@@ -67,6 +67,9 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 func Recorder_Assertions(recorder *Recorder, namespace Namespace) (builder Assertion_Builder) {
 	builder.Context = unsafe.Pointer(unsafe.StringData(string(namespace)))
 	builder.State_A = uintptr(len(namespace))
+	if recorder.Assertion_Plans == nil {
+		return builder
+	}
 	if !recorder.Is_Test {
 		return builder
 	}
@@ -95,198 +98,377 @@ func (builder Assertion_Builder) Sometimes(
 
 // Range_Int keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int(
-	value int, minimum int, maximum int, excluded ...int,
+	value int, minimum int, maximum int,
 ) (next Assertion_Builder) {
-	valid := value >= minimum && value <= maximum
-	for _, hole := range excluded {
-		if value == hole {
-			valid = false
-			break
-		}
-	}
-	if valid {
-		if !builder.assertion_recording() {
-			return builder
-		}
-	}
-	return assertion_range_slow[int](
-		builder, value, minimum, maximum,
-		unsafe.Pointer(unsafe.SliceData(excluded)), len(excluded))
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Int8 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int8(
-	value int8, minimum int8, maximum int8, excluded ...int8,
+	value int8, minimum int8, maximum int8,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Int16 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int16(
-	value int16, minimum int16, maximum int16, excluded ...int16,
+	value int16, minimum int16, maximum int16,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Int32 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int32(
-	value int32, minimum int32, maximum int32, excluded ...int32,
+	value int32, minimum int32, maximum int32,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Int64 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int64(
-	value int64, minimum int64, maximum int64, excluded ...int64,
+	value int64, minimum int64, maximum int64,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Uint keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint(
-	value uint, minimum uint, maximum uint, excluded ...uint,
+	value uint, minimum uint, maximum uint,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Uint8 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint8(
-	value uint8, minimum uint8, maximum uint8, excluded ...uint8,
+	value uint8, minimum uint8, maximum uint8,
 ) (next Assertion_Builder) {
-	valid := value >= minimum && value <= maximum
-	for _, hole := range excluded {
-		if value == hole {
-			valid = false
-			break
-		}
-	}
-	if valid {
-		if !builder.assertion_recording() {
-			return builder
-		}
-	}
-	return assertion_range_slow[uint8](
-		builder, value, minimum, maximum,
-		unsafe.Pointer(unsafe.SliceData(excluded)), len(excluded))
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Uint16 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint16(
-	value uint16, minimum uint16, maximum uint16, excluded ...uint16,
+	value uint16, minimum uint16, maximum uint16,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Uint32 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint32(
-	value uint32, minimum uint32, maximum uint32, excluded ...uint32,
+	value uint32, minimum uint32, maximum uint32,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
 // Range_Uint64 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint64(
-	value uint64, minimum uint64, maximum uint64, excluded ...uint64,
+	value uint64, minimum uint64, maximum uint64,
 ) (next Assertion_Builder) {
-	return assertion_range_head(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum)
 }
 
-// Enum_Int keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Range_Holed_Int excludes up to four canonical signed holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Int(
+	value int, minimum int, maximum int,
+	hole_1 int, hole_2 int, hole_3 int, hole_4 int,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+}
+
+// Range_Holed_Int8 excludes up to four canonical signed holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Int8(
+	value int8, minimum int8, maximum int8,
+	hole_1 int8, hole_2 int8, hole_3 int8, hole_4 int8,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+}
+
+// Range_Holed_Int16 excludes up to four canonical signed holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Int16(
+	value int16, minimum int16, maximum int16,
+	hole_1 int16, hole_2 int16, hole_3 int16, hole_4 int16,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+}
+
+// Range_Holed_Int32 excludes up to four canonical signed holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Int32(
+	value int32, minimum int32, maximum int32,
+	hole_1 int32, hole_2 int32, hole_3 int32, hole_4 int32,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+}
+
+// Range_Holed_Int64 excludes up to four canonical signed holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Int64(
+	value int64, minimum int64, maximum int64,
+	hole_1 int64, hole_2 int64, hole_3 int64, hole_4 int64,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+}
+
+// Range_Holed_Uint excludes up to three canonical unsigned holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Uint(
+	value uint, minimum uint, maximum uint, hole_1 uint, hole_2 uint, hole_3 uint,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_3)
+}
+
+// Range_Holed_Uint8 excludes up to three canonical unsigned holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Uint8(
+	value uint8, minimum uint8, maximum uint8,
+	hole_1 uint8, hole_2 uint8, hole_3 uint8,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_3)
+}
+
+// Range_Holed_Uint16 excludes up to three canonical unsigned holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Uint16(
+	value uint16, minimum uint16, maximum uint16,
+	hole_1 uint16, hole_2 uint16, hole_3 uint16,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_3)
+}
+
+// Range_Holed_Uint32 excludes up to three canonical unsigned holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Uint32(
+	value uint32, minimum uint32, maximum uint32,
+	hole_1 uint32, hole_2 uint32, hole_3 uint32,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_3)
+}
+
+// Range_Holed_Uint64 excludes up to three canonical unsigned holes without constructing a slice.
+func (builder Assertion_Builder) Range_Holed_Uint64(
+	value uint64, minimum uint64, maximum uint64,
+	hole_1 uint64, hole_2 uint64, hole_3 uint64,
+) (next Assertion_Builder) {
+	return assertion_range_holed_head(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_3)
+}
+
+// Enum_Int keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Int(
-	value int, members ...int,
+	value int, first int, second int,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[int])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Int8 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Int8 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Int8(
-	value int8, members ...int8,
+	value int8, first int8, second int8,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[int8])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Int16 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Int16 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Int16(
-	value int16, members ...int16,
+	value int16, first int16, second int16,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[int16])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Int32 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Int32 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Int32(
-	value int32, members ...int32,
+	value int32, first int32, second int32,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[int32])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Int64 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Int64 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Int64(
-	value int64, members ...int64,
+	value int64, first int64, second int64,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[int64])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Uint keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Uint keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Uint(
-	value uint, members ...uint,
+	value uint, first uint, second uint,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Uint8 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Uint8 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Uint8(
-	value uint8, members ...uint8,
+	value uint8, first uint8, second uint8,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint8])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Uint16 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Uint16 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Uint16(
-	value uint16, members ...uint16,
+	value uint16, first uint16, second uint16,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint16])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Uint32 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Uint32 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Uint32(
-	value uint32, members ...uint32,
+	value uint32, first uint32, second uint32,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint32])
+	return assertion_enum_2_head(builder, value, first, second)
 }
 
-// Enum_Uint64 keeps only membership enforcement in ordinary binaries.
-//
-//go:noinline
+// Enum_Uint64 keeps fixed two-member enforcement inlineable in ordinary binaries.
 func (builder Assertion_Builder) Enum_Uint64(
-	value uint64, members ...uint64,
+	value uint64, first uint64, second uint64,
 ) (next Assertion_Builder) {
-	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint64])
+	return assertion_enum_2_head(builder, value, first, second)
+}
+
+// Enum_3_Int keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Int(
+	value int, first int, second int, third int,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Int8 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Int8(
+	value int8, first int8, second int8, third int8,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Int16 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Int16(
+	value int16, first int16, second int16, third int16,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Int32 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Int32(
+	value int32, first int32, second int32, third int32,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Int64 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Int64(
+	value int64, first int64, second int64, third int64,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Uint keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Uint(
+	value uint, first uint, second uint, third uint,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Uint8 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Uint8(
+	value uint8, first uint8, second uint8, third uint8,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Uint16 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Uint16(
+	value uint16, first uint16, second uint16, third uint16,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Uint32 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Uint32(
+	value uint32, first uint32, second uint32, third uint32,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_3_Uint64 keeps fixed three-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_3_Uint64(
+	value uint64, first uint64, second uint64, third uint64,
+) (next Assertion_Builder) {
+	return assertion_enum_3_head(builder, value, first, second, third)
+}
+
+// Enum_4_Int keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Int(
+	value int, first int, second int, third int, fourth int,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Int8 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Int8(
+	value int8, first int8, second int8, third int8, fourth int8,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Int16 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Int16(
+	value int16, first int16, second int16, third int16, fourth int16,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Int32 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Int32(
+	value int32, first int32, second int32, third int32, fourth int32,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Int64 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Int64(
+	value int64, first int64, second int64, third int64, fourth int64,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Uint keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Uint(
+	value uint, first uint, second uint, third uint, fourth uint,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Uint8 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Uint8(
+	value uint8, first uint8, second uint8, third uint8, fourth uint8,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Uint16 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Uint16(
+	value uint16, first uint16, second uint16, third uint16, fourth uint16,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Uint32 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Uint32(
+	value uint32, first uint32, second uint32, third uint32, fourth uint32,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
+}
+
+// Enum_4_Uint64 keeps fixed four-member enforcement inlineable in ordinary binaries.
+func (builder Assertion_Builder) Enum_4_Uint64(
+	value uint64, first uint64, second uint64, third uint64, fourth uint64,
+) (next Assertion_Builder) {
+	return assertion_enum_4_head(builder, value, first, second, third, fourth)
 }
 
 // Ensure keeps the successful ordinary path small enough to inline at every assertion site.
 func (builder Assertion_Builder) Ensure() {
-	if builder.assertion_failure() == ASSERTION_FAILURE_NONE {
-		if !builder.assertion_recording() {
-			return
-		}
+	if builder.State_B&(ASSERTION_RECORDING_MASK|ASSERTION_FAILURE_MASK) == 0 {
+		return
 	}
 	assertion_ensure(&builder)
 }
@@ -410,44 +592,90 @@ func (builder *Assertion_Builder) assertion_failure_message() (message string) {
 }
 
 func assertion_range_head[Value Integer](
-	builder Assertion_Builder, value Value, minimum Value, maximum Value, excluded []Value,
+	builder Assertion_Builder, value Value, minimum Value, maximum Value,
 ) (next Assertion_Builder) {
-	valid := value >= minimum && value <= maximum
-	for _, hole := range excluded {
-		if value == hole {
-			valid = false
-			break
+	if value >= minimum {
+		if value <= maximum {
+			if !builder.assertion_recording() {
+				return builder
+			}
 		}
 	}
-	if valid {
-		if !builder.assertion_recording() {
-			return builder
-		}
-	}
-	return assertion_range_slow(
-		builder, value, minimum, maximum,
-		unsafe.Pointer(unsafe.SliceData(excluded)), len(excluded))
+	return assertion_range_slow(builder, value, minimum, maximum)
 }
 
 //go:noinline
 func assertion_range_slow[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value,
-	excluded_data unsafe.Pointer, excluded_count int,
 ) (next Assertion_Builder) {
-	excluded := unsafe.Slice((*Value)(excluded_data), excluded_count)
 	if value < minimum {
 		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER)
 	}
 	if value > maximum {
 		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER)
 	}
-	for _, hole := range excluded {
-		if value == hole {
-			builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUDED)
+	if builder.assertion_recording() {
+		builder = assertion_range_recording(
+			builder, value, minimum, maximum, false,
+			Value(0), Value(0), Value(0), Value(0))
+	}
+	return builder
+}
+
+func assertion_range_holed_head[Value Integer](
+	builder Assertion_Builder, value Value, minimum Value, maximum Value,
+	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
+) (next Assertion_Builder) {
+	valid := value >= minimum && value <= maximum
+	if value == hole_1 {
+		valid = false
+	}
+	if value == hole_2 {
+		valid = false
+	}
+	if value == hole_3 {
+		valid = false
+	}
+	if value == hole_4 {
+		valid = false
+	}
+	if valid {
+		if !builder.assertion_recording() {
+			return builder
 		}
 	}
+	return assertion_range_holed_slow(
+		builder, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+}
+
+//go:noinline
+func assertion_range_holed_slow[Value Integer](
+	builder Assertion_Builder, value Value, minimum Value, maximum Value,
+	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
+) (next Assertion_Builder) {
+	if value < minimum {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER)
+	}
+	if value > maximum {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER)
+	}
+	excluded := value == hole_1
+	if value == hole_2 {
+		excluded = true
+	}
+	if value == hole_3 {
+		excluded = true
+	}
+	if value == hole_4 {
+		excluded = true
+	}
+	if excluded {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUDED)
+	}
 	if builder.assertion_recording() {
-		builder = assertion_range_recording(builder, value, minimum, maximum, excluded)
+		builder = assertion_range_recording(
+			builder, value, minimum, maximum, true,
+			hole_1, hole_2, hole_3, hole_4)
 	}
 	return builder
 }
@@ -456,7 +684,8 @@ func assertion_range_slow[Value Integer](
 //
 //go:noinline
 func assertion_range_recording[Value Integer](
-	builder Assertion_Builder, value Value, minimum Value, maximum Value, excluded []Value,
+	builder Assertion_Builder, value Value, minimum Value, maximum Value,
+	holed bool, hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
 ) (next Assertion_Builder) {
 	builder = builder.assertion_guard()
 	builder = builder.assertion_guard()
@@ -466,23 +695,27 @@ func assertion_range_recording[Value Integer](
 	builder = builder.assertion_axis(value == minimum)
 	builder = builder.assertion_axis(value == maximum)
 	builder = assertion_range_candidate_recording(
-		builder, value, minimum, maximum, excluded, Value(0))
+		builder, value, minimum, maximum, Value(0), holed,
+		hole_1, hole_2, hole_3, hole_4)
 	builder = assertion_range_candidate_recording(
-		builder, value, minimum, maximum, excluded, Value(1))
+		builder, value, minimum, maximum, Value(1), holed,
+		hole_1, hole_2, hole_3, hole_4)
 	builder = assertion_range_candidate_recording(
-		builder, value, minimum, maximum, excluded, Value(2))
+		builder, value, minimum, maximum, Value(2), holed,
+		hole_1, hole_2, hole_3, hole_4)
 	zero := Value(0)
 	negative_one := zero - Value(1)
 	if negative_one < zero {
 		builder = assertion_range_candidate_recording(
-			builder, value, minimum, maximum, excluded, negative_one)
+			builder, value, minimum, maximum, negative_one, holed,
+			hole_1, hole_2, hole_3, hole_4)
 	}
 	return builder
 }
 
 func assertion_range_candidate_recording[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value,
-	excluded []Value, candidate Value,
+	candidate Value, holed bool, hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
 ) (next Assertion_Builder) {
 	outside := candidate <= minimum
 	if candidate >= maximum {
@@ -491,74 +724,145 @@ func assertion_range_candidate_recording[Value Integer](
 	if outside {
 		return builder
 	}
-	for _, hole := range excluded {
-		if hole == candidate {
+	if holed {
+		excluded := candidate == hole_1
+		if candidate == hole_2 {
+			excluded = true
+		}
+		if candidate == hole_3 {
+			excluded = true
+		}
+		if candidate == hole_4 {
+			excluded = true
+		}
+		if excluded {
 			return builder
 		}
 	}
 	return builder.assertion_axis(value == candidate)
 }
 
-func assertion_enum_head[Value Integer](
-	builder Assertion_Builder, value Value, members []Value,
-	slow func(Assertion_Builder, Value, unsafe.Pointer, int) (next Assertion_Builder),
+func assertion_enum_2_head[Value Integer](
+	builder Assertion_Builder, value Value, first Value, second Value,
 ) (next Assertion_Builder) {
-	matched := false
-	for _, member := range members {
-		if value == member {
-			matched = true
-			break
-		}
+	matched := value == first
+	if value == second {
+		matched = true
 	}
 	if matched {
 		if !builder.assertion_recording() {
 			return builder
 		}
 	}
-	return slow(
-		builder, value, unsafe.Pointer(unsafe.SliceData(members)), len(members))
+	return assertion_enum_2_slow(builder, value, first, second)
 }
 
 //go:noinline
-func assertion_enum_slow[Value Integer](
-	builder Assertion_Builder, value Value, member_data unsafe.Pointer, member_count int,
+func assertion_enum_2_slow[Value Integer](
+	builder Assertion_Builder, value Value, first Value, second Value,
 ) (next Assertion_Builder) {
-	members := unsafe.Slice((*Value)(member_data), member_count)
-	matched := false
-	for _, member := range members {
-		if value == member {
-			matched = true
-			break
-		}
+	matched := value == first
+	if value == second {
+		matched = true
 	}
 	if !matched {
 		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
 	}
 	if builder.assertion_recording() {
-		builder = assertion_enum_recording(builder, value, members)
+		builder = builder.assertion_guard()
+		builder = builder.assertion_axis(value == first)
+		builder = builder.assertion_axis(value == second)
 	}
 	return builder
 }
 
-// Distinct-member expansion is useful only to the registration-owned emission plan.
-//
-//go:noinline
-func assertion_enum_recording[Value Integer](
-	builder Assertion_Builder, value Value, members []Value,
+func assertion_enum_3_head[Value Integer](
+	builder Assertion_Builder, value Value, first Value, second Value, third Value,
 ) (next Assertion_Builder) {
-	builder = builder.assertion_guard()
-	for index, member := range members {
-		duplicate := false
-		for _, earlier := range members[:index] {
-			if earlier == member {
-				duplicate = true
-				break
-			}
+	matched := value == first
+	if value == second {
+		matched = true
+	}
+	if value == third {
+		matched = true
+	}
+	if matched {
+		if !builder.assertion_recording() {
+			return builder
 		}
-		if duplicate {
-			continue
+	}
+	return assertion_enum_3_slow(builder, value, first, second, third)
+}
+
+//go:noinline
+func assertion_enum_3_slow[Value Integer](
+	builder Assertion_Builder, value Value, first Value, second Value, third Value,
+) (next Assertion_Builder) {
+	matched := value == first
+	if value == second {
+		matched = true
+	}
+	if value == third {
+		matched = true
+	}
+	if !matched {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
+	}
+	if builder.assertion_recording() {
+		builder = builder.assertion_guard()
+		builder = builder.assertion_axis(value == first)
+		builder = builder.assertion_axis(value == second)
+		builder = builder.assertion_axis(value == third)
+	}
+	return builder
+}
+
+func assertion_enum_4_head[Value Integer](
+	builder Assertion_Builder, value Value,
+	first Value, second Value, third Value, fourth Value,
+) (next Assertion_Builder) {
+	matched := value == first
+	if value == second {
+		matched = true
+	}
+	if value == third {
+		matched = true
+	}
+	if value == fourth {
+		matched = true
+	}
+	if matched {
+		if !builder.assertion_recording() {
+			return builder
 		}
-		builder = builder.assertion_axis(value == member)
+	}
+	return assertion_enum_4_slow(builder, value, first, second, third, fourth)
+}
+
+//go:noinline
+func assertion_enum_4_slow[Value Integer](
+	builder Assertion_Builder, value Value,
+	first Value, second Value, third Value, fourth Value,
+) (next Assertion_Builder) {
+	matched := value == first
+	if value == second {
+		matched = true
+	}
+	if value == third {
+		matched = true
+	}
+	if value == fourth {
+		matched = true
+	}
+	if !matched {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
+	}
+	if builder.assertion_recording() {
+		builder = builder.assertion_guard()
+		builder = builder.assertion_axis(value == first)
+		builder = builder.assertion_axis(value == second)
+		builder = builder.assertion_axis(value == third)
+		builder = builder.assertion_axis(value == fourth)
 	}
 	return builder
 }

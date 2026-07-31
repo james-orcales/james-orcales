@@ -145,36 +145,75 @@ func check(value bool) {
 func Test_Assertions_Typed_Presets_Register_Every_Integer_Width(t *testing.T) {
 	fixtures := []struct {
 		Value_Type string
-		Method     string
+		Suffix     string
 		Minimum    string
 		Maximum    string
 	}{
-		{"int", "Range_Int", "-9223372036854775808", "9223372036854775807"},
-		{"int8", "Range_Int8", "-128", "127"},
-		{"int16", "Range_Int16", "-32768", "32767"},
-		{"int32", "Range_Int32", "-2147483648", "2147483647"},
-		{"int64", "Range_Int64", "-9223372036854775808", "9223372036854775807"},
-		{"uint", "Range_Uint", "0", "18446744073709551615"},
-		{"uint8", "Range_Uint8", "0", "255"},
-		{"uint16", "Range_Uint16", "0", "65535"},
-		{"uint32", "Range_Uint32", "0", "4294967295"},
-		{"uint64", "Range_Uint64", "0", "18446744073709551615"},
+		{"int", "Int", "-9223372036854775808", "9223372036854775807"},
+		{"int8", "Int8", "-128", "127"},
+		{"int16", "Int16", "-32768", "32767"},
+		{"int32", "Int32", "-2147483648", "2147483647"},
+		{"int64", "Int64", "-9223372036854775808", "9223372036854775807"},
+		{"uint", "Uint", "0", "18446744073709551615"},
+		{"uint8", "Uint8", "0", "255"},
+		{"uint16", "Uint16", "0", "65535"},
+		{"uint32", "Uint32", "0", "4294967295"},
+		{"uint64", "Uint64", "0", "18446744073709551615"},
 	}
 	for _, fixture := range fixtures {
 		source := fmt.Sprintf(`package fixture
 func check(value %s) {
-	invariant.Assertions(%q).%s(value, %s, %s).Ensure()
+	invariant.Assertions(%q).Range_%s(value, %s, %s).Ensure()
 }
-`, fixture.Value_Type, fixture.Method, fixture.Method, fixture.Minimum, fixture.Maximum)
+`, fixture.Value_Type, fixture.Suffix, fixture.Suffix, fixture.Minimum, fixture.Maximum)
 		_, output, code := registered_fixture(source)
 		if code != -1 {
-			t.Fatalf("%s exit=%d output=%q", fixture.Method, code, output.String())
+			t.Fatalf("Range_%s exit=%d output=%q",
+				fixture.Suffix, code, output.String())
+		}
+		unsigned := strings.HasPrefix(fixture.Value_Type, "uint")
+		holes := "-1, 0, 1, 1"
+		if unsigned {
+			holes = "1, 2, 2"
+		}
+		source = fmt.Sprintf(`package fixture
+func check(value %s) {
+	invariant.Assertions(%q).Range_Holed_%s(value, %s, %s, %s).Ensure()
+}
+`, fixture.Value_Type, "Range_Holed_"+fixture.Suffix, fixture.Suffix,
+			fixture.Minimum, fixture.Maximum, holes)
+		_, output, code = registered_fixture(source)
+		if code != -1 {
+			t.Fatalf("Range_Holed_%s exit=%d output=%q",
+				fixture.Suffix, code, output.String())
+		}
+		for capacity := 2; capacity <= 4; capacity++ {
+			method := "Enum_" + fixture.Suffix
+			if capacity > 2 {
+				method = fmt.Sprintf("Enum_%d_%s", capacity, fixture.Suffix)
+			}
+			members := "0, 1"
+			if capacity == 3 {
+				members = "0, 1, 2"
+			}
+			if capacity == 4 {
+				members = "0, 1, 2, 3"
+			}
+			source = fmt.Sprintf(`package fixture
+func check(value %s) {
+	invariant.Assertions(%q).%s(value, %s).Ensure()
+}
+`, fixture.Value_Type, method, method, members)
+			_, output, code = registered_fixture(source)
+			if code != -1 {
+				t.Fatalf("%s exit=%d output=%q", method, code, output.String())
+			}
 		}
 	}
 }
 
-// Test_Assertions_Typed_Presets_Execute_Every_Integer_Width prevents wrapper drift.
-func Test_Assertions_Typed_Presets_Execute_Every_Integer_Width(t *testing.T) {
+// Test_Assertions_Range_Families_Execute_Every_Integer_Width prevents wrapper drift.
+func Test_Assertions_Range_Families_Execute_Every_Integer_Width(t *testing.T) {
 	recorder := &invariant.Recorder{}
 	builders := []invariant.Assertion_Builder{
 		invariant.Recorder_Assertions(recorder, "int8").Range_Int8(1, 0, 2),
@@ -186,6 +225,36 @@ func Test_Assertions_Typed_Presets_Execute_Every_Integer_Width(t *testing.T) {
 		invariant.Recorder_Assertions(recorder, "uint16").Range_Uint16(1, 0, 2),
 		invariant.Recorder_Assertions(recorder, "uint32").Range_Uint32(1, 0, 2),
 		invariant.Recorder_Assertions(recorder, "uint64").Range_Uint64(1, 0, 2),
+		invariant.Recorder_Assertions(recorder, "holed-int").
+			Range_Holed_Int(3, 0, 9, 1, 2, 4, 4),
+		invariant.Recorder_Assertions(recorder, "holed-int8").
+			Range_Holed_Int8(3, 0, 9, 1, 2, 4, 4),
+		invariant.Recorder_Assertions(recorder, "holed-int16").
+			Range_Holed_Int16(3, 0, 9, 1, 2, 4, 4),
+		invariant.Recorder_Assertions(recorder, "holed-int32").
+			Range_Holed_Int32(3, 0, 9, 1, 2, 4, 4),
+		invariant.Recorder_Assertions(recorder, "holed-int64").
+			Range_Holed_Int64(3, 0, 9, 1, 2, 4, 4),
+		invariant.Recorder_Assertions(recorder, "holed-uint").
+			Range_Holed_Uint(3, 0, 9, 1, 2, 4),
+		invariant.Recorder_Assertions(recorder, "holed-uint8").
+			Range_Holed_Uint8(3, 0, 9, 1, 2, 4),
+		invariant.Recorder_Assertions(recorder, "holed-uint16").
+			Range_Holed_Uint16(3, 0, 9, 1, 2, 4),
+		invariant.Recorder_Assertions(recorder, "holed-uint32").
+			Range_Holed_Uint32(3, 0, 9, 1, 2, 4),
+		invariant.Recorder_Assertions(recorder, "holed-uint64").
+			Range_Holed_Uint64(3, 0, 9, 1, 2, 4),
+	}
+	for _, builder := range builders {
+		builder.Ensure()
+	}
+}
+
+// Test_Assertions_Enum_Families_Execute_Every_Integer_Width prevents capacity drift.
+func Test_Assertions_Enum_Families_Execute_Every_Integer_Width(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	builders := []invariant.Assertion_Builder{
 		invariant.Recorder_Assertions(recorder, "enum-int8").Enum_Int8(1, 1, 2),
 		invariant.Recorder_Assertions(recorder, "enum-int16").Enum_Int16(1, 1, 2),
 		invariant.Recorder_Assertions(recorder, "enum-int32").Enum_Int32(1, 1, 2),
@@ -195,6 +264,33 @@ func Test_Assertions_Typed_Presets_Execute_Every_Integer_Width(t *testing.T) {
 		invariant.Recorder_Assertions(recorder, "enum-uint16").Enum_Uint16(1, 1, 2),
 		invariant.Recorder_Assertions(recorder, "enum-uint32").Enum_Uint32(1, 1, 2),
 		invariant.Recorder_Assertions(recorder, "enum-uint64").Enum_Uint64(1, 1, 2),
+		invariant.Recorder_Assertions(recorder, "enum-3-int").Enum_3_Int(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-int8").Enum_3_Int8(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-int16").Enum_3_Int16(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-int32").Enum_3_Int32(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-int64").Enum_3_Int64(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-uint").Enum_3_Uint(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-uint8").Enum_3_Uint8(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-uint16").Enum_3_Uint16(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-uint32").Enum_3_Uint32(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-3-uint64").Enum_3_Uint64(2, 1, 2, 3),
+		invariant.Recorder_Assertions(recorder, "enum-4-int").Enum_4_Int(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-int8").Enum_4_Int8(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-int16").
+			Enum_4_Int16(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-int32").
+			Enum_4_Int32(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-int64").
+			Enum_4_Int64(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-uint").Enum_4_Uint(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-uint8").
+			Enum_4_Uint8(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-uint16").
+			Enum_4_Uint16(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-uint32").
+			Enum_4_Uint32(3, 1, 2, 3, 4),
+		invariant.Recorder_Assertions(recorder, "enum-4-uint64").
+			Enum_4_Uint64(3, 1, 2, 3, 4),
 	}
 	for _, builder := range builders {
 		builder.Ensure()
@@ -210,7 +306,8 @@ func Test_Assertions_Defers_Every_Value_Failure(t *testing.T) {
 	}{
 		{invariant.Recorder_Assertions(recorder, "lower").Range_Int(-1, 0, 2),
 			"below min"},
-		{invariant.Recorder_Assertions(recorder, "excluded").Range_Int(1, 0, 2, 1),
+		{invariant.Recorder_Assertions(recorder, "excluded").
+			Range_Holed_Int(1, 0, 2, 1, 1, 1, 1),
 			"is excluded"},
 		{invariant.Recorder_Assertions(recorder, "enum-member").Enum_Int(3, 1, 2),
 			"not a member"},
@@ -337,15 +434,15 @@ func Benchmark_Assertions_Range_Holes(benchmark *testing.B) {
 	recorder := &invariant.Recorder{}
 	for benchmark.Loop() {
 		invariant.Recorder_Assertions(recorder, "benchmark").
-			Range_Int(5, 0, 10, 2, 4, 6, 8).Ensure()
+			Range_Holed_Int(5, 0, 10, 2, 4, 6, 8).Ensure()
 	}
 }
 
-func Benchmark_Assertions_Enum(benchmark *testing.B) {
+func Benchmark_Assertions_Enum_4(benchmark *testing.B) {
 	recorder := &invariant.Recorder{}
 	for benchmark.Loop() {
 		invariant.Recorder_Assertions(recorder, "benchmark").
-			Enum_Int(5, 1, 3, 5, 7).Ensure()
+			Enum_4_Int(5, 1, 3, 5, 7).Ensure()
 	}
 }
 
@@ -378,8 +475,8 @@ func check(value int) {
 func benchmark_dense_leaf(recorder *invariant.Recorder, value int) {
 	invariant.Recorder_Assertions(recorder, "dense-leaf").
 		Sometimes(value&1 == 1, "odd").
-		Range_Int(value, 0, 10, 2, 4, 6, 8).
-		Enum_Int(value, 1, 3, 5, 7, 9).
+		Range_Holed_Int(value, 0, 10, 2, 4, 6, 8).
+		Enum_4_Int(value, 1, 3, 5, 7).
 		Ensure()
 }
 
@@ -393,7 +490,7 @@ func benchmark_dense_branch(recorder *invariant.Recorder, value int) {
 
 func benchmark_dense_root(recorder *invariant.Recorder, value int) {
 	invariant.Recorder_Assertions(recorder, "dense-root").
-		Enum_Int(value, 1, 3, 5, 7, 9).
+		Enum_4_Int(value, 1, 3, 5, 7).
 		Sometimes(value != 0, "nonzero").
 		Ensure()
 	benchmark_dense_branch(recorder, value)

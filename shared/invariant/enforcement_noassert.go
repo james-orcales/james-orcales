@@ -18,121 +18,310 @@ func (builder Assertion_Builder) Sometimes(
 }
 
 func (builder Assertion_Builder) Range_Int(
-	value int, minimum int, maximum int, excluded ...int,
+	value int, minimum int, maximum int,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Int8(
-	value int8, minimum int8, maximum int8, excluded ...int8,
+	value int8, minimum int8, maximum int8,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Int16(
-	value int16, minimum int16, maximum int16, excluded ...int16,
+	value int16, minimum int16, maximum int16,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Int32(
-	value int32, minimum int32, maximum int32, excluded ...int32,
+	value int32, minimum int32, maximum int32,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Int64(
-	value int64, minimum int64, maximum int64, excluded ...int64,
+	value int64, minimum int64, maximum int64,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Uint(
-	value uint, minimum uint, maximum uint, excluded ...uint,
+	value uint, minimum uint, maximum uint,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Uint8(
-	value uint8, minimum uint8, maximum uint8, excluded ...uint8,
+	value uint8, minimum uint8, maximum uint8,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Uint16(
-	value uint16, minimum uint16, maximum uint16, excluded ...uint16,
+	value uint16, minimum uint16, maximum uint16,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Uint32(
-	value uint32, minimum uint32, maximum uint32, excluded ...uint32,
+	value uint32, minimum uint32, maximum uint32,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Range_Uint64(
-	value uint64, minimum uint64, maximum uint64, excluded ...uint64,
+	value uint64, minimum uint64, maximum uint64,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Int(
+	value int, minimum int, maximum int,
+	hole_1 int, hole_2 int, hole_3 int, hole_4 int,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Int8(
+	value int8, minimum int8, maximum int8,
+	hole_1 int8, hole_2 int8, hole_3 int8, hole_4 int8,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Int16(
+	value int16, minimum int16, maximum int16,
+	hole_1 int16, hole_2 int16, hole_3 int16, hole_4 int16,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Int32(
+	value int32, minimum int32, maximum int32,
+	hole_1 int32, hole_2 int32, hole_3 int32, hole_4 int32,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Int64(
+	value int64, minimum int64, maximum int64,
+	hole_1 int64, hole_2 int64, hole_3 int64, hole_4 int64,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Uint(
+	value uint, minimum uint, maximum uint, hole_1 uint, hole_2 uint, hole_3 uint,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Uint8(
+	value uint8, minimum uint8, maximum uint8,
+	hole_1 uint8, hole_2 uint8, hole_3 uint8,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Uint16(
+	value uint16, minimum uint16, maximum uint16,
+	hole_1 uint16, hole_2 uint16, hole_3 uint16,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Uint32(
+	value uint32, minimum uint32, maximum uint32,
+	hole_1 uint32, hole_2 uint32, hole_3 uint32,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Range_Holed_Uint64(
+	value uint64, minimum uint64, maximum uint64,
+	hole_1 uint64, hole_2 uint64, hole_3 uint64,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Int(
-	value int, members ...int,
+	value int, first int, second int,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Int8(
-	value int8, members ...int8,
+	value int8, first int8, second int8,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Int16(
-	value int16, members ...int16,
+	value int16, first int16, second int16,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Int32(
-	value int32, members ...int32,
+	value int32, first int32, second int32,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Int64(
-	value int64, members ...int64,
+	value int64, first int64, second int64,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Uint(
-	value uint, members ...uint,
+	value uint, first uint, second uint,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Uint8(
-	value uint8, members ...uint8,
+	value uint8, first uint8, second uint8,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Uint16(
-	value uint16, members ...uint16,
+	value uint16, first uint16, second uint16,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Uint32(
-	value uint32, members ...uint32,
+	value uint32, first uint32, second uint32,
 ) (next Assertion_Builder) {
 	return builder
 }
 
 func (builder Assertion_Builder) Enum_Uint64(
-	value uint64, members ...uint64,
+	value uint64, first uint64, second uint64,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Int(
+	value int, first int, second int, third int,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Int8(
+	value int8, first int8, second int8, third int8,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Int16(
+	value int16, first int16, second int16, third int16,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Int32(
+	value int32, first int32, second int32, third int32,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Int64(
+	value int64, first int64, second int64, third int64,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Uint(
+	value uint, first uint, second uint, third uint,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Uint8(
+	value uint8, first uint8, second uint8, third uint8,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Uint16(
+	value uint16, first uint16, second uint16, third uint16,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Uint32(
+	value uint32, first uint32, second uint32, third uint32,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_3_Uint64(
+	value uint64, first uint64, second uint64, third uint64,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Int(
+	value int, first int, second int, third int, fourth int,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Int8(
+	value int8, first int8, second int8, third int8, fourth int8,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Int16(
+	value int16, first int16, second int16, third int16, fourth int16,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Int32(
+	value int32, first int32, second int32, third int32, fourth int32,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Int64(
+	value int64, first int64, second int64, third int64, fourth int64,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Uint(
+	value uint, first uint, second uint, third uint, fourth uint,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Uint8(
+	value uint8, first uint8, second uint8, third uint8, fourth uint8,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Uint16(
+	value uint16, first uint16, second uint16, third uint16, fourth uint16,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Uint32(
+	value uint32, first uint32, second uint32, third uint32, fourth uint32,
+) (next Assertion_Builder) {
+	return builder
+}
+
+func (builder Assertion_Builder) Enum_4_Uint64(
+	value uint64, first uint64, second uint64, third uint64, fourth uint64,
 ) (next Assertion_Builder) {
 	return builder
 }

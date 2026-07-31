@@ -34,20 +34,27 @@ Every concrete integer width has chain methods for bounded and enumerated domain
 
 ```go
 invariant.Assertions(namespace).
-    Range_Int(value, Minimum, Maximum, holes...).
+    Range_Int(value, Minimum, Maximum).
     Ensure()
 
 invariant.Assertions(namespace).
-    Enum_Uint8(value, State_New, State_Ready, State_Done).
+    Range_Holed_Int(value, Minimum, Maximum, Hole_A, Hole_B, Hole_B, Hole_B).
+    Ensure()
+
+invariant.Assertions(namespace).
+    Enum_3_Uint8(value, State_New, State_Ready, State_Done).
     Ensure()
 ```
 
-Range enforces both bounds and strictly-interior holes at `Ensure`. Its coverage includes successful
-lower and upper guards, both interval boundaries when distinct, and eligible interior 0, 1, 2, and
--1 witnesses. A boundary cannot be excluded.
+Range enforces both bounds at `Ensure`; Range_Holed also enforces fixed strictly-interior hole
+slots. Signed methods carry four slots and unsigned methods three. Distinct holes are ascending,
+with unused slots repeating the final hole. Coverage includes successful lower and upper guards,
+both interval boundaries when distinct, and eligible interior 0, 1, 2, and -1 witnesses. A boundary
+cannot be excluded.
 
-Enum enforces membership at `Ensure`, requires at least two distinct members, seeds one successful
-membership guard, and gives each distinct member an independent true/false axis.
+Enum, Enum_3, and Enum_4 enforce their fixed member capacities at `Ensure`. Members are statically
+resolvable, strictly ascending, and distinct. Registration seeds one successful membership guard
+and gives each member an independent true/false axis.
 
 ## Type-owned helpers
 

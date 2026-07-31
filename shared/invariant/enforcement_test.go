@@ -23,8 +23,8 @@ func Test_Assertion_Builder_Fits_Three_Words(t *testing.T) {
 func Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations(t *testing.T) {
 	builder := Recorder_Assertions(&Recorder{}, "ordinary").
 		Sometimes(true, "axis").
-		Range_Int(3, 0, 10, 4).
-		Enum_Int(3, 1, 2, 3)
+		Range_Holed_Int(3, 0, 10, 4, 4, 4, 4).
+		Enum_3_Int(3, 1, 2, 3)
 	if ordinal := builder.assertion_ordinal(); ordinal != 0 {
 		t.Fatalf("ordinal = %d, want no recording progress", ordinal)
 	}
@@ -45,7 +45,8 @@ func Test_Assertions_Non_Recording_Range_Failures_Are_Deferred(t *testing.T) {
 	}{
 		{Recorder_Assertions(&Recorder{}, "lower").Range_Int(-1, 0, 3), "below min"},
 		{Recorder_Assertions(&Recorder{}, "upper").Range_Int(4, 0, 3), "exceeds max"},
-		{Recorder_Assertions(&Recorder{}, "hole").Range_Int(2, 0, 3, 2), "excluded"},
+		{Recorder_Assertions(&Recorder{}, "hole").
+			Range_Holed_Int(2, 0, 3, 2, 2, 2, 2), "excluded"},
 	}
 	for _, failure := range failures {
 		message := panic_message(failure.Builder.Ensure)
@@ -58,7 +59,7 @@ func Test_Assertions_Non_Recording_Range_Failures_Are_Deferred(t *testing.T) {
 // Test_Assertions_Non_Recording_Enum_Failure_Is_Deferred keeps membership on the enforcement path
 // while registration alone owns distinct-member expansion.
 func Test_Assertions_Non_Recording_Enum_Failure_Is_Deferred(t *testing.T) {
-	builder := Recorder_Assertions(&Recorder{}, "enum").Enum_Int(3, 1, 2)
+	builder := Recorder_Assertions(&Recorder{}, "enum").Enum_4_Int(5, 1, 2, 3, 4)
 	if message := panic_message(builder.Ensure); !strings.Contains(message, "not a member") {
 		t.Fatalf("panic = %q", message)
 	}
@@ -90,9 +91,7 @@ func assertion_range_int_immediate_control(
 		}
 	}
 	if builder.assertion_recording() {
-		return assertion_range_slow[int](
-			builder, value, minimum, maximum,
-			unsafe.Pointer(unsafe.SliceData(excluded)), len(excluded))
+		return assertion_range_slow(builder, value, minimum, maximum)
 	}
 	return builder
 }

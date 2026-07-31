@@ -1768,13 +1768,44 @@ func ast_assertion_link_method(method string) (link bool) {
 }
 
 func ast_assertion_preset_kind(method string) (kind string) {
-	if strings.HasPrefix(method, "Range_") {
+	if ast_assertion_integer_method(method, "Range_Holed_") {
+		return "range_holed"
+	}
+	if ast_assertion_integer_method(method, "Range_") {
 		return "range"
 	}
-	if strings.HasPrefix(method, "Enum_") {
+	if ast_assertion_integer_method(method, "Enum_3_") {
+		return "enum_3"
+	}
+	if ast_assertion_integer_method(method, "Enum_4_") {
+		return "enum_4"
+	}
+	if ast_assertion_integer_method(method, "Enum_") {
 		return "enum"
 	}
 	return ""
+}
+
+func ast_assertion_integer_method(method string, prefix string) (matched bool) {
+	if !strings.HasPrefix(method, prefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(method, prefix)
+	switch suffix {
+	case "Int", "Int8", "Int16", "Int32", "Int64":
+		return true
+	case "Uint", "Uint8", "Uint16", "Uint32", "Uint64":
+		return true
+	}
+	return false
+}
+
+func ast_assertion_unsigned_method(method string) (unsigned bool) {
+	return strings.HasSuffix(method, "_Uint") ||
+		strings.HasSuffix(method, "_Uint8") ||
+		strings.HasSuffix(method, "_Uint16") ||
+		strings.HasSuffix(method, "_Uint32") ||
+		strings.HasSuffix(method, "_Uint64")
 }
 
 func ast_assertion_root(call *ast.CallExpr, allow_unqualified bool) (root bool) {
@@ -1938,9 +1969,14 @@ func recorder_collect_assertion_links(
 		} else if ast_assertion_preset_kind(method) == "range" {
 			var preset_valid bool
 			links, preset_valid = recorder_collect_assertion_range(
-				file_set, call, constants, reg, diagnose, links)
+				file_set, call, constants, reg, diagnose, links, false)
 			valid = valid && preset_valid
-		} else if ast_assertion_preset_kind(method) == "enum" {
+		} else if ast_assertion_preset_kind(method) == "range_holed" {
+			var preset_valid bool
+			links, preset_valid = recorder_collect_assertion_range(
+				file_set, call, constants, reg, diagnose, links, true)
+			valid = valid && preset_valid
+		} else if strings.HasPrefix(ast_assertion_preset_kind(method), "enum") {
 			var preset_valid bool
 			links, preset_valid = recorder_collect_assertion_enum(
 				file_set, call, constants, reg, diagnose, links)
@@ -1973,10 +2009,10 @@ func recorder_invalid_sometimes_message(
 func recorder_collect_assertion_range(
 	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
 	reg *Registration, diagnose bool, links []Assertion_Registration_Link,
+	holed bool,
 ) (expanded []Assertion_Registration_Link, valid bool) {
-	if len(call.Args) < 3 {
-		return links, recorder_invalid_preset(file_set, call, reg, diagnose,
-			"Range needs value, minimum, and maximum")
+	if !recorder_assertion_range_arity(file_set, call, reg, diagnose, holed) {
+		return links, false
 	}
 	minimum, minimum_ok := constant_resolve(constants, call.Args[1])
 	maximum, maximum_ok := constant_resolve(constants, call.Args[2])
@@ -1992,24 +2028,10 @@ func recorder_collect_assertion_range(
 		return links, recorder_invalid_preset(file_set, call, reg, diagnose,
 			"Range minimum exceeds maximum")
 	}
-	var holes []Integer_Value
-	for _, argument := range call.Args[3:] {
-		hole, resolved := constant_resolve(constants, argument)
-		if !resolved {
-			return links, recorder_unresolved_preset(file_set, call, reg, diagnose,
-				"Range exclusions are not statically resolvable")
-		}
-		inside := integer_compare(hole, minimum) > 0
-		if integer_compare(hole, maximum) >= 0 {
-			inside = false
-		}
-		if !inside {
-			return links, recorder_invalid_preset(file_set, call, reg, diagnose,
-				"Range exclusion is not strictly inside the interval")
-		}
-		if !assertion_integer_contains(holes, hole) {
-			holes = append(holes, hole)
-		}
+	holes, holes_valid := recorder_assertion_range_holes(
+		file_set, call, constants, reg, diagnose, minimum, maximum)
+	if !holes_valid {
+		return links, false
 	}
 	condition := ast_condition_text(file_set, call, 0)
 	expanded = append(links,
@@ -2033,12 +2055,78 @@ func recorder_collect_assertion_range(
 	expanded = recorder_append_assertion_range_candidate(
 		expanded, Integer_Value{Magnitude: 2}, RANGE_MESSAGE_TWO,
 		condition, minimum, maximum, holes)
-	if !strings.HasPrefix(ast_assertion_chain_method(call), "Range_Uint") {
+	if !ast_assertion_unsigned_method(ast_assertion_chain_method(call)) {
 		expanded = recorder_append_assertion_range_candidate(
 			expanded, Integer_Value{Magnitude: 1, Negative: true},
 			RANGE_MESSAGE_NEGATIVE_ONE, condition, minimum, maximum, holes)
 	}
 	return expanded, true
+}
+
+func recorder_assertion_range_arity(
+	file_set *token.FileSet, call *ast.CallExpr, reg *Registration,
+	diagnose bool, holed bool,
+) (valid bool) {
+	if !holed {
+		if len(call.Args) == 3 {
+			return true
+		}
+		return recorder_invalid_preset(file_set, call, reg, diagnose,
+			"Range needs exactly value, minimum, and maximum")
+	}
+	hole_count := 4
+	if ast_assertion_unsigned_method(ast_assertion_chain_method(call)) {
+		hole_count = 3
+	}
+	if len(call.Args) == 3+hole_count {
+		return true
+	}
+	message := "Range_Holed needs exactly four hole slots"
+	if hole_count == 3 {
+		message = "Range_Holed needs exactly three hole slots"
+	}
+	return recorder_invalid_preset(file_set, call, reg, diagnose, message)
+}
+
+func recorder_assertion_range_holes(
+	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
+	reg *Registration, diagnose bool, minimum Integer_Value, maximum Integer_Value,
+) (holes []Integer_Value, valid bool) {
+	padding := false
+	for hole_index, argument := range call.Args[3:] {
+		hole, resolved := constant_resolve(constants, argument)
+		if !resolved {
+			return nil, recorder_unresolved_preset(file_set, call, reg, diagnose,
+				"Range exclusions are not statically resolvable")
+		}
+		inside := integer_compare(hole, minimum) > 0
+		if integer_compare(hole, maximum) >= 0 {
+			inside = false
+		}
+		if !inside {
+			return nil, recorder_invalid_preset(file_set, call, reg, diagnose,
+				"Range exclusion is not strictly inside the interval")
+		}
+		if hole_index == 0 {
+			holes = append(holes, hole)
+			continue
+		}
+		comparison := integer_compare(hole, holes[len(holes)-1])
+		if comparison < 0 {
+			return nil, recorder_invalid_preset(file_set, call, reg, diagnose,
+				"Range holes must be ascending")
+		}
+		if comparison == 0 {
+			padding = true
+			continue
+		}
+		if padding {
+			return nil, recorder_invalid_preset(file_set, call, reg, diagnose,
+				"Range hole duplicates must be final-hole padding")
+		}
+		holes = append(holes, hole)
+	}
+	return holes, true
 }
 
 func recorder_append_assertion_range_candidate(
@@ -2063,9 +2151,24 @@ func recorder_collect_assertion_enum(
 	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
 	reg *Registration, diagnose bool, links []Assertion_Registration_Link,
 ) (expanded []Assertion_Registration_Link, valid bool) {
-	if len(call.Args) < 3 {
+	method := ast_assertion_chain_method(call)
+	member_count := 2
+	if ast_assertion_preset_kind(method) == "enum_3" {
+		member_count = 3
+	}
+	if ast_assertion_preset_kind(method) == "enum_4" {
+		member_count = 4
+	}
+	if len(call.Args) != member_count+1 {
+		message := "Enum needs exactly two members"
+		if member_count == 3 {
+			message = "Enum_3 needs exactly three members"
+		}
+		if member_count == 4 {
+			message = "Enum_4 needs exactly four members"
+		}
 		return links, recorder_invalid_preset(file_set, call, reg, diagnose,
-			"Enum requires at least two distinct members")
+			message)
 	}
 	var members []Integer_Value
 	for _, argument := range call.Args[1:] {
@@ -2074,13 +2177,18 @@ func recorder_collect_assertion_enum(
 			return links, recorder_unresolved_preset(file_set, call, reg, diagnose,
 				"Enum members are not statically resolvable")
 		}
-		if !assertion_integer_contains(members, member) {
-			members = append(members, member)
+		if len(members) != 0 {
+			comparison := integer_compare(member, members[len(members)-1])
+			if comparison == 0 {
+				return links, recorder_invalid_preset(file_set, call, reg, diagnose,
+					"Enum members must be exactly distinct")
+			}
+			if comparison < 0 {
+				return links, recorder_invalid_preset(file_set, call, reg, diagnose,
+					"Enum members must be ascending")
+			}
 		}
-	}
-	if len(members) < 2 {
-		return links, recorder_invalid_preset(file_set, call, reg, diagnose,
-			"Enum requires at least two distinct members")
+		members = append(members, member)
 	}
 	condition := ast_condition_text(file_set, call, 0)
 	expanded = append(links, Assertion_Registration_Link{

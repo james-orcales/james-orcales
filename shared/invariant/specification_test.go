@@ -320,6 +320,20 @@ func Test_Assertions_Registration_Caps(t *testing.T) {
 	if !strings.Contains(output.String(), "70 links") {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
+	var presets strings.Builder
+	presets.WriteString(
+		"package fixture\nfunc check(v int) { invariant.Assertions(\"presets\")")
+	for preset_index := 0; preset_index < 15; preset_index++ {
+		presets.WriteString(".Enum_4_Int(v, 0, 1, 2, 3)")
+	}
+	presets.WriteString(".Ensure() }\n")
+	_, output, code = registered_fixture(presets.String())
+	if code != 1 {
+		t.Fatalf("75 expanded links exit=%d output=%q", code, output.String())
+	}
+	if !strings.Contains(output.String(), "70 links") {
+		t.Fatalf("75 expanded links exit=%d output=%q", code, output.String())
+	}
 }
 
 // Test_Bundles_Static keeps template expansion independent of runtime control flow.
@@ -482,7 +496,7 @@ func check(v int, condition bool) {
 	invariant.Always(true, "guard")
 	invariant.Assertions("summary").
 		Sometimes(condition, "axis").
-		Range_Int(v, Minimum, Maximum, Hole).
+		Range_Holed_Int(v, Minimum, Maximum, Hole, Hole, Hole, Hole).
 		Enum_Int(v, Minimum, Maximum).
 		Ensure()
 }
@@ -537,6 +551,25 @@ func Test_Coverage_Literal(t *testing.T) {
 	Test_Assertions_Registration_Literal(t)
 }
 
+// Test_Range_Holed keeps arbitrary strict-interior holes canonical and recordable.
+func Test_Range_Holed(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+func check(v int) {
+	invariant.Assertions("holed").Range_Holed_Int(v, -4, 6, -2, 3, 3, 3).Ensure()
+}
+`)
+	if code != -1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	invariant.Recorder_Assertions(recorder, "holed").
+		Range_Holed_Int(0, -4, 6, -2, 3, 3, 3).
+		Ensure()
+	if event_count(&recorder.Events) != 8 {
+		t.Fatalf("events = %d, want canonical guards, boundaries, and sentinels",
+			event_count(&recorder.Events))
+	}
+}
+
 // Test_Range_Guard keeps both successful bounds visible.
 func Test_Range_Guard(t *testing.T) {
 	recorder, _, _ := registered_range(t, "range", 0, 3)
@@ -581,25 +614,67 @@ func Test_Range_Coverage(t *testing.T) {
 	}
 }
 
-// Test_Range_Exclusions prevents holes from weakening boundary witnesses.
+// Test_Range_Exclusions prevents canonical padding from weakening boundary witnesses or counting
+// one hole repeatedly.
 func Test_Range_Exclusions(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+func check(v int) {
+	invariant.Assertions("range").Range_Holed_Int(v, -4, 6, -2, 3, 3, 3).Ensure()
+}
+`)
+	if code != -1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	for value := -4; value <= 6; value++ {
+		excluded := value == -2
+		if value == 3 {
+			excluded = true
+		}
+		if excluded {
+			continue
+		}
+		invariant.Recorder_Assertions(recorder, "range").
+			Range_Holed_Int(value, -4, 6, -2, 3, 3, 3).
+			Ensure()
+	}
 	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "range").
-		Range_Int(1, 0, 3, 1)
+		Range_Holed_Int(3, -4, 6, -2, 3, 3, 3)
 	if message := panic_text(builder.Ensure); !strings.Contains(message, "excluded") {
 		t.Fatalf("panic = %q", message)
 	}
+	if event_count(&recorder.Events) != 8 {
+		t.Fatalf("events = %d, want canonical guards, boundaries, and sentinels",
+			event_count(&recorder.Events))
+	}
 }
 
-// Test_Range_Registration rejects an invalid static domain before the suite.
+// Test_Range_Registration rejects wrong arities and noncanonical static hole domains before the
+// suite.
 func Test_Range_Registration(t *testing.T) {
-	_, output, code := registered_fixture(`package fixture
-func check(v int) { invariant.Assertions("range").Range_Int(v, 0, 3, 0).Ensure() }
-`)
-	if code != 1 {
-		t.Fatalf("exit=%d output=%q", code, output.String())
+	fixtures := []struct {
+		Call string
+		Want string
+	}{
+		{"Range_Int(v, 0)", "exactly value, minimum, and maximum"},
+		{"Range_Int(v, 0, 4, 1)", "exactly value, minimum, and maximum"},
+		{"Range_Holed_Int(v, 0, 5, 0, 1, 2, 3)", "strictly inside"},
+		{"Range_Holed_Int(v, 0, 5, 1, 2, 3, 5)", "strictly inside"},
+		{"Range_Holed_Int(v, 0, 6, 1, 1, 2, 2)", "final-hole padding"},
+		{"Range_Holed_Int(v, 0, 6, 2, 1, 2, 2)", "ascending"},
+		{"Range_Holed_Int(v, 0, 6, 1, 2, 3)", "exactly four hole slots"},
+		{"Range_Holed_Uint(v, 0, 6, 1, 2, 3, 3)", "exactly three hole slots"},
 	}
-	if !strings.Contains(output.String(), "strictly inside") {
-		t.Fatalf("exit=%d output=%q", code, output.String())
+	for _, fixture := range fixtures {
+		source := "package fixture\nfunc check(v int) { invariant.Assertions(\"range\")." +
+			fixture.Call + ".Ensure() }\n"
+		_, output, code := registered_fixture(source)
+		if code != 1 {
+			t.Fatalf("%s exit=%d output=%q", fixture.Call, code, output.String())
+		}
+		if !strings.Contains(output.String(), fixture.Want) {
+			t.Fatalf("%s exit=%d output=%q, want %q",
+				fixture.Call, code, output.String(), fixture.Want)
+		}
 	}
 }
 
@@ -617,33 +692,47 @@ func check(v int) { invariant.Assertions("enum").Enum_Int(v, 1, 2).Ensure() }
 	}
 }
 
-// Test_Enum_Members keeps every distinct member mandatory.
+// Test_Enum_Members keeps every canonical member mandatory and ordered by value.
 func Test_Enum_Members(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
-func check(v int) { invariant.Assertions("enum").Enum_Int(v, 1, 1, 2).Ensure() }
+func check(v int) { invariant.Assertions("enum").Enum_4_Int(v, -3, 0, 2, 9).Ensure() }
 `)
-	if event_count(&recorder.Events) != 3 {
-		t.Fatalf("events = %d, want guard plus two members", event_count(&recorder.Events))
+	if event_count(&recorder.Events) != 5 {
+		t.Fatalf("events = %d, want guard plus four members", event_count(&recorder.Events))
 	}
-	invariant.Recorder_Assertions(recorder, "enum").Enum_Int(1, 1, 1, 2).Ensure()
+	invariant.Recorder_Assertions(recorder, "enum").Enum_4_Int(2, -3, 0, 2, 9).Ensure()
 	member := chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "enum", Ordinal: 1, Message: "The value equals member 1.",
+		Namespace: "enum", Ordinal: 3, Message: "The value equals member 2.",
 	})
 	if member.Frequency.Load() != 1 {
 		t.Fatal("member branch was not credited")
 	}
 }
 
-// Test_Enum_Registration rejects a domain with fewer than two distinct values.
+// Test_Enum_Registration rejects wrong capacities, duplicates, and nonascending domains.
 func Test_Enum_Registration(t *testing.T) {
-	_, output, code := registered_fixture(`package fixture
-func check(v int) { invariant.Assertions("enum").Enum_Int(v, 1, 1).Ensure() }
-`)
-	if code != 1 {
-		t.Fatalf("exit=%d output=%q", code, output.String())
+	fixtures := []struct {
+		Call string
+		Want string
+	}{
+		{"Enum_Int(v, 1)", "exactly two members"},
+		{"Enum_Int(v, 1, 2, 3)", "exactly two members"},
+		{"Enum_3_Int(v, 1, 2)", "exactly three members"},
+		{"Enum_4_Int(v, 1, 2, 3)", "exactly four members"},
+		{"Enum_3_Int(v, 1, 1, 2)", "exactly distinct"},
+		{"Enum_4_Int(v, 1, 3, 2, 4)", "ascending"},
 	}
-	if !strings.Contains(output.String(), "two distinct") {
-		t.Fatalf("exit=%d output=%q", code, output.String())
+	for _, fixture := range fixtures {
+		source := "package fixture\nfunc check(v int) { invariant.Assertions(\"enum\")." +
+			fixture.Call + ".Ensure() }\n"
+		_, output, code := registered_fixture(source)
+		if code != 1 {
+			t.Fatalf("%s exit=%d output=%q", fixture.Call, code, output.String())
+		}
+		if !strings.Contains(output.String(), fixture.Want) {
+			t.Fatalf("%s exit=%d output=%q, want %q",
+				fixture.Call, code, output.String(), fixture.Want)
+		}
 	}
 }
 

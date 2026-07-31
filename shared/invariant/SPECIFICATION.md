@@ -42,8 +42,9 @@ uses the default recorder. Value links return advanced copies and `Ensure` termi
 
 ### API
 
-Links are `Sometimes` and every concrete `Range_TYPE` and `Enum_TYPE` method. There is no bare
-`Sometimes`, cross product, `Impossible`, polarity reference, or compatibility surface.
+Links are `Sometimes`, every concrete `Range_TYPE` and `Range_Holed_TYPE` method, and the
+`Enum_TYPE`, `Enum_3_TYPE`, and `Enum_4_TYPE` families. There is no bare `Sometimes`, cross
+product, `Impossible`, polarity reference, variadic preset, or compatibility surface.
 
 ### Identity
 
@@ -208,14 +209,21 @@ may enforce presets but never create coverage identities.
 
 # Range
 
-`Assertion_Builder.Range_TYPE(value, minimum, maximum, holes...)` is available for every signed and
-unsigned primitive width except `uintptr`; defined integers convert explicitly at the call.
+`Assertion_Builder.Range_TYPE(value, minimum, maximum)` is available for every signed and unsigned
+primitive width except `uintptr`; defined integers convert explicitly at the call. A contiguous
+Range accepts exactly those three arguments.
+
+### Holed
+
+`Range_Holed_TYPE` separates excluded domains from the ordinary contiguous path. A signed method
+takes four hole slots and an unsigned method takes three. Distinct holes are strictly ascending;
+unused slots repeat the final hole, and only that final-hole padding may duplicate a value.
 
 ### Guard
 
-Range contributes successful lower-bound and upper-bound reachability guards. Invalid domains,
-boundary holes, and exterior holes fail registration. Observed bound and hole violations are
-deferred until `Ensure` in every enforcing mode.
+Both families contribute lower-bound and upper-bound reachability guards. Wrong arities, invalid
+domains, boundary or exterior holes, nonascending holes, and non-final duplicate padding fail
+registration. Observed violations are deferred until `Ensure` in every enforcing mode.
 
 ### Coverage
 
@@ -224,30 +232,34 @@ A non-singleton interval witnesses minimum and maximum plus eligible strictly-in
 
 ### Exclusions
 
-Holes must be strictly inside the boundaries, may never exclude a boundary, and remove an equal
-sentinel axis. Invalid and out-of-range holes fail before registration seeds any entry.
+Distinct holes must be strictly inside the boundaries, may never exclude a boundary, and remove an
+equal sentinel axis. Repeated final-hole padding is idempotent: it removes and counts that hole only
+once. Invalid and out-of-range holes fail before registration seeds any entry.
 
 ### Registration
 
 Registration resolves constants and arithmetic, expands two guards followed by the distinct axes,
-and rejects any unresolvable domain or expansion beyond 70 links.
+and rejects any unresolvable domain, noncanonical slot sequence, wrong arity, or expansion beyond
+70 links.
 
 # Enum
 
-`Assertion_Builder.Enum_TYPE(value, members...)` is available for the same primitive integer types
-and requires at least two distinct members.
+`Assertion_Builder.Enum_TYPE(value, first, second)`, `Enum_3_TYPE`, and `Enum_4_TYPE` are available
+for the same primitive integer types. Their names declare exactly two, three, and four members; no
+variadic compatibility surface remains.
 
 ### Guard
 
-Enum contributes one successful membership reachability guard. An invalid domain or non-member is
-a registration failure; an observed non-member is deferred until `Ensure` in every enforcing mode.
+Enum contributes one successful membership reachability guard. A wrong arity, invalid domain, or
+non-member is a registration failure; an observed non-member is deferred until `Ensure` in every
+enforcing mode.
 
 ### Members
 
-Every distinct member is an independent true/false axis in argument order. Repeated members do not
-change the coverage set or expanded ordinal sequence.
+Members are statically resolvable, exactly distinct, and strictly ascending. Every member is an
+independent true/false axis in canonical ascending order.
 
 ### Registration
 
-Registration resolves and normalizes the member constants, seeds the membership guard and member
-axes, and rejects any unresolvable domain or expansion beyond 70 links.
+Registration resolves the member constants, seeds the membership guard and canonical member axes,
+and rejects any unresolved, duplicate, nonascending, wrong-arity, or beyond-70-link domain.
