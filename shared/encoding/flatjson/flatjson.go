@@ -31,7 +31,7 @@ import (
 	"reflect"
 	"strings"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	invariant_flatjson "local/james-orcales/shared/invariant/flatjson"
 )
 
 // The path-segment joiner: Addr.City becomes "addr_city".
@@ -97,8 +97,9 @@ func marshal_object(root reflect.Value) (data []byte, err error) {
 		return nil, err
 	}
 	data = append(data, '}')
-	invariant.Always(data[0] == '{', "A marshalled object opens with a brace.")
-	invariant.Always(data[len(data)-1] == '}', "A marshalled object closes with a brace.")
+	invariant_flatjson.Always(data[0] == '{', "A marshalled object opens with a brace.")
+	invariant_flatjson.Always(
+		data[len(data)-1] == '}', "A marshalled object closes with a brace.")
 	return data, nil
 }
 
@@ -116,8 +117,9 @@ func marshal_array(root reflect.Value) (data []byte, err error) {
 		}
 	}
 	data = append(data, ']')
-	invariant.Always(data[0] == '[', "A marshalled array opens with a bracket.")
-	invariant.Always(data[len(data)-1] == ']', "A marshalled array closes with a bracket.")
+	invariant_flatjson.Always(data[0] == '[', "A marshalled array opens with a bracket.")
+	invariant_flatjson.Always(
+		data[len(data)-1] == ']', "A marshalled array closes with a bracket.")
 	return data, nil
 }
 
@@ -188,7 +190,8 @@ func flatten_struct(
 			child, child_null := deref_struct(value)
 			child_null = child_null || current.Null
 			is_struct := child.Kind() == reflect.Struct
-			invariant.Always(is_struct, "Marshal only descends into struct values.")
+			invariant_flatjson.Always(
+				is_struct, "Marshal only descends into struct values.")
 			nested := prefix + name + KEY_SEPARATOR
 			next := Frame{Structure: child, Index: 0, Prefix: nested, Null: child_null}
 			stack = append(stack, next)
@@ -240,7 +243,7 @@ func flatten_leaf(
 	if null {
 		return append(destination, 'n', 'u', 'l', 'l'), nil
 	}
-	invariant.Always(value.CanInterface(), "A marshalled leaf is an exported value.")
+	invariant_flatjson.Always(value.CanInterface(), "A marshalled leaf is an exported value.")
 	raw, marshal_err := json.Marshal(value.Interface())
 	if marshal_err != nil {
 		return nil, marshal_err
