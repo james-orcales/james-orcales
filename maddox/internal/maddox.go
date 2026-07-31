@@ -100,7 +100,7 @@ type Output_Format uint8
 // Output_Format_Invariants bounds an Output_Format to its declared rendering modes
 // and claims each boundary of that range.
 func Output_Format_Invariants(format Output_Format, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint8(
 			uint8(format), uint8(OUTPUT_FORMAT_TABLE), uint8(OUTPUT_FORMAT_JSON)).
 		Ensure()
@@ -160,7 +160,7 @@ type Captured_Output []byte
 // Captured_Output_Invariants bounds the captured stderr and witnesses its boundaries: the
 // empty min, the full-buffer max, and the one- and two-byte shapes between.
 func Captured_Output_Invariants(output Captured_Output, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(output), CAPTURE_BYTES_MIN, CAPTURE_BYTES_MAX).
 		Ensure()
 }
@@ -205,7 +205,7 @@ type Samples []Sample
 // early failure and the uninterrupted three-run quorum while Range keeps both reachable edges
 // demanded rather than reducing the contract to bound guards.
 func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(samples), COLLECTION_MIN, SAMPLES_MAX, 1, 2).
 		Ensure()
 }
@@ -217,7 +217,7 @@ type Distribution []Sample
 // Distribution_Invariants bounds the run count: the quorum floor and the kept-run ceiling
 // are witnessed, every short boundary claimed unreachable.
 func Distribution_Invariants(samples Distribution, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(samples), QUORUM_MIN, SAMPLES_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(samples), QUORUM_MIN, SAMPLES_MAX).Ensure()
 }
 
 // Values is one metric's value pulled from every sample, the int64 the statistics work in.
@@ -227,7 +227,7 @@ type Values []int64
 // floored at the 3-run quorum, so the quorum floor and the kept-run ceiling are the witnessed
 // shapes; the empty, one, and two counts a quorum never holds fall below the range and are guarded.
 func Values_Invariants(values Values, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
 }
 
 // Series is one metric pulled from a distribution — always the quorum's worth, never the
@@ -237,7 +237,7 @@ type Series []int64
 // Series_Invariants bounds the extracted count: it mirrors a distribution's quorum floor
 // and kept-run ceiling, claiming every short boundary unreachable.
 func Series_Invariants(values Series, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
 }
 
 // Deviations is the sorted values the standard deviation reduces — a kept distribution's, so
@@ -248,7 +248,7 @@ type Deviations []int64
 // the 3-run quorum, so the quorum floor and the kept-run ceiling are witnessed and the shorter
 // counts are guarded out.
 func Deviations_Invariants(values Deviations, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
 }
 
 // WORD_MIN is the lone executable a command line always carries.
@@ -266,7 +266,7 @@ type Command_Line []Command_Word
 // Command_Line_Invariants bounds the word count; a command always has its executable, so
 // the empty count is unreachable while the one-word min, two-word shape, and max are witnessed.
 func Command_Line_Invariants(words Command_Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(words), WORD_MIN, COMMAND_WORDS_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(words), WORD_MIN, COMMAND_WORDS_MAX).Ensure()
 }
 
 // Commands is the set of commands a run benchmarks, in invocation order.
@@ -275,7 +275,7 @@ type Commands []sysio.Process_Request
 // Commands_Invariants bounds the command count: the empty min, the one- and two-command
 // shapes, and the max are witnessed.
 func Commands_Invariants(commands Commands, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(commands), COLLECTION_MIN, COMMAND_SET_MAX).
 		Ensure()
 }
@@ -286,7 +286,7 @@ type Benchmarks []Benchmark
 // Benchmarks_Invariants bounds the entry count: the empty min, the one- and two-entry
 // shapes, and the max are witnessed.
 func Benchmarks_Invariants(benchmarks Benchmarks, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(benchmarks), COLLECTION_MIN, COMMAND_SET_MAX).
 		Ensure()
 }
@@ -302,7 +302,7 @@ type Report []byte
 // Report_Invariants bounds the rendered length; a report is empty only for an empty
 // document and otherwise carries structure, never a lone one or two bytes.
 func Report_Invariants(report Report, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(report), COLLECTION_MIN, REPORT_MAX, 1, 2).
 		Ensure()
 }
@@ -349,7 +349,7 @@ type Host_Text string
 // Host_Text_Invariants bounds a host spec field's length, witnessing the empty min, the
 // capped max, and the one- and two-byte shapes between.
 func Host_Text_Invariants(text Host_Text, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), HOST_TEXT_BYTES_MIN, HOST_TEXT_BYTES_MAX).
 		Ensure()
 }
@@ -431,7 +431,7 @@ type Unit string
 // Unit_Invariants uses an Enum because the vocabulary admits two lengths and no width between;
 // saturation makes the all-false cell impossible instead of demanding an invented third width.
 func Unit_Invariants(name Unit, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Enum_Int(len(name), UNIT_BYTES_MIN, UNIT_BYTES_MAX).
 		Ensure()
 }
@@ -960,7 +960,7 @@ type Command_Word string
 // Command_Word_Invariants bounds a command word's length, witnessing the empty min, the
 // capped max, and the one- and two-byte shapes between.
 func Command_Word_Invariants(word Command_Word, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(word), COMMAND_WORD_BYTES_MIN, COMMAND_WORD_BYTES_MAX).
 		Ensure()
 }
@@ -1450,7 +1450,7 @@ type Ansi_Code string
 // An SGR code is always four or five bytes, so the empty and one/two-byte boundaries
 // are claimed as never reached rather than as observed.
 func Ansi_Code_Invariants(code Ansi_Code, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(code), ANSI_CODE_BYTES_MIN, ANSI_CODE_BYTES_MAX).
 		Ensure()
 }
@@ -1550,7 +1550,7 @@ type Cores_Line string
 // Cores_Line_Invariants bounds the core-layout length; it is never empty, with the single-digit
 // min, the widest hybrid max, and the one- and two-byte shapes between witnessed.
 func Cores_Line_Invariants(text Cores_Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), CORES_MIN, CORES_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), CORES_MIN, CORES_MAX).Ensure()
 }
 
 // Machine_specs_cores renders the CPU core layout, naming performance and efficiency cores on
@@ -1633,7 +1633,7 @@ type Span string
 // Span_Invariants bounds a rendered span's length, witnessing the one-byte floor, the two-byte
 // single-digit-seconds shape, and the widest glyph-and-suffix form.
 func Span_Invariants(text Span, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), SPAN_BYTES_MIN, SPAN_BYTES_MAX).
 		Ensure()
 }
@@ -1872,7 +1872,7 @@ type Cell string
 // Cell_Invariants bounds a cell's length: never empty, the single-byte min and the widest
 // max witnessed alongside the two-byte shape.
 func Cell_Invariants(text Cell, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), CELL_BYTES_MIN, CELL_BYTES_MAX).
 		Ensure()
 }
@@ -1891,7 +1891,7 @@ type Glyph string
 // Glyph_Invariants bounds the figure length; never empty, with the single-digit min, the
 // widest figure max, and the one- and two-byte shapes between witnessed.
 func Glyph_Invariants(text Glyph, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), GLYPH_MIN, GLYPH_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), GLYPH_MIN, GLYPH_MAX).Ensure()
 }
 
 // COLUMN_MIN is the single byte a padded column floors at before alignment.
@@ -1909,7 +1909,7 @@ type Column string
 // Column_Invariants bounds the column-text length; never empty, with the single-byte min,
 // the widest text max, and the one- and two-byte shapes between witnessed.
 func Column_Invariants(text Column, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), COLUMN_MIN, COLUMN_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), COLUMN_MIN, COLUMN_MAX).Ensure()
 }
 
 // CAPTION_MIN is the shortest metric or column name, like "peak_rss".
@@ -1925,7 +1925,7 @@ type Caption string
 // Caption_Invariants bounds a caption's length; always several bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
 func Caption_Invariants(text Caption, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), CAPTION_MIN, CAPTION_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), CAPTION_MIN, CAPTION_MAX).Ensure()
 }
 
 // OUTLIERS_MIN is the shortest outlier tally, the six-byte "0 (0%)".
@@ -1942,7 +1942,7 @@ type Outliers string
 // Outliers_Invariants bounds the tally's length; always several bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
 func Outliers_Invariants(text Outliers, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), OUTLIERS_MIN, OUTLIERS_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), OUTLIERS_MIN, OUTLIERS_MAX).Ensure()
 }
 
 // PADDED_MIN is the narrowest padded column, the four-wide delta interval.
@@ -1959,7 +1959,7 @@ type Padded string
 // Padded_Invariants bounds a padded column's length; always several bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
 func Padded_Invariants(text Padded, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), PADDED_MIN, PADDED_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), PADDED_MIN, PADDED_MAX).Ensure()
 }
 
 // BARE_ROW_MIN is the narrowest assembled data row, all columns at their minimum.
@@ -1976,7 +1976,7 @@ type Bare_Row string
 // Bare_Row_Invariants bounds an assembled row's length; always many bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
 func Bare_Row_Invariants(text Bare_Row, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), BARE_ROW_MIN, BARE_ROW_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), BARE_ROW_MIN, BARE_ROW_MAX).Ensure()
 }
 
 // FULL_ROW_MIN is the narrowest complete metric row, the reference's bare row with no delta.
@@ -1994,7 +1994,7 @@ type Full_Row string
 // Full_Row_Invariants bounds a complete row's length; always many bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
 func Full_Row_Invariants(text Full_Row, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), FULL_ROW_MIN, FULL_ROW_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(text), FULL_ROW_MIN, FULL_ROW_MAX).Ensure()
 }
 
 // DELTA_BODY_MIN is the narrowest delta body, a sign over two padded percentages.
@@ -2013,7 +2013,7 @@ type Delta_Body string
 // Delta_Body_Invariants bounds the body's length; always many bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
 func Delta_Body_Invariants(text Delta_Body, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), DELTA_BODY_MIN, DELTA_BODY_MAX).
 		Ensure()
 }
@@ -2032,7 +2032,7 @@ type Delta_Text string
 // Delta_Text_Invariants bounds the rendered delta's length; always many bytes, so the empty,
 // one, and two-byte boundaries are unreachable while the min and max are witnessed.
 func Delta_Text_Invariants(text Delta_Text, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), DELTA_TEXT_MIN, DELTA_TEXT_MAX).
 		Ensure()
 }
@@ -2050,7 +2050,7 @@ type Frequency string
 // Frequency_Invariants excludes the two-byte shape the formatter can never produce while Range
 // keeps the placeholder floor, widest form, and ordinary interior lengths demanded.
 func Frequency_Invariants(text Frequency, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), FREQUENCY_BYTES_MIN, FREQUENCY_BYTES_MAX, 2).
 		Ensure()
 }
@@ -2068,7 +2068,7 @@ type Suffix string
 // Suffix_Invariants bounds a suffix's length and witnesses each boundary; a suffix spans
 // the empty base unit through the three-byte binary suffixes.
 func Suffix_Invariants(unit Suffix, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(unit), SUFFIX_BYTES_MIN, SUFFIX_BYTES_MAX).
 		Ensure()
 }
@@ -2086,7 +2086,7 @@ type Phase string
 // Phase_Invariants uses an Enum because only the empty sampling phase and the warmup word exist;
 // saturation rejects every other width and demands both real states.
 func Phase_Invariants(name Phase, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Enum_Int(len(name), PHASE_BYTES_MIN, PHASE_BYTES_MAX).
 		Ensure()
 }
@@ -2107,7 +2107,7 @@ type Extent int
 // Extent_Invariants bounds an extent; a column width is always at least three, so the
 // zero, one, two, and negative boundaries are unreachable while the min and max witness.
 func Extent_Invariants(value Extent, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), EXTENT_MIN, EXTENT_MAX).
 		Ensure()
 }
@@ -2126,7 +2126,7 @@ type Kept int
 // Kept_Invariants bounds a kept-run count to the quorum range; the below-quorum counts are
 // guarded away, and the quorum floor and the run-cap ceiling are witnessed.
 func Kept_Invariants(value Kept, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), KEPT_MIN, KEPT_MAX).
 		Ensure()
 }
@@ -2148,7 +2148,7 @@ type Degree int
 // Degree_Invariants bounds a degree; a degree is at least one, so the zero and negative
 // boundaries are unreachable while the one min, the two shape, and the max are witnessed.
 func Degree_Invariants(value Degree, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), DEGREE_MIN, DEGREE_MAX).
 		Ensure()
 }
@@ -2166,7 +2166,7 @@ type Census int
 // Census_Invariants bounds a census; it is at least one, so the zero and negative boundaries
 // are unreachable while the one min, the two shape, and the cap max are witnessed.
 func Census_Invariants(value Census, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), CENSUS_MIN, CENSUS_MAX).
 		Ensure()
 }
@@ -2185,7 +2185,7 @@ type Divisor int
 // Divisor_Invariants bounds a divisor; it is at least one, so the zero and negative
 // boundaries are unreachable while the one min, the two shape, and the max are witnessed.
 func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), DIVISOR_MIN, DIVISOR_MAX).
 		Ensure()
 }
@@ -2203,7 +2203,7 @@ type Tally int
 // Tally_Invariants bounds a tally; it is never negative, with the zero min, the kept-run
 // max, and the one- and two-count shapes between witnessed.
 func Tally_Invariants(value Tally, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), TALLY_MIN, TALLY_MAX).
 		Ensure()
 }
@@ -2222,7 +2222,7 @@ type Strays int
 // Strays_Invariants bounds the outlier count; never negative, with the zero min, the outer-half
 // max, and the one- and two-count shapes between witnessed.
 func Strays_Invariants(value Strays, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), STRAYS_MIN, STRAYS_MAX).
 		Ensure()
 }
@@ -2241,7 +2241,7 @@ type Position int
 // Position_Invariants bounds a position; it is never negative, with the zero min, the last
 // slot max, and the one- and two-position shapes between witnessed.
 func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), POSITION_MIN, POSITION_MAX).
 		Ensure()
 }
@@ -2260,7 +2260,7 @@ type Exit_Code int
 // Exit_Code_Invariants bounds an exit code to success or failure; the higher and negative
 // codes are unreachable, and the success min and failure max are witnessed.
 func Exit_Code_Invariants(value Exit_Code, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), EXIT_CODE_MIN, EXIT_CODE_MAX).
 		Ensure()
 }
@@ -2280,7 +2280,7 @@ type Exit_Status int
 // Exit_Status_Invariants bounds a command's exit to the byte range and witnesses the small
 // codes and the extremes; a negative code is guarded away, never a child's real status.
 func Exit_Status_Invariants(value Exit_Status, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), EXIT_STATUS_MIN, EXIT_STATUS_MAX).
 		Ensure()
 }
@@ -2300,7 +2300,7 @@ type Failure_Status int
 // Failure_Status_Invariants bounds a failing command's exit to the non-zero byte range and
 // witnesses the small codes and the ceiling; success and negatives are guarded away.
 func Failure_Status_Invariants(value Failure_Status, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), FAILURE_STATUS_MIN, FAILURE_STATUS_MAX).
 		Ensure()
 }
@@ -2321,7 +2321,7 @@ type Cores int
 // Cores_Invariants bounds a core count to the realistic range; never negative, with the
 // zero, one, two, and ceiling shapes witnessed.
 func Cores_Invariants(value Cores, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(value), CORES_COUNT_MIN, CORES_COUNT_MAX).
 		Ensure()
 }
@@ -2341,7 +2341,7 @@ type Hertz uint64
 // Hertz_Invariants bounds a frequency to the realistic range; the zero (unknown), the one
 // and two shapes, and the ceiling are witnessed.
 func Hertz_Invariants(value Hertz, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint64(uint64(value), HERTZ_MIN, HERTZ_MAX).
 		Ensure()
 }
@@ -2362,7 +2362,7 @@ type Byte_Size uint64
 // Byte_Size_Invariants bounds a byte size to the realistic range; the zero, one, two, and
 // ceiling shapes are witnessed.
 func Byte_Size_Invariants(value Byte_Size, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint64(uint64(value), BYTE_SIZE_MIN, BYTE_SIZE_MAX).
 		Ensure()
 }
@@ -2385,7 +2385,7 @@ type Gap uint64
 // Gap_Invariants bounds a gap. The zero floor and the ceiling — a lone extreme value's distance
 // from the mean it barely shifts — are both reached, so it is an ordinary bounded range.
 func Gap_Invariants(value Gap, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint64(uint64(value), GAP_MIN, GAP_MAX).
 		Ensure()
 }
@@ -2408,7 +2408,7 @@ type Accumulator_High uint64
 // Accumulator_High_Invariants bounds the high word to the high half of the greatest sum of
 // squared deviations a distribution reaches.
 func Accumulator_High_Invariants(value Accumulator_High, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint64(uint64(value), ACCUMULATOR_MIN, ACCUMULATOR_HIGH_MAX).
 		Ensure()
 }
@@ -2424,7 +2424,7 @@ type Accumulator_Low uint64
 // Accumulator_Low_Invariants bounds the low word to the full word width it spans as a modular
 // residue of the running sum.
 func Accumulator_Low_Invariants(value Accumulator_Low, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint64(uint64(value), ACCUMULATOR_MIN, ACCUMULATOR_LOW_MAX).
 		Ensure()
 }
@@ -2451,7 +2451,7 @@ type Metric int64
 // boundary is guarded away, with the zero min, the representable max, and the one and two
 // shapes witnessed.
 func Metric_Invariants(value Metric, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
 		Ensure()
 }
@@ -2473,7 +2473,7 @@ type Average int64
 // witnesses the small values and the representable ceiling; the negative boundaries are
 // guarded away, since a mean of non-negative metrics never goes below zero.
 func Average_Invariants(value Average, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int64(int64(value), AVERAGE_MIN, AVERAGE_MAX).
 		Ensure()
 }
@@ -2490,7 +2490,7 @@ type Points []int64
 // floored at the 3-run quorum, so the quorum floor and the cap max are witnessed and the
 // shorter counts are guarded out.
 func Points_Invariants(values Points, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, POINTS_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(values), QUORUM_MIN, POINTS_MAX).Ensure()
 }
 
 // LABEL_BYTES_MIN is the empty command label a progress line floors at.
@@ -2508,7 +2508,7 @@ type Label string
 // Label_Invariants bounds a label's byte length: the empty min, the truncation max, and
 // the one- and two-byte shapes between are witnessed.
 func Label_Invariants(text Label, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), LABEL_BYTES_MIN, LABEL_BYTES_MAX).
 		Ensure()
 }

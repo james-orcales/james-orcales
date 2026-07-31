@@ -290,7 +290,7 @@ type Proc_Path string
 
 // Proc_Path_Invariants bounds the path's length.
 func Proc_Path_Invariants(path Proc_Path, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(path), BOUND_MIN, BOUND_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(path), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Proc_Content is the bytes read back from a pseudo-file.
@@ -298,7 +298,7 @@ type Proc_Content string
 
 // Proc_Content_Invariants bounds the content's length.
 func Proc_Content_Invariants(content Proc_Content, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(content), BOUND_MIN, PROC_CONTENT_MAX).
 		Ensure()
 }
@@ -473,7 +473,7 @@ type Utsname_Field[T int8 | uint8] []T
 func Utsname_Field_Invariants[T int8 | uint8](
 	field Utsname_Field[T], namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).Range_Int(len(field), BOUND_MIN, BOUND_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(field), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Utsname_string converts a fixed-size Utsname field to a Go string, stopping at

@@ -24,7 +24,7 @@ type Argv []string
 
 // Argv_Invariants bounds the argv word count.
 func Argv_Invariants(argv Argv, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(argv), BOUND_MIN, BOUND_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(argv), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Command_argv flattens a command to argv: the executable followed by its arguments.

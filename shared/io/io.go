@@ -230,10 +230,10 @@ type Completion_Transition_Input struct {
 // two Always guards fail loudly on a caller whose belief about the current state is
 // stale — a reused or double-armed completion — and on an edge the machine does not
 // have, so a lifecycle bug dies at the mutation instead of corrupting a queue. Every
-// transition then records its edge on the io.completion.transition grid: this package's
-// own suite registers the grid through its TestMain, so an edge the sim suite never
-// witnesses fails the run — the graph is enforced by the guards and witnessed by the
-// sweep. Backend code only; applications never transition a completion.
+// transition then records the predicates that distinguish its edges: this package's own suite
+// registers them through TestMain, so missing state-machine boundaries fail the run. The guards
+// enforce the graph while the independent axes witness its origins and destinations. Backend code
+// only; applications never transition a completion.
 func Completion_Transition(input *Completion_Transition_Input) {
 	invariant.Always(input.Completion.State == input.From,
 		"A completion transitions from the state its caller expects.")
@@ -242,22 +242,12 @@ func Completion_Transition(input *Completion_Transition_Input) {
 	})
 	invariant.Always(legal, "A completion transitions along an edge its machine has.")
 	input.Completion.State = input.To
-	// Three axes identify each legal edge as one grid cell; the Impossible carves remove
-	// exactly the from-to tuples the legality table forbids, so the demanded grid is the
-	// four legal edges and nothing else.
-	invariant.Dot_Product("io.completion.transition").
+	// The legality guard excludes impossible tuples, so individual branch obligations can
+	// witness every state boundary without rebuilding a second transition table in coverage.
+	invariant.Assertions("io.completion.transition").
 		Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle").
 		Sometimes(input.From == COMPLETION_CANCELLED, "the edge leaves cancelled").
 		Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle").
-		Impossible("idle and cancelled origins are exclusive",
-			invariant.Event_True("the edge leaves idle"),
-			invariant.Event_True("the edge leaves cancelled")).
-		Impossible("an idle completion cannot enter idle",
-			invariant.Event_True("the edge leaves idle"),
-			invariant.Event_True("the edge enters idle")).
-		Impossible("a cancelled completion must enter idle",
-			invariant.Event_True("the edge leaves cancelled"),
-			invariant.Event_False("the edge enters idle")).
 		Ensure()
 }
 

@@ -230,7 +230,7 @@ type Sysctl_Key string
 
 // Sysctl_Key_Invariants bounds the key's length.
 func Sysctl_Key_Invariants(name Sysctl_Key, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(name), BOUND_MIN, BOUND_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(name), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Sysctl_uint64 reads a 64-bit sysctl by name, marshaling the Go string across the

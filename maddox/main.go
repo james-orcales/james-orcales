@@ -155,7 +155,7 @@ type Cli_Commands []string
 
 // Cli_Commands_Invariants bounds the command-string count.
 func Cli_Commands_Invariants(commands Cli_Commands, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(commands), BOUND_MIN, BOUND_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(commands), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Stream_Mode is a color/progress toggle from the command line: never, always, or auto.
@@ -163,7 +163,7 @@ type Stream_Mode string
 
 // Stream_Mode_Invariants bounds the mode word's length.
 func Stream_Mode_Invariants(mode Stream_Mode, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(mode), BOUND_MIN, BOUND_MAX).Ensure()
+	invariant.Assertions(namespace).Range_Int(len(mode), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Commands_from_strings turns each command string into an io.Process_Request,
