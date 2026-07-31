@@ -15,7 +15,7 @@ suppresses by rule.
 
 ### Want
 
-Want is the suggested fix, phrased as the desired post-state.
+Want is the suggested fix, phrased as an imperative sentence.
 
 ### Message
 

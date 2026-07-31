@@ -29,11 +29,11 @@ func Test_Diagnostic_Name(t *testing.T) {
 	}
 }
 
-// Test_Diagnostic_Want verifies Want carries the suggested fix as a post-state.
+// Test_Diagnostic_Want verifies Want carries the suggested fix as an imperative.
 func Test_Diagnostic_Want(t *testing.T) {
 	t.Parallel()
-	d := diagnostic.Diagnostic{Want: "add SPECIFICATION.md"}
-	if d.Want != "add SPECIFICATION.md" {
+	d := diagnostic.Diagnostic{Want: "Add SPECIFICATION.md to the package."}
+	if d.Want != "Add SPECIFICATION.md to the package." {
 		t.Fatal("Want must carry the suggested fix")
 	}
 }

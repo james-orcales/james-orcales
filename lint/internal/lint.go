@@ -977,7 +977,8 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 		// and is NOT a feature we support. Reject them here so no entry can ever lean
 		// on path.Match's extra syntax.
 		if strings.ContainsAny(raw, "?[") {
-			return fmt.Errorf("%s: ? and [ are unsupported; use * and **", where)
+			return fmt.Errorf(
+				"%s: the tokens ? and [ are unsupported. Use * and **.", where)
 		}
 		for _, segment := range strings.Split(source.Parse_Glob_Pattern(raw).Core, "/") {
 			// ** is the matcher's own segment wildcard, not a path.Match token.
@@ -1522,7 +1523,8 @@ func check_shadow(
 			*diags = append(*diags, Diagnostic{
 				Position: file_set.Position(identifier.Pos()),
 				Message: fmt.Sprintf(
-					"variable %q shadows outer scope variable", name),
+					"The variable %q shadows a variable in an outer scope. "+
+						"Write a different name.", name),
 			})
 			return
 		}
@@ -1657,7 +1659,7 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 			Position: file_set.Position(identifier.Pos()),
 			Name:     identifier.Name,
 			Want:     want,
-			Message:  fmt.Sprintf("%s -> %s", identifier.Name, suggestion),
+			Message:  fmt.Sprintf("Rename %s -> %s.", identifier.Name, suggestion),
 		})
 	}
 }
@@ -1765,7 +1767,7 @@ func check_constant_casing(file_set *token.FileSet, file *ast.File, _ []byte) (d
 			Position: file_set.Position(identifier.Pos()),
 			Name:     identifier.Name,
 			Want:     "SCREAMING_SNAKE_CASE",
-			Message:  fmt.Sprintf("%s -> %s", identifier.Name, suggestion),
+			Message:  fmt.Sprintf("Rename %s -> %s.", identifier.Name, suggestion),
 		})
 	}
 	return diags
@@ -1786,7 +1788,8 @@ func check_named_returns(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(f.Pos()),
 					Message: fmt.Sprintf(
-						"unnamed return type: %s", types.ExprString(
+						"The return type %s has no name. "+
+							"Name the return value.", types.ExprString(
 							f.Type)),
 				})
 			}
@@ -1851,7 +1854,7 @@ func check_no_naked_return(file_set *token.FileSet, file *ast.File, _ []byte) (d
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(x.Return),
-				Message:  "naked return is banned",
+				Message:  "Do not use a naked return. Write the return values.",
 			})
 		}
 		push_history = append(push_history, pushed)
@@ -1894,7 +1897,8 @@ func check_line_character_count(
 				Line:     line_number,
 				Column:   LINE_CHARS_MAX + 1,
 			},
-			Message: fmt.Sprintf("line is %d chars (max %d)", n, LINE_CHARS_MAX),
+			Message: fmt.Sprintf("The line has %d characters. The maximum is %d.",
+				n, LINE_CHARS_MAX),
 		})
 	}
 	for len(source) > 0 {
@@ -1984,8 +1988,8 @@ func check_compound_if(file_set *token.FileSet, file *ast.File, _ []byte) (diags
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(if_statement.Cond.Pos()),
 				Message: fmt.Sprintf(
-					"compound if condition (%s) — "+
-						"split into nested ifs", be.Op),
+					"The if condition has the compound operator %q. "+
+						"Write nested if statements.", be.Op.String()),
 			})
 		}
 		return true
@@ -2014,7 +2018,7 @@ func check_function_line_count(
 			diags = append(diags, Diagnostic{
 				Position: position,
 				Message: fmt.Sprintf(
-					"%s is %d lines (max %d)",
+					"The %s has %d lines. The maximum is %d.",
 					label, line_count, FUNCTION_LINES_MAX),
 			})
 		}
@@ -2056,7 +2060,8 @@ func check_file_line_count(
 	return []Diagnostic{{
 		Position: token.Position{Filename: tok_file.Name(), Line: 1, Column: 1},
 		Message: fmt.Sprintf(
-			"file is %d lines (max %d)", line_count, LINES_PER_FILE_MAX),
+			"The file has %d lines. The maximum is %d.",
+			line_count, LINES_PER_FILE_MAX),
 	}}
 }
 
@@ -2089,7 +2094,8 @@ func check_array_capacity(
 			Name:     literal.Value,
 			Want:     "a named constant",
 			Message: fmt.Sprintf(
-				"array capacity %s is a literal; name the bound as a constant",
+				"The array capacity %s is a literal. "+
+					"Declare the bound as a constant.",
 				literal.Value),
 		})
 		return true
@@ -2335,25 +2341,25 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 			fix := ""
 			if !is_directory {
 				if !is_file {
-					fix = "matches no tracked file or directory"
+					fix = "matches no tracked file and no tracked directory."
 				}
 			}
 			if is_directory {
 				if !has_slash {
-					fix = "names a directory; add a trailing slash"
+					fix = "names a directory. Add a trailing slash."
 				}
 			}
 			if is_file {
 				if has_slash {
-					fix = "names a file; drop the trailing slash"
+					fix = "names a file. Remove the trailing slash."
 				}
 			}
 			// Wrong-list is the more fundamental problem than notation, so it wins
 			// over the slash-correctness fix above.
 			if is_file {
 				if packages_only {
-					fix = "names a file; only ignore and " +
-						"opt_out_recursion_ban may name a file"
+					fix = "names a file. Only ignore and " +
+						"opt_out_recursion_ban can name a file."
 				}
 			}
 			if fix == "" {
@@ -2362,9 +2368,10 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 			diags = append(diags, Diagnostic{
 				Position: token.Position{Filename: "<lint.json>"},
 				Name:     "config-directory-slash",
-				Want:     "directory entries end in a slash, file entries do not",
-				Message:  fmt.Sprintf("%s: %q %s", list.Name, entry, fix),
-				Tier:     1,
+				Want:     "Write a trailing slash on a directory entry only.",
+				Message: fmt.Sprintf("The %s entry %q %s",
+					list.Name, entry, fix),
+				Tier: 1,
 			})
 		}
 	}
@@ -2554,9 +2561,9 @@ func Git_Input_Check(input Git_Input) (diags []Diagnostic) {
 		return []Diagnostic{{
 			Position: token.Position{Filename: "<git>"},
 			Name:     "git-main-ref",
-			Want:     "main ref reachable from HEAD",
-			Message: "main ref not found; fetch main or " +
-				"set actions/checkout fetch-depth: 0",
+			Want:     "Make the main ref reachable from HEAD.",
+			Message: "The linter cannot find the main ref. Fetch main, or " +
+				"set \"actions/checkout fetch-depth: 0\".",
 		}}
 	}
 	return vcs.Check(&vcs.Check_Input{
@@ -2671,8 +2678,8 @@ func package_group_key_diag(
 	return Diagnostic{
 		Position: token.Position{Filename: first.Path, Line: 1, Column: 1},
 		Message: fmt.Sprintf(
-			"package %s in %s has %d %s files%s totaling %d lines; "+
-				"want %d (one file per %d lines)",
+			"The package %s in %s has %d %s files%s with %d lines in total. "+
+				"The correct file count is %d, one file for each %d lines.",
 			first.File.Name.Name, key.Directory, len(st.Files), label, build_suffix,
 			st.Lines, files_max, LINES_PER_FILE_MAX,
 		),
@@ -2747,10 +2754,10 @@ func main_package_size_diag(
 	return Diagnostic{
 		Position: token.Position{Filename: st.Files[0].Path, Line: 1, Column: 1},
 		Name:     "main-package-size",
-		Want:     "package main is a thin composition root",
+		Want:     "Keep package main a thin composition root.",
 		Message: fmt.Sprintf(
-			"package main in %s spans %d lines%s (max %d); move the work "+
-				"to internal/",
+			"The package main in %s has %d lines%s. The maximum is %d. "+
+				"Move the work to internal/.",
 			key.Directory, st.Lines, build_suffix, MAIN_LINES_MAX),
 	}
 }
@@ -2833,7 +2840,8 @@ func check_file_system_parse_files(
 			if parse_err != nil {
 				diags[i] = Diagnostic{
 					Position: token.Position{Filename: p},
-					Message:  fmt.Sprintf("parse error: %v", parse_err),
+					Message: fmt.Sprintf(
+						"The parser cannot read the file: %v", parse_err),
 				}
 				had_err[i] = true
 				return
@@ -3148,7 +3156,7 @@ func binary_component_layout_message(
 	if input.Root == "." {
 		destination = "./" + destination
 	}
-	return fmt.Sprintf("move %s -> %s", input.Directory, destination)
+	return fmt.Sprintf("Move %s -> %s.", input.Directory, destination)
 }
 
 // True for directories whose first segment is `internal` — the only
@@ -3203,10 +3211,11 @@ func check_binary_component_main_package(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "binary-component-main-package",
-			Want:     "the single main package sits at the component root, no cmd/",
+			Want: "Put the single main package at the component root. " +
+				"Do not use a cmd/ directory.",
 			Message: fmt.Sprintf(
-				"binary component %q places its main package at %q; the main "+
-					"package must sit at the component root, no cmd/ directory",
+				"The binary component %q has its main package at %q. "+
+					"Move the main package to the component root.",
 				m.Import_Path, directory,
 			),
 		})
@@ -3262,7 +3271,8 @@ func check_binary_component_internal_main(
 				Name:     "binary-component-internal-main",
 				Want:     want,
 				Message: fmt.Sprintf(
-					"binary component %q declares no func Main in internal/",
+					"The binary component %q declares no func Main in "+
+						"internal/. Declare a func Main in internal/.",
 					m.Import_Path),
 			})
 			continue
@@ -3273,8 +3283,9 @@ func check_binary_component_internal_main(
 				Name:     "binary-component-internal-main",
 				Want:     want,
 				Message: fmt.Sprintf(
-					"binary component %q declares multiple "+
-						"func Main in internal/",
+					"The binary component %q declares more than one "+
+						"func Main in internal/. "+
+						"Declare only one func Main.",
 					m.Import_Path),
 			})
 		}
@@ -3334,9 +3345,11 @@ func check_shared_component_no_internal(
 			diags = append(diags, Diagnostic{
 				Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 				Name:     "shared-component-no-internal",
-				Want:     "shared library is fully exposed; no internal/ subtree",
+				Want: "Expose the shared library fully. " +
+					"Keep no internal/ subtree.",
 				Message: fmt.Sprintf(
-					"shared library forbids internal/ directories; remove %q",
+					"A shared library permits no internal/ directory. "+
+						"Remove %q.",
 					internal_directory),
 			})
 			break
@@ -3375,10 +3388,11 @@ func check_binary_component_no_default_tier(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "binary-component-no-default-tier",
-			Want:     "binary component holds its impurity in package main",
+			Want:     "Hold the impurity of a binary component in package main.",
 			Message: fmt.Sprintf(
-				"binary component forbids a default tier; bind the real world in "+
-					"package main instead; remove %q", directory),
+				"A binary component permits no default tier. "+
+					"Bind the real world in package main. Remove %q.",
+				directory),
 		})
 	}
 	return diags
@@ -3414,10 +3428,11 @@ func check_shared_component_no_main_package(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "shared-component-no-main",
-			Want:     "shared library declares no package main",
+			Want:     "Declare no package main in a shared library.",
 			Message: fmt.Sprintf(
-				"shared library %q forbids package main; move the entry "+
-					"point to a binary component", m.Import_Path),
+				"The shared library %q permits no package main. "+
+					"Move the entry point to a binary component.",
+				m.Import_Path),
 		})
 	}
 	return diags
@@ -3467,9 +3482,11 @@ func check_component_tier_depth(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "component-tier-depth",
-			Want:     "at most one non-main Go ancestor in module (v[0-9]+ skipped)",
+			Want: "Write a maximum of one non-main Go ancestor in the module. " +
+				"The linter skips a v[0-9]+ segment.",
 			Message: fmt.Sprintf(
-				"package %q at %q exceeds library tier; %d non-main ancestors: %v",
+				"The package %q at %q is below the library tier. "+
+					"It has %d non-main ancestors: %v.",
 				pf.File.Name.Name, canonical, len(ancestor_names), ancestor_names,
 			),
 		})
@@ -3531,9 +3548,10 @@ func check_single_module(input *Check_Single_Module_Input) (diags []Diagnostic) 
 	if !root_module_present {
 		diags = append(diags, single_module_diagnostic(&Single_Module_Diagnostic_Input{
 			Path: "go.mod",
-			Want: "one module: a single root go.mod at the repository root",
-			Message: "no go.mod at the repository root; the linter needs " +
-				"the module anchor",
+			Want: "Keep one module. Write a single root go.mod at the " +
+				"repository root.",
+			Message: "There is no go.mod at the repository root. " +
+				"The linter needs the module anchor.",
 		}))
 	}
 	return diags
@@ -3562,9 +3580,10 @@ func single_module_file(
 	if workspace_file {
 		return []Diagnostic{single_module_diagnostic(&Single_Module_Diagnostic_Input{
 			Path: p,
-			Want: "one module: a single root go.mod, no go.work",
+			Want: "Keep one module. Write a single root go.mod and no go.work.",
 			Message: fmt.Sprintf(
-				"go.work reintroduces a multi-module workspace; remove %q", p),
+				"A go.work makes a workspace with more than one module. "+
+					"Remove %q.", p),
 		})}, false
 	}
 	if p == "go.mod" {
@@ -3572,9 +3591,11 @@ func single_module_file(
 	}
 	return []Diagnostic{single_module_diagnostic(&Single_Module_Diagnostic_Input{
 		Path: p,
-		Want: "one module: a single root go.mod, no nested go.mod",
+		Want: "Keep one module. Write a single root go.mod and no nested " +
+			"go.mod.",
 		Message: fmt.Sprintf(
-			"nested go.mod splits the repo into multiple modules; remove %q", p),
+			"A nested go.mod divides the repository into more than one "+
+				"module. Remove %q.", p),
 	})}, false
 }
 
@@ -3668,7 +3689,9 @@ func check_package_documentation_comment(
 			Position: first.File_Set.Position(first.File.Name.Pos()),
 			Name:     "package-doc",
 			Want:     "// Package " + k.Package + " ...",
-			Message:  fmt.Sprintf("package %q is missing a doc comment", k.Package),
+			Message: fmt.Sprintf(
+				"The package %q has no doc comment. Write a doc comment.",
+				k.Package),
 		})
 	}
 	return diags
@@ -3833,7 +3856,8 @@ func check_comments(file_set *token.FileSet, file *ast.File, source []byte) (dia
 			if !check_comments_group_has_space_after_slashes(c.Text) {
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(c.Slash),
-					Message:  "comment: missing space after `//`",
+					Message: "The comment has no space after \"//\". " +
+						"Add a space.",
 				})
 			}
 		}
@@ -3862,7 +3886,8 @@ func check_comments_group_capital(file_set *token.FileSet, c *ast.Comment) (diag
 	}
 	return []Diagnostic{{
 		Position: file_set.Position(c.Slash),
-		Message:  "comment: should start with capital letter",
+		Message: "The comment does not start with a capital letter. " +
+			"Write a capital letter first.",
 	}}
 }
 
@@ -3879,7 +3904,8 @@ func check_comments_group_terminator(file_set *token.FileSet, c *ast.Comment) (d
 	}
 	return []Diagnostic{{
 		Position: file_set.Position(c.Slash),
-		Message:  "comment: should end with `.`, `:`, `?`, or `!`",
+		Message: "The comment does not end with \".\", \":\", \"?\", or \"!\". " +
+			"Add one of the four marks.",
 	}}
 }
 
@@ -4285,10 +4311,11 @@ func check_no_recursion_find_cycles_dfs_diag(
 func check_no_recursion_find_cycles_dfs_diag_message(cycle_nodes []string) (MESSAGE string) {
 
 	if len(cycle_nodes) == 1 {
-		return fmt.Sprintf("recursion: %s calls itself", cycle_nodes[0])
+		return fmt.Sprintf("The function %s recurses. "+
+			"Write a loop instead.", cycle_nodes[0])
 	}
 	var sb strings.Builder
-	sb.WriteString("recursion: cycle ")
+	sb.WriteString("The functions recurse in a cycle. Write a loop instead. ")
 	for _, n := range cycle_nodes {
 		sb.WriteString(n)
 		sb.WriteString(" → ")
@@ -4314,19 +4341,19 @@ func check_main_first(file_set *token.FileSet, file *ast.File, _ []byte) (diags 
 		if function_declaration.Name.Name == "main" {
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(function_declaration.Pos()),
-				Message:  "func main should be declared first in the file",
+				Message:  "Declare func main first in the file.",
 			})
 		}
 		if function_declaration.Name.Name == "Main" {
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(function_declaration.Pos()),
-				Message:  "func Main should be declared first in the file",
+				Message:  "Declare func Main first in the file.",
 			})
 		}
 		if function_declaration.Name.Name == "TestMain" {
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(function_declaration.Pos()),
-				Message:  "func TestMain should be declared first in the file",
+				Message:  "Declare func TestMain first in the file.",
 			})
 		}
 	}
@@ -4340,7 +4367,8 @@ func check_main_first(file_set *token.FileSet, file *ast.File, _ []byte) (diags 
 // compile-time interface-satisfaction assertion, not a value discard.
 func check_no_discard(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
-	const MESSAGE = "discard: _ = ... hides the value; name it or drop the assignment"
+	const MESSAGE = "The assignment to the blank identifier hides the value. " +
+		"Name the value or remove the assignment."
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		switch x := n.(type) {
 		case *ast.AssignStmt:
@@ -4452,7 +4480,7 @@ func check_public_struct_fields_named(
 	suggested := check_public_struct_fields_named_capitalize(identifier.Name)
 	*diags = append(*diags, Diagnostic{
 		Position: file_set.Position(identifier.Pos()),
-		Message:  fmt.Sprintf("rename %s -> %s", identifier.Name, suggested),
+		Message:  fmt.Sprintf("Rename %s -> %s.", identifier.Name, suggested),
 	})
 }
 
@@ -4585,7 +4613,8 @@ func check_struct_field_documentation_comment_fields(
 				Name:     "struct-field-doc",
 				Want:     "doc comment leading every exported-struct field",
 				Message: fmt.Sprintf(
-					"field %s.%s lacks a doc comment",
+					"The field %s.%s has no doc comment. "+
+						"Write a doc comment.",
 					input.Struct_Name, name.Name),
 			})
 		}
@@ -4790,7 +4819,8 @@ func check_exported_type_exposes_private_walk(
 				*input.Diags = append(*input.Diags, Diagnostic{
 					Position: input.File_Set.Position(identifier.Pos()),
 					Message: fmt.Sprintf(
-						"public type %s contains private type %s",
+						"The public type %s contains the private type %s. "+
+							"Export the private type.",
 						input.Entry_Name, identifier.Name),
 				})
 				continue
@@ -4869,7 +4899,8 @@ func check_exported_type_exposes_private_check(
 	*input.Diags = append(*input.Diags, Diagnostic{
 		Position: input.File_Set.Position(identifier.Pos()),
 		Message: fmt.Sprintf(
-			"public type %s contains private type %s",
+			"The public type %s contains the private type %s. "+
+				"Export the private type.",
 			input.Entry_Name,
 			identifier.Name),
 	})
@@ -4945,7 +4976,8 @@ func check_type_declaration_exported(
 			}
 			suggestion := suggest(&Suggest_Input{Name: type_name, Want: "Ada_Case"})
 			message := fmt.Sprintf(
-				"type %s must be exported; rename to %s", type_name, suggestion)
+				"The type %s is not exported. Rename %s -> %s.",
+				type_name, type_name, suggestion)
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(type_specification.Name.Pos()),
 				Name:     "exported-type",
@@ -4969,7 +5001,7 @@ func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(identifier.Pos()),
-			Message:  "iota is banned",
+			Message:  "Do not use iota.",
 		})
 		return true
 	})
@@ -4991,7 +5023,7 @@ func check_no_fallthrough(file_set *token.FileSet, file *ast.File, _ []byte) (di
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(branch.Pos()),
-			Message:  "fallthrough is banned",
+			Message:  "Do not use fallthrough.",
 		})
 		return true
 	})
@@ -5012,7 +5044,7 @@ func check_no_blank_import(file_set *token.FileSet, file *ast.File, _ []byte) (d
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(import_specification.Pos()),
-			Message:  "blank import is banned",
+			Message:  "Do not use a blank import.",
 		})
 	}
 	return diags
@@ -5042,7 +5074,8 @@ func check_no_grouped_declaration(
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(generic_declaration.Pos()),
-			Message:  "grouped declaration banned; split into one per line",
+			Message: "Do not use a grouped declaration. " +
+				"Write one declaration on each line.",
 		})
 	}
 	return diags
@@ -5075,8 +5108,9 @@ func check_no_third_party_struct_tag(
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(field.Tag.Pos()),
-				Message: fmt.Sprintf("struct tag key %q is not stdlib; only "+
-					"json, xml, and asn1 are permitted", key),
+				Message: fmt.Sprintf(
+					"The struct tag key %q is not a stdlib key. "+
+						"Use only json, xml, and asn1.", key),
 			})
 		}
 		return true
@@ -5172,10 +5206,9 @@ func check_blank_synchronization_mutex(
 				}
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(name.Pos()),
-					Message: "blank-named sync mutex has no usable Lock " +
-						"receiver; " +
-						"use the noCopy idiom for non-copy semantics or " +
-						"name the field to lock it",
+					Message: "A sync mutex with a blank name has no Lock " +
+						"receiver. Use the noCopy idiom for non-copy " +
+						"semantics, or name the field.",
 				})
 			}
 		}
@@ -5236,7 +5269,9 @@ func check_keyed_struct_init(
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(lit.Pos()),
-				Message:  fmt.Sprintf("%s literal must use keyed fields", name),
+				Message: fmt.Sprintf(
+					"The %s literal has no field keys. Write keyed fields.",
+					name),
 			})
 			return true
 		}
@@ -5368,7 +5403,7 @@ func check_gofmt(file_set *token.FileSet, file *ast.File, source []byte) (diags 
 	}
 	return []Diagnostic{{
 		Position: token.Position{Filename: filename, Line: 1, Column: 1},
-		Message:  "file is not gofmt-clean",
+		Message:  "The file is not gofmt-clean. Run gofmt on the file.",
 	}}
 }
 
@@ -5385,7 +5420,7 @@ func check_no_dot_import(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(import_specification.Pos()),
-			Message:  "dot import is banned",
+			Message:  "Do not use a dot import.",
 		})
 	}
 	return diags
@@ -5419,10 +5454,11 @@ func check_import_alias_no_default(
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(import_specification.Pos()),
 			Name:     "import-alias-default",
-			Want:     "import the package under its declared name",
+			Want:     "Import the package under its declared name.",
 			Message: fmt.Sprintf(
-				"import alias %q holds \"default\"; name the alias for the "+
-					"package, which a default directory declares as its parent",
+				"The import alias %q holds \"default\". Name the alias for "+
+					"the package. A default directory declares the parent "+
+					"as that package.",
 				alias),
 		})
 	}
@@ -5464,11 +5500,11 @@ func check_default_package_name(
 	diags = append(diags, Diagnostic{
 		Position: file_set.Position(file.Name.Pos()),
 		Name:     "default-package-name",
-		Want:     fmt.Sprintf("package %s", parent),
+		Want:     fmt.Sprintf("Declare \"package %s\".", parent),
 		Message: fmt.Sprintf(
-			"default package must declare 'package %s', not 'package %s'; it "+
-				"shadows the library it re-exports",
-			parent, file.Name.Name),
+			"The default package declares \"package %s\", not \"package %s\". "+
+				"The default package shadows the library it re-exports.",
+			file.Name.Name, parent),
 	})
 	return diags
 }
@@ -5588,7 +5624,8 @@ func check_names_vocabulary_message(input *Check_Names_Vocabulary_Message_Input)
 
 	if len(input.Candidates) == 0 {
 		return fmt.Sprintf(
-			"identifier %q contains banned substring %q", input.Name, input.Word)
+			"The identifier %q contains the banned substring %q. "+
+				"Write a different name.", input.Name, input.Word)
 	}
 	renames := make([]string, len(input.Candidates))
 	for candidate_index, candidate := range input.Candidates {
@@ -5598,9 +5635,9 @@ func check_names_vocabulary_message(input *Check_Names_Vocabulary_Message_Input)
 			Name: strings.Join(substituted, "_"), Want: input.Style})
 	}
 	if len(renames) == 1 {
-		return fmt.Sprintf("rename %s -> %s", input.Name, renames[0])
+		return fmt.Sprintf("Rename %s -> %s.", input.Name, renames[0])
 	}
-	return fmt.Sprintf("rename %s -> [%s]", input.Name, strings.Join(renames, ", "))
+	return fmt.Sprintf("Rename %s -> [%s].", input.Name, strings.Join(renames, ", "))
 }
 
 // Functions with two or more parameters of the same type are call-site
@@ -5648,8 +5685,9 @@ func check_input_struct(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(function_declaration.Pos()),
-			Message: "declare " + want_name + " directly above " +
-				function_declaration.Name.Name,
+			Message: "The func " + function_declaration.Name.Name +
+				" has no input struct. Declare " + want_name +
+				" directly above the func.",
 		})
 	}
 	return diags
@@ -5808,8 +5846,8 @@ func check_input_struct_validate(
 	}
 	return &Diagnostic{
 		Position: file_set.Position(function.Pos()),
-		Message: "convert to " + check_input_struct_validate_suggest_sig(
-			function, want_name),
+		Message: "The func has too many parameters. Convert it to " +
+			check_input_struct_validate_suggest_sig(function, want_name) + ".",
 	}
 }
 
@@ -5909,7 +5947,8 @@ func check_no_empty_function_body(
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(function_declaration.Pos()),
 			Message: fmt.Sprintf(
-				"func %s has an empty body", function_declaration.Name.Name),
+				"The func %s has an empty body. Write a body or remove the "+
+					"func.", function_declaration.Name.Name),
 		})
 	}
 	return diags
@@ -5935,7 +5974,8 @@ func check_no_function_init(
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(function_declaration.Pos()),
-			Message:  "func init is banned; expose a func Init() instead",
+			Message: "Do not use func init. " +
+				"Declare a func Init instead.",
 		})
 	}
 	return diags
@@ -5970,7 +6010,8 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(interface_type.Pos()),
-				Message:  "interface declarations are banned (except for generics)",
+				Message: "Do not declare an interface. " +
+					"A generic constraint is the one exception.",
 			})
 			return true
 		}
@@ -6030,9 +6071,9 @@ func check_no_package_vars(
 	file_set *token.FileSet, file *ast.File, instrumentation []string,
 ) (diags []Diagnostic) {
 
-	const BASE_MESSAGE = "package-level var is banned" +
-		" (except for regexp.MustCompile and errors.New)"
-	const SWITCH_HINT = ", or use a switch for lookup tables"
+	const BASE_MESSAGE = "Do not declare a package-level var. " +
+		"Only regexp.MustCompile and errors.New are exceptions."
+	const SWITCH_HINT = " For a lookup table, use a switch."
 	for _, declaration := range file.Decls {
 		generic_declaration, is_generic_declaration := declaration.(*ast.GenDecl)
 		if !is_generic_declaration {
@@ -6204,9 +6245,9 @@ func check_unnecessary_method(
 			continue
 		}
 		MESSAGE := fmt.Sprintf(
-			"method %s does not satisfy any stdlib interface; "+
-				"convert to a free function with the receiver as the first "+
-				"parameter",
+			"The method %s satisfies no stdlib interface. "+
+				"Convert the method to a free function. "+
+				"Write the receiver as the first parameter.",
 			function_declaration.Name.Name,
 		)
 		diags = append(diags, Diagnostic{
@@ -6263,7 +6304,8 @@ func check_snap_backtick(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(lit.Pos()),
 			Message: fmt.Sprintf(
-				"snap.%s must use a backticked raw string literal", method),
+				"The call snap.%s has no raw string literal. "+
+					"Write a raw string literal.", method),
 		})
 		return true
 	})
@@ -6308,7 +6350,8 @@ func check_test_documentation_comment(
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(function_declaration.Pos()),
 			Message: fmt.Sprintf(
-				"test %s is missing a doc comment", function_declaration.Name.Name),
+				"The test %s has no doc comment. Write a doc comment.",
+				function_declaration.Name.Name),
 		})
 	}
 	return diags
@@ -6373,7 +6416,7 @@ func check_exported_documentation_comment_function(
 		Name:     "exported-doc",
 		Want:     "doc comment on exported " + label,
 		Message: fmt.Sprintf(
-			"exported %s %s is missing a doc comment",
+			"The exported %s %s has no doc comment. Write a doc comment.",
 			label,
 			function_declaration.Name.Name),
 	}}
@@ -6425,7 +6468,8 @@ func check_exported_documentation_comment_generic_specs(
 				Name:     "exported-doc",
 				Want:     "doc comment on exported type",
 				Message: fmt.Sprintf(
-					"exported type %s is missing a doc comment", s.Name.Name),
+					"The exported type %s has no doc comment. "+
+						"Write a doc comment.", s.Name.Name),
 			})
 		case *ast.ValueSpec:
 			specification_has_documentation :=
@@ -6445,7 +6489,7 @@ func check_exported_documentation_comment_generic_specs(
 					Position: file_set.Position(name.Pos()),
 					Name:     "exported-doc",
 					Want:     "doc comment on exported " + kind,
-					Message: fmt.Sprintf("exported %s %s is missing a doc "+
+					Message: fmt.Sprintf("The exported %s %s has no doc "+
 						"comment", kind, name.Name),
 				})
 			}
@@ -6902,9 +6946,10 @@ func check_names_terminology_emit(
 		violations = append(violations, Name_Violation{
 			Position: e.Position,
 			Message: fmt.Sprintf(
-				"naming convention: %s (used as %s) → rename to %s",
+				"The name %s has the role %s. Rename %s -> %s.",
 				e.Name,
 				category,
+				e.Name,
 				suggestion),
 		})
 	}
@@ -7087,7 +7132,8 @@ func check_names_arithmetic_check_binary(
 		violations = append(violations, Name_Violation{
 			Position: input.Binary_Expression.Pos(),
 			Message: fmt.Sprintf(
-				"arithmetic: _%s %s _%s is incoherent",
+				"The arithmetic _%s %s _%s is not coherent. "+
+					"Use operands with compatible suffixes.",
 				left_suffix,
 				op_string,
 				right_suffix),
@@ -7104,7 +7150,8 @@ func check_names_arithmetic_check_binary(
 	violations = append(violations, Name_Violation{
 		Position: input.Lhs.Pos(),
 		Message: fmt.Sprintf(
-			"arithmetic: %s = _%s %s _%s; must end in _%s",
+			"The arithmetic %s = _%s %s _%s gives the wrong suffix. "+
+				"End the name with _%s.",
 			input.Lhs.Name, left_suffix, op_string, right_suffix, result,
 		),
 	})
@@ -7395,7 +7442,8 @@ func check_names_participles(file *ast.File) (violations []Name_Violation) {
 		violations = append(violations, Name_Violation{
 			Position: identifier.Pos(),
 			Message: fmt.Sprintf(
-				"present participle %q → rename to a noun form", last),
+				"The name %q is a present participle. "+
+					"Rename it to a noun form.", last),
 		})
 	})
 	return violations
@@ -7428,7 +7476,7 @@ func check_names_extremum(file *ast.File) (violations []Name_Violation) {
 			reordered = append(reordered, w)
 			violations = append(violations, Name_Violation{
 				Position: identifier.Pos(),
-				Message: fmt.Sprintf("rename %s -> %s", identifier.Name,
+				Message: fmt.Sprintf("Rename %s -> %s.", identifier.Name,
 					suggest(&Suggest_Input{
 						Name: strings.Join(reordered, "_"), Want: style})),
 			})
@@ -7542,7 +7590,12 @@ func check_file_system_stream(
 	}
 	for i, c := range checks {
 		for _, d := range per_check[i] {
-			d.Message = fmt.Sprintf("%s: %s", c.Name, d.Message)
+			// The rule identity belongs in Name, not in the printed line:
+			// Format renders only Position and Message, so a name-prefixed
+			// message would put machine identity in the reader's sentence.
+			if d.Name == "" {
+				d.Name = c.Name
+			}
 			diags = append(diags, d)
 		}
 	}
@@ -7851,7 +7904,8 @@ func check_stream_conflict_markers(
 						Line:     line_number,
 						Column:   1,
 					},
-					Message: "resolve the conflict and remove the marker",
+					Message: "The file has a conflict marker. " +
+						"Resolve the conflict and remove the marker.",
 				})
 				break
 			}
@@ -7895,7 +7949,8 @@ func check_stream_banned_scripts(
 	}
 	*output = append(*output, Diagnostic{
 		Position: token.Position{Filename: p, Line: 1, Column: 1},
-		Message:  fmt.Sprintf("rewrite %q as a go script", p),
+		Message: fmt.Sprintf(
+			"The file %q is a shell script. Rewrite the file as a go script.", p),
 	})
 }
 
@@ -7915,7 +7970,8 @@ func check_stream_banned_archives(
 	}
 	*output = append(*output, Diagnostic{
 		Position: token.Position{Filename: p, Line: 1, Column: 1},
-		Message:  ".xz files are banned; use .gz or .zip instead",
+		Message: "Do not use a .xz file. " +
+			"Use a .gz file or a .zip file.",
 	})
 }
 
@@ -7961,8 +8017,8 @@ func check_stream_github_actions_uses(
 		if bytes.HasPrefix(trimmed, []byte("uses:")) {
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: p, Line: line_number, Column: 1},
-				Message: "third-party github action banned; replace `uses:` with " +
-					"an inline `run:` step",
+				Message: "Do not use a third-party github action. " +
+					"Replace the \"uses:\" line with an inline \"run:\" step.",
 			})
 		}
 		line_number++
@@ -7995,7 +8051,8 @@ func check_stream_agent_documentation_lines_max(
 	}
 	if lines_count > AGENT_DOCUMENTATION_LINES_MAX {
 		MESSAGE := fmt.Sprintf(
-			"%s has %d lines; split or trim it under %d",
+			"The file %s has %d lines. The maximum is %d. "+
+				"Divide the file or remove content.",
 			information.Name(), lines_count, AGENT_DOCUMENTATION_LINES_MAX,
 		)
 		// A skill that outgrows the budget should shed prose, not just shrink:
@@ -8003,9 +8060,9 @@ func check_stream_agent_documentation_lines_max(
 		// earns its own directive rather than the generic split-or-trim line.
 		if information.Name() == "SKILL.md" {
 			MESSAGE = fmt.Sprintf(
-				"SKILL.md is capped at %d lines. "+
-					"Prefer procedural scripting over prose.",
-				AGENT_DOCUMENTATION_LINES_MAX,
+				"The file SKILL.md has %d lines. The maximum is %d. "+
+					"Write a procedural script instead of prose.",
+				lines_count, AGENT_DOCUMENTATION_LINES_MAX,
 			)
 		}
 		*output = append(*output, Diagnostic{
@@ -8061,7 +8118,7 @@ func check_path_casing(
 			suggestion := path_casing_suggest(seg)
 			diags = append(diags, Diagnostic{
 				Position: token.Position{Filename: key},
-				Message:  fmt.Sprintf("rename %s -> %s", seg, suggestion),
+				Message:  fmt.Sprintf("Rename %s -> %s.", seg, suggestion),
 			})
 		}
 	}
@@ -8214,7 +8271,7 @@ func check_file_system_stream_checks_stream_symlinks_checker(
 			if read_err != nil {
 				*output = append(*output, Diagnostic{
 					Position: token.Position{Filename: p},
-					Message:  "unreadable symlink target",
+					Message:  "The linter cannot read the symlink target.",
 				})
 				return
 			}
@@ -8234,7 +8291,7 @@ func check_file_system_stream_checks_stream_symlinks_checker(
 				if target_path == p {
 					*output = append(*output, Diagnostic{
 						Position: token.Position{Filename: p},
-						Message:  "symlink targets itself",
+						Message:  "The symlink points to itself.",
 					})
 					return
 				}
@@ -8247,7 +8304,9 @@ func check_file_system_stream_checks_stream_symlinks_checker(
 			}
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: p},
-				Message:  fmt.Sprintf("untracked symlink target -> %s", target),
+				Message: fmt.Sprintf(
+					"The symlink target %q is not tracked. "+
+						"Track the target or remove the symlink.", target),
 			})
 		},
 	}
@@ -8362,7 +8421,8 @@ func check_stream_markdown_line_max(
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: p, Line: line_number, Column: 1},
 				Message: fmt.Sprintf(
-					"markdown line is %d columns; visual limit is %d",
+					"The markdown line has %d columns. "+
+						"The visual limit is %d.",
 					columns, MARKDOWN_LINE_MAX),
 			})
 		}
@@ -8408,7 +8468,8 @@ func check_stream_markdown_trailing_whitespace(
 		}
 		*output = append(*output, Diagnostic{
 			Position: token.Position{Filename: p, Line: line_number, Column: 1},
-			Message:  "markdown line has trailing whitespace",
+			Message: "The markdown line has trailing whitespace. " +
+				"Remove the trailing whitespace.",
 		})
 	}
 }
@@ -8499,19 +8560,19 @@ func agents_claude_pair_finalize(
 		case !pp.Has_Agents:
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: d},
-				Message: "AGENTS.md is missing; it must mirror " +
+				Message: "There is no AGENTS.md. Add an AGENTS.md that is " +
 					"CLAUDE.md byte-for-byte",
 			})
 		case !pp.Has_Claude:
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: d},
-				Message: "CLAUDE.md is missing; it must mirror " +
+				Message: "There is no CLAUDE.md. Add a CLAUDE.md that is " +
 					"AGENTS.md byte-for-byte",
 			})
 		case !bytes.Equal(pp.Agents, pp.Claude):
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: d},
-				Message: "AGENTS.md and CLAUDE.md differ; make " +
+				Message: "AGENTS.md and CLAUDE.md are different. Make " +
 					"them byte-identical",
 			})
 		}
@@ -8554,8 +8615,10 @@ func check_no_impure_stdlib_per_file(
 	file_set *token.FileSet, file *ast.File,
 ) (diags []Diagnostic) {
 
-	const IMPORT_MESSAGE = "impure stdlib import %q: see lint/README.md for resolutions"
-	const CALL_MESSAGE = "impure stdlib call %s.%s: see lint/README.md for resolutions"
+	const IMPORT_MESSAGE = "The stdlib import %q is impure. " +
+		"See lint/README.md for the resolutions."
+	const CALL_MESSAGE = "The stdlib call %s.%s is impure. " +
+		"See lint/README.md for the resolutions."
 	for _, implementation := range file.Imports {
 		path := strings.Trim(implementation.Path.Value, `"`)
 		if !is_impure_hard_import(path) {
@@ -8697,8 +8760,10 @@ func check_transitive_purity_per_file(
 	instrumentation []string,
 ) (diags []Diagnostic) {
 
-	const IMPORT_MESSAGE = "impure dependency %q: a pure package imports only pure packages"
-	const CALL_MESSAGE = "impure transitive call %s.%s: a pure package calls only pure APIs"
+	const IMPORT_MESSAGE = "The dependency %q is impure. " +
+		"A pure package imports only pure packages."
+	const CALL_MESSAGE = "The transitive call %s.%s is impure. " +
+		"A pure package calls only pure APIs."
 	local_to_path := make(map[string]string, len(file.Imports))
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
@@ -8817,8 +8882,8 @@ func is_transitive_stdlib_ident(input *Is_Transitive_Stdlib_Ident_Input) (yes bo
 // not caught here — choosing a different syntactic form *is* the assertion
 // that the loop is unbounded on purpose.
 func check_no_bare_for(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-	const MESSAGE = "bare `for {}` is banned" +
-		" if the loop is intentionally unbounded"
+	const MESSAGE = "Do not use a bare \"for {}\" loop. " +
+		"For an unbounded loop, write a different form."
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		f, is_for := n.(*ast.ForStmt)
 		if !is_for {
@@ -8969,7 +9034,7 @@ func check_no_unbounded_apis_lookup(
 		Name:     qualified,
 		Want:     substitution,
 		Message: fmt.Sprintf(
-			"%s: unbounded API '%s'; use %s instead",
+			"The API %[2]q is unbounded (%[1]s). Use %[3]s instead.",
 			category,
 			qualified,
 			substitution),
@@ -9284,7 +9349,8 @@ func check_deterministic_coverage(
 			Want: "every pure_but_indeterministic_packages entry matches " +
 				"a pure package",
 			Message: fmt.Sprintf(
-				"pure_but_indeterministic_packages: no pure package found at %q",
+				"The pure_but_indeterministic_packages entry %q matches no "+
+					"pure package. Correct the entry.",
 				entry),
 			Tier: 1,
 		})
@@ -9321,23 +9387,23 @@ func check_deterministic_constructs(
 		diags = append(diags, Diagnostic{
 			Position: position,
 			Name:     "deterministic",
-			Message:  "deterministic package " + tail,
+			Message:  "A deterministic package " + tail,
 			Tier:     1,
 		})
 	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		switch node := n.(type) {
 		case *ast.GoStmt:
-			report(file_set.Position(node.Pos()), "must not start a goroutine")
+			report(file_set.Position(node.Pos()), "must not start a goroutine.")
 		case *ast.SelectStmt:
-			report(file_set.Position(node.Pos()), "must not use select")
+			report(file_set.Position(node.Pos()), "must not use select.")
 		case *ast.ChanType:
-			report(file_set.Position(node.Pos()), "must not use a channel")
+			report(file_set.Position(node.Pos()), "must not use a channel.")
 		case *ast.SendStmt:
-			report(file_set.Position(node.Pos()), "must not use a channel")
+			report(file_set.Position(node.Pos()), "must not use a channel.")
 		case *ast.UnaryExpr:
 			if node.Op == token.ARROW {
-				report(file_set.Position(node.Pos()), "must not use a channel")
+				report(file_set.Position(node.Pos()), "must not use a channel.")
 			}
 		}
 		return true
@@ -9370,8 +9436,9 @@ func check_deterministic_floats(
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(identifier.Pos()),
 			Name:     "deterministic",
-			Message:  "deterministic package must not use " + identifier.Name,
-			Tier:     1,
+			Message: "A deterministic package must not use " +
+				identifier.Name + ".",
+			Tier: 1,
 		})
 		return true
 	})
@@ -9396,7 +9463,7 @@ func check_deterministic_imports(
 				Position: file_set.Position(implementation.Pos()),
 				Name:     "deterministic",
 				Message: fmt.Sprintf(
-					"deterministic package must not import %q", import_path),
+					"A deterministic package must not import %q.", import_path),
 				Tier: 1,
 			})
 			continue
@@ -9411,7 +9478,8 @@ func check_deterministic_imports(
 			Position: file_set.Position(implementation.Pos()),
 			Name:     "deterministic",
 			Message: fmt.Sprintf(
-				"deterministic package must import only deterministic packages: %q",
+				"A deterministic package must import only deterministic "+
+					"packages. The import %q is not deterministic.",
 				import_path),
 			Tier: 1,
 		})
@@ -9500,9 +9568,10 @@ func check_time_import_gateway(
 			diags = append(diags, Diagnostic{
 				Position: pf.File_Set.Position(implementation.Pos()),
 				Name:     "stdlib-time",
-				Want:     "import the time/default gateway and inject a Clock",
+				Want:     "Import the time/default gateway and inject a Clock.",
 				Message: fmt.Sprintf(
-					"stdlib time may be imported only by %q; inject the Clock",
+					"Only %q can import the stdlib time package. "+
+						"Inject the Clock.",
 					gateway),
 				Tier: 1,
 			})
@@ -9546,9 +9615,10 @@ func driver_gateway_file_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 		diags = append(diags, Diagnostic{
 			Position: pf.File_Set.Position(selector.Pos()),
 			Name:     "driver-gateway",
-			Want:     "call the constructor only in package main or a test",
-			Message: selector.Sel.Name +
-				" mints a loop driver; call it only in main or a test",
+			Want:     "Call the constructor only in package main or in a test.",
+			Message: "The constructor " + selector.Sel.Name +
+				" makes a loop driver. Call it only in package main or " +
+				"in a test.",
 			Tier: 1,
 		})
 		return true
@@ -9625,9 +9695,9 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 		diags = append(diags, Diagnostic{
 			Position: pf.File_Set.Position(selector.Pos()),
 			Name:     "driver-gateway",
-			Want:     "hold the Driver only in package main or a test",
-			Message: "io.Driver may be held only in package main or a test; " +
-				"internal takes io.IO and the harness drives",
+			Want:     "Hold the Driver only in package main or in a test.",
+			Message: "Only package main or a test can hold an io.Driver. " +
+				"An internal package takes io.IO and the harness runs it.",
 			Tier: 1,
 		})
 		return true
@@ -9683,9 +9753,10 @@ func io_gateway_import_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 		diags = append(diags, Diagnostic{
 			Position: pf.File_Set.Position(implementation.Pos()),
 			Name:     "io-gateway",
-			Want:     "route IO through shared/io",
+			Want:     "Route IO through shared/io.",
 			Message: fmt.Sprintf(
-				"%q is banned outside io/default; route IO through shared/io",
+				"Only io/default can import %q. "+
+					"Route IO through shared/io.",
 				import_path),
 			Tier: 2,
 		})
@@ -9759,9 +9830,9 @@ func io_gateway_call_diagnostic(pf Parsed_File, selector *ast.SelectorExpr) (dia
 	return Diagnostic{
 		Position: pf.File_Set.Position(selector.Pos()),
 		Name:     "io-gateway",
-		Want:     "route IO through shared/io",
-		Message: identifier.Name + "." + selector.Sel.Name +
-			" does raw IO; route it through shared/io",
+		Want:     "Route IO through shared/io.",
+		Message: "The call " + identifier.Name + "." + selector.Sel.Name +
+			" does raw IO. Route it through shared/io.",
 		Tier: 2,
 	}
 }
@@ -9859,7 +9930,8 @@ func sim_script_function_diagnostics(
 		return nil
 	}
 	return []Diagnostic{sim_script_diagnostic(pf, function,
-		function.Name.Name+" is a scripting entry; a sim's only input is its seed")}
+		"The func "+function.Name.Name+" is a scripting entry. "+
+			"The only input of a simulation is the seed.")}
 }
 
 // Flags New_Sim unless it takes exactly one integer seed and nothing else.
@@ -9879,7 +9951,8 @@ func sim_script_constructor_diagnostics(
 		}
 	}
 	return []Diagnostic{sim_script_diagnostic(pf, function,
-		"New_Sim takes only the seed; a parameter that carries outcomes is scripting")}
+		"New_Sim takes a parameter that carries outcomes. "+
+			"Take only the seed.")}
 }
 
 // Reports whether name is an exported Sim_* helper.

@@ -21,7 +21,7 @@ func Test_Invariants_Presence(t *testing.T) {
 			"// Widget is a fixture.\n" +
 			"type Widget struct {\n\t// X is a fixture.\n\tX int\n}\n"})
 	diags := assertion.Check_Type(pf.File_Set, pf.File, nil)
-	if !diagnosed(diags, "directly below Widget") {
+	if !diagnosed(diags, "directly below the type Widget") {
 		t.Fatal("a type without its invariant must be flagged")
 	}
 }
@@ -38,7 +38,7 @@ func Test_Invariants_Casing(t *testing.T) {
 			"// Widget_invariants is wrongly cased.\n" +
 			"func Widget_invariants(w Widget) {\n\tprintln(0)\n}\n"})
 	diags := assertion.Check_Type(pf.File_Set, pf.File, nil)
-	if !diagnosed(diags, "declare Widget_Invariants") {
+	if !diagnosed(diags, "Declare Widget_Invariants") {
 		t.Fatal("an exported type wants the _Invariants suffix")
 	}
 }
@@ -55,7 +55,7 @@ func Test_Invariants_Signature(t *testing.T) {
 			"// Widget_Invariants is a fixture.\n" +
 			"func Widget_Invariants(w Widget) {\n\tprintln(0)\n}\n"})
 	diags := assertion.Check_Type(pf.File_Set, pf.File, nil)
-	if !diagnosed(diags, "must take") {
+	if !diagnosed(diags, "Write the parameters (Widget or *Widget, invariant.Namespace).") {
 		t.Fatal("a bundle without the namespace parameter must be flagged")
 	}
 }
@@ -70,7 +70,7 @@ func Test_Invariants_Orphan(t *testing.T) {
 			"// Stray_Invariants is a fixture.\n" +
 			"func Stray_Invariants() {\n\tprintln(0)\n}\n"})
 	diags := assertion.Check_Type(pf.File_Set, pf.File, nil)
-	if !diagnosed(diags, "directly below its type") {
+	if !diagnosed(diags, "directly below the type of the same name") {
 		t.Fatal("an orphan invariant function must be flagged")
 	}
 }
@@ -84,7 +84,7 @@ func Test_Invariants_Scope(t *testing.T) {
 		Source_Text: "package fixture\n\n" +
 			"// Count is a fixture.\ntype Count uint64\n"})
 	diags := assertion.Check_Type(pf.File_Set, pf.File, nil)
-	if !diagnosed(diags, "directly below Count") {
+	if !diagnosed(diags, "directly below the type Count") {
 		t.Fatal("a defined scalar type is in scope")
 	}
 }
@@ -95,18 +95,18 @@ func Test_Invariants_Underlying_Kind(t *testing.T) {
 	t.Parallel()
 	loose := "\tinvariant.Always(int(v) > Span_Min, \"loose\")"
 	if !diagnosed(check_fixture(t, chained_helper_source(CHAINED_INTEGER, loose)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a defined type over a named integer owes the scalar mandate")
 	}
 	exact := "\tinvariant.Tree(v, namespace)." +
 		"Range_Int(int(v), Span_Min, Span_Max).Ensure()"
 	if diagnosed(check_fixture(t, chained_helper_source(CHAINED_INTEGER, exact)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the exact Range helper must satisfy the resolved scalar mandate")
 	}
 	counted := "\tinvariant.Always(len(v) > Span_Min, \"loose\")"
 	if !diagnosed(check_fixture(t, chained_helper_source(CHAINED_SLICE, counted)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a defined type over a named slice owes the count mandate")
 	}
 }
@@ -119,62 +119,62 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 		"\tinvariant.Always(value <= Value_Max, \"max\")\n" +
 		"\tinvariant.Tree(value, namespace).Sometimes(value == Value_Min, \"min\")." +
 		"Sometimes(value == Value_Max, \"max\").Ensure()")
-	if !diagnosed(check_fixture(t, raw), "must call a canonical helper") {
+	if !diagnosed(check_fixture(t, raw), "does not call a canonical helper") {
 		t.Fatal("individual scalar assertions must not satisfy the helper mandate")
 	}
 	range_body := "\tinvariant.Tree(value, namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(range_body)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the exact Range helper must satisfy the scalar mandate")
 	}
 	scalar_range_holed_helper(t)
 	enum_body := "\tinvariant.Tree(value, namespace)." +
 		"Enum_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_body)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the exact Enum helper must satisfy the scalar mandate")
 	}
 	enum_3_body := "\tinvariant.Tree(value, namespace)." +
 		"Enum_3_Int(int(value), int(Value_Min), int(Value_Third), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_3_body)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the exact Enum_3 helper must satisfy the scalar mandate")
 	}
 	enum_4_body := "\tinvariant.Tree(value, namespace)." +
 		"Enum_4_Int(int(value), int(Value_Min), int(Value_Third), " +
 		"int(Value_Fourth), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_4_body)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the exact Enum_4 helper must satisfy the scalar mandate")
 	}
 	retired := "\tinvariant.Int_Invariants(int(value), namespace)"
 	if !diagnosed(check_fixture(t, integer_helper_source(retired)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a deleted primitive preset must not satisfy the scalar mandate")
 	}
 	singleton := "\tinvariant.Always(int(value) == int(Value_Min), " +
 		"\"The value is the only member.\")"
 	if diagnosed(check_fixture(t, integer_helper_source(singleton)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a direct singleton Always must satisfy the integer mandate")
 	}
 	// A float has no builder preset, thus Always is all it can state.
 	float_singleton := "\tinvariant.Always(float64(value) == float64(Value_Min), \"only\")"
 	if diagnosed(check_fixture(t, float_helper_source(float_singleton)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a float singleton must satisfy the scalar mandate")
 	}
 	// A Boolean has two legal values, thus a Tree with one Sometimes states the whole type. A
 	// singleton Always would claim the type is constant, which the library rejects outright.
 	boolean := "\tinvariant.Tree(value, namespace).Sometimes(bool(value), \"set\").Ensure()"
 	if diagnosed(check_fixture(t, boolean_helper_source(boolean)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("one Sometimes must satisfy the Boolean mandate")
 	}
 	boolean_singleton := "\tinvariant.Always(bool(value) == true, \"only\")"
 	if !diagnosed(check_fixture(t, boolean_helper_source(boolean_singleton)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a singleton Always must not satisfy the Boolean mandate")
 	}
 	scalar_helper_remedy_text(t)
@@ -189,37 +189,37 @@ func Test_Invariants_Count_Helper(t *testing.T) {
 		"\tinvariant.Tree(value, namespace).Sometimes(len(value) == Value_Min, \"min\")." +
 		"Sometimes(len(value) == Value_Max, \"max\").Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(raw)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("individual count assertions must not satisfy the helper mandate")
 	}
 	valid := "\tinvariant.Tree(value, namespace)." +
 		"Range_Holed_Int(len(value), Value_Min, Value_Max, 1, 2, 2, 2).Ensure()"
 	if diagnosed(check_fixture(t, count_helper_source(valid)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("Range_Holed_Int over the counted value must satisfy the mandate")
 	}
 	wrong_suffix := "\tinvariant.Tree(value, namespace)." +
 		"Range_Int64(int64(len(value)), int64(Value_Min), int64(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(wrong_suffix)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a differently typed Range helper must not substitute")
 	}
 	wrong_subject := "\tinvariant.Tree(value, namespace)." +
 		"Range_Int(len(value[:0]), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(wrong_subject)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a Range_Int over another subject must not satisfy the mandate")
 	}
 	split := "\tassertions := invariant.Tree(value, namespace)\n" +
 		"\tassertions.Range_Int(len(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(split)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a split builder must not satisfy the helper mandate")
 	}
 	singleton := "\tinvariant.Always(len(value) == Value_Min, " +
 		"\"The count is the only member.\")"
 	if diagnosed(check_fixture(t, count_helper_source(singleton)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a direct singleton Always must satisfy the count mandate")
 	}
 }
@@ -231,31 +231,31 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 	inline_range := "\tinvariant.Tree(value, namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(7)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_range)),
-		"arguments must be package-level constants") {
+		"an argument that is not a package-level constant") {
 		t.Fatal("an inline Range edge must not satisfy the helper mandate")
 	}
 	inline_enum := "\tinvariant.Tree(value, namespace)." +
 		"Enum_Int(int(value), int(Value_Min), int(7)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_enum)),
-		"arguments must be package-level constants") {
+		"an argument that is not a package-level constant") {
 		t.Fatal("an inline Enum member must not satisfy the helper mandate")
 	}
 	converted := "\tinvariant.Tree(value, namespace)." +
 		"Range_Holed_Int(int(value), int(Value_Min), int(Value_Max), 1, 2, 2, 2).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(converted)),
-		"arguments must be package-level constants") {
+		"an argument that is not a package-level constant") {
 		t.Fatal("exactly converted package constants must satisfy the mandate")
 	}
 	shadowed := "\tValue_Min := 0\n" +
 		"\tinvariant.Tree(value, namespace)." +
 		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(shadowed)),
-		"arguments must be package-level constants") {
+		"an argument that is not a package-level constant") {
 		t.Fatal("a local shadow of a package constant must not satisfy the mandate")
 	}
 	inline_singleton := "\tinvariant.Always(int(value) == 1, \"only\")"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_singleton)),
-		"arguments must be package-level constants") {
+		"an argument that is not a package-level constant") {
 		t.Fatal("an inline singleton member must not satisfy the helper mandate")
 	}
 }
@@ -275,59 +275,59 @@ func Test_Invariants_Helper_Identity(t *testing.T) {
 	literal := "\tinvariant.Assertions(\"manual\")." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(literal)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a literal namespace must not satisfy a helper template")
 	}
 	nested := "\tif true {\n\t\tinvariant.Tree(value, namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n\t}"
 	if !diagnosed(check_fixture(t, integer_helper_source(nested)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a nested builder must not satisfy the direct helper mandate")
 	}
 	foreign := foreign_scalar_helper_source()
-	if !diagnosed(check_fixture(t, foreign), "must call a canonical helper") {
+	if !diagnosed(check_fixture(t, foreign), "does not call a canonical helper") {
 		t.Fatal("a foreign Assertions lookalike must not satisfy the mandate")
 	}
 	aliased := aliased_scalar_helper_source()
-	if !diagnosed(check_fixture(t, aliased), "must call a canonical helper") {
+	if !diagnosed(check_fixture(t, aliased), "does not call a canonical helper") {
 		t.Fatal("an import alias must not impersonate the literal invariant qualifier")
 	}
 	parent := strings.Replace(integer_helper_source(
 		"\tinvariant.Tree(value, namespace).Range_Int("+
 			"int(value), int(Value_Min), int(Value_Max)).Ensure()"), "/default", "", 1)
-	if !diagnosed(check_fixture(t, parent), "must call a canonical helper") {
+	if !diagnosed(check_fixture(t, parent), "does not call a canonical helper") {
 		t.Fatal("the pure invariant package must not impersonate its default builder")
 	}
 	recorder := "\tinvariant.Recorder_Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(recorder)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("Recorder_Assertions must not satisfy the helper mandate")
 	}
 	legacy := "\tinvariant.Dot_Product(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(legacy)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the old Dot_Product root must not satisfy the helper mandate")
 	}
 	retired := "\tinvariant.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(retired)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the old Assertions root must not satisfy the helper mandate")
 	}
 	conversion := "\tint := func(Value) int { return 0 }\n" +
 		"\tinvariant.Tree(value, namespace)." +
 		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(conversion)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a local function shadowing the primitive conversion must not substitute")
 	}
 	count := "\tlen := func(Value) int { return 0 }\n" +
 		"\tinvariant.Tree(value, namespace)." +
 		"Range_Int(len(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(count)),
-		"must call Range_Int or Enum_Int") {
+		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a local function shadowing len must not substitute")
 	}
 	assert_invalid_singleton_helper_identity(t)
@@ -339,12 +339,12 @@ func Test_Invariants_Builder_Walk(t *testing.T) {
 	t.Parallel()
 	at_limit := assertions_builder_body(70)
 	if diagnosed(check_fixture(t, integer_helper_source(at_limit)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a builder with exactly 70 expanded links must satisfy the mandate")
 	}
 	over_limit := assertions_builder_body(71)
 	if !diagnosed(check_fixture(t, integer_helper_source(over_limit)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("a builder with 71 expanded links must exceed the static walk limit")
 	}
 }
@@ -380,12 +380,12 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"\tinvariant.Tree(v, namespace)." +
 			"Sometimes(true, \"y\").Ensure()\n}\n"})
 	diags := check_source(pf)
-	if !diagnosed(diags, "Lexeme_Invariants must call Token_Invariants") {
+	if !diagnosed(diags, "Lexeme_Invariants does not call a helper for the field v.Tok") {
 		t.Fatal("a struct that does not compose a value field's invariant must be flagged")
 	}
 	// A pointer field composes its pointee, the same as a value field of that type,
 	// so a bundle that omits it is flagged too.
-	if !diagnosed(diags, "Phrase_Invariants must call Token_Invariants") {
+	if !diagnosed(diags, "Phrase_Invariants does not call a helper for the field v.Tok") {
 		t.Fatal("a struct that does not compose a pointer field's pointee must be flagged")
 	}
 	external := parse(t, &parse_input{
@@ -416,7 +416,8 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
 			"\texternal.Token_Invariants(v.Token, \"token\")\n" +
 			"\tCount_Invariants(v.Count, \"count\")\n}\n"})
-	if diagnosed(check_sources([]source.Parsed_File{external, composed}), "must call") {
+	if diagnosed(check_sources([]source.Parsed_File{external, composed}),
+		"does not call a helper") {
 		t.Fatal("an aliased cross-package helper and a local helper must compose")
 	}
 }
@@ -450,7 +451,7 @@ func Test_Invariants_Embedded_Fields(t *testing.T) {
 	bare := head + "// Reference_Invariants is a fixture.\n" +
 		"func Reference_Invariants(v Reference, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(v.Frame != nil, \"the frame is present\")\n}\n"
-	want := "must call Frame_Invariants(v.Frame, ...)"
+	want := "Call Frame_Invariants(v.Frame, ...)."
 	if !diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: bare})), want) {
 		t.Fatal("an embedded pointer that states only its presence must be flagged")
@@ -460,7 +461,7 @@ func Test_Invariants_Embedded_Fields(t *testing.T) {
 		"\tinvariant.Always(v.Frame != nil, \"the frame is present\")\n" +
 		"\tFrame_Invariants(*v.Frame, namespace)\n}\n"
 	if diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: composed})), "must call Frame_Invariants") {
+		Path: "pkg/rule.go", Source_Text: composed})), "Call Frame_Invariants") {
 		t.Fatal("an embedded pointer composed by its pointee must be accepted")
 	}
 }
@@ -474,7 +475,8 @@ func Test_Invariants_Inline_Form(t *testing.T) {
 		INHERITED_STRUCT_LINK + "\tinvariant.Tree(v, namespace)." +
 		"Sometimes(int(v.Mk) == Mark_Min, \"the mark is least\").Ensure()\n}\n"
 	if !diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: loose})), "must state v.Mk inline") {
+		Path: "pkg/rule.go", Source_Text: loose})),
+		"does not assert the inherited field v.Mk inline") {
 		t.Fatal("a Sometimes over a bounded field must not state it")
 	}
 	// A comparison holds one side of the domain, and a literal names no shared fact.
@@ -485,7 +487,8 @@ func Test_Invariants_Inline_Form(t *testing.T) {
 			"\tinvariant.Always(" + condition + ", \"partial\")\n" +
 			INHERITED_STRUCT_LINK + "}\n"
 		if !diagnosed(check_source(parse(t, &parse_input{
-			Path: "pkg/rule.go", Source_Text: partial})), "must state v.Mk inline") {
+			Path: "pkg/rule.go", Source_Text: partial})),
+			"does not assert the inherited field v.Mk inline") {
 			t.Fatalf("%q must not state the field", condition)
 		}
 	}
@@ -518,18 +521,19 @@ func Test_Invariants_Always_Condition(t *testing.T) {
 	bound := integer_helper_source(
 		"\tinvariant.Always(int(value) >= int(Value_Min) && " +
 			"int(value) <= int(Value_Max), \"in range\")")
-	if !diagnosed(check_fixture(t, bound), "Always condition") {
+	if !diagnosed(check_fixture(t, bound), "The Always condition has the compound operator") {
 		t.Fatal("a hand-written Range must be flagged")
 	}
 	membership := integer_helper_source(
 		"\tinvariant.Always(int(value) == int(Value_Min) || " +
 			"int(value) == int(Value_Max), \"a member\")")
-	if !diagnosed(check_fixture(t, membership), "Always condition") {
+	if !diagnosed(check_fixture(t, membership),
+		"The Always condition has the compound operator") {
 		t.Fatal("a hand-written Enum must be flagged")
 	}
 	single := integer_helper_source(
 		"\tinvariant.Always(int(value) == int(Value_Min), \"the only member\")")
-	if diagnosed(check_fixture(t, single), "Always condition") {
+	if diagnosed(check_fixture(t, single), "The Always condition has the compound operator") {
 		t.Fatal("a single-term Always must be accepted")
 	}
 }
@@ -555,7 +559,7 @@ func Test_Invariants_Parameter_Helper(t *testing.T) {
 			"\tinvariant.Assertions(\"raw builder\")." +
 			"Sometimes(true, \"raw axis\").Ensure()\n" +
 			"\tprintln(0)\n}\n"})
-	if !diagnosed(check_source(pf), "must call helper for tok") {
+	if !diagnosed(check_source(pf), "does not call a helper for the input tok") {
 		t.Fatal("foreign and direct assertions must not satisfy the input helper")
 	}
 	parameter_helper_correct(t)
@@ -584,7 +588,8 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 			"\t\tToken_Invariants := func(Token, invariant.Namespace) {}\n" +
 			"\t\tToken_Invariants(tok, \"shadowed\")\n" +
 			"\t\tinvariant.Always(true, \"raw guard\")\n\t}()\n\treturn \"\"\n}\n"})
-	if !diagnosed(check_source(pf), "must call helper for tok in the output defer") {
+	if !diagnosed(check_source(pf), "does not call a helper for the output tok. "+
+		"Call Token_Invariants(tok, ...) in the output defer.") {
 		t.Fatal("foreign and direct assertions must not satisfy the output helper")
 	}
 	correct := parse(t, &parse_input{
@@ -600,7 +605,7 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 			"// Make uses the exact output helper.\nfunc Make() (tok Token) {\n" +
 			"\tdefer func() {\n\t\tToken_Invariants(tok, \"token\")\n" +
 			"\t}()\n\treturn \"\"\n}\n"})
-	if diagnosed(check_source(correct), "must call helper") {
+	if diagnosed(check_source(correct), "does not call a helper") {
 		t.Fatal("the exact helper in the first output defer must satisfy the mandate")
 	}
 }
@@ -627,7 +632,8 @@ func Test_Invariants_Recorder_Registration(t *testing.T) {
 			Source_Text: "package fixture_test\n\nimport \"testing\"\n\n" +
 				"func Test_Widget(t *testing.T) {}\n"}),
 	}
-	if !diagnosed(recorder_diagnostics(files), "must wire invariant.Run_Test_Main") {
+	if !diagnosed(recorder_diagnostics(files),
+		"has no TestMain that calls invariant.Run_Test_Main") {
 		t.Fatal("a package with no TestMain must be flagged")
 	}
 }
@@ -642,10 +648,12 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 			"// Greet does.\n" +
 			"func Greet(name string) (greeting string) {\n\treturn \"\"\n}\n"})
 	diags := check_source(pf)
-	if !diagnosed(diags, "raw string parameter") {
+	if !diagnosed(diags, "The declaration Greet has a raw string parameter (name). "+
+		"Declare a defined type for the parameter.") {
 		t.Fatal("a raw string parameter must be flagged")
 	}
-	if !diagnosed(diags, "raw string result") {
+	if !diagnosed(diags, "The declaration Greet has a raw string result (greeting). "+
+		"Declare a defined type for the result.") {
 		t.Fatal("a raw string result must be flagged")
 	}
 	// The presets are gone, thus every builtin needs a defined type, not only string.
@@ -657,13 +665,14 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 			"// Holder is a fixture.\ntype Holder struct {\n" +
 			"\t// Ratio is a fixture.\n\tRatio float64\n}\n"})
 	diags = check_source(numeric)
-	if !diagnosed(diags, "raw int parameter") {
+	if !diagnosed(diags, "The declaration Count has a raw int parameter (workers).") {
 		t.Fatal("a raw int parameter must be flagged")
 	}
-	if !diagnosed(diags, "raw bool result") {
+	if !diagnosed(diags, "The declaration Count has a raw bool result (done).") {
 		t.Fatal("a raw bool result must be flagged")
 	}
-	if !diagnosed(diags, "raw float64 field") {
+	if !diagnosed(diags, "The declaration Holder has a raw float64 field (Ratio). "+
+		"Declare a defined type for the field.") {
 		t.Fatal("a raw float64 field must be flagged")
 	}
 }
@@ -673,7 +682,7 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 func Test_Simulation_Presence(t *testing.T) {
 	t.Parallel()
 	if !diagnosed(simulation_diagnostics(simulation_base(t)),
-		"must declare an internal/simulation_test") {
+		"has no internal/simulation_test package") {
 		t.Fatal("a binary component without a simulation package must be flagged")
 	}
 }
@@ -687,7 +696,7 @@ func Test_Simulation_Contents(t *testing.T) {
 		"func TestMain(m *testing.M) {\n" +
 		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
-		"must declare a fuzz function") {
+		"The simulation package has no fuzz function for internal.Main.") {
 		t.Fatal("a simulation package without a fuzz function must be flagged")
 	}
 }
@@ -698,7 +707,8 @@ func Test_Simulation_Test_Main(t *testing.T) {
 	t.Parallel()
 	sim := simulation_fixture_source("invariant.Run_Test_Main(m)")
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
-		"simulation TestMain must be exactly") {
+		"The body of the simulation TestMain is not "+
+			"invariant.Run_Test_Main(m, \"../**\").") {
 		t.Fatal("a simulation TestMain without directory arguments must be flagged")
 	}
 }
@@ -709,7 +719,8 @@ func Test_Simulation_Coverage(t *testing.T) {
 	t.Parallel()
 	sim := simulation_fixture_source("invariant.Run_Test_Main(m, \"../*\")")
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
-		"simulation TestMain must be exactly") {
+		"The body of the simulation TestMain is not "+
+			"invariant.Run_Test_Main(m, \"../**\").") {
 		t.Fatal("a narrower glob that omits nested internal packages must be flagged")
 	}
 }
@@ -738,7 +749,8 @@ func Test_Simulation_Entry(t *testing.T) {
 			Path:        "pkg/internal/simulation_test/sim_test.go",
 			Source_Text: sim}),
 	}
-	if !diagnosed(simulation_diagnostics(files), "simulation may reference only Main") {
+	if !diagnosed(simulation_diagnostics(files),
+		"The simulation package refers to internal.Extra. Refer only to Main.") {
 		t.Fatal("referencing a non-Main internal function must be flagged")
 	}
 }
@@ -752,7 +764,8 @@ func Test_Simulation_Blackbox(t *testing.T) {
 		"func TestMain(m *testing.M) {\n" +
 		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
-	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)), "must be blackbox") {
+	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
+		"The simulation package simulation is not an external test package.") {
 		t.Fatal("a whitebox simulation package must be flagged")
 	}
 }
@@ -795,7 +808,8 @@ func assert_inherited_scalar_is_inline(t *testing.T) {
 		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
 		"\tMark_Invariants(v.Mk, namespace)\n" + INHERITED_STRUCT_LINK + "}\n"
 	if !diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: composed})), "must state v.Mk inline") {
+		Path: "pkg/rule.go", Source_Text: composed})),
+		"does not assert the inherited field v.Mk inline") {
 		t.Fatal("a composed inherited scalar field must be flagged")
 	}
 	inline := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
@@ -826,7 +840,8 @@ func assert_inherited_struct_is_composed(t *testing.T) {
 		"\tinvariant.Tree(v, namespace)." +
 		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
 	if !diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: inline_only})), "must call Inner_Invariants") {
+		Path: "pkg/rule.go", Source_Text: inline_only})),
+		"Call Inner_Invariants(v.In, ...).") {
 		t.Fatal("an omitted inherited struct field must be flagged")
 	}
 	converted := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
@@ -888,7 +903,7 @@ func scalar_range_holed_helper(t *testing.T) {
 		"int(Value_Third), int(Value_Fourth), int(Value_Fourth), " +
 		"int(Value_Fourth)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(body)),
-		"must call a canonical helper") {
+		"does not call a canonical helper") {
 		t.Fatal("the exact Range_Holed helper must satisfy the scalar mandate")
 	}
 }
@@ -905,20 +920,20 @@ func assert_invalid_singleton_helper_identity(t *testing.T) {
 	}
 	for _, body := range invalid_singletons {
 		if !diagnosed(check_fixture(t, integer_helper_source(body)),
-			"must call a canonical helper") {
+			"does not call a canonical helper") {
 			t.Fatalf("noncanonical singleton satisfied the helper mandate: %s", body)
 		}
 	}
 	parent_singleton := strings.Replace(integer_helper_source(
 		"\tinvariant.Always(int(value) == int(Value_Min), \"only\")"),
 		"/default", "", 1)
-	if !diagnosed(check_fixture(t, parent_singleton), "must call a canonical helper") {
+	if !diagnosed(check_fixture(t, parent_singleton), "does not call a canonical helper") {
 		t.Fatal("the pure invariant package must not provide the singleton helper")
 	}
 	aliased_singleton := strings.ReplaceAll(integer_helper_source(
 		"\tinvariant.Always(int(value) == int(Value_Min), \"only\")"),
 		"invariant", "contract")
-	if !diagnosed(check_fixture(t, aliased_singleton), "must call a canonical helper") {
+	if !diagnosed(check_fixture(t, aliased_singleton), "does not call a canonical helper") {
 		t.Fatal("an import alias must not provide the singleton helper")
 	}
 }
@@ -939,7 +954,7 @@ func parameter_helper_correct(t *testing.T) {
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume uses exact helpers.\nfunc Consume(tok Token) {\n" +
 			"\tToken_Invariants(tok, \"token\")\n}\n"})
-	if diagnosed(check_source(correct), "must call helper") {
+	if diagnosed(check_source(correct), "does not call a helper") {
 		t.Fatal("an exact local input helper must satisfy the mandate")
 	}
 }
@@ -961,7 +976,7 @@ func parameter_helper_shadowed(t *testing.T) {
 			"func Consume(tok Token, Token_Invariants " +
 			"func(Token, invariant.Namespace)) {\n" +
 			"\tToken_Invariants(tok, \"shadowed\")\n}\n"})
-	if !diagnosed(check_source(shadowed), "must call helper for tok") {
+	if !diagnosed(check_source(shadowed), "does not call a helper for the input tok") {
 		t.Fatal("a parameter shadowing the exact helper must not satisfy the mandate")
 	}
 }
@@ -987,7 +1002,8 @@ func parameter_helper_external(t *testing.T) {
 			"// Consume uses an aliased external helper.\n" +
 			"func Consume(input external.Input) {\n" +
 			"\texternal.Input_Invariants(input, \"input\")\n}\n"})
-	if diagnosed(check_sources([]source.Parsed_File{external, consumer}), "must call helper") {
+	if diagnosed(check_sources([]source.Parsed_File{external, consumer}),
+		"does not call a helper") {
 		t.Fatal("an aliased exact cross-package input helper must satisfy the mandate")
 	}
 }
@@ -1011,7 +1027,8 @@ func field_subject_isolation(t *testing.T) {
 			"func Pair_Invariants(value Pair, namespace invariant.Namespace) {\n" +
 			"\tToken_Invariants(value.First, \"first\")\n}\n"})
 	diags := check_source(pf)
-	if !diagnosed(diags, "Pair_Invariants must call Token_Invariants(value.Second, ...)") {
+	if !diagnosed(diags, "The function Pair_Invariants does not call a helper for "+
+		"the field value.Second. Call Token_Invariants(value.Second, ...).") {
 		t.Fatalf("first field call satisfied the second field: %v", diags)
 	}
 	if diagnosed(diags, "Token_Invariants(value.First, ...)") {
@@ -1035,11 +1052,12 @@ func parameter_subject_isolation(t *testing.T) {
 			"func Consume(first Token, second Token) {\n" +
 			"\tToken_Invariants(first, \"first\")\n\tprintln(0)\n}\n"})
 	diags := check_source(pf)
-	want := "Consume must call helper for second via Token_Invariants(second, ...)"
+	want := "The function Consume does not call a helper for the input second. " +
+		"Call Token_Invariants(second, ...) at the start of the body."
 	if !diagnosed(diags, want) {
 		t.Fatalf("first input call satisfied the second input: %v", diags)
 	}
-	if diagnosed(diags, "helper for first") {
+	if diagnosed(diags, "helper for the input first") {
 		t.Fatalf("the exact first input call was rejected: %v", diags)
 	}
 }
@@ -1060,10 +1078,11 @@ func output_subject_isolation(t *testing.T) {
 			"\tdefer func() { Token_Invariants(first, \"first\") }()\n" +
 			"\treturn 0, 0\n}\n"})
 	diags := check_source(pf)
-	if !diagnosed(diags, "Make must call helper for second in the output defer") {
+	if !diagnosed(diags, "The function Make does not call a helper for the output "+
+		"second. Call Token_Invariants(second, ...) in the output defer.") {
 		t.Fatalf("first output call satisfied the second output: %v", diags)
 	}
-	if diagnosed(diags, "helper for first") {
+	if diagnosed(diags, "helper for the output first") {
 		t.Fatalf("the exact first output call was rejected: %v", diags)
 	}
 }
@@ -1083,7 +1102,7 @@ func cross_package_constant_isolation(t *testing.T) {
 			"\tinvariant.Tree(value, namespace).Range_Int(" +
 			"int(value), Value_Min, Value_Max).Ensure()\n}\n"})
 	diags := check_sources([]source.Parsed_File{foreign, local})
-	if !diagnosed(diags, "arguments must be package-level constants") {
+	if !diagnosed(diags, "an argument that is not a package-level constant") {
 		t.Fatalf("foreign same-spelled constants satisfied the local helper: %v", diags)
 	}
 }
@@ -1114,7 +1133,8 @@ func cross_package_helper_isolation(t *testing.T) {
 			"// Consume is a fixture.\nfunc Consume(value Token) {\n" +
 			"\tforeign.Token_Invariants(foreign.Token(value), \"foreign\")\n}\n"})
 	diags := check_sources([]source.Parsed_File{foreign, local})
-	want := "Consume must call helper for value via Token_Invariants(value, ...)"
+	want := "The function Consume does not call a helper for the input value. " +
+		"Call Token_Invariants(value, ...) at the start of the body."
 	if !diagnosed(diags, want) {
 		t.Fatalf("foreign same-named helper satisfied the local subject: %v", diags)
 	}

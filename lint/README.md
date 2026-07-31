@@ -219,7 +219,7 @@ to use a `<lib>_default` directory instead of a bare `default/`.
 
 ## Resolving diagnostics
 
-### `impure stdlib import` / `impure stdlib call`
+### `The stdlib import … is impure` / `The stdlib call … is impure`
 
 The file is in a library-tier package and touches impure stdlib state. Example:
 
@@ -257,7 +257,7 @@ Three fixes:
    the linter to permit the `var Default` binding, add the sub-package's directory
    to lint.json's `instrumentation_packages`.
 
-### `default package must declare 'package <X>'`
+### `The default package declares "package <X>", not "package <Y>"`
 
 A package in a directory named `default` did not declare its parent library's
 package clause. The composition-tier package re-exports its library and must
@@ -278,7 +278,7 @@ reason beyond ergonomics: `snap.Edit`'s source-line rewriter searches for the
 literal `snap.Edit(` in the file; declaring `package snap` keeps that string
 correct so the snapshot update doesn't silently fail.
 
-### `binary module forbids package … outside of internal/`
+### `Move … -> …/internal/…`
 
 ```
 mybinary/
@@ -300,7 +300,9 @@ mybinary/
 If `helpers` is meant to be imported by *other* modules, it doesn't belong in a
 binary at all — promote it to `shared/helpers/`.
 
-### `binary module … declares no func Main in internal/` / `… declares multiple func Main`
+### `The binary component … declares no func Main in internal/`
+
+Also: `… declares more than one func Main in internal/`.
 
 Every binary module exposes its entry point as a single free `func Main` living
 directly in its top-level `internal/` package. `package main`'s `main()` is a
@@ -326,7 +328,9 @@ one. The shared library is exempt from the *requirement* — it is imported, not
 run — but it *may* still expose a `func Main` of its own to represent an
 embeddable entry point a host can call; the rule never flags it either way.
 
-### `shared library forbids internal/ directories` / `shared library forbids package main`
+### `A shared library permits no internal/ directory`
+
+Also: `The shared library … permits no package main`.
 
 ```
 shared/
@@ -341,7 +345,7 @@ Fix for `internal/`: rename it (e.g. to `snap_internal/` if it's a
 composition-tier helper), or promote the contents to a normal package. Fix for
 `package main`: move the entry point to its own binary module.
 
-### `package … exceeds library tier`
+### `The package … is below the library tier`
 
 A package may have at most one non-main package above it. The count starts at the
 module root for a shared library, and at the top-level `internal/` for a binary —

@@ -58,7 +58,8 @@ func main() {
 func main_resolve_root(request string) (root string, scope_prefix string) {
 	absolute_request, err := filepath.Abs(request)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lint: cannot resolve %q: %v\n", request, err)
+		fmt.Fprintf(os.Stderr,
+			"lint: The linter cannot resolve %q: %v\n", request, err)
 		os.Exit(2)
 	}
 	current := absolute_request
@@ -81,15 +82,16 @@ func main_resolve_root(request string) (root string, scope_prefix string) {
 	}
 	if anchor == "" {
 		fmt.Fprintf(os.Stderr,
-			"lint: no go.mod found above %q; this linter expects "+
-				"the monorepo's single root module\n",
+			"lint: There is no go.mod above %q. "+
+				"The linter expects the single root module of the monorepo.\n",
 			request,
 		)
 		os.Exit(2)
 	}
 	relative, err := filepath.Rel(anchor, absolute_request)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lint: cannot compute relative path: %v\n", err)
+		fmt.Fprintf(os.Stderr,
+			"lint: The linter cannot compute the relative path: %v\n", err)
 		os.Exit(2)
 	}
 	if relative == "." {
@@ -155,7 +157,9 @@ func main_git_ignored(root string) (ignored map[string]bool, ok bool) {
 	command.Dir = root
 	stdout, err := command.Output()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lint: git ignore-scan failed: %v; full tree\n", err)
+		fmt.Fprintf(os.Stderr,
+			"lint: The git ignore-scan failed: %v. The linter reads the "+
+				"full tree.\n", err)
 		return nil, false
 	}
 	return lint.Parse_Ignored_Set(stdout), true

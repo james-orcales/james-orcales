@@ -17,7 +17,7 @@ func Test_Commits_Subject_Size(t *testing.T) {
 	input := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
 		{Hash: "abc", Subject: "feat: " + strings.Repeat("x", 200)},
 	}}
-	if !flagged(input, "commit subject is") {
+	if !flagged(input, "The commit subject has") {
 		t.Fatal("an over-long subject must be flagged")
 	}
 }
@@ -28,7 +28,7 @@ func Test_Commits_Conventional_Subjects(t *testing.T) {
 	input := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
 		{Hash: "abc", Subject: "did some stuff"},
 	}}
-	if !flagged(input, "non-conventional commit subject") {
+	if !flagged(input, "is not conventional") {
 		t.Fatal("a non-conventional subject must be flagged")
 	}
 }
@@ -39,7 +39,7 @@ func Test_Commits_Fixup_Commits(t *testing.T) {
 	input := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
 		{Hash: "abc", Subject: "fixup! feat: thing"},
 	}}
-	if !flagged(input, "fixup commit on branch") {
+	if !flagged(input, "is a fixup commit") {
 		t.Fatal("a fixup commit must be flagged")
 	}
 }
@@ -50,7 +50,7 @@ func Test_Commits_Merge_Commits(t *testing.T) {
 	input := vcs.Check_Input{Merge_Commits: []vcs.Commit{
 		{Hash: "abc", Subject: "Merge branch 'feature' into main"},
 	}}
-	if !flagged(input, "merge commit on branch") {
+	if !flagged(input, "is a merge commit") {
 		t.Fatal("a merge commit must be flagged")
 	}
 }
@@ -62,13 +62,13 @@ func Test_Commits_Synthetic_Merge_Exempt(t *testing.T) {
 	pull := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
 		{Hash: "abc", Subject: "Merge pull request #42 from owner/branch"},
 	}}
-	if flagged(pull, "non-conventional") {
+	if flagged(pull, "is not conventional") {
 		t.Fatal("a GitHub pull-request merge subject must be exempt")
 	}
 	octopus := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
 		{Hash: "abc", Subject: "Merge abc1234 into def5678"},
 	}}
-	if flagged(octopus, "non-conventional") {
+	if flagged(octopus, "is not conventional") {
 		t.Fatal("a GitHub sha-into-sha merge subject must be exempt")
 	}
 }
@@ -100,7 +100,7 @@ func Test_Commits_Malformed_Revert_Subjects(t *testing.T) {
 		input := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{{
 			Hash: "abc", Subject: subject,
 		}}}
-		if !flagged(input, "non-conventional commit subject") {
+		if !flagged(input, "is not conventional") {
 			t.Fatalf("malformed revert subject must be rejected: %q", subject)
 		}
 	}

@@ -21,7 +21,7 @@ func Test_Coverage_Presence(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = nil
-	if !flagged(target, "missing SPECIFICATION.md") {
+	if !flagged(target, "has no SPECIFICATION.md") {
 		t.Fatal("an in-scope package missing the spec must be flagged")
 	}
 }
@@ -33,7 +33,7 @@ func Test_Coverage_Exemptions(t *testing.T) {
 	target := baseline(t)
 	target.Markdown = nil
 	target.Impure = true
-	if flagged(target, "missing SPECIFICATION.md") {
+	if flagged(target, "has no SPECIFICATION.md") {
 		t.Fatal("an impure package must be exempt from the mandate")
 	}
 }
@@ -43,7 +43,7 @@ func Test_Format_Preamble(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = append([]byte("Stray prose.\n"), target.Markdown...)
-	if !flagged(target, "content precedes the first heading") {
+	if !flagged(target, "is before the first heading") {
 		t.Fatal("preamble content must be flagged")
 	}
 }
@@ -66,7 +66,7 @@ func Test_Format_Heading_Blank_Lines(t *testing.T) {
 	target := baseline(t)
 	target.Markdown = append(target.Markdown,
 		[]byte("# No Fence\n\nIt lacks a leading blank.\n")...)
-	if !flagged(target, "not preceded by a blank line") {
+	if !flagged(target, "no blank line before the heading") {
 		t.Fatal("an unfenced heading must be flagged")
 	}
 }
@@ -77,7 +77,7 @@ func Test_Format_Heading_Level(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = append(target.Markdown, []byte("\n## Mid Level\n\nLevel two.\n")...)
-	if !flagged(target, "not level # or ###") {
+	if !flagged(target, "heading level is not") {
 		t.Fatal("a level-two heading must be flagged")
 	}
 }
@@ -88,7 +88,7 @@ func Test_Format_Heading_Characters(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = append(target.Markdown, []byte("\n# Bad-Word\n\nIt has a hyphen.\n")...)
-	if !flagged(target, "must use only letters and digits") {
+	if !flagged(target, "Write only letters and digits") {
 		t.Fatal("a punctuated heading must be flagged")
 	}
 }
@@ -100,7 +100,7 @@ func Test_Format_Heading_Uniqueness(t *testing.T) {
 	target := baseline(t)
 	target.Markdown = append(target.Markdown,
 		[]byte("\n# Twin\n\nFirst.\n\n# Twin\n\nSecond.\n")...)
-	if !flagged(target, "is duplicated") {
+	if !flagged(target, "is not unique") {
 		t.Fatal("a duplicate heading must be flagged")
 	}
 }
@@ -120,7 +120,7 @@ func Test_Format_Section_Size(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = append(target.Markdown, []byte("\n# Long\n\none\ntwo\nthree\nfour\n")...)
-	if !flagged(target, "exceeds three lines") {
+	if !flagged(target, "has more than three lines") {
 		t.Fatal("an oversized section must be flagged")
 	}
 }
@@ -131,7 +131,7 @@ func Test_Format_Section_Contiguity(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = append(target.Markdown, []byte("\n# Gapped\n\none\n\ntwo\n")...)
-	if !flagged(target, "blank line between body lines") {
+	if !flagged(target, "blank line between two body lines") {
 		t.Fatal("a gapped section body must be flagged")
 	}
 }
@@ -141,7 +141,7 @@ func Test_Tests_Presence(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Test = nil
-	if !flagged(target, "missing specification_test.go") {
+	if !flagged(target, "has no specification_test.go") {
 		t.Fatal("a package missing the test file must be flagged")
 	}
 }
@@ -173,7 +173,7 @@ func Test_Tests_Order(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = append([]byte("\n# Alpha\n\nIt jumps the order.\n"), target.Markdown...)
-	if !flagged(target, "in order") {
+	if !flagged(target, "in leaf order") {
 		t.Fatal("an out-of-order leaf test must be flagged")
 	}
 }

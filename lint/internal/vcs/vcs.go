@@ -80,9 +80,11 @@ func merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 			diags = append(diags, diagnostic.Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
-				Want:     fmt.Sprintf("subject ≤ %d chars", SUBJECT_CHARS_MAX),
+				Want: fmt.Sprintf(
+					"Write a maximum of %d characters in the commit subject.",
+					SUBJECT_CHARS_MAX),
 				Message: fmt.Sprintf(
-					"commit subject is %d chars (max %d)",
+					"The commit subject has %d characters. The maximum is %d.",
 					len(c.Subject), SUBJECT_CHARS_MAX),
 			})
 			// The subtree-merge check assumes a bounded subject; the length entry
@@ -95,9 +97,11 @@ func merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 		diags = append(diags, diagnostic.Diagnostic{
 			Position: token.Position{Filename: filename},
 			Name:     "no-merge-commits",
-			Want: "rebase onto main: git fetch origin main && " +
-				"git rebase origin/main",
-			Message: "merge commit on branch: " + c.Subject,
+			Want: "Rebase onto main. Run \"git fetch origin main && " +
+				"git rebase origin/main\".",
+			Message: fmt.Sprintf(
+				"The commit %q is a merge commit. Rebase the branch onto main.",
+				c.Subject),
 		})
 	}
 	return diags
@@ -122,9 +126,11 @@ func non_merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 			diags = append(diags, diagnostic.Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
-				Want:     fmt.Sprintf("subject ≤ %d chars", SUBJECT_CHARS_MAX),
+				Want: fmt.Sprintf(
+					"Write a maximum of %d characters in the commit subject.",
+					SUBJECT_CHARS_MAX),
 				Message: fmt.Sprintf(
-					"commit subject is %d chars (max %d)",
+					"The commit subject has %d characters. The maximum is %d.",
 					len(c.Subject), SUBJECT_CHARS_MAX),
 			})
 			continue
@@ -134,8 +140,12 @@ func non_merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 			diags = append(diags, diagnostic.Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "no-fixup-commits",
-				Want:     "autosquash: git rebase -i --autosquash origin/main",
-				Message:  "fixup commit on branch: " + c.Subject,
+				Want: "Squash the fixup commit. Run " +
+					"\"git rebase -i --autosquash origin/main\".",
+				Message: fmt.Sprintf(
+					"The commit %q is a fixup commit. "+
+						"Squash it into its target commit.",
+					c.Subject),
 			})
 			// A fixup subject is not conventional by construction (e.g.
 			// `fixup! feat: foo`); skip the conventional check so it does not
@@ -147,9 +157,13 @@ func non_merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 			diags = append(diags, diagnostic.Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "conventional-commits",
-				Want: "subject like: type(scope)?!?: description " +
-					"(https://www.conventionalcommits.org/)",
-				Message: "non-conventional commit subject: " + c.Subject,
+				Want: "Write a conventional commit subject in the form " +
+					"\"type(scope)!: description\". " +
+					"See https://www.conventionalcommits.org/.",
+				Message: fmt.Sprintf(
+					"The commit subject %q is not conventional. "+
+						"Write \"type(scope): description\".",
+					c.Subject),
 			})
 		}
 	}

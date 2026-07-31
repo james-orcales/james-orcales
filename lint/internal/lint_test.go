@@ -185,7 +185,7 @@ func f() {
 	}
 }`,
 			},
-			Want_Diag: "shadows outer scope variable",
+			Want_Diag: "shadows a variable in an outer scope",
 		},
 
 		{
@@ -199,7 +199,7 @@ func f() {
 	}
 }`,
 			},
-			Want_Diag: "shadows outer scope variable",
+			Want_Diag: "shadows a variable in an outer scope",
 		},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -248,7 +248,7 @@ func f() {
 	}
 }`,
 			},
-			Want_Diag: "shadows outer scope variable",
+			Want_Diag: "shadows a variable in an outer scope",
 		},
 
 		{
@@ -312,7 +312,7 @@ func f() {
 	}
 }`,
 			},
-			Want_Diag: "shadows outer scope variable",
+			Want_Diag: "shadows a variable in an outer scope",
 		},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -397,30 +397,30 @@ func Test_No_Discard(t *testing.T) {
 			Files: map[string]string{"test.go": `package main
 func f() {
 	_ = g()
-}`}, Want_Diag: "discard"},
+}`}, Want_Diag: "blank identifier hides the value"},
 
 		{Name: "two discards short decl",
 			Files: map[string]string{"test.go": `package main
 func f() {
 	_, _ := g()
-}`}, Want_Diag: "discard"},
+}`}, Want_Diag: "blank identifier hides the value"},
 
 		{Name: "three discards assign",
 			Files: map[string]string{"test.go": `package main
 func f() {
 	_, _, _ = g()
-}`}, Want_Diag: "discard"},
+}`}, Want_Diag: "blank identifier hides the value"},
 
 		{Name: "var blank no type",
 			Files: map[string]string{"test.go": `package main
-var _ = g()`}, Want_Diag: "discard"},
+var _ = g()`}, Want_Diag: "blank identifier hides the value"},
 
 		{Name: "mixed lhs short decl allowed",
 			Files: map[string]string{"test.go": `package main
 func f() {
 	_, x := g()
 	_ = x
-}`}, Want_Diag: "discard"},
+}`}, Want_Diag: "blank identifier hides the value"},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
@@ -516,7 +516,7 @@ type Foo struct {
 }
 `,
 			},
-			Want_Diag: "rename bar",
+			Want_Diag: "Rename bar",
 		},
 		{
 			Name: "uppercase named field allowed",
@@ -541,7 +541,7 @@ type Foo struct {
 }
 `,
 			},
-			Want_Diag: "rename bar",
+			Want_Diag: "Rename bar",
 		},
 		{
 			Name: "embedded uppercase type allowed",
@@ -585,7 +585,7 @@ type Foo struct {
 
 // Test_Exported_Type_Exposes_Private verifies that exported struct field
 // types and exported aliases that resolve to an unexported named identifier
-// are flagged (with pointer unwrapping and same-file recursion).
+// are flagged (with pointer unwrapping and same-file recurse).
 func Test_Exported_Type_Exposes_Private(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -597,38 +597,38 @@ func Test_Exported_Type_Exposes_Private(t *testing.T) {
 			Files: map[string]string{"test.go": `package main
 type Foo struct { F bar }
 type bar int
-`}, Want_Diag: "public type Foo contains private type bar"},
+`}, Want_Diag: "The public type Foo contains the private type bar"},
 		{Name: "pointer to lowercase flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { F *bar }
 type bar int
-`}, Want_Diag: "public type Foo contains private type bar"},
+`}, Want_Diag: "The public type Foo contains the private type bar"},
 		{Name: "double pointer flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { F **bar }
 type bar int
-`}, Want_Diag: "public type Foo contains private type bar"},
+`}, Want_Diag: "The public type Foo contains the private type bar"},
 		{Name: "embedded lowercase flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { bar }
 type bar struct{}
-`}, Want_Diag: "public type Foo contains private type bar"},
+`}, Want_Diag: "The public type Foo contains the private type bar"},
 		{Name: "transitive via same-file exported flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { M Middle }
 type Middle struct { F bar }
 type bar int
-`}, Want_Diag: "public type Foo contains private type bar"},
+`}, Want_Diag: "The public type Foo contains the private type bar"},
 		{Name: "alias to unexported flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo = bar
 type bar int
-`}, Want_Diag: "public type Foo contains private type bar"},
+`}, Want_Diag: "The public type Foo contains the private type bar"},
 		{Name: "pointer alias to unexported flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo = *bar
 type bar int
-`}, Want_Diag: "public type Foo contains private type bar"},
+`}, Want_Diag: "The public type Foo contains the private type bar"},
 	}
 	run_diag_table(t, tests)
 }
@@ -691,21 +691,21 @@ type Node struct {
 }
 
 // Test_Exported_Type_Exposes_Private_Allows_Part2 covers the remaining
-// negative cases: mutual recursion, slice element positions (out of scope),
+// negative cases: mutual recurse, slice element positions (out of scope),
 // unexported parents, aliases to exported types, and _test.go exemption.
 func Test_Exported_Type_Exposes_Private_Allows_Part2(t *testing.T) {
 	t.Parallel()
 	// Every case asserts the exposes-private rule stays silent (Forbid). The
 	// cases whose fixture declares an unexported package-level type in non-test
 	// source now also earn the exported-type diagnostic, so they expect a nonzero
-	// exit with "must be exported"; the exported and _test.go cases stay clean.
+	// exit with "is not exported"; the exported and _test.go cases stay clean.
 	run_doctrine_diag_table(t, []struct {
 		Name       string
 		Files      map[string]string
 		Want_Diags []string
 		Forbid     []string
 	}{
-		{Name: "mutual recursion allowed",
+		{Name: "mutual recurse allowed",
 			Files: map[string]string{"test.go": `package main
 type A struct {
 	// B is a fixture.
@@ -723,12 +723,12 @@ type Foo struct {
 	Xs []bar
 }
 type bar int
-`}, Want_Diags: []string{"must be exported"}, Forbid: []string{"contains private"}},
+`}, Want_Diags: []string{"is not exported"}, Forbid: []string{"contains private"}},
 		{Name: "unexported parent allowed",
 			Files: map[string]string{"test.go": `package main
 type foo struct { X bar }
 type bar int
-`}, Want_Diags: []string{"must be exported"}, Forbid: []string{"contains private"}},
+`}, Want_Diags: []string{"is not exported"}, Forbid: []string{"contains private"}},
 		{Name: "alias to exported allowed",
 			Files: map[string]string{"test.go": `package main
 type Foo = Bar
@@ -761,13 +761,13 @@ func Test_No_Naked_Return(t *testing.T) {
 		{Name: "func with named return and bare return flagged",
 			Files: map[string]string{"test.go": `package main
 func f() (x int) { return }
-`}, Want_Diag: "naked return is banned"},
+`}, Want_Diag: "Do not use a naked return"},
 
 		{Name: "method with named return and bare return flagged",
 			Files: map[string]string{"test.go": `package main
 type S struct{}
 func (s *S) f() (x int) { return }
-`}, Want_Diag: "naked return is banned"},
+`}, Want_Diag: "Do not use a naked return"},
 
 		{Name: "closure with named return and bare return flagged",
 			Files: map[string]string{"test.go": `package main
@@ -776,12 +776,12 @@ func g() (out int) {
 	out = cb()
 	return out
 }
-`}, Want_Diag: "naked return is banned"},
+`}, Want_Diag: "Do not use a naked return"},
 
 		{Name: "blank-named return with bare return flagged",
 			Files: map[string]string{"test.go": `package main
 func f() (_ int) { return }
-`}, Want_Diag: "naked return is banned"},
+`}, Want_Diag: "Do not use a naked return"},
 
 		{Name: "multiple bare returns each flagged",
 			Files: map[string]string{"test.go": `package main
@@ -791,7 +791,7 @@ func f(c bool) (x int) {
 	}
 	return
 }
-`}, Want_Diag: "naked return is banned"},
+`}, Want_Diag: "Do not use a naked return"},
 
 		{Name: "void early-exit allowed",
 			Files: map[string]string{"test.go": `package main
@@ -866,7 +866,7 @@ func Test_No_Iota(t *testing.T) {
 const X = iota
 `,
 			},
-			Want_Diag: "iota is banned",
+			Want_Diag: "Do not use iota",
 		},
 		{
 			Name: "const literal allowed",
@@ -933,7 +933,7 @@ func Test_Exported_Type(t *testing.T) {
 			}
 			found := false
 			for _, d := range diags {
-				if strings.Contains(d.Message, "must be exported") {
+				if strings.Contains(d.Message, "is not exported") {
 					found = true
 				}
 			}
@@ -969,7 +969,7 @@ func f() (n int) {
 }
 `,
 			},
-			Want_Diag: "fallthrough is banned",
+			Want_Diag: "Do not use fallthrough",
 		},
 		{
 			Name: "switch without fallthrough allowed",
@@ -1009,7 +1009,7 @@ func Test_No_Blank_Import(t *testing.T) {
 import _ "strings"
 `,
 			},
-			Want_Diag: "blank import is banned",
+			Want_Diag: "Do not use a blank import",
 		},
 		{
 			Name: "named import allowed",
@@ -1047,7 +1047,7 @@ const (
 )
 `,
 			},
-			Want_Diag: "grouped declaration banned",
+			Want_Diag: "Do not use a grouped declaration",
 		},
 		{
 			Name: "grouped const single-spec flagged",
@@ -1059,7 +1059,7 @@ const (
 )
 `,
 			},
-			Want_Diag: "grouped declaration banned",
+			Want_Diag: "Do not use a grouped declaration",
 		},
 		{
 			Name: "grouped var multi-spec flagged",
@@ -1072,7 +1072,7 @@ var (
 )
 `,
 			},
-			Want_Diag: "grouped declaration banned",
+			Want_Diag: "Do not use a grouped declaration",
 		},
 		{
 			Name: "grouped type multi-spec flagged",
@@ -1085,7 +1085,7 @@ type (
 )
 `,
 			},
-			Want_Diag: "grouped declaration banned",
+			Want_Diag: "Do not use a grouped declaration",
 		},
 	}
 	run_diag_table(t, tests)
@@ -1425,7 +1425,7 @@ type Foo struct {
 func make_v() (result Foo) { return Foo{1, 2} }
 `,
 			},
-			Want_Diag: "keyed",
+			Want_Diag: "keyed fields",
 		},
 	}
 	run_diag_table(t, tests)
@@ -1607,7 +1607,7 @@ func Test_No_Dot_Import(t *testing.T) {
 import . "fmt"
 `,
 			},
-			Want_Diag: "dot import",
+			Want_Diag: "Do not use a dot import",
 		},
 		{
 			Name: "named import allowed",
@@ -1640,7 +1640,7 @@ func Test_No_Function_Init(t *testing.T) {
 func init() { return }
 `,
 			},
-			Want_Diag: "func init",
+			Want_Diag: "Do not use func init",
 		},
 		{
 			Name: "exported Init allowed",
@@ -1709,9 +1709,9 @@ func test_lint_json(t *testing.T, shared_component string, allowlist []string) (
 	return data
 }
 
-// Test_lint_json_recursion_exempt_input pairs the shared component with the one
-// opt_out_recursion_ban entry a recursion fixture needs.
-type test_lint_json_recursion_exempt_input struct {
+// Test_lint_json_recurse_exempt_input pairs the shared component with the one
+// opt_out_recursion_ban entry a recurse fixture needs.
+type test_lint_json_recurse_exempt_input struct {
 	// Shared_Component is the workspace's shared library directory.
 	Shared_Component string
 	// Exempt is the single opt_out_recursion_ban glob.
@@ -1720,20 +1720,20 @@ type test_lint_json_recursion_exempt_input struct {
 
 // The default lint.json with one opt_out_recursion_ban entry added, for the
 // fixtures that prove an exempt file contributes nothing to the call graph.
-func test_lint_json_recursion_exempt(
-	t *testing.T, input *test_lint_json_recursion_exempt_input,
+func test_lint_json_recurse_exempt(
+	t *testing.T, input *test_lint_json_recurse_exempt_input,
 ) (data []byte) {
 	t.Helper()
 	var configuration lint.Configuration
 	if err := json.Unmarshal(
 		test_lint_json(t, input.Shared_Component, nil), &configuration,
 	); err != nil {
-		t.Fatalf("test_lint_json_recursion_exempt: %v", err)
+		t.Fatalf("test_lint_json_recurse_exempt: %v", err)
 	}
 	configuration.Recursion_Exempt = []string{input.Exempt}
 	data, err := json.Marshal(configuration)
 	if err != nil {
-		t.Fatalf("test_lint_json_recursion_exempt: %v", err)
+		t.Fatalf("test_lint_json_recurse_exempt: %v", err)
 	}
 	return data
 }
@@ -2327,7 +2327,7 @@ func F(n int) (result int) {
 }
 `,
 			},
-			Want_Diag: "i (used as index) → rename to i_index",
+			Want_Diag: "The name i has the role index. Rename i -> i_index.",
 		},
 
 		{
@@ -2409,7 +2409,7 @@ func F(n int) (result []int) {
 }
 `,
 			},
-			Want_Diag: "n (used as count) → rename to n_count",
+			Want_Diag: "The name n has the role count. Rename n -> n_count.",
 		},
 
 		{
@@ -2423,7 +2423,7 @@ func F(n int) (result []byte) {
 }
 `,
 			},
-			Want_Diag: "n (used as size) → rename to n_size",
+			Want_Diag: "The name n has the role size. Rename n -> n_size.",
 		},
 
 		{
@@ -2437,7 +2437,7 @@ func F(n int) (result map[string]int) {
 }
 `,
 			},
-			Want_Diag: "n (used as count) → rename to n_count",
+			Want_Diag: "The name n has the role count. Rename n -> n_count.",
 		},
 	})
 }
@@ -2496,7 +2496,7 @@ func F(s string) (result int) {
 }
 `,
 			},
-			Want_Diag: "pos (used as offset) → rename to pos_offset",
+			Want_Diag: "The name pos has the role offset. Rename pos -> pos_offset.",
 		},
 		{
 			Name: "binary.Size result requires _size",
@@ -2511,7 +2511,7 @@ func F(v int32) (result int) {
 }
 `,
 			},
-			Want_Diag: "n (used as size) → rename to n_size",
+			Want_Diag: "The name n has the role size. Rename n -> n_size.",
 		},
 		{
 			Name: "method .Len() requires _size",
@@ -2526,7 +2526,7 @@ func F(b *bytes.Buffer) (result int) {
 }
 `,
 			},
-			Want_Diag: "n (used as size) → rename to n_size",
+			Want_Diag: "The name n has the role size. Rename n -> n_size.",
 		},
 	}
 	run_diag_table(t, tests)
@@ -2554,7 +2554,7 @@ func F(xs []int) (result int) {
 }
 `,
 			},
-			Want_Diag: "n (used as count or size) → rename to n_count",
+			Want_Diag: "The name n has the role count or size. Rename n -> n_count.",
 		},
 
 		{
@@ -2568,7 +2568,7 @@ func F(xs []int) (result int) {
 }
 `,
 			},
-			Want_Diag: "n (used as count or size) → rename to n_count",
+			Want_Diag: "The name n has the role count or size. Rename n -> n_count.",
 		},
 	})
 }
@@ -2660,7 +2660,7 @@ func F(n int) (result int) {
 }
 `,
 			},
-			Want_Diag: "i (used as index) → rename to i_index",
+			Want_Diag: "The name i has the role index. Rename i -> i_index.",
 		},
 		{
 			Name: "Ada_Case preserved in suggestion",
@@ -2675,7 +2675,7 @@ func F(N int) (result int) {
 }
 `,
 			},
-			Want_Diag: "I (used as index) → rename to I_Index",
+			Want_Diag: "The name I has the role index. Rename I -> I_Index.",
 		},
 	}
 	run_diag_table(t, tests)
@@ -2931,7 +2931,7 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `rename cfg_path -> config_path`,
+			Want_Diag: `Rename cfg_path -> config_path`,
 		},
 
 		{
@@ -2945,7 +2945,7 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `rename user_res -> ` +
+			Want_Diag: `Rename user_res -> ` +
 				`[user_response, user_result, user_resource, user_reserve]`,
 		},
 
@@ -2959,7 +2959,7 @@ type Pool_Mgr struct {
 }
 `,
 			},
-			Want_Diag: `rename Pool_Mgr -> Pool_Manager`,
+			Want_Diag: `Rename Pool_Mgr -> Pool_Manager`,
 		},
 
 		{
@@ -2972,7 +2972,7 @@ type Form struct {
 }
 `,
 			},
-			Want_Diag: `rename Submit_Btn -> Submit_Button`,
+			Want_Diag: `Rename Submit_Btn -> Submit_Button`,
 		},
 	})
 }
@@ -2994,7 +2994,7 @@ func Test_Naming_Abbreviations_Flagged_Part2(t *testing.T) {
 func Run_Cb() (x int) { return 0 }
 `,
 			},
-			Want_Diag: `rename Run_Cb -> Run_Callback`,
+			Want_Diag: `Rename Run_Cb -> Run_Callback`,
 		},
 
 		{
@@ -3008,7 +3008,7 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `rename file_src -> file_source`,
+			Want_Diag: `Rename file_src -> file_source`,
 		},
 	})
 }
@@ -3120,9 +3120,9 @@ func Compute(value int) (result int) {
 
 // Test_Names_Vocabulary pins the merged vocabulary check: one table drives both
 // the abbreviation expansions and the no-candidate bans, with one uniform
-// diagnostic shape. A single candidate renders `rename x -> y`; multiple render
-// `rename x -> [a, b, c]`; a banned word with no candidate renders
-// `identifier "x" contains banned substring "y"`.
+// diagnostic shape. A single candidate renders `Rename x -> y`; multiple render
+// `Rename x -> [a, b, c]`; a banned word with no candidate renders
+// `The identifier "x" contains the banned substring "y"`.
 func Test_Names_Vocabulary(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
@@ -3142,7 +3142,7 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `rename cfg_path -> config_path`,
+			Want_Diag: `Rename cfg_path -> config_path`,
 		},
 
 		{
@@ -3156,7 +3156,7 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `rename user_res -> ` +
+			Want_Diag: `Rename user_res -> ` +
 				`[user_response, user_result, user_resource, user_reserve]`,
 		},
 
@@ -3171,7 +3171,7 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `identifier "length" contains banned substring "length"`,
+			Want_Diag: `The identifier "length" contains the banned substring "length"`,
 		},
 
 		{
@@ -3182,7 +3182,7 @@ func F() (x int) {
 func parse_util() { return }
 `,
 			},
-			Want_Diag: `identifier "parse_util" contains banned substring "util"`,
+			Want_Diag: `The identifier "parse_util" contains the banned substring "util"`,
 		},
 	})
 }
@@ -3202,7 +3202,7 @@ func Test_Names_Vocabulary_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": "package cfg\n",
 			},
-			Want_Diag: `rename cfg -> config`,
+			Want_Diag: `Rename cfg -> config`,
 		},
 
 		{
@@ -3210,7 +3210,7 @@ func Test_Names_Vocabulary_Part2(t *testing.T) {
 			Files: map[string]string{
 				"cfg.go": "package main\n",
 			},
-			Want_Diag: `rename cfg -> config`,
+			Want_Diag: `Rename cfg -> config`,
 		},
 	})
 }
@@ -3239,7 +3239,7 @@ func F() (x int) {
 	stdout := &bytes.Buffer{}
 	lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	output := stdout.String()
-	if !strings.Contains(output, "rename wibble_path -> wobble_path") {
+	if !strings.Contains(output, "Rename wibble_path -> wobble_path") {
 		t.Fatalf("the word configured in lint.json must be flagged; got: %s", output)
 	}
 	if strings.Contains(output, "config") {
@@ -3267,7 +3267,7 @@ func Test_Naming_Participles(t *testing.T) {
 func Preparing() (x int) { return 0 }
 `,
 			},
-			Want_Diag: `present participle "preparing"`,
+			Want_Diag: `The name "preparing"`,
 		},
 		{
 			Name: "type name processing flagged",
@@ -3279,7 +3279,7 @@ type Data_Processing struct {
 }
 `,
 			},
-			Want_Diag: `present participle "processing"`,
+			Want_Diag: `The name "processing"`,
 		},
 		{
 			Name: "var name rendering flagged",
@@ -3292,7 +3292,7 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `present participle "rendering"`,
+			Want_Diag: `The name "rendering"`,
 		},
 	}
 	run_diag_table(t, tests)
@@ -3407,7 +3407,7 @@ import "testing"
 func Test_Foo(t *testing.T) { t.Helper() }
 `,
 			},
-			Want_Diag: "test Test_Foo is missing a doc comment",
+			Want_Diag: "test Test_Foo has no doc comment",
 		},
 		{
 			Name: "test with doc allowed",
@@ -3611,7 +3611,8 @@ func Test_File_Size(t *testing.T) {
 		Stdout: stdout,
 		Stderr: stderr,
 	})
-	if !bytes.Contains(stdout.Bytes(), []byte("file is 10001 lines (max 10000)")) {
+	if !bytes.Contains(stdout.Bytes(),
+		[]byte("The file has 10001 lines. The maximum is 10000.")) {
 		t.Errorf("a file over the cap must be flagged; got: %s", stdout.String())
 	}
 	if bytes.Contains(stdout.Bytes(), []byte("source files")) {
@@ -3637,7 +3638,7 @@ func Test_File_Size(t *testing.T) {
 // directory but not the name space, so its names stay out.
 func Test_Variable_Shadow_Package_Wide(t *testing.T) {
 	t.Parallel()
-	const SHADOW = `variable "helper" shadows outer scope variable`
+	const SHADOW = `The variable "helper" shadows a variable in an outer scope`
 	sibling := fixture_package("foo") +
 		"\nfunc helper() (value int) {\n\treturn 0\n}\n"
 	body := "func f() (value int) {\n\thelper := 1\n\treturn helper\n}\n"
@@ -3675,7 +3676,7 @@ func Test_Array_Capacity(t *testing.T) {
 
 type Buffer [16]byte
 `},
-			Want_Diag: "array capacity 16 is a literal",
+			Want_Diag: "The array capacity 16 is a literal",
 		},
 		{
 			Name: "literal nested in a result type",
@@ -3793,7 +3794,7 @@ func Test_Snap_Backtick(t *testing.T) {
 				"test.go": "package main\n\nimport \"x/snap\"\n\n" +
 					"func f() { snap.Init(\"foo\") }\n",
 			},
-			Want_Diag: "snap.Init must use a backticked",
+			Want_Diag: "The call snap.Init has no raw string literal",
 		},
 		{
 			Name: "snap.Edit with double-quoted string flagged",
@@ -3801,13 +3802,13 @@ func Test_Snap_Backtick(t *testing.T) {
 				"test.go": "package main\n\nimport \"x/snap\"\n\n" +
 					"func f() { snap.Edit(\"foo\") }\n",
 			},
-			Want_Diag: "snap.Edit must use a backticked",
+			Want_Diag: "The call snap.Edit has no raw string literal",
 		},
 		{
 			Name: "snap.Init with backticked string allowed",
 			Files: map[string]string{
 				"test.go": "package main\n\nimport \"x/snap\"\n\n" +
-					"func f() { snap.Init(`foo`) }\n",
+					"func f() { snap.Edit(`foo`) }\n",
 			},
 			Want_Diag: "",
 		},
@@ -3931,7 +3932,7 @@ func Test_Input_Struct(t *testing.T) {
 func F(a, b int) (result int) { return a + b }
 `,
 			},
-			Want_Diag: "convert to F(*F_Input) (result int)",
+			Want_Diag: "Convert it to F(*F_Input) (result int)",
 		},
 
 		{
@@ -3979,7 +3980,7 @@ func Test_Input_Struct_Part2(t *testing.T) {
 func F(a int, b int) (result int) { return a + b }
 `,
 			},
-			Want_Diag: "convert to F(*F_Input) (result int)",
+			Want_Diag: "Convert it to F(*F_Input) (result int)",
 		},
 
 		{
@@ -3990,7 +3991,7 @@ func F(a int, b int) (result int) { return a + b }
 func F(a, b int, extra ...string) (result int) { return a + b + len(extra) }
 `,
 			},
-			Want_Diag: "convert to F(*F_Input, extra ...string) (result int)",
+			Want_Diag: "Convert it to F(*F_Input, extra ...string) (result int)",
 		},
 	})
 }
@@ -4031,8 +4032,8 @@ func f(input *f_input) (result int) {
 }
 `,
 			},
-			Want_Diags: []string{"must be exported"},
-			Forbid:     []string{"directly above"},
+			Want_Diags: []string{"is not exported"},
+			Forbid:     []string{"directly above the func"},
 		},
 	})
 }
@@ -4164,7 +4165,7 @@ type F_Input struct {
 }
 `,
 			},
-			Want_Diag: "declare F_Input directly above F",
+			Want_Diag: "Declare F_Input directly above the func",
 		},
 	})
 }
@@ -4209,7 +4210,7 @@ func F(input *F_Input) (result int) {
 }
 `,
 			},
-			Want_Diag: "declare F_Input directly above F",
+			Want_Diag: "Declare F_Input directly above the func",
 		},
 	})
 }
@@ -4334,7 +4335,7 @@ type Iface interface {
 }
 `,
 			},
-			Want_Diag: "interface declarations are banned (except for generics)",
+			Want_Diag: "Do not declare an interface",
 		},
 
 		{
@@ -4355,7 +4356,7 @@ func main() (result int) {
 func F(x interface{ M() }) (result int) { return 0 }
 `,
 			},
-			Want_Diag: "interface declarations are banned (except for generics)",
+			Want_Diag: "Do not declare an interface",
 		},
 	})
 }
@@ -4381,7 +4382,7 @@ func main() (result int) {
 }
 `,
 			},
-			Want_Diag: "interface declarations are banned (except for generics)",
+			Want_Diag: "Do not declare an interface",
 		},
 	})
 }
@@ -4707,7 +4708,7 @@ func (t T) Write(p []byte) (err error) {
 }
 `,
 			},
-			Want_Diag: "does not satisfy any stdlib interface",
+			Want_Diag: "satisfies no stdlib interface",
 		},
 	})
 }
@@ -4748,7 +4749,7 @@ func (t T) Foo() (result int) {
 }
 `,
 			},
-			Want_Diag: "does not satisfy any stdlib interface",
+			Want_Diag: "satisfies no stdlib interface",
 		},
 	})
 }
@@ -4783,7 +4784,7 @@ func f() (result int) {
 	})
 }
 
-// Test_No_Recursion verifies that direct and mutual recursion cycles are
+// Test_No_Recursion verifies that direct and mutual recurse cycles are
 // detected via the per-file Ident-based call graph.
 func Test_No_Recursion(t *testing.T) {
 	t.Parallel()
@@ -4793,29 +4794,29 @@ func Test_No_Recursion(t *testing.T) {
 		Want_Diag string
 	}{
 
-		{Name: "direct recursion",
+		{Name: "direct recurse",
 			Files: map[string]string{"test.go": `package main
 func f() {
 	f()
-}`}, Want_Diag: "recursion"},
+}`}, Want_Diag: "recurse"},
 
-		{Name: "recursion inside nested block",
+		{Name: "recurse inside nested block",
 			Files: map[string]string{"test.go": `package main
 func f(x int) (result int) {
 	if x > 0 {
 		return f(x - 1)
 	}
 	return 0
-}`}, Want_Diag: "recursion"},
+}`}, Want_Diag: "recurse"},
 
-		{Name: "no recursion: calls other function",
+		{Name: "no recurse: calls other function",
 			Files: map[string]string{"test.go": `package main
 func f_inner() { return }
 func f() {
 	f_inner()
 }`}, Want_Diag: ""},
 
-		{Name: "no recursion: no calls",
+		{Name: "no recurse: no calls",
 			Files: map[string]string{"test.go": `package main
 func f() { return }`}, Want_Diag: ""},
 
@@ -4823,7 +4824,7 @@ func f() { return }`}, Want_Diag: ""},
 			Files: map[string]string{"test.go": `package main
 func entry() { a(); b() }
 func a() { b() }
-func b() { a() }`}, Want_Diag: "cycle"},
+func b() { a() }`}, Want_Diag: "recurse in a cycle"},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
@@ -4866,7 +4867,7 @@ func Test_No_Recursion_Part2(t *testing.T) {
 func entry() { a(); b(); c() }
 func a() { b() }
 func b() { c() }
-func c() { a() }`}, Want_Diag: "cycle"},
+func c() { a() }`}, Want_Diag: "recurse in a cycle"},
 
 		{Name: "non-cycle chain",
 			Files: map[string]string{"test.go": `package main
@@ -4879,7 +4880,7 @@ func a_b_c() { return }`}, Want_Diag: ""},
 func entry() { a(); b(); inner() }
 func a() { b(); inner() }
 func b() { a() }
-func inner() { return }`}, Want_Diag: "cycle"},
+func inner() { return }`}, Want_Diag: "recurse in a cycle"},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
@@ -4930,7 +4931,7 @@ func Test_Unbounded_Read(t *testing.T) {
 				"test.go": "package main\nimport \"io\"\n" +
 					"func f() { io.ReadAll(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'io.ReadAll'",
+			Want_Diag: "API \"io.ReadAll\" is unbounded",
 		},
 		{
 			Name: "io.Copy flagged",
@@ -4938,7 +4939,7 @@ func Test_Unbounded_Read(t *testing.T) {
 				"test.go": "package main\nimport \"io\"\n" +
 					"func f() { io.Copy(nil, nil) }\n",
 			},
-			Want_Diag: "unbounded API 'io.Copy'",
+			Want_Diag: "API \"io.Copy\" is unbounded",
 		},
 		{
 			Name: "io.CopyBuffer flagged",
@@ -4946,7 +4947,7 @@ func Test_Unbounded_Read(t *testing.T) {
 				"test.go": "package main\nimport \"io\"\n" +
 					"func f() { io.CopyBuffer(nil, nil, nil) }\n",
 			},
-			Want_Diag: "unbounded API 'io.CopyBuffer'",
+			Want_Diag: "API \"io.CopyBuffer\" is unbounded",
 		},
 		{
 			Name: "os.ReadFile flagged",
@@ -4954,7 +4955,7 @@ func Test_Unbounded_Read(t *testing.T) {
 				"test.go": "package main\nimport \"os\"\n" +
 					"func f() { os.ReadFile(\"path\") }\n",
 			},
-			Want_Diag: "unbounded API 'os.ReadFile'",
+			Want_Diag: "API \"os.ReadFile\" is unbounded",
 		},
 		{
 			Name: "os.ReadDir flagged",
@@ -4962,7 +4963,7 @@ func Test_Unbounded_Read(t *testing.T) {
 				"test.go": "package main\nimport \"os\"\n" +
 					"func f() { os.ReadDir(\"path\") }\n",
 			},
-			Want_Diag: "unbounded API 'os.ReadDir'",
+			Want_Diag: "API \"os.ReadDir\" is unbounded",
 		},
 		{
 			Name: "bufio.NewScanner flagged",
@@ -4970,7 +4971,7 @@ func Test_Unbounded_Read(t *testing.T) {
 				"test.go": "package main\nimport \"bufio\"\n" +
 					"func f() { bufio.NewScanner(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'bufio.NewScanner'",
+			Want_Diag: "API \"bufio.NewScanner\" is unbounded",
 		},
 		{
 			Name: "bufio.NewReader flagged",
@@ -4978,7 +4979,7 @@ func Test_Unbounded_Read(t *testing.T) {
 				"test.go": "package main\nimport \"bufio\"\n" +
 					"func f() { bufio.NewReader(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'bufio.NewReader'",
+			Want_Diag: "API \"bufio.NewReader\" is unbounded",
 		},
 	}
 	run_diag_table(t, tests)
@@ -5032,7 +5033,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 				"test.go": "package main\nimport \"encoding/json\"\n" +
 					"func f() { json.NewDecoder(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'json.NewDecoder'",
+			Want_Diag: "API \"json.NewDecoder\" is unbounded",
 		},
 		{
 			Name: "xml.NewDecoder flagged",
@@ -5040,7 +5041,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 				"test.go": "package main\nimport \"encoding/xml\"\n" +
 					"func f() { xml.NewDecoder(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'xml.NewDecoder'",
+			Want_Diag: "API \"xml.NewDecoder\" is unbounded",
 		},
 		{
 			Name: "gob.NewDecoder flagged",
@@ -5048,7 +5049,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 				"test.go": "package main\nimport \"encoding/gob\"\n" +
 					"func f() { gob.NewDecoder(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'gob.NewDecoder'",
+			Want_Diag: "API \"gob.NewDecoder\" is unbounded",
 		},
 		{
 			Name: "csv.NewReader flagged",
@@ -5056,7 +5057,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 				"test.go": "package main\nimport \"encoding/csv\"\n" +
 					"func f() { csv.NewReader(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'csv.NewReader'",
+			Want_Diag: "API \"csv.NewReader\" is unbounded",
 		},
 		{
 			Name: "no banned API allowed",
@@ -5086,7 +5087,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 				"test.go": "package main\nimport \"compress/gzip\"\n" +
 					"func f() { gzip.NewReader(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'gzip.NewReader'",
+			Want_Diag: "API \"gzip.NewReader\" is unbounded",
 		},
 
 		{
@@ -5095,7 +5096,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 				"test.go": "package main\nimport \"compress/flate\"\n" +
 					"func f() { flate.NewReader(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'flate.NewReader'",
+			Want_Diag: "API \"flate.NewReader\" is unbounded",
 		},
 
 		{
@@ -5104,7 +5105,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 				"test.go": "package main\nimport \"compress/zlib\"\n" +
 					"func f() { zlib.NewReader(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'zlib.NewReader'",
+			Want_Diag: "API \"zlib.NewReader\" is unbounded",
 		},
 
 		{
@@ -5113,7 +5114,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 				"test.go": "package main\nimport \"compress/bzip2\"\n" +
 					"func f() { bzip2.NewReader(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'bzip2.NewReader'",
+			Want_Diag: "API \"bzip2.NewReader\" is unbounded",
 		},
 
 		{
@@ -5122,7 +5123,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 				"test.go": "package main\nimport \"compress/lzw\"\n" +
 					"func f() { lzw.NewReader(nil, 0, 0) }\n",
 			},
-			Want_Diag: "unbounded API 'lzw.NewReader'",
+			Want_Diag: "API \"lzw.NewReader\" is unbounded",
 		},
 
 		{
@@ -5131,7 +5132,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 				"test.go": "package main\nimport \"archive/zip\"\n" +
 					"func f() { zip.NewReader(nil, 0) }\n",
 			},
-			Want_Diag: "unbounded API 'zip.NewReader'",
+			Want_Diag: "API \"zip.NewReader\" is unbounded",
 		},
 	})
 }
@@ -5151,7 +5152,7 @@ func Test_Unbounded_Decompression_Part2(t *testing.T) {
 				"test.go": "package main\nimport \"archive/zip\"\n" +
 					"func f() { zip.OpenReader(\"path\") }\n",
 			},
-			Want_Diag: "unbounded API 'zip.OpenReader'",
+			Want_Diag: "API \"zip.OpenReader\" is unbounded",
 		},
 
 		{
@@ -5160,7 +5161,7 @@ func Test_Unbounded_Decompression_Part2(t *testing.T) {
 				"test.go": "package main\nimport \"archive/tar\"\n" +
 					"func f() { tar.NewReader(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'tar.NewReader'",
+			Want_Diag: "API \"tar.NewReader\" is unbounded",
 		},
 
 		{
@@ -5190,7 +5191,7 @@ func Test_Unbounded_Allocation(t *testing.T) {
 				"test.go": "package main\nimport \"bytes\"\n" +
 					"func f() { bytes.NewBuffer(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'bytes.NewBuffer'",
+			Want_Diag: "API \"bytes.NewBuffer\" is unbounded",
 		},
 		{
 			Name: "bytes.NewBufferString flagged",
@@ -5198,7 +5199,7 @@ func Test_Unbounded_Allocation(t *testing.T) {
 				"test.go": "package main\nimport \"bytes\"\n" +
 					"func f() { bytes.NewBufferString(\"\") }\n",
 			},
-			Want_Diag: "unbounded API 'bytes.NewBufferString'",
+			Want_Diag: "API \"bytes.NewBufferString\" is unbounded",
 		},
 		{
 			Name: "no banned API allowed",
@@ -5229,7 +5230,7 @@ func Test_Unbounded_Http(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { http.Get(\"\") }\n",
 			},
-			Want_Diag: "unbounded API 'http.Get'",
+			Want_Diag: "API \"http.Get\" is unbounded",
 		},
 
 		{
@@ -5238,7 +5239,7 @@ func Test_Unbounded_Http(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { http.Post(\"\", \"\", nil) }\n",
 			},
-			Want_Diag: "unbounded API 'http.Post'",
+			Want_Diag: "API \"http.Post\" is unbounded",
 		},
 
 		{
@@ -5247,7 +5248,7 @@ func Test_Unbounded_Http(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { http.PostForm(\"\", nil) }\n",
 			},
-			Want_Diag: "unbounded API 'http.PostForm'",
+			Want_Diag: "API \"http.PostForm\" is unbounded",
 		},
 
 		{
@@ -5256,7 +5257,7 @@ func Test_Unbounded_Http(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { http.Head(\"\") }\n",
 			},
-			Want_Diag: "unbounded API 'http.Head'",
+			Want_Diag: "API \"http.Head\" is unbounded",
 		},
 
 		{
@@ -5265,7 +5266,7 @@ func Test_Unbounded_Http(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { http.ListenAndServe(\"\", nil) }\n",
 			},
-			Want_Diag: "unbounded API 'http.ListenAndServe'",
+			Want_Diag: "API \"http.ListenAndServe\" is unbounded",
 		},
 
 		{
@@ -5275,7 +5276,7 @@ func Test_Unbounded_Http(t *testing.T) {
 					"func f() { " +
 					"http.ListenAndServeTLS(\"\", \"\", \"\", nil) }\n",
 			},
-			Want_Diag: "unbounded API 'http.ListenAndServeTLS'",
+			Want_Diag: "API \"http.ListenAndServeTLS\" is unbounded",
 		},
 	})
 }
@@ -5295,7 +5296,7 @@ func Test_Unbounded_Http_Part2(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { if http.DefaultClient != nil { return } }\n",
 			},
-			Want_Diag: "unbounded API 'http.DefaultClient'",
+			Want_Diag: "API \"http.DefaultClient\" is unbounded",
 		},
 
 		{
@@ -5304,7 +5305,7 @@ func Test_Unbounded_Http_Part2(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { if http.DefaultServeMux != nil { return } }\n",
 			},
-			Want_Diag: "unbounded API 'http.DefaultServeMux'",
+			Want_Diag: "API \"http.DefaultServeMux\" is unbounded",
 		},
 
 		{
@@ -5313,7 +5314,7 @@ func Test_Unbounded_Http_Part2(t *testing.T) {
 				"test.go": "package main\nimport \"net/http\"\n" +
 					"func f() { if http.DefaultTransport != nil { return } }\n",
 			},
-			Want_Diag: "unbounded API 'http.DefaultTransport'",
+			Want_Diag: "API \"http.DefaultTransport\" is unbounded",
 		},
 
 		{
@@ -5343,7 +5344,7 @@ func Test_Deprecated_Ioutil(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { ioutil.ReadAll(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.ReadAll'",
+			Want_Diag: "API \"ioutil.ReadAll\" is unbounded",
 		},
 
 		{
@@ -5352,7 +5353,7 @@ func Test_Deprecated_Ioutil(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { ioutil.ReadFile(\"\") }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.ReadFile'",
+			Want_Diag: "API \"ioutil.ReadFile\" is unbounded",
 		},
 
 		{
@@ -5361,7 +5362,7 @@ func Test_Deprecated_Ioutil(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { ioutil.ReadDir(\"\") }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.ReadDir'",
+			Want_Diag: "API \"ioutil.ReadDir\" is unbounded",
 		},
 
 		{
@@ -5370,7 +5371,7 @@ func Test_Deprecated_Ioutil(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { ioutil.WriteFile(\"\", nil, 0) }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.WriteFile'",
+			Want_Diag: "API \"ioutil.WriteFile\" is unbounded",
 		},
 
 		{
@@ -5379,7 +5380,7 @@ func Test_Deprecated_Ioutil(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { ioutil.TempFile(\"\", \"\") }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.TempFile'",
+			Want_Diag: "API \"ioutil.TempFile\" is unbounded",
 		},
 
 		{
@@ -5388,7 +5389,7 @@ func Test_Deprecated_Ioutil(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { ioutil.TempDir(\"\", \"\") }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.TempDir'",
+			Want_Diag: "API \"ioutil.TempDir\" is unbounded",
 		},
 	})
 }
@@ -5408,7 +5409,7 @@ func Test_Deprecated_Ioutil_Part2(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { ioutil.NopCloser(nil) }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.NopCloser'",
+			Want_Diag: "API \"ioutil.NopCloser\" is unbounded",
 		},
 
 		{
@@ -5417,7 +5418,7 @@ func Test_Deprecated_Ioutil_Part2(t *testing.T) {
 				"test.go": "package main\nimport \"io/ioutil\"\n" +
 					"func f() { if ioutil.Discard != nil { return } }\n",
 			},
-			Want_Diag: "unbounded API 'ioutil.Discard'",
+			Want_Diag: "API \"ioutil.Discard\" is unbounded",
 		},
 
 		{
@@ -5443,12 +5444,12 @@ func Test_Main_First(t *testing.T) {
 		{Name: "main not first",
 			Files: map[string]string{"test.go": `package main
 func other() { return }
-func main() { return }`}, Want_Diag: "should be declared first"},
+func main() { return }`}, Want_Diag: "first in the file"},
 
 		{Name: "Main not first",
 			Files: map[string]string{"test.go": `package implementation
 func helper() { return }
-func Main() { return }`}, Want_Diag: "should be declared first"},
+func Main() { return }`}, Want_Diag: "first in the file"},
 
 		{Name: "main is first",
 			Files: map[string]string{"test.go": `package main

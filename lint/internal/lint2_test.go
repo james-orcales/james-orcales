@@ -34,7 +34,7 @@ import "testing"
 // Test_Foo is a fixture.
 func Test_Foo(t *testing.T) { return }
 func TestMain(m *testing.M) { return }
-`}, Want_Diag: "func TestMain should be declared first"},
+`}, Want_Diag: "Declare func TestMain first"},
 
 		{Name: "TestMain is first",
 			Files: map[string]string{"foo_test.go": `package foo_test
@@ -101,7 +101,7 @@ func Test_Line_Character_Count_Tabs(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("expected line-length diagnostic, got exit 0; output: %s", stdout.String())
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("line is")) {
+	if !bytes.Contains(stdout.Bytes(), []byte("The line has")) {
 		t.Errorf("expected line-length diagnostic, got: %s", stdout.String())
 	}
 }
@@ -143,7 +143,7 @@ func Test_Comments(t *testing.T) {
 			Files: map[string]string{
 				"test.go": "// Usage info (no period)\npackage main\n",
 			},
-			Want_Diag: "should end with",
+			Want_Diag: "does not end with",
 		},
 
 		{
@@ -151,15 +151,15 @@ func Test_Comments(t *testing.T) {
 			Files: map[string]string{
 				"test.go": "// lowercase start.\npackage main\n",
 			},
-			Want_Diag: "should start with capital",
+			Want_Diag: "does not start with a capital letter",
 		},
 
 		{
-			Name: "missing space after slashes",
+			Name: "has no space after slashes",
 			Files: map[string]string{
 				"test.go": "//No space.\npackage main\n",
 			},
-			Want_Diag: "missing space after",
+			Want_Diag: "has no space after",
 		},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -415,7 +415,7 @@ var Default = &S{}
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 	}
 	run_diag_table(t, tests)
@@ -470,7 +470,7 @@ type Snapper struct{}
 var Default = &Snapper{}
 `,
 			Allowlist: nil,
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -531,7 +531,7 @@ func Test_Shared_Component_Configurable(t *testing.T) {
 		"lib/foo/foo.go":                  fixture_package("foo"),
 		"lib/foo/internal/helper/help.go": fixture_package("helper"),
 	}
-	const FORBID = "shared library forbids internal/"
+	const FORBID = "A shared library permits no internal/"
 	as_shared := run_shared_component_output(t, files, "lib")
 	if !strings.Contains(as_shared, FORBID) {
 		t.Fatalf("with lib/ as the shared module, internal/ must be "+
@@ -549,7 +549,7 @@ func Test_Shared_Component_Configurable(t *testing.T) {
 // alone.
 func Test_Keyed_Struct_Init_Cross_Package(t *testing.T) {
 	t.Parallel()
-	const UNKEYED = "literal must use keyed fields"
+	const UNKEYED = "literal has no field keys"
 	alpha := "// Package alpha is a fixture.\npackage alpha\n\n" +
 		"// Widget is a fixture.\ntype Widget struct {\n" +
 		"\t// X is a fixture.\n\tX int\n}\n\n" +
@@ -602,7 +602,7 @@ func Test_No_Recursion_Cross_File(t *testing.T) {
 		"lib/foo/b.go": "package foo\n\n" +
 			"func beta() (value int) {\n\treturn alpha()\n}\n",
 	}, "lib")
-	if !strings.Contains(output, "recursion: cycle") {
+	if !strings.Contains(output, "recurse in a cycle") {
 		t.Fatalf("a cycle across sibling files must be flagged; got: %s", output)
 	}
 }
@@ -616,14 +616,14 @@ func Test_No_Recursion_Exempt_File(t *testing.T) {
 		"lib/foo/a.go": &fstest.MapFile{Data: gofmt_must(t,
 			"// Package foo is a fixture.\npackage foo\n\n"+
 				"func alpha() (value int) {\n\treturn alpha()\n}\n")},
-		"lint.json": &fstest.MapFile{Data: test_lint_json_recursion_exempt(t,
-			&test_lint_json_recursion_exempt_input{
+		"lint.json": &fstest.MapFile{Data: test_lint_json_recurse_exempt(t,
+			&test_lint_json_recurse_exempt_input{
 				Shared_Component: "lib", Exempt: "lib/foo/**"})},
 	}
 	stdout := &bytes.Buffer{}
 	lint_main(t, &lint.Main_Input{
 		Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	if strings.Contains(stdout.String(), "recursion:") {
+	if strings.Contains(stdout.String(), "recurse:") {
 		t.Fatalf("an exempt file must contribute no edges; got: %s", stdout.String())
 	}
 }
@@ -644,7 +644,7 @@ func Test_Exported_Type_Exposes_Private_Cross_File(t *testing.T) {
 			"\t// F is a fixture.\n\tF secret\n}\n\n" +
 			"type secret int\n",
 	}, "lib")
-	if !strings.Contains(output, "public type Widget contains private type secret") {
+	if !strings.Contains(output, "The public type Widget contains the private type secret") {
 		t.Fatalf("the walk must follow a sibling file's struct; got: %s", output)
 	}
 }
@@ -662,7 +662,7 @@ func Test_Keyed_Struct_Init_Unparsed_Package(t *testing.T) {
 		"lib/gamma/SPECIFICATION.md":      SPECIFICATION_FIXTURE_MD,
 		"lib/gamma/specification_test.go": fixture_specification_test("gamma"),
 	}, "lib")
-	if strings.Contains(output, "literal must use keyed fields") {
+	if strings.Contains(output, "literal has no field keys") {
 		t.Fatalf("an unparsed package's type is unknowable; got: %s", output)
 	}
 }
@@ -680,8 +680,8 @@ func Test_Binary_Default_Tier(t *testing.T) {
 			"import \"os\"\n\n// Read reads.\nfunc Read() (value string) {\n" +
 			"\treturn os.Getenv(\"X\")\n}\n",
 	}
-	const FORBID = "forbids a default tier"
-	const IMPURE = "impure stdlib import"
+	const FORBID = "permits no default tier"
+	const IMPURE = "The stdlib import"
 	as_shared := run_shared_component_output(t, files, "lib")
 	if strings.Contains(as_shared, FORBID) {
 		t.Fatalf("a shared library keeps its default tier; got: %s", as_shared)
@@ -710,7 +710,7 @@ func Test_Binary_Composition_Tier_Release(t *testing.T) {
 			"import \"os\"\n\n// Read reads.\nfunc Read() (value string) {\n" +
 			"\treturn os.Getenv(\"X\")\n}\n",
 	}
-	const IMPURE = "impure stdlib import"
+	const IMPURE = "The stdlib import"
 	as_shared := run_shared_component_output(t, files, "lib")
 	if strings.Contains(as_shared, IMPURE) {
 		t.Fatalf("the composition tier is an impure home; got: %s", as_shared)
@@ -762,7 +762,7 @@ var x_count int
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 
 		{
@@ -773,7 +773,7 @@ var x_count = 5
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 
 		{
@@ -785,7 +785,7 @@ var x_thing = S{}
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 
 		{
@@ -797,7 +797,7 @@ var t_start = time.Now()
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 
 		{
@@ -808,7 +808,7 @@ var a_count, b_count = 1, 2
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 	})
 }
@@ -832,7 +832,7 @@ var bad_v = 5
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 
 		{
@@ -856,7 +856,7 @@ var x_list = []int{1, 2, 3}
 func main() { return }
 `,
 			},
-			Want_Diag: "package-level var is banned",
+			Want_Diag: "Do not declare a package-level var",
 		},
 	})
 }
@@ -1148,15 +1148,15 @@ func snapshot_specification(MARKDOWN string) (files map[string]string) {
 // single spec diagnostic fires; a new leaf would also lack a test.
 func Test_Snapshot_Specification(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 content precedes the first heading`), Files: snapshot_specification("Stray prose.\n" + SNAPSHOT_SPECIFICATION_MARKDOWN)},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 heading "Sole Rule" is not preceded by a blank line`), Files: snapshot_specification("# Sole Rule\n\nThe sole rule.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 section "Sole Rule" has no body line`), Files: snapshot_specification("\n# Sole Rule\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:7: pkg/SPECIFICATION.md:7 section "Sole Rule" exceeds three lines`), Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 The content is before the first heading. Start the file with a heading.`), Files: snapshot_specification("Stray prose.\n" + SNAPSHOT_SPECIFICATION_MARKDOWN)},
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 There is no blank line before the heading "Sole Rule". Write a blank line.`), Files: snapshot_specification("# Sole Rule\n\nThe sole rule.\n")},
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 The section "Sole Rule" has no body line. Write a body line.`), Files: snapshot_specification("\n# Sole Rule\n")},
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:7: pkg/SPECIFICATION.md:7 The section "Sole Rule" has more than three lines. Write a maximum of three lines.`), Files: snapshot_specification(
 			"\n# Sole Rule\n\none\ntwo\nthree\nfour\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 section "Sole Rule" has a blank line between body lines`), Files: snapshot_specification("\n# Sole Rule\n\none\n\ntwo\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 uses a heading that is not level # or ###`), Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 The section "Sole Rule" has a blank line between two body lines. Remove the blank line.`), Files: snapshot_specification("\n# Sole Rule\n\none\n\ntwo\n")},
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 The heading level is not "#" or "###". Write a "#" heading or a "###" heading.`), Files: snapshot_specification(
 			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n## Mid Level\n\nLevel two.\n")},
-		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 needs Test_Phantom for leaf "Phantom" (in order, at top)`), Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 The file needs Test_Phantom for the leaf "Phantom". Declare the tests in leaf order at the top of the file.`), Files: snapshot_specification(
 			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n# Phantom\n\nIt has no test.\n")},
 	})
 }
@@ -1165,15 +1165,15 @@ func Test_Snapshot_Specification(t *testing.T) {
 // spec checks. Each drops the companion noise it cannot avoid.
 func Test_Snapshot_Specification_Coverage(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md: package "pkg" is missing SPECIFICATION.md`), Drop: "specification_test.go", Files: map[string]string{
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md: The package "pkg" has no SPECIFICATION.md. Add SPECIFICATION.md.`), Drop: "specification_test.go", Files: map[string]string{
 			"go.mod":         DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\npackage fixture\n"}},
-		{Snapshot: snap.Init(`pkg/specification_test.go: package "pkg" is missing specification_test.go`), Drop: "needs Test_", Files: map[string]string{
+		{Snapshot: snap.Init(`pkg/specification_test.go: The package "pkg" has no specification_test.go. Add specification_test.go.`), Drop: "needs Test_", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
 				"package fixture\n",
 			"pkg/SPECIFICATION.md": SNAPSHOT_SPECIFICATION_MARKDOWN}},
-		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:1 needs Test_Sole_Rule for leaf "Sole_Rule" (in order, at top)`), Files: map[string]string{
+		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:1 The file needs Test_Sole_Rule for the leaf "Sole_Rule". Declare the tests in leaf order at the top of the file.`), Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
 				"package fixture\n",
@@ -1185,10 +1185,10 @@ import "testing"
 // Test_Wrong checks the wrong thing.
 func Test_Wrong(t *testing.T) { t.Parallel() }
 `}},
-		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 needs Test_Extra_Child for leaf "Extra_Child" (in order, at top)`), Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 The file needs Test_Extra_Child for the leaf "Extra_Child". Declare the tests in leaf order at the top of the file.`), Files: snapshot_specification(
 			SNAPSHOT_SPECIFICATION_MARKDOWN +
 				"\n# Extra\n\n### Child\n\nA child leaf.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 heading "Sole-Rule" must use only letters and digits`), Drop: "needs Test_", Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 The heading "Sole-Rule" has a character that is not a letter or a digit. Write only letters and digits.`), Drop: "needs Test_", Files: snapshot_specification(
 			"\n# Sole-Rule\n\nThe rule.\n")},
 	})
 }
@@ -1197,10 +1197,10 @@ func Test_Wrong(t *testing.T) { t.Parallel() }
 // checks: a heading not followed by a blank line, a duplicate, and an orphan ###.
 func Test_Snapshot_Specification_Headings(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 heading "Sole Rule" is not followed by a blank line`), Files: snapshot_specification("\n# Sole Rule\nThe sole rule.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 heading "Sole Rule" is duplicated`), Drop: "needs Test_", Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 There is no blank line after the heading "Sole Rule". Write a blank line.`), Files: snapshot_specification("\n# Sole Rule\nThe sole rule.\n")},
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 The heading "Sole Rule" is not unique. Write a different heading.`), Drop: "needs Test_", Files: snapshot_specification(
 			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n# Sole Rule\n\nAgain.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 ### "Orphan" has no parent #`), Drop: "needs Test_", Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 The "###" heading "Orphan" has no parent "#" heading. Put the heading below a "#" heading.`), Drop: "needs Test_", Files: snapshot_specification(
 			"\n### Orphan\n\nNo parent.\n" + SNAPSHOT_SPECIFICATION_MARKDOWN)},
 	})
 }
@@ -1208,19 +1208,19 @@ func Test_Snapshot_Specification_Headings(t *testing.T) {
 // Test_Snapshot_Bans_Imports pins the import-construct bans.
 func Test_Snapshot_Bans_Imports(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:4:8: blank import is banned`),
+		{Snapshot: snap.Init(`a.go:4:8: Do not use a blank import.`),
 			Files: snapshot_package("import _ \"strings\"\n")},
-		{Snapshot: snap.Init(`a.go:4:8: dot import is banned`), Files: snapshot_package("import . \"strings\"\n")},
+		{Snapshot: snap.Init(`a.go:4:8: Do not use a dot import.`), Files: snapshot_package("import . \"strings\"\n")},
 	})
 }
 
 // Test_Snapshot_Bans_Declarations pins the declaration-construct bans.
 func Test_Snapshot_Bans_Declarations(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:11: iota is banned`),
+		{Snapshot: snap.Init(`a.go:5:11: Do not use iota.`),
 			Files: snapshot_package("// X is a fixture.\nconst X = iota\n")},
-		{Snapshot: snap.Init(`a.go:4:1: grouped declaration banned; split into one per line`), Files: snapshot_package("var (\n\ta = 1\n\tb = 2\n)\n")},
-		{Snapshot: snap.Init(`a.go:5:1: func F has an empty body`),
+		{Snapshot: snap.Init(`a.go:4:1: Do not use a grouped declaration. Write one declaration on each line.`), Files: snapshot_package("var (\n\ta = 1\n\tb = 2\n)\n")},
+		{Snapshot: snap.Init(`a.go:5:1: The func F has an empty body. Write a body or remove the func.`),
 			Files: snapshot_package("// F does.\nfunc F() {}\n")},
 	})
 }
@@ -1228,14 +1228,14 @@ func Test_Snapshot_Bans_Declarations(t *testing.T) {
 // Test_Snapshot_Bans_Control pins the control-flow bans.
 func Test_Snapshot_Bans_Control(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:7:2: naked return is banned`),
+		{Snapshot: snap.Init(`a.go:7:2: Do not use a naked return. Write the return values.`),
 			Files: snapshot_package(`// F does.
 func F() (n int) {
 	n = 1
 	return
 }
 `)},
-		{Snapshot: snap.Init(`a.go:6:5: compound if condition (&&) — split into nested ifs`),
+		{Snapshot: snap.Init(`a.go:6:5: The if condition has the compound operator "&&". Write nested if statements.`),
 			Files: snapshot_package(`// F does.
 func F() (n int) {
 	if n > 0 && n < 5 {
@@ -1244,7 +1244,7 @@ func F() (n int) {
 	return n
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:3: fallthrough is banned`),
+		{Snapshot: snap.Init(`a.go:8:3: Do not use fallthrough.`),
 			Files: snapshot_package(`// F does.
 func F() (n int) {
 	switch n {
@@ -1262,7 +1262,7 @@ func F() (n int) {
 // Test_Snapshot_Bans_Scope pins the scope-construct bans.
 func Test_Snapshot_Bans_Scope(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:7:3: variable "n" shadows outer scope variable`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:7:3: The variable "n" shadows a variable in an outer scope. Write a different name.`), Files: snapshot_package(`// F does.
 func F(n int) {
 	{
 		n := 0
@@ -1270,7 +1270,7 @@ func F(n int) {
 	}
 }
 `)},
-		{Snapshot: snap.Init(`a.go:7:2: discard: _ = ... hides the value; name it or drop the assignment`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:7:2: The assignment to the blank identifier hides the value. Name the value or remove the assignment.`), Files: snapshot_package(`// F does.
 func F() {
 	x := 1
 	_ = x
@@ -1279,15 +1279,15 @@ func F() {
 	})
 }
 
-// Test_Snapshot_Bans_Recursion pins the recursion bans (tier two).
+// Test_Snapshot_Bans_Recursion pins the recurse bans (tier two).
 func Test_Snapshot_Bans_Recursion(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:6:2: recursion: F calls itself`), Files: snapshot_package(`// F loops.
+		{Snapshot: snap.Init(`a.go:6:2: The function F recurses. Write a loop instead.`), Files: snapshot_package(`// F loops.
 func F() {
 	F()
 }
 `)},
-		{Snapshot: snap.Init(`a.go:11:2: recursion: cycle F → G → F`), Files: snapshot_package(`// F calls G.
+		{Snapshot: snap.Init(`a.go:11:2: The functions recurse in a cycle. Write a loop instead. F → G → F`), Files: snapshot_package(`// F calls G.
 func F() {
 	G()
 }
@@ -1303,10 +1303,10 @@ func G() {
 // Test_Snapshot_Bans_Types pins the type-construct bans.
 func Test_Snapshot_Bans_Types(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:8: interface declarations are banned (except for generics)`), Files: snapshot_package(`// I is a fixture.
+		{Snapshot: snap.Init(`a.go:5:8: Do not declare an interface. A generic constraint is the one exception.`), Files: snapshot_package(`// I is a fixture.
 type I interface{ M() }
 `)},
-		{Snapshot: snap.Init(`a.go:11:12: method Compute does not satisfy any stdlib interface; convert to a free function with the receiver as the first parameter`), Files: snapshot_package(`// T is a fixture.
+		{Snapshot: snap.Init(`a.go:11:12: The method Compute satisfies no stdlib interface. Convert the method to a free function. Write the receiver as the first parameter.`), Files: snapshot_package(`// T is a fixture.
 type T struct {
 	// X is a fixture.
 	X int
@@ -1323,10 +1323,10 @@ func (t T) Compute() (n int) {
 // Test_Snapshot_Bans_Globals pins the package-level bans (init is tier two).
 func Test_Snapshot_Bans_Globals(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:5: package-level var is banned (except for regexp.MustCompile and errors.New)`), Files: snapshot_package(`// X is a fixture.
+		{Snapshot: snap.Init(`a.go:5:5: Do not declare a package-level var. Only regexp.MustCompile and errors.New are exceptions.`), Files: snapshot_package(`// X is a fixture.
 var X = 0
 `)},
-		{Snapshot: snap.Init(`a.go:4:1: func init is banned; expose a func Init() instead`), Files: snapshot_package(`func init() { println(0) }
+		{Snapshot: snap.Init(`a.go:4:1: Do not use func init. Declare a func Init instead.`), Files: snapshot_package(`func init() { println(0) }
 `)},
 	})
 }
@@ -1335,7 +1335,7 @@ var X = 0
 func Test_Snapshot_Bans_Words(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
 		{
-			Snapshot: snap.Init(`a.go:5:7: identifier "Length" contains banned substring "length"`),
+			Snapshot: snap.Init(`a.go:5:7: The identifier "Length" contains the banned substring "length". Write a different name.`),
 			Files: snapshot_package(`// Length is a fixture.
 const Length = 0
 `),
@@ -1349,12 +1349,12 @@ const Length = 0
 // Test_Snapshot_Requirements_Forms pins the required-form checks.
 func Test_Snapshot_Requirements_Forms(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:10: unnamed return type: int`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:5:10: The return type int has no name. Name the return value.`), Files: snapshot_package(`// F does.
 func F() int {
 	return 0
 }
 `)},
-		{Snapshot: snap.Init(`a.go:12:6: T literal must use keyed fields`), Files: snapshot_package(`// T is a fixture.
+		{Snapshot: snap.Init(`a.go:12:6: The T literal has no field keys. Write keyed fields.`), Files: snapshot_package(`// T is a fixture.
 type T struct {
 	// X is a fixture.
 	X int
@@ -1366,7 +1366,7 @@ func F() (t T) {
 	return t
 }
 `)},
-		{Snapshot: snap.Init(`a.go:5:1: convert to F(*F_Input) (n int)`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:5:1: The func has too many parameters. Convert it to F(*F_Input) (n int).`), Files: snapshot_package(`// F does.
 func F(a int, b int) (n int) {
 	return a + b
 }
@@ -1377,18 +1377,18 @@ func F(a int, b int) (n int) {
 // Test_Snapshot_Documentation pins the documentation-requirement checks.
 func Test_Snapshot_Documentation(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:1:9: package "fixture" is missing a doc comment`), Files: map[string]string{
+		{Snapshot: snap.Init(`a.go:1:9: The package "fixture" has no doc comment. Write a doc comment.`), Files: map[string]string{
 			"a.go": "package fixture\n\n// F does.\nfunc F() {\n\tprintln(0)\n}\n"}},
-		{Snapshot: snap.Init(`a.go:4:6: exported func F is missing a doc comment`), Files: snapshot_package(`func F() {
+		{Snapshot: snap.Init(`a.go:4:6: The exported func F has no doc comment. Write a doc comment.`), Files: snapshot_package(`func F() {
 	println(0)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:6:2: field Widget.Count lacks a doc comment`), Files: snapshot_package(`// Widget is a fixture.
+		{Snapshot: snap.Init(`a.go:6:2: The field Widget.Count has no doc comment. Write a doc comment.`), Files: snapshot_package(`// Widget is a fixture.
 type Widget struct {
 	Count int
 }
 `)},
-		{Snapshot: snap.Init(`a_test.go:5:1: test Test_X is missing a doc comment`), Files: map[string]string{
+		{Snapshot: snap.Init(`a_test.go:5:1: The test Test_X has no doc comment. Write a doc comment.`), Files: map[string]string{
 			"a_test.go": "package fixture_test\n\nimport \"testing\"\n\n" +
 				"func Test_X(t *testing.T) {\n\tt.Parallel()\n}\n"}},
 	})
@@ -1397,13 +1397,13 @@ type Widget struct {
 // Test_Snapshot_Names pins the naming-convention checks.
 func Test_Snapshot_Names(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:6: MyName -> My_Name`), Files: snapshot_package(`// MyName is a fixture.
+		{Snapshot: snap.Init(`a.go:5:6: Rename MyName -> My_Name.`), Files: snapshot_package(`// MyName is a fixture.
 func MyName() {
 	println(0)
 }
 `)},
 		{
-			Snapshot: snap.Init(`a.go:5:7: rename Widget_Id -> Widget_Identifier`),
+			Snapshot: snap.Init(`a.go:5:7: Rename Widget_Id -> Widget_Identifier.`),
 			Files: snapshot_package(`// Widget_Id is a fixture.
 const Widget_Id = 0
 `),
@@ -1411,7 +1411,7 @@ const Widget_Id = 0
 			// incidental to the rule this case pins; drop it rather than pin it too.
 			Drop: "Widget_Id -> WIDGET_ID",
 		},
-		{Snapshot: snap.Init(`a.go:5:6: present participle "parsing" → rename to a noun form`), Files: snapshot_package(`// Parsing is a fixture.
+		{Snapshot: snap.Init(`a.go:5:6: The name "parsing" is a present participle. Rename it to a noun form.`), Files: snapshot_package(`// Parsing is a fixture.
 type Parsing struct {
 	// X is a fixture.
 	X int
@@ -1423,13 +1423,13 @@ type Parsing struct {
 // Test_Snapshot_Entry_Point pins the entry-point-first checks.
 func Test_Snapshot_Entry_Point(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:8:1: func main should be declared first in the file`), Files: map[string]string{
+		{Snapshot: snap.Init(`a.go:8:1: Declare func main first in the file.`), Files: map[string]string{
 			"a.go": "package main\n\n// Run does.\nfunc Run() {\n\tprintln(0)\n}\n\n" +
 				"func main() {\n\tRun()\n}\n"}},
-		{Snapshot: snap.Init(`a.go:9:1: func Main should be declared first in the file`), Files: map[string]string{
+		{Snapshot: snap.Init(`a.go:9:1: Declare func Main first in the file.`), Files: map[string]string{
 			"a.go": "package main\n\n// Run does.\nfunc Run() {\n\tprintln(0)\n}\n\n" +
 				"// Main does.\nfunc Main() {\n\tRun()\n}\n"}},
-		{Snapshot: snap.Init(`a_test.go:10:1: func TestMain should be declared first in the file`), Files: map[string]string{
+		{Snapshot: snap.Init(`a_test.go:10:1: Declare func TestMain first in the file.`), Files: map[string]string{
 			"a_test.go": `package fixture_test
 
 import "testing"
@@ -1449,11 +1449,11 @@ func TestMain(m *testing.M) {
 // Test_Snapshot_Requirements_Struct pins the struct-shape requirement checks.
 func Test_Snapshot_Requirements_Struct(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:4:21: rename count -> Count
-a.go:4:6: type widget must be exported; rename to Widget`), Files: snapshot_package(`type widget struct{ count int }
+		{Snapshot: snap.Init(`a.go:4:21: Rename count -> Count.
+a.go:4:6: The type widget is not exported. Rename widget -> Widget.`), Files: snapshot_package(`type widget struct{ count int }
 `)},
-		{Snapshot: snap.Init(`a.go:9:8: public type Widget contains private type hidden
-a.go:4:6: type hidden must be exported; rename to Hidden`), Files: snapshot_package(`type hidden struct{ X int }
+		{Snapshot: snap.Init(`a.go:9:8: The public type Widget contains the private type hidden. Export the private type.
+a.go:4:6: The type hidden is not exported. Rename hidden -> Hidden.`), Files: snapshot_package(`type hidden struct{ X int }
 
 // Widget is a fixture.
 type Widget struct {
@@ -1467,13 +1467,13 @@ type Widget struct {
 // Test_Snapshot_Stream_Files pins the stream-tier file bans.
 func Test_Snapshot_Stream_Files(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`notes.txt:2:1: conflict-markers: resolve the conflict and remove the marker`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`notes.txt:2:1: The file has a conflict marker. Resolve the conflict and remove the marker.`), Verbatim: true, Files: map[string]string{
 			"notes.txt": "ok\n<<<<<<< HEAD\n"}},
-		{Snapshot: snap.Init(`build.sh:1:1: banned-scripts: rewrite "build.sh" as a go script`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`build.sh:1:1: The file "build.sh" is a shell script. Rewrite the file as a go script.`), Verbatim: true, Files: map[string]string{
 			"build.sh": "echo hi\n"}},
-		{Snapshot: snap.Init(`Makefile:1:1: banned-scripts: rewrite "Makefile" as a go script`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`Makefile:1:1: The file "Makefile" is a shell script. Rewrite the file as a go script.`), Verbatim: true, Files: map[string]string{
 			"Makefile": "all:\n\techo hi\n"}},
-		{Snapshot: snap.Init(`backup.tar.xz:1:1: banned-archives: .xz files are banned; use .gz or .zip instead`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`backup.tar.xz:1:1: Do not use a .xz file. Use a .gz file or a .zip file.`), Verbatim: true, Files: map[string]string{
 			"backup.tar.xz": "\xfd7zXZ\x00"}},
 	})
 }
@@ -1481,15 +1481,15 @@ func Test_Snapshot_Stream_Files(t *testing.T) {
 // Test_Snapshot_Stream_Markdown pins the markdown, agent-doc, and path checks.
 func Test_Snapshot_Stream_Markdown(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`notes.md:3:1: trailing-whitespace: markdown line has trailing whitespace`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`notes.md:3:1: The markdown line has trailing whitespace. Remove the trailing whitespace.`), Verbatim: true, Files: map[string]string{
 			"notes.md": "# Title\n\nIt trails.   \n"}},
-		{Snapshot: snap.Init(`notes.md:3:1: markdown-line-length: markdown line is 120 columns; visual limit is 100`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`notes.md:3:1: The markdown line has 120 columns. The visual limit is 100.`), Verbatim: true, Files: map[string]string{
 			"notes.md": "# Wide\n\n" + strings.Repeat("x", 120) + "\n"}},
-		{Snapshot: snap.Init(`SKILL.md:1:1: agent-doc-max-lines: SKILL.md is capped at 100 lines. Prefer procedural scripting over prose.`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`SKILL.md:1:1: The file SKILL.md has 101 lines. The maximum is 100. Write a procedural script instead of prose.`), Verbatim: true, Files: map[string]string{
 			"SKILL.md": strings.Repeat("line\n", 101)}},
-		{Snapshot: snap.Init(`top: agents-claude-pair: AGENTS.md is missing; it must mirror CLAUDE.md byte-for-byte`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`top: There is no AGENTS.md. Add an AGENTS.md that is CLAUDE.md byte-for-byte`), Verbatim: true, Files: map[string]string{
 			"top/CLAUDE.md": "Shared instructions.\n"}},
-		{Snapshot: snap.Init(`bad-dir: rename bad-dir -> bad_dir`), Files: map[string]string{
+		{Snapshot: snap.Init(`bad-dir: Rename bad-dir -> bad_dir.`), Files: map[string]string{
 			"bad-dir/x.txt": "x\n"}},
 	})
 }
@@ -1499,17 +1499,17 @@ func Test_Snapshot_Stream_Markdown(t *testing.T) {
 // the unavoidable missing-SPECIFICATION.md coverage noise it adds.
 func Test_Snapshot_Module_Layout(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`app/feature/feature.go:1:1: move feature -> app/internal/feature`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`app/feature/feature.go:1:1: Move feature -> app/internal/feature.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			"app/feature/feature.go": "// Package feature is a fixture.\n" +
 				"package feature\n"}},
-		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: binary component "github.com/james-orcales/james-orcales/app" places its main package at "cmd/app"; the main package must sit at the component root, no cmd/ directory`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: The binary component "github.com/james-orcales/james-orcales/app" has its main package at "cmd/app". Move the main package to the component root.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			"app/cmd/app/main.go": "package main\n\n" +
 				"func main() {\n\tprintln(0)\n}\n"}},
-		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: shared library forbids internal/ directories; remove "shared/internal"`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: A shared library permits no internal/ directory. Remove "shared/internal".`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/internal/x/x.go": "// Package x is a fixture.\npackage x\n"}},
-		{Snapshot: snap.Init(`shared/main.go:1:1: shared library "github.com/james-orcales/james-orcales/shared" forbids package main; move the entry point to a binary component`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/main.go:1:1: The shared library "github.com/james-orcales/james-orcales/shared" permits no package main. Move the entry point to a binary component.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/main.go": "package main\n\nfunc main() {\n\tprintln(0)\n}\n"}},
 	})
 }
@@ -1518,7 +1518,7 @@ func Test_Snapshot_Module_Layout(t *testing.T) {
 // now governed by the single-module rule, snapshotted in Test_Snapshot_Single_Module.
 func Test_Snapshot_Module_Structure(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/a/b/c/c.go:1:1: package "c" at "a/b/c" exceeds library tier; 2 non-main ancestors: [a/b a]`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/a/b/c/c.go:1:1: The package "c" at "a/b/c" is below the library tier. It has 2 non-main ancestors: [a/b a].`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/a/a.go":     "// Package a is a fixture.\npackage a\n",
 			"shared/a/b/b.go":   "// Package b is a fixture.\npackage b\n",
 			"shared/a/b/c/c.go": "// Package c is a fixture.\npackage c\n"}},
@@ -1529,7 +1529,7 @@ func Test_Snapshot_Module_Structure(t *testing.T) {
 // go.work, and a missing root go.mod are each flagged at the offending file.
 func Test_Snapshot_Single_Module(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/nested/go.mod:1:1: nested go.mod splits the repo into multiple modules; remove "shared/nested/go.mod"`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/nested/go.mod:1:1: A nested go.mod divides the repository into more than one module. Remove "shared/nested/go.mod".`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/nested/go.mod": "module example.com/nested\n",
 			"shared/x.go":          "// Package shared x.\npackage shared\n"}},
 	})
@@ -1538,14 +1538,14 @@ func Test_Snapshot_Single_Module(t *testing.T) {
 // Test_Snapshot_Purity pins the direct impure-stdlib checks.
 func Test_Snapshot_Purity(t *testing.T) {
 	run_snapshot_cases_shared(t, "lib", []snapshot_case{
-		{Snapshot: snap.Init(`lib/library.go:4:8: impure stdlib import "os": see lint/README.md for resolutions`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:4:8: The stdlib import "os" is impure. See lint/README.md for the resolutions.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
 
 import "os"
 `}},
-		{Snapshot: snap.Init(`lib/library.go:8:2: impure stdlib call fmt.Println: see lint/README.md for resolutions`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:8:2: The stdlib call fmt.Println is impure. See lint/README.md for the resolutions.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
@@ -1563,7 +1563,7 @@ func F() {
 // Test_Snapshot_Transitive pins the transitive-purity checks.
 func Test_Snapshot_Transitive(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/lib/library_test.go:7:2: impure transitive call path/filepath.Walk: a pure package calls only pure APIs`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/lib/library_test.go:7:2: The transitive call path/filepath.Walk is impure. A pure package calls only pure APIs.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/lib/library.go": "// Package library x.\npackage library\n",
 			"shared/lib/library_test.go": `package library_test
 
@@ -1574,7 +1574,7 @@ func Test_F() {
 	filepath.Walk(".", nil)
 }
 `}},
-		{Snapshot: snap.Init(`shared/lib/library.go:4:8: impure dependency "github.com/james-orcales/james-orcales/shared/widget/default": a pure package imports only pure packages`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/lib/library.go:4:8: The dependency "github.com/james-orcales/james-orcales/shared/widget/default" is impure. A pure package imports only pure packages.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/lib/library.go": `// Package library x.
 package library
 
@@ -1599,7 +1599,7 @@ func Name() (s string) {
 // Test_Snapshot_Unbounded pins the unbounded-API bans (tier two).
 func Test_Snapshot_Unbounded(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:8:9: unbounded-read: unbounded API 'io.ReadAll'; use io.ReadFull(r, buf) with a bounded buf instead`), Files: snapshot_package(`import "io"
+		{Snapshot: snap.Init(`a.go:8:9: The API "io.ReadAll" is unbounded (unbounded-read). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`import "io"
 
 // F reads.
 func F(r io.Reader) (b []byte) {
@@ -1607,7 +1607,7 @@ func F(r io.Reader) (b []byte) {
 	return b
 }
 `)},
-		{Snapshot: snap.Init(`a.go:11:9: unbounded-decode: unbounded API 'json.NewDecoder'; use json.Unmarshal over a bounded []byte instead`), Files: snapshot_package(`import (
+		{Snapshot: snap.Init(`a.go:11:9: The API "json.NewDecoder" is unbounded (unbounded-decode). Use json.Unmarshal over a bounded []byte instead.`), Files: snapshot_package(`import (
 	"encoding/json"
 	"io"
 )
@@ -1617,7 +1617,7 @@ func F(r io.Reader) (d *json.Decoder) {
 	return json.NewDecoder(r)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:11:9: unbounded-decompression: unbounded API 'gzip.NewReader'; use wrap the decompressed reader in io.LimitReader instead`), Files: snapshot_package(`import (
+		{Snapshot: snap.Init(`a.go:11:9: The API "gzip.NewReader" is unbounded (unbounded-decompression). Use wrap the decompressed reader in io.LimitReader instead.`), Files: snapshot_package(`import (
 	"compress/gzip"
 	"io"
 )
@@ -1627,22 +1627,22 @@ func F(r io.Reader) (z *gzip.Reader, err error) {
 	return gzip.NewReader(r)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:2: unbounded-allocation: unbounded API 'bytes.NewBuffer'; use a fixed []byte with explicit length tracking instead`), Files: snapshot_package(`import "bytes"
+		{Snapshot: snap.Init(`a.go:8:2: The API "bytes.NewBuffer" is unbounded (unbounded-allocation). Use a fixed []byte with explicit length tracking instead.`), Files: snapshot_package(`import "bytes"
 
 // F buffers.
 func F() {
 	bytes.NewBuffer(nil)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:9: unbounded-http: unbounded API 'http.Get'; use (&http.Client{Timeout: N}).Get(...) instead
-a.go:4:8: "net/http" is banned outside io/default; route IO through shared/io`), Drop: "impure stdlib call", Files: snapshot_package(`import "net/http"
+		{Snapshot: snap.Init(`a.go:8:9: The API "http.Get" is unbounded (unbounded-http). Use (&http.Client{Timeout: N}).Get(...) instead.
+a.go:4:8: Only io/default can import "net/http". Route IO through shared/io.`), Drop: "The stdlib call", Files: snapshot_package(`import "net/http"
 
 // F fetches.
 func F(url string) (resp *http.Response, err error) {
 	return http.Get(url)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:11:9: deprecated-ioutil: unbounded API 'ioutil.ReadAll'; use io.ReadFull(r, buf) with a bounded buf instead`), Files: snapshot_package(`import (
+		{Snapshot: snap.Init(`a.go:11:9: The API "ioutil.ReadAll" is unbounded (deprecated-ioutil). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`import (
 	"io"
 	"io/ioutil"
 )
@@ -1657,31 +1657,31 @@ func F(r io.Reader) (b []byte, err error) {
 
 // Test_Snapshot_Commits pins the git-history checks, rendered like Main prints.
 func Test_Snapshot_Commits(t *testing.T) {
-	snap.Expect(t, snap.Init(`<git:abc>: commit subject is 206 chars (max 100)`), render_diags(lint.Git_Input_Check(lint.Git_Input{
+	snap.Expect(t, snap.Init(`<git:abc>: The commit subject has 206 characters. The maximum is 100.`), render_diags(lint.Git_Input_Check(lint.Git_Input{
 		Enabled: true,
 		Non_Merge_Commits: []lint.Git_Commit{
 			{Hash: "abc", Subject: "feat: " + strings.Repeat("x", 200)},
 		},
 	})))
-	snap.Expect(t, snap.Init(`<git:abc>: non-conventional commit subject: did some stuff`), render_diags(lint.Git_Input_Check(lint.Git_Input{
+	snap.Expect(t, snap.Init(`<git:abc>: The commit subject "did some stuff" is not conventional. Write "type(scope): description".`), render_diags(lint.Git_Input_Check(lint.Git_Input{
 		Enabled: true,
 		Non_Merge_Commits: []lint.Git_Commit{
 			{Hash: "abc", Subject: "did some stuff"},
 		},
 	})))
-	snap.Expect(t, snap.Init(`<git:abc>: fixup commit on branch: fixup! feat: thing`), render_diags(lint.Git_Input_Check(lint.Git_Input{
+	snap.Expect(t, snap.Init(`<git:abc>: The commit "fixup! feat: thing" is a fixup commit. Squash it into its target commit.`), render_diags(lint.Git_Input_Check(lint.Git_Input{
 		Enabled: true,
 		Non_Merge_Commits: []lint.Git_Commit{
 			{Hash: "abc", Subject: "fixup! feat: thing"},
 		},
 	})))
-	snap.Expect(t, snap.Init(`<git:abc>: merge commit on branch: Merge branch 'feature' into main`), render_diags(lint.Git_Input_Check(lint.Git_Input{
+	snap.Expect(t, snap.Init(`<git:abc>: The commit "Merge branch 'feature' into main" is a merge commit. Rebase the branch onto main.`), render_diags(lint.Git_Input_Check(lint.Git_Input{
 		Enabled: true,
 		Merge_Commits: []lint.Git_Commit{
 			{Hash: "abc", Subject: "Merge branch 'feature' into main"},
 		},
 	})))
-	snap.Expect(t, snap.Init(`<git>: main ref not found; fetch main or set actions/checkout fetch-depth: 0`), render_diags(lint.Git_Input_Check(lint.Git_Input{
+	snap.Expect(t, snap.Init(`<git>: The linter cannot find the main ref. Fetch main, or set "actions/checkout fetch-depth: 0".`), render_diags(lint.Git_Input_Check(lint.Git_Input{
 		Enabled: true, Main_Reference_Absent: true,
 	})))
 }
@@ -1689,13 +1689,13 @@ func Test_Snapshot_Commits(t *testing.T) {
 // Test_Snapshot_Suffixes pins the quantity/arithmetic/extremum suffix checks.
 func Test_Snapshot_Suffixes(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:6:2: naming convention: total (used as count or size) → rename to total_count`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:6:2: The name total has the role count or size. Rename total -> total_count.`), Files: snapshot_package(`// F does.
 func F(s string) (n int) {
 	total := len(s)
 	return total
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:6: arithmetic: _index + _size is incoherent`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:8:6: The arithmetic _index + _size is not coherent. Use operands with compatible suffixes.`), Files: snapshot_package(`// F does.
 func F() (n int) {
 	a_index := 0
 	b_size := 0
@@ -1703,7 +1703,7 @@ func F() (n int) {
 	return n
 }
 `)},
-		{Snapshot: snap.Init(`a.go:6:2: rename max_count -> count_max`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:6:2: Rename max_count -> count_max.`), Files: snapshot_package(`// F does.
 func F() (n int) {
 	max_count := 1
 	return max_count
@@ -1715,14 +1715,14 @@ func F() (n int) {
 // Test_Snapshot_Forms pins the remaining per-file form checks.
 func Test_Snapshot_Forms(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:4:1: comment: should start with capital letter`), Files: snapshot_package(`// f does something.
+		{Snapshot: snap.Init(`a.go:4:1: The comment does not start with a capital letter. Write a capital letter first.`), Files: snapshot_package(`// f does something.
 func F() {
 	println(0)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:5:1: function is 73 lines (max 70)`), Files: snapshot_package("// F does.\nfunc F() {\n" +
+		{Snapshot: snap.Init(`a.go:5:1: The function has 73 lines. The maximum is 70.`), Files: snapshot_package("// F does.\nfunc F() {\n" +
 			strings.Repeat("\tprintln(0)\n", 71) + "}\n")},
-		{Snapshot: snap.Init(`a.go:1:1: file is not gofmt-clean`), Verbatim: true, Files: map[string]string{
+		{Snapshot: snap.Init(`a.go:1:1: The file is not gofmt-clean. Run gofmt on the file.`), Verbatim: true, Files: map[string]string{
 			"a.go": `// Package fixture is a fixture.
 package fixture
 
@@ -1737,8 +1737,8 @@ func F() (s string) { return strings.TrimSpace("x") }
 // Test_Snapshot_Miscellaneous pins the remaining per-file checks.
 func Test_Snapshot_Miscellaneous(t *testing.T) {
 	run_snapshot_cases_shared(t, "foo", []snapshot_case{
-		{Snapshot: snap.Init(`a.go:10:6: type snapper must be exported; rename to Snapper
-a.go:7:12: snap.Init must use a backticked raw string literal`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:10:6: The type snapper is not exported. Rename snapper -> Snapper.
+a.go:7:12: The call snap.Init has no raw string literal. Write a raw string literal.`), Files: snapshot_package(`// F does.
 func F() {
 	var snap snapper
 	snap.Init("plain")
@@ -1746,9 +1746,9 @@ func F() {
 
 type snapper struct{ X int }
 `)},
-		{Snapshot: snap.Init(`foo/default/wire.go:2:9: default package must declare 'package foo', not 'package wrong'; it shadows the library it re-exports`), Files: map[string]string{
+		{Snapshot: snap.Init(`foo/default/wire.go:2:9: The default package declares "package wrong", not "package foo". The default package shadows the library it re-exports.`), Files: map[string]string{
 			"foo/default/wire.go": "// Package wrong is a fixture.\npackage wrong\n"}},
-		{Snapshot: snap.Init(`a.go:8:2: blank-named sync mutex has no usable Lock receiver; use the noCopy idiom for non-copy semantics or name the field to lock it`), Files: snapshot_package(`import "sync"
+		{Snapshot: snap.Init(`a.go:8:2: A sync mutex with a blank name has no Lock receiver. Use the noCopy idiom for non-copy semantics, or name the field.`), Files: snapshot_package(`import "sync"
 
 // T is a fixture.
 type T struct {
@@ -1757,23 +1757,17 @@ type T struct {
 	X int
 }
 `)},
-		{Snapshot: snap.Init(`a.go:7:8: struct tag key "yaml" is not stdlib; only json, xml, and asn1 are permitted`), Files: snapshot_package("// T is a fixture.\n" +
+		{Snapshot: snap.Init(`a.go:7:8: The struct tag key "yaml" is not a stdlib key. Use only json, xml, and asn1.`), Files: snapshot_package("// T is a fixture.\n" +
 			"type T struct {\n\t// X is a fixture.\n\tX int `yaml:\"x\"`\n}\n")},
 	})
 }
 
-// Test_Snapshot_Backtick_Messages pins the diagnostics whose message text
-// contains a backtick. snap forbids backticks in snapshot values, so these use
-// a plain equality check with a double-quoted expected string instead.
-func Test_Snapshot_Backtick_Messages(t *testing.T) {
-	cases := []struct {
-		Want     string
-		Verbatim bool
-		Drop     string
-		Files    map[string]string
-	}{
-		{Want: "a.go:6:2: bare `for {}` is banned " +
-			"if the loop is intentionally unbounded",
+// Test_Snapshot_Quoted_Messages pins the four diagnostics that once held a
+// backtick in their message text. They now quote with %q, so a snapshot can
+// carry them and the old equality-check special case is gone.
+func Test_Snapshot_Quoted_Messages(t *testing.T) {
+	run_snapshot_cases_shared(t, DOCTRINE_SHARED_COMPONENT_AT_ROOT, []snapshot_case{
+		{Snapshot: snap.Init(`a.go:6:2: Do not use a bare "for {}" loop. For an unbounded loop, write a different form.`),
 			Files: snapshot_package(`// F does.
 func F() {
 	for {
@@ -1781,40 +1775,17 @@ func F() {
 	}
 }
 `)},
-		{Want: "a.go:4:1: comment: missing space after `//`", Verbatim: true,
-			Drop: "gofmt-clean", Files: map[string]string{
+		{Snapshot: snap.Init(`a.go:4:1: The comment has no space after "//". Add a space.`),
+			Verbatim: true, Drop: "gofmt-clean", Files: map[string]string{
 				"a.go": "// Package fixture is a fixture.\npackage fixture\n\n" +
 					"//F does.\nfunc F() {\n\tprintln(0)\n}\n"}},
-		{Want: "a.go:4:1: comment: should end with `.`, `:`, `?`, or `!`",
+		{Snapshot: snap.Init(`a.go:4:1: The comment does not end with ".", ":", "?", or "!". Add one of the four marks.`),
 			Files: snapshot_package("// F does\nfunc F() {\n\tprintln(0)\n}\n")},
-		{Want: ".github/workflows/ci.yml:2:1: github-actions-uses: " +
-			"third-party github action banned; " +
-			"replace `uses:` with an inline `run:` step",
+		{Snapshot: snap.Init(`.github/workflows/ci.yml:2:1: Do not use a third-party github action. Replace the "uses:" line with an inline "run:" step.`),
 			Verbatim: true, Files: map[string]string{
 				".github/workflows/ci.yml": "steps:\n" +
 					"  - uses: actions/checkout@v4\n"}},
-	}
-	for _, entry := range cases {
-		got := run_snapshot(t, entry.Files, DOCTRINE_SHARED_COMPONENT_AT_ROOT)
-		if entry.Verbatim {
-			got = run_snapshot_verbatim(
-				t, entry.Files, DOCTRINE_SHARED_COMPONENT_AT_ROOT)
-		}
-		if entry.Drop != "" {
-			var builder strings.Builder
-			for _, line := range strings.Split(got, "\n") {
-				if strings.Contains(line, entry.Drop) {
-					continue
-				}
-				builder.WriteString(line)
-				builder.WriteByte('\n')
-			}
-			got = strings.TrimRight(builder.String(), "\n")
-		}
-		if got != entry.Want {
-			t.Errorf("want %q, got %q", entry.Want, got)
-		}
-	}
+	})
 }
 
 // Test_Transitive_Purity_Instrumentation_Exemption verifies a pure package may
@@ -1843,7 +1814,7 @@ func Test_Transitive_Purity_Instrumentation_Exemption(t *testing.T) {
 		Data: test_lint_json(t, "fixture", []string{"instr/**"})}
 	stdout := &bytes.Buffer{}
 	code := lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	if bytes.Contains(stdout.Bytes(), []byte("impure dependency")) {
+	if bytes.Contains(stdout.Bytes(), []byte("The dependency")) {
 		t.Fatalf("instrumentation import must be exempt (exit %d): %s",
 			code, stdout.String())
 	}
@@ -1888,7 +1859,7 @@ func Use() {
 	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", nil)}
 	stdout := &bytes.Buffer{}
 	code := lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	for _, banned := range []string{"impure stdlib", "impure transitive"} {
+	for _, banned := range []string{"The stdlib", "impure transitive"} {
 		if bytes.Contains(stdout.Bytes(), []byte(banned)) {
 			t.Fatalf("telemetry stdlib must be exempt (exit %d), found %q: %s",
 				code, banned, stdout.String())
@@ -1934,7 +1905,7 @@ func Test_Module_Discovery_Ignores_Untracked(t *testing.T) {
 			"lint.json":              true,
 		},
 	})
-	if bytes.Contains(stdout.Bytes(), []byte("impure dependency")) {
+	if bytes.Contains(stdout.Bytes(), []byte("The dependency")) {
 		t.Fatalf("an untracked module must not shadow the real one: %s", stdout.String())
 	}
 }
@@ -1946,7 +1917,7 @@ func Test_Stream_Conflict_Markers(t *testing.T) {
 	output := run_stream(t, map[string]string{
 		"notes.txt": "ok line\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> branch\n",
 	})
-	if !strings.Contains(output, "conflict-markers") {
+	if !strings.Contains(output, "conflict marker") {
 		t.Errorf("expected conflict-markers diag, got: %s", output)
 	}
 	if !strings.Contains(output, "notes.txt:2") {
@@ -2007,7 +1978,7 @@ func Test_Stream_Github_Actions_Uses(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			output := run_stream(t, map[string]string{tc.Path: tc.Body})
-			has := strings.Contains(output, "github-actions-uses")
+			has := strings.Contains(output, "third-party github action")
 			want := tc.Should != ""
 			if has != want {
 				t.Errorf("path %q: want github-actions-uses=%v, got: %s",
@@ -2032,7 +2003,7 @@ func Test_Stream_Ignored_Directories(t *testing.T) {
 		".git/build.sh",
 	} {
 		output := run_stream(t, map[string]string{p: "echo hi\n"})
-		if strings.Contains(output, "banned-scripts") {
+		if strings.Contains(output, "as a go script") {
 			t.Errorf("%s is ignored; want no diagnostic, got: %s", p, output)
 		}
 	}
@@ -2041,7 +2012,7 @@ func Test_Stream_Ignored_Directories(t *testing.T) {
 		"pkg/third_party/build.sh",
 	} {
 		output := run_stream(t, map[string]string{p: "echo hi\n"})
-		if !strings.Contains(output, "banned-scripts") {
+		if !strings.Contains(output, "as a go script") {
 			t.Errorf("%s is not ignored; want a diagnostic, got: %s", p, output)
 		}
 	}
@@ -2055,12 +2026,12 @@ func Test_Stream_Agent_Documentation_Lines_Max(t *testing.T) {
 	// The vendor/ tree is on the global ignore list, so the doc must live under
 	// a non-ignored path to be reached.
 	output := run_stream(t, map[string]string{"vendor/skills/foo/SKILL.md": body})
-	if strings.Contains(output, "agent-doc-max-lines") {
+	if strings.Contains(output, "The maximum is") {
 		t.Errorf("ignored-dir SKILL.md should be skipped, got: %s", output)
 	}
 	for _, name := range []string{"SKILL.md", "CLAUDE.md", "AGENTS.md"} {
 		loop_output := run_stream(t, map[string]string{"skills/foo/" + name: body})
-		if !strings.Contains(loop_output, "agent-doc-max-lines") {
+		if !strings.Contains(loop_output, "The maximum is") {
 			t.Errorf("expected agent-doc-max-lines diag for %s, got: %s",
 				name, loop_output)
 		}
@@ -2394,7 +2365,7 @@ func Test_Stream_Markdown_Line_Max(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", 120) + "\n"
 	output := run_stream(t, map[string]string{"docs.md": long})
-	if !strings.Contains(output, "markdown-line-length") {
+	if !strings.Contains(output, "The markdown line has") {
 		t.Errorf("expected markdown-line-length diag, got: %s", output)
 	}
 }
@@ -2405,7 +2376,7 @@ func Test_Stream_Markdown_Code_Fence_Counted(t *testing.T) {
 	t.Parallel()
 	long := "```\n" + strings.Repeat("x", 200) + "\n```\n"
 	output := run_stream(t, map[string]string{"docs.md": long})
-	if !strings.Contains(output, "markdown-line-length") {
+	if !strings.Contains(output, "The markdown line has") {
 		t.Errorf("fenced code should be counted; got: %s", output)
 	}
 }
@@ -2416,7 +2387,7 @@ func Test_Stream_Markdown_Display_Width(t *testing.T) {
 	t.Parallel()
 	wide := strings.Repeat("世", 60) + "\n"
 	output := run_stream(t, map[string]string{"docs.md": wide})
-	if !strings.Contains(output, "markdown-line-length") {
+	if !strings.Contains(output, "The markdown line has") {
 		t.Errorf("expected width diag for wide runes, got: %s", output)
 	}
 }
@@ -2425,7 +2396,7 @@ func Test_Stream_Markdown_Display_Width(t *testing.T) {
 func Test_Stream_Markdown_Trailing_Whitespace(t *testing.T) {
 	t.Parallel()
 	output := run_stream(t, map[string]string{"docs.md": "Trailing here.   \n"})
-	if !strings.Contains(output, "trailing-whitespace") {
+	if !strings.Contains(output, "trailing whitespace") {
 		t.Errorf("expected trailing-whitespace diag, got: %s", output)
 	}
 }
@@ -2436,7 +2407,7 @@ func Test_Stream_Markdown_Trailing_Whitespace_Fence_Exempt(t *testing.T) {
 	t.Parallel()
 	source := "```\ncode trailing   \n```\n"
 	output := run_stream(t, map[string]string{"docs.md": source})
-	if strings.Contains(output, "trailing-whitespace") {
+	if strings.Contains(output, "trailing whitespace") {
 		t.Errorf("fenced code should be exempt; got: %s", output)
 	}
 }
@@ -2445,10 +2416,10 @@ func Test_Stream_Markdown_Trailing_Whitespace_Fence_Exempt(t *testing.T) {
 func Test_Stream_Agents_Claude_Pair_Absence(t *testing.T) {
 	t.Parallel()
 	output := run_stream(t, map[string]string{"CLAUDE.md": "instructions\n"})
-	if !strings.Contains(output, "agents-claude-pair") {
+	if !strings.Contains(output, "AGENTS.md") {
 		t.Errorf("expected agents-claude-pair diag, got: %s", output)
 	}
-	if !strings.Contains(output, "AGENTS.md is missing") {
+	if !strings.Contains(output, "There is no AGENTS.md") {
 		t.Errorf("expected AGENTS.md missing message, got: %s", output)
 	}
 }
@@ -2460,7 +2431,7 @@ func Test_Stream_Agents_Claude_Pair_Drift(t *testing.T) {
 		"AGENTS.md": "version one\n",
 		"CLAUDE.md": "version two\n",
 	})
-	if !strings.Contains(output, "agents-claude-pair") {
+	if !strings.Contains(output, "AGENTS.md") {
 		t.Errorf("expected agents-claude-pair diag, got: %s", output)
 	}
 	if !strings.Contains(output, "differ") {
@@ -2475,7 +2446,7 @@ func Test_Stream_Agents_Claude_Pair_Identical_OK(t *testing.T) {
 		"AGENTS.md": "shared\n",
 		"CLAUDE.md": "shared\n",
 	})
-	if strings.Contains(output, "agents-claude-pair") {
+	if strings.Contains(output, "AGENTS.md") {
 		t.Errorf("byte-identical pair should pass; got: %s", output)
 	}
 }
@@ -2488,10 +2459,10 @@ func Test_Stream_Conflict_Marker_Input_Go_File(t *testing.T) {
 	t.Parallel()
 	bad_go := "package p\n<<<<<<< HEAD\nfunc f() {}\n=======\nfunc g() {}\n>>>>>>> branch\n"
 	output := run_stream(t, map[string]string{"a.go": bad_go})
-	if !strings.Contains(output, "conflict-markers") {
+	if !strings.Contains(output, "conflict marker") {
 		t.Errorf("expected conflict-markers diag, got: %s", output)
 	}
-	if !strings.Contains(output, "parse error") {
+	if !strings.Contains(output, "The parser cannot read the file") {
 		t.Errorf("expected parse error diag, got: %s", output)
 	}
 }
@@ -2631,7 +2602,7 @@ func Test_Git_Conventional_Commits(t *testing.T) {
 		{"breaking change with scope", "refactor(api)!: rename field", false},
 		{"no type prefix", "add widget", true},
 		{"missing colon", "feat add widget", true},
-		{"missing space after colon", "feat:add widget", true},
+		{"has no space after colon", "feat:add widget", true},
 		{"empty description", "feat: ", true},
 		{"capitalized type", "Feat: add widget", true},
 		{"fixup exempt from conventional", "fixup! feat: foo", false},
@@ -2650,7 +2621,7 @@ func Test_Git_Conventional_Commits(t *testing.T) {
 				},
 			})
 			flagged := strings.Contains(output, "conventional-commits") ||
-				strings.Contains(output, "non-conventional commit")
+				strings.Contains(output, "is not conventional")
 			if flagged != tt.Want_Flag {
 				t.Errorf("subject %q: want flagged=%v, got flagged=%v; output: %s",
 					tt.Subject, tt.Want_Flag, flagged, output)
@@ -2683,7 +2654,7 @@ func Test_Git_Commit_Subject_Chars(t *testing.T) {
 					{Hash: "abc1234567def", Subject: tt.Subject},
 				},
 			})
-			flagged := strings.Contains(output, "commit subject is")
+			flagged := strings.Contains(output, "The commit subject has")
 			if flagged != tt.Want_Flag {
 				t.Errorf("len=%d: want flagged=%v, got flagged=%v; output: %s",
 					len(tt.Subject), tt.Want_Flag, flagged, output)
@@ -2720,7 +2691,7 @@ func Test_Git_No_Fixup_Commits(t *testing.T) {
 					{Hash: "deadbeef00cafe", Subject: tt.Subject},
 				},
 			})
-			flagged := strings.Contains(output, "fixup commit on branch")
+			flagged := strings.Contains(output, "is a fixup commit")
 			if flagged != tt.Want_Flag {
 				t.Errorf("subject %q: want flagged=%v, got flagged=%v; output: %s",
 					tt.Subject, tt.Want_Flag, flagged, output)
@@ -2757,7 +2728,7 @@ import "os"
 func F() (val string) { return os.Getenv("X") }
 `,
 			},
-			Want_Diag: "impure stdlib import",
+			Want_Diag: "The stdlib import",
 		},
 
 		{
@@ -2770,7 +2741,7 @@ import "crypto/rand"
 func F() (n int, err error) { return rand.Reader.Read(nil) }
 `,
 			},
-			Want_Diag: "impure stdlib import",
+			Want_Diag: "The stdlib import",
 		},
 
 		{
@@ -2783,7 +2754,7 @@ import "math/rand"
 func F() (n int) { return rand.Int() }
 `,
 			},
-			Want_Diag: "impure stdlib import",
+			Want_Diag: "The stdlib import",
 		},
 	}
 	run_diag_table(t, tests)
@@ -2833,7 +2804,7 @@ import "flag"
 func F() (s string) { return flag.Arg(0) }
 `,
 			},
-			Want_Diag: "impure stdlib import",
+			Want_Diag: "The stdlib import",
 		},
 	}
 	run_diag_table(t, tests)
@@ -2861,7 +2832,7 @@ import "time"
 func F() (t time.Time) { return time.Now() }
 `,
 			},
-			Want_Diag: "impure stdlib call",
+			Want_Diag: "The stdlib call",
 		},
 
 		{
@@ -2889,7 +2860,7 @@ import "fmt"
 func F() { fmt.Println("hi") }
 `,
 			},
-			Want_Diag: "impure stdlib call",
+			Want_Diag: "The stdlib call",
 		},
 
 		{
@@ -2944,7 +2915,7 @@ import t "time"
 func F() (result t.Time) { return t.Now() }
 `,
 			},
-			Want_Diag: "impure stdlib call",
+			Want_Diag: "The stdlib call",
 		},
 	}
 	run_diag_table(t, tests)
@@ -2993,7 +2964,7 @@ import "net/http"
 func F() (c *http.Client) { return http.DefaultClient }
 `,
 			},
-			Want_Diag: "impure stdlib call",
+			Want_Diag: "The stdlib call",
 		},
 		{
 			Name: "library uses http.Request type is io-gateway-banned",
@@ -3012,7 +2983,7 @@ func F(r *http.Request) (h http.Header) {
 }
 `,
 			},
-			Want_Diag: "route IO through shared/io",
+			Want_Diag: "Route IO through shared/io",
 		},
 		{
 			Name: "library calls net.Dial",
@@ -3024,7 +2995,7 @@ import "net"
 func F() (c net.Conn, err error) { return net.Dial("tcp", "x:1") }
 `,
 			},
-			Want_Diag: "impure stdlib call",
+			Want_Diag: "The stdlib call",
 		},
 	}
 	run_diag_table(t, tests)
@@ -3050,7 +3021,7 @@ import "path/filepath"
 func F() (err error) { return filepath.Walk(".", nil) }
 `,
 			},
-			Want_Diag: "impure transitive call",
+			Want_Diag: "The transitive call",
 		},
 		{
 			Name: "filepath.Abs reads the working directory",
@@ -3062,7 +3033,7 @@ import "path/filepath"
 func F() (s string, err error) { return filepath.Abs(".") }
 `,
 			},
-			Want_Diag: "impure transitive call",
+			Want_Diag: "The transitive call",
 		},
 		{
 			Name: "context.WithTimeout reads the wall clock",
@@ -3076,7 +3047,7 @@ func F(parent context.Context) (child context.Context, cancel context.CancelFunc
 }
 `,
 			},
-			Want_Diag: "impure transitive call",
+			Want_Diag: "The transitive call",
 		},
 	}
 	run_diag_table(t, tests)
@@ -3101,7 +3072,7 @@ import "crypto/x509"
 func F() (p *x509.CertPool, err error) { return x509.SystemCertPool() }
 `,
 			},
-			Want_Diag: "impure transitive call",
+			Want_Diag: "The transitive call",
 		},
 		{
 			Name: "smtp.SendMail dials a server",
@@ -3113,7 +3084,7 @@ import "net/smtp"
 func F() (err error) { return smtp.SendMail("h:25", nil, "f", nil, nil) }
 `,
 			},
-			Want_Diag: "impure transitive call",
+			Want_Diag: "The transitive call",
 		},
 		{
 			Name: "filepath.Join is pure",
@@ -3134,7 +3105,7 @@ func F() (s string) { return filepath.Join("a", "b") }
 }
 
 // Test_No_Impure_Stdlib_Exemptions verifies that package main and _test.go
-// files may freely use impure stdlib calls.
+// files may freely use The stdlib calls.
 func Test_No_Impure_Stdlib_Exemptions(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -3247,7 +3218,7 @@ import "os"
 func Read() (name string) { return os.Getenv("X") }
 `,
 			},
-			Want_Diags: []string{"impure stdlib import \"os\""},
+			Want_Diags: []string{"The stdlib import \"os\""},
 		},
 
 		{
@@ -3275,7 +3246,7 @@ func Read() (name string) {
 }
 `,
 			},
-			Forbid: []string{"impure stdlib import"},
+			Forbid: []string{"The stdlib import"},
 		},
 	}
 	run_doctrine_diag_table(t, tests)
@@ -3316,7 +3287,7 @@ func Read() (name string) {
 }
 `,
 			},
-			Forbid: []string{"impure stdlib import"},
+			Forbid: []string{"The stdlib import"},
 		},
 	}
 	run_doctrine_diag_table(t, tests)
@@ -3351,7 +3322,7 @@ import "fmt"
 func Stamp() { fmt.Println("stamped") }
 `,
 			},
-			Forbid: []string{"impure stdlib call"},
+			Forbid: []string{"The stdlib call"},
 		},
 		{
 			Name: "binary module composition tier " +
@@ -3382,7 +3353,7 @@ func Read() (name string) {
 }
 `,
 			},
-			Want_Diags: []string{"impure stdlib import"},
+			Want_Diags: []string{"The stdlib import"},
 		},
 	}
 	run_doctrine_diag_table(t, tests)
@@ -3409,7 +3380,7 @@ func main() {
 }
 `,
 			},
-			Want_Diag: "bare `for",
+			Want_Diag: "bare \"for {}\" loop",
 		},
 		{
 			Name: "for double-semicolon flagged",
@@ -3423,7 +3394,7 @@ func main() {
 }
 `,
 			},
-			Want_Diag: "bare `for",
+			Want_Diag: "bare \"for {}\" loop",
 		},
 		{
 			Name: "for true flagged",
@@ -3437,7 +3408,7 @@ func main() {
 }
 `,
 			},
-			Want_Diag: "bare `for",
+			Want_Diag: "bare \"for {}\" loop",
 		},
 	}
 	run_diag_table(t, tests)
@@ -3538,7 +3509,7 @@ func Test_Default_Package_Name(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if !specification_diagnosed(wrong, "must declare 'package foo'") {
+	if !specification_diagnosed(wrong, "not \"package foo\"") {
 		t.Fatal("a default package with the wrong package clause must be flagged")
 	}
 }
@@ -3573,7 +3544,7 @@ func Test_Binary_Module_Layout(t *testing.T) {
 					"func main() { return }\n",
 				"mybinary/helpers/h.go": fixture_package("helpers"),
 			},
-			Want_Diags: []string{"move helpers -> mybinary/internal/helpers"},
+			Want_Diags: []string{"Move helpers -> mybinary/internal/helpers"},
 		},
 		{
 			Name: "binary with package under internal is clean",
@@ -3591,7 +3562,7 @@ func Test_Binary_Module_Layout(t *testing.T) {
 				"mybinary/go.mod":     DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/library.go": fixture_package("mybinary"),
 			},
-			Want_Diags: []string{"move . -> mybinary/internal"},
+			Want_Diags: []string{"Move . -> mybinary/internal"},
 		},
 		{
 			Name: "shared library with non-main package at depth 1 is exempt",
@@ -3610,8 +3581,8 @@ func Test_Binary_Module_Layout(t *testing.T) {
 					"func main() { return }\n",
 			},
 			Want_Diags: []string{
-				"places its main package at \"cmd/extra\"",
-				"no cmd/ directory",
+				"has its main package at \"cmd/extra\"",
+				"Move the main package to the component root",
 			},
 		},
 	}
@@ -3720,7 +3691,7 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 				"mybinary/internal/b.go": "package entry\n\n" +
 					"// Main is a fixture.\nfunc Main() { return }\n",
 			},
-			Want_Diags: []string{"declares multiple func Main in internal/"},
+			Want_Diags: []string{"declares more than one func Main in internal/"},
 		},
 		{
 			Name: "shared library without internal func Main is exempt",
@@ -3761,7 +3732,7 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 					"help.go": fixture_package("helper"),
 			},
 			Want_Diags: []string{
-				"shared library forbids internal/", "shared/foo/internal",
+				"A shared library permits no internal/", "shared/foo/internal",
 			},
 		},
 		{
@@ -3772,7 +3743,7 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 				"shared/run/main.go": "package main\n\n" +
 					"func main() { return }\n",
 			},
-			Want_Diags: []string{"forbids package main"},
+			Want_Diags: []string{"permits no package main"},
 		},
 		{
 			Name: "shared library without internal is clean",
@@ -3817,7 +3788,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 				"shared/foo/bar/bar.go":     fixture_package("bar"),
 				"shared/foo/bar/baz/baz.go": fixture_package("baz"),
 			},
-			Want_Diags: []string{"exceeds library tier", "baz"},
+			Want_Diags: []string{"is below the library tier", "baz"},
 		},
 		{
 			Name: "library plus composition tier is clean",
@@ -3826,7 +3797,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 				"shared/foo/foo.go":     fixture_package("foo"),
 				"shared/foo/bar/bar.go": fixture_package("bar"),
 			},
-			Forbid: []string{"exceeds library tier"},
+			Forbid: []string{"is below the library tier"},
 		},
 		{
 			Name: "v2 version directory does not count as ancestor",
@@ -3837,7 +3808,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 				"shared/snap/v2/snap.go":      fixture_package("snap"),
 				"shared/snap/v2/sub/child.go": fixture_package("child"),
 			},
-			Forbid: []string{"exceeds library tier"},
+			Forbid: []string{"is below the library tier"},
 		},
 		{
 			Name: "non-Go intermediate directory does not count as ancestor",
@@ -3847,7 +3818,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 				"shared/foo/examples/sample/" +
 					"example.go": fixture_package("example"),
 			},
-			Forbid: []string{"exceeds library tier"},
+			Forbid: []string{"is below the library tier"},
 		},
 		{
 			Name: "binary composition tier one level under internal is clean",
@@ -3858,7 +3829,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 				"mybinary/internal/entry.go":   DOCTRINE_BINARY_INTERNAL_MAIN,
 				"mybinary/internal/foo/foo.go": fixture_package("foo"),
 			},
-			Forbid: []string{"exceeds library tier"},
+			Forbid: []string{"is below the library tier"},
 		},
 	}
 	run_doctrine_diag_table(t, tests)
@@ -3888,7 +3859,7 @@ func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
 				"bin/internal/foo/foo.go":     fixture_package("foo"),
 				"bin/internal/foo/bar/bar.go": fixture_package("bar"),
 			},
-			Forbid: []string{"exceeds library tier"},
+			Forbid: []string{"is below the library tier"},
 		},
 		{
 			Name: "nesting beyond the composition tier under internal flagged",
@@ -3901,7 +3872,7 @@ func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
 				"bin/internal/foo/bar/bar.go":     fixture_package("bar"),
 				"bin/internal/foo/bar/baz/baz.go": fixture_package("baz"),
 			},
-			Want_Diags: []string{"exceeds library tier", "baz"},
+			Want_Diags: []string{"is below the library tier", "baz"},
 		},
 	}
 	run_doctrine_diag_table(t, tests)
@@ -3928,7 +3899,7 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
 					"func Do() { return }\n",
 			},
-			Want_Diag: "exported func Do is missing a doc comment",
+			Want_Diag: "exported func Do has no doc comment",
 		},
 
 		{
@@ -3957,7 +3928,7 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
 					"type Thing struct{ X int }\n",
 			},
-			Want_Diag: "exported type Thing is missing a doc comment",
+			Want_Diag: "exported type Thing has no doc comment",
 		},
 
 		{
@@ -3968,7 +3939,7 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 					"import \"regexp\"\n\n" +
 					"var Default_Pattern = regexp.MustCompile(\"abc\")\n",
 			},
-			Want_Diag: "exported var Default_Pattern is missing a doc comment",
+			Want_Diag: "exported var Default_Pattern has no doc comment",
 		},
 
 		{
@@ -3977,7 +3948,7 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
 					"const Count_Max = 100\n",
 			},
-			Want_Diag: "exported const Count_Max is missing a doc comment",
+			Want_Diag: "exported const Count_Max has no doc comment",
 		},
 	}
 	run_diag_table(t, tests)
@@ -4014,7 +3985,7 @@ func Test_Exported_Documentation_Comment_Part2(t *testing.T) {
 					"\tB_Count = 2\n" +
 					")\n",
 			},
-			Want_Diag: "exported const A_Count is missing a doc comment",
+			Want_Diag: "exported const A_Count has no doc comment",
 		},
 
 		{
@@ -4027,7 +3998,7 @@ func Test_Exported_Documentation_Comment_Part2(t *testing.T) {
 					"func (t *Thing) String() (output string) " +
 					"{ return \"\" }\n",
 			},
-			Want_Diag: "exported method String is missing a doc comment",
+			Want_Diag: "exported method String has no doc comment",
 		},
 
 		{
@@ -4058,7 +4029,7 @@ func Test_Package_Documentation_Comment(t *testing.T) {
 				"foo.go": "package foo\n\n" +
 					"// Do performs the operation.\nfunc Do() { return }\n",
 			},
-			Want_Diag: "package \"foo\" is missing a doc comment",
+			Want_Diag: "The package \"foo\" has no doc comment",
 		},
 		{
 			Name: "package with doc allowed",
@@ -4340,7 +4311,7 @@ func Test_Coverage_Backfill_Large_Package(t *testing.T) {
 		t.Logf("stderr: %s", stderr.String())
 		t.Fatalf("expected exit 1 (diagnostics emitted); got %d", code)
 	}
-	if !strings.Contains(stdout.String(), "files totaling") {
+	if !strings.Contains(stdout.String(), "lines in total") {
 		t.Fatalf("fixture did not trigger package_split diagnostic; stdout:\n%s",
 			stdout.String())
 	}
@@ -4779,7 +4750,7 @@ func Test_Coverage_Backfill_Exposes_Private_Alias_Edges(t *testing.T) {
 
 // Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File drives
 // build_file_call_graph with files that have exactly one function declaration
-// so the recursion visitor's Targets map has exactly one entry (Lo bucket of
+// so the recurse visitor's Targets map has exactly one entry (Lo bucket of
 // V.Targets boundary, Lo=NON_EMPTY_MIN). Two shapes exercise both Lo (1-char)
 // and Hi (128-char) Caller buckets at Visit entry, where Scopes/Edges/
 // Push_History are all empty (Lo for each).
@@ -4787,24 +4758,24 @@ func Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File(t *testing.T)
 	t.Parallel()
 	long_funcname := strings.Repeat("F", 128)
 	cases := []string{
-		// Documented package, lowercase 1-char function with a non-discard
-		// statement so tier-1 stays clean and tier-2 (check_no_recursion)
-		// runs, exercising the recursion visitor.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		// Documented package, lowercase 1-char function with a non-blank discard
+		// statement so tier-1 stays clean and tier-2 (check_no_recurse)
+		// runs, exercising the recurse visitor.
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"func f() {\n\tif true {\n\t}\n}\n",
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"// " +
 			long_funcname +
-			"\n// is for the recursion visitor.\nfunc " +
+			"\n// is for the recurse visitor.\nfunc " +
 			long_funcname + "() {\n\tif true {\n\t}\n}\n",
-		// Range with explicit blank key drives recursion_visitor_define_ident
+		// Range with explicit blank key drives recurse_visitor_define_ident
 		// with a nil expr branch (e_nil=true case).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"func f() {\n\tfor range 1 {\n\t}\n}\n",
 		// Single-function file with a 128-char self-recursing function name
-		// drives recursion_visitor_enter_record_call_edge with Lo targets
+		// drives recurse_visitor_enter_record_call_edge with Lo targets
 		// (single-target) AND Hi caller (128-char) simultaneously.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"// " +
 			long_funcname +
 			"\n// recurses into itself.\nfunc " +
@@ -4814,7 +4785,7 @@ func Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File(t *testing.T)
 		// record_call_edge returns without appending to v.Edges. Defer time
 		// observes (Lo edges, Hi caller, True ident, Lo targets, Lo scopes,
 		// Lo history).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"// " +
 			long_funcname +
 			"\n// invokes a builtin.\nfunc " +
@@ -4822,23 +4793,23 @@ func Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File(t *testing.T)
 		// 128-char function calling a selector — call.Fun is *ast.SelectorExpr
 		// (False ident). The package-level `p` var isn't added to v.Targets
 		// (only FuncDecls are), so targets stays at 1 (single-target file).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"var p = struct{ F func() }{F: func() {}}\n\n// " +
 			long_funcname +
 			"\n// invokes a method.\nfunc " +
 			long_funcname + "() {\n\tp.F()\n}\n",
 		// 128-char function with an if-init clause drives
-		// recursion_visitor_enter_define_statement with Hi caller AND False
+		// recurse_visitor_enter_define_statement with Hi caller AND False
 		// s_nil (init present) in a single-target file.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"// " +
 			long_funcname +
 			"\n// has an if-init.\nfunc " +
 			long_funcname + "() {\n\tif y := 1; y > 0 {\n\t}\n}\n",
 		// 128-char function with a top-level := drives
-		// recursion_visitor_define_ident with Hi caller, Lo scopes (=1, only
+		// recurse_visitor_define_ident with Hi caller, Lo scopes (=1, only
 		// the BlockStmt scope is pushed at this point), Lo history (=1).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+		"// Package fixture is for the recurse visitor.\npackage fixture\n\n" +
 			"// " +
 			long_funcname +
 			"\n// has a top-level define.\nfunc " +
@@ -4916,8 +4887,8 @@ func Test_Coverage_Backfill_Suffix_Of_Hi(t *testing.T) {
 	t.Logf("suffix_of_hi diags=%d err=%v", len(diags), err)
 }
 
-// Test_Coverage_Backfill_Recursion drives check_no_recursion to emit a
-// self-recursion diagnostic with a single 1-char function name so the
+// Test_Coverage_Backfill_Recursion drives check_no_recurse to emit a
+// self-recurse diagnostic with a single 1-char function name so the
 // diag-message helper observes its Lo bucket.
 func Test_Coverage_Backfill_Recursion(t *testing.T) {
 	t.Parallel()
@@ -4925,14 +4896,14 @@ func Test_Coverage_Backfill_Recursion(t *testing.T) {
 	long_name := strings.Repeat("x", 128)
 	source := "// Package fixture is a fixture.\n" +
 		"package fixture\n\n" +
-		"// F recurses into itself to trigger check_no_recursion.\n" +
+		"// F recurses into itself to trigger check_no_recurse.\n" +
 		"func F() { F() }\n\n" +
 		"// Long recurses into itself; diag_message gets Hi message.\n" +
 		"func " + long_name + "() {\n" +
 		"\t" + long_name + "()\n" +
 		"}\n"
 	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("recursion diags=%d err=%v", len(diags), err)
+	t.Logf("recurse diags=%d err=%v", len(diags), err)
 	for _, d := range diags {
 		t.Logf("  diag: %s", d.Message)
 	}
@@ -5263,7 +5234,7 @@ func Test_Specification_Missing_File(t *testing.T) {
 	files := specification_clean_files()
 	delete(files, "greet/SPECIFICATION.md")
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "missing SPECIFICATION.md") {
+	if !specification_message_contains(diags, "has no SPECIFICATION.md") {
 		t.Fatalf("expected missing-file diagnostic, got %v", diags)
 	}
 }
@@ -5275,7 +5246,7 @@ func Test_Specification_Heading_Level_Two_Flagged(t *testing.T) {
 	files := specification_clean_files()
 	files["greet/SPECIFICATION.md"] = "\n## Greeting\n\nIt greets the caller.\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "not level # or ###") {
+	if !specification_message_contains(diags, "heading level is not") {
 		t.Fatalf("expected heading-level diagnostic, got %v", diags)
 	}
 }
@@ -5287,7 +5258,7 @@ func Test_Specification_Heading_Missing_Blank_Line(t *testing.T) {
 	files := specification_clean_files()
 	files["greet/SPECIFICATION.md"] = "\n# Greeting\nIt greets the caller.\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "not followed by a blank line") {
+	if !specification_message_contains(diags, "no blank line after the heading") {
 		t.Fatalf("expected blank-line diagnostic, got %v", diags)
 	}
 }
@@ -5298,7 +5269,7 @@ func Test_Specification_Section_Too_Long(t *testing.T) {
 	files := specification_clean_files()
 	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\none\ntwo\nthree\nfour\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "exceeds three lines") {
+	if !specification_message_contains(diags, "has more than three lines") {
 		t.Fatalf("expected section-size diagnostic, got %v", diags)
 	}
 }
@@ -5310,7 +5281,7 @@ func Test_Specification_Missing_Test_File(t *testing.T) {
 	files := specification_clean_files()
 	delete(files, "greet/specification_test.go")
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "missing specification_test.go") {
+	if !specification_message_contains(diags, "has no specification_test.go") {
 		t.Fatalf("expected missing-test-file diagnostic, got %v", diags)
 	}
 }
@@ -5375,7 +5346,7 @@ func Test_Specification_Coverage_Respects_Package_Argument(t *testing.T) {
 	lint_main(t, &lint.Main_Input{
 		Fsys: files, Stdout: input_other, Stderr: &bytes.Buffer{},
 		Scope_Prefix: "other"})
-	if !strings.Contains(input_other.String(), "missing SPECIFICATION.md") {
+	if !strings.Contains(input_other.String(), "has no SPECIFICATION.md") {
 		t.Fatalf("scoped to other, its missing file must surface: %s",
 			input_other.String())
 	}
@@ -5425,7 +5396,7 @@ func specification_fixture_package(directory string) (files map[string]string) {
 func Test_Specification_Coverage_Whole_Workspace(t *testing.T) {
 	t.Parallel()
 	diags := specification_diagnostics_workspace(t, specification_fixture_package("thing"))
-	if !specification_message_contains(diags, "missing SPECIFICATION.md") {
+	if !specification_message_contains(diags, "has no SPECIFICATION.md") {
 		t.Fatalf("scopeless run must mandate the file, got %v", diags)
 	}
 }
@@ -5436,7 +5407,7 @@ func Test_Specification_Coverage_Exempts_Third_Party(t *testing.T) {
 	t.Parallel()
 	diags := specification_diagnostics_workspace(
 		t, specification_fixture_package("third_party/vendored"))
-	if specification_message_contains(diags, "missing SPECIFICATION.md") {
+	if specification_message_contains(diags, "has no SPECIFICATION.md") {
 		t.Fatalf("third_party must be exempt from coverage, got %v", diags)
 	}
 }
@@ -5447,7 +5418,7 @@ func Test_Specification_Coverage_Exempts_Examples(t *testing.T) {
 	t.Parallel()
 	diags := specification_diagnostics_workspace(
 		t, specification_fixture_package("snippets/examples/demo"))
-	if specification_message_contains(diags, "missing SPECIFICATION.md") {
+	if specification_message_contains(diags, "has no SPECIFICATION.md") {
 		t.Fatalf("examples must be exempt from coverage, got %v", diags)
 	}
 }
@@ -5461,7 +5432,7 @@ func Test_Specification_Coverage_Exempts_Main(t *testing.T) {
 		"main.go": "// Package main is a fixture.\npackage main\n\nfunc main() {}\n",
 	}
 	diags := specification_diagnostics_workspace(t, files)
-	if specification_message_contains(diags, "missing SPECIFICATION.md") {
+	if specification_message_contains(diags, "has no SPECIFICATION.md") {
 		t.Fatalf("package main must be exempt from coverage, got %v", diags)
 	}
 }
@@ -5476,7 +5447,7 @@ func Test_Specification_Coverage_Exempts_Default(t *testing.T) {
 		"shared/foo/default/wire.go": "// Package foo is a fixture.\npackage foo\n",
 	}
 	diags := specification_diagnostics_workspace(t, files)
-	if specification_message_contains(diags, "missing SPECIFICATION.md") {
+	if specification_message_contains(diags, "has no SPECIFICATION.md") {
 		t.Fatalf("a `default` package must be exempt from coverage, got %v", diags)
 	}
 }
@@ -5493,7 +5464,7 @@ func Test_Specification_Coverage_Exempt_Specification_Validated(t *testing.T) {
 		"SPECIFICATION.md": "\n## Mid Level\n\nA level-two heading is banned.\n",
 	}
 	diags := specification_diagnostics_workspace(t, files)
-	if !specification_message_contains(diags, "not level # or ###") {
+	if !specification_message_contains(diags, "heading level is not") {
 		t.Fatalf("an impure package's present spec must still be validated, got %v", diags)
 	}
 }
@@ -5536,7 +5507,7 @@ func Test_Specification_File_Name_Exact_Case(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_message_contains(all, "missing SPECIFICATION.md") {
+	if !specification_message_contains(all, "has no SPECIFICATION.md") {
 		t.Fatalf("wrong-case spec file must be flagged, got %v", all)
 	}
 }
@@ -5557,7 +5528,7 @@ func Test_Specification_Test_File_Name_Exact_Case(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_message_contains(all, "missing specification_test.go") {
+	if !specification_message_contains(all, "has no specification_test.go") {
 		t.Fatalf("wrong-case test file must be flagged, got %v", all)
 	}
 }
@@ -5569,7 +5540,7 @@ func Test_Specification_Preamble_Flagged(t *testing.T) {
 	files := specification_clean_files()
 	files["greet/SPECIFICATION.md"] = "Stray prose.\n\n# Greeting\n\nIt greets.\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "content precedes the first heading") {
+	if !specification_message_contains(diags, "is before the first heading") {
 		t.Fatalf("expected preamble diagnostic, got %v", diags)
 	}
 }
@@ -5593,7 +5564,7 @@ func Test_Specification_Section_Contiguity_Flagged(t *testing.T) {
 	files := specification_clean_files()
 	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\none\n\ntwo\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "blank line between body lines") {
+	if !specification_message_contains(diags, "blank line between two body lines") {
 		t.Fatalf("expected contiguity diagnostic, got %v", diags)
 	}
 }
@@ -5606,7 +5577,7 @@ func Test_Specification_Heading_Uniqueness_Flagged(t *testing.T) {
 	files["greet/SPECIFICATION.md"] =
 		"\n# Greeting\n\nIt greets.\n\n# Greeting\n\nAgain.\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "is duplicated") {
+	if !specification_message_contains(diags, "is not unique") {
 		t.Fatalf("expected duplicate-heading diagnostic, got %v", diags)
 	}
 }
@@ -5618,7 +5589,7 @@ func Test_Specification_Heading_Words(t *testing.T) {
 	files := specification_clean_files()
 	files["greet/SPECIFICATION.md"] = "\n# Greeting-Caller\n\nIt greets.\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "must use only letters and digits") {
+	if !specification_message_contains(diags, "Write only letters and digits") {
 		t.Fatalf("expected heading-words diagnostic, got %v", diags)
 	}
 }
@@ -5636,7 +5607,7 @@ func Test_Specification_Test_Order_Leading_Declaration(t *testing.T) {
 		"// Test_Greeting is a fixture.\n" +
 		"func Test_Greeting(t *testing.T) { _ = t }\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "at top") {
+	if !specification_message_contains(diags, "at the top of the file") {
 		t.Fatalf("leading declaration must be flagged, got %v", diags)
 	}
 }
@@ -5675,7 +5646,7 @@ func Test_Specification_Heading_Level_Four_Flagged(t *testing.T) {
 	files := specification_clean_files()
 	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\n#### Deep\n\nToo deep.\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "not level") {
+	if !specification_message_contains(diags, "heading level is not") {
 		t.Fatalf("a #### heading must be flagged, got %v", diags)
 	}
 }
@@ -5688,7 +5659,7 @@ func Test_Specification_Subheading_Duplicate(t *testing.T) {
 	files["greet/SPECIFICATION.md"] =
 		"\n# Greeting\n\n### Hello\n\nHi.\n\n### Hello\n\nAgain.\n"
 	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "is duplicated") {
+	if !specification_message_contains(diags, "is not unique") {
 		t.Fatalf("a duplicate ### under one parent must be flagged, got %v", diags)
 	}
 }
@@ -5706,7 +5677,7 @@ func Test_Specification_Subheading_Reuse_Across_Parents(t *testing.T) {
 		"// Test_Farewell_Hello is a fixture.\n" +
 		"func Test_Farewell_Hello(t *testing.T) { _ = t }\n"
 	diags := specification_diagnostics(t, files)
-	if specification_message_contains(diags, "is duplicated") {
+	if specification_message_contains(diags, "is not unique") {
 		t.Fatalf("the same ### under two parents must be allowed, got %v", diags)
 	}
 }
@@ -6021,14 +5992,20 @@ func Test_Scope_Parses_Target_And_Shared_Components(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(diags_at(diags, "mybinary/internal/entry.go"), "dot import") {
+	if !specification_diagnosed(
+		diags_at(diags, "mybinary/internal/entry.go"),
+		"Do not use a dot import") {
 		t.Errorf("in-scope file mybinary/internal/entry.go was not parsed")
 	}
-	if !specification_diagnosed(diags_at(diags, "shared/lib/library.go"), "dot import") {
+	if !specification_diagnosed(
+		diags_at(diags, "shared/lib/library.go"),
+		"Do not use a dot import") {
 		t.Errorf("shared-library file shared/lib/library.go was not parsed; " +
 			"transitive-purity resolution of imports into shared would fail open")
 	}
-	if specification_diagnosed(diags_at(diags, "other/lib/library.go"), "dot import") {
+	if specification_diagnosed(
+		diags_at(diags, "other/lib/library.go"),
+		"Do not use a dot import") {
 		t.Errorf("out-of-scope file other/lib/library.go was parsed; " +
 			"scope must prune unrelated modules from the parse set")
 	}

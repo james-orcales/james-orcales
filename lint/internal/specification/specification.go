@@ -366,8 +366,10 @@ func heading_words_invalid(raw string) (invalid bool) {
 func preamble_diag(position token.Position) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: position, Name: "specification",
-		Want: "open with a heading",
-		Message: fmt.Sprintf("%s:%d content precedes the first heading",
+		Want: "Start the file with a heading.",
+		Message: fmt.Sprintf(
+			"%s:%d The content is before the first heading. "+
+				"Start the file with a heading.",
 			position.Filename, position.Line),
 	}
 }
@@ -375,8 +377,9 @@ func preamble_diag(position token.Position) (diag diagnostic.Diagnostic) {
 func section_body_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: position, Name: "specification",
-		Want: "give the section a body line",
-		Message: fmt.Sprintf("%s:%d section %q has no body line",
+		Want: "Write a body line in the section.",
+		Message: fmt.Sprintf(
+			"%s:%d The section %q has no body line. Write a body line.",
 			position.Filename, position.Line, raw),
 	}
 }
@@ -384,8 +387,10 @@ func section_body_diag(position token.Position, raw string) (diag diagnostic.Dia
 func section_contiguity_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: position, Name: "specification",
-		Want: "keep the section body contiguous",
-		Message: fmt.Sprintf("%s:%d section %q has a blank line between body lines",
+		Want: "Remove the blank line from the section body.",
+		Message: fmt.Sprintf(
+			"%s:%d The section %q has a blank line between two body lines. "+
+				"Remove the blank line.",
 			position.Filename, position.Line, raw),
 	}
 }
@@ -393,8 +398,9 @@ func section_contiguity_diag(position token.Position, raw string) (diag diagnost
 func heading_duplicate_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: position, Name: "specification",
-		Want: "make every heading unique",
-		Message: fmt.Sprintf("%s:%d heading %q is duplicated",
+		Want: "Write a different heading.",
+		Message: fmt.Sprintf(
+			"%s:%d The heading %q is not unique. Write a different heading.",
 			position.Filename, position.Line, raw),
 	}
 }
@@ -402,16 +408,21 @@ func heading_duplicate_diag(position token.Position, raw string) (diag diagnosti
 func heading_words_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: position, Name: "specification",
-		Want: "use only letters and digits in headings",
-		Message: fmt.Sprintf("%s:%d heading %q must use only letters and digits",
+		Want: "Write only letters and digits in the heading.",
+		Message: fmt.Sprintf(
+			"%s:%d The heading %q has a character that is not a letter or a "+
+				"digit. Write only letters and digits.",
 			position.Filename, position.Line, raw),
 	}
 }
 
 func heading_level_diag(position token.Position) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification", Want: "use a # or ### heading",
-		Message: fmt.Sprintf("%s:%d uses a heading that is not level # or ###",
+		Position: position, Name: "specification",
+		Want: "Write a \"#\" heading or a \"###\" heading.",
+		Message: fmt.Sprintf(
+			"%s:%d The heading level is not \"#\" or \"###\". "+
+				"Write a \"#\" heading or a \"###\" heading.",
 			position.Filename, position.Line),
 	}
 }
@@ -419,8 +430,10 @@ func heading_level_diag(position token.Position) (diag diagnostic.Diagnostic) {
 func orphan_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: position, Name: "specification",
-		Want: "nest the subheading under a #",
-		Message: fmt.Sprintf("%s:%d ### %q has no parent #",
+		Want: "Put the subheading below a \"#\" heading.",
+		Message: fmt.Sprintf(
+			"%s:%d The \"###\" heading %q has no parent \"#\" heading. "+
+				"Put the heading below a \"#\" heading.",
 			position.Filename, position.Line, raw),
 	}
 }
@@ -428,8 +441,10 @@ func orphan_diag(position token.Position, raw string) (diag diagnostic.Diagnosti
 func section_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: position, Name: "specification",
-		Want: "limit sections to three lines",
-		Message: fmt.Sprintf("%s:%d section %q exceeds three lines",
+		Want: "Write a maximum of three lines in the section.",
+		Message: fmt.Sprintf(
+			"%s:%d The section %q has more than three lines. "+
+				"Write a maximum of three lines.",
 			position.Filename, position.Line, raw),
 	}
 }
@@ -454,8 +469,10 @@ func coverage_diag(directory string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: token.Position{Filename: path.Join(directory, "SPECIFICATION.md")},
 		Name:     "specification",
-		Want:     "add SPECIFICATION.md",
-		Message:  fmt.Sprintf("package %q is missing SPECIFICATION.md", directory),
+		Want:     "Add SPECIFICATION.md to the package.",
+		Message: fmt.Sprintf(
+			"The package %q has no SPECIFICATION.md. Add SPECIFICATION.md.",
+			directory),
 	}
 }
 
@@ -463,8 +480,11 @@ func test_file_diag(directory string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
 		Position: token.Position{Filename: path.Join(directory, "specification_test.go")},
 		Name:     "specification",
-		Want:     "add specification_test.go",
-		Message:  fmt.Sprintf("package %q is missing specification_test.go", directory),
+		Want:     "Add specification_test.go to the package.",
+		Message: fmt.Sprintf(
+			"The package %q has no specification_test.go. "+
+				"Add specification_test.go.",
+			directory),
 	}
 }
 
@@ -478,8 +498,10 @@ func blank_lines(
 	if !preceded {
 		diags = append(diags, diagnostic.Diagnostic{
 			Position: position, Name: "specification",
-			Want: "precede heading with a blank line",
-			Message: fmt.Sprintf("%s:%d heading %q is not preceded by a blank line",
+			Want: "Write a blank line before the heading.",
+			Message: fmt.Sprintf(
+				"%s:%d There is no blank line before the heading %q. "+
+					"Write a blank line.",
 				position.Filename, i+1, raw),
 		})
 	}
@@ -490,8 +512,10 @@ func blank_lines(
 	if !followed {
 		diags = append(diags, diagnostic.Diagnostic{
 			Position: position, Name: "specification",
-			Want: "follow heading with a blank line",
-			Message: fmt.Sprintf("%s:%d heading %q is not followed by a blank line",
+			Want: "Write a blank line after the heading.",
+			Message: fmt.Sprintf(
+				"%s:%d There is no blank line after the heading %q. "+
+					"Write a blank line.",
 				position.Filename, i+1, raw),
 		})
 	}
@@ -524,9 +548,10 @@ func check_tests(
 		diags = append(diags, diagnostic.Diagnostic{
 			Position: token.Position{Filename: test_path},
 			Name:     "specification",
-			Want:     want,
+			Want:     "Declare func " + want + ".",
 			Message: fmt.Sprintf(
-				"%s:%d needs %s for leaf %q (in order, at top)",
+				"%s:%d The file needs %s for the leaf %q. "+
+					"Declare the tests in leaf order at the top of the file.",
 				test_path, i+1, want, leaf),
 		})
 	}

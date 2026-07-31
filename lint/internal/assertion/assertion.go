@@ -798,8 +798,10 @@ func invariant_constant_diagnostic(
 ) (diags []Diagnostic) {
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()),
-		Message: helper.Name.Name +
-			" canonical helper arguments must be package-level constants",
+		Message: fmt.Sprintf(
+			"The function %s gives a canonical helper an argument that is not "+
+				"a package-level constant. Write a package-level constant.",
+			helper.Name.Name),
 	}}
 }
 
@@ -809,11 +811,15 @@ func invariant_missing_helper_diagnostic(
 ) (diags []Diagnostic) {
 	_, _, count := invariant_scope_kind(type_specification, scope)
 	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
-	message := helper.Name.Name + " must call a canonical helper for " + value +
-		": " + invariant_remedy_text(type_specification, scope)
+	message := fmt.Sprintf(
+		"The function %s does not call a canonical helper for %s. Write %s.",
+		helper.Name.Name, value, invariant_remedy_text(type_specification, scope))
 	if count {
-		message = helper.Name.Name + " must call Range_Int or Enum_Int family for len(" +
-			value + "), or use direct Always equality"
+		message = fmt.Sprintf(
+			"The function %s does not call a canonical helper for len(%s). "+
+				"Write a Range_Int family, an Enum_Int family, or a direct "+
+				"Always equality.",
+			helper.Name.Name, value)
 	}
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,
@@ -828,12 +834,12 @@ func invariant_remedy_text(
 ) (remedy string) {
 	suffix, primitive, _ := invariant_scope_kind(type_specification, scope)
 	if primitive == "bool" {
-		return "an ensured Tree whose one link is a Sometimes"
+		return "a Tree whose one link is a Sometimes, and then an Ensure"
 	}
 	if invariant_float_primitive(primitive) {
-		return "direct Always equality against a package constant"
+		return "a direct Always equality to a package constant"
 	}
-	return "direct Always equality, a Range_" + suffix +
+	return "a direct Always equality, a Range_" + suffix +
 		" family, or an Enum_" + suffix + " family"
 }
 
@@ -1155,8 +1161,9 @@ func always_condition_diagnostics(
 		diags = append(diags, Diagnostic{
 			Position: file.File_Set.Position(call.Args[0].Pos()),
 			Message: fmt.Sprintf(
-				"compound Always condition (%s) — use Range for a bound, "+
-					"Enum for a membership, or separate Always calls", join.Op),
+				"The Always condition has the compound operator %q. "+
+					"Write a Range for a bound, an Enum for a membership, "+
+					"or separate Always calls.", join.Op.String()),
 		})
 		return true
 	})
@@ -1396,10 +1403,10 @@ func struct_type_diagnostics(
 			bundle, struct_type, scope, present, parameter, position)
 	}
 	for _, field := range struct_type.Fields.List {
-		for _, call := range struct_field_missing_calls(field, scope, present, parameter) {
+		for _, gap := range struct_field_missing_calls(field, scope, present, parameter) {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Message:  bundle.Name.Name + " must call " + call,
+				Message:  "The function " + bundle.Name.Name + " " + gap,
 			})
 		}
 	}
@@ -1428,7 +1435,7 @@ func struct_inherited_diagnostics(
 		for _, gap := range struct_inherited_field_gaps(gaps_input) {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Message:  bundle.Name.Name + " must " + gap,
+				Message:  "The function " + bundle.Name.Name + " " + gap,
 			})
 		}
 	}
@@ -1470,10 +1477,12 @@ func struct_inherited_field_gaps(
 	}
 	is_struct := struct_field_is_struct(field.Type, gaps_input.Scope)
 	for _, name := range names {
+		subject := gaps_input.Parameter + "." + name
 		if !is_struct {
 			if !gaps_input.Inline[name] {
-				gaps = append(gaps,
-					"state "+gaps_input.Parameter+"."+name+" inline")
+				gaps = append(gaps, "does not assert the inherited field "+
+					subject+" inline. Write an inline assertion for "+
+					subject+".")
 			}
 			continue
 		}
@@ -1483,8 +1492,8 @@ func struct_inherited_field_gaps(
 		if gaps_input.Converted[name] {
 			continue
 		}
-		gaps = append(gaps, "call "+helper_identity_name(expected)+"("+
-			gaps_input.Parameter+"."+name+", ...)")
+		gaps = append(gaps, "does not call a helper for the inherited field "+
+			subject+". Call "+helper_identity_name(expected)+"("+subject+", ...).")
 	}
 	return gaps
 }
@@ -1734,7 +1743,7 @@ func struct_field_missing_calls(
 	scope *Invariant_Scope,
 	present map[string]bool,
 	parameter string,
-) (calls []string) {
+) (gaps []string) {
 	names := struct_field_names(field)
 	if len(names) == 0 {
 		return nil
@@ -1750,10 +1759,11 @@ func struct_field_missing_calls(
 		if present[expected+"\x00"+name] {
 			continue
 		}
-		calls = append(calls, helper_identity_name(expected)+"("+
-			parameter+"."+name+", ...)")
+		subject := parameter + "." + name
+		gaps = append(gaps, "does not call a helper for the field "+subject+
+			". Call "+helper_identity_name(expected)+"("+subject+", ...).")
 	}
-	return calls
+	return gaps
 }
 
 // Gives the names a field is selected by. An embedded field declares none, and Go selects it by the
@@ -2129,14 +2139,19 @@ func function_diagnostics(
 	for _, requirement := range outputs {
 		if !has_defer {
 			diags = append(diags, Diagnostic{Position: position,
-				Message: name + " must call helper for " + requirement.Subject +
-					" in a first-statement defer"})
+				Message: fmt.Sprintf(
+					"The function %s does not call a helper for the "+
+						"output %s. Call %s in a defer that is the "+
+						"first statement.",
+					name, requirement.Subject, function_form(requirement))})
 			continue
 		}
 		if !function_requirement_met(defer_body, requirement, scope) {
 			diags = append(diags, Diagnostic{Position: position,
-				Message: name + " must call helper for " + requirement.Subject +
-					" in the output defer"})
+				Message: fmt.Sprintf(
+					"The function %s does not call a helper for the "+
+						"output %s. Call %s in the output defer.",
+					name, requirement.Subject, function_form(requirement))})
 		}
 	}
 	for _, requirement := range inputs {
@@ -2144,8 +2159,10 @@ func function_diagnostics(
 			continue
 		}
 		diags = append(diags, Diagnostic{Position: position,
-			Message: name + " must call helper for " + requirement.Subject + " via " +
-				function_form(requirement)})
+			Message: fmt.Sprintf(
+				"The function %s does not call a helper for the input %s. "+
+					"Call %s at the start of the body.",
+				name, requirement.Subject, function_form(requirement))})
 	}
 	return diags
 }
@@ -2671,14 +2688,17 @@ func recorder_group_diagnostics(group *Recorder_Group) (diags []Diagnostic) {
 		}
 		return []Diagnostic{{
 			Position: anchor,
-			Message: group.Directory +
-				" must wire invariant.Run_Test_Main in a TestMain",
+			Message: fmt.Sprintf(
+				"The directory %s has no TestMain that calls "+
+					"invariant.Run_Test_Main. Write a TestMain that calls "+
+					"invariant.Run_Test_Main.", group.Directory),
 		}}
 	}
 	if !group.Test_Main_Canonical {
 		return []Diagnostic{{
 			Position: group.Test_Main_Position,
-			Message:  "TestMain must be exactly: invariant.Run_Test_Main(m)",
+			Message: "The body of TestMain is not invariant.Run_Test_Main(m). " +
+				"Write invariant.Run_Test_Main(m).",
 		}}
 	}
 	return nil
@@ -2731,9 +2751,10 @@ func simulation_component_diagnostics(
 	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
 	sim_files := simulation_package_files(parsed_files, sim_directory)
 	if len(sim_files) == 0 {
-		return simulation_diagnostic(position, "binary component "+
-			strconv.Quote(component.Import_Path)+" must declare an internal/"+
-			SIMULATION_DIRECTORY+" package driving internal.Main")
+		return simulation_diagnostic(position, fmt.Sprintf(
+			"The binary component %q has no internal/%s package. "+
+				"Declare an internal/%s package that calls internal.Main.",
+			component.Import_Path, SIMULATION_DIRECTORY, SIMULATION_DIRECTORY))
 	}
 	diags = append(diags, simulation_package_diagnostics(sim_files, position)...)
 	diags = append(diags, simulation_contents_diagnostics(sim_files, position)...)
@@ -2808,12 +2829,15 @@ func simulation_package_diagnostics(
 ) (diags []Diagnostic) {
 	for _, pf := range sim_files {
 		if !strings.HasSuffix(pf.Path, "_test.go") {
-			return simulation_diagnostic(position,
-				"simulation holds only a blackbox test package; no source file")
+			return simulation_diagnostic(position, fmt.Sprintf(
+				"The simulation directory has the source file %s. "+
+					"Remove the source file.", pf.Path))
 		}
 		if !strings.HasSuffix(pf.File.Name.Name, "_test") {
-			return simulation_diagnostic(position,
-				"simulation package must be blackbox: package <name>_test")
+			return simulation_diagnostic(position, fmt.Sprintf(
+				"The simulation package %s is not an external test package. "+
+					"Add the suffix %q to the package name.",
+				pf.File.Name.Name, "_test"))
 		}
 	}
 	return nil
@@ -2833,7 +2857,8 @@ func simulation_contents_diagnostics(
 		}
 	}
 	return simulation_diagnostic(position,
-		"simulation package must declare a fuzz function driving internal.Main")
+		"The simulation package has no fuzz function for internal.Main. "+
+			"Declare a fuzz function that calls internal.Main.")
 }
 
 // Reports whether the declaration is a free Fuzz function taking a *testing.F.
@@ -2938,9 +2963,9 @@ func simulation_entry_diagnostics(
 			if !internal_functions[selector.Sel.Name] {
 				return true
 			}
-			diags = append(diags, simulation_diagnostic(position,
-				"simulation may reference only Main; got "+
-					identifier.Name+"."+selector.Sel.Name)...)
+			diags = append(diags, simulation_diagnostic(position, fmt.Sprintf(
+				"The simulation package refers to %s.%s. Refer only to Main.",
+				identifier.Name, selector.Sel.Name))...)
 			return true
 		})
 	}
@@ -2989,14 +3014,17 @@ func simulation_test_main_diagnostics(
 	function := simulation_find_test_main(files)
 	if function == nil {
 		return simulation_diagnostic(position,
-			"simulation package must wire invariant.Run_Test_Main in a TestMain")
+			"The simulation package has no TestMain. "+
+				"Write a TestMain that calls invariant.Run_Test_Main.")
 	}
 	if simulation_test_main_canonical(function) {
 		return nil
 	}
-	return simulation_diagnostic(position,
-		"simulation TestMain must be exactly: invariant.Run_Test_Main(m, "+
-			strconv.Quote(SIMULATION_GLOB)+")")
+	return simulation_diagnostic(position, fmt.Sprintf(
+		"The body of the simulation TestMain is not "+
+			"invariant.Run_Test_Main(m, %q). "+
+			"Write invariant.Run_Test_Main(m, %q).",
+		SIMULATION_GLOB, SIMULATION_GLOB))
 }
 
 // Reports whether the TestMain body is exactly invariant.Run_Test_Main(m, "../**").
@@ -3201,8 +3229,14 @@ func primitive_field_gaps(fields *ast.FieldList, role string) (gaps []string) {
 			continue
 		}
 		for _, identifier := range primitive_field_names(field) {
-			gaps = append(gaps, "raw "+kind+" "+role+" "+identifier+
-				"; wrap it in a defined type")
+			// An embedded field declares no name, thus the parenthetical that
+			// names the subject has nothing to hold and is left out.
+			named := ""
+			if identifier != "" {
+				named = " (" + identifier + ")"
+			}
+			gaps = append(gaps, "has a raw "+kind+" "+role+named+
+				". Declare a defined type for the "+role+".")
 		}
 	}
 	return gaps
@@ -3216,7 +3250,7 @@ func primitive_owner_diagnostics(
 	for _, gap := range gaps {
 		diags = append(diags, Diagnostic{
 			Position: position,
-			Message:  owner + ": " + gap,
+			Message:  "The declaration " + owner + " " + gap,
 		})
 	}
 	return diags
@@ -3326,8 +3360,10 @@ func type_invariants_absent(
 	type_name := type_specification.Name.Name
 	return Diagnostic{
 		Position: file_set.Position(type_specification.Name.Pos()),
-		Message: "declare " + want + "(" + type_name +
-			", invariant.Namespace) directly below " + type_name,
+		Message: fmt.Sprintf(
+			"The type %s has no invariants function. "+
+				"Declare %s(%s, invariant.Namespace) directly below the type %s.",
+			type_name, want, type_name, type_name),
 	}
 }
 
@@ -3340,8 +3376,10 @@ func type_invariants_bad_signature(
 	type_name := type_specification.Name.Name
 	return Diagnostic{
 		Position: file_set.Position(function.Name.Pos()),
-		Message: function.Name.Name + " must take (" + type_name + " or *" +
-			type_name + ", invariant.Namespace)",
+		Message: fmt.Sprintf(
+			"The function %s has incorrect parameters. "+
+				"Write the parameters (%s or *%s, invariant.Namespace).",
+			function.Name.Name, type_name, type_name),
 	}
 }
 
@@ -3367,7 +3405,10 @@ func check_type_invariants_orphan(
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(function.Name.Pos()),
-			Message:  function.Name.Name + " must be declared directly below its type",
+			Message: fmt.Sprintf(
+				"The function %s is not directly below the type of the same "+
+					"name. Declare the function %s directly below the type.",
+				function.Name.Name, function.Name.Name),
 		})
 	}
 	return diags
@@ -3393,8 +3434,9 @@ func check_type_invariants_gap(
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(group.Pos()),
-			Message: "remove the comment between " + type_specification.Name.Name +
-				" and " + function.Name.Name,
+			Message: fmt.Sprintf(
+				"There is a comment between %s and %s. Remove the comment.",
+				type_specification.Name.Name, function.Name.Name),
 		})
 	}
 	return diags
