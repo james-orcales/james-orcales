@@ -588,11 +588,6 @@ func Test_Range_Exclusions(t *testing.T) {
 	if message := panic_text(builder.Ensure); !strings.Contains(message, "excluded") {
 		t.Fatalf("panic = %q", message)
 	}
-	invalid := invariant.Recorder_Assertions(&invariant.Recorder{}, "range").
-		Range_Int(1, 0, 3, 0)
-	if message := panic_text(invalid.Ensure); !strings.Contains(message, "strictly inside") {
-		t.Fatalf("panic = %q", message)
-	}
 }
 
 // Test_Range_Registration rejects an invalid static domain before the suite.

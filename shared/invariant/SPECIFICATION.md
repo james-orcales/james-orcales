@@ -22,8 +22,9 @@ Registration seeds each literal message once, so an `Always` the suite never rea
 
 ### Deferred
 
-A link captures its condition and advances the value builder. It never panics, resolves coverage,
-or credits an event; `Ensure` owns every visible operation.
+A recording link captures its condition and advances the value builder. Without a registration
+plan the link is inert: it does not advance an ordinal or construct an observation. It never
+panics, resolves coverage, or credits an event; `Ensure` owns every visible operation.
 
 ### Coverage
 
@@ -62,7 +63,8 @@ binaries do not consult registration plans or shape caches.
 ### Allocation
 
 Warmed recording and enforcement allocate nothing. The builder is a value carrying fixed
-observations, counters, deferred verdicts, and an optional registration-owned plan.
+observations and counters only while a registration-owned plan exists. Ordinary enforcement
+carries only a deferred value-dependent verdict and does not construct recording state.
 
 ### Persistence
 
@@ -101,8 +103,9 @@ composition is idempotent; a distinct root using the namespace is fatal even wit
 
 ### Caps
 
-A chain accepts exactly 70 expanded links. Preset guards and generated axes occupy that same space;
-registration rejects a 71st, while foreign runtime execution defers the equivalent panic to Ensure.
+A chain accepts exactly 70 expanded links. Preset guards and generated axes occupy that same space,
+and registration rejects a 71st before the suite runs. Ordinary runtime enforcement never recounts
+the statically expanded chain.
 
 # Bundles
 
@@ -189,8 +192,9 @@ Fuzz workers persist only a branch's first transition and the coordinator unions
 
 ### Enforcement
 
-`Ensure` enforces Range and Enum in every enforcing mode, including modes that do not record.
-Bare `Always` remains independent and eager; `noassert` makes the complete surface inert.
+`Ensure` enforces Range and Enum in every enforcing mode, including modes that do not record. Only
+value-dependent bounds, holes, and membership are runtime work; malformed static domains are
+registration failures. Bare `Always` remains eager; `noassert` makes the complete surface inert.
 
 ### Uniqueness
 
@@ -210,7 +214,8 @@ unsigned primitive width except `uintptr`; defined integers convert explicitly a
 ### Guard
 
 Range contributes successful lower-bound and upper-bound reachability guards. Invalid domains,
-bound violations, and observed holes are deferred until `Ensure` in every enforcing mode.
+boundary holes, and exterior holes fail registration. Observed bound and hole violations are
+deferred until `Ensure` in every enforcing mode.
 
 ### Coverage
 
@@ -235,7 +240,7 @@ and requires at least two distinct members.
 ### Guard
 
 Enum contributes one successful membership reachability guard. An invalid domain or non-member is
-deferred until `Ensure` in every enforcing mode.
+a registration failure; an observed non-member is deferred until `Ensure` in every enforcing mode.
 
 ### Members
 

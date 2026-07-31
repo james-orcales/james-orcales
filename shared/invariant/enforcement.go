@@ -4,6 +4,8 @@
 // latch raw verdicts. Ensure is the single boundary that can panic or mutate coverage.
 package invariant
 
+import "unsafe"
+
 // ASSERTION_FAILURE_NONE reserves zero so the builder's zero value has no deferred verdict.
 const ASSERTION_FAILURE_NONE uint8 = 0
 
@@ -31,6 +33,21 @@ const ASSERTION_FAILURE_ENUM_DOMAIN uint8 = 7
 // ASSERTION_FAILURE_ENUM_MEMBER identifies an observed non-member.
 const ASSERTION_FAILURE_ENUM_MEMBER uint8 = 8
 
+// ASSERTION_RECORDING_MASK tags the union without colliding with any packed recording field.
+const ASSERTION_RECORDING_MASK = uintptr(1) << (unsafe.Sizeof(uintptr(0))*8 - 1)
+
+// ASSERTION_ORDINAL_SHIFT leaves the low byte available for the six observations above ordinal 63.
+const ASSERTION_ORDINAL_SHIFT = 8
+
+// ASSERTION_ORDINAL_MASK reserves seven bits because registration caps ordinals at 70.
+const ASSERTION_ORDINAL_MASK = uintptr(0x7f) << ASSERTION_ORDINAL_SHIFT
+
+// ASSERTION_FAILURE_SHIFT keeps the deferred verdict independent of observations and ordinals.
+const ASSERTION_FAILURE_SHIFT = 16
+
+// ASSERTION_FAILURE_MASK reserves four bits for the nine failure states.
+const ASSERTION_FAILURE_MASK = uintptr(0x0f) << ASSERTION_FAILURE_SHIFT
+
 // Recorder_Always remains eager because it is deliberately outside the deferred builder.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
@@ -48,15 +65,20 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 // Recorder_Assertions starts one deferred chain. Only recording modes consult registration;
 // shipped enforcement therefore pays no map, cache, lock, or identity-validation cost.
 func Recorder_Assertions(recorder *Recorder, namespace Namespace) (builder Assertion_Builder) {
-	builder.Recorder = recorder
-	builder.Namespace = namespace
+	builder.Context = unsafe.Pointer(unsafe.StringData(string(namespace)))
+	builder.State_A = uintptr(len(namespace))
 	if !recorder.Is_Test {
 		return builder
 	}
 	if recorder.Is_Benchmark {
 		return builder
 	}
-	builder.Plan = recorder.Assertion_Plans[namespace]
+	plan := recorder.Assertion_Plans[namespace]
+	if plan != nil {
+		builder.Context = unsafe.Pointer(plan)
+		builder.State_A = 0
+		builder.State_B = ASSERTION_RECORDING_MASK
+	}
 	return builder
 }
 
@@ -65,210 +87,308 @@ func Recorder_Assertions(recorder *Recorder, namespace Namespace) (builder Asser
 func (builder Assertion_Builder) Sometimes(
 	condition bool, message string,
 ) (next Assertion_Builder) {
+	if !builder.assertion_recording() {
+		return builder
+	}
 	return builder.assertion_axis(condition)
 }
 
-// Range_Int captures the int bounded-domain assertion for Ensure.
+// Range_Int keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int(
 	value int, minimum int, maximum int, excluded ...int,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	valid := value >= minimum && value <= maximum
+	for _, hole := range excluded {
+		if value == hole {
+			valid = false
+			break
+		}
+	}
+	if valid {
+		if !builder.assertion_recording() {
+			return builder
+		}
+	}
+	return assertion_range_slow[int](
+		builder, value, minimum, maximum,
+		unsafe.Pointer(unsafe.SliceData(excluded)), len(excluded))
 }
 
-// Range_Int8 captures the int8 bounded-domain assertion for Ensure.
+// Range_Int8 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int8(
 	value int8, minimum int8, maximum int8, excluded ...int8,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Range_Int16 captures the int16 bounded-domain assertion for Ensure.
+// Range_Int16 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int16(
 	value int16, minimum int16, maximum int16, excluded ...int16,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Range_Int32 captures the int32 bounded-domain assertion for Ensure.
+// Range_Int32 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int32(
 	value int32, minimum int32, maximum int32, excluded ...int32,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Range_Int64 captures the int64 bounded-domain assertion for Ensure.
+// Range_Int64 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Int64(
 	value int64, minimum int64, maximum int64, excluded ...int64,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Range_Uint captures the uint bounded-domain assertion for Ensure.
+// Range_Uint keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint(
 	value uint, minimum uint, maximum uint, excluded ...uint,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Range_Uint8 captures the uint8 bounded-domain assertion for Ensure.
+// Range_Uint8 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint8(
 	value uint8, minimum uint8, maximum uint8, excluded ...uint8,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	valid := value >= minimum && value <= maximum
+	for _, hole := range excluded {
+		if value == hole {
+			valid = false
+			break
+		}
+	}
+	if valid {
+		if !builder.assertion_recording() {
+			return builder
+		}
+	}
+	return assertion_range_slow[uint8](
+		builder, value, minimum, maximum,
+		unsafe.Pointer(unsafe.SliceData(excluded)), len(excluded))
 }
 
-// Range_Uint16 captures the uint16 bounded-domain assertion for Ensure.
+// Range_Uint16 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint16(
 	value uint16, minimum uint16, maximum uint16, excluded ...uint16,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Range_Uint32 captures the uint32 bounded-domain assertion for Ensure.
+// Range_Uint32 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint32(
 	value uint32, minimum uint32, maximum uint32, excluded ...uint32,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Range_Uint64 captures the uint64 bounded-domain assertion for Ensure.
+// Range_Uint64 keeps only value-dependent enforcement in ordinary binaries.
 func (builder Assertion_Builder) Range_Uint64(
 	value uint64, minimum uint64, maximum uint64, excluded ...uint64,
 ) (next Assertion_Builder) {
-	return assertion_range(builder, value, minimum, maximum, excluded)
+	return assertion_range_head(builder, value, minimum, maximum, excluded)
 }
 
-// Enum_Int captures the int member-domain assertion for Ensure.
+// Enum_Int keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Int(
 	value int, members ...int,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[int])
 }
 
-// Enum_Int8 captures the int8 member-domain assertion for Ensure.
+// Enum_Int8 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Int8(
 	value int8, members ...int8,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[int8])
 }
 
-// Enum_Int16 captures the int16 member-domain assertion for Ensure.
+// Enum_Int16 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Int16(
 	value int16, members ...int16,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[int16])
 }
 
-// Enum_Int32 captures the int32 member-domain assertion for Ensure.
+// Enum_Int32 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Int32(
 	value int32, members ...int32,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[int32])
 }
 
-// Enum_Int64 captures the int64 member-domain assertion for Ensure.
+// Enum_Int64 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Int64(
 	value int64, members ...int64,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[int64])
 }
 
-// Enum_Uint captures the uint member-domain assertion for Ensure.
+// Enum_Uint keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Uint(
 	value uint, members ...uint,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint])
 }
 
-// Enum_Uint8 captures the uint8 member-domain assertion for Ensure.
+// Enum_Uint8 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Uint8(
 	value uint8, members ...uint8,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint8])
 }
 
-// Enum_Uint16 captures the uint16 member-domain assertion for Ensure.
+// Enum_Uint16 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Uint16(
 	value uint16, members ...uint16,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint16])
 }
 
-// Enum_Uint32 captures the uint32 member-domain assertion for Ensure.
+// Enum_Uint32 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Uint32(
 	value uint32, members ...uint32,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint32])
 }
 
-// Enum_Uint64 captures the uint64 member-domain assertion for Ensure.
+// Enum_Uint64 keeps only membership enforcement in ordinary binaries.
+//
+//go:noinline
 func (builder Assertion_Builder) Enum_Uint64(
 	value uint64, members ...uint64,
 ) (next Assertion_Builder) {
-	return assertion_enum(builder, value, members)
+	return assertion_enum_head(builder, value, members, assertion_enum_slow[uint64])
 }
 
-// Ensure is the only fluent operation allowed to panic or credit. It preflights the whole plan so
-// an invalid execution can never leave a misleading partially-covered chain.
+// Ensure keeps the successful ordinary path small enough to inline at every assertion site.
 func (builder Assertion_Builder) Ensure() {
-	if builder.Failure != ASSERTION_FAILURE_NONE {
+	if builder.assertion_failure() == ASSERTION_FAILURE_NONE {
+		if !builder.assertion_recording() {
+			return
+		}
+	}
+	assertion_ensure(&builder)
+}
+
+//go:noinline
+func assertion_ensure(builder *Assertion_Builder) {
+	if builder.assertion_failure() != ASSERTION_FAILURE_NONE {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + builder.assertion_failure_message())
 	}
-	if builder.Plan == nil {
-		return
-	}
-	if len(builder.Plan.Links) != int(builder.Ordinal) {
+	assertion_record(builder)
+}
+
+// Preflighting the whole plan in this cold boundary prevents an invalid execution from leaving
+// misleading partial coverage.
+//
+//go:noinline
+func assertion_record(builder *Assertion_Builder) {
+	plan := builder.assertion_plan()
+	if len(plan.Links) != int(builder.assertion_ordinal()) {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
 			"registered Assertions chain differs from its registration plan")
 	}
-	for _, link := range builder.Plan.Links {
+	for _, link := range plan.Links {
 		if link.Entry.Metadata == nil {
 			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
 				"registered Assertions chain resolved an unknown coverage handle")
 		}
 	}
-	for _, link := range builder.Plan.Links {
+	for _, link := range plan.Links {
 		condition := true
 		if link.Kind == ASSERTION_KIND_SOMETIMES {
 			condition = builder.assertion_observed(link.Ordinal)
 		}
-		recorder_increment_entry(builder.Recorder, link.Entry, condition)
+		recorder_increment_entry(plan.Recorder, link.Entry, condition)
 	}
 }
 
 func (builder Assertion_Builder) assertion_axis(condition bool) (next Assertion_Builder) {
-	if builder.Ordinal >= ASSERTION_LINKS_MAX {
-		return builder.assertion_fail(ASSERTION_FAILURE_LINKS)
-	}
+	ordinal := builder.assertion_ordinal()
 	if condition {
-		builder.Observations[builder.Ordinal/64] |= uint64(1) << (builder.Ordinal % 64)
+		if ordinal < 64 {
+			builder.State_A |= uintptr(1) << ordinal
+		} else {
+			builder.State_B |= uintptr(1) << (ordinal - 64)
+		}
 	}
-	builder.Ordinal++
+	builder.State_B += uintptr(1) << ASSERTION_ORDINAL_SHIFT
 	return builder
 }
 
 func (builder Assertion_Builder) assertion_guard() (next Assertion_Builder) {
-	if builder.Ordinal >= ASSERTION_LINKS_MAX {
-		return builder.assertion_fail(ASSERTION_FAILURE_LINKS)
-	}
-	builder.Ordinal++
+	builder.State_B += uintptr(1) << ASSERTION_ORDINAL_SHIFT
 	return builder
 }
 
 func (builder Assertion_Builder) assertion_observed(ordinal uint8) (observed bool) {
-	return builder.Observations[ordinal/64]&(uint64(1)<<(ordinal%64)) != 0
+	if !builder.assertion_recording() {
+		return false
+	}
+	if ordinal < 64 {
+		return builder.State_A&(uintptr(1)<<ordinal) != 0
+	}
+	return builder.State_B&(uintptr(1)<<(ordinal-64)) != 0
 }
 
+func (builder Assertion_Builder) assertion_recording() (recording bool) {
+	return builder.State_B&ASSERTION_RECORDING_MASK != 0
+}
+
+func (builder Assertion_Builder) assertion_ordinal() (ordinal uint8) {
+	return uint8((builder.State_B & ASSERTION_ORDINAL_MASK) >> ASSERTION_ORDINAL_SHIFT)
+}
+
+func (builder Assertion_Builder) assertion_failure() (failure uint8) {
+	return uint8((builder.State_B & ASSERTION_FAILURE_MASK) >> ASSERTION_FAILURE_SHIFT)
+}
+
+func (builder *Assertion_Builder) assertion_plan() (plan *Assertion_Plan) {
+	return (*Assertion_Plan)(builder.Context)
+}
+
+func (builder *Assertion_Builder) assertion_namespace() (namespace Namespace) {
+	if builder.assertion_recording() {
+		return builder.assertion_plan().Namespace
+	}
+	if builder.State_A == 0 {
+		return ""
+	}
+	return Namespace(unsafe.String((*byte)(builder.Context), int(builder.State_A)))
+}
+
+//go:noinline
 func (builder Assertion_Builder) assertion_fail(failure uint8) (next Assertion_Builder) {
-	if builder.Failure == ASSERTION_FAILURE_NONE {
-		builder.Failure = failure
+	if builder.assertion_failure() == ASSERTION_FAILURE_NONE {
+		builder.State_B |= uintptr(failure) << ASSERTION_FAILURE_SHIFT
 	}
 	return builder
 }
 
-func (builder Assertion_Builder) assertion_failure_message() (message string) {
-	prefix := string(builder.Namespace) + ELEMENT_MESSAGE_SEPARATOR
-	switch builder.Failure {
+func (builder *Assertion_Builder) assertion_failure_message() (message string) {
+	prefix := string(builder.assertion_namespace()) + ELEMENT_MESSAGE_SEPARATOR
+	switch builder.assertion_failure() {
 	case ASSERTION_FAILURE_LINKS:
 		return "Assertions exceeds 70 links"
 	case ASSERTION_FAILURE_RANGE_DOMAIN:
@@ -289,14 +409,32 @@ func (builder Assertion_Builder) assertion_failure_message() (message string) {
 	return "Assertions failed"
 }
 
-func assertion_range[Value Integer](
+func assertion_range_head[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value, excluded []Value,
 ) (next Assertion_Builder) {
-	builder = builder.assertion_guard()
-	builder = builder.assertion_guard()
-	if minimum > maximum {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_DOMAIN)
+	valid := value >= minimum && value <= maximum
+	for _, hole := range excluded {
+		if value == hole {
+			valid = false
+			break
+		}
 	}
+	if valid {
+		if !builder.assertion_recording() {
+			return builder
+		}
+	}
+	return assertion_range_slow(
+		builder, value, minimum, maximum,
+		unsafe.Pointer(unsafe.SliceData(excluded)), len(excluded))
+}
+
+//go:noinline
+func assertion_range_slow[Value Integer](
+	builder Assertion_Builder, value Value, minimum Value, maximum Value,
+	excluded_data unsafe.Pointer, excluded_count int,
+) (next Assertion_Builder) {
+	excluded := unsafe.Slice((*Value)(excluded_data), excluded_count)
 	if value < minimum {
 		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER)
 	}
@@ -304,35 +442,45 @@ func assertion_range[Value Integer](
 		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER)
 	}
 	for _, hole := range excluded {
-		outside := hole <= minimum
-		if hole >= maximum {
-			outside = true
-		}
-		if outside {
-			builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUSION)
-		}
 		if value == hole {
 			builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUDED)
 		}
 	}
+	if builder.assertion_recording() {
+		builder = assertion_range_recording(builder, value, minimum, maximum, excluded)
+	}
+	return builder
+}
+
+// Only a registered test run needs boundary and sentinel observations.
+//
+//go:noinline
+func assertion_range_recording[Value Integer](
+	builder Assertion_Builder, value Value, minimum Value, maximum Value, excluded []Value,
+) (next Assertion_Builder) {
+	builder = builder.assertion_guard()
+	builder = builder.assertion_guard()
 	if minimum == maximum {
 		return builder
 	}
 	builder = builder.assertion_axis(value == minimum)
 	builder = builder.assertion_axis(value == maximum)
-	builder = assertion_range_candidate(builder, value, minimum, maximum, excluded, Value(0))
-	builder = assertion_range_candidate(builder, value, minimum, maximum, excluded, Value(1))
-	builder = assertion_range_candidate(builder, value, minimum, maximum, excluded, Value(2))
+	builder = assertion_range_candidate_recording(
+		builder, value, minimum, maximum, excluded, Value(0))
+	builder = assertion_range_candidate_recording(
+		builder, value, minimum, maximum, excluded, Value(1))
+	builder = assertion_range_candidate_recording(
+		builder, value, minimum, maximum, excluded, Value(2))
 	zero := Value(0)
 	negative_one := zero - Value(1)
 	if negative_one < zero {
-		builder = assertion_range_candidate(
+		builder = assertion_range_candidate_recording(
 			builder, value, minimum, maximum, excluded, negative_one)
 	}
 	return builder
 }
 
-func assertion_range_candidate[Value Integer](
+func assertion_range_candidate_recording[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value,
 	excluded []Value, candidate Value,
 ) (next Assertion_Builder) {
@@ -351,12 +499,54 @@ func assertion_range_candidate[Value Integer](
 	return builder.assertion_axis(value == candidate)
 }
 
-func assertion_enum[Value Integer](
+func assertion_enum_head[Value Integer](
+	builder Assertion_Builder, value Value, members []Value,
+	slow func(Assertion_Builder, Value, unsafe.Pointer, int) (next Assertion_Builder),
+) (next Assertion_Builder) {
+	matched := false
+	for _, member := range members {
+		if value == member {
+			matched = true
+			break
+		}
+	}
+	if matched {
+		if !builder.assertion_recording() {
+			return builder
+		}
+	}
+	return slow(
+		builder, value, unsafe.Pointer(unsafe.SliceData(members)), len(members))
+}
+
+//go:noinline
+func assertion_enum_slow[Value Integer](
+	builder Assertion_Builder, value Value, member_data unsafe.Pointer, member_count int,
+) (next Assertion_Builder) {
+	members := unsafe.Slice((*Value)(member_data), member_count)
+	matched := false
+	for _, member := range members {
+		if value == member {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
+	}
+	if builder.assertion_recording() {
+		builder = assertion_enum_recording(builder, value, members)
+	}
+	return builder
+}
+
+// Distinct-member expansion is useful only to the registration-owned emission plan.
+//
+//go:noinline
+func assertion_enum_recording[Value Integer](
 	builder Assertion_Builder, value Value, members []Value,
 ) (next Assertion_Builder) {
 	builder = builder.assertion_guard()
-	distinct := 0
-	matched := false
 	for index, member := range members {
 		duplicate := false
 		for _, earlier := range members[:index] {
@@ -368,18 +558,7 @@ func assertion_enum[Value Integer](
 		if duplicate {
 			continue
 		}
-		distinct++
-		condition := value == member
-		if condition {
-			matched = true
-		}
-		builder = builder.assertion_axis(condition)
-	}
-	if distinct < 2 {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_DOMAIN)
-	}
-	if !matched {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
+		builder = builder.assertion_axis(value == member)
 	}
 	return builder
 }

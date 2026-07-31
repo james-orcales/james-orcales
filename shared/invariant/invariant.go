@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unsafe"
 )
 
 // ASSERTION_FAILURE_MESSAGE_PREFIX opens every assertion-failure message.
@@ -179,22 +180,23 @@ type Namespace string
 // Assertion_Builder is the complete deferred runtime state. Fixed observations make escape and
 // allocation unnecessary even at the largest supported chain.
 type Assertion_Builder struct {
-	// Recorder owns enforcement mode and the registration plan.
-	Recorder *Recorder
-	// Plan is non-nil only when this run records a registered chain.
-	Plan *Assertion_Plan
-	// Namespace names deferred preset failures without rebuilding coverage keys.
-	Namespace Namespace
-	// Observations packs the true branch of each expanded ordinal.
-	Observations [2]uint64
-	// Ordinal is the number of expanded links captured so far.
-	Ordinal uint8
-	// Failure is the first deferred structural or preset verdict.
-	Failure uint8
+	// Context holds ordinary namespace bytes or a recording plan. State_A and State_B interpret
+	// that pointer as a tagged union: namespace length plus failure for enforcement, or packed
+	// observations, ordinal, and failure for recording. The states are mutually exclusive, so
+	// carrying both representations through every fluent return would be pure overhead.
+	Context unsafe.Pointer
+	// State_A holds the namespace length or the first 64 observations selected by Context.
+	State_A uintptr
+	// State_B holds the union tag, deferred failure, ordinal, and remaining observations.
+	State_B uintptr
 }
 
 // Assertion_Plan is registration's immutable emission program for one namespace.
 type Assertion_Plan struct {
+	// Recorder owns the plan, so recording builders do not carry a second pointer.
+	Recorder *Recorder
+	// Namespace restores the deferred failure identity when Context_Data carries the plan.
+	Namespace Namespace
 	// Links is the exact expanded sequence runtime observations index.
 	Links []Assertion_Plan_Link
 }
@@ -671,6 +673,8 @@ func recorder_commit_planned(recorder *Recorder, reg *Registration) {
 	}
 	recorder.Assertion_Plans = map[Namespace]*Assertion_Plan{}
 	for namespace, plan := range reg.Planned_Assertions {
+		plan.Recorder = recorder
+		plan.Namespace = namespace
 		for link_index := range plan.Links {
 			link := &plan.Links[link_index]
 			value, exists := recorder.Events.Load(link.Entry.Key)

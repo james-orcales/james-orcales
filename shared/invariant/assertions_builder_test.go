@@ -108,21 +108,6 @@ func Test_Assertions_Defers_Enum_Failure(t *testing.T) {
 	}
 }
 
-// Test_Assertions_Rejects_The_Seventy_First_Link_At_Ensure pins the fixed observation capacity.
-func Test_Assertions_Rejects_The_Seventy_First_Link_At_Ensure(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "links")
-	for ordinal_index := 0; ordinal_index < 70; ordinal_index++ {
-		builder = builder.Sometimes(false, "axis")
-	}
-	if message := panic_text(builder.Ensure); message != "" {
-		t.Fatalf("70 links panic = %q", message)
-	}
-	builder = builder.Sometimes(false, "overflow")
-	if message := panic_text(builder.Ensure); !strings.Contains(message, "70 links") {
-		t.Fatalf("71 links panic = %q", message)
-	}
-}
-
 // Test_Assertions_Has_Zero_Allocations protects the builder's register-value shape.
 func Test_Assertions_Has_Zero_Allocations(t *testing.T) {
 	recorder := &invariant.Recorder{}
@@ -147,6 +132,12 @@ func check(value bool) {
 	})
 	if allocations != 0 {
 		t.Fatalf("recording allocations = %f, want 0", allocations)
+	}
+	allocations = testing.AllocsPerRun(1000, func() {
+		benchmark_dense_root(recorder, 5)
+	})
+	if allocations != 0 {
+		t.Fatalf("dense enforcement allocations = %f, want 0", allocations)
 	}
 }
 
@@ -210,23 +201,19 @@ func Test_Assertions_Typed_Presets_Execute_Every_Integer_Width(t *testing.T) {
 	}
 }
 
-// Test_Assertions_Defers_Every_Preset_Failure keeps failure precedence at Ensure.
-func Test_Assertions_Defers_Every_Preset_Failure(t *testing.T) {
+// Test_Assertions_Defers_Every_Value_Failure keeps runtime failure precedence at Ensure.
+func Test_Assertions_Defers_Every_Value_Failure(t *testing.T) {
 	recorder := &invariant.Recorder{}
 	failures := []struct {
 		Builder invariant.Assertion_Builder
 		Message string
 	}{
-		{invariant.Recorder_Assertions(recorder, "domain").Range_Int(1, 2, 0),
-			"minimum exceeds maximum"},
 		{invariant.Recorder_Assertions(recorder, "lower").Range_Int(-1, 0, 2),
 			"below min"},
-		{invariant.Recorder_Assertions(recorder, "exclusion").Range_Int(1, 0, 2, 0),
-			"strictly inside"},
 		{invariant.Recorder_Assertions(recorder, "excluded").Range_Int(1, 0, 2, 1),
 			"is excluded"},
-		{invariant.Recorder_Assertions(recorder, "enum-domain").Enum_Int(1, 1, 1),
-			"two distinct"},
+		{invariant.Recorder_Assertions(recorder, "enum-member").Enum_Int(3, 1, 2),
+			"not a member"},
 	}
 	for _, failure := range failures {
 		message := panic_text(failure.Builder.Ensure)
@@ -314,6 +301,62 @@ func Benchmark_Assertions_Enforcement(benchmark *testing.B) {
 	}
 }
 
+func Benchmark_Assertions_Sometimes(benchmark *testing.B) {
+	recorder := &invariant.Recorder{}
+	for benchmark.Loop() {
+		invariant.Recorder_Assertions(recorder, "benchmark").
+			Sometimes(true, "axis").Ensure()
+	}
+}
+
+func Benchmark_Assertions_Range(benchmark *testing.B) {
+	recorder := &invariant.Recorder{}
+	for benchmark.Loop() {
+		invariant.Recorder_Assertions(recorder, "benchmark").
+			Range_Int(5, 0, 10).Ensure()
+	}
+}
+
+func Benchmark_Assertions_Range_Uint8(benchmark *testing.B) {
+	recorder := &invariant.Recorder{}
+	for benchmark.Loop() {
+		invariant.Recorder_Assertions(recorder, "benchmark").
+			Range_Uint8(5, 0, 10).Ensure()
+	}
+}
+
+func Benchmark_Assertions_Range_Uint8_Domain(benchmark *testing.B) {
+	recorder := &invariant.Recorder{}
+	for benchmark.Loop() {
+		invariant.Recorder_Assertions(recorder, "benchmark").
+			Range_Uint8(5, 0, ^uint8(0)).Ensure()
+	}
+}
+
+func Benchmark_Assertions_Range_Holes(benchmark *testing.B) {
+	recorder := &invariant.Recorder{}
+	for benchmark.Loop() {
+		invariant.Recorder_Assertions(recorder, "benchmark").
+			Range_Int(5, 0, 10, 2, 4, 6, 8).Ensure()
+	}
+}
+
+func Benchmark_Assertions_Enum(benchmark *testing.B) {
+	recorder := &invariant.Recorder{}
+	for benchmark.Loop() {
+		invariant.Recorder_Assertions(recorder, "benchmark").
+			Enum_Int(5, 1, 3, 5, 7).Ensure()
+	}
+}
+
+func Benchmark_Assertions_Ensure(benchmark *testing.B) {
+	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "benchmark").
+		Sometimes(true, "axis")
+	for benchmark.Loop() {
+		builder.Ensure()
+	}
+}
+
 func Benchmark_Assertions_Recording(benchmark *testing.B) {
 	recorder, _, code := registered_fixture(`package fixture
 func check(value int) {
@@ -327,5 +370,39 @@ func check(value int) {
 	for benchmark.Loop() {
 		invariant.Recorder_Assertions(recorder, "benchmark").
 			Sometimes(true, "axis").Range_Int(5, 0, 10).Ensure()
+	}
+}
+
+// Nested helpers preserve the amplification that a solitary fluent chain
+// cannot represent.
+func benchmark_dense_leaf(recorder *invariant.Recorder, value int) {
+	invariant.Recorder_Assertions(recorder, "dense-leaf").
+		Sometimes(value&1 == 1, "odd").
+		Range_Int(value, 0, 10, 2, 4, 6, 8).
+		Enum_Int(value, 1, 3, 5, 7, 9).
+		Ensure()
+}
+
+func benchmark_dense_branch(recorder *invariant.Recorder, value int) {
+	invariant.Recorder_Assertions(recorder, "dense-branch").
+		Range_Int(value, 0, 10).
+		Sometimes(value < 8, "below eight").
+		Ensure()
+	benchmark_dense_leaf(recorder, value)
+}
+
+func benchmark_dense_root(recorder *invariant.Recorder, value int) {
+	invariant.Recorder_Assertions(recorder, "dense-root").
+		Enum_Int(value, 1, 3, 5, 7, 9).
+		Sometimes(value != 0, "nonzero").
+		Ensure()
+	benchmark_dense_branch(recorder, value)
+	benchmark_dense_branch(recorder, value)
+}
+
+func Benchmark_Assertions_Dense(benchmark *testing.B) {
+	recorder := &invariant.Recorder{}
+	for benchmark.Loop() {
+		benchmark_dense_root(recorder, 5)
 	}
 }
