@@ -286,16 +286,19 @@ exits with a nonzero status.
 ### Gaps
 
 A guard with no call is in the reachability table. An absent axis polarity is in the branch table.
-Each branch row has a namespace, numeric link, polarity, property, and unquoted source expression.
+Each branch record has a namespace, package, subject type, numeric link, polarity, property, and
+unquoted source expression. A table shows the subject type and holds the package back.
 
 ### Reachability Identity
 
-A builder reachability row uses its public namespace. It does not expose the internal link key.
+A builder reachability record uses its public namespace, package, and subject type. It does not
+expose the internal link key. An eager message owns no package and no subject type.
 
 ### Table Order
 
-Each section has a count. Branch rows use assertion, numeric link, and polarity as the sort keys.
-Reachability rows use assertion as the sort key. The gap banner occurs before and after the report.
+Each section has a count. Branch rows sort by assertion, package, subject type, numeric link, and
+polarity. Reachability rows sort by assertion, package, and subject type. The gap banner occurs
+before and after the report.
 
 ### Table Escape
 

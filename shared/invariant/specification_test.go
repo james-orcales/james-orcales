@@ -46,9 +46,9 @@ func check(ok bool) { invariant.Always(ok, "reachable") }
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 1 coverage gaps 🚨\n\n" +
 		"# Reachability gaps (1)\n\n" +
-		"| Assertion | Source |\n" +
-		"|-----------|--------|\n" +
-		"| reachable | ok     |\n\n" +
+		"| Assertion | Type | Source |\n" +
+		"|-----------|------|--------|\n" +
+		"| reachable |      | ok     |\n\n" +
 		"🚨 1 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -139,9 +139,9 @@ func Test_Sometimes_Gap(t *testing.T) {
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 1 coverage gaps 🚨\n\n" +
 		"# Branch gaps (1)\n\n" +
-		"| Assertion | Link | Missing | Property | Source     |\n" +
-		"|-----------|-----:|---------|----------|------------|\n" +
-		"| gap       |    0 | false   | axis     | value == 0 |\n\n" +
+		"| Assertion | Type            | Link | Missing | Property | Source     |\n" +
+		"|-----------|-----------------|-----:|---------|----------|------------|\n" +
+		"| gap       | Fixture_Subject |    0 | false   | axis     | value == 0 |\n\n" +
 		"🚨 1 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -202,7 +202,10 @@ func check(count int) { invariant.Range(count, 0, 4, "gapped") }
 `)
 	core.Recorder_Range(gapped, 0, 0, 4, "gapped")
 	core.Recorder_Analyze_Assertion_Frequency(gapped)
-	want := "| gapped    |    3 | true    | The value equals the maximum. | count  |"
+	// An inline helper keys on its own message, thus it owns no subject type and its cell is
+	// empty.
+	want := "| gapped    |      |    3 | true    | " +
+		"The value equals the maximum. | count  |"
 	if !strings.Contains(output.String(), want) {
 		t.Fatalf("output = %q, want a row containing %q", output.String(), want)
 	}
@@ -1076,11 +1079,11 @@ func second(value Fixture_Subject) { Fixture_Subject_Invariants(value, "second")
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 3 coverage gaps 🚨\n\n" +
 		"# Branch gaps (3)\n\n" +
-		"| Assertion | Link | Missing | Property | Source     |\n" +
-		"|-----------|-----:|---------|----------|------------|\n" +
-		"| first     |    0 | false   | zero     | value == 0 |\n" +
-		"| second    |    0 | false   | zero     | value == 0 |\n" +
-		"| second    |    0 | true    | zero     | value == 0 |\n\n" +
+		"| Assertion | Type            | Link | Missing | Property | Source     |\n" +
+		"|-----------|-----------------|-----:|---------|----------|------------|\n" +
+		"| first     | Fixture_Subject |    0 | false   | zero     | value == 0 |\n" +
+		"| second    | Fixture_Subject |    0 | false   | zero     | value == 0 |\n" +
+		"| second    | Fixture_Subject |    0 | true    | zero     | value == 0 |\n\n" +
 		"🚨 3 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
@@ -1097,7 +1100,7 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 func check(value Number) { Number_Invariants(value, "number") }
 `)
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
-	if !strings.Contains(output.String(), "| number    |    0 | false   | zero") {
+	if !strings.Contains(output.String(), "| number    | Number |    0 | false   | zero") {
 		t.Fatalf("output = %q", output.String())
 	}
 }
@@ -1161,9 +1164,10 @@ func Int_Invariants(value int, namespace invariant.Namespace) {
 	}
 }
 
-// Test_Analysis_Gaps keeps uncovered branches fatal.
+// Test_Analysis_Gaps keeps uncovered branches fatal and keeps two duplicated bundles apart.
 func Test_Analysis_Gaps(t *testing.T) {
 	Test_Sometimes_Gap(t)
+	analysis_gap_names_its_subject(t)
 }
 
 // Test_Analysis_Reachability_Identity keeps a builder's internal key out of public reports.
@@ -1186,10 +1190,10 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 2 coverage gaps 🚨\n\n" +
 		"# Reachability gaps (2)\n\n" +
-		"| Assertion | Source     |\n" +
-		"|-----------|------------|\n" +
-		"| range     | int(value) |\n" +
-		"| range     | int(value) |\n\n" +
+		"| Assertion | Type            | Source     |\n" +
+		"|-----------|-----------------|------------|\n" +
+		"| range     | Fixture_Subject | int(value) |\n" +
+		"| range     | Fixture_Subject | int(value) |\n\n" +
 		"🚨 2 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
@@ -1216,12 +1220,12 @@ func same(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 4 coverage gaps 🚨\n\n" +
 		"# Branch gaps (4)\n\n" +
-		"| Assertion | Link | Missing | Property | Source     |\n" +
-		"|-----------|-----:|---------|----------|------------|\n" +
-		"| alpha     |    0 | false   | axis     | value == 0 |\n" +
-		"| alpha     |    0 | true    | axis     | value == 0 |\n" +
-		"| same      |    0 | true    | second   | value == 0 |\n" +
-		"| same      |    1 | true    | first    | value == 1 |\n\n" +
+		"| Assertion | Type            | Link | Missing | Property | Source     |\n" +
+		"|-----------|-----------------|-----:|---------|----------|------------|\n" +
+		"| alpha     | Alpha           |    0 | false   | axis     | value == 0 |\n" +
+		"| alpha     | Alpha           |    0 | true    | axis     | value == 0 |\n" +
+		"| same      | Fixture_Subject |    0 | true    | second   | value == 0 |\n" +
+		"| same      | Fixture_Subject |    1 | true    | first    | value == 1 |\n\n" +
 		"🚨 4 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -1233,7 +1237,7 @@ func Test_Analysis_Table_Escape(t *testing.T) {
 	link := uint8(2)
 	property := "P|Q\\R\nS"
 	gaps := []core.Coverage_Gap{{
-		Section: "branch", Assertion: "A|B\\C\nD", Link: &link,
+		Section: "branch", Assertion: "A|B\\C\nD", Type: "T|U\\V\nW", Link: &link,
 		Absent: "true", Property: &property, Source: "x|y\\z\nw",
 	}}
 	output := &bytes.Buffer{}
@@ -1242,9 +1246,10 @@ func Test_Analysis_Table_Escape(t *testing.T) {
 	}
 	want := "🚨 1 coverage gaps 🚨\n\n" +
 		"# Branch gaps (1)\n\n" +
-		"| Assertion    | Link | Missing | Property     | Source       |\n" +
-		"|--------------|-----:|---------|--------------|--------------|\n" +
-		"| A\\|B\\\\C<br>D |    2 | true    | P\\|Q\\\\R<br>S | x\\|y\\\\z<br>w |\n\n" +
+		"| Assertion    | Type         | Link | Missing | Property     | Source       |\n" +
+		"|--------------|--------------|-----:|---------|--------------|--------------|\n" +
+		"| A\\|B\\\\C<br>D | T\\|U\\\\V<br>W |    2 | true    | " +
+		"P\\|Q\\\\R<br>S | x\\|y\\\\z<br>w |\n\n" +
 		"🚨 1 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -1755,6 +1760,37 @@ func bundle_fixture(namespace string, links string) (source string) {
 		"\tinvariant.Tree(value, namespace)" + links + ".Ensure()\n}\n" +
 		"func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, \"" +
 		namespace + "\") }\n"
+}
+
+// Two types that share their constants state the same property under one namespace, which the
+// design calls for. Their rows then agree on every other field, thus the subject type is the only
+// handle a reader has on which of them lacks evidence.
+func analysis_gap_names_its_subject(t *testing.T) {
+	recorder, output, _ := registered_fixture(`package fixture
+type Alpha int
+func Alpha_Invariants(value Alpha, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+}
+type Beta int
+func Beta_Invariants(value Beta, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+}
+type Fixture_Subject struct {
+	A Alpha
+	B Beta
+}
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	Alpha_Invariants(value.A, namespace)
+	Beta_Invariants(value.B, namespace)
+}
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
+`)
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	for _, subject := range []string{"| Alpha ", "| Beta "} {
+		if !strings.Contains(output.String(), subject) {
+			t.Fatalf("gap report has no %q cell: %q", subject, output.String())
+		}
+	}
 }
 
 func registered_fixture(source string) (

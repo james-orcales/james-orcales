@@ -1725,6 +1725,13 @@ type Coverage_Gap struct {
 	Section string `json:"section"`
 	// Assertion is the builder namespace or the eager assertion identity.
 	Assertion string `json:"assertion"`
+	// Package is the import path of the subject a builder keyed its plan on. A namespace
+	// descends unchanged, thus it alone cannot say which bundle of a tree lacks evidence. An
+	// eager message is empty here, because it owns a globally unique message instead.
+	Package string `json:"package"`
+	// Type is the subject type a builder keyed its plan on. Two types that share their
+	// constants state one property under one namespace by design, and this separates them.
+	Type string `json:"type"`
 	// Link is the expanded builder ordinal; reachability records leave it null.
 	Link *uint8 `json:"link"`
 	// Absent is true, false, or reachability according to the absent obligation.
@@ -1807,25 +1814,29 @@ func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []Coverage_Gap)
 	if metadata.Frequency.Load() != 0 {
 		return gaps
 	}
+	assertion, package_path, subject := coverage_gap_identity(metadata.Message)
 	return append(gaps, Coverage_Gap{
-		Section: "reachability", Assertion: coverage_gap_assertion(metadata.Message),
+		Section: "reachability", Assertion: assertion, Package: package_path, Type: subject,
 		Absent: "reachability", Source: metadata.Condition,
 	})
 }
 
-// A builder guard shares the branch key shape, but its public reachability identity is the
-// namespace. Eager Always messages cannot contain the separator, so they remain unchanged.
-func coverage_gap_assertion(message string) (assertion string) {
-	assertion, _, separated := strings.Cut(message, ELEMENT_MESSAGE_SEPARATOR)
-	if separated {
-		return assertion
+// Splits the registration-owned key into the identity a reader gets. The key has namespace,
+// package, type, ordinal, and message. An eager Always cannot contain the separator, thus it is its
+// own assertion and owns neither a package nor a subject type.
+func coverage_gap_identity(
+	message string,
+) (assertion string, package_path string, subject string) {
+	parts := strings.Split(message, ELEMENT_MESSAGE_SEPARATOR)
+	if len(parts) != ASSERTION_KEY_PARTS {
+		return message, "", ""
 	}
-	return message
+	return parts[0], parts[1], parts[2]
 }
 
-// Parses the registration-owned builder identity into the stable reporting schema. The key has
-// namespace, package, type, ordinal, and message. The report shows the namespace as the assertion,
-// because the subject type is an implementation detail of identity rather than a reader's handle.
+// Parses the registration-owned builder identity into the stable reporting schema. A namespace
+// descends a tree unchanged, thus two bundles under one root share it. The subject type is what
+// separates them, and duplicated bundles across types are what the composition model calls for.
 func coverage_gap_branch(metadata *Assertion_Metadata, absent string) (gap Coverage_Gap) {
 	unparsed := Coverage_Gap{
 		Section: "branch", Assertion: metadata.Message,
@@ -1842,8 +1853,8 @@ func coverage_gap_branch(metadata *Assertion_Metadata, absent string) (gap Cover
 	link := uint8(ordinal)
 	property := parts[4]
 	return Coverage_Gap{
-		Section: "branch", Assertion: parts[0], Link: &link,
-		Absent: absent, Property: &property, Source: metadata.Condition,
+		Section: "branch", Assertion: parts[0], Package: parts[1], Type: parts[2],
+		Link: &link, Absent: absent, Property: &property, Source: metadata.Condition,
 	}
 }
 
@@ -1854,6 +1865,12 @@ func coverage_gap_less(left Coverage_Gap, right Coverage_Gap) (less bool) {
 	}
 	if left.Assertion != right.Assertion {
 		return left.Assertion < right.Assertion
+	}
+	if left.Package != right.Package {
+		return left.Package < right.Package
+	}
+	if left.Type != right.Type {
+		return left.Type < right.Type
 	}
 	if coverage_gap_link(left) != coverage_gap_link(right) {
 		return coverage_gap_link(left) < coverage_gap_link(right)
@@ -1933,6 +1950,7 @@ func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][BRANCH_TABLE_COLUMNS
 		}
 		rows = append(rows, [BRANCH_TABLE_COLUMNS]string{
 			coverage_gap_table_cell(gap.Assertion),
+			coverage_gap_table_cell(gap.Type),
 			link,
 			coverage_gap_table_cell(gap.Absent),
 			coverage_gap_table_cell(coverage_gap_property(gap)),
@@ -1942,11 +1960,12 @@ func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][BRANCH_TABLE_COLUMNS
 	return rows
 }
 
-// Writes the five-column branch table with Link right aligned as an ordinal.
+// Writes the six-column branch table with Link right aligned as an ordinal.
 func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Gap) {
 	rows := coverage_gap_branch_rows(gaps)
 	widths := [BRANCH_TABLE_COLUMNS]int{
-		len("Assertion"), len("Link"), len("Missing"), len("Property"), len("Source"),
+		len("Assertion"), len("Type"), len("Link"), len("Missing"),
+		len("Property"), len("Source"),
 	}
 	for _, row := range rows {
 		for column_index := range widths {
@@ -1954,14 +1973,14 @@ func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Ga
 				widths[column_index], len(row[column_index]))
 		}
 	}
-	fmt.Fprintf(report, "| %-*s | %*s | %-*s | %-*s | %-*s |\n",
-		widths[0], "Assertion", widths[1], "Link", widths[2], "Missing",
-		widths[3], "Property", widths[4], "Source")
+	fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %-*s |\n",
+		widths[0], "Assertion", widths[1], "Type", widths[2], "Link",
+		widths[3], "Missing", widths[4], "Property", widths[5], "Source")
 	coverage_gap_branch_separator_write(report, widths)
 	for _, row := range rows {
-		fmt.Fprintf(report, "| %-*s | %*s | %-*s | %-*s | %-*s |\n",
+		fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %-*s |\n",
 			widths[0], row[0], widths[1], row[1], widths[2], row[2],
-			widths[3], row[3], widths[4], row[4])
+			widths[3], row[3], widths[4], row[4], widths[5], row[5])
 	}
 }
 
@@ -1970,8 +1989,9 @@ func coverage_gap_branch_separator_write(
 	report *strings.Builder, widths [BRANCH_TABLE_COLUMNS]int,
 ) {
 	report.WriteString("|" + strings.Repeat("-", widths[0]+2))
-	report.WriteString("|" + strings.Repeat("-", widths[1]+1) + ":")
-	for _, width := range widths[2:] {
+	report.WriteString("|" + strings.Repeat("-", widths[1]+2))
+	report.WriteString("|" + strings.Repeat("-", widths[2]+1) + ":")
+	for _, width := range widths[3:] {
 		report.WriteString("|" + strings.Repeat("-", width+2))
 	}
 	report.WriteString("|\n")
@@ -1980,22 +2000,30 @@ func coverage_gap_branch_separator_write(
 // Writes the smaller reachability table because its section already names the absent obligation.
 func coverage_gap_reachability_table_write(report *strings.Builder, gaps []Coverage_Gap) {
 	rows := make([][REACHABILITY_TABLE_COLUMNS]string, 0, len(gaps))
-	widths := [REACHABILITY_TABLE_COLUMNS]int{len("Assertion"), len("Source")}
+	widths := [REACHABILITY_TABLE_COLUMNS]int{
+		len("Assertion"), len("Type"), len("Source"),
+	}
 	for _, gap := range gaps {
 		row := [REACHABILITY_TABLE_COLUMNS]string{
 			coverage_gap_table_cell(gap.Assertion),
+			coverage_gap_table_cell(gap.Type),
 			coverage_gap_table_cell(gap.Source),
 		}
 		rows = append(rows, row)
-		widths[0] = integer_maximum(widths[0], len(row[0]))
-		widths[1] = integer_maximum(widths[1], len(row[1]))
+		for column_index := range widths {
+			widths[column_index] = integer_maximum(
+				widths[column_index], len(row[column_index]))
+		}
 	}
-	fmt.Fprintf(report, "| %-*s | %-*s |\n", widths[0], "Assertion", widths[1], "Source")
-	report.WriteString("|" + strings.Repeat("-", widths[0]+2) +
-		"|" + strings.Repeat("-", widths[1]+2) + "|\n")
+	fmt.Fprintf(report, "| %-*s | %-*s | %-*s |\n",
+		widths[0], "Assertion", widths[1], "Type", widths[2], "Source")
+	for _, width := range widths {
+		report.WriteString("|" + strings.Repeat("-", width+2))
+	}
+	report.WriteString("|\n")
 	for _, row := range rows {
-		fmt.Fprintf(report, "| %-*s | %-*s |\n",
-			widths[0], row[0], widths[1], row[1])
+		fmt.Fprintf(report, "| %-*s | %-*s | %-*s |\n",
+			widths[0], row[0], widths[1], row[1], widths[2], row[2])
 	}
 }
 
@@ -2885,12 +2913,14 @@ func recorder_namespace_owner_equal(first []token.Pos, second []token.Pos) (equa
 // marker, so this holds many records per read and truncates none that the merge can resolve.
 const MERGE_READ_BYTES = 4096
 
-// BRANCH_TABLE_COLUMNS is the branch gap table's width: assertion, link, missing, property, source.
-const BRANCH_TABLE_COLUMNS = 5
+// BRANCH_TABLE_COLUMNS is the branch gap table's width: assertion, type, link, missing, property,
+// source. The package stays out of every table, because an import path repeats on each row and the
+// subject type alone separates the bundles of one tree.
+const BRANCH_TABLE_COLUMNS = 6
 
-// REACHABILITY_TABLE_COLUMNS is the reachability gap table's width: assertion and source. Its
-// section names the absent obligation, so it needs no polarity or property column.
-const REACHABILITY_TABLE_COLUMNS = 2
+// REACHABILITY_TABLE_COLUMNS is the reachability gap table's width: assertion, type, and source.
+// Its section names the absent obligation, so it needs no polarity or property column.
+const REACHABILITY_TABLE_COLUMNS = 3
 
 // ASSERTION_KEY_PARTS is how many separated elements assertion_registration_key writes: namespace,
 // package, type, ordinal, and message.

@@ -15,9 +15,12 @@ func Test_JSON_Output_Records(t *testing.T) {
 	property := "The value equals the minimum."
 	gaps := []core.Coverage_Gap{
 		{
-			Section: "branch", Assertion: "Classify_File_Input.Path", Link: &link,
+			Section: "branch", Assertion: "Classify_File_Input.Path",
+			Package: "local/james-orcales/sloc/internal", Type: "File_Path",
+			Link:   &link,
 			Absent: "true", Property: &property, Source: "len(file_path)",
 		},
+		// An eager guard owns a unique message, thus it carries no subject identity.
 		{
 			Section: "reachability", Assertion: "A guard is reached.",
 			Absent: "reachability", Source: "ready",
@@ -28,9 +31,11 @@ func Test_JSON_Output_Records(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `[{"section":"branch","assertion":"Classify_File_Input.Path",` +
+		`"package":"local/james-orcales/sloc/internal","type":"File_Path",` +
 		`"link":2,"missing":"true","property":"The value equals the minimum.",` +
 		`"source":"len(file_path)"},{"section":"reachability",` +
-		`"assertion":"A guard is reached.","link":null,"missing":"reachability",` +
+		`"assertion":"A guard is reached.","package":"","type":"",` +
+		`"link":null,"missing":"reachability",` +
 		`"property":null,"source":"ready"}]` + "\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
