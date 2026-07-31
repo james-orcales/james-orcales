@@ -26,9 +26,9 @@ matching type, never adrift.
 
 ### Scope
 
-Structs with fields, defined non-alias types, and generic types are in scope; their helper bodies
-carry the mandate and the pass defines no argument-bundling _Input structs. Aliases, function and
-interface types, empty structs, local types, tests, and opted-out packages are exempt.
+Structs with fields, defined non-alias types, and generic types are in scope, and their helper
+bodies carry the mandate. Aliases, function and interface types, empty structs, local types, tests,
+and opted-out packages are exempt.
 
 ### Scalar Helper
 
@@ -68,8 +68,19 @@ static analysis and is banned.
 ### Field Composition
 
 A struct type's helper directly calls the exact package-qualified _Invariants helper of every field.
-Every field has a defined type, thus every field has one. Foreign, nested, or shadowed calls never
-substitute. A pointer field composes its pointee, and an immediate mutex is exempt.
+Foreign, nested, or shadowed calls never substitute. A pointer field composes its pointee, and an
+immediate mutex is exempt.
+
+### Inherited Fields
+
+A defined type over a struct inherits that struct's fields. It states each inherited field inline in
+its own Tree, because one tree holds a type at one position. A struct field has no inline form, thus
+the defined type composes it. It can use a defined type of its own when the field type is occupied.
+
+### Always Condition
+
+An Always condition holds a single term. A bound belongs in a Range, a membership belongs in an
+Enum, and any other compound belongs in separate Always calls.
 
 ### Parameter Helper
 

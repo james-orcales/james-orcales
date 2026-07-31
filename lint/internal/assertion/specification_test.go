@@ -1,7 +1,6 @@
 package assertion_test
 
 import (
-	"go/ast"
 	"go/parser"
 	"go/token"
 	"strings"
@@ -87,9 +86,6 @@ func Test_Invariants_Scope(t *testing.T) {
 	diags := assertion.Check_Type(pf.File_Set, pf.File, nil)
 	if !diagnosed(diags, "directly below Count") {
 		t.Fatal("a defined scalar type is in scope")
-	}
-	if name := assertion_input_struct(t); name != "" {
-		t.Fatalf("argument-bundling struct remains: %s", name)
 	}
 }
 
@@ -353,8 +349,7 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"\tif false { Token_Invariants(v.Tok, \"nested\") }\n" +
 			"\tToken_Invariants := func(Token, invariant.Namespace) {}\n" +
 			"\tToken_Invariants(v.Tok, namespace)\n" +
-			"\tinvariant.Tree(v, namespace)." +
-			"Sometimes(true, \"x\").Ensure()\n}\n\n" +
+			"\tinvariant.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n\n" +
 			"// Phrase is a fixture.\ntype Phrase struct {\n" +
 			"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 			"// Phrase_Invariants is a fixture.\n" +
@@ -400,6 +395,37 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"\tCount_Invariants(v.Count, \"count\")\n}\n"})
 	if diagnosed(check_sources([]source.Parsed_File{external, composed}), "must call") {
 		t.Fatal("an aliased cross-package helper and a local helper must compose")
+	}
+}
+
+// Test_Invariants_Inherited_Fields verifies a defined type over a struct states an inherited scalar
+// field inline and composes an inherited struct field, which has no inline form.
+func Test_Invariants_Inherited_Fields(t *testing.T) {
+	t.Parallel()
+	assert_inherited_scalar_is_inline(t)
+	assert_inherited_struct_is_composed(t)
+}
+
+// Test_Invariants_Always_Condition verifies a compound Always condition is flagged, because it
+// collapses a Range or an Enum into one guard and drops their branch obligations.
+func Test_Invariants_Always_Condition(t *testing.T) {
+	t.Parallel()
+	bound := integer_helper_source(
+		"\tinvariant.Always(int(value) >= int(Value_Min) && " +
+			"int(value) <= int(Value_Max), \"in range\")")
+	if !diagnosed(check_fixture(t, bound), "Always condition") {
+		t.Fatal("a hand-written Range must be flagged")
+	}
+	membership := integer_helper_source(
+		"\tinvariant.Always(int(value) == int(Value_Min) || " +
+			"int(value) == int(Value_Max), \"a member\")")
+	if !diagnosed(check_fixture(t, membership), "Always condition") {
+		t.Fatal("a hand-written Enum must be flagged")
+	}
+	single := integer_helper_source(
+		"\tinvariant.Always(int(value) == int(Value_Min), \"the only member\")")
+	if diagnosed(check_fixture(t, single), "Always condition") {
+		t.Fatal("a single-term Always must be accepted")
 	}
 }
 
@@ -623,6 +649,84 @@ func Test_Simulation_Blackbox(t *testing.T) {
 		"func Fuzz_Main(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)), "must be blackbox") {
 		t.Fatal("a whitebox simulation package must be flagged")
+	}
+}
+
+// INHERITED_FIELD_HEAD declares a struct over a scalar and a struct field, its composing bundle,
+// and a defined type over it. Each case appends that defined type's own bundle.
+const INHERITED_FIELD_HEAD = "package fixture\n\n" +
+	"import invariant \"fixture/shared/invariant/default\"\n\n" +
+	"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
+	"// Mark is a fixture.\ntype Mark int\n\n" +
+	"// Mark_Invariants is a fixture.\n" +
+	"func Mark_Invariants(v Mark, namespace invariant.Namespace) {\n" +
+	"\tinvariant.Tree(v, namespace)." +
+	"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+	"// Token is a fixture.\ntype Token string\n\n" +
+	"// Token_Invariants is a fixture.\n" +
+	"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+	"\tinvariant.Tree(v, namespace)." +
+	"Range_Int(len(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+	"// Inner is a fixture.\ntype Inner struct {\n" +
+	"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
+	"// Inner_Invariants is a fixture.\n" +
+	"func Inner_Invariants(v Inner, namespace invariant.Namespace) {\n" +
+	"\tToken_Invariants(v.Tok, namespace)\n}\n\n" +
+	"// Holder is a fixture.\ntype Holder struct {\n" +
+	"\t// Mk is a fixture.\n\tMk Mark\n\t// In is a fixture.\n\tIn Inner\n}\n\n" +
+	"// Holder_Invariants is a fixture.\n" +
+	"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
+	"\tMark_Invariants(v.Mk, namespace)\n\tInner_Invariants(v.In, namespace)\n}\n\n" +
+	"// Kept is a fixture.\ntype Kept Holder\n\n"
+
+// INHERITED_STRUCT_LINK composes the inherited struct field, which every scalar case still owes.
+const INHERITED_STRUCT_LINK = "\tInner_Invariants(v.In, namespace)\n"
+
+// A defined type cannot compose the scalar field's helper, because the struct it inherits from
+// already holds that type under any shared root.
+func assert_inherited_scalar_is_inline(t *testing.T) {
+	t.Helper()
+	composed := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		"\tMark_Invariants(v.Mk, namespace)\n" + INHERITED_STRUCT_LINK + "}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: composed})), "must state v.Mk inline") {
+		t.Fatal("a composed inherited scalar field must be flagged")
+	}
+	inline := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		INHERITED_STRUCT_LINK + "\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: inline})), "v.Mk") {
+		t.Fatal("an inlined inherited scalar field must be accepted")
+	}
+}
+
+// A struct has no single link that states it, thus the defined type composes it. A defined type of
+// its own keeps that struct at one position when the field type is already occupied.
+func assert_inherited_struct_is_composed(t *testing.T) {
+	t.Helper()
+	inline_only := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: inline_only})), "must call Inner_Invariants") {
+		t.Fatal("an omitted inherited struct field must be flagged")
+	}
+	converted := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		"\tSpare_Invariants(Spare(v.In), namespace)\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+		"// Spare is a fixture.\ntype Spare Inner\n\n" +
+		"// Spare_Invariants is a fixture.\n" +
+		"func Spare_Invariants(v Spare, namespace invariant.Namespace) {\n" +
+		"\tToken_Invariants(v.Tok, namespace)\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: converted})), "v.In") {
+		t.Fatal("a defined type of its own must compose the inherited struct field")
 	}
 }
 
@@ -854,32 +958,6 @@ func cross_package_helper_isolation(t *testing.T) {
 	if !diagnosed(diags, want) {
 		t.Fatalf("foreign same-named helper satisfied the local subject: %v", diags)
 	}
-}
-
-// Reading the analyzer itself pins the deliberately flat API without coupling the production
-// package to a self-reflection mechanism needed only by this regression.
-func assertion_input_struct(t *testing.T) (name string) {
-	t.Helper()
-	file, parse_error := parser.ParseFile(token.NewFileSet(), "assertion.go", nil, 0)
-	if parse_error != nil {
-		t.Fatal(parse_error)
-	}
-	for _, declaration := range file.Decls {
-		general, is_general := declaration.(*ast.GenDecl)
-		if !is_general {
-			continue
-		}
-		for _, specification := range general.Specs {
-			type_specification, is_type := specification.(*ast.TypeSpec)
-			if !is_type {
-				continue
-			}
-			if strings.HasSuffix(type_specification.Name.Name, "_Input") {
-				return type_specification.Name.Name
-			}
-		}
-	}
-	return ""
 }
 
 // The fixture a parse turns into a Parsed_File.

@@ -7,6 +7,7 @@
 package assertion
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"path"
@@ -55,6 +56,7 @@ func Check(
 	diags = append(diags,
 		check_recorder_test_main(parsed_files, components, exempt)...)
 	diags = append(diags, check_primitive_types(parsed_files, exempt)...)
+	diags = append(diags, check_always_condition(parsed_files, components, exempt)...)
 	diags = append(diags,
 		check_simulation(parsed_files, components, exempt)...)
 	return diags
@@ -879,6 +881,7 @@ func check_struct_invariants(
 	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
+	struct_index := struct_declaration_index(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -886,9 +889,189 @@ func check_struct_invariants(
 		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
-		diags = append(diags, struct_file_diagnostics(pf, defined, components)...)
+		diags = append(diags, struct_file_diagnostics(
+			pf, defined, struct_index, components)...)
 	}
 	return diags
+}
+
+// Flags an Always whose condition joins terms with && or ||. Such a condition collapses a preset
+// into one guard: `a == A || a == B` is an Enum, which owes a membership guard and one axis for
+// each member, and `x >= MIN && x <= MAX` is a Range, which owes two guards and its bound axes. As
+// one Always each owes one guard, thus a suite that never reaches the second member or either
+// boundary still runs clean.
+func check_always_condition(
+	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+) (diags []Diagnostic) {
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if source.Path_Matches_Glob(pf.Path, exempt) {
+			continue
+		}
+		diags = append(diags, always_condition_diagnostics(pf, components)...)
+	}
+	return diags
+}
+
+// Walks one file for an Always call whose condition is a logical join.
+func always_condition_diagnostics(
+	file Parsed_File, components *Component_Index,
+) (diags []Diagnostic) {
+	imports := helper_import_paths(file.File)
+	default_package := helper_default_package(components, imports)
+	ast.Inspect(file.File, func(node ast.Node) (descend bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		if !always_named_call(call, imports, default_package) {
+			return true
+		}
+		if len(call.Args) == 0 {
+			return true
+		}
+		join, is_join := invariant_unparen(call.Args[0]).(*ast.BinaryExpr)
+		if !is_join {
+			return true
+		}
+		if join.Op != token.LAND {
+			if join.Op != token.LOR {
+				return true
+			}
+		}
+		diags = append(diags, Diagnostic{
+			Position: file.File_Set.Position(call.Args[0].Pos()),
+			Message: fmt.Sprintf(
+				"compound Always condition (%s) — use Range for a bound, "+
+					"Enum for a membership, or separate Always calls", join.Op),
+		})
+		return true
+	})
+	return diags
+}
+
+// Reports whether call names the composition tier's Always or Recorder_Always.
+func always_named_call(
+	call *ast.CallExpr, imports map[string]string, default_package string,
+) (matched bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Always" {
+		if selector.Sel.Name != "Recorder_Always" {
+			return false
+		}
+	}
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return false
+	}
+	return imports[qualifier.Name] == default_package
+}
+
+// Gives the struct whose fields a type declaration owns, and whether it inherits them. A literal
+// struct owns its own. A defined type over a struct in the same package inherits that struct's
+// fields, and it states them under a different rule. An alias declaration is out of scope by the
+// Scope rule and never reaches here.
+func struct_declared_fields(
+	type_specification *ast.TypeSpec, file Parsed_File,
+	struct_index map[string]*ast.StructType, components *Component_Index,
+) (struct_type *ast.StructType, is_struct bool, inherits bool) {
+	if declared, literal := type_specification.Type.(*ast.StructType); literal {
+		return declared, true, false
+	}
+	if type_specification.Assign.IsValid() {
+		return nil, false, false
+	}
+	identifier, is_identifier := type_specification.Type.(*ast.Ident)
+	if !is_identifier {
+		return nil, false, false
+	}
+	identity := helper_package_path(file, components) + "\x00" + identifier.Name
+	inherited, found := struct_index[identity]
+	return inherited, found, found
+}
+
+// Maps each package-qualified type name to the struct it declares. A defined type over a struct
+// inherits that struct's fields, thus it inherits the duty to compose them, and only this index
+// can see those fields. The alias and its struct share one package, because a cross-package
+// reference is a selector and not an identifier.
+func struct_declaration_index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (struct_index map[string]*ast.StructType) {
+	struct_index = map[string]*ast.StructType{}
+	defined := map[string]string{}
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		package_path := helper_package_path(pf, components)
+		for _, declaration := range pf.File.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.TYPE {
+				continue
+			}
+			struct_declaration_specs(
+				general.Specs, package_path, struct_index, defined)
+		}
+	}
+	struct_resolve_defined(struct_index, defined)
+	return struct_index
+}
+
+// Records one type declaration group: a literal struct by its own fields, and a defined type by the
+// name it stands over, which a later pass resolves.
+func struct_declaration_specs(
+	specifications []ast.Spec, package_path string,
+	struct_index map[string]*ast.StructType, defined map[string]string,
+) {
+	for _, specification := range specifications {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		identity := package_path + "\x00" + type_specification.Name.Name
+		struct_type, is_struct := type_specification.Type.(*ast.StructType)
+		if is_struct {
+			struct_index[identity] = struct_type
+			continue
+		}
+		if type_specification.Assign.IsValid() {
+			continue
+		}
+		identifier, is_identifier := type_specification.Type.(*ast.Ident)
+		if !is_identifier {
+			continue
+		}
+		defined[identity] = package_path + "\x00" + identifier.Name
+	}
+}
+
+// Resolves each defined type to the struct it stands over. A chain of defined types is legal Go,
+// thus one pass over the edges is not enough and the walk repeats until it settles.
+func struct_resolve_defined(
+	struct_index map[string]*ast.StructType, defined map[string]string,
+) {
+	for settled := false; !settled; {
+		settled = true
+		for identity, base := range defined {
+			if _, found := struct_index[identity]; found {
+				continue
+			}
+			struct_type, found := struct_index[base]
+			if !found {
+				continue
+			}
+			struct_index[identity] = struct_type
+			settled = false
+		}
+	}
 }
 
 // Package-qualified keys ensure adding Foo_Invariants in one package cannot silently impose or
@@ -921,7 +1104,8 @@ func struct_helper_index(
 
 // Checks every struct type + value/pointer-parameter bundle pair in one file.
 func struct_file_diagnostics(
-	file Parsed_File, defined map[string]bool, components *Component_Index,
+	file Parsed_File, defined map[string]bool,
+	struct_index map[string]*ast.StructType, components *Component_Index,
 ) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
@@ -935,7 +1119,8 @@ func struct_file_diagnostics(
 		if !is_type {
 			continue
 		}
-		struct_type, is_struct := type_specification.Type.(*ast.StructType)
+		struct_type, is_struct, inherits := struct_declared_fields(
+			type_specification, file, struct_index, components)
 		if !is_struct {
 			continue
 		}
@@ -951,6 +1136,8 @@ func struct_file_diagnostics(
 			type_specification,
 			struct_type,
 			defined,
+			struct_index,
+			inherits,
 			components,
 		)...)
 	}
@@ -964,6 +1151,8 @@ func struct_type_diagnostics(
 	type_specification *ast.TypeSpec,
 	struct_type *ast.StructType,
 	defined map[string]bool,
+	struct_index map[string]*ast.StructType,
+	inherits bool,
 	components *Component_Index,
 ) (diags []Diagnostic) {
 	bundle := type_invariants_following_function(file.File, index)
@@ -989,6 +1178,11 @@ func struct_type_diagnostics(
 	}
 	present := struct_present_calls(bundle, parameter, scope)
 	position := file.File_Set.Position(bundle.Name.Pos())
+	if inherits {
+		scope.Structs = struct_index
+		return struct_inherited_diagnostics(
+			bundle, struct_type, scope, present, parameter, position)
+	}
 	for _, field := range struct_type.Fields.List {
 		for _, call := range struct_field_missing_calls(field, scope, present, parameter) {
 			diags = append(diags, Diagnostic{
@@ -998,6 +1192,220 @@ func struct_type_diagnostics(
 		}
 	}
 	return diags
+}
+
+// Checks that a defined type's bundle states every field it inherits. Collecting the inline and the
+// converted names one time keeps the per-field walk out of the bundle body.
+func struct_inherited_diagnostics(
+	bundle *ast.FuncDecl,
+	struct_type *ast.StructType,
+	scope *Invariant_Scope,
+	present map[string]bool,
+	parameter string,
+	position token.Position,
+) (diags []Diagnostic) {
+	gaps_input := &Struct_Inherited_Field_Gaps_Input{
+		Scope:     scope,
+		Present:   present,
+		Converted: struct_converted_fields(bundle, parameter, scope),
+		Inline:    struct_inline_fields(bundle, parameter),
+		Parameter: parameter,
+	}
+	for _, field := range struct_type.Fields.List {
+		gaps_input.Field = field
+		for _, gap := range struct_inherited_field_gaps(gaps_input) {
+			diags = append(diags, Diagnostic{
+				Position: position,
+				Message:  bundle.Name.Name + " must " + gap,
+			})
+		}
+	}
+	return diags
+}
+
+// The three name sets one inherited field is checked against.
+type Struct_Inherited_Field_Gaps_Input struct {
+	// Field is the inherited field under check.
+	Field *ast.Field
+	// Scope resolves the field type and the bundle it must carry.
+	Scope *Invariant_Scope
+	// Present holds each field composed by a direct call.
+	Present map[string]bool
+	// Converted holds each field composed through a defined type of the bundle's own.
+	Converted map[string]bool
+	// Inline holds each field the bundle states in its own Tree.
+	Inline map[string]bool
+	// Parameter names the bundle's own subject, which every field selector reads from.
+	Parameter string
+}
+
+// Separating field discovery from diagnostic ownership keeps bundle identity and position out of
+// the input struct.
+func struct_inherited_field_gaps(
+	gaps_input *Struct_Inherited_Field_Gaps_Input,
+) (gaps []string) {
+	field := gaps_input.Field
+	if len(field.Names) == 0 {
+		return nil
+	}
+	expected, preset := struct_field_invariant(field.Type, gaps_input.Scope)
+	if expected == "" {
+		return nil
+	}
+	if !preset {
+		if !gaps_input.Scope.Defined[expected] {
+			return nil
+		}
+	}
+	is_struct := struct_field_is_struct(field.Type, gaps_input.Scope)
+	for _, name := range field.Names {
+		if !is_struct {
+			if !gaps_input.Inline[name.Name] {
+				gaps = append(gaps,
+					"state "+gaps_input.Parameter+"."+name.Name+" inline")
+			}
+			continue
+		}
+		if gaps_input.Present[expected+"\x00"+name.Name] {
+			continue
+		}
+		if gaps_input.Converted[name.Name] {
+			continue
+		}
+		gaps = append(gaps, "call "+helper_identity_name(expected)+"("+
+			gaps_input.Parameter+"."+name.Name+", ...)")
+	}
+	return gaps
+}
+
+// Reports whether a field's type is a struct. Only a struct keeps its composition duty under a
+// defined type, because no single link states a struct. A foreign type is opaque to this pass, thus
+// it keeps that duty too rather than owe an inline form this pass cannot read.
+func struct_field_is_struct(
+	field_type ast.Expr, scope *Invariant_Scope,
+) (yes bool) {
+	star, is_star := field_type.(*ast.StarExpr)
+	if is_star {
+		field_type = star.X
+	}
+	if _, literal := field_type.(*ast.StructType); literal {
+		return true
+	}
+	if _, foreign := field_type.(*ast.SelectorExpr); foreign {
+		return true
+	}
+	identifier, is_identifier := field_type.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	_, found := scope.Structs[scope.Current_Package+"\x00"+identifier.Name]
+	return found
+}
+
+// Gives the inherited fields a bundle states in its own Tree.
+func struct_inline_fields(
+	bundle *ast.FuncDecl, parameter string,
+) (inline map[string]bool) {
+	inline = map[string]bool{}
+	for _, statement := range bundle.Body.List {
+		call := statement_call(statement)
+		if call == nil {
+			continue
+		}
+		struct_chain_fields(call, parameter, inline)
+	}
+	return inline
+}
+
+// Walks one ensured chain from its Ensure back toward its root and records each field a link
+// states. The walk stops at the root, whose subject is the whole value and not one field.
+func struct_chain_fields(call *ast.CallExpr, parameter string, inline map[string]bool) {
+	current, matched := invariant_ensure_receiver(call)
+	if !matched {
+		return
+	}
+	for current != nil {
+		_, receiver, is_method := invariant_builder_method(current)
+		if !is_method {
+			return
+		}
+		for _, argument := range current.Args {
+			name := struct_expression_field(argument, parameter)
+			if name != "" {
+				inline[name] = true
+			}
+		}
+		current = receiver
+	}
+}
+
+// Finds the field a link argument states. A link wraps its subject in a conversion or in len, thus
+// a match against the argument itself would miss the field.
+func struct_expression_field(expression ast.Expr, parameter string) (field string) {
+	field = ""
+	ast.Inspect(expression, func(node ast.Node) (descend bool) {
+		selector, is_selector := node.(*ast.SelectorExpr)
+		if !is_selector {
+			return true
+		}
+		base, is_identifier := selector.X.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if base.Name != parameter {
+			return true
+		}
+		field = selector.Sel.Name
+		return false
+	})
+	return field
+}
+
+// Gives the inherited struct fields a bundle composes through a defined type of its own. The Go
+// compiler already proves the conversion shares the field's underlying type, thus this pass only
+// checks that the called bundle belongs to the converted type.
+func struct_converted_fields(
+	bundle *ast.FuncDecl, parameter string, scope *Invariant_Scope,
+) (converted map[string]bool) {
+	converted = map[string]bool{}
+	shadowed := function_shadow_copy(scope.Shadowed)
+	for _, statement := range bundle.Body.List {
+		call := statement_call(statement)
+		if call != nil {
+			defined, field := struct_conversion_argument(call, parameter)
+			callee := helper_callee_identity(
+				call.Fun, scope.Current_Package, scope.Imports, shadowed)
+			owner := scope.Current_Package + "\x00" + source.Invariant_Name(defined)
+			if field != "" {
+				if callee == owner {
+					converted[field] = true
+				}
+			}
+		}
+		function_statement_shadows(statement, shadowed)
+	}
+	return converted
+}
+
+// Reads a first argument of the form Defined(parameter.Field).
+func struct_conversion_argument(
+	call *ast.CallExpr, parameter string,
+) (defined string, field string) {
+	if len(call.Args) == 0 {
+		return "", ""
+	}
+	conversion, is_call := call.Args[0].(*ast.CallExpr)
+	if !is_call {
+		return "", ""
+	}
+	if len(conversion.Args) != 1 {
+		return "", ""
+	}
+	identifier, is_identifier := conversion.Fun.(*ast.Ident)
+	if !is_identifier {
+		return "", ""
+	}
+	return identifier.Name, struct_first_argument_field(conversion, parameter)
 }
 
 // Separating field discovery from diagnostic ownership keeps bundle identity and position out of
@@ -1334,6 +1742,8 @@ type Invariant_Scope struct {
 	Shadowed map[string]bool
 	// Constants pins Range boundaries and Enum members to declarations in the type's package.
 	Constants map[string]bool
+	// Structs tells a field type that owns fields from one that a link can state.
+	Structs map[string]*ast.StructType
 }
 
 // One subject and the exact package-qualified helper it must carry.
