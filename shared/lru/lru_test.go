@@ -674,7 +674,11 @@ func Test_Expirable_With_Purge_Expiry(t *testing.T) {
 	empty := func() (finished bool) {
 		return lru.Expirable_Count(c) == 0
 	}
-	if !driver.Run_Until(empty, time.MILLISECOND) {
+	completed, drive_err := driver.Run_Until(empty, time.MILLISECOND)
+	if drive_err != nil {
+		t.Fatalf("drive until the timer reaps the expired entry: %v", drive_err)
+	}
+	if !completed {
 		t.Fatalf("timer did not reap the expired entry")
 	}
 	if !reflect.DeepEqual(evicted, []string{"key1", "val1"}) {
@@ -913,7 +917,11 @@ func Test_Expirable_Lifecycle(t *testing.T) {
 	gone := func() (finished bool) {
 		return lru.Expirable_Count(c) == 0
 	}
-	if !driver.Run_Until(gone, time.MILLISECOND) {
+	completed, drive_err := driver.Run_Until(gone, time.MILLISECOND)
+	if drive_err != nil {
+		t.Fatalf("drive until the timer reaps key1: %v", drive_err)
+	}
+	if !completed {
 		t.Fatalf("timer did not reap key1")
 	}
 	lru.Expirable_Add(c, "key2", "val2")

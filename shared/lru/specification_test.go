@@ -387,7 +387,11 @@ func Test_Expirable_Timer_Reaps_Expired(t *testing.T) {
 	reaped := func() (finished bool) {
 		return lru.Expirable_Count(c) == 0
 	}
-	if !driver.Run_Until(reaped, time.MILLISECOND) {
+	completed, drive_err := driver.Run_Until(reaped, time.MILLISECOND)
+	if drive_err != nil {
+		t.Fatalf("drive until the timer reaps the expired entries: %v", drive_err)
+	}
+	if !completed {
 		t.Fatalf("timer did not reap the expired entries")
 	}
 	if lru.Expirable_Contains(c, 1) {
