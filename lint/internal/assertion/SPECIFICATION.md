@@ -30,6 +30,12 @@ Structs with fields, defined non-alias types, and generic types are in scope, an
 bodies carry the mandate. Aliases, function and interface types, empty structs, local types, tests,
 and opted-out packages are exempt.
 
+### Underlying Kind
+
+A defined type carries the kind of the type it stands over, and a chain of defined types resolves to
+its end. Thus a helper over a named integer owes the scalar mandate, and one over a named string,
+slice, or map owes the count mandate. A name of its own hides no type from either.
+
 ### Scalar Helper
 
 An integer helper uses direct singleton Always equality against a package constant, or an ensured

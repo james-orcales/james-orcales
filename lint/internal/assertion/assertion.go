@@ -68,6 +68,7 @@ func check_value_invariants(
 	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	constants := invariant_package_constants(parsed_files)
+	base_kind := base_kind_declaration_index(parsed_files, components)
 	for _, file := range parsed_files {
 		if strings.HasSuffix(file.Path, "_test.go") {
 			continue
@@ -77,9 +78,105 @@ func check_value_invariants(
 		}
 		directory := path.Dir(file.Path)
 		diags = append(diags, invariant_file_diagnostics(
-			file, components, constants[directory])...)
+			file, components, constants[directory], base_kind)...)
 	}
 	return diags
+}
+
+// Maps each package-qualified type name to the type expression it stands over, after every chain of
+// defined types is followed to its end. A name of its own hides no kind, thus a helper over a named
+// integer still owes the scalar mandate and one over a named slice still owes the count mandate.
+func base_kind_declaration_index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (base_kind map[string]ast.Expr) {
+	base_kind = map[string]ast.Expr{}
+	named := map[string]string{}
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		package_path := helper_package_path(pf, components)
+		for _, declaration := range pf.File.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.TYPE {
+				continue
+			}
+			base_kind_declaration_specs(
+				general.Specs, package_path, base_kind, named)
+		}
+	}
+	base_kind_resolve_named(base_kind, named)
+	return base_kind
+}
+
+// Records a type that stands directly over a kind this pass reads, and the name every other defined
+// type stands over, which a later walk resolves.
+func base_kind_declaration_specs(
+	specifications []ast.Spec, package_path string,
+	base_kind map[string]ast.Expr, named map[string]string,
+) {
+	for _, specification := range specifications {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if type_specification.Assign.IsValid() {
+			continue
+		}
+		identity := package_path + "\x00" + type_specification.Name.Name
+		identifier, is_identifier := type_specification.Type.(*ast.Ident)
+		if !is_identifier {
+			base_kind[identity] = type_specification.Type
+			continue
+		}
+		if suffix, _, _ := invariant_identifier_kind(identifier.Name); suffix != "" {
+			base_kind[identity] = type_specification.Type
+			continue
+		}
+		named[identity] = package_path + "\x00" + identifier.Name
+	}
+}
+
+// Follows each named edge to the kind at its end until no more resolve.
+func base_kind_resolve_named(base_kind map[string]ast.Expr, named map[string]string) {
+	for settled := false; !settled; {
+		settled = true
+		for identity, base := range named {
+			if _, found := base_kind[identity]; found {
+				continue
+			}
+			resolved, found := base_kind[base]
+			if !found {
+				continue
+			}
+			base_kind[identity] = resolved
+			settled = false
+		}
+	}
+}
+
+// Gives the kind a type owes its mandate to, following the name it stands over when its own
+// declaration spells another type rather than a kind this pass reads.
+func invariant_resolved_kind(
+	type_specification *ast.TypeSpec, package_path string, base_kind map[string]ast.Expr,
+) (suffix string, primitive string, count bool) {
+	suffix, primitive, count = invariant_type_kind(type_specification)
+	if suffix != "" {
+		return suffix, primitive, count
+	}
+	if type_specification.Assign.IsValid() {
+		return "", "", false
+	}
+	resolved, found := base_kind[package_path+"\x00"+type_specification.Name.Name]
+	if !found {
+		return "", "", false
+	}
+	return invariant_type_kind(&ast.TypeSpec{
+		Name: type_specification.Name, Type: resolved,
+	})
 }
 
 // Constants are indexed per package because an argument in one package must not borrow a
@@ -124,7 +221,9 @@ func invariant_collect_constants(file *ast.File, constants map[string]bool) {
 
 func invariant_file_diagnostics(
 	file Parsed_File, components *Component_Index, constants map[string]bool,
+	base_kind map[string]ast.Expr,
 ) (diags []Diagnostic) {
+	package_path := helper_package_path(file, components)
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
 		if !is_general {
@@ -137,19 +236,20 @@ func invariant_file_diagnostics(
 		if !is_type {
 			continue
 		}
-		suffix, _, _ := invariant_type_kind(type_specification)
+		suffix, _, _ := invariant_resolved_kind(
+			type_specification, package_path, base_kind)
 		if suffix == "" {
 			continue
 		}
 		diags = append(diags, invariant_type_diagnostics(
-			file, components, constants, index)...)
+			file, components, constants, base_kind, index)...)
 	}
 	return diags
 }
 
 func invariant_type_diagnostics(
 	file Parsed_File, components *Component_Index, constants map[string]bool,
-	index int,
+	base_kind map[string]ast.Expr, index int,
 ) (diags []Diagnostic) {
 	general := file.File.Decls[index].(*ast.GenDecl)
 	type_specification := general.Specs[0].(*ast.TypeSpec)
@@ -175,6 +275,7 @@ func invariant_type_diagnostics(
 		Default_Package: helper_default_package(components, imports),
 		Shadowed:        function_value_names(helper),
 		Constants:       constants,
+		Base_Kind:       base_kind,
 	}
 	found, constant := invariant_body_helper(helper, type_specification, scope)
 	if found {
@@ -183,7 +284,15 @@ func invariant_type_diagnostics(
 		}
 		return invariant_constant_diagnostic(file, helper)
 	}
-	return invariant_missing_helper_diagnostic(file, helper, type_specification)
+	return invariant_missing_helper_diagnostic(file, helper, type_specification, scope)
+}
+
+// Gives the kind a bundle's own subject owes its mandate to.
+func invariant_scope_kind(
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (suffix string, primitive string, count bool) {
+	return invariant_resolved_kind(
+		type_specification, scope.Current_Package, scope.Base_Kind)
 }
 
 // Direct underlying types determine the concrete helper without go/types; aliases and uintptr
@@ -311,7 +420,7 @@ func invariant_direct_singleton(
 	call *ast.CallExpr, helper *ast.FuncDecl,
 	type_specification *ast.TypeSpec, scope *Invariant_Scope,
 ) (matched bool, constant bool) {
-	_, primitive, count := invariant_type_kind(type_specification)
+	_, primitive, count := invariant_scope_kind(type_specification, scope)
 	if !count {
 		// A singleton Always states one legal value. A Boolean has two, thus the library
 		// requires its bundle to ensure a Tree whose one link is a Sometimes, and an
@@ -448,7 +557,7 @@ func invariant_builder_link(
 	type_specification *ast.TypeSpec, scope *Invariant_Scope,
 ) (matched bool, constant bool) {
 	method, _, _ := invariant_builder_method(call)
-	suffix, primitive, _ := invariant_type_kind(type_specification)
+	suffix, primitive, _ := invariant_scope_kind(type_specification, scope)
 	range_name := "Range_" + suffix
 	range_holed_name := "Range_Holed_" + suffix
 	enum_name := "Enum_" + suffix
@@ -567,7 +676,7 @@ func invariant_subject(
 	expression ast.Expr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
 	scope *Invariant_Scope,
 ) (matched bool) {
-	_, primitive, count := invariant_type_kind(type_specification)
+	_, primitive, count := invariant_scope_kind(type_specification, scope)
 	value, pointer := invariant_value_parameter(helper, type_specification.Name.Name)
 	expression = invariant_unparen(expression)
 	if count {
@@ -696,11 +805,12 @@ func invariant_constant_diagnostic(
 
 func invariant_missing_helper_diagnostic(
 	file Parsed_File, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
+	scope *Invariant_Scope,
 ) (diags []Diagnostic) {
-	_, _, count := invariant_type_kind(type_specification)
+	_, _, count := invariant_scope_kind(type_specification, scope)
 	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
 	message := helper.Name.Name + " must call a canonical helper for " + value +
-		": " + invariant_remedy_text(type_specification)
+		": " + invariant_remedy_text(type_specification, scope)
 	if count {
 		message = helper.Name.Name + " must call Range_Int or Enum_Int family for len(" +
 			value + "), or use direct Always equality"
@@ -713,8 +823,10 @@ func invariant_missing_helper_diagnostic(
 // Names the forms a scalar can actually take. Only an integer has a Range and an Enum family, and a
 // Boolean rejects a singleton Always because its two values are two obligations, thus one list
 // pasted from the suffix would name a form that does not exist.
-func invariant_remedy_text(type_specification *ast.TypeSpec) (remedy string) {
-	suffix, primitive, _ := invariant_type_kind(type_specification)
+func invariant_remedy_text(
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (remedy string) {
+	suffix, primitive, _ := invariant_scope_kind(type_specification, scope)
 	if primitive == "bool" {
 		return "an ensured Tree whose one link is a Sometimes"
 	}
@@ -896,8 +1008,9 @@ func check_struct_invariants(
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
 	index := &Declaration_Index{
-		Structs:  struct_declaration_index(parsed_files, components),
-		Booleans: boolean_declaration_index(parsed_files, components),
+		Structs:   struct_declaration_index(parsed_files, components),
+		Booleans:  boolean_declaration_index(parsed_files, components),
+		Constants: invariant_package_constants(parsed_files),
 	}
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -917,6 +1030,8 @@ type Declaration_Index struct {
 	Structs map[string]*ast.StructType
 	// Booleans is the set of type names that stand over bool.
 	Booleans map[string]bool
+	// Constants names each package's own constants, keyed by the directory that declares them.
+	Constants map[string]map[string]bool
 }
 
 // Maps each package-qualified type name that stands over bool. A Boolean is the one field kind an
@@ -1276,6 +1391,7 @@ func struct_type_diagnostics(
 	position := file.File_Set.Position(bundle.Name.Pos())
 	if inherits {
 		scope.Declarations = declarations
+		scope.Constants = declarations.Constants[path.Dir(file.Path)]
 		return struct_inherited_diagnostics(
 			bundle, struct_type, scope, present, parameter, position)
 	}
@@ -1415,15 +1531,60 @@ func struct_inline_fields(
 		if !always_named_call(call, scope.Imports, scope.Default_Package) {
 			continue
 		}
-		if len(call.Args) != 2 {
-			continue
-		}
-		name := struct_expression_field(call.Args[0], parameter)
+		name := struct_always_field(call, parameter, scope)
 		if name != "" {
 			inline[name] = true
 		}
 	}
 	return inline
+}
+
+// Gives the field one direct Always states in full. A singleton is an equality against a package
+// constant, thus a comparison holds one side of the domain and a literal names no shared fact, and
+// neither states the field.
+func struct_always_field(
+	call *ast.CallExpr, parameter string, scope *Invariant_Scope,
+) (name string) {
+	if len(call.Args) != 2 {
+		return ""
+	}
+	if !invariant_string_literal(call.Args[1]) {
+		return ""
+	}
+	equality, is_equality := invariant_unparen(call.Args[0]).(*ast.BinaryExpr)
+	if !is_equality {
+		return ""
+	}
+	if equality.Op != token.EQL {
+		return ""
+	}
+	if !struct_constant_operand(equality.Y, scope) {
+		return ""
+	}
+	return struct_expression_field(equality.X, parameter)
+}
+
+// Reports whether an operand names a constant of the bundle's own package. A conversion wraps the
+// constant when the field's type differs from the compared width, thus the walk unwraps one call.
+func struct_constant_operand(
+	expression ast.Expr, scope *Invariant_Scope,
+) (constant bool) {
+	expression = invariant_unparen(expression)
+	call, is_call := expression.(*ast.CallExpr)
+	if is_call {
+		if len(call.Args) != 1 {
+			return false
+		}
+		expression = invariant_unparen(call.Args[0])
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	if scope.Shadowed[identifier.Name] {
+		return false
+	}
+	return scope.Constants[identifier.Name]
 }
 
 // Gives the inherited fields whose type stands over bool.
@@ -1897,6 +2058,9 @@ type Invariant_Scope struct {
 	Shadowed map[string]bool
 	// Constants pins Range boundaries and Enum members to declarations in the type's package.
 	Constants map[string]bool
+	// Base_Kind resolves a type that stands over another name to the kind at the end of that
+	// chain, thus a name of its own hides no mandate.
+	Base_Kind map[string]ast.Expr
 	// Declarations tells a field type that owns fields from one a link can state, and names the
 	// Boolean types, the one kind a Sometimes states in full.
 	Declarations *Declaration_Index

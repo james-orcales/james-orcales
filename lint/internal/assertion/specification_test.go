@@ -89,6 +89,28 @@ func Test_Invariants_Scope(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Underlying_Kind verifies a chain of defined types cannot hide the kind it stands
+// over, thus a named integer still owes the scalar mandate and a named slice the count mandate.
+func Test_Invariants_Underlying_Kind(t *testing.T) {
+	t.Parallel()
+	loose := "\tinvariant.Always(int(v) > Span_Min, \"loose\")"
+	if !diagnosed(check_fixture(t, chained_helper_source(CHAINED_INTEGER, loose)),
+		"must call a canonical helper") {
+		t.Fatal("a defined type over a named integer owes the scalar mandate")
+	}
+	exact := "\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v), Span_Min, Span_Max).Ensure()"
+	if diagnosed(check_fixture(t, chained_helper_source(CHAINED_INTEGER, exact)),
+		"must call a canonical helper") {
+		t.Fatal("the exact Range helper must satisfy the resolved scalar mandate")
+	}
+	counted := "\tinvariant.Always(len(v) > Span_Min, \"loose\")"
+	if !diagnosed(check_fixture(t, chained_helper_source(CHAINED_SLICE, counted)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("a defined type over a named slice owes the count mandate")
+	}
+}
+
 // Test_Invariants_Scalar_Helper verifies raw assertions cannot replace the canonical primitive,
 // Range, or Enum helper required by a defined scalar.
 func Test_Invariants_Scalar_Helper(t *testing.T) {
@@ -418,6 +440,18 @@ func Test_Invariants_Inline_Form(t *testing.T) {
 	if !diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: loose})), "must state v.Mk inline") {
 		t.Fatal("a Sometimes over a bounded field must not state it")
+	}
+	// A comparison holds one side of the domain, and a literal names no shared fact.
+	for _, condition := range []string{
+		"int(v.Mk) > Mark_Min", "int(v.Mk) == 0", "int(v.Mk) != Mark_Min"} {
+		partial := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+			"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Always(" + condition + ", \"partial\")\n" +
+			INHERITED_STRUCT_LINK + "}\n"
+		if !diagnosed(check_source(parse(t, &parse_input{
+			Path: "pkg/rule.go", Source_Text: partial})), "must state v.Mk inline") {
+			t.Fatalf("%q must not state the field", condition)
+		}
 	}
 	boolean := "package fixture\n\n" +
 		"import invariant \"fixture/shared/invariant/default\"\n\n" +
@@ -1101,6 +1135,43 @@ func integer_helper_source(body string) (code string) {
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
 		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		body + "\n}\n"
+}
+
+// The named type a chained fixture's subject stands over.
+type chained_subject string
+
+// CHAINED_INTEGER stands over Reading_Representation, thus its kind is two names away.
+const CHAINED_INTEGER chained_subject = "Reading"
+
+// CHAINED_SLICE stands over a slice of a type that is itself two names from its kind.
+const CHAINED_SLICE chained_subject = "Readings"
+
+// Builds a helper whose subject stands over a named type, which stands over another named type.
+// Only a walk to the end of that chain can see the kind the subject owes its mandate to.
+func chained_helper_source(subject chained_subject, body string) (code string) {
+	return "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
+		"// Reading_Representation is a fixture.\ntype Reading_Representation int\n\n" +
+		"// Reading_Representation_Invariants is a fixture.\n" +
+		"func Reading_Representation_Invariants(" +
+		"v Reading_Representation, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v), Span_Min, Span_Max).Ensure()\n}\n\n" +
+		"// Reading is a fixture.\ntype Reading Reading_Representation\n\n" +
+		"// Reading_Invariants is a fixture.\n" +
+		"func Reading_Invariants(v Reading, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v), Span_Min, Span_Max).Ensure()\n}\n\n" +
+		"// Readings is a fixture.\ntype Readings []Reading\n\n" +
+		"// Readings_Invariants is a fixture.\n" +
+		"func Readings_Invariants(v Readings, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(len(v), Span_Min, Span_Max).Ensure()\n}\n\n" +
+		"// Value is a fixture.\ntype Value " + string(subject) + "\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(v Value, namespace invariant.Namespace) {\n" +
 		body + "\n}\n"
 }
 
