@@ -11,6 +11,129 @@ import (
 	"local/james-orcales/shared/invariant"
 )
 
+// Test_Optimized_Production_Enforcement_Matches_Literal_Reference keeps the inlineable build tied
+// to a direct test implementation whose branches can be inspected without packed state or helpers.
+func Test_Optimized_Production_Enforcement_Matches_Literal_Reference(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	for _, condition := range []bool{false, true} {
+		production_pair(
+			t, fmt.Sprintf("always=%t", condition),
+			func() { invariant.Recorder_Always(recorder, condition, "identity") },
+			func() { production_reference_always(condition, "identity") },
+		)
+	}
+	builder := invariant.Recorder_Assertions(recorder, "ignored")
+	production_pair(
+		t, "sometimes",
+		func() { builder.Sometimes(false, "axis").Ensure() },
+		func() {
+			production_reference_sometimes(false, "axis")
+			production_reference_ensure()
+		},
+	)
+	for value := -2; value <= 6; value++ {
+		production_pair(
+			t, fmt.Sprintf("range=%d", value),
+			func() { builder.Range_Int(value, 0, 4) },
+			func() { production_reference_range_int(value, 0, 4) },
+		)
+		production_pair(
+			t, fmt.Sprintf("range-holed=%d", value),
+			func() { builder.Range_Holed_Int(value, 0, 4, 2, 2, 2, 2) },
+			func() { production_reference_range_holed_int(value, 0, 4, 2, 2, 2, 2) },
+		)
+		production_pair(
+			t, fmt.Sprintf("enum=%d", value),
+			func() { builder.Enum_Int(value, 1, 3) },
+			func() { production_reference_enum_int(value, 1, 3) },
+		)
+		production_pair(
+			t, fmt.Sprintf("enum-3=%d", value),
+			func() { builder.Enum_3_Int(value, 1, 3, 5) },
+			func() { production_reference_enum_3_int(value, 1, 3, 5) },
+		)
+		production_pair(
+			t, fmt.Sprintf("enum-4=%d", value),
+			func() { builder.Enum_4_Int(value, 1, 2, 3, 5) },
+			func() { production_reference_enum_4_int(value, 1, 2, 3, 5) },
+		)
+	}
+}
+
+func production_pair(t *testing.T, name string, optimized func(), reference func()) {
+	t.Helper()
+	optimized_panic := production_panic_text(optimized)
+	reference_panic := production_panic_text(reference)
+	if optimized_panic != reference_panic {
+		t.Fatalf("%s: optimized panic = %q, reference panic = %q",
+			name, optimized_panic, reference_panic)
+	}
+}
+
+func production_reference_always(condition bool, message string) {
+	if !condition {
+		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + message)
+	}
+}
+
+func production_reference_sometimes(condition bool, message string) {
+	return
+}
+
+func production_reference_ensure() {
+	return
+}
+
+func production_reference_range_int(value int, minimum int, maximum int) {
+	if value < minimum {
+		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
+			invariant.RANGE_GUARD_MINIMUM + "  value below min")
+	}
+	if value > maximum {
+		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
+			invariant.RANGE_GUARD_MAXIMUM + "  value exceeds max")
+	}
+}
+
+func production_reference_range_holed_int(
+	value int, minimum int, maximum int, hole_1 int, hole_2 int, hole_3 int, hole_4 int,
+) {
+	production_reference_range_int(value, minimum, maximum)
+	switch value {
+	case hole_1, hole_2, hole_3, hole_4:
+		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + "Range value is excluded")
+	}
+}
+
+func production_reference_enum_int(value int, first int, second int) {
+	switch value {
+	case first, second:
+		return
+	}
+	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
+		invariant.ENUM_GUARD_MEMBER + "  value is not a member")
+}
+
+func production_reference_enum_3_int(value int, first int, second int, third int) {
+	switch value {
+	case first, second, third:
+		return
+	}
+	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
+		invariant.ENUM_GUARD_MEMBER + "  value is not a member")
+}
+
+func production_reference_enum_4_int(
+	value int, first int, second int, third int, fourth int,
+) {
+	switch value {
+	case first, second, third, fourth:
+		return
+	}
+	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
+		invariant.ENUM_GUARD_MEMBER + "  value is not a member")
+}
+
 // Test_Production_Int_Assertions_Enforce_At_The_Violating_Link keeps every int family eager.
 func Test_Production_Int_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
 	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")

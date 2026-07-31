@@ -9,6 +9,152 @@ import (
 	"unsafe"
 )
 
+// Test_Optimized_Full_Enforcement_Matches_Literal_Reference keeps packed deferred state honest by
+// comparing its externally visible result with direct, field-by-field test code.
+func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
+	const NAMESPACE = Namespace("pair")
+	for _, condition := range []bool{false, true} {
+		assertion_pair(
+			t, fmt.Sprintf("always=%t", condition),
+			func() { Recorder_Always(&Recorder{}, condition, "identity") },
+			func() { full_reference_always(condition, "identity") },
+		)
+	}
+	assertion_pair(
+		t, "sometimes",
+		func() {
+			Recorder_Assertions(&Recorder{}, NAMESPACE).
+				Sometimes(false, "axis").Ensure()
+		},
+		func() {
+			full_reference_sometimes(false, "axis")
+			full_reference_ensure()
+		},
+	)
+	for value := -2; value <= 6; value++ {
+		assertion_pair(
+			t, fmt.Sprintf("range=%d", value),
+			func() {
+				Recorder_Assertions(&Recorder{}, NAMESPACE).
+					Range_Int(value, 0, 4).Ensure()
+			},
+			func() { full_reference_range_int(NAMESPACE, value, 0, 4) },
+		)
+		assertion_pair(
+			t, fmt.Sprintf("range-holed=%d", value),
+			func() {
+				Recorder_Assertions(&Recorder{}, NAMESPACE).
+					Range_Holed_Int(value, 0, 4, 2, 2, 2, 2).Ensure()
+			},
+			func() {
+				full_reference_range_holed_int(NAMESPACE, value, 0, 4, 2, 2, 2, 2)
+			},
+		)
+		assertion_pair(
+			t, fmt.Sprintf("enum=%d", value),
+			func() {
+				Recorder_Assertions(&Recorder{}, NAMESPACE).
+					Enum_Int(value, 1, 3).Ensure()
+			},
+			func() { full_reference_enum_int(NAMESPACE, value, 1, 3) },
+		)
+		assertion_pair(
+			t, fmt.Sprintf("enum-3=%d", value),
+			func() {
+				Recorder_Assertions(&Recorder{}, NAMESPACE).
+					Enum_3_Int(value, 1, 3, 5).Ensure()
+			},
+			func() { full_reference_enum_3_int(NAMESPACE, value, 1, 3, 5) },
+		)
+		assertion_pair(
+			t, fmt.Sprintf("enum-4=%d", value),
+			func() {
+				Recorder_Assertions(&Recorder{}, NAMESPACE).
+					Enum_4_Int(value, 1, 2, 3, 5).Ensure()
+			},
+			func() { full_reference_enum_4_int(NAMESPACE, value, 1, 2, 3, 5) },
+		)
+	}
+}
+
+func assertion_pair(t *testing.T, name string, optimized func(), reference func()) {
+	t.Helper()
+	optimized_panic := panic_message(optimized)
+	reference_panic := panic_message(reference)
+	if optimized_panic != reference_panic {
+		t.Fatalf("%s: optimized panic = %q, reference panic = %q",
+			name, optimized_panic, reference_panic)
+	}
+}
+
+func full_reference_always(condition bool, message string) {
+	if !condition {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message + "  Always — condition was false")
+	}
+}
+
+func full_reference_sometimes(condition bool, message string) {
+	return
+}
+
+func full_reference_ensure() {
+	return
+}
+
+func full_reference_range_int(namespace Namespace, value int, minimum int, maximum int) {
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
+	if value < minimum {
+		panic(prefix + RANGE_GUARD_MINIMUM + "  value below min")
+	}
+	if value > maximum {
+		panic(prefix + RANGE_GUARD_MAXIMUM + "  value exceeds max")
+	}
+}
+
+func full_reference_range_holed_int(
+	namespace Namespace, value int, minimum int, maximum int,
+	hole_1 int, hole_2 int, hole_3 int, hole_4 int,
+) {
+	full_reference_range_int(namespace, value, minimum, maximum)
+	switch value {
+	case hole_1, hole_2, hole_3, hole_4:
+		prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace)
+		prefix += ELEMENT_MESSAGE_SEPARATOR
+		panic(prefix + "Range value is excluded")
+	}
+}
+
+func full_reference_enum_int(namespace Namespace, value int, first int, second int) {
+	switch value {
+	case first, second:
+		return
+	}
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
+	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member")
+}
+
+func full_reference_enum_3_int(
+	namespace Namespace, value int, first int, second int, third int,
+) {
+	switch value {
+	case first, second, third:
+		return
+	}
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
+	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member")
+}
+
+func full_reference_enum_4_int(
+	namespace Namespace, value int, first int, second int, third int, fourth int,
+) {
+	switch value {
+	case first, second, third, fourth:
+		return
+	}
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
+	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member")
+}
+
 // Test_Assertion_Builder_Fits_Three_Words prevents recording-only state from making every fluent
 // return copy more than the ordinary enforcement path can justify.
 func Test_Assertion_Builder_Fits_Three_Words(t *testing.T) {
