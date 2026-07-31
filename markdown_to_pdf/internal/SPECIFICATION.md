@@ -1,4 +1,29 @@
 
+# PDF To Markdown
+
+PDF_To_Markdown extracts positioned text from an unencrypted PDF. It returns
+Markdown that follows MarkItDown 0.1.7 layout and table-classification rules.
+
+### Golden Documents
+
+The converter produces the checked-in MarkItDown output for prose, forms,
+mixed pages, sparse tables, and image-only documents without byte changes.
+
+### Master Format Numbers
+
+A line that contains only a dot-prefixed number joins the next non-empty text
+line. The converter preserves all other content order.
+
+### Parser Validation
+
+The converter rejects malformed or encrypted PDF input. An image-only PDF is a
+valid document and produces empty Markdown.
+
+### Resource Limits
+
+The converter rejects input that exceeds its object, page, nesting, per-stream,
+cumulative decoded-data, or Markdown-output limit.
+
 # Render
 
 Render turns Markdown source into the laid out, styled text of a PDF body.

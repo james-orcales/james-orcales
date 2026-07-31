@@ -1,6 +1,6 @@
-// Package main is the markdown_to_pdf command. render converts a Markdown file to
-// PDF beside it or to -out; preview renders one to the system temp directory and
-// opens it; golden does the same with a built-in showcase.
+// Package main is the markdown_to_pdf command. render converts Markdown to PDF
+// or PDF to Markdown; preview writes the conversion to the system temp
+// directory and opens it; golden keeps the built-in PDF showcase.
 package main
 
 import (
@@ -66,21 +66,21 @@ func main() {
 func main_program() (program cli.Program) {
 	input := cli.New_Argument[string](cli.New_Argument_Input{
 		Label:       "input",
-		Description: "the Markdown file to convert",
+		Description: "the Markdown or PDF file to convert",
 	})
 	output_flag := cli.New_Flag[string](cli.New_Flag_Input[string]{
 		Label:       "out",
-		Description: "output PDF path; defaults to beside the input",
+		Description: "output path; defaults to .pdf for Markdown or .md for PDF",
 	})
 	render := cli.Command{
 		Label:       "render",
-		Description: "render a Markdown file to PDF, beside it or to -out",
+		Description: "convert Markdown to PDF or PDF to Markdown, beside it or to -out",
 		Arguments:   []cli.Option{input},
 		Flags:       []cli.Option{output_flag},
 	}
 	preview := cli.Command{
 		Label:       "preview",
-		Description: "render a Markdown file to the system temp directory and open it",
+		Description: "convert a Markdown or PDF file in the temp directory and open it",
 		Arguments:   []cli.Option{input},
 	}
 	golden := cli.Command{
@@ -89,7 +89,7 @@ func main_program() (program cli.Program) {
 	}
 	return cli.New(cli.New_Input{
 		Label:       "markdown_to_pdf",
-		Description: "render Markdown to PDF",
+		Description: "convert Markdown to PDF or PDF to Markdown",
 		Commands:    []cli.Command{render, preview, golden},
 	})
 }
@@ -98,15 +98,31 @@ func main_program() (program cli.Program) {
 // renders the input into it.
 func main_render_command(command cli.Command) (status_code int) {
 	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
+	explicit_output := cli.Get_Option(command.Flags, "out").Value.(string)
 	output_path := main_output_path(&Main_Output_Path_Input{
 		Input:  input_path,
-		Output: cli.Get_Option(command.Flags, "out").Value.(string),
+		Output: explicit_output,
 	})
-	markdown, read_ok := main_read_file(input_path)
+	if explicit_output == "" {
+		if main_path_exists(output_path) {
+			fmt.Fprintf(os.Stderr, "markdown_to_pdf: %s already exists\n", output_path)
+			return EXIT_EXISTS
+		}
+	}
+	is_pdf := main_input_is_pdf(input_path)
+	bytes_max := MARKDOWN_BYTES_MAX
+	limit_label := "16 MiB"
+	if is_pdf {
+		bytes_max = markdown_to_pdf.PDF_BYTES_MAX
+		limit_label = "64 MiB"
+	}
+	contents, read_ok := main_read_file(&Main_Read_File_Input{
+		Name: input_path, Bytes_Max: bytes_max, Limit_Label: limit_label,
+	})
 	if !read_ok {
 		return EXIT_FAILURE
 	}
-	return main_render(markdown, output_path)
+	return main_convert_to_path(contents, is_pdf, output_path)
 }
 
 // Renders the built-in showcase to the OS temp directory and opens it.
@@ -123,11 +139,20 @@ func golden_path() (path string) {
 // overwriting any prior preview unconditionally.
 func main_preview(command cli.Command) (status_code int) {
 	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
-	markdown, read_ok := main_read_file(input_path)
+	is_pdf := main_input_is_pdf(input_path)
+	bytes_max := MARKDOWN_BYTES_MAX
+	limit_label := "16 MiB"
+	if is_pdf {
+		bytes_max = markdown_to_pdf.PDF_BYTES_MAX
+		limit_label = "64 MiB"
+	}
+	contents, read_ok := main_read_file(&Main_Read_File_Input{
+		Name: input_path, Bytes_Max: bytes_max, Limit_Label: limit_label,
+	})
 	if !read_ok {
 		return EXIT_FAILURE
 	}
-	return main_render_then_open(markdown, main_preview_path(input_path))
+	return main_convert_then_open(contents, is_pdf, main_preview_path(input_path))
 }
 
 // A preview is written to the OS temp directory, named for the input's base so
@@ -135,13 +160,22 @@ func main_preview(command cli.Command) (status_code int) {
 func main_preview_path(input_path string) (preview_path string) {
 	base_name := filepath.Base(input_path)
 	stem := strings.TrimSuffix(base_name, filepath.Ext(base_name))
+	if main_input_is_pdf(input_path) {
+		return filepath.Join(os.TempDir(), stem+".md")
+	}
 	return filepath.Join(os.TempDir(), stem+".pdf")
 }
 
 // Renders markdown to path, overwriting it, then opens the result in the default
 // viewer; the path is reported so the caller knows where it landed.
 func main_render_then_open(markdown []byte, path string) (status_code int) {
-	status := main_render(markdown, path)
+	return main_convert_then_open(markdown, false, path)
+}
+
+// Converts source before it opens path, then reports and opens a successful
+// preview. Parse failures therefore leave any prior preview intact.
+func main_convert_then_open(source []byte, is_pdf bool, path string) (status_code int) {
+	status := main_convert_to_path(source, is_pdf, path)
 	if status != 0 {
 		return status
 	}
@@ -164,22 +198,45 @@ func main_open(path string) {
 // code. Shared by the file and -golden paths so both bind the output the same
 // way.
 func main_render(markdown []byte, output_path string) (status_code int) {
+	return main_convert_to_path(markdown, false, output_path)
+}
+
+// Converts source completely before it opens output_path. This ordering is
+// load-bearing for explicit output paths because a malformed PDF must not
+// truncate the caller's existing file.
+func main_convert_to_path(source []byte, is_pdf bool, output_path string) (status_code int) {
+	document := source
+	if is_pdf {
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(source)
+		if convert_err != nil {
+			fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", convert_err)
+			return EXIT_FAILURE
+		}
+		document = markdown
+	} else {
+		document = markdown_to_pdf.Render(source)
+	}
+	return main_write_output(document, output_path)
+}
+
+func main_write_output(document []byte, output_path string) (status_code int) {
 	output, create_err := os.Create(output_path)
 	if create_err != nil {
 		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", create_err)
 		return EXIT_FAILURE
 	}
-	status := markdown_to_pdf.Main(&markdown_to_pdf.Main_Input{
-		Markdown: markdown,
-		Output:   output,
-		Stderr:   os.Stderr,
-	})
+	_, write_err := output.Write(document)
+	if write_err != nil {
+		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", write_err)
+		output.Close()
+		return EXIT_FAILURE
+	}
 	close_err := output.Close()
 	if close_err != nil {
 		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", close_err)
 		return EXIT_FAILURE
 	}
-	return status
+	return 0
 }
 
 type Main_Output_Path_Input struct {
@@ -189,34 +246,48 @@ type Main_Output_Path_Input struct {
 	Output string
 }
 
-// Returns the explicit -out path when set; otherwise the input path with its
-// extension swapped for .pdf, so a bare render writes beside its source. A
-// derived path that already exists aborts the run rather than overwrite a file
-// the caller never named.
+// Returns the explicit -out path when set. A derived path uses .md for PDF
+// input and .pdf for every other input.
 func main_output_path(input *Main_Output_Path_Input) (output_path string) {
 	if input.Output != "" {
 		return input.Output
 	}
-	derived := strings.TrimSuffix(input.Input, filepath.Ext(input.Input)) + ".pdf"
-	_, stat_err := os.Stat(derived)
-	if stat_err == nil {
-		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %s already exists\n", derived)
-		os.Exit(EXIT_EXISTS)
+	extension := ".pdf"
+	if main_input_is_pdf(input.Input) {
+		extension = ".md"
 	}
-	return derived
+	return strings.TrimSuffix(input.Input, filepath.Ext(input.Input)) + extension
 }
 
-// Reads the named file into one fixed buffer, bounded by MARKDOWN_BYTES_MAX so
-// no single input can exhaust memory. ok is false, with a stderr message, when
-// the file cannot be opened, overflows the cap, or errors mid-read.
-func main_read_file(name string) (contents []byte, ok bool) {
-	file, open_err := os.Open(name)
+func main_input_is_pdf(path string) (is_pdf bool) {
+	return strings.EqualFold(filepath.Ext(path), ".pdf")
+}
+
+func main_path_exists(path string) (exists bool) {
+	_, stat_err := os.Stat(path)
+	return stat_err == nil
+}
+
+// Main_Read_File_Input describes a bounded command input read.
+type Main_Read_File_Input struct {
+	// Name is the input path.
+	Name string
+	// Bytes_Max is the direction-specific size limit.
+	Bytes_Max int
+	// Limit_Label is the diagnostic form of Bytes_Max.
+	Limit_Label string
+}
+
+// Reads the named file into one fixed buffer. ok is false, with a stderr
+// message, when the file cannot be opened, overflows the cap, or errors.
+func main_read_file(input *Main_Read_File_Input) (contents []byte, ok bool) {
+	file, open_err := os.Open(input.Name)
 	if open_err != nil {
 		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", open_err)
 		return nil, false
 	}
 	defer file.Close()
-	buffer := make([]byte, MARKDOWN_BYTES_MAX)
+	buffer := make([]byte, input.Bytes_Max+1)
 	read_total := 0
 	for read_total < len(buffer) {
 		n, read_err := file.Read(buffer[read_total:])
@@ -229,8 +300,8 @@ func main_read_file(name string) (contents []byte, ok bool) {
 			return nil, false
 		}
 	}
-	// The buffer filled before EOF, so the file is larger than the cap.
-	fmt.Fprintln(os.Stderr, "markdown_to_pdf: input exceeds 16 MiB")
+	// The extra byte distinguishes an input exactly at the cap from overflow.
+	fmt.Fprintf(os.Stderr, "markdown_to_pdf: input exceeds %s\n", input.Limit_Label)
 	return nil, false
 }
 

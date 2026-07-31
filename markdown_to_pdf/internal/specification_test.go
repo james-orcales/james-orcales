@@ -1,11 +1,131 @@
 package markdown_to_pdf_test
 
 import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"local/james-orcales/markdown_to_pdf/internal"
 )
+
+// Test_PDF_To_Markdown_Golden_Documents compares raw output bytes for every
+// PDF/Markdown pair copied from MarkItDown 0.1.7.
+func Test_PDF_To_Markdown_Golden_Documents(t *testing.T) {
+	t.Parallel()
+	fixture_names := []string{
+		"academic_paper",
+		"movie_booking",
+		"receipt",
+		"repair_estimate",
+		"sparse_table",
+		"empty_medical_scan",
+	}
+	for _, fixture_name := range fixture_names {
+		pdf := read_fixture(t, fixture_name+".pdf", 64*1024*1024)
+		want := read_fixture(t, fixture_name+".golden", 64*1024*1024)
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(pdf)
+		if convert_err != nil {
+			t.Errorf("%s: PDF_To_Markdown: %v", fixture_name, convert_err)
+			continue
+		}
+		if !bytes.Equal(markdown, want) {
+			difference := first_difference(&First_Difference_Input{
+				Got: markdown, Want: want,
+			})
+			t.Errorf(
+				"%s: markdown differs: got %d bytes, want %d bytes; %s",
+				fixture_name,
+				len(markdown),
+				len(want),
+				difference,
+			)
+		}
+	}
+}
+
+// Test_PDF_To_Markdown_Master_Format_Numbers verifies that the MasterFormat
+// fixture keeps its content and joins dot-prefixed numbers to their text.
+func Test_PDF_To_Markdown_Master_Format_Numbers(t *testing.T) {
+	t.Parallel()
+	pdf := read_fixture(t, "masterformat_partial_numbering.pdf", 64*1024*1024)
+	markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(pdf)
+	if convert_err != nil {
+		t.Fatalf("PDF_To_Markdown: %v", convert_err)
+	}
+	text := string(markdown)
+	wanted := []string{
+		"RFP for Construction Management Services",
+		"Section 00 00 43",
+		"Instructions to Respondents",
+		"Ken Sargent House",
+		"INTENT",
+		".1 The intent",
+		".2 Available information",
+		"GRANDE PRAIRIE, ALBERTA",
+		"Section 00 00 45",
+	}
+	for _, fragment := range wanted {
+		if !strings.Contains(text, fragment) {
+			t.Errorf("missing %q", fragment)
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		stripped := strings.TrimSpace(strings.ReplaceAll(line, "|", ""))
+		if partial_number(stripped) {
+			t.Errorf("isolated partial numbering %q", line)
+		}
+	}
+}
+
+// Test_PDF_To_Markdown_Parser_Validation verifies invalid headers, malformed
+// objects, and encryption fail instead of producing partial Markdown.
+func Test_PDF_To_Markdown_Parser_Validation(t *testing.T) {
+	t.Parallel()
+	cases := [][]byte{
+		[]byte("not a PDF"),
+		[]byte("%PDF-1.4\n1 0 obj <<"),
+		[]byte("%PDF-1.4\n/Encrypt 2 0 R\n"),
+	}
+	for _, source := range cases {
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(source)
+		if convert_err == nil {
+			t.Errorf("source %q succeeded with %q", source, markdown)
+		}
+	}
+}
+
+// Test_PDF_To_Markdown_Resource_Limits pins each public parser bound and
+// exercises the input-size and nesting checks without an RSS assertion.
+func Test_PDF_To_Markdown_Resource_Limits(t *testing.T) {
+	if markdown_to_pdf.PDF_OBJECT_COUNT_MAX != 262144 {
+		t.Fatal("indirect-object limit changed")
+	}
+	if markdown_to_pdf.PDF_PAGE_COUNT_MAX != 65536 {
+		t.Fatal("page limit changed")
+	}
+	if markdown_to_pdf.PDF_DEPTH_MAX != 128 {
+		t.Fatal("depth limit changed")
+	}
+	if markdown_to_pdf.PDF_STREAM_BYTES_MAX != 64*1024*1024 {
+		t.Fatal("decoded-stream limit changed")
+	}
+	if markdown_to_pdf.PDF_DECODED_BYTES_MAX != 256*1024*1024 {
+		t.Fatal("cumulative decoded-data limit changed")
+	}
+	too_large := make([]byte, markdown_to_pdf.PDF_BYTES_MAX+1)
+	copy(too_large, "%PDF-1.4")
+	if _, convert_err := markdown_to_pdf.PDF_To_Markdown(too_large); convert_err == nil {
+		t.Fatal("oversized PDF input succeeded")
+	}
+	nested := "%PDF-1.4\n1 0 obj " + strings.Repeat("[", 130) + "null" +
+		strings.Repeat("]", 130) + " endobj\n"
+	if _, convert_err := markdown_to_pdf.PDF_To_Markdown([]byte(nested)); convert_err == nil {
+		t.Fatal("over-deep PDF value succeeded")
+	}
+}
 
 // Each leaf test feeds the renderer a Markdown fragment that exercises exactly
 // the feature its heading names and asserts on the resulting PDF bytes. The
@@ -268,6 +388,83 @@ func Test_Main_Output(t *testing.T) {
 	if !strings.HasPrefix(output.String(), "%PDF-1.") {
 		t.Fatal("Main did not write a PDF to its output")
 	}
+}
+
+// First_Difference_Input groups two byte slices for mismatch reporting.
+type First_Difference_Input struct {
+	// Got is the converter output.
+	Got []byte
+	// Want is the golden output.
+	Want []byte
+}
+
+func first_difference(input *First_Difference_Input) (description string) {
+	shared_size := len(input.Got)
+	if len(input.Want) < shared_size {
+		shared_size = len(input.Want)
+	}
+	offset := 0
+	for offset < shared_size {
+		if input.Got[offset] != input.Want[offset] {
+			break
+		}
+		offset++
+	}
+	got_end := offset + 80
+	if got_end > len(input.Got) {
+		got_end = len(input.Got)
+	}
+	want_end := offset + 80
+	if want_end > len(input.Want) {
+		want_end = len(input.Want)
+	}
+	return fmt.Sprintf(
+		"offset %d: got %q, want %q",
+		offset,
+		input.Got[offset:got_end],
+		input.Want[offset:want_end],
+	)
+}
+
+func partial_number(text string) (yes bool) {
+	if len(text) < 2 {
+		return false
+	}
+	if text[0] != '.' {
+		return false
+	}
+	for index := 1; index < len(text); index++ {
+		if text[index] < '0' {
+			return false
+		}
+		if text[index] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func read_fixture(t *testing.T, name string, bytes_max int64) (contents []byte) {
+	t.Helper()
+	path := "testdata/" + name
+	file, open_err := os.Open(path)
+	if open_err != nil {
+		t.Fatalf("open %s: %v", path, open_err)
+	}
+	defer file.Close()
+	info, stat_err := file.Stat()
+	if stat_err != nil {
+		t.Fatalf("stat %s: %v", path, stat_err)
+	}
+	if info.Size() > bytes_max {
+		t.Fatalf("%s exceeds %d bytes", path, bytes_max)
+	}
+	contents = make([]byte, info.Size())
+	_, read_err := io.ReadFull(file, contents)
+	if read_err != nil {
+		t.Fatalf("read %s: %v", path, read_err)
+	}
+	return contents
 }
 
 // Renders the Markdown source to PDF bytes and returns them as a string for
