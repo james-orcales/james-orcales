@@ -1160,8 +1160,18 @@ func constant_resolve_frame(
 		if len(concrete.Args) != 1 {
 			return nil, nil, false
 		}
-		if _, is_conversion := concrete.Fun.(*ast.Ident); !is_conversion {
+		callee, is_conversion := concrete.Fun.(*ast.Ident)
+		if !is_conversion {
 			return nil, nil, false
+		}
+		// A measure over a constant string is a Go constant expression. Reading it as a
+		// conversion would push the string itself, which carries no integer.
+		if callee.Name == "len" {
+			bytes, measured := constant_resolve_bytes(constants, concrete.Args[0])
+			if !measured {
+				return nil, nil, false
+			}
+			return frames, append(values, bytes), true
 		}
 		return append(frames, Constant_Frame{Expression: concrete.Args[0]}), values, true
 	case *ast.UnaryExpr:
@@ -1170,6 +1180,44 @@ func constant_resolve_frame(
 		return constant_resolve_binary(frame, concrete, frames, values)
 	}
 	return nil, nil, false
+}
+
+// Measures a constant string operand in bytes. A name resolves through its own package or through
+// the package a qualifier states, thus one declared string carries its own bound and no bundle has
+// to restate the number.
+func constant_resolve_bytes(
+	constants Constant_Scope, expression ast.Expr,
+) (bytes *big.Int, measured bool) {
+	for step_index := 0; step_index < CONSTANT_RESOLUTION_STEPS_MAX; step_index++ {
+		switch concrete := expression.(type) {
+		case *ast.ParenExpr:
+			expression = concrete.X
+		case *ast.Ident:
+			declaration, declared := constants.Local[concrete.Name]
+			if !declared {
+				return nil, false
+			}
+			expression = declaration
+		case *ast.SelectorExpr:
+			declaration, declared := constant_scope_qualified(constants, concrete)
+			if !declared {
+				return nil, false
+			}
+			expression = declaration
+		case *ast.BasicLit:
+			if concrete.Kind != token.STRING {
+				return nil, false
+			}
+			text, unquote_error := strconv.Unquote(concrete.Value)
+			if unquote_error != nil {
+				return nil, false
+			}
+			return big.NewInt(int64(len(text))), true
+		default:
+			return nil, false
+		}
+	}
+	return nil, false
 }
 
 func constant_resolve_unary(

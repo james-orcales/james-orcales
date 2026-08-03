@@ -566,6 +566,8 @@ func Test_Assertions_Registration_Cross_Package_Constants(t *testing.T) {
 	if !strings.Contains(silent.String(), "not statically resolvable") {
 		t.Fatalf("bare bounds output=%q, want unresolvable", silent.String())
 	}
+	assert_constant_bytes_resolve(t)
+	assert_composed_bytes_resolve(t)
 }
 
 // Test_Assertions_Registration_Walk keeps registration expansion aligned with runtime ordinals.
@@ -1832,6 +1834,65 @@ func axis_chain_fixture(axis_count int, namespace string) (source string) {
 	}
 	chain.WriteString(bundle_fixture_tail(namespace))
 	return chain.String()
+}
+
+// A bound built from two literals and one imported constant is still one static number. Each part
+// is a measure over a string, thus the sum is a Go constant expression like any other.
+func assert_composed_bytes_resolve(t *testing.T) {
+	t.Helper()
+	files := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
+		"a/a.go": &fstest.MapFile{Data: []byte(`package a
+const MIDDLE = "middle"
+`)},
+		"b/b.go": &fstest.MapFile{Data: []byte(`package b
+import part "fixture/a"
+const LABEL_BYTES_MIN = 0
+const LABEL_BYTES_MAX = len("prefix.") +
+	len(part.MIDDLE) + len(".suffix")
+type Label string
+func Label_Invariants(value Label, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), LABEL_BYTES_MIN, LABEL_BYTES_MAX).Ensure()
+}
+func check(value Label) { Label_Invariants(value, "label") }
+`)},
+	}
+	output := &bytes.Buffer{}
+	recorder := &core.Recorder{
+		File_System: files, Packages_To_Analyze: []string{"/b"}, Output: output,
+		Exit: func(int) {}, Is_Test: true,
+	}
+	core.Recorder_Register_Packages_For_Analysis(recorder)
+	if output.String() != "" {
+		t.Fatalf("composed bound output=%q, want no diagnostic", output.String())
+	}
+	// The domain row prints the bound registration resolved, which pins the arithmetic:
+	// "prefix." is 7, "middle" is 6, and ".suffix" is 7.
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	if !strings.Contains(output.String(), "0..20") {
+		t.Fatalf("composed bound = %q, want a 0..20 domain", output.String())
+	}
+}
+
+// A constant string's length is a Go constant expression, thus a bound derived from one is static
+// and a bundle should not restate the number the string already carries.
+func assert_constant_bytes_resolve(t *testing.T) {
+	t.Helper()
+	_, output, code := registered_fixture(`package fixture
+const LABEL = "a seeded label"
+const LABEL_BYTES_MAX = len(LABEL)
+const LABEL_BYTES_MIN = 0
+type Label string
+func Label_Invariants(value Label, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), LABEL_BYTES_MIN, LABEL_BYTES_MAX).Ensure()
+}
+func check(value Label) { Label_Invariants(value, "label") }
+`)
+	if code != -1 {
+		t.Fatalf("len bound exit=%d output=%q", code, output.String())
+	}
 }
 
 // Builds two packages: one owning the shared bounds, one whose bundle names them as its Range.
