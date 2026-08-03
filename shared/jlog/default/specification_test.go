@@ -155,7 +155,7 @@ func Benchmark_Caller_Diode(b *testing.B) {
 	writer := diode.New(diode.New_Input{
 		Writer: sink,
 		Clock:  clock,
-		Sleep:  system_time.Sleep,
+		Sleep:  system_time.New_Sleep(),
 		Count:  1024,
 	})
 	defer writer.Close()

@@ -104,7 +104,7 @@ func New_Default_Logger() (logger Logger) {
 	writer := diode.New(diode.New_Input{
 		Writer:        os.Stderr,
 		Clock:         clock,
-		Sleep:         system_time.Sleep,
+		Sleep:         system_time.New_Sleep(),
 		Count:         DEFAULT_DIODE_COUNT,
 		Poll_Interval: 100 * time.MILLISECOND,
 		Alerter:       report_dropped,
