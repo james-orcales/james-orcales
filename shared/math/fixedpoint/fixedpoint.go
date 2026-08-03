@@ -10,6 +10,8 @@ import (
 	"math/bits"
 	"strconv"
 	"strings"
+
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // FRACTIONAL_BITS is how many of a Number's low bits hold the fraction; the rest hold the
@@ -21,146 +23,491 @@ const FRACTIONAL_BITS = 20
 // A Number's real value is its stored integer divided by SCALE.
 const SCALE = 1 << FRACTIONAL_BITS
 
+// INTEGER_64_MINIMUM is the smallest signed 64-bit integer.
+const INTEGER_64_MINIMUM int64 = -9223372036854775808
+
+// INTEGER_64_MAXIMUM is the largest signed 64-bit integer.
+const INTEGER_64_MAXIMUM int64 = 9223372036854775807
+
+// UNSIGNED_64_MINIMUM is the smallest unsigned 64-bit integer.
+const UNSIGNED_64_MINIMUM uint64 = 0
+
+// UNSIGNED_64_MAXIMUM is the largest unsigned 64-bit integer.
+const UNSIGNED_64_MAXIMUM uint64 = 18446744073709551615
+
+// HIGH_WORD_MAXIMUM keeps the 128-bit root in the signed 64-bit result domain.
+const HIGH_WORD_MAXIMUM uint64 = 1<<56 - 1
+
+// DIGIT_COUNT_MINIMUM is the smallest decimal precision.
+const DIGIT_COUNT_MINIMUM = 0
+
+// DIGIT_COUNT_MAXIMUM prevents an int64 power of ten from overflowing.
+const DIGIT_COUNT_MAXIMUM = 6
+
+// TEXT_SIZE_MINIMUM is one decimal digit.
+const TEXT_SIZE_MINIMUM = 1
+
+// TEXT_SIZE_MAXIMUM holds a sign, an integer part, a point, and six fraction digits.
+const TEXT_SIZE_MAXIMUM = 21
+
+// WHOLE_INTEGER_MINIMUM is the smallest integer that fixed-point storage can lift.
+const WHOLE_INTEGER_MINIMUM int64 = -8796093022208
+
+// WHOLE_INTEGER_MAXIMUM is the largest integer that fixed-point storage can lift.
+const WHOLE_INTEGER_MAXIMUM int64 = 8796093022207
+
+// INTEGER_NUMBER_MINIMUM is the smallest fixed-point integer.
+const INTEGER_NUMBER_MINIMUM int64 = INTEGER_64_MINIMUM
+
+// INTEGER_NUMBER_MAXIMUM is the largest fixed-point integer.
+const INTEGER_NUMBER_MAXIMUM int64 = 9223372036853727232
+
+// NUMBER_ROOT_MINIMUM is the smallest root of a Number.
+const NUMBER_ROOT_MINIMUM int64 = 0
+
+// NUMBER_ROOT_MAXIMUM is the largest root of a Number.
+const NUMBER_ROOT_MAXIMUM int64 = 3109888511975
+
+// SCALED_ROOT_MINIMUM is the smallest scaled root of an integer.
+const SCALED_ROOT_MINIMUM int64 = 0
+
+// SCALED_ROOT_MAXIMUM is the largest scaled root of an integer.
+const SCALED_ROOT_MAXIMUM int64 = 3184525836262886
+
+// ROOT_INTEGER_MINIMUM is the smallest integer root.
+const ROOT_INTEGER_MINIMUM int64 = 0
+
+// ROOT_INTEGER_MAXIMUM is the largest root in the admitted 128-bit domain.
+const ROOT_INTEGER_MAXIMUM int64 = 1152921504606846975
+
+// SINE_MINIMUM is the lower bound of a sine.
+const SINE_MINIMUM int64 = -SCALE
+
+// SINE_MAXIMUM is the upper bound of a sine.
+const SINE_MAXIMUM int64 = SCALE
+
+// FRACTION_UNIT_ONE is one fixed-point fraction unit.
+const FRACTION_UNIT_ONE int64 = 1
+
+// FRACTION_UNIT_TWO is two fixed-point fraction units.
+const FRACTION_UNIT_TWO int64 = 2
+
+// FRACTION_UNIT_NEGATIVE_ONE is negative one fixed-point fraction unit.
+const FRACTION_UNIT_NEGATIVE_ONE int64 = -1
+
 // Number is a base-two fixed-point value. Addition, subtraction, negation, and the
 // ordering comparisons are the native int64 operators, the shared SCALE aligning them;
 // multiplication and division need the functions below because the scale must cancel.
 type Number int64
+
+// Number_Invariants states the complete fixed-point storage domain.
+func Number_Invariants(value Number, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
 
 // Ratio is a dimensionless fixed-point multiplier denoting ratio divided by SCALE. It
 // is a type distinct from Number so Apply takes one of each — sidestepping the
 // input-struct rule two Numbers would trip — and so a ratio reads as a plain constant.
 type Ratio int64
 
-// From_Integer lifts a whole number into fixed-point.
-func From_Integer(value int64) (number Number) {
-	return Number(value * SCALE)
+// Ratio_Invariants states the complete ratio storage domain.
+func Ratio_Invariants(value Ratio, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
 }
 
-// From_Ratio_Input holds the operands of From_Ratio, which repeat a type.
-type From_Ratio_Input struct {
-	// Numerator is the dividend of the ratio.
-	Numerator int64
-	// Denominator is the divisor of the ratio.
-	Denominator int64
+// Numerator is the dividend of a ratio.
+type Numerator int64
+
+// Numerator_Invariants states the complete signed 64-bit domain.
+func Numerator_Invariants(value Numerator, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Denominator is the divisor of a ratio.
+type Denominator int64
+
+// Denominator_Invariants states the complete signed 64-bit domain.
+func Denominator_Invariants(value Denominator, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Multiplicand is the first fixed-point factor.
+type Multiplicand Number
+
+// Multiplicand_Invariants states the complete fixed-point storage domain.
+func Multiplicand_Invariants(value Multiplicand, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Multiplier is the second fixed-point factor.
+type Multiplier Number
+
+// Multiplier_Invariants states the complete fixed-point storage domain.
+func Multiplier_Invariants(value Multiplier, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Dividend is the fixed-point value that a divisor divides.
+type Dividend Number
+
+// Dividend_Invariants states the complete fixed-point storage domain.
+func Dividend_Invariants(value Dividend, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Divisor is the fixed-point value that divides a dividend.
+type Divisor Number
+
+// Divisor_Invariants states the complete fixed-point storage domain.
+func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Whole_Integer is an integer that fixed-point storage can lift without overflow.
+type Whole_Integer int64
+
+// Whole_Integer_Invariants bounds an integer to the fixed-point whole-number domain.
+func Whole_Integer_Invariants(value Whole_Integer, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), WHOLE_INTEGER_MINIMUM, WHOLE_INTEGER_MAXIMUM).
+		Ensure()
+}
+
+// Integer_Number is a fixed-point Number with no fractional units.
+type Integer_Number Number
+
+// Integer_Number_Invariants bounds the fixed-point whole-number domain.
+func Integer_Number_Invariants(value Integer_Number, namespace invariant.Namespace) {
+	invariant.Always(
+		int64(value)%SCALE == 0,
+		"An Integer_Number has no fractional units.",
+	)
+	invariant.Tree(value, namespace).
+		Range_Holed_Int64(
+			int64(value), INTEGER_NUMBER_MINIMUM, INTEGER_NUMBER_MAXIMUM,
+			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
+			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
+		).
+		Ensure()
+}
+
+// Radicand is a signed 64-bit integer before a scaled square-root operation.
+type Radicand int64
+
+// Radicand_Invariants states the complete signed 64-bit domain.
+func Radicand_Invariants(value Radicand, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Number_Root is a nonnegative square root of a Number.
+type Number_Root Number
+
+// Number_Root_Invariants bounds a root to the Number radicand domain.
+func Number_Root_Invariants(value Number_Root, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int64(
+			int64(value), NUMBER_ROOT_MINIMUM, NUMBER_ROOT_MAXIMUM,
+			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
+			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
+		).
+		Ensure()
+}
+
+// Scaled_Root is a fixed-point square root of an integer radicand.
+type Scaled_Root Number
+
+// Scaled_Root_Invariants bounds a root to the signed integer radicand domain.
+func Scaled_Root_Invariants(value Scaled_Root, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int64(
+			int64(value), SCALED_ROOT_MINIMUM, SCALED_ROOT_MAXIMUM,
+			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
+			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
+		).
+		Ensure()
+}
+
+// Root_Integer is a nonnegative integer root of a 128-bit radicand.
+type Root_Integer int64
+
+// Root_Integer_Invariants bounds a root to the admitted 128-bit radicand domain.
+func Root_Integer_Invariants(value Root_Integer, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), ROOT_INTEGER_MINIMUM, ROOT_INTEGER_MAXIMUM).
+		Ensure()
+}
+
+// Sine is a fixed-point sine in the closed interval from negative one to one.
+type Sine Number
+
+// Sine_Invariants bounds a sine to the unit interval.
+func Sine_Invariants(value Sine, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int64(
+			int64(value), SINE_MINIMUM, SINE_MAXIMUM,
+			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
+			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
+		).
+		Ensure()
+}
+
+// High_Word is the upper word of a 128-bit integer.
+type High_Word uint64
+
+// High_Word_Invariants keeps the root in the signed 64-bit result domain.
+func High_Word_Invariants(value High_Word, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), UNSIGNED_64_MINIMUM, HIGH_WORD_MAXIMUM).
+		Ensure()
+}
+
+// Low_Word is the lower word of a 128-bit integer.
+type Low_Word uint64
+
+// Low_Word_Invariants states the complete unsigned 64-bit domain.
+func Low_Word_Invariants(value Low_Word, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), UNSIGNED_64_MINIMUM, UNSIGNED_64_MAXIMUM).
+		Ensure()
+}
+
+// Digit_Count is a count of decimal fraction digits.
+type Digit_Count int
+
+// Digit_Count_Invariants keeps decimal scaling in the signed 64-bit domain.
+func Digit_Count_Invariants(value Digit_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), DIGIT_COUNT_MINIMUM, DIGIT_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Boolean is one true or false value.
+type Boolean bool
+
+// Boolean_Invariants records both Boolean states.
+func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A Boolean value is true.").
+		Ensure()
+}
+
+// Text is decimal text.
+type Text string
+
+// Text_Invariants bounds a formatted fixed-point number.
+func Text_Invariants(value Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// From_Integer lifts a whole number into fixed-point.
+func From_Integer(value Whole_Integer) (number Integer_Number) {
+	defer func() { Integer_Number_Invariants(number, "from_integer.number") }()
+	Whole_Integer_Invariants(value, "from_integer.value")
+	return Integer_Number(value * SCALE)
 }
 
 // From_Ratio lifts the quotient numerator/denominator into fixed-point, the scaled-up
 // numerator taken through a 128-bit intermediate so it cannot overflow and a large
 // integer mean keeps its fraction. A zero denominator yields zero, not a divide by zero.
-func From_Ratio(input *From_Ratio_Input) (number Number) {
-	if input.Denominator == 0 {
+func From_Ratio(numerator Numerator, denominator Denominator) (number Number) {
+	defer func() { Number_Invariants(number, "from_ratio.number") }()
+	Numerator_Invariants(numerator, "from_ratio.numerator")
+	Denominator_Invariants(denominator, "from_ratio.denominator")
+	if denominator == 0 {
 		return 0
 	}
-	negative := (input.Numerator < 0) != (input.Denominator < 0)
-	magnitude := shift_divide(&Shift_Divide_Input{
-		Numerator:   absolute(Number(input.Numerator)),
-		Denominator: absolute(Number(input.Denominator)),
-	})
-	return signed(magnitude, negative)
+	negative := (numerator < 0) != (denominator < 0)
+	numerator_magnitude := uint64(numerator)
+	if numerator < 0 {
+		numerator_magnitude = uint64(-int64(numerator))
+	}
+	denominator_magnitude := uint64(denominator)
+	if denominator < 0 {
+		denominator_magnitude = uint64(-int64(denominator))
+	}
+	high := numerator_magnitude >> (64 - FRACTIONAL_BITS)
+	low := numerator_magnitude << FRACTIONAL_BITS
+	magnitude, _ := bits.Div64(high, low, denominator_magnitude)
+	if negative {
+		return Number(-int64(magnitude))
+	}
+	return Number(magnitude)
 }
 
 // Whole truncates a fixed-point value toward zero to the integer it contains.
-func Whole(value Number) (whole int64) {
-	return int64(value) / SCALE
+func Whole(value Number) (whole Whole_Integer) {
+	defer func() { Whole_Integer_Invariants(whole, "whole.whole") }()
+	Number_Invariants(value, "whole.value")
+	return Whole_Integer(int64(value) / SCALE)
 }
 
 // Is_Integer reports whether a value carries no fractional part.
-func Is_Integer(value Number) (yes bool) {
-	return int64(value)%SCALE == 0
-}
-
-// Multiply_Input pairs the two factors of Multiply, which repeat a type.
-type Multiply_Input struct {
-	// A is the first factor.
-	A Number
-	// B is the second factor.
-	B Number
+func Is_Integer(value Number) (yes Boolean) {
+	defer func() { Boolean_Invariants(yes, "is_integer.yes") }()
+	Number_Invariants(value, "is_integer.value")
+	return Boolean(int64(value)%SCALE == 0)
 }
 
 // Multiply returns the fixed-point product: the 128-bit product of the factors shifted
 // back down by the scale, so no divide and no premature overflow.
-func Multiply(input *Multiply_Input) (product Number) {
-	negative := (input.A < 0) != (input.B < 0)
-	magnitude := multiply_shifted(&Multiply_Shifted_Input{
-		Left: absolute(input.A), Right: absolute(input.B),
-	})
-	return signed(magnitude, negative)
-}
-
-// Divide_Input pairs the operands of Divide, which repeat a type.
-type Divide_Input struct {
-	// Dividend is the value being divided.
-	Dividend Number
-	// Divisor is the value it is divided by.
-	Divisor Number
+func Multiply(multiplicand Multiplicand, multiplier Multiplier) (product Number) {
+	defer func() { Number_Invariants(product, "multiply.product") }()
+	Multiplicand_Invariants(multiplicand, "multiply.multiplicand")
+	Multiplier_Invariants(multiplier, "multiply.multiplier")
+	negative := (multiplicand < 0) != (multiplier < 0)
+	left := uint64(multiplicand)
+	if multiplicand < 0 {
+		left = uint64(-int64(multiplicand))
+	}
+	right := uint64(multiplier)
+	if multiplier < 0 {
+		right = uint64(-int64(multiplier))
+	}
+	high, low := bits.Mul64(left, right)
+	magnitude := (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
+	if negative {
+		return Number(-int64(magnitude))
+	}
+	return Number(magnitude)
 }
 
 // Divide returns the fixed-point quotient: the dividend scaled up by a shift, then one
 // hardware divide by the runtime divisor. A zero divisor yields zero.
-func Divide(input *Divide_Input) (quotient Number) {
-	if input.Divisor == 0 {
+func Divide(dividend Dividend, divisor Divisor) (quotient Number) {
+	defer func() { Number_Invariants(quotient, "divide.quotient") }()
+	Dividend_Invariants(dividend, "divide.dividend")
+	Divisor_Invariants(divisor, "divide.divisor")
+	if divisor == 0 {
 		return 0
 	}
-	negative := (input.Dividend < 0) != (input.Divisor < 0)
-	magnitude := shift_divide(&Shift_Divide_Input{
-		Numerator:   absolute(input.Dividend),
-		Denominator: absolute(input.Divisor),
-	})
-	return signed(magnitude, negative)
+	negative := (dividend < 0) != (divisor < 0)
+	numerator := uint64(dividend)
+	if dividend < 0 {
+		numerator = uint64(-int64(dividend))
+	}
+	denominator := uint64(divisor)
+	if divisor < 0 {
+		denominator = uint64(-int64(divisor))
+	}
+	high := numerator >> (64 - FRACTIONAL_BITS)
+	low := numerator << FRACTIONAL_BITS
+	magnitude, _ := bits.Div64(high, low, denominator)
+	if negative {
+		return Number(-int64(magnitude))
+	}
+	return Number(magnitude)
 }
 
 // Apply scales a value by a dimensionless ratio.
 func Apply(value Number, ratio Ratio) (scaled Number) {
+	defer func() { Number_Invariants(scaled, "apply.scaled") }()
+	Number_Invariants(value, "apply.value")
+	Ratio_Invariants(ratio, "apply.ratio")
 	negative := (value < 0) != (ratio < 0)
-	magnitude := multiply_shifted(&Multiply_Shifted_Input{
-		Left: absolute(value), Right: absolute(Number(ratio)),
-	})
-	return signed(magnitude, negative)
+	left := uint64(value)
+	if value < 0 {
+		left = uint64(-int64(value))
+	}
+	right := uint64(ratio)
+	if ratio < 0 {
+		right = uint64(-int64(ratio))
+	}
+	high, low := bits.Mul64(left, right)
+	magnitude := (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
+	if negative {
+		return Number(-int64(magnitude))
+	}
+	return Number(magnitude)
 }
 
 // Square_Root returns the fixed-point square root of a fixed-point value. A negative
 // input has no real root and yields zero.
-func Square_Root(value Number) (root Number) {
+func Square_Root(value Number) (root Number_Root) {
+	defer func() { Number_Root_Invariants(root, "square_root.root") }()
+	Number_Invariants(value, "square_root.value")
 	if value < 0 {
 		return 0
 	}
 	// The root of value/SCALE, scaled back up, is the root of value*SCALE; the product
 	// can exceed int64, so it is taken as a 128-bit radicand.
 	high, low := bits.Mul64(uint64(value), SCALE)
-	return Number(square_root_uint128(&Integer_Root_Input{High: high, Low: low}))
+	return Number_Root(Integer_Root(High_Word(high), Low_Word(low)))
 }
 
 // Square_Root_Scaled returns the fixed-point square root of a plain integer, for a sum
 // of squares whose magnitude would overflow if first lifted into fixed-point. A
 // negative input yields zero.
-func Square_Root_Scaled(value int64) (root Number) {
+func Square_Root_Scaled(value Radicand) (root Scaled_Root) {
+	defer func() { Scaled_Root_Invariants(root, "square_root_scaled.root") }()
+	Radicand_Invariants(value, "square_root_scaled.value")
 	if value < 0 {
 		return 0
 	}
 	// The root of value, scaled up by SCALE, is the root of value*SCALE*SCALE.
 	high, low := bits.Mul64(uint64(value), SCALE*SCALE)
-	return Number(square_root_uint128(&Integer_Root_Input{High: high, Low: low}))
-}
-
-// Integer_Root_Input holds the high and low words of a 128-bit radicand.
-type Integer_Root_Input struct {
-	// High is the upper 64 bits of the radicand.
-	High uint64
-	// Low is the lower 64 bits of the radicand.
-	Low uint64
+	return Scaled_Root(Integer_Root(High_Word(high), Low_Word(low)))
 }
 
 // Integer_Root returns the floor of the square root of a 128-bit radicand — the integer
 // primitive the fixed-point roots build on, and the escape hatch for a sum of squares too
 // large to lift into fixed-point first.
-func Integer_Root(input *Integer_Root_Input) (root int64) {
-	return int64(square_root_uint128(input))
+func Integer_Root(high High_Word, low Low_Word) (root Root_Integer) {
+	defer func() { Root_Integer_Invariants(root, "integer_root.root") }()
+	High_Word_Invariants(high, "integer_root.high")
+	Low_Word_Invariants(low, "integer_root.low")
+	if high == 0 {
+		if low == 0 {
+			return 0
+		}
+		estimate := uint64(1) << uint((bits.Len64(uint64(low))+1)/2)
+		for index := 0; index < 64; index++ {
+			next := (estimate + uint64(low)/estimate) / 2
+			if next >= estimate {
+				return Root_Integer(estimate)
+			}
+			estimate = next
+		}
+		return Root_Integer(estimate)
+	}
+	leading_zeros := bits.LeadingZeros64(uint64(high))
+	estimate := uint64(1) << uint((128-leading_zeros+1)/2)
+	for index := 0; index < 64; index++ {
+		quotient, _ := bits.Div64(uint64(high), uint64(low), estimate)
+		next := (estimate + quotient) / 2
+		if next >= estimate {
+			return Root_Integer(estimate)
+		}
+		estimate = next
+	}
+	return Root_Integer(estimate)
 }
 
 // Sine_Turns returns the sine of an angle measured in whole turns. The angle is reduced
 // to one period and approximated by Bhaskara's rational formula for sin(pi*theta), so no
 // irrational pi enters and the quarter-turn extremes land exactly on plus or minus one.
-func Sine_Turns(turns Number) (sine Number) {
+func Sine_Turns(turns Number) (sine Sine) {
+	defer func() { Sine_Invariants(sine, "sine_turns.sine") }()
+	Number_Invariants(turns, "sine_turns.turns")
 	fraction := turns % Number(SCALE)
 	if fraction < 0 {
 		fraction += Number(SCALE)
@@ -173,33 +520,50 @@ func Sine_Turns(turns Number) (sine Number) {
 	// Theta in [0,1] is twice the half-period fraction; the product theta*(1-theta)
 	// drives Bhaskara's 16p / (5 - 4p) approximation of sin(pi*theta).
 	theta := fraction * 2
-	product := Multiply(&Multiply_Input{A: theta, B: Number(SCALE) - theta})
+	product := Multiply(Multiplicand(theta), Multiplier(Number(SCALE)-theta))
 	numerator := 16 * product
-	magnitude := Divide(&Divide_Input{
-		Dividend: numerator, Divisor: From_Integer(5) - 4*product,
-	})
+	magnitude := Divide(
+		Dividend(numerator), Divisor(Number(From_Integer(5))-4*product),
+	)
 	if negative {
-		return -magnitude
+		return Sine(-magnitude)
 	}
-	return magnitude
+	return Sine(magnitude)
 }
 
 // Format renders a value as decimal text with a set number of fractional digits, the
 // dropped remainder rounded half away from zero.
-func Format(value Number, digits int) (text string) {
+func Format(value Number, digits Digit_Count) (text Text) {
+	defer func() { Text_Invariants(text, "format.text") }()
+	Number_Invariants(value, "format.value")
+	Digit_Count_Invariants(digits, "format.digits")
 	negative := value < 0
-	scaled := decimal_scaled(absolute(value), digits)
+	magnitude := uint64(value)
+	if value < 0 {
+		magnitude = uint64(-int64(value))
+	}
+	power := int64(1)
+	for index := 0; index < int(digits); index++ {
+		power *= 10
+	}
+	high, low := bits.Mul64(magnitude, uint64(power))
+	low, carry := bits.Add64(low, 1<<(FRACTIONAL_BITS-1), 0)
+	high += carry
+	scaled := (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
 	if scaled == 0 {
 		negative = false
 	}
-	power := uint64(power_of_ten(digits))
-	text = strconv.FormatUint(scaled/power, 10)
+	unsigned_power := uint64(power)
+	text = Text(strconv.FormatUint(scaled/unsigned_power, 10))
 	if digits > 0 {
-		fraction := strconv.FormatUint(scaled%power, 10)
-		text += "." + left_pad_zeros(fraction, digits)
+		fraction := strconv.FormatUint(scaled%unsigned_power, 10)
+		for len(fraction) < int(digits) {
+			fraction = "0" + fraction
+		}
+		text += Text("." + fraction)
 	}
 	if negative {
-		return "-" + text
+		return Text("-" + text)
 	}
 	return text
 }
@@ -209,9 +573,22 @@ func Format(value Number, digits int) (text string) {
 // sub-microscale binary remainder, so ordinary values still read as clean decimals.
 func (number Number) MarshalJSON() (data []byte, err error) {
 	if Is_Integer(number) {
-		return []byte(strconv.FormatInt(Whole(number), 10)), nil
+		return []byte(strconv.FormatInt(int64(Whole(number)), 10)), nil
 	}
-	return []byte(trim_trailing_zeros(Format(number, 6))), nil
+	text := Format(number, 6)
+	end_count := len(text)
+	for end_count > 0 {
+		if text[end_count-1] != '0' {
+			break
+		}
+		end_count--
+	}
+	if end_count > 0 {
+		if text[end_count-1] == '.' {
+			end_count--
+		}
+	}
+	return []byte(text[:end_count]), nil
 }
 
 // UnmarshalJSON parses a JSON decimal number into a Number, rounding the fraction onto the
@@ -234,171 +611,25 @@ func (number *Number) UnmarshalJSON(data []byte) (err error) {
 	if err != nil {
 		return err
 	}
-	value := whole_part*SCALE + fraction_to_units(fraction_text)
+	digits := fraction_text
+	if len(digits) > 9 {
+		digits = digits[:9]
+	}
+	units := int64(0)
+	if digits != "" {
+		parsed, parse_error := strconv.ParseInt(digits, 10, 64)
+		if parse_error == nil {
+			power := int64(1)
+			for index := 0; index < len(digits); index++ {
+				power *= 10
+			}
+			units = (parsed<<FRACTIONAL_BITS + power/2) / power
+		}
+	}
+	value := whole_part*SCALE + units
 	if negative {
 		value = -value
 	}
 	*number = Number(value)
 	return nil
-}
-
-// Holds the unsigned factors of multiply_shifted.
-type Multiply_Shifted_Input struct {
-	// Left is the first factor.
-	Left uint64
-	// Right is the second factor.
-	Right uint64
-}
-
-// Returns left*right rescaled by the scale: the high and low words of the 128-bit product
-// shifted down by FRACTIONAL_BITS — a shift where a base-ten scale would need a divide.
-// Callers pass factors whose true product fits int64, so the shifted-away high bits are
-// zero.
-func multiply_shifted(input *Multiply_Shifted_Input) (magnitude uint64) {
-	high, low := bits.Mul64(input.Left, input.Right)
-	return (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
-}
-
-// Holds the unsigned operands of shift_divide.
-type Shift_Divide_Input struct {
-	// Numerator is the value being divided, before the scale-up shift.
-	Numerator uint64
-	// Denominator is the value it is divided by.
-	Denominator uint64
-}
-
-// Returns (numerator << FRACTIONAL_BITS) / denominator through a 128-bit intermediate, so
-// the scaled-up numerator keeps full precision without overflowing. The divide is the one
-// the runtime divisor forces; only the scale-up is a shift. Callers pass a nonzero
-// denominator and a result that fits int64, so the high word stays below the denominator.
-func shift_divide(input *Shift_Divide_Input) (quotient uint64) {
-	high := input.Numerator >> (64 - FRACTIONAL_BITS)
-	low := input.Numerator << FRACTIONAL_BITS
-	quotient, _ = bits.Div64(high, low, input.Denominator)
-	return quotient
-}
-
-// Returns the magnitude of a value as an unsigned integer, so the unsigned 128-bit
-// primitives can run on a signed Number.
-func absolute(value Number) (magnitude uint64) {
-	if value < 0 {
-		return uint64(-int64(value))
-	}
-	return uint64(value)
-}
-
-// Reapplies a sign that was stripped for the unsigned 128-bit math.
-func signed(magnitude uint64, negative bool) (value Number) {
-	if negative {
-		return Number(-int64(magnitude))
-	}
-	return Number(magnitude)
-}
-
-// Returns the floor of the square root of a 128-bit radicand by Newton's method, seeded
-// at two raised to half the radicand's bit length — an overestimate the iteration drives
-// down to the floor in a handful of steps. The seed keeps the running estimate above the
-// radicand's high word, so the 128-bit divide cannot overflow. A radicand that fits 64
-// bits — every Square_Root and all but a large variance's Square_Root_Scaled — takes the
-// faster path, whose per-step divide is a plain 64-bit one, not the wide 128-bit divide.
-// Callers keep the radicand below 2^120, a bound any benchmark variance respects.
-func square_root_uint128(input *Integer_Root_Input) (root uint64) {
-	if input.High == 0 {
-		return square_root_uint64(input.Low)
-	}
-	leading_zeros := bits.LeadingZeros64(input.High)
-	estimate := uint64(1) << uint((128-leading_zeros+1)/2)
-	for index := 0; index < 64; index++ {
-		quotient, _ := bits.Div64(input.High, input.Low, estimate)
-		next := (estimate + quotient) / 2
-		if next >= estimate {
-			return estimate
-		}
-		estimate = next
-	}
-	return estimate
-}
-
-// Returns the floor of the square root of a 64-bit radicand by Newton's method from a
-// power-of-two seed. A reciprocal-square-root variant (table seed plus multiply-only
-// refinement) was tried to avoid the per-step divide; it measured no faster, because the
-// refinement is a serial dependency chain whatever each step costs, so the plain divide
-// stays — simpler and lint-clean.
-func square_root_uint64(value uint64) (root uint64) {
-	if value == 0 {
-		return 0
-	}
-	estimate := uint64(1) << uint((bits.Len64(value)+1)/2)
-	for index := 0; index < 64; index++ {
-		next := (estimate + value/estimate) / 2
-		if next >= estimate {
-			return estimate
-		}
-		estimate = next
-	}
-	return estimate
-}
-
-// Returns round(magnitude * 10^digits / SCALE): the magnitude expressed as an integer
-// with digits decimal places, the divide by the power-of-two SCALE done as a rounding add
-// and a shift.
-func decimal_scaled(magnitude uint64, digits int) (scaled uint64) {
-	high, low := bits.Mul64(magnitude, uint64(power_of_ten(digits)))
-	low, carry := bits.Add64(low, 1<<(FRACTIONAL_BITS-1), 0)
-	high += carry
-	return (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
-}
-
-// Returns ten raised to a small non-negative exponent.
-func power_of_ten(exponent int) (result int64) {
-	result = 1
-	for index := 0; index < exponent; index++ {
-		result *= 10
-	}
-	return result
-}
-
-// Widens text to width by prepending zeros, so a fraction keeps its leading zeros once
-// the integer part has been stripped.
-func left_pad_zeros(text string, width int) (padded string) {
-	for len(text) < width {
-		text = "0" + text
-	}
-	return text
-}
-
-// Drops trailing zeros, and a now-trailing point, from decimal text, leaving the minimal
-// exact decimal.
-func trim_trailing_zeros(text string) (trimmed string) {
-	end_count := len(text)
-	for end_count > 0 {
-		if text[end_count-1] != '0' {
-			break
-		}
-		end_count--
-	}
-	if end_count > 0 {
-		if text[end_count-1] == '.' {
-			end_count--
-		}
-	}
-	return text[:end_count]
-}
-
-// Reads decimal fraction digits as a count of fixed-point units, rounding fraction*SCALE.
-// Digits past the ninth are dropped, far beyond the grid's resolution.
-func fraction_to_units(fraction_text string) (units int64) {
-	digits := fraction_text
-	if len(digits) > 9 {
-		digits = digits[:9]
-	}
-	if digits == "" {
-		return 0
-	}
-	parsed, err := strconv.ParseInt(digits, 10, 64)
-	if err != nil {
-		return 0
-	}
-	power := power_of_ten(len(digits))
-	return (parsed<<FRACTIONAL_BITS + power/2) / power
 }

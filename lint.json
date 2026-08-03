@@ -30,7 +30,8 @@
           "**",
           "!maddox/**",
           "!sloc/**",
-          "!shared/csprng/**"
+          "!shared/random/csprng/**",
+          "!shared/math/fixedpoint/**"
   ],
   "word_replacements": {
     "len":       [],

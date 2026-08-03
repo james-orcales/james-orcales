@@ -1,14 +1,15 @@
 
 # Conversion
 
-From_Integer lifts a whole number and From_Ratio a quotient into fixed-point; Whole
-truncates back toward zero, and Is_Integer reports a value carrying no fractional part.
+From_Integer lifts a Whole_Integer to an Integer_Number. From_Ratio lifts a numerator
+and denominator. Whole returns a Whole_Integer. Is_Integer reports whether a Number has
+no fractional units.
 
 # Arithmetic
 
-Multiply and Divide combine two fixed-point values through a 128-bit intermediate, so
-the scale cancels without the overflow a bare int64 product would hit. Addition and
-subtraction stay the native operators, the shared scale already aligning them.
+Multiply accepts a Multiplicand and a Multiplier. Divide accepts a Dividend and a
+Divisor. Each operation uses a 128-bit intermediate, so the scale cancels without an
+int64 product overflow. Native operators perform addition and subtraction.
 
 # Ratio
 
@@ -17,18 +18,19 @@ distinct type so the call needs no input struct and a ratio reads as a plain con
 
 # Square Root
 
-Square_Root roots a fixed-point value and Square_Root_Scaled a plain integer;
-Integer_Root floors the root of a 128-bit radicand, the primitive both build on.
+Square_Root returns a Number_Root, and Square_Root_Scaled returns a Scaled_Root.
+Integer_Root accepts separate High_Word and Low_Word values. It returns the floored
+Root_Integer of the 128-bit radicand.
 
 # Sine
 
-Sine_Turns returns the sine of an angle measured in whole turns, reduced to one
-period, through Bhaskara's rational approximation so no irrational pi enters.
+Sine_Turns returns a Sine in the closed interval from negative one to one. It reduces
+the angle to one period and uses Bhaskara's rational approximation.
 
 # Format
 
-Format renders a value as decimal text with a set number of fractional digits,
-rounding the dropped remainder half away from zero.
+Format renders a value as Text with zero to six fractional digits. It rounds the
+dropped remainder half away from zero.
 
 # Serialization
 
