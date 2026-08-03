@@ -12,6 +12,10 @@ description: >
 
 The full rules are in `shared/invariant/SPECIFICATION.md`.
 
+## Test
+
+Run each Go test suite with `-timeout=10s`. Always aim to REDUCE the coverage gaps.
+
 ## Choose the smallest assertion tree first
 
 The harness checks the tree that the code declares. It does not prove that each node is
@@ -23,12 +27,14 @@ owner.
 
 Before you add a type or a bundle:
 
-1. Identify the function that owns the state change.
-2. Remove a named helper when it only reports a local predicate to that owner.
-3. Keep a value local when it has no separate domain identity.
-4. Narrow a boundary when real values cannot reach its declared property.
-5. Add another type only when an unavoidable root needs another position or another value set.
-6. State each shared property through the same constants.
+1. Classify the change as a storage fact, a semantic identity, or a coverage obligation.
+2. State each shared storage fact through the same constants. Do not add a type for a bound or a
+primitive width.
+3. Identify the function that owns the state change. Keep a value local when it has no separate
+domain identity.
+4. Remove a named helper when it only reports a local predicate to that owner.
+5. Narrow a boundary when real values cannot reach its declared property.
+6. Add another type only when an unavoidable root needs another position or another value set.
 
 Do not confuse proof boundaries with domain identities. Two function namespaces need separate
 evidence, but that fact does not require two types. First remove unnecessary boundaries. Then
