@@ -3,8 +3,14 @@ package time_test
 import (
 	"testing"
 
+	invariant "local/james-orcales/shared/invariant/default"
 	timeos "local/james-orcales/shared/time/default"
 )
+
+// TestMain registers the package invariant roots before the smoke test runs.
+func TestMain(m *testing.M) {
+	invariant.Run_Test_Main(m)
+}
 
 // Test_Operating_System_Smoke verifies the host clock never reads monotonic
 // backwards and reports a positive wall-clock time. Real time is non-deterministic,

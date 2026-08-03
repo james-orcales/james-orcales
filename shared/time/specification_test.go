@@ -61,3 +61,52 @@ func Test_Virtual_Clock_Skew(t *testing.T) {
 		t.Fatalf("periodic realtime at quarter turn = %d, want 0", got)
 	}
 }
+
+// Test_Invariant_Domains verifies the special values of each admitted scalar domain.
+func Test_Invariant_Domains(t *testing.T) {
+	t.Parallel()
+	verify_virtual_clock_domains()
+	verify_skew_domains()
+}
+
+// SPECIAL_VALUE_COUNT is how many special values a full-width signed domain has: its
+// two bounds and the four interior sentinels the framework expands.
+const SPECIAL_VALUE_COUNT = 6
+
+// The signed special values every full-width domain in this package states.
+func special_values() (values [SPECIAL_VALUE_COUNT]int64) {
+	return [...]int64{
+		time.INTEGER_64_MINIMUM,
+		time.INTEGER_64_MAXIMUM,
+		0,
+		1,
+		2,
+		-1,
+	}
+}
+
+// Exercises each special value at the two scalars a virtual clock is configured with.
+// The clock is only built, never ticked: an extreme resolution or epoch is a legal
+// configuration, and the product it would read is not what these domains state.
+func verify_virtual_clock_domains() {
+	for _, value := range special_values() {
+		time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Duration(value)})
+		time.Virtual_Clock_To_Clock(time.Virtual_Clock{Epoch: time.Moment(value)})
+	}
+}
+
+// Exercises each skew model and each special value at both of its coefficients.
+func verify_skew_domains() {
+	kinds := [...]time.Skew_Kind{
+		time.SKEW_KIND_LINEAR,
+		time.SKEW_KIND_PERIODIC,
+		time.SKEW_KIND_STEP,
+	}
+	for _, kind := range kinds {
+		time.Skew(time.Skew_Input{Kind: kind})
+	}
+	for _, value := range special_values() {
+		time.Skew(time.Skew_Input{A: time.Duration(value)})
+		time.Skew(time.Skew_Input{B: time.Tick_Count(value)})
+	}
+}
