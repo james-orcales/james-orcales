@@ -540,9 +540,10 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Sugar_Package: recorder.Sugar_Package,
 		Same_Set: ast_index_functions(
 			files, file_set, module_path, module_root, constants, package_types),
-		Loaded:        map[string]map[string]Indexed_Function{},
-		Constants:     constants,
-		Package_Types: package_types,
+		Loaded:           map[string]map[string]Indexed_Function{},
+		Loaded_Constants: map[string]map[string]ast.Expr{},
+		Constants:        constants,
+		Package_Types:    package_types,
 	}
 	reg := &Registration{
 		Planned_Keys:         map[string]bool{},
@@ -856,6 +857,9 @@ type Bundle_Index struct {
 	Same_Set map[string]Indexed_Function
 	// Loaded caches lazily parsed cross-package functions, keyed by import path then bare name.
 	Loaded map[string]map[string]Indexed_Function
+	// Loaded_Constants caches those same packages' constants, keyed the same way. A qualified
+	// operand names one package, thus a flat bare-name index cannot answer it.
+	Loaded_Constants map[string]map[string]ast.Expr
 	// Constants maps package constants to their value expressions. A flat bare-name index, like
 	// Same_Set, is sufficient because one analysis covers one package tree.
 	Constants map[string]ast.Expr
@@ -1036,6 +1040,50 @@ type Integer_Value struct {
 	Negative bool
 }
 
+// Constant_Scope resolves one constant operand. A bare name comes from the declaring package. A
+// qualified name states its package in the source, thus one shared fact can serve every package
+// that names it while a bare name still cannot reach across a boundary.
+type Constant_Scope struct {
+	// Local is the declaring package's static integer namespace.
+	Local map[string]ast.Expr
+	// Imports maps the declaring file's local names to import paths.
+	Imports map[string]string
+	// Index parses an imported package on demand and caches its constants.
+	Index *Bundle_Index
+}
+
+// Gives the scope one function's operands resolve in: its own package's constants, its own file's
+// imports, and the index that parses an imported package on demand.
+func indexed_function_constants(
+	function Indexed_Function, index *Bundle_Index,
+) (scope Constant_Scope) {
+	return Constant_Scope{
+		Local: function.Constants, Imports: function.Imports, Index: index,
+	}
+}
+
+// Gives the declaration a qualified operand names, parsing its package the first time.
+func constant_scope_qualified(
+	scope Constant_Scope, selector *ast.SelectorExpr,
+) (declaration ast.Expr, resolved bool) {
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return nil, false
+	}
+	if scope.Index == nil {
+		return nil, false
+	}
+	import_path, imported := scope.Imports[qualifier.Name]
+	if !imported {
+		return nil, false
+	}
+	// The loader fills Loaded_Constants as a side effect, and caches an empty map for a package
+	// outside this module, thus a second miss costs one lookup.
+	bundle_index_load(scope.Index, import_path)
+	declaration, resolved = scope.Index.Loaded_Constants[import_path][selector.Sel.Name]
+	return declaration, resolved
+}
+
 // Constant_Frame lets registration evaluate constants without recursive source descent.
 type Constant_Frame struct {
 	// Expression is the AST node this work item resolves.
@@ -1045,7 +1093,7 @@ type Constant_Frame struct {
 }
 
 func constant_resolve(
-	constants map[string]ast.Expr, expression ast.Expr,
+	constants Constant_Scope, expression ast.Expr,
 ) (value Integer_Value, ok bool) {
 	frames := []Constant_Frame{{Expression: expression}}
 	var values []*big.Int
@@ -1067,7 +1115,7 @@ func constant_resolve(
 }
 
 func constant_resolve_frame(
-	constants map[string]ast.Expr, frame Constant_Frame, frames []Constant_Frame,
+	constants Constant_Scope, frame Constant_Frame, frames []Constant_Frame,
 	values []*big.Int,
 ) (next_frames []Constant_Frame, next_values []*big.Int, ok bool) {
 	switch concrete := frame.Expression.(type) {
@@ -1083,7 +1131,13 @@ func constant_resolve_frame(
 		}
 		return frames, append(values, parsed), true
 	case *ast.Ident:
-		declaration, declared := constants[concrete.Name]
+		declaration, declared := constants.Local[concrete.Name]
+		if !declared {
+			return nil, nil, false
+		}
+		return append(frames, Constant_Frame{Expression: declaration}), values, true
+	case *ast.SelectorExpr:
+		declaration, declared := constant_scope_qualified(constants, concrete)
 		if !declared {
 			return nil, nil, false
 		}
@@ -1712,14 +1766,17 @@ func bundle_index_load(
 	}
 	functions = map[string]Indexed_Function{}
 	index.Loaded[import_path] = functions
+	index.Loaded_Constants[import_path] = map[string]ast.Expr{}
 	directory, resolved := bundle_index_module_root(index, import_path)
 	if !resolved {
 		return functions
 	}
 	files, _ := recorder_parse_directory(index.File_System, index.File_Set, directory)
+	constants := ast_index_constants(files)
+	index.Loaded_Constants[import_path] = constants
 	indexed := ast_index_functions(
 		files, index.File_Set, index.Module_Path, index.Module_Root,
-		ast_index_constants(files), ast_index_package_types(files))
+		constants, ast_index_package_types(files))
 	for name, function := range indexed {
 		function.Is_Sugar = import_path == index.Sugar_Package
 		function.Package_Functions = functions
@@ -2538,9 +2595,11 @@ func recorder_register_assertion_function(
 			return true
 		}
 		recorder_register_assertion_always(
-			file_set, call, function.Is_Sugar, function.Constants, reg)
+			file_set, call, function.Is_Sugar,
+			indexed_function_constants(function, index), reg)
 		recorder_register_inline_assertion(
-			file_set, call, function.Is_Sugar, function.Constants, reg)
+			file_set, call, function.Is_Sugar,
+			indexed_function_constants(function, index), reg)
 		if ast_assertion_chain_method(call) == "Ensure" {
 			chain, parsed := ast_assertion_chain_from_ensure(call)
 			if !parsed {
@@ -2550,7 +2609,8 @@ func recorder_register_assertion_function(
 			}
 			if is_bundle {
 				recorder_validate_assertion_template(
-					file_set, chain, parameter, function.Constants, reg)
+					file_set, chain, parameter,
+					indexed_function_constants(function, index), reg)
 				return false
 			}
 			// A chain identifies itself by its subject type, and only a bundle owns
@@ -2583,7 +2643,7 @@ func recorder_register_assertion_function(
 // an Always message, or with a second inline helper, fatal without a separate check.
 func recorder_register_inline_assertion(
 	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool,
-	constants map[string]ast.Expr, reg *Registration,
+	constants Constant_Scope, reg *Registration,
 ) {
 	kind, matched := ast_inline_assertion_kind(call, allow_unqualified)
 	if !matched {
@@ -2677,7 +2737,7 @@ func ast_inline_assertion_kind(
 
 func recorder_register_assertion_always(
 	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool,
-	constants map[string]ast.Expr, reg *Registration,
+	constants Constant_Scope, reg *Registration,
 ) {
 	plain := ast_assertion_named_call(call, "Always", allow_unqualified)
 	recorder := ast_assertion_named_call(call, "Recorder_Always", false)
@@ -2732,7 +2792,7 @@ func recorder_register_assertion_always(
 
 // Resolves the Boolean constants that can disguise a true literal without type information.
 func constant_resolve_boolean(
-	constants map[string]ast.Expr, expression ast.Expr,
+	constants Constant_Scope, expression ast.Expr,
 ) (value bool, resolved bool) {
 	negated := false
 	for step_index := 0; step_index < CONSTANT_RESOLUTION_STEPS_MAX; step_index++ {
@@ -2746,7 +2806,13 @@ func constant_resolve_boolean(
 			if concrete.Name == "false" {
 				return negated, true
 			}
-			declaration, declared := constants[concrete.Name]
+			declaration, declared := constants.Local[concrete.Name]
+			if !declared {
+				return false, false
+			}
+			expression = declaration
+		case *ast.SelectorExpr:
+			declaration, declared := constant_scope_qualified(constants, concrete)
 			if !declared {
 				return false, false
 			}
@@ -2918,7 +2984,7 @@ func ast_assertion_named_call(
 
 func recorder_seed_assertion_root(
 	file_set *token.FileSet, chain Assertion_Registration_Chain, function *ast.FuncDecl,
-	package_path string, package_types map[string]ast.Expr, constants map[string]ast.Expr,
+	package_path string, package_types map[string]ast.Expr, constants Constant_Scope,
 	reg *Registration, allow_unqualified bool,
 ) {
 	if !ast_assertion_root(chain.Root, allow_unqualified) {
@@ -3033,7 +3099,7 @@ func recorder_invalid_assertion_namespace(
 
 func recorder_validate_assertion_template(
 	file_set *token.FileSet, chain Assertion_Registration_Chain,
-	parameter string, constants map[string]ast.Expr, reg *Registration,
+	parameter string, constants Constant_Scope, reg *Registration,
 ) {
 	if !ast_assertion_root(chain.Root, true) {
 		recorder_invalid_chain(file_set, chain.Root, reg,
@@ -3057,7 +3123,7 @@ func recorder_validate_assertion_template(
 
 func recorder_seed_assertion_chain(
 	file_set *token.FileSet, chain Assertion_Registration_Chain, key Plan_Key,
-	owner_path []token.Pos, constants map[string]ast.Expr, reg *Registration, diagnose bool,
+	owner_path []token.Pos, constants Constant_Scope, reg *Registration, diagnose bool,
 ) {
 	resolved_owner := recorder_namespace_owner_append(owner_path, chain.Root.Pos())
 	// SECURITY: One key belongs to one complete static invocation path. A different path would
@@ -3185,7 +3251,7 @@ func assertion_registration_key(
 
 func recorder_collect_assertion_links(
 	file_set *token.FileSet, chain Assertion_Registration_Chain,
-	constants map[string]ast.Expr, reg *Registration, diagnose bool,
+	constants Constant_Scope, reg *Registration, diagnose bool,
 ) (links []Assertion_Registration_Link, valid bool) {
 	valid = true
 	for _, call := range chain.Links {
@@ -3249,7 +3315,7 @@ func recorder_invalid_sometimes_message(
 // Extra_arguments counts the arguments after the preset's own operands. A fluent link has none.
 // An inline helper has its message, which must stay out of the hole slots and the arity check.
 func recorder_collect_assertion_range(
-	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
+	file_set *token.FileSet, call *ast.CallExpr, constants Constant_Scope,
 	reg *Registration, diagnose bool, links []Assertion_Registration_Link,
 	holed bool, extra_arguments int,
 ) (expanded []Assertion_Registration_Link, valid bool) {
@@ -3343,7 +3409,7 @@ func recorder_assertion_range_arity(
 }
 
 func recorder_assertion_range_holes(
-	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
+	file_set *token.FileSet, call *ast.CallExpr, constants Constant_Scope,
 	reg *Registration, diagnose bool, minimum Integer_Value, maximum Integer_Value,
 	extra_arguments int,
 ) (holes []Integer_Value, valid bool) {
@@ -3460,7 +3526,7 @@ func recorder_append_assertion_range_candidate(
 
 // Extra_arguments counts the arguments after the members. An inline helper has one, its message.
 func recorder_collect_assertion_enum(
-	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
+	file_set *token.FileSet, call *ast.CallExpr, constants Constant_Scope,
 	reg *Registration, diagnose bool, links []Assertion_Registration_Link, extra_arguments int,
 ) (expanded []Assertion_Registration_Link, valid bool) {
 	method := ast_assertion_chain_method(call)
@@ -3766,9 +3832,11 @@ func recorder_register_assertion_bundle_body(
 		// An eager guard in this body runs whenever the body runs, thus it owes coverage
 		// even when its own package is never analyzed directly.
 		recorder_register_assertion_always(
-			file_set, call, function.Is_Sugar, function.Constants, reg)
+			file_set, call, function.Is_Sugar,
+			indexed_function_constants(function, index), reg)
 		recorder_register_inline_assertion(
-			file_set, call, function.Is_Sugar, function.Constants, reg)
+			file_set, call, function.Is_Sugar,
+			indexed_function_constants(function, index), reg)
 		if ast_assertion_chain_method(call) == "Ensure" {
 			chain, parsed := ast_assertion_chain_from_ensure(call)
 			if !parsed {
@@ -3790,7 +3858,8 @@ func recorder_register_assertion_bundle_body(
 					Namespace: namespace, Package: function.Package,
 					Type: subject,
 				},
-				owner_path, function.Constants, reg, false)
+				owner_path, indexed_function_constants(function, index),
+				reg, false)
 			return false
 		}
 		if !ast_is_invariants_name(ast_callee_name(call)) {

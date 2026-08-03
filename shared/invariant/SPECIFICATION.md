@@ -150,6 +150,12 @@ Registration follows each helper call through the current module without a runti
 parses a necessary package on demand. A descent registers every assertion of the body it enters, not
 only its chain. An unrelated assertion stays unregistered, and an unresolved bundle is fatal.
 
+### Cross Package Constants
+
+A preset operand can name a constant of an imported package, and registration parses that package to
+read it. The qualifier is the boundary the source states, thus one fact serves every package that
+names it. A bare name still resolves only in the declaring package.
+
 ### Walk
 
 The walk expands links in fluent order. It records each guard one time and each axis two times. It

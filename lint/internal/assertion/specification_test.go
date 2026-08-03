@@ -258,6 +258,20 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 		"an argument that is not a package-level constant") {
 		t.Fatal("an inline singleton member must not satisfy the helper mandate")
 	}
+	// A qualified constant states the boundary it crosses, thus one shared bound serves every
+	// type that names it and no type has to copy the number.
+	qualified := "package fixture\n\n" +
+		"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+		"\tbound \"fixture/other\"\n)\n\n" +
+		"// Value is a fixture.\ntype Value int\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(value, namespace).Range_Int(" +
+		"int(value), bound.SPAN_MINIMUM, bound.SPAN_MAXIMUM).Ensure()\n}\n"
+	if diagnosed(check_fixture(t, qualified),
+		"an argument that is not a package-level constant") {
+		t.Fatal("a qualified constant must satisfy the helper mandate")
+	}
 }
 
 // Test_Invariants_Cross_Package_Identity proves same-spelled foreign constants and helpers cannot

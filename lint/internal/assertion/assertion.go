@@ -783,6 +783,9 @@ func invariant_argument_constant(
 		}
 		expression = invariant_unparen(call.Args[0])
 	}
+	if selector, qualified := expression.(*ast.SelectorExpr); qualified {
+		return invariant_qualified_constant(selector, scope)
+	}
 	identifier, is_identifier := expression.(*ast.Ident)
 	if !is_identifier {
 		return false
@@ -791,6 +794,23 @@ func invariant_argument_constant(
 		return false
 	}
 	return scope.Constants[identifier.Name]
+}
+
+// Reports whether a qualified operand names a constant of a package this file imports. A bare name
+// resolves only in its own package, thus the qualifier is what states the boundary a shared bound
+// crosses. This pass reads one package at a time and never the imported one, so the name itself
+// stays unchecked here. Registration parses that package and rejects a name it does not declare.
+func invariant_qualified_constant(
+	selector *ast.SelectorExpr, scope *Invariant_Scope,
+) (valid bool) {
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return false
+	}
+	if scope.Shadowed[qualifier.Name] {
+		return false
+	}
+	return scope.Imports[qualifier.Name] != ""
 }
 
 func invariant_constant_diagnostic(
@@ -1586,6 +1606,9 @@ func struct_constant_operand(
 			return false
 		}
 		expression = invariant_unparen(call.Args[0])
+	}
+	if selector, qualified := expression.(*ast.SelectorExpr); qualified {
+		return invariant_qualified_constant(selector, scope)
 	}
 	identifier, is_identifier := expression.(*ast.Ident)
 	if !is_identifier {

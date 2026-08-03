@@ -50,15 +50,15 @@ unterminated or split builder, or unrelated Tree builder never substitutes.
 
 ### Helper Constants
 
-Each Range boundary, Enum member, and singleton Always member is a package-level constant in the
-type's package. An integer can use its exact primitive conversion. Inline literals, computed call
-operands, imported selectors, and conversion to another primitive never satisfy the helper mandate.
+Each Range boundary, Enum member, and singleton member is a package-level constant, named bare from
+the type's package or qualified from an imported one. An integer can use its exact primitive
+conversion. A literal, a computed operand, and another primitive never satisfy the mandate.
 
 ### Cross Package Identity
 
-A constant belongs only to its declaring package. A same-spelled constant from another package
-cannot supply a local Range boundary, Enum member, or singleton member. A helper also belongs to its
-declaring package. A foreign helper with the required name cannot satisfy a local typed subject.
+A bare constant belongs only to its declaring package, thus a same-spelled foreign one supplies no
+local boundary, member, or singleton. A qualified constant states the boundary it crosses and is the
+one form that shares a fact. A foreign helper never satisfies a local typed subject.
 
 ### Helper Identity
 

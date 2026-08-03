@@ -515,6 +515,38 @@ func check(value Leaf) { Leaf_Invariants(value, "twice") }
 	inline_metadata(t, twice, "twice axis", 0, "twice axis")
 }
 
+// Test_Assertions_Registration_Cross_Package_Constants keeps one shared bound at one site. A type
+// that cannot reuse a foreign bundle can still name that bundle's constants.
+func Test_Assertions_Registration_Cross_Package_Constants(t *testing.T) {
+	qualified := cross_package_constant_fixture(
+		"bound.SPAN_MINIMUM, bound.SPAN_MAXIMUM")
+	output := &bytes.Buffer{}
+	across := &core.Recorder{
+		File_System: qualified, Packages_To_Analyze: []string{"/b"}, Output: output,
+		Exit: func(int) {}, Is_Test: true,
+	}
+	core.Recorder_Register_Packages_For_Analysis(across)
+	if output.String() != "" {
+		t.Fatalf("qualified bounds output=%q, want no diagnostic", output.String())
+	}
+	chain_metadata(t, across, chain_metadata_key{
+		Namespace: "root", Package: "fixture/b", Type: "Span",
+		Ordinal: 0, Message: "The value is at least its minimum.",
+	})
+	// A bare name states no boundary, thus it stays unresolvable even when a package this file
+	// imports declares it.
+	bare := cross_package_constant_fixture("SPAN_MINIMUM, SPAN_MAXIMUM")
+	silent := &bytes.Buffer{}
+	local := &core.Recorder{
+		File_System: bare, Packages_To_Analyze: []string{"/b"}, Output: silent,
+		Exit: func(int) {}, Is_Test: true,
+	}
+	core.Recorder_Register_Packages_For_Analysis(local)
+	if !strings.Contains(silent.String(), "not statically resolvable") {
+		t.Fatalf("bare bounds output=%q, want unresolvable", silent.String())
+	}
+}
+
 // Test_Assertions_Registration_Walk keeps registration expansion aligned with runtime ordinals.
 func Test_Assertions_Registration_Walk(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
@@ -1779,6 +1811,25 @@ func axis_chain_fixture(axis_count int, namespace string) (source string) {
 	}
 	chain.WriteString(bundle_fixture_tail(namespace))
 	return chain.String()
+}
+
+// Builds two packages: one owning the shared bounds, one whose bundle names them as its Range.
+func cross_package_constant_fixture(bounds string) (files fstest.MapFS) {
+	return fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
+		"a/a.go": &fstest.MapFile{Data: []byte(`package a
+const SPAN_MINIMUM = -4
+const SPAN_MAXIMUM = 4
+`)},
+		"b/b.go": &fstest.MapFile{Data: []byte(`package b
+import bound "fixture/a"
+type Span int
+func Span_Invariants(value Span, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Range_Int(int(value), ` + bounds + `).Ensure()
+}
+func check(value Span) { Span_Invariants(value, "root") }
+`)},
+	}
 }
 
 // Wraps one fluent chain in the bundle that owns its subject type, plus the callsite that names it.
