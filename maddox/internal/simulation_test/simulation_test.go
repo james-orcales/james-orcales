@@ -989,6 +989,15 @@ func seeds_variance() (seeds [][]byte) {
 		with(func(s *scenario) { s.Sleep = 0 }),
 		with(func(s *scenario) { s.Sleep = 2 }),
 		with(func(s *scenario) { s.Sleep = maddox.METRIC_MAX; s.Runs = 3 }),
+		// Three symmetric wall samples have a standard deviation of exactly one. The
+		// comparison and rendering paths therefore witness the middle deviation region.
+		with(func(s *scenario) {
+			s.Commands = 2
+			s.Runs = 3
+			s.Sleep = 1000
+			s.Deltas = []int64{-1, 0, 1}
+			s.Wall_Pattern = true
+		}),
 		// Large symmetric deviations sized so the sum of squares lands its high 64-bit word
 		// on one and two: four runs of a 2^31 gap give a sum of exactly 2^64, eight give
 		// 2^65. JSON output carries these without a render guard rejecting the magnitudes.

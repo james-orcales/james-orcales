@@ -300,7 +300,11 @@ type Run_Limit int64
 // Run_Limit_Invariants accepts the complete signed 64-bit input domain.
 func Run_Limit_Invariants(value Run_Limit, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), int64(LIMIT_MIN), int64(LIMIT_MAX)).
+		Range_Int64(
+			int64(value),
+			int64(LIMIT_MIN),
+			int64(LIMIT_MAX),
+		).
 		Ensure()
 }
 
@@ -310,7 +314,11 @@ type Warmup_Limit int64
 // Warmup_Limit_Invariants accepts the complete signed 64-bit input domain.
 func Warmup_Limit_Invariants(value Warmup_Limit, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), int64(LIMIT_MIN), int64(LIMIT_MAX)).
+		Range_Int64(
+			int64(value),
+			int64(LIMIT_MIN),
+			int64(LIMIT_MAX),
+		).
 		Ensure()
 }
 
@@ -369,7 +377,11 @@ type Resident_Bytes int64
 // Resident_Bytes_Invariants bounds a resident-memory sample.
 func Resident_Bytes_Invariants(value Resident_Bytes, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -379,7 +391,11 @@ type Cycle_Count int64
 // Cycle_Count_Invariants bounds a processor-cycle sample.
 func Cycle_Count_Invariants(value Cycle_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -389,7 +405,11 @@ type Instruction_Count int64
 // Instruction_Count_Invariants bounds a retired-instruction sample.
 func Instruction_Count_Invariants(value Instruction_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -401,7 +421,11 @@ func Cache_Reference_Count_Invariants(
 	value Cache_Reference_Count, namespace invariant.Namespace,
 ) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -411,7 +435,11 @@ type Cache_Miss_Count int64
 // Cache_Miss_Count_Invariants bounds a cache-miss sample.
 func Cache_Miss_Count_Invariants(value Cache_Miss_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -421,7 +449,11 @@ type Branch_Miss_Count int64
 // Branch_Miss_Count_Invariants bounds a branch-miss sample.
 func Branch_Miss_Count_Invariants(value Branch_Miss_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -939,24 +971,120 @@ func Unit_Invariants(name Unit, namespace invariant.Namespace) {
 		Ensure()
 }
 
+// STANDARD_DEVIATION_MAXIMUM is the largest sample deviation for three or more
+// values in the metric domain. Three samples at zero, zero, and METRIC_MAX produce it.
+const STANDARD_DEVIATION_MAXIMUM int64 = 5078426674188
+
+// Mean is the arithmetic mean of one metric.
+type Mean fixedpoint.Number
+
+// Mean_Invariants bounds a mean to the metric domain.
+func Mean_Invariants(value Mean, namespace invariant.Namespace) {
+	invariant.Always(value >= 0, "A mean cannot be negative.")
+	invariant.Tree(value, namespace).
+		Enum_Int64(min(max(int64(value)/fixedpoint.SCALE, 1), 2), 1, 2).
+		Ensure()
+}
+
+// Standard_Deviation is the sample standard deviation of one metric.
+type Standard_Deviation fixedpoint.Number
+
+// Standard_Deviation_Invariants bounds a deviation to the metric domain.
+func Standard_Deviation_Invariants(value Standard_Deviation, namespace invariant.Namespace) {
+	invariant.Always(value >= 0, "A standard deviation cannot be negative.")
+	invariant.Always(
+		int64(value)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A standard deviation cannot exceed the metric domain.",
+	)
+	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(int64(value)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Ensure()
+}
+
+// Minimum is the smallest value of one metric.
+type Minimum fixedpoint.Number
+
+// Minimum_Invariants bounds a minimum to the metric domain.
+func Minimum_Invariants(value Minimum, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Ensure()
+}
+
+// Maximum is the largest value of one metric.
+type Maximum fixedpoint.Number
+
+// Maximum_Invariants bounds a maximum to the metric domain.
+func Maximum_Invariants(value Maximum, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_Int64(min(max(int64(value)/fixedpoint.SCALE, 1), 2), 1, 2).
+		Ensure()
+}
+
+// Median is the middle value of one metric.
+type Median fixedpoint.Number
+
+// Median_Invariants bounds a median to the metric domain.
+func Median_Invariants(value Median, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Ensure()
+}
+
+// First_Quartile is the lower quartile of one metric.
+type First_Quartile fixedpoint.Number
+
+// First_Quartile_Invariants bounds a first quartile to the metric domain.
+func First_Quartile_Invariants(value First_Quartile, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Ensure()
+}
+
+// Third_Quartile is the upper quartile of one metric.
+type Third_Quartile fixedpoint.Number
+
+// Third_Quartile_Invariants bounds a third quartile to the metric domain.
+func Third_Quartile_Invariants(value Third_Quartile, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Ensure()
+}
+
 // Measurement is the distribution of one metric across a command's runs — poop's
 // Measurement, reduced from the raw Samples. Every field is a number so the report
 // marshals to JSON without custom encoders.
 type Measurement struct {
 	// Mean is the arithmetic mean of the metric's values.
-	Mean fixedpoint.Number `json:"mean"`
+	Mean Mean `json:"mean"`
 	// Standard_Deviation is the sample standard deviation, with an n-1 denominator.
-	Standard_Deviation fixedpoint.Number `json:"stddev"`
+	Standard_Deviation Standard_Deviation `json:"stddev"`
 	// Min is the smallest value observed.
-	Min fixedpoint.Number `json:"min"`
+	Min Minimum `json:"min"`
 	// Max is the largest value observed.
-	Max fixedpoint.Number `json:"max"`
+	Max Maximum `json:"max"`
 	// Median is the middle value of the sorted values.
-	Median fixedpoint.Number `json:"median"`
+	Median Median `json:"median"`
 	// Q1 is the first quartile by poop's index math.
-	Q1 fixedpoint.Number `json:"q1"`
+	Q1 First_Quartile `json:"q1"`
 	// Q3 is the third quartile by poop's index math.
-	Q3 fixedpoint.Number `json:"q3"`
+	Q3 Third_Quartile `json:"q3"`
 	// Outlier_Count is how many values fall beyond Tukey's fences.
 	Outlier_Count Strays `json:"outliers"`
 	// Sample_Count is how many values the distribution was computed from.
@@ -968,9 +1096,66 @@ type Measurement struct {
 // Measurement_Invariants states the integer and unit fields of a distribution;
 // the fixedpoint.Number fields have no preset of their own.
 func Measurement_Invariants(measurement Measurement, namespace invariant.Namespace) {
+	Mean_Invariants(measurement.Mean, namespace)
+	Standard_Deviation_Invariants(measurement.Standard_Deviation, namespace)
+	Minimum_Invariants(measurement.Min, namespace)
+	Maximum_Invariants(measurement.Max, namespace)
+	Median_Invariants(measurement.Median, namespace)
+	First_Quartile_Invariants(measurement.Q1, namespace)
+	Third_Quartile_Invariants(measurement.Q3, namespace)
 	Strays_Invariants(measurement.Outlier_Count, namespace)
 	Kept_Invariants(measurement.Sample_Count, namespace)
 	Unit_Invariants(measurement.Unit, namespace)
+}
+
+// Difference_Percent is a signed percentage difference.
+type Difference_Percent fixedpoint.Number
+
+// Difference_Percent_Invariants states the fixed-point percentage domain.
+func Difference_Percent_Invariants(value Difference_Percent, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value), -1), 1), -1, 0, 1).
+		Ensure()
+}
+
+// Half_Percent is the half-width of a percentage confidence interval.
+type Half_Percent fixedpoint.Number
+
+// Half_Percent_Invariants states the nonnegative fixed-point percentage domain.
+func Half_Percent_Invariants(value Half_Percent, namespace invariant.Namespace) {
+	invariant.Always(value >= 0, "A confidence half-interval cannot be negative.")
+	invariant.Tree(value, namespace).
+		Enum_Int64(min(int64(value), 1), 0, 1).
+		Ensure()
+}
+
+// Relative_Deviation is a standard deviation divided by its reference mean.
+type Relative_Deviation fixedpoint.Number
+
+// Relative_Deviation_Invariants states whether the nonnegative ratio is zero or positive.
+func Relative_Deviation_Invariants(value Relative_Deviation, namespace invariant.Namespace) {
+	invariant.Always(value >= 0, "A relative deviation cannot be negative.")
+	invariant.Tree(value, namespace).
+		Enum_Int64(min(int64(value), 1), 0, 1).
+		Ensure()
+}
+
+// Student_T_Score is a 95-percent Student-t critical score.
+type Student_T_Score fixedpoint.Number
+
+// Student_T_Score_Invariants states the two whole-number score regions in the table.
+func Student_T_Score_Invariants(value Student_T_Score, namespace invariant.Namespace) {
+	invariant.Always(
+		fixedpoint.Number(value) >= fixedpoint.From_Ratio(1960, 1000),
+		"A t score is at least 1.96.",
+	)
+	invariant.Always(
+		fixedpoint.Number(value) <= fixedpoint.From_Ratio(12706, 1000),
+		"A t score is at most 12.706.",
+	)
+	invariant.Tree(value, namespace).
+		Enum_Int64(min(int64(value)/fixedpoint.SCALE, 2), 1, 2).
+		Ensure()
 }
 
 // SIGNIFICANCE_SIGNIFICANT is the shared positive significance fact.
@@ -1003,9 +1188,9 @@ func Speed_Order_Invariants(value Speed_Order, namespace invariant.Namespace) {
 // poop's colored ratio column, as data.
 type Delta struct {
 	// Diff_Percent is the candidate's mean as a signed percentage of the reference's.
-	Diff_Percent fixedpoint.Number `json:"diff_percent"`
+	Diff_Percent Difference_Percent `json:"diff_percent"`
 	// Half_Percent is the half-width of the 95% confidence interval on Diff_Percent.
-	Half_Percent fixedpoint.Number `json:"half_percent"`
+	Half_Percent Half_Percent `json:"half_percent"`
 	// Significant is true only when the interval clears the ±1% band.
 	Significant Significance `json:"significant"`
 	// Faster is true when the candidate's mean is below the reference's.
@@ -1015,6 +1200,8 @@ type Delta struct {
 // Delta_Invariants states the boolean fields of a metric's change; the
 // fixedpoint.Number fields have no preset of their own.
 func Delta_Invariants(delta Delta, namespace invariant.Namespace) {
+	Difference_Percent_Invariants(delta.Diff_Percent, namespace)
+	Half_Percent_Invariants(delta.Half_Percent, namespace)
 	Significance_Invariants(delta.Significant, namespace)
 	Speed_Order_Invariants(delta.Faster, namespace)
 }
@@ -1027,7 +1214,42 @@ func Wall_Time_Measurement_Invariants(
 	value Wall_Time_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_TIME, "Wall time always uses nanoseconds.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A wall-time standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1041,7 +1263,26 @@ func Peak_Resident_Measurement_Invariants(
 	value Peak_Resident_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_SIZE, "Peak resident memory always uses bytes.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A resident-memory standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(int64(value.Mean)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Max)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Enum_3_Int64(min(int64(value.Median)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Q3)/fixedpoint.SCALE, 2), 0, 1, 2).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1053,7 +1294,42 @@ type Cycle_Measurement Measurement
 // Cycle_Measurement_Invariants states the processor-cycle distribution fields.
 func Cycle_Measurement_Invariants(value Cycle_Measurement, namespace invariant.Namespace) {
 	invariant.Always(value.Unit == UNIT_COUNT, "Processor cycles always use a count.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A processor-cycle standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1067,7 +1343,42 @@ func Instruction_Measurement_Invariants(
 	value Instruction_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_COUNT, "Instructions always use a count.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"An instruction standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1081,7 +1392,42 @@ func Cache_Reference_Measurement_Invariants(
 	value Cache_Reference_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_COUNT, "Cache references always use a count.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A cache-reference standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1095,7 +1441,42 @@ func Cache_Miss_Measurement_Invariants(
 	value Cache_Miss_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_COUNT, "Cache misses always use a count.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A cache-miss standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1109,7 +1490,42 @@ func Branch_Miss_Measurement_Invariants(
 	value Branch_Miss_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_COUNT, "Branch misses always use a count.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A branch-miss standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1123,7 +1539,42 @@ func User_Time_Measurement_Invariants(
 	value User_Time_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_TIME, "User time always uses nanoseconds.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A user-time standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1137,7 +1588,42 @@ func System_Time_Measurement_Invariants(
 	value System_Time_Measurement, namespace invariant.Namespace,
 ) {
 	invariant.Always(value.Unit == UNIT_TIME, "System time always uses nanoseconds.")
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A system-time standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Range_Int64(
+			int64(value.Mean)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Max)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Median)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Range_Int64(
+			int64(value.Q3)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Ensure()
@@ -1184,7 +1670,13 @@ type Wall_Time_Delta Delta
 
 // Wall_Time_Delta_Invariants states the wall-time comparison outcomes.
 func Wall_Time_Delta_Invariants(value Wall_Time_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A wall-time confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1197,7 +1689,13 @@ type Peak_Resident_Delta Delta
 
 // Peak_Resident_Delta_Invariants states the resident-memory comparison outcomes.
 func Peak_Resident_Delta_Invariants(value Peak_Resident_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A resident-memory confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1210,7 +1708,13 @@ type Cycle_Delta Delta
 
 // Cycle_Delta_Invariants states the processor-cycle comparison outcomes.
 func Cycle_Delta_Invariants(value Cycle_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A processor-cycle confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1223,7 +1727,13 @@ type Instruction_Delta Delta
 
 // Instruction_Delta_Invariants states the instruction comparison outcomes.
 func Instruction_Delta_Invariants(value Instruction_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"An instruction confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1238,7 +1748,13 @@ type Cache_Reference_Delta Delta
 func Cache_Reference_Delta_Invariants(
 	value Cache_Reference_Delta, namespace invariant.Namespace,
 ) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A cache-reference confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1251,7 +1767,13 @@ type Cache_Miss_Delta Delta
 
 // Cache_Miss_Delta_Invariants states the cache-miss comparison outcomes.
 func Cache_Miss_Delta_Invariants(value Cache_Miss_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A cache-miss confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1264,7 +1786,13 @@ type Branch_Miss_Delta Delta
 
 // Branch_Miss_Delta_Invariants states the branch-miss comparison outcomes.
 func Branch_Miss_Delta_Invariants(value Branch_Miss_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A branch-miss confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1277,7 +1805,13 @@ type User_Time_Delta Delta
 
 // User_Time_Delta_Invariants states the user-time comparison outcomes.
 func User_Time_Delta_Invariants(value User_Time_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A user-time confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1290,7 +1824,13 @@ type System_Time_Delta Delta
 
 // System_Time_Delta_Invariants states the system-time comparison outcomes.
 func System_Time_Delta_Invariants(value System_Time_Delta, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Half_Percent >= 0,
+		"A system-time confidence half-interval cannot be negative.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(max(int64(value.Diff_Percent), -1), 1), -1, 0, 1).
+		Enum_Int64(min(int64(value.Half_Percent), 1), 0, 1).
 		Sometimes(
 			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
 			"The difference is significant.").
@@ -1999,19 +2539,19 @@ func Measurement_Compute(values Values, unit Unit) (measurement Measurement) {
 	deviation := standard_deviation(Deviations(values), Average(mean_integer), Kept(count))
 
 	measurement = Measurement{
-		Mean:               mean,
-		Standard_Deviation: deviation,
-		Min: fixedpoint.Number(fixedpoint.From_Integer(
+		Mean:               Mean(mean),
+		Standard_Deviation: Standard_Deviation(deviation),
+		Min: Minimum(fixedpoint.Number(fixedpoint.From_Integer(
 			fixedpoint.Whole_Integer(sorted[0]),
-		)),
-		Max: fixedpoint.Number(fixedpoint.From_Integer(
+		))),
+		Max: Maximum(fixedpoint.Number(fixedpoint.From_Integer(
 			fixedpoint.Whole_Integer(sorted[count-1]),
-		)),
-		Median: fixedpoint.Number(fixedpoint.From_Integer(
+		))),
+		Median: Median(fixedpoint.Number(fixedpoint.From_Integer(
 			fixedpoint.Whole_Integer(sorted[count/2]),
-		)),
-		Q1: q1,
-		Q3: q3,
+		))),
+		Q1: First_Quartile(q1),
+		Q3: Third_Quartile(q3),
 		Outlier_Count: outlier_count(&Outlier_Count_Input{
 			Sorted:        Points(sorted),
 			Low_Quartile:  Low_Quartile(low_quartile),
@@ -2067,7 +2607,8 @@ func wide_add_square(subtotal Wide_Subtotal, value Gap) (sum Wide) {
 // overflow before the divide and the fixed-point root. Its result does not depend on order.
 func standard_deviation(
 	sorted Deviations, center Average, count Kept,
-) (deviation fixedpoint.Number) {
+) (deviation Standard_Deviation) {
+	defer func() { Standard_Deviation_Invariants(deviation, "standard_deviation.deviation") }()
 	Deviations_Invariants(sorted, "standard_deviation.sorted")
 	Average_Invariants(center, "standard_deviation.mean")
 	Kept_Invariants(count, "standard_deviation.count")
@@ -2113,7 +2654,8 @@ func Root_Of_Quotient_Input_Invariants(
 // denominator — the shared tail of the sample and pooled deviations. A quotient that fits
 // a signed word keeps full fractional precision; a larger one, a multi-second jitter far
 // outside maddox's fast-command envelope, falls back to the integer root.
-func root_of_quotient(input *Root_Of_Quotient_Input) (deviation fixedpoint.Number) {
+func root_of_quotient(input *Root_Of_Quotient_Input) (deviation Standard_Deviation) {
+	defer func() { Standard_Deviation_Invariants(deviation, "root_of_quotient.deviation") }()
 	Root_Of_Quotient_Input_Invariants(*input, "root_of_quotient.input")
 	if int(input.Denominator) <= 0 {
 		return 0
@@ -2128,14 +2670,14 @@ func root_of_quotient(input *Root_Of_Quotient_Input) (deviation fixedpoint.Numbe
 		fits = quotient_low <= INT64_MAX
 	}
 	if fits {
-		return fixedpoint.Number(fixedpoint.Square_Root_Scaled(
+		return Standard_Deviation(fixedpoint.Square_Root_Scaled(
 			fixedpoint.Radicand(quotient_low),
 		))
 	}
 	root := fixedpoint.Integer_Root(
 		fixedpoint.High_Word(quotient_high), fixedpoint.Low_Word(quotient_low),
 	)
-	return fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(root)))
+	return Standard_Deviation(fixedpoint.From_Integer(fixedpoint.Whole_Integer(root)))
 }
 
 // Low_Quartile is the lower quartile in the raw metric domain.
@@ -2144,7 +2686,11 @@ type Low_Quartile int64
 // Low_Quartile_Invariants bounds a lower quartile.
 func Low_Quartile_Invariants(value Low_Quartile, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -2154,7 +2700,11 @@ type High_Quartile int64
 // High_Quartile_Invariants bounds an upper quartile.
 func High_Quartile_Invariants(value High_Quartile, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -2210,7 +2760,26 @@ type Candidate_Measurement Measurement
 func Candidate_Measurement_Invariants(
 	value Candidate_Measurement, namespace invariant.Namespace,
 ) {
+	invariant.Always(
+		int64(value.Standard_Deviation)/fixedpoint.SCALE <= STANDARD_DEVIATION_MAXIMUM,
+		"A candidate standard deviation cannot exceed the metric domain.",
+	)
 	invariant.Tree(value, namespace).
+		Enum_Int64(min(max(int64(value.Mean)/fixedpoint.SCALE, 1), 2), 1, 2).
+		Enum_3_Int64(min(int64(value.Standard_Deviation)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Range_Int64(
+			int64(value.Min)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_Int64(min(max(int64(value.Max)/fixedpoint.SCALE, 1), 2), 1, 2).
+		Enum_Int64(min(max(int64(value.Median)/fixedpoint.SCALE, 1), 2), 1, 2).
+		Range_Int64(
+			int64(value.Q1)/fixedpoint.SCALE,
+			METRIC_MIN,
+			METRIC_MAX,
+		).
+		Enum_Int64(min(max(int64(value.Q3)/fixedpoint.SCALE, 1), 2), 1, 2).
 		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
 		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
 		Enum_Int(len(value.Unit), UNIT_BYTES_MIN, UNIT_BYTES_MAX).
@@ -2230,17 +2799,20 @@ func Compare(reference Measurement, candidate Candidate_Measurement) (delta Delt
 		return delta
 	}
 	ratio := fixedpoint.Divide(
-		fixedpoint.Dividend(candidate_measurement.Mean-reference.Mean),
-		fixedpoint.Divisor(reference.Mean),
+		fixedpoint.Dividend(
+			fixedpoint.Number(candidate_measurement.Mean)-
+				fixedpoint.Number(reference.Mean),
+		),
+		fixedpoint.Divisor(fixedpoint.Number(reference.Mean)),
 	)
-	delta.Diff_Percent = ratio * 100
+	delta.Diff_Percent = Difference_Percent(ratio * 100)
 	delta.Faster = candidate_measurement.Mean < reference.Mean
 
 	degrees := candidate_measurement.Sample_Count + reference.Sample_Count - 2
 	if degrees < 1 {
 		return delta
 	}
-	delta.Half_Percent = half_interval(reference, candidate, Degree(degrees))
+	delta.Half_Percent = Half_Percent(half_interval(reference, candidate, Degree(degrees)))
 	delta.Significant = significant(&Significant_Input{
 		Diff_Percent: delta.Diff_Percent,
 		Half_Percent: delta.Half_Percent,
@@ -2254,7 +2826,8 @@ func Compare(reference Measurement, candidate Candidate_Measurement) (delta Delt
 // forms a raw variance — which, for a metric in the billions, overflows.
 func half_interval(
 	reference Measurement, candidate Candidate_Measurement, degrees Degree,
-) (half fixedpoint.Number) {
+) (half Half_Percent) {
+	defer func() { Half_Percent_Invariants(half, "half_interval.half") }()
 	Measurement_Invariants(reference, "half_interval.reference")
 	Candidate_Measurement_Invariants(candidate, "half_interval.candidate")
 	Degree_Invariants(degrees, "half_interval.degrees")
@@ -2263,11 +2836,13 @@ func half_interval(
 	normalizer := fixedpoint.Number(fixedpoint.Square_Root(first + second))
 	pooled := pooled_deviation(reference, candidate, degrees)
 	score := student_t_score(degrees)
-	band := fixedpoint.Multiply(fixedpoint.Multiplicand(score), fixedpoint.Multiplier(pooled))
+	band := fixedpoint.Multiply(
+		fixedpoint.Multiplicand(score), fixedpoint.Multiplier(pooled),
+	)
 	band = fixedpoint.Multiply(
 		fixedpoint.Multiplicand(band), fixedpoint.Multiplier(normalizer),
 	)
-	return band * 100
+	return Half_Percent(band * 100)
 }
 
 // Pooled_deviation is the pooled standard deviation as a fraction of the reference mean:
@@ -2276,26 +2851,31 @@ func half_interval(
 // billions and its enormous raw variance never overflow.
 func pooled_deviation(
 	reference Measurement, candidate Candidate_Measurement, degrees Degree,
-) (pooled fixedpoint.Number) {
+) (pooled Relative_Deviation) {
+	defer func() { Relative_Deviation_Invariants(pooled, "pooled_deviation.pooled") }()
 	Measurement_Invariants(reference, "pooled_deviation.reference")
 	Candidate_Measurement_Invariants(candidate, "pooled_deviation.candidate")
 	Degree_Invariants(degrees, "pooled_deviation.degrees")
-	mean := reference.Mean
+	mean := fixedpoint.Number(reference.Mean)
 	candidate_deviation := fixedpoint.Divide(
-		fixedpoint.Dividend(candidate.Standard_Deviation), fixedpoint.Divisor(mean),
+		fixedpoint.Dividend(fixedpoint.Number(candidate.Standard_Deviation)),
+		fixedpoint.Divisor(mean),
 	)
 	reference_deviation := fixedpoint.Divide(
-		fixedpoint.Dividend(reference.Standard_Deviation), fixedpoint.Divisor(mean),
+		fixedpoint.Dividend(fixedpoint.Number(reference.Standard_Deviation)),
+		fixedpoint.Divisor(mean),
 	)
 	candidate_variance := fixedpoint.Multiply(
-		fixedpoint.Multiplicand(candidate_deviation), fixedpoint.Multiplier(candidate_deviation),
+		fixedpoint.Multiplicand(candidate_deviation),
+		fixedpoint.Multiplier(candidate_deviation),
 	)
 	reference_variance := fixedpoint.Multiply(
-		fixedpoint.Multiplicand(reference_deviation), fixedpoint.Multiplier(reference_deviation),
+		fixedpoint.Multiplicand(reference_deviation),
+		fixedpoint.Multiplier(reference_deviation),
 	)
 	weighted := candidate_variance*fixedpoint.Number(candidate.Sample_Count-1) +
 		reference_variance*fixedpoint.Number(reference.Sample_Count-1)
-	return fixedpoint.Number(
+	return Relative_Deviation(
 		fixedpoint.Square_Root(weighted / fixedpoint.Number(int(degrees))),
 	)
 }
@@ -2305,7 +2885,8 @@ func pooled_deviation(
 // 1.96 past the tabulated range — poop's getStatScore95. The tables hold thousandths so
 // they read as the published constants, and From_Ratio puts them on the fixed-point grid.
 // The tables are local, not package globals, so the package keeps no mutable state.
-func student_t_score(degrees_of_freedom Degree) (score fixedpoint.Number) {
+func student_t_score(degrees_of_freedom Degree) (score Student_T_Score) {
+	defer func() { Student_T_Score_Invariants(score, "student_t_score.score") }()
 	Degree_Invariants(degrees_of_freedom, "student_t_score.degrees_of_freedom")
 	freedom := int(degrees_of_freedom)
 	table_1to30 := []int64{
@@ -2327,22 +2908,24 @@ func student_t_score(degrees_of_freedom Degree) (score fixedpoint.Number) {
 			milli = table_10s[freedom/10-1]
 		}
 	}
-	return fixedpoint.From_Ratio(fixedpoint.Numerator(milli), 1000)
+	return Student_T_Score(fixedpoint.From_Ratio(fixedpoint.Numerator(milli), 1000))
 }
 
 // Significant_Input carries the difference and its confidence half-interval, both as
 // fixed-point percentages.
 type Significant_Input struct {
 	// Diff_Percent is the signed percentage difference under test.
-	Diff_Percent fixedpoint.Number
+	Diff_Percent Difference_Percent
 	// Half_Percent is the confidence interval's half-width, as a percentage.
-	Half_Percent fixedpoint.Number
+	Half_Percent Half_Percent
 }
 
 // Significant_Input_Invariants states the one property the fields carry that
 // fixedpoint.Number cannot: the half-interval is a confidence half-width, so it is
 // never negative. The difference may have either sign and is left unconstrained.
 func Significant_Input_Invariants(input Significant_Input, namespace invariant.Namespace) {
+	Difference_Percent_Invariants(input.Diff_Percent, namespace)
+	Half_Percent_Invariants(input.Half_Percent, namespace)
 	invariant.Always(input.Half_Percent >= 0, "A confidence half-interval is never negative.")
 }
 
@@ -2352,15 +2935,17 @@ func Significant_Input_Invariants(input Significant_Input, namespace invariant.N
 func significant(input *Significant_Input) (is Significance) {
 	defer func() { Significance_Invariants(is, "significant.is") }()
 	Significant_Input_Invariants(*input, "significant.input")
+	difference := fixedpoint.Number(input.Diff_Percent)
+	half := fixedpoint.Number(input.Half_Percent)
 	one := fixedpoint.Number(fixedpoint.From_Integer(1))
-	if input.Diff_Percent >= one {
-		if input.Diff_Percent-input.Half_Percent >= one {
+	if difference >= one {
+		if difference-half >= one {
 			return true
 		}
 	}
 	negative_one := fixedpoint.Number(fixedpoint.From_Integer(-1))
-	if input.Diff_Percent <= negative_one {
-		if input.Diff_Percent+input.Half_Percent <= negative_one {
+	if difference <= negative_one {
+		if difference+half <= negative_one {
 			return true
 		}
 	}
@@ -2555,16 +3140,18 @@ func format_bytes(value Byte_Size) (text Cell) {
 	Byte_Size_Invariants(value, "format_bytes.value")
 	raw := int64(value)
 	for _, step := range byte_ladder() {
-		rung := int64(fixedpoint.Whole(step.Divisor))
+		rung := int64(fixedpoint.Whole(fixedpoint.Number(step.Divisor)))
 		if raw >= rung {
 			scaled := fixedpoint.From_Ratio(
 				fixedpoint.Numerator(raw), fixedpoint.Denominator(rung),
 			)
-			return Cell(string(format_significant(scaled)) + string(step.Suffix))
+			return Cell(
+				string(format_significant(Quantity(scaled))) + string(step.Suffix),
+			)
 		}
 	}
 	integer := fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(raw)))
-	return Cell(string(format_significant(integer)))
+	return Cell(string(format_significant(Quantity(integer))))
 }
 
 // ELAPSED_DISPLAY_MAX caps the total sampling time the table header renders. Kiloseconds is the
@@ -2607,16 +3194,18 @@ func format_elapsed(elapsed time.Duration) (text Span) {
 		raw = ELAPSED_DISPLAY_MAX
 	}
 	for _, step := range time_ladder() {
-		rung := int64(fixedpoint.Whole(step.Divisor))
+		rung := int64(fixedpoint.Whole(fixedpoint.Number(step.Divisor)))
 		if raw >= rung {
 			scaled := fixedpoint.From_Ratio(
 				fixedpoint.Numerator(raw), fixedpoint.Denominator(rung),
 			)
-			return Span(string(format_significant(scaled)) + string(step.Suffix))
+			return Span(
+				string(format_significant(Quantity(scaled))) + string(step.Suffix),
+			)
 		}
 	}
 	integer := fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(raw)))
-	return Span(string(format_significant(integer)))
+	return Span(string(format_significant(Quantity(integer))))
 }
 
 // Write_table renders the table and writes it to output, returning EXIT_FAILURE if
@@ -2776,11 +3365,13 @@ func metric_line(input *Metric_Line_Input) (text Full_Row) {
 	outlier_text := strconv.Itoa(int(measurement.Outlier_Count)) +
 		" (" + string(fixedpoint.Format(outlier_percent, 0)) + "%)"
 	row := render_cells(&Render_Cells_Input{
-		Name:     input.Name,
-		Mean:     Mean_Cell(format_quantity(measurement.Mean, unit)),
-		Sigma:    Deviation_Cell(format_quantity(measurement.Standard_Deviation, unit)),
-		Low:      Minimum_Cell(format_quantity(measurement.Min, unit)),
-		High:     Maximum_Cell(format_quantity(measurement.Max, unit)),
+		Name: input.Name,
+		Mean: Mean_Cell(format_quantity(Quantity(measurement.Mean), unit)),
+		Sigma: Deviation_Cell(format_quantity(
+			Quantity(measurement.Standard_Deviation), unit,
+		)),
+		Low:      Minimum_Cell(format_quantity(Quantity(measurement.Min), unit)),
+		High:     Maximum_Cell(format_quantity(Quantity(measurement.Max), unit)),
 		Outliers: Outliers(outlier_text),
 	})
 	text = Full_Row(row)
@@ -3514,7 +4105,11 @@ type Metric int64
 // shapes witnessed.
 func Metric_Invariants(value Metric, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Range_Int64(
+			int64(value),
+			METRIC_MIN,
+			METRIC_MAX,
+		).
 		Ensure()
 }
 
@@ -3536,7 +4131,11 @@ type Average int64
 // guarded away, since a mean of non-negative metrics never goes below zero.
 func Average_Invariants(value Average, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), AVERAGE_MIN, AVERAGE_MAX).
+		Range_Int64(
+			int64(value),
+			AVERAGE_MIN,
+			AVERAGE_MAX,
+		).
 		Ensure()
 }
 
@@ -3628,11 +4227,11 @@ func delta_render(delta Delta, color Color) (text Delta_Text) {
 			code = ANSI_BRIGHT_GREEN
 		}
 	}
-	difference := delta.Diff_Percent
+	difference := fixedpoint.Number(delta.Diff_Percent)
 	if difference < 0 {
 		difference = -difference
 	}
-	half_percent := delta.Half_Percent
+	half_percent := fixedpoint.Number(delta.Half_Percent)
 	// Pin both percentages to the column's widest value. A change past ten million percent —
 	// a candidate a hundred-thousand-fold off the reference — cannot fit the fixed delta
 	// layout the body invariant sizes for, and its exact magnitude past the bound is noise;
@@ -3649,10 +4248,21 @@ func delta_render(delta Delta, color Color) (text Delta_Text) {
 	return paint(body, code, color)
 }
 
+// Quantity is a nonnegative fixed-point value prepared for human-readable scaling.
+type Quantity fixedpoint.Number
+
+// Quantity_Invariants states the zero, unit, and larger rendering regions.
+func Quantity_Invariants(value Quantity, namespace invariant.Namespace) {
+	invariant.Always(value >= 0, "A rendered quantity cannot be negative.")
+	invariant.Tree(value, namespace).
+		Enum_3_Int64(min(int64(value)/fixedpoint.SCALE, 2), 0, 1, 2).
+		Ensure()
+}
+
 // Scale_Step is one rung of a scaling ladder: the divisor above which the suffix applies.
 type Scale_Step struct {
 	// Divisor is the magnitude the value is divided by at this rung.
-	Divisor fixedpoint.Number
+	Divisor Quantity
 	// Suffix names the unit at this rung — empty at the base rung, so it is a suffix, not a
 	// cell, whose length range admits the empty base unit.
 	Suffix Suffix
@@ -3660,13 +4270,15 @@ type Scale_Step struct {
 
 // Scale_Step_Invariants states a rung's suffix; the divisor has no preset of its own.
 func Scale_Step_Invariants(step Scale_Step, namespace invariant.Namespace) {
+	Quantity_Invariants(step.Divisor, namespace)
 	Suffix_Invariants(step.Suffix, namespace)
 }
 
 // Format_quantity renders a raw value scaled to a human unit with three significant
 // figures — poop's printUnit, e.g. 14906807 nanoseconds becomes "14.9ms".
-func format_quantity(value fixedpoint.Number, unit Unit) (text Cell) {
+func format_quantity(value Quantity, unit Unit) (text Cell) {
 	defer func() { Cell_Invariants(text, "format_quantity.text") }()
+	Quantity_Invariants(value, "format_quantity.value")
 	Unit_Invariants(unit, "format_quantity.unit")
 	scaled, unit_suffix := scale_quantity(value, unit)
 	return Cell(string(format_significant(scaled)) + string(unit_suffix))
@@ -3675,9 +4287,13 @@ func format_quantity(value fixedpoint.Number, unit Unit) (text Cell) {
 // Scale_quantity divides a value down to its human magnitude and names the unit
 // suffix, dispatching on the metric's unit.
 func scale_quantity(
-	value fixedpoint.Number, unit Unit,
-) (scaled fixedpoint.Number, unit_suffix Suffix) {
-	defer func() { Suffix_Invariants(unit_suffix, "scale_quantity.suffix") }()
+	value Quantity, unit Unit,
+) (scaled Quantity, unit_suffix Suffix) {
+	defer func() {
+		Quantity_Invariants(scaled, "scale_quantity.scaled")
+		Suffix_Invariants(unit_suffix, "scale_quantity.suffix")
+	}()
+	Quantity_Invariants(value, "scale_quantity.value")
 	Unit_Invariants(unit, "scale_quantity.unit")
 	switch unit {
 	case "nanoseconds":
@@ -3691,15 +4307,19 @@ func scale_quantity(
 // Scale_ladder divides a value by the first rung it reaches or above, naming that rung's
 // suffix; below the lowest rung it stays in the base unit.
 func scale_ladder(
-	value fixedpoint.Number, ladder Ladder,
-) (scaled fixedpoint.Number, unit_suffix Suffix) {
-	defer func() { Suffix_Invariants(unit_suffix, "scale_ladder.suffix") }()
+	value Quantity, ladder Ladder,
+) (scaled Quantity, unit_suffix Suffix) {
+	defer func() {
+		Quantity_Invariants(scaled, "scale_ladder.scaled")
+		Suffix_Invariants(unit_suffix, "scale_ladder.suffix")
+	}()
+	Quantity_Invariants(value, "scale_ladder.value")
 	Ladder_Invariants(ladder, "scale_ladder.ladder")
 	for _, step := range ladder {
 		if value >= step.Divisor {
-			scaled = fixedpoint.Divide(
+			scaled = Quantity(fixedpoint.Divide(
 				fixedpoint.Dividend(value), fixedpoint.Divisor(step.Divisor),
-			)
+			))
 			return scaled, Suffix(step.Suffix)
 		}
 	}
@@ -3710,11 +4330,14 @@ func scale_ladder(
 func time_ladder() (ladder Ladder) {
 	defer func() { Ladder_Invariants(ladder, "time_ladder.ladder") }()
 	return Ladder{
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000_000)), Suffix: "ks"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000)), Suffix: "s"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000)), Suffix: "ms"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000)), Suffix: "us"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1)), Suffix: "ns"},
+		{
+			Divisor: Quantity(fixedpoint.From_Integer(1_000_000_000_000)),
+			Suffix:  "ks",
+		},
+		{Divisor: Quantity(fixedpoint.From_Integer(1_000_000_000)), Suffix: "s"},
+		{Divisor: Quantity(fixedpoint.From_Integer(1_000_000)), Suffix: "ms"},
+		{Divisor: Quantity(fixedpoint.From_Integer(1_000)), Suffix: "us"},
+		{Divisor: Quantity(fixedpoint.From_Integer(1)), Suffix: "ns"},
 	}
 }
 
@@ -3723,11 +4346,19 @@ func time_ladder() (ladder Ladder) {
 func byte_ladder() (ladder Ladder) {
 	defer func() { Ladder_Invariants(ladder, "byte_ladder.ladder") }()
 	return Ladder{
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024 * 1024 * 1024 * 1024)), Suffix: "TiB"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024 * 1024 * 1024)), Suffix: "GiB"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024 * 1024)), Suffix: "MiB"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024)), Suffix: "KiB"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1)), Suffix: "B"},
+		{
+			Divisor: Quantity(
+				fixedpoint.From_Integer(1024 * 1024 * 1024 * 1024),
+			),
+			Suffix: "TiB",
+		},
+		{
+			Divisor: Quantity(fixedpoint.From_Integer(1024 * 1024 * 1024)),
+			Suffix:  "GiB",
+		},
+		{Divisor: Quantity(fixedpoint.From_Integer(1024 * 1024)), Suffix: "MiB"},
+		{Divisor: Quantity(fixedpoint.From_Integer(1024)), Suffix: "KiB"},
+		{Divisor: Quantity(fixedpoint.From_Integer(1)), Suffix: "B"},
 	}
 }
 
@@ -3735,30 +4366,34 @@ func byte_ladder() (ladder Ladder) {
 func count_ladder() (ladder Ladder) {
 	defer func() { Ladder_Invariants(ladder, "count_ladder.ladder") }()
 	return Ladder{
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000_000)), Suffix: "T"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000)), Suffix: "G"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000)), Suffix: "M"},
-		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000)), Suffix: "K"},
+		{
+			Divisor: Quantity(fixedpoint.From_Integer(1_000_000_000_000)),
+			Suffix:  "T",
+		},
+		{Divisor: Quantity(fixedpoint.From_Integer(1_000_000_000)), Suffix: "G"},
+		{Divisor: Quantity(fixedpoint.From_Integer(1_000_000)), Suffix: "M"},
+		{Divisor: Quantity(fixedpoint.From_Integer(1_000)), Suffix: "K"},
 	}
 }
 
 // Format_significant renders a scaled value to three significant figures: whole
 // numbers and hundreds with no decimals, tens with one, units with two.
-func format_significant(value fixedpoint.Number) (text Glyph) {
+func format_significant(value Quantity) (text Glyph) {
 	defer func() { Glyph_Invariants(text, "format_significant.text") }()
-	if value >= fixedpoint.Number(fixedpoint.From_Integer(1000)) {
-		return Glyph(fixedpoint.Format(value, 0))
+	Quantity_Invariants(value, "format_significant.value")
+	if value >= Quantity(fixedpoint.From_Integer(1000)) {
+		return Glyph(fixedpoint.Format(fixedpoint.Number(value), 0))
 	}
-	if fixedpoint.Is_Integer(value) {
-		return Glyph(fixedpoint.Format(value, 0))
+	if fixedpoint.Is_Integer(fixedpoint.Number(value)) {
+		return Glyph(fixedpoint.Format(fixedpoint.Number(value), 0))
 	}
-	if value >= fixedpoint.Number(fixedpoint.From_Integer(100)) {
-		return Glyph(fixedpoint.Format(value, 0))
+	if value >= Quantity(fixedpoint.From_Integer(100)) {
+		return Glyph(fixedpoint.Format(fixedpoint.Number(value), 0))
 	}
-	if value >= fixedpoint.Number(fixedpoint.From_Integer(10)) {
-		return Glyph(fixedpoint.Format(value, 1))
+	if value >= Quantity(fixedpoint.From_Integer(10)) {
+		return Glyph(fixedpoint.Format(fixedpoint.Number(value), 1))
 	}
-	return Glyph(fixedpoint.Format(value, 2))
+	return Glyph(fixedpoint.Format(fixedpoint.Number(value), 2))
 }
 
 // Paint wraps text in an ANSI color when color is enabled; the codes have zero
@@ -3788,7 +4423,11 @@ type Progress_Total int64
 // Progress_Total_Invariants accepts the complete signed 64-bit input domain.
 func Progress_Total_Invariants(value Progress_Total, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), LIMIT_MIN, LIMIT_MAX).
+		Range_Int64(
+			int64(value),
+			LIMIT_MIN,
+			LIMIT_MAX,
+		).
 		Ensure()
 }
 

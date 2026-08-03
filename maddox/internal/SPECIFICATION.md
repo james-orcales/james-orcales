@@ -14,7 +14,8 @@ poop summarizes a benchmark.
 ### Distribution
 
 The mean, sample standard deviation, extrema, median, and quartiles are computed
-over the values, the quartiles by position.
+over the values, the quartiles by position. Each fixed-point result keeps its
+statistical role and stays in the bound that its source metric permits.
 
 ### Outliers
 
@@ -34,7 +35,8 @@ significant.
 ### Significance
 
 A difference is significant only when its confidence interval clears one percent
-with a single sign.
+with a single sign. The percentage difference keeps its sign, and the confidence
+half-interval is nonnegative.
 
 # Sampling
 
