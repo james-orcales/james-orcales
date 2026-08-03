@@ -31,6 +31,12 @@ An `Always` message identifies one eager source root in the full registration se
 message shares that one global set. Registration fails if two roots have the same message, and the
 recorder publishes no event for these roots.
 
+# Fatal Hook
+
+`Recorder.On_Fatal`, when set, receives the complete assertion failure text immediately before an
+enforcing assertion panics. A nil hook changes nothing. The production build preserves this hook
+for eager guards, inline value assertions, and fluent value assertions.
+
 # Sometimes
 
 `Sometimes` is only an `Assertion_Builder` link. Its true and false branches are separate

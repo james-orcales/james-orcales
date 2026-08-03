@@ -105,6 +105,27 @@ func second(ok bool) { invariant.Always(ok, "duplicate") }
 	}
 }
 
+// Test_Fatal_Hook keeps a composition root's last word ahead of the panic, so an asynchronous log
+// egress can drain before the process stops.
+func Test_Fatal_Hook(t *testing.T) {
+	recorder := &core.Recorder{}
+	hook_message := ""
+	hook_called := false
+	recorder.On_Fatal = func(message string) {
+		hook_called = true
+		hook_message = message
+	}
+	panic_message := panic_text(func() {
+		core.Recorder_Always(recorder, false, "fatal hook guard")
+	})
+	if !hook_called {
+		t.Fatal("fatal hook did not run before the panic")
+	}
+	if hook_message != panic_message {
+		t.Fatalf("hook message = %q, panic = %q", hook_message, panic_message)
+	}
+}
+
 // Test_Sometimes_Deferred protects Ensure as the only emission boundary.
 func Test_Sometimes_Deferred(t *testing.T) {
 	recorder := registered_single_axis(t, "deferred")

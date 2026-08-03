@@ -73,7 +73,7 @@ const ASSERTION_RECORDING_MASK = uintptr(1) << (unsafe.Sizeof(uintptr(0))*8 - 1)
 // Recorder_Always remains eager because it is deliberately outside the deferred builder.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
-		recorder_always_failure(bool(condition), message)
+		recorder_always_failure(recorder, bool(condition), message)
 	}
 	if !recorder.Is_Test {
 		return
@@ -87,9 +87,11 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 // Keeping diagnostic formatting out of the eager guard leaves its passing branch inlineable.
 //
 //go:noinline
-func recorder_always_failure(condition bool, message string) {
-	panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message +
-		"  Always — condition was false: " + fmt.Sprint(condition))
+func recorder_always_failure(recorder *Recorder, condition bool, message string) {
+	failure := ASSERTION_FAILURE_MESSAGE_PREFIX + message +
+		"  Always — condition was false: " + fmt.Sprint(condition)
+	recorder_fatal_hook(recorder, failure)
+	panic(failure)
 }
 
 // Recorder_Sometimes states one inline two-branch axis in a body that owns no bundle.
@@ -573,9 +575,20 @@ func (builder Assertion_Builder) Ensure() {
 //go:noinline
 func assertion_ensure(builder *Assertion_Builder) {
 	if builder.assertion_failure() != ASSERTION_FAILURE_NONE {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + builder.assertion_failure_message())
+		failure := ASSERTION_FAILURE_MESSAGE_PREFIX + builder.assertion_failure_message()
+		recorder_fatal_hook(assertion_failure_recorder(builder), failure)
+		panic(failure)
 	}
 	assertion_record(builder)
+}
+
+// Returns the recording root for a failed registered chain. A plan-free development chain keeps its
+// namespace in Context and has no recorder state to recover.
+func assertion_failure_recorder(builder *Assertion_Builder) (recorder *Recorder) {
+	if builder.State_B&ASSERTION_RECORDING_MASK == 0 {
+		return nil
+	}
+	return builder.assertion_plan().Recorder
 }
 
 // Preflighting the whole plan in this cold boundary prevents an invalid execution from leaving

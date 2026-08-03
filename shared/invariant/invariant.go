@@ -185,6 +185,20 @@ type Recorder struct {
 	// and before the analysis. A fuzz coordinator wires it to read every worker's persisted
 	// coverage and credit it into registered entries so analysis sees what workers found.
 	Merge_Fuzz_Coverage func()
+
+	// On_Fatal receives the complete assertion message immediately before an enforcing
+	// assertion panics. A composition root can drain an asynchronous log egress before exit.
+	On_Fatal func(message string)
+}
+
+// Calls the optional composition hook before the assertion site causes the panic.
+func recorder_fatal_hook(recorder *Recorder, message string) {
+	if recorder == nil {
+		return
+	}
+	if recorder.On_Fatal != nil {
+		recorder.On_Fatal(message)
+	}
 }
 
 // Signed spans the primitive signed integer widths.

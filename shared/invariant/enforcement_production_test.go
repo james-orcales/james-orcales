@@ -15,6 +15,46 @@ import (
 // This build resolves no plan, so the chain type only has to compile.
 type Fixture_Subject int
 
+// Test_Production_Fatal_Hook verifies that every production assertion entrypoint preserves the
+// fatal egress before it panics.
+func Test_Production_Fatal_Hook(t *testing.T) {
+	tests := []struct {
+		Name string
+		Run  func(recorder *invariant.Recorder)
+	}{
+		{Name: "always", Run: func(recorder *invariant.Recorder) {
+			invariant.Recorder_Always(recorder, false, "fatal hook guard")
+		}},
+		{Name: "inline range", Run: func(recorder *invariant.Recorder) {
+			invariant.Recorder_Range(recorder, -1, 0, 1, "fatal hook range")
+		}},
+		{Name: "inline enum", Run: func(recorder *invariant.Recorder) {
+			invariant.Recorder_Enum(recorder, 3, 1, 2, "fatal hook enum")
+		}},
+		{Name: "fluent range", Run: func(recorder *invariant.Recorder) {
+			invariant.Recorder_Tree(recorder, Fixture_Subject(0), "fatal hook tree").
+				Range_Int(-1, 0, 1).Ensure()
+		}},
+	}
+	for _, test := range tests {
+		recorder := &invariant.Recorder{}
+		hook_count := 0
+		hook_message := ""
+		recorder.On_Fatal = func(message string) {
+			hook_count++
+			hook_message = message
+		}
+		panic_message := production_panic_text(func() { test.Run(recorder) })
+		if hook_count != 1 {
+			t.Fatalf("%s hook count = %d, want 1", test.Name, hook_count)
+		}
+		if hook_message != panic_message {
+			t.Fatalf("%s hook message = %q, panic = %q",
+				test.Name, hook_message, panic_message)
+		}
+	}
+}
+
 // Opens a chain on a plan-free recorder over the fixture subject, keeping call sites short.
 func fixture_assertions(namespace invariant.Namespace) (builder invariant.Assertion_Builder) {
 	return invariant.Recorder_Tree(&invariant.Recorder{}, Fixture_Subject(0), namespace)

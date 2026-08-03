@@ -4,15 +4,41 @@
 // their callers while violations still stop execution.
 package invariant
 
+import "unsafe"
+
 // Recorder_Always remains eager because production removes every recording concern.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
-		panic(Assertion_Failure{
+		failure := Assertion_Failure{
 			Identity: message,
 			Reason:   "  Always — condition was false",
 			Value:    condition,
-		})
+		}
+		recorder_fatal_hook(recorder, failure.Error())
+		panic(failure)
 	}
+}
+
+// Carries a recorder only when a composition hook is active. The usual production builder stays
+// the zero value and retains its three-word, allocation-free representation.
+func production_builder(recorder *Recorder) (builder Assertion_Builder) {
+	if recorder == nil {
+		return builder
+	}
+	if recorder.On_Fatal == nil {
+		return builder
+	}
+	builder.Context = unsafe.Pointer(recorder)
+	return builder
+}
+
+// Delivers one production assertion failure before the assertion site panics.
+func production_fatal(builder Assertion_Builder, failure Assertion_Failure) {
+	var recorder *Recorder
+	if builder.Context != nil {
+		recorder = (*Recorder)(builder.Context)
+	}
+	recorder_fatal_hook(recorder, failure.Error())
 }
 
 // Recorder_Sometimes keeps only its two-branch coverage duty, which production drops, so it has
@@ -25,14 +51,14 @@ func Recorder_Sometimes[T ~bool](recorder *Recorder, condition T, message string
 func Recorder_Range[Value Integer](
 	recorder *Recorder, value Value, minimum Value, maximum Value, message string,
 ) {
-	production_range(Assertion_Builder{}, value, minimum, maximum)
+	production_range(production_builder(recorder), value, minimum, maximum)
 }
 
 // Recorder_Enum keeps only membership enforcement in the production build.
 func Recorder_Enum[Value Integer](
 	recorder *Recorder, value Value, first Value, second Value, message string,
 ) {
-	production_enum_2(Assertion_Builder{}, value, first, second)
+	production_enum_2(production_builder(recorder), value, first, second)
 }
 
 // Recorder_Range_Holed keeps only value-dependent enforcement in the production build.
@@ -41,14 +67,15 @@ func Recorder_Range_Holed[Value Integer](
 	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value, message string,
 ) {
 	production_range_holed(
-		Assertion_Builder{}, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+		production_builder(recorder), value, minimum, maximum,
+		hole_1, hole_2, hole_3, hole_4)
 }
 
 // Recorder_Tree discards recorder state so production carries enforcement alone.
 func Recorder_Tree[Subject any](
 	recorder *Recorder, subject Subject, namespace Namespace,
 ) (builder Assertion_Builder) {
-	return Assertion_Builder{}
+	return production_builder(recorder)
 }
 
 // Sometimes disappears because a caller-chosen condition cannot violate a typed domain.
@@ -436,18 +463,22 @@ func production_range[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value,
 ) (next Assertion_Builder) {
 	if value < minimum {
-		panic(Assertion_Failure{
+		failure := Assertion_Failure{
 			Identity: RANGE_GUARD_MINIMUM,
 			Reason:   "  value below min",
 			Value:    value,
-		})
+		}
+		production_fatal(builder, failure)
+		panic(failure)
 	}
 	if value > maximum {
-		panic(Assertion_Failure{
+		failure := Assertion_Failure{
 			Identity: RANGE_GUARD_MAXIMUM,
 			Reason:   "  value exceeds max",
 			Value:    value,
-		})
+		}
+		production_fatal(builder, failure)
+		panic(failure)
 	}
 	return builder
 }
@@ -457,25 +488,31 @@ func production_range_holed[Value Integer](
 	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
 ) (next Assertion_Builder) {
 	if value < minimum {
-		panic(Assertion_Failure{
+		failure := Assertion_Failure{
 			Identity: RANGE_GUARD_MINIMUM,
 			Reason:   "  value below min",
 			Value:    value,
-		})
+		}
+		production_fatal(builder, failure)
+		panic(failure)
 	}
 	if value > maximum {
-		panic(Assertion_Failure{
+		failure := Assertion_Failure{
 			Identity: RANGE_GUARD_MAXIMUM,
 			Reason:   "  value exceeds max",
 			Value:    value,
-		})
+		}
+		production_fatal(builder, failure)
+		panic(failure)
 	}
 	switch value {
 	case hole_1, hole_2, hole_3, hole_4:
-		panic(Assertion_Failure{
+		failure := Assertion_Failure{
 			Identity: "Range value is excluded",
 			Value:    value,
-		})
+		}
+		production_fatal(builder, failure)
+		panic(failure)
 	}
 	return builder
 }
@@ -487,11 +524,13 @@ func production_enum_2[Value Integer](
 	case first, second:
 		return builder
 	}
-	panic(Assertion_Failure{
+	failure := Assertion_Failure{
 		Identity: ENUM_GUARD_MEMBER,
 		Reason:   "  value is not a member",
 		Value:    value,
-	})
+	}
+	production_fatal(builder, failure)
+	panic(failure)
 }
 
 func production_enum_3[Value Integer](
@@ -501,11 +540,13 @@ func production_enum_3[Value Integer](
 	case first, second, third:
 		return builder
 	}
-	panic(Assertion_Failure{
+	failure := Assertion_Failure{
 		Identity: ENUM_GUARD_MEMBER,
 		Reason:   "  value is not a member",
 		Value:    value,
-	})
+	}
+	production_fatal(builder, failure)
+	panic(failure)
 }
 
 func production_enum_4[Value Integer](
@@ -516,9 +557,11 @@ func production_enum_4[Value Integer](
 	case first, second, third, fourth:
 		return builder
 	}
-	panic(Assertion_Failure{
+	failure := Assertion_Failure{
 		Identity: ENUM_GUARD_MEMBER,
 		Reason:   "  value is not a member",
 		Value:    value,
-	})
+	}
+	production_fatal(builder, failure)
+	panic(failure)
 }
