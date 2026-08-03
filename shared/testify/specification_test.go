@@ -202,16 +202,16 @@ func Test_Panics(t *testing.T) {
 func Test_Approximation_And_Time(t *testing.T) {
 	t.Parallel()
 	delta := &testify.In_Delta_Input{
-		Expected: fixedpoint.From_Integer(10),
-		Actual:   fixedpoint.From_Integer(10),
-		Delta:    fixedpoint.From_Integer(1),
+		Expected: fixedpoint.Number(fixedpoint.From_Integer(10)),
+		Actual:   fixedpoint.Number(fixedpoint.From_Integer(10)),
+		Delta:    fixedpoint.Number(fixedpoint.From_Integer(1)),
 	}
 	if !testify.In_Delta(t, delta) {
 		t.Errorf("In_Delta should pass within the delta")
 	}
 	epsilon := &testify.In_Epsilon_Input{
-		Expected: fixedpoint.From_Integer(100),
-		Actual:   fixedpoint.From_Integer(100),
+		Expected: fixedpoint.Number(fixedpoint.From_Integer(100)),
+		Actual:   fixedpoint.Number(fixedpoint.From_Integer(100)),
 		Epsilon:  fixedpoint.SCALE / 100,
 	}
 	if !testify.In_Epsilon(t, epsilon) {

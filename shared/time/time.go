@@ -135,14 +135,16 @@ func Skew(input Skew_Input) (offset Offset) {
 			// Reduce the phase to one period before lifting it into fixed-point, so a
 			// long-running tick count cannot overflow the scaled numerator.
 			phase := ticks % input.B
-			turns := fixedpoint.Divide(&fixedpoint.Divide_Input{
-				Dividend: fixedpoint.From_Integer(phase),
-				Divisor:  fixedpoint.From_Integer(input.B),
-			})
-			wobble := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
-				A: fixedpoint.From_Integer(int64(input.A)),
-				B: fixedpoint.Sine_Turns(turns),
-			})
+			turns := fixedpoint.From_Ratio(
+				fixedpoint.Numerator(phase), fixedpoint.Denominator(input.B),
+			)
+			amplitude := fixedpoint.Number(fixedpoint.From_Integer(
+				fixedpoint.Whole_Integer(input.A),
+			))
+			wobble := fixedpoint.Multiply(
+				fixedpoint.Multiplicand(amplitude),
+				fixedpoint.Multiplier(fixedpoint.Sine_Turns(turns)),
+			)
 			return Duration(fixedpoint.Whole(wobble))
 		}
 	case SKEW_KIND_STEP:

@@ -1304,10 +1304,10 @@ func In_Epsilon(t *testing.T, input *In_Epsilon_Input, message_and_args ...any) 
 		message := "expected value must be non-zero to compute a relative error"
 		return Fail(t, message, message_and_args...)
 	}
-	relative := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: fixedpoint_absolute(input.Expected - input.Actual),
-		Divisor:  fixedpoint_absolute(input.Expected),
-	})
+	relative := fixedpoint.Divide(
+		fixedpoint.Dividend(fixedpoint_absolute(input.Expected-input.Actual)),
+		fixedpoint.Divisor(fixedpoint_absolute(input.Expected)),
+	)
 	// Number and Ratio share SCALE, so the relative error compares to Epsilon directly.
 	if int64(relative) <= int64(input.Epsilon) {
 		return true

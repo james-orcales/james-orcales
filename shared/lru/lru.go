@@ -646,7 +646,8 @@ func two_queue_ensure_space[K comparable, V any](c *Two_Queue[K, V], recent_evic
 // the upstream int(float64(size) * ratio). fixedpoint is the house stand-in for float64; Apply
 // scales a Number by a dimensionless Ratio.
 func ratio_of(size int, ratio fixedpoint.Ratio) (scaled int) {
-	product := fixedpoint.Apply(fixedpoint.From_Integer(int64(size)), ratio)
+	number := fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(size)))
+	product := fixedpoint.Apply(number, ratio)
 	return int(fixedpoint.Whole(product))
 }
 
