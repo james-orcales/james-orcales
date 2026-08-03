@@ -68,7 +68,7 @@ func Test_Statistics_Distribution(t *testing.T) {
 	if measurement.Sample_Count != 5 {
 		t.Fatalf("sample count = %d, want 5", measurement.Sample_Count)
 	}
-	if measurement.Mean != fixedpoint.From_Integer(30) {
+	if measurement.Mean != fixedpoint_number(30) {
 		t.Fatalf("mean = %d, want 30.0", measurement.Mean)
 	}
 	// Sample standard deviation uses n-1 in the denominator: sqrt(1000/4) = 15.811388.
@@ -76,19 +76,19 @@ func Test_Statistics_Distribution(t *testing.T) {
 		t.Fatalf("stddev = %s, want 15.811",
 			fixedpoint.Format(measurement.Standard_Deviation, 3))
 	}
-	if measurement.Min != fixedpoint.From_Integer(10) {
+	if measurement.Min != fixedpoint_number(10) {
 		t.Fatalf("min = %d, want 10.0", measurement.Min)
 	}
-	if measurement.Max != fixedpoint.From_Integer(50) {
+	if measurement.Max != fixedpoint_number(50) {
 		t.Fatalf("max = %d, want 50.0", measurement.Max)
 	}
-	if measurement.Median != fixedpoint.From_Integer(30) {
+	if measurement.Median != fixedpoint_number(30) {
 		t.Fatalf("median = %d, want 30.0", measurement.Median)
 	}
-	if measurement.Q1 != fixedpoint.From_Integer(20) {
+	if measurement.Q1 != fixedpoint_number(20) {
 		t.Fatalf("q1 = %d, want 20.0", measurement.Q1)
 	}
-	if measurement.Q3 != fixedpoint.From_Integer(50) {
+	if measurement.Q3 != fixedpoint_number(50) {
 		t.Fatalf("q3 = %d, want 50.0", measurement.Q3)
 	}
 }
@@ -109,8 +109,8 @@ func Test_Statistics_Outliers(t *testing.T) {
 // significant, so the baseline never flags itself as a change.
 func Test_Comparison_Reference(t *testing.T) {
 	reference := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(100),
-		Standard_Deviation: fixedpoint.From_Integer(5),
+		Mean:               fixedpoint_number(100),
+		Standard_Deviation: fixedpoint_number(5),
 		Sample_Count:       10,
 		Unit:               "count",
 	}
@@ -124,8 +124,8 @@ func Test_Comparison_Reference(t *testing.T) {
 	// A real program reports metrics in the billions; a standard deviation past 2^32
 	// must not overflow the pooled-variance arithmetic.
 	large := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(20_000_000_000),
-		Standard_Deviation: fixedpoint.From_Integer(6_000_000_000),
+		Mean:               fixedpoint_number(20_000_000_000),
+		Standard_Deviation: fixedpoint_number(6_000_000_000),
 		Sample_Count:       10,
 		Unit:               "count",
 	}
@@ -140,14 +140,14 @@ func Test_Comparison_Reference(t *testing.T) {
 // confidence interval clears the +1% band, and the candidate is not faster.
 func Test_Comparison_Significance(t *testing.T) {
 	reference := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(100),
-		Standard_Deviation: fixedpoint.From_Integer(1),
+		Mean:               fixedpoint_number(100),
+		Standard_Deviation: fixedpoint_number(1),
 		Sample_Count:       20,
 		Unit:               "count",
 	}
 	candidate := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(200),
-		Standard_Deviation: fixedpoint.From_Integer(1),
+		Mean:               fixedpoint_number(200),
+		Standard_Deviation: fixedpoint_number(1),
 		Sample_Count:       20,
 		Unit:               "count",
 	}
@@ -158,7 +158,7 @@ func Test_Comparison_Significance(t *testing.T) {
 	if delta.Faster {
 		t.Fatal("a doubled mean is slower, not faster")
 	}
-	if delta.Diff_Percent != fixedpoint.From_Integer(100) {
+	if delta.Diff_Percent != fixedpoint_number(100) {
 		t.Fatalf("diff percent = %d, want 100.0", delta.Diff_Percent)
 	}
 }
@@ -374,13 +374,13 @@ func Test_Table_Header(t *testing.T) {
 // Test_Table_Units verifies a raw nanosecond value is scaled to a human unit: a
 // ~14.9ms mean renders in milliseconds, not bare nanoseconds.
 func Test_Table_Units(t *testing.T) {
-	wall_ns := fixedpoint.From_Integer(14906807)
+	wall_ns := fixedpoint_number(14906807)
 	wall := maddox.Measurement{
 		Mean: wall_ns, Min: wall_ns, Max: wall_ns, Median: wall_ns,
 		Q1: wall_ns, Q3: wall_ns, Sample_Count: 3, Unit: "nanoseconds",
 	}
 	// 2 MiB exactly: binary scaling renders "2MiB", decimal would be "2.10MB".
-	bytes_2mib := fixedpoint.From_Integer(2097152)
+	bytes_2mib := fixedpoint_number(2097152)
 	memory := maddox.Measurement{
 		Mean: bytes_2mib, Min: bytes_2mib, Max: bytes_2mib, Median: bytes_2mib,
 		Q1: bytes_2mib, Q3: bytes_2mib, Sample_Count: 3, Unit: "bytes",
@@ -405,12 +405,12 @@ func Test_Table_Units(t *testing.T) {
 // Test_Table_Delta verifies a non-reference benchmark's row carries its signed
 // percentage change against the reference.
 func Test_Table_Delta(t *testing.T) {
-	mean := fixedpoint.From_Integer(1_000_000)
+	mean := fixedpoint_number(1_000_000)
 	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	deltas := maddox.Deltas{
 		Wall_Time: maddox.Wall_Time_Delta(maddox.Delta{
-			Diff_Percent: fixedpoint.From_Integer(50),
-			Half_Percent: fixedpoint.From_Integer(2),
+			Diff_Percent: fixedpoint_number(50),
+			Half_Percent: fixedpoint_number(2),
 			Significant:  true,
 		}),
 	}
@@ -432,12 +432,12 @@ func Test_Table_Delta(t *testing.T) {
 // Test_Table_Color verifies ANSI escapes mark the delta only when color is enabled,
 // and never otherwise.
 func Test_Table_Color(t *testing.T) {
-	mean := fixedpoint.From_Integer(1_000_000)
+	mean := fixedpoint_number(1_000_000)
 	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	deltas := maddox.Deltas{
 		Wall_Time: maddox.Wall_Time_Delta(maddox.Delta{
-			Diff_Percent: fixedpoint.From_Integer(50),
-			Half_Percent: fixedpoint.From_Integer(2),
+			Diff_Percent: fixedpoint_number(50),
+			Half_Percent: fixedpoint_number(2),
 			Significant:  true,
 		}),
 	}
@@ -468,7 +468,7 @@ func Test_Table_Color(t *testing.T) {
 // Linux-only counters on macOS — is omitted from the table, while a metric that has
 // data is shown.
 func Test_Table_Sparse(t *testing.T) {
-	mean := fixedpoint.From_Integer(1_000_000)
+	mean := fixedpoint_number(1_000_000)
 	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	measurements := filled_measurements()
 	measurements.Wall_Time = maddox.Wall_Time_Measurement(wall)
@@ -614,6 +614,11 @@ func Test_Progress(t *testing.T) {
 	if hidden.Len() != 0 {
 		t.Fatalf("progress disabled must write nothing, got: %q", hidden.String())
 	}
+}
+
+// Converts one whole integer to the general fixed-point arithmetic type.
+func fixedpoint_number(value int64) (number fixedpoint.Number) {
+	return fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(value)))
 }
 
 // Decode unmarshals a JSON report from the buffer, failing the test if it is not

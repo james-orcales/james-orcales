@@ -1991,21 +1991,27 @@ func Measurement_Compute(values Values, unit Unit) (measurement Measurement) {
 	if count >= 4 {
 		high_quartile = sorted[count-count/4]
 	}
-	q1 := fixedpoint.From_Integer(low_quartile)
-	q3 := fixedpoint.From_Integer(high_quartile)
-	mean := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: total, Denominator: int64(count),
-	})
+	q1 := fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(low_quartile)))
+	q3 := fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(high_quartile)))
+	mean := fixedpoint.From_Ratio(
+		fixedpoint.Numerator(total), fixedpoint.Denominator(count),
+	)
 	deviation := standard_deviation(Deviations(values), Average(mean_integer), Kept(count))
 
 	measurement = Measurement{
 		Mean:               mean,
 		Standard_Deviation: deviation,
-		Min:                fixedpoint.From_Integer(sorted[0]),
-		Max:                fixedpoint.From_Integer(sorted[count-1]),
-		Median:             fixedpoint.From_Integer(sorted[count/2]),
-		Q1:                 q1,
-		Q3:                 q3,
+		Min: fixedpoint.Number(fixedpoint.From_Integer(
+			fixedpoint.Whole_Integer(sorted[0]),
+		)),
+		Max: fixedpoint.Number(fixedpoint.From_Integer(
+			fixedpoint.Whole_Integer(sorted[count-1]),
+		)),
+		Median: fixedpoint.Number(fixedpoint.From_Integer(
+			fixedpoint.Whole_Integer(sorted[count/2]),
+		)),
+		Q1: q1,
+		Q3: q3,
 		Outlier_Count: outlier_count(&Outlier_Count_Input{
 			Sorted:        Points(sorted),
 			Low_Quartile:  Low_Quartile(low_quartile),
@@ -2122,11 +2128,14 @@ func root_of_quotient(input *Root_Of_Quotient_Input) (deviation fixedpoint.Numbe
 		fits = quotient_low <= INT64_MAX
 	}
 	if fits {
-		return fixedpoint.Square_Root_Scaled(int64(quotient_low))
+		return fixedpoint.Number(fixedpoint.Square_Root_Scaled(
+			fixedpoint.Radicand(quotient_low),
+		))
 	}
-	return fixedpoint.From_Integer(fixedpoint.Integer_Root(&fixedpoint.Integer_Root_Input{
-		High: quotient_high, Low: quotient_low,
-	}))
+	root := fixedpoint.Integer_Root(
+		fixedpoint.High_Word(quotient_high), fixedpoint.Low_Word(quotient_low),
+	)
+	return fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(root)))
 }
 
 // Low_Quartile is the lower quartile in the raw metric domain.
@@ -2220,9 +2229,10 @@ func Compare(reference Measurement, candidate Candidate_Measurement) (delta Delt
 	if reference.Mean == 0 {
 		return delta
 	}
-	ratio := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: candidate_measurement.Mean - reference.Mean, Divisor: reference.Mean,
-	})
+	ratio := fixedpoint.Divide(
+		fixedpoint.Dividend(candidate_measurement.Mean-reference.Mean),
+		fixedpoint.Divisor(reference.Mean),
+	)
 	delta.Diff_Percent = ratio * 100
 	delta.Faster = candidate_measurement.Mean < reference.Mean
 
@@ -2248,17 +2258,15 @@ func half_interval(
 	Measurement_Invariants(reference, "half_interval.reference")
 	Candidate_Measurement_Invariants(candidate, "half_interval.candidate")
 	Degree_Invariants(degrees, "half_interval.degrees")
-	first := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: 1, Denominator: int64(candidate.Sample_Count),
-	})
-	second := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: 1, Denominator: int64(reference.Sample_Count),
-	})
-	normalizer := fixedpoint.Square_Root(first + second)
+	first := fixedpoint.From_Ratio(1, fixedpoint.Denominator(candidate.Sample_Count))
+	second := fixedpoint.From_Ratio(1, fixedpoint.Denominator(reference.Sample_Count))
+	normalizer := fixedpoint.Number(fixedpoint.Square_Root(first + second))
 	pooled := pooled_deviation(reference, candidate, degrees)
 	score := student_t_score(degrees)
-	band := fixedpoint.Multiply(&fixedpoint.Multiply_Input{A: score, B: pooled})
-	band = fixedpoint.Multiply(&fixedpoint.Multiply_Input{A: band, B: normalizer})
+	band := fixedpoint.Multiply(fixedpoint.Multiplicand(score), fixedpoint.Multiplier(pooled))
+	band = fixedpoint.Multiply(
+		fixedpoint.Multiplicand(band), fixedpoint.Multiplier(normalizer),
+	)
 	return band * 100
 }
 
@@ -2273,21 +2281,23 @@ func pooled_deviation(
 	Candidate_Measurement_Invariants(candidate, "pooled_deviation.candidate")
 	Degree_Invariants(degrees, "pooled_deviation.degrees")
 	mean := reference.Mean
-	candidate_deviation := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: candidate.Standard_Deviation, Divisor: mean,
-	})
-	reference_deviation := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: reference.Standard_Deviation, Divisor: mean,
-	})
-	candidate_variance := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
-		A: candidate_deviation, B: candidate_deviation,
-	})
-	reference_variance := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
-		A: reference_deviation, B: reference_deviation,
-	})
+	candidate_deviation := fixedpoint.Divide(
+		fixedpoint.Dividend(candidate.Standard_Deviation), fixedpoint.Divisor(mean),
+	)
+	reference_deviation := fixedpoint.Divide(
+		fixedpoint.Dividend(reference.Standard_Deviation), fixedpoint.Divisor(mean),
+	)
+	candidate_variance := fixedpoint.Multiply(
+		fixedpoint.Multiplicand(candidate_deviation), fixedpoint.Multiplier(candidate_deviation),
+	)
+	reference_variance := fixedpoint.Multiply(
+		fixedpoint.Multiplicand(reference_deviation), fixedpoint.Multiplier(reference_deviation),
+	)
 	weighted := candidate_variance*fixedpoint.Number(candidate.Sample_Count-1) +
 		reference_variance*fixedpoint.Number(reference.Sample_Count-1)
-	return fixedpoint.Square_Root(weighted / fixedpoint.Number(int(degrees)))
+	return fixedpoint.Number(
+		fixedpoint.Square_Root(weighted / fixedpoint.Number(int(degrees))),
+	)
 }
 
 // Student_t_score returns the Student-t critical value for 95% confidence at the given
@@ -2317,9 +2327,7 @@ func student_t_score(degrees_of_freedom Degree) (score fixedpoint.Number) {
 			milli = table_10s[freedom/10-1]
 		}
 	}
-	return fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: milli, Denominator: 1000,
-	})
+	return fixedpoint.From_Ratio(fixedpoint.Numerator(milli), 1000)
 }
 
 // Significant_Input carries the difference and its confidence half-interval, both as
@@ -2344,13 +2352,15 @@ func Significant_Input_Invariants(input Significant_Input, namespace invariant.N
 func significant(input *Significant_Input) (is Significance) {
 	defer func() { Significance_Invariants(is, "significant.is") }()
 	Significant_Input_Invariants(*input, "significant.input")
-	if input.Diff_Percent >= fixedpoint.From_Integer(1) {
-		if input.Diff_Percent-input.Half_Percent >= fixedpoint.From_Integer(1) {
+	one := fixedpoint.Number(fixedpoint.From_Integer(1))
+	if input.Diff_Percent >= one {
+		if input.Diff_Percent-input.Half_Percent >= one {
 			return true
 		}
 	}
-	if input.Diff_Percent <= fixedpoint.From_Integer(-1) {
-		if input.Diff_Percent+input.Half_Percent <= fixedpoint.From_Integer(-1) {
+	negative_one := fixedpoint.Number(fixedpoint.From_Integer(-1))
+	if input.Diff_Percent <= negative_one {
+		if input.Diff_Percent+input.Half_Percent <= negative_one {
 			return true
 		}
 	}
@@ -2527,14 +2537,10 @@ func format_hz(hz Hertz) (text Frequency) {
 		return "?"
 	}
 	if hz >= 1_000_000_000 {
-		gigahertz := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-			Numerator: int64(hz), Denominator: 1_000_000_000,
-		})
+		gigahertz := fixedpoint.From_Ratio(fixedpoint.Numerator(hz), 1_000_000_000)
 		return Frequency(fixedpoint.Format(gigahertz, 2) + " GHz")
 	}
-	megahertz := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: int64(hz), Denominator: 1_000_000,
-	})
+	megahertz := fixedpoint.From_Ratio(fixedpoint.Numerator(hz), 1_000_000)
 	return Frequency(fixedpoint.Format(megahertz, 0) + " MHz")
 }
 
@@ -2549,15 +2555,16 @@ func format_bytes(value Byte_Size) (text Cell) {
 	Byte_Size_Invariants(value, "format_bytes.value")
 	raw := int64(value)
 	for _, step := range byte_ladder() {
-		rung := fixedpoint.Whole(step.Divisor)
+		rung := int64(fixedpoint.Whole(step.Divisor))
 		if raw >= rung {
-			scaled := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-				Numerator: raw, Denominator: rung,
-			})
+			scaled := fixedpoint.From_Ratio(
+				fixedpoint.Numerator(raw), fixedpoint.Denominator(rung),
+			)
 			return Cell(string(format_significant(scaled)) + string(step.Suffix))
 		}
 	}
-	return Cell(string(format_significant(fixedpoint.From_Integer(raw))))
+	integer := fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(raw)))
+	return Cell(string(format_significant(integer)))
 }
 
 // ELAPSED_DISPLAY_MAX caps the total sampling time the table header renders. Kiloseconds is the
@@ -2600,15 +2607,16 @@ func format_elapsed(elapsed time.Duration) (text Span) {
 		raw = ELAPSED_DISPLAY_MAX
 	}
 	for _, step := range time_ladder() {
-		rung := fixedpoint.Whole(step.Divisor)
+		rung := int64(fixedpoint.Whole(step.Divisor))
 		if raw >= rung {
-			scaled := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-				Numerator: raw, Denominator: rung,
-			})
+			scaled := fixedpoint.From_Ratio(
+				fixedpoint.Numerator(raw), fixedpoint.Denominator(rung),
+			)
 			return Span(string(format_significant(scaled)) + string(step.Suffix))
 		}
 	}
-	return Span(string(format_significant(fixedpoint.From_Integer(raw))))
+	integer := fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(raw)))
+	return Span(string(format_significant(integer)))
 }
 
 // Write_table renders the table and writes it to output, returning EXIT_FAILURE if
@@ -2760,13 +2768,13 @@ func metric_line(input *Metric_Line_Input) (text Full_Row) {
 	unit := measurement.Unit
 	outlier_percent := fixedpoint.Number(0)
 	if measurement.Sample_Count > 0 {
-		outlier_percent = fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-			Numerator:   int64(measurement.Outlier_Count) * 100,
-			Denominator: int64(measurement.Sample_Count),
-		})
+		outlier_percent = fixedpoint.From_Ratio(
+			fixedpoint.Numerator(measurement.Outlier_Count)*100,
+			fixedpoint.Denominator(measurement.Sample_Count),
+		)
 	}
 	outlier_text := strconv.Itoa(int(measurement.Outlier_Count)) +
-		" (" + fixedpoint.Format(outlier_percent, 0) + "%)"
+		" (" + string(fixedpoint.Format(outlier_percent, 0)) + "%)"
 	row := render_cells(&Render_Cells_Input{
 		Name:     input.Name,
 		Mean:     Mean_Cell(format_quantity(measurement.Mean, unit)),
@@ -3689,9 +3697,9 @@ func scale_ladder(
 	Ladder_Invariants(ladder, "scale_ladder.ladder")
 	for _, step := range ladder {
 		if value >= step.Divisor {
-			scaled = fixedpoint.Divide(&fixedpoint.Divide_Input{
-				Dividend: value, Divisor: step.Divisor,
-			})
+			scaled = fixedpoint.Divide(
+				fixedpoint.Dividend(value), fixedpoint.Divisor(step.Divisor),
+			)
 			return scaled, Suffix(step.Suffix)
 		}
 	}
@@ -3702,11 +3710,11 @@ func scale_ladder(
 func time_ladder() (ladder Ladder) {
 	defer func() { Ladder_Invariants(ladder, "time_ladder.ladder") }()
 	return Ladder{
-		{Divisor: fixedpoint.From_Integer(1_000_000_000_000), Suffix: "ks"},
-		{Divisor: fixedpoint.From_Integer(1_000_000_000), Suffix: "s"},
-		{Divisor: fixedpoint.From_Integer(1_000_000), Suffix: "ms"},
-		{Divisor: fixedpoint.From_Integer(1_000), Suffix: "us"},
-		{Divisor: fixedpoint.From_Integer(1), Suffix: "ns"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000_000)), Suffix: "ks"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000)), Suffix: "s"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000)), Suffix: "ms"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000)), Suffix: "us"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1)), Suffix: "ns"},
 	}
 }
 
@@ -3715,11 +3723,11 @@ func time_ladder() (ladder Ladder) {
 func byte_ladder() (ladder Ladder) {
 	defer func() { Ladder_Invariants(ladder, "byte_ladder.ladder") }()
 	return Ladder{
-		{Divisor: fixedpoint.From_Integer(1024 * 1024 * 1024 * 1024), Suffix: "TiB"},
-		{Divisor: fixedpoint.From_Integer(1024 * 1024 * 1024), Suffix: "GiB"},
-		{Divisor: fixedpoint.From_Integer(1024 * 1024), Suffix: "MiB"},
-		{Divisor: fixedpoint.From_Integer(1024), Suffix: "KiB"},
-		{Divisor: fixedpoint.From_Integer(1), Suffix: "B"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024 * 1024 * 1024 * 1024)), Suffix: "TiB"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024 * 1024 * 1024)), Suffix: "GiB"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024 * 1024)), Suffix: "MiB"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1024)), Suffix: "KiB"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1)), Suffix: "B"},
 	}
 }
 
@@ -3727,10 +3735,10 @@ func byte_ladder() (ladder Ladder) {
 func count_ladder() (ladder Ladder) {
 	defer func() { Ladder_Invariants(ladder, "count_ladder.ladder") }()
 	return Ladder{
-		{Divisor: fixedpoint.From_Integer(1_000_000_000_000), Suffix: "T"},
-		{Divisor: fixedpoint.From_Integer(1_000_000_000), Suffix: "G"},
-		{Divisor: fixedpoint.From_Integer(1_000_000), Suffix: "M"},
-		{Divisor: fixedpoint.From_Integer(1_000), Suffix: "K"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000_000)), Suffix: "T"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000_000)), Suffix: "G"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000_000)), Suffix: "M"},
+		{Divisor: fixedpoint.Number(fixedpoint.From_Integer(1_000)), Suffix: "K"},
 	}
 }
 
@@ -3738,16 +3746,16 @@ func count_ladder() (ladder Ladder) {
 // numbers and hundreds with no decimals, tens with one, units with two.
 func format_significant(value fixedpoint.Number) (text Glyph) {
 	defer func() { Glyph_Invariants(text, "format_significant.text") }()
-	if value >= fixedpoint.From_Integer(1000) {
+	if value >= fixedpoint.Number(fixedpoint.From_Integer(1000)) {
 		return Glyph(fixedpoint.Format(value, 0))
 	}
 	if fixedpoint.Is_Integer(value) {
 		return Glyph(fixedpoint.Format(value, 0))
 	}
-	if value >= fixedpoint.From_Integer(100) {
+	if value >= fixedpoint.Number(fixedpoint.From_Integer(100)) {
 		return Glyph(fixedpoint.Format(value, 0))
 	}
-	if value >= fixedpoint.From_Integer(10) {
+	if value >= fixedpoint.Number(fixedpoint.From_Integer(10)) {
 		return Glyph(fixedpoint.Format(value, 1))
 	}
 	return Glyph(fixedpoint.Format(value, 2))
@@ -3812,9 +3820,9 @@ func Render_Progress_Input_Invariants(input Render_Progress_Input, namespace inv
 // when the total is disabled), and the command. Gated by Progress at the call site.
 func render_progress(stderr io.Writer, input *Render_Progress_Input) {
 	Render_Progress_Input_Invariants(*input, "render_progress.input")
-	seconds := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: int64(input.Elapsed), Denominator: int64(time.SECOND),
-	})
+	seconds := fixedpoint.From_Ratio(
+		fixedpoint.Numerator(input.Elapsed), fixedpoint.Denominator(time.SECOND),
+	)
 	counter := strconv.Itoa(int(input.Count))
 	if input.Total > 0 {
 		counter = counter + "/" + strconv.FormatInt(int64(input.Total), 10)
@@ -3824,7 +3832,7 @@ func render_progress(stderr io.Writer, input *Render_Progress_Input) {
 		phase_text = string(input.Phase) + " "
 	}
 	command_label := progress_label(command_words(input.Command))
-	output := PROGRESS_CLEAR + fixedpoint.Format(seconds, 1) + "s  " +
+	output := PROGRESS_CLEAR + string(fixedpoint.Format(seconds, 1)) + "s  " +
 		phase_text + counter + "  " + string(command_label)
 	stderr.Write([]byte(output))
 }
