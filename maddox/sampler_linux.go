@@ -68,7 +68,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	after := clock.Now_Monotonic()
 	wall := time.Duration(after - before)
 	// The completion stamp drives the budget stopwatch, spanning the gaps between runs.
-	result.Completed_At = after
+	result.Completed_At = maddox.Completion_Moment(after)
 	if counters.spawn_errno != 0 {
 		result.Exit = SPAWN_FAILURE_EXIT
 		result.Stderr = []byte("maddox: cannot spawn " + command.Path + "\n")
@@ -76,15 +76,15 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	}
 
 	result.Sample = maddox.Sample{
-		Wall:             wall,
+		Wall:             maddox.Metric(wall),
 		RSS_Bytes_Max:    maddox.Resident_Bytes(counters.rss_bytes),
 		CPU_Cycles:       maddox.Cycle_Count(counters.cycles),
 		Instructions:     maddox.Instruction_Count(counters.instructions),
 		Cache_References: maddox.Cache_Reference_Count(counters.cache_references),
 		Cache_Misses:     maddox.Cache_Miss_Count(counters.cache_misses),
 		Branch_Misses:    maddox.Branch_Miss_Count(counters.branch_misses),
-		CPU_User:         time.Duration(counters.user_ns),
-		CPU_System:       time.Duration(counters.system_ns),
+		CPU_User:         maddox.User_Time(counters.user_ns),
+		CPU_System:       maddox.System_Time(counters.system_ns),
 	}
 	result.Exit = maddox.Exit_Status(counters.exit_code)
 	if result.Exit != 0 {

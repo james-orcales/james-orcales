@@ -154,9 +154,9 @@ func drive(s scenario) {
 				wall = sample_value(s, wall_center, run)
 			}
 			wall = metric_clamp(wall)
-			result.Sample.Wall = time.Duration(wall)
+			result.Sample.Wall = maddox.Metric(wall)
 			elapsed_virtual += time.Duration(wall)
-			result.Completed_At = time.Moment(elapsed_virtual)
+			result.Completed_At = maddox.Completion_Moment(elapsed_virtual)
 			fail := false
 			if s.Fail_Command > 0 {
 				if command_index == s.Fail_Command-1 {
@@ -332,8 +332,8 @@ func sample_from(value int64) (sample maddox.Sample) {
 	sample.Cache_References = maddox.Cache_Reference_Count(value)
 	sample.Cache_Misses = maddox.Cache_Miss_Count(value)
 	sample.Branch_Misses = maddox.Branch_Miss_Count(value)
-	sample.CPU_User = time.Duration(value)
-	sample.CPU_System = time.Duration(value)
+	sample.CPU_User = maddox.User_Time(value)
+	sample.CPU_System = maddox.System_Time(value)
 	return sample
 }
 

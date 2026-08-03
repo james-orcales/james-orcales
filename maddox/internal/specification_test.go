@@ -29,7 +29,7 @@ func Test_Command_Line_Arguments(t *testing.T) {
 		Sampler: maddox.Sampler{
 			Measure: func(command io.Process_Request) (result maddox.Run_Result) {
 				measured = append(measured, command)
-				result.Sample.Wall = time.MILLISECOND
+				result.Sample.Wall = maddox.Metric(time.MILLISECOND)
 				return result
 			},
 		},
@@ -171,9 +171,10 @@ func Test_Sampling_Budget(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
+			result.Sample.Wall = maddox.Metric(per_run)
 			// A real clock advances each run; the stopwatch reads this stamp.
-			result.Completed_At = time.Moment(time.Duration(calls) * per_run)
+			result.Completed_At = maddox.Completion_Moment(
+				time.Duration(calls) * per_run)
 			return result
 		},
 	}
@@ -201,7 +202,7 @@ func Test_Sampling_Runs(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
+			result.Sample.Wall = maddox.Metric(per_run)
 			return result
 		},
 	}
@@ -227,8 +228,9 @@ func Test_Sampling_Minimum(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
-			result.Completed_At = time.Moment(time.Duration(calls) * per_run)
+			result.Sample.Wall = maddox.Metric(per_run)
+			result.Completed_At = maddox.Completion_Moment(
+				time.Duration(calls) * per_run)
 			return result
 		},
 	}
@@ -255,8 +257,9 @@ func Test_Sampling_Warmup(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
-			result.Completed_At = time.Moment(time.Duration(calls) * per_run)
+			result.Sample.Wall = maddox.Metric(per_run)
+			result.Completed_At = maddox.Completion_Moment(
+				time.Duration(calls) * per_run)
 			return result
 		},
 	}
@@ -286,7 +289,9 @@ func Test_Sampling_Warmup(t *testing.T) {
 func Test_Output_Document(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
-			result.Sample = maddox.Sample{Wall: time.MILLISECOND, Instructions: 100}
+			result.Sample = maddox.Sample{
+				Wall: maddox.Metric(time.MILLISECOND), Instructions: 100,
+			}
 			return result
 		},
 	}
@@ -352,7 +357,7 @@ func Test_Table_Header(t *testing.T) {
 		{
 			Command:      []maddox.Command_Word{"echo", "hi"},
 			Runs:         5,
-			Elapsed:      2 * time.SECOND,
+			Elapsed:      maddox.Elapsed(2 * time.SECOND),
 			Measurements: filled_measurements(),
 		},
 	}}
@@ -505,7 +510,7 @@ func Test_Table_Sparse(t *testing.T) {
 func Test_Machine_Document(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
-			result.Sample.Wall = time.MILLISECOND
+			result.Sample.Wall = maddox.Metric(time.MILLISECOND)
 			return result
 		},
 	}

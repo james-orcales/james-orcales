@@ -101,9 +101,11 @@ func Main(input Main_Input) (code Exit_Code) {
 	color_mode := Stream_Mode(cli.Get_Option(command.Flags, "color").Value.(string))
 	progress_mode := Stream_Mode(cli.Get_Option(command.Flags, "progress").Value.(string))
 	return Exit_Code(main_benchmark(&Benchmark_Input{
-		Commands:       Commands(commands),
-		Sampler:        input.Sampler,
-		Duration_Max:   time.Duration(duration_seconds) * time.SECOND,
+		Commands: Commands(commands),
+		Sampler:  input.Sampler,
+		Duration_Max: Duration_Limit(
+			time.Duration(duration_seconds) * time.SECOND,
+		),
 		Runs_Max:       Run_Limit(runs),
 		Warmup_Count:   Warmup_Limit(warmup),
 		Allow_Failures: Failure_Allowance(allow_failures),
@@ -457,10 +459,30 @@ func Branch_Miss_Count_Invariants(value Branch_Miss_Count, namespace invariant.N
 		Ensure()
 }
 
+// User_Time is one sample's user-space CPU time.
+type User_Time time.Duration
+
+// User_Time_Invariants bounds a user-space CPU-time sample as a metric.
+func User_Time_Invariants(value User_Time, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Ensure()
+}
+
+// System_Time is one sample's kernel-space CPU time.
+type System_Time time.Duration
+
+// System_Time_Invariants bounds a kernel-space CPU-time sample as a metric.
+func System_Time_Invariants(value System_Time, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
+		Ensure()
+}
+
 // Sample is one run's measurements.
 type Sample struct {
 	// Wall is the run's elapsed time, measured and reported by the sampler that ran it.
-	Wall time.Duration
+	Wall Metric
 	// RSS_Bytes_Max is the run's peak physical memory footprint, in bytes.
 	RSS_Bytes_Max Resident_Bytes
 	// CPU_Cycles is the run's CPU cycle count from the hardware counters.
@@ -474,22 +496,22 @@ type Sample struct {
 	// Branch_Misses is the run's mispredicted-branch count (Linux only).
 	Branch_Misses Branch_Miss_Count
 	// CPU_User is the run's user-space CPU time.
-	CPU_User time.Duration
+	CPU_User User_Time
 	// CPU_System is the run's kernel-space CPU time.
-	CPU_System time.Duration
+	CPU_System System_Time
 }
 
-// Sample_Invariants states a Sample's counter fields as the bounded metrics they are;
-// the time.Duration fields carry their metric bound at the selector, not here. A counter
-// past the representable ceiling, or a garbage negative one, trips the metric guard rather
-// than silently overflowing the statistics downstream.
+// Sample_Invariants states a Sample's metric fields.
 func Sample_Invariants(sample Sample, namespace invariant.Namespace) {
+	Metric_Invariants(sample.Wall, namespace)
 	Resident_Bytes_Invariants(sample.RSS_Bytes_Max, namespace)
 	Cycle_Count_Invariants(sample.CPU_Cycles, namespace)
 	Instruction_Count_Invariants(sample.Instructions, namespace)
 	Cache_Reference_Count_Invariants(sample.Cache_References, namespace)
 	Cache_Miss_Count_Invariants(sample.Cache_Misses, namespace)
 	Branch_Miss_Count_Invariants(sample.Branch_Misses, namespace)
+	User_Time_Invariants(sample.CPU_User, namespace)
+	System_Time_Invariants(sample.CPU_System, namespace)
 }
 
 // CAPTURE_BYTES_MIN is the empty capture: a command that wrote nothing to stderr.
@@ -510,6 +532,16 @@ func Captured_Output_Invariants(output Captured_Output, namespace invariant.Name
 		Ensure()
 }
 
+// Completion_Moment is the monotonic clock reading after one measured run.
+type Completion_Moment time.Moment
+
+// Completion_Moment_Invariants distinguishes an absent stamp from a measured stamp.
+func Completion_Moment_Invariants(value Completion_Moment, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(value != 0, "A completion moment is set.").
+		Ensure()
+}
+
 // Run_Result is everything one measured run reports: its Sample, the exit code,
 // and the stderr captured for a failing run.
 type Run_Result struct {
@@ -519,7 +551,7 @@ type Run_Result struct {
 	// drives the time budget as a real stopwatch — spanning the gaps between runs, which
 	// the reported per-run wall does not — while the library itself reads no clock: it
 	// only subtracts the moments the sampler hands it. Left zero when the budget is off.
-	Completed_At time.Moment
+	Completed_At Completion_Moment
 	// Exit is the command's exit code; non-zero is a failure.
 	Exit Exit_Status
 	// Stderr is the command's captured stderr, surfaced on failure.
@@ -529,6 +561,7 @@ type Run_Result struct {
 // Run_Result_Invariants states a Run_Result's fields.
 func Run_Result_Invariants(result Run_Result, namespace invariant.Namespace) {
 	Sample_Invariants(result.Sample, namespace)
+	Completion_Moment_Invariants(result.Completed_At, namespace)
 	Exit_Status_Invariants(result.Exit, namespace)
 	Captured_Output_Invariants(result.Stderr, namespace)
 }
@@ -1874,6 +1907,16 @@ func Deltas_Invariants(deltas Deltas, namespace invariant.Namespace) {
 	System_Time_Delta_Invariants(deltas.CPU_System, namespace)
 }
 
+// Elapsed is accumulated sampling time.
+type Elapsed time.Duration
+
+// Elapsed_Invariants distinguishes an instant sample set from one that consumed time.
+func Elapsed_Invariants(value Elapsed, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(value > 0, "Sampling consumed time.").
+		Ensure()
+}
+
 // Benchmark is one command's entry in the report.
 type Benchmark struct {
 	// Command is the command's words, as a reader recognizes them.
@@ -1881,7 +1924,7 @@ type Benchmark struct {
 	// Runs is how many samples were kept, warmup excluded.
 	Runs Kept `json:"runs"`
 	// Elapsed is the total wall time of the kept runs.
-	Elapsed time.Duration `json:"elapsed_ns"`
+	Elapsed Elapsed `json:"elapsed_ns"`
 	// Measurements is the per-metric distribution.
 	Measurements Measurements `json:"measurements"`
 	// Deltas is the change against the reference; the reference compared against
@@ -1895,6 +1938,7 @@ type Benchmark struct {
 func Benchmark_Invariants(benchmark Benchmark, namespace invariant.Namespace) {
 	Command_Line_Invariants(benchmark.Command, namespace)
 	Kept_Invariants(benchmark.Runs, namespace)
+	Elapsed_Invariants(benchmark.Elapsed, namespace)
 	Measurements_Invariants(benchmark.Measurements, namespace)
 	Deltas_Invariants(benchmark.Deltas, namespace)
 }
@@ -2046,6 +2090,16 @@ func Main_Input_Invariants(input Main_Input, namespace invariant.Namespace) {
 	Machine_Specs_Invariants(input.Machine, namespace)
 }
 
+// Duration_Limit is the optional per-command sampling budget.
+type Duration_Limit time.Duration
+
+// Duration_Limit_Invariants distinguishes an active budget from a disabled budget.
+func Duration_Limit_Invariants(value Duration_Limit, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(value > 0, "A duration limit is active.").
+		Ensure()
+}
+
 // Benchmark_Input carries the configuration resolved from the command line.
 type Benchmark_Input struct {
 	// Commands are the commands to benchmark; the first is the reference.
@@ -2053,7 +2107,7 @@ type Benchmark_Input struct {
 	// Sampler runs and measures one command.
 	Sampler Sampler
 	// Duration_Max is the per-command time budget.
-	Duration_Max time.Duration
+	Duration_Max Duration_Limit
 	// Runs_Max is the per-command run cap.
 	Runs_Max Run_Limit
 	// Warmup_Count is how many runs Main discards before sampling.
@@ -2078,6 +2132,7 @@ type Benchmark_Input struct {
 func Benchmark_Input_Invariants(input Benchmark_Input, namespace invariant.Namespace) {
 	Commands_Invariants(input.Commands, namespace)
 	Sampler_Invariants(input.Sampler, namespace)
+	Duration_Limit_Invariants(input.Duration_Max, namespace)
 	Run_Limit_Invariants(input.Runs_Max, namespace)
 	Warmup_Limit_Invariants(input.Warmup_Count, namespace)
 	Failure_Allowance_Invariants(input.Allow_Failures, namespace)
@@ -2092,7 +2147,7 @@ type Collect_Samples_Input struct {
 	// Sampler runs and measures one command.
 	Sampler Sampler
 	// Duration_Max is the time budget for the command.
-	Duration_Max time.Duration
+	Duration_Max Duration_Limit
 	// Runs_Max is the kept-run limit.
 	Runs_Max Run_Limit
 	// Warmup_Count is the discarded-run limit.
@@ -2110,6 +2165,7 @@ func Collect_Samples_Input_Invariants(
 	input Collect_Samples_Input, namespace invariant.Namespace,
 ) {
 	Sampler_Invariants(input.Sampler, namespace)
+	Duration_Limit_Invariants(input.Duration_Max, namespace)
 	Run_Limit_Invariants(input.Runs_Max, namespace)
 	Warmup_Limit_Invariants(input.Warmup_Count, namespace)
 	Failure_Allowance_Invariants(input.Allow_Failures, namespace)
@@ -2132,7 +2188,7 @@ func main_input_collect_samples(
 	warmups := 0
 	// Elapsed is the running sum of measured wall time, the budget's clock: the library
 	// reads no ambient clock, so a run's cost is the wall the sampler reports, accrued.
-	var warmup_elapsed time.Duration
+	var warmup_elapsed Elapsed
 	for Warmup_Limit(warmups) < input.Warmup_Count {
 		// Warming up past the kept-sample cap is pointless and would carry the warmup
 		// counter past a tally's range, so the cap bounds both.
@@ -2146,7 +2202,7 @@ func main_input_collect_samples(
 			}
 		}
 		warmups++
-		warmup_elapsed += warm.Sample.Wall
+		warmup_elapsed += Elapsed(warm.Sample.Wall)
 		if input.Progress {
 			render_progress(input.Stderr, &Render_Progress_Input{
 				Command: command,
@@ -2157,9 +2213,8 @@ func main_input_collect_samples(
 			})
 		}
 	}
-
 	samples = make([]Sample, 0)
-	var elapsed time.Duration
+	var elapsed Elapsed
 	var stopwatch_start time.Moment
 	for sampling_should_continue(&Sampling_Should_Continue_Input{
 		Duration_Max: input.Duration_Max,
@@ -2177,10 +2232,11 @@ func main_input_collect_samples(
 		sample := result.Sample
 		if len(samples) == 0 {
 			// Anchor at the first run's start so between-run gaps count in the budget.
-			stopwatch_start = result.Completed_At - time.Moment(sample.Wall)
+			stopwatch_start = time.Moment(result.Completed_At) -
+				time.Moment(sample.Wall)
 		}
 		samples = append(samples, sample)
-		elapsed = time.Duration(result.Completed_At - stopwatch_start)
+		elapsed = Elapsed(time.Moment(result.Completed_At) - stopwatch_start)
 		if input.Progress {
 			render_progress(input.Stderr, &Render_Progress_Input{
 				Command: command,
@@ -2196,20 +2252,21 @@ func main_input_collect_samples(
 // Sampling_Should_Continue_Input is the loop state sampling_should_continue judges.
 type Sampling_Should_Continue_Input struct {
 	// Elapsed is the wall time spent sampling so far.
-	Elapsed time.Duration
+	Elapsed Elapsed
 	// Duration_Max is the time budget; zero disables it.
-	Duration_Max time.Duration
+	Duration_Max Duration_Limit
 	// Runs_Max is the run cap; zero disables it.
 	Runs_Max Run_Limit
 	// Count is how many runs have been kept so far.
 	Count Tally
 }
 
-// Sampling_Should_Continue_Input_Invariants states the loop state's integer fields;
-// the durations have no preset of their own.
+// Sampling_Should_Continue_Input_Invariants states the sampling loop state.
 func Sampling_Should_Continue_Input_Invariants(
 	input Sampling_Should_Continue_Input, namespace invariant.Namespace,
 ) {
+	Elapsed_Invariants(input.Elapsed, namespace)
+	Duration_Limit_Invariants(input.Duration_Max, namespace)
 	Run_Limit_Invariants(input.Runs_Max, namespace)
 	Tally_Invariants(input.Count, namespace)
 }
@@ -2236,7 +2293,7 @@ func sampling_should_continue(input *Sampling_Should_Continue_Input) (yes Contin
 		}
 	}
 	if input.Duration_Max > 0 {
-		if input.Elapsed >= input.Duration_Max {
+		if time.Duration(input.Elapsed) >= time.Duration(input.Duration_Max) {
 			return false
 		}
 	}
@@ -2245,10 +2302,11 @@ func sampling_should_continue(input *Sampling_Should_Continue_Input) (yes Contin
 
 // Samples_elapsed sums the wall time of the kept runs — how long the command's
 // measured sampling took in total.
-func samples_elapsed(samples Distribution) (elapsed time.Duration) {
+func samples_elapsed(samples Distribution) (elapsed Elapsed) {
+	defer func() { Elapsed_Invariants(elapsed, "samples_elapsed.elapsed") }()
 	Distribution_Invariants(samples, "samples_elapsed.samples")
 	for _, sample := range samples {
-		elapsed += sample.Wall
+		elapsed += Elapsed(sample.Wall)
 	}
 	return elapsed
 }
@@ -3187,8 +3245,9 @@ func Span_Invariants(text Span, namespace invariant.Namespace) {
 // reduces without overflow; and it caps the magnitude first, so an absurd multi-year span still
 // lands within the header's glyph rather than rendering a five-digit count. The suffix is the
 // rung's own, witnessed by time_ladder.
-func format_elapsed(elapsed time.Duration) (text Span) {
+func format_elapsed(elapsed Elapsed) (text Span) {
 	defer func() { Span_Invariants(text, "format_elapsed.text") }()
+	Elapsed_Invariants(elapsed, "format_elapsed.elapsed")
 	raw := int64(elapsed)
 	if raw > ELAPSED_DISPLAY_MAX {
 		raw = ELAPSED_DISPLAY_MAX
@@ -4437,7 +4496,7 @@ type Render_Progress_Input struct {
 	// Command is the command being sampled.
 	Command sysio.Process_Request
 	// Elapsed is how long it has been sampling.
-	Elapsed time.Duration
+	Elapsed Elapsed
 	// Phase is whether the run is warming up or sampling.
 	Phase Phase
 	// Count is how many runs have completed so far.
@@ -4446,9 +4505,9 @@ type Render_Progress_Input struct {
 	Total Progress_Total
 }
 
-// Render_Progress_Input_Invariants states the update's coverable fields; the command
-// and elapsed duration have no preset of their own.
+// Render_Progress_Input_Invariants states the update's coverable fields.
 func Render_Progress_Input_Invariants(input Render_Progress_Input, namespace invariant.Namespace) {
+	Elapsed_Invariants(input.Elapsed, namespace)
 	Phase_Invariants(input.Phase, namespace)
 	Census_Invariants(input.Count, namespace)
 	Progress_Total_Invariants(input.Total, namespace)
