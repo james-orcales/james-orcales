@@ -2820,6 +2820,15 @@ func integer_maximum(left int, right int) (maximum int) {
 	return right
 }
 
+// ANSI_BLUE colors the property total, which is the number a reader takes in first.
+const ANSI_BLUE = "\033[34m"
+
+// ANSI_YELLOW colors the panic-able subset, keeping it distinct from the total it sits inside.
+const ANSI_YELLOW = "\033[33m"
+
+// ANSI_RESET ends one colored span so the rest of the line keeps the terminal's own color.
+const ANSI_RESET = "\033[0m"
+
 // Recorder_Assertion_Summary keeps the enforced subset visible because an undifferentiated total
 // cannot distinguish branch exploration from contracts whose violation terminates execution.
 func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
@@ -2838,12 +2847,14 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 		}
 		return true
 	})
+	total := ANSI_BLUE + strconv.Itoa(properties) + ANSI_RESET
+	enforced := ANSI_YELLOW + strconv.Itoa(panic_able) + ANSI_RESET
 	if recorder.Package_Label != "" {
-		return fmt.Sprintf("✓ %s: tested %d properties, of which %d are panic-able",
-			recorder.Package_Label, properties, panic_able)
+		return fmt.Sprintf("✓ %s: tested %s properties, of which %s are panic-able",
+			recorder.Package_Label, total, enforced)
 	}
-	return fmt.Sprintf("✓ tested %d properties, of which %d are panic-able",
-		properties, panic_able)
+	return fmt.Sprintf("✓ tested %s properties, of which %s are panic-able",
+		total, enforced)
 }
 
 // Recorder_Run_Test_Main runs the injected TestMain process. It registers the selected

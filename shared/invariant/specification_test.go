@@ -1605,7 +1605,8 @@ func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Names
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "summary") }
 `)
-	want := "✓ invariant_test: tested 21 properties, of which 5 are panic-able"
+	want := "✓ invariant_test: tested \033[34m21\033[0m properties, " +
+		"of which \033[33m5\033[0m are panic-able"
 	if summary := core.Recorder_Assertion_Summary(recorder); summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
