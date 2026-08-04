@@ -106,7 +106,13 @@ func Main(input *Main_Input) (status_code int) {
 	if cli.Handle_Completion(program, input.Arguments, input.Output) {
 		return EXIT_SUCCESS
 	}
-	command, parse_err := cli.Program_Parse(&program, input.Arguments)
+	parser := cli.Program_Parse(&program, cli.Program_Parse_Input{Arguments: input.Arguments})
+	result := cli.Parser_Done(parser)
+	if result == nil {
+		panic("shell_sdk parser did not complete synchronously")
+	}
+	command := result.Command
+	parse_err := result.Error
 	if errors.Is(parse_err, cli.Help_Requested) {
 		// -help short-circuits parsing in cli, so per-verb usage works even when a
 		// required argument is absent — the guarantee shell_sdk used to hand-roll.

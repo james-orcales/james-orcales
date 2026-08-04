@@ -2177,7 +2177,7 @@ func Test_Main_Password_Usage(t *testing.T) {
 	output_path := filepath.Join(directory, "output.pdf")
 	program := main_program()
 	for _, password := range []string{"secret"} {
-		render, render_err := cli.Program_Parse(&program, []string{
+		render, render_err := parse_program(&program, []string{
 			"markdown_to_pdf", "render", source_path,
 			"-out=" + output_path, "-password=" + password,
 		})
@@ -2188,7 +2188,7 @@ func Test_Main_Password_Usage(t *testing.T) {
 			t.Fatalf("Markdown password %q status = %d", password, status)
 		}
 	}
-	if _, render_err := cli.Program_Parse(&program, []string{
+	if _, render_err := parse_program(&program, []string{
 		"markdown_to_pdf", "render", source_path,
 		"-out=" + output_path, "-password=",
 	}); render_err == nil {
@@ -2205,7 +2205,7 @@ func Test_Main_Password_Usage(t *testing.T) {
 		t.Fatal("malformed encryption did not map to status one")
 	}
 	for _, password := range []string{"secret"} {
-		preview, preview_err := cli.Program_Parse(&program, []string{
+		preview, preview_err := parse_program(&program, []string{
 			"markdown_to_pdf", "preview", source_path, "-password=" + password,
 		})
 		if preview_err != nil {
@@ -2215,7 +2215,7 @@ func Test_Main_Password_Usage(t *testing.T) {
 			t.Fatalf("Markdown preview password %q status = %d", password, status)
 		}
 	}
-	if _, preview_err := cli.Program_Parse(&program, []string{
+	if _, preview_err := parse_program(&program, []string{
 		"markdown_to_pdf", "preview", source_path, "-password=",
 	}); preview_err == nil {
 		t.Fatal("empty Markdown preview password flag parsed")
@@ -2390,7 +2390,7 @@ func Test_Main_Overwrite_Statuses(t *testing.T) {
 	if close_err := derived.Close(); close_err != nil {
 		t.Fatalf("close derived output: %v", close_err)
 	}
-	command, parse_err := cli.Program_Parse(
+	command, parse_err := parse_program(
 		&program, []string{"markdown_to_pdf", "render", source_path},
 	)
 	if parse_err != nil {
@@ -2422,7 +2422,7 @@ func Test_Main_Overwrite_Statuses(t *testing.T) {
 	if close_err := explicit.Close(); close_err != nil {
 		t.Fatalf("close explicit output: %v", close_err)
 	}
-	command, parse_err = cli.Program_Parse(&program, []string{
+	command, parse_err = parse_program(&program, []string{
 		"markdown_to_pdf", "render", source_path, "-out=" + explicit_path,
 	})
 	if parse_err != nil {
@@ -2436,7 +2436,7 @@ func Test_Main_Overwrite_Statuses(t *testing.T) {
 	}
 
 	missing_path := filepath.Join(directory, "missing.pdf")
-	command, parse_err = cli.Program_Parse(&program, []string{
+	command, parse_err = parse_program(&program, []string{
 		"markdown_to_pdf", "render", missing_path,
 		"-out=" + filepath.Join(directory, "missing.md"),
 	})
@@ -2486,4 +2486,14 @@ func main_test_input(t *testing.T) (input *Main_Input) {
 		Temporary_Directory: t.TempDir(),
 		Open_Path:           func(string) (err error) { return nil },
 	}
+}
+
+// The markdown_to_pdf program declares no secrets, so parsing completes without a loop.
+func parse_program(program *cli.Program, arguments []string) (command cli.Command, err error) {
+	parser := cli.Program_Parse(program, cli.Program_Parse_Input{Arguments: arguments})
+	result := cli.Parser_Done(parser)
+	if result == nil {
+		panic("markdown_to_pdf parser did not complete synchronously")
+	}
+	return result.Command, result.Error
 }

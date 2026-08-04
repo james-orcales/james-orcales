@@ -58,7 +58,13 @@ func Main(input *Main_Input) (status_code int) {
 		cli.Print_Help(input.Error_Output, program)
 		return EXIT_USAGE
 	}
-	command, parse_err := cli.Program_Parse(&program, input.Arguments)
+	parser := cli.Program_Parse(&program, cli.Program_Parse_Input{Arguments: input.Arguments})
+	result := cli.Parser_Done(parser)
+	if result == nil {
+		panic("markdown_to_pdf parser did not complete synchronously")
+	}
+	command := result.Command
+	parse_err := result.Error
 	if errors.Is(parse_err, cli.Help_Requested) {
 		cli.Print_Requested_Help(input.Output, program, command)
 		return 0

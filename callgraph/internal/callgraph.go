@@ -156,7 +156,13 @@ func Main(input *Main_Input) (code int) {
 	if cli.Handle_Completion(program, input.Arguments, input.Output) {
 		return EXIT_SUCCESS
 	}
-	command, parse_err := cli.Program_Parse(&program, input.Arguments)
+	parser := cli.Program_Parse(&program, cli.Program_Parse_Input{Arguments: input.Arguments})
+	result := cli.Parser_Done(parser)
+	if result == nil {
+		panic("callgraph parser did not complete synchronously")
+	}
+	command := result.Command
+	parse_err := result.Error
 	if errors.Is(parse_err, cli.Help_Requested) {
 		cli.Print_Requested_Help(input.Output, program, command)
 		return EXIT_SUCCESS
