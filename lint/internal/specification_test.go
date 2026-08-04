@@ -863,30 +863,6 @@ func Test_Source_And_Test_Requirements_Main_Package_Size(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Requirements_Input_Structs verifies a function repeating
-// a parameter type is flagged, while the assertion DSL and its external tests are exempt.
-func Test_Source_And_Test_Requirements_Input_Structs(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file(
-		"package fixture\n\n// F does.\n" +
-			"func F(a int, b int) (n int) {\n\treturn a + b\n}\n")
-	if !specification_flags(t, files, "Convert it to") {
-		t.Fatal("a repeated parameter type must be flagged")
-	}
-	files = specification_one_file(
-		"package invariant\n\n// F does.\n" +
-			"func F(a int, b int) (n int) {\n\treturn a + b\n}\n")
-	if specification_flags(t, files, "Convert it to") {
-		t.Fatal("a package named invariant must be exempt from the input-struct rule")
-	}
-	files = specification_one_file(
-		"package invariant_test\n\n// F does.\n" +
-			"func F(a int, b int) (n int) {\n\treturn a + b\n}\n")
-	if specification_flags(t, files, "Convert it to") {
-		t.Fatal("invariant_test must be exempt from the input-struct rule")
-	}
-}
-
 // Test_Source_And_Test_Requirements_Named_Returns verifies an unnamed return is flagged.
 func Test_Source_And_Test_Requirements_Named_Returns(t *testing.T) {
 	t.Parallel()
@@ -1977,8 +1953,8 @@ func repository_flags(
 }
 
 // Wraps one Go source string as the sole file of a fixture package. Kept
-// separate from the fragment assertion so no helper takes two string parameters
-// (which the input-struct rule would reject).
+// separate from the fragment assertion so no caller must supply a fragment it
+// does not need.
 func specification_one_file(source string) (files map[string][]byte) {
 	return map[string][]byte{"pkg/rule.go": []byte(source)}
 }
@@ -2164,25 +2140,22 @@ func Test_Type_Invariant_Exempt_Kinds_Pass(t *testing.T) {
 	}
 }
 
-// Test_Type_Invariant_Between_Input_Struct_And_Function verifies the amended
-// input-struct rule: a bundle may sit between an input struct and the function it
-// feeds, satisfying both the locality rule and the type-invariant rule.
-func Test_Type_Invariant_Between_Input_Struct_And_Function(t *testing.T) {
+// Test_Type_Invariant_Before_A_Consumer verifies a bundle that sits directly
+// below its type satisfies the rule, even when a function that reads the type
+// follows the bundle.
+func Test_Type_Invariant_Before_A_Consumer(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
-		"// Foo_Input is a fixture.\ntype Foo_Input struct {\n" +
+		"// Payload is a fixture.\ntype Payload struct {\n" +
 		"\t// A is a fixture.\n\tA int\n\t// B is a fixture.\n\tB int\n}\n\n" +
-		"// Foo_Input_Invariants is a fixture.\n" +
-		"func Foo_Input_Invariants(input Foo_Input, namespace invariant.Namespace) {\n" +
+		"// Payload_Invariants is a fixture.\n" +
+		"func Payload_Invariants(input Payload, namespace invariant.Namespace) {\n" +
 		"\tprintln(0)\n}\n\n" +
-		"// Foo does.\nfunc Foo(input *Foo_Input) (n int) {\n" +
+		"// Foo does.\nfunc Foo(input *Payload) (n int) {\n" +
 		"\treturn input.A + input.B\n}\n")
-	if specification_flags(t, files, "directly above the func") {
-		t.Fatal("the input struct may be parted from its function by its invariant")
-	}
-	if specification_flags(t, files, "directly below the type Foo_Input") {
-		t.Fatal("the bundle directly below the input struct satisfies the rule")
+	if specification_flags(t, files, "directly below the type Payload") {
+		t.Fatal("the bundle directly below its type satisfies the rule")
 	}
 }
 
@@ -2372,8 +2345,8 @@ func Test_Function_Helper_Companion_Exempt(t *testing.T) {
 }
 
 // One non-exempt fixture package: the shared source plus the given test file, so
-// the recorder rule has a real package to judge. A single string parameter keeps
-// it clear of the input-struct rule.
+// the recorder rule has a real package to judge. The source half is a constant,
+// thus only the test file varies per call.
 func recorder_test_files(test string) (files map[string][]byte) {
 	return map[string][]byte{
 		"pkg/rule.go":      []byte(RECORDER_FIXTURE_SOURCE),

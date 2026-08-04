@@ -1366,11 +1366,6 @@ func F() (t T) {
 	return t
 }
 `)},
-		{Snapshot: snap.Init(`a.go:5:1: The func has too many parameters. Convert it to F(*F_Input) (n int).`), Files: snapshot_package(`// F does.
-func F(a int, b int) (n int) {
-	return a + b
-}
-`)},
 	})
 }
 
@@ -4601,24 +4596,6 @@ func Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input(t *testing.T) {
 		Root_Directory: ".",
 		Git:            git_input,
 	})
-}
-
-// Test_Coverage_Backfill_Input_Struct_Sig_Hi drives the input-struct
-// signature suggester with a 128-char function name so its `sig` Hi
-// bucket fires.
-func Test_Coverage_Backfill_Input_Struct_Sig_Hi(t *testing.T) {
-	t.Parallel()
-	// Sig = funcname + "(*" + want_name + ")" + " (result int)"
-	// For a 117-char funcname, want_name = funcname + "_Input" = 123 chars.
-	// Total sig = 117 + 2 + 123 + 1 + 13 = 256 chars... close to Hi=257.
-	long := strings.Repeat("F", 128)
-	source := "package main\n\n" +
-		"func " + long + "(a, b int) (result int) { return a + b }\n" +
-		// 6-char funcname with no result clause gives sig = "Foo123(*Foo123_Input)"
-		// = 21 chars, hitting the Lo=21 bucket of suggest_sig.
-		"func Foo123(a, b int) {}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("input_struct_sig diags=%d err=%v", len(diags), err)
 }
 
 // Test_Coverage_Backfill_Build_Key_Hi drives build_key with a long-form

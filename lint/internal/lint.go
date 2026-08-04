@@ -291,21 +291,6 @@ const DIAGNOSTIC_MESSAGE_CHARS_MAX = 1024
 // banned-segment check (universal, function-only, file-only, package-only).
 const BANNED_LISTS_PER_CHECK_MAX = 4
 
-// SUGGESTED_SIG_CHARS_MIN caps the shortest suggested function signature.
-// In practice the shortest fixture-observed signature is the 21-char
-// `f(*f_Input) (result T)` template with a single-letter funcname and a
-// minimal result type.
-const SUGGESTED_SIG_CHARS_MIN = 21
-
-// CONVERT_TO_MESSAGE_CHARS_MIN / CONVERT_TO_MESSAGE_CHARS_MAX bound the
-// `convert to <sig>` diagnostic message constructed by
-// check_input_struct_validate. The 11-character "convert to " prefix is
-// added to the suggested signature's length bounds.
-const CONVERT_TO_MESSAGE_CHARS_MIN = SUGGESTED_SIG_CHARS_MIN + 11
-
-// CONVERT_TO_MESSAGE_CHARS_MAX is the Hi end: longest signature plus the "convert to " prefix.
-const CONVERT_TO_MESSAGE_CHARS_MAX = SUGGESTED_SIG_CHARS_MAX + 11
-
 // STDLIB_TERM_CHARS_MAX caps the stdlib-allowlist terminology suffix
 // string. Longest entry is `offset` (6 chars).
 const STDLIB_TERM_CHARS_MAX = 6
@@ -474,15 +459,6 @@ const INSIDE_IF_FIELD_CHARS_MIN = 5
 // reached, so the boundary masks Hi and observes only this Lo.
 const INSIDE_IF_MESSAGE_CHARS_MIN = 113
 
-// WANT_NAME_CHARS_MIN / WANT_NAME_CHARS_MAX cap the input-struct
-// expected name (e.g. "f_Input" for function `f`). The "_Input" suffix
-// is 6 chars; combined with the shortest (1-char) function name the
-// minimum is 7. Max is IDENTIFIER_CHARS_MAX + 6 = 134.
-const WANT_NAME_CHARS_MIN = 7
-
-// WANT_NAME_CHARS_MAX is the Hi end: the longest identifier plus the 6-char "_Input" suffix.
-const WANT_NAME_CHARS_MAX = IDENTIFIER_CHARS_MAX + 6
-
 // FILESYSTEM_PATH_CHARS_MAX caps filesystem path strings the linter
 // processes. POSIX PATH_MAX is 4096 on Linux; the linter inherits this
 // as the hard bound for file paths and is exercised by the long-path
@@ -503,12 +479,6 @@ const INFERRED_FIELD_KIND_CHARS_MAX = 7
 // at most one identifier plus a space plus a type expression that itself
 // is bounded by identifier length, yielding 2*identifier + 1.
 const FIELD_DESCRIPTION_CHARS_MAX = 2*IDENTIFIER_CHARS_MAX + 1
-
-// SUGGESTED_SIG_CHARS_MAX caps suggested function-signature strings of the
-// form `<funcname>(*<funcname>_Input) (result <type>)`. The funcname
-// appears twice (raw plus inside `_Input`), plus the wrapping syntax and
-// a result clause; budget is 2*identifier + 6 (`_Input`) + ~16 (result).
-const SUGGESTED_SIG_CHARS_MAX = 2*IDENTIFIER_CHARS_MAX + 22
 
 // COMMENT_TEXT_CHARS_MAX caps raw comment text. comment_body strips the
 // leading `//` and any whitespace, so the text bound is the body budget
@@ -1592,7 +1562,6 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_default_package_name,
 		check_no_empty_function_body,
 		check_no_interfaces,
-		check_input_struct,
 		make_check_names_vocabulary(input.Word_Replacements),
 		check_test_documentation_comment,
 		check_snap_backtick,
@@ -5640,147 +5609,6 @@ func check_names_vocabulary_message(input *Check_Names_Vocabulary_Message_Input)
 	return fmt.Sprintf("Rename %s -> [%s].", input.Name, strings.Join(renames, ", "))
 }
 
-// Functions with two or more parameters of the same type are call-site
-// landmines: `transfer(source, dst)` can be silently swapped to
-// `transfer(dst, source)` with no compiler protest. Force such signatures to
-// take a pointer to a named input struct declared directly above; call sites
-// then read as `transfer(&Transfer_Input{Src: ..., Dst: ...})` and re-orderings
-// become compile errors.
-func check_input_struct(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-	// The assertion DSL and its external tests repeat parameter types by design
-	// (Range_TYPE(v, MIN, MAX)); forcing ceremony into either side obscures the
-	// exact declarations that registration must analyze.
-	if file.Name.Name == "invariant" {
-		return nil
-	}
-	if file.Name.Name == "invariant_test" {
-		return nil
-	}
-
-	for index, declaration := range file.Decls {
-		function_declaration, ok := declaration.(*ast.FuncDecl)
-		if !ok {
-			continue
-		}
-		want_name := check_input_struct_expected_name(function_declaration.Name.Name)
-		if check_input_struct_should_trigger(function_declaration) {
-			diag := check_input_struct_validate(
-				file_set, function_declaration, want_name)
-			if diag != nil {
-				diags = append(diags, *diag)
-			}
-			continue
-		}
-		// A function that has already adopted the struct (its parameter is
-		// *<Func>_Input) must keep that struct adjacent. The call site reads the
-		// field shape from the lines directly above the call's target; a struct
-		// drifting below the function, or fenced off behind another
-		// declaration, severs that locality and is no better than the loose
-		// positional parameters the rule exists to abolish.
-		if !check_input_struct_uses_named_input(function_declaration, want_name) {
-			continue
-		}
-		if check_input_struct_declared_directly_above(file, index, want_name) {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(function_declaration.Pos()),
-			Message: "The func " + function_declaration.Name.Name +
-				" has no input struct. Declare " + want_name +
-				" directly above the func.",
-		})
-	}
-	return diags
-}
-
-// Reports whether function takes a parameter typed *<want_name> — the adopted
-// input-struct shape whose declaration the locality rule then governs. Keying on
-// the expected name, not on "any pointer parameter", leaves an unrelated single
-// pointer argument untouched.
-func check_input_struct_uses_named_input(function *ast.FuncDecl, want_name string) (uses bool) {
-
-	if function.Type.Params == nil {
-		return false
-	}
-	pointer := "*" + want_name
-	for _, f := range function.Type.Params.List {
-		if types.ExprString(f.Type) == pointer {
-			return true
-		}
-	}
-	return false
-}
-
-// Reports whether the declaration immediately preceding index declares want_name
-// as a struct type — the "declared just above it" half of the rule. The struct
-// may sit directly above, or be parted from the function only by its own
-// invariant function, the slot the # Invariants rule reserves there. A doc
-// comment attaches to the GenDecl, so it never counts as an intervening
-// declaration; any other declaration in the gap does.
-func check_input_struct_declared_directly_above(
-	file *ast.File, index int, want_name string,
-) (above bool) {
-
-	if index == 0 {
-		return false
-	}
-	if check_input_struct_declaration_is_named_struct(file.Decls[index-1], want_name) {
-		return true
-	}
-	// The struct's invariant function may sit between the struct and the function
-	// it feeds, so the struct is two slots up — still adjacent for this rule.
-	if index < 2 {
-		return false
-	}
-	if !check_input_struct_declaration_is_invariant(file.Decls[index-1], want_name) {
-		return false
-	}
-	return check_input_struct_declaration_is_named_struct(file.Decls[index-2], want_name)
-}
-
-// Reports whether declaration declares want_name as a struct type.
-func check_input_struct_declaration_is_named_struct(
-	declaration ast.Decl, want_name string,
-) (yes bool) {
-
-	general, is_general := declaration.(*ast.GenDecl)
-	if !is_general {
-		return false
-	}
-	if general.Tok != token.TYPE {
-		return false
-	}
-	for _, specification := range general.Specs {
-		type_definition, is_type := specification.(*ast.TypeSpec)
-		if !is_type {
-			continue
-		}
-		if type_definition.Name.Name != want_name {
-			continue
-		}
-		_, is_struct := type_definition.Type.(*ast.StructType)
-		return is_struct
-	}
-	return false
-}
-
-// Reports whether declaration is the invariant function for the struct named
-// struct_name, the only declaration the locality rule tolerates between the
-// input struct and the function it feeds.
-func check_input_struct_declaration_is_invariant(
-	declaration ast.Decl, struct_name string,
-) (yes bool) {
-
-	function, is_function := declaration.(*ast.FuncDecl)
-	if !is_function {
-		return false
-	}
-	if function.Recv != nil {
-		return false
-	}
-	return function.Name.Name == source.Invariant_Name(struct_name)
-}
-
 // Builds the type-invariant check, closing over the
 // lint.json opt_out_assertion_mandate_packages list. Every in-scope type must be followed
 // directly by its bundle function (the forward half), and every bundle-named
@@ -5794,135 +5622,6 @@ func make_check_type_invariants(invariant_exempt []string) (check Check_Function
 	) (diags []Diagnostic) {
 		return assertion.Check_Type(file_set, file, invariant_exempt)
 	}
-}
-
-func check_input_struct_should_trigger(function *ast.FuncDecl) (trigger bool) {
-
-	if function.Type.Params == nil {
-		return false
-	}
-	counts := map[string]int{}
-	for _, f := range function.Type.Params.List {
-		if _, is_variadic := f.Type.(*ast.Ellipsis); is_variadic {
-			continue
-		}
-		key := types.ExprString(f.Type)
-		name_count := len(f.Names)
-		if name_count == 0 {
-			name_count = 1
-		}
-		counts[key] += name_count
-		if counts[key] >= 2 {
-			return true
-		}
-	}
-	return false
-}
-
-func check_input_struct_expected_name(function_name string) (want string) {
-
-	suffix := "_Input"
-	if len(function_name) > 0 {
-		if unicode.IsLower(rune(function_name[0])) {
-			suffix = "_input"
-		}
-	}
-	return function_name + suffix
-}
-
-func check_input_struct_validate(
-	file_set *token.FileSet,
-	function *ast.FuncDecl,
-	want_name string,
-) (diag *Diagnostic) {
-	non_variadic := check_input_struct_validate_non_variadic_params(function)
-	if len(non_variadic) == 1 {
-		if len(non_variadic[0].Names) == 1 {
-			// Trigger fires only when some type appears ≥2 times in the param
-			// list. A single 1-name field contributes exactly 1 entry, so the
-			// trigger cannot fire on this shape — reaching here means
-			// check_input_struct_should_trigger lied.
-		}
-	}
-	return &Diagnostic{
-		Position: file_set.Position(function.Pos()),
-		Message: "The func has too many parameters. Convert it to " +
-			check_input_struct_validate_suggest_sig(function, want_name) + ".",
-	}
-}
-
-func check_input_struct_validate_suggest_sig(
-	function *ast.FuncDecl, want_name string,
-) (sig string) {
-
-	var sb strings.Builder
-	sb.WriteString(function.Name.Name)
-	sb.WriteString("(*")
-	sb.WriteString(want_name)
-	if function.Type.Params != nil {
-		for _, f := range function.Type.Params.List {
-			if _, is_variadic := f.Type.(*ast.Ellipsis); !is_variadic {
-				continue
-			}
-			type_string := types.ExprString(f.Type)
-			if len(f.Names) == 0 {
-				sb.WriteString(", ")
-				sb.WriteString(type_string)
-				continue
-			}
-			for _, n := range f.Names {
-				sb.WriteString(", ")
-				sb.WriteString(n.Name)
-				sb.WriteString(" ")
-				sb.WriteString(type_string)
-			}
-		}
-	}
-	sb.WriteString(")")
-	if function.Type.Results == nil {
-		return sb.String()
-	}
-	if len(function.Type.Results.List) == 0 {
-		return sb.String()
-	}
-	sb.WriteString(" (")
-	first := true
-	for _, f := range function.Type.Results.List {
-		type_string := types.ExprString(f.Type)
-		if len(f.Names) == 0 {
-			if !first {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(type_string)
-			first = false
-			continue
-		}
-		for _, n := range f.Names {
-			if !first {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(n.Name)
-			sb.WriteString(" ")
-			sb.WriteString(type_string)
-			first = false
-		}
-	}
-	sb.WriteString(")")
-	return sb.String()
-}
-
-func check_input_struct_validate_non_variadic_params(function *ast.FuncDecl) (output []*ast.Field) {
-
-	if function.Type.Params == nil {
-		return nil
-	}
-	for _, f := range function.Type.Params.List {
-		if _, is_variadic := f.Type.(*ast.Ellipsis); is_variadic {
-			continue
-		}
-		output = append(output, f)
-	}
-	return output
 }
 
 // Empty-body functions are dead weight: either the function is unfinished, or
@@ -9307,8 +9006,8 @@ func deterministic_pure_directories(
 	return pure
 }
 
-// Bundles check_deterministic_coverage's inputs: the entry list and the scan
-// prefixes both being string slices repeat a type, which the input-struct rule folds.
+// Bundles check_deterministic_coverage's inputs. The entry list and the scan
+// prefixes are both string slices, thus a positional pair invites a silent swap.
 type Check_Deterministic_Coverage_Input struct {
 	// Exceptions is lint.json's pure_but_indeterministic_packages, reported verbatim on a gap.
 	Exceptions []string

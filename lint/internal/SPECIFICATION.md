@@ -331,12 +331,6 @@ A source or test file spans at most 10000 lines.
 A package main's source spans at most 200 lines, counted per build-tag group as the file count
 is. Its test files carry no count.
 
-### Input Structs
-
-A function whose parameters repeat a type takes a single input struct pointer, named for the
-function and declared just above it, or parted from it only by the struct's own invariant function;
-a variadic may remain a separate parameter. Packages invariant and invariant_test are exempt.
-
 ### Named Returns
 
 A function with results names every one of them.
