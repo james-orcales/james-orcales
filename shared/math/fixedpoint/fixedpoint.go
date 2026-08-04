@@ -23,18 +23,6 @@ const FRACTIONAL_BITS = 20
 // A Number's real value is its stored integer divided by SCALE.
 const SCALE = 1 << FRACTIONAL_BITS
 
-// INTEGER_64_MINIMUM is the smallest signed 64-bit integer.
-const INTEGER_64_MINIMUM int64 = -9223372036854775808
-
-// INTEGER_64_MAXIMUM is the largest signed 64-bit integer.
-const INTEGER_64_MAXIMUM int64 = 9223372036854775807
-
-// UNSIGNED_64_MINIMUM is the smallest unsigned 64-bit integer.
-const UNSIGNED_64_MINIMUM uint64 = 0
-
-// UNSIGNED_64_MAXIMUM is the largest unsigned 64-bit integer.
-const UNSIGNED_64_MAXIMUM uint64 = 18446744073709551615
-
 // HIGH_WORD_MAXIMUM keeps the 128-bit root in the signed 64-bit result domain.
 const HIGH_WORD_MAXIMUM uint64 = 1<<56 - 1
 
@@ -57,7 +45,7 @@ const WHOLE_INTEGER_MINIMUM int64 = -8796093022208
 const WHOLE_INTEGER_MAXIMUM int64 = 8796093022207
 
 // INTEGER_NUMBER_MINIMUM is the smallest fixed-point integer.
-const INTEGER_NUMBER_MINIMUM int64 = INTEGER_64_MINIMUM
+const INTEGER_NUMBER_MINIMUM int64 = bits.INTEGER_64_MINIMUM
 
 // INTEGER_NUMBER_MAXIMUM is the largest fixed-point integer.
 const INTEGER_NUMBER_MAXIMUM int64 = 9223372036853727232
@@ -103,7 +91,7 @@ type Number int64
 // Number_Invariants states the complete fixed-point storage domain.
 func Number_Invariants(value Number, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -115,7 +103,7 @@ type Ratio int64
 // Ratio_Invariants states the complete ratio storage domain.
 func Ratio_Invariants(value Ratio, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -125,7 +113,7 @@ type Numerator int64
 // Numerator_Invariants states the complete signed 64-bit domain.
 func Numerator_Invariants(value Numerator, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -135,7 +123,7 @@ type Denominator int64
 // Denominator_Invariants states the complete signed 64-bit domain.
 func Denominator_Invariants(value Denominator, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -145,7 +133,7 @@ type Multiplicand Number
 // Multiplicand_Invariants states the complete fixed-point storage domain.
 func Multiplicand_Invariants(value Multiplicand, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -155,7 +143,7 @@ type Multiplier Number
 // Multiplier_Invariants states the complete fixed-point storage domain.
 func Multiplier_Invariants(value Multiplier, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -165,7 +153,7 @@ type Dividend Number
 // Dividend_Invariants states the complete fixed-point storage domain.
 func Dividend_Invariants(value Dividend, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -175,7 +163,7 @@ type Divisor Number
 // Divisor_Invariants states the complete fixed-point storage domain.
 func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -213,7 +201,7 @@ type Radicand int64
 // Radicand_Invariants states the complete signed 64-bit domain.
 func Radicand_Invariants(value Radicand, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -275,7 +263,7 @@ type High_Word uint64
 // High_Word_Invariants keeps the root in the signed 64-bit result domain.
 func High_Word_Invariants(value High_Word, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Uint64(uint64(value), UNSIGNED_64_MINIMUM, HIGH_WORD_MAXIMUM).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, HIGH_WORD_MAXIMUM).
 		Ensure()
 }
 
@@ -285,7 +273,7 @@ type Low_Word uint64
 // Low_Word_Invariants states the complete unsigned 64-bit domain.
 func Low_Word_Invariants(value Low_Word, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Uint64(uint64(value), UNSIGNED_64_MINIMUM, UNSIGNED_64_MAXIMUM).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
 

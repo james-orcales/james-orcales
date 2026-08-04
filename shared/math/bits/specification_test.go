@@ -21,6 +21,58 @@ func Test_Word_Size(t *testing.T) {
 
 }
 
+// Test_Integer_Limits verifies that each width limit holds the value the width admits and
+// that one more step would leave the width.
+func Test_Integer_Limits(t *testing.T) {
+	t.Parallel()
+	// A constant cannot hold one step past its own width, thus the step happens at run
+	// time where the value wraps instead.
+	signed_8 := bits.INTEGER_8_MAXIMUM
+	signed_8++
+	testify.Equal_Values(t, bits.INTEGER_8_MINIMUM, signed_8,
+		"the 8-bit limits must wrap into each other")
+
+	signed_16 := bits.INTEGER_16_MAXIMUM
+	signed_16++
+	testify.Equal_Values(t, bits.INTEGER_16_MINIMUM, signed_16,
+		"the 16-bit limits must wrap into each other")
+
+	signed_32 := bits.INTEGER_32_MAXIMUM
+	signed_32++
+	testify.Equal_Values(t, bits.INTEGER_32_MINIMUM, signed_32,
+		"the 32-bit limits must wrap into each other")
+
+	signed_64 := bits.INTEGER_64_MAXIMUM
+	signed_64++
+	testify.Equal_Values(t, bits.INTEGER_64_MINIMUM, signed_64,
+		"the 64-bit limits must wrap into each other")
+
+	unsigned_8 := bits.WORD_8_MAXIMUM
+	unsigned_8++
+	testify.Equal_Values(t, 0, unsigned_8,
+		"the unsigned 8-bit limit must wrap to zero")
+
+	unsigned_64 := bits.WORD_64_MAXIMUM
+	unsigned_64++
+	testify.Equal_Values(t, 0, unsigned_64,
+		"the unsigned 64-bit limit must wrap to zero")
+
+	machine := bits.INTEGER_MAXIMUM
+	machine++
+	testify.Equal_Values(t, bits.INTEGER_MINIMUM, machine,
+		"the machine limits must wrap into each other")
+
+	unsigned_machine := bits.WORD_MAXIMUM
+	unsigned_machine++
+	testify.Equal_Values(t, 0, unsigned_machine,
+		"the unsigned machine limit must wrap to zero")
+	testify.Equal_Values(t, 65535, bits.WORD_16_MAXIMUM,
+		"UNSIGNED_16_MAXIMUM = %d, want 65535", bits.WORD_16_MAXIMUM)
+	testify.Equal_Values(t, 4294967295, bits.WORD_32_MAXIMUM,
+		"UNSIGNED_32_MAXIMUM = %d, want 4294967295", bits.WORD_32_MAXIMUM)
+
+}
+
 // Test_Leading_Zeros verifies the count of zero bits above the highest set bit at each
 // width, including the full-width result a zero operand gives.
 func Test_Leading_Zeros(t *testing.T) {

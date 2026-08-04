@@ -4,6 +4,12 @@
 WORD_SIZE gives the bit width of the machine word, either 32 or 64. The width forms the
 upper bound of each count that a machine-word operation returns.
 
+# Integer Limits
+
+The signed limits INTEGER_8_MINIMUM through INTEGER_64_MAXIMUM and the unsigned limits
+WORD_8_MINIMUM through WORD_64_MAXIMUM give the bounds of each machine width. Every
+package above names these rather than repeating them.
+
 # Leading Zeros
 
 Leading_Zeros_8 through Leading_Zeros_64 count the zero bits above the highest set bit.

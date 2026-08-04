@@ -1,10 +1,4 @@
 
-# Integer Limits
-
-The signed limits INTEGER_8_MINIMUM through INTEGER_64_MAXIMUM and the unsigned limits
-UNSIGNED_8_MAXIMUM through UNSIGNED_64_MAXIMUM give the bounds of each width.
-INTEGER_MINIMUM, INTEGER_MAXIMUM, and UNSIGNED_MAXIMUM give the machine word bounds.
-
 # Integer Arithmetic
 
 Absolute_Integer returns the magnitude of a signed integer. Minimum_Integer and

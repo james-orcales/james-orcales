@@ -3,62 +3,11 @@ package scalar_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/math/scalar"
 	"local/james-orcales/shared/testify"
 )
-
-// Test_Integer_Limits verifies that each width limit holds the value the width admits and
-// that one more step would leave the width.
-func Test_Integer_Limits(t *testing.T) {
-	t.Parallel()
-	// A constant cannot hold one step past its own width, thus the step happens at run
-	// time where the value wraps instead.
-	signed_8 := scalar.INTEGER_8_MAXIMUM
-	signed_8++
-	testify.Equal_Values(t, scalar.INTEGER_8_MINIMUM, signed_8,
-		"the 8-bit limits must wrap into each other")
-
-	signed_16 := scalar.INTEGER_16_MAXIMUM
-	signed_16++
-	testify.Equal_Values(t, scalar.INTEGER_16_MINIMUM, signed_16,
-		"the 16-bit limits must wrap into each other")
-
-	signed_32 := scalar.INTEGER_32_MAXIMUM
-	signed_32++
-	testify.Equal_Values(t, scalar.INTEGER_32_MINIMUM, signed_32,
-		"the 32-bit limits must wrap into each other")
-
-	signed_64 := scalar.INTEGER_64_MAXIMUM
-	signed_64++
-	testify.Equal_Values(t, scalar.INTEGER_64_MINIMUM, signed_64,
-		"the 64-bit limits must wrap into each other")
-
-	unsigned_8 := scalar.UNSIGNED_8_MAXIMUM
-	unsigned_8++
-	testify.Equal_Values(t, scalar.UNSIGNED_MINIMUM, unsigned_8,
-		"the unsigned 8-bit limit must wrap to zero")
-
-	unsigned_64 := scalar.UNSIGNED_64_MAXIMUM
-	unsigned_64++
-	testify.Equal_Values(t, scalar.UNSIGNED_MINIMUM, unsigned_64,
-		"the unsigned 64-bit limit must wrap to zero")
-
-	machine := scalar.INTEGER_MAXIMUM
-	machine++
-	testify.Equal_Values(t, scalar.INTEGER_MINIMUM, machine,
-		"the machine limits must wrap into each other")
-
-	unsigned_machine := scalar.UNSIGNED_MAXIMUM
-	unsigned_machine++
-	testify.Equal_Values(t, scalar.UNSIGNED_MINIMUM, unsigned_machine,
-		"the unsigned machine limit must wrap to zero")
-	testify.Equal_Values(t, 65535, scalar.UNSIGNED_16_MAXIMUM,
-		"UNSIGNED_16_MAXIMUM = %d, want 65535", scalar.UNSIGNED_16_MAXIMUM)
-	testify.Equal_Values(t, 4294967295, scalar.UNSIGNED_32_MAXIMUM,
-		"UNSIGNED_32_MAXIMUM = %d, want 4294967295", scalar.UNSIGNED_32_MAXIMUM)
-
-}
 
 // Test_Integer_Arithmetic verifies the magnitude of a signed integer and the two ordering
 // selections, at the ends of the domain and around zero.
@@ -71,10 +20,10 @@ func Test_Integer_Arithmetic(t *testing.T) {
 	testify.Equal_Values(t, 0, scalar.Absolute_Integer(0),
 		"Absolute_Integer(0) = %d, want 0", scalar.Absolute_Integer(0))
 
-	largest := scalar.Signed_Integer(scalar.INTEGER_64_MAXIMUM)
-	testify.Equal_Values(t, scalar.INTEGER_64_MAXIMUM, int64(scalar.Absolute_Integer(largest)),
+	largest := scalar.Negatable_Integer(bits.INTEGER_64_MAXIMUM)
+	testify.Equal_Values(t, bits.INTEGER_64_MAXIMUM, int64(scalar.Absolute_Integer(largest)),
 		"the largest integer is its own magnitude")
-	testify.Equal_Values(t, scalar.INTEGER_64_MAXIMUM, int64(scalar.Absolute_Integer(-largest)),
+	testify.Equal_Values(t, bits.INTEGER_64_MAXIMUM, int64(scalar.Absolute_Integer(-largest)),
 		"the negation of the largest integer has the same magnitude")
 	testify.Equal_Values(t, 2, scalar.Minimum_Integer(2, 3),
 		"Minimum_Integer(2,3) = %d, want 2", scalar.Minimum_Integer(2, 3))
@@ -85,9 +34,9 @@ func Test_Integer_Arithmetic(t *testing.T) {
 	testify.Equal_Values(t, 3, scalar.Maximum_Integer(3, 2),
 		"Maximum_Integer(3,2) = %d, want 3", scalar.Maximum_Integer(3, 2))
 
-	smallest := scalar.First_Integer(scalar.INTEGER_64_MINIMUM)
+	smallest := scalar.First_Integer(bits.INTEGER_64_MINIMUM)
 	testify.Equal_Values(t,
-		scalar.INTEGER_64_MINIMUM,
+		bits.INTEGER_64_MINIMUM,
 		int64(scalar.Minimum_Integer(smallest, 0)),
 		"the smallest integer must win a minimum")
 	testify.Equal_Values(t, 0, int64(scalar.Maximum_Integer(smallest, 0)),
@@ -316,7 +265,7 @@ func Test_Logarithm(t *testing.T) {
 		"Logarithm_2 of one unit = %d, want %d",
 		smallest, scalar.LOGARITHM_2_MINIMUM)
 
-	largest := scalar.Logarithm_2(scalar.Argument(scalar.INTEGER_64_MAXIMUM))
+	largest := scalar.Logarithm_2(scalar.Argument(bits.INTEGER_64_MAXIMUM))
 	testify.Equal_Values(t, scalar.LOGARITHM_2_MAXIMUM, int64(largest),
 		"Logarithm_2 of the largest Number = %d, want %d",
 		largest, scalar.LOGARITHM_2_MAXIMUM)
@@ -575,7 +524,7 @@ func Test_Hyperbolic(t *testing.T) {
 func Test_Domain_Errors(t *testing.T) {
 	t.Parallel()
 	testify.Panics(t, func() {
-		scalar.Absolute_Integer(scalar.Signed_Integer(scalar.INTEGER_64_MINIMUM))
+		scalar.Absolute_Integer(scalar.Negatable_Integer(bits.INTEGER_64_MINIMUM))
 	},
 		"the most negative integer has no magnitude and must panic")
 	testify.Panics(t, func() { scalar.Square_Root(scalar.Radicand(-1)) },

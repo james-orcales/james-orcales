@@ -273,8 +273,8 @@ func number_from_integer(value fixedpoint.Whole_Integer) (number fixedpoint.Numb
 // Exercises each signed special value at the fixed-point arithmetic boundaries.
 func verify_number_domains() {
 	values := [...]int64{
-		fixedpoint.INTEGER_64_MINIMUM,
-		fixedpoint.INTEGER_64_MAXIMUM,
+		bits.INTEGER_64_MINIMUM,
+		bits.INTEGER_64_MAXIMUM,
 		0,
 		1,
 		2,
@@ -315,8 +315,8 @@ func verify_integer_domains() {
 		fixedpoint.From_Integer(value)
 	}
 	values := [...]int64{
-		fixedpoint.INTEGER_64_MINIMUM,
-		fixedpoint.INTEGER_64_MAXIMUM,
+		bits.INTEGER_64_MINIMUM,
+		bits.INTEGER_64_MAXIMUM,
 		0,
 		1,
 		2,
@@ -331,13 +331,13 @@ func verify_integer_domains() {
 	fixedpoint.Integer_Root(0, 1)
 	fixedpoint.Integer_Root(0, 2)
 	fixedpoint.Integer_Root(0, 4)
-	fixedpoint.Integer_Root(0, fixedpoint.Low_Word(fixedpoint.UNSIGNED_64_MAXIMUM))
+	fixedpoint.Integer_Root(0, fixedpoint.Low_Word(bits.WORD_64_MAXIMUM))
 	fixedpoint.Integer_Root(1, 0)
 	fixedpoint.Integer_Root(2, 0)
 	fixedpoint.Integer_Root(fixedpoint.High_Word(fixedpoint.HIGH_WORD_MAXIMUM), 0)
 	fixedpoint.Integer_Root(
 		fixedpoint.High_Word(fixedpoint.HIGH_WORD_MAXIMUM),
-		fixedpoint.Low_Word(fixedpoint.UNSIGNED_64_MAXIMUM),
+		fixedpoint.Low_Word(bits.WORD_64_MAXIMUM),
 	)
 }
 
@@ -347,7 +347,7 @@ func verify_format_domains() {
 	fixedpoint.Format(number_from_integer(10), 0)
 	fixedpoint.Format(0, 1)
 	fixedpoint.Format(0, 2)
-	fixedpoint.Format(fixedpoint.Number(fixedpoint.INTEGER_64_MINIMUM), 6)
+	fixedpoint.Format(fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6)
 }
 
 // Verifies that the divide-free root satisfies its defining property across large,

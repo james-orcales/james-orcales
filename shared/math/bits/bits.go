@@ -44,6 +44,31 @@ const ROTATION_MINIMUM = -1 << 62
 // ROTATION_MAXIMUM is the largest rotation distance.
 const ROTATION_MAXIMUM = 1<<62 - 1
 
+// INTEGER_8_MINIMUM is the smallest signed 8-bit integer. The signed limits sit beside the
+// unsigned ones because both state the same kind of fact: what one machine width holds.
+const INTEGER_8_MINIMUM int8 = -128
+
+// INTEGER_8_MAXIMUM is the largest signed 8-bit integer.
+const INTEGER_8_MAXIMUM int8 = 127
+
+// INTEGER_16_MINIMUM is the smallest signed 16-bit integer.
+const INTEGER_16_MINIMUM int16 = -32768
+
+// INTEGER_16_MAXIMUM is the largest signed 16-bit integer.
+const INTEGER_16_MAXIMUM int16 = 32767
+
+// INTEGER_32_MINIMUM is the smallest signed 32-bit integer.
+const INTEGER_32_MINIMUM int32 = -2147483648
+
+// INTEGER_32_MAXIMUM is the largest signed 32-bit integer.
+const INTEGER_32_MAXIMUM int32 = 2147483647
+
+// INTEGER_64_MINIMUM is the smallest signed 64-bit integer.
+const INTEGER_64_MINIMUM int64 = -9223372036854775808
+
+// INTEGER_64_MAXIMUM is the largest signed 64-bit integer.
+const INTEGER_64_MAXIMUM int64 = 9223372036854775807
+
 // WORD_8_MINIMUM is the smallest 8-bit word.
 const WORD_8_MINIMUM uint8 = 0
 
@@ -71,9 +96,15 @@ const WORD_64_MAXIMUM uint64 = 18446744073709551615
 // WORD_MINIMUM is the smallest machine word.
 const WORD_MINIMUM uint = 0
 
-// WORD_MAXIMUM is the largest machine word. The word is 64 bits wide here, thus this is
-// the 64-bit limit under another name.
+// WORD_MAXIMUM is the largest machine word. The word is 64 bits wide here, thus each
+// machine limit is the 64-bit limit under another name.
 const WORD_MAXIMUM uint = uint(WORD_64_MAXIMUM)
+
+// INTEGER_MAXIMUM is the largest signed machine integer.
+const INTEGER_MAXIMUM int = int(INTEGER_64_MAXIMUM)
+
+// INTEGER_MINIMUM is the smallest signed machine integer.
+const INTEGER_MINIMUM int = int(INTEGER_64_MINIMUM)
 
 // DIVISOR_MINIMUM is the smallest divisor. A zero divisor has no quotient, thus the divisor
 // domain starts one above the word domain.

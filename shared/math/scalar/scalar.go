@@ -8,61 +8,13 @@ package scalar
 
 import (
 	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 )
 
 // SCALE is the count of fixed-point units in one whole, repeated from fixedpoint so the
 // bounds below stay literal constant expressions the assertion analyzer can resolve.
 const SCALE = fixedpoint.SCALE
-
-// INTEGER_8_MINIMUM is the smallest signed 8-bit integer.
-const INTEGER_8_MINIMUM int8 = -128
-
-// INTEGER_8_MAXIMUM is the largest signed 8-bit integer.
-const INTEGER_8_MAXIMUM int8 = 127
-
-// INTEGER_16_MINIMUM is the smallest signed 16-bit integer.
-const INTEGER_16_MINIMUM int16 = -32768
-
-// INTEGER_16_MAXIMUM is the largest signed 16-bit integer.
-const INTEGER_16_MAXIMUM int16 = 32767
-
-// INTEGER_32_MINIMUM is the smallest signed 32-bit integer.
-const INTEGER_32_MINIMUM int32 = -2147483648
-
-// INTEGER_32_MAXIMUM is the largest signed 32-bit integer.
-const INTEGER_32_MAXIMUM int32 = 2147483647
-
-// INTEGER_64_MINIMUM is the smallest signed 64-bit integer.
-const INTEGER_64_MINIMUM int64 = -9223372036854775808
-
-// INTEGER_64_MAXIMUM is the largest signed 64-bit integer.
-const INTEGER_64_MAXIMUM int64 = 9223372036854775807
-
-// UNSIGNED_MINIMUM is the smallest unsigned integer at every width.
-const UNSIGNED_MINIMUM = 0
-
-// UNSIGNED_8_MAXIMUM is the largest unsigned 8-bit integer.
-const UNSIGNED_8_MAXIMUM uint8 = 255
-
-// UNSIGNED_16_MAXIMUM is the largest unsigned 16-bit integer.
-const UNSIGNED_16_MAXIMUM uint16 = 65535
-
-// UNSIGNED_32_MAXIMUM is the largest unsigned 32-bit integer.
-const UNSIGNED_32_MAXIMUM uint32 = 4294967295
-
-// UNSIGNED_64_MAXIMUM is the largest unsigned 64-bit integer.
-const UNSIGNED_64_MAXIMUM uint64 = 18446744073709551615
-
-// UNSIGNED_MAXIMUM is the largest machine word. This repository builds for 64-bit targets
-// only, thus each machine limit is the 64-bit limit under another name.
-const UNSIGNED_MAXIMUM uint = uint(UNSIGNED_64_MAXIMUM)
-
-// INTEGER_MAXIMUM is the largest signed machine integer.
-const INTEGER_MAXIMUM int = int(INTEGER_64_MAXIMUM)
-
-// INTEGER_MINIMUM is the smallest signed machine integer.
-const INTEGER_MINIMUM int = int(INTEGER_64_MINIMUM)
 
 // FRACTION_UNIT_NEGATIVE_ONE is negative one fixed-point fraction unit. A result that the
 // grid quantizes cannot land on it, thus it is excluded from those result domains.
@@ -81,17 +33,10 @@ const MAGNITUDE_MINIMUM int64 = 0
 // argument, a power base, and a cube-root magnitude all start here.
 const POSITIVE_MINIMUM int64 = 1
 
-// SIGNED_INTEGER_MINIMUM is the smallest integer that has a positive magnitude. The most
-// negative integer negates to itself, thus the magnitude domain starts one above it.
-const SIGNED_INTEGER_MINIMUM int64 = INTEGER_64_MINIMUM + 1
-
-// VALUE_MINIMUM is the smallest Number that rounds to a whole Number without overflow. It
-// is the smallest Number the storage holds, which is already a whole multiple of SCALE.
-const VALUE_MINIMUM int64 = INTEGER_64_MINIMUM
-
-// VALUE_MAXIMUM is the largest Number that rounds to a whole Number without overflow. It
-// is the largest whole multiple of SCALE the storage holds.
-const VALUE_MAXIMUM int64 = 9223372036853727232
+// NEGATABLE_MINIMUM is the most negative value this package can negate. Negating the
+// storage floor overflows back to the floor, so that one value has no magnitude, and every
+// operation that takes a magnitude first starts one above it.
+const NEGATABLE_MINIMUM int64 = bits.INTEGER_64_MINIMUM + 1
 
 // HALF is one half on the grid, the point at which Round moves away from zero.
 const HALF int64 = SCALE / 2
@@ -187,12 +132,6 @@ const POWER_MAXIMUM int64 = 4611686018427387904
 // root, thus the domain starts at zero.
 const RADICAND_MINIMUM int64 = 0
 
-// ROOT_MINIMUM is the smallest square root.
-const ROOT_MINIMUM int64 = 0
-
-// ROOT_MAXIMUM is the square root of the largest Number.
-const ROOT_MAXIMUM int64 = 3109888511975
-
 // CUBE_ROOT_MINIMUM is the cube root of the smallest Number.
 const CUBE_ROOT_MINIMUM int64 = -CUBE_ROOT_MAXIMUM
 
@@ -223,13 +162,14 @@ const HYPERBOLIC_MAXIMUM int64 = 2061129104266100736
 // never below one, thus its domain starts at one and not at the negative end.
 const HYPERBOLIC_COSINE_MINIMUM int64 = 1048572
 
-// Signed_Integer is an integer that has a positive magnitude.
-type Signed_Integer int64
+// Negatable_Integer is an integer this package can negate, and so one that has a
+// magnitude.
+type Negatable_Integer int64
 
-// Signed_Integer_Invariants excludes the most negative integer, which negates to itself.
-func Signed_Integer_Invariants(value Signed_Integer, namespace invariant.Namespace) {
+// Negatable_Integer_Invariants excludes the storage floor, which negates to itself.
+func Negatable_Integer_Invariants(value Negatable_Integer, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), SIGNED_INTEGER_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), NEGATABLE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -239,7 +179,7 @@ type Magnitude_Integer int64
 // Magnitude_Integer_Invariants bounds a magnitude to the nonnegative integers.
 func Magnitude_Integer_Invariants(value Magnitude_Integer, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), MAGNITUDE_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), MAGNITUDE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -249,7 +189,7 @@ type First_Integer int64
 // First_Integer_Invariants states the complete signed 64-bit domain.
 func First_Integer_Invariants(value First_Integer, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -259,7 +199,7 @@ type Second_Integer int64
 // Second_Integer_Invariants states the complete signed 64-bit domain.
 func Second_Integer_Invariants(value Second_Integer, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -269,7 +209,7 @@ type Ordered_Integer int64
 // Ordered_Integer_Invariants states the complete signed 64-bit domain.
 func Ordered_Integer_Invariants(value Ordered_Integer, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -279,7 +219,8 @@ type Value fixedpoint.Number
 // Value_Invariants bounds a value to the range whose rounding stays in storage.
 func Value_Invariants(value Value, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), VALUE_MINIMUM, VALUE_MAXIMUM).
+		Range_Int64(int64(value), fixedpoint.INTEGER_NUMBER_MINIMUM,
+			fixedpoint.INTEGER_NUMBER_MAXIMUM).
 		Ensure()
 }
 
@@ -294,7 +235,8 @@ func Whole_Number_Invariants(value Whole_Number, namespace invariant.Namespace) 
 	)
 	invariant.Tree(value, namespace).
 		Range_Holed_Int64(
-			int64(value), VALUE_MINIMUM, VALUE_MAXIMUM,
+			int64(value), fixedpoint.INTEGER_NUMBER_MINIMUM,
+			fixedpoint.INTEGER_NUMBER_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
 			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
 		).
@@ -307,7 +249,7 @@ type Dividend fixedpoint.Number
 // Dividend_Invariants states the complete fixed-point storage domain.
 func Dividend_Invariants(value Dividend, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -318,7 +260,7 @@ type Divisor fixedpoint.Number
 // a zero remainder rather than a panic, which matches fixedpoint division.
 func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -330,7 +272,7 @@ type Remainder fixedpoint.Number
 // above it.
 func Remainder_Invariants(value Remainder, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), SIGNED_INTEGER_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), NEGATABLE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -340,7 +282,7 @@ type Radicand fixedpoint.Number
 // Radicand_Invariants excludes the negative values, which have no real root.
 func Radicand_Invariants(value Radicand, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), RADICAND_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), RADICAND_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -353,7 +295,8 @@ type Root fixedpoint.Number
 func Root_Invariants(value Root, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Holed_Int64(
-			int64(value), ROOT_MINIMUM, ROOT_MAXIMUM,
+			int64(value), fixedpoint.NUMBER_ROOT_MINIMUM,
+			fixedpoint.NUMBER_ROOT_MAXIMUM,
 			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
 			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
 		).
@@ -366,7 +309,7 @@ type Cube_Radicand fixedpoint.Number
 // Cube_Radicand_Invariants states the complete fixed-point storage domain.
 func Cube_Radicand_Invariants(value Cube_Radicand, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -428,7 +371,7 @@ type Cube_Magnitude fixedpoint.Number
 // Cube_Magnitude_Invariants excludes zero, which the caller returns before it estimates.
 func Cube_Magnitude_Invariants(value Cube_Magnitude, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), POSITIVE_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), POSITIVE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -497,7 +440,7 @@ type Nonzero_Adjacent fixedpoint.Number
 func Nonzero_Adjacent_Invariants(value Nonzero_Adjacent, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Holed_Int64(
-			int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM,
+			int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM,
 			ADJACENT_ZERO, ADJACENT_ZERO, ADJACENT_ZERO, ADJACENT_ZERO,
 		).
 		Ensure()
@@ -509,7 +452,7 @@ type Opposite fixedpoint.Number
 // Opposite_Invariants states the complete fixed-point storage domain.
 func Opposite_Invariants(value Opposite, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -519,7 +462,7 @@ type Adjacent fixedpoint.Number
 // Adjacent_Invariants states the complete fixed-point storage domain.
 func Adjacent_Invariants(value Adjacent, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -598,7 +541,7 @@ type Argument fixedpoint.Number
 // Argument_Invariants excludes zero and the negative values, which have no logarithm.
 func Argument_Invariants(value Argument, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), POSITIVE_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), POSITIVE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -654,7 +597,7 @@ type Base fixedpoint.Number
 // Base_Invariants excludes zero and the negative values, which have no logarithm.
 func Base_Invariants(value Base, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), POSITIVE_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), POSITIVE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -665,7 +608,7 @@ type Power_Exponent fixedpoint.Number
 // the exponent and the logarithm carries its own bound, thus this one stays wide.
 func Power_Exponent_Invariants(value Power_Exponent, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -675,7 +618,8 @@ type Angle fixedpoint.Number
 // Angle_Invariants bounds an angle to the range whose turn conversion stays in storage.
 func Angle_Invariants(value Angle, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), VALUE_MINIMUM, VALUE_MAXIMUM).
+		Range_Int64(int64(value), fixedpoint.INTEGER_NUMBER_MINIMUM,
+			fixedpoint.INTEGER_NUMBER_MAXIMUM).
 		Ensure()
 }
 
@@ -710,7 +654,7 @@ type Slope fixedpoint.Number
 // Slope_Invariants states the complete fixed-point storage domain.
 func Slope_Invariants(value Slope, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
+		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
@@ -834,9 +778,9 @@ func Hyperbolic_Cosine_Value_Invariants(
 }
 
 // Absolute_Integer returns the magnitude of a signed integer.
-func Absolute_Integer(value Signed_Integer) (magnitude Magnitude_Integer) {
+func Absolute_Integer(value Negatable_Integer) (magnitude Magnitude_Integer) {
 	defer func() { Magnitude_Integer_Invariants(magnitude, "absolute_integer.magnitude") }()
-	Signed_Integer_Invariants(value, "absolute_integer.value")
+	Negatable_Integer_Invariants(value, "absolute_integer.value")
 	if value < 0 {
 		return Magnitude_Integer(-int64(value))
 	}
@@ -1006,7 +950,7 @@ func Cube_Root(value Cube_Radicand) (root Cube_Root_Value) {
 	// storage. The two radicands differ by one part in nine quintillion, thus their cube
 	// roots land on the same grid point and the largest magnitude stands in for it.
 	if magnitude < 0 {
-		magnitude = fixedpoint.Number(INTEGER_64_MAXIMUM)
+		magnitude = fixedpoint.Number(bits.INTEGER_64_MAXIMUM)
 	}
 	estimate := fixedpoint.Number(cube_root_estimate(Cube_Magnitude(magnitude)))
 	for index := 0; index < 64; index++ {
@@ -1270,7 +1214,7 @@ func Arctangent(value Slope) (angle Principal_Angle) {
 	Slope_Invariants(value, "arctangent.value")
 	// The most negative slope negates to itself, so its magnitude is no Number. Its
 	// reciprocal is below one unit either way, thus the angle is a quarter turn already.
-	if int64(value) == INTEGER_64_MINIMUM {
+	if int64(value) == bits.INTEGER_64_MINIMUM {
 		return Principal_Angle(-PI_HALF)
 	}
 	magnitude := fixedpoint.Number(value)

@@ -3,18 +3,22 @@ package scalar
 import (
 	"testing"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/testify"
 )
 
 // Sweeps the ends of the fixed-point storage domain and the small values around zero.
 func sweep_storage() (values []int64) {
-	return []int64{INTEGER_64_MINIMUM, -2, -1, 0, 1, 2, INTEGER_64_MAXIMUM}
+	return []int64{bits.INTEGER_64_MINIMUM, -2, -1, 0, 1, 2, bits.INTEGER_64_MAXIMUM}
 }
 
 // Sweeps the ends of the rounding domain and the small values around zero.
 func sweep_value() (values []int64) {
-	return []int64{VALUE_MINIMUM, -2, -1, 0, 1, 2, VALUE_MAXIMUM}
+	return []int64{
+		fixedpoint.INTEGER_NUMBER_MINIMUM, -2, -1, 0, 1, 2,
+		fixedpoint.INTEGER_NUMBER_MAXIMUM,
+	}
 }
 
 // Sweeps the ends of the closed unit interval and the small values around zero.
@@ -25,7 +29,7 @@ func sweep_unit() (values []int64) {
 // Sweeps the values that have a magnitude. The most negative Number negates to itself,
 // thus every operation that takes a magnitude first excludes it.
 func sweep_magnitude() (values []int64) {
-	return []int64{SIGNED_INTEGER_MINIMUM, -2, -1, 0, 1, 2, INTEGER_64_MAXIMUM}
+	return []int64{NEGATABLE_MINIMUM, -2, -1, 0, 1, 2, bits.INTEGER_64_MAXIMUM}
 }
 
 // Sweeps the legs whose hypotenuse the storage holds.
@@ -35,12 +39,12 @@ func sweep_leg() (values []int64) {
 
 // Sweeps the values a logarithm accepts.
 func sweep_argument() (values []int64) {
-	return []int64{1, 2, SCALE, INTEGER_64_MAXIMUM}
+	return []int64{1, 2, SCALE, bits.INTEGER_64_MAXIMUM}
 }
 
 // Sweeps the values a square root accepts.
 func sweep_radicand() (values []int64) {
-	return []int64{0, 1, 2, INTEGER_64_MAXIMUM}
+	return []int64{0, 1, 2, bits.INTEGER_64_MAXIMUM}
 }
 
 // Test_Rounding_Holds_At_The_Domain_Ends drives each rounding function over the ends of
@@ -64,7 +68,7 @@ func Test_Rounding_Holds_At_The_Domain_Ends(t *testing.T) {
 			"Ceiling(%d) is below its own value", raw)
 
 	}
-	dividends := append(sweep_storage(), SIGNED_INTEGER_MINIMUM)
+	dividends := append(sweep_storage(), NEGATABLE_MINIMUM)
 	for _, dividend := range dividends {
 		for _, divisor := range sweep_storage() {
 			remainder := Modulo(Dividend(dividend), Divisor(divisor))
@@ -95,8 +99,8 @@ func Test_Roots_Hold_At_The_Domain_Ends(t *testing.T) {
 	// The two most negative radicands share a cube root, because they differ by far less
 	// than one grid unit of that root.
 	testify.Equal_Values(t,
-		Cube_Root(Cube_Radicand(SIGNED_INTEGER_MINIMUM)),
-		Cube_Root(Cube_Radicand(INTEGER_64_MINIMUM)),
+		Cube_Root(Cube_Radicand(NEGATABLE_MINIMUM)),
+		Cube_Root(Cube_Radicand(bits.INTEGER_64_MINIMUM)),
 
 		"the two most negative radicands must share a cube root")
 
@@ -311,11 +315,11 @@ func Test_Hyperbolic_Holds_At_The_Domain_Ends(t *testing.T) {
 // ends of its domain.
 func Test_Integer_Arithmetic_Holds_At_The_Domain_Ends(t *testing.T) {
 	t.Parallel()
-	signed := []int64{SIGNED_INTEGER_MINIMUM, -2, -1, 0, 1, 2, INTEGER_64_MAXIMUM}
+	signed := []int64{NEGATABLE_MINIMUM, -2, -1, 0, 1, 2, bits.INTEGER_64_MAXIMUM}
 	for _, raw := range signed {
 		testify.Equal_Values(t,
-			Absolute_Integer(Signed_Integer(raw)),
-			Absolute_Integer(Signed_Integer(raw)),
+			Absolute_Integer(Negatable_Integer(raw)),
+			Absolute_Integer(Negatable_Integer(raw)),
 			"Absolute_Integer(%d) is not deterministic", raw)
 
 	}
