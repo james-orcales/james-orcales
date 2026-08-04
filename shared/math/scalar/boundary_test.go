@@ -894,3 +894,82 @@ func Test_Standard_Whole_Numbers(t *testing.T) {
 			return int64(Truncate(Value(input)))
 		})
 }
+
+// IDENTITY_TOLERANCE bounds a relation that carries the sine error twice, once through
+// each operand it squares.
+const IDENTITY_TOLERANCE = 6000
+
+// Test_The_Circular_Identity_Holds requires the squared sine and cosine to sum to one over
+// the whole angle sweep. No range states this, because each value alone is a legal sine.
+func Test_The_Circular_Identity_Holds(t *testing.T) {
+	t.Parallel()
+	for _, raw := range sweep_value() {
+		angle := Angle(raw)
+		sine := fixedpoint.Number(Sine(angle))
+		cosine := fixedpoint.Number(Cosine(angle))
+		total := fixedpoint.Multiply(
+			fixedpoint.Multiplicand(sine), fixedpoint.Multiplier(sine)) +
+			fixedpoint.Multiply(
+				fixedpoint.Multiplicand(cosine), fixedpoint.Multiplier(cosine))
+		testify.In_Delta(t, &testify.In_Delta_Input{
+			Expected: fixedpoint.Number(SCALE),
+			Actual:   total,
+			Delta:    IDENTITY_TOLERANCE,
+		}, "the squared sine and cosine of %d do not sum to one", raw)
+	}
+}
+
+// Test_The_Hyperbolic_Identity_Holds requires the squared hyperbolic cosine less the
+// squared hyperbolic sine to equal one. The squares grow fast, thus the sweep stays at the
+// small angles where the difference still fits the storage.
+func Test_The_Hyperbolic_Identity_Holds(t *testing.T) {
+	t.Parallel()
+	for _, whole_angle := range []int64{-3, -2, -1, 0, 1, 2, 3} {
+		angle := Hyperbolic_Angle(whole_angle * SCALE)
+		sine := fixedpoint.Number(Hyperbolic_Sine(angle))
+		cosine := fixedpoint.Number(Hyperbolic_Cosine(angle))
+		difference := fixedpoint.Multiply(
+			fixedpoint.Multiplicand(cosine), fixedpoint.Multiplier(cosine)) -
+			fixedpoint.Multiply(
+				fixedpoint.Multiplicand(sine), fixedpoint.Multiplier(sine))
+		testify.In_Delta(t, &testify.In_Delta_Input{
+			Expected: fixedpoint.Number(SCALE),
+			Actual:   difference,
+			Delta:    IDENTITY_TOLERANCE,
+		}, "the hyperbolic identity fails at %d", whole_angle)
+	}
+}
+
+// Test_The_Exponential_Undoes_The_Logarithm requires raising two to the base-two logarithm
+// of a value to return that value. The two operations carry independent errors, thus the
+// round trip states something neither range does.
+func Test_The_Exponential_Undoes_The_Logarithm(t *testing.T) {
+	t.Parallel()
+	for _, whole_value := range []int64{1, 2, 3, 5, 10, 100, 1000, 100000} {
+		value := whole_value * SCALE
+		binary := Logarithm_2(Argument(value))
+		returned := Exponential_2(Exponent_2(binary))
+		// The logarithm resolves twenty fraction bits, thus the round trip keeps about
+		// six digits and the tolerance is a share of the value rather than a fixed step.
+		testify.In_Delta(t, &testify.In_Delta_Input{
+			Expected: fixedpoint.Number(value),
+			Actual:   fixedpoint.Number(returned),
+			Delta:    fixedpoint.Number(tolerance(value, 8, 2000)),
+		}, "raising two to the logarithm of %d does not return it", whole_value)
+	}
+}
+
+// Test_The_Sine_Undoes_The_Arcsine requires the sine of an arcsine to return the argument.
+// The sine carries Bhaskara's error, thus the tolerance is that error and not the grid.
+func Test_The_Sine_Undoes_The_Arcsine(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []int64{-SCALE, -SCALE / 2, 0, SCALE / 4, SCALE / 2, SCALE} {
+		angle := Arcsine(Unit_Argument(raw))
+		returned := Sine(Angle(angle))
+		testify.In_Delta(t, &testify.In_Delta_Input{
+			Expected: fixedpoint.Number(raw),
+			Actual:   fixedpoint.Number(returned),
+			Delta:    IDENTITY_TOLERANCE,
+		}, "the sine of the arcsine of %d does not return it", raw)
+	}
+}

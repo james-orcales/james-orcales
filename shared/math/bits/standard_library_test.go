@@ -1,10 +1,17 @@
-package bits
+package bits_test
 
 import (
 	"testing"
 
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
 )
+
+// TestMain registers the package invariant roots before the suites run.
+func TestMain(m *testing.M) {
+	invariant.Run_Test_Main(m)
+}
 
 // DE_BRUIJN_64 is the 64-bit de Bruijn sequence the standard library rotates and reverses
 // in its own tests. Every 6-bit window of it is distinct, thus a shift of it exposes a
@@ -74,11 +81,11 @@ func reference_table() (table [BYTE_VALUE_COUNT]reference_entry) {
 func Test_Standard_Word_Size(t *testing.T) {
 	t.Parallel()
 	width := 0
-	for probe := WORD_MAXIMUM; probe != 0; probe >>= 1 {
+	for probe := bits.WORD_MAXIMUM; probe != 0; probe >>= 1 {
 		width++
 	}
-	testify.Equal_Values(t, WORD_SIZE, width,
-		"WORD_SIZE = %d, want %d", WORD_SIZE, width)
+	testify.Equal_Values(t, bits.WORD_SIZE, width,
+		"WORD_SIZE = %d, want %d", bits.WORD_SIZE, width)
 
 }
 
@@ -104,7 +111,7 @@ func compare_leading_zeros(t *testing.T, shifted uint64, above int, shift int) {
 		if shifted == 0 {
 			want = 8
 		}
-		testify.Equal_Values(t, want, int(Leading_Zeros_8(Word_8(shifted))),
+		testify.Equal_Values(t, want, int(bits.Leading_Zeros_8(bits.Word_8(shifted))),
 			"Leading_Zeros_8(%#02x) is not %d", shifted, want)
 
 	}
@@ -113,7 +120,7 @@ func compare_leading_zeros(t *testing.T, shifted uint64, above int, shift int) {
 		if shifted == 0 {
 			want = 16
 		}
-		testify.Equal_Values(t, want, int(Leading_Zeros_16(Word_16(shifted))),
+		testify.Equal_Values(t, want, int(bits.Leading_Zeros_16(bits.Word_16(shifted))),
 			"Leading_Zeros_16(%#04x) is not %d", shifted, want)
 
 	}
@@ -122,7 +129,7 @@ func compare_leading_zeros(t *testing.T, shifted uint64, above int, shift int) {
 		if shifted == 0 {
 			want = 32
 		}
-		testify.Equal_Values(t, want, int(Leading_Zeros_32(Word_32(shifted))),
+		testify.Equal_Values(t, want, int(bits.Leading_Zeros_32(bits.Word_32(shifted))),
 			"Leading_Zeros_32(%#08x) is not %d", shifted, want)
 
 	}
@@ -130,9 +137,9 @@ func compare_leading_zeros(t *testing.T, shifted uint64, above int, shift int) {
 	if shifted == 0 {
 		want = 64
 	}
-	testify.Equal_Values(t, want, int(Leading_Zeros_64(Word_64(shifted))),
+	testify.Equal_Values(t, want, int(bits.Leading_Zeros_64(bits.Word_64(shifted))),
 		"Leading_Zeros_64(%#016x) is not %d", shifted, want)
-	testify.Equal_Values(t, want, int(Leading_Zeros(Word(shifted))),
+	testify.Equal_Values(t, want, int(bits.Leading_Zeros(bits.Word(shifted))),
 		"Leading_Zeros(%#016x) is not %d", shifted, want)
 
 }
@@ -159,7 +166,7 @@ func compare_trailing_zeros(t *testing.T, shifted uint64, want int) {
 		if shifted == 0 {
 			expected = 8
 		}
-		testify.Equal_Values(t, expected, int(Trailing_Zeros_8(Word_8(shifted))),
+		testify.Equal_Values(t, expected, int(bits.Trailing_Zeros_8(bits.Word_8(shifted))),
 			"Trailing_Zeros_8(%#02x) is not %d", shifted, expected)
 
 	}
@@ -168,7 +175,9 @@ func compare_trailing_zeros(t *testing.T, shifted uint64, want int) {
 		if shifted == 0 {
 			expected = 16
 		}
-		testify.Equal_Values(t, expected, int(Trailing_Zeros_16(Word_16(shifted))),
+		testify.Equal_Values(t,
+			expected,
+			int(bits.Trailing_Zeros_16(bits.Word_16(shifted))),
 			"Trailing_Zeros_16(%#04x) is not %d", shifted, expected)
 
 	}
@@ -177,7 +186,9 @@ func compare_trailing_zeros(t *testing.T, shifted uint64, want int) {
 		if shifted == 0 {
 			expected = 32
 		}
-		testify.Equal_Values(t, expected, int(Trailing_Zeros_32(Word_32(shifted))),
+		testify.Equal_Values(t,
+			expected,
+			int(bits.Trailing_Zeros_32(bits.Word_32(shifted))),
 			"Trailing_Zeros_32(%#08x) is not %d", shifted, expected)
 
 	}
@@ -185,9 +196,9 @@ func compare_trailing_zeros(t *testing.T, shifted uint64, want int) {
 	if shifted == 0 {
 		expected = 64
 	}
-	testify.Equal_Values(t, expected, int(Trailing_Zeros_64(Word_64(shifted))),
+	testify.Equal_Values(t, expected, int(bits.Trailing_Zeros_64(bits.Word_64(shifted))),
 		"Trailing_Zeros_64(%#016x) is not %d", shifted, expected)
-	testify.Equal_Values(t, expected, int(Trailing_Zeros(Word(shifted))),
+	testify.Equal_Values(t, expected, int(bits.Trailing_Zeros(bits.Word(shifted))),
 		"Trailing_Zeros(%#016x) is not %d", shifted, expected)
 
 }
@@ -203,23 +214,31 @@ func Test_Standard_Ones_Count(t *testing.T) {
 		for shift_index := 0; shift_index < 64-8; shift_index++ {
 			shifted := uint64(value_index) << uint(shift_index)
 			if shifted <= 1<<8-1 {
-				testify.Equal_Values(t, want, int(Ones_Count_8(Word_8(shifted))),
+				testify.Equal_Values(t,
+					want,
+					int(bits.Ones_Count_8(bits.Word_8(shifted))),
 					"Ones_Count_8(%#02x) is not %d", shifted, want)
 
 			}
 			if shifted <= 1<<16-1 {
-				testify.Equal_Values(t, want, int(Ones_Count_16(Word_16(shifted))),
+				testify.Equal_Values(t,
+					want,
+					int(bits.Ones_Count_16(bits.Word_16(shifted))),
 					"Ones_Count_16(%#04x) is not %d", shifted, want)
 
 			}
 			if shifted <= 1<<32-1 {
-				testify.Equal_Values(t, want, int(Ones_Count_32(Word_32(shifted))),
+				testify.Equal_Values(t,
+					want,
+					int(bits.Ones_Count_32(bits.Word_32(shifted))),
 					"Ones_Count_32(%#08x) is not %d", shifted, want)
 
 			}
-			testify.Equal_Values(t, want, int(Ones_Count_64(Word_64(shifted))),
+			testify.Equal_Values(t,
+				want,
+				int(bits.Ones_Count_64(bits.Word_64(shifted))),
 				"Ones_Count_64(%#016x) is not %d", shifted, want)
-			testify.Equal_Values(t, want, int(Ones_Count(Word(shifted))),
+			testify.Equal_Values(t, want, int(bits.Ones_Count(bits.Word(shifted))),
 				"Ones_Count(%#016x) is not %d", shifted, want)
 
 		}
@@ -240,23 +259,29 @@ func Test_Standard_Bit_Size(t *testing.T) {
 				want = byte_width + shift_index
 			}
 			if shifted <= 1<<8-1 {
-				testify.Equal_Values(t, want, int(Bit_Size_8(Word_8(shifted))),
+				testify.Equal_Values(t,
+					want,
+					int(bits.Bit_Size_8(bits.Word_8(shifted))),
 					"Bit_Size_8(%#02x) is not %d", shifted, want)
 
 			}
 			if shifted <= 1<<16-1 {
-				testify.Equal_Values(t, want, int(Bit_Size_16(Word_16(shifted))),
+				testify.Equal_Values(t,
+					want,
+					int(bits.Bit_Size_16(bits.Word_16(shifted))),
 					"Bit_Size_16(%#04x) is not %d", shifted, want)
 
 			}
 			if shifted <= 1<<32-1 {
-				testify.Equal_Values(t, want, int(Bit_Size_32(Word_32(shifted))),
+				testify.Equal_Values(t,
+					want,
+					int(bits.Bit_Size_32(bits.Word_32(shifted))),
 					"Bit_Size_32(%#08x) is not %d", shifted, want)
 
 			}
-			testify.Equal_Values(t, want, int(Bit_Size_64(Word_64(shifted))),
+			testify.Equal_Values(t, want, int(bits.Bit_Size_64(bits.Word_64(shifted))),
 				"Bit_Size_64(%#016x) is not %d", shifted, want)
-			testify.Equal_Values(t, want, int(Bit_Size(Word(shifted))),
+			testify.Equal_Values(t, want, int(bits.Bit_Size(bits.Word(shifted))),
 				"Bit_Size(%#016x) is not %d", shifted, want)
 
 		}
@@ -271,43 +296,65 @@ func Test_Standard_Rotate_Left(t *testing.T) {
 	// fit the narrower type even when the truncation is the intent.
 	sequence := DE_BRUIJN_64
 	for distance := uint(0); distance < 128; distance++ {
-		rotation := Rotation(distance)
-		value_8 := Word_8(sequence)
-		want_8 := value_8<<(distance&0x7) | value_8>>(8-distance&0x7)
-		testify.Equal_Values(t, want_8, Rotate_Left_8(value_8, rotation),
-			"Rotate_Left_8(%#02x, %d) is wrong", value_8, distance)
-		testify.Equal_Values(t, value_8, Rotate_Left_8(want_8, -rotation),
-			"Rotate_Left_8(%#02x, -%d) does not undo", want_8, distance)
-
-		value_16 := Word_16(sequence)
-		want_16 := value_16<<(distance&0xf) | value_16>>(16-distance&0xf)
-		testify.Equal_Values(t, want_16, Rotate_Left_16(value_16, rotation),
-			"Rotate_Left_16(%#04x, %d) is wrong", value_16, distance)
-		testify.Equal_Values(t, value_16, Rotate_Left_16(want_16, -rotation),
-			"Rotate_Left_16(%#04x, -%d) does not undo", want_16, distance)
-
-		value_32 := Word_32(sequence)
-		want_32 := value_32<<(distance&0x1f) | value_32>>(32-distance&0x1f)
-		testify.Equal_Values(t, want_32, Rotate_Left_32(value_32, rotation),
-			"Rotate_Left_32(%#08x, %d) is wrong", value_32, distance)
-		testify.Equal_Values(t, value_32, Rotate_Left_32(want_32, -rotation),
-			"Rotate_Left_32(%#08x, -%d) does not undo", want_32, distance)
-
-		value_64 := Word_64(DE_BRUIJN_64)
-		want_64 := value_64<<(distance&0x3f) | value_64>>(64-distance&0x3f)
-		testify.Equal_Values(t, want_64, Rotate_Left_64(value_64, rotation),
-			"Rotate_Left_64(%#016x, %d) is wrong", value_64, distance)
-		testify.Equal_Values(t, value_64, Rotate_Left_64(want_64, -rotation),
-			"Rotate_Left_64(%#016x, -%d) does not undo", want_64, distance)
-
-		word := Word(DE_BRUIJN_64)
-		want_word := word<<(distance&0x3f) | word>>(64-distance&0x3f)
-		testify.Equal_Values(t, want_word, Rotate_Left(word, rotation),
-			"Rotate_Left(%#016x, %d) is wrong", word, distance)
-		testify.Equal_Values(t, word, Rotate_Left(want_word, -rotation),
-			"Rotate_Left(%#016x, -%d) does not undo", want_word, distance)
-
+		compare_rotation_8(t, sequence, distance)
+		compare_rotation_16(t, sequence, distance)
+		compare_rotation_32(t, sequence, distance)
+		compare_rotation_64(t, sequence, distance)
 	}
+}
+
+// Compares one 8-bit turn against a shift pair, then turns the result back.
+func compare_rotation_8(t *testing.T, sequence uint64, distance uint) {
+	t.Helper()
+	rotation := bits.Rotation(distance)
+	value := bits.Word_8(sequence)
+	want := value<<(distance&0x7) | value>>(8-distance&0x7)
+	testify.Equal_Values(t, want, bits.Rotate_Left_8(value, rotation),
+		"Rotate_Left_8(%#02x, %d) is wrong", value, distance)
+	testify.Equal_Values(t, value, bits.Rotate_Left_8(want, -rotation),
+		"Rotate_Left_8(%#02x, -%d) does not undo", want, distance)
+}
+
+// Compares one 16-bit turn against a shift pair, then turns the result back.
+func compare_rotation_16(t *testing.T, sequence uint64, distance uint) {
+	t.Helper()
+	rotation := bits.Rotation(distance)
+	value := bits.Word_16(sequence)
+	want := value<<(distance&0xf) | value>>(16-distance&0xf)
+	testify.Equal_Values(t, want, bits.Rotate_Left_16(value, rotation),
+		"Rotate_Left_16(%#04x, %d) is wrong", value, distance)
+	testify.Equal_Values(t, value, bits.Rotate_Left_16(want, -rotation),
+		"Rotate_Left_16(%#04x, -%d) does not undo", want, distance)
+}
+
+// Compares one 32-bit turn against a shift pair, then turns the result back.
+func compare_rotation_32(t *testing.T, sequence uint64, distance uint) {
+	t.Helper()
+	rotation := bits.Rotation(distance)
+	value := bits.Word_32(sequence)
+	want := value<<(distance&0x1f) | value>>(32-distance&0x1f)
+	testify.Equal_Values(t, want, bits.Rotate_Left_32(value, rotation),
+		"Rotate_Left_32(%#08x, %d) is wrong", value, distance)
+	testify.Equal_Values(t, value, bits.Rotate_Left_32(want, -rotation),
+		"Rotate_Left_32(%#08x, -%d) does not undo", want, distance)
+}
+
+// Compares one 64-bit turn and the matching machine-word turn against a shift pair.
+func compare_rotation_64(t *testing.T, sequence uint64, distance uint) {
+	t.Helper()
+	rotation := bits.Rotation(distance)
+	value := bits.Word_64(sequence)
+	want := value<<(distance&0x3f) | value>>(64-distance&0x3f)
+	testify.Equal_Values(t, want, bits.Rotate_Left_64(value, rotation),
+		"Rotate_Left_64(%#016x, %d) is wrong", value, distance)
+	testify.Equal_Values(t, value, bits.Rotate_Left_64(want, -rotation),
+		"Rotate_Left_64(%#016x, -%d) does not undo", want, distance)
+	word := bits.Word(sequence)
+	want_word := word<<(distance&0x3f) | word>>(64-distance&0x3f)
+	testify.Equal_Values(t, want_word, bits.Rotate_Left(word, rotation),
+		"Rotate_Left(%#016x, %d) is wrong", word, distance)
+	testify.Equal_Values(t, word, bits.Rotate_Left(want_word, -rotation),
+		"Rotate_Left(%#016x, -%d) does not undo", want_word, distance)
 }
 
 // Test_Standard_Reverse mirrors each single bit to its opposite position, then checks the
@@ -336,16 +383,31 @@ func Test_Standard_Reverse(t *testing.T) {
 // end of the mirror of the longer one.
 func compare_reverse(t *testing.T, value uint64, want uint64) {
 	t.Helper()
-	testify.Equal_Values(t, Word_8(want>>(64-8)), Reverse_8(Word_8(value)),
-		"Reverse_8(%#02x) is wrong", uint8(value))
-	testify.Equal_Values(t, Word_16(want>>(64-16)), Reverse_16(Word_16(value)),
-		"Reverse_16(%#04x) is wrong", uint16(value))
-	testify.Equal_Values(t, Word_32(want>>(64-32)), Reverse_32(Word_32(value)),
-		"Reverse_32(%#08x) is wrong", uint32(value))
-	testify.Equal_Values(t, Word_64(want), Reverse_64(Word_64(value)),
-		"Reverse_64(%#016x) is wrong", value)
-	testify.Equal_Values(t, Word(want), Reverse(Word(value)),
-		"Reverse(%#016x) is wrong", value)
+	testify.Equal_Values(t,
+		bits.Word_8(want>>(64-8)),
+		bits.Reverse_8(bits.Word_8(value)),
+		"Reverse_8(%#02x) is wrong",
+		uint8(value))
+	testify.Equal_Values(t,
+		bits.Word_16(want>>(64-16)),
+		bits.Reverse_16(bits.Word_16(value)),
+		"Reverse_16(%#04x) is wrong",
+		uint16(value))
+	testify.Equal_Values(t,
+		bits.Word_32(want>>(64-32)),
+		bits.Reverse_32(bits.Word_32(value)),
+		"Reverse_32(%#08x) is wrong",
+		uint32(value))
+	testify.Equal_Values(t,
+		bits.Word_64(want),
+		bits.Reverse_64(bits.Word_64(value)),
+		"Reverse_64(%#016x) is wrong",
+		value)
+	testify.Equal_Values(t,
+		bits.Word(want),
+		bits.Reverse(bits.Word(value)),
+		"Reverse(%#016x) is wrong",
+		value)
 
 }
 
@@ -354,28 +416,46 @@ func compare_reverse(t *testing.T, value uint64, want uint64) {
 func Test_Standard_Reverse_Bytes(t *testing.T) {
 	t.Parallel()
 	for shift := uint(0); shift < 64; shift++ {
-		value := Word_64(DE_BRUIJN_64 >> shift)
-		testify.Equal_Values(t, value, Reverse_Bytes_64(Reverse_Bytes_64(value)),
-			"Reverse_Bytes_64 twice on %#016x does not return it", value)
+		value := bits.Word_64(DE_BRUIJN_64 >> shift)
+		testify.Equal_Values(t,
+			value,
+			bits.Reverse_Bytes_64(bits.Reverse_Bytes_64(value)),
+			"Reverse_Bytes_64 twice on %#016x does not return it",
+			value)
 
-		narrow := Word_32(value)
-		testify.Equal_Values(t, narrow, Reverse_Bytes_32(Reverse_Bytes_32(narrow)),
-			"Reverse_Bytes_32 twice on %#08x does not return it", narrow)
+		narrow := bits.Word_32(value)
+		testify.Equal_Values(t,
+			narrow,
+			bits.Reverse_Bytes_32(bits.Reverse_Bytes_32(narrow)),
+			"Reverse_Bytes_32 twice on %#08x does not return it",
+			narrow)
 
-		short := Word_16(value)
-		testify.Equal_Values(t, short, Reverse_Bytes_16(Reverse_Bytes_16(short)),
-			"Reverse_Bytes_16 twice on %#04x does not return it", short)
+		short := bits.Word_16(value)
+		testify.Equal_Values(t,
+			short,
+			bits.Reverse_Bytes_16(bits.Reverse_Bytes_16(short)),
+			"Reverse_Bytes_16 twice on %#04x does not return it",
+			short)
 
-		word := Word(value)
-		testify.Equal_Values(t, word, Reverse_Bytes(Reverse_Bytes(word)),
-			"Reverse_Bytes twice on %#016x does not return it", word)
+		word := bits.Word(value)
+		testify.Equal_Values(t,
+			word,
+			bits.Reverse_Bytes(bits.Reverse_Bytes(word)),
+			"Reverse_Bytes twice on %#016x does not return it",
+			word)
 
 	}
-	testify.Equal_Values(t, 0x0201, Reverse_Bytes_16(0x0102),
+	testify.Equal_Values(t,
+		0x0201,
+		bits.Reverse_Bytes_16(0x0102),
 		"Reverse_Bytes_16(0x0102) must be 0x0201")
-	testify.Equal_Values(t, 0x04030201, Reverse_Bytes_32(0x01020304),
+	testify.Equal_Values(t,
+		0x04030201,
+		bits.Reverse_Bytes_32(0x01020304),
 		"Reverse_Bytes_32(0x01020304) must be 0x04030201")
-	testify.Equal_Values(t, 0x0807060504030201, Reverse_Bytes_64(0x0102030405060708),
+	testify.Equal_Values(t,
+		0x0807060504030201,
+		bits.Reverse_Bytes_64(0x0102030405060708),
 		"Reverse_Bytes_64 must mirror the eight bytes")
 
 }
@@ -384,7 +464,7 @@ func Test_Standard_Reverse_Bytes(t *testing.T) {
 // table, in both operand orders, and checks that subtraction undoes each addition.
 func Test_Standard_Add_Subtract_64(t *testing.T) {
 	t.Parallel()
-	largest := WORD_64_MAXIMUM
+	largest := bits.WORD_64_MAXIMUM
 	for _, row := range [][ARITHMETIC_ROW_SIZE]uint64{
 		{0, 0, 0, 0, 0},
 		{0, 1, 0, 1, 0},
@@ -412,7 +492,9 @@ func compare_add_64(
 	want_sum uint64, want_carry uint64,
 ) {
 	t.Helper()
-	sum, carry_output := Add_64(Word_64(augend), Addend_64(addend), Carry_In(carry))
+	sum, carry_output := bits.Add_64(bits.Word_64(augend),
+		bits.Addend_64(addend),
+		bits.Carry_In(carry))
 	testify.Equal_Values(t, want_sum, uint64(sum),
 		"Add_64(%#x,%#x,%#x) sum = %#x, want %#x",
 		augend, addend, carry, sum, want_sum)
@@ -428,8 +510,9 @@ func compare_subtract_64(
 	want_difference uint64, want_borrow uint64,
 ) {
 	t.Helper()
-	difference, borrow_output := Subtract_64(
-		Word_64(minuend), Subtrahend_64(subtrahend), Borrow_In(borrow))
+	difference, borrow_output := bits.Subtract_64(bits.Word_64(minuend),
+		bits.Subtrahend_64(subtrahend),
+		bits.Borrow_In(borrow))
 	testify.Equal_Values(t, want_difference, uint64(difference),
 		"Subtract_64(%#x,%#x,%#x) = %#x, want %#x",
 		minuend, subtrahend, borrow, difference, want_difference)
@@ -471,7 +554,9 @@ func compare_add_32(
 	want_sum uint32, want_carry uint32,
 ) {
 	t.Helper()
-	sum, carry_output := Add_32(Word_32(augend), Addend_32(addend), Carry_In(carry))
+	sum, carry_output := bits.Add_32(bits.Word_32(augend),
+		bits.Addend_32(addend),
+		bits.Carry_In(carry))
 	testify.Equal_Values(t, want_sum, uint32(sum),
 		"Add_32(%#x,%#x,%#x) sum = %#x, want %#x",
 		augend, addend, carry, sum, want_sum)
@@ -487,8 +572,9 @@ func compare_subtract_32(
 	want_difference uint32, want_borrow uint32,
 ) {
 	t.Helper()
-	difference, borrow_output := Subtract_32(
-		Word_32(minuend), Subtrahend_32(subtrahend), Borrow_In(uint64(borrow)))
+	difference, borrow_output := bits.Subtract_32(bits.Word_32(minuend),
+		bits.Subtrahend_32(subtrahend),
+		bits.Borrow_In(uint64(borrow)))
 	testify.Equal_Values(t, want_difference, uint32(difference),
 		"Subtract_32(%#x,%#x,%#x) = %#x, want %#x",
 		minuend, subtrahend, borrow, difference, want_difference)
@@ -502,7 +588,7 @@ func compare_subtract_32(
 // standard library table in both operand orders.
 func Test_Standard_Add_Subtract_Word(t *testing.T) {
 	t.Parallel()
-	largest := uint64(WORD_MAXIMUM)
+	largest := uint64(bits.WORD_MAXIMUM)
 	for _, row := range [][ARITHMETIC_ROW_SIZE]uint64{
 		{0, 0, 0, 0, 0},
 		{0, 1, 0, 1, 0},
@@ -528,7 +614,9 @@ func compare_add_word(
 	want_sum uint64, want_carry uint64,
 ) {
 	t.Helper()
-	sum, carry_output := Add_Word(Word(augend), Addend_Word(addend), Carry_In(carry))
+	sum, carry_output := bits.Add_Word(bits.Word(augend),
+		bits.Addend_Word(addend),
+		bits.Carry_In(carry))
 	testify.Equal_Values(t, want_sum, uint64(sum),
 		"Add_Word(%#x,%#x,%#x) sum = %#x, want %#x",
 		augend, addend, carry, sum, want_sum)
@@ -536,8 +624,9 @@ func compare_add_word(
 		"Add_Word(%#x,%#x,%#x) carry = %#x, want %#x",
 		augend, addend, carry, carry_output, want_carry)
 
-	difference, borrow := Subtract_Word(
-		Word(want_sum), Subtrahend_Word(augend), Borrow_In(carry))
+	difference, borrow := bits.Subtract_Word(bits.Word(want_sum),
+		bits.Subtrahend_Word(augend),
+		bits.Borrow_In(carry))
 	testify.Equal_Values(t, addend, uint64(difference),
 		"Subtract_Word(%#x,%#x,%#x) = %#x, want %#x",
 		want_sum, augend, carry, difference, addend)
@@ -551,7 +640,7 @@ func compare_add_word(
 // it against the standard library table, in both factor orders.
 func Test_Standard_Multiply_Divide_64(t *testing.T) {
 	t.Parallel()
-	largest := WORD_64_MAXIMUM
+	largest := bits.WORD_64_MAXIMUM
 	for _, row := range [][ARITHMETIC_ROW_SIZE]uint64{
 		{1 << 63, 2, 1, 0, 1},
 		{0x3626229738a3b9, 0xd8988a9f1cc4a61, 0x2dd0712657fe8, 0x9dd6a3364c358319, 13},
@@ -572,7 +661,7 @@ func compare_multiply_64(
 	want_high uint64, want_low uint64,
 ) {
 	t.Helper()
-	high, low := Multiply_64(Word_64(multiplicand), Multiplier_64(multiplier))
+	high, low := bits.Multiply_64(bits.Word_64(multiplicand), bits.Multiplier_64(multiplier))
 	testify.Equal_Values(t, want_high, uint64(high),
 		"Multiply_64(%#x,%#x) high = %#x, want %#x",
 		multiplicand, multiplier, high, want_high)
@@ -589,8 +678,9 @@ func compare_divide_64(
 	want_quotient uint64, want_rest uint64,
 ) {
 	t.Helper()
-	quotient, rest := Divide_64(
-		Dividend_High_64(high), Dividend_Low_64(low), Divisor_64(divisor))
+	quotient, rest := bits.Divide_64(bits.Dividend_High_64(high),
+		bits.Dividend_Low_64(low),
+		bits.Divisor_64(divisor))
 	testify.Equal_Values(t, want_quotient, uint64(quotient),
 		"Divide_64(%#x,%#x,%#x) quotient = %#x, want %#x",
 		high, low, divisor, quotient, want_quotient)
@@ -598,7 +688,9 @@ func compare_divide_64(
 		"Divide_64(%#x,%#x,%#x) remainder = %#x, want %#x",
 		high, low, divisor, rest, want_rest)
 
-	alone := Remainder_64(High_Word_64(high), Low_Word_64(low), Divisor_64(divisor))
+	alone := bits.Remainder_64(bits.High_Word_64(high),
+		bits.Low_Word_64(low),
+		bits.Divisor_64(divisor))
 	testify.Equal_Values(t, want_rest, uint64(alone),
 		"Remainder_64(%#x,%#x,%#x) = %#x, want %#x",
 		high, low, divisor, alone, want_rest)
@@ -630,7 +722,7 @@ func compare_multiply_32(
 	want_high uint32, want_low uint32,
 ) {
 	t.Helper()
-	high, low := Multiply_32(Word_32(multiplicand), Multiplier_32(multiplier))
+	high, low := bits.Multiply_32(bits.Word_32(multiplicand), bits.Multiplier_32(multiplier))
 	testify.Equal_Values(t, want_high, uint32(high),
 		"Multiply_32(%#x,%#x) high = %#x, want %#x",
 		multiplicand, multiplier, high, want_high)
@@ -646,8 +738,9 @@ func compare_divide_32(
 	want_quotient uint32, want_rest uint32,
 ) {
 	t.Helper()
-	quotient, rest := Divide_32(
-		Dividend_High_32(high), Dividend_Low_32(low), Divisor_32(divisor))
+	quotient, rest := bits.Divide_32(bits.Dividend_High_32(high),
+		bits.Dividend_Low_32(low),
+		bits.Divisor_32(divisor))
 	testify.Equal_Values(t, want_quotient, uint32(quotient),
 		"Divide_32(%#x,%#x,%#x) quotient = %#x, want %#x",
 		high, low, divisor, quotient, want_quotient)
@@ -655,7 +748,9 @@ func compare_divide_32(
 		"Divide_32(%#x,%#x,%#x) remainder = %#x, want %#x",
 		high, low, divisor, rest, want_rest)
 
-	alone := Remainder_32(High_Word_32(high), Low_Word_32(low), Divisor_32(divisor))
+	alone := bits.Remainder_32(bits.High_Word_32(high),
+		bits.Low_Word_32(low),
+		bits.Divisor_32(divisor))
 	testify.Equal_Values(t, want_rest, uint32(alone),
 		"Remainder_32(%#x,%#x,%#x) = %#x, want %#x",
 		high, low, divisor, alone, want_rest)
@@ -666,9 +761,9 @@ func compare_divide_32(
 // undoes it against the standard library table.
 func Test_Standard_Multiply_Divide_Word(t *testing.T) {
 	t.Parallel()
-	largest := uint64(WORD_MAXIMUM)
+	largest := uint64(bits.WORD_MAXIMUM)
 	for _, row := range [][ARITHMETIC_ROW_SIZE]uint64{
-		{1 << (WORD_SIZE - 1), 2, 1, 0, 1},
+		{1 << (bits.WORD_SIZE - 1), 2, 1, 0, 1},
 		{largest, largest, largest - 1, 1, 42},
 	} {
 		first, second := row[0], row[1]
@@ -686,7 +781,7 @@ func compare_multiply_word(
 	want_high uint64, want_low uint64,
 ) {
 	t.Helper()
-	high, low := Multiply_Word(Word(multiplicand), Multiplier_Word(multiplier))
+	high, low := bits.Multiply_Word(bits.Word(multiplicand), bits.Multiplier_Word(multiplier))
 	testify.Equal_Values(t, want_high, uint64(high),
 		"Multiply_Word(%#x,%#x) high = %#x, want %#x",
 		multiplicand, multiplier, high, want_high)
@@ -702,8 +797,9 @@ func compare_divide_word(
 	want_quotient uint64, want_rest uint64,
 ) {
 	t.Helper()
-	quotient, rest := Divide_Word(
-		Dividend_High_Word(high), Dividend_Low_Word(low), Divisor_Word(divisor))
+	quotient, rest := bits.Divide_Word(bits.Dividend_High_Word(high),
+		bits.Dividend_Low_Word(low),
+		bits.Divisor_Word(divisor))
 	testify.Equal_Values(t, want_quotient, uint64(quotient),
 		"Divide_Word(%#x,%#x,%#x) quotient = %#x, want %#x",
 		high, low, divisor, quotient, want_quotient)
@@ -711,7 +807,9 @@ func compare_divide_word(
 		"Divide_Word(%#x,%#x,%#x) remainder = %#x, want %#x",
 		high, low, divisor, rest, want_rest)
 
-	alone := Remainder_Word(High_Word(high), Low_Word(low), Divisor_Word(divisor))
+	alone := bits.Remainder_Word(bits.High_Word(high),
+		bits.Low_Word(low),
+		bits.Divisor_Word(divisor))
 	testify.Equal_Values(t, want_rest, uint64(alone),
 		"Remainder_Word(%#x,%#x,%#x) = %#x, want %#x",
 		high, low, divisor, alone, want_rest)
@@ -723,17 +821,17 @@ func compare_divide_word(
 // this package raises an assertion failure, thus the test asks only that it panics.
 func Test_Standard_Divide_Panics(t *testing.T) {
 	t.Parallel()
-	testify.Panics(t, func() { Divide_Word(1, 0, 1) },
+	testify.Panics(t, func() { bits.Divide_Word(1, 0, 1) },
 		"Divide_Word must panic when the divisor is not above the high word")
-	testify.Panics(t, func() { Divide_32(1, 0, 1) },
+	testify.Panics(t, func() { bits.Divide_32(1, 0, 1) },
 		"Divide_32 must panic when the divisor is not above the high word")
-	testify.Panics(t, func() { Divide_64(1, 0, 1) },
+	testify.Panics(t, func() { bits.Divide_64(1, 0, 1) },
 		"Divide_64 must panic when the divisor is not above the high word")
-	testify.Panics(t, func() { Divide_Word(1, 0, 0) },
+	testify.Panics(t, func() { bits.Divide_Word(1, 0, 0) },
 		"Divide_Word must panic on a zero divisor")
-	testify.Panics(t, func() { Divide_32(1, 0, 0) },
+	testify.Panics(t, func() { bits.Divide_32(1, 0, 0) },
 		"Divide_32 must panic on a zero divisor")
-	testify.Panics(t, func() { Divide_64(1, 0, 0) },
+	testify.Panics(t, func() { bits.Divide_64(1, 0, 0) },
 		"Divide_64 must panic on a zero divisor")
 
 }
@@ -742,13 +840,13 @@ func Test_Standard_Divide_Panics(t *testing.T) {
 // panics rather than entering the arithmetic.
 func Test_Standard_Add_Subtract_Carry_Panics(t *testing.T) {
 	t.Parallel()
-	testify.Panics(t, func() { Add_64(1, 1, 2) },
+	testify.Panics(t, func() { bits.Add_64(1, 1, 2) },
 		"Add_64 must panic on a carry above one")
-	testify.Panics(t, func() { Subtract_64(1, 1, 2) },
+	testify.Panics(t, func() { bits.Subtract_64(1, 1, 2) },
 		"Subtract_64 must panic on a borrow above one")
-	testify.Panics(t, func() { Add_32(1, 1, 2) },
+	testify.Panics(t, func() { bits.Add_32(1, 1, 2) },
 		"Add_32 must panic on a carry above one")
-	testify.Panics(t, func() { Subtract_32(1, 1, 2) },
+	testify.Panics(t, func() { bits.Subtract_32(1, 1, 2) },
 		"Subtract_32 must panic on a borrow above one")
 
 }
@@ -760,10 +858,12 @@ func Test_Standard_Remainder_32(t *testing.T) {
 	high, low := uint32(510510), uint32(9699690)
 	divisor := uint32(510510 + 1)
 	for step_index := 0; step_index < 1000; step_index++ {
-		rest := Remainder_32(
-			High_Word_32(high), Low_Word_32(low), Divisor_32(divisor))
-		_, expected := Divide_32(
-			Dividend_High_32(high), Dividend_Low_32(low), Divisor_32(divisor))
+		rest := bits.Remainder_32(bits.High_Word_32(high),
+			bits.Low_Word_32(low),
+			bits.Divisor_32(divisor))
+		_, expected := bits.Divide_32(bits.Dividend_High_32(high),
+			bits.Dividend_Low_32(low),
+			bits.Divisor_32(divisor))
 		testify.Equal_Values(t, uint32(expected), uint32(rest),
 			"Remainder_32(%d,%d,%d) = %d, but the division gives %d",
 			high, low, divisor, rest, expected)
@@ -779,10 +879,13 @@ func Test_Standard_Remainder_32_Overflow(t *testing.T) {
 	high, low := uint32(510510), uint32(9699690)
 	divisor := uint32(7)
 	for step_index := 0; step_index < 1000; step_index++ {
-		rest := Remainder_32(
-			High_Word_32(high), Low_Word_32(low), Divisor_32(divisor))
+		rest := bits.Remainder_32(bits.High_Word_32(high),
+			bits.Low_Word_32(low),
+			bits.Divisor_32(divisor))
 		wide := uint64(high)<<32 | uint64(low)
-		_, expected := Divide_64(0, Dividend_Low_64(wide), Divisor_64(divisor))
+		_, expected := bits.Divide_64(0,
+			bits.Dividend_Low_64(wide),
+			bits.Divisor_64(divisor))
 		testify.Equal_Values(t, uint32(expected), uint32(rest),
 			"Remainder_32(%d,%d,%d) = %d, but the wide division gives %d",
 			high, low, divisor, rest, expected)
@@ -798,10 +901,12 @@ func Test_Standard_Remainder_64(t *testing.T) {
 	high, low := uint64(510510), uint64(9699690)
 	divisor := uint64(510510 + 1)
 	for step_index := 0; step_index < 1000; step_index++ {
-		rest := Remainder_64(
-			High_Word_64(high), Low_Word_64(low), Divisor_64(divisor))
-		_, expected := Divide_64(
-			Dividend_High_64(high), Dividend_Low_64(low), Divisor_64(divisor))
+		rest := bits.Remainder_64(bits.High_Word_64(high),
+			bits.Low_Word_64(low),
+			bits.Divisor_64(divisor))
+		_, expected := bits.Divide_64(bits.Dividend_High_64(high),
+			bits.Dividend_Low_64(low),
+			bits.Divisor_64(divisor))
 		testify.Equal_Values(t, uint64(expected), uint64(rest),
 			"Remainder_64(%d,%d,%d) = %d, but the division gives %d",
 			high, low, divisor, rest, expected)
@@ -828,8 +933,9 @@ func Test_Standard_Remainder_64_Overflow(t *testing.T) {
 			"Remainder_64(%d,%d,%d) does not overflow a quotient",
 			high, low, divisor)
 
-		rest := Remainder_64(
-			High_Word_64(high), Low_Word_64(low), Divisor_64(divisor))
+		rest := bits.Remainder_64(bits.High_Word_64(high),
+			bits.Low_Word_64(low),
+			bits.Divisor_64(divisor))
 		testify.Equal_Values(t, want, uint64(rest),
 			"Remainder_64(%d,%d,%d) = %d, want %d",
 			high, low, divisor, rest, want)
@@ -841,55 +947,62 @@ func Test_Standard_Remainder_64_Overflow(t *testing.T) {
 // standard library has no counterpart for because its distance is a plain machine integer.
 func Test_Standard_Rotation_Ends(t *testing.T) {
 	t.Parallel()
-	for _, rotation := range []Rotation{ROTATION_MINIMUM, ROTATION_MAXIMUM} {
+	for _, rotation := range []bits.Rotation{bits.ROTATION_MINIMUM, bits.ROTATION_MAXIMUM} {
 		testify.Equal_Values(t,
-			Rotate_Left_8(0xa5, rotation),
-			Rotate_Left_8(0xa5, rotation),
-			"Rotate_Left_8 at rotation %d is not deterministic", rotation)
+			bits.Rotate_Left_8(0xa5, rotation),
+			bits.Rotate_Left_8(0xa5, rotation),
+			"Rotate_Left_8 at rotation %d is not deterministic",
+			rotation)
 		testify.Equal_Values(t,
-			Rotate_Left_16(0xa5a5, rotation),
-			Rotate_Left_16(0xa5a5, rotation),
-			"Rotate_Left_16 at rotation %d is not deterministic", rotation)
+			bits.Rotate_Left_16(0xa5a5, rotation),
+			bits.Rotate_Left_16(0xa5a5, rotation),
+			"Rotate_Left_16 at rotation %d is not deterministic",
+			rotation)
 		testify.Equal_Values(t,
-			Rotate_Left_32(0xa5a5a5a5, rotation),
-			Rotate_Left_32(0xa5a5a5a5, rotation),
-			"Rotate_Left_32 at rotation %d is not deterministic", rotation)
+			bits.Rotate_Left_32(0xa5a5a5a5, rotation),
+			bits.Rotate_Left_32(0xa5a5a5a5, rotation),
+			"Rotate_Left_32 at rotation %d is not deterministic",
+			rotation)
 
-		value := Word_64(DE_BRUIJN_64)
+		value := bits.Word_64(DE_BRUIJN_64)
 		testify.Equal_Values(t,
-			Rotate_Left_64(value, rotation),
-			Rotate_Left_64(value, rotation),
-			"Rotate_Left_64 at rotation %d is not deterministic", rotation)
+			bits.Rotate_Left_64(value, rotation),
+			bits.Rotate_Left_64(value, rotation),
+			"Rotate_Left_64 at rotation %d is not deterministic",
+			rotation)
 
-		word := Word(DE_BRUIJN_64)
-		testify.Equal_Values(t, Rotate_Left(word, rotation), Rotate_Left(word, rotation),
-			"Rotate_Left at rotation %d is not deterministic", rotation)
+		word := bits.Word(DE_BRUIJN_64)
+		testify.Equal_Values(t,
+			bits.Rotate_Left(word, rotation),
+			bits.Rotate_Left(word, rotation),
+			"Rotate_Left at rotation %d is not deterministic",
+			rotation)
 
 	}
 }
 
 // Sweeps the 8-bit domain ends and the small values around zero.
-func sweep_8() (values []Word_8) {
-	return []Word_8{0, 1, 2, 3, 0x7f, 0x80, 0xfe, 0xff}
+func sweep_8() (values []bits.Word_8) {
+	return []bits.Word_8{0, 1, 2, 3, 0x7f, 0x80, 0xfe, 0xff}
 }
 
 // Sweeps the 16-bit domain ends and the small values around zero. The two single-byte
 // values are there so a byte reversal lands on one and on two.
-func sweep_16() (values []Word_16) {
-	return []Word_16{
+func sweep_16() (values []bits.Word_16) {
+	return []bits.Word_16{
 		0, 1, 2, 3, 0x0100, 0x0200, 0x7fff, 0x8000, 0xfffe, 0xffff,
 	}
 }
 
 // Sweeps the 32-bit domain ends and the small values around zero.
-func sweep_32() (values []Word_32) {
-	return []Word_32{0, 1, 2, 3, 0x7fffffff, 0x80000000, 0xfffffffe, 0xffffffff}
+func sweep_32() (values []bits.Word_32) {
+	return []bits.Word_32{0, 1, 2, 3, 0x7fffffff, 0x80000000, 0xfffffffe, 0xffffffff}
 }
 
 // Sweeps the 64-bit domain ends and the small values around zero. The two top-byte values
 // are there so a byte reversal lands on one and on two.
-func sweep_64() (values []Word_64) {
-	return []Word_64{
+func sweep_64() (values []bits.Word_64) {
+	return []bits.Word_64{
 		0, 1, 2, 3, 1 << 56, 1 << 57, 1 << 62, 1 << 63,
 		0xfffffffffffffffe, 0xffffffffffffffff,
 	}
@@ -900,64 +1013,74 @@ func sweep_64() (values []Word_64) {
 func Test_Domain_Ends_Of_The_Counts(t *testing.T) {
 	t.Parallel()
 	for _, value := range sweep_8() {
-		Leading_Zeros_8(value)
-		Trailing_Zeros_8(value)
-		Ones_Count_8(value)
-		Bit_Size_8(value)
-		Reverse_8(value)
+		bits.Leading_Zeros_8(value)
+		bits.Trailing_Zeros_8(value)
+		bits.Ones_Count_8(value)
+		bits.Bit_Size_8(value)
+		bits.Reverse_8(value)
 	}
 	for _, value := range sweep_16() {
-		Leading_Zeros_16(value)
-		Trailing_Zeros_16(value)
-		Ones_Count_16(value)
-		Bit_Size_16(value)
-		Reverse_16(value)
-		Reverse_Bytes_16(value)
+		bits.Leading_Zeros_16(value)
+		bits.Trailing_Zeros_16(value)
+		bits.Ones_Count_16(value)
+		bits.Bit_Size_16(value)
+		bits.Reverse_16(value)
+		bits.Reverse_Bytes_16(value)
 	}
 	for _, value := range sweep_32() {
-		Leading_Zeros_32(value)
-		Trailing_Zeros_32(value)
-		Ones_Count_32(value)
-		Bit_Size_32(value)
-		Reverse_32(value)
-		Reverse_Bytes_32(value)
+		bits.Leading_Zeros_32(value)
+		bits.Trailing_Zeros_32(value)
+		bits.Ones_Count_32(value)
+		bits.Bit_Size_32(value)
+		bits.Reverse_32(value)
+		bits.Reverse_Bytes_32(value)
 	}
 	for _, value := range sweep_64() {
-		Leading_Zeros_64(value)
-		Trailing_Zeros_64(value)
-		Ones_Count_64(value)
-		Bit_Size_64(value)
-		Reverse_64(value)
-		Reverse_Bytes_64(value)
-		Leading_Zeros(Word(value))
-		Trailing_Zeros(Word(value))
-		Ones_Count(Word(value))
-		Bit_Size(Word(value))
-		Reverse(Word(value))
-		Reverse_Bytes(Word(value))
+		bits.Leading_Zeros_64(value)
+		bits.Trailing_Zeros_64(value)
+		bits.Ones_Count_64(value)
+		bits.Bit_Size_64(value)
+		bits.Reverse_64(value)
+		bits.Reverse_Bytes_64(value)
+		bits.Leading_Zeros(bits.Word(value))
+		bits.Trailing_Zeros(bits.Word(value))
+		bits.Ones_Count(bits.Word(value))
+		bits.Bit_Size(bits.Word(value))
+		bits.Reverse(bits.Word(value))
+		bits.Reverse_Bytes(bits.Word(value))
 	}
 }
 
 // Test_Domain_Ends_Of_The_Rotations drives each rotation over the ends of both domains.
 func Test_Domain_Ends_Of_The_Rotations(t *testing.T) {
 	t.Parallel()
-	distances := []Rotation{
-		ROTATION_MINIMUM, -65, -64, -3, -2, -1, 0, 1, 2, 3, 63, 64, 65,
-		ROTATION_MAXIMUM,
-	}
+	distances := []bits.Rotation{bits.ROTATION_MINIMUM,
+		-65,
+		-64,
+		-3,
+		-2,
+		-1,
+		0,
+		1,
+		2,
+		3,
+		63,
+		64,
+		65,
+		bits.ROTATION_MAXIMUM}
 	for _, rotation := range distances {
 		for _, value := range sweep_8() {
-			Rotate_Left_8(value, rotation)
+			bits.Rotate_Left_8(value, rotation)
 		}
 		for _, value := range sweep_16() {
-			Rotate_Left_16(value, rotation)
+			bits.Rotate_Left_16(value, rotation)
 		}
 		for _, value := range sweep_32() {
-			Rotate_Left_32(value, rotation)
+			bits.Rotate_Left_32(value, rotation)
 		}
 		for _, value := range sweep_64() {
-			Rotate_Left_64(value, rotation)
-			Rotate_Left(Word(value), rotation)
+			bits.Rotate_Left_64(value, rotation)
+			bits.Rotate_Left(bits.Word(value), rotation)
 		}
 	}
 }
@@ -966,22 +1089,28 @@ func Test_Domain_Ends_Of_The_Rotations(t *testing.T) {
 // multiplication over the ends of every operand domain and both carries.
 func Test_Domain_Ends_Of_The_Arithmetic(t *testing.T) {
 	t.Parallel()
-	for _, carry := range []Carry_In{0, 1} {
+	for _, carry := range []bits.Carry_In{0, 1} {
 		for _, left := range sweep_32() {
 			for _, right := range sweep_32() {
-				Add_32(left, Addend_32(right), carry)
-				Subtract_32(left, Subtrahend_32(right), Borrow_In(carry))
-				Multiply_32(left, Multiplier_32(right))
+				bits.Add_32(left, bits.Addend_32(right), carry)
+				bits.Subtract_32(left,
+					bits.Subtrahend_32(right),
+					bits.Borrow_In(carry))
+				bits.Multiply_32(left, bits.Multiplier_32(right))
 			}
 		}
 		for _, left := range sweep_64() {
 			for _, right := range sweep_64() {
-				Add_64(left, Addend_64(right), carry)
-				Subtract_64(left, Subtrahend_64(right), Borrow_In(carry))
-				Multiply_64(left, Multiplier_64(right))
-				Add_Word(Word(left), Addend_Word(right), carry)
-				Subtract_Word(Word(left), Subtrahend_Word(right), Borrow_In(carry))
-				Multiply_Word(Word(left), Multiplier_Word(right))
+				bits.Add_64(left, bits.Addend_64(right), carry)
+				bits.Subtract_64(left,
+					bits.Subtrahend_64(right),
+					bits.Borrow_In(carry))
+				bits.Multiply_64(left, bits.Multiplier_64(right))
+				bits.Add_Word(bits.Word(left), bits.Addend_Word(right), carry)
+				bits.Subtract_Word(bits.Word(left),
+					bits.Subtrahend_Word(right),
+					bits.Borrow_In(carry))
+				bits.Multiply_Word(bits.Word(left), bits.Multiplier_Word(right))
 			}
 		}
 	}
@@ -1015,22 +1144,27 @@ func Test_Domain_Ends_Of_The_Division(t *testing.T) {
 
 // Drives the 64-bit and machine-word division and remainder for one triple. The remainder
 // admits any high word, thus only the division needs the quotient to fit.
-func drive_division_64(high Word_64, low Word_64, divisor Word_64) {
-	Remainder_64(High_Word_64(high), Low_Word_64(low), Divisor_64(divisor))
-	Remainder_Word(High_Word(high), Low_Word(low), Divisor_Word(divisor))
+func drive_division_64(high bits.Word_64, low bits.Word_64, divisor bits.Word_64) {
+	bits.Remainder_64(bits.High_Word_64(high), bits.Low_Word_64(low), bits.Divisor_64(divisor))
+	bits.Remainder_Word(bits.High_Word(high), bits.Low_Word(low), bits.Divisor_Word(divisor))
 	if uint64(high) >= uint64(divisor) {
 		return
 	}
-	Divide_64(Dividend_High_64(high), Dividend_Low_64(low), Divisor_64(divisor))
-	Divide_Word(
-		Dividend_High_Word(high), Dividend_Low_Word(low), Divisor_Word(divisor))
+	bits.Divide_64(bits.Dividend_High_64(high),
+		bits.Dividend_Low_64(low),
+		bits.Divisor_64(divisor))
+	bits.Divide_Word(bits.Dividend_High_Word(high),
+		bits.Dividend_Low_Word(low),
+		bits.Divisor_Word(divisor))
 }
 
 // Drives the 32-bit division and remainder for one triple.
-func drive_division_32(high Word_32, low Word_32, divisor Word_32) {
-	Remainder_32(High_Word_32(high), Low_Word_32(low), Divisor_32(divisor))
+func drive_division_32(high bits.Word_32, low bits.Word_32, divisor bits.Word_32) {
+	bits.Remainder_32(bits.High_Word_32(high), bits.Low_Word_32(low), bits.Divisor_32(divisor))
 	if uint32(high) >= uint32(divisor) {
 		return
 	}
-	Divide_32(Dividend_High_32(high), Dividend_Low_32(low), Divisor_32(divisor))
+	bits.Divide_32(bits.Dividend_High_32(high),
+		bits.Dividend_Low_32(low),
+		bits.Divisor_32(divisor))
 }

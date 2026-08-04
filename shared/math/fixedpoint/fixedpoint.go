@@ -7,11 +7,11 @@
 package fixedpoint
 
 import (
-	"math/bits"
 	"strconv"
 	"strings"
 
 	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 )
 
 // FRACTIONAL_BITS is how many of a Number's low bits hold the fraction; the rest hold the
@@ -347,7 +347,8 @@ func From_Ratio(numerator Numerator, denominator Denominator) (number Number) {
 	}
 	high := numerator_magnitude >> (64 - FRACTIONAL_BITS)
 	low := numerator_magnitude << FRACTIONAL_BITS
-	magnitude, _ := bits.Div64(high, low, denominator_magnitude)
+	magnitude, _ := bits.Divide_64(bits.Dividend_High_64(high),
+		bits.Dividend_Low_64(low), bits.Divisor_64(denominator_magnitude))
 	if negative {
 		return Number(-int64(magnitude))
 	}
@@ -383,7 +384,10 @@ func Multiply(multiplicand Multiplicand, multiplier Multiplier) (product Number)
 	if multiplier < 0 {
 		right = uint64(-int64(multiplier))
 	}
-	high, low := bits.Mul64(left, right)
+	product_high, product_low := bits.Multiply_64(
+		bits.Word_64(left), bits.Multiplier_64(right))
+	high := uint64(product_high)
+	low := uint64(product_low)
 	magnitude := (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
 	if negative {
 		return Number(-int64(magnitude))
@@ -411,7 +415,8 @@ func Divide(dividend Dividend, divisor Divisor) (quotient Number) {
 	}
 	high := numerator >> (64 - FRACTIONAL_BITS)
 	low := numerator << FRACTIONAL_BITS
-	magnitude, _ := bits.Div64(high, low, denominator)
+	magnitude, _ := bits.Divide_64(bits.Dividend_High_64(high),
+		bits.Dividend_Low_64(low), bits.Divisor_64(denominator))
 	if negative {
 		return Number(-int64(magnitude))
 	}
@@ -432,7 +437,10 @@ func Apply(value Number, ratio Ratio) (scaled Number) {
 	if ratio < 0 {
 		right = uint64(-int64(ratio))
 	}
-	high, low := bits.Mul64(left, right)
+	product_high, product_low := bits.Multiply_64(
+		bits.Word_64(left), bits.Multiplier_64(right))
+	high := uint64(product_high)
+	low := uint64(product_low)
 	magnitude := (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
 	if negative {
 		return Number(-int64(magnitude))
@@ -450,7 +458,7 @@ func Square_Root(value Number) (root Number_Root) {
 	}
 	// The root of value/SCALE, scaled back up, is the root of value*SCALE; the product
 	// can exceed int64, so it is taken as a 128-bit radicand.
-	high, low := bits.Mul64(uint64(value), SCALE)
+	high, low := bits.Multiply_64(bits.Word_64(value), SCALE)
 	return Number_Root(Integer_Root(High_Word(high), Low_Word(low)))
 }
 
@@ -464,7 +472,7 @@ func Square_Root_Scaled(value Radicand) (root Scaled_Root) {
 		return 0
 	}
 	// The root of value, scaled up by SCALE, is the root of value*SCALE*SCALE.
-	high, low := bits.Mul64(uint64(value), SCALE*SCALE)
+	high, low := bits.Multiply_64(bits.Word_64(value), SCALE*SCALE)
 	return Scaled_Root(Integer_Root(High_Word(high), Low_Word(low)))
 }
 
@@ -479,7 +487,8 @@ func Integer_Root(high High_Word, low Low_Word) (root Root_Integer) {
 		if low == 0 {
 			return 0
 		}
-		estimate := uint64(1) << uint((bits.Len64(uint64(low))+1)/2)
+		size := int(bits.Bit_Size_64(bits.Word_64(low)))
+		estimate := uint64(1) << uint((size+1)/2)
 		for index := 0; index < 64; index++ {
 			next := (estimate + uint64(low)/estimate) / 2
 			if next >= estimate {
@@ -489,11 +498,12 @@ func Integer_Root(high High_Word, low Low_Word) (root Root_Integer) {
 		}
 		return Root_Integer(estimate)
 	}
-	leading_zeros := bits.LeadingZeros64(uint64(high))
+	leading_zeros := int(bits.Leading_Zeros_64(bits.Word_64(high)))
 	estimate := uint64(1) << uint((128-leading_zeros+1)/2)
 	for index := 0; index < 64; index++ {
-		quotient, _ := bits.Div64(uint64(high), uint64(low), estimate)
-		next := (estimate + quotient) / 2
+		quotient, _ := bits.Divide_64(bits.Dividend_High_64(high),
+			bits.Dividend_Low_64(low), bits.Divisor_64(estimate))
+		next := (estimate + uint64(quotient)) / 2
 		if next >= estimate {
 			return Root_Integer(estimate)
 		}
@@ -546,9 +556,12 @@ func Format(value Number, digits Digit_Count) (text Text) {
 	for index := 0; index < int(digits); index++ {
 		power *= 10
 	}
-	high, low := bits.Mul64(magnitude, uint64(power))
-	low, carry := bits.Add64(low, 1<<(FRACTIONAL_BITS-1), 0)
-	high += carry
+	product_high, product_low := bits.Multiply_64(
+		bits.Word_64(magnitude), bits.Multiplier_64(power))
+	rounded, carry := bits.Add_64(
+		bits.Word_64(product_low), 1<<(FRACTIONAL_BITS-1), 0)
+	high := uint64(product_high) + uint64(carry)
+	low := uint64(rounded)
 	scaled := (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
 	if scaled == 0 {
 		negative = false

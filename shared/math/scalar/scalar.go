@@ -876,7 +876,19 @@ func Truncate(value Value) (whole Whole_Number) {
 // division truncates toward zero, thus a negative value with a fraction needs one step
 // down.
 func Floor(value Value) (whole Whole_Number) {
-	defer func() { Whole_Number_Invariants(whole, "floor.whole") }()
+	defer func() {
+		Whole_Number_Invariants(whole, "floor.whole")
+		// The result brackets the value from below by less than one whole. A shift that
+		// leaves the storage range breaks this even when the result still looks whole.
+		invariant.Always(
+			int64(whole) <= int64(value),
+			"A floor never exceeds its own value.",
+		)
+		invariant.Always(
+			int64(value)-int64(whole) < SCALE,
+			"A floor is within one whole of its own value.",
+		)
+	}()
 	Value_Invariants(value, "floor.value")
 	truncated := int64(value) / SCALE * SCALE
 	if int64(value) < 0 {
@@ -889,7 +901,17 @@ func Floor(value Value) (whole Whole_Number) {
 
 // Ceiling returns the smallest whole Number that is not smaller than the value.
 func Ceiling(value Value) (whole Whole_Number) {
-	defer func() { Whole_Number_Invariants(whole, "ceiling.whole") }()
+	defer func() {
+		Whole_Number_Invariants(whole, "ceiling.whole")
+		invariant.Always(
+			int64(whole) >= int64(value),
+			"A ceiling is never below its own value.",
+		)
+		invariant.Always(
+			int64(whole)-int64(value) < SCALE,
+			"A ceiling is within one whole of its own value.",
+		)
+	}()
 	Value_Invariants(value, "ceiling.value")
 	truncated := int64(value) / SCALE * SCALE
 	if int64(value) > 0 {
@@ -904,7 +926,19 @@ func Ceiling(value Value) (whole Whole_Number) {
 // fraction rather than shifting the value by a half first, because a shift at either end
 // of the domain would leave the storage range.
 func Round(value Value) (whole Whole_Number) {
-	defer func() { Whole_Number_Invariants(whole, "round.whole") }()
+	defer func() {
+		Whole_Number_Invariants(whole, "round.whole")
+		// The nearest whole is never more than a half away. A shift past the end of the
+		// storage lands far outside this, whatever the sign it wraps to.
+		distance := int64(value) - int64(whole)
+		if distance < 0 {
+			distance = -distance
+		}
+		invariant.Always(
+			distance <= HALF,
+			"A rounded value is within one half of its own value.",
+		)
+	}()
 	Value_Invariants(value, "round.value")
 	truncated := int64(value) / SCALE * SCALE
 	fraction := int64(value) - truncated
@@ -931,7 +965,17 @@ func Modulo(dividend Dividend, divisor Divisor) (remainder Remainder) {
 
 // Square_Root returns the square root of a Number that is not negative.
 func Square_Root(value Radicand) (root Root) {
-	defer func() { Root_Invariants(root, "square_root.root") }()
+	defer func() {
+		Root_Invariants(root, "square_root.root")
+		// The square of a floored root never passes the radicand. The square stays in
+		// range because the root is the floor, thus this needs no wider arithmetic.
+		square := fixedpoint.Multiply(
+			fixedpoint.Multiplicand(root), fixedpoint.Multiplier(root))
+		invariant.Always(
+			int64(square) <= int64(value),
+			"The square of a root never exceeds its radicand.",
+		)
+	}()
 	Radicand_Invariants(value, "square_root.value")
 	return Root(fixedpoint.Square_Root(fixedpoint.Number(value)))
 }
@@ -939,7 +983,15 @@ func Square_Root(value Radicand) (root Root) {
 // Cube_Root returns the cube root of a Number of either sign. Newton's iteration converges
 // on the root, and the magnitude carries the sign back at the end.
 func Cube_Root(value Cube_Radicand) (root Cube_Root_Value) {
-	defer func() { Cube_Root_Value_Invariants(root, "cube_root.root") }()
+	defer func() {
+		Cube_Root_Value_Invariants(root, "cube_root.root")
+		// A cube keeps the sign of its root, thus the two always agree. An estimate that
+		// overflows lands on a value of the wrong sign while still looking like a root.
+		invariant.Always(
+			(int64(root) < 0) == (int64(value) < 0),
+			"A cube root carries the sign of its radicand.",
+		)
+	}()
 	Cube_Radicand_Invariants(value, "cube_root.value")
 	if value == 0 {
 		return 0
@@ -1012,7 +1064,27 @@ func cube_root_estimate(magnitude Cube_Magnitude) (estimate Cube_Estimate) {
 // larger keeps the squared ratio inside the unit interval, thus a large leg cannot
 // overflow the sum.
 func Hypotenuse(opposite Leg_Opposite, adjacent Leg_Adjacent) (distance Distance) {
-	defer func() { Distance_Invariants(distance, "hypotenuse.distance") }()
+	defer func() {
+		Distance_Invariants(distance, "hypotenuse.distance")
+		// The hypotenuse is the longest side, thus it reaches at least as far as either
+		// leg. A product that overflows falls short of this, or turns negative.
+		opposite_reach := int64(opposite)
+		if opposite_reach < 0 {
+			opposite_reach = -opposite_reach
+		}
+		adjacent_reach := int64(adjacent)
+		if adjacent_reach < 0 {
+			adjacent_reach = -adjacent_reach
+		}
+		invariant.Always(
+			int64(distance) >= opposite_reach,
+			"A hypotenuse reaches at least as far as the opposite leg.",
+		)
+		invariant.Always(
+			int64(distance) >= adjacent_reach,
+			"A hypotenuse reaches at least as far as the adjacent leg.",
+		)
+	}()
 	Leg_Opposite_Invariants(opposite, "hypotenuse.opposite")
 	Leg_Adjacent_Invariants(adjacent, "hypotenuse.adjacent")
 	larger := fixedpoint.Number(opposite)

@@ -2,9 +2,9 @@ package fixedpoint_test
 
 import (
 	"encoding/json"
-	"math/bits"
 	"testing"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 )
 
@@ -134,34 +134,7 @@ func Test_Square_Root(t *testing.T) {
 			t.Fatalf("Integer_Root(just below (%d+1)^2) != %d", root, root)
 		}
 	}
-	// Across large, scattered 64-bit radicands the divide-free root must satisfy the
-	// defining property exactly: r^2 <= n < (r+1)^2, checked in 128 bits.
-	scatter := uint64(0x9E3779B97F4A7C15)
-	probe := uint64(1)
-	for index := 0; index < 500_000; index++ {
-		probe += scatter
-		root := uint64(root_of(probe))
-		low_high, low_low := bits.Mul64(root, root)
-		if low_high != 0 {
-			t.Fatalf("Integer_Root(%d) = %d, but r^2 overflows past n", probe, root)
-		}
-		if low_low > probe {
-			t.Fatalf("Integer_Root(%d) = %d, but r^2 > n", probe, root)
-		}
-		next_high, next_low := bits.Mul64(root+1, root+1)
-		if next_high == 0 {
-			if next_low <= probe {
-				t.Fatalf("Integer_Root(%d) = %d, but (r+1)^2 <= n", probe, root)
-			}
-		}
-	}
-	// A large 128-bit radicand floors exactly too: (3<<40)^2 roots back to 3<<40.
-	big_root := uint64(3) << 40
-	big_high, big_low := bits.Mul64(big_root, big_root)
-	big := fixedpoint.Integer_Root(fixedpoint.High_Word(big_high), fixedpoint.Low_Word(big_low))
-	if big != fixedpoint.Root_Integer(big_root) {
-		t.Fatalf("Integer_Root((3<<40)^2) != 3<<40")
-	}
+	verify_root_property(t)
 }
 
 // Test_Sine verifies the quarter-turn extremes exactly, range reduction past one turn,
@@ -375,4 +348,40 @@ func verify_format_domains() {
 	fixedpoint.Format(0, 1)
 	fixedpoint.Format(0, 2)
 	fixedpoint.Format(fixedpoint.Number(fixedpoint.INTEGER_64_MINIMUM), 6)
+}
+
+// Verifies that the divide-free root satisfies its defining property across large,
+// scattered radicands: r^2 <= n < (r+1)^2, checked in 128 bits.
+func verify_root_property(t *testing.T) {
+	t.Helper()
+	root_of := integer_root
+	scatter := uint64(0x9E3779B97F4A7C15)
+	probe := uint64(1)
+	for index := 0; index < 500_000; index++ {
+		probe += scatter
+		root := uint64(root_of(probe))
+		low_high, low_low := bits.Multiply_64(bits.Word_64(root), bits.Multiplier_64(root))
+		if low_high != 0 {
+			t.Fatalf("Integer_Root(%d) = %d, but r^2 overflows past n", probe, root)
+		}
+		if uint64(low_low) > probe {
+			t.Fatalf("Integer_Root(%d) = %d, but r^2 > n", probe, root)
+		}
+		next_root := root + 1
+		next_high, next_low := bits.Multiply_64(
+			bits.Word_64(next_root), bits.Multiplier_64(next_root))
+		if next_high == 0 {
+			if uint64(next_low) <= probe {
+				t.Fatalf("Integer_Root(%d) = %d, but (r+1)^2 <= n", probe, root)
+			}
+		}
+	}
+	// A large 128-bit radicand floors exactly too: (3<<40)^2 roots back to 3<<40.
+	big_root := uint64(3) << 40
+	big_high, big_low := bits.Multiply_64(
+		bits.Word_64(big_root), bits.Multiplier_64(big_root))
+	big := fixedpoint.Integer_Root(fixedpoint.High_Word(big_high), fixedpoint.Low_Word(big_low))
+	if big != fixedpoint.Root_Integer(big_root) {
+		t.Fatalf("Integer_Root((3<<40)^2) != 3<<40")
+	}
 }
