@@ -579,6 +579,7 @@ func Test_Assertions_Registration_Cross_Package_Constants(t *testing.T) {
 	}
 	assert_constant_bytes_resolve(t)
 	assert_composed_bytes_resolve(t)
+	assert_foreign_declaration_scope(t)
 }
 
 // Test_Assertions_Registration_Constant_Expression keeps one evaluator behind every operand, so a
@@ -2217,6 +2218,47 @@ func check(value Span) { Span_Invariants(value, "span") }
 		if !strings.Contains(output.String(), "not statically resolvable") {
 			t.Fatalf("%s output=%q, want unresolvable", operand, output.String())
 		}
+	}
+}
+
+// A foreign constant is read with the names its own file could see. The importing package declares
+// the same bare name at a different value, thus a scope that failed to travel would resolve 512 in
+// silence rather than the 16 the source states.
+func assert_foreign_declaration_scope(t *testing.T) {
+	t.Helper()
+	files := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
+		"a/a.go": &fstest.MapFile{Data: []byte(`package a
+const BITS = 4
+const SCALE = 1 << BITS
+`)},
+		"b/b.go": &fstest.MapFile{Data: []byte(`package b
+import width "fixture/a"
+const BITS = 9
+const SPAN_MINIMUM = 0
+type Span string
+func Span_Invariants(value Span, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SPAN_MINIMUM, width.SCALE).Ensure()
+}
+func check(value Span) { Span_Invariants(value, "span") }
+`)},
+	}
+	output := &bytes.Buffer{}
+	recorder := &core.Recorder{
+		File_System: files, Packages_To_Analyze: []string{"/b"}, Output: output,
+		Exit: func(int) {}, Is_Test: true,
+	}
+	core.Recorder_Register_Packages_For_Analysis(recorder)
+	if output.String() != "" {
+		t.Fatalf("foreign declaration output=%q, want no diagnostic", output.String())
+	}
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	if strings.Contains(output.String(), "0..512") {
+		t.Fatalf("output = %q, want the importer's BITS to be invisible", output.String())
+	}
+	if !strings.Contains(output.String(), "0..16") {
+		t.Fatalf("output = %q, want a 0..16 domain", output.String())
 	}
 }
 

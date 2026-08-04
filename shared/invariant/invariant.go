@@ -564,7 +564,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Same_Set: ast_index_functions(
 			files, file_set, module_path, module_root, constants, package_types),
 		Loaded:           map[string]map[string]Indexed_Function{},
-		Loaded_Constants: map[string]map[string]ast.Expr{},
+		Loaded_Constants: map[string]map[string]Constant_Declaration{},
 		Constants:        constants,
 		Package_Types:    package_types,
 	}
@@ -851,7 +851,7 @@ type Indexed_Function struct {
 	// Imports maps the file's local names to import paths, so qualified sub-calls resolve.
 	Imports map[string]string
 	// Constants is the declaration package's static integer namespace.
-	Constants map[string]ast.Expr
+	Constants map[string]Constant_Declaration
 	// Package_Types maps the declaration package's package-level types to their underlying
 	// expressions, so a function-local subject is rejected and a Boolean subject is known.
 	Package_Types map[string]ast.Expr
@@ -884,10 +884,10 @@ type Bundle_Index struct {
 	Loaded map[string]map[string]Indexed_Function
 	// Loaded_Constants caches those same packages' constants, keyed the same way. A qualified
 	// operand names one package, thus a flat bare-name index cannot answer it.
-	Loaded_Constants map[string]map[string]ast.Expr
+	Loaded_Constants map[string]map[string]Constant_Declaration
 	// Constants maps package constants to their value expressions. A flat bare-name index, like
 	// Same_Set, is sufficient because one analysis covers one package tree.
-	Constants map[string]ast.Expr
+	Constants map[string]Constant_Declaration
 	// Package_Types maps each package-level type declaration to its underlying expression.
 	// reflect reports one empty PkgPath and one shared Name for two function-local types that
 	// share a name, thus presence here is what lets a chain subject carry an identity. The
@@ -924,7 +924,7 @@ func ast_index_package_types(files []*ast.File) (types map[string]ast.Expr) {
 // descending *_Invariants bundles. A later definition wins on a name collision.
 func ast_index_functions(
 	files []*ast.File, file_set *token.FileSet, module_path string, module_root string,
-	constants map[string]ast.Expr, package_types map[string]ast.Expr,
+	constants map[string]Constant_Declaration, package_types map[string]ast.Expr,
 ) (functions map[string]Indexed_Function) {
 	functions = map[string]Indexed_Function{}
 	for _, file := range files {
@@ -1027,9 +1027,10 @@ func ast_argument(call *ast.CallExpr, index int) (argument ast.Expr) {
 // Multi-name and implicit (iota-carrying) specs are deliberately absent: their values depend on
 // positional context the flat index cannot carry, so a reference to one is unresolvable and
 // fails registration rather than resolving wrongly.
-func ast_index_constants(files []*ast.File) (constants map[string]ast.Expr) {
-	constants = map[string]ast.Expr{}
+func ast_index_constants(files []*ast.File) (constants map[string]Constant_Declaration) {
+	constants = map[string]Constant_Declaration{}
 	for _, file := range files {
+		imports := ast_file_imports(file)
 		for _, declaration := range file.Decls {
 			generic, is_generic := declaration.(*ast.GenDecl)
 			if !is_generic {
@@ -1050,11 +1051,25 @@ func ast_index_constants(files []*ast.File) (constants map[string]ast.Expr) {
 					continue
 				}
 				name := value_specification.Names[0].Name
-				constants[name] = value_specification.Values[0]
+				constants[name] = Constant_Declaration{
+					Expression: value_specification.Values[0],
+					Imports:    imports,
+				}
 			}
 		}
 	}
 	return constants
+}
+
+// Constant_Declaration is one constant and the names its own file could see. An expression alone is
+// not a value, thus the imports that resolve its operands travel beside it. Without them a foreign
+// declaration would read its bare names in the package that named it, and a same-spelled constant
+// there would supply a different number in silence.
+type Constant_Declaration struct {
+	// Expression is the declared value, unevaluated.
+	Expression ast.Expr
+	// Imports maps the declaring file's local names to import paths.
+	Imports map[string]string
 }
 
 // Integer_Value is exact across the negative int64 minimum and positive uint64 maximum.
@@ -1069,8 +1084,8 @@ type Integer_Value struct {
 // qualified name states its package in the source, thus one shared fact can serve every package
 // that names it while a bare name still cannot reach across a boundary.
 type Constant_Scope struct {
-	// Local is the declaring package's static integer namespace.
-	Local map[string]ast.Expr
+	// Local is the declaring package's static constant namespace.
+	Local map[string]Constant_Declaration
 	// Imports maps the declaring file's local names to import paths.
 	Imports map[string]string
 	// Index parses an imported package on demand and caches its constants.
@@ -1090,29 +1105,48 @@ func indexed_function_constants(
 // Gives the declaration a qualified operand names, parsing its package the first time.
 func constant_scope_qualified(
 	scope Constant_Scope, selector *ast.SelectorExpr,
-) (declaration ast.Expr, resolved bool) {
+) (declaration Constant_Declaration, declared Constant_Scope, resolved bool) {
 	qualifier, is_qualifier := selector.X.(*ast.Ident)
 	if !is_qualifier {
-		return nil, false
+		return Constant_Declaration{}, Constant_Scope{}, false
 	}
 	if scope.Index == nil {
-		return nil, false
+		return Constant_Declaration{}, Constant_Scope{}, false
 	}
 	import_path, imported := scope.Imports[qualifier.Name]
 	if !imported {
-		return nil, false
+		return Constant_Declaration{}, Constant_Scope{}, false
 	}
 	// The loader fills Loaded_Constants as a side effect, and caches an empty map for a package
 	// outside this module, thus a second miss costs one lookup.
 	bundle_index_load(scope.Index, import_path)
-	declaration, resolved = scope.Index.Loaded_Constants[import_path][selector.Sel.Name]
-	return declaration, resolved
+	foreign := scope.Index.Loaded_Constants[import_path]
+	declaration, resolved = foreign[selector.Sel.Name]
+	if !resolved {
+		return Constant_Declaration{}, Constant_Scope{}, false
+	}
+	return declaration, constant_declaration_scope(declaration, foreign, scope.Index), true
+}
+
+// Gives the scope one declaration is read in: its own package's constants and its own file's
+// imports. Nothing of the naming package survives the hop, which is what keeps a same-spelled
+// constant there from supplying a value the source never states.
+func constant_declaration_scope(
+	declaration Constant_Declaration, local map[string]Constant_Declaration,
+	index *Bundle_Index,
+) (scope Constant_Scope) {
+	return Constant_Scope{
+		Local: local, Imports: declaration.Imports, Index: index,
+	}
 }
 
 // Constant_Frame lets registration evaluate constants without recursive source descent.
 type Constant_Frame struct {
 	// Expression is the AST node this work item resolves.
 	Expression ast.Expr
+	// Scope is where this expression's bare names resolve. A name pushes the scope of the
+	// declaration it names, thus an operand is always read where it was written.
+	Scope Constant_Scope
 	// Visited marks the operator's second pass after its operands are available.
 	Visited bool
 }
@@ -1145,7 +1179,7 @@ func constant_resolve(
 func constant_evaluate(
 	constants Constant_Scope, expression ast.Expr,
 ) (value constant.Value, ok bool) {
-	frames := []Constant_Frame{{Expression: expression}}
+	frames := []Constant_Frame{{Expression: expression, Scope: constants}}
 	var values []constant.Value
 	for steps := 0; len(frames) != 0; steps++ {
 		if steps > CONSTANT_RESOLUTION_STEPS_MAX {
@@ -1153,7 +1187,7 @@ func constant_evaluate(
 		}
 		frame := frames[len(frames)-1]
 		frames = frames[:len(frames)-1]
-		frames, values, ok = constant_resolve_frame(constants, frame, frames, values)
+		frames, values, ok = constant_resolve_frame(frame, frames, values)
 		if !ok {
 			return nil, false
 		}
@@ -1165,12 +1199,13 @@ func constant_evaluate(
 }
 
 func constant_resolve_frame(
-	constants Constant_Scope, frame Constant_Frame, frames []Constant_Frame,
-	values []constant.Value,
+	frame Constant_Frame, frames []Constant_Frame, values []constant.Value,
 ) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
 	switch concrete := frame.Expression.(type) {
 	case *ast.ParenExpr:
-		return append(frames, Constant_Frame{Expression: concrete.X}), values, true
+		return append(frames, Constant_Frame{
+			Expression: concrete.X, Scope: frame.Scope,
+		}), values, true
 	case *ast.BasicLit:
 		// One call covers an integer, a string, a rune, and a float literal alike.
 		literal := constant.MakeFromLiteral(concrete.Value, concrete.Kind, 0)
@@ -1179,13 +1214,15 @@ func constant_resolve_frame(
 		}
 		return frames, append(values, literal), true
 	case *ast.Ident:
-		return constant_resolve_name(constants, concrete, frames, values)
+		return constant_resolve_name(frame, concrete, frames, values)
 	case *ast.SelectorExpr:
-		declaration, declared := constant_scope_qualified(constants, concrete)
-		if !declared {
+		declaration, declared, resolved := constant_scope_qualified(frame.Scope, concrete)
+		if !resolved {
 			return nil, nil, false
 		}
-		return append(frames, Constant_Frame{Expression: declaration}), values, true
+		return append(frames, Constant_Frame{
+			Expression: declaration.Expression, Scope: declared,
+		}), values, true
 	case *ast.CallExpr:
 		return constant_resolve_call(frame, concrete, frames, values)
 	case *ast.UnaryExpr:
@@ -1199,7 +1236,7 @@ func constant_resolve_frame(
 // Resolves a bare name. The two Boolean literals are predeclared rather than declared, thus they
 // answer here and never through the package's constants.
 func constant_resolve_name(
-	constants Constant_Scope, identifier *ast.Ident, frames []Constant_Frame,
+	frame Constant_Frame, identifier *ast.Ident, frames []Constant_Frame,
 	values []constant.Value,
 ) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
 	if identifier.Name == "true" {
@@ -1208,11 +1245,16 @@ func constant_resolve_name(
 	if identifier.Name == "false" {
 		return frames, append(values, constant.MakeBool(false)), true
 	}
-	declaration, declared := constants.Local[identifier.Name]
+	declaration, declared := frame.Scope.Local[identifier.Name]
 	if !declared {
 		return nil, nil, false
 	}
-	return append(frames, Constant_Frame{Expression: declaration}), values, true
+	// One package spans several files, thus even a bare name takes its own file's imports.
+	return append(frames, Constant_Frame{
+		Expression: declaration.Expression,
+		Scope: constant_declaration_scope(
+			declaration, frame.Scope.Local, frame.Scope.Index),
+	}), values, true
 }
 
 // Reads a one-argument call. A measure over a constant string is itself constant, and every other
@@ -1229,11 +1271,17 @@ func constant_resolve_call(
 		return nil, nil, false
 	}
 	if callee.Name != "len" {
-		return append(frames, Constant_Frame{Expression: call.Args[0]}), values, true
+		return append(frames, Constant_Frame{
+			Expression: call.Args[0], Scope: frame.Scope,
+		}), values, true
 	}
 	if !frame.Visited {
-		frames = append(frames, Constant_Frame{Expression: frame.Expression, Visited: true})
-		return append(frames, Constant_Frame{Expression: call.Args[0]}), values, true
+		frames = append(frames, Constant_Frame{
+			Expression: frame.Expression, Scope: frame.Scope, Visited: true,
+		})
+		return append(frames, Constant_Frame{
+			Expression: call.Args[0], Scope: frame.Scope,
+		}), values, true
 	}
 	measured := values[len(values)-1]
 	if measured.Kind() != constant.String {
@@ -1249,8 +1297,12 @@ func constant_resolve_unary(
 	values []constant.Value,
 ) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
 	if !frame.Visited {
-		frames = append(frames, Constant_Frame{Expression: frame.Expression, Visited: true})
-		return append(frames, Constant_Frame{Expression: unary.X}), values, true
+		frames = append(frames, Constant_Frame{
+			Expression: frame.Expression, Scope: frame.Scope, Visited: true,
+		})
+		return append(frames, Constant_Frame{
+			Expression: unary.X, Scope: frame.Scope,
+		}), values, true
 	}
 	operand := values[len(values)-1]
 	values = values[:len(values)-1]
@@ -1267,9 +1319,15 @@ func constant_resolve_binary(
 	values []constant.Value,
 ) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
 	if !frame.Visited {
-		frames = append(frames, Constant_Frame{Expression: frame.Expression, Visited: true})
-		frames = append(frames, Constant_Frame{Expression: binary.Y})
-		return append(frames, Constant_Frame{Expression: binary.X}), values, true
+		frames = append(frames, Constant_Frame{
+			Expression: frame.Expression, Scope: frame.Scope, Visited: true,
+		})
+		frames = append(frames, Constant_Frame{
+			Expression: binary.Y, Scope: frame.Scope,
+		})
+		return append(frames, Constant_Frame{
+			Expression: binary.X, Scope: frame.Scope,
+		}), values, true
 	}
 	right := values[len(values)-1]
 	left := values[len(values)-2]
@@ -1918,7 +1976,7 @@ func bundle_index_load(
 	}
 	functions = map[string]Indexed_Function{}
 	index.Loaded[import_path] = functions
-	index.Loaded_Constants[import_path] = map[string]ast.Expr{}
+	index.Loaded_Constants[import_path] = map[string]Constant_Declaration{}
 	directory, resolved := bundle_index_module_root(index, import_path)
 	if !resolved {
 		return functions
