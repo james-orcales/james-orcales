@@ -700,6 +700,49 @@ func check(value Value) { Value_Invariants(value, "owned") }
 	})
 }
 
+// Test_Assertions_Registration_Alias keeps a second name from reaching one plan, which would leave
+// an obligation nobody owns.
+func Test_Assertions_Registration_Alias(t *testing.T) {
+	_, output, code := registered_fixture(`package fixture
+type Value = struct {
+	Count int
+}
+func check(value Value) { println(value.Count) }
+`)
+	if code != 1 {
+		t.Fatalf("literal alias exit=%d output=%q", code, output.String())
+	}
+	if !strings.Contains(output.String(), "type alias") {
+		t.Fatalf("literal alias output=%q, want an alias diagnostic", output.String())
+	}
+	// A named right side adds no identity either, thus it is refused on the same terms.
+	_, output, code = registered_fixture(`package fixture
+type Value int
+func Value_Invariants(value Value, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+}
+type Named = Value
+func check(value Named) { Value_Invariants(Value(value), "named") }
+`)
+	if code != 1 {
+		t.Fatalf("named alias exit=%d output=%q", code, output.String())
+	}
+	if !strings.Contains(output.String(), "type alias") {
+		t.Fatalf("named alias output=%q, want an alias diagnostic", output.String())
+	}
+	// A defined type carries an identity of its own, thus it is what a second name must be.
+	_, output, code = registered_fixture(`package fixture
+type Value int
+func Value_Invariants(value Value, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+}
+func check(value Value) { Value_Invariants(value, "defined") }
+`)
+	if code != -1 {
+		t.Fatalf("defined type exit=%d output=%q", code, output.String())
+	}
+}
+
 // Test_Assertions_Registration_Literal keeps coverage identities statically knowable.
 func Test_Assertions_Registration_Literal(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture

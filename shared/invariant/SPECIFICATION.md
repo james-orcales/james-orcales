@@ -183,6 +183,12 @@ A `Tree` chain lives in an `_Invariants` bundle. A chain identifies itself by it
 only a bundle owns one type, thus a chain in any other body has no owner. A chain outside a bundle
 is a fatal error, and an ordinary body states an inline helper instead.
 
+### Alias
+
+A type alias is a fatal error. An alias adds a name and no identity, thus two names reach one plan
+and neither one owns it. A defined type carries an identity of its own, and it is what a second name
+for a type must be.
+
 ### Literal
 
 A namespace and an axis message must be a compile-time string literal without NUL. A final template

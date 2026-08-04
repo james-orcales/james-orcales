@@ -584,6 +584,8 @@ func recorder_check_registration(
 	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
 	test_files []*ast.File, index *Bundle_Index, reg *Registration,
 ) {
+	recorder_collect_aliases(file_set, files, reg)
+	recorder_check_aliases(recorder, reg)
 	recorder_check_test_assertion_calls(recorder, file_set, test_files, reg)
 	recorder_check_bundle_control_flow(recorder, file_set, files, reg)
 	recorder_check_bundle_literal_namespaces(recorder, file_set, files, reg)
@@ -1387,6 +1389,50 @@ func recorder_check_invalid_subjects(recorder *Recorder, reg *Registration) {
 		recorder, reg, "invalid assertion subjects", reg.Invalid_Subject)
 }
 
+// Reports each type alias. An alias adds a name and no identity, thus two names reach one plan and
+// neither one owns it.
+func recorder_check_aliases(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "type aliases", reg.Alias)
+}
+
+// Collects each type alias. A defined type carries an identity of its own, and it is what a second
+// name for a type must be.
+func recorder_collect_aliases(
+	file_set *token.FileSet, files []*ast.File, reg *Registration,
+) {
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.TYPE {
+				continue
+			}
+			recorder_collect_alias_specs(file_set, general.Specs, reg)
+		}
+	}
+}
+
+// Records one type declaration group's offending aliases.
+func recorder_collect_alias_specs(
+	file_set *token.FileSet, specifications []ast.Spec, reg *Registration,
+) {
+	for _, specification := range specifications {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if !type_specification.Assign.IsValid() {
+			continue
+		}
+		reg.Alias = append(reg.Alias,
+			recorder_position(file_set, type_specification)+
+				"  type alias: "+strconv.Quote(type_specification.Name.Name))
+	}
+}
+
 // Reports each subject type that occurs twice in one root's expansion.
 func recorder_check_repeated_subjects(recorder *Recorder, reg *Registration) {
 	recorder_report_registration_failure(
@@ -1710,6 +1756,9 @@ type Registration struct {
 	Invalid_Chain []string
 	// Invalid_Subject holds chains whose subject reflect cannot name uniquely.
 	Invalid_Subject []string
+	// Alias holds each type alias. An alias adds a name and no identity, thus two names reach
+	// one plan and neither one owns it.
+	Alias []string
 	// Cycle holds bundle compositions that recurse back into themselves.
 	Cycle []string
 	// Planned holds the Events entries to create when no diagnostic fired.
