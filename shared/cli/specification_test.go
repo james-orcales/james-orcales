@@ -9,6 +9,7 @@ import (
 
 	"local/james-orcales/shared/cli"
 	sharedio "local/james-orcales/shared/io"
+	testify "local/james-orcales/shared/testify"
 )
 
 // Test_Parse_Commands verifies named, default, and unknown command resolution.
@@ -387,38 +388,24 @@ func Test_Parse_Help(t *testing.T) {
 		},
 	})
 	_, err := parse_program(&single, []string{"tool", "-help"})
-	if !errors.Is(err, cli.Help_Requested) {
-		t.Fatalf("expected Help_Requested, got %v", err)
-	}
+	testify.Error_Is(t, err, cli.Help_Requested, "-help")
 	short_context, err := parse_program(&single, []string{"tool", "-h"})
-	if !errors.Is(err, cli.Help_Requested) {
-		t.Fatalf("expected Help_Requested for -h, got %v", err)
-	}
+	testify.Error_Is(t, err, cli.Help_Requested, "-h")
 	short_help := strings.Builder{}
 	cli.Print_Requested_Help(&short_help, single, short_context)
-	if !strings.Contains(short_help.String(), "does a thing") {
-		t.Fatalf("-h did not select the program help:\n%s", short_help.String())
-	}
+	testify.Contains_Any(t, short_help.String(), "does a thing", "-h program help")
 
 	// Multi-command: a command then -help resolves that command as the context.
 	fixture := new_cli_fixture()
 	command, err := parse_program(&fixture.Program, []string{"todoctl", "list", "-help"})
-	if !errors.Is(err, cli.Help_Requested) {
-		t.Fatalf("expected Help_Requested, got %v", err)
-	}
-	if command.Label != "list" {
-		t.Errorf("expected list context, got %q", command.Label)
-	}
+	testify.Error_Is(t, err, cli.Help_Requested, "command help")
+	testify.Equal(t, "list", command.Label, "command help context")
 
 	// Multi-command with -help but no command selected → root context (empty label).
 	fixture = new_cli_fixture()
 	command, err = parse_program(&fixture.Program, []string{"todoctl", "-help"})
-	if !errors.Is(err, cli.Help_Requested) {
-		t.Fatalf("expected Help_Requested, got %v", err)
-	}
-	if command.Label != "" {
-		t.Errorf("expected root context (empty label), got %q", command.Label)
-	}
+	testify.Error_Is(t, err, cli.Help_Requested, "root help")
+	testify.Empty(t, command.Label, "root help context")
 }
 
 // Test_Parse_Environment_Variables verifies injected typed values and environment defaults.
@@ -444,20 +431,14 @@ func Test_Completion(t *testing.T) {
 	// A leading dash supplies each valid named token.
 	dashed := cli.Complete(program, []string{"add", "-"})
 	for _, expected := range []string{"-h", "-help", "-task"} {
-		if !slices.Contains(dashed, expected) {
-			t.Errorf("expected %s among %v", expected, dashed)
-		}
+		testify.Contains(t, dashed, expected, "completion candidates")
 	}
 
 	// Handle_Completion serves __complete, printing candidates one per line.
 	output := strings.Builder{}
 	args := []string{"toolbox", "__complete", "add", "-"}
-	if !cli.Handle_Completion(program, args, &output) {
-		t.Fatal("expected __complete to be handled")
-	}
-	if !strings.Contains(output.String(), "-task") {
-		t.Errorf("expected -task in completion output, got %q", output.String())
-	}
+	testify.True(t, cli.Handle_Completion(program, args, &output), "__complete")
+	testify.Contains_Any(t, output.String(), "-task", "completion output")
 }
 
 // Test_Visibility_Hidden verifies a hidden flag and a hidden command still parse and
@@ -1286,18 +1267,18 @@ func assert_new_enum_validation(t *testing.T) {
 		})
 	})
 	// User declarations cannot change the function of a default help flag.
-	assert_panics(t, "user option named help", func() {
+	testify.Panics(t, func() {
 		cli.New_Single(cli.New_Single_Input{
 			Label: "tool",
 			Flags: []cli.Option{{Label: "help", Value: false}},
 		})
-	})
-	assert_panics(t, "user option named h", func() {
+	}, "user option named help")
+	testify.Panics(t, func() {
 		cli.New_Single(cli.New_Single_Input{
 			Label: "tool",
 			Flags: []cli.Option{{Label: "h", Value: false}},
 		})
-	})
+	}, "user option named h")
 }
 
 // Parses arguments against a copy of the program and asserts the named variadic

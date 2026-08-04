@@ -10,6 +10,7 @@ import (
 	"local/james-orcales/shared/cli"
 	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/snap/default"
+	testify "local/james-orcales/shared/testify"
 )
 
 func TestMain(m *testing.M) {
@@ -576,9 +577,7 @@ func Test_Complete_Flags(t *testing.T) {
 	fixture := new_cli_fixture()
 	got := cli.Complete(fixture.Program, []string{"todoctl", "add", "-"})
 	for _, want := range []string{"-deadline", "-priority", "-h", "-help", "-task"} {
-		if !slices.Contains(got, want) {
-			t.Errorf("expected %q among %v", want, got)
-		}
+		testify.Contains(t, got, want, "flag completion")
 	}
 }
 
