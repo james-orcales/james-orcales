@@ -104,8 +104,12 @@ The output carries a cross reference table and ends with the end of file marker.
 
 # Main
 
-Main reads the injected Markdown and writes the PDF to the injected output.
+Main parses the injected arguments and performs one complete render, preview, or golden command.
+
+### Dependencies
+
+Main receives its streams, file operations, temporary directory, and path opener through Main_Input.
 
 ### Output
 
-A run writes a valid PDF to the output sink and returns a zero status code.
+A successful render writes the converted document and returns a zero status code.

@@ -445,22 +445,76 @@ func Test_Document_Trailer(t *testing.T) {
 	}
 }
 
-// Test_Main_Output verifies Main writes a valid PDF to its injected sink and
-// returns a zero status code.
-func Test_Main_Output(t *testing.T) {
+// Test_Main_Dependencies verifies that the temporary path and external opener
+// stay injectable because neither is deterministic process state.
+func Test_Main_Dependencies(t *testing.T) {
 	t.Parallel()
-	var output strings.Builder
-	var diagnostics strings.Builder
+	written_path := ""
+	opened_path := ""
 	status := markdown_to_pdf.Main(&markdown_to_pdf.Main_Input{
-		Markdown: []byte("# Hello"),
-		Output:   &output,
-		Stderr:   &diagnostics,
+		Arguments:    []string{"markdown_to_pdf", "golden"},
+		Output:       io.Discard,
+		Error_Output: io.Discard,
+		Write_File: func(path string, document []byte) (err error) {
+			written_path = path
+			return nil
+		},
+		Temporary_Directory: "/injected",
+		Open_Path: func(path string) (err error) {
+			opened_path = path
+			return nil
+		},
 	})
 	if status != 0 {
 		t.Fatalf("status = %d, want 0", status)
 	}
-	if !strings.HasPrefix(output.String(), "%PDF-1.") {
-		t.Fatal("Main did not write a PDF to its output")
+	want_path := "/injected/markdown_to_pdf_golden.pdf"
+	if written_path != want_path {
+		t.Fatalf("written path = %q, want %q", written_path, want_path)
+	}
+	if opened_path != want_path {
+		t.Fatalf("opened path = %q, want %q", opened_path, want_path)
+	}
+}
+
+// Test_Main_Output verifies that package main only binds capabilities because
+// the injected entry point owns the complete command policy.
+func Test_Main_Output(t *testing.T) {
+	t.Parallel()
+	var output strings.Builder
+	var diagnostics strings.Builder
+	written_path := ""
+	var written_document []byte
+	status := markdown_to_pdf.Main(&markdown_to_pdf.Main_Input{
+		Arguments:    []string{"markdown_to_pdf", "render", "source.md", "-out=result.pdf"},
+		Output:       &output,
+		Error_Output: &diagnostics,
+		Open_File: func(path string) (file io.ReadCloser, err error) {
+			if path != "source.md" {
+				t.Fatalf("opened path = %q, want source.md", path)
+			}
+			return io.NopCloser(strings.NewReader("# Hello")), nil
+		},
+		Write_File: func(path string, document []byte) (err error) {
+			written_path = path
+			written_document = append([]byte{}, document...)
+			return nil
+		},
+		Path_Exists:         func(string) (exists bool) { return false },
+		Temporary_Directory: "/tmp",
+		Open_Path:           func(string) (err error) { return nil },
+	})
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	if written_path != "result.pdf" {
+		t.Fatalf("written path = %q, want result.pdf", written_path)
+	}
+	if !bytes.HasPrefix(written_document, []byte("%PDF-1.")) {
+		t.Fatal("Main did not write a PDF document")
+	}
+	if diagnostics.Len() != 0 {
+		t.Fatalf("diagnostics = %q, want empty", diagnostics.String())
 	}
 }
 

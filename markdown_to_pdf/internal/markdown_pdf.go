@@ -1,7 +1,5 @@
-// Package markdown_to_pdf renders a Markdown document to a PDF file. It is the
-// pure tier of the markdown_to_pdf binary: every dependency on the outside world
-// (the source bytes, the output sink, the diagnostic sink) arrives through
-// Main_Input, so the renderer reads no files and touches no process globals.
+// Package markdown_to_pdf receives host capabilities through Main_Input so command policy does
+// not depend on process state.
 package markdown_to_pdf
 
 import (
@@ -16,39 +14,67 @@ import (
 	"encoding/ascii85"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"local/james-orcales/shared/cli"
 	bounded_zlib "local/james-orcales/shared/compress/zlib"
 	"local/james-orcales/shared/math/fixedpoint"
 )
 
-// Main_Input carries the injected dependencies Main needs.
+// Main_Input keeps all host access outside the command policy.
 type Main_Input struct {
-	// Markdown is the source document, already read into memory by the caller.
-	Markdown []byte
-	// Output receives the rendered PDF bytes.
+	// Arguments are injected because the process argument vector is global state.
+	Arguments []string
+	// Output permits deterministic help and completion verification.
 	Output io.Writer
-	// Stderr receives a diagnostic line when writing the output fails.
-	Stderr io.Writer
+	// Error_Output permits deterministic diagnostic verification.
+	Error_Output io.Writer
+	// Open_File prevents the command policy from accessing the host filesystem directly.
+	Open_File func(path string) (file io.ReadCloser, err error)
+	// Write_File keeps output creation and replacement in the composition root.
+	Write_File func(path string, document []byte) (err error)
+	// Path_Exists lets the policy protect derived output without direct filesystem access.
+	Path_Exists func(path string) (exists bool)
+	// Temporary_Directory avoids a direct dependency on the process environment.
+	Temporary_Directory string
+	// Open_Path keeps external process execution in the composition root.
+	Open_Path func(path string) (err error)
 }
 
-// Main renders input.Markdown and writes the resulting PDF to input.Output,
-// returning a process exit code: zero on success, non-zero when the write
-// fails. It is the binary's single entry point, kept here so package main
-// stays a thin, untested shell.
+// Main owns the complete command policy so the composition root has no branches.
 func Main(input *Main_Input) (status_code int) {
-	document := Render(input.Markdown)
-	_, write_err := input.Output.Write(document)
-	if write_err != nil {
-		fmt.Fprintf(input.Stderr, "markdown_to_pdf: %v\n", write_err)
-		return EXIT_WRITE_FAILURE
+	program := main_program()
+	if cli.Handle_Completion(program, input.Arguments, input.Output) {
+		return 0
 	}
-	return 0
+	if len(input.Arguments) < 2 {
+		cli.Print_Help(input.Error_Output, program)
+		return EXIT_USAGE
+	}
+	command, parse_err := cli.Program_Parse(&program, input.Arguments)
+	if errors.Is(parse_err, cli.Help_Requested) {
+		cli.Print_Requested_Help(input.Output, program, command)
+		return 0
+	}
+	if parse_err != nil {
+		fmt.Fprintln(input.Error_Output, parse_err)
+		cli.Print_Help(input.Error_Output, program)
+		return EXIT_USAGE
+	}
+	if command.Label == "golden" {
+		return main_golden(input)
+	}
+	if command.Label == "preview" {
+		return main_preview(input, command)
+	}
+	return main_render_command(input, command)
 }
 
 // Render turns Markdown source into the bytes of a self-contained PDF file.
@@ -261,9 +287,6 @@ const BLOCK_RULE = 6
 
 // BLOCK_TABLE tags a table block.
 const BLOCK_TABLE = 7
-
-// EXIT_WRITE_FAILURE is the exit code Main returns when writing the PDF to Output fails.
-const EXIT_WRITE_FAILURE = 1
 
 // Text_Run is a span of inline text sharing one font and link target.
 type Text_Run struct {
@@ -1932,6 +1955,15 @@ const PDF_DEPTH_MAX = 128
 // PDF_STREAM_BYTES_MAX bounds each decoded stream.
 const PDF_STREAM_BYTES_MAX = 64 * 1024 * 1024
 
+// PDF_READ_BUFFER_CAPACITY gives bounded reads one reusable 32 KiB stack buffer.
+const PDF_READ_BUFFER_CAPACITY = 32768
+
+// PDF_ENCODING_CAPACITY covers each value of one PDF simple-font byte.
+const PDF_ENCODING_CAPACITY = 256
+
+// PDF_PERMISSIONS_CAPACITY matches the Standard Security Handler permissions word.
+const PDF_PERMISSIONS_CAPACITY = 4
+
 // PDF_DECODED_BYTES_MAX bounds all decoded streams in one conversion.
 const PDF_DECODED_BYTES_MAX = 256 * 1024 * 1024
 
@@ -2710,10 +2742,11 @@ func pdf_parse_number(text string) (
 			return 0, 0, false
 		}
 	}
-	fraction_number := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: fraction, Denominator: denominator,
-	})
-	number = fixedpoint.From_Integer(whole) + fraction_number
+	fraction_number := pdf_fixed_from_ratio(
+		fixedpoint.Numerator(fraction),
+		fixedpoint.Denominator(denominator),
+	)
+	number = pdf_fixed_from_integer(whole) + fraction_number
 	if negative {
 		number = -number
 		whole = -whole
@@ -3240,8 +3273,8 @@ func pdf_decode_flate(encoded []byte) (decoded []byte, err error) {
 }
 
 func pdf_read_bounded(reader io.Reader, bytes_max int) (contents []byte, err error) {
-	contents = make([]byte, 0, 32768)
-	var buffer [32768]byte
+	contents = make([]byte, 0, PDF_READ_BUFFER_CAPACITY)
+	var buffer [PDF_READ_BUFFER_CAPACITY]byte
 	for read_count := 0; read_count <= bytes_max+1; read_count++ {
 		count, read_err := reader.Read(buffer[:])
 		if len(contents)+count > bytes_max {
@@ -3800,8 +3833,8 @@ func pdf_page_dimensions(media_box Pdf_Value) (
 	width fixedpoint.Number,
 	height fixedpoint.Number,
 ) {
-	width = fixedpoint.From_Integer(612)
-	height = fixedpoint.From_Integer(792)
+	width = pdf_fixed_from_integer(612)
+	height = pdf_fixed_from_integer(792)
 	if media_box.Kind != PDF_VALUE_ARRAY {
 		return width, height
 	}
@@ -3907,7 +3940,7 @@ type Pdf_Font struct {
 	// Subtype selects simple-font or Type 0 decoding rules.
 	Subtype string
 	// Base_Encoding maps one-byte codes when ToUnicode has no entry.
-	Base_Encoding [256]string
+	Base_Encoding [PDF_ENCODING_CAPACITY]string
 	// Unicode_Map maps source-code byte strings to Unicode.
 	Unicode_Map map[string]string
 	// Code_Sizes permits greedy decoding of variable-size CMap codes.
@@ -4026,7 +4059,10 @@ func pdf_font_encoding(
 	return nil
 }
 
-func pdf_apply_encoding_differences(encoding *[256]string, differences Pdf_Value) {
+func pdf_apply_encoding_differences(
+	encoding *[PDF_ENCODING_CAPACITY]string,
+	differences Pdf_Value,
+) {
 	if differences.Kind != PDF_VALUE_ARRAY {
 		return
 	}
@@ -4050,7 +4086,7 @@ func pdf_apply_encoding_differences(encoding *[256]string, differences Pdf_Value
 	}
 }
 
-func pdf_base_encoding(name string) (encoding [256]string) {
+func pdf_base_encoding(name string) (encoding [PDF_ENCODING_CAPACITY]string) {
 	for code := 32; code <= 126; code++ {
 		encoding[code] = string(rune(code))
 	}
@@ -4066,7 +4102,7 @@ func pdf_base_encoding(name string) (encoding [256]string) {
 	return encoding
 }
 
-func pdf_apply_windows_ansi(encoding *[256]string) {
+func pdf_apply_windows_ansi(encoding *[PDF_ENCODING_CAPACITY]string) {
 	values := []rune{
 		'€', 0, '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', 0, 'Ž', 0,
 		0, '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', 0, 'ž', 'Ÿ',
@@ -4078,7 +4114,7 @@ func pdf_apply_windows_ansi(encoding *[256]string) {
 	}
 }
 
-func pdf_apply_mac_roman(encoding *[256]string) {
+func pdf_apply_mac_roman(encoding *[PDF_ENCODING_CAPACITY]string) {
 	values := []rune{
 		'Ä', 'Å', 'Ç', 'É', 'Ñ', 'Ö', 'Ü', 'á', 'à', 'â', 'ä', 'ã', 'å', 'ç', 'é', 'è',
 		'ê', 'ë', 'í', 'ì', 'î', 'ï', 'ñ', 'ó', 'ò', 'ô', 'ö', 'õ', 'ú', 'ù', 'û', 'ü',
@@ -4832,14 +4868,14 @@ func pdf_default_graphics_state() (state Pdf_Graphics_State) {
 	state.Ctm = pdf_identity_matrix()
 	state.Text_Matrix = pdf_identity_matrix()
 	state.Line_Matrix = pdf_identity_matrix()
-	state.Horizontal_Scale = fixedpoint.From_Integer(1)
+	state.Horizontal_Scale = pdf_fixed_from_integer(1)
 	return state
 }
 
 func pdf_identity_matrix() (matrix Pdf_Matrix) {
 	return Pdf_Matrix{
-		A: fixedpoint.From_Integer(1),
-		D: fixedpoint.From_Integer(1),
+		A: pdf_fixed_from_integer(1),
+		D: pdf_fixed_from_integer(1),
 	}
 }
 
@@ -5331,9 +5367,10 @@ func pdf_show_glyph(context *Pdf_Content_Context, glyph *Pdf_Glyph) {
 }
 
 func pdf_glyph_width(context *Pdf_Content_Context, glyph *Pdf_Glyph) (width fixedpoint.Number) {
-	ratio := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: glyph.Width, Denominator: 1000,
-	})
+	ratio := pdf_fixed_from_ratio(
+		fixedpoint.Numerator(glyph.Width),
+		fixedpoint.Denominator(1000),
+	)
 	return pdf_fixed_multiply(&Pdf_Fixed_Multiply_Input{
 		Left: context.State.Font_Size, Right: ratio,
 	})
@@ -5525,13 +5562,28 @@ type Pdf_Fixed_Multiply_Input struct {
 }
 
 func pdf_fixed_multiply(input *Pdf_Fixed_Multiply_Input) (product fixedpoint.Number) {
-	return fixedpoint.Multiply(&fixedpoint.Multiply_Input{A: input.Left, B: input.Right})
+	return fixedpoint.Multiply(
+		fixedpoint.Multiplicand(input.Left),
+		fixedpoint.Multiplier(input.Right),
+	)
+}
+
+func pdf_fixed_from_integer(value int64) (number fixedpoint.Number) {
+	return fixedpoint.Number(fixedpoint.From_Integer(fixedpoint.Whole_Integer(value)))
+}
+
+func pdf_fixed_from_ratio(
+	numerator fixedpoint.Numerator,
+	denominator fixedpoint.Denominator,
+) (number fixedpoint.Number) {
+	return fixedpoint.From_Ratio(numerator, denominator)
 }
 
 func pdf_number_ratio(value fixedpoint.Number, denominator int64) (result fixedpoint.Number) {
-	ratio := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: 1, Denominator: denominator,
-	})
+	ratio := pdf_fixed_from_ratio(
+		fixedpoint.Numerator(1),
+		fixedpoint.Denominator(denominator),
+	)
 	return pdf_fixed_multiply(&Pdf_Fixed_Multiply_Input{Left: value, Right: ratio})
 }
 
@@ -5746,11 +5798,11 @@ type Pdf_Table_Rectangle_Input struct {
 
 func pdf_table_rectangle(input *Pdf_Table_Rectangle_Input) (table_rectangle bool) {
 	width := input.Rectangle.X1 - input.Rectangle.X0
-	if width < fixedpoint.From_Integer(20) {
+	if width < pdf_fixed_from_integer(20) {
 		return false
 	}
 	height := input.Rectangle.Bottom - input.Rectangle.Top
-	if height < fixedpoint.From_Integer(8) {
+	if height < pdf_fixed_from_integer(8) {
 		return false
 	}
 	return width*10 < input.Page_Width*9
@@ -5765,7 +5817,7 @@ type Pdf_Rectangles_Input struct {
 }
 
 func pdf_rectangles_near(input *Pdf_Rectangles_Input) (near bool) {
-	tolerance := fixedpoint.From_Integer(1)
+	tolerance := pdf_fixed_from_integer(1)
 	if pdf_fixed_absolute(input.Left.X0-input.Right.X0) > tolerance {
 		return false
 	}
@@ -5800,7 +5852,7 @@ func pdf_outer_rectangles(rectangles []Pdf_Rectangle) (outer []Pdf_Rectangle) {
 }
 
 func pdf_rectangle_contains(input *Pdf_Rectangles_Input) (contains bool) {
-	tolerance := fixedpoint.From_Integer(1)
+	tolerance := pdf_fixed_from_integer(1)
 	if input.Left.X0 > input.Right.X0+tolerance {
 		return false
 	}
@@ -5815,12 +5867,12 @@ func pdf_rectangle_contains(input *Pdf_Rectangles_Input) (contains bool) {
 	}
 	left_width := input.Left.X1 - input.Left.X0
 	right_width := input.Right.X1 - input.Right.X0
-	if left_width > right_width+fixedpoint.From_Integer(2) {
+	if left_width > right_width+pdf_fixed_from_integer(2) {
 		return true
 	}
 	left_height := input.Left.Bottom - input.Left.Top
 	right_height := input.Right.Bottom - input.Right.Top
-	return left_height > right_height+fixedpoint.From_Integer(2)
+	return left_height > right_height+pdf_fixed_from_integer(2)
 }
 
 // Pdf_Rectangle_Span_Support_Input contains one span and its page candidates.
@@ -5834,7 +5886,7 @@ type Pdf_Rectangle_Span_Support_Input struct {
 func pdf_rectangle_span_support(
 	input *Pdf_Rectangle_Span_Support_Input,
 ) (support int) {
-	tolerance := fixedpoint.From_Integer(1)
+	tolerance := pdf_fixed_from_integer(1)
 	for _, rectangle := range input.Rectangles {
 		if pdf_fixed_absolute(rectangle.X0-input.Rectangle.X0) > tolerance {
 			continue
@@ -5896,7 +5948,7 @@ func pdf_ruled_rows(rectangles []Pdf_Rectangle) (rows []Pdf_Ruled_Row) {
 }
 
 func pdf_rectangles_same_band(input *Pdf_Rectangles_Input) (same bool) {
-	tolerance := fixedpoint.From_Integer(1)
+	tolerance := pdf_fixed_from_integer(1)
 	if pdf_fixed_absolute(input.Left.Top-input.Right.Top) > tolerance {
 		return false
 	}
@@ -5908,7 +5960,7 @@ func pdf_ruled_tables(rows []Pdf_Ruled_Row) (tables []Pdf_Ruled_Table) {
 		end := start + 1
 		for end < len(rows) {
 			gap := rows[end].Top - rows[end-1].Bottom
-			if gap > fixedpoint.From_Integer(2) {
+			if gap > pdf_fixed_from_integer(2) {
 				break
 			}
 			if !pdf_ruled_rows_compatible(&Pdf_Ruled_Rows_Input{
@@ -5941,7 +5993,7 @@ func pdf_ruled_rows_compatible(input *Pdf_Ruled_Rows_Input) (compatible bool) {
 	if len(input.Left.Cells) != len(input.Right.Cells) {
 		return false
 	}
-	tolerance := fixedpoint.From_Integer(2)
+	tolerance := pdf_fixed_from_integer(2)
 	for cell_index, left := range input.Left.Cells {
 		right := input.Right.Cells[cell_index]
 		if pdf_fixed_absolute(left.X0-right.X0) > tolerance {
@@ -5974,7 +6026,7 @@ func pdf_format_ruled_page(input *Pdf_Format_Ruled_Page_Input) (content string) 
 			// Glyph boxes can extend above a painted cell border. Their center is
 			// the same containment evidence used when assigning text to the cell.
 			row_center := pdf_form_row_center(&input.Rows[row_index])
-			if table.Top <= row_center+fixedpoint.From_Integer(2) {
+			if table.Top <= row_center+pdf_fixed_from_integer(2) {
 				cells := pdf_ruled_table_cells(&Pdf_Ruled_Table_Cells_Input{
 					Words: input.Words, Table: table,
 				})
@@ -6073,7 +6125,7 @@ type Pdf_Ruled_Cell_Text_Input struct {
 }
 
 func pdf_ruled_cell_text(input *Pdf_Ruled_Cell_Text_Input) (text string) {
-	tolerance := fixedpoint.From_Integer(2)
+	tolerance := pdf_fixed_from_integer(2)
 	for _, word := range input.Words {
 		center_x := pdf_number_ratio(word.X0+word.X1, 2)
 		if center_x < input.Rectangle.X0-tolerance {
@@ -6149,7 +6201,7 @@ type Pdf_Table_Region struct {
 
 func pdf_characters_to_words(characters []Pdf_Character) (words []Pdf_Word) {
 	return pdf_characters_to_words_with_tolerance(
-		characters, fixedpoint.From_Integer(3),
+		characters, pdf_fixed_from_integer(3),
 	)
 }
 
@@ -6197,7 +6249,7 @@ func pdf_character_joins_word(
 	horizontal_tolerance fixedpoint.Number,
 ) (joins bool) {
 	vertical_distance := pdf_fixed_absolute(character.Top - word.Top)
-	if vertical_distance > fixedpoint.From_Integer(3) {
+	if vertical_distance > pdf_fixed_from_integer(3) {
 		return false
 	}
 	horizontal_gap := character.X0 - word.X1
@@ -6228,7 +6280,7 @@ type Pdf_Character_Before_Input struct {
 
 func pdf_character_before(input *Pdf_Character_Before_Input) (before bool) {
 	vertical_distance := pdf_fixed_absolute(input.Left.Top - input.Right.Top)
-	if vertical_distance <= fixedpoint.From_Integer(3) {
+	if vertical_distance <= pdf_fixed_from_integer(3) {
 		if input.Left.X0 != input.Right.X0 {
 			return input.Left.X0 < input.Right.X0
 		}
@@ -6322,13 +6374,13 @@ func pdf_exclude_form_page_furniture(input *Pdf_Form_Page_Rows_Input) {
 func pdf_form_rows(words []Pdf_Word, page_width fixedpoint.Number) (rows []Pdf_Form_Row) {
 	for _, word := range words {
 		key := pdf_round_position(&Pdf_Round_Position_Input{
-			Value: word.Top, Step: fixedpoint.From_Integer(5),
+			Value: word.Top, Step: pdf_fixed_from_integer(5),
 		})
 		if len(rows) == 0 {
 			rows = append(rows, Pdf_Form_Row{})
 		} else if pdf_round_position(&Pdf_Round_Position_Input{
 			Value: rows[len(rows)-1].Words[0].Top,
-			Step:  fixedpoint.From_Integer(5),
+			Step:  pdf_fixed_from_integer(5),
 		}) != key {
 			rows = append(rows, Pdf_Form_Row{})
 		}
@@ -6346,7 +6398,7 @@ func pdf_form_rows_with_vertical_tolerance(
 			rows = append(rows, Pdf_Form_Row{})
 		} else if pdf_fixed_absolute(
 			word.Top-pdf_form_row_top(&rows[len(rows)-1]),
-		) > fixedpoint.From_Integer(5) {
+		) > pdf_fixed_from_integer(5) {
 			rows = append(rows, Pdf_Form_Row{})
 		}
 		rows[len(rows)-1].Words = append(rows[len(rows)-1].Words, word)
@@ -6403,7 +6455,7 @@ func pdf_analyze_form_row(row *Pdf_Form_Row, page_width fixedpoint.Number) {
 		if len(row.X_Groups) == 0 {
 			row.X_Groups = append(row.X_Groups, word.X0)
 		} else if word.X0-row.X_Groups[len(row.X_Groups)-1] >
-			fixedpoint.From_Integer(50) {
+			pdf_fixed_from_integer(50) {
 			row.X_Groups = append(row.X_Groups, word.X0)
 		}
 	}
@@ -6446,20 +6498,20 @@ func pdf_adaptive_column_tolerance(positions []fixedpoint.Number) (
 	gaps := make([]fixedpoint.Number, 0, len(positions))
 	for index := 0; index+1 < len(positions); index++ {
 		gap := positions[index+1] - positions[index]
-		if gap > fixedpoint.From_Integer(5) {
+		if gap > pdf_fixed_from_integer(5) {
 			gaps = append(gaps, gap)
 		}
 	}
 	if len(gaps) < 3 {
-		return fixedpoint.From_Integer(35)
+		return pdf_fixed_from_integer(35)
 	}
 	pdf_sort_numbers(gaps)
 	tolerance = gaps[len(gaps)*70/100]
 	tolerance = pdf_fixed_max(&Pdf_Fixed_Input_Max{
-		Left: tolerance, Right: fixedpoint.From_Integer(25),
+		Left: tolerance, Right: pdf_fixed_from_integer(25),
 	})
 	return pdf_fixed_min(&Pdf_Fixed_Input_Min{
-		Left: tolerance, Right: fixedpoint.From_Integer(50),
+		Left: tolerance, Right: pdf_fixed_from_integer(50),
 	})
 }
 
@@ -6518,7 +6570,7 @@ func pdf_dominant_position(positions []fixedpoint.Number) (position fixedpoint.N
 	group_start := 0
 	for index := 1; index <= len(positions); index++ {
 		if index < len(positions) {
-			if positions[index]-positions[index-1] <= fixedpoint.From_Integer(5) {
+			if positions[index]-positions[index-1] <= pdf_fixed_from_integer(5) {
 				continue
 			}
 		}
@@ -6538,13 +6590,13 @@ func pdf_columns_valid(columns []fixedpoint.Number, page_width fixedpoint.Number
 	}
 	content_width := columns[len(columns)-1] - columns[0]
 	average_width := pdf_number_ratio(content_width, int64(len(columns)))
-	if average_width < fixedpoint.From_Integer(30) {
+	if average_width < pdf_fixed_from_integer(30) {
 		return false
 	}
 	if content_width <= 0 {
 		return false
 	}
-	if fixedpoint.From_Integer(int64(len(columns)*72)) > content_width*10 {
+	if pdf_fixed_from_integer(int64(len(columns)*72)) > content_width*10 {
 		return false
 	}
 	adaptive_max := int(fixedpoint.Whole(pdf_number_ratio(page_width*20, 612)))
@@ -6594,7 +6646,7 @@ func pdf_aligned_column_count(row *Pdf_Form_Row, columns []fixedpoint.Number) (
 
 func pdf_aligned_column(x fixedpoint.Number, columns []fixedpoint.Number) (column int) {
 	for index, column_x := range columns {
-		if pdf_fixed_absolute(x-column_x) < fixedpoint.From_Integer(40) {
+		if pdf_fixed_absolute(x-column_x) < pdf_fixed_from_integer(40) {
 			return index
 		}
 	}
@@ -6617,7 +6669,7 @@ func pdf_table_regions(
 		start := seed
 		for start > consumed {
 			gap := pdf_form_row_top(&rows[start]) - pdf_form_row_top(&rows[start-1])
-			if gap > fixedpoint.From_Integer(15) {
+			if gap > pdf_fixed_from_integer(15) {
 				break
 			}
 			if !pdf_table_continuation_row(&rows[start-1], columns) {
@@ -6629,19 +6681,19 @@ func pdf_table_regions(
 		for end < len(rows) {
 			gap := pdf_form_row_top(&rows[end]) - pdf_form_row_top(&rows[end-1])
 			if rows[end].Is_Table_Row {
-				if gap > fixedpoint.From_Integer(24) {
+				if gap > pdf_fixed_from_integer(24) {
 					break
 				}
 				end++
 				continue
 			}
-			if gap > fixedpoint.From_Integer(20) {
+			if gap > pdf_fixed_from_integer(20) {
 				break
 			}
 			if !pdf_table_continuation_row(&rows[end], columns) {
 				break
 			}
-			if gap <= fixedpoint.From_Integer(15) {
+			if gap <= pdf_fixed_from_integer(15) {
 				end++
 				continue
 			}
@@ -6747,7 +6799,7 @@ func pdf_table_row_leads_to_seed(
 ) (leads bool) {
 	for index := row_index + 1; index < len(rows); index++ {
 		gap := pdf_form_row_top(&rows[index]) - pdf_form_row_top(&rows[index-1])
-		if gap > fixedpoint.From_Integer(20) {
+		if gap > pdf_fixed_from_integer(20) {
 			return false
 		}
 		if rows[index].Is_Table_Row {
@@ -6865,7 +6917,7 @@ func pdf_region_cells(
 		if previous_row_index >= 0 {
 			gap := pdf_form_row_top(&rows[row_index]) -
 				pdf_form_row_top(&rows[previous_row_index])
-			if gap > fixedpoint.From_Integer(15) {
+			if gap > pdf_fixed_from_integer(15) {
 				new_logical_row = true
 			}
 		}
@@ -6935,7 +6987,7 @@ func pdf_merge_table_cells(input *Pdf_Merge_Table_Cells_Input) {
 func pdf_cell_column(x fixedpoint.Number, columns []fixedpoint.Number) (column int) {
 	column = len(columns) - 1
 	for index := 0; index+1 < len(columns); index++ {
-		if x < columns[index+1]-fixedpoint.From_Integer(20) {
+		if x < columns[index+1]-pdf_fixed_from_integer(20) {
 			return index
 		}
 	}
@@ -7040,7 +7092,7 @@ type Pdf_Prose_Line struct {
 
 func pdf_prose_content(characters []Pdf_Character) (content string) {
 	words := pdf_characters_to_words_with_tolerance(
-		characters, fixedpoint.From_Integer(1),
+		characters, pdf_fixed_from_integer(1),
 	)
 	if len(words) == 0 {
 		return ""
@@ -7082,7 +7134,7 @@ func pdf_prose_blank_before(input *Pdf_Prose_Blank_Before_Input) (blank bool) {
 		return true
 	}
 	if pdf_prose_rule(input.Line.Text) {
-		if input.Gap > fixedpoint.From_Integer(4) {
+		if input.Gap > pdf_fixed_from_integer(4) {
 			return true
 		}
 	}
@@ -7132,7 +7184,7 @@ func pdf_prose_lines(words []Pdf_Word) (lines []Pdf_Prose_Line) {
 			continue
 		}
 		if pdf_fixed_absolute(word.Top-lines[len(lines)-1].Top) >
-			fixedpoint.From_Integer(3) {
+			pdf_fixed_from_integer(3) {
 			lines = append(lines, Pdf_Prose_Line{
 				Text: word.Text, Top: word.Top, Bottom: word.Bottom, X1: word.X1,
 			})
@@ -7140,7 +7192,7 @@ func pdf_prose_lines(words []Pdf_Word) (lines []Pdf_Prose_Line) {
 		}
 		line := &lines[len(lines)-1]
 		if pdf_prose_numeric_prefix(line.Text) {
-			if word.X0-line.X1 > fixedpoint.From_Integer(8) {
+			if word.X0-line.X1 > pdf_fixed_from_integer(8) {
 				lines = append(lines, Pdf_Prose_Line{
 					Text: word.Text, Top: word.Top, Bottom: word.Bottom,
 					X1: word.X1, Force_Blank_Before: true,
@@ -7296,9 +7348,9 @@ func serialize_xref(output *strings.Builder, offsets []int) {
 
 func format_number(value fixedpoint.Number) (text string) {
 	if fixedpoint.Is_Integer(value) {
-		return strconv.FormatInt(fixedpoint.Whole(value), 10)
+		return strconv.FormatInt(int64(fixedpoint.Whole(value)), 10)
 	}
-	return fixedpoint.Format(value, 2)
+	return string(fixedpoint.Format(value, 2))
 }
 
 // A PDF literal string escapes the three syntax bytes and writes any byte above
@@ -8481,7 +8533,7 @@ func pdf_legacy_file_key(
 	material := make([]byte, 0, 32+32+4+len(encryption.Identifier)+4)
 	material = append(material, prepared_password...)
 	material = append(material, encryption.Owner...)
-	var permissions [4]byte
+	var permissions [PDF_PERMISSIONS_CAPACITY]byte
 	binary.LittleEndian.PutUint32(permissions[:], uint32(encryption.Permissions))
 	material = append(material, permissions[:]...)
 	material = append(material, encryption.Identifier...)
@@ -8813,3 +8865,499 @@ func pdf_aes_256_permissions_valid(
 	copy(want[9:], []byte("adb"))
 	return subtle.ConstantTimeCompare(clear[:12], want) == 1
 }
+
+// MARKDOWN_BYTES_MAX caps the input the command reads into its fixed buffer.
+// 16 MiB dwarfs any hand-written document yet bounds memory against an
+// accidental or hostile huge file, satisfying the unbounded-read ban.
+const MARKDOWN_BYTES_MAX = 16777216
+
+// EXIT_USAGE marks a malformed command line, kept distinct from a run failure
+// so a caller can tell "you invoked me wrong" from "the work itself failed".
+const EXIT_USAGE = 2
+
+// EXIT_FAILURE marks a read, render, or write failure during an otherwise
+// well-formed invocation.
+const EXIT_FAILURE = 1
+
+// EXIT_EXISTS marks the refusal to clobber: no -out was given and the path
+// derived beside the input already holds a file, so nothing is written.
+const EXIT_EXISTS = 3
+
+// Declares the markdown_to_pdf program: a render command taking the input file and
+// an optional -out path, and a golden command that writes the showcase.
+func main_program() (program cli.Program) {
+	input := cli.New_Argument[string](cli.New_Argument_Input{
+		Label:       "input",
+		Description: "the Markdown or PDF file to convert",
+	})
+	output_flag := cli.New_Flag[string](cli.New_Flag_Input[string]{
+		Label:       "out",
+		Description: "output path; defaults to .pdf for Markdown or .md for PDF",
+	})
+	password_flag := cli.New_Flag[string](cli.New_Flag_Input[string]{
+		Label:       "password",
+		Description: "user or owner password for encrypted PDF input",
+	})
+	render := cli.Command{
+		Label:       "render",
+		Description: "convert Markdown to PDF or PDF to Markdown, beside it or to -out",
+		Arguments:   []cli.Option{input},
+		Flags:       []cli.Option{output_flag, password_flag},
+	}
+	preview := cli.Command{
+		Label:       "preview",
+		Description: "render a Markdown or PDF file as a PDF preview and open it",
+		Arguments:   []cli.Option{input},
+		Flags:       []cli.Option{password_flag},
+	}
+	golden := cli.Command{
+		Label:       "golden",
+		Description: "write a feature showcase to the system temp directory and open it",
+	}
+	return cli.New(cli.New_Input{
+		Label:       "markdown_to_pdf",
+		Description: "convert Markdown to PDF or PDF to Markdown",
+		Commands:    []cli.Command{render, preview, golden},
+	})
+}
+
+// Pulls the input and -out off the render command, derives the output path, and
+// renders the input into it.
+func main_render_command(input *Main_Input, command cli.Command) (status_code int) {
+	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
+	explicit_output := cli.Get_Option(command.Flags, "out").Value.(string)
+	password := cli.Get_Option(command.Flags, "password").Value.(string)
+	output_path := main_output_path(&Main_Output_Path_Input{
+		Input:  input_path,
+		Output: explicit_output,
+	})
+	is_pdf := main_input_is_pdf(input_path)
+	if password != "" {
+		if !is_pdf {
+			fmt.Fprintln(
+				input.Error_Output,
+				"markdown_to_pdf: -password requires PDF input",
+			)
+			return EXIT_USAGE
+		}
+	}
+	if explicit_output == "" {
+		if main_path_exists(input, output_path) {
+			fmt.Fprintf(
+				input.Error_Output,
+				"markdown_to_pdf: %s already exists\n",
+				output_path,
+			)
+			return EXIT_EXISTS
+		}
+	}
+	bytes_max := MARKDOWN_BYTES_MAX
+	limit_label := "16 MiB"
+	if is_pdf {
+		bytes_max = PDF_BYTES_MAX
+		limit_label = "64 MiB"
+	}
+	contents, read_ok := main_read_file(input, &Main_Read_File_Input{
+		Name: input_path, Bytes_Max: bytes_max, Limit_Label: limit_label,
+	})
+	if !read_ok {
+		return EXIT_FAILURE
+	}
+	return main_convert_to_path_with_password(input, &Main_Convert_To_Path_With_Password_Input{
+		Source: contents, Is_PDF: is_pdf, Output_Path: output_path,
+		Password: []byte(password),
+	})
+}
+
+// Renders the built-in showcase to the OS temp directory and opens it.
+func main_golden(input *Main_Input) (status_code int) {
+	return main_render_then_open(input, []byte(GOLDEN_SHOWCASE), golden_path(input))
+}
+
+// The injected directory keeps process environment access in package main.
+func golden_path(input *Main_Input) (path string) {
+	return filepath.Join(input.Temporary_Directory, "markdown_to_pdf_golden.pdf")
+}
+
+// Renders the command's input as a PDF in the OS temp directory and opens it,
+// overwriting any prior preview unconditionally.
+func main_preview(input *Main_Input, command cli.Command) (status_code int) {
+	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
+	password := cli.Get_Option(command.Flags, "password").Value.(string)
+	is_pdf := main_input_is_pdf(input_path)
+	if password != "" {
+		if !is_pdf {
+			fmt.Fprintln(
+				input.Error_Output,
+				"markdown_to_pdf: -password requires PDF input",
+			)
+			return EXIT_USAGE
+		}
+	}
+	bytes_max := MARKDOWN_BYTES_MAX
+	limit_label := "16 MiB"
+	if is_pdf {
+		bytes_max = PDF_BYTES_MAX
+		limit_label = "64 MiB"
+	}
+	contents, read_ok := main_read_file(input, &Main_Read_File_Input{
+		Name: input_path, Bytes_Max: bytes_max, Limit_Label: limit_label,
+	})
+	if !read_ok {
+		return EXIT_FAILURE
+	}
+	document, preview_status := main_preview_document(input, &Main_Preview_Document_Input{
+		Source: contents, Is_PDF: is_pdf, Password: []byte(password),
+	})
+	if preview_status != 0 {
+		return preview_status
+	}
+	return main_document_then_open(
+		input,
+		document,
+		main_preview_path(&Main_Preview_Path_Input{
+			Temporary_Directory: input.Temporary_Directory,
+			Input_Path:          input_path,
+		}),
+	)
+}
+
+// Main_Preview_Document_Input contains source for one PDF preview.
+type Main_Preview_Document_Input struct {
+	// Source is Markdown or one complete source PDF.
+	Source []byte
+	// Is_PDF selects extraction before rendering.
+	Is_PDF bool
+	// Password is empty or one PDF password.
+	Password []byte
+}
+
+func main_preview_document(
+	main_input *Main_Input,
+	document_input *Main_Preview_Document_Input,
+) (document []byte, status_code int) {
+	markdown := document_input.Source
+	if document_input.Is_PDF {
+		extracted, convert_err := PDF_To_Markdown(
+			&PDF_To_Markdown_Input{
+				PDF: document_input.Source, Password: document_input.Password,
+			},
+		)
+		if convert_err != nil {
+			fmt.Fprintf(main_input.Error_Output, "markdown_to_pdf: %v\n", convert_err)
+			return nil, main_conversion_error_status(convert_err)
+		}
+		markdown = extracted
+	}
+	return Render(markdown), 0
+}
+
+// Main_Preview_Path_Input groups the two distinct paths to prevent argument inversion.
+type Main_Preview_Path_Input struct {
+	// Temporary_Directory prevents preview output beside caller-owned input.
+	Temporary_Directory string
+	// Input_Path gives each preview a stable source-derived name.
+	Input_Path string
+}
+
+// The input base name keeps previews for different files separate.
+func main_preview_path(input *Main_Preview_Path_Input) (preview_path string) {
+	base_name := filepath.Base(input.Input_Path)
+	stem := strings.TrimSuffix(base_name, filepath.Ext(base_name))
+	return filepath.Join(input.Temporary_Directory, stem+".pdf")
+}
+
+// Renders markdown to path, overwriting it, then opens the result in the default
+// viewer; the path is reported so the caller knows where it landed.
+func main_render_then_open(
+	input *Main_Input,
+	markdown []byte,
+	path string,
+) (status_code int) {
+	return main_document_then_open(input, Render(markdown), path)
+}
+
+// Writes a complete PDF before it opens the preview path.
+func main_document_then_open(
+	input *Main_Input,
+	document []byte,
+	path string,
+) (status_code int) {
+	status := main_write_output(input, document, path)
+	if status != 0 {
+		return status
+	}
+	fmt.Fprintf(input.Error_Output, "markdown_to_pdf: wrote %s\n", path)
+	main_open(input, path)
+	return 0
+}
+
+// Hands the rendered showcase to the system opener so it surfaces in the
+// default PDF viewer. A failure here is reported but does not fail the run,
+// since the file is already written.
+func main_open(input *Main_Input, path string) {
+	open_err := input.Open_Path(path)
+	if open_err != nil {
+		fmt.Fprintf(input.Error_Output, "markdown_to_pdf: %v\n", open_err)
+	}
+}
+
+// Creates output_path, renders markdown into it, and returns the process exit
+// code. Shared by the file and -golden paths so both bind the output the same
+// way.
+func main_render(input *Main_Input, markdown []byte, output_path string) (status_code int) {
+	return main_convert_to_path(input, markdown, false, output_path)
+}
+
+// Converts source completely before it opens output_path. This ordering is
+// load-bearing for explicit output paths because a malformed PDF must not
+// truncate the caller's existing file.
+func main_convert_to_path(
+	input *Main_Input,
+	source []byte,
+	is_pdf bool,
+	output_path string,
+) (status_code int) {
+	return main_convert_to_path_with_password(input, &Main_Convert_To_Path_With_Password_Input{
+		Source: source, Is_PDF: is_pdf, Output_Path: output_path,
+	})
+}
+
+// Main_Convert_To_Path_With_Password_Input contains one output transaction.
+type Main_Convert_To_Path_With_Password_Input struct {
+	// Source is the complete input file.
+	Source []byte
+	// Is_PDF selects extraction instead of rendering.
+	Is_PDF bool
+	// Output_Path stays closed until conversion succeeds.
+	Output_Path string
+	// Password is empty or one PDF password.
+	Password []byte
+}
+
+func main_convert_to_path_with_password(
+	main_input *Main_Input,
+	conversion_input *Main_Convert_To_Path_With_Password_Input,
+) (status_code int) {
+	document := conversion_input.Source
+	if conversion_input.Is_PDF {
+		markdown, convert_err := PDF_To_Markdown(
+			&PDF_To_Markdown_Input{
+				PDF: conversion_input.Source, Password: conversion_input.Password,
+			},
+		)
+		if convert_err != nil {
+			fmt.Fprintf(main_input.Error_Output, "markdown_to_pdf: %v\n", convert_err)
+			return main_conversion_error_status(convert_err)
+		}
+		document = markdown
+	} else {
+		document = Render(conversion_input.Source)
+	}
+	return main_write_output(main_input, document, conversion_input.Output_Path)
+}
+
+func main_conversion_error_status(convert_err error) (status_code int) {
+	if PDF_Incorrect_Password(convert_err) {
+		return EXIT_USAGE
+	}
+	return EXIT_FAILURE
+}
+
+func main_write_output(
+	input *Main_Input,
+	document []byte,
+	output_path string,
+) (status_code int) {
+	write_err := input.Write_File(output_path, document)
+	if write_err != nil {
+		fmt.Fprintf(input.Error_Output, "markdown_to_pdf: %v\n", write_err)
+		return EXIT_FAILURE
+	}
+	return 0
+}
+
+// Main_Output_Path_Input prevents the explicit and derived paths from being inverted.
+type Main_Output_Path_Input struct {
+	// Input is the source Markdown path.
+	Input string
+	// Output is the explicit -out path, or empty to derive from Input.
+	Output string
+}
+
+// Returns the explicit -out path when set. A derived path uses .md for PDF
+// input and .pdf for every other input.
+func main_output_path(input *Main_Output_Path_Input) (output_path string) {
+	if input.Output != "" {
+		return input.Output
+	}
+	extension := ".pdf"
+	if main_input_is_pdf(input.Input) {
+		extension = ".md"
+	}
+	return strings.TrimSuffix(input.Input, filepath.Ext(input.Input)) + extension
+}
+
+func main_input_is_pdf(path string) (is_pdf bool) {
+	return strings.EqualFold(filepath.Ext(path), ".pdf")
+}
+
+func main_path_exists(input *Main_Input, path string) (exists bool) {
+	return input.Path_Exists(path)
+}
+
+// Main_Read_File_Input describes a bounded command input read.
+type Main_Read_File_Input struct {
+	// Name is the input path.
+	Name string
+	// Bytes_Max is the direction-specific size limit.
+	Bytes_Max int
+	// Limit_Label is the diagnostic form of Bytes_Max.
+	Limit_Label string
+}
+
+// Reads the named file into one fixed buffer. ok is false, with a stderr
+// message, when the file cannot be opened, overflows the cap, or errors.
+func main_read_file(
+	main_input *Main_Input,
+	read_input *Main_Read_File_Input,
+) (contents []byte, ok bool) {
+	file, open_err := main_input.Open_File(read_input.Name)
+	if open_err != nil {
+		fmt.Fprintf(main_input.Error_Output, "markdown_to_pdf: %v\n", open_err)
+		return nil, false
+	}
+	defer file.Close()
+	buffer := make([]byte, read_input.Bytes_Max+1)
+	read_total := 0
+	for read_total < len(buffer) {
+		n, read_err := file.Read(buffer[read_total:])
+		read_total += n
+		if read_err == io.EOF {
+			return buffer[:read_total], true
+		}
+		if read_err != nil {
+			fmt.Fprintf(main_input.Error_Output, "markdown_to_pdf: %v\n", read_err)
+			return nil, false
+		}
+	}
+	// The extra byte distinguishes an input exactly at the cap from overflow.
+	fmt.Fprintf(
+		main_input.Error_Output,
+		"markdown_to_pdf: input exceeds %s\n",
+		read_input.Limit_Label,
+	)
+	return nil, false
+}
+
+// One Markdown document exercising every feature the converter renders — from
+// smart punctuation and box-drawing diagrams to wrapping table cells — long
+// enough to spill onto a second page so pagination shows too.
+const GOLDEN_SHOWCASE = "# markdown_to_pdf showcase\n" +
+	"\n" +
+	"A minimal, zero-dependency Markdown to PDF converter. Every section below\n" +
+	"exercises one of its features, rendered straight from Markdown with no\n" +
+	"external libraries.\n" +
+	"\n" +
+	"## Text and emphasis\n" +
+	"\n" +
+	"Paragraphs wrap to the page width as you would expect. Within a line you can\n" +
+	"mix **bold**, *italic*, and `inline code`, and a link such as\n" +
+	"[random link that will brick your pc](https://github.com/james-orcales) renders blue,\n" +
+	"underlined, and clickable.\n" +
+	"\n" +
+	"## Typography\n" +
+	"\n" +
+	"Punctuation is measured at its true width, so nothing drifts:\n" +
+	"em-dashes — like this — en-dashes (pages 1–10), “curly quotes”,\n" +
+	"the app’s apostrophe, and a bullet • all advance correctly, so a\n" +
+	"**bold lead-in** `right next to code` keeps its panel aligned.\n" +
+	"\n" +
+	"## Heading levels\n" +
+	"\n" +
+	"### Level three heading\n" +
+	"\n" +
+	"#### Level four heading\n" +
+	"\n" +
+	"##### Level five heading\n" +
+	"\n" +
+	"###### Level six heading\n" +
+	"\n" +
+	"## Lists\n" +
+	"\n" +
+	"An unordered list:\n" +
+	"\n" +
+	"- Espresso\n" +
+	"- Cortado\n" +
+	"- Flat white\n" +
+	"\n" +
+	"An ordered list:\n" +
+	"\n" +
+	"1. Grind the beans\n" +
+	"2. Pull the shot\n" +
+	"3. Steam the milk\n" +
+	"\n" +
+	"## Block quote\n" +
+	"\n" +
+	"> A block quote is indented beside a soft gray bar, GitHub style, setting it\n" +
+	"> apart from the surrounding paragraphs.\n" +
+	"\n" +
+	"## Code\n" +
+	"\n" +
+	"Inline `code` and fenced blocks both render white on a dark gray panel. A\n" +
+	"fenced line of up to one hundred characters fits the column:\n" +
+	"\n" +
+	"```\n" +
+	"func render(markdown []byte) []byte {\n" +
+	"    // even a fairly long comment line stays on one line and fits the page width\n" +
+	"    return assemble(layout(parse(markdown)))\n" +
+	"}\n" +
+	"```\n" +
+	"\n" +
+	"## Diagrams\n" +
+	"\n" +
+	"Box-drawing characters and arrows inside a code fence transliterate to\n" +
+	"ASCII, so diagrams stay aligned without embedding a font:\n" +
+	"\n" +
+	"```\n" +
+	"┌────────┐   ┌────────┐   ┌────────┐\n" +
+	"│ parse  │──▶│ layout │──▶│ render │\n" +
+	"└───┬────┘   └────────┘   └────────┘\n" +
+	"    │\n" +
+	"    ▼\n" +
+	"┌────────┐\n" +
+	"│ blocks │\n" +
+	"└────────┘\n" +
+	"```\n" +
+	"\n" +
+	"## Horizontal rule\n" +
+	"\n" +
+	"A thematic break draws a line across the column:\n" +
+	"\n" +
+	"---\n" +
+	"\n" +
+	"## Tables\n" +
+	"\n" +
+	"Cells parse inline markdown and wrap to their column; a row grows to fit\n" +
+	"its tallest cell:\n" +
+	"\n" +
+	"| Drink | Ratio | Notes |\n" +
+	"| --- | --- | --- |\n" +
+	"| Espresso | `1:2` | the base shot, pulled in about 30 seconds |\n" +
+	"| Cortado | `1:1` | equal parts espresso and milk; " +
+	"see [the guide](https://github.com/james-orcales) |\n" +
+	"| Flat white | `1:3` | a double ristretto under steamed microfoam, very smooth |\n" +
+	"\n" +
+	"The table keeps a clear margin above this paragraph rather than letting\n" +
+	"prose lap its bottom border.\n" +
+	"\n" +
+	"## Pagination\n" +
+	"\n" +
+	"When content runs past the bottom margin the renderer opens a new page and\n" +
+	"continues. This document is long enough that it flows onto a second page,\n" +
+	"which is itself a demonstration of automatic pagination.\n" +
+	"\n" +
+	"Headings keep a blank line above them, paragraphs are separated by a small\n" +
+	"gap, and every page carries the same media box, fonts, and margins. The cross\n" +
+	"reference table and trailer are regenerated to match however many pages the\n" +
+	"document needs.\n"
