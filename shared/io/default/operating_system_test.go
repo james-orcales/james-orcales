@@ -756,6 +756,62 @@ func Test_Operating_System_IO_Tiger_Beetle_File_Parity(t *testing.T) {
 	self_exec_close(loop, driver, opened)
 }
 
+// Test_Operating_System_IO_Open_At_No_Follow verifies that OPEN_AT_NO_FOLLOW rejects a symbolic
+// link in the final path part and does not reject an ordinary file.
+func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	link := filepath.Join(root, "link")
+	if write_err := os.WriteFile(target, []byte("secret"), 0o600); write_err != nil {
+		t.Fatalf("write target: %v", write_err)
+	}
+	if link_err := os.Symlink(target, link); link_err != nil {
+		t.Fatalf("make symbolic link: %v", link_err)
+	}
+
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	assert_open_at_result(t, loop, driver, target, nil)
+	assert_open_at_result(t, loop, driver, link, errors.New("symbolic link must fail"))
+}
+
+// Opens one path with no-follow and compares the result class with expected_error.
+func assert_open_at_result(
+	t *testing.T,
+	loop io.IO,
+	driver io.Driver,
+	path string,
+	expected_error error,
+) {
+	t.Helper()
+	opened := io.File(-1)
+	completed := false
+	var open_err error
+	var completion io.Completion
+	loop.Open_At(&completion, func(_ *io.Completion, file io.File, err error) {
+		opened = file
+		open_err = err
+		completed = true
+	}, io.DIRECTORY_CURRENT, path, io.Open_At_Options{
+		Access: io.OPEN_READ_ONLY,
+		Flags:  io.OPEN_AT_NO_FOLLOW,
+	})
+	if !operating_system_run_until(t, driver, func() (finished bool) { return completed }) {
+		t.Fatal("open at did not complete")
+	}
+	if expected_error == nil {
+		if open_err != nil {
+			t.Fatalf("ordinary open: %v", open_err)
+		}
+		self_exec_close(loop, driver, opened)
+		return
+	}
+	if open_err == nil {
+		self_exec_close(loop, driver, opened)
+		t.Fatal(expected_error)
+	}
+}
+
 // Test_Operating_System_IO_Event ports TigerBeetle's Event reattachment contract: one trigger
 // retires one listener on the loop thread, after which the same completion may be armed again.
 func Test_Operating_System_IO_Event(t *testing.T) {
@@ -1126,6 +1182,9 @@ func Test_Operating_System_IO_Directory(t *testing.T) {
 	if !directory_status.Is_Directory {
 		t.Fatalf("nested status = %+v, want a directory", directory_status)
 	}
+	if directory_status.Is_Regular {
+		t.Fatalf("nested status = %+v, want a non-regular file", directory_status)
+	}
 	regular_status, _ := loop.Status(file_path)
 	if !regular_status.Exists {
 		t.Fatalf("file status = %+v, want an existing path", regular_status)
@@ -1133,9 +1192,15 @@ func Test_Operating_System_IO_Directory(t *testing.T) {
 	if regular_status.Is_Directory {
 		t.Fatalf("file status = %+v, want a non-directory", regular_status)
 	}
+	if !regular_status.Is_Regular {
+		t.Fatalf("file status = %+v, want a regular file", regular_status)
+	}
 	absent_status, _ := loop.Status(filepath.Join(root, "nope"))
 	if absent_status.Exists {
 		t.Fatalf("absent status = %+v, want not exists", absent_status)
+	}
+	if absent_status.Is_Regular {
+		t.Fatalf("absent status = %+v, want a non-regular file", absent_status)
 	}
 
 	entries, read_err := loop.Read_Directory(nested)

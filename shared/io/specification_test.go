@@ -134,6 +134,21 @@ func Test_Sim_Open_At(t *testing.T) {
 	if driver.Introspect().Raw_Open != 1 {
 		t.Fatal("open at did not transfer caller ownership")
 	}
+
+	unknown_loop, _, _ := sim_loop(0)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Open_At accepted an unknown flag")
+		}
+	}()
+	var unknown_completion io.Completion
+	unknown_loop.Open_At(
+		&unknown_completion,
+		func(_ *io.Completion, _ io.File, _ error) {},
+		io.DIRECTORY_CURRENT,
+		"file",
+		io.Open_At_Options{Flags: io.Open_At_Flags(1 << 31)},
+	)
 }
 
 // Test_Sim_Event verifies the TigerBeetle Event primitive retires its listener before invoking the
@@ -768,6 +783,9 @@ func Test_Sim_Status(t *testing.T) {
 	if !directory.Is_Directory {
 		t.Fatalf("dir status = %+v, want a directory", directory)
 	}
+	if directory.Is_Regular {
+		t.Fatalf("dir status = %+v, want a non-regular file", directory)
+	}
 	if directory.Size != 0 {
 		t.Fatalf("dir status = %+v, want a zero Size", directory)
 	}
@@ -775,12 +793,18 @@ func Test_Sim_Status(t *testing.T) {
 	if regular.Is_Directory {
 		t.Fatalf("file status = %+v, want a non-directory", regular)
 	}
+	if !regular.Is_Regular {
+		t.Fatalf("file status = %+v, want a regular file", regular)
+	}
 	if regular.Size != int64(len(content)) {
 		t.Fatalf("file status = %+v, want Size %d", regular, len(content))
 	}
 	absent, _ := loop.Status("/nope")
 	if absent.Exists {
 		t.Fatalf("absent status = %+v, want not exists", absent)
+	}
+	if absent.Is_Regular {
+		t.Fatalf("absent status = %+v, want a non-regular file", absent)
 	}
 }
 

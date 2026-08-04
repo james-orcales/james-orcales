@@ -57,6 +57,7 @@ func file_status(path string) (status io.File_Status, err error) {
 	return io.File_Status{
 		Exists:       true,
 		Is_Directory: metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
+		Is_Regular:   metadata.Mode&syscall.S_IFMT == syscall.S_IFREG,
 		Size:         metadata.Size,
 	}, nil
 }

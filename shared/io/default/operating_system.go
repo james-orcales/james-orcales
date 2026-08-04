@@ -380,6 +380,10 @@ func operating_system_wire_file(state *Operating_System, loop *io.IO) {
 		completion *io.Completion, callback io.File_Callback, directory io.File,
 		file_path string, options io.Open_At_Options,
 	) {
+		invariant.Always(
+			options.Flags & ^io.OPEN_AT_NO_FOLLOW == 0,
+			"Open_At options contain only known flags.",
+		)
 		operating_system_submit(completion)
 		operating_system_open_at(
 			state, completion, callback, directory, file_path, options,

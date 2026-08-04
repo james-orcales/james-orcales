@@ -320,6 +320,9 @@ func platform_open_flags(options sharedio.Open_At_Options) (flags int) {
 	if options.Truncate {
 		flags |= syscall.O_TRUNC
 	}
+	if options.Flags&sharedio.OPEN_AT_NO_FOLLOW != 0 {
+		flags |= syscall.O_NOFOLLOW
+	}
 	return flags
 }
 

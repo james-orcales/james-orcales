@@ -40,6 +40,12 @@ const OPEN_WRITE_ONLY Open_Access = 1
 // OPEN_READ_WRITE opens a file for reads and writes.
 const OPEN_READ_WRITE Open_Access = 2
 
+// Open_At_Flags selects independent Open_At controls.
+type Open_At_Flags uint32
+
+// OPEN_AT_NO_FOLLOW rejects a symbolic link in the final path part.
+const OPEN_AT_NO_FOLLOW Open_At_Flags = 1 << 0
+
 // Open_At_Options is the Go representation of the posix.O fields used by TigerBeetle openat.
 type Open_At_Options struct {
 	// Access selects read-only, write-only, or read-write access.
@@ -50,6 +56,8 @@ type Open_At_Options struct {
 	Truncate bool
 	// Mode is the permission mode used only when Create is true.
 	Mode uint32
+	// Flags contains independent Open_At controls.
+	Flags Open_At_Flags
 }
 
 // Event identifies TigerBeetle's cross-thread event primitive: EVFILT_USER on Darwin and eventfd
@@ -265,6 +273,8 @@ type File_Status struct {
 	Exists bool
 	// Is_Directory reports whether an existing path is a directory rather than a file.
 	Is_Directory bool
+	// Is_Regular reports whether an existing path is a regular file.
+	Is_Regular bool
 	// Size is the file's length in bytes, zero for a directory or an absent path.
 	Size int64
 }
@@ -865,6 +875,10 @@ func sim_wire_lifecycle(state *Sim, loop *IO) {
 		completion *Completion, callback File_Callback, directory File, file_path string,
 		options Open_At_Options,
 	) {
+		invariant.Always(
+			options.Flags & ^OPEN_AT_NO_FOLLOW == 0,
+			"Open_At options contain only known flags.",
+		)
 		sim_submit(state, completion, sim_latency(state), func() {
 			file := File(-1)
 			var open_err error
@@ -1234,6 +1248,7 @@ func sim_status(root *Sim_Node, path string) (status File_Status) {
 	return File_Status{
 		Exists:       true,
 		Is_Directory: node.Directory,
+		Is_Regular:   !node.Directory,
 		Size:         int64(len(node.Contents)),
 	}
 }
