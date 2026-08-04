@@ -607,6 +607,29 @@ func Test_Assertions_Registration_Constant_Expression(t *testing.T) {
 	assert_non_constant_operand(t)
 }
 
+// Test_Assertions_Registration_Word_Width keeps a conversion from vanishing. Reading a complement
+// at unbounded precision answers minus one for every width, which is a wrong bound and not a
+// refusal.
+func Test_Assertions_Registration_Word_Width(t *testing.T) {
+	widths := []struct {
+		Expression string
+		Declared   string
+	}{
+		{Expression: "^uint8(0)", Declared: "0..255"},
+		{Expression: "^uint16(0)", Declared: "0..65535"},
+		{Expression: "^uint64(0) >> 60", Declared: "0..15"},
+		// A machine word is 64 bits. At 32 each of these would shift away to zero, which
+		// no Range admits, thus the number itself is the proof of the width.
+		{Expression: "^uint(0) >> 59", Declared: "0..31"},
+		{Expression: "^uint(0) >> 40", Declared: "0..16777215"},
+		{Expression: "int32(1) << 20", Declared: "0..1048576"},
+	}
+	for _, width := range widths {
+		assert_constant_expression_bound(t, width.Expression, width.Declared)
+	}
+	assert_unrepresentable_conversion(t)
+}
+
 // Test_Assertions_Registration_Walk keeps registration expansion aligned with runtime ordinals.
 func Test_Assertions_Registration_Walk(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
@@ -2172,6 +2195,28 @@ func check(value Span) { Span_Invariants(value, "span") }
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	if !strings.Contains(output.String(), declared) {
 		t.Fatalf("%s declared %q, want %q", expression, output.String(), declared)
+	}
+}
+
+// A value its type cannot hold is not a constant, thus a bound built from one is refused rather
+// than wrapped into a number the source never states.
+func assert_unrepresentable_conversion(t *testing.T) {
+	t.Helper()
+	for _, operand := range []string{"uint8(300)", "int8(200)", "uint16(70000)"} {
+		_, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
+			"const SPAN_MAXIMUM = " + operand + "\n" + `type Span string
+func Span_Invariants(value Span, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SPAN_MINIMUM, SPAN_MAXIMUM).Ensure()
+}
+func check(value Span) { Span_Invariants(value, "span") }
+`)
+		if code != 1 {
+			t.Fatalf("%s exit=%d output=%q", operand, code, output.String())
+		}
+		if !strings.Contains(output.String(), "not statically resolvable") {
+			t.Fatalf("%s output=%q, want unresolvable", operand, output.String())
+		}
 	}
 }
 

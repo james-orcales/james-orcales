@@ -119,6 +119,69 @@ const CONSTANT_RESOLUTION_STEPS_MAX = 4096
 // hold, thus registration refuses it rather than building a value no width admits.
 const CONSTANT_SHIFT_BITS_MAX = 64
 
+// CONSTANT_WORD_BITS is the width of int, uint, and uintptr. The host is 64 bits, thus a machine
+// word is read at that width rather than left unknown.
+const CONSTANT_WORD_BITS = 64
+
+// Constant_Operand is one evaluated value beside the width a conversion fixed for it. A complement
+// reads every bit of its own width, thus a value that forgot its conversion answers minus one where
+// the source states a maximum.
+type Constant_Operand struct {
+	// Value is the evaluated constant.
+	Value constant.Value
+	// Bits is the width its conversion fixed, or zero while the value stays untyped.
+	Bits uint
+	// Signed distinguishes the two ranges one width admits.
+	Signed bool
+}
+
+// Gives the width and signedness a conversion target fixes, or false for a target that fixes
+// neither. A string or a defined type leaves its operand untyped here, which is what keeps a
+// conversion to a bundle's own subject transparent.
+func constant_integer_width(name string) (bits uint, signed bool, sized bool) {
+	switch name {
+	case "int", "uintptr", "uint":
+		return CONSTANT_WORD_BITS, name == "int", true
+	case "int8", "int16", "int32", "int64":
+		width, _ := strconv.Atoi(strings.TrimPrefix(name, "int"))
+		return uint(width), true, true
+	case "uint8", "uint16", "uint32", "uint64":
+		width, _ := strconv.Atoi(strings.TrimPrefix(name, "uint"))
+		return uint(width), false, true
+	case "byte":
+		return 8, false, true
+	case "rune":
+		return 32, true, true
+	}
+	return 0, false, false
+}
+
+// Reports whether a value fits the width and signedness given. Go calls an integer its type cannot
+// hold no constant at all, thus this refuses rather than wrapping into a number nobody wrote.
+func constant_representable(value constant.Value, bits uint, signed bool) (fits bool) {
+	integer := constant.ToInt(value)
+	if integer.Kind() != constant.Int {
+		return false
+	}
+	if signed {
+		if constant.Sign(integer) < 0 {
+			smallest := constant.Shift(constant.MakeInt64(-1), token.SHL, bits-1)
+			return constant.Compare(integer, token.GEQ, smallest)
+		}
+		largest := constant.BinaryOp(
+			constant.Shift(constant.MakeInt64(1), token.SHL, bits-1),
+			token.SUB, constant.MakeInt64(1))
+		return constant.Compare(integer, token.LEQ, largest)
+	}
+	if constant.Sign(integer) < 0 {
+		return false
+	}
+	largest := constant.BinaryOp(
+		constant.Shift(constant.MakeInt64(1), token.SHL, bits),
+		token.SUB, constant.MakeInt64(1))
+	return constant.Compare(integer, token.LEQ, largest)
+}
+
 // Recorder accumulates assertion observations for one run under registration-owned identities.
 type Recorder struct {
 	// File_System reads Go source files during AST analysis. Paths are absolute OS paths;
@@ -1180,7 +1243,7 @@ func constant_evaluate(
 	constants Constant_Scope, expression ast.Expr,
 ) (value constant.Value, ok bool) {
 	frames := []Constant_Frame{{Expression: expression, Scope: constants}}
-	var values []constant.Value
+	var values []Constant_Operand
 	for steps := 0; len(frames) != 0; steps++ {
 		if steps > CONSTANT_RESOLUTION_STEPS_MAX {
 			return nil, false
@@ -1195,12 +1258,12 @@ func constant_evaluate(
 	if len(values) != 1 {
 		return nil, false
 	}
-	return values[0], true
+	return values[0].Value, true
 }
 
 func constant_resolve_frame(
-	frame Constant_Frame, frames []Constant_Frame, values []constant.Value,
-) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
+	frame Constant_Frame, frames []Constant_Frame, values []Constant_Operand,
+) (next_frames []Constant_Frame, next_values []Constant_Operand, ok bool) {
 	switch concrete := frame.Expression.(type) {
 	case *ast.ParenExpr:
 		return append(frames, Constant_Frame{
@@ -1212,7 +1275,7 @@ func constant_resolve_frame(
 		if literal.Kind() == constant.Unknown {
 			return nil, nil, false
 		}
-		return frames, append(values, literal), true
+		return frames, append(values, Constant_Operand{Value: literal}), true
 	case *ast.Ident:
 		return constant_resolve_name(frame, concrete, frames, values)
 	case *ast.SelectorExpr:
@@ -1237,13 +1300,15 @@ func constant_resolve_frame(
 // answer here and never through the package's constants.
 func constant_resolve_name(
 	frame Constant_Frame, identifier *ast.Ident, frames []Constant_Frame,
-	values []constant.Value,
-) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
+	values []Constant_Operand,
+) (next_frames []Constant_Frame, next_values []Constant_Operand, ok bool) {
 	if identifier.Name == "true" {
-		return frames, append(values, constant.MakeBool(true)), true
+		return frames, append(values,
+			Constant_Operand{Value: constant.MakeBool(true)}), true
 	}
 	if identifier.Name == "false" {
-		return frames, append(values, constant.MakeBool(false)), true
+		return frames, append(values,
+			Constant_Operand{Value: constant.MakeBool(false)}), true
 	}
 	declaration, declared := frame.Scope.Local[identifier.Name]
 	if !declared {
@@ -1261,19 +1326,14 @@ func constant_resolve_name(
 // identifier callee is a conversion, which leaves an untyped constant's value unchanged.
 func constant_resolve_call(
 	frame Constant_Frame, call *ast.CallExpr, frames []Constant_Frame,
-	values []constant.Value,
-) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
+	values []Constant_Operand,
+) (next_frames []Constant_Frame, next_values []Constant_Operand, ok bool) {
 	if len(call.Args) != 1 {
 		return nil, nil, false
 	}
 	callee, is_identifier := call.Fun.(*ast.Ident)
 	if !is_identifier {
 		return nil, nil, false
-	}
-	if callee.Name != "len" {
-		return append(frames, Constant_Frame{
-			Expression: call.Args[0], Scope: frame.Scope,
-		}), values, true
 	}
 	if !frame.Visited {
 		frames = append(frames, Constant_Frame{
@@ -1283,19 +1343,33 @@ func constant_resolve_call(
 			Expression: call.Args[0], Scope: frame.Scope,
 		}), values, true
 	}
-	measured := values[len(values)-1]
-	if measured.Kind() != constant.String {
+	operand := values[len(values)-1]
+	values = values[:len(values)-1]
+	if callee.Name == "len" {
+		if operand.Value.Kind() != constant.String {
+			return nil, nil, false
+		}
+		bytes := int64(len(constant.StringVal(operand.Value)))
+		return frames, append(values,
+			Constant_Operand{Value: constant.MakeInt64(bytes)}), true
+	}
+	bits, signed, sized := constant_integer_width(callee.Name)
+	if !sized {
+		// A conversion to a defined type or a string leaves the value as it stands.
+		return frames, append(values, operand), true
+	}
+	if !constant_representable(operand.Value, bits, signed) {
 		return nil, nil, false
 	}
-	values = values[:len(values)-1]
-	bytes := int64(len(constant.StringVal(measured)))
-	return frames, append(values, constant.MakeInt64(bytes)), true
+	return frames, append(values, Constant_Operand{
+		Value: constant.ToInt(operand.Value), Bits: bits, Signed: signed,
+	}), true
 }
 
 func constant_resolve_unary(
 	frame Constant_Frame, unary *ast.UnaryExpr, frames []Constant_Frame,
-	values []constant.Value,
-) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
+	values []Constant_Operand,
+) (next_frames []Constant_Frame, next_values []Constant_Operand, ok bool) {
 	if !frame.Visited {
 		frames = append(frames, Constant_Frame{
 			Expression: frame.Expression, Scope: frame.Scope, Visited: true,
@@ -1306,18 +1380,34 @@ func constant_resolve_unary(
 	}
 	operand := values[len(values)-1]
 	values = values[:len(values)-1]
-	// A precision of zero keeps an untyped constant unbounded, which is what a bound needs.
-	result := constant.UnaryOp(unary.Op, operand, 0)
+	// A complement reads every bit of its own width. An unsigned width is given to go/constant
+	// so it masks the result, and a signed one already comes out right at unbounded precision.
+	precision := uint(0)
+	if unary.Op == token.XOR {
+		if operand.Bits != 0 {
+			if !operand.Signed {
+				precision = operand.Bits
+			}
+		}
+	}
+	result := constant.UnaryOp(unary.Op, operand.Value, precision)
 	if result.Kind() == constant.Unknown {
 		return nil, nil, false
 	}
-	return frames, append(values, result), true
+	if operand.Bits != 0 {
+		if !constant_representable(result, operand.Bits, operand.Signed) {
+			return nil, nil, false
+		}
+	}
+	return frames, append(values, Constant_Operand{
+		Value: result, Bits: operand.Bits, Signed: operand.Signed,
+	}), true
 }
 
 func constant_resolve_binary(
 	frame Constant_Frame, binary *ast.BinaryExpr, frames []Constant_Frame,
-	values []constant.Value,
-) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
+	values []Constant_Operand,
+) (next_frames []Constant_Frame, next_values []Constant_Operand, ok bool) {
 	if !frame.Visited {
 		frames = append(frames, Constant_Frame{
 			Expression: frame.Expression, Scope: frame.Scope, Visited: true,
@@ -1332,11 +1422,46 @@ func constant_resolve_binary(
 	right := values[len(values)-1]
 	left := values[len(values)-2]
 	values = values[:len(values)-2]
-	result, evaluated := constant_operate(binary.Op, left, right)
+	result, evaluated := constant_operate(binary.Op, left.Value, right.Value)
 	if !evaluated {
 		return nil, nil, false
 	}
-	return frames, append(values, result), true
+	// An untyped operand takes the other's type, thus the result keeps whichever width the
+	// expression fixed. Two different widths are a type error and never one value.
+	width, signed, typed := constant_operand_width(left, right)
+	if !typed {
+		return nil, nil, false
+	}
+	if width != 0 {
+		if result.Kind() != constant.Bool {
+			if !constant_representable(result, width, signed) {
+				return nil, nil, false
+			}
+		}
+	}
+	return frames, append(values, Constant_Operand{
+		Value: result, Bits: width, Signed: signed,
+	}), true
+}
+
+// Gives the width one binary expression carries. An untyped operand adopts the typed one's width,
+// and two operands of different widths never meet in a constant the language accepts.
+func constant_operand_width(
+	left Constant_Operand, right Constant_Operand,
+) (bits uint, signed bool, typed bool) {
+	if left.Bits == 0 {
+		return right.Bits, right.Signed, true
+	}
+	if right.Bits == 0 {
+		return left.Bits, left.Signed, true
+	}
+	if left.Bits != right.Bits {
+		return 0, false, false
+	}
+	if left.Signed != right.Signed {
+		return 0, false, false
+	}
+	return left.Bits, left.Signed, true
 }
 
 // Applies one binary operator. A shift and a comparison each take their own entry point. Integer

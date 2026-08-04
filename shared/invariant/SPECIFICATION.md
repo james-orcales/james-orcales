@@ -168,6 +168,12 @@ A preset operand is each constant expression the language admits, at the precisi
 gives it. A name resolves in its own package or in the package a qualifier states. An operand that
 is not constant stays unresolved.
 
+### Word Width
+
+A conversion fixes the width its operand is read at, thus the complement of a converted zero is that
+width's largest value. A machine word is 64 bits. A value outside its type's range is not a
+constant.
+
 ### Walk
 
 The walk expands links in fluent order. It records each guard one time and each axis two times. It
