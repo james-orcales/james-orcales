@@ -30,13 +30,13 @@ const SLICE_SIZE_MINIMUM = TEXT_SIZE_MINIMUM
 const SLICE_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM
 
 // TEXTS_COUNT_MINIMUM permits an absent split result.
-const TEXTS_COUNT_MINIMUM = 0
+const TEXTS_COUNT_MINIMUM = TEXT_SIZE_MINIMUM
 
 // TEXTS_COUNT_MAXIMUM includes both sides of every one-byte separator.
 const TEXTS_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM + 1
 
 // FIELDS_COUNT_MINIMUM permits an empty field result.
-const FIELDS_COUNT_MINIMUM = 0
+const FIELDS_COUNT_MINIMUM = TEXTS_COUNT_MINIMUM
 
 // FIELDS_COUNT_MAXIMUM permits alternating one-byte fields and separators.
 const FIELDS_COUNT_MAXIMUM = TEXTS_COUNT_MAXIMUM / 2
@@ -51,7 +51,7 @@ const INDEX_MAXIMUM = TEXT_SIZE_MAXIMUM - 1
 const BOUNDARY_INDEX_MAXIMUM = TEXT_SIZE_MAXIMUM
 
 // COUNT_VALUE_MINIMUM permits no match.
-const COUNT_VALUE_MINIMUM = 0
+const COUNT_VALUE_MINIMUM = TEXTS_COUNT_MINIMUM
 
 // COUNT_VALUE_MAXIMUM includes every empty character boundary.
 const COUNT_VALUE_MAXIMUM = TEXTS_COUNT_MAXIMUM
@@ -63,7 +63,7 @@ const LIMIT_MINIMUM = -1
 const LIMIT_MAXIMUM = TEXT_SIZE_MAXIMUM
 
 // REPEAT_COUNT_MINIMUM permits no copy.
-const REPEAT_COUNT_MINIMUM = 0
+const REPEAT_COUNT_MINIMUM = COUNT_VALUE_MINIMUM
 
 // REPEAT_COUNT_MAXIMUM lets one-byte text fill the complete budget.
 const REPEAT_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM
@@ -75,7 +75,7 @@ const REPLACEMENT_COUNT_MINIMUM = LIMIT_MINIMUM
 const REPLACEMENT_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM
 
 // REPLACEMENT_PAIRS_COUNT_MINIMUM permits a Replacer with no rules.
-const REPLACEMENT_PAIRS_COUNT_MINIMUM = 0
+const REPLACEMENT_PAIRS_COUNT_MINIMUM = TEXTS_COUNT_MINIMUM
 
 // REPLACEMENT_PAIRS_COUNT_MAXIMUM permits one rule for each input byte.
 const REPLACEMENT_PAIRS_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM
@@ -120,13 +120,13 @@ const BYTE_MAXIMUM uint8 = bits.WORD_8_MAXIMUM
 const WORD_BYTE_COUNT = bits.BIT_COUNT_64_MAXIMUM / bits.BIT_COUNT_8_MAXIMUM
 
 // BYTE_LOW_BITS puts the low bit in each byte of a machine word.
-const BYTE_LOW_BITS uint64 = 0x0101010101010101
+const BYTE_LOW_BITS uint64 = BYTE_HIGH_BITS >> (bits.BIT_COUNT_8_MAXIMUM - 1)
 
 // BYTE_HIGH_BITS puts the high bit in each byte of a machine word.
-const BYTE_HIGH_BITS uint64 = 0x8080808080808080
+const BYTE_HIGH_BITS uint64 = uint64(utf8.HIGH_BITS)
 
 // GROWTH_COUNT_MINIMUM permits a capacity check without new storage.
-const GROWTH_COUNT_MINIMUM = 0
+const GROWTH_COUNT_MINIMUM = TEXT_SIZE_MINIMUM
 
 // BUILDER_CAPACITY_MAXIMUM keeps Builder allocation inside the text budget.
 const BUILDER_CAPACITY_MAXIMUM = SLICE_SIZE_MAXIMUM
@@ -135,10 +135,10 @@ const BUILDER_CAPACITY_MAXIMUM = SLICE_SIZE_MAXIMUM
 const GROWTH_COUNT_MAXIMUM = BUILDER_CAPACITY_MAXIMUM
 
 // READER_POSITION_MINIMUM is the first Reader byte.
-const READER_POSITION_MINIMUM int64 = 0
+const READER_POSITION_MINIMUM int64 = int64(TEXT_SIZE_MINIMUM)
 
-// READER_POSITION_MAXIMUM is the boundary after the largest Reader source.
-const READER_POSITION_MAXIMUM int64 = BOUNDARY_INDEX_MAXIMUM
+// READER_POSITION_MAXIMUM permits every nonnegative shared stream position.
+const READER_POSITION_MAXIMUM int64 = bits.INTEGER_64_MAXIMUM
 
 // STREAM_OFFSET_MINIMUM admits every negative shared stream offset.
 const STREAM_OFFSET_MINIMUM int64 = bits.INTEGER_64_MINIMUM
@@ -147,10 +147,16 @@ const STREAM_OFFSET_MINIMUM int64 = bits.INTEGER_64_MINIMUM
 const STREAM_OFFSET_MAXIMUM int64 = bits.INTEGER_64_MAXIMUM
 
 // STREAM_COUNT_MINIMUM is the smallest successful stream byte count.
-const STREAM_COUNT_MINIMUM int64 = 0
+const STREAM_COUNT_MINIMUM int64 = READER_POSITION_MINIMUM
 
 // STREAM_COUNT_MAXIMUM is the largest bounded stream byte count.
-const STREAM_COUNT_MAXIMUM int64 = READER_POSITION_MAXIMUM
+const STREAM_COUNT_MAXIMUM int64 = TEXT_SIZE_MAXIMUM
+
+// STREAM_RESULT_MINIMUM is the smallest shared stream callback result.
+const STREAM_RESULT_MINIMUM int64 = STREAM_COUNT_MINIMUM
+
+// STREAM_RESULT_MAXIMUM includes every nonnegative seek position.
+const STREAM_RESULT_MAXIMUM int64 = READER_POSITION_MAXIMUM
 
 // STREAM_STATE_OPEN permits stream operations.
 const STREAM_STATE_OPEN uint8 = 0
@@ -168,7 +174,7 @@ const BUILDER_STATE_SIZE = STREAM_STATE_SIZE
 const READER_POSITION_OFFSET = 0
 
 // READER_POSITION_SIZE stores the encoded cursor.
-const READER_POSITION_SIZE = bits.BIT_COUNT_64_MAXIMUM / bits.BIT_COUNT_8_MAXIMUM
+const READER_POSITION_SIZE = WORD_BYTE_COUNT
 
 // READER_PREVIOUS_OFFSET follows the encoded cursor.
 const READER_PREVIOUS_OFFSET = READER_POSITION_OFFSET + READER_POSITION_SIZE
@@ -440,10 +446,20 @@ func Stream_Count_Invariants(value Stream_Count, namespace invariant.Namespace) 
 		Ensure()
 }
 
-// Reader_Position keeps each stream cursor inside its source.
+// Stream_Result holds a byte count, a mode set, a size, or a seek position.
+type Stream_Result int64
+
+// Stream_Result_Invariants admits every nonnegative shared stream callback result.
+func Stream_Result_Invariants(value Stream_Result, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), STREAM_RESULT_MINIMUM, STREAM_RESULT_MAXIMUM).
+		Ensure()
+}
+
+// Reader_Position keeps each stream cursor nonnegative.
 type Reader_Position int64
 
-// Reader_Position_Invariants rejects a cursor outside the largest Reader source.
+// Reader_Position_Invariants admits positions beyond the source for standard seek behavior.
 func Reader_Position_Invariants(value Reader_Position, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int64(
@@ -646,10 +662,10 @@ func Reader_To_Stream(reader *Reader) (stream shared_io.Stream) {
 			offset int64,
 			whence shared_io.Seek_From,
 		) (count int64, err error) {
-			stream_count, stream_err := reader_stream_procedure(
+			result, stream_err := reader_stream_procedure(
 				data, mode, Slice(buffer), Stream_Offset(offset), whence,
 			)
-			return int64(stream_count), stream_err
+			return int64(result), stream_err
 		},
 		Data: reader,
 	}
@@ -659,7 +675,11 @@ func Reader_To_Stream(reader *Reader) (stream shared_io.Stream) {
 func Reader_Unread_Size(reader *Reader) (size Boundary) {
 	defer func() { Boundary_Invariants(size, "reader_unread_size.size") }()
 	Reader_Invariants(*reader, "reader_unread_size.reader")
-	return Boundary(len(reader.Source) - int(reader_position(reader)))
+	position := reader_position(reader)
+	if position >= Reader_Position(len(reader.Source)) {
+		return 0
+	}
+	return Boundary(len(reader.Source) - int(position))
 }
 
 // Reader_Read_Byte preserves the byte domain that a generic stream cannot return.
@@ -671,7 +691,7 @@ func Reader_Read_Byte(reader *Reader) (value Byte, err error) {
 	}
 	reader_set_previous(reader, INDEX_ABSENT)
 	position := reader_position(reader)
-	if position == Reader_Position(len(reader.Source)) {
+	if position >= Reader_Position(len(reader.Source)) {
 		return 0, shared_io.Stream_EOF
 	}
 	value = Byte(reader.Source[position])
@@ -707,7 +727,7 @@ func Reader_Read_Character(
 		return 0, 0, shared_io.Stream_Empty
 	}
 	position := reader_position(reader)
-	if position == Reader_Position(len(reader.Source)) {
+	if position >= Reader_Position(len(reader.Source)) {
 		reader_set_previous(reader, INDEX_ABSENT)
 		return 0, 0, shared_io.Stream_EOF
 	}
@@ -745,7 +765,7 @@ func Reader_Write_To(
 	}
 	reader_set_previous(reader, INDEX_ABSENT)
 	position := reader_position(reader)
-	if position == Reader_Position(len(reader.Source)) {
+	if position >= Reader_Position(len(reader.Source)) {
 		return 0, nil
 	}
 	content := []byte(reader.Source[position:])
@@ -776,10 +796,6 @@ func reader_position(reader *Reader) (position Reader_Position) {
 func reader_set_position(reader *Reader, position Reader_Position) {
 	Reader_Invariants(*reader, "reader_set_position.reader")
 	Reader_Position_Invariants(position, "reader_set_position.position")
-	invariant.Always(
-		position <= Reader_Position(len(reader.Source)),
-		"A Reader position does not pass its source.",
-	)
 	standard_binary.LittleEndian.PutUint64(
 		reader.State[READER_POSITION_OFFSET:READER_PREVIOUS_OFFSET],
 		uint64(position),
@@ -810,15 +826,15 @@ func reader_stream_procedure(
 	buffer Slice,
 	offset Stream_Offset,
 	whence shared_io.Seek_From,
-) (count Stream_Count, err error) {
-	defer func() { Stream_Count_Invariants(count, "reader_stream.count") }()
+) (result Stream_Result, err error) {
+	defer func() { Stream_Result_Invariants(result, "reader_stream.result") }()
 	Slice_Invariants(buffer, "reader_stream.buffer")
 	Stream_Offset_Invariants(offset, "reader_stream.offset")
 	reader, held := data.(*Reader)
 	invariant.Always(held, "A Reader stream receives Reader state.")
 	Reader_Invariants(*reader, "reader_stream.reader")
 	if mode == shared_io.STREAM_MODE_QUERY {
-		return Stream_Count(READER_STREAM_MODES), nil
+		return Stream_Result(READER_STREAM_MODES), nil
 	}
 	if mode == shared_io.STREAM_MODE_CLOSE {
 		reader.State[READER_STREAM_STATE_OFFSET] = STREAM_STATE_CLOSED
@@ -835,13 +851,15 @@ func reader_stream_procedure(
 		return 0, nil
 	}
 	if mode == shared_io.STREAM_MODE_SIZE {
-		return Stream_Count(len(reader.Source)), nil
+		return Stream_Result(len(reader.Source)), nil
 	}
 	if mode == shared_io.STREAM_MODE_SEEK {
-		return reader_stream_seek(reader, offset, whence)
+		position, seek_err := reader_stream_seek(reader, offset, whence)
+		return Stream_Result(position), seek_err
 	}
 	if mode == shared_io.STREAM_MODE_READ_AT {
-		return reader_stream_read_at(reader, buffer, offset)
+		count, read_err := reader_stream_read_at(reader, buffer, offset)
+		return Stream_Result(count), read_err
 	}
 	if mode == shared_io.STREAM_MODE_READ {
 		reader_set_previous(reader, INDEX_ABSENT)
@@ -850,7 +868,10 @@ func reader_stream_procedure(
 			reader, buffer, Stream_Offset(position),
 		)
 		reader_set_position(reader, position+Reader_Position(moved))
-		return moved, read_err
+		if moved > 0 {
+			return Stream_Result(moved), nil
+		}
+		return Stream_Result(moved), read_err
 	}
 	return 0, shared_io.Stream_Empty
 }
@@ -865,19 +886,20 @@ func reader_stream_read_at(
 	if offset < 0 {
 		return 0, shared_io.Stream_Invalid_Offset
 	}
-	if offset > Stream_Offset(len(reader.Source)) {
-		return 0, shared_io.Stream_Invalid_Offset
-	}
-	if offset == Stream_Offset(len(reader.Source)) {
+	if offset >= Stream_Offset(len(reader.Source)) {
 		return 0, shared_io.Stream_EOF
 	}
-	return Stream_Count(copy(buffer, reader.Source[offset:])), nil
+	count = Stream_Count(copy(buffer, reader.Source[offset:]))
+	if count < Stream_Count(len(buffer)) {
+		return count, shared_io.Stream_EOF
+	}
+	return count, nil
 }
 
 func reader_stream_seek(
 	reader *Reader, offset Stream_Offset, whence shared_io.Seek_From,
-) (position Stream_Count, err error) {
-	defer func() { Stream_Count_Invariants(position, "reader_stream_seek.position") }()
+) (position Reader_Position, err error) {
+	defer func() { Reader_Position_Invariants(position, "reader_stream_seek.position") }()
 	Reader_Invariants(*reader, "reader_stream_seek.reader")
 	Stream_Offset_Invariants(offset, "reader_stream_seek.offset")
 	base := Stream_Offset(0)
@@ -895,11 +917,8 @@ func reader_stream_seek(
 	if target < 0 {
 		return 0, shared_io.Stream_Invalid_Offset
 	}
-	if target > Stream_Offset(len(reader.Source)) {
-		return 0, shared_io.Stream_Invalid_Offset
-	}
-	position = Stream_Count(target)
-	reader_set_position(reader, Reader_Position(position))
+	position = Reader_Position(target)
+	reader_set_position(reader, position)
 	reader_set_previous(reader, INDEX_ABSENT)
 	return position, nil
 }
@@ -1462,20 +1481,44 @@ func Has_Suffix(source Text, suffix Text) (present Boolean) {
 func Map(mapping func(rune) (mapped rune), source Text) (mapped Text) {
 	defer func() { Text_Invariants(mapped, "map.mapped") }()
 	Text_Invariants(source, "map.source")
-	content := make([]byte, 0, len(source))
-	for _, character := range string(source) {
+	for position, character := range string(source) {
 		mapped_character := mapping(character)
-		if mapped_character < 0 {
-			continue
+		if mapped_character == character {
+			if character != rune(utf8.REPLACEMENT_CHARACTER) {
+				continue
+			}
+			_, size := utf8.Decode_Character_Text(utf8.Text(source[position:]))
+			if size != utf8.CHARACTER_SIZE_MINIMUM {
+				continue
+			}
 		}
-		content = []byte(utf8.Append_Character(
-			utf8.Bytes(content), utf8.Character(mapped_character),
-		))
+		_, size := utf8.Decode_Character_Text(utf8.Text(source[position:]))
+		content := make([]byte, 0, len(source))
+		content = append(content, source[:position]...)
+		if mapped_character >= 0 {
+			content = []byte(utf8.Append_Character(
+				utf8.Bytes(content), utf8.Character(mapped_character),
+			))
+		}
 		if len(content) > TEXT_SIZE_MAXIMUM {
 			panic(Error_Too_Large)
 		}
+		tail := source[position+int(size):]
+		for _, tail_character := range string(tail) {
+			mapped_tail_character := mapping(tail_character)
+			if mapped_tail_character < 0 {
+				continue
+			}
+			content = []byte(utf8.Append_Character(
+				utf8.Bytes(content), utf8.Character(mapped_tail_character),
+			))
+			if len(content) > TEXT_SIZE_MAXIMUM {
+				panic(Error_Too_Large)
+			}
+		}
+		return Text(string(content))
 	}
-	return Text(string(content))
+	return source
 }
 
 // Repeat checks multiplication before the standard algorithm allocates the result.

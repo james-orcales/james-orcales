@@ -2,7 +2,6 @@ package strings_test
 
 import (
 	"reflect"
-	standard_strings "strings"
 	"testing"
 
 	shared_io "local/james-orcales/shared/io"
@@ -17,16 +16,18 @@ func Test_Comparison(t *testing.T) {
 	for _, one := range []struct {
 		Left  string
 		Right string
+		Want  shared_strings.Order
 	}{
-		{Left: "", Right: ""},
-		{Left: "a", Right: "b"},
-		{Left: "b", Right: "a"},
-		{Left: "abc", Right: "ab"},
+		{Left: "", Right: "", Want: shared_strings.ORDER_EQUAL},
+		{Left: "a", Right: "b", Want: shared_strings.ORDER_BEFORE},
+		{Left: "b", Right: "a", Want: shared_strings.ORDER_AFTER},
+		{Left: "abc", Right: "ab", Want: shared_strings.ORDER_AFTER},
 	} {
 		got := shared_strings.Compare(text(one.Left), text(one.Right))
-		want := standard_strings.Compare(one.Left, one.Right)
-		if int(got) != want {
-			t.Fatalf("Compare(%q, %q) = %d, want %d", one.Left, one.Right, got, want)
+		if got != one.Want {
+			t.Fatalf(
+				"Compare(%q, %q) = %d, want %d", one.Left, one.Right, got, one.Want,
+			)
 		}
 	}
 	if !shared_strings.Equal_Fold("Go", "gO") {
@@ -45,7 +46,7 @@ func Test_Comparison(t *testing.T) {
 // Test_Search verifies every search form, empty separators, invalid UTF-8, and absence.
 func Test_Search(t *testing.T) {
 	t.Parallel()
-	full := text(standard_strings.Repeat("a", shared_strings.TEXT_SIZE_MAXIMUM-1) + "z")
+	full := text(fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM-1) + "z")
 	if shared_strings.Count(full, "") != shared_strings.TEXT_SIZE_MAXIMUM+1 {
 		t.Fatal("an empty separator must occur at every character boundary")
 	}
@@ -111,42 +112,33 @@ func Test_Search(t *testing.T) {
 // Test_Split_And_Join verifies collection forms, field forms, limits, and empty separators.
 func Test_Split_And_Join(t *testing.T) {
 	t.Parallel()
-	for _, source := range []string{"", "a,b,c", "☺,☻", "\xff"} {
-		for _, separator := range []string{"", ",", "x"} {
-			source_text := text(source)
-			separator_text := text(separator)
-			assert_texts(t, shared_strings.Split(source_text, separator_text),
-				standard_strings.Split(source, separator))
-			assert_texts(t, shared_strings.Split_After(source_text, separator_text),
-				standard_strings.SplitAfter(source, separator))
-			for _, limit := range []shared_strings.Limit{-1, 0, 1, 2} {
-				parts := shared_strings.Split_N(source_text, separator_text, limit)
-				standard_limit := int(limit)
-				want := standard_strings.SplitN(source, separator, standard_limit)
-				assert_texts(t, parts, want)
-				after_parts := shared_strings.Split_After_N(
-					source_text, separator_text, limit,
-				)
-				standard_after_parts := standard_strings.SplitAfterN(
-					source, separator, standard_limit,
-				)
-				assert_texts(t, after_parts, standard_after_parts)
-			}
-		}
-	}
-	separators := text(standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
+	assert_texts(t, shared_strings.Split("a,b,c", ","), []string{"a", "b", "c"})
+	assert_texts(t, shared_strings.Split_After("a,b,c", ","), []string{"a,", "b,", "c"})
+	assert_texts(t, shared_strings.Split_N("a,b,c", ",", 2), []string{"a", "b,c"})
+	assert_texts(
+		t, shared_strings.Split_After_N("a,b,c", ",", 2), []string{"a,", "b,c"},
+	)
+	assert_texts(t, shared_strings.Split("", ""), []string{})
+	assert_texts(t, shared_strings.Split_After("", ""), []string{})
+	assert_texts(t, shared_strings.Split("\xff", ""), []string{"\xff"})
+	separators := text(fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
 	if len(shared_strings.Split(separators, "x")) != shared_strings.TEXTS_COUNT_MAXIMUM {
 		t.Fatal("Split must reach the text-count maximum")
 	}
 	space := func(character rune) (matches bool) {
 		return bool(ucd.Is_Space(ucd.Character(character)))
 	}
-	for _, source := range []string{"", " a\tb\n", "\u2000a\u2000b", "abc"} {
-		assert_texts(
-			t, shared_strings.Fields(text(source)), standard_strings.Fields(source),
-		)
-		assert_texts(t, shared_strings.Fields_Function(text(source), space),
-			standard_strings.FieldsFunc(source, space))
+	for _, one := range []struct {
+		Source string
+		Want   []string
+	}{
+		{Source: "", Want: []string{}},
+		{Source: " a\tb\n", Want: []string{"a", "b"}},
+		{Source: "\u2000a\u2000b", Want: []string{"a", "b"}},
+		{Source: "abc", Want: []string{"abc"}},
+	} {
+		assert_texts(t, shared_strings.Fields(text(one.Source)), one.Want)
+		assert_texts(t, shared_strings.Fields_Function(text(one.Source), space), one.Want)
 	}
 	parts := shared_strings.Texts{"a", "b", ""}
 	if got := shared_strings.Join(parts, ","); got != "a,b," {
@@ -166,26 +158,32 @@ func Test_Transform(t *testing.T) {
 		}
 		return character
 	}
-	for _, source := range []string{"", "abx", "Hello, 世界"} {
-		if got, want := shared_strings.Map(mapping, text(source)),
-			standard_strings.Map(mapping, source); string(got) != want {
-			t.Fatalf("Map(%q) = %q, want %q", source, got, want)
+	for _, one := range []struct {
+		Source string
+		Want   string
+	}{
+		{Source: "", Want: ""},
+		{Source: "abx", Want: "☺b"},
+		{Source: "Hello, 世界", Want: "Hello, 世界"},
+	} {
+		if got := shared_strings.Map(mapping, text(one.Source)); string(got) != one.Want {
+			t.Fatalf("Map(%q) = %q, want %q", one.Source, got, one.Want)
 		}
 	}
 	if got := shared_strings.Repeat("ab", 3); got != "ababab" {
 		t.Fatalf("Repeat = %q, want %q", got, "ababab")
 	}
 	upper := shared_strings.To_Upper("Hello, 世界")
-	if string(upper) != standard_strings.ToUpper("Hello, 世界") {
-		t.Fatal("To_Upper must match the standard library")
+	if string(upper) != "HELLO, 世界" {
+		t.Fatalf("To_Upper = %q, want %q", upper, "HELLO, 世界")
 	}
 	lower := shared_strings.To_Lower("Hello, 世界")
-	if string(lower) != standard_strings.ToLower("Hello, 世界") {
-		t.Fatal("To_Lower must match the standard library")
+	if string(lower) != "hello, 世界" {
+		t.Fatalf("To_Lower = %q, want %q", lower, "hello, 世界")
 	}
 	title := shared_strings.To_Title("hello")
-	if string(title) != standard_strings.ToTitle("hello") {
-		t.Fatal("To_Title must match the standard library")
+	if string(title) != "HELLO" {
+		t.Fatalf("To_Title = %q, want %q", title, "HELLO")
 	}
 	if got := shared_strings.To_Upper_Special(turkish_case(), "i"); got != "İ" {
 		t.Fatal("To_Upper_Special must apply the supplied case")
@@ -200,19 +198,10 @@ func Test_Transform(t *testing.T) {
 		t.Fatalf("To_Valid_UTF8 = %q, want %q", got, "a?b")
 	}
 	word_title := shared_strings.Title("hello-world")
-	if string(word_title) != standard_strings.Title("hello-world") {
-		t.Fatal("Title must match the standard library")
+	if string(word_title) != "Hello-World" {
+		t.Fatalf("Title = %q, want %q", word_title, "Hello-World")
 	}
-	for _, count := range []shared_strings.Replacement_Count{-1, 0, 1, 2} {
-		got := shared_strings.Replace("abcabc", "a", "xy", count)
-		want := standard_strings.Replace("abcabc", "a", "xy", int(count))
-		if string(got) != want {
-			t.Fatalf("Replace count %d = %q, want %q", count, got, want)
-		}
-	}
-	if got := shared_strings.Replace_All("abcabc", "a", "xy"); got != "xybcxybc" {
-		t.Fatalf("Replace_All = %q, want %q", got, "xybcxybc")
-	}
+	verify_transform_replacement(t)
 }
 
 // Test_Trim_And_Cut verifies Unicode trim forms and the prefix, suffix, and cut forms.
@@ -367,8 +356,7 @@ func Test_Replacer(t *testing.T) {
 	replacer := shared_strings.New_Replacer(shared_strings.Replacement_Pairs{
 		{"ab", "x"}, {"a", "y"}, {"", "."},
 	})
-	standard := standard_strings.NewReplacer("ab", "x", "a", "y", "", ".")
-	want := standard.Replace("ababa")
+	want := "xxy."
 	if got := shared_strings.Replacer_Replace(replacer, "ababa"); string(got) != want {
 		t.Fatalf("Replacer_Replace = %q, want %q", got, want)
 	}
@@ -392,7 +380,7 @@ func Test_Replacer(t *testing.T) {
 func Test_Size_Limits(t *testing.T) {
 	t.Parallel()
 	exercise_invariant_boundaries()
-	maximum := text(standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
+	maximum := text(fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
 	if shared_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM) != maximum {
 		t.Fatal("Repeat must reach the text-size maximum")
 	}
@@ -429,46 +417,90 @@ func Test_Domain_Errors(t *testing.T) {
 	assert_panic(t, func() { shared_strings.New_Replacer(too_many_pairs) })
 }
 
+func verify_transform_replacement(t *testing.T) {
+	t.Helper()
+	for _, one := range []struct {
+		Count shared_strings.Replacement_Count
+		Want  string
+	}{
+		{Count: -1, Want: "xybcxybc"},
+		{Count: 0, Want: "abcabc"},
+		{Count: 1, Want: "xybcabc"},
+		{Count: 2, Want: "xybcxybc"},
+	} {
+		got := shared_strings.Replace("abcabc", "a", "xy", one.Count)
+		if string(got) != one.Want {
+			t.Fatalf("Replace count %d = %q, want %q", one.Count, got, one.Want)
+		}
+	}
+	if got := shared_strings.Replace_All("abcabc", "a", "xy"); got != "xybcxybc" {
+		t.Fatalf("Replace_All = %q, want %q", got, "xybcxybc")
+	}
+}
+
 func verify_trim_forms(t *testing.T) {
 	t.Helper()
 	space := func(character rune) (matches bool) {
 		return bool(ucd.Is_Space(ucd.Character(character)))
 	}
-	for _, source := range []string{"", "  abc  ", "xxabcxx", "\u2000abc\u2000"} {
-		if shared_strings.Trim(text(source), " x") != text(
-			standard_strings.Trim(source, " x"),
-		) {
-			t.Fatal("Trim must match the standard library")
+	for _, one := range []struct {
+		Source      string
+		Cut         string
+		Cut_Left    string
+		Cut_Right   string
+		Whitespace  string
+		Space_Left  string
+		Space_Right string
+	}{
+		{
+			Source: "", Cut: "", Cut_Left: "", Cut_Right: "", Whitespace: "",
+			Space_Left: "", Space_Right: "",
+		},
+		{
+			Source: "  abc  ", Cut: "abc", Cut_Left: "abc  ", Cut_Right: "  abc",
+			Whitespace: "abc", Space_Left: "abc  ", Space_Right: "  abc",
+		},
+		{
+			Source: "xxabcxx", Cut: "abc", Cut_Left: "abcxx", Cut_Right: "xxabc",
+			Whitespace: "xxabcxx", Space_Left: "xxabcxx", Space_Right: "xxabcxx",
+		},
+		{
+			Source: "\u2000abc\u2000", Cut: "\u2000abc\u2000",
+			Cut_Left: "\u2000abc\u2000", Cut_Right: "\u2000abc\u2000",
+			Whitespace: "abc",
+			Space_Left: "abc\u2000", Space_Right: "\u2000abc",
+		},
+	} {
+		if shared_strings.Trim(text(one.Source), " x") != text(one.Cut) {
+			t.Fatalf("Trim(%q) did not return %q", one.Source, one.Cut)
 		}
-		if shared_strings.Trim_Left(text(source), " x") != text(
-			standard_strings.TrimLeft(source, " x"),
-		) {
-			t.Fatal("Trim_Left must match the standard library")
+		if shared_strings.Trim_Left(text(one.Source), " x") != text(one.Cut_Left) {
+			t.Fatalf("Trim_Left(%q) did not return %q", one.Source, one.Cut_Left)
 		}
-		if shared_strings.Trim_Right(text(source), " x") != text(
-			standard_strings.TrimRight(source, " x"),
-		) {
-			t.Fatal("Trim_Right must match the standard library")
+		if shared_strings.Trim_Right(text(one.Source), " x") != text(one.Cut_Right) {
+			t.Fatalf("Trim_Right(%q) did not return %q", one.Source, one.Cut_Right)
 		}
-		if shared_strings.Trim_Space(text(source)) != text(
-			standard_strings.TrimSpace(source),
-		) {
-			t.Fatal("Trim_Space must match the standard library")
+		if shared_strings.Trim_Space(text(one.Source)) != text(one.Whitespace) {
+			t.Fatalf("Trim_Space(%q) did not return %q", one.Source, one.Whitespace)
 		}
-		if shared_strings.Trim_Function(text(source), space) != text(
-			standard_strings.TrimFunc(source, space),
-		) {
-			t.Fatal("Trim_Function must match the standard library")
+		if shared_strings.Trim_Function(text(one.Source), space) != text(one.Whitespace) {
+			t.Fatalf("Trim_Function(%q) did not return %q", one.Source, one.Whitespace)
 		}
-		if shared_strings.Trim_Left_Function(text(source), space) != text(
-			standard_strings.TrimLeftFunc(source, space),
-		) {
-			t.Fatal("Trim_Left_Function must match the standard library")
+		if shared_strings.Trim_Left_Function(
+			text(one.Source), space,
+		) != text(one.Space_Left) {
+			t.Fatalf(
+				"Trim_Left_Function(%q) did not return %q",
+				one.Source, one.Space_Left,
+			)
 		}
-		if shared_strings.Trim_Right_Function(text(source), space) != text(
-			standard_strings.TrimRightFunc(source, space),
-		) {
-			t.Fatal("Trim_Right_Function must match the standard library")
+		if shared_strings.Trim_Right_Function(
+			text(one.Source), space,
+		) != text(one.Space_Right) {
+			t.Fatalf(
+				"Trim_Right_Function(%q) did not return %q",
+				one.Source, one.Space_Right,
+			)
 		}
 	}
 }
@@ -613,7 +645,7 @@ func boundary_texts() (values []shared_strings.Text) {
 		"",
 		"a",
 		"aa",
-		text(standard_strings.Repeat("a", shared_strings.TEXT_SIZE_MAXIMUM)),
+		text(fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM)),
 	}
 }
 
@@ -635,7 +667,7 @@ func exercise_comparison_boundaries(values []shared_strings.Text) {
 func exercise_search_boundaries(values []shared_strings.Text) {
 	full := values[len(values)-1]
 	last := text(
-		standard_strings.Repeat("a", shared_strings.TEXT_SIZE_MAXIMUM-1) + "z",
+		fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM-1) + "z",
 	)
 	for _, value := range values {
 		shared_strings.Count(value, value)
@@ -706,7 +738,7 @@ func exercise_byte_or_non_ascii_boundaries(last shared_strings.Text) {
 	shared_strings.Index_Byte_Or_Non_ASCII("aaz", "z")
 	shared_strings.Index_Byte_Or_Non_ASCII(last, "z")
 	shared_strings.Index_Byte_Or_Non_ASCII(
-		"a", text("a"+standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM-1)),
+		"a", text("a"+fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM-1)),
 	)
 }
 
@@ -715,7 +747,7 @@ func exercise_split_boundaries(values []shared_strings.Text) {
 		return bool(ucd.Is_Space(ucd.Character(character)))
 	}
 	full := values[len(values)-1]
-	separators := text(standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
+	separators := text(fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
 	for index, value := range values {
 		other := values[len(values)-1-index]
 		shared_strings.Split(value, other)
@@ -734,7 +766,7 @@ func exercise_split_boundaries(values []shared_strings.Text) {
 	shared_strings.Split_After(separators, "x")
 	shared_strings.Split("a", "a")
 	shared_strings.Split_After("a", "a")
-	full_fields := text(standard_strings.Repeat("a ", shared_strings.FIELDS_COUNT_MAXIMUM))
+	full_fields := text(fixture_repeat("a ", shared_strings.FIELDS_COUNT_MAXIMUM))
 	for _, value := range values {
 		shared_strings.Fields(value)
 		shared_strings.Fields_Function(value, space)
@@ -946,10 +978,12 @@ func exercise_reader_stream_offsets(values []shared_strings.Text) {
 		shared_io.Seek(stream, 0, shared_io.SEEK_FROM_START)
 	}
 	maximum := values[len(values)-1]
-	stream := shared_strings.Reader_To_Stream(shared_strings.New_Reader(maximum))
+	reader := shared_strings.New_Reader(maximum)
+	stream := shared_strings.Reader_To_Stream(reader)
 	for _, offset := range offsets {
 		shared_io.Read_At(stream, make([]byte, 2), offset)
 		shared_io.Seek(stream, offset, shared_io.SEEK_FROM_START)
+		shared_strings.Reader_Unread_Size(reader)
 	}
 }
 
@@ -960,7 +994,7 @@ func exercise_reader_state_boundaries(operation func(*shared_strings.Reader)) {
 }
 
 func reader_boundary_states() (readers []*shared_strings.Reader) {
-	maximum := text(standard_strings.Repeat("a", shared_strings.TEXT_SIZE_MAXIMUM))
+	maximum := text(fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM))
 	readers = append(readers, shared_strings.New_Reader(""))
 	readers = append(readers, shared_strings.New_Reader(maximum))
 	for _, position := range []int64{0, 1, 2, shared_strings.TEXT_SIZE_MAXIMUM - 1} {
@@ -1007,6 +1041,15 @@ func exercise_replacer_boundaries(values []shared_strings.Text) {
 func discard_stream() (stream shared_io.Stream) {
 	state := &shared_io.Stream_Discard{}
 	return shared_io.Discard_To_Stream(state)
+}
+
+func fixture_repeat(fragment string, count int) (value string) {
+	size := len(fragment) * count
+	content := make([]byte, size)
+	for offset := 0; offset < size; offset += len(fragment) {
+		copy(content[offset:], fragment)
+	}
+	return string(content)
 }
 
 func text(value string) (converted shared_strings.Text) {

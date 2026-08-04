@@ -28,12 +28,16 @@
   ],
   "opt_out_assertion_mandate_packages": [
           "**",
+          "!shared/strconv/**",
           "!maddox/**",
           "!sloc/**",
           "!shared/random/csprng/**",
-          "!shared/math/fixedpoint/**",
-          "!shared/math/fixedpoint/**",
-          "!shared/time/**"
+          "!shared/time/**",
+          "!shared/math/**",
+          "!shared/slices/**",
+          "!shared/bytes/**",
+          "!shared/strings/**",
+          "!shared/unicode/**"
   ],
   "word_replacements": {
     "len":       [],

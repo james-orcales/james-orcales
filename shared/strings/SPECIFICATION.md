@@ -43,8 +43,9 @@ interface. Package functions and shared/io.Stream supply all stateful operations
 
 # Reader
 
-Reader reads one bounded Text. Reader_To_Stream supplies read, read-at, seek, size, flush, close,
-destroy, and query operations. The unread functions reverse byte and character reads directly.
+Reader reads bounded Text. Reader_To_Stream supplies shared stream operations.
+A seek can set any nonnegative position. A read at or after the end reports Stream_EOF.
+The unread functions reverse byte and character reads directly.
 
 # Replacer
 
