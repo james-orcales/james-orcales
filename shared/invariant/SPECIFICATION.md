@@ -298,8 +298,20 @@ exits with a nonzero status.
 ### Gaps
 
 A guard with no call is in the reachability table. An absent axis polarity is in the branch table.
-Each branch record has a namespace, package, subject type, numeric link, polarity, property, and
-unquoted source expression. A table shows the subject type and holds the package back.
+Each branch record has a namespace, package, subject type, numeric link, polarity, reached state,
+property, and unquoted source expression. A table shows the subject type and holds the package back.
+
+### Reached
+
+A record states whether its assertion ran. An axis that ran and lacks one polarity needs a different
+value, and one that never ran needs a different path, thus this separates a wrong bound from an
+absent witness. The state is read from the two branch counters and is never a count of its own.
+
+### Namespace Summary
+
+The report opens with one row for each namespace that owns a gap: its name, how many gaps it holds,
+and how many of those never ran. The largest namespace sorts first. The block is a table affordance,
+thus the record schema keeps one record for each obligation.
 
 ### Domains
 
@@ -314,14 +326,20 @@ expose the internal link key. An eager message owns no package and no subject ty
 
 ### Table Order
 
-Each section has a count. Branch rows sort by assertion, package, subject type, numeric link, and
-polarity. Reachability rows sort by assertion, package, and subject type. The gap banner occurs
-before and after the report.
+Each section has a count. Summary rows sort by gap count, largest first, then by namespace. Branch
+rows sort by assertion, package, subject type, numeric link, and polarity. Reachability rows sort by
+assertion, package, and subject type. The gap banner occurs before and after the report.
 
 ### Table Escape
 
 A table cell escapes pipes and backslashes. It writes a physical line break as `<br>`. These changes
 keep the Markdown structure and do not change the registered value.
+
+### Overflow
+
+A report of more than 40 gaps goes to a file, and the terminal keeps the banner, the head of the
+ranking, and the total beside that file's path. The file holds JSON in each output mode. Absent a
+composition seam to write it, the whole report prints as it does without this rule.
 
 ### Output Configuration
 

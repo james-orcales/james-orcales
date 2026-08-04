@@ -2,12 +2,66 @@ package invariant
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
+	"strings"
 	"testing"
 
 	core "local/james-orcales/shared/invariant"
 )
+
+// OVERFLOW_FIXTURE_BYTES_MAX bounds the fixture read. Two records fit far inside it, thus a short
+// read is what proves the whole artifact was taken.
+const OVERFLOW_FIXTURE_BYTES_MAX = 4096
+
+// Test_Overflow_File keeps the terminal line pointing at a real artifact: the wired seam writes
+// every record it was handed, as JSON, under a name a reader can find.
+func Test_Overflow_File(t *testing.T) {
+	property := "The value equals the minimum."
+	link := uint8(2)
+	gaps := []core.Coverage_Gap{
+		{
+			Section: "branch", Assertion: "spilled", Package: "pkg", Type: "Value",
+			Link: &link, Absent: "true", Property: &property, Source: "int(value)",
+		},
+		{
+			Section: "reachability", Assertion: "A guard is reached.",
+			Absent: "reachability", Source: "ready",
+		},
+	}
+	path, write_error := coverage_gap_overflow_write(gaps)
+	if write_error != nil {
+		t.Fatal(write_error)
+	}
+	defer os.Remove(path)
+	if !strings.HasSuffix(path, ".json") {
+		t.Fatalf("path = %q, want a .json artifact", path)
+	}
+	opened, open_error := os.Open(path)
+	if open_error != nil {
+		t.Fatal(open_error)
+	}
+	defer opened.Close()
+	content := make([]byte, OVERFLOW_FIXTURE_BYTES_MAX)
+	read, read_error := io.ReadFull(
+		io.LimitReader(opened, OVERFLOW_FIXTURE_BYTES_MAX), content)
+	if !errors.Is(read_error, io.ErrUnexpectedEOF) {
+		t.Fatalf("read error = %v, want the fixture to fit its bound", read_error)
+	}
+	var restored []core.Coverage_Gap
+	if decode_error := json.Unmarshal(content[:read], &restored); decode_error != nil {
+		t.Fatal(decode_error)
+	}
+	if len(restored) != len(gaps) {
+		t.Fatalf("restored %d records, want %d", len(restored), len(gaps))
+	}
+	if restored[0].Assertion != "spilled" {
+		t.Fatalf("restored[0] = %q, want the record it was handed",
+			restored[0].Assertion)
+	}
+}
 
 // Test_JSON_Output_Records keeps branch and reachability gaps in one stable flat schema.
 func Test_JSON_Output_Records(t *testing.T) {
@@ -32,11 +86,12 @@ func Test_JSON_Output_Records(t *testing.T) {
 	}
 	want := `[{"section":"branch","assertion":"Classify_File_Input.Path",` +
 		`"package":"local/james-orcales/sloc/internal","type":"File_Path",` +
-		`"link":2,"missing":"true","property":"The value equals the minimum.",` +
+		`"link":2,"missing":"true","reached":false,` +
+		`"property":"The value equals the minimum.",` +
 		`"source":"len(file_path)","declared":"","observed":"",` +
 		`"observations":null},{"section":"reachability",` +
 		`"assertion":"A guard is reached.","package":"","type":"",` +
-		`"link":null,"missing":"reachability",` +
+		`"link":null,"missing":"reachability","reached":false,` +
 		`"property":null,"source":"ready","declared":"","observed":"",` +
 		`"observations":null}]` + "\n"
 	if output.String() != want {

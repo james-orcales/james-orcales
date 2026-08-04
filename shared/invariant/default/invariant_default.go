@@ -60,8 +60,30 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 		Working_Directory:   working_directory,
 		Sugar_Package:       reflect.TypeOf(Sugar_Package_Marker{}).PkgPath(),
 	}
+	recorder.Report_Overflow = coverage_gap_overflow_write
 	recorder_output_configure(recorder, os.Getenv(OUTPUT_ENVIRONMENT))
 	return recorder
+}
+
+// Persists a report too large for a terminal and returns where it put it. The file holds JSON in
+// each output mode, because a spilled report is read by a later pass and never by eye. It stays on
+// disk after the run: it is the artifact the terminal line points at.
+func coverage_gap_overflow_write(
+	gaps []invariant.Coverage_Gap,
+) (path string, err error) {
+	file, create_error := os.CreateTemp("", "invariant-coverage-gaps-*.json")
+	if create_error != nil {
+		return "", create_error
+	}
+	write_error := Coverage_Gap_Json_Write(file, gaps)
+	close_error := file.Close()
+	if write_error != nil {
+		return "", write_error
+	}
+	if close_error != nil {
+		return "", close_error
+	}
+	return file.Name(), nil
 }
 
 // Sniffs os.Args for the go-test harness flags that distinguish a plain test run from a fuzz

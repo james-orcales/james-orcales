@@ -45,6 +45,10 @@ func check(ok bool) { invariant.Always(ok, "reachable") }
 `)
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 1 coverage gaps 🚨\n\n" +
+		"# Gaps by namespace (1)\n\n" +
+		"| Namespace | Gaps | Unreached |\n" +
+		"|-----------|-----:|----------:|\n" +
+		"| reachable |    1 |         1 |\n\n" +
 		"# Reachability gaps (1)\n\n" +
 		"| Assertion | Type | Source |\n" +
 		"|-----------|------|--------|\n" +
@@ -159,10 +163,17 @@ func Test_Sometimes_Gap(t *testing.T) {
 	fixture_assertions(recorder, "gap").Sometimes(true, "axis").Ensure()
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 1 coverage gaps 🚨\n\n" +
+		"# Gaps by namespace (1)\n\n" +
+		"| Namespace | Gaps | Unreached |\n" +
+		"|-----------|-----:|----------:|\n" +
+		"| gap       |    1 |         0 |\n\n" +
 		"# Branch gaps (1)\n\n" +
-		"| Assertion | Type            | Link | Missing | Property | Source     |\n" +
-		"|-----------|-----------------|-----:|---------|----------|------------|\n" +
-		"| gap       | Fixture_Subject |    0 | false   | axis     | value == 0 |\n\n" +
+		"| Assertion | Type            | Link | Missing | Reached | Property | " +
+		"Source     |\n" +
+		"|-----------|-----------------|-----:|---------|---------|----------|" +
+		"------------|\n" +
+		"| gap       | Fixture_Subject |    0 | false   | yes     | axis     | " +
+		"value == 0 |\n\n" +
 		"🚨 1 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -225,7 +236,7 @@ func check(count int) { invariant.Range(count, 0, 4, "gapped") }
 	core.Recorder_Analyze_Assertion_Frequency(gapped)
 	// An inline helper keys on its own message, thus it owns no subject type and its cell is
 	// empty.
-	want := "| gapped    |      |    3 | true    | " +
+	want := "| gapped    |      |    3 | true    | yes     | " +
 		"The value equals the maximum. | count  |"
 	if !strings.Contains(output.String(), want) {
 		t.Fatalf("output = %q, want a row containing %q", output.String(), want)
@@ -1122,13 +1133,24 @@ func second(value Fixture_Subject) { Fixture_Subject_Invariants(value, "second")
 		t.Fatal("first callsite credited the second namespace")
 	}
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	// The ranking separates the two at a glance: "second" was never driven, "first" was.
 	want := "🚨 3 coverage gaps 🚨\n\n" +
+		"# Gaps by namespace (2)\n\n" +
+		"| Namespace | Gaps | Unreached |\n" +
+		"|-----------|-----:|----------:|\n" +
+		"| second    |    2 |         2 |\n" +
+		"| first     |    1 |         0 |\n\n" +
 		"# Branch gaps (3)\n\n" +
-		"| Assertion | Type            | Link | Missing | Property | Source     |\n" +
-		"|-----------|-----------------|-----:|---------|----------|------------|\n" +
-		"| first     | Fixture_Subject |    0 | false   | zero     | value == 0 |\n" +
-		"| second    | Fixture_Subject |    0 | false   | zero     | value == 0 |\n" +
-		"| second    | Fixture_Subject |    0 | true    | zero     | value == 0 |\n\n" +
+		"| Assertion | Type            | Link | Missing | Reached | Property | " +
+		"Source     |\n" +
+		"|-----------|-----------------|-----:|---------|---------|----------|" +
+		"------------|\n" +
+		"| first     | Fixture_Subject |    0 | false   | yes     | zero     | " +
+		"value == 0 |\n" +
+		"| second    | Fixture_Subject |    0 | false   | no      | zero     | " +
+		"value == 0 |\n" +
+		"| second    | Fixture_Subject |    0 | true    | no      | zero     | " +
+		"value == 0 |\n\n" +
 		"🚨 3 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
@@ -1145,7 +1167,8 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 func check(value Number) { Number_Invariants(value, "number") }
 `)
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
-	if !strings.Contains(output.String(), "| number    | Number |    0 | false   | zero") {
+	if !strings.Contains(output.String(),
+		"| number    | Number |    0 | false   | no      | zero") {
 		t.Fatalf("output = %q", output.String())
 	}
 }
@@ -1215,6 +1238,61 @@ func Test_Analysis_Gaps(t *testing.T) {
 	analysis_gap_names_its_subject(t)
 }
 
+// Test_Analysis_Reached separates a wrong bound from an absent witness. An axis that ran and lacks
+// one polarity needs a different value; one that never ran needs a different path.
+func Test_Analysis_Reached(t *testing.T) {
+	// One polarity witnessed, thus the axis ran and owes only its other branch.
+	ran, output, _ := registered_fixture(
+		bundle_fixture("ran", ".Sometimes(value == 0, \"axis\")"))
+	fixture_assertions(ran, "ran").Sometimes(true, "axis").Ensure()
+	core.Recorder_Analyze_Assertion_Frequency(ran)
+	if !strings.Contains(output.String(), "| false   | yes     |") {
+		t.Fatalf("output = %q, want a reached branch row", output.String())
+	}
+	// Nothing drove the chain, thus both polarities are absent and both rows say so.
+	quiet, silent, _ := registered_fixture(
+		bundle_fixture("quiet", ".Sometimes(value == 0, \"axis\")"))
+	core.Recorder_Analyze_Assertion_Frequency(quiet)
+	if strings.Contains(silent.String(), "| yes     |") {
+		t.Fatalf("output = %q, want no reached row", silent.String())
+	}
+	if strings.Count(silent.String(), "| no      |") != 2 {
+		t.Fatalf("output = %q, want both polarities unreached", silent.String())
+	}
+}
+
+// Test_Analysis_Namespace_Summary puts the largest namespace first, so the reader starts where the
+// gaps are rather than counting rows.
+func Test_Analysis_Namespace_Summary(t *testing.T) {
+	recorder, output, _ := registered_fixture(`package fixture
+type Alpha int
+func Alpha_Invariants(value Alpha, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+}
+type Fixture_Subject int
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "first").
+		Sometimes(value == 1, "second").Sometimes(value == 2, "third").Ensure()
+}
+func alpha(value Alpha) { Alpha_Invariants(value, "alpha") }
+func wide(value Fixture_Subject) { Fixture_Subject_Invariants(value, "wide") }
+`)
+	// Each axis witnesses one polarity, thus "wide" holds three reached gaps against the two
+	// unreached gaps of a namespace nothing drove.
+	fixture_assertions(recorder, "wide").
+		Sometimes(true, "first").Sometimes(false, "second").
+		Sometimes(false, "third").Ensure()
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	want := "# Gaps by namespace (2)\n\n" +
+		"| Namespace | Gaps | Unreached |\n" +
+		"|-----------|-----:|----------:|\n" +
+		"| wide      |    3 |         0 |\n" +
+		"| alpha     |    2 |         2 |\n"
+	if !strings.Contains(output.String(), want) {
+		t.Fatalf("output = %q, want a ranking containing %q", output.String(), want)
+	}
+}
+
 // Test_Analysis_Domains keeps the values a Range actually saw beside the interval it declared, so a
 // bound no real value approaches is visible without a second run.
 func Test_Analysis_Domains(t *testing.T) {
@@ -1256,6 +1334,10 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
 	})
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 2 coverage gaps 🚨\n\n" +
+		"# Gaps by namespace (1)\n\n" +
+		"| Namespace | Gaps | Unreached |\n" +
+		"|-----------|-----:|----------:|\n" +
+		"| range     |    2 |         2 |\n\n" +
 		"# Reachability gaps (2)\n\n" +
 		"| Assertion | Type            | Source     |\n" +
 		"|-----------|-----------------|------------|\n" +
@@ -1292,14 +1374,26 @@ func same(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
 	fixture_assertions(recorder, "same").
 		Sometimes(false, "second").Sometimes(false, "first").Ensure()
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	// Two namespaces tie on count, thus the ranking breaks the tie by name.
 	want := "🚨 4 coverage gaps 🚨\n\n" +
+		"# Gaps by namespace (2)\n\n" +
+		"| Namespace | Gaps | Unreached |\n" +
+		"|-----------|-----:|----------:|\n" +
+		"| alpha     |    2 |         2 |\n" +
+		"| same      |    2 |         0 |\n\n" +
 		"# Branch gaps (4)\n\n" +
-		"| Assertion | Type            | Link | Missing | Property | Source     |\n" +
-		"|-----------|-----------------|-----:|---------|----------|------------|\n" +
-		"| alpha     | Alpha           |    0 | false   | axis     | value == 0 |\n" +
-		"| alpha     | Alpha           |    0 | true    | axis     | value == 0 |\n" +
-		"| same      | Fixture_Subject |    0 | true    | second   | value == 0 |\n" +
-		"| same      | Fixture_Subject |    1 | true    | first    | value == 1 |\n\n" +
+		"| Assertion | Type            | Link | Missing | Reached | Property | " +
+		"Source     |\n" +
+		"|-----------|-----------------|-----:|---------|---------|----------|" +
+		"------------|\n" +
+		"| alpha     | Alpha           |    0 | false   | no      | axis     | " +
+		"value == 0 |\n" +
+		"| alpha     | Alpha           |    0 | true    | no      | axis     | " +
+		"value == 0 |\n" +
+		"| same      | Fixture_Subject |    0 | true    | yes     | second   | " +
+		"value == 0 |\n" +
+		"| same      | Fixture_Subject |    1 | true    | yes     | first    | " +
+		"value == 1 |\n\n" +
 		"🚨 4 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -1318,16 +1412,63 @@ func Test_Analysis_Table_Escape(t *testing.T) {
 	if err := core.Coverage_Gap_Table_Write(output, gaps); err != nil {
 		t.Fatal(err)
 	}
+	// The ranking escapes its namespace cell on the same terms as every other table.
 	want := "🚨 1 coverage gaps 🚨\n\n" +
+		"# Gaps by namespace (1)\n\n" +
+		"| Namespace    | Gaps | Unreached |\n" +
+		"|--------------|-----:|----------:|\n" +
+		"| A\\|B\\\\C<br>D |    1 |         1 |\n\n" +
 		"# Branch gaps (1)\n\n" +
-		"| Assertion    | Type         | Link | Missing | Property     | Source       |\n" +
-		"|--------------|--------------|-----:|---------|--------------|--------------|\n" +
-		"| A\\|B\\\\C<br>D | T\\|U\\\\V<br>W |    2 | true    | " +
+		"| Assertion    | Type         | Link | Missing | Reached | Property     | " +
+		"Source       |\n" +
+		"|--------------|--------------|-----:|---------|---------|--------------|" +
+		"--------------|\n" +
+		"| A\\|B\\\\C<br>D | T\\|U\\\\V<br>W |    2 | true    | no      | " +
 		"P\\|Q\\\\R<br>S | x\\|y\\\\z<br>w |\n\n" +
 		"🚨 1 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}
+}
+
+// Test_Analysis_Overflow keeps a report nobody can read off the terminal, and keeps the two facts
+// that replace it exact: where the report went and how many gaps it holds.
+func Test_Analysis_Overflow(t *testing.T) {
+	// Twenty axes nobody drives owe both polarities, which is the threshold exactly.
+	bounded, output, _ := registered_fixture(axis_chain_fixture(20, "bounded"))
+	spilled := 0
+	bounded.Report_Overflow = func(gaps []core.Coverage_Gap) (path string, err error) {
+		spilled = len(gaps)
+		return "/tmp/unused.json", nil
+	}
+	core.Recorder_Analyze_Assertion_Frequency(bounded)
+	if spilled != 0 {
+		t.Fatalf("40 gaps spilled %d records, want the whole report on the terminal",
+			spilled)
+	}
+	if !strings.Contains(output.String(), "# Branch gaps (40)") {
+		t.Fatalf("output = %q, want the branch table", output.String())
+	}
+	over, terminal, _ := registered_fixture(axis_chain_fixture(21, "over"))
+	over.Report_Overflow = func(gaps []core.Coverage_Gap) (path string, err error) {
+		spilled = len(gaps)
+		return "/tmp/invariant-coverage-gaps-1.json", nil
+	}
+	core.Recorder_Analyze_Assertion_Frequency(over)
+	if spilled != 42 {
+		t.Fatalf("spilled %d records, want every gap the banner counts", spilled)
+	}
+	if strings.Contains(terminal.String(), "# Branch gaps") {
+		t.Fatalf("output = %q, want no branch table", terminal.String())
+	}
+	want := "42 coverage gaps saved to /tmp/invariant-coverage-gaps-1.json\n"
+	if !strings.Contains(terminal.String(), want) {
+		t.Fatalf("output = %q, want it to end with %q", terminal.String(), want)
+	}
+	if !strings.Contains(terminal.String(), "# Gaps by namespace (1, showing 1)") {
+		t.Fatalf("output = %q, want a truncated ranking", terminal.String())
+	}
+	assert_overflow_seam_absent(t)
 }
 
 // Test_Analysis_Output_Configuration keeps an invalid output mode fatal and diagnostic.
@@ -1821,6 +1962,20 @@ const BUNDLE_FIXTURE_HEAD = "package fixture\ntype Fixture_Subject int\n" +
 func bundle_fixture_tail(namespace string) (source string) {
 	return ".Ensure()\n}\nfunc check(value Fixture_Subject) { " +
 		"Fixture_Subject_Invariants(value, \"" + namespace + "\") }\n"
+}
+
+// A pure caller wires no seam and cannot open a file, thus it keeps the whole report rather than
+// naming a file that was never written.
+func assert_overflow_seam_absent(t *testing.T) {
+	t.Helper()
+	recorder, output, _ := registered_fixture(axis_chain_fixture(21, "unwired"))
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	if !strings.Contains(output.String(), "# Branch gaps (42)") {
+		t.Fatalf("output = %q, want the whole report", output.String())
+	}
+	if strings.Contains(output.String(), "saved to") {
+		t.Fatalf("output = %q, want no file named", output.String())
+	}
 }
 
 // Builds a bundle whose chain is one Sometimes for each axis, so a fixture reaches the observation

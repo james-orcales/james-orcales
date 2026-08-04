@@ -140,6 +140,10 @@ type Recorder struct {
 	// Report_Coverage_Gaps renders the already-sorted flat gap records. Nil selects the
 	// Markdown table so pure callers retain the human default without composition wiring.
 	Report_Coverage_Gaps Coverage_Gap_Reporter
+	// Report_Overflow persists a report too large for a terminal and returns where it put it.
+	// This package opens no file, thus the composition tier owns the seam. Nil keeps the whole
+	// report on Output, because naming a file nobody wrote would lose the report.
+	Report_Overflow func(gaps []Coverage_Gap) (path string, err error)
 	// Output_Configuration_Diagnostic prevents a misconfigured report mode from running a
 	// suite whose final result could not honor the requested output contract.
 	Output_Configuration_Diagnostic string
@@ -1953,6 +1957,10 @@ type Coverage_Gap struct {
 	Link *uint8 `json:"link"`
 	// Absent is true, false, or reachability according to the absent obligation.
 	Absent string `json:"missing"`
+	// Reached is whether the assertion ran at all. An axis that ran and lacks one polarity
+	// needs a different value, and one that never ran needs a different path, thus this
+	// separates a wrong bound from an absent witness without a count of its own.
+	Reached bool `json:"reached"`
 	// Property is the builder link identity; reachability records leave it null.
 	Property *string `json:"property"`
 	// Source is the unquoted Go expression registered for the assertion.
@@ -1989,6 +1997,10 @@ func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 	if coverage_gap_count(gaps) == 0 {
 		return
 	}
+	if recorder_report_overflow(recorder, gaps) {
+		recorder.Exit(1)
+		return
+	}
 	reporter := recorder.Report_Coverage_Gaps
 	if reporter == nil {
 		reporter = Coverage_Gap_Table_Write
@@ -1998,6 +2010,39 @@ func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 			report_error.Error())
 	}
 	recorder.Exit(1)
+}
+
+// Writes an oversized report to the composition tier's file and leaves the terminal the banner, the
+// head of the ranking, and the total beside that path. Reports whether it took the report. A seam
+// that fails hands the report back rather than losing it.
+func recorder_report_overflow(recorder *Recorder, gaps []Coverage_Gap) (spilled bool) {
+	total := coverage_gap_count(gaps)
+	if total <= COVERAGE_GAP_TERMINAL_MAX {
+		return false
+	}
+	if recorder.Report_Overflow == nil {
+		return false
+	}
+	path, report_error := recorder.Report_Overflow(gaps)
+	if report_error != nil {
+		fmt.Fprintln(recorder.Output, "invariant: coverage gap report failed: "+
+			report_error.Error())
+		return false
+	}
+	var report strings.Builder
+	report.WriteString("🚨 " + strconv.Itoa(total) + " coverage gaps 🚨\n")
+	summary := coverage_gap_namespace_summary(gaps)
+	shown := summary
+	if len(shown) > COVERAGE_GAP_RANKING_MAX {
+		shown = shown[:COVERAGE_GAP_RANKING_MAX]
+	}
+	// Naming both counts keeps a truncated ranking from reading as a complete one.
+	report.WriteString("\n# Gaps by namespace (" + strconv.Itoa(len(summary)) +
+		", showing " + strconv.Itoa(len(shown)) + ")\n\n")
+	coverage_gap_summary_table_write(&report, shown)
+	report.WriteString("\n" + strconv.Itoa(total) + " coverage gaps saved to " + path + "\n")
+	fmt.Fprint(recorder.Output, report.String())
+	return true
 }
 
 // Rejects a composition-tier output selection before it can produce a differently shaped result.
@@ -2066,7 +2111,7 @@ func assertion_domain_row(metadata *Assertion_Metadata) (row Coverage_Gap) {
 	link := assertion_key_ordinal(metadata.Message)
 	return Coverage_Gap{
 		Section: "domain", Assertion: assertion, Package: package_path, Type: subject,
-		Link: link, Absent: "domain", Source: metadata.Condition,
+		Link: link, Absent: "domain", Reached: count != 0, Source: metadata.Condition,
 		Declared: assertion_domain_interval(
 			domain.Declared_Minimum, domain.Declared_Maximum),
 		Observed: observed, Observations: &count,
@@ -2111,9 +2156,15 @@ func coverage_gap_identity(
 // descends a tree unchanged, thus two bundles under one root share it. The subject type is what
 // separates them, and duplicated bundles across types are what the composition model calls for.
 func coverage_gap_branch(metadata *Assertion_Metadata, absent string) (gap Coverage_Gap) {
+	// One witnessed polarity proves the assertion ran, thus the two saturating counters answer
+	// this without a count of their own.
+	reached := metadata.Frequency.Load() != 0
+	if metadata.False_Frequency.Load() != 0 {
+		reached = true
+	}
 	unparsed := Coverage_Gap{
 		Section: "branch", Assertion: metadata.Message,
-		Absent: absent, Source: metadata.Condition,
+		Absent: absent, Reached: reached, Source: metadata.Condition,
 	}
 	parts := strings.Split(metadata.Message, ELEMENT_MESSAGE_SEPARATOR)
 	if len(parts) != ASSERTION_KEY_PARTS {
@@ -2127,7 +2178,8 @@ func coverage_gap_branch(metadata *Assertion_Metadata, absent string) (gap Cover
 	property := parts[4]
 	return Coverage_Gap{
 		Section: "branch", Assertion: parts[0], Package: parts[1], Type: parts[2],
-		Link: &link, Absent: absent, Property: &property, Source: metadata.Condition,
+		Link: &link, Absent: absent, Reached: reached, Property: &property,
+		Source: metadata.Condition,
 	}
 }
 
@@ -2178,6 +2230,12 @@ func Coverage_Gap_Table_Write(output io.Writer, gaps []Coverage_Gap) (err error)
 	var report strings.Builder
 	banner := "🚨 " + strconv.Itoa(coverage_gap_count(gaps)) + " coverage gaps 🚨"
 	report.WriteString(banner + "\n")
+	summary := coverage_gap_namespace_summary(gaps)
+	if len(summary) > 0 {
+		report.WriteString("\n# Gaps by namespace (" +
+			strconv.Itoa(len(summary)) + ")\n\n")
+		coverage_gap_summary_table_write(&report, summary)
+	}
 	branch := coverage_gap_section(gaps, "branch")
 	if len(branch) > 0 {
 		report.WriteString("\n# Branch gaps (" + strconv.Itoa(len(branch)) + ")\n\n")
@@ -2214,6 +2272,86 @@ func coverage_gap_count(gaps []Coverage_Gap) (count int) {
 		}
 	}
 	return count
+}
+
+// Namespace_Summary is one namespace's share of a report. Unreached separates a namespace that
+// needs another witness path from one that needs a different value.
+type Namespace_Summary struct {
+	// Namespace is the root identifier every gap under it carries.
+	Namespace string
+	// Gaps is how many absent obligations it holds.
+	Gaps int
+	// Unreached is how many of those never ran at all.
+	Unreached int
+}
+
+// Ranks each namespace by the gaps it owns. A domain row states what a Range saw and never that
+// something is missing, thus it is left out of both tallies.
+func coverage_gap_namespace_summary(gaps []Coverage_Gap) (summary []Namespace_Summary) {
+	order := []string{}
+	totals := map[string]Namespace_Summary{}
+	for _, gap := range gaps {
+		if gap.Section == "domain" {
+			continue
+		}
+		total, seen := totals[gap.Assertion]
+		if !seen {
+			order = append(order, gap.Assertion)
+			total.Namespace = gap.Assertion
+		}
+		total.Gaps++
+		if !gap.Reached {
+			total.Unreached++
+		}
+		totals[gap.Assertion] = total
+	}
+	for _, namespace := range order {
+		summary = append(summary, totals[namespace])
+	}
+	sort.Slice(summary, func(left_index int, right_index int) (less bool) {
+		return coverage_summary_less(summary[left_index], summary[right_index])
+	})
+	return summary
+}
+
+// Puts the largest namespace first so the reader starts where the gaps are, and breaks a tie by
+// name so map iteration can never leak into the report.
+func coverage_summary_less(left Namespace_Summary, right Namespace_Summary) (less bool) {
+	if left.Gaps != right.Gaps {
+		return left.Gaps > right.Gaps
+	}
+	return left.Namespace < right.Namespace
+}
+
+// Writes the namespace ranking, whose two tallies are right aligned as counts.
+func coverage_gap_summary_table_write(
+	report *strings.Builder, summary []Namespace_Summary,
+) {
+	rows := make([][SUMMARY_TABLE_COLUMNS]string, 0, len(summary))
+	widths := [SUMMARY_TABLE_COLUMNS]int{
+		len("Namespace"), len("Gaps"), len("Unreached"),
+	}
+	for _, total := range summary {
+		row := [SUMMARY_TABLE_COLUMNS]string{
+			coverage_gap_table_cell(total.Namespace),
+			strconv.Itoa(total.Gaps), strconv.Itoa(total.Unreached),
+		}
+		rows = append(rows, row)
+		for column_index := range widths {
+			widths[column_index] = integer_maximum(
+				widths[column_index], len(row[column_index]))
+		}
+	}
+	fmt.Fprintf(report, "| %-*s | %*s | %*s |\n",
+		widths[0], "Namespace", widths[1], "Gaps", widths[2], "Unreached")
+	report.WriteString("|" + strings.Repeat("-", widths[0]+2))
+	report.WriteString("|" + strings.Repeat("-", widths[1]+1) + ":")
+	report.WriteString("|" + strings.Repeat("-", widths[2]+1) + ":")
+	report.WriteString("|\n")
+	for _, row := range rows {
+		fmt.Fprintf(report, "| %-*s | %*s | %*s |\n",
+			widths[0], row[0], widths[1], row[1], widths[2], row[2])
+	}
 }
 
 // Writes the domain table, whose Observations column is right aligned as a tally.
@@ -2298,6 +2436,7 @@ func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][BRANCH_TABLE_COLUMNS
 			coverage_gap_table_cell(gap.Type),
 			link,
 			coverage_gap_table_cell(gap.Absent),
+			coverage_gap_reached_cell(gap),
 			coverage_gap_table_cell(coverage_gap_property(gap)),
 			coverage_gap_table_cell(gap.Source),
 		})
@@ -2305,12 +2444,21 @@ func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][BRANCH_TABLE_COLUMNS
 	return rows
 }
 
-// Writes the six-column branch table with Link right aligned as an ordinal.
+// Renders the reached state. Missing already prints true and false for one polarity, thus a second
+// pair of those words would read as a second polarity rather than as a separate fact.
+func coverage_gap_reached_cell(gap Coverage_Gap) (cell string) {
+	if gap.Reached {
+		return "yes"
+	}
+	return "no"
+}
+
+// Writes the seven-column branch table with Link right aligned as an ordinal.
 func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Gap) {
 	rows := coverage_gap_branch_rows(gaps)
 	widths := [BRANCH_TABLE_COLUMNS]int{
 		len("Assertion"), len("Type"), len("Link"), len("Missing"),
-		len("Property"), len("Source"),
+		len("Reached"), len("Property"), len("Source"),
 	}
 	for _, row := range rows {
 		for column_index := range widths {
@@ -2318,14 +2466,16 @@ func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Ga
 				widths[column_index], len(row[column_index]))
 		}
 	}
-	fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %-*s |\n",
+	fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %-*s | %-*s |\n",
 		widths[0], "Assertion", widths[1], "Type", widths[2], "Link",
-		widths[3], "Missing", widths[4], "Property", widths[5], "Source")
+		widths[3], "Missing", widths[4], "Reached", widths[5], "Property",
+		widths[6], "Source")
 	coverage_gap_branch_separator_write(report, widths)
 	for _, row := range rows {
-		fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %-*s |\n",
+		fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %-*s | %-*s |\n",
 			widths[0], row[0], widths[1], row[1], widths[2], row[2],
-			widths[3], row[3], widths[4], row[4], widths[5], row[5])
+			widths[3], row[3], widths[4], row[4], widths[5], row[5],
+			widths[6], row[6])
 	}
 }
 
@@ -3283,10 +3433,22 @@ func recorder_namespace_owner_equal(first []token.Pos, second []token.Pos) (equa
 // marker, so this holds many records per read and truncates none that the merge can resolve.
 const MERGE_READ_BYTES = 4096
 
-// BRANCH_TABLE_COLUMNS is the branch gap table's width: assertion, type, link, missing, property,
-// source. The package stays out of every table, because an import path repeats on each row and the
-// subject type alone separates the bundles of one tree.
-const BRANCH_TABLE_COLUMNS = 6
+// BRANCH_TABLE_COLUMNS is the branch gap table's width: assertion, type, link, missing, reached,
+// property, source. The package stays out of every table, because an import path repeats on each
+// row and the subject type alone separates the bundles of one tree.
+const BRANCH_TABLE_COLUMNS = 7
+
+// SUMMARY_TABLE_COLUMNS is the namespace ranking's width: namespace, gaps, and unreached.
+const SUMMARY_TABLE_COLUMNS = 3
+
+// COVERAGE_GAP_TERMINAL_MAX is how many gaps a terminal receives in full. Past it the report goes
+// to a file, because no reader takes in thousands of rows and the rows bury the ranking that says
+// where to start.
+const COVERAGE_GAP_TERMINAL_MAX = 40
+
+// COVERAGE_GAP_RANKING_MAX is how many namespaces survive a spill. The ranking is what a reader
+// acts on first, thus its head stays on the terminal while the records go to the file.
+const COVERAGE_GAP_RANKING_MAX = 8
 
 // DOMAIN_TABLE_COLUMNS is the Range domain table's width: assertion, type, link, declared,
 // observed, count, and source. It carries no polarity, because a domain names no absent branch.
