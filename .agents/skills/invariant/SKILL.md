@@ -1,100 +1,90 @@
 ---
 name: invariant
 description: >
-  Load BEFORE you write an `_Invariants` bundle, add an assertion, or resolve an invariant
-  coverage gap in this repository. Minimize the assertion tree before you add types or bundles.
-  A bundle names each bundle it composes and never learns what composed it, the reverse of
-  inheritance. The types under one root make a tree, never a DAG. A bundle is an identity, and
-  registration never shares one. A constant is a fact that two distinct types both name.
+  Load BEFORE you write an `_Invariants` function, add an assertion, or resolve an invariant
+  coverage gap in this repository. An `_Invariants` function holds the set of invariants for one
+  type, and it can call other `_Invariants` functions. Each type must occur one time in one
+  chain, and each chain is separate from the others. State a property that two types share
+  through the same package-level constants. A large quantity of diagnostics is the usual result,
+  thus the Quickstart gives the steps that start the work.
 ---
 
-# The composition model of shared/invariant
+# Many diagnostics are usual
 
-The full rules are in `shared/invariant/SPECIFICATION.md`.
+The framework is not easy, and it gives a large quantity of diagnostics. That quantity is the
+usual result.
 
-## Test
+# _Invariants
 
-Run each Go test suite with `-timeout=10s`. Always aim to REDUCE the coverage gaps.
+An `_Invariants` function holds the set of invariants for one type. It can call other
+`_Invariants` functions. Each type in one chain must occur one time. Each chain is separate from
+the others, thus one type can be part of many chains.
 
-## Choose the smallest assertion tree first
+# Composition
 
-The harness checks the tree that the code declares. It does not prove that each node is
-necessary. Each named helper that states an invariant creates another proof boundary.
+You will find yourself declaring types with duplicated `_Invariants` declarations. To state a
+property that they share, use the same package-level constants in each of them.
 
-Do not add a type or a bundle only because a coverage gap exists. A gap can identify a missing
-production witness, a boundary that is too broad, an unnecessary helper, or the wrong state
-owner.
+# Reuse constants
 
-Before you add a type or a bundle:
+The framework resolves each constant expression at compile time. Reuse constants as much as
+possible, especially from other packages, referencing them by variable instead of inlining the
+literal. Then one change to a load-bearing constant goes to each place that uses its assumptions.
 
-1. Classify the change as a storage fact, a semantic identity, or a coverage obligation.
-2. State each shared storage fact through the same constants. Do not add a type for a bound or a
-primitive width.
-3. Identify the function that owns the state change. Keep a value local when it has no separate
-domain identity.
-4. Remove a named helper when it only reports a local predicate to that owner.
-5. Narrow a boundary when real values cannot reach its declared property.
-6. Add another type only when an unavoidable root needs another position or another value set.
+# Quickstart
 
-Do not confuse proof boundaries with domain identities. Two function namespaces need separate
-evidence, but that fact does not require two types. First remove unnecessary boundaries. Then
-model the tree that remains.
+When you cannot start, do these steps first:
 
-## A parent knows its children, a child knows no parent
+- Correct each bound that is not applicable, especially one set to the minimum or the maximum
+value of the primitive type.
+- Push each `if` up and each `for` down. A branch that moves up the stack decreases the quantity
+of diagnostics.
+- Remove each unused struct field and each unused function parameter.
+- Replace a large struct in a parameter or an embedded position when the callsite uses only some
+of its fields.
+- Return no value where you can, because a returned value requires a deferred assertion.
+- Delete dead code.
 
-Object-oriented inheritance points knowledge upward. A subtype names its base type, and the base
-type never learns which types extend it. The set of implementors stays open, thus a base type
-cannot state what its subtypes hold.
+# Reading diagnostics
 
-An assertion points knowledge downward. A bundle names each bundle it composes, and a composed
-bundle never names what composed it. The set is closed and each root knows it in full.
+The report separates two kinds of gap, and each one has a different correction:
 
-Two consequences follow, and both are the reason for the rest of this document:
+- An axis that ran and holds one polarity must have a different **value**. Its bound is too wide,
+or no input gets to the other branch.
+- An axis that never ran must have a different **path**. No test gets to that code.
 
-1. A root states its whole tree. The entrypoint holds the widest type, thus its bundle reaches
-every obligation below it. Depth gives precision, not breadth.
-2. A bundle carries no context. It cannot know its position, thus it cannot state anything about
-the situation that composed it.
+Each Range also reports its declared interval against the interval that the run observed. An
+observed interval far inside the declared one names a type that is too broad, and no absent
+branch can show that.
 
-The namespace shows the same direction. One root writes it one time, and each bundle sends it down
-unchanged.
+The report starts with one row for each namespace that holds a gap, the largest first. Above 40
+gaps it goes to a file. `INVARIANT_OUTPUT=table` or `INVARIANT_OUTPUT=json` selects the form.
 
-## The shape is a tree, never a DAG
+# Handling unvalidated input
 
-A bundle carries no context, thus its type is its position and nothing else. One type at two
-positions under one root gives one name to two obligations, and evidence from one position
-satisfies the other. Registration rejects that shape.
+At each boundary that takes unvalidated input:
 
-A diamond is the usual form: two branches that both reach one leaf type. A repeated sibling and a
-cycle fail for the same reason.
+1. Make two types for the data, `Foo_Unvalidated` and `Foo`.
+2. The two types' invariants should NOT share the same constants.
+3. Write one function that changes the first type into the second.
+4. Centralize graceful error handling in that function.
 
-The constraint applies to each root, not to the program. One type can sit in many bundles and many
-trees. The type must be unique in each chain that contains it.
+```go
+func Foo_Validate(foo_unvalidated Foo_Unvalidated) (foo Foo, err Foo_Validation_Error)
+```
 
-## A bundle is an identity, a constant is a fact
+# Gotchas
 
-Object-oriented code carries structure and vocabulary in one act. Thus reuse is cheap, and a new
-name is expensive. Here the two are separate, and the costs are the reverse.
-
-A bundle that calls a second bundle does not borrow it. The call puts that bundle at one position
-and makes one obligation there. Two callers of one bundle state that their two situations are one
-obligation, and evidence from one satisfies the other. That statement is usually false. Thus a
-bundle composes by position, and registration never shares one.
-
-A constant holds no identity. Any number of types can name one constant at no cost.
-
-**Duplicate the bundle. Share the constants.** Reuse of a bundle is a coverage decision, never a
-decision about code economy.
-
-## Duplicate types only for unavoidable positions
-
-One type cannot sit at two positions under one root. When an unavoidable root contains two
-distinct positions for one value set, declare separate types. Do not duplicate a type only because
-two functions report separate coverage gaps.
-
-State the shared property through the constants. Each type keeps its own bundle, and each of those
-bundles names the same bounds. When two types share a full value set, make one constant name the
-other.
-
-The duplication then costs one bundle for each type. The fact stays at one site, thus one edit
-keeps every type correct.
+- A Range must have at least five legal values. For two to four, use the matching Enum. For one,
+use a direct `Always` equality.
+- A bundle for a defined Boolean type states exactly one `Sometimes`. Any other link, a second
+link, or no chain at all is a fatal error.
+- A test must not call an assertion writer or an invariant helper. Get to the assertion through a
+registered production entry point.
+- A type alias is a fatal error. A defined type holds an identity, and a second name for a type
+must have one.
+- A constant condition in `Always` is a fatal error, because it states no property.
+- One `Always` message and one namespace literal each occur one time in the full registration.
+- A bundle body is straight-line. A branch or a loop makes its assertion set conditional.
+- In a bundle body, a bundle call uses the `Namespace` parameter. A string literal there is a fatal
+  error.

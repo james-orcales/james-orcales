@@ -1,14 +1,17 @@
 ## Communication style
 
-Religiously follow the `communication` skill when responding or writing documentation.
+Always use `communication` skill when responding or writing documentation.
 
 ## Key Architecural Principle
 
-End-to-end Dependency Injection
+- End-to-end Dependency Injection
+- Everything must be bounded
+- Treat unvalidated input as intentionally malicious
 
 ## Test-Driven Development
 
-**STRICTLY WRITE THE FAILING TEST FIRST, THEN THE CODE TO MAKE IT PASS.**
+**WRITE FAILING TESTS FIRST, THEN IMPLEMENT.**
+A package's test suite must finish within 10 seconds locally.
 
 ## Comments
 
