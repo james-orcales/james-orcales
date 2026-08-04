@@ -369,7 +369,7 @@ The suite does not start.
 
 A clean run reports each expanded property and the subset that can cause a panic. Each `Always` and
 preset guard counts one time. Each axis counts two times. Each Range hole counts one time in the
-panic subset. A helper does not combine its links. The builder has no combination total.
+panic subset. The builder combines no links, thus one total states every property.
 
 ### Clean
 

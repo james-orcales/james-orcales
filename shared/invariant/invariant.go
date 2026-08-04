@@ -2823,29 +2823,27 @@ func integer_maximum(left int, right int) (maximum int) {
 // Recorder_Assertion_Summary keeps the enforced subset visible because an undifferentiated total
 // cannot distinguish branch exploration from contracts whose violation terminates execution.
 func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
-	individual := recorder.Forbidden_Properties
+	properties := recorder.Forbidden_Properties
 	panic_able := recorder.Forbidden_Properties
 	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
 		metadata := value.(*Assertion_Metadata)
 		switch metadata.Kind {
 		case ASSERTION_KIND_ALWAYS:
-			individual++
+			properties++
 			panic_able++
 		default:
 			// A Sometimes must witness both its true and its false branch, so it
 			// counts twice.
-			individual += 2
+			properties += 2
 		}
 		return true
 	})
 	if recorder.Package_Label != "" {
-		return fmt.Sprintf(
-			"✓ %s: tested %d properties (%d individual, of which %d are panic-able)",
-			recorder.Package_Label, individual, individual, panic_able)
+		return fmt.Sprintf("✓ %s: tested %d properties, of which %d are panic-able",
+			recorder.Package_Label, properties, panic_able)
 	}
-	return fmt.Sprintf(
-		"✓ tested %d properties (%d individual, of which %d are panic-able)",
-		individual, individual, panic_able)
+	return fmt.Sprintf("✓ tested %d properties, of which %d are panic-able",
+		properties, panic_able)
 }
 
 // Recorder_Run_Test_Main runs the injected TestMain process. It registers the selected
