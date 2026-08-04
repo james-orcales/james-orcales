@@ -1426,9 +1426,7 @@ func constant_resolve_binary(
 	if !evaluated {
 		return nil, nil, false
 	}
-	// An untyped operand takes the other's type, thus the result keeps whichever width the
-	// expression fixed. Two different widths are a type error and never one value.
-	width, signed, typed := constant_operand_width(left, right)
+	width, signed, typed := constant_binary_width(binary.Op, left, right)
 	if !typed {
 		return nil, nil, false
 	}
@@ -1444,8 +1442,24 @@ func constant_resolve_binary(
 	}), true
 }
 
-// Gives the width one binary expression carries. An untyped operand adopts the typed one's width,
-// and two operands of different widths never meet in a constant the language accepts.
+// Gives the width one binary expression carries. A shift keeps the width of its left operand alone,
+// because the right operand is a count and its own type says nothing about the result. Reading a
+// count's width here would narrow an untyped left side into a range the result outgrows.
+func constant_binary_width(
+	operator token.Token, left Constant_Operand, right Constant_Operand,
+) (bits uint, signed bool, typed bool) {
+	if operator == token.SHL {
+		return left.Bits, left.Signed, true
+	}
+	if operator == token.SHR {
+		return left.Bits, left.Signed, true
+	}
+	return constant_operand_width(left, right)
+}
+
+// Gives the width two operands of one ordinary expression share. An untyped operand adopts the
+// typed one's width, and two operands of different widths never meet in a constant the language
+// accepts.
 func constant_operand_width(
 	left Constant_Operand, right Constant_Operand,
 ) (bits uint, signed bool, typed bool) {

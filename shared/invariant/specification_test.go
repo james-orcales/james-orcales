@@ -623,6 +623,10 @@ func Test_Assertions_Registration_Word_Width(t *testing.T) {
 		{Expression: "^uint(0) >> 59", Declared: "0..31"},
 		{Expression: "^uint(0) >> 40", Declared: "0..16777215"},
 		{Expression: "int32(1) << 20", Declared: "0..1048576"},
+		// A shift takes the type of its left operand, thus a typed count never narrows an
+		// untyped left side into a width that cannot hold the result.
+		{Expression: "1 << (32 << (^uint(0) >> 63)) - 1",
+			Declared: "0..18446744073709551615"},
 	}
 	for _, width := range widths {
 		assert_constant_expression_bound(t, width.Expression, width.Declared)
