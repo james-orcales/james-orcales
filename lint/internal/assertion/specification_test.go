@@ -444,6 +444,46 @@ func Test_Invariants_Inherited_Fields(t *testing.T) {
 	assert_inherited_struct_is_composed(t)
 }
 
+// Test_Invariants_Defined_Pointers verifies a defined type over a pointer to a struct still owes
+// every field, so a nil guard cannot stand in for the domain the pointer reaches.
+func Test_Invariants_Defined_Pointers(t *testing.T) {
+	t.Parallel()
+	head := "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
+		"// Mark is a fixture.\ntype Mark int\n\n" +
+		"// Mark_Invariants is a fixture.\n" +
+		"func Mark_Invariants(v Mark, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+		"// Frame is a fixture.\ntype Frame struct {\n" +
+		"\t// Mk is a fixture.\n\tMk Mark\n\t// Other is a fixture.\n\tOther Mark\n}\n\n" +
+		"// Frame_Invariants is a fixture.\n" +
+		"func Frame_Invariants(v Frame, namespace invariant.Namespace) {\n" +
+		"\tMark_Invariants(v.Mk, namespace)\n" +
+		"\tMark_Invariants(v.Other, namespace)\n}\n\n" +
+		"// Handle is a fixture.\ntype Handle *Frame\n\n"
+	guarded := head + "// Handle_Invariants is a fixture.\n" +
+		"func Handle_Invariants(v Handle, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v != nil, \"the handle is present\")\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: guarded})), "v.Other") {
+		t.Fatal("a defined pointer that omits an inherited field must be flagged")
+	}
+	whole := head + "// Handle_Invariants is a fixture.\n" +
+		"func Handle_Invariants(v Handle, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v != nil, \"the handle is present\")\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max)." +
+		"Range_Int(int(v.Other), Mark_Min, Mark_Max).Ensure()\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: whole})), "inherited field") {
+		t.Fatal("a defined pointer that states every inherited field must be accepted")
+	}
+}
+
 // Test_Invariants_Embedded_Fields verifies an anonymous field still owes its helper, under the name
 // of the type it embeds and through a pointer.
 func Test_Invariants_Embedded_Fields(t *testing.T) {

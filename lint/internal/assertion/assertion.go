@@ -1224,13 +1224,27 @@ func struct_declared_fields(
 	if type_specification.Assign.IsValid() {
 		return nil, false, false
 	}
-	identifier, is_identifier := type_specification.Type.(*ast.Ident)
+	identifier, is_identifier := struct_declared_base(type_specification.Type)
 	if !is_identifier {
 		return nil, false, false
 	}
-	identity := helper_package_path(file, components) + "\x00" + identifier.Name
+	identity := helper_package_path(file, components) + "\x00" + identifier
 	inherited, found := struct_index[identity]
 	return inherited, found, found
+}
+
+// Gives the name a type declaration stands over. Go selects a field through a pointer, thus a
+// defined type over a pointer to a struct reaches every field that struct holds and owes each one.
+func struct_declared_base(expression ast.Expr) (name string, named bool) {
+	star, is_star := expression.(*ast.StarExpr)
+	if is_star {
+		expression = star.X
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return "", false
+	}
+	return identifier.Name, true
 }
 
 // Maps each package-qualified type name to the struct it declares. A defined type over a struct
@@ -1283,11 +1297,11 @@ func struct_declaration_specs(
 		if type_specification.Assign.IsValid() {
 			continue
 		}
-		identifier, is_identifier := type_specification.Type.(*ast.Ident)
-		if !is_identifier {
+		base, named := struct_declared_base(type_specification.Type)
+		if !named {
 			continue
 		}
-		defined[identity] = package_path + "\x00" + identifier.Name
+		defined[identity] = package_path + "\x00" + base
 	}
 }
 

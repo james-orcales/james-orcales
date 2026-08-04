@@ -83,6 +83,12 @@ A defined type over a struct states each inherited field by a link of its own Tr
 Always, because one tree holds a type at one position. A struct field has no inline form, thus the
 defined type composes it, through a defined type of its own when the field type is occupied.
 
+### Defined Pointers
+
+A defined type over a pointer to a struct inherits that struct's fields. Go selects a field through
+the pointer, thus the bundle reaches every one and owes every one. A nil guard states that the
+pointer is present and never states what it points at.
+
 ### Embedded Fields
 
 An embedded field carries the same duty as a named one, and its name is the type it embeds. A
