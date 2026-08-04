@@ -219,6 +219,7 @@ Usage:
     Positional arguments may also be supplied via -key=val syntax.
 
 Global Flags:
+    -[34mh[0m     show this help
     -[34mhelp[0m  show this help
 
 
@@ -258,7 +259,7 @@ func Test_Demo(t *testing.T) {
 		{"todoctl", "list", "-columns=priority,description"},
 	}
 	for _, command := range commands {
-		command, err := cli.Program_Parse(&fixture.Program, command)
+		command, err := parse_program(&fixture.Program, command)
 		if err != nil {
 			panic(err)
 		}
@@ -296,7 +297,7 @@ func Test_User_Error(t *testing.T) {
 		{"todoctl", "list", "-count=0", "-count=-1", "-count=-2"},
 	}
 	for _, command := range commands {
-		command, err := cli.Program_Parse(&fixture.Program, command)
+		command, err := parse_program(&fixture.Program, command)
 		if err != nil {
 			fmt.Fprintln(fixture.Stderr, err.Error())
 			continue
@@ -311,6 +312,7 @@ Usage:
     Positional arguments may also be supplied via -key=val syntax.
 
 Global Flags:
+    -[34mh[0m     show this help
     -[34mhelp[0m  show this help
 
 
@@ -356,7 +358,7 @@ func Test_Quotes(t *testing.T) {
 		{"todoctl", "list"},
 	}
 	for _, command := range commands {
-		command, err := cli.Program_Parse(&fixture.Program, command)
+		command, err := parse_program(&fixture.Program, command)
 		if err != nil {
 			panic(err)
 		}
@@ -468,7 +470,7 @@ func Test_Print_Requested_Help(t *testing.T) {
 		t.Errorf("root help should list commands, got:\n%s", root.String())
 	}
 
-	command, _ := cli.Program_Parse(&fixture.Program, []string{"todoctl", "list", "-help"})
+	command, _ := parse_program(&fixture.Program, []string{"todoctl", "list", "-help"})
 	one := bytes.Buffer{}
 	cli.Print_Requested_Help(&one, fixture.Program, command)
 	if !strings.Contains(one.String(), "list") {
@@ -497,7 +499,7 @@ func new_single_fixture() (program cli.Program) {
 // flags, the per-verb help a multicall binary shows for the invoked name.
 func Test_Command_Help(t *testing.T) {
 	program := new_multicall_fixture()
-	command, err := cli.Program_Parse(&program, []string{"add", "milk"})
+	command, err := parse_program(&program, []string{"add", "milk"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -569,12 +571,11 @@ func Test_Complete_Multicall_Self(t *testing.T) {
 	}
 }
 
-// Test_Complete_Flags verifies flag-name completion within a command, including the
-// auto-injected -help and the command's arguments (settable by name).
+// Test_Complete_Flags verifies flag-name completion for default and declared options.
 func Test_Complete_Flags(t *testing.T) {
 	fixture := new_cli_fixture()
 	got := cli.Complete(fixture.Program, []string{"todoctl", "add", "-"})
-	for _, want := range []string{"-deadline", "-priority", "-help", "-task"} {
+	for _, want := range []string{"-deadline", "-priority", "-h", "-help", "-task"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("expected %q among %v", want, got)
 		}
@@ -665,4 +666,17 @@ func Test_Handle_Completion(t *testing.T) {
 	if cli.Handle_Completion(program, []string{"todoctl", "list"}, &output) {
 		t.Error("a normal invocation must not be handled as completion")
 	}
+}
+
+// Existing fixtures have no secrets, so their parser must publish before a loop runs.
+func parse_program(
+	program *cli.Program,
+	arguments []string,
+) (command cli.Command, err error) {
+	parser := cli.Program_Parse(program, cli.Program_Parse_Input{Arguments: arguments})
+	result := cli.Parser_Done(parser)
+	if result == nil {
+		panic("a program without secrets did not complete synchronously")
+	}
+	return result.Command, result.Error
 }

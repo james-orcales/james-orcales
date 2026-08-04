@@ -1,9 +1,9 @@
 
 # Parse
 
-Program_Parse resolves the active command and populates its options, returning an
-error on malformed input. A flag carries a default value; a positional argument has
-none and may also be given by position, without its label.
+Program_Parse starts a parser that resolves the active command and populates its options.
+Parser_Done returns nil while secret I/O continues. It returns the command and error when all
+work stops. A flag has a default. A positional argument has no default and can use its position.
 
 ### Commands
 
@@ -53,9 +53,26 @@ for a string enum and otherwise listing the whole set.
 
 ### Help
 
-Every program carries an auto-injected -help flag. When the token appears anywhere,
-parsing short-circuits and returns the Help_Requested sentinel with the command context
-— the selected command or the empty-label root — which Print_Requested_Help renders.
+Every program carries auto-injected -h and -help flags. When either token appears,
+parsing stops and returns Help_Requested and the applicable command context.
+Help shows public environment defaults and full secret paths, but it does not show secret values.
+
+### Environment Variables
+
+A program declares typed environment variables for all commands. Program_Parse reads declared
+keys from an injected KEY=value list and ignores other entries. A declaration can be required,
+can permit an empty value, can have a default, and can restrict the value to an enum.
+
+### Secrets
+
+A secret has ordered absolute paths that use one uppercase base filename as the key. The parser
+starts secrets in parallel, accepts regular files of at most 64 KiB, and rejects a final link.
+It removes one final LF or CRLF, converts the value, and closes each opened file.
+
+### External Errors
+
+The parser joins external errors in declaration order and does not disclose secret values.
+Help and CLI syntax errors stop before external validation or file I/O.
 
 # Completion
 
@@ -73,9 +90,9 @@ without being advertised.
 
 ### Deprecated
 
-A deprecated flag or command still parses but is hidden the same way, and using it
-records a warning naming its guidance; Program_Parse gathers those warnings onto the
-returned command and Print_Deprecations emits them.
+A deprecated declaration stays usable but does not appear in help or completion output.
+Program_Parse adds its guidance to the command when the applicable source supplies a value.
+Print_Deprecations writes each warning.
 
 # Trim Quotes
 
@@ -95,12 +112,28 @@ Get_Option returns the option carrying a given label from a slice of options.
 
 A present label returns its option; an absent label panics.
 
+# Get Environment
+
+Get_Environment returns the environment variable that has a specified key.
+
+### Lookup
+
+A declared key returns its resolved environment variable. An undeclared key panics.
+
+# Get Secret
+
+Get_Secret returns the secret that has a specified key.
+
+### Lookup
+
+A declared key returns its resolved secret. An undeclared key panics.
+
 # New
 
 New validates a program's configuration and panics when it is malformed.
 
 ### Validation
 
-A label that is empty, not flag-safe, or colliding panics, as does a non-terminal slice
-argument. An enum that is empty, type-mismatched, defaulted outside its set, or on a
-variadic panics; the reserved "help" label claimed by a user option panics too.
+An invalid label, collision, non-terminal slice, malformed enum, or reserved name panics.
+An invalid external key, source collision, or required environment default also panics.
+A secret with no path, a relative path, or different base filenames panics.

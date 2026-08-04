@@ -15,11 +15,17 @@
 //			Flags:     []cli.Option{{Label: "priority", Value: "low"}},
 //		}},
 //	})
-//	command, err := cli.Program_Parse(&program, os.Args)
-//	if err != nil {
+//	parser := cli.Program_Parse(&program, cli.Program_Parse_Input{Arguments: os.Args})
+//	result := cli.Parser_Done(parser)
+//	if result == nil {
+//		panic("a program without secrets must complete synchronously")
+//	}
+//	if result.Error != nil {
 //		cli.Print_Help(os.Stderr, program)
 //		os.Exit(1)
 //	}
+//	command := result.Command
+//	_ = command
 //
 // Parse with Program_Parse and render help with Print_Help.
 //
@@ -39,6 +45,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,17 +53,19 @@ import (
 
 	"local/james-orcales/shared/diff/levenshtein"
 	invariant "local/james-orcales/shared/invariant/default"
+	sharedio "local/james-orcales/shared/io"
 )
 
-// Help_Requested is returned by Program_Parse when the command line carries the
-// auto-injected -help flag. It short-circuits parsing — even a missing required argument
-// does not preempt it — so the caller renders help and exits successfully. Match it with
-// errors.Is, then call Print_Requested_Help with the returned command.
+// Help_Requested is returned when the command line contains -h or -help.
+// Help has priority over an absent argument. Match the error with errors.Is.
+// Then call Print_Requested_Help with the returned command.
 var Help_Requested = errors.New("help requested")
 
-// HELP_LABEL is the reserved option label for the auto-injected help flag, so -help works
-// on every program without being declared. A user option may not claim it.
+// HELP_LABEL is the reserved label for the default long help flag.
 const HELP_LABEL = "help"
+
+// HELP_SHORT_LABEL is the reserved label for the default short help flag.
+const HELP_SHORT_LABEL = "h"
 
 // Program represents a command-line application with one or more commands.
 type Program struct {
@@ -68,6 +77,10 @@ type Program struct {
 	Commands []Command
 	// Global_Flags are flags accepted by every command.
 	Global_Flags []Option
+	// Environment_Variables are process-wide external-value declarations.
+	Environment_Variables []Environment_Variable
+	// Secrets are process-wide file-backed external-value declarations.
+	Secrets []Secret
 	// Single marks a program with no command selector: the first token after the
 	// program name is the first positional argument, not a command name. New_Single
 	// sets it; New leaves it false.
@@ -99,6 +112,10 @@ type Command struct {
 	// ready-to-print message per deprecated command or flag the invocation actually
 	// used. It is empty on a command held as a definition.
 	Deprecation_Warnings []string
+	// Environment contains the resolved program-wide environment variables.
+	Environment []Environment_Variable
+	// Secrets contains the resolved program-wide file-backed secrets.
+	Secrets []Secret
 }
 
 // Option represents either an argument or a flag for a command.
@@ -262,6 +279,10 @@ type New_Input struct {
 	Description string
 	// Global_Flags are flags accepted by every command.
 	Global_Flags []Option
+	// Environment_Variables are process-wide external-value declarations.
+	Environment_Variables []Environment_Variable
+	// Secrets are process-wide file-backed external-value declarations.
+	Secrets []Secret
 	// Commands are the program's commands.
 	Commands []Command
 }
@@ -272,11 +293,9 @@ type New_Input struct {
 func New(input New_Input) (program Program) {
 	panic_when(len(input.Commands) == 0, "Program has zero commands specified.")
 
-	// -help is auto-injected as a global flag so every command carries it in help output
-	// and its label is reserved; the injection precedes validation so a colliding user
-	// option is caught, and reserve_help_label reports it with a clearer message first.
-	reserve_help_label(input.Commands, input.Global_Flags)
-	global_flags := append([]Option{help_flag()}, input.Global_Flags...)
+	// The injection occurs before validation because a reserved label must give a clear error.
+	reserve_help_labels(input.Commands, input.Global_Flags)
+	global_flags := append(help_flags(), input.Global_Flags...)
 
 	for index, flag := range global_flags {
 		panic_when(!flag.Is_Flag, "Global flags must be created with New_Flag.")
@@ -284,11 +303,14 @@ func New(input New_Input) (program Program) {
 	}
 
 	program = Program{
-		Label:        input.Label,
-		Description:  input.Description,
-		Commands:     input.Commands,
-		Global_Flags: global_flags,
+		Label:                 input.Label,
+		Description:           input.Description,
+		Commands:              input.Commands,
+		Global_Flags:          global_flags,
+		Environment_Variables: input.Environment_Variables,
+		Secrets:               input.Secrets,
 	}
+	external_validate(program.Environment_Variables, program.Secrets)
 
 	for index, command := range program.Commands {
 		panic_when(command.Label == "", "Program.Commands[%d].Label is unset.", index)
@@ -308,6 +330,10 @@ type New_Single_Input struct {
 	Arguments []Option
 	// Flags are the program's optional, unordered flags.
 	Flags []Option
+	// Environment_Variables are process-wide external-value declarations.
+	Environment_Variables []Environment_Variable
+	// Secrets are process-wide file-backed external-value declarations.
+	Secrets []Secret
 }
 
 // New_Single creates a program with no command selector: the first token after the
@@ -327,42 +353,58 @@ func New_Single(input New_Single_Input) (program Program) {
 		Arguments:   input.Arguments,
 		Flags:       input.Flags,
 	}
-	// A single-command program still gets the auto-injected -help global flag.
-	reserve_help_label([]Command{command}, nil)
-	global_flags := []Option{help_flag()}
+	reserve_help_labels([]Command{command}, nil)
+	global_flags := help_flags()
 	command_validate_options(command, global_flags)
+	external_validate(input.Environment_Variables, input.Secrets)
 	return Program{
-		Label:        input.Label,
-		Description:  input.Description,
-		Commands:     []Command{command},
-		Global_Flags: global_flags,
-		Single:       true,
+		Label:                 input.Label,
+		Description:           input.Description,
+		Commands:              []Command{command},
+		Global_Flags:          global_flags,
+		Environment_Variables: input.Environment_Variables,
+		Secrets:               input.Secrets,
+		Single:                true,
 	}
 }
 
-// The bool flag auto-injected into every program's Global_Flags: it documents -help
-// in help output and reserves the label. The parser recognizes the token directly
-// (see program_wants_help), so this flag's value is never read.
-func help_flag() (option Option) {
-	return New_Flag(New_Flag_Input[bool]{Label: HELP_LABEL, Description: "show this help"})
+// These flags make the two help forms visible in help output and completion output.
+// The parser reads the tokens before it assigns option values.
+func help_flags() (flags []Option) {
+	return []Option{
+		help_flag(HELP_SHORT_LABEL),
+		help_flag(HELP_LABEL),
+	}
 }
 
-// Panics when a user option claims the reserved HELP_LABEL, so the auto-injected -help
-// flag never collides with or shadows a real option.
-func reserve_help_label(commands []Command, global_flags []Option) {
+func help_flag(label string) (option Option) {
+	return New_Flag(New_Flag_Input[bool]{Label: label, Description: "show this help"})
+}
+
+// A program cannot replace a default help flag with a different function.
+func reserve_help_labels(commands []Command, global_flags []Option) {
 	for _, flag := range global_flags {
-		panic_when(flag.Label == HELP_LABEL,
-			"%q is reserved for the auto-injected -help flag", HELP_LABEL)
+		panic_when(help_label_reserved(flag.Label),
+			"%q is reserved for an auto-injected help flag", flag.Label)
 	}
 	for _, command := range commands {
 		for _, argument := range command.Arguments {
-			panic_when(argument.Label == HELP_LABEL,
-				"%q is reserved for the auto-injected -help flag", HELP_LABEL)
+			panic_when(help_label_reserved(argument.Label),
+				"%q is reserved for an auto-injected help flag", argument.Label)
 		}
 		for _, flag := range command.Flags {
-			panic_when(flag.Label == HELP_LABEL,
-				"%q is reserved for the auto-injected -help flag", HELP_LABEL)
+			panic_when(help_label_reserved(flag.Label),
+				"%q is reserved for an auto-injected help flag", flag.Label)
 		}
+	}
+}
+
+func help_label_reserved(label string) (reserved bool) {
+	switch label {
+	case HELP_SHORT_LABEL, HELP_LABEL:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -374,6 +416,10 @@ type New_Multicall_Input struct {
 	Description string
 	// Global_Flags are flags accepted by every command.
 	Global_Flags []Option
+	// Environment_Variables are process-wide external-value declarations.
+	Environment_Variables []Environment_Variable
+	// Secrets are process-wide file-backed external-value declarations.
+	Secrets []Secret
 	// Commands are the program's commands, each selected by its label matching the
 	// binary name in argv[0].
 	Commands []Command
@@ -385,10 +431,12 @@ type New_Multicall_Input struct {
 // does, panicking when validation fails.
 func New_Multicall(input New_Multicall_Input) (program Program) {
 	program = New(New_Input{
-		Label:        input.Label,
-		Description:  input.Description,
-		Global_Flags: input.Global_Flags,
-		Commands:     input.Commands,
+		Label:                 input.Label,
+		Description:           input.Description,
+		Global_Flags:          input.Global_Flags,
+		Environment_Variables: input.Environment_Variables,
+		Secrets:               input.Secrets,
+		Commands:              input.Commands,
 	})
 	program.Multicall = true
 	return program
@@ -509,7 +557,7 @@ func validate_enum(context string, option Option) {
 // kinds of token may interleave freely. It returns an error for an unknown command,
 // an unknown option, a scalar set more than once, a positional with no argument to
 // fill, a missing required argument, or an invalid or absent value.
-func Program_Parse(
+func program_parse_arguments(
 	program *Program, operating_system_args []string,
 ) (active_command Command, err error) {
 	panic_when(len(operating_system_args) == 0, "Program_Parse needs at least one os_arg.")
@@ -601,11 +649,11 @@ func deprecated_flags_used(flags []Option, filled map[string]bool) (warnings []s
 	return warnings
 }
 
-// Reports whether the arguments carry the auto-injected -help flag. Help is detected
-// before command resolution so it works despite a missing or malformed command line.
+// Help has priority over command resolution because help must work for incomplete input.
 func program_wants_help(tokens []string) (wants bool) {
 	for _, token := range tokens {
-		if token == "-"+HELP_LABEL {
+		switch token {
+		case "-" + HELP_SHORT_LABEL, "-" + HELP_LABEL:
 			return true
 		}
 	}
@@ -1152,11 +1200,12 @@ func Print_Help(output io.Writer, program Program) {
 		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
 		for _, flag := range global_flags {
 			print_help_flag(writer, flag, "    ", true)
-			fmt.Fprintf(writer, "\n")
 		}
+		fmt.Fprintf(writer, "\n")
 		writer.Flush()
 		fmt.Fprintln(output, "")
 	}
+	print_external_help(output, program)
 
 	fmt.Fprintln(output, "Available Commands:")
 	for _, command := range program.Commands {
@@ -1209,6 +1258,7 @@ func Print_Command(output io.Writer, program Program, command Command) {
 	}
 	print_help_flag_section(output, "Flags:", command.Flags)
 	print_help_flag_section(output, "Global Flags:", program.Global_Flags)
+	print_external_help(output, program)
 }
 
 // Print_Deprecations writes a warning line for each deprecated command or flag the
@@ -1572,4 +1622,961 @@ func completion_block(input *Completion_Block_Input) (block string, err error) {
 			"complete -c %[1]s -f -a '(_%[1]s_complete)'\n", input.Name), nil
 	}
 	return "", fmt.Errorf("unsupported shell %q; use bash, zsh, or fish", input.Shell)
+}
+
+// SECRET_BYTES_MAX is the largest raw secret file that the parser accepts.
+const SECRET_BYTES_MAX = 64 * 1024
+
+// Environment_Variable declares one typed value from an injected process environment.
+type Environment_Variable struct {
+	// Key is the uppercase environment name.
+	Key string
+	// Description is the one-line help text.
+	Description string
+	// Value is the default before parsing and the resolved value after parsing.
+	Value any
+	// Enum restricts a string or integer value when it is not nil.
+	Enum any
+	// Required rejects an absent source and permits no nonzero default.
+	Required bool
+	// Allow_Empty makes an empty source different from an absent source.
+	Allow_Empty bool
+	// Hidden removes the declaration from help.
+	Hidden bool
+	// Deprecated is the guidance for a source-supplied value.
+	Deprecated string
+}
+
+// Secret declares one typed value from an ordered list of files.
+type Secret struct {
+	// Key is the uppercase base filename that all Paths share.
+	Key string
+	// Paths are the absolute fallback paths in declaration order.
+	Paths []string
+	// Description is the one-line help text.
+	Description string
+	// Value is the resolved value or its type's zero value when an optional secret is absent.
+	Value any
+	// Enum restricts a source-supplied string or integer value when it is not nil.
+	Enum any
+	// Required rejects the declaration when no path supplies a value.
+	Required bool
+	// Allow_Empty makes an empty file different from an absent file.
+	Allow_Empty bool
+	// Hidden removes the declaration from help.
+	Hidden bool
+	// Deprecated is the guidance for a source-supplied value.
+	Deprecated string
+}
+
+// New_Environment_Variable_Input contains one non-enum environment declaration.
+type New_Environment_Variable_Input[T string | int | bool] struct {
+	// Key is the uppercase environment name.
+	Key string
+	// Description is the one-line help text.
+	Description string
+	// Value supplies the type and the optional default.
+	Value T
+	// Required rejects an absent source and permits no nonzero default.
+	Required bool
+	// Allow_Empty makes an empty source different from an absent source.
+	Allow_Empty bool
+	// Hidden removes the declaration from help.
+	Hidden bool
+	// Deprecated is the guidance for a source-supplied value.
+	Deprecated string
+}
+
+// New_Environment_Variable makes one typed environment declaration.
+func New_Environment_Variable[T string | int | bool](
+	input New_Environment_Variable_Input[T],
+) (environment Environment_Variable) {
+	return Environment_Variable{
+		Key:         input.Key,
+		Description: input.Description,
+		Value:       input.Value,
+		Required:    input.Required,
+		Allow_Empty: input.Allow_Empty,
+		Hidden:      input.Hidden,
+		Deprecated:  input.Deprecated,
+	}
+}
+
+// New_Enum_Environment_Variable_Input contains one enum environment declaration.
+type New_Enum_Environment_Variable_Input[T string | int] struct {
+	// Key is the uppercase environment name.
+	Key string
+	// Description is the one-line help text.
+	Description string
+	// Value supplies the type and the optional default.
+	Value T
+	// Enum is the nonempty permitted-value set.
+	Enum []T
+	// Required rejects an absent source and permits no nonzero default.
+	Required bool
+	// Allow_Empty makes an empty source different from an absent source.
+	Allow_Empty bool
+	// Hidden removes the declaration from help.
+	Hidden bool
+	// Deprecated is the guidance for a source-supplied value.
+	Deprecated string
+}
+
+// New_Enum_Environment_Variable makes one typed enum environment declaration.
+func New_Enum_Environment_Variable[T string | int](
+	input New_Enum_Environment_Variable_Input[T],
+) (environment Environment_Variable) {
+	return Environment_Variable{
+		Key:         input.Key,
+		Description: input.Description,
+		Value:       input.Value,
+		Enum:        input.Enum,
+		Required:    input.Required,
+		Allow_Empty: input.Allow_Empty,
+		Hidden:      input.Hidden,
+		Deprecated:  input.Deprecated,
+	}
+}
+
+// New_Secret_Input contains one non-enum file-backed declaration.
+type New_Secret_Input struct {
+	// Paths are the absolute fallback paths in declaration order.
+	Paths []string
+	// Description is the one-line help text.
+	Description string
+	// Required rejects the declaration when no path supplies a value.
+	Required bool
+	// Allow_Empty makes an empty file different from an absent file.
+	Allow_Empty bool
+	// Hidden removes the declaration from help.
+	Hidden bool
+	// Deprecated is the guidance for a source-supplied value.
+	Deprecated string
+}
+
+// New_Secret makes one typed file-backed declaration without a compiled-in default.
+func New_Secret[T string | int | bool](input New_Secret_Input) (secret Secret) {
+	var zero_value T
+	return Secret{
+		Key:         secret_key(input.Paths),
+		Paths:       input.Paths,
+		Description: input.Description,
+		Value:       zero_value,
+		Required:    input.Required,
+		Allow_Empty: input.Allow_Empty,
+		Hidden:      input.Hidden,
+		Deprecated:  input.Deprecated,
+	}
+}
+
+// New_Enum_Secret_Input contains one enum file-backed declaration.
+type New_Enum_Secret_Input[T string | int] struct {
+	// Paths are the absolute fallback paths in declaration order.
+	Paths []string
+	// Description is the one-line help text.
+	Description string
+	// Enum is the nonempty permitted-value set.
+	Enum []T
+	// Required rejects the declaration when no path supplies a value.
+	Required bool
+	// Allow_Empty makes an empty file different from an absent file.
+	Allow_Empty bool
+	// Hidden removes the declaration from help.
+	Hidden bool
+	// Deprecated is the guidance for a source-supplied value.
+	Deprecated string
+}
+
+// New_Enum_Secret makes one typed enum secret without a compiled-in default.
+func New_Enum_Secret[T string | int](input New_Enum_Secret_Input[T]) (secret Secret) {
+	var zero_value T
+	return Secret{
+		Key:         secret_key(input.Paths),
+		Paths:       input.Paths,
+		Description: input.Description,
+		Value:       zero_value,
+		Enum:        input.Enum,
+		Required:    input.Required,
+		Allow_Empty: input.Allow_Empty,
+		Hidden:      input.Hidden,
+		Deprecated:  input.Deprecated,
+	}
+}
+
+// Program_Parse_Input contains deterministic process inputs and the injected I/O loop.
+type Program_Parse_Input struct {
+	// Arguments are the complete process argument list.
+	Arguments []string
+	// Environment is the complete raw KEY=value process environment snapshot.
+	Environment []string
+	// Loop submits secret file operations. Programs without secrets can leave it unset.
+	Loop sharedio.IO
+}
+
+// Parse_Result is the terminal parser result.
+type Parse_Result struct {
+	// Command contains all CLI and external values that resolved before Error.
+	Command Command
+	// Error joins all external failures after a successful CLI parse.
+	Error error
+}
+
+// Parser holds stable completion storage until all secret operations retire.
+type Parser struct {
+	// Result is nil until all secret operations retire.
+	Result *Parse_Result
+	// Loop is the injected submission surface.
+	Loop sharedio.IO
+	// Command is the parse-owned active command.
+	Command Command
+	// Environment_Errors keep environment declaration order.
+	Environment_Errors []error
+	// Secret_Errors keep secret declaration order.
+	Secret_Errors []error
+	// Environment_Warnings keep environment declaration order.
+	Environment_Warnings []string
+	// Secret_Warnings keep secret declaration order.
+	Secret_Warnings []string
+	// Secret_Count is the number of declarations that did not retire.
+	Secret_Count int
+}
+
+// Parser_Done returns nil while secret file work continues and the terminal result afterward.
+func Parser_Done(parser *Parser) (result *Parse_Result) {
+	return parser.Result
+}
+
+// Get_Environment returns a declared environment variable and panics for an unknown key.
+func Get_Environment(
+	environment []Environment_Variable,
+	key string,
+) (variable Environment_Variable) {
+	for _, candidate := range environment {
+		if candidate.Key == key {
+			return candidate
+		}
+	}
+	panic(fmt.Sprintf("environment variable %q is not declared", key))
+}
+
+// Get_Secret returns a declared secret and panics for an unknown key.
+func Get_Secret(secrets []Secret, key string) (secret Secret) {
+	for _, candidate := range secrets {
+		if candidate.Key == key {
+			return candidate
+		}
+	}
+	panic(fmt.Sprintf("secret %q is not declared", key))
+}
+
+// Program_Parse resolves CLI inputs before it reads environment variables or secret files.
+func Program_Parse(program *Program, input Program_Parse_Input) (parser *Parser) {
+	parser = &Parser{}
+	command, parse_err := program_parse_arguments(program, input.Arguments)
+	parser.Command = command
+	if parse_err != nil {
+		parser.Result = &Parse_Result{Command: command, Error: parse_err}
+		return parser
+	}
+	parser.Loop = input.Loop
+	parser.Command.Environment = copy_environment(program.Environment_Variables)
+	parser.Command.Secrets = copy_secrets(program.Secrets)
+	parser.Environment_Errors, parser.Environment_Warnings = environment_parse(
+		parser.Command.Environment,
+		input.Environment,
+	)
+	if len(parser.Command.Secrets) == 0 {
+		parser_publish(parser)
+		return parser
+	}
+	panic_when(parser.Loop.Open_At == nil, "Program_Parse needs Loop for secret declarations.")
+	parser_start_secrets(parser)
+	return parser
+}
+
+// Definitions stay immutable because one Program can parse more than one process snapshot.
+func copy_environment(input []Environment_Variable) (output []Environment_Variable) {
+	output = make([]Environment_Variable, len(input))
+	copy(output, input)
+	return output
+}
+
+// Each parse owns its secret values and internal presence state.
+func copy_secrets(input []Secret) (output []Secret) {
+	output = make([]Secret, len(input))
+	copy(output, input)
+	for index := range output {
+		output[index].Paths = append([]string{}, input[index].Paths...)
+	}
+	return output
+}
+
+// The first path supplies the key before construction validation examines the complete list.
+func secret_key(paths []string) (key string) {
+	if len(paths) == 0 {
+		return ""
+	}
+	return filepath.Base(paths[0])
+}
+
+// Construction rejects source ambiguity and declarations that no loader can resolve safely.
+func external_validate(environment []Environment_Variable, secrets []Secret) {
+	seen := map[string]bool{}
+	for index := range environment {
+		variable := environment[index]
+		external_key_validate(variable.Key, "environment variable")
+		panic_when(seen[variable.Key], "Duplicate external key %q.", variable.Key)
+		seen[variable.Key] = true
+		environment_validate_value(variable)
+	}
+	for index := range secrets {
+		secret := secrets[index]
+		secret_validate_paths(secret)
+		panic_when(seen[secret.Key], "Duplicate external key %q.", secret.Key)
+		seen[secret.Key] = true
+		secret_validate_value(secret)
+	}
+}
+
+// An uppercase key makes the environment namespace and filename namespace identical.
+func external_key_validate(key string, source string) {
+	panic_when(!external_key_valid(key), "%s key %q is not an uppercase environment name.",
+		source, key)
+	panic_when(key == strings.ToUpper(HELP_LABEL), "%q is a reserved external key.", key)
+}
+
+// Reports the portable environment-name grammar selected for all external declarations.
+func external_key_valid(key string) (valid bool) {
+	if len(key) == 0 {
+		return false
+	}
+	for index, character := range key {
+		if index == 0 {
+			if !ascii_uppercase(character) {
+				return false
+			}
+			continue
+		}
+		if ascii_uppercase(character) {
+			continue
+		}
+		if ascii_digit(character) {
+			continue
+		}
+		if character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Reports one uppercase ASCII letter without locale-dependent classification.
+func ascii_uppercase(character rune) (uppercase bool) {
+	if character < 'A' {
+		return false
+	}
+	return character <= 'Z'
+}
+
+// Reports one ASCII digit without locale-dependent classification.
+func ascii_digit(character rune) (digit bool) {
+	if character < '0' {
+		return false
+	}
+	return character <= '9'
+}
+
+// Required environment declarations use Value only to name the type.
+func environment_validate_value(variable Environment_Variable) {
+	external_value_validate(variable.Key, variable.Value, variable.Enum, !variable.Required)
+	if variable.Required {
+		panic_when(!external_value_zero(variable.Value),
+			"Required environment variable %q has a nonzero default.", variable.Key)
+	}
+}
+
+// Secret absence is separate from enum membership, so its zero value is never an enum default.
+func secret_validate_value(secret Secret) {
+	external_value_validate(secret.Key, secret.Value, secret.Enum, false)
+}
+
+// Existing option enum validation is the single source for external enum shape rules.
+func external_value_validate(key string, value any, enum any, default_is_value bool) {
+	switch value.(type) {
+	default:
+		panic_when(true, "External value %q has unsupported type %T.", key, value)
+	case string, int, bool:
+	}
+	validate_enum("External value "+strconv.Quote(key), Option{
+		Label: key, Value: value, Enum: enum, Is_Flag: default_is_value,
+	})
+}
+
+// Reports the zero value for each permitted external declaration type.
+func external_value_zero(value any) (zero bool) {
+	switch typed := value.(type) {
+	case string:
+		return typed == ""
+	case int:
+		return typed == 0
+	case bool:
+		return !typed
+	}
+	panic_when(true, "unreachable external type %T", value)
+	return false
+}
+
+// Path validation makes the filename a stable key across all fallbacks.
+func secret_validate_paths(secret Secret) {
+	panic_when(len(secret.Paths) == 0, "Secret has zero paths.")
+	for _, path := range secret.Paths {
+		panic_when(!filepath.IsAbs(path), "Secret path %q is not absolute.", path)
+		key := filepath.Base(path)
+		external_key_validate(key, "secret")
+		panic_when(key != secret.Key,
+			"Secret path %q does not have base filename %q.", path, secret.Key)
+	}
+}
+
+// One environment source record keeps malformed and duplicate states representable.
+type Environment_Source struct {
+	// Value is the text after the first equals sign.
+	Value string
+	// Occurrences counts all well-formed and malformed entries for the key.
+	Occurrences int
+	// Malformed reports that an entry had no equals sign.
+	Malformed bool
+}
+
+// Environment failures stay indexed by declaration instead of source-list order.
+func environment_parse(
+	environment []Environment_Variable,
+	raw []string,
+) (failures []error, warnings []string) {
+	sources := environment_sources(environment, raw)
+	failures = make([]error, len(environment))
+	for index := range environment {
+		variable := &environment[index]
+		source := sources[variable.Key]
+		failure := environment_source_failure(variable, source)
+		failures[index] = failure
+		if failure == nil {
+			warning := environment_warning(*variable, source)
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+		}
+	}
+	return failures, warnings
+}
+
+// Undeclared malformed entries do not affect a program that inherits a large environment.
+func environment_sources(
+	environment []Environment_Variable,
+	raw []string,
+) (sources map[string]Environment_Source) {
+	declared := map[string]bool{}
+	for _, variable := range environment {
+		declared[variable.Key] = true
+	}
+	sources = map[string]Environment_Source{}
+	for _, entry := range raw {
+		key, value, has_equals := strings.Cut(entry, "=")
+		if !has_equals {
+			if declared[entry] {
+				source := sources[entry]
+				source.Occurrences++
+				source.Malformed = true
+				sources[entry] = source
+			}
+			continue
+		}
+		if !declared[key] {
+			continue
+		}
+		source := sources[key]
+		source.Occurrences++
+		source.Value = value
+		sources[key] = source
+	}
+	return sources
+}
+
+// Resolves one declaration after the raw snapshot has classified source shape.
+func environment_source_failure(
+	variable *Environment_Variable,
+	source Environment_Source,
+) (failure error) {
+	shape_failures := []error{}
+	if source.Malformed {
+		shape_failures = append(shape_failures,
+			fmt.Errorf("environment variable %s has no '='", variable.Key))
+	}
+	if source.Occurrences > 1 {
+		duplicate_err := fmt.Errorf(
+			"environment variable %s is present more than once",
+			variable.Key,
+		)
+		shape_failures = append(shape_failures, duplicate_err)
+	}
+	if len(shape_failures) > 0 {
+		return errors.Join(shape_failures...)
+	}
+	absent := source.Occurrences == 0
+	if source.Value == "" {
+		if !variable.Allow_Empty {
+			absent = true
+		}
+	}
+	if absent {
+		if variable.Required {
+			return fmt.Errorf(
+				"required environment variable %s is missing",
+				variable.Key,
+			)
+		}
+		return nil
+	}
+	value, convert_err := external_convert(variable.Key, variable.Value, variable.Enum,
+		source.Value, false)
+	if convert_err != nil {
+		return convert_err
+	}
+	variable.Value = value
+	return nil
+}
+
+// Converts external text and uses redacted diagnostics for a secret source.
+func external_convert(
+	key string,
+	type_value any,
+	enum any,
+	raw string,
+	redact bool,
+) (value any, err error) {
+	option := Option{Label: key, Value: type_value, Enum: enum}
+	switch type_value.(type) {
+	case string:
+		option.Value = raw
+	case int:
+		number, parse_err := strconv.Atoi(raw)
+		if parse_err != nil {
+			return nil, external_conversion_error(key, "a whole number", raw, redact)
+		}
+		option.Value = number
+	case bool:
+		boolean, parse_err := strconv.ParseBool(raw)
+		if parse_err != nil {
+			return nil, external_conversion_error(key, "a Boolean", raw, redact)
+		}
+		option.Value = boolean
+	}
+	enum_err := option_check_enum(&option, key)
+	if enum_err != nil {
+		if redact {
+			return nil, fmt.Errorf("%s is not a permitted enum value", key)
+		}
+		return nil, enum_err
+	}
+	return option.Value, nil
+}
+
+// A secret conversion error names only the expected type, never the source bytes.
+func external_conversion_error(
+	key string,
+	expected string,
+	raw string,
+	redact bool,
+) (err error) {
+	if redact {
+		return fmt.Errorf("%s is not %s", key, expected)
+	}
+	return fmt.Errorf("%s expects %s, but got %q", key, expected, raw)
+}
+
+// A default does not trigger a warning because no external source supplied it.
+func environment_warning(
+	variable Environment_Variable,
+	source Environment_Source,
+) (warning string) {
+	if source.Occurrences == 0 {
+		return ""
+	}
+	if source.Value == "" {
+		if !variable.Allow_Empty {
+			return ""
+		}
+	}
+	if variable.Deprecated == "" {
+		return ""
+	}
+	return fmt.Sprintf("environment variable %s is deprecated: %s",
+		variable.Key, variable.Deprecated)
+}
+
+// One state owns every completion for one declaration and never moves after submission.
+type Secret_Parser struct {
+	// Parser is the parent state that owns the terminal result.
+	Parser *Parser
+	// Index is the secret declaration index.
+	Index int
+	// Secret receives a value only after its file closes.
+	Secret *Secret
+	// Path_Index is the current fallback index.
+	Path_Index int
+	// Path_Failures keep the declared fallback order.
+	Path_Failures []error
+	// Only_Absent reports that all completed paths were absent or empty.
+	Only_Absent bool
+	// Status_Size is the file size before Open_At.
+	Status_Size int64
+	// File is the descriptor that Close must retire.
+	File sharedio.File
+	// Buffer has one byte more than the accepted size.
+	Buffer []byte
+	// Candidate waits for a successful Close.
+	Candidate any
+	// Current_Failure is the content or Close failure for one path.
+	Current_Failure error
+	// Current_Absent classifies a missing or empty path.
+	Current_Absent bool
+	// Open owns the current Open_At completion.
+	Open sharedio.Completion
+	// Read owns the current Read completion.
+	Read sharedio.Completion
+	// Close owns the current Close completion.
+	Close sharedio.Completion
+}
+
+// The count is set before submission, so an all-absent declaration cannot publish too early.
+func parser_start_secrets(parser *Parser) {
+	secret_count := len(parser.Command.Secrets)
+	parser.Secret_Errors = make([]error, secret_count)
+	parser.Secret_Warnings = make([]string, secret_count)
+	parser.Secret_Count = secret_count
+	for index := range parser.Command.Secrets {
+		state := &Secret_Parser{
+			Parser:      parser,
+			Index:       index,
+			Secret:      &parser.Command.Secrets[index],
+			Only_Absent: true,
+		}
+		secret_start_paths(state)
+	}
+}
+
+// The reverse-built chain gives each fallback one different continuation and no recursion cycle.
+func secret_start_paths(state *Secret_Parser) {
+	next := func() { secret_exhausted(state) }
+	for path_index := len(state.Secret.Paths) - 1; path_index >= 0; path_index-- {
+		index := path_index
+		next_path := next
+		next = func() { secret_start_path(state, index, next_path) }
+	}
+	next()
+}
+
+// One path either submits Open_At or transfers control to its later fallback.
+func secret_start_path(state *Secret_Parser, path_index int, next func()) {
+	state.Path_Index = path_index
+	path := state.Secret.Paths[path_index]
+	status, status_err := state.Parser.Loop.Status(path)
+	if status_err != nil {
+		failure := fmt.Errorf("%s: status: %w", path, status_err)
+		secret_record_path(state, failure, false)
+		next()
+		return
+	}
+	if !status.Exists {
+		secret_record_path(state, fmt.Errorf("%s: missing", path), true)
+		next()
+		return
+	}
+	if !status.Is_Regular {
+		secret_record_path(state, fmt.Errorf("%s: not a regular file", path), false)
+		next()
+		return
+	}
+	if status.Size < 0 {
+		secret_record_path(state, fmt.Errorf("%s: negative file size", path), false)
+		next()
+		return
+	}
+	if status.Size > SECRET_BYTES_MAX {
+		failure := fmt.Errorf("%s: file exceeds 64 KiB", path)
+		secret_record_path(state, failure, false)
+		next()
+		return
+	}
+	state.Status_Size = status.Size
+	state.Parser.Loop.Open_At(
+		&state.Open,
+		func(_ *sharedio.Completion, file sharedio.File, err error) {
+			secret_opened(state, file, err, next)
+		},
+		sharedio.DIRECTORY_CURRENT,
+		path,
+		sharedio.Open_At_Options{
+			Access: sharedio.OPEN_READ_ONLY, Flags: sharedio.OPEN_AT_NO_FOLLOW,
+		},
+	)
+}
+
+// An open failure has no descriptor to close, so the next path can start immediately.
+func secret_opened(
+	state *Secret_Parser,
+	file sharedio.File,
+	open_err error,
+	next func(),
+) {
+	path := state.Secret.Paths[state.Path_Index]
+	if open_err != nil {
+		secret_record_path(state, fmt.Errorf("%s: open: %w", path, open_err), false)
+		next()
+		return
+	}
+	if file < 0 {
+		secret_record_path(state, fmt.Errorf("%s: open returned no file", path), false)
+		next()
+		return
+	}
+	state.File = file
+	state.Buffer = make([]byte, SECRET_BYTES_MAX+1)
+	state.Parser.Loop.Read(
+		&state.Read,
+		func(_ *sharedio.Completion, count int, err error) {
+			secret_read(state, count, err, next)
+		},
+		file,
+		state.Buffer,
+		0,
+	)
+}
+
+// Read analysis records a candidate, but Close must succeed before the parser accepts it.
+func secret_read(
+	state *Secret_Parser,
+	count int,
+	read_err error,
+	next func(),
+) {
+	state.Current_Failure = nil
+	state.Current_Absent = false
+	if read_err != nil {
+		state.Current_Failure = fmt.Errorf("read: %w", read_err)
+	} else if count < 0 {
+		state.Current_Failure = errors.New("read returned a negative byte count")
+	} else if count > SECRET_BYTES_MAX {
+		state.Current_Failure = errors.New("file exceeds 64 KiB")
+	} else if int64(count) != state.Status_Size {
+		state.Current_Failure = errors.New("file size changed after status")
+	} else {
+		secret_convert_candidate(state, count)
+	}
+	state.Parser.Loop.Close(
+		&state.Close,
+		func(_ *sharedio.Completion, err error) { secret_closed(state, err, next) },
+		state.File,
+	)
+}
+
+// The normalized bytes stay local to the state and never enter a secret error.
+func secret_convert_candidate(state *Secret_Parser, count int) {
+	content := string(state.Buffer[:count])
+	if strings.HasSuffix(content, "\r\n") {
+		content = content[:len(content)-2]
+	} else if strings.HasSuffix(content, "\n") {
+		content = content[:len(content)-1]
+	}
+	if content == "" {
+		if !state.Secret.Allow_Empty {
+			state.Current_Failure = errors.New("file is empty")
+			state.Current_Absent = true
+			return
+		}
+	}
+	value, convert_err := external_convert(
+		state.Secret.Key,
+		state.Secret.Value,
+		state.Secret.Enum,
+		content,
+		true,
+	)
+	if convert_err != nil {
+		state.Current_Failure = convert_err
+		return
+	}
+	state.Candidate = value
+}
+
+// A close failure invalidates otherwise usable content because ownership did not retire cleanly.
+func secret_closed(state *Secret_Parser, close_err error, next func()) {
+	path := state.Secret.Paths[state.Path_Index]
+	if close_err != nil {
+		close_failure := fmt.Errorf("close: %w", close_err)
+		state.Current_Failure = errors.Join(state.Current_Failure, close_failure)
+		state.Current_Absent = false
+	}
+	if state.Current_Failure == nil {
+		state.Secret.Value = state.Candidate
+		if state.Secret.Deprecated != "" {
+			warning := fmt.Sprintf(
+				"secret %s is deprecated: %s",
+				state.Secret.Key,
+				state.Secret.Deprecated,
+			)
+			state.Parser.Secret_Warnings[state.Index] = warning
+		}
+		secret_complete(state)
+		return
+	}
+	secret_record_path(state,
+		fmt.Errorf("%s: %w", path, state.Current_Failure), state.Current_Absent)
+	next()
+}
+
+// One non-absence failure prevents an optional declaration from hiding operational faults.
+func secret_record_path(state *Secret_Parser, failure error, absent bool) {
+	state.Path_Failures = append(state.Path_Failures, failure)
+	if !absent {
+		state.Only_Absent = false
+	}
+}
+
+// Required absence and optional operational failure both retain every ordered path cause.
+func secret_exhausted(state *Secret_Parser) {
+	if state.Secret.Required {
+		state.Parser.Secret_Errors[state.Index] = fmt.Errorf(
+			"secret %s: %w", state.Secret.Key, errors.Join(state.Path_Failures...),
+		)
+	} else if !state.Only_Absent {
+		state.Parser.Secret_Errors[state.Index] = fmt.Errorf(
+			"secret %s: %w", state.Secret.Key, errors.Join(state.Path_Failures...),
+		)
+	}
+	secret_complete(state)
+}
+
+// The last declaration publishes one stable result in declaration order.
+func secret_complete(state *Secret_Parser) {
+	state.Parser.Secret_Count--
+	if state.Parser.Secret_Count == 0 {
+		parser_publish(state.Parser)
+	}
+}
+
+// Errors.Join preserves child identity while the indexed slices preserve declaration order.
+func parser_publish(parser *Parser) {
+	failures := make([]error, 0,
+		len(parser.Environment_Errors)+len(parser.Secret_Errors))
+	for _, failure := range parser.Environment_Errors {
+		if failure != nil {
+			failures = append(failures, failure)
+		}
+	}
+	for _, failure := range parser.Secret_Errors {
+		if failure != nil {
+			failures = append(failures, failure)
+		}
+	}
+	parser.Command.Deprecation_Warnings = append(
+		parser.Command.Deprecation_Warnings,
+		parser.Environment_Warnings...,
+	)
+	for _, warning := range parser.Secret_Warnings {
+		if warning != "" {
+			parser.Command.Deprecation_Warnings = append(
+				parser.Command.Deprecation_Warnings,
+				warning,
+			)
+		}
+	}
+	parser.Result = &Parse_Result{Command: parser.Command, Error: errors.Join(failures...)}
+}
+
+// Program-wide external inputs appear in command help and root help by the same rules.
+func print_external_help(output io.Writer, program Program) {
+	print_environment_help(output, program.Environment_Variables)
+	print_secret_help(output, program.Secrets)
+}
+
+// Environment help can show defaults because environment values are not secrets.
+func print_environment_help(
+	output io.Writer,
+	environment []Environment_Variable,
+) {
+	shown := []Environment_Variable{}
+	for _, variable := range environment {
+		if external_shown(variable.Hidden, variable.Deprecated) {
+			shown = append(shown, variable)
+		}
+	}
+	if len(shown) == 0 {
+		return
+	}
+	fmt.Fprintln(output, "Environment Variables:")
+	writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
+	for _, variable := range shown {
+		status := "optional"
+		if variable.Required {
+			status = "required"
+		}
+		default_text := ""
+		if !variable.Required {
+			default_text = fmt.Sprintf(" default=%v", variable.Value)
+		}
+		fmt.Fprintf(writer, "    %s\t%s %s%s\t%s\n",
+			variable.Key, external_type(variable.Value, variable.Enum), status,
+			default_text, variable.Description)
+	}
+	writer.Flush()
+	fmt.Fprintln(output, "")
+}
+
+// Secret help shows paths and type constraints but never reads or formats Value.
+func print_secret_help(output io.Writer, secrets []Secret) {
+	shown := []Secret{}
+	for _, secret := range secrets {
+		if external_shown(secret.Hidden, secret.Deprecated) {
+			shown = append(shown, secret)
+		}
+	}
+	if len(shown) == 0 {
+		return
+	}
+	fmt.Fprintln(output, "Secrets:")
+	writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
+	for _, secret := range shown {
+		status := "optional"
+		if secret.Required {
+			status = "required"
+		}
+		value_type := external_type(secret.Value, secret.Enum)
+		fmt.Fprintf(writer, "    %s\t%s %s\t%s\n",
+			secret.Key, value_type, status, secret.Description)
+		for _, path := range secret.Paths {
+			fmt.Fprintf(writer, "        %s\n", path)
+		}
+	}
+	writer.Flush()
+	fmt.Fprintln(output, "")
+}
+
+// Hidden and deprecated declarations stay usable but do not advertise their names or paths.
+func external_shown(hidden bool, deprecated string) (shown bool) {
+	if hidden {
+		return false
+	}
+	return deprecated == ""
+}
+
+// Help uses one type description for environment variables and secrets.
+func external_type(value any, enum any) (description string) {
+	type_name := fmt.Sprintf("%T", value)
+	if enum == nil {
+		return type_name
+	}
+	text, _ := enum_values_text(Option{Value: value, Enum: enum}, "|")
+	return type_name + "(" + text + ")"
 }
