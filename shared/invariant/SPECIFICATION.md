@@ -162,6 +162,12 @@ A preset operand can name a constant of an imported package, and registration pa
 read it. The qualifier is the boundary the source states, thus one fact serves every package that
 names it. A bare name still resolves only in the declaring package.
 
+### Constant Expression
+
+A preset operand is each constant expression the language admits, at the precision the language
+gives it. A name resolves in its own package or in the package a qualifier states. An operand that
+is not constant stays unresolved.
+
 ### Walk
 
 The walk expands links in fluent order. It records each guard one time and each axis two times. It

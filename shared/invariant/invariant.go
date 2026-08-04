@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/printer"
 	"go/token"
@@ -113,6 +114,10 @@ const ASSERTION_KIND_SOMETIMES Assertion_Kind = 1
 // Bounds the resolver's total work so a constant-reference cycle (`const A = B; const B = A`)
 // cannot loop it; a legal bound expression resolves in far fewer steps.
 const CONSTANT_RESOLUTION_STEPS_MAX = 4096
+
+// CONSTANT_SHIFT_BITS_MAX bounds a shift count. A wider shift needs more storage than any bound can
+// hold, thus registration refuses it rather than building a value no width admits.
+const CONSTANT_SHIFT_BITS_MAX = 64
 
 // Recorder accumulates assertion observations for one run under registration-owned identities.
 type Recorder struct {
@@ -1115,47 +1120,66 @@ type Constant_Frame struct {
 func constant_resolve(
 	constants Constant_Scope, expression ast.Expr,
 ) (value Integer_Value, ok bool) {
+	resolved, evaluated := constant_evaluate(constants, expression)
+	if !evaluated {
+		return Integer_Value{}, false
+	}
+	integer := constant.ToInt(resolved)
+	if integer.Kind() != constant.Int {
+		return Integer_Value{}, false
+	}
+	magnitude, exact := constant.Val(integer).(*big.Int)
+	if !exact {
+		signed, representable := constant.Int64Val(integer)
+		if !representable {
+			return Integer_Value{}, false
+		}
+		return integer_from_big(big.NewInt(signed))
+	}
+	return integer_from_big(magnitude)
+}
+
+// Evaluates one constant expression to the value the language gives it. Go ships this evaluator, so
+// each operator carries the language's own precision and rules, and not a second reading of them.
+// Only name resolution stays here, because go/constant knows operators and never packages.
+func constant_evaluate(
+	constants Constant_Scope, expression ast.Expr,
+) (value constant.Value, ok bool) {
 	frames := []Constant_Frame{{Expression: expression}}
-	var values []*big.Int
+	var values []constant.Value
 	for steps := 0; len(frames) != 0; steps++ {
 		if steps > CONSTANT_RESOLUTION_STEPS_MAX {
-			return Integer_Value{}, false
+			return nil, false
 		}
 		frame := frames[len(frames)-1]
 		frames = frames[:len(frames)-1]
 		frames, values, ok = constant_resolve_frame(constants, frame, frames, values)
 		if !ok {
-			return Integer_Value{}, false
+			return nil, false
 		}
 	}
 	if len(values) != 1 {
-		return Integer_Value{}, false
+		return nil, false
 	}
-	return integer_from_big(values[0])
+	return values[0], true
 }
 
 func constant_resolve_frame(
 	constants Constant_Scope, frame Constant_Frame, frames []Constant_Frame,
-	values []*big.Int,
-) (next_frames []Constant_Frame, next_values []*big.Int, ok bool) {
+	values []constant.Value,
+) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
 	switch concrete := frame.Expression.(type) {
 	case *ast.ParenExpr:
 		return append(frames, Constant_Frame{Expression: concrete.X}), values, true
 	case *ast.BasicLit:
-		if concrete.Kind != token.INT {
+		// One call covers an integer, a string, a rune, and a float literal alike.
+		literal := constant.MakeFromLiteral(concrete.Value, concrete.Kind, 0)
+		if literal.Kind() == constant.Unknown {
 			return nil, nil, false
 		}
-		parsed, parsed_ok := new(big.Int).SetString(concrete.Value, 0)
-		if !parsed_ok {
-			return nil, nil, false
-		}
-		return frames, append(values, parsed), true
+		return frames, append(values, literal), true
 	case *ast.Ident:
-		declaration, declared := constants.Local[concrete.Name]
-		if !declared {
-			return nil, nil, false
-		}
-		return append(frames, Constant_Frame{Expression: declaration}), values, true
+		return constant_resolve_name(constants, concrete, frames, values)
 	case *ast.SelectorExpr:
 		declaration, declared := constant_scope_qualified(constants, concrete)
 		if !declared {
@@ -1163,23 +1187,7 @@ func constant_resolve_frame(
 		}
 		return append(frames, Constant_Frame{Expression: declaration}), values, true
 	case *ast.CallExpr:
-		if len(concrete.Args) != 1 {
-			return nil, nil, false
-		}
-		callee, is_conversion := concrete.Fun.(*ast.Ident)
-		if !is_conversion {
-			return nil, nil, false
-		}
-		// A measure over a constant string is a Go constant expression. Reading it as a
-		// conversion would push the string itself, which carries no integer.
-		if callee.Name == "len" {
-			bytes, measured := constant_resolve_bytes(constants, concrete.Args[0])
-			if !measured {
-				return nil, nil, false
-			}
-			return frames, append(values, bytes), true
-		}
-		return append(frames, Constant_Frame{Expression: concrete.Args[0]}), values, true
+		return constant_resolve_call(frame, concrete, frames, values)
 	case *ast.UnaryExpr:
 		return constant_resolve_unary(frame, concrete, frames, values)
 	case *ast.BinaryExpr:
@@ -1188,65 +1196,76 @@ func constant_resolve_frame(
 	return nil, nil, false
 }
 
-// Measures a constant string operand in bytes. A name resolves through its own package or through
-// the package a qualifier states, thus one declared string carries its own bound and no bundle has
-// to restate the number.
-func constant_resolve_bytes(
-	constants Constant_Scope, expression ast.Expr,
-) (bytes *big.Int, measured bool) {
-	for step_index := 0; step_index < CONSTANT_RESOLUTION_STEPS_MAX; step_index++ {
-		switch concrete := expression.(type) {
-		case *ast.ParenExpr:
-			expression = concrete.X
-		case *ast.Ident:
-			declaration, declared := constants.Local[concrete.Name]
-			if !declared {
-				return nil, false
-			}
-			expression = declaration
-		case *ast.SelectorExpr:
-			declaration, declared := constant_scope_qualified(constants, concrete)
-			if !declared {
-				return nil, false
-			}
-			expression = declaration
-		case *ast.BasicLit:
-			if concrete.Kind != token.STRING {
-				return nil, false
-			}
-			text, unquote_error := strconv.Unquote(concrete.Value)
-			if unquote_error != nil {
-				return nil, false
-			}
-			return big.NewInt(int64(len(text))), true
-		default:
-			return nil, false
-		}
+// Resolves a bare name. The two Boolean literals are predeclared rather than declared, thus they
+// answer here and never through the package's constants.
+func constant_resolve_name(
+	constants Constant_Scope, identifier *ast.Ident, frames []Constant_Frame,
+	values []constant.Value,
+) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
+	if identifier.Name == "true" {
+		return frames, append(values, constant.MakeBool(true)), true
 	}
-	return nil, false
+	if identifier.Name == "false" {
+		return frames, append(values, constant.MakeBool(false)), true
+	}
+	declaration, declared := constants.Local[identifier.Name]
+	if !declared {
+		return nil, nil, false
+	}
+	return append(frames, Constant_Frame{Expression: declaration}), values, true
+}
+
+// Reads a one-argument call. A measure over a constant string is itself constant, and every other
+// identifier callee is a conversion, which leaves an untyped constant's value unchanged.
+func constant_resolve_call(
+	frame Constant_Frame, call *ast.CallExpr, frames []Constant_Frame,
+	values []constant.Value,
+) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
+	if len(call.Args) != 1 {
+		return nil, nil, false
+	}
+	callee, is_identifier := call.Fun.(*ast.Ident)
+	if !is_identifier {
+		return nil, nil, false
+	}
+	if callee.Name != "len" {
+		return append(frames, Constant_Frame{Expression: call.Args[0]}), values, true
+	}
+	if !frame.Visited {
+		frames = append(frames, Constant_Frame{Expression: frame.Expression, Visited: true})
+		return append(frames, Constant_Frame{Expression: call.Args[0]}), values, true
+	}
+	measured := values[len(values)-1]
+	if measured.Kind() != constant.String {
+		return nil, nil, false
+	}
+	values = values[:len(values)-1]
+	bytes := int64(len(constant.StringVal(measured)))
+	return frames, append(values, constant.MakeInt64(bytes)), true
 }
 
 func constant_resolve_unary(
-	frame Constant_Frame, unary *ast.UnaryExpr, frames []Constant_Frame, values []*big.Int,
-) (next_frames []Constant_Frame, next_values []*big.Int, ok bool) {
-	if unary.Op != token.SUB {
-		if unary.Op != token.ADD {
-			return nil, nil, false
-		}
-	}
+	frame Constant_Frame, unary *ast.UnaryExpr, frames []Constant_Frame,
+	values []constant.Value,
+) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
 	if !frame.Visited {
 		frames = append(frames, Constant_Frame{Expression: frame.Expression, Visited: true})
 		return append(frames, Constant_Frame{Expression: unary.X}), values, true
 	}
-	if unary.Op == token.SUB {
-		values[len(values)-1].Neg(values[len(values)-1])
+	operand := values[len(values)-1]
+	values = values[:len(values)-1]
+	// A precision of zero keeps an untyped constant unbounded, which is what a bound needs.
+	result := constant.UnaryOp(unary.Op, operand, 0)
+	if result.Kind() == constant.Unknown {
+		return nil, nil, false
 	}
-	return frames, values, true
+	return frames, append(values, result), true
 }
 
 func constant_resolve_binary(
-	frame Constant_Frame, binary *ast.BinaryExpr, frames []Constant_Frame, values []*big.Int,
-) (next_frames []Constant_Frame, next_values []*big.Int, ok bool) {
+	frame Constant_Frame, binary *ast.BinaryExpr, frames []Constant_Frame,
+	values []constant.Value,
+) (next_frames []Constant_Frame, next_values []constant.Value, ok bool) {
 	if !frame.Visited {
 		frames = append(frames, Constant_Frame{Expression: frame.Expression, Visited: true})
 		frames = append(frames, Constant_Frame{Expression: binary.Y})
@@ -1255,34 +1274,52 @@ func constant_resolve_binary(
 	right := values[len(values)-1]
 	left := values[len(values)-2]
 	values = values[:len(values)-2]
-	result := new(big.Int)
-	switch binary.Op {
-	case token.ADD:
-		result.Add(left, right)
-	case token.SUB:
-		result.Sub(left, right)
-	case token.MUL:
-		result.Mul(left, right)
-	case token.QUO:
-		if right.Sign() == 0 {
-			return nil, nil, false
-		}
-		result.Quo(left, right)
-	case token.SHL:
-		if right.Sign() < 0 {
-			return nil, nil, false
-		}
-		if !right.IsUint64() {
-			return nil, nil, false
-		}
-		if right.Uint64() > 64 {
-			return nil, nil, false
-		}
-		result.Lsh(left, uint(right.Uint64()))
-	default:
+	result, evaluated := constant_operate(binary.Op, left, right)
+	if !evaluated {
 		return nil, nil, false
 	}
 	return frames, append(values, result), true
+}
+
+// Applies one binary operator. A shift and a comparison each take their own entry point. Integer
+// division carries the assignment token, which is what selects truncation over an exact ratio.
+func constant_operate(
+	operator token.Token, left constant.Value, right constant.Value,
+) (result constant.Value, ok bool) {
+	switch operator {
+	case token.SHL, token.SHR:
+		count, representable := constant.Uint64Val(constant.ToInt(right))
+		if !representable {
+			return nil, false
+		}
+		if count > CONSTANT_SHIFT_BITS_MAX {
+			return nil, false
+		}
+		result = constant.Shift(left, operator, uint(count))
+	case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+		return constant.MakeBool(constant.Compare(left, operator, right)), true
+	case token.QUO:
+		operator = token.QUO_ASSIGN
+		if left.Kind() != constant.Int {
+			operator = token.QUO
+		}
+		if right.Kind() != constant.Int {
+			operator = token.QUO
+		}
+		if constant.Sign(right) == 0 {
+			return nil, false
+		}
+		result = constant.BinaryOp(left, operator, right)
+	default:
+		result = constant.BinaryOp(left, operator, right)
+	}
+	if result == nil {
+		return nil, false
+	}
+	if result.Kind() == constant.Unknown {
+		return nil, false
+	}
+	return result, true
 }
 
 func integer_from_big(value *big.Int) (integer Integer_Value, ok bool) {
@@ -3051,44 +3088,19 @@ func recorder_register_assertion_always(
 		ast_condition_text(file_set, call, condition_index), nil)
 }
 
-// Resolves the Boolean constants that can disguise a true literal without type information.
+// Resolves a guard condition the language already settles. A comparison and a conjunction reach the
+// same evaluator every bound uses, thus a constant condition is caught in each form it takes.
 func constant_resolve_boolean(
 	constants Constant_Scope, expression ast.Expr,
 ) (value bool, resolved bool) {
-	negated := false
-	for step_index := 0; step_index < CONSTANT_RESOLUTION_STEPS_MAX; step_index++ {
-		switch concrete := expression.(type) {
-		case *ast.ParenExpr:
-			expression = concrete.X
-		case *ast.Ident:
-			if concrete.Name == "true" {
-				return !negated, true
-			}
-			if concrete.Name == "false" {
-				return negated, true
-			}
-			declaration, declared := constants.Local[concrete.Name]
-			if !declared {
-				return false, false
-			}
-			expression = declaration
-		case *ast.SelectorExpr:
-			declaration, declared := constant_scope_qualified(constants, concrete)
-			if !declared {
-				return false, false
-			}
-			expression = declaration
-		case *ast.UnaryExpr:
-			if concrete.Op != token.NOT {
-				return false, false
-			}
-			negated = !negated
-			expression = concrete.X
-		default:
-			return false, false
-		}
+	evaluated, ok := constant_evaluate(constants, expression)
+	if !ok {
+		return false, false
 	}
-	return false, false
+	if evaluated.Kind() != constant.Bool {
+		return false, false
+	}
+	return constant.BoolVal(evaluated), true
 }
 
 func recorder_assertion_ensured_roots(

@@ -581,6 +581,31 @@ func Test_Assertions_Registration_Cross_Package_Constants(t *testing.T) {
 	assert_composed_bytes_resolve(t)
 }
 
+// Test_Assertions_Registration_Constant_Expression keeps one evaluator behind every operand, so a
+// form the language calls constant never depends on which caller happens to read it.
+func Test_Assertions_Registration_Constant_Expression(t *testing.T) {
+	bounds := []struct {
+		Name       string
+		Expression string
+		Declared   string
+	}{
+		// "<a>" is 3, "body" is 4, and "</a>" is 4.
+		{Name: "concatenated names", Declared: "0..11",
+			Expression: "len(OPEN + BODY + CLOSE)"},
+		{Name: "conversion", Declared: "0..6", Expression: "len(string(BODY)) + 2"},
+		{Name: "remainder", Declared: "0..23", Expression: "123 % 100"},
+		{Name: "exclusive or", Declared: "0..6", Expression: "5 ^ 3"},
+		{Name: "right shift", Declared: "0..10", Expression: "80 >> 3"},
+		{Name: "parenthesized product", Declared: "0..14",
+			Expression: "(3 + 4) * 2"},
+	}
+	for _, bound := range bounds {
+		assert_constant_expression_bound(t, bound.Expression, bound.Declared)
+	}
+	assert_constant_condition(t)
+	assert_non_constant_operand(t)
+}
+
 // Test_Assertions_Registration_Walk keeps registration expansion aligned with runtime ordinals.
 func Test_Assertions_Registration_Walk(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
@@ -2090,6 +2115,108 @@ func check(value Label) { Label_Invariants(value, "label") }
 `)
 	if code != -1 {
 		t.Fatalf("len bound exit=%d output=%q", code, output.String())
+	}
+	assert_concatenated_bytes_resolve(t)
+}
+
+// A concatenation is one constant string, thus its measure is one static number. Spelling a wrapper
+// out of its parts is how a bound stays tied to the text it bounds.
+func assert_concatenated_bytes_resolve(t *testing.T) {
+	t.Helper()
+	recorder, output, code := registered_fixture(`package fixture
+const ENVELOPE_BYTES_MAX = 32 - len(
+	"<a><b>"+
+		"</b></a>")
+const ENVELOPE_BYTES_MIN = 0
+type Envelope string
+func Envelope_Invariants(value Envelope, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), ENVELOPE_BYTES_MIN, ENVELOPE_BYTES_MAX).Ensure()
+}
+func check(value Envelope) { Envelope_Invariants(value, "envelope") }
+`)
+	if code != -1 {
+		t.Fatalf("concatenated bound exit=%d output=%q", code, output.String())
+	}
+	// The domain row prints the bound registration resolved. "<a><b>" is 6 bytes and
+	// "</b></a>" is 8, thus the wrapper is 14 and the payload bound is 18.
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	if !strings.Contains(output.String(), "0..18") {
+		t.Fatalf("concatenated bound = %q, want a 0..18 domain", output.String())
+	}
+}
+
+// CONSTANT_EXPRESSION_HEAD declares the strings each bound below measures or converts.
+const CONSTANT_EXPRESSION_HEAD = "package fixture\n" +
+	"const OPEN = \"<a>\"\n" +
+	"const BODY = \"body\"\n" +
+	"const CLOSE = \"</a>\"\n" +
+	"const SPAN_MINIMUM = 0\n"
+
+// Drives one bound through registration and reads the resolved number back out of the domain row,
+// which is what proves the arithmetic rather than the absence of a diagnostic.
+func assert_constant_expression_bound(t *testing.T, expression string, declared string) {
+	t.Helper()
+	recorder, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
+		"const SPAN_MAXIMUM = " + expression + "\n" + `type Span string
+func Span_Invariants(value Span, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SPAN_MINIMUM, SPAN_MAXIMUM).Ensure()
+}
+func check(value Span) { Span_Invariants(value, "span") }
+`)
+	if code != -1 {
+		t.Fatalf("%s exit=%d output=%q", expression, code, output.String())
+	}
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	if !strings.Contains(output.String(), declared) {
+		t.Fatalf("%s declared %q, want %q", expression, output.String(), declared)
+	}
+}
+
+// A comparison and a conjunction are constant expressions, thus a guard built from them states a
+// fact registration can already settle and owes no runtime evidence.
+func assert_constant_condition(t *testing.T) {
+	t.Helper()
+	conditions := []string{
+		"len(OPEN) < len(CLOSE)",
+		"len(OPEN) > 0 && len(CLOSE) > 0",
+		"len(OPEN) > 99 || len(CLOSE) > 0",
+	}
+	for _, condition := range conditions {
+		_, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
+			"func check() { invariant.Always(" + condition + ", \"constant\") }\n")
+		if code != 1 {
+			t.Fatalf("%s exit=%d output=%q", condition, code, output.String())
+		}
+		if !strings.Contains(output.String(), "Always condition is constant true") {
+			t.Fatalf("%s output=%q, want a constant diagnostic",
+				condition, output.String())
+		}
+	}
+}
+
+// An operand the language does not call constant stays unresolved, thus the evaluator never guesses
+// a bound from a value only the run can produce.
+func assert_non_constant_operand(t *testing.T) {
+	t.Helper()
+	operands := []string{"measure()", "variable", "OPEN[0:1]"}
+	for _, operand := range operands {
+		_, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
+			"var variable = 4\nfunc measure() (count int) { return 4 }\n" +
+			`type Span string
+func Span_Invariants(value Span, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SPAN_MINIMUM, ` + operand + `).Ensure()
+}
+func check(value Span) { Span_Invariants(value, "span") }
+`)
+		if code != 1 {
+			t.Fatalf("%s exit=%d output=%q", operand, code, output.String())
+		}
+		if !strings.Contains(output.String(), "not statically resolvable") {
+			t.Fatalf("%s output=%q, want unresolvable", operand, output.String())
+		}
 	}
 }
 
