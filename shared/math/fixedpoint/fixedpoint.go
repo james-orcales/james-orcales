@@ -7,12 +7,129 @@
 package fixedpoint
 
 import (
-	"strconv"
-	"strings"
+	"errors"
 
 	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
+
+// FRACTION_DIGITS_MAXIMUM is how many fraction digits a parse reads. Ten digits scaled by
+// the fraction width would leave the signed range, thus the parse stops at nine.
+const FRACTION_DIGITS_MAXIMUM = 9
+
+// DECIMAL_BASE is the base this package reads and writes.
+const DECIMAL_BASE = 10
+
+// DECIMAL_TEXT_SIZE_MAXIMUM is how many digits the largest unsigned value needs.
+const DECIMAL_TEXT_SIZE_MAXIMUM = 20
+
+// DECIMAL_TEXT_SIZE_MINIMUM is the size of the empty text, which a parse rejects rather
+// than refuses to accept.
+const DECIMAL_TEXT_SIZE_MINIMUM = 0
+
+// DECIMAL_DIGITS_SIZE_MINIMUM is the size of the shortest rendered value, a single zero.
+const DECIMAL_DIGITS_SIZE_MINIMUM = 1
+
+// DECIMAL_VALUE_MINIMUM is the smallest value a decimal parse gives.
+const DECIMAL_VALUE_MINIMUM int64 = 0
+
+// Unsigned_Value is a value this package renders as decimal text.
+type Unsigned_Value uint64
+
+// Unsigned_Value_Invariants states the complete unsigned 64-bit domain.
+func Unsigned_Value_Invariants(value Unsigned_Value, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Decimal_Text is the digits a parse reads. The empty text carries no digit, thus the
+// domain starts at no bytes rather than at one.
+type Decimal_Text string
+
+// Decimal_Text_Invariants bounds the digits a parse accepts. Text longer than the largest
+// unsigned value needs cannot name an integer this storage holds, thus the caller answers
+// it before the parse runs.
+func Decimal_Text_Invariants(value Decimal_Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), DECIMAL_TEXT_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Decimal_Value is the value a decimal parse gives. The parse reads digits only and the
+// caller strips any sign, thus the value is never negative.
+type Decimal_Value int64
+
+// Decimal_Value_Invariants bounds a parsed value to the nonnegative integers.
+func Decimal_Value_Invariants(value Decimal_Value, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int64(int64(value), DECIMAL_VALUE_MINIMUM, bits.INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Decimal_Digits is the text one unsigned value renders to.
+type Decimal_Digits string
+
+// Decimal_Digits_Invariants bounds rendered digits. A zero renders as one digit and the
+// largest unsigned value as twenty, thus the text is never empty.
+func Decimal_Digits_Invariants(value Decimal_Digits, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), DECIMAL_DIGITS_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Parse_Error reports text that is not a decimal number.
+var Parse_Error = errors.New("fixedpoint: the text is not a decimal number")
+
+// Renders an unsigned value as decimal text. This package sits beneath the shared strconv,
+// which reaches back here for its own fixed-point forms, thus the digits are written here.
+func decimal_text(value Unsigned_Value) (text Decimal_Digits) {
+	defer func() { Decimal_Digits_Invariants(text, "decimal_text.text") }()
+	Unsigned_Value_Invariants(value, "decimal_text.value")
+	if value == 0 {
+		return "0"
+	}
+	digits := [DECIMAL_TEXT_SIZE_MAXIMUM]byte{}
+	end_count := len(digits)
+	residue := uint64(value)
+	for residue > 0 {
+		end_count--
+		digits[end_count] = byte('0' + residue%DECIMAL_BASE)
+		residue /= DECIMAL_BASE
+	}
+	return Decimal_Digits(digits[end_count:])
+}
+
+// Reads decimal text into a signed value, reporting whether every byte was a digit. A
+// leading sign is the caller's to strip, thus this reads digits only.
+func decimal_value(text Decimal_Text) (value Decimal_Value, ok Boolean) {
+	defer func() {
+		Decimal_Value_Invariants(value, "decimal_value.value")
+		Boolean_Invariants(ok, "decimal_value.ok")
+	}()
+	Decimal_Text_Invariants(text, "decimal_value.text")
+	if text == "" {
+		return 0, false
+	}
+	for index := 0; index < len(text); index++ {
+		symbol := text[index]
+		if symbol < '0' {
+			return 0, false
+		}
+		if symbol > '9' {
+			return 0, false
+		}
+		digit := Decimal_Value(symbol - '0')
+		// The next step overflows when the value already passes the largest signed value
+		// less that digit, divided by the base. Testing before the step keeps the value
+		// inside the range at every point, so no wrapped value ever escapes.
+		if int64(value) > (bits.INTEGER_64_MAXIMUM-int64(digit))/DECIMAL_BASE {
+			return 0, false
+		}
+		value = value*DECIMAL_BASE + digit
+	}
+	return value, true
+}
 
 // FRACTIONAL_BITS is how many of a Number's low bits hold the fraction; the rest hold the
 // integer part. Twenty bits gives ~9.5e-7 precision over a ±8.8e12 range, matching the
@@ -555,9 +672,9 @@ func Format(value Number, digits Digit_Count) (text Text) {
 		negative = false
 	}
 	unsigned_power := uint64(power)
-	text = Text(strconv.FormatUint(scaled/unsigned_power, 10))
+	text = Text(decimal_text(Unsigned_Value(scaled / unsigned_power)))
 	if digits > 0 {
-		fraction := strconv.FormatUint(scaled%unsigned_power, 10)
+		fraction := string(decimal_text(Unsigned_Value(scaled % unsigned_power)))
 		for len(fraction) < int(digits) {
 			fraction = "0" + fraction
 		}
@@ -574,7 +691,11 @@ func Format(value Number, digits Digit_Count) (text Text) {
 // sub-microscale binary remainder, so ordinary values still read as clean decimals.
 func (number Number) MarshalJSON() (data []byte, err error) {
 	if Is_Integer(number) {
-		return []byte(strconv.FormatInt(int64(Whole(number)), 10)), nil
+		whole := int64(Whole(number))
+		if whole < 0 {
+			return []byte("-" + decimal_text(Unsigned_Value(-whole))), nil
+		}
+		return []byte(decimal_text(Unsigned_Value(whole))), nil
 	}
 	text := Format(number, 6)
 	end_count := len(text)
@@ -597,37 +718,51 @@ func (number Number) MarshalJSON() (data []byte, err error) {
 func (number *Number) UnmarshalJSON(data []byte) (err error) {
 	text := string(data)
 	negative := false
-	if strings.HasPrefix(text, "-") {
-		negative = true
-		text = text[1:]
+	// A leading sign and a decimal point are single bytes, so the two scans below replace
+	// a text package this one sits beneath: shared/strings reaches io, which reaches time,
+	// which reaches back here.
+	if len(text) > 0 {
+		if text[0] == '-' {
+			negative = true
+			text = text[1:]
+		}
 	}
 	whole_text := text
 	fraction_text := ""
-	point_offset := strings.IndexByte(text, '.')
+	point_offset := -1
+	for index := 0; index < len(text); index++ {
+		if text[index] == '.' {
+			point_offset = index
+			break
+		}
+	}
 	if point_offset >= 0 {
 		whole_text = text[:point_offset]
 		fraction_text = text[point_offset+1:]
 	}
-	whole_part, err := strconv.ParseInt(whole_text, 10, 64)
-	if err != nil {
-		return err
+	if len(whole_text) > DECIMAL_TEXT_SIZE_MAXIMUM {
+		return Parse_Error
+	}
+	whole_part, whole_ok := decimal_value(Decimal_Text(whole_text))
+	if !whole_ok {
+		return Parse_Error
 	}
 	digits := fraction_text
-	if len(digits) > 9 {
-		digits = digits[:9]
+	if len(digits) > FRACTION_DIGITS_MAXIMUM {
+		digits = digits[:FRACTION_DIGITS_MAXIMUM]
 	}
 	units := int64(0)
 	if digits != "" {
-		parsed, parse_error := strconv.ParseInt(digits, 10, 64)
-		if parse_error == nil {
+		parsed, parsed_ok := decimal_value(Decimal_Text(digits))
+		if parsed_ok {
 			power := int64(1)
 			for index := 0; index < len(digits); index++ {
-				power *= 10
+				power *= DECIMAL_BASE
 			}
-			units = (parsed<<FRACTIONAL_BITS + power/2) / power
+			units = (int64(parsed)<<FRACTIONAL_BITS + power/2) / power
 		}
 	}
-	value := whole_part*SCALE + units
+	value := int64(whole_part)*SCALE + units
 	if negative {
 		value = -value
 	}
