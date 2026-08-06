@@ -2,15 +2,12 @@
 package main
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"runtime"
 
 	"local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
 	system_io "local/james-orcales/shared/io/default"
-	systime "local/james-orcales/shared/time"
 	system_time "local/james-orcales/shared/time/default"
 )
 
@@ -19,102 +16,104 @@ func main() {
 	home, home_err := os.UserHomeDir()
 	console, console_err := os.Stderr.Stat()
 	color := console_err == nil && console.Mode()&os.ModeCharDevice != 0
+	stdout := file_stream(os.Stdout)
+	stderr := file_stream(os.Stderr)
 	loop, driver, loop_err := system_io.New_Operating_System_IO(
 		clock, setup.SCHEDULER_ENTRY_COUNT, setup.SCHEDULER_FLAGS)
 	if loop_err != nil {
-		fmt.Fprintln(os.Stderr, "cannot initialize IO:", loop_err)
+		diagnostic := []byte("cannot initialize IO: " + loop_err.Error() + "\n")
+		written, write_err := sysio.Write(stderr, diagnostic)
+		if write_err != nil {
+			os.Exit(int(setup.EXIT_USAGE))
+		}
+		if written != int64(len(diagnostic)) {
+			os.Exit(int(setup.EXIT_USAGE))
+		}
 		os.Exit(int(setup.EXIT_USAGE))
 	}
-	system := draining_io(loop, driver)
 	input := setup.Main_Input{
 		Environment: &setup.Environment_Input{
-			Clock: clock, Console: os.Stderr,
+			Clock: clock, Console: stderr,
 			Effective_User_Identifier: setup.Effective_User_Identifier(os.Geteuid()),
 			Color:                     setup.Console_Color(color),
 			Home_Directory:            setup.Home_Directory(home), Home_Error: home_err,
 			Operating_System: setup.Operating_System(runtime.GOOS),
 			Cargo_Directory:  setup.Cargo_Directory(os.Getenv("CARGO_HOME")),
 			Data_Directory:   setup.Data_Directory(os.Getenv("XDG_DATA_HOME")),
-			Stdout:           os.Stdout, Stderr: os.Stderr,
-		}, IO: system,
+			Stdout:           stdout, Stderr: stderr,
+		}, IO: loop,
 	}
-	status := setup.Main(&input)
-	driver.Deinit()
+	runner := setup.Main(&input)
+	status := drive_runner(driver, runner, stderr)
+	deinitialize_driver(driver, runner)
 	os.Exit(int(status))
 }
 
-// The root drains each submission before it returns because setup policy is sequential. The
-// copied value still has the shared IO shape, and no internal package receives the Driver.
-func draining_io(loop sysio.IO, driver sysio.Driver) (system sysio.IO) {
-	system = loop
-	system.Read = func(
-		completion *sysio.Completion, callback sysio.Callback,
-		file sysio.File, buffer []byte, offset int64,
-	) {
-		retired, count, operation_err := false, 0, error(nil)
-		actual := sysio.Completion{}
-		loop.Read(&actual, func(_ *sysio.Completion, completed int, err error) {
-			count, operation_err, retired = completed, err, true
-		}, file, buffer, offset)
-		drive_err := drive(driver, func() (done bool) {
-			return retired
-		})
-		callback(completion, count, errors.Join(operation_err, drive_err))
+// A failed backend remains process-owned because Deinit requires every submission to be joined.
+func deinitialize_driver(driver sysio.Driver, runner setup.Runner) {
+	if runner.Stopped() {
+		driver.Deinit()
 	}
-	system.Write = func(
-		completion *sysio.Completion, callback sysio.Callback,
-		file sysio.File, buffer []byte, offset int64,
-	) {
-		retired, count, operation_err := false, 0, error(nil)
-		actual := sysio.Completion{}
-		loop.Write(&actual, func(_ *sysio.Completion, completed int, err error) {
-			count, operation_err, retired = completed, err, true
-		}, file, buffer, offset)
-		drive_err := drive(driver, func() (done bool) {
-			return retired
-		})
-		callback(completion, count, errors.Join(operation_err, drive_err))
-	}
-	system.Close = func(
-		completion *sysio.Completion, callback sysio.Timeout_Callback, file sysio.File,
-	) {
-		retired, operation_err := false, error(nil)
-		actual := sysio.Completion{}
-		loop.Close(&actual, func(_ *sysio.Completion, err error) {
-			operation_err, retired = err, true
-		}, file)
-		drive_err := drive(driver, func() (done bool) {
-			return retired
-		})
-		callback(completion, errors.Join(operation_err, drive_err))
-	}
-	system.Spawn = func(
-		completion *sysio.Completion, callback sysio.Process_Callback,
-		request sysio.Process_Request, deadline systime.Duration,
-	) {
-		retired, result, operation_err := false, sysio.Process_Result{}, error(nil)
-		actual := sysio.Completion{}
-		loop.Spawn(&actual, func(
-			_ *sysio.Completion, completed sysio.Process_Result, err error,
-		) {
-			result, operation_err, retired = completed, err, true
-		}, request, deadline)
-		drive_err := drive(driver, func() (done bool) {
-			return retired
-		})
-		callback(completion, result, errors.Join(operation_err, drive_err))
-	}
-	return system
 }
 
-// Only the composition root can advance callback-owned transitions.
-func drive(driver sysio.Driver, done func() (finished bool)) (err error) {
-	completed, drive_err := driver.Run_Until(done, setup.PROCESS_DURATION_MAX)
-	if drive_err != nil {
-		return drive_err
+// The composition root alone binds an operating-system file to the shared stream type.
+func file_stream(file *os.File) (stream sysio.Stream) {
+	return sysio.Stream{
+		Data: file,
+		Procedure: func(
+			data any, mode sysio.Stream_Mode, buffer []byte,
+			_ int64, _ sysio.Seek_From,
+		) (count int64, err error) {
+			if mode == sysio.STREAM_MODE_QUERY {
+				return int64(sysio.Mode_Set_Add(0, sysio.STREAM_MODE_WRITE)), nil
+			}
+			// Unsupported modes fail because console output is a write-only capability.
+			if mode != sysio.STREAM_MODE_WRITE {
+				return 0, sysio.Stream_Empty
+			}
+			output := data.(*os.File)
+			written, write_err := output.Write(buffer)
+			return int64(written), write_err
+		},
 	}
-	if !completed {
-		return errors.New("the IO operation did not complete")
+}
+
+// The root alternates recorded continuations and timeline advancement until setup stops.
+func drive_runner(
+	driver sysio.Driver, runner setup.Runner, diagnostics sysio.Stream,
+) (status setup.Exit_Code) {
+	for !runner.Stopped() {
+		for runner.Rearm() {
+		}
+		if runner.Stopped() {
+			break
+		}
+		completed, drive_err := driver.Run_Until(func() (finished bool) {
+			if runner.Stopped() {
+				return true
+			}
+			return bool(runner.Work_Queued())
+		}, setup.PUMP_DURATION_MAX)
+		if drive_err != nil {
+			write_drive_failure(diagnostics)
+			return setup.EXIT_FAILURE
+		}
+		if !completed {
+			write_drive_failure(diagnostics)
+			return setup.EXIT_FAILURE
+		}
 	}
-	return nil
+	return runner.Status()
+}
+
+// Write_drive_failure keeps the driver result bounded before it crosses the output boundary.
+func write_drive_failure(diagnostics sysio.Stream) {
+	message := []byte(setup.IO_OPERATION_INCOMPLETE + "\n")
+	written, write_err := sysio.Write(diagnostics, message)
+	if write_err != nil {
+		return
+	}
+	if written != int64(len(message)) {
+		return
+	}
 }

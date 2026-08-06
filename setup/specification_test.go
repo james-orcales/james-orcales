@@ -3,11 +3,11 @@ package main
 import (
 	"go/parser"
 	"go/token"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	setup "local/james-orcales/setup/internal"
 	shared_bytes "local/james-orcales/shared/bytes"
 	sysio "local/james-orcales/shared/io"
 	systime "local/james-orcales/shared/time"
@@ -21,50 +21,107 @@ func Test_Main_Owns_Driver(t *testing.T) {
 	}
 }
 
-// The root preserves one IO boundary while it makes sequential setup policy wait for callbacks.
-func Test_Main_Drains_Shared_IO(t *testing.T) {
-	loop, driver, _ := sysio.New_Sim(0)
+// A callback on the injected IO value must wake the same runner that the root drives.
+func Test_Main_Drive_Runner_Advances_Original_IO(t *testing.T) {
+	loop, driver, _ := sysio.New_Sim(1)
 	t.Cleanup(driver.Deinit)
-	system := draining_io(loop, driver)
-	if mkdir_err := system.Make_Directory("/setup"); mkdir_err != nil {
-		t.Fatalf("make directory: %v", mkdir_err)
+	retired := false
+	stopped := false
+	var action func()
+	action = func() {
+		completion := &sysio.Completion{}
+		loop.Next_Tick(completion, func(_ *sysio.Completion) {
+			retired = true
+			action = func() { stopped = true }
+		}, sysio.NEXT_TICK_VSR)
 	}
-	file, create_err := system.Create("/setup/file")
-	if create_err != nil {
-		t.Fatalf("create file: %v", create_err)
+	runner := setup.Runner{
+		Rearm: func() (armed setup.Runner_Work_Queued) {
+			if action == nil {
+				return false
+			}
+			next := action
+			action = nil
+			next()
+			return true
+		},
+		Work_Queued: func() (queued setup.Runner_Work_Queued) {
+			return action != nil
+		},
+		Stopped: func() (finished setup.Runner_Stopped) {
+			return setup.Runner_Stopped(stopped)
+		},
+		Status: func() (status setup.Exit_Code) { return setup.EXIT_SUCCESS },
 	}
-	written := -1
-	completion := sysio.Completion{}
-	system.Write(&completion, func(_ *sysio.Completion, count int, err error) {
-		if err != nil {
-			t.Errorf("write: %v", err)
+	status := drive_runner(driver, runner, sysio.Stream{})
+	if status != setup.EXIT_SUCCESS {
+		t.Fatalf("status = %d, want success", status)
+	}
+	if !retired {
+		t.Fatal("the original IO callback did not retire")
+	}
+}
+
+// The process callback must retire before the outer pump guard can expire.
+func Test_Main_Pump_Guard_Exceeds_Process_Deadline(t *testing.T) {
+	observed := systime.Duration(0)
+	driver := sysio.Driver{
+		Run_Until: func(
+			_ func() (finished bool), timeout systime.Duration,
+		) (completed bool, err error) {
+			observed = timeout
+			return false, nil
+		},
+	}
+	runner := setup.Runner{
+		Rearm:       func() (armed setup.Runner_Work_Queued) { return false },
+		Work_Queued: func() (queued setup.Runner_Work_Queued) { return false },
+		Stopped:     func() (finished setup.Runner_Stopped) { return false },
+		Status:      func() (status setup.Exit_Code) { return setup.EXIT_FAILURE },
+	}
+	drive_runner(driver, runner, sysio.Stream{})
+	if observed <= setup.PROCESS_DURATION_MAX {
+		t.Fatalf(
+			"pump guard = %d, want more than process deadline %d",
+			observed, setup.PROCESS_DURATION_MAX,
+		)
+	}
+}
+
+// Driver deinitialization requires the runner to join every callback-owned operation.
+func Test_Main_Deinitializes_Only_Joined_Runner(t *testing.T) {
+	deinitialized := 0
+	driver := sysio.Driver{Deinit: func() { deinitialized++ }}
+	active := setup.Runner{
+		Stopped: func() (finished setup.Runner_Stopped) { return false },
+	}
+	deinitialize_driver(driver, active)
+	if deinitialized != 0 {
+		t.Fatal("the root deinitialized an active runner")
+	}
+	joined := setup.Runner{
+		Stopped: func() (finished setup.Runner_Stopped) { return true },
+	}
+	deinitialize_driver(driver, joined)
+	if deinitialized != 1 {
+		t.Fatalf("deinitializations = %d, want one", deinitialized)
+	}
+}
+
+// The root must not hide timeline advancement behind a copied IO value.
+func Test_Main_Does_Not_Build_Blocking_IO(t *testing.T) {
+	source := main_source(t)
+	for _, forbidden := range [][]byte{
+		[]byte("func draining_io("),
+		[]byte("system = loop"),
+		[]byte("system.Read ="),
+		[]byte("system.Write ="),
+		[]byte("system.Close ="),
+		[]byte("system.Spawn ="),
+	} {
+		if source_contains(source, forbidden) {
+			t.Errorf("main.go builds a blocking IO wrapper %q", forbidden)
 		}
-		written = count
-	}, file, []byte("setup"), 0)
-	if written != len("setup") {
-		t.Fatalf("write count = %d, want %d", written, len("setup"))
-	}
-	closed := false
-	system.Close(&completion, func(_ *sysio.Completion, err error) {
-		if err != nil {
-			t.Errorf("close: %v", err)
-		}
-		closed = true
-	}, file)
-	if !closed {
-		t.Fatal("close callback did not retire before return")
-	}
-	spawned := false
-	system.Spawn(&completion, func(
-		_ *sysio.Completion, _ sysio.Process_Result, err error,
-	) {
-		if err != nil {
-			t.Errorf("spawn: %v", err)
-		}
-		spawned = true
-	}, sysio.Process_Request{Path: "setup"}, systime.SECOND)
-	if !spawned {
-		t.Fatal("spawn callback did not retire before return")
 	}
 }
 
@@ -76,6 +133,23 @@ func Test_Main_Calls_Internal_Main(t *testing.T) {
 	}
 	if source_contains(source, []byte("setup.Bootstrap(")) {
 		t.Fatal("main.go owns bootstrap orchestration")
+	}
+}
+
+// Test_Main_Imports_No_Standard_IO prevents a second IO type system in the setup tree.
+func Test_Main_Imports_No_Standard_IO(t *testing.T) {
+	t.Parallel()
+	for _, path := range setup_go_files(t, ".") {
+		syntax, parse_err := parser.ParseFile(
+			token.NewFileSet(), path, setup_source(t, path), parser.ImportsOnly)
+		if parse_err != nil {
+			t.Fatalf("parse %s: %v", path, parse_err)
+		}
+		for _, imported := range syntax.Imports {
+			if imported.Path.Value == `"io"` {
+				t.Errorf("standard-library io import in %s", path)
+			}
+		}
 	}
 }
 
@@ -170,17 +244,28 @@ func setup_source(t *testing.T, path string) (source []byte) {
 			t.Errorf("close %s: %v", path, close_err)
 		}
 	})
-	buffer := make([]byte, SETUP_SOURCE_BYTES_MAX+1)
-	count, read_err := io.ReadFull(file, buffer)
-	if read_err != nil {
-		if read_err != io.ErrUnexpectedEOF {
-			t.Fatalf("read %s: %v", path, read_err)
-		}
+	information, stat_err := file.Stat()
+	if stat_err != nil {
+		t.Fatalf("stat %s: %v", path, stat_err)
 	}
-	if count > SETUP_SOURCE_BYTES_MAX {
+	if information.Size() < 0 {
+		t.Fatalf("%s has a negative source size", path)
+	}
+	if information.Size() > SETUP_SOURCE_BYTES_MAX {
 		t.Fatalf("%s exceeds the source size limit", path)
 	}
-	return buffer[:count]
+	source = make([]byte, int(information.Size()))
+	if len(source) == 0 {
+		return source
+	}
+	count, read_err := file.ReadAt(source, 0)
+	if read_err != nil {
+		t.Fatalf("read %s: %v", path, read_err)
+	}
+	if count != len(source) {
+		t.Fatalf("read %s: got %d bytes, want %d", path, count, len(source))
+	}
+	return source
 }
 
 // Fixed entry and file counts prevent a generated source tree from making this audit unbounded.
@@ -196,13 +281,8 @@ func setup_go_files(t *testing.T, root string) (paths []string) {
 		if open_err != nil {
 			t.Fatalf("open directory %s: %v", directory, open_err)
 		}
-		entries, read_err := directory_file.ReadDir(SETUP_ENTRY_COUNT_MAX + 1)
+		entries, _ := directory_file.ReadDir(SETUP_ENTRY_COUNT_MAX + 1)
 		close_err := directory_file.Close()
-		if read_err != nil {
-			if read_err != io.EOF {
-				t.Fatalf("read directory %s: %v", directory, read_err)
-			}
-		}
 		if close_err != nil {
 			t.Fatalf("close directory %s: %v", directory, close_err)
 		}

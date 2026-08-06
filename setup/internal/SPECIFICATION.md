@@ -1,19 +1,29 @@
 
 # Main
 
-Main validates the injected host facts before it constructs policy. Invalid host input returns
-EXIT_USAGE; otherwise Main returns the first failing step status or EXIT_SUCCESS.
-
 ### Runs Complete Bootstrap
 
-Main constructs and runs the complete ordered bootstrap from the injected environment, file
-and process operations in one shared `io.IO` value. It returns the first failing step status.
+Main validates the host facts and stops invalid input with EXIT_USAGE. Otherwise, it returns the
+complete bootstrap runner. The runner uses one shared `io.IO` value and stops with the first
+failing step status or EXIT_SUCCESS.
+
+# Runner
+
+### Queues Late Duplicate Retirement
+
+A second IO callback records its failure even after the root submits the first callback's
+continuation. The runner does not require both callbacks to arrive in one loop pass.
+
+### Stops After Submitted IO Retires
+
+A terminal status does not stop the runner while a submitted IO operation remains armed. The root
+continues its pump until each callback retires, then it can deinitialize the Driver.
 
 # Bootstrap Steps
 
-Bootstrap_Steps constructs the ordered steps from host facts and one shared `io.IO` value.
-Setup submits directory, status, file, and process operations through that value.
-It declares no second IO seam, and it accepts the longest validated source path.
+Bootstrap_Steps constructs the ordered steps from host facts and one shared `io.IO` value. Setup
+submits directory, status, file, and process operations through it. It declares no second IO seam,
+accepts the longest validated source path, and rejects a completion that does not retire once.
 
 # Order of Operations
 
@@ -33,7 +43,7 @@ Installed reports true when the binary's --version output starts with the wanted
 
 ### Rejects A Missing Or Stale Binary
 
-Installed reports false when the binary is absent or reports a different version.
+Installed reports false when the binary is absent, its probe fails, or it reports another version.
 
 # Mirror
 
@@ -57,6 +67,11 @@ is advancing rather than looking hung, and reports an up-to-date tree when it wr
 
 The walk classifies each directory's entries with one Is_Ignored call carrying them all. It does
 not start one gitignore subprocess per entry.
+
+### Rejects A Failed Ignore Probe
+
+The walk stops before it writes a file when the gitignore probe returns an error, does not retire
+exactly one time, or exits with a nonzero status.
 
 # Install Neovim
 

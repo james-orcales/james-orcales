@@ -11,7 +11,6 @@ import (
 	"container/list"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 
 	shared_bytes "local/james-orcales/shared/bytes"
@@ -54,19 +53,26 @@ const SCHEDULER_FLAGS uint32 = 0
 // PROCESS_DURATION_MAX permits a slow first build and stops a process group that cannot finish.
 const PROCESS_DURATION_MAX = 6 * systime.HOUR
 
+// PUMP_DURATION_MAX lets every bounded process deadline retire before the root guard expires.
+const PUMP_DURATION_MAX = PROCESS_DURATION_MAX + systime.SECOND
+
+// IO_OPERATION_INCOMPLETE reports that the root deadline expired before a callback retired.
+const IO_OPERATION_INCOMPLETE = "the IO operation did not complete"
+
 // ROOT_REFUSAL prevents the bootstrap from creating root-owned home files.
 const ROOT_REFUSAL = "run as your normal user, not root"
 
-// Main constructs the complete setup policy from injected capabilities and returns the first
-// failing status. Package main binds the real world and calls only this setup entry point.
-func Main(input *Main_Input) (status_code Exit_Code) {
-	defer func() { Exit_Code_Invariants(status_code, "Main.status_code") }()
+// Main constructs the complete runner from injected capabilities and returns without driving IO.
+func Main(input *Main_Input) (runner Runner) {
+	defer func() { Runner_Invariants(runner, "Main.runner") }()
 	Main_Input_Invariants(input, "Main.input")
+	state, runner := new_runner()
 	environment, valid := New_Environment(input.Environment)
 	if !valid {
-		return EXIT_USAGE
+		runner_stop(state, EXIT_USAGE)
+		return runner
 	}
-	steps := Bootstrap_Steps(&Bootstrap_Steps_Input{
+	bootstrap_input := &Bootstrap_Steps_Input{
 		Home_Directory:   environment.Home_Directory,
 		Operating_System: environment.Operating_System,
 		Cargo_Directory:  environment.Cargo_Directory,
@@ -75,11 +81,10 @@ func Main(input *Main_Input) (status_code Exit_Code) {
 		Logger:           environment.Logger,
 		Stdout:           environment.Stdout,
 		Stderr:           environment.Stderr,
-	})
-	if !Bootstrap(&Bootstrap_Input{Steps: steps, Logger: environment.Logger}) {
-		return EXIT_FAILURE
 	}
-	return EXIT_SUCCESS
+	bootstrap_runner_start(
+		state, runner_steps(bootstrap_input), environment.Logger)
+	return runner
 }
 
 // Environment_Input contains operating-system facts. Package main reads each fact once, while
@@ -88,7 +93,7 @@ type Environment_Input struct {
 	// Clock supplies timestamped logging.
 	Clock systime.Clock
 	// Console receives setup log records.
-	Console io.Writer
+	Console sysio.Stream
 	// Color reports whether Console supports terminal color.
 	Color Console_Color
 	// Effective_User_Identifier identifies root ownership before setup writes home files.
@@ -104,9 +109,9 @@ type Environment_Input struct {
 	// Data_Directory preserves an explicit XDG_DATA_HOME value.
 	Data_Directory Data_Directory
 	// Stdout receives live command output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives live command diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Environment_Input_Invariants states each environment fact that has a preset.
@@ -118,6 +123,24 @@ func Environment_Input_Invariants(input *Environment_Input, namespace invariant.
 	Operating_System_Invariants(input.Operating_System, namespace)
 	Cargo_Directory_Invariants(input.Cargo_Directory, namespace)
 	Data_Directory_Invariants(input.Data_Directory, namespace)
+}
+
+// Existing logger and process APIs require the standard writer method at their final boundary.
+type Stream_Writer struct {
+	// Stream retains the shared output boundary while external APIs call Write.
+	Stream sysio.Stream
+}
+
+// Stream_Writer_Invariants rejects an adapter that cannot forward a write.
+func Stream_Writer_Invariants(writer Stream_Writer, _ invariant.Namespace) {
+	invariant.Always(writer.Stream.Procedure != nil, "The stream writer can write.")
+}
+
+// Write forwards the required writer operation without adding a second setup output type.
+func (writer Stream_Writer) Write(content []byte) (count int, err error) {
+	Stream_Writer_Invariants(writer, "Stream_Writer.Write.writer")
+	written, write_err := sysio.Write(writer.Stream, content)
+	return int(written), write_err
 }
 
 // Environment contains validated facts and the logger that setup injects into each step.
@@ -133,9 +156,9 @@ type Environment struct {
 	// Data_Directory preserves an explicit XDG_DATA_HOME value.
 	Data_Directory Data_Directory
 	// Stdout receives live command output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives live command diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Environment_Invariants states each validated environment fact that has a preset.
@@ -172,163 +195,13 @@ func File_Path_Invariants(path File_Path, namespace invariant.Namespace) {
 		len(path), FILE_PATH_BYTES_MIN, FILE_PATH_BYTES_MAX).Ensure()
 }
 
-// File_read reads one bounded file through shared IO. The composition root drains each
-// submission before it returns, so policy can stay sequential without owning the Driver.
-func file_read(system sysio.IO, path File_Path) (
-	contents Dotfile_Bytes, found File_Presence, err error,
-) {
-	defer func() {
-		Dotfile_Bytes_Invariants(contents, "file_read.contents")
-		File_Presence_Invariants(found, "file_read.found")
-	}()
-	File_Path_Invariants(path, "file_read.path")
-	file_io_requirements(system, "file_read.system")
-	if len(path) < FILE_PATH_BYTES_MIN {
-		return nil, false, errors.New("the file path is outside its limit")
-	}
-	if len(path) > FILE_PATH_BYTES_MAX {
-		return nil, false, errors.New("the file path is outside its limit")
-	}
-	status, status_err := system.Status(string(path))
-	if status_err != nil {
-		return nil, false, status_err
-	}
-	if !status.Exists {
-		return nil, false, nil
-	}
-	if !status.Is_Regular {
-		return nil, true, errors.New("the file path is not a regular file")
-	}
-	file, open_err := system.Open(string(path))
-	if open_err != nil {
-		return nil, true, open_err
-	}
-	buffer := make([]byte, DOTFILE_BYTES_MAX)
-	total := 0
-	for total < len(buffer) {
-		retired, count, read_err := false, 0, error(nil)
-		completion := sysio.Completion{}
-		system.Read(&completion, func(
-			_ *sysio.Completion, completed int, completed_err error,
-		) {
-			count, read_err, retired = completed, completed_err, true
-		}, file, buffer[total:], int64(total))
-		if !retired {
-			read_err = errors.New("the file read did not retire before return")
-		}
-		if read_err != nil {
-			return nil, true, errors.Join(read_err, file_close(system, file))
-		}
-		if count < 0 {
-			return nil, true, errors.Join(
-				errors.New("the file read returned a negative byte count"),
-				file_close(system, file),
-			)
-		}
-		if count > len(buffer)-total {
-			return nil, true, errors.Join(
-				errors.New("the file read returned an invalid byte count"),
-				file_close(system, file),
-			)
-		}
-		total += count
-		if count == 0 {
-			return Dotfile_Bytes(buffer[:total]), true, file_close(system, file)
-		}
-		if total == len(buffer) {
-			return nil, true, errors.Join(
-				errors.New("the file exceeds its limit"), file_close(system, file))
-		}
-	}
-	return nil, true, errors.Join(
-		errors.New("the file exceeds its limit"), file_close(system, file))
-}
+// File_read lets synchronous specification IO execute the same runner operation as production.
 
-// File_write replaces one bounded file through shared IO.
-func file_write(system sysio.IO, path Destination_Path, contents Dotfile_Bytes) (err error) {
-	Destination_Path_Invariants(path, "file_write.path")
-	Dotfile_Bytes_Invariants(contents, "file_write.contents")
-	file_io_requirements(system, "file_write.system")
-	if len(path) < DESTINATION_PATH_BYTES_MIN {
-		return errors.New("the file path is outside its limit")
-	}
-	if len(path) > DESTINATION_PATH_BYTES_MAX {
-		return errors.New("the file path is outside its limit")
-	}
-	if mkdir_err := system.Make_Directory(filepath.Dir(string(path))); mkdir_err != nil {
-		return mkdir_err
-	}
-	file, create_err := system.Create(string(path))
-	if create_err != nil {
-		return create_err
-	}
-	written := 0
-	for written < len(contents) {
-		retired, count, write_err := false, 0, error(nil)
-		chunk := contents[written:]
-		completion := sysio.Completion{}
-		system.Write(&completion, func(
-			_ *sysio.Completion, completed int, completed_err error,
-		) {
-			count, write_err, retired = completed, completed_err, true
-		}, file, chunk, int64(written))
-		if !retired {
-			write_err = errors.New("the file write did not retire before return")
-		}
-		if write_err != nil {
-			return errors.Join(write_err, file_close(system, file))
-		}
-		if count <= 0 {
-			return errors.Join(
-				errors.New("the file write made no progress"),
-				file_close(system, file),
-			)
-		}
-		if count > len(chunk) {
-			return errors.Join(
-				errors.New("the file write returned an invalid byte count"),
-				file_close(system, file),
-			)
-		}
-		written += count
-	}
-	return file_close(system, file)
-}
+// File_write lets synchronous specification IO execute the production runner operation.
 
-// File_close keeps descriptor cleanup on the same shared IO boundary.
-func file_close(system sysio.IO, file sysio.File) (err error) {
-	retired := false
-	completion := sysio.Completion{}
-	system.Close(&completion, func(_ *sysio.Completion, close_err error) {
-		err, retired = close_err, true
-	}, file)
-	if !retired {
-		return errors.New("the file close did not retire before return")
-	}
-	return err
-}
+// File_close lets synchronous specification IO execute the production close operation.
 
-// Process_spawn submits one bounded process through shared IO.
-func process_spawn(system sysio.IO, request sysio.Process_Request) (
-	result sysio.Process_Result, err error,
-) {
-	process_io_requirements(system, "process_spawn.system")
-	retired := false
-	completion := sysio.Completion{}
-	system.Spawn(&completion, func(
-		_ *sysio.Completion, completed sysio.Process_Result, completed_err error,
-	) {
-		result, err, retired = completed, completed_err, true
-	}, request, PROCESS_DURATION_MAX)
-	if !retired {
-		return sysio.Process_Result{Exit: 1}, errors.New(
-			"the process spawn did not retire before return")
-	}
-	if err != nil {
-		result.Exit = 1
-	}
-	return result, err
-}
+// Process_spawn lets synchronous specification IO execute the production spawn operation.
 
 // Main_Input contains the complete injected environment for one setup run.
 type Main_Input struct {
@@ -355,10 +228,14 @@ func New_Environment(input *Environment_Input) (
 		Environment_Valid_Invariants(valid, "New_Environment.valid")
 	}()
 	Environment_Input_Invariants(input, "New_Environment.input")
-	logger := jlog.New_Console_Logger(jlog.New_Console_Logger_Input{
-		Console: input.Console, Color: bool(input.Color),
+	logger_input := jlog.New_Console_Logger_Input{
+		Color: bool(input.Color),
 		Floor: jlog.LEVEL_DEBUG, Clock: input.Clock,
-	})
+	}
+	if input.Console.Procedure != nil {
+		logger_input.Console = Stream_Writer{Stream: input.Console}
+	}
+	logger := jlog.New_Console_Logger(logger_input)
 	environment = Environment{
 		Logger: logger, Home_Directory: input.Home_Directory,
 		Operating_System: input.Operating_System, Cargo_Directory: input.Cargo_Directory,
@@ -394,9 +271,9 @@ type Mirror_Input struct {
 	// disabled no-op, so a caller wanting silence passes none.
 	Logger jlog.Logger
 	// Stdout receives live macOS defaults output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives live macOS defaults diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Mirror_Input_Invariants states the mirror dependency set and its path facts.
@@ -410,41 +287,6 @@ func Mirror_Input_Invariants(input *Mirror_Input, namespace invariant.Namespace)
 
 // Mirror syncs the source dotfiles into the home directory and, on darwin, applies the macos
 // defaults. The separate name keeps Main as the complete binary policy entry point.
-func Mirror(input *Mirror_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Mirror.succeeded") }()
-	Mirror_Input_Invariants(input, "Mirror.input")
-	writes, plan_err := Plan(&Plan_Input{
-		IO:                    input.IO,
-		Source_Directory:      input.Source_Directory,
-		Destination_Directory: input.Destination_Directory,
-		Logger:                input.Logger,
-	})
-	if plan_err != nil {
-		jlog.Logger_Error(input.Logger, "plan failed", jlog.Err(plan_err))
-		return false
-	}
-	for element := writes.List.Front(); element != nil; element = element.Next() {
-		write := element.Value.(File_Write)
-		write_err := file_write(input.IO, write.Destination_Path, write.Contents)
-		if write_err != nil {
-			jlog.Logger_Error(input.Logger, "write failed", jlog.Err(write_err))
-			return false
-		}
-		jlog.Logger_Info(input.Logger, "wrote", jlog.String("path", write.Destination_Path))
-	}
-	// A converged tree writes nothing, so without a closing line the step would look
-	// stuck after the last scan line; say it finished and had no work.
-	if writes.List.Len() == 0 {
-		jlog.Logger_Info(input.Logger, "dotfiles up to date")
-	}
-	// The macos defaults touch macOS-only preference domains, so they run there
-	// and nowhere else.
-	if input.Operating_System != "darwin" {
-		return true
-	}
-	return apply_macos_defaults(
-		input.IO, input.Stdout, input.Stderr, input.Logger)
-}
 
 // Reports whether the injected file system contains a path. A status error cannot prove that the
 // file exists, so the idempotency gate treats that result as absent.
@@ -461,209 +303,10 @@ func file_present(system sysio.IO, path Font_Path) (present File_Presence) {
 
 // Copies one bounded file through the injected file system. The larger font limit stays separate
 // from the dotfile limit because a font is binary installation data, not configuration text.
-func copy_file(system sysio.IO, input *File_Copy_Input) (err error) {
-	File_Copy_Input_Invariants(input, "copy_file.input")
-	file_io_requirements(system, "copy_file.system")
-	copy := Font_Copy{IO: system, Input: input, Contents: list.New()}
-	if read_err := font_copy_read(&copy); read_err != nil {
-		return read_err
-	}
-	return font_copy_write(&copy)
-}
-
-// Font_Copy retains one bounded payload between its shared IO read and write submissions.
-type Font_Copy struct {
-	// IO submits every file operation.
-	IO sysio.IO
-	// Input identifies the typed source and destination paths.
-	Input *File_Copy_Input
-	// Contents retains bounded chunks until the source closes.
-	Contents *list.List
-}
-
-// Font_Copy_Invariants states the typed paths copied through shared IO.
-func Font_Copy_Invariants(copy *Font_Copy, namespace invariant.Namespace) {
-	File_Copy_Input_Invariants(copy.Input, namespace)
-	invariant.Always(copy.Contents != nil, "A font copy has a bounded chunk list.")
-}
-
-// Font_copy_read loads one font after shared IO proves that it is regular.
-func font_copy_read(copy *Font_Copy) (err error) {
-	Font_Copy_Invariants(copy, "font_copy_read.copy")
-	file_io_requirements(copy.IO, "font_copy_read.system")
-	status, status_err := copy.IO.Status(string(copy.Input.Source))
-	if status_err != nil {
-		return status_err
-	}
-	if !status.Exists {
-		return errors.New("copy source is absent")
-	}
-	if !status.Is_Regular {
-		return errors.New("copy source is not a regular file")
-	}
-	file, open_err := copy.IO.Open(string(copy.Input.Source))
-	if open_err != nil {
-		return open_err
-	}
-	content_bytes := 0
-	for content_bytes <= COPY_BYTES_MAX {
-		capacity := COPY_BYTES_MAX - content_bytes + 1
-		buffer_size := shared_bytes.SLICE_SIZE_MAXIMUM
-		if capacity < buffer_size {
-			buffer_size = capacity
-		}
-		buffer := make([]byte, buffer_size)
-		retired, count, read_err := false, 0, error(nil)
-		completion := sysio.Completion{}
-		copy.IO.Read(&completion, func(
-			_ *sysio.Completion, completed int, completed_err error,
-		) {
-			count, read_err, retired = completed, completed_err, true
-		}, file, buffer, int64(content_bytes))
-		if !retired {
-			read_err = errors.New("the font read did not retire before return")
-		}
-		if read_err != nil {
-			return errors.Join(read_err, file_close(copy.IO, file))
-		}
-		if count < 0 {
-			return errors.Join(
-				errors.New("the font read returned a negative byte count"),
-				file_close(copy.IO, file))
-		}
-		if count > len(buffer) {
-			return errors.Join(
-				errors.New("the font read returned an invalid byte count"),
-				file_close(copy.IO, file))
-		}
-		if count == 0 {
-			return file_close(copy.IO, file)
-		}
-		chunk := append([]byte(nil), buffer[:count]...)
-		copy.Contents.PushBack(chunk)
-		content_bytes += count
-	}
-	return errors.Join(
-		errors.New("the font exceeds its limit"), file_close(copy.IO, file))
-}
-
-// Font_copy_write replaces one font after its complete payload is retained.
-func font_copy_write(copy *Font_Copy) (err error) {
-	Font_Copy_Invariants(copy, "font_copy_write.copy")
-	file_io_requirements(copy.IO, "font_copy_write.system")
-	destination := string(copy.Input.Destination)
-	if mkdir_err := copy.IO.Make_Directory(filepath.Dir(destination)); mkdir_err != nil {
-		return mkdir_err
-	}
-	file, create_err := copy.IO.Create(destination)
-	if create_err != nil {
-		return create_err
-	}
-	written := 0
-	for element := copy.Contents.Front(); element != nil; element = element.Next() {
-		chunk := element.Value.([]byte)
-		chunk_written := 0
-		for chunk_written < len(chunk) {
-			retired, count, write_err := false, 0, error(nil)
-			completion := sysio.Completion{}
-			copy.IO.Write(&completion, func(
-				_ *sysio.Completion, completed int, completed_err error,
-			) {
-				count, write_err, retired = completed, completed_err, true
-			}, file, chunk[chunk_written:], int64(written))
-			if !retired {
-				write_err = errors.New(
-					"the font write did not retire before return")
-			}
-			if write_err != nil {
-				return errors.Join(write_err, file_close(copy.IO, file))
-			}
-			if count <= 0 {
-				return errors.Join(
-					errors.New("the font write made no progress"),
-					file_close(copy.IO, file))
-			}
-			if count > len(chunk)-chunk_written {
-				return errors.Join(errors.New(
-					"the font write returned an invalid byte count"),
-					file_close(copy.IO, file))
-			}
-			chunk_written += count
-			written += count
-		}
-	}
-	return file_close(copy.IO, file)
-}
 
 // Takes shared IO and the output policy, not the whole Mirror_Input. Runs
 // every macos defaults command, stopping at the first that fails. It logs
 // nothing per command — 35 lines of `defaults write` is noise, not progress.
-func apply_macos_defaults(
-	system sysio.IO, stdout io.Writer, stderr io.Writer, logger jlog.Logger,
-) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "apply_macos_defaults.succeeded") }()
-	for _, command := range macos_commands() {
-		result, spawn_err := process_spawn(system, sysio.Process_Request{
-			Path: string(command.Name), Arguments: []string(command.Arguments),
-			Stdout: stdout, Stderr: stderr,
-		})
-		if spawn_err != nil {
-			jlog.Logger_Error(logger, "macos defaults failed", jlog.Err(spawn_err))
-			return false
-		}
-		if result.Exit != 0 {
-			spawn_err = fmt.Errorf(
-				"%s exited with status %d", command.Name, result.Exit)
-			jlog.Logger_Error(logger, "macos defaults failed", jlog.Err(spawn_err))
-			return false
-		}
-	}
-	return true
-}
-
-// Step is one named stage of the bootstrap: the label Bootstrap announces before
-// running it, and the work itself.
-type Step struct {
-	// Name is the label Bootstrap announces before running this step.
-	Name Step_Name
-	// Run performs the step and returns its process exit code.
-	Run func() (succeeded Step_Success)
-}
-
-// Step_Invariants states the step label.
-func Step_Invariants(step Step, namespace invariant.Namespace) {
-	Step_Name_Invariants(step.Name, namespace)
-}
-
-// Bootstrap_Input carries the ordered steps and the logger their progress is
-// announced to.
-type Bootstrap_Input struct {
-	// Steps run in slice order; the first to return non-zero stops the rest.
-	Steps Steps
-	// Logger records one line naming each step as it starts. The zero Logger is a
-	// disabled no-op.
-	Logger jlog.Logger
-}
-
-// Bootstrap_Input_Invariants states the ordered bootstrap plan.
-func Bootstrap_Input_Invariants(input *Bootstrap_Input, namespace invariant.Namespace) {
-	Steps_Invariants(input.Steps, namespace)
-}
-
-// Bootstrap runs the setup steps in their fixed order of operations, announcing
-// each by name before it runs and returning the first non-zero status — skipping
-// the rest — so a cheap early failure surfaces before later, heavier work.
-func Bootstrap(input *Bootstrap_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Bootstrap.succeeded") }()
-	Bootstrap_Input_Invariants(input, "Bootstrap.input")
-	for _, step := range input.Steps {
-		jlog.Logger_Info(input.Logger, "step", jlog.String("name", step.Name))
-		if !step.Run() {
-			return false
-		}
-	}
-	return true
-}
 
 // MACOS_DEFAULTS_SCRIPT lists the `defaults write` and `killall` commands that
 // configure macOS, one per line, parsed into commands at run time. The clock
@@ -795,42 +438,6 @@ func Plan_Input_Invariants(input *Plan_Input, namespace invariant.Namespace) {
 // is missing or its contents differ. It walks through the loop's Read_Directory, classifies each
 // directory with one Is_Ignored batch, and prunes an ignored directory so the install tree under
 // .local is never descended into.
-func Plan(input *Plan_Input) (writes Writes, err error) {
-	defer func() { Writes_Invariants(writes, "Plan.writes") }()
-	Plan_Input_Invariants(input, "Plan.input")
-	writes = Writes{}
-	directories := []Traversal_Directory{"."}
-	directory_count := 1
-	write_count := 0
-	for len(directories) > 0 {
-		directory := directories[0]
-		directories = directories[1:]
-		plan_err := plan_directory(
-			input, directory,
-			func(next Traversal_Directory) (err error) {
-				if directory_count == TRAVERSAL_DIRECTORY_COUNT_MAX {
-					return errors.New(
-						"mirror directory count exceeds its limit")
-				}
-				directories = append(directories, next)
-				directory_count++
-				return nil
-			},
-			func(write File_Write) (err error) {
-				if write_count == WRITE_COUNT_MAX {
-					return errors.New("mirror write plan exceeds its limit")
-				}
-				write_plan_append(&writes, write)
-				write_count++
-				return nil
-			},
-		)
-		if plan_err != nil {
-			return Writes{}, plan_err
-		}
-	}
-	return writes, nil
-}
 
 // Announces the directory the walk is about to read, one line each, so a scan that
 // writes nothing still shows it is advancing. The scan is chatter — one line per
@@ -843,113 +450,13 @@ func plan_narrate(logger jlog.Logger, directory Traversal_Directory) {
 // Returns the set of a level's entries that are gitignored, classifying them all in one
 // Is_Ignored call. A nil predicate — or an empty level — ignores nothing, so the filter
 // stays opt-in and an empty level spawns no probe.
-func plan_directory(
-	input *Plan_Input, directory Traversal_Directory,
-	enqueue func(directory Traversal_Directory) (err error),
-	emit func(write File_Write) (err error),
-) (err error) {
-	Plan_Input_Invariants(input, "plan_directory.input")
-	Traversal_Directory_Invariants(directory, "plan_directory.directory")
-	plan_narrate(input.Logger, directory)
-	entries, read_err := input.IO.Read_Directory(
-		filepath.Join(string(input.Source_Directory), string(directory)))
-	if read_err != nil {
-		return read_err
-	}
-	if len(entries) > PLAN_ENTRY_COUNT_MAX {
-		return errors.New("mirror traversal entries exceed their limit")
-	}
-	paths := make([]string, len(entries))
-	for index, child := range entries {
-		paths[index] = filepath.Join(string(directory), child.Name)
-		if len(paths[index]) > RELATIVE_FILE_PATH_BYTES_MAX {
-			return errors.New("mirror relative path exceeds its limit")
-		}
-	}
-	ignored := git_ignores(
-		input.IO, Directory(input.Source_Directory))(paths)
-	if len(ignored) > IGNORE_COUNT_MAX {
-		return errors.New("mirror ignore result exceeds its limit")
-	}
-	for index, child := range entries {
-		relative := Relative_File_Path(paths[index])
-		if ignored[string(relative)] {
-			continue
-		}
-		if child.Is_Directory {
-			if enqueue(Traversal_Directory(relative)) != nil {
-				return errors.New("mirror directory enqueue failed")
-			}
-			continue
-		}
-		write, planned, plan_err := plan_file(input, relative)
-		if plan_err != nil {
-			return plan_err
-		}
-		if planned {
-			if emit(write) != nil {
-				return errors.New("mirror write emit failed")
-			}
-		}
-	}
-	return nil
-}
 
 // Decides whether the source file at relative needs syncing. planned is false when the
 // source is absent or the destination already holds identical bytes; otherwise it returns
 // the write mirroring the relative path under the home directory.
-func plan_file(input *Plan_Input, relative Relative_File_Path) (
-	write File_Write, planned Plan_Decision, err error,
-) {
-	defer func() {
-		File_Write_Invariants(write, "plan_file.write")
-		Plan_Decision_Invariants(planned, "plan_file.planned")
-	}()
-	Plan_Input_Invariants(input, "plan_file.input")
-	Relative_File_Path_Invariants(relative, "plan_file.relative")
-	destination_path := Destination_Path(filepath.Join(
-		string(input.Destination_Directory), string(relative)))
-	if len(destination_path) > DESTINATION_PATH_BYTES_MAX {
-		return File_Write{Destination_Path: destination_path}, false,
-			errors.New("mirror destination path exceeds its limit")
-	}
-	source_contents, found, read_err := file_read(input.IO, File_Path(filepath.Join(
-		string(input.Source_Directory), string(relative))))
-	if read_err != nil {
-		return File_Write{Destination_Path: destination_path}, false, read_err
-	}
-	if !found {
-		return File_Write{Destination_Path: destination_path}, false, nil
-	}
-	write = File_Write{
-		Destination_Path: destination_path, Contents: Dotfile_Bytes(source_contents)}
-	if destination_matches(
-		input.IO, Mirror_Path(destination_path), Dotfile_Bytes(source_contents)) {
-		return write, false, nil
-	}
-	return write, true, nil
-}
 
 // Reports whether the home directory already holds exactly source_contents at path. A
 // destination that is absent or unreadable counts as a mismatch, so the file is written.
-func destination_matches(
-	system sysio.IO, path Mirror_Path, source_contents Dotfile_Bytes,
-) (
-	matches Plan_Decision,
-) {
-	defer func() { Plan_Decision_Invariants(matches, "destination_matches.matches") }()
-	Mirror_Path_Invariants(path, "destination_matches.path")
-	Dotfile_Bytes_Invariants(source_contents, "destination_matches.source_contents")
-	file_io_requirements(system, "destination_matches.system")
-	destination_contents, found, err := file_read(system, File_Path(path))
-	if err != nil {
-		return false
-	}
-	if !found {
-		return false
-	}
-	return dotfile_contents_equal(source_contents, Dotfile_Bytes(destination_contents))
-}
 
 // Shared byte operations have a smaller boundary than a dotfile, so each call compares one
 // bounded part while this package keeps its existing dotfile limit.
@@ -978,33 +485,10 @@ func dotfile_contents_equal(left Dotfile_Bytes, right Dotfile_Bytes) (equal Plan
 // probes' one use. It passes no sink, so the loop captures the output for parsing rather than
 // streaming it. Trimming strips the trailing newline `which` appends, so a resolved path is
 // usable as the next probe's executable.
-func run_pipe(system sysio.IO, path Probe_Path, arguments Probe_Arguments) (
-	output Command_Output,
-) {
-	defer func() { Command_Output_Invariants(output, "run_pipe.output") }()
-	Probe_Path_Invariants(path, "run_pipe.path")
-	Probe_Arguments_Invariants(arguments, "run_pipe.arguments")
-	process_io_requirements(system, "run_pipe.system")
-	result, _ := process_spawn(system, sysio.Process_Request{
-		Path: string(path), Arguments: []string(arguments)})
-	return Command_Output(shared_strings.Trim_Space(shared_strings.Text(result.Output)))
-}
 
 // Runs the command named by the first argument and reports success, streaming the process's
 // output live to its sinks so a multi-minute build's progress reaches the user as it
 // happens rather than in one burst at the end.
-func run_spawn(
-	system sysio.IO, stdout io.Writer, stderr io.Writer, arguments Spawn_Arguments,
-) (ok Command_Success) {
-	defer func() { Command_Success_Invariants(ok, "run_spawn.ok") }()
-	Spawn_Arguments_Invariants(arguments, "run_spawn.arguments")
-	process_io_requirements(system, "run_spawn.system")
-	result, spawn_err := process_spawn(system, sysio.Process_Request{
-		Path: arguments[0], Arguments: arguments[1:],
-		Stdout: stdout, Stderr: stderr,
-	})
-	return spawn_err == nil && result.Exit == 0
-}
 
 // Installed_Input names the binary an install step probes and the version it must
 // report. Two string fields, so it is a struct rather than two parameters.
@@ -1030,13 +514,6 @@ func Installed_Input_Invariants(input *Installed_Input, namespace invariant.Name
 // managed path already reports the wanted version. An install step that is
 // Installed does no work; one that is not reinstalls. direnv and Neovim verify the
 // same rule their own way (a version subcommand, and a which-resolved path).
-func Installed(input *Installed_Input) (yes File_Presence) {
-	defer func() { File_Presence_Invariants(yes, "Installed.yes") }()
-	Installed_Input_Invariants(input, "Installed.input")
-	version := run_pipe(input.IO, Probe_Path(input.Executable), Probe_Arguments{"--version"})
-	return File_Presence(shared_strings.Has_Prefix(
-		shared_strings.Text(version), shared_strings.Text(input.Version)))
-}
 
 // NEOVIM_SOURCE_SUBPATH locates the vendored Neovim source relative to the
 // checkout root. make is pointed at it with -C, so the build needs no
@@ -1075,9 +552,9 @@ type Install_Neovim_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed make output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed make diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Neovim_Input_Invariants states the Neovim build dependency set.
@@ -1092,31 +569,6 @@ func Install_Neovim_Input_Invariants(
 // prefix, where it lands at local/bin/nvim — already on PATH — and finds its own
 // runtime. Every step is idempotent: make rebuilds only what changed and install
 // re-copies, so a repeated bootstrap converges without error.
-func Install_Neovim(input *Install_Neovim_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Neovim.succeeded") }()
-	Install_Neovim_Input_Invariants(input, "Install_Neovim.input")
-	// Building Neovim is the expensive step, so it is gated on the checkout's own
-	// nvim not already being installed: a bootstrap that has it does no work.
-	if neovim_already_installed(input.IO, input.Repository_Directory) {
-		jlog.Logger_Info(input.Logger, "neovim already installed",
-			jlog.String("version", NEOVIM_VERSION))
-		return true
-	}
-	for index, arguments := range neovim_make_invocations(input.Repository_Directory) {
-		phase := "configuring neovim prefix"
-		if index != 0 {
-			phase = "installing neovim"
-		}
-		jlog.Logger_Info(input.Logger, phase)
-		// The first argument is the executable; make's output streams to the sinks, so
-		// a generic line is all setup adds.
-		if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(arguments)) {
-			jlog.Logger_Error(input.Logger, "neovim build failed")
-			return false
-		}
-	}
-	return true
-}
 
 // Returns the two make invocations the build runs in order: configure-and-build,
 // then install. Each begins with the executable, "make", because run_spawn
@@ -1165,22 +617,6 @@ func neovim_version_present(version_output Version_Output) (present File_Presenc
 // release. It resolves nvim first and rejects a path outside the repository, so a
 // system package at the same version cannot stand in; only an in-repository
 // binary then has its version checked.
-func neovim_already_installed(
-	system sysio.IO, repository_directory Repository_Directory,
-) (installed File_Presence) {
-	defer func() { File_Presence_Invariants(installed, "neovim_already_installed.installed") }()
-	Repository_Directory_Invariants(
-		repository_directory, "neovim_already_installed.repository_directory")
-	process_io_requirements(system, "neovim_already_installed.system")
-	executable := run_pipe(system, "which", Probe_Arguments{"nvim"})
-	if !shared_strings.Has_Prefix(
-		shared_strings.Text(executable), shared_strings.Text(repository_directory)+"/",
-	) {
-		return false
-	}
-	return neovim_version_present(Version_Output(run_pipe(
-		system, Probe_Path(executable), Probe_Arguments{"--version"})))
-}
 
 // Returns the Iosevka TTF filenames the install copies. A function rather than a
 // package var so the list stays within the deterministic tier's value rules.
@@ -1210,9 +646,9 @@ type Install_Fonts_Input struct {
 	// when a copy or refresh fails. The zero Logger is a disabled no-op.
 	Logger jlog.Logger
 	// Stdout receives live cache-refresh output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives live cache-refresh diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Fonts_Input_Invariants states the font install destination.
@@ -1230,50 +666,6 @@ func Install_Fonts_Input_Invariants(
 // directory and, where the OS needs it, refreshes the font cache. It is
 // idempotent: a destination already holding the fonts copies nothing and skips
 // the refresh, so a repeat bootstrap does no work.
-func Install_Fonts(input *Install_Fonts_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Fonts.succeeded") }()
-	Install_Fonts_Input_Invariants(input, "Install_Fonts.input")
-	copied := false
-	for _, file := range iosevka_font_files() {
-		destination := Font_Path(filepath.Join(string(input.Font_Directory), file))
-		if file_present(input.IO, destination) {
-			jlog.Logger_Info(input.Logger, "font present, skipped",
-				jlog.String("file", file))
-			continue
-		}
-		copy_err := copy_file(input.IO, &File_Copy_Input{
-			Source: Font_Source_Path(filepath.Join(
-				string(input.Home_Directory), IOSEVKA_SUBPATH, file)),
-			Destination: Font_Destination_Path(destination),
-		})
-		if copy_err != nil {
-			jlog.Logger_Error(input.Logger, "font copy failed", jlog.Err(copy_err))
-			return false
-		}
-		jlog.Logger_Info(input.Logger, "copied font", jlog.String("file", file))
-		copied = true
-	}
-	if !copied {
-		return true
-	}
-	if !input.Refresh_Cache {
-		return true
-	}
-	result, refresh_err := process_spawn(input.IO, sysio.Process_Request{
-		Path: "fc-cache", Arguments: []string{"-f", string(input.Font_Directory)},
-		Stdout: input.Stdout, Stderr: input.Stderr,
-	})
-	if refresh_err != nil {
-		jlog.Logger_Error(input.Logger, "font cache refresh failed", jlog.Err(refresh_err))
-		return false
-	}
-	if result.Exit != 0 {
-		refresh_err = fmt.Errorf("fc-cache exited with status %d", result.Exit)
-		jlog.Logger_Error(input.Logger, "font cache refresh failed", jlog.Err(refresh_err))
-		return false
-	}
-	return true
-}
 
 // DIRENV_VERSION is the release the bootstrap wants — the prefix of `direnv
 // --version`. direnv embeds version.txt, so a plain build self-reports it; tracks
@@ -1294,9 +686,9 @@ type Install_Direnv_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed build output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed build diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Direnv_Input_Invariants states the direnv build dependency set.
@@ -1312,43 +704,9 @@ func Install_Direnv_Input_Invariants(
 // the shell hook and every .envrc can find it. It is the bootstrap's first step
 // because everything downstream is driven by direnv. It is idempotent: when the
 // built direnv already reports the wanted version, it does nothing.
-func Install_Direnv(input *Install_Direnv_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Direnv.succeeded") }()
-	Install_Direnv_Input_Invariants(input, "Install_Direnv.input")
-	if input.Direnv_Directory == "" {
-		return true
-	}
-	if input.Binary_Directory == "" {
-		return true
-	}
-	if direnv_built(input.IO, input.Binary_Directory) {
-		jlog.Logger_Info(input.Logger, "direnv already installed")
-		return true
-	}
-	jlog.Logger_Info(input.Logger, "building direnv")
-	destination := filepath.Join(string(input.Binary_Directory), "direnv")
-	build := "cd " + string(input.Direnv_Directory) +
-		" && CGO_ENABLED=0 go build -mod=vendor" +
-		" -o " + destination + " ."
-	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments{"sh", "-c", build}) {
-		jlog.Logger_Error(input.Logger, "direnv build failed")
-		return false
-	}
-	return true
-}
 
 // Reports whether the direnv binary in the bin directory already reports the
 // wanted version. Probing that exact path leaves a present build alone.
-func direnv_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
-	defer func() { File_Presence_Invariants(built, "direnv_built.built") }()
-	Binary_Directory_Invariants(binary_directory, "direnv_built.binary_directory")
-	process_io_requirements(system, "direnv_built.system")
-	return Installed(&Installed_Input{
-		IO:         system,
-		Executable: Managed_Executable(filepath.Join(string(binary_directory), "direnv")),
-		Version:    DIRENV_VERSION,
-	})
-}
 
 // RUST_VERSION is the toolchain rustup installs and the gate checks. Pinned, not
 // "stable", so the idempotency check has a fixed version to match; bump it
@@ -1372,9 +730,9 @@ type Install_Rust_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed process output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed process diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Rust_Input_Invariants states the Rust install dependency set.
@@ -1388,41 +746,6 @@ func Install_Rust_Input_Invariants(input *Install_Rust_Input, namespace invarian
 // rustup, and rustc into the PATH directory, so they are reachable without
 // CARGO_HOME/bin on PATH. It is idempotent: when all three already resolve inside
 // the link directory, it does nothing, so a repeat bootstrap does no work.
-func Install_Rust(input *Install_Rust_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Rust.succeeded") }()
-	Install_Rust_Input_Invariants(input, "Install_Rust.input")
-	if input.Cargo_Directory == "" {
-		return true
-	}
-	if input.Link_Directory == "" {
-		return true
-	}
-	if rust_installed(input.IO, Required_Cargo_Directory(input.Cargo_Directory)) {
-		jlog.Logger_Info(input.Logger, "rust already installed")
-	} else {
-		jlog.Logger_Info(input.Logger, "installing rust")
-		if !run_spawn(
-			input.IO, input.Stdout, input.Stderr,
-			Spawn_Arguments(rust_install_invocation()),
-		) {
-			jlog.Logger_Error(input.Logger, "rust install failed")
-			return false
-		}
-	}
-	// Always (re)link, even when the install was skipped, so a stale or missing
-	// symlink is repointed at the current CARGO_HOME without reinstalling.
-	if !rust_link(&Rust_Link_Input{
-		IO:              input.IO,
-		Stdout:          input.Stdout,
-		Stderr:          input.Stderr,
-		Cargo_Directory: Required_Cargo_Directory(input.Cargo_Directory),
-		Link_Directory:  input.Link_Directory,
-	}) {
-		jlog.Logger_Error(input.Logger, "rust link failed")
-		return false
-	}
-	return true
-}
 
 // Returns the invocation that installs rustup non-interactively. -y answers every
 // prompt, --no-modify-path leaves the shell rc alone because rust reaches PATH
@@ -1445,28 +768,15 @@ func rust_install_invocation() (arguments Install_Arguments) {
 // CARGO_HOME, probing rustc (which carries the toolchain version; cargo and rustup
 // install with it). A stale symlink to an old CARGO_HOME or a wrong version does
 // not pass, so a moved or mismatched toolchain is reinstalled.
-func rust_installed(
-	system sysio.IO, cargo_directory Required_Cargo_Directory,
-) (installed File_Presence) {
-	defer func() { File_Presence_Invariants(installed, "rust_installed.installed") }()
-	Required_Cargo_Directory_Invariants(cargo_directory, "rust_installed.cargo_directory")
-	process_io_requirements(system, "rust_installed.system")
-	return Installed(&Installed_Input{
-		IO: system,
-		Executable: Managed_Executable(filepath.Join(
-			string(cargo_directory), "bin", "rustc")),
-		Version: "rustc " + RUST_VERSION,
-	})
-}
 
 // Carries the arguments for symlinking the rust toolchain onto PATH.
 type Rust_Link_Input struct {
 	// IO runs the link commands.
 	IO sysio.IO
 	// Stdout receives link output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives link diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 	// Cargo_Directory is the CARGO_HOME whose bin holds the toolchain to link from.
 	Cargo_Directory Required_Cargo_Directory
 	// Link_Directory is the PATH entry the toolchain is symlinked into.
@@ -1483,21 +793,6 @@ func Rust_Link_Input_Invariants(input *Rust_Link_Input, namespace invariant.Name
 // Symlinks cargo, rustup, and rustc from CARGO_HOME/bin into the link directory
 // with ln -sf, so the managed toolchain is reachable from the one PATH entry and
 // any stale link there is overwritten. Reports whether every link succeeded.
-func rust_link(input *Rust_Link_Input) (linked Command_Success) {
-	defer func() { Command_Success_Invariants(linked, "rust_link.linked") }()
-	Rust_Link_Input_Invariants(input, "rust_link.input")
-	for _, tool := range []string{"cargo", "rustup", "rustc"} {
-		source := filepath.Join(string(input.Cargo_Directory), "bin", tool)
-		target := filepath.Join(string(input.Link_Directory), tool)
-		if !run_spawn(
-			input.IO, input.Stdout, input.Stderr,
-			Spawn_Arguments{"ln", "-sf", source, target},
-		) {
-			return false
-		}
-	}
-	return true
-}
 
 // FZF_VERSION is the release the bootstrap wants, the exact line `fzf --version`
 // prints. It tracks the vendored third_party/fzf source; bump it with the source.
@@ -1518,9 +813,9 @@ type Install_Fzf_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed build output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed build diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Fzf_Input_Invariants states the fzf build dependency set.
@@ -1534,44 +829,9 @@ func Install_Fzf_Input_Invariants(input *Install_Fzf_Input, namespace invariant.
 // It is idempotent: when the built fzf already reports the wanted version, it does
 // nothing, so a repeat bootstrap does no work. fzf is a Go binary, so the build
 // output is the install — no separate copy or symlink.
-func Install_Fzf(input *Install_Fzf_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Fzf.succeeded") }()
-	Install_Fzf_Input_Invariants(input, "Install_Fzf.input")
-	if input.Fzf_Directory == "" {
-		return true
-	}
-	if input.Binary_Directory == "" {
-		return true
-	}
-	if fzf_built(input.IO, input.Binary_Directory) {
-		jlog.Logger_Info(input.Logger, "fzf already installed")
-		return true
-	}
-	jlog.Logger_Info(input.Logger, "building fzf")
-	destination := filepath.Join(string(input.Binary_Directory), "fzf")
-	build := "cd " + string(input.Fzf_Directory) +
-		" && go build -mod=vendor" +
-		" -ldflags '-s -w -X main.version=" + FZF_VERSION + " -X main.revision='" +
-		" -o " + destination + " ."
-	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments{"sh", "-c", build}) {
-		jlog.Logger_Error(input.Logger, "fzf build failed")
-		return false
-	}
-	return true
-}
 
 // Reports whether the fzf binary in the bin directory already reports the wanted
 // version. Probing that exact path leaves a present build alone.
-func fzf_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
-	defer func() { File_Presence_Invariants(built, "fzf_built.built") }()
-	Binary_Directory_Invariants(binary_directory, "fzf_built.binary_directory")
-	process_io_requirements(system, "fzf_built.system")
-	return Installed(&Installed_Input{
-		IO:         system,
-		Executable: Managed_Executable(filepath.Join(string(binary_directory), "fzf")),
-		Version:    FZF_VERSION,
-	})
-}
 
 // Install_Command_Input carries the injected dependencies Install_Command needs to
 // build a command from this repository with the Go toolchain and place it on PATH.
@@ -1586,15 +846,15 @@ type Install_Command_Input struct {
 	// Binary_Name is the built command's filename — the name it is invoked by on PATH
 	// and the name the idempotency gate looks up. markdown_to_pdf installs as "m2p",
 	// so a command's name is not always its package directory's name.
-	Binary_Name Step_Name
+	Binary_Name Command_Name
 	// IO runs the PATH-presence gate and the Go build.
 	IO sysio.IO
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed build output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed build diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Command_Input_Invariants states one repository command build.
@@ -1603,7 +863,7 @@ func Install_Command_Input_Invariants(
 ) {
 	Command_Directory_Invariants(input.Package_Directory, namespace)
 	Binary_Directory_Invariants(input.Binary_Directory, namespace)
-	Step_Name_Invariants(input.Binary_Name, namespace)
+	Command_Name_Invariants(input.Binary_Name, namespace)
 	process_io_requirements(input.IO, namespace)
 }
 
@@ -1613,46 +873,11 @@ func Install_Command_Input_Invariants(
 // freely, so a name already on PATH is left alone and an absent one is built. Like
 // fzf and direnv, it is a Go build, so the build output is the install — no separate
 // copy or symlink.
-func Install_Command(input *Install_Command_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Command.succeeded") }()
-	Install_Command_Input_Invariants(input, "Install_Command.input")
-	if input.Package_Directory == "" {
-		return true
-	}
-	if input.Binary_Directory == "" {
-		return true
-	}
-	if input.Binary_Name == "" {
-		return true
-	}
-	if command_on_path(input.IO, input.Binary_Name) {
-		jlog.Logger_Info(input.Logger, "command already installed",
-			jlog.String("command", string(input.Binary_Name)))
-		return true
-	}
-	jlog.Logger_Info(input.Logger, "building command",
-		jlog.String("command", string(input.Binary_Name)))
-	destination := filepath.Join(string(input.Binary_Directory), string(input.Binary_Name))
-	build := "cd " + string(input.Package_Directory) +
-		" && go build -o " + destination + " ."
-	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments{"sh", "-c", build}) {
-		jlog.Logger_Error(input.Logger, "command build failed",
-			jlog.String("command", string(input.Binary_Name)))
-		return false
-	}
-	return true
-}
 
 // Reports whether a command of the given name already resolves on PATH — the only
 // idempotency gate for this repo's own commands. `which` prints the resolved path
 // on stdout and nothing when the name is unknown, so a non-empty result means the
 // command is present and the build is skipped.
-func command_on_path(system sysio.IO, name Step_Name) (present File_Presence) {
-	defer func() { File_Presence_Invariants(present, "command_on_path.present") }()
-	Step_Name_Invariants(name, "command_on_path.name")
-	process_io_requirements(system, "command_on_path.system")
-	return run_pipe(system, "which", Probe_Arguments{string(name)}) != ""
-}
 
 // JJ_VERSION is the release the bootstrap wants — the prefix of `jj --version`.
 // jj's build.rs appends a commit hash, so the gate prefix-matches; tracks the
@@ -1674,9 +899,9 @@ type Install_Jj_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed build output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed build diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Jj_Input_Invariants states the jj build dependency set.
@@ -1690,28 +915,6 @@ func Install_Jj_Input_Invariants(input *Install_Jj_Input, namespace invariant.Na
 // straight into the binary directory. It is idempotent: when the built jj already
 // reports the wanted version the build is skipped, so a repeat bootstrap does no
 // heavy work.
-func Install_Jj(input *Install_Jj_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Jj.succeeded") }()
-	Install_Jj_Input_Invariants(input, "Install_Jj.input")
-	if input.Jj_Directory == "" {
-		return true
-	}
-	if input.Binary_Directory == "" {
-		return true
-	}
-	if jj_built(input.IO, input.Binary_Directory) {
-		jlog.Logger_Info(input.Logger, "jj already built")
-		return true
-	}
-	jlog.Logger_Info(input.Logger, "building jj")
-	if !run_spawn(
-		input.IO, input.Stdout, input.Stderr, Spawn_Arguments(jj_install_invocation(input)),
-	) {
-		jlog.Logger_Error(input.Logger, "jj build failed")
-		return false
-	}
-	return true
-}
 
 // Returns the invocation that builds and installs jj from the vendored workspace.
 // cd into the workspace root so its .cargo/config.toml maps crates to the vendor
@@ -1734,16 +937,6 @@ func jj_install_invocation(input *Install_Jj_Input) (arguments Install_Arguments
 // Reports whether the jj binary already installed in the binary directory reports
 // the wanted version. Probing the exact path, not PATH, keeps a build present at a
 // non-PATH location from being needlessly recompiled.
-func jj_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
-	defer func() { File_Presence_Invariants(built, "jj_built.built") }()
-	Binary_Directory_Invariants(binary_directory, "jj_built.binary_directory")
-	process_io_requirements(system, "jj_built.system")
-	return Installed(&Installed_Input{
-		IO:         system,
-		Executable: Managed_Executable(filepath.Join(string(binary_directory), "jj")),
-		Version:    JJ_VERSION,
-	})
-}
 
 // RIPGREP_VERSION is the release the bootstrap wants — the prefix of `rg
 // --version`. ripgrep's build.rs appends a git rev, so the gate prefix-matches;
@@ -1765,9 +958,9 @@ type Install_Ripgrep_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed build output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed build diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Ripgrep_Input_Invariants states the ripgrep build dependency set.
@@ -1783,27 +976,6 @@ func Install_Ripgrep_Input_Invariants(
 // rg binary straight into the binary directory. It is idempotent: when the built rg
 // already reports the wanted version the build is skipped, so a repeat bootstrap
 // does no heavy work.
-func Install_Ripgrep(input *Install_Ripgrep_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Ripgrep.succeeded") }()
-	Install_Ripgrep_Input_Invariants(input, "Install_Ripgrep.input")
-	if input.Ripgrep_Directory == "" {
-		return true
-	}
-	if input.Binary_Directory == "" {
-		return true
-	}
-	if ripgrep_built(input.IO, input.Binary_Directory) {
-		jlog.Logger_Info(input.Logger, "ripgrep already built")
-		return true
-	}
-	jlog.Logger_Info(input.Logger, "building ripgrep")
-	invocation := ripgrep_install_invocation(input)
-	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(invocation)) {
-		jlog.Logger_Error(input.Logger, "ripgrep build failed")
-		return false
-	}
-	return true
-}
 
 // Returns the invocation that builds and installs rg from the vendored crate. cd
 // into the crate so its .cargo/config.toml maps crates to the vendor tree;
@@ -1829,16 +1001,6 @@ func ripgrep_install_invocation(input *Install_Ripgrep_Input) (
 // Reports whether the rg binary already installed in the binary directory reports
 // the wanted version. Probing the exact path, not PATH, keeps a build present at a
 // non-PATH location from being needlessly recompiled.
-func ripgrep_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
-	defer func() { File_Presence_Invariants(built, "ripgrep_built.built") }()
-	Binary_Directory_Invariants(binary_directory, "ripgrep_built.binary_directory")
-	process_io_requirements(system, "ripgrep_built.system")
-	return Installed(&Installed_Input{
-		IO:         system,
-		Executable: Managed_Executable(filepath.Join(string(binary_directory), "rg")),
-		Version:    RIPGREP_VERSION,
-	})
-}
 
 // Fd_version is the release the bootstrap wants — the prefix of `fd --version`.
 // Tracks the vendored third_party/fd Cargo.toml version, bump it with the source.
@@ -1859,9 +1021,9 @@ type Install_Fdcli_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed build output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed build diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Fdcli_Input_Invariants states the fd build dependency set.
@@ -1877,27 +1039,6 @@ func Install_Fdcli_Input_Invariants(
 // straight into the binary directory. It is idempotent: when the built fd already
 // reports the wanted version the build is skipped, so a repeat bootstrap does no
 // heavy work.
-func Install_Fdcli(input *Install_Fdcli_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Fdcli.succeeded") }()
-	Install_Fdcli_Input_Invariants(input, "Install_Fdcli.input")
-	if input.Fdcli_Directory == "" {
-		return true
-	}
-	if input.Binary_Directory == "" {
-		return true
-	}
-	if fdcli_built(input.IO, input.Binary_Directory) {
-		jlog.Logger_Info(input.Logger, "fd already built")
-		return true
-	}
-	jlog.Logger_Info(input.Logger, "building fd")
-	invocation := fdcli_install_invocation(input)
-	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(invocation)) {
-		jlog.Logger_Error(input.Logger, "fd build failed")
-		return false
-	}
-	return true
-}
 
 // Returns the invocation that builds and installs fd from the vendored crate. cd
 // into the crate so its .cargo/config.toml maps crates to the vendor tree;
@@ -1919,16 +1060,6 @@ func fdcli_install_invocation(input *Install_Fdcli_Input) (arguments Install_Arg
 // Reports whether the fd binary already installed in the binary directory reports
 // the wanted version. Probing the exact path, not PATH, keeps a build present at a
 // non-PATH location from being needlessly recompiled.
-func fdcli_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
-	defer func() { File_Presence_Invariants(built, "fdcli_built.built") }()
-	Binary_Directory_Invariants(binary_directory, "fdcli_built.binary_directory")
-	process_io_requirements(system, "fdcli_built.system")
-	return Installed(&Installed_Input{
-		IO:         system,
-		Executable: Managed_Executable(filepath.Join(string(binary_directory), "fd")),
-		Version:    FDCLI_VERSION,
-	})
-}
 
 // GHOSTTY_VERSION is the release the bootstrap wants — the prefix of `ghostty
 // --version`, whose first line reads "Ghostty <version>". Tracks the pinned DMG
@@ -1971,9 +1102,9 @@ type Install_Ghostty_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed process output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed process diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Install_Ghostty_Input_Invariants states the Ghostty install dependency set.
@@ -1989,33 +1120,6 @@ func Install_Ghostty_Input_Invariants(
 // directory and symlinks the app's CLI into the PATH directory. It is idempotent:
 // when the installed app already reports the wanted version, the download is skipped
 // and only the symlink is refreshed, so a repeat bootstrap does no network work.
-func Install_Ghostty(input *Install_Ghostty_Input) (succeeded Step_Success) {
-	defer func() { Step_Success_Invariants(succeeded, "Install_Ghostty.succeeded") }()
-	Install_Ghostty_Input_Invariants(input, "Install_Ghostty.input")
-	if ghostty_installed(input.IO, input.Applications_Directory) {
-		jlog.Logger_Info(input.Logger, "ghostty already installed")
-	} else {
-		jlog.Logger_Info(input.Logger, "installing ghostty")
-		invocation := ghostty_install_invocation(input.Applications_Directory)
-		if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(invocation)) {
-			jlog.Logger_Error(input.Logger, "ghostty install failed")
-			return false
-		}
-	}
-	// Always (re)link, even when the install was skipped, so a missing symlink is
-	// restored without re-downloading. ln -sf is idempotent.
-	source := filepath.Join(
-		string(input.Applications_Directory), GHOSTTY_APPLICATION_BINARY_SUBPATH)
-	target := filepath.Join(string(input.Link_Directory), "ghostty")
-	if !run_spawn(
-		input.IO, input.Stdout, input.Stderr,
-		Spawn_Arguments{"ln", "-sf", source, target},
-	) {
-		jlog.Logger_Error(input.Logger, "ghostty link failed")
-		return false
-	}
-	return true
-}
 
 // REPOSITORY_SUBPATH is the fixed checkout path below the home directory.
 const REPOSITORY_SUBPATH = "code/james-orcales"
@@ -2055,9 +1159,9 @@ type Bootstrap_Steps_Input struct {
 	// Logger records setup progress.
 	Logger jlog.Logger
 	// Stdout receives streamed process output.
-	Stdout io.Writer
+	Stdout sysio.Stream
 	// Stderr receives streamed process diagnostics.
-	Stderr io.Writer
+	Stderr sysio.Stream
 }
 
 // Bootstrap_Steps_Input_Invariants states the complete bootstrap dependency set.
@@ -2073,232 +1177,26 @@ func Bootstrap_Steps_Input_Invariants(
 }
 
 // Bootstrap_Steps returns the complete setup policy in execution order.
-func Bootstrap_Steps(input *Bootstrap_Steps_Input) (steps Steps) {
-	defer func() { Steps_Invariants(steps, "Bootstrap_Steps.steps") }()
-	Bootstrap_Steps_Input_Invariants(input, "Bootstrap_Steps.input")
-	return Steps{
-		{Name: "direnv", Run: direnv_step(input)},
-		{Name: "dotfiles", Run: dotfiles_step(input)},
-		{Name: "fonts", Run: fonts_step(input)},
-		{Name: "neovim", Run: neovim_step(input)},
-		{Name: "fzf", Run: fzf_step(input)},
-		{Name: "maddox", Run: command_step(&Command_Step_Input{
-			Bootstrap: input, Package_Directory: "maddox", Binary_Name: "maddox",
-		})},
-		{Name: "m2p", Run: command_step(&Command_Step_Input{
-			Bootstrap: input, Package_Directory: "markdown_to_pdf", Binary_Name: "m2p",
-		})},
-		{Name: "sloc", Run: command_step(&Command_Step_Input{
-			Bootstrap: input, Package_Directory: "sloc", Binary_Name: "sloc",
-		})},
-		{Name: "timeout", Run: command_step(&Command_Step_Input{
-			Bootstrap: input, Package_Directory: "timeout", Binary_Name: "timeout",
-		})},
-		{Name: "rust", Run: rust_step(input)},
-		{Name: "jj", Run: jj_step(input)},
-		{Name: "ripgrep", Run: ripgrep_step(input)},
-		{Name: "fd", Run: fdcli_step(input)},
-		{Name: "ghostty", Run: ghostty_step(input)},
-	}
-}
 
 // Returns the step that builds the vendored direnv binary.
-func direnv_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "direnv_step.input")
-	repository := filepath.Join(string(input.Home_Directory), REPOSITORY_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Install_Direnv(&Install_Direnv_Input{
-			Direnv_Directory: Direnv_Directory(
-				filepath.Join(repository, "third_party", "direnv")),
-			Binary_Directory: Binary_Directory(
-				filepath.Join(repository, "home", ".local", "bin")),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that synchronizes dotfiles and applies macOS defaults.
-func dotfiles_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "dotfiles_step.input")
-	dotfiles_directory := filepath.Join(string(input.Home_Directory), DOTFILES_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Mirror(&Mirror_Input{
-			IO:                    input.IO,
-			Source_Directory:      Source_Directory(dotfiles_directory),
-			Destination_Directory: Destination_Directory(input.Home_Directory),
-			Operating_System:      input.Operating_System,
-			Logger:                input.Logger,
-			Stdout:                input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that copies each absent vendored font.
-func fonts_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "fonts_step.input")
-	font_directory, refresh_cache, supported := font_destination(&Font_Destination_Input{
-		Home_Directory: input.Home_Directory, Operating_System: input.Operating_System,
-		Data_Directory: input.Data_Directory,
-	})
-	return func() (succeeded Step_Success) {
-		if !supported {
-			return true
-		}
-		return Install_Fonts(&Install_Fonts_Input{
-			IO: input.IO, Home_Directory: input.Home_Directory,
-			Font_Directory: font_directory, Refresh_Cache: refresh_cache,
-			Logger: input.Logger, Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that builds the vendored Neovim checkout.
-func neovim_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "neovim_step.input")
-	return func() (succeeded Step_Success) {
-		return Install_Neovim(&Install_Neovim_Input{
-			Repository_Directory: Repository_Directory(filepath.Join(
-				string(input.Home_Directory), REPOSITORY_SUBPATH)),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that builds the vendored fzf checkout.
-func fzf_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "fzf_step.input")
-	repository := filepath.Join(string(input.Home_Directory), REPOSITORY_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Install_Fzf(&Install_Fzf_Input{
-			Fzf_Directory: Fzf_Directory(
-				filepath.Join(repository, "third_party", "fzf")),
-			Binary_Directory: Binary_Directory(
-				filepath.Join(repository, "home", ".local", "bin")),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
-
-// Command_Step_Input identifies one repository command build step.
-type Command_Step_Input struct {
-	// Bootstrap supplies the home directory and process operation.
-	Bootstrap *Bootstrap_Steps_Input
-	// Package_Directory is the package path below the repository.
-	Package_Directory Package_Directory
-	// Binary_Name is the installed command name.
-	Binary_Name Step_Name
-}
-
-// Command_Step_Input_Invariants states one repository command step.
-func Command_Step_Input_Invariants(
-	input *Command_Step_Input, namespace invariant.Namespace,
-) {
-	Bootstrap_Steps_Input_Invariants(input.Bootstrap, namespace)
-	Package_Directory_Invariants(input.Package_Directory, namespace)
-	Step_Name_Invariants(input.Binary_Name, namespace)
-}
-
-// Returns a step that builds one command from this repository.
-func command_step(input *Command_Step_Input) (run func() (succeeded Step_Success)) {
-	Command_Step_Input_Invariants(input, "command_step.input")
-	repository := filepath.Join(string(input.Bootstrap.Home_Directory), REPOSITORY_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Install_Command(&Install_Command_Input{
-			Package_Directory: Command_Directory(
-				filepath.Join(repository, string(input.Package_Directory))),
-			Binary_Directory: Binary_Directory(
-				filepath.Join(repository, "home", ".local", "bin")),
-			Binary_Name: input.Binary_Name,
-			IO:          input.Bootstrap.IO,
-			Logger:      input.Bootstrap.Logger,
-			Stdout:      input.Bootstrap.Stdout,
-			Stderr:      input.Bootstrap.Stderr,
-		})
-	}
-}
 
 // Returns the step that installs the Rust toolchain.
-func rust_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "rust_step.input")
-	return func() (succeeded Step_Success) {
-		return Install_Rust(&Install_Rust_Input{
-			Cargo_Directory: input.Cargo_Directory,
-			Link_Directory: Rust_Link_Directory(filepath.Join(
-				string(input.Home_Directory), REPOSITORY_SUBPATH, ".local", "bin")),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that builds the vendored jj checkout.
-func jj_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "jj_step.input")
-	repository := filepath.Join(string(input.Home_Directory), REPOSITORY_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Install_Jj(&Install_Jj_Input{
-			Jj_Directory: Jj_Directory(
-				filepath.Join(repository, "third_party", "jj")),
-			Binary_Directory: Binary_Directory(
-				filepath.Join(repository, "home", ".local", "bin")),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that builds the vendored ripgrep checkout.
-func ripgrep_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "ripgrep_step.input")
-	repository := filepath.Join(string(input.Home_Directory), REPOSITORY_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Install_Ripgrep(&Install_Ripgrep_Input{
-			Ripgrep_Directory: Ripgrep_Directory(
-				filepath.Join(repository, "third_party", "ripgrep")),
-			Binary_Directory: Binary_Directory(
-				filepath.Join(repository, "home", ".local", "bin")),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that builds the vendored fd checkout.
-func fdcli_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "fdcli_step.input")
-	repository := filepath.Join(string(input.Home_Directory), REPOSITORY_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Install_Fdcli(&Install_Fdcli_Input{
-			Fdcli_Directory: Fdcli_Directory(
-				filepath.Join(repository, "third_party", "fd")),
-			Binary_Directory: Binary_Directory(
-				filepath.Join(repository, "home", ".local", "bin")),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Returns the step that installs the signed Ghostty application.
-func ghostty_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)) {
-	Bootstrap_Steps_Input_Invariants(input, "ghostty_step.input")
-	if input.Operating_System != "darwin" {
-		return func() (succeeded Step_Success) { return true }
-	}
-	repository := filepath.Join(string(input.Home_Directory), REPOSITORY_SUBPATH)
-	return func() (succeeded Step_Success) {
-		return Install_Ghostty(&Install_Ghostty_Input{
-			Applications_Directory: Applications_Directory("/Applications"),
-			Link_Directory: Ghostty_Link_Directory(
-				filepath.Join(repository, "home", ".local", "bin")),
-			IO: input.IO, Logger: input.Logger,
-			Stdout: input.Stdout, Stderr: input.Stderr,
-		})
-	}
-}
 
 // Font_Destination_Input supplies the operating-system font path facts.
 type Font_Destination_Input struct {
@@ -2349,54 +1247,6 @@ func font_destination(input *Font_Destination_Input) (
 }
 
 // Returns one batched gitignore classifier for directory.
-func git_ignores(
-	system sysio.IO, directory Directory,
-) (is_ignored func(relative_paths []string) (ignored map[string]bool)) {
-	Directory_Invariants(directory, "git_ignores.directory")
-	process_io_requirements(system, "git_ignores.system")
-	return func(relative_paths []string) (ignored map[string]bool) {
-		ignored = map[string]bool{}
-		if len(relative_paths) == 0 {
-			return ignored
-		}
-		targets := make([]string, len(relative_paths))
-		for index, relative := range relative_paths {
-			targets[index] = filepath.Join(string(directory), relative)
-		}
-		target_set := map[string]bool{}
-		for _, target := range targets {
-			target_set[target] = true
-		}
-		request := Check_Ignore_Request{
-			Targets: func(yield func(target string) (next bool)) {
-				for _, target := range targets {
-					if !yield(target) {
-						return
-					}
-				}
-			},
-		}
-		check_ignore_input(&request)
-		result, _ := process_spawn(system, sysio.Process_Request{
-			Path:      "git",
-			Arguments: []string{"-C", string(directory), "check-ignore", "--stdin"},
-			Input:     request.Process.Input,
-		})
-		response := Check_Ignore_Result{
-			Process: result,
-			Target: func(path string) (present bool) {
-				return target_set[path]
-			},
-		}
-		check_ignore_matches(&response)
-		for index, target := range targets {
-			if response.Contains(target) {
-				ignored[relative_paths[index]] = true
-			}
-		}
-		return ignored
-	}
-}
 
 // A batch can exceed one shared text value, so each joined group stays inside the shared
 // boundary while the complete process input keeps the setup batch limit.
@@ -2532,32 +1382,6 @@ func ghostty_install_invocation(applications_directory Applications_Directory) (
 // Reports whether the installed Ghostty app is the wanted version AND still carries
 // a verifying code signature. Probing the app's own binary, not PATH, keeps a
 // missing symlink from forcing a needless re-download of an app already in place.
-func ghostty_installed(
-	system sysio.IO, applications_directory Applications_Directory,
-) (installed File_Presence) {
-	defer func() { File_Presence_Invariants(installed, "ghostty_installed.installed") }()
-	Applications_Directory_Invariants(
-		applications_directory, "ghostty_installed.applications_directory")
-	process_io_requirements(system, "ghostty_installed.system")
-	binary := Managed_Executable(filepath.Join(
-		string(applications_directory), GHOSTTY_APPLICATION_BINARY_SUBPATH))
-	version_present := Installed(&Installed_Input{
-		IO:         system,
-		Executable: binary,
-		Version:    GHOSTTY_VERSION,
-	})
-	if !version_present {
-		return false
-	}
-	// A matching version alone is not enough: an app whose binary was swapped or
-	// re-signed by another developer still reports 1.3.1, so the install counts only
-	// if codesign verifies the bundle against Ghostty's signing identity. codesign is
-	// offline and deterministic, so a failure means a tampered or foreign bundle.
-	application := Application_Path(filepath.Join(
-		string(applications_directory), "Ghostty.app"))
-	return File_Presence(run_spawn(
-		system, nil, nil, Spawn_Arguments(ghostty_codesign_invocation(application))))
-}
 
 // Returns the codesign invocation that verifies the bundle and pins it to Ghostty's
 // signing Team ID, so a tampered app or one validly signed by another developer
@@ -2684,10 +1508,16 @@ const BYTE_COUNT_MIN = 0
 const BUFFER_SIZE_MIN = 0
 
 // STEP_NAME_BYTES_MIN is the shortest bootstrap label.
-const STEP_NAME_BYTES_MIN = 3
+const STEP_NAME_BYTES_MIN = 2
 
 // STEP_NAME_BYTES_MAX is the longest bootstrap label.
-const STEP_NAME_BYTES_MAX = 7
+const STEP_NAME_BYTES_MAX = 8
+
+// COMMAND_NAME_BYTES_MIN is the shortest repository command name.
+const COMMAND_NAME_BYTES_MIN = 3
+
+// COMMAND_NAME_BYTES_MAX is the longest repository command name.
+const COMMAND_NAME_BYTES_MAX = 7
 
 // MACOS_ARGUMENT_COUNT_MIN is the Finder restart argument.
 const MACOS_ARGUMENT_COUNT_MIN = 1
@@ -2700,6 +1530,9 @@ const PROBE_ARGUMENT_COUNT = 1
 
 // INSTALL_ARGUMENT_COUNT is the shell, flag, and script install tuple.
 const INSTALL_ARGUMENT_COUNT = 3
+
+// BUILD_INVOCATION_ARGUMENT_COUNT is the common shell build tuple.
+const BUILD_INVOCATION_ARGUMENT_COUNT = 3
 
 // SPAWN_ARGUMENT_COUNT_MIN is the shortest streamed shell invocation.
 const SPAWN_ARGUMENT_COUNT_MIN = 3
@@ -2715,6 +1548,9 @@ const MANAGED_EXECUTABLE_BYTES_MIN = 11
 
 // MANAGED_EXECUTABLE_BYTES_MAX is the longest executable path setup probes.
 const MANAGED_EXECUTABLE_BYTES_MAX = 106
+
+// VERSIONED_EXECUTABLE_BYTES_MIN is the shortest managed build destination.
+const VERSIONED_EXECUTABLE_BYTES_MIN = BINARY_DIRECTORY_BYTES_MIN + 3
 
 // PROBE_PATH_BYTES_MIN is the shortest command name that setup probes.
 const PROBE_PATH_BYTES_MIN = 5
@@ -3229,6 +2065,20 @@ func Managed_Executable_Invariants(
 		Ensure()
 }
 
+// Versioned_Executable is one managed executable produced by the common build gate.
+type Versioned_Executable string
+
+// Versioned_Executable_Invariants bounds common build destinations.
+func Versioned_Executable_Invariants(
+	executable Versioned_Executable, namespace invariant.Namespace,
+) {
+	invariant.Tree(executable, namespace).
+		Range_Int(
+			len(executable), VERSIONED_EXECUTABLE_BYTES_MIN,
+			MANAGED_EXECUTABLE_BYTES_MAX).
+		Ensure()
+}
+
 // Probe_Path is one command name or absolute executable path.
 type Probe_Path string
 
@@ -3292,6 +2142,16 @@ func Step_Name_Invariants(name Step_Name, namespace invariant.Namespace) {
 		Ensure()
 }
 
+// Command_Name is one repository command name used by its PATH gate.
+type Command_Name string
+
+// Command_Name_Invariants bounds the four repository command names.
+func Command_Name_Invariants(name Command_Name, namespace invariant.Namespace) {
+	invariant.Tree(name, namespace).
+		Range_Int(len(name), COMMAND_NAME_BYTES_MIN, COMMAND_NAME_BYTES_MAX).
+		Ensure()
+}
+
 // Macos_Arguments is one ordered defaults or Finder argument list.
 type Macos_Arguments []string
 
@@ -3330,6 +2190,17 @@ func Spawn_Arguments_Invariants(arguments Spawn_Arguments, namespace invariant.N
 		Ensure()
 }
 
+// Build_Invocation is the shell, flag, and script used by a common versioned build.
+type Build_Invocation []string
+
+// Build_Invocation_Invariants requires the complete shell tuple.
+func Build_Invocation_Invariants(arguments Build_Invocation, _ invariant.Namespace) {
+	invariant.Always(
+		len(arguments) == BUILD_INVOCATION_ARGUMENT_COUNT,
+		"A versioned build uses one shell script.",
+	)
+}
+
 // Codesign_Arguments is the complete Ghostty signature check.
 type Codesign_Arguments []string
 
@@ -3338,15 +2209,6 @@ func Codesign_Arguments_Invariants(arguments Codesign_Arguments, namespace invar
 	invariant.Always(
 		len(arguments) == CODESIGN_ARGUMENT_COUNT,
 		"The signature check has every required restriction.")
-}
-
-// Steps is one ordered bootstrap plan.
-type Steps []Step
-
-// Steps_Invariants bounds one bootstrap plan.
-func Steps_Invariants(steps Steps, namespace invariant.Namespace) {
-	invariant.Always(
-		len(steps) == BOOTSTRAP_STEP_COUNT, "Setup has every bootstrap step.")
 }
 
 // Commands is one ordered macOS command list.
@@ -3369,13 +2231,6 @@ func Writes_Invariants(writes Writes, namespace invariant.Namespace) {
 	invariant.Tree(writes, namespace).
 		Sometimes(writes.List.Len() != 0, "A mirror plan has pending writes.").
 		Ensure()
-}
-
-// Write_plan_append appends one write while Plan still owns the list.
-func write_plan_append(writes *Writes, write File_Write) {
-	Writes_Invariants(*writes, "write_plan_append.writes")
-	File_Write_Invariants(write, "write_plan_append.write")
-	writes.List.PushBack(write)
 }
 
 // Plan_Decision reports whether a source file needs a write.
@@ -3463,4 +2318,2409 @@ func Font_Support_Invariants(supported Font_Support, namespace invariant.Namespa
 	invariant.Tree(supported, namespace).
 		Sometimes(bool(supported), "The host has a managed font destination.").
 		Ensure()
+}
+
+// Runner exposes setup progress without giving policy code the event-loop driver.
+type Runner struct {
+	// Rearm submits one continuation that a prior completion recorded.
+	Rearm func() (armed Runner_Work_Queued)
+	// Work_Queued reports whether Rearm can submit a continuation.
+	Work_Queued func() (queued Runner_Work_Queued)
+	// Stopped reports whether setup reached a terminal status.
+	Stopped func() (stopped Runner_Stopped)
+	// Status returns the terminal process status.
+	Status func() (status Exit_Code)
+}
+
+// Runner_Invariants states the complete root control surface.
+func Runner_Invariants(runner Runner, _ invariant.Namespace) {
+	invariant.Always(runner.Rearm != nil, "A setup runner has a rearm operation.")
+	invariant.Always(
+		runner.Work_Queued != nil, "A setup runner reports its queued work.")
+	invariant.Always(runner.Stopped != nil, "A setup runner reports its terminal state.")
+	invariant.Always(runner.Status != nil, "A setup runner reports its process status.")
+}
+
+// Runner_Work_Queued reports whether one continuation is ready for root submission.
+type Runner_Work_Queued bool
+
+// Runner_Work_Queued_Invariants requires both queue states across the simulation sweep.
+func Runner_Work_Queued_Invariants(
+	queued Runner_Work_Queued, namespace invariant.Namespace,
+) {
+	invariant.Tree(queued, namespace).
+		Sometimes(bool(queued), "A setup runner has queued work.").
+		Ensure()
+}
+
+// Runner_Stopped reports whether setup has one terminal exit status.
+type Runner_Stopped bool
+
+// Runner_Stopped_Invariants requires active and terminal runner states across the sweep.
+func Runner_Stopped_Invariants(stopped Runner_Stopped, namespace invariant.Namespace) {
+	invariant.Tree(stopped, namespace).
+		Sometimes(bool(stopped), "A setup runner has stopped.").
+		Ensure()
+}
+
+// Runner_State retains one bounded continuation, armed submissions, and the terminal result.
+type Runner_State struct {
+	// Action is the one continuation that the root can submit next.
+	Action func()
+	// Operations retains each submission until its callback retires.
+	Operations *list.List
+	// Terminal returns the exit status after setup stops.
+	Terminal func() (status Exit_Code)
+}
+
+// Runner_State_Invariants requires one private state allocation.
+func Runner_State_Invariants(state *Runner_State, _ invariant.Namespace) {
+	invariant.Always(state != nil, "A setup runner has private state.")
+	invariant.Always(state.Operations != nil, "A setup runner tracks armed IO operations.")
+}
+
+// New_runner returns the root surface for one private continuation state.
+func new_runner() (state *Runner_State, runner Runner) {
+	defer func() {
+		Runner_State_Invariants(state, "new_runner.state")
+		Runner_Invariants(runner, "new_runner.runner")
+	}()
+	state = &Runner_State{Operations: list.New()}
+	runner = Runner{
+		Rearm: func() (armed Runner_Work_Queued) {
+			return runner_rearm(state)
+		},
+		Work_Queued: func() (queued Runner_Work_Queued) {
+			return state.Action != nil
+		},
+		Stopped: func() (stopped Runner_Stopped) {
+			return state.Terminal != nil && state.Operations.Len() == 0
+		},
+		Status: func() (status Exit_Code) {
+			if state.Terminal == nil {
+				return EXIT_FAILURE
+			}
+			return state.Terminal()
+		},
+	}
+	return state, runner
+}
+
+// Runner_rearm removes one recorded continuation before it submits that continuation.
+func runner_rearm(state *Runner_State) (armed Runner_Work_Queued) {
+	defer func() {
+		Runner_Work_Queued_Invariants(armed, "runner_rearm.armed")
+	}()
+	Runner_State_Invariants(state, "runner_rearm.state")
+	if state.Action == nil {
+		return false
+	}
+	action := state.Action
+	state.Action = nil
+	action()
+	return true
+}
+
+// Runner_queue records one continuation after pure work or an IO callback completes.
+func runner_queue(state *Runner_State, action func()) {
+	Runner_State_Invariants(state, "runner_queue.state")
+	invariant.Always(state.Terminal == nil, "A stopped setup runner queues no work.")
+	invariant.Always(state.Action == nil, "A setup runner does not replace queued work.")
+	invariant.Always(action != nil, "A setup runner queues a nonnil continuation.")
+	state.Action = action
+}
+
+// Runner_operation_start keeps the root active until one submitted callback retires.
+func runner_operation_start(state *Runner_State) (operation *list.Element) {
+	Runner_State_Invariants(state, "runner_operation_start.state")
+	invariant.Always(state.Terminal == nil, "A stopped setup runner submits no IO.")
+	return state.Operations.PushBack(struct{}{})
+}
+
+// Runner_complete_io joins one submission before it transfers control back to the root.
+func runner_complete_io(
+	state *Runner_State, operation *list.Element, action func(),
+) {
+	Runner_State_Invariants(state, "runner_complete_io.state")
+	invariant.Always(operation != nil, "An IO callback retires one tracked operation.")
+	invariant.Always(action != nil, "An IO callback has a nonnil continuation.")
+	state.Operations.Remove(operation)
+	if state.Terminal != nil {
+		return
+	}
+	runner_queue(state, action)
+}
+
+// Runner_stop records one terminal result and removes no work because callers stop in sequence.
+func runner_stop(state *Runner_State, status Exit_Code) {
+	Runner_State_Invariants(state, "runner_stop.state")
+	Exit_Code_Invariants(status, "runner_stop.status")
+	invariant.Always(state.Action == nil, "A setup runner stops with no queued work.")
+	invariant.Always(state.Terminal == nil, "A setup runner stops one time.")
+	state.Terminal = func() (terminal_status Exit_Code) { return status }
+}
+
+// File_Size_Limit is one permitted bound for a complete file payload.
+type File_Size_Limit int
+
+// File_Size_Limit_Invariants restricts reads to the dotfile or font payload bound.
+func File_Size_Limit_Invariants(limit File_Size_Limit, namespace invariant.Namespace) {
+	invariant.Tree(limit, namespace).
+		Enum_Int(int(limit), DOTFILE_PAYLOAD_BYTES_MAX, COPY_BYTES_MAX).
+		Ensure()
+}
+
+// File_Operation_Subject identifies the payload class named by completion diagnostics.
+type File_Operation_Subject uint8
+
+// File_Operation_Subject_Invariants restricts diagnostics to the two bounded file classes.
+func File_Operation_Subject_Invariants(
+	subject File_Operation_Subject, namespace invariant.Namespace,
+) {
+	invariant.Tree(subject, namespace).
+		Enum_Uint8(uint8(subject), uint8(FILE_OPERATION_SUBJECT_DOTFILE),
+			uint8(FILE_OPERATION_SUBJECT_FONT)).
+		Ensure()
+}
+
+// FILE_OPERATION_SUBJECT_DOTFILE identifies mirrored configuration data.
+const FILE_OPERATION_SUBJECT_DOTFILE File_Operation_Subject = 0
+
+// FILE_OPERATION_SUBJECT_FONT identifies vendored font installation data.
+const FILE_OPERATION_SUBJECT_FONT File_Operation_Subject = 1
+
+// File_Chunks keeps large setup files in shared-algorithm-sized pieces.
+type File_Chunks struct {
+	// List avoids one allocation whose size comes from an untrusted file status.
+	List *list.List
+}
+
+// File_Chunks_Invariants bounds every piece and their complete payload.
+func File_Chunks_Invariants(chunks File_Chunks, _ invariant.Namespace) {
+	invariant.Always(chunks.List != nil, "A setup file has a chunk list.")
+	file_chunks_validate(chunks.List)
+}
+
+// File_Chunk_Remainder contains write chunks that IO has not accepted.
+type File_Chunk_Remainder struct {
+	// List retains the unwritten suffix without a phase-specific byte cursor.
+	List *list.List
+}
+
+// File_Chunk_Remainder_Invariants bounds the unaccepted write suffix.
+func File_Chunk_Remainder_Invariants(
+	chunks File_Chunk_Remainder, _ invariant.Namespace,
+) {
+	invariant.Always(chunks.List != nil, "A file write has a remainder list.")
+	file_chunks_validate(chunks.List)
+}
+
+// File_Chunk_History contains write chunks that IO accepted.
+type File_Chunk_History struct {
+	// List derives the next file offset without a phase-specific byte cursor.
+	List *list.List
+}
+
+// File_Chunk_History_Invariants bounds the accepted write prefix.
+func File_Chunk_History_Invariants(
+	chunks File_Chunk_History, _ invariant.Namespace,
+) {
+	invariant.Always(chunks.List != nil, "A file write has a history list.")
+	file_chunks_validate(chunks.List)
+}
+
+// File_chunks_validate keeps traversal out of the invariant bundle control flow.
+func file_chunks_validate(elements *list.List) {
+	invariant.Always(elements != nil, "A chunk validator has a list.")
+	size := 0
+	for element := elements.Front(); element != nil; element = element.Next() {
+		content, valid := element.Value.([]byte)
+		invariant.Always(valid, "A setup file chunk contains bytes.")
+		invariant.Always(len(content) != 0, "A retained setup file chunk is not empty.")
+		invariant.Always(
+			len(content) <= shared_bytes.SLICE_SIZE_MAXIMUM,
+			"A setup file chunk fits the shared slice limit.",
+		)
+		invariant.Always(
+			size <= COPY_BYTES_MAX-len(content),
+			"Setup file chunks cannot overflow their complete size.",
+		)
+		size += len(content)
+	}
+}
+
+// File_chunks_size returns the validated size through a consumer to keep it call-local.
+func file_chunks_size(chunks File_Chunks, consume func(size int)) {
+	File_Chunks_Invariants(chunks, "file_chunks_size.chunks")
+	file_chunk_list_size(chunks.List, consume)
+}
+
+// File_chunk_list_size measures validated storage owned by a larger operation bundle.
+func file_chunk_list_size(elements *list.List, consume func(size int)) {
+	file_chunks_validate(elements)
+	invariant.Always(consume != nil, "A setup file size consumer is present.")
+	size := 0
+	for element := elements.Front(); element != nil; element = element.Next() {
+		size += len(element.Value.([]byte))
+	}
+	consume(size)
+}
+
+// File_chunks_dotfile materializes only the smaller configuration-file domain.
+func file_chunks_dotfile(chunks File_Chunks) (contents Dotfile_Bytes) {
+	defer func() {
+		Dotfile_Bytes_Invariants(contents, "file_chunks_dotfile.contents")
+	}()
+	File_Chunks_Invariants(chunks, "file_chunks_dotfile.chunks")
+	size := 0
+	file_chunks_size(chunks, func(measured int) { size = measured })
+	invariant.Always(
+		size <= DOTFILE_PAYLOAD_BYTES_MAX,
+		"Configuration file chunks fit the dotfile limit.",
+	)
+	contents = make(Dotfile_Bytes, size)
+	offset := 0
+	for element := chunks.List.Front(); element != nil; element = element.Next() {
+		offset += copy(contents[offset:], element.Value.([]byte))
+	}
+	return contents
+}
+
+// Dotfile_chunks exposes a planned write through the same bounded write path as a font.
+func dotfile_chunks(contents Dotfile_Bytes) (chunks File_Chunks) {
+	defer func() { File_Chunks_Invariants(chunks, "dotfile_chunks.chunks") }()
+	Dotfile_Bytes_Invariants(contents, "dotfile_chunks.contents")
+	chunks.List = list.New()
+	for offset := 0; offset < len(contents); {
+		end := offset + shared_bytes.SLICE_SIZE_MAXIMUM
+		if end > len(contents) {
+			end = len(contents)
+		}
+		chunks.List.PushBack([]byte(contents[offset:end]))
+		offset = end
+	}
+	return chunks
+}
+
+// File_Read_Operation retains one buffer and descriptor until its completion retires.
+type File_Read_Operation struct {
+	// Runner records the next read or the consumer continuation.
+	Runner *Runner_State
+	// IO is the original shared operation surface.
+	IO sysio.IO
+	// File is the descriptor that remains open through the complete bounded read.
+	File sysio.File
+	// Limit selects the dotfile or font payload boundary.
+	Limit File_Size_Limit
+	// Subject names the payload class in completion diagnostics.
+	Subject File_Operation_Subject
+	// Contents retains all bytes from completed read submissions.
+	Contents *File_Chunks
+	// Continue gives the root the next read submission without a static call cycle.
+	Continue func()
+	// Duplicate retains a callback-contract failure until the operation's one close retires.
+	Duplicate func() (err error)
+	// Finish receives the complete payload after the descriptor closes.
+	Finish func(contents File_Chunks, found File_Presence, err error)
+}
+
+// File_Read_Operation_Invariants states the operation payload bound and required continuations.
+func File_Read_Operation_Invariants(
+	operation *File_Read_Operation, namespace invariant.Namespace,
+) {
+	File_Size_Limit_Invariants(operation.Limit, namespace)
+	File_Operation_Subject_Invariants(operation.Subject, namespace)
+	File_Chunks_Invariants(*operation.Contents, namespace)
+	Runner_State_Invariants(operation.Runner, namespace)
+	contents_size := 0
+	file_chunks_size(*operation.Contents, func(measured int) { contents_size = measured })
+	invariant.Always(
+		contents_size <= int(operation.Limit),
+		"A file read stays inside its selected file-class limit.",
+	)
+	invariant.Always(operation.Continue != nil, "A file read has a continuation.")
+	invariant.Always(operation.Finish != nil, "A file read has a consumer.")
+}
+
+// File_Write_Operation retains caller-owned bytes until every write completion retires.
+type File_Write_Operation struct {
+	// Runner records the next partial write or the close continuation.
+	Runner *Runner_State
+	// IO is the original shared operation surface.
+	IO sysio.IO
+	// File is the destination descriptor.
+	File sysio.File
+	// Subject names the payload class in completion diagnostics.
+	Subject File_Operation_Subject
+	// Contents remains unchanged while IO owns each submitted suffix.
+	Remainder *File_Chunk_Remainder
+	// Written preserves the file offset without a phase-specific integer field.
+	Written *File_Chunk_History
+	// Continue gives the root the next write submission without a static call cycle.
+	Continue func()
+	// Duplicate retains a callback-contract failure until the operation's one close retires.
+	Duplicate func() (err error)
+	// Finish receives the close or write error.
+	Finish func(err error)
+}
+
+// File_Write_Operation_Invariants states the bounded payload and required continuations.
+func File_Write_Operation_Invariants(
+	operation *File_Write_Operation, namespace invariant.Namespace,
+) {
+	File_Operation_Subject_Invariants(operation.Subject, namespace)
+	File_Chunk_Remainder_Invariants(*operation.Remainder, namespace)
+	File_Chunk_History_Invariants(*operation.Written, namespace)
+	Runner_State_Invariants(operation.Runner, namespace)
+	invariant.Always(operation.Continue != nil, "A file write has a continuation.")
+	invariant.Always(operation.Finish != nil, "A file write has a consumer.")
+	written_size := 0
+	file_chunk_list_size(
+		operation.Written.List, func(measured int) { written_size = measured })
+	remainder_size := 0
+	file_chunk_list_size(
+		operation.Remainder.List, func(measured int) { remainder_size = measured })
+	invariant.Always(
+		written_size <= COPY_BYTES_MAX-remainder_size,
+		"A file write stays inside the largest accepted file class.",
+	)
+}
+
+// Process_spawn_start submits one process and records its consumer for root rearm.
+func process_spawn_start(
+	state *Runner_State, system sysio.IO, request sysio.Process_Request,
+	continuation func(result sysio.Process_Result, err error),
+) {
+	Runner_State_Invariants(state, "process_spawn_start.state")
+	process_io_requirements(system, "process_spawn_start.system")
+	retired := false
+	completion := &sysio.Completion{}
+	operation := runner_operation_start(state)
+	system.Spawn(completion, func(
+		_ *sysio.Completion, result sysio.Process_Result, operation_err error,
+	) {
+		if retired {
+			runner_replace_queued(state, func() {
+				continuation(
+					sysio.Process_Result{Exit: 1},
+					errors.New("the process spawn retired more than once"),
+				)
+			})
+			return
+		}
+		retired = true
+		runner_complete_io(state, operation, func() {
+			continuation(result, operation_err)
+		})
+	}, request, PROCESS_DURATION_MAX)
+}
+
+// File_close_start submits one close and records its consumer for root rearm.
+func file_close_start(
+	state *Runner_State, system sysio.IO, file sysio.File,
+	continuation func(err error),
+) {
+	Runner_State_Invariants(state, "file_close_start.state")
+	retired := false
+	completion := &sysio.Completion{}
+	operation := runner_operation_start(state)
+	system.Close(completion, func(_ *sysio.Completion, operation_err error) {
+		if retired {
+			runner_replace_queued(state, func() {
+				continuation(errors.New("the file close retired more than once"))
+			})
+			return
+		}
+		retired = true
+		runner_complete_io(state, operation, func() {
+			continuation(operation_err)
+		})
+	}, file)
+}
+
+// File_read_start validates and opens one file before it queues the first bounded read.
+func file_read_start(
+	state *Runner_State, system sysio.IO, path File_Path, limit File_Size_Limit,
+	subject File_Operation_Subject,
+	continuation func(contents File_Chunks, found File_Presence, err error),
+) {
+	Runner_State_Invariants(state, "file_read_start.state")
+	File_Path_Invariants(path, "file_read_start.path")
+	File_Size_Limit_Invariants(limit, "file_read_start.limit")
+	File_Operation_Subject_Invariants(subject, "file_read_start.subject")
+	file_io_requirements(system, "file_read_start.system")
+	status, status_err := system.Status(string(path))
+	if status_err != nil {
+		continuation(File_Chunks{List: list.New()}, false, status_err)
+		return
+	}
+	if !status.Exists {
+		continuation(File_Chunks{List: list.New()}, false, nil)
+		return
+	}
+	if !status.Is_Regular {
+		continuation(
+			File_Chunks{List: list.New()}, true,
+			errors.New("the file is not regular"),
+		)
+		return
+	}
+	if status.Size < 0 {
+		continuation(
+			File_Chunks{List: list.New()}, true,
+			errors.New("the file size is negative"),
+		)
+		return
+	}
+	if status.Size > int64(limit) {
+		continuation(
+			File_Chunks{List: list.New()}, true,
+			errors.New("the file exceeds its size limit"),
+		)
+		return
+	}
+	file, open_err := system.Open(string(path))
+	if open_err != nil {
+		continuation(File_Chunks{List: list.New()}, true, open_err)
+		return
+	}
+	operation := &File_Read_Operation{
+		Runner: state, IO: system, File: file, Limit: limit,
+		Subject: subject, Contents: &File_Chunks{List: list.New()}, Finish: continuation,
+	}
+	operation.Continue = func() { file_read_rearm(operation) }
+	runner_queue(state, operation.Continue)
+}
+
+// File_read_rearm submits one bounded suffix while the descriptor remains open.
+func file_read_rearm(operation *File_Read_Operation) {
+	File_Read_Operation_Invariants(operation, "file_read_rearm.operation")
+	if operation.Duplicate != nil {
+		file_read_finish(operation, nil)
+		return
+	}
+	contents_size := 0
+	file_chunks_size(*operation.Contents, func(measured int) { contents_size = measured })
+	capacity := int(operation.Limit) - contents_size + 1
+	buffer_size := shared_bytes.SLICE_SIZE_MAXIMUM
+	if capacity < buffer_size {
+		buffer_size = capacity
+	}
+	buffer := make([]byte, buffer_size)
+	retired := false
+	completion := &sysio.Completion{}
+	submission := runner_operation_start(operation.Runner)
+	operation.IO.Read(
+		completion,
+		func(_ *sysio.Completion, count int, operation_err error) {
+			if retired {
+				operation.Duplicate = func() (err error) {
+					return file_read_duplicate_error(operation.Subject)
+				}
+				return
+			}
+			retired = true
+			runner_complete_io(operation.Runner, submission, func() {
+				if operation.Duplicate != nil {
+					file_read_finish(operation, nil)
+					return
+				}
+				if operation_err != nil {
+					file_read_finish(operation, operation_err)
+					return
+				}
+				if count < 0 {
+					count_err := file_read_negative_error(operation.Subject)
+					file_read_finish(operation, count_err)
+					return
+				}
+				if count > len(buffer) {
+					file_read_finish(
+						operation, file_read_count_error(operation.Subject))
+					return
+				}
+				if count == 0 {
+					file_read_finish(operation, nil)
+					return
+				}
+				operation.Contents.List.PushBack(buffer[:count])
+				completed_size := 0
+				file_chunks_size(*operation.Contents, func(measured int) {
+					completed_size = measured
+				})
+				if completed_size > int(operation.Limit) {
+					limit_err := errors.New("the file exceeds its size limit")
+					file_read_finish(operation, limit_err)
+					return
+				}
+				runner_queue(operation.Runner, operation.Continue)
+			})
+		},
+		operation.File, buffer, int64(contents_size),
+	)
+}
+
+// File_read_finish closes the descriptor before it gives the payload to its consumer.
+func file_read_finish(operation *File_Read_Operation, operation_err error) {
+	File_Read_Operation_Invariants(operation, "file_read_finish.operation")
+	file_close_start(operation.Runner, operation.IO, operation.File, func(close_err error) {
+		duplicate_err := error(nil)
+		if operation.Duplicate != nil {
+			duplicate_err = operation.Duplicate()
+		}
+		operation.Finish(
+			*operation.Contents, true,
+			errors.Join(operation_err, duplicate_err, close_err),
+		)
+	})
+}
+
+// File_write_start creates one destination before it queues the first partial write.
+func file_write_start(
+	state *Runner_State, system sysio.IO, path Destination_Path, contents File_Chunks,
+	subject File_Operation_Subject,
+	continuation func(err error),
+) {
+	Runner_State_Invariants(state, "file_write_start.state")
+	Destination_Path_Invariants(path, "file_write_start.path")
+	File_Chunks_Invariants(contents, "file_write_start.contents")
+	File_Operation_Subject_Invariants(subject, "file_write_start.subject")
+	file_io_requirements(system, "file_write_start.system")
+	if mkdir_err := system.Make_Directory(filepath.Dir(string(path))); mkdir_err != nil {
+		continuation(mkdir_err)
+		return
+	}
+	file, create_err := system.Create(string(path))
+	if create_err != nil {
+		continuation(create_err)
+		return
+	}
+	remainder := &File_Chunk_Remainder{List: list.New()}
+	for element := contents.List.Front(); element != nil; element = element.Next() {
+		remainder.List.PushBack(element.Value)
+	}
+	operation := &File_Write_Operation{
+		Runner: state, IO: system, File: file, Subject: subject,
+		Remainder: remainder,
+		Written:   &File_Chunk_History{List: list.New()},
+		Finish:    continuation,
+	}
+	operation.Continue = func() { file_write_rearm(operation) }
+	if contents.List.Len() == 0 {
+		file_close_start(state, system, file, continuation)
+		return
+	}
+	runner_queue(state, operation.Continue)
+}
+
+// File_write_rearm submits the unwritten suffix and retains it until callback retirement.
+func file_write_rearm(operation *File_Write_Operation) {
+	File_Write_Operation_Invariants(operation, "file_write_rearm.operation")
+	if operation.Duplicate != nil {
+		file_write_finish(operation, nil)
+		return
+	}
+	current := operation.Remainder.List.Front()
+	invariant.Always(current != nil, "A queued file write has a pending chunk.")
+	buffer := current.Value.([]byte)
+	offset := 0
+	file_chunk_list_size(
+		operation.Written.List, func(measured int) { offset = measured })
+	retired := false
+	completion := &sysio.Completion{}
+	submission := runner_operation_start(operation.Runner)
+	operation.IO.Write(
+		completion,
+		func(_ *sysio.Completion, count int, operation_err error) {
+			if retired {
+				operation.Duplicate = func() (err error) {
+					return file_write_duplicate_error(operation.Subject)
+				}
+				return
+			}
+			retired = true
+			runner_complete_io(operation.Runner, submission, func() {
+				if operation.Duplicate != nil {
+					file_write_finish(operation, nil)
+					return
+				}
+				if operation_err != nil {
+					file_write_finish(operation, operation_err)
+					return
+				}
+				if count <= 0 {
+					progress_err := file_write_progress_error(operation.Subject)
+					file_write_finish(operation, progress_err)
+					return
+				}
+				if count > len(buffer) {
+					count_err := file_write_count_error(operation.Subject)
+					file_write_finish(operation, count_err)
+					return
+				}
+				operation.Written.List.PushBack(buffer[:count])
+				if count == len(buffer) {
+					operation.Remainder.List.Remove(current)
+				} else {
+					current.Value = buffer[count:]
+				}
+				if operation.Remainder.List.Len() == 0 {
+					file_write_finish(operation, nil)
+					return
+				}
+				runner_queue(operation.Runner, operation.Continue)
+			})
+		},
+		operation.File, buffer, int64(offset),
+	)
+}
+
+// File_write_finish closes the destination before it reports the combined result.
+func file_write_finish(operation *File_Write_Operation, operation_err error) {
+	File_Write_Operation_Invariants(operation, "file_write_finish.operation")
+	file_close_start(operation.Runner, operation.IO, operation.File, func(close_err error) {
+		duplicate_err := error(nil)
+		if operation.Duplicate != nil {
+			duplicate_err = operation.Duplicate()
+		}
+		operation.Finish(errors.Join(operation_err, duplicate_err, close_err))
+	})
+}
+
+// Copy_file_start reads one bounded font before it creates the destination.
+func copy_file_start(
+	state *Runner_State, system sysio.IO, input *File_Copy_Input,
+	continuation func(err error),
+) {
+	Runner_State_Invariants(state, "copy_file_start.state")
+	File_Copy_Input_Invariants(input, "copy_file_start.input")
+	file_read_start(
+		state, system, File_Path(input.Source), COPY_BYTES_MAX,
+		FILE_OPERATION_SUBJECT_FONT,
+		func(contents File_Chunks, found File_Presence, read_err error) {
+			if read_err != nil {
+				continuation(read_err)
+				return
+			}
+			if !found {
+				continuation(errors.New("copy source is absent"))
+				return
+			}
+			file_write_start(
+				state, system, Destination_Path(input.Destination),
+				contents,
+				FILE_OPERATION_SUBJECT_FONT, continuation)
+		},
+	)
+}
+
+// Runner_replace_queued preserves a duplicate failure across separate loop passes.
+func runner_replace_queued(state *Runner_State, action func()) {
+	Runner_State_Invariants(state, "runner_replace_queued.state")
+	invariant.Always(action != nil, "A duplicate IO callback has a nonnil continuation.")
+	if state.Terminal != nil {
+		return
+	}
+	state.Action = action
+}
+
+// File_read_duplicate_error keeps the two payload-class diagnostics explicit.
+func file_read_duplicate_error(subject File_Operation_Subject) (err error) {
+	File_Operation_Subject_Invariants(subject, "file_read_duplicate_error.subject")
+	if subject == FILE_OPERATION_SUBJECT_FONT {
+		return errors.New("the font read retired more than once")
+	}
+	return errors.New("the file read retired more than once")
+}
+
+// File_read_negative_error keeps the two payload-class diagnostics explicit.
+func file_read_negative_error(subject File_Operation_Subject) (err error) {
+	File_Operation_Subject_Invariants(subject, "file_read_negative_error.subject")
+	if subject == FILE_OPERATION_SUBJECT_FONT {
+		return errors.New("the font read returned a negative byte count")
+	}
+	return errors.New("the file read returned a negative byte count")
+}
+
+// File_read_count_error keeps the two payload-class diagnostics explicit.
+func file_read_count_error(subject File_Operation_Subject) (err error) {
+	File_Operation_Subject_Invariants(subject, "file_read_count_error.subject")
+	if subject == FILE_OPERATION_SUBJECT_FONT {
+		return errors.New("the font read returned an invalid byte count")
+	}
+	return errors.New("the file read returned an invalid byte count")
+}
+
+// File_write_duplicate_error keeps the two payload-class diagnostics explicit.
+func file_write_duplicate_error(subject File_Operation_Subject) (err error) {
+	File_Operation_Subject_Invariants(subject, "file_write_duplicate_error.subject")
+	if subject == FILE_OPERATION_SUBJECT_FONT {
+		return errors.New("the font write retired more than once")
+	}
+	return errors.New("the file write retired more than once")
+}
+
+// File_write_progress_error keeps the two payload-class diagnostics explicit.
+func file_write_progress_error(subject File_Operation_Subject) (err error) {
+	File_Operation_Subject_Invariants(subject, "file_write_progress_error.subject")
+	if subject == FILE_OPERATION_SUBJECT_FONT {
+		return errors.New("the font write made no progress")
+	}
+	return errors.New("the file write made no progress")
+}
+
+// File_write_count_error keeps the two payload-class diagnostics explicit.
+func file_write_count_error(subject File_Operation_Subject) (err error) {
+	File_Operation_Subject_Invariants(subject, "file_write_count_error.subject")
+	if subject == FILE_OPERATION_SUBJECT_FONT {
+		return errors.New("the font write returned an invalid byte count")
+	}
+	return errors.New("the file write returned an invalid byte count")
+}
+
+// PROCESS_INVOCATION_COUNT_MINIMUM is the two-phase Neovim sequence.
+const PROCESS_INVOCATION_COUNT_MINIMUM = 2
+
+// PROCESS_SEQUENCE_INDEX_MINIMUM is the first invocation position.
+const PROCESS_SEQUENCE_INDEX_MINIMUM = 0
+
+// PROCESS_SEQUENCE_INDEX_MAXIMUM is the last macOS command position.
+const PROCESS_SEQUENCE_INDEX_MAXIMUM = MACOS_COMMAND_COUNT - 1
+
+// INSTALL_ALREADY_MESSAGE_BYTES_MINIMUM is the shortest converged-install diagnostic.
+const INSTALL_ALREADY_MESSAGE_BYTES_MINIMUM = 16
+
+// INSTALL_ALREADY_MESSAGE_BYTES_MAXIMUM is the longest converged-install diagnostic.
+const INSTALL_ALREADY_MESSAGE_BYTES_MAXIMUM = 24
+
+// INSTALL_BUILD_MESSAGE_BYTES_MINIMUM is the shortest required-build diagnostic.
+const INSTALL_BUILD_MESSAGE_BYTES_MINIMUM = 11
+
+// INSTALL_BUILD_MESSAGE_BYTES_MAXIMUM is the longest required-build diagnostic.
+const INSTALL_BUILD_MESSAGE_BYTES_MAXIMUM = 16
+
+// INSTALL_FAILURE_MESSAGE_BYTES_MINIMUM is the shortest failed-build diagnostic.
+const INSTALL_FAILURE_MESSAGE_BYTES_MINIMUM = 15
+
+// INSTALL_FAILURE_MESSAGE_BYTES_MAXIMUM is the longest failed-build diagnostic.
+const INSTALL_FAILURE_MESSAGE_BYTES_MAXIMUM = 20
+
+// Install_Already_Message is one fixed converged-install diagnostic.
+type Install_Already_Message string
+
+// Install_Already_Message_Invariants rejects an absent converged-install diagnostic.
+func Install_Already_Message_Invariants(
+	message Install_Already_Message, namespace invariant.Namespace,
+) {
+	invariant.Tree(message, namespace).
+		Range_Int(
+			len(message), INSTALL_ALREADY_MESSAGE_BYTES_MINIMUM,
+			INSTALL_ALREADY_MESSAGE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Install_Build_Message is one fixed required-build diagnostic.
+type Install_Build_Message string
+
+// Install_Build_Message_Invariants rejects an absent required-build diagnostic.
+func Install_Build_Message_Invariants(
+	message Install_Build_Message, namespace invariant.Namespace,
+) {
+	invariant.Tree(message, namespace).
+		Range_Int(
+			len(message), INSTALL_BUILD_MESSAGE_BYTES_MINIMUM,
+			INSTALL_BUILD_MESSAGE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Install_Failure_Message is one fixed failed-build diagnostic.
+type Install_Failure_Message string
+
+// Install_Failure_Message_Invariants rejects an absent failed-build diagnostic.
+func Install_Failure_Message_Invariants(
+	message Install_Failure_Message, namespace invariant.Namespace,
+) {
+	invariant.Tree(message, namespace).
+		Range_Int(
+			len(message), INSTALL_FAILURE_MESSAGE_BYTES_MINIMUM,
+			INSTALL_FAILURE_MESSAGE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Process_Sequence_Index selects one invocation from a bounded process list.
+type Process_Sequence_Index int
+
+// Process_Sequence_Index_Invariants bounds the largest retained process sequence.
+func Process_Sequence_Index_Invariants(
+	index Process_Sequence_Index, namespace invariant.Namespace,
+) {
+	invariant.Tree(index, namespace).
+		Range_Int(
+			int(index), PROCESS_SEQUENCE_INDEX_MINIMUM,
+			PROCESS_SEQUENCE_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Run_pipe_start captures one successful process output and records empty output on failure.
+func run_pipe_start(
+	state *Runner_State, system sysio.IO, path Probe_Path, arguments Probe_Arguments,
+	continuation func(output Command_Output),
+) {
+	Runner_State_Invariants(state, "run_pipe_start.state")
+	Probe_Path_Invariants(path, "run_pipe_start.path")
+	Probe_Arguments_Invariants(arguments, "run_pipe_start.arguments")
+	process_spawn_start(state, system, sysio.Process_Request{
+		Path: string(path), Arguments: []string(arguments),
+	}, func(result sysio.Process_Result, spawn_err error) {
+		if spawn_err != nil {
+			continuation("")
+			return
+		}
+		if result.Exit != 0 {
+			continuation("")
+			return
+		}
+		continuation(Command_Output(
+			shared_strings.Trim_Space(shared_strings.Text(result.Output))))
+	})
+}
+
+// Run_spawn_start streams one process through shared streams and reports its exit result.
+func run_spawn_start(
+	state *Runner_State, system sysio.IO, stdout sysio.Stream, stderr sysio.Stream,
+	arguments Spawn_Arguments, continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "run_spawn_start.state")
+	Spawn_Arguments_Invariants(arguments, "run_spawn_start.arguments")
+	request := sysio.Process_Request{Path: arguments[0], Arguments: arguments[1:]}
+	if stdout.Procedure != nil {
+		request.Stdout = Stream_Writer{Stream: stdout}
+	}
+	if stderr.Procedure != nil {
+		request.Stderr = Stream_Writer{Stream: stderr}
+	}
+	process_spawn_start(state, system, request, func(
+		result sysio.Process_Result, spawn_err error,
+	) {
+		if spawn_err != nil {
+			continuation(false)
+			return
+		}
+		continuation(result.Exit == 0)
+	})
+}
+
+// Installed_start probes one managed executable and reports whether its version matches.
+func installed_start(
+	state *Runner_State, input *Installed_Input,
+	continuation func(installed File_Presence),
+) {
+	Runner_State_Invariants(state, "installed_start.state")
+	Installed_Input_Invariants(input, "installed_start.input")
+	run_pipe_start(
+		state, input.IO, Probe_Path(input.Executable), Probe_Arguments{"--version"},
+		func(version Command_Output) {
+			continuation(File_Presence(shared_strings.Has_Prefix(
+				shared_strings.Text(version), shared_strings.Text(input.Version))))
+		},
+	)
+}
+
+// Command_on_path_start resolves one command without introducing another process seam.
+func command_on_path_start(
+	state *Runner_State, system sysio.IO, name Command_Name,
+	continuation func(present File_Presence),
+) {
+	Runner_State_Invariants(state, "command_on_path_start.state")
+	Command_Name_Invariants(name, "command_on_path_start.name")
+	run_pipe_start(state, system, "which", Probe_Arguments{string(name)}, func(
+		output Command_Output,
+	) {
+		continuation(output != "")
+	})
+}
+
+// Versioned_install_start runs one version gate and one build when the gate fails.
+func versioned_install_start(
+	state *Runner_State, input *Versioned_Install_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "versioned_install_start.state")
+	Versioned_Install_Input_Invariants(input, "versioned_install_start.input")
+	installed_start(state, &Installed_Input{
+		IO: input.IO, Executable: Managed_Executable(input.Executable),
+		Version: input.Version,
+	}, func(installed File_Presence) {
+		if installed {
+			jlog.Logger_Info(input.Logger, string(input.Already_Message))
+			continuation(true)
+			return
+		}
+		jlog.Logger_Info(input.Logger, string(input.Build_Message))
+		run_spawn_start(
+			state, input.IO, input.Stdout, input.Stderr,
+			Spawn_Arguments(input.Invocation),
+			func(succeeded Step_Success) {
+				if !succeeded {
+					jlog.Logger_Error(
+						input.Logger, string(input.Failure_Message))
+				}
+				continuation(succeeded)
+			},
+		)
+	})
+}
+
+// Versioned_Install_Input contains one common version gate and build operation.
+type Versioned_Install_Input struct {
+	// IO submits the probe and build process.
+	IO sysio.IO
+	// Executable is the exact managed binary that the gate probes.
+	Executable Versioned_Executable
+	// Version is the required output prefix.
+	Version Version_Prefix
+	// Invocation is the build or install process.
+	Invocation Build_Invocation
+	// Logger records the selected branch and a process failure.
+	Logger jlog.Logger
+	// Stdout receives live process output.
+	Stdout sysio.Stream
+	// Stderr receives live process diagnostics.
+	Stderr sysio.Stream
+	// Already_Message describes a matching managed executable.
+	Already_Message Install_Already_Message
+	// Build_Message describes the required build.
+	Build_Message Install_Build_Message
+	// Failure_Message describes a failed build.
+	Failure_Message Install_Failure_Message
+}
+
+// Versioned_Install_Input_Invariants states the shared version gate facts.
+func Versioned_Install_Input_Invariants(
+	input *Versioned_Install_Input, namespace invariant.Namespace,
+) {
+	process_io_requirements(input.IO, namespace)
+	Versioned_Executable_Invariants(input.Executable, namespace)
+	Version_Prefix_Invariants(input.Version, namespace)
+	Build_Invocation_Invariants(input.Invocation, namespace)
+	Install_Already_Message_Invariants(input.Already_Message, namespace)
+	Install_Build_Message_Invariants(input.Build_Message, namespace)
+	Install_Failure_Message_Invariants(input.Failure_Message, namespace)
+}
+
+// Process_Invocations is one bounded sequence of general setup processes.
+type Process_Invocations [][]string
+
+// Process_Invocations_Invariants bounds a sequence from one build to all macOS commands.
+func Process_Invocations_Invariants(
+	invocations Process_Invocations, namespace invariant.Namespace,
+) {
+	invariant.Tree(invocations, namespace).
+		Range_Int(
+			len(invocations), PROCESS_INVOCATION_COUNT_MINIMUM,
+			MACOS_COMMAND_COUNT).
+		Ensure()
+}
+
+// Process_Sequence retains one fixed process list while callbacks advance its index.
+type Process_Sequence struct {
+	// Runner records each next process submission.
+	Runner *Runner_State
+	// IO is the original shared operation surface.
+	IO sysio.IO
+	// Invocations contains the fixed process order.
+	Invocations Process_Invocations
+	// Index selects the next invocation.
+	Index Process_Sequence_Index
+	// Stdout receives live process output.
+	Stdout sysio.Stream
+	// Stderr receives live process diagnostics.
+	Stderr sysio.Stream
+	// Before records process-specific progress before submission.
+	Before func(index int)
+	// Continue gives the root the next process without a static call cycle.
+	Continue func()
+	// Finish receives the first failure or the complete success result.
+	Finish func(succeeded Step_Success)
+}
+
+// Process_Sequence_Invariants states its fixed process list and required continuations.
+func Process_Sequence_Invariants(sequence *Process_Sequence, namespace invariant.Namespace) {
+	Process_Invocations_Invariants(sequence.Invocations, namespace)
+	Runner_State_Invariants(sequence.Runner, namespace)
+	Process_Sequence_Index_Invariants(sequence.Index, namespace)
+	invariant.Always(sequence.Continue != nil, "A process sequence has a continuation.")
+	invariant.Always(sequence.Finish != nil, "A process sequence has a consumer.")
+	invariant.Always(sequence.Index >= 0, "A process sequence index is not negative.")
+	invariant.Always(
+		int(sequence.Index) <= len(sequence.Invocations),
+		"A process sequence index stays inside its invocation list.",
+	)
+}
+
+// Process_sequence_start records a bounded list for sequential process submission.
+func process_sequence_start(
+	state *Runner_State, system sysio.IO, stdout sysio.Stream, stderr sysio.Stream,
+	invocations Process_Invocations, before func(index int),
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "process_sequence_start.state")
+	Process_Invocations_Invariants(invocations, "process_sequence_start.invocations")
+	if len(invocations) == 0 {
+		continuation(true)
+		return
+	}
+	sequence := &Process_Sequence{
+		Runner: state, IO: system, Invocations: invocations,
+		Stdout: stdout, Stderr: stderr, Before: before, Finish: continuation,
+	}
+	sequence.Continue = func() { process_sequence_rearm(sequence) }
+	runner_queue(state, sequence.Continue)
+}
+
+// Process_sequence_rearm submits one invocation and records the next index after success.
+func process_sequence_rearm(sequence *Process_Sequence) {
+	Process_Sequence_Invariants(sequence, "process_sequence_rearm.sequence")
+	if sequence.Before != nil {
+		sequence.Before(int(sequence.Index))
+	}
+	invocation := sequence.Invocations[int(sequence.Index)]
+	request := sysio.Process_Request{Path: invocation[0], Arguments: invocation[1:]}
+	if sequence.Stdout.Procedure != nil {
+		request.Stdout = Stream_Writer{Stream: sequence.Stdout}
+	}
+	if sequence.Stderr.Procedure != nil {
+		request.Stderr = Stream_Writer{Stream: sequence.Stderr}
+	}
+	process_spawn_start(
+		sequence.Runner, sequence.IO, request,
+		func(result sysio.Process_Result, process_err error) {
+			succeeded := Step_Success(false)
+			if process_err == nil {
+				succeeded = result.Exit == 0
+			}
+			if !succeeded {
+				sequence.Finish(false)
+				return
+			}
+			sequence.Index++
+			if int(sequence.Index) == len(sequence.Invocations) {
+				sequence.Finish(true)
+				return
+			}
+			runner_queue(sequence.Runner, sequence.Continue)
+		},
+	)
+}
+
+// Install_direnv_start runs the vendored direnv gate and build.
+func install_direnv_start(
+	state *Runner_State, input *Install_Direnv_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_direnv_start.state")
+	Install_Direnv_Input_Invariants(input, "install_direnv_start.input")
+	if input.Direnv_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Binary_Directory == "" {
+		continuation(true)
+		return
+	}
+	destination := filepath.Join(string(input.Binary_Directory), "direnv")
+	build := "cd " + string(input.Direnv_Directory) +
+		" && CGO_ENABLED=0 go build -mod=vendor -o " + destination + " ."
+	versioned_install_start(state, &Versioned_Install_Input{
+		IO:         input.IO,
+		Executable: Versioned_Executable(destination),
+		Version:    DIRENV_VERSION,
+		Invocation: Build_Invocation{"sh", "-c", build}, Logger: input.Logger,
+		Stdout: input.Stdout, Stderr: input.Stderr,
+		Already_Message: "direnv already installed", Build_Message: "building direnv",
+		Failure_Message: "direnv build failed",
+	}, continuation)
+}
+
+// Install_fzf_start runs the vendored fzf gate and build.
+func install_fzf_start(
+	state *Runner_State, input *Install_Fzf_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_fzf_start.state")
+	Install_Fzf_Input_Invariants(input, "install_fzf_start.input")
+	if input.Fzf_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Binary_Directory == "" {
+		continuation(true)
+		return
+	}
+	destination := filepath.Join(string(input.Binary_Directory), "fzf")
+	build := "cd " + string(input.Fzf_Directory) +
+		" && go build -mod=vendor" +
+		" -ldflags '-s -w -X main.version=" + FZF_VERSION + " -X main.revision='" +
+		" -o " + destination + " ."
+	versioned_install_start(state, &Versioned_Install_Input{
+		IO:         input.IO,
+		Executable: Versioned_Executable(destination),
+		Version:    FZF_VERSION,
+		Invocation: Build_Invocation{"sh", "-c", build}, Logger: input.Logger,
+		Stdout: input.Stdout, Stderr: input.Stderr,
+		Already_Message: "fzf already installed", Build_Message: "building fzf",
+		Failure_Message: "fzf build failed",
+	}, continuation)
+}
+
+// Install_jj_start runs the vendored jj gate and build.
+func install_jj_start(
+	state *Runner_State, input *Install_Jj_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_jj_start.state")
+	Install_Jj_Input_Invariants(input, "install_jj_start.input")
+	if input.Jj_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Binary_Directory == "" {
+		continuation(true)
+		return
+	}
+	executable := Versioned_Executable(filepath.Join(
+		string(input.Binary_Directory), "jj"))
+	versioned_install_start(state, &Versioned_Install_Input{
+		IO:         input.IO,
+		Executable: executable,
+		Version:    JJ_VERSION, Invocation: Build_Invocation(jj_install_invocation(input)),
+		Logger: input.Logger, Stdout: input.Stdout, Stderr: input.Stderr,
+		Already_Message: "jj already built", Build_Message: "building jj",
+		Failure_Message: "jj build failed",
+	}, continuation)
+}
+
+// Install_ripgrep_start runs the vendored ripgrep gate and build.
+func install_ripgrep_start(
+	state *Runner_State, input *Install_Ripgrep_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_ripgrep_start.state")
+	Install_Ripgrep_Input_Invariants(input, "install_ripgrep_start.input")
+	if input.Ripgrep_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Binary_Directory == "" {
+		continuation(true)
+		return
+	}
+	executable := Versioned_Executable(filepath.Join(
+		string(input.Binary_Directory), "rg"))
+	versioned_install_start(state, &Versioned_Install_Input{
+		IO:         input.IO,
+		Executable: executable,
+		Version:    RIPGREP_VERSION,
+		Invocation: Build_Invocation(ripgrep_install_invocation(input)),
+		Logger:     input.Logger, Stdout: input.Stdout, Stderr: input.Stderr,
+		Already_Message: "ripgrep already built", Build_Message: "building ripgrep",
+		Failure_Message: "ripgrep build failed",
+	}, continuation)
+}
+
+// Install_fdcli_start runs the vendored fd gate and build.
+func install_fdcli_start(
+	state *Runner_State, input *Install_Fdcli_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_fdcli_start.state")
+	Install_Fdcli_Input_Invariants(input, "install_fdcli_start.input")
+	if input.Fdcli_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Binary_Directory == "" {
+		continuation(true)
+		return
+	}
+	executable := Versioned_Executable(filepath.Join(
+		string(input.Binary_Directory), "fd"))
+	versioned_install_start(state, &Versioned_Install_Input{
+		IO:         input.IO,
+		Executable: executable,
+		Version:    FDCLI_VERSION,
+		Invocation: Build_Invocation(fdcli_install_invocation(input)),
+		Logger:     input.Logger, Stdout: input.Stdout, Stderr: input.Stderr,
+		Already_Message: "fd already built", Build_Message: "building fd",
+		Failure_Message: "fd build failed",
+	}, continuation)
+}
+
+// Install_command_start runs one PATH gate and builds an absent repository command.
+func install_command_start(
+	state *Runner_State, input *Install_Command_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_command_start.state")
+	Install_Command_Input_Invariants(input, "install_command_start.input")
+	if input.Package_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Binary_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Binary_Name == "" {
+		continuation(true)
+		return
+	}
+	command_on_path_start(state, input.IO, input.Binary_Name, func(present File_Presence) {
+		if present {
+			jlog.Logger_Info(input.Logger, "command already installed",
+				jlog.String("command", string(input.Binary_Name)))
+			continuation(true)
+			return
+		}
+		jlog.Logger_Info(input.Logger, "building command",
+			jlog.String("command", string(input.Binary_Name)))
+		destination := filepath.Join(
+			string(input.Binary_Directory), string(input.Binary_Name))
+		build := "cd " + string(input.Package_Directory) +
+			" && go build -o " + destination + " ."
+		run_spawn_start(
+			state, input.IO, input.Stdout, input.Stderr,
+			Spawn_Arguments{"sh", "-c", build},
+			func(succeeded Step_Success) {
+				if !succeeded {
+					jlog.Logger_Error(input.Logger, "command build failed",
+						jlog.String("command", string(input.Binary_Name)))
+				}
+				continuation(succeeded)
+			},
+		)
+	})
+}
+
+// Install_neovim_start runs the repository path gate and both required make phases.
+func install_neovim_start(
+	state *Runner_State, input *Install_Neovim_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_neovim_start.state")
+	Install_Neovim_Input_Invariants(input, "install_neovim_start.input")
+	run_pipe_start(state, input.IO, "which", Probe_Arguments{"nvim"}, func(
+		executable Command_Output,
+	) {
+		if !shared_strings.Has_Prefix(
+			shared_strings.Text(executable),
+			shared_strings.Text(input.Repository_Directory)+"/",
+		) {
+			neovim_build_start(state, input, continuation)
+			return
+		}
+		run_pipe_start(
+			state, input.IO, Probe_Path(executable), Probe_Arguments{"--version"},
+			func(version Command_Output) {
+				if neovim_version_present(Version_Output(version)) {
+					jlog.Logger_Info(input.Logger, "neovim already installed",
+						jlog.String("version", NEOVIM_VERSION))
+					continuation(true)
+					return
+				}
+				neovim_build_start(state, input, continuation)
+			},
+		)
+	})
+}
+
+// Neovim_build_start submits the configure and install phases as one process sequence.
+func neovim_build_start(
+	state *Runner_State, input *Install_Neovim_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "neovim_build_start.state")
+	Install_Neovim_Input_Invariants(input, "neovim_build_start.input")
+	process_sequence_start(
+		state, input.IO, input.Stdout, input.Stderr,
+		Process_Invocations(neovim_make_invocations(input.Repository_Directory)),
+		func(index int) {
+			if index == 0 {
+				jlog.Logger_Info(input.Logger, "configuring neovim prefix")
+				return
+			}
+			jlog.Logger_Info(input.Logger, "installing neovim")
+		},
+		func(succeeded Step_Success) {
+			if !succeeded {
+				jlog.Logger_Error(input.Logger, "neovim build failed")
+			}
+			continuation(succeeded)
+		},
+	)
+}
+
+// Install_rust_start gates the toolchain install and refreshes its three links.
+func install_rust_start(
+	state *Runner_State, input *Install_Rust_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_rust_start.state")
+	Install_Rust_Input_Invariants(input, "install_rust_start.input")
+	if input.Cargo_Directory == "" {
+		continuation(true)
+		return
+	}
+	if input.Link_Directory == "" {
+		continuation(true)
+		return
+	}
+	cargo := Required_Cargo_Directory(input.Cargo_Directory)
+	links := &Rust_Link_Input{
+		IO: input.IO, Stdout: input.Stdout, Stderr: input.Stderr,
+		Cargo_Directory: cargo, Link_Directory: input.Link_Directory,
+	}
+	installed_start(state, &Installed_Input{
+		IO:         input.IO,
+		Executable: Managed_Executable(filepath.Join(string(cargo), "bin", "rustc")),
+		Version:    "rustc " + RUST_VERSION,
+	}, func(installed File_Presence) {
+		if installed {
+			jlog.Logger_Info(input.Logger, "rust already installed")
+			rust_links_start(state, links, input.Logger, continuation)
+			return
+		}
+		jlog.Logger_Info(input.Logger, "installing rust")
+		run_spawn_start(
+			state, input.IO, input.Stdout, input.Stderr,
+			Spawn_Arguments(rust_install_invocation()),
+			func(succeeded Step_Success) {
+				if !succeeded {
+					jlog.Logger_Error(input.Logger, "rust install failed")
+					continuation(false)
+					return
+				}
+				rust_links_start(state, links, input.Logger, continuation)
+			},
+		)
+	})
+}
+
+// Rust_links_start submits the three link commands in their fixed order.
+func rust_links_start(
+	state *Runner_State, input *Rust_Link_Input, logger jlog.Logger,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "rust_links_start.state")
+	Rust_Link_Input_Invariants(input, "rust_links_start.input")
+	invocations := Process_Invocations{}
+	for _, tool := range []string{"cargo", "rustup", "rustc"} {
+		source := filepath.Join(string(input.Cargo_Directory), "bin", tool)
+		target := filepath.Join(string(input.Link_Directory), tool)
+		invocations = append(invocations, []string{"ln", "-sf", source, target})
+	}
+	process_sequence_start(
+		state, input.IO, input.Stdout, input.Stderr, invocations, nil,
+		func(succeeded Step_Success) {
+			if !succeeded {
+				jlog.Logger_Error(logger, "rust link failed")
+			}
+			continuation(succeeded)
+		},
+	)
+}
+
+// Install_ghostty_start gates the signed app install and refreshes its CLI link.
+func install_ghostty_start(
+	state *Runner_State, input *Install_Ghostty_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_ghostty_start.state")
+	Install_Ghostty_Input_Invariants(input, "install_ghostty_start.input")
+	binary := Managed_Executable(filepath.Join(
+		string(input.Applications_Directory), GHOSTTY_APPLICATION_BINARY_SUBPATH))
+	installed_start(state, &Installed_Input{
+		IO: input.IO, Executable: binary, Version: GHOSTTY_VERSION,
+	}, func(version_present File_Presence) {
+		if !version_present {
+			ghostty_install_start(state, input, continuation)
+			return
+		}
+		application := Application_Path(filepath.Join(
+			string(input.Applications_Directory), "Ghostty.app"))
+		run_spawn_start(
+			state, input.IO, sysio.Stream{}, sysio.Stream{},
+			Spawn_Arguments(ghostty_codesign_invocation(application)),
+			func(signature_valid Step_Success) {
+				if !signature_valid {
+					ghostty_install_start(state, input, continuation)
+					return
+				}
+				jlog.Logger_Info(input.Logger, "ghostty already installed")
+				ghostty_link_start(state, input, continuation)
+			},
+		)
+	})
+}
+
+// Ghostty_install_start runs the install script before it records the link continuation.
+func ghostty_install_start(
+	state *Runner_State, input *Install_Ghostty_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "ghostty_install_start.state")
+	Install_Ghostty_Input_Invariants(input, "ghostty_install_start.input")
+	jlog.Logger_Info(input.Logger, "installing ghostty")
+	run_spawn_start(
+		state, input.IO, input.Stdout, input.Stderr,
+		Spawn_Arguments(ghostty_install_invocation(input.Applications_Directory)),
+		func(succeeded Step_Success) {
+			if !succeeded {
+				jlog.Logger_Error(input.Logger, "ghostty install failed")
+				continuation(false)
+				return
+			}
+			ghostty_link_start(state, input, continuation)
+		},
+	)
+}
+
+// Ghostty_link_start refreshes the one managed CLI link after either gate branch.
+func ghostty_link_start(
+	state *Runner_State, input *Install_Ghostty_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "ghostty_link_start.state")
+	Install_Ghostty_Input_Invariants(input, "ghostty_link_start.input")
+	source := filepath.Join(
+		string(input.Applications_Directory), GHOSTTY_APPLICATION_BINARY_SUBPATH)
+	target := filepath.Join(string(input.Link_Directory), "ghostty")
+	run_spawn_start(
+		state, input.IO, input.Stdout, input.Stderr,
+		Spawn_Arguments{"ln", "-sf", source, target},
+		func(succeeded Step_Success) {
+			if !succeeded {
+				jlog.Logger_Error(input.Logger, "ghostty link failed")
+			}
+			continuation(succeeded)
+		},
+	)
+}
+
+// Plan_Operation retains the bounded traversal between shared IO completions.
+type Plan_Operation struct {
+	// Runner records the next directory or file transition.
+	Runner *Runner_State
+	// Input contains the original shared IO and mirror roots.
+	Input *Plan_Input
+	// Directories contains each discovered directory that the traversal has not read.
+	Directories *list.List
+	// Directory is the level whose entries the current process result classifies.
+	Directory *list.Element
+	// Entries contains the current bounded directory level.
+	Entries *list.List
+	// Paths contains the relative path for each current entry.
+	Paths *list.List
+	// Ignored records the current Git classification.
+	Ignored func(path string) (ignored bool)
+	// Entry selects the next current-level entry.
+	Entry *list.Element
+	// Path selects the relative path for Entry.
+	Path *list.Element
+	// Discovered bounds all directories, including those already processed.
+	Discovered *list.List
+	// Writes contains the bounded result in traversal order.
+	Writes *list.List
+	// Directory_Step breaks the static recursion that a traversal phase enum would conceal.
+	Directory_Step func()
+	// Entry_Step breaks the static recursion that a traversal phase enum would conceal.
+	Entry_Step func()
+	// Next selects the operation that Continue submits.
+	Next func()
+	// Continue gives the root the next transition without a static call cycle.
+	Continue func()
+	// Finish receives the complete plan or the first error.
+	Finish func(writes Writes, err error)
+}
+
+// Plan_Operation_Invariants states the source facts and bounded result.
+func Plan_Operation_Invariants(operation *Plan_Operation, namespace invariant.Namespace) {
+	Plan_Input_Invariants(operation.Input, namespace)
+	Runner_State_Invariants(operation.Runner, namespace)
+	invariant.Always(operation.Directories != nil, "A plan has a directory queue.")
+	invariant.Always(operation.Entries != nil, "A plan has a directory level.")
+	invariant.Always(operation.Paths != nil, "A plan has relative paths.")
+	invariant.Always(operation.Discovered != nil, "A plan counts discovered directories.")
+	invariant.Always(operation.Writes != nil, "A plan has a write list.")
+	invariant.Always(operation.Ignored != nil, "A plan can classify an ignored path.")
+	invariant.Always(operation.Directory_Step != nil, "A plan can read its next directory.")
+	invariant.Always(operation.Entry_Step != nil, "A plan can inspect its next entry.")
+	invariant.Always(operation.Next != nil, "A plan has a selected operation.")
+	invariant.Always(operation.Continue != nil, "A plan operation has a continuation.")
+	invariant.Always(operation.Finish != nil, "A plan operation has a consumer.")
+}
+
+// Plan_start records the traversal root before the root submits asynchronous work.
+func plan_start(
+	state *Runner_State, input *Plan_Input,
+	continuation func(writes Writes, err error),
+) {
+	Runner_State_Invariants(state, "plan_start.state")
+	Plan_Input_Invariants(input, "plan_start.input")
+	operation := &Plan_Operation{
+		Runner: state, Input: input, Directories: list.New(), Entries: list.New(),
+		Paths: list.New(), Discovered: list.New(), Writes: list.New(),
+		Ignored: func(_ string) (ignored bool) { return false }, Finish: continuation,
+	}
+	operation.Directories.PushBack(Traversal_Directory("."))
+	operation.Discovered.PushBack(struct{}{})
+	operation.Directory_Step = func() { plan_directory_rearm(operation) }
+	operation.Entry_Step = func() { plan_entry_rearm(operation) }
+	operation.Next = operation.Directory_Step
+	operation.Continue = func() { plan_rearm(operation) }
+	runner_queue(state, operation.Continue)
+}
+
+// Plan_rearm submits the operation selected by the retained traversal phase.
+func plan_rearm(operation *Plan_Operation) {
+	Plan_Operation_Invariants(operation, "plan_rearm.operation")
+	operation.Next()
+}
+
+// Plan_directory_rearm reads one level and submits one batched ignore probe.
+func plan_directory_rearm(operation *Plan_Operation) {
+	Plan_Operation_Invariants(operation, "plan_directory_rearm.operation")
+	operation.Directory = operation.Directories.Front()
+	invariant.Always(operation.Directory != nil, "A queued plan directory is present.")
+	operation.Directories.Remove(operation.Directory)
+	directory := operation.Directory.Value.(Traversal_Directory)
+	Traversal_Directory_Invariants(directory, "plan_directory_rearm.directory")
+	plan_narrate(operation.Input.Logger, directory)
+	entries, read_err := operation.Input.IO.Read_Directory(filepath.Join(
+		string(operation.Input.Source_Directory), string(directory)))
+	if read_err != nil {
+		operation.Finish(Writes{}, read_err)
+		return
+	}
+	if len(entries) > PLAN_ENTRY_COUNT_MAX {
+		entry_err := errors.New("mirror traversal entries exceed their limit")
+		operation.Finish(Writes{}, entry_err)
+		return
+	}
+	operation.Entries.Init()
+	operation.Paths.Init()
+	for _, child := range entries {
+		relative := filepath.Join(string(directory), child.Name)
+		if len(relative) > RELATIVE_FILE_PATH_BYTES_MAX {
+			operation.Finish(
+				Writes{}, errors.New("mirror relative path exceeds its limit"))
+			return
+		}
+		operation.Entries.PushBack(child)
+		operation.Paths.PushBack(relative)
+	}
+	if len(entries) == 0 {
+		operation.Ignored = func(_ string) (ignored bool) { return false }
+		operation.Entry = nil
+		operation.Path = nil
+		operation.Next = operation.Entry_Step
+		runner_queue(operation.Runner, operation.Continue)
+		return
+	}
+	request := plan_ignore_request(operation)
+	process_spawn_start(operation.Runner, operation.Input.IO, request, func(
+		result sysio.Process_Result, spawn_err error,
+	) {
+		if spawn_err != nil {
+			operation.Finish(Writes{}, spawn_err)
+			return
+		}
+		if result.Exit != 0 {
+			operation.Finish(Writes{}, errors.New(
+				"the gitignore probe exited with a nonzero status"))
+			return
+		}
+		response := plan_ignore_result(operation, result)
+		operation.Ignored = response.Contains
+		operation.Entry = operation.Entries.Front()
+		operation.Path = operation.Paths.Front()
+		operation.Next = operation.Entry_Step
+		runner_queue(operation.Runner, operation.Continue)
+	})
+}
+
+// Plan_ignore_targets keeps path construction identical for the request and its validator.
+func plan_ignore_targets(
+	operation *Plan_Operation, yield func(target string) (next bool),
+) {
+	Plan_Operation_Invariants(operation, "plan_ignore_targets.operation")
+	invariant.Always(yield != nil, "A plan ignore target callback is present.")
+	for element := operation.Paths.Front(); element != nil; element = element.Next() {
+		relative := element.Value.(string)
+		target := filepath.Join(string(operation.Input.Source_Directory), relative)
+		if !yield(target) {
+			return
+		}
+	}
+}
+
+// Plan_ignore_result validates that each ignored path came from the submitted request.
+func plan_ignore_result(
+	operation *Plan_Operation, result sysio.Process_Result,
+) (response *Check_Ignore_Result) {
+	defer func() {
+		Check_Ignore_Result_Invariants(response, "plan_ignore_result.response")
+	}()
+	Plan_Operation_Invariants(operation, "plan_ignore_result.operation")
+	response = &Check_Ignore_Result{}
+	response.Process = result
+	response.Target = func(path string) (present bool) {
+		plan_ignore_targets(operation, func(target string) (next bool) {
+			present = target == path
+			return !present
+		})
+		return present
+	}
+	check_ignore_matches(response)
+	return response
+}
+
+// Plan_ignore_request builds one process request and its accepted output set.
+func plan_ignore_request(operation *Plan_Operation) (request sysio.Process_Request) {
+	Plan_Operation_Invariants(operation, "plan_ignore_request.operation")
+	check := Check_Ignore_Request{
+		Targets: func(yield func(target string) (next bool)) {
+			plan_ignore_targets(operation, yield)
+		},
+	}
+	check_ignore_input(&check)
+	return sysio.Process_Request{
+		Path: "git",
+		Arguments: []string{
+			"-C", string(operation.Input.Source_Directory), "check-ignore", "--stdin",
+		},
+		Input: check.Process.Input,
+	}
+}
+
+// Plan_entry_rearm advances entries until one regular file needs asynchronous reads.
+func plan_entry_rearm(operation *Plan_Operation) {
+	Plan_Operation_Invariants(operation, "plan_entry_rearm.operation")
+	advance := func() {
+		operation.Entry = operation.Entry.Next()
+		operation.Path = operation.Path.Next()
+	}
+	for operation.Entry != nil {
+		child := operation.Entry.Value.(sysio.Directory_Entry)
+		relative := Relative_File_Path(operation.Path.Value.(string))
+		target := filepath.Join(
+			string(operation.Input.Source_Directory), string(relative))
+		if operation.Ignored(target) {
+			advance()
+			continue
+		}
+		if child.Is_Directory {
+			if operation.Discovered.Len() == TRAVERSAL_DIRECTORY_COUNT_MAX {
+				directory_err := errors.New(
+					"mirror directory count exceeds its limit")
+				operation.Finish(Writes{}, directory_err)
+				return
+			}
+			operation.Directories.PushBack(Traversal_Directory(relative))
+			operation.Discovered.PushBack(struct{}{})
+			advance()
+			continue
+		}
+		plan_file_start(operation, relative)
+		return
+	}
+	if operation.Directories.Len() != 0 {
+		operation.Entries.Init()
+		operation.Paths.Init()
+		operation.Entry = nil
+		operation.Path = nil
+		operation.Next = operation.Directory_Step
+		runner_queue(operation.Runner, operation.Continue)
+		return
+	}
+	writes := Writes{}
+	for element := operation.Writes.Front(); element != nil; element = element.Next() {
+		writes.List.PushBack(element.Value)
+	}
+	operation.Finish(writes, nil)
+}
+
+// Plan_file_start reads one source and its destination before it records a required write.
+func plan_file_start(operation *Plan_Operation, relative Relative_File_Path) {
+	Plan_Operation_Invariants(operation, "plan_file_start.operation")
+	Relative_File_Path_Invariants(relative, "plan_file_start.relative")
+	destination := Destination_Path(filepath.Join(
+		string(operation.Input.Destination_Directory), string(relative)))
+	if len(destination) > DESTINATION_PATH_BYTES_MAX {
+		operation.Finish(Writes{}, errors.New("mirror destination path exceeds its limit"))
+		return
+	}
+	source := File_Path(filepath.Join(
+		string(operation.Input.Source_Directory), string(relative)))
+	file_read_start(
+		operation.Runner, operation.Input.IO, source, DOTFILE_PAYLOAD_BYTES_MAX,
+		FILE_OPERATION_SUBJECT_DOTFILE,
+		func(contents File_Chunks, found File_Presence, read_err error) {
+			if read_err != nil {
+				operation.Finish(Writes{}, read_err)
+				return
+			}
+			if !found {
+				plan_file_complete(operation)
+				return
+			}
+			plan_destination_start(
+				operation, destination, file_chunks_dotfile(contents))
+		},
+	)
+}
+
+// Plan_destination_start treats an unreadable destination as a required write.
+func plan_destination_start(
+	operation *Plan_Operation, destination Destination_Path, source Dotfile_Bytes,
+) {
+	Plan_Operation_Invariants(operation, "plan_destination_start.operation")
+	Destination_Path_Invariants(destination, "plan_destination_start.destination")
+	Dotfile_Bytes_Invariants(source, "plan_destination_start.source")
+	file_read_start(
+		operation.Runner, operation.Input.IO, File_Path(destination),
+		DOTFILE_PAYLOAD_BYTES_MAX, FILE_OPERATION_SUBJECT_DOTFILE,
+		func(contents File_Chunks, found File_Presence, read_err error) {
+			matches := false
+			if read_err == nil {
+				if found {
+					matches = bool(dotfile_contents_equal(
+						source, file_chunks_dotfile(contents)))
+				}
+			}
+			if !matches {
+				if operation.Writes.Len() == WRITE_COUNT_MAX {
+					write_err := errors.New(
+						"mirror write plan exceeds its limit")
+					operation.Finish(Writes{}, write_err)
+					return
+				}
+				write := File_Write{
+					Destination_Path: destination,
+					Contents:         Dotfile_Bytes(source),
+				}
+				File_Write_Invariants(write, "plan_destination_start.write")
+				operation.Writes.PushBack(write)
+			}
+			plan_file_complete(operation)
+		},
+	)
+}
+
+// Plan_file_complete records the next entry only after both file reads retire.
+func plan_file_complete(operation *Plan_Operation) {
+	Plan_Operation_Invariants(operation, "plan_file_complete.operation")
+	operation.Entry = operation.Entry.Next()
+	operation.Path = operation.Path.Next()
+	runner_queue(operation.Runner, operation.Continue)
+}
+
+// Mirror_Operation retains the write cursor after its asynchronous plan completes.
+type Mirror_Operation struct {
+	// Runner records each write or macOS process continuation.
+	Runner *Runner_State
+	// Input contains the original mirror dependencies.
+	Input *Mirror_Input
+	// Write is the next list element that the runner must apply.
+	Write *list.Element
+	// Continue gives the root the next write without a static call cycle.
+	Continue func()
+	// Finish receives the terminal mirror result.
+	Finish func(succeeded Step_Success)
+}
+
+// Mirror_Operation_Invariants states the mirror facts and bounded plan.
+func Mirror_Operation_Invariants(operation *Mirror_Operation, namespace invariant.Namespace) {
+	Mirror_Input_Invariants(operation.Input, namespace)
+	Runner_State_Invariants(operation.Runner, namespace)
+	invariant.Always(operation.Continue != nil, "A mirror operation has a continuation.")
+	invariant.Always(operation.Finish != nil, "A mirror operation has a consumer.")
+}
+
+// Mirror_start plans the complete sync before it queues any destination write.
+func mirror_start(
+	state *Runner_State, input *Mirror_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "mirror_start.state")
+	Mirror_Input_Invariants(input, "mirror_start.input")
+	plan_start(state, &Plan_Input{
+		IO: input.IO, Source_Directory: input.Source_Directory,
+		Destination_Directory: input.Destination_Directory, Logger: input.Logger,
+	}, func(writes Writes, plan_err error) {
+		if plan_err != nil {
+			jlog.Logger_Error(input.Logger, "plan failed", jlog.Err(plan_err))
+			continuation(false)
+			return
+		}
+		operation := &Mirror_Operation{
+			Runner: state,
+			Input:  input,
+			Write:  writes.List.Front(),
+			Finish: continuation,
+		}
+		operation.Continue = func() { mirror_write_rearm(operation) }
+		if operation.Write == nil {
+			jlog.Logger_Info(input.Logger, "dotfiles up to date")
+			mirror_defaults_start(operation)
+			return
+		}
+		runner_queue(state, operation.Continue)
+	})
+}
+
+// Mirror_write_rearm applies one planned file and records the next list element.
+func mirror_write_rearm(operation *Mirror_Operation) {
+	Mirror_Operation_Invariants(operation, "mirror_write_rearm.operation")
+	write := operation.Write.Value.(File_Write)
+	file_write_start(
+		operation.Runner, operation.Input.IO, write.Destination_Path,
+		dotfile_chunks(write.Contents), FILE_OPERATION_SUBJECT_DOTFILE,
+		func(write_err error) {
+			if write_err != nil {
+				jlog.Logger_Error(
+					operation.Input.Logger, "write failed", jlog.Err(write_err))
+				operation.Finish(false)
+				return
+			}
+			jlog.Logger_Info(operation.Input.Logger, "wrote",
+				jlog.String("path", write.Destination_Path))
+			operation.Write = operation.Write.Next()
+			if operation.Write == nil {
+				mirror_defaults_start(operation)
+				return
+			}
+			runner_queue(operation.Runner, operation.Continue)
+		},
+	)
+}
+
+// Mirror_defaults_start runs the fixed macOS process sequence only on Darwin.
+func mirror_defaults_start(operation *Mirror_Operation) {
+	Mirror_Operation_Invariants(operation, "mirror_defaults_start.operation")
+	if operation.Input.Operating_System != "darwin" {
+		operation.Finish(true)
+		return
+	}
+	invocations := Process_Invocations{}
+	for _, command := range macos_commands() {
+		invocations = append(invocations, append(
+			[]string{string(command.Name)}, []string(command.Arguments)...))
+	}
+	process_sequence_start(
+		operation.Runner, operation.Input.IO,
+		operation.Input.Stdout, operation.Input.Stderr, invocations, nil,
+		func(succeeded Step_Success) {
+			if !succeeded {
+				jlog.Logger_Error(operation.Input.Logger, "macos defaults failed")
+			}
+			operation.Finish(succeeded)
+		},
+	)
+}
+
+// FONT_INDEX_MINIMUM is the first managed face position.
+const FONT_INDEX_MINIMUM = 0
+
+// Font_Index selects one face from the fixed managed list.
+type Font_Index int
+
+// Font_Index_Invariants bounds the cursor through the terminal list position.
+func Font_Index_Invariants(index Font_Index, namespace invariant.Namespace) {
+	invariant.Tree(index, namespace).
+		Range_Int(int(index), FONT_INDEX_MINIMUM, IOSEVKA_FONT_COUNT).
+		Ensure()
+}
+
+// Font_Copied reports whether setup must refresh the platform font cache.
+type Font_Copied bool
+
+// Font_Copied_Invariants requires copied and converged runs across the seed sweep.
+func Font_Copied_Invariants(copied Font_Copied, namespace invariant.Namespace) {
+	invariant.Tree(copied, namespace).
+		Sometimes(bool(copied), "A font installation copied a face.").
+		Ensure()
+}
+
+// Font_Install_Operation retains the fixed face index between asynchronous copies.
+type Font_Install_Operation struct {
+	// Runner records each absent font copy.
+	Runner *Runner_State
+	// Input contains the original shared IO and font paths.
+	Input *Install_Fonts_Input
+	// Files is the fixed managed face list.
+	Files File_Paths
+	// Index selects the next managed face.
+	Index Font_Index
+	// Copied reports whether the cache refresh is required.
+	Copied Font_Copied
+	// Continue gives the root the next face without a static call cycle.
+	Continue func()
+	// Finish receives the terminal font install result.
+	Finish func(succeeded Step_Success)
+}
+
+// Font_Install_Operation_Invariants states its fixed file list and required continuations.
+func Font_Install_Operation_Invariants(
+	operation *Font_Install_Operation, namespace invariant.Namespace,
+) {
+	Install_Fonts_Input_Invariants(operation.Input, namespace)
+	File_Paths_Invariants(operation.Files, namespace)
+	Runner_State_Invariants(operation.Runner, namespace)
+	Font_Index_Invariants(operation.Index, namespace)
+	Font_Copied_Invariants(operation.Copied, namespace)
+	invariant.Always(operation.Continue != nil, "A font install has a continuation.")
+	invariant.Always(operation.Finish != nil, "A font install has a consumer.")
+	invariant.Always(operation.Index >= 0, "A font install index is not negative.")
+	invariant.Always(
+		int(operation.Index) <= len(operation.Files),
+		"A font install index stays inside its face list.",
+	)
+}
+
+// Install_fonts_start records the fixed face list before it evaluates the first status.
+func install_fonts_start(
+	state *Runner_State, input *Install_Fonts_Input,
+	continuation func(succeeded Step_Success),
+) {
+	Runner_State_Invariants(state, "install_fonts_start.state")
+	Install_Fonts_Input_Invariants(input, "install_fonts_start.input")
+	operation := &Font_Install_Operation{
+		Runner: state, Input: input, Files: iosevka_font_files(), Finish: continuation,
+	}
+	operation.Continue = func() { install_font_rearm(operation) }
+	runner_queue(state, operation.Continue)
+}
+
+// Install_font_rearm advances present faces and starts one absent face copy.
+func install_font_rearm(operation *Font_Install_Operation) {
+	Font_Install_Operation_Invariants(operation, "install_font_rearm.operation")
+	for int(operation.Index) < len(operation.Files) {
+		file := operation.Files[int(operation.Index)]
+		destination := Font_Path(filepath.Join(
+			string(operation.Input.Font_Directory), file))
+		if file_present(operation.Input.IO, destination) {
+			jlog.Logger_Info(operation.Input.Logger, "font present, skipped",
+				jlog.String("file", file))
+			operation.Index++
+			continue
+		}
+		copy_file_start(operation.Runner, operation.Input.IO, &File_Copy_Input{
+			Source: Font_Source_Path(filepath.Join(
+				string(operation.Input.Home_Directory), IOSEVKA_SUBPATH, file)),
+			Destination: Font_Destination_Path(destination),
+		}, func(copy_err error) {
+			if copy_err != nil {
+				jlog.Logger_Error(operation.Input.Logger, "font copy failed",
+					jlog.Err(copy_err))
+				operation.Finish(false)
+				return
+			}
+			jlog.Logger_Info(
+				operation.Input.Logger, "copied font", jlog.String("file", file))
+			operation.Copied = true
+			operation.Index++
+			runner_queue(operation.Runner, operation.Continue)
+		})
+		return
+	}
+	if !operation.Copied {
+		operation.Finish(true)
+		return
+	}
+	if !operation.Input.Refresh_Cache {
+		operation.Finish(true)
+		return
+	}
+	run_spawn_start(
+		operation.Runner, operation.Input.IO,
+		operation.Input.Stdout, operation.Input.Stderr,
+		Spawn_Arguments{"fc-cache", "-f", string(operation.Input.Font_Directory)},
+		func(succeeded Step_Success) {
+			if !succeeded {
+				jlog.Logger_Error(
+					operation.Input.Logger, "font cache refresh failed")
+			}
+			operation.Finish(succeeded)
+		},
+	)
+}
+
+// BOOTSTRAP_STEP_INDEX_MINIMUM is the first stage position.
+const BOOTSTRAP_STEP_INDEX_MINIMUM = 0
+
+// BOOTSTRAP_STEP_INDEX_MAXIMUM is the last stage position.
+const BOOTSTRAP_STEP_INDEX_MAXIMUM = BOOTSTRAP_STEP_COUNT - 1
+
+// Bootstrap_Step_Index selects one stage from the complete bootstrap plan.
+type Bootstrap_Step_Index int
+
+// Bootstrap_Step_Index_Invariants prevents a queued stage from passing the plan boundary.
+func Bootstrap_Step_Index_Invariants(
+	index Bootstrap_Step_Index, namespace invariant.Namespace,
+) {
+	invariant.Tree(index, namespace).
+		Range_Int(
+			int(index), BOOTSTRAP_STEP_INDEX_MINIMUM,
+			BOOTSTRAP_STEP_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Runner_Step is one named asynchronous bootstrap stage.
+type Runner_Step struct {
+	// Name is the progress label that precedes the stage.
+	Name Step_Name
+	// Start submits the first operation or reports an inline result.
+	Start func(state *Runner_State, continuation func(succeeded Step_Success))
+}
+
+// Runner_Step_Invariants states the stage label and required start operation.
+func Runner_Step_Invariants(step Runner_Step, namespace invariant.Namespace) {
+	Step_Name_Invariants(step.Name, namespace)
+	invariant.Always(step.Start != nil, "A runner step has a start operation.")
+}
+
+// Runner_Steps is the fixed asynchronous bootstrap plan.
+type Runner_Steps []Runner_Step
+
+// Runner_Steps_Invariants requires every bootstrap stage.
+func Runner_Steps_Invariants(steps Runner_Steps, _ invariant.Namespace) {
+	invariant.Always(
+		len(steps) == BOOTSTRAP_STEP_COUNT, "A setup runner has every bootstrap step.")
+}
+
+// RUNNER_HOST_STEP_COUNT is each fixed host-policy section size.
+const RUNNER_HOST_STEP_COUNT = 5
+
+// RUNNER_COMMAND_STEP_COUNT is the fixed repository-command section size.
+const RUNNER_COMMAND_STEP_COUNT = 4
+
+// Runner_Host_Steps is one fixed five-stage host-policy section.
+type Runner_Host_Steps []Runner_Step
+
+// Runner_Host_Steps_Invariants keeps both host sections structurally identical.
+func Runner_Host_Steps_Invariants(steps Runner_Host_Steps, _ invariant.Namespace) {
+	invariant.Always(
+		len(steps) == RUNNER_HOST_STEP_COUNT,
+		"A runner host section has five steps.",
+	)
+}
+
+// Runner_Command_Step keeps a repository command inside its narrower name domain.
+type Runner_Command_Step struct {
+	// Name stays narrower than labels such as jj and dotfiles.
+	Name Command_Name
+	// Start preserves the same callback-owned transition as a complete runner step.
+	Start func(state *Runner_State, continuation func(succeeded Step_Success))
+}
+
+// Runner_Command_Step_Invariants states one repository command stage.
+func Runner_Command_Step_Invariants(
+	step Runner_Command_Step, namespace invariant.Namespace,
+) {
+	Command_Name_Invariants(step.Name, namespace)
+	invariant.Always(step.Start != nil, "A runner command step has a start operation.")
+}
+
+// Runner_Command_Steps is the fixed repository-command section.
+type Runner_Command_Steps []Runner_Command_Step
+
+// Runner_Command_Steps_Invariants requires every repository command stage.
+func Runner_Command_Steps_Invariants(steps Runner_Command_Steps, _ invariant.Namespace) {
+	invariant.Always(
+		len(steps) == RUNNER_COMMAND_STEP_COUNT,
+		"A runner command section has four steps.",
+	)
+}
+
+// Bootstrap_Operation retains the current step between process and file completions.
+type Bootstrap_Operation struct {
+	// Runner records each next stage.
+	Runner *Runner_State
+	// Steps is the fixed complete bootstrap plan.
+	Steps Runner_Steps
+	// Index selects the next stage.
+	Index Bootstrap_Step_Index
+	// Logger records each stage before it starts.
+	Logger jlog.Logger
+	// Continue gives the root the next stage without a static call cycle.
+	Continue func()
+}
+
+// Bootstrap_Operation_Invariants states its fixed plan and current index.
+func Bootstrap_Operation_Invariants(
+	operation *Bootstrap_Operation, namespace invariant.Namespace,
+) {
+	Runner_Steps_Invariants(operation.Steps, namespace)
+	Runner_State_Invariants(operation.Runner, namespace)
+	Bootstrap_Step_Index_Invariants(operation.Index, namespace)
+	invariant.Always(operation.Continue != nil, "A bootstrap operation has a continuation.")
+	invariant.Always(operation.Index >= 0, "A bootstrap step index is not negative.")
+	invariant.Always(
+		int(operation.Index) < len(operation.Steps),
+		"A bootstrap step index stays inside its complete plan.",
+	)
+}
+
+// Bootstrap_runner_start records the fixed plan before the root submits its first stage.
+func bootstrap_runner_start(
+	state *Runner_State, steps Runner_Steps, logger jlog.Logger,
+) {
+	Runner_State_Invariants(state, "bootstrap_runner_start.state")
+	Runner_Steps_Invariants(steps, "bootstrap_runner_start.steps")
+	operation := &Bootstrap_Operation{Runner: state, Steps: steps, Logger: logger}
+	operation.Continue = func() { bootstrap_runner_rearm(operation) }
+	runner_queue(state, operation.Continue)
+}
+
+// Bootstrap_runner_rearm starts one stage and records its successor after success.
+func bootstrap_runner_rearm(operation *Bootstrap_Operation) {
+	Bootstrap_Operation_Invariants(operation, "bootstrap_runner_rearm.operation")
+	step := operation.Steps[int(operation.Index)]
+	Runner_Step_Invariants(step, "bootstrap_runner_rearm.step")
+	jlog.Logger_Info(operation.Logger, "step", jlog.String("name", step.Name))
+	step.Start(operation.Runner, func(succeeded Step_Success) {
+		if !succeeded {
+			runner_stop(operation.Runner, EXIT_FAILURE)
+			return
+		}
+		operation.Index++
+		if int(operation.Index) == len(operation.Steps) {
+			runner_stop(operation.Runner, EXIT_SUCCESS)
+			return
+		}
+		runner_queue(operation.Runner, operation.Continue)
+	})
+}
+
+// Runner_steps builds the complete asynchronous policy from validated host facts.
+func runner_steps(input *Bootstrap_Steps_Input) (steps Runner_Steps) {
+	defer func() { Runner_Steps_Invariants(steps, "runner_steps.steps") }()
+	Bootstrap_Steps_Input_Invariants(input, "runner_steps.input")
+	repository := Repository_Directory(filepath.Join(
+		string(input.Home_Directory), REPOSITORY_SUBPATH))
+	binary_directory := Binary_Directory(filepath.Join(
+		string(repository), "home", ".local", "bin"))
+	font_directory, refresh_cache, font_supported := font_destination(&Font_Destination_Input{
+		Home_Directory: input.Home_Directory, Operating_System: input.Operating_System,
+		Data_Directory: input.Data_Directory,
+	})
+	steps = append(steps, runner_initial_steps(
+		input, repository, binary_directory,
+		font_directory, refresh_cache, font_supported)...)
+	for _, command := range runner_command_steps(
+		input, repository, binary_directory,
+	) {
+		steps = append(steps, Runner_Step{
+			Name: Step_Name(command.Name), Start: command.Start,
+		})
+	}
+	steps = append(steps, runner_final_steps(
+		input, repository, binary_directory)...)
+	return steps
+}
+
+// Runner_initial_steps builds the file and first tool section.
+func runner_initial_steps(
+	input *Bootstrap_Steps_Input, repository Repository_Directory,
+	binary_directory Binary_Directory, font_directory Font_Directory,
+	refresh_cache Cache_Refresh, font_supported Font_Support,
+) (steps Runner_Host_Steps) {
+	defer func() {
+		Runner_Host_Steps_Invariants(steps, "runner_initial_steps.steps")
+	}()
+	Bootstrap_Steps_Input_Invariants(input, "runner_initial_steps.input")
+	Repository_Directory_Invariants(repository, "runner_initial_steps.repository")
+	Binary_Directory_Invariants(binary_directory, "runner_initial_steps.binary_directory")
+	Font_Directory_Invariants(font_directory, "runner_initial_steps.font_directory")
+	Cache_Refresh_Invariants(refresh_cache, "runner_initial_steps.refresh_cache")
+	Font_Support_Invariants(font_supported, "runner_initial_steps.font_supported")
+	return Runner_Host_Steps{
+		{Name: "direnv", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			install_direnv_start(state, &Install_Direnv_Input{
+				Direnv_Directory: Direnv_Directory(filepath.Join(
+					string(repository), "third_party", "direnv")),
+				Binary_Directory: binary_directory,
+				IO:               input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "dotfiles", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			mirror_start(state, &Mirror_Input{
+				IO: input.IO, Source_Directory: Source_Directory(filepath.Join(
+					string(input.Home_Directory), DOTFILES_SUBPATH)),
+				Destination_Directory: Destination_Directory(input.Home_Directory),
+				Operating_System:      input.Operating_System, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "fonts", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			if !font_supported {
+				continuation(true)
+				return
+			}
+			install_fonts_start(state, &Install_Fonts_Input{
+				IO: input.IO, Home_Directory: input.Home_Directory,
+				Font_Directory: font_directory, Refresh_Cache: refresh_cache,
+				Logger: input.Logger, Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "neovim", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			install_neovim_start(state, &Install_Neovim_Input{
+				Repository_Directory: Repository_Directory(repository),
+				IO:                   input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "fzf", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			install_fzf_start(state, &Install_Fzf_Input{
+				Fzf_Directory: Fzf_Directory(filepath.Join(
+					string(repository), "third_party", "fzf")),
+				Binary_Directory: binary_directory,
+				IO:               input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+	}
+}
+
+// Runner_command_steps builds the four repository command stages.
+func runner_command_steps(
+	input *Bootstrap_Steps_Input, repository Repository_Directory,
+	binary_directory Binary_Directory,
+) (steps Runner_Command_Steps) {
+	defer func() {
+		Runner_Command_Steps_Invariants(steps, "runner_command_steps.steps")
+	}()
+	Bootstrap_Steps_Input_Invariants(input, "runner_command_steps.input")
+	Repository_Directory_Invariants(repository, "runner_command_steps.repository")
+	Binary_Directory_Invariants(binary_directory, "runner_command_steps.binary_directory")
+	return Runner_Command_Steps{
+		runner_command_step(input, repository, binary_directory, "maddox", "maddox"),
+		runner_command_step(
+			input, repository, binary_directory, "markdown_to_pdf", "m2p"),
+		runner_command_step(input, repository, binary_directory, "sloc", "sloc"),
+		runner_command_step(input, repository, binary_directory, "timeout", "timeout"),
+	}
+}
+
+// Runner_final_steps builds the toolchain and platform section.
+func runner_final_steps(
+	input *Bootstrap_Steps_Input, repository Repository_Directory,
+	binary_directory Binary_Directory,
+) (steps Runner_Host_Steps) {
+	defer func() {
+		Runner_Host_Steps_Invariants(steps, "runner_final_steps.steps")
+	}()
+	Bootstrap_Steps_Input_Invariants(input, "runner_final_steps.input")
+	Repository_Directory_Invariants(repository, "runner_final_steps.repository")
+	Binary_Directory_Invariants(binary_directory, "runner_final_steps.binary_directory")
+	return Runner_Host_Steps{
+		{Name: "rust", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			install_rust_start(state, &Install_Rust_Input{
+				Cargo_Directory: input.Cargo_Directory,
+				Link_Directory: Rust_Link_Directory(filepath.Join(
+					string(repository), ".local", "bin")),
+				IO: input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "jj", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			install_jj_start(state, &Install_Jj_Input{
+				Jj_Directory: Jj_Directory(filepath.Join(
+					string(repository), "third_party", "jj")),
+				Binary_Directory: binary_directory,
+				IO:               input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "ripgrep", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			install_ripgrep_start(state, &Install_Ripgrep_Input{
+				Ripgrep_Directory: Ripgrep_Directory(filepath.Join(
+					string(repository), "third_party", "ripgrep")),
+				Binary_Directory: binary_directory,
+				IO:               input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "fd", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			install_fdcli_start(state, &Install_Fdcli_Input{
+				Fdcli_Directory: Fdcli_Directory(filepath.Join(
+					string(repository), "third_party", "fd")),
+				Binary_Directory: binary_directory,
+				IO:               input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+		{Name: "ghostty", Start: func(
+			state *Runner_State, continuation func(succeeded Step_Success),
+		) {
+			if input.Operating_System != "darwin" {
+				continuation(true)
+				return
+			}
+			install_ghostty_start(state, &Install_Ghostty_Input{
+				Applications_Directory: "/Applications",
+				Link_Directory: Ghostty_Link_Directory(filepath.Join(
+					string(repository), "home", ".local", "bin")),
+				IO: input.IO, Logger: input.Logger,
+				Stdout: input.Stdout, Stderr: input.Stderr,
+			}, continuation)
+		}},
+	}
+}
+
+// Runner_command_step creates one repository command stage from its package and binary names.
+func runner_command_step(
+	input *Bootstrap_Steps_Input, repository Repository_Directory,
+	binary_directory Binary_Directory,
+	package_directory Package_Directory, binary_name Command_Name,
+) (step Runner_Command_Step) {
+	defer func() {
+		Runner_Command_Step_Invariants(step, "runner_command_step.step")
+	}()
+	Bootstrap_Steps_Input_Invariants(input, "runner_command_step.input")
+	Repository_Directory_Invariants(repository, "runner_command_step.repository")
+	Binary_Directory_Invariants(binary_directory, "runner_command_step.binary_directory")
+	Package_Directory_Invariants(package_directory, "runner_command_step.package_directory")
+	Command_Name_Invariants(binary_name, "runner_command_step.binary_name")
+	return Runner_Command_Step{Name: binary_name, Start: func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_command_start(state, &Install_Command_Input{
+			Package_Directory: Command_Directory(filepath.Join(
+				string(repository), string(package_directory))),
+			Binary_Directory: binary_directory, Binary_Name: binary_name,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
+		}, continuation)
+	}}
 }

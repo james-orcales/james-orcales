@@ -1,12 +1,10 @@
-package setup_test
+package setup
 
 import (
 	"errors"
-	"io"
 	"path/filepath"
 	"testing"
 
-	"local/james-orcales/setup/internal"
 	shared_bytes "local/james-orcales/shared/bytes"
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/jlog"
@@ -26,9 +24,9 @@ func Test_Main_Runs_Complete_Bootstrap(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	loop, _, clock := sysio.New_Sim(1)
-	status := setup.Main(&setup.Main_Input{
-		Environment: &setup.Environment_Input{
-			Clock: clock, Console: io.Discard, Effective_User_Identifier: 1,
+	status := main_status(t, &Main_Input{
+		Environment: &Environment_Input{
+			Clock: clock, Effective_User_Identifier: 1,
 			Home_Directory: "/home/person", Operating_System: "freebsd",
 		},
 		IO: recording_io(directory_file_system(t, loop), &commands, nil, 1),
@@ -48,13 +46,55 @@ func Test_Main_Runs_Complete_Bootstrap(t *testing.T) {
 	}
 }
 
+// A callback from a later loop pass must not depend on the first result remaining queued.
+func Test_Runner_Queues_Late_Duplicate_Retirement(t *testing.T) {
+	state, runner := new_runner()
+	first_retired := false
+	runner_queue(state, func() { first_retired = true })
+	if !runner.Rearm() {
+		t.Fatal("the first callback did not queue work")
+	}
+	runner_replace_queued(state, func() { runner_stop(state, EXIT_FAILURE) })
+	if !runner.Rearm() {
+		t.Fatal("the late duplicate callback did not queue work")
+	}
+	if !first_retired {
+		t.Fatal("the first callback continuation did not run")
+	}
+	if !runner.Stopped() {
+		t.Fatal("the late duplicate callback did not stop the runner")
+	}
+	if runner.Status() != EXIT_FAILURE {
+		t.Fatalf("status = %d, want failure", runner.Status())
+	}
+}
+
+// A terminal policy result cannot release the Driver before its callbacks retire.
+func Test_Runner_Stops_After_Submitted_IO_Retires(t *testing.T) {
+	state, runner := new_runner()
+	submission := runner_operation_start(state)
+	runner_stop(state, EXIT_FAILURE)
+	if runner.Stopped() {
+		t.Fatal("the runner stopped with an armed IO operation")
+	}
+	runner_complete_io(state, submission, func() {
+		t.Fatal("a callback resumed policy after its terminal result")
+	})
+	if !runner.Stopped() {
+		t.Fatal("the runner did not stop after its IO operation retired")
+	}
+	if runner.Rearm() {
+		t.Fatal("the terminal callback queued more policy work")
+	}
+}
+
 // Test_Bootstrap_Steps verifies Bootstrap_Steps owns the complete bootstrap
 // policy in the order that the setup command requires.
 func Test_Bootstrap_Steps(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	loop, _, _ := sysio.New_Sim(1)
-	steps := setup.Bootstrap_Steps(&setup.Bootstrap_Steps_Input{
+	steps := Bootstrap_Steps(&Bootstrap_Steps_Input{
 		Home_Directory:   "/home/person",
 		Operating_System: "freebsd",
 		IO:               recording_io(directory_file_system(t, loop), &commands, nil, 0),
@@ -79,26 +119,26 @@ func Test_Order_Of_Operations(t *testing.T) {
 	t.Parallel()
 	order := []int{}
 	log := shared_bytes.New_Buffer(nil)
-	steps := setup.Steps{
-		{Name: "first", Run: func() (succeeded setup.Step_Success) {
+	steps := Steps{
+		{Name: "first", Run: func() (succeeded Step_Success) {
 			order = append(order, 1)
 			return true
 		}},
-		{Name: "second", Run: func() (succeeded setup.Step_Success) {
+		{Name: "second", Run: func() (succeeded Step_Success) {
 			order = append(order, 2)
 			return false
 		}},
-		{Name: "third", Run: func() (succeeded setup.Step_Success) {
+		{Name: "third", Run: func() (succeeded Step_Success) {
 			order = append(order, 3)
 			return true
 		}},
 	}
 	for len(steps) < 14 {
-		steps = append(steps, setup.Step{
-			Name: "rest", Run: func() (succeeded setup.Step_Success) { return true },
+		steps = append(steps, Step{
+			Name: "rest", Run: func() (succeeded Step_Success) { return true },
 		})
 	}
-	status := setup.Bootstrap(&setup.Bootstrap_Input{Logger: buffer_logger(log), Steps: steps})
+	status := Bootstrap(&Bootstrap_Input{Logger: buffer_logger(log), Steps: steps})
 	if status {
 		t.Fatalf("expected the failing step's status, got %t", status)
 	}
@@ -120,7 +160,7 @@ func Test_Order_Of_Operations(t *testing.T) {
 func Test_Idempotency_Accepts_A_Matching_Version(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	yes := setup.Installed(&setup.Installed_Input{
+	yes := Installed(&Installed_Input{
 		IO: recording_process_io(&commands, map[string]string{
 			"/bin/tool-x": "tool 1.2.3 (abc 2026-01-01)\n",
 		}, 0),
@@ -137,7 +177,7 @@ func Test_Idempotency_Accepts_A_Matching_Version(t *testing.T) {
 func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	yes := setup.Installed(&setup.Installed_Input{
+	yes := Installed(&Installed_Input{
 		IO: recording_process_io(&commands, map[string]string{
 			"/bin/tool-x": "tool 9.9.9\n",
 		}, 0),
@@ -161,7 +201,7 @@ func Test_Mirror_Applies_Macos_Defaults(t *testing.T) {
 		t.Fatalf("make source: %v", make_err)
 	}
 	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
-	status := setup.Mirror(&setup.Mirror_Input{
+	status := Mirror(&Mirror_Input{
 		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -198,7 +238,7 @@ func Test_Mirror_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 		t.Fatalf("make source: %v", make_err)
 	}
 	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
-	status := setup.Mirror(&setup.Mirror_Input{
+	status := Mirror(&Mirror_Input{
 		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -229,7 +269,7 @@ func Test_Mirror_Narrates_The_Scan(t *testing.T) {
 	log := shared_bytes.New_Buffer(nil)
 	commands := []sysio.Process_Request{}
 	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
-	status := setup.Mirror(&setup.Mirror_Input{
+	status := Mirror(&Mirror_Input{
 		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -267,7 +307,7 @@ func Test_Mirror_Probes_Each_Directory_In_One_Batch(t *testing.T) {
 	}
 	commands := []sysio.Process_Request{}
 	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
-	status := setup.Mirror(&setup.Mirror_Input{
+	status := Mirror(&Mirror_Input{
 		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -287,6 +327,60 @@ func Test_Mirror_Probes_Each_Directory_In_One_Batch(t *testing.T) {
 	}
 }
 
+// Test_Mirror_Rejects_A_Failed_Ignore_Probe verifies that an unknown ignore state cannot make
+// setup copy a path that Git would exclude.
+func Test_Mirror_Rejects_A_Failed_Ignore_Probe(t *testing.T) {
+	t.Parallel()
+	for name, spawn := range map[string]func(
+		*sysio.Completion, sysio.Process_Callback,
+		sysio.Process_Request, systime.Duration,
+	){
+		"error": func(
+			completion *sysio.Completion, callback sysio.Process_Callback,
+			_ sysio.Process_Request, _ systime.Duration,
+		) {
+			callback(completion, sysio.Process_Result{}, errors.New("probe failed"))
+		},
+		"missing retirement": func(
+			_ *sysio.Completion, _ sysio.Process_Callback,
+			_ sysio.Process_Request, _ systime.Duration,
+		) {
+		},
+		"double retirement": func(
+			completion *sysio.Completion, callback sysio.Process_Callback,
+			_ sysio.Process_Request, _ systime.Duration,
+		) {
+			callback(completion, sysio.Process_Result{}, nil)
+			callback(completion, sysio.Process_Result{}, nil)
+		},
+		"nonzero exit": func(
+			completion *sysio.Completion, callback sysio.Process_Callback,
+			_ sysio.Process_Request, _ systime.Duration,
+		) {
+			callback(completion, sysio.Process_Result{Exit: 1}, nil)
+		},
+	} {
+		spawn := spawn
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			loop, _, _ := sysio.New_Sim(0)
+			make_err := loop.Make_Directory(TEST_SOURCE + "/entry")
+			if make_err != nil {
+				t.Fatalf("make source: %v", make_err)
+			}
+			system := directory_file_system(t, loop)
+			system.Spawn = spawn
+			status := Mirror(&Mirror_Input{
+				IO: system, Source_Directory: TEST_SOURCE,
+				Destination_Directory: TEST_HOME, Operating_System: "linux",
+			})
+			if status {
+				t.Fatal("the mirror accepted a failed ignore probe")
+			}
+		})
+	}
+}
+
 // Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout verifies that when
 // nvim resolves to a path inside the checkout and reports the wanted release, no
 // make runs.
@@ -294,7 +388,7 @@ func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) 
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	executable := TEST_REPOSITORY + "/home/.local/bin/nvim"
-	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
+	status := Install_Neovim(&Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
 		IO: recording_process_io(&commands, map[string]string{
 			"which":    executable + "\n",
@@ -315,7 +409,7 @@ func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) 
 func Test_Install_Neovim_Builds_When_The_Match_Is_Outside_Repository(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
+	status := Install_Neovim(&Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
 		IO: recording_process_io(&commands, map[string]string{
 			"which": "/opt/homebrew/bin/nvim\n",
@@ -338,7 +432,7 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	commands := []sysio.Process_Request{}
 	system := recording_process_io(&commands, nil, 0)
 	progress := shared_bytes.New_Buffer(nil)
-	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
+	status := Install_Neovim(&Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
 		IO:                   system,
 		Logger:               buffer_logger(progress),
@@ -380,7 +474,7 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 func Test_Install_Neovim_Reports_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
+	status := Install_Neovim(&Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
 		IO:                   recording_process_io(&commands, nil, 1),
 	})
@@ -398,7 +492,7 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 	t.Parallel()
 	copied := []string{}
 	log := shared_bytes.New_Buffer(nil)
-	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
+	status := Install_Fonts(&Install_Fonts_Input{
 		IO: font_test_io(func(file string) (present bool) {
 			return file == "IosevkaNerdFontMono-Regular.ttf"
 		}, &copied, nil, nil),
@@ -435,7 +529,7 @@ func Test_Install_Fonts_Skips_When_All_Present(t *testing.T) {
 	t.Parallel()
 	copied := []string{}
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
+	status := Install_Fonts(&Install_Fonts_Input{
 		IO: font_test_io(
 			func(string) (present bool) { return true }, &copied, nil, &commands),
 		Home_Directory: TEST_HOME,
@@ -458,7 +552,7 @@ func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 	t.Parallel()
 	copied := []string{}
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
+	status := Install_Fonts(&Install_Fonts_Input{
 		IO: font_test_io(
 			func(string) (present bool) { return false }, &copied, nil, &commands),
 		Home_Directory: TEST_HOME,
@@ -477,7 +571,7 @@ func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 func Test_Install_Fonts_Reports_A_Copy_Failure(t *testing.T) {
 	t.Parallel()
 	copied := []string{}
-	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
+	status := Install_Fonts(&Install_Fonts_Input{
 		IO: font_test_io(
 			func(string) (present bool) { return false },
 			&copied, errors.New("disk full"), nil),
@@ -495,7 +589,7 @@ func Test_Install_Fonts_Reports_A_Copy_Failure(t *testing.T) {
 func Test_Install_Direnv_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
+	status := Install_Direnv(&Install_Direnv_Input{
 		Direnv_Directory: TEST_DIRENV_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -515,7 +609,7 @@ func Test_Install_Direnv_Skips_Build_When_Already_Built(t *testing.T) {
 func Test_Install_Direnv_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
+	status := Install_Direnv(&Install_Direnv_Input{
 		Direnv_Directory: TEST_DIRENV_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 0),
@@ -533,7 +627,7 @@ func Test_Install_Direnv_Builds_When_Absent(t *testing.T) {
 func Test_Install_Direnv_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
+	status := Install_Direnv(&Install_Direnv_Input{
 		Direnv_Directory: TEST_DIRENV_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 1),
@@ -549,7 +643,7 @@ func Test_Install_Direnv_Reports_A_Build_Failure(t *testing.T) {
 func Test_Install_Rust_Skips_Install_When_Already_Installed(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Rust(&setup.Install_Rust_Input{
+	status := Install_Rust(&Install_Rust_Input{
 		Cargo_Directory: TEST_CARGO_DIRECTORY,
 		Link_Directory:  TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -572,7 +666,7 @@ func Test_Install_Rust_Skips_Install_When_Already_Installed(t *testing.T) {
 func Test_Install_Rust_Installs_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Rust(&setup.Install_Rust_Input{
+	status := Install_Rust(&Install_Rust_Input{
 		Cargo_Directory: TEST_CARGO_DIRECTORY,
 		Link_Directory:  TEST_LINK_DIRECTORY,
 		IO:              recording_process_io(&commands, nil, 0),
@@ -593,7 +687,7 @@ func Test_Install_Rust_Installs_Then_Links_When_Absent(t *testing.T) {
 func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Rust(&setup.Install_Rust_Input{
+	status := Install_Rust(&Install_Rust_Input{
 		Cargo_Directory: TEST_CARGO_DIRECTORY,
 		Link_Directory:  TEST_LINK_DIRECTORY,
 		IO:              recording_process_io(&commands, nil, 1),
@@ -609,7 +703,7 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 func Test_Install_Fzf_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
+	status := Install_Fzf(&Install_Fzf_Input{
 		Fzf_Directory:    TEST_FZF_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -629,7 +723,7 @@ func Test_Install_Fzf_Skips_Build_When_Already_Built(t *testing.T) {
 func Test_Install_Fzf_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
+	status := Install_Fzf(&Install_Fzf_Input{
 		Fzf_Directory:    TEST_FZF_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 0),
@@ -647,7 +741,7 @@ func Test_Install_Fzf_Builds_When_Absent(t *testing.T) {
 func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
+	status := Install_Fzf(&Install_Fzf_Input{
 		Fzf_Directory:    TEST_FZF_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 1),
@@ -663,7 +757,7 @@ func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Command(&setup.Install_Command_Input{
+	status := Install_Command(&Install_Command_Input{
 		Package_Directory: TEST_COMMAND_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "maddox",
@@ -684,7 +778,7 @@ func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
 func Test_Install_Command_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Command(&setup.Install_Command_Input{
+	status := Install_Command(&Install_Command_Input{
 		Package_Directory: TEST_COMMAND_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "m2p",
@@ -703,7 +797,7 @@ func Test_Install_Command_Builds_When_Absent(t *testing.T) {
 func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Command(&setup.Install_Command_Input{
+	status := Install_Command(&Install_Command_Input{
 		Package_Directory: TEST_COMMAND_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "sloc",
@@ -720,7 +814,7 @@ func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Jj(&setup.Install_Jj_Input{
+	status := Install_Jj(&Install_Jj_Input{
 		Jj_Directory:     TEST_JJ_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -744,7 +838,7 @@ func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 func Test_Install_Jj_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Jj(&setup.Install_Jj_Input{
+	status := Install_Jj(&Install_Jj_Input{
 		Jj_Directory:     TEST_JJ_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 0),
@@ -769,7 +863,7 @@ func Test_Install_Jj_Builds_When_Absent(t *testing.T) {
 func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Jj(&setup.Install_Jj_Input{
+	status := Install_Jj(&Install_Jj_Input{
 		Jj_Directory:     TEST_JJ_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 1),
@@ -785,7 +879,7 @@ func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
+	status := Install_Ripgrep(&Install_Ripgrep_Input{
 		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -809,7 +903,7 @@ func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 func Test_Install_Ripgrep_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
+	status := Install_Ripgrep(&Install_Ripgrep_Input{
 		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		IO:                recording_process_io(&commands, nil, 0),
@@ -834,7 +928,7 @@ func Test_Install_Ripgrep_Builds_When_Absent(t *testing.T) {
 func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
+	status := Install_Ripgrep(&Install_Ripgrep_Input{
 		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		IO:                recording_process_io(&commands, nil, 1),
@@ -850,7 +944,7 @@ func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
+	status := Install_Fdcli(&Install_Fdcli_Input{
 		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -874,7 +968,7 @@ func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 func Test_Install_Fdcli_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
+	status := Install_Fdcli(&Install_Fdcli_Input{
 		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 0),
@@ -899,7 +993,7 @@ func Test_Install_Fdcli_Builds_When_Absent(t *testing.T) {
 func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
+	status := Install_Fdcli(&Install_Fdcli_Input{
 		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		IO:               recording_process_io(&commands, nil, 1),
@@ -916,7 +1010,7 @@ func Test_Install_Ghostty_Skips_Install_When_Already_Installed(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	binary := TEST_APPLICATIONS_DIRECTORY + "/Ghostty.app/Contents/MacOS/ghostty"
-	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
+	status := Install_Ghostty(&Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -941,7 +1035,7 @@ func Test_Install_Ghostty_Reinstalls_When_Signature_Is_Invalid(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	binary := TEST_APPLICATIONS_DIRECTORY + "/Ghostty.app/Contents/MacOS/ghostty"
-	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
+	status := Install_Ghostty(&Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
 		IO: recording_process_io_exits(&commands, map[string]string{
@@ -966,7 +1060,7 @@ func Test_Install_Ghostty_Pins_The_Signing_Team(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	binary := TEST_APPLICATIONS_DIRECTORY + "/Ghostty.app/Contents/MacOS/ghostty"
-	setup.Install_Ghostty(&setup.Install_Ghostty_Input{
+	Install_Ghostty(&Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
 		IO: recording_process_io(&commands, map[string]string{
@@ -988,7 +1082,7 @@ func Test_Install_Ghostty_Pins_The_Signing_Team(t *testing.T) {
 func Test_Install_Ghostty_Installs_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
+	status := Install_Ghostty(&Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
 		IO:                     recording_process_io(&commands, nil, 0),
@@ -1009,7 +1103,7 @@ func Test_Install_Ghostty_Installs_Then_Links_When_Absent(t *testing.T) {
 func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
+	status := Install_Ghostty(&Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
 		IO:                     recording_process_io(&commands, nil, 1),
@@ -1275,4 +1369,204 @@ func commands_named(commands []sysio.Process_Request, name string) (named []sysi
 		}
 	}
 	return named
+}
+
+// The test root rearms the same setup runner while its injected IO retires inline.
+func main_status(t *testing.T, input *Main_Input) (status Exit_Code) {
+	t.Helper()
+	runner := Main(input)
+	for !runner.Stopped() {
+		if !runner.Rearm() {
+			t.Fatal("the setup runner has no work before it stops")
+		}
+	}
+	return runner.Status()
+}
+
+// Test_step runs one asynchronous policy against an inline test IO implementation.
+func test_step(
+	start func(state *Runner_State, continuation func(succeeded Step_Success)),
+) (succeeded Step_Success) {
+	state, _ := new_runner()
+	start(state, func(result Step_Success) {
+		succeeded = result
+		runner_stop(state, EXIT_SUCCESS)
+	})
+	if !test_runner_finished(state) {
+		return false
+	}
+	return succeeded
+}
+
+// Test_runner_finished drains each continuation that inline test IO records.
+func test_runner_finished(state *Runner_State) (finished bool) {
+	for runner_rearm(state) {
+	}
+	return state.Terminal != nil
+}
+
+// Step is test-only because production policy uses callback-owned Runner_Step values.
+type Step struct {
+	Name Step_Name
+	Run  func() (succeeded Step_Success)
+}
+
+// Steps lets the synchronous construction specification inspect the fixed policy names.
+type Steps []Step
+
+// Bootstrap_Input is test-only because production bootstrap always uses the bounded runner.
+type Bootstrap_Input struct {
+	Steps  Steps
+	Logger jlog.Logger
+}
+
+// Bootstrap_Steps returns the fixed policy names for the construction specification.
+func Bootstrap_Steps(_ *Bootstrap_Steps_Input) (steps Steps) {
+	names := []Step_Name{
+		"direnv", "dotfiles", "fonts", "neovim", "fzf", "maddox", "m2p",
+		"sloc", "timeout", "rust", "jj", "ripgrep", "fd", "ghostty",
+	}
+	for _, name := range names {
+		steps = append(steps, Step{
+			Name: name,
+			Run:  func() (succeeded Step_Success) { return true },
+		})
+	}
+	return steps
+}
+
+// Bootstrap runs the injected test steps without adding an IO seam.
+func Bootstrap(input *Bootstrap_Input) (succeeded Step_Success) {
+	for _, step := range input.Steps {
+		jlog.Logger_Info(input.Logger, "step", jlog.String("name", step.Name))
+		if !step.Run() {
+			return false
+		}
+	}
+	return true
+}
+
+// Mirror drives the asynchronous mirror against inline test IO.
+func Mirror(input *Mirror_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		mirror_start(state, input, continuation)
+	})
+}
+
+// Plan drives the asynchronous planner against inline test IO.
+func Plan(input *Plan_Input) (writes Writes, err error) {
+	state, _ := new_runner()
+	plan_start(state, input, func(result Writes, plan_err error) {
+		writes, err = result, plan_err
+		runner_stop(state, EXIT_SUCCESS)
+	})
+	if !test_runner_finished(state) {
+		return Writes{}, errors.New("the test planner did not retire inline")
+	}
+	return writes, err
+}
+
+// Installed drives the asynchronous version probe against inline test IO.
+func Installed(input *Installed_Input) (installed File_Presence) {
+	state, _ := new_runner()
+	installed_start(state, input, func(result File_Presence) {
+		installed = result
+		runner_stop(state, EXIT_SUCCESS)
+	})
+	if !test_runner_finished(state) {
+		return false
+	}
+	return installed
+}
+
+// Install_Neovim drives the asynchronous Neovim policy against inline test IO.
+func Install_Neovim(input *Install_Neovim_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_neovim_start(state, input, continuation)
+	})
+}
+
+// Install_Fonts drives the asynchronous font policy against inline test IO.
+func Install_Fonts(input *Install_Fonts_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_fonts_start(state, input, continuation)
+	})
+}
+
+// Install_Direnv drives the asynchronous direnv policy against inline test IO.
+func Install_Direnv(input *Install_Direnv_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_direnv_start(state, input, continuation)
+	})
+}
+
+// Install_Rust drives the asynchronous Rust policy against inline test IO.
+func Install_Rust(input *Install_Rust_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_rust_start(state, input, continuation)
+	})
+}
+
+// Install_Fzf drives the asynchronous fzf policy against inline test IO.
+func Install_Fzf(input *Install_Fzf_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_fzf_start(state, input, continuation)
+	})
+}
+
+// Install_Command drives one asynchronous command policy against inline test IO.
+func Install_Command(input *Install_Command_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_command_start(state, input, continuation)
+	})
+}
+
+// Install_Jj drives the asynchronous jj policy against inline test IO.
+func Install_Jj(input *Install_Jj_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_jj_start(state, input, continuation)
+	})
+}
+
+// Install_Ripgrep drives the asynchronous ripgrep policy against inline test IO.
+func Install_Ripgrep(input *Install_Ripgrep_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_ripgrep_start(state, input, continuation)
+	})
+}
+
+// Install_Fdcli drives the asynchronous fd policy against inline test IO.
+func Install_Fdcli(input *Install_Fdcli_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_fdcli_start(state, input, continuation)
+	})
+}
+
+// Install_Ghostty drives the asynchronous Ghostty policy against inline test IO.
+func Install_Ghostty(input *Install_Ghostty_Input) (succeeded Step_Success) {
+	return test_step(func(
+		state *Runner_State, continuation func(succeeded Step_Success),
+	) {
+		install_ghostty_start(state, input, continuation)
+	})
 }
