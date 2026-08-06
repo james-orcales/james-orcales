@@ -38,6 +38,8 @@
           "!shared/bytes/**",
           "!shared/strings/**",
           "!shared/unicode/**",
+          "!shared/path/**",
+          "!shared/container/**",
           "!setup/**"
   ],
   "word_replacements": {
