@@ -7,12 +7,13 @@ EXIT_USAGE; otherwise Main returns the first failing step status or EXIT_SUCCESS
 ### Runs Complete Bootstrap
 
 Main constructs and runs the complete ordered bootstrap from the injected environment, file
-system, and shell. It returns the first failing step status.
+and process operations in one shared `io.IO` value. It returns the first failing step status.
 
 # Bootstrap Steps
 
-Bootstrap_Steps constructs the complete ordered step list from injected operating-system facts and
-file operations, so the composition root does not own bootstrap policy.
+Bootstrap_Steps constructs the ordered steps from host facts and one shared `io.IO` value.
+Setup submits directory, status, file, and process operations through that value.
+It declares no second IO seam, and it accepts the longest validated source path.
 
 # Order of Operations
 
@@ -36,12 +37,12 @@ Installed reports false when the binary is absent or reports a different version
 
 # Mirror
 
-Mirror plans the sync, writes each pending file through the injected file system, and then applies
+Mirror plans the sync, writes each pending file through shared IO, and then applies
 the macos defaults on darwin. The simulation harness proves the mirror properties.
 
 ### Applies Macos Defaults
 
-On darwin the macos defaults commands run through the injected runner after the sync.
+On darwin the macos defaults commands run through `io.IO.Spawn` after the sync.
 
 ### Skips Macos Defaults Off Darwin
 

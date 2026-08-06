@@ -1,6 +1,6 @@
 
 # Main
 
-setup.Main mirrors the seed-generated source tree into the destination; over a seed sweep it
-converges and stays idempotent, prunes the ignored subtree, and rewrites only the files whose
-destination differs.
+setup.Main mirrors the seed-generated source tree into the destination. A seed sweep proves
+convergence, pruning, and exact rewrites. The seeded model implements the production `io.IO`
+boundary.

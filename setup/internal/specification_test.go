@@ -1,17 +1,18 @@
 package setup_test
 
 import (
-	"bytes"
 	"errors"
 	"io"
 	"path/filepath"
-	"slices"
-	"strings"
 	"testing"
 
 	"local/james-orcales/setup/internal"
+	shared_bytes "local/james-orcales/shared/bytes"
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/jlog"
+	shared_slices "local/james-orcales/shared/slices"
+	shared_strings "local/james-orcales/shared/strings"
+	systime "local/james-orcales/shared/time"
 )
 
 // Each test drives Plan and Mirror with in-memory filesystems and a recording or
@@ -30,8 +31,7 @@ func Test_Main_Runs_Complete_Bootstrap(t *testing.T) {
 			Clock: clock, Console: io.Discard, Effective_User_Identifier: 1,
 			Home_Directory: "/home/person", Operating_System: "freebsd",
 		},
-		File_System: directory_file_system(t, loop),
-		Shell:       recording_shell(&commands, nil, 1),
+		IO: recording_io(directory_file_system(t, loop), &commands, nil, 1),
 	})
 	if status != 1 {
 		t.Fatalf("status = %d, want the direnv failure status 1", status)
@@ -57,8 +57,7 @@ func Test_Bootstrap_Steps(t *testing.T) {
 	steps := setup.Bootstrap_Steps(&setup.Bootstrap_Steps_Input{
 		Home_Directory:   "/home/person",
 		Operating_System: "freebsd",
-		File_System:      directory_file_system(t, loop),
-		Shell:            recording_shell(&commands, nil, 0),
+		IO:               recording_io(directory_file_system(t, loop), &commands, nil, 0),
 	})
 	names := []string{}
 	for _, step := range steps {
@@ -68,7 +67,7 @@ func Test_Bootstrap_Steps(t *testing.T) {
 		"direnv", "dotfiles", "fonts", "neovim", "fzf", "maddox", "m2p", "sloc",
 		"timeout", "rust", "jj", "ripgrep", "fd", "ghostty",
 	}
-	if !slices.Equal(names, want) {
+	if !shared_slices.Equal(names, want) {
 		t.Fatalf("steps = %v, want %v", names, want)
 	}
 }
@@ -79,7 +78,7 @@ func Test_Bootstrap_Steps(t *testing.T) {
 func Test_Order_Of_Operations(t *testing.T) {
 	t.Parallel()
 	order := []int{}
-	log := &bytes.Buffer{}
+	log := shared_bytes.New_Buffer(nil)
 	steps := setup.Steps{
 		{Name: "first", Run: func() (succeeded setup.Step_Success) {
 			order = append(order, 1)
@@ -103,13 +102,16 @@ func Test_Order_Of_Operations(t *testing.T) {
 	if status {
 		t.Fatalf("expected the failing step's status, got %t", status)
 	}
-	if !slices.Equal(order, []int{1, 2}) {
+	if !shared_slices.Equal(order, []int{1, 2}) {
 		t.Fatalf("expected steps to run in order and stop at the failure, ran %v", order)
 	}
 	want := "{\"level\":\"info\",\"name\":\"first\",\"message\":\"step\"}\n" +
 		"{\"level\":\"info\",\"name\":\"second\",\"message\":\"step\"}\n"
-	if log.String() != want {
-		t.Fatalf("expected each run step announced by name in order, got %q", log.String())
+	if buffer_text(log) != shared_strings.Text(want) {
+		t.Fatalf(
+			"expected each run step announced by name in order, got %q",
+			buffer_text(log),
+		)
 	}
 }
 
@@ -119,7 +121,7 @@ func Test_Idempotency_Accepts_A_Matching_Version(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	yes := setup.Installed(&setup.Installed_Input{
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			"/bin/tool-x": "tool 1.2.3 (abc 2026-01-01)\n",
 		}, 0),
 		Executable: "/bin/tool-x",
@@ -136,7 +138,7 @@ func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	yes := setup.Installed(&setup.Installed_Input{
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			"/bin/tool-x": "tool 9.9.9\n",
 		}, 0),
 		Executable: "/bin/tool-x",
@@ -152,39 +154,36 @@ func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 // a line per command.
 func Test_Mirror_Applies_Macos_Defaults(t *testing.T) {
 	t.Parallel()
-	ran := [][]string{}
-	log := &bytes.Buffer{}
+	commands := []sysio.Process_Request{}
+	log := shared_bytes.New_Buffer(nil)
 	loop, _, _ := sysio.New_Sim(0)
 	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
+	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
 	status := setup.Mirror(&setup.Mirror_Input{
-		File_System:           directory_file_system(t, loop),
+		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "darwin",
-		Run_Command: func(name string, arguments []string) (err error) {
-			ran = append(ran, append([]string{name}, arguments...))
-			return nil
-		},
-		Logger: buffer_logger(log),
+		Logger:                buffer_logger(log),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
 	}
-	if !ran_contains(ran, []string{"killall", "Dock"}) {
+	if !request_contains(commands, []string{"killall", "Dock"}) {
 		t.Fatal("expected killall Dock to run")
 	}
 	// The 35 defaults commands must not each print a line; the dotfiles scan narrates
 	// itself, so assert the absence of per-command noise rather than an empty log.
-	if strings.Contains(log.String(), "defaults") {
-		t.Fatalf("expected no per-command logging, got %q", log.String())
+	if shared_strings.Contains(buffer_text(log), "defaults") {
+		t.Fatalf("expected no per-command logging, got %q", buffer_text(log))
 	}
 	clock := []string{
 		"defaults", "write", "com.apple.menuextra.clock",
 		"DateFormat", "-string", "EEE MMM d mm:HH",
 	}
-	if !ran_contains(ran, clock) {
+	if !request_contains(commands, clock) {
 		t.Fatal("expected the clock date format default to be set")
 	}
 }
@@ -193,26 +192,23 @@ func Test_Mirror_Applies_Macos_Defaults(t *testing.T) {
 // any operating system other than darwin.
 func Test_Mirror_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	t.Parallel()
-	run_count := 0
+	commands := []sysio.Process_Request{}
 	loop, _, _ := sysio.New_Sim(0)
 	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
+	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
 	status := setup.Mirror(&setup.Mirror_Input{
-		File_System:           directory_file_system(t, loop),
+		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
-		Run_Command: func(name string, arguments []string) (err error) {
-			run_count++
-			return nil
-		},
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
 	}
-	if run_count != 0 {
-		t.Fatalf("expected no commands off darwin, got %d", run_count)
+	if len(commands) != 0 {
+		t.Fatalf("expected no commands off darwin, got %d", len(commands))
 	}
 }
 
@@ -230,16 +226,15 @@ func Test_Mirror_Narrates_The_Scan(t *testing.T) {
 	if make_err := loop.Make_Directory(TEST_SOURCE + "/nested"); make_err != nil {
 		t.Fatalf("make nested: %v", make_err)
 	}
-	log := &bytes.Buffer{}
+	log := shared_bytes.New_Buffer(nil)
+	commands := []sysio.Process_Request{}
+	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
 	status := setup.Mirror(&setup.Mirror_Input{
-		File_System:           directory_file_system(t, loop),
+		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
-		Run_Command: func(name string, arguments []string) (err error) {
-			return nil
-		},
-		Logger: buffer_logger(log),
+		Logger:                buffer_logger(log),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -249,8 +244,8 @@ func Test_Mirror_Narrates_The_Scan(t *testing.T) {
 		"{\"level\":\"debug\",\"dir\":\"nested\",\"message\":\"scanning\"}\n",
 		"{\"level\":\"info\",\"message\":\"dotfiles up to date\"}\n",
 	} {
-		if !strings.Contains(log.String(), want) {
-			t.Fatalf("expected the scan to narrate %q, got %q", want, log.String())
+		if !shared_strings.Contains(buffer_text(log), shared_strings.Text(want)) {
+			t.Fatalf("expected the scan to narrate %q, got %q", want, buffer_text(log))
 		}
 	}
 }
@@ -270,28 +265,25 @@ func Test_Mirror_Probes_Each_Directory_In_One_Batch(t *testing.T) {
 			t.Fatalf("make %s: %v", directory, make_err)
 		}
 	}
-	batches := [][]string{}
+	commands := []sysio.Process_Request{}
+	system := recording_io(directory_file_system(t, loop), &commands, nil, 0)
 	status := setup.Mirror(&setup.Mirror_Input{
-		File_System:           directory_file_system(t, loop),
+		IO:                    system,
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
-		Run_Command: func(name string, arguments []string) (err error) {
-			return nil
-		},
-		Is_Ignored: func(relative_paths []string) (ignored map[string]bool) {
-			batches = append(batches, append([]string{}, relative_paths...))
-			return nil
-		},
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
 	}
-	if len(batches) == 0 {
+	probes := commands_named(commands, "git")
+	if len(probes) == 0 {
 		t.Fatal("expected the walk to probe ignores at least once")
 	}
-	if len(batches[0]) != 3 {
-		t.Fatalf("expected the root's three entries probed in one batch, got %v", batches)
+	if shared_strings.Count(shared_strings.Text(probes[0].Input), "\n") != 3 {
+		t.Fatalf(
+			"expected the root's three entries probed in one batch, got %q",
+			probes[0].Input)
 	}
 }
 
@@ -304,7 +296,7 @@ func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) 
 	executable := TEST_REPOSITORY + "/home/.local/bin/nvim"
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			"which":    executable + "\n",
 			executable: "NVIM v0.12.3\n",
 		}, 0),
@@ -325,7 +317,7 @@ func Test_Install_Neovim_Builds_When_The_Match_Is_Outside_Repository(t *testing.
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			"which": "/opt/homebrew/bin/nvim\n",
 		}, 0),
 	})
@@ -344,20 +336,23 @@ func Test_Install_Neovim_Builds_When_The_Match_Is_Outside_Repository(t *testing.
 func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	shell := recording_shell(&commands, nil, 0)
-	progress := &bytes.Buffer{}
-	shell.Logger = buffer_logger(progress)
+	system := recording_process_io(&commands, nil, 0)
+	progress := shared_bytes.New_Buffer(nil)
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
-		Shell:                shell,
+		IO:                   system,
+		Logger:               buffer_logger(progress),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
 	}
 	want_progress := "{\"level\":\"info\",\"message\":\"configuring neovim prefix\"}\n" +
 		"{\"level\":\"info\",\"message\":\"installing neovim\"}\n"
-	if progress.String() != want_progress {
-		t.Fatalf("expected each build phase announced in order, got %q", progress.String())
+	if buffer_text(progress) != shared_strings.Text(want_progress) {
+		t.Fatalf(
+			"expected each build phase announced in order, got %q",
+			buffer_text(progress),
+		)
 	}
 	builds := make_commands(commands)
 	if len(builds) != 2 {
@@ -367,15 +362,15 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	prefix := "CMAKE_INSTALL_PREFIX=" + filepath.Join(TEST_REPOSITORY, "home/.local")
 	for index, command := range builds {
 		for _, want := range []string{"-C", source, prefix} {
-			if !slices.Contains(command.Arguments, want) {
+			if !shared_slices.Contains(command.Arguments, want) {
 				t.Fatalf("command %d missing %q", index, want)
 			}
 		}
 	}
-	if slices.Contains(builds[0].Arguments, "install") {
+	if shared_slices.Contains(builds[0].Arguments, "install") {
 		t.Fatalf("first command should not install: %v", builds[0].Arguments)
 	}
-	if !slices.Contains(builds[1].Arguments, "install") {
+	if !shared_slices.Contains(builds[1].Arguments, "install") {
 		t.Fatalf("second command should install, got %v", builds[1].Arguments)
 	}
 }
@@ -387,7 +382,7 @@ func Test_Install_Neovim_Reports_Build_Failure(t *testing.T) {
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
-		Shell:                recording_shell(&commands, nil, 1),
+		IO:                   recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on build failure")
@@ -402,18 +397,15 @@ func Test_Install_Neovim_Reports_Build_Failure(t *testing.T) {
 func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 	t.Parallel()
 	copied := []string{}
-	log := &bytes.Buffer{}
+	log := shared_bytes.New_Buffer(nil)
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: TEST_FONT_DIRECTORY,
-		Font_Present: func(file string) (present bool) {
+		IO: font_test_io(func(file string) (present bool) {
 			return file == "IosevkaNerdFontMono-Regular.ttf"
-		},
-		Copy_Font: func(file string) (err error) {
-			copied = append(copied, file)
-			return nil
-		},
-		Refresh: nil,
-		Logger:  buffer_logger(log),
+		}, &copied, nil, nil),
+		Home_Directory: TEST_HOME,
+		Font_Directory: TEST_FONT_DIRECTORY,
+		Refresh_Cache:  false,
+		Logger:         buffer_logger(log),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -421,7 +413,7 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 	if len(copied) != 3 {
 		t.Fatalf("expected the three missing faces copied, got %v", copied)
 	}
-	if slices.Contains(copied, "IosevkaNerdFontMono-Regular.ttf") {
+	if shared_slices.Contains(copied, "IosevkaNerdFontMono-Regular.ttf") {
 		t.Fatalf("expected the present face skipped, got %v", copied)
 	}
 	want_log := "{\"level\":\"info\",\"file\":\"IosevkaNerdFontMono-Regular.ttf\"," +
@@ -432,8 +424,8 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 		"\"message\":\"copied font\"}\n" +
 		"{\"level\":\"info\",\"file\":\"IosevkaNerdFontMono-BoldOblique.ttf\"," +
 		"\"message\":\"copied font\"}\n"
-	if log.String() != want_log {
-		t.Fatalf("expected per-face copy and skip logging, got %q", log.String())
+	if buffer_text(log) != shared_strings.Text(want_log) {
+		t.Fatalf("expected per-face copy and skip logging, got %q", buffer_text(log))
 	}
 }
 
@@ -441,27 +433,21 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 // the destination, nothing is copied and the cache is not refreshed.
 func Test_Install_Fonts_Skips_When_All_Present(t *testing.T) {
 	t.Parallel()
-	copies := 0
-	refreshed := false
+	copied := []string{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: TEST_FONT_DIRECTORY,
-		Font_Present:   func(file string) (present bool) { return true },
-		Copy_Font: func(file string) (err error) {
-			copies++
-			return nil
-		},
-		Refresh: func() (err error) {
-			refreshed = true
-			return nil
-		},
+		IO: font_test_io(
+			func(string) (present bool) { return true }, &copied, nil, &commands),
+		Home_Directory: TEST_HOME,
+		Font_Directory: TEST_FONT_DIRECTORY, Refresh_Cache: true,
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
 	}
-	if copies != 0 {
+	if len(copied) != 0 {
 		t.Fatal("expected no copies when every face is present")
 	}
-	if refreshed {
+	if len(commands) != 0 {
 		t.Fatal("expected no cache refresh when nothing was copied")
 	}
 }
@@ -470,20 +456,18 @@ func Test_Install_Fonts_Skips_When_All_Present(t *testing.T) {
 // runs once at least one face is copied.
 func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 	t.Parallel()
-	refreshed := false
+	copied := []string{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: TEST_FONT_DIRECTORY,
-		Font_Present:   func(file string) (present bool) { return false },
-		Copy_Font:      func(file string) (err error) { return nil },
-		Refresh: func() (err error) {
-			refreshed = true
-			return nil
-		},
+		IO: font_test_io(
+			func(string) (present bool) { return false }, &copied, nil, &commands),
+		Home_Directory: TEST_HOME,
+		Font_Directory: TEST_FONT_DIRECTORY, Refresh_Cache: true,
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
 	}
-	if !refreshed {
+	if len(commands_named(commands, "fc-cache")) != 1 {
 		t.Fatal("expected the cache refresh after copying a face")
 	}
 }
@@ -492,11 +476,13 @@ func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 // non-zero exit code.
 func Test_Install_Fonts_Reports_A_Copy_Failure(t *testing.T) {
 	t.Parallel()
+	copied := []string{}
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: TEST_FONT_DIRECTORY,
-		Font_Present:   func(file string) (present bool) { return false },
-		Copy_Font:      func(file string) (err error) { return errors.New("disk full") },
-		Refresh:        nil,
+		IO: font_test_io(
+			func(string) (present bool) { return false },
+			&copied, errors.New("disk full"), nil),
+		Home_Directory: TEST_HOME,
+		Font_Directory: TEST_FONT_DIRECTORY, Refresh_Cache: false,
 	})
 	if status {
 		t.Fatal("expected a non-zero status on copy failure")
@@ -512,7 +498,7 @@ func Test_Install_Direnv_Skips_Build_When_Already_Built(t *testing.T) {
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
 		Direnv_Directory: TEST_DIRENV_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			TEST_LINK_DIRECTORY + "/direnv": "2.37.1\n",
 		}, 0),
 	})
@@ -532,7 +518,7 @@ func Test_Install_Direnv_Builds_When_Absent(t *testing.T) {
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
 		Direnv_Directory: TEST_DIRENV_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 0),
+		IO:               recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -550,7 +536,7 @@ func Test_Install_Direnv_Reports_A_Build_Failure(t *testing.T) {
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
 		Direnv_Directory: TEST_DIRENV_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 1),
+		IO:               recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on build failure")
@@ -566,7 +552,7 @@ func Test_Install_Rust_Skips_Install_When_Already_Installed(t *testing.T) {
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
 		Cargo_Directory: TEST_CARGO_DIRECTORY,
 		Link_Directory:  TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			TEST_CARGO_DIRECTORY + "/bin/rustc": "rustc 1.96.0 (abc 2026-05-25)\n",
 		}, 0),
 	})
@@ -589,7 +575,7 @@ func Test_Install_Rust_Installs_Then_Links_When_Absent(t *testing.T) {
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
 		Cargo_Directory: TEST_CARGO_DIRECTORY,
 		Link_Directory:  TEST_LINK_DIRECTORY,
-		Shell:           recording_shell(&commands, nil, 0),
+		IO:              recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -610,7 +596,7 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
 		Cargo_Directory: TEST_CARGO_DIRECTORY,
 		Link_Directory:  TEST_LINK_DIRECTORY,
-		Shell:           recording_shell(&commands, nil, 1),
+		IO:              recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on install failure")
@@ -626,7 +612,7 @@ func Test_Install_Fzf_Skips_Build_When_Already_Built(t *testing.T) {
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
 		Fzf_Directory:    TEST_FZF_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			TEST_LINK_DIRECTORY + "/fzf": "0.73.1\n",
 		}, 0),
 	})
@@ -646,7 +632,7 @@ func Test_Install_Fzf_Builds_When_Absent(t *testing.T) {
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
 		Fzf_Directory:    TEST_FZF_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 0),
+		IO:               recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -664,7 +650,7 @@ func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
 		Fzf_Directory:    TEST_FZF_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 1),
+		IO:               recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on build failure")
@@ -681,7 +667,7 @@ func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
 		Package_Directory: TEST_COMMAND_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "maddox",
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			"which": TEST_LINK_DIRECTORY + "/maddox\n",
 		}, 0),
 	})
@@ -702,7 +688,7 @@ func Test_Install_Command_Builds_When_Absent(t *testing.T) {
 		Package_Directory: TEST_COMMAND_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "m2p",
-		Shell:             recording_shell(&commands, nil, 0),
+		IO:                recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -721,7 +707,7 @@ func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 		Package_Directory: TEST_COMMAND_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "sloc",
-		Shell:             recording_shell(&commands, nil, 1),
+		IO:                recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on build failure")
@@ -737,7 +723,7 @@ func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
 		Jj_Directory:     TEST_JJ_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			TEST_LINK_DIRECTORY + "/jj": "jj 0.42.0-abc123\n",
 		}, 0),
 	})
@@ -761,7 +747,7 @@ func Test_Install_Jj_Builds_When_Absent(t *testing.T) {
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
 		Jj_Directory:     TEST_JJ_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 0),
+		IO:               recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -770,7 +756,7 @@ func Test_Install_Jj_Builds_When_Absent(t *testing.T) {
 	if len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
 	}
-	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
+	if !shared_strings.Contains(joined_text(builds[0].Arguments, " "), "--root") {
 		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
 	}
 	if links := commands_named(commands, "ln"); len(links) != 0 {
@@ -786,7 +772,7 @@ func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
 		Jj_Directory:     TEST_JJ_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 1),
+		IO:               recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on build failure")
@@ -802,7 +788,7 @@ func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			TEST_LINK_DIRECTORY + "/rg": "ripgrep 15.1.0 (rev abc123)\n",
 		}, 0),
 	})
@@ -826,7 +812,7 @@ func Test_Install_Ripgrep_Builds_When_Absent(t *testing.T) {
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
-		Shell:             recording_shell(&commands, nil, 0),
+		IO:                recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -835,7 +821,7 @@ func Test_Install_Ripgrep_Builds_When_Absent(t *testing.T) {
 	if len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
 	}
-	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
+	if !shared_strings.Contains(joined_text(builds[0].Arguments, " "), "--root") {
 		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
 	}
 	if links := commands_named(commands, "ln"); len(links) != 0 {
@@ -851,7 +837,7 @@ func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
 		Binary_Directory:  TEST_LINK_DIRECTORY,
-		Shell:             recording_shell(&commands, nil, 1),
+		IO:                recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on build failure")
@@ -867,7 +853,7 @@ func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			TEST_LINK_DIRECTORY + "/fd": "fd 10.4.2\n",
 		}, 0),
 	})
@@ -891,7 +877,7 @@ func Test_Install_Fdcli_Builds_When_Absent(t *testing.T) {
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 0),
+		IO:               recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -900,7 +886,7 @@ func Test_Install_Fdcli_Builds_When_Absent(t *testing.T) {
 	if len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
 	}
-	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
+	if !shared_strings.Contains(joined_text(builds[0].Arguments, " "), "--root") {
 		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
 	}
 	if links := commands_named(commands, "ln"); len(links) != 0 {
@@ -916,7 +902,7 @@ func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
 		Binary_Directory: TEST_LINK_DIRECTORY,
-		Shell:            recording_shell(&commands, nil, 1),
+		IO:               recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on build failure")
@@ -933,7 +919,7 @@ func Test_Install_Ghostty_Skips_Install_When_Already_Installed(t *testing.T) {
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			binary: "Ghostty 1.3.1\n",
 		}, 0),
 	})
@@ -958,7 +944,7 @@ func Test_Install_Ghostty_Reinstalls_When_Signature_Is_Invalid(t *testing.T) {
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
-		Shell: recording_shell_exits(&commands, map[string]string{
+		IO: recording_process_io_exits(&commands, map[string]string{
 			binary: "Ghostty 1.3.1\n",
 		}, map[string]int{"codesign": 1}),
 	})
@@ -983,7 +969,7 @@ func Test_Install_Ghostty_Pins_The_Signing_Team(t *testing.T) {
 	setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
-		Shell: recording_shell(&commands, map[string]string{
+		IO: recording_process_io(&commands, map[string]string{
 			binary: "Ghostty 1.3.1\n",
 		}, 0),
 	})
@@ -1005,7 +991,7 @@ func Test_Install_Ghostty_Installs_Then_Links_When_Absent(t *testing.T) {
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
-		Shell:                  recording_shell(&commands, nil, 0),
+		IO:                     recording_process_io(&commands, nil, 0),
 	})
 	if !status {
 		t.Fatalf("expected success, got status %t", status)
@@ -1026,7 +1012,7 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
 		Link_Directory:         TEST_LINK_DIRECTORY,
-		Shell:                  recording_shell(&commands, nil, 1),
+		IO:                     recording_process_io(&commands, nil, 1),
 	})
 	if status {
 		t.Fatal("expected a non-zero status on install failure")
@@ -1038,22 +1024,9 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 
 // These Main examples use directory-only trees because they specify command and narration
 // behavior. Fail the test if a change adds an unrelated file operation to one of them.
-func directory_file_system(t *testing.T, loop sysio.IO) (system setup.File_System) {
+func directory_file_system(t *testing.T, loop sysio.IO) (system sysio.IO) {
 	t.Helper()
-	return setup.File_System{
-		Read_Directory: loop.Read_Directory,
-		Status:         loop.Status,
-		Read: func(
-			path string, buffer_size int,
-		) (contents []byte, found bool, err error) {
-			t.Fatalf("unexpected file read: %s", path)
-			return nil, false, nil
-		},
-		Write: func(path string, contents []byte) (err error) {
-			t.Fatalf("unexpected file write: %s", path)
-			return nil
-		},
-	}
+	return loop
 }
 
 // The fixed absolute home directory the planned writes are built against; a
@@ -1110,68 +1083,177 @@ const TEST_APPLICATIONS_DIRECTORY = "/Applications"
 
 // Reports whether ran holds a command exactly equal to want — name and arguments
 // together — so a test can assert one specific invocation happened.
-func ran_contains(ran [][]string, want []string) (found bool) {
-	for _, command := range ran {
-		if slices.Equal(command, want) {
+func request_contains(requests []sysio.Process_Request, want []string) (found bool) {
+	for _, request := range requests {
+		command := append([]string{request.Path}, request.Arguments...)
+		if shared_slices.Equal(command, want) {
 			return true
 		}
 	}
 	return false
 }
 
+// The jlog package keeps its standard writer boundary, while the test stores output in a
+// bounded shared buffer. This adapter contains that required standard-library interface.
+type buffer_writer struct {
+	Buffer *shared_bytes.Buffer
+}
+
+// Write is the standard-library writer operation that jlog requires.
+func (writer buffer_writer) Write(content []byte) (count int, err error) {
+	written, write_err := shared_bytes.Buffer_Write(
+		writer.Buffer, shared_bytes.Slice(content))
+	return int(written), write_err
+}
+
+// The shared text type lets every log assertion use the bounded string algorithms directly.
+func buffer_text(buffer *shared_bytes.Buffer) (content shared_strings.Text) {
+	return shared_strings.Text(shared_bytes.Buffer_String(buffer))
+}
+
+// The test command lists fit one shared text value, so this conversion keeps the shared join
+// boundary visible at the assertion site.
+func joined_text(values []string, separator string) (joined shared_strings.Text) {
+	texts := make(shared_strings.Texts, len(values))
+	for index, value := range values {
+		texts[index] = shared_strings.Text(value)
+	}
+	return shared_strings.Join(texts, shared_strings.Text(separator))
+}
+
 // Returns a logger writing flat JSON to buffer, floored at debug so the scan's debug lines
 // show, with no clock so its output is timestamp-free and byte-for-byte assertable.
-func buffer_logger(buffer *bytes.Buffer) (logger jlog.Logger) {
-	return jlog.New(jlog.New_Input{Writer: buffer, Floor: jlog.LEVEL_DEBUG})
+func buffer_logger(buffer *shared_bytes.Buffer) (logger jlog.Logger) {
+	return jlog.New(jlog.New_Input{
+		Writer: buffer_writer{Buffer: buffer}, Floor: jlog.LEVEL_DEBUG,
+	})
 }
 
-// Returns a Shell whose Spawn records each request into record, replies to a probe
+// Shared IO makes the font specifications observe status, copy, and refresh effects directly.
+func font_test_io(
+	present func(file string) (present bool), copied *[]string, copy_err error,
+	commands *[]sysio.Process_Request,
+) (system sysio.IO) {
+	handles := map[sysio.File]string{}
+	next_file := sysio.File(1)
+	open := func(path string) (file sysio.File) {
+		file = next_file
+		next_file++
+		handles[file] = path
+		return file
+	}
+	system.Read_Directory = func(string) (
+		entries []sysio.Directory_Entry, err error,
+	) {
+		return nil, nil
+	}
+	system.Status = func(path string) (status sysio.File_Status, err error) {
+		status.Is_Regular = filepath.Dir(path) != TEST_FONT_DIRECTORY
+		if !status.Is_Regular {
+			status.Is_Regular = present(filepath.Base(path))
+		}
+		status.Exists = status.Is_Regular
+		return status, nil
+	}
+	system.Open = func(path string) (file sysio.File, err error) { return open(path), nil }
+	system.Create = func(path string) (file sysio.File, err error) {
+		if copy_err != nil {
+			return 0, copy_err
+		}
+		*copied = append(*copied, filepath.Base(path))
+		return open(path), nil
+	}
+	system.Make_Directory = func(string) (err error) { return nil }
+	system.Read = func(
+		completion *sysio.Completion, callback sysio.Callback,
+		_ sysio.File, buffer []byte, offset int64,
+	) {
+		content := []byte("font")
+		if offset >= int64(len(content)) {
+			callback(completion, 0, nil)
+			return
+		}
+		callback(completion, copy(buffer, content[int(offset):]), nil)
+	}
+	system.Write = func(
+		completion *sysio.Completion, callback sysio.Callback,
+		_ sysio.File, buffer []byte, _ int64,
+	) {
+		callback(completion, len(buffer), nil)
+	}
+	system.Close = func(
+		completion *sysio.Completion, callback sysio.Timeout_Callback, file sysio.File,
+	) {
+		delete(handles, file)
+		callback(completion, nil)
+	}
+	system.Spawn = func(
+		completion *sysio.Completion, callback sysio.Process_Callback,
+		request sysio.Process_Request, _ systime.Duration,
+	) {
+		if commands != nil {
+			*commands = append(*commands, request)
+		}
+		callback(completion, sysio.Process_Result{}, nil)
+	}
+	return system
+}
+
+// Returns shared IO whose Spawn records each request into record, replies to a probe
 // with responses keyed by the command path, and reports exit for every spawn, so
 // a test drives the gate and the build without spawning a real process or a loop.
-func recording_shell(
+func recording_process_io(
 	record *[]sysio.Process_Request, responses map[string]string, exit int,
-) (shell setup.Shell) {
-	return setup.Shell{
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-		Spawn: func(request sysio.Process_Request) (result sysio.Process_Result) {
-			*record = append(*record, request)
-			return sysio.Process_Result{
-				Output: []byte(responses[request.Path]),
-				Exit:   exit,
-			}
-		},
-	}
+) (system sysio.IO) {
+	return recording_io(sysio.IO{}, record, responses, exit)
 }
 
-// Returns a Shell like recording_shell whose spawn exit code is chosen per command
+// Returns shared IO like recording_process_io whose spawn exit code is chosen per command
 // path from exits, defaulting to zero, so a test can fail one specific command — a
 // codesign verify — while the gate's version probe and the rest still succeed.
-func recording_shell_exits(
+func recording_process_io_exits(
 	record *[]sysio.Process_Request, responses map[string]string, exits map[string]int,
-) (shell setup.Shell) {
-	return setup.Shell{
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-		Spawn: func(request sysio.Process_Request) (result sysio.Process_Result) {
-			*record = append(*record, request)
-			return sysio.Process_Result{
-				Output: []byte(responses[request.Path]),
-				Exit:   exits[request.Path],
-			}
-		},
+) (system sysio.IO) {
+	system.Spawn = func(
+		completion *sysio.Completion, callback sysio.Process_Callback,
+		request sysio.Process_Request, _ systime.Duration,
+	) {
+		*record = append(*record, request)
+		callback(completion, sysio.Process_Result{
+			Output: []byte(responses[request.Path]), Exit: exits[request.Path],
+		}, nil)
 	}
+	return system
+}
+
+// A copied IO value lets one test combine simulated files with recorded processes.
+func recording_io(
+	system sysio.IO, record *[]sysio.Process_Request,
+	responses map[string]string, exit int,
+) (recording sysio.IO) {
+	system.Spawn = func(
+		completion *sysio.Completion, callback sysio.Process_Callback,
+		request sysio.Process_Request, _ systime.Duration,
+	) {
+		*record = append(*record, request)
+		callback(completion, sysio.Process_Result{
+			Output: []byte(responses[request.Path]), Exit: exit,
+		}, nil)
+	}
+	return system
 }
 
 // Reports whether a codesign invocation pins a signing team: it carries the -R
 // requirement flag and a requirement argument naming the team id, so the check
 // rejects an app signed by anyone else.
 func pins_team(arguments []string, team string) (pins bool) {
-	if !slices.Contains(arguments, "-R") {
+	if !shared_slices.Contains(arguments, "-R") {
 		return false
 	}
 	for _, argument := range arguments {
-		if strings.Contains(argument, team) {
+		if shared_strings.Contains(
+			shared_strings.Text(argument), shared_strings.Text(team),
+		) {
 			return true
 		}
 	}

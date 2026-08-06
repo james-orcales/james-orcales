@@ -8,18 +8,18 @@
 package setup
 
 import (
-	"bytes"
 	"container/list"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
-	"slices"
-	"strings"
 
+	shared_bytes "local/james-orcales/shared/bytes"
 	invariant "local/james-orcales/shared/invariant/default"
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/jlog"
+	shared_slices "local/james-orcales/shared/slices"
+	shared_strings "local/james-orcales/shared/strings"
 	systime "local/james-orcales/shared/time"
 )
 
@@ -66,16 +66,15 @@ func Main(input *Main_Input) (status_code Exit_Code) {
 	if !valid {
 		return EXIT_USAGE
 	}
-	input.Shell.Logger = environment.Logger
-	input.Shell.Stdout = environment.Stdout
-	input.Shell.Stderr = environment.Stderr
 	steps := Bootstrap_Steps(&Bootstrap_Steps_Input{
 		Home_Directory:   environment.Home_Directory,
 		Operating_System: environment.Operating_System,
 		Cargo_Directory:  environment.Cargo_Directory,
 		Data_Directory:   environment.Data_Directory,
-		File_System:      input.File_System,
-		Shell:            input.Shell,
+		IO:               input.IO,
+		Logger:           environment.Logger,
+		Stdout:           environment.Stdout,
+		Stderr:           environment.Stderr,
 	})
 	if !Bootstrap(&Bootstrap_Input{Steps: steps, Logger: environment.Logger}) {
 		return EXIT_FAILURE
@@ -147,307 +146,203 @@ func Environment_Invariants(environment Environment, namespace invariant.Namespa
 	Data_Directory_Invariants(environment.Data_Directory, namespace)
 }
 
-// File_System gives the sync synchronous file operations. The composition root converts its
-// asynchronous IO into these operations because only the composition root can drive the loop.
-type File_System struct {
-	// Read_Directory returns the immediate entries in one directory.
-	Read_Directory func(path string) (entries []sysio.Directory_Entry, err error)
-	// Status reports whether a path exists without an asynchronous operation.
-	Status func(path string) (status sysio.File_Status, err error)
-	// Read returns one bounded file and reports an absent path without an error.
-	Read func(path string, buffer_size int) (contents []byte, found bool, err error)
-	// Write replaces one file after it creates the necessary parent directories.
-	Write func(path string, contents []byte) (err error)
+// File operations require these shared IO members.
+func file_io_requirements(system sysio.IO, _ invariant.Namespace) {
+	invariant.Always(system.Read_Directory != nil, "Setup IO has a directory reader.")
+	invariant.Always(system.Status != nil, "Setup IO has a status reader.")
+	invariant.Always(system.Open != nil, "Setup IO has a file opener.")
+	invariant.Always(system.Create != nil, "Setup IO has a file creator.")
+	invariant.Always(system.Make_Directory != nil, "Setup IO has a directory creator.")
+	invariant.Always(system.Read != nil, "Setup IO has a file read submission.")
+	invariant.Always(system.Write != nil, "Setup IO has a file write submission.")
+	invariant.Always(system.Close != nil, "Setup IO has a file close submission.")
 }
 
-// File_System_Invariants states that each required file-system operation is present.
-func File_System_Invariants(system File_System, namespace invariant.Namespace) {
-	invariant.Always(system.Read_Directory != nil, "A file system has a directory reader.")
-	invariant.Always(system.Status != nil, "A file system has a status reader.")
-	invariant.Always(system.Read != nil, "A file system has a file reader.")
-	invariant.Always(system.Write != nil, "A file system has a file writer.")
+// Process operations require the shared spawn member.
+func process_io_requirements(system sysio.IO, _ invariant.Namespace) {
+	invariant.Always(system.Spawn != nil, "Setup IO has a process spawn submission.")
 }
 
-// Transition_Ready reports that one callback-owned transition retired.
-type Transition_Ready func() (ready bool)
+// File_Path is one validated absolute path submitted through shared IO.
+type File_Path string
 
-// Transition_Complete reports that one callback-owned operation retired all transitions.
-type Transition_Complete func() (complete bool)
+// File_Path_Invariants bounds a shared IO file path.
+func File_Path_Invariants(path File_Path, namespace invariant.Namespace) {
+	invariant.Tree(path, namespace).Range_Int(
+		len(path), FILE_PATH_BYTES_MIN, FILE_PATH_BYTES_MAX).Ensure()
+}
 
-// Transition_Rearm submits the next callback-owned transition.
-type Transition_Rearm func()
-
-// Asynchronous_File_Read_Result reports one result after the root observes completion.
-type Asynchronous_File_Read_Result func() (contents []byte, found bool, err error)
-
-// Asynchronous_File_Read submits one bounded read without advancing the IO timeline.
-type Asynchronous_File_Read func(
-	path string, size int,
-) (
-	ready Transition_Ready, complete Transition_Complete,
-	rearm Transition_Rearm, result Asynchronous_File_Read_Result,
-)
-
-// Asynchronous_File_Open validates one read request before it returns a descriptor.
-type Asynchronous_File_Open func(
-	path string, size int,
-) (file sysio.File, present File_Presence, err error)
-
-// Asynchronous_File_Write_Result reports one result after the root observes completion.
-type Asynchronous_File_Write_Result func() (err error)
-
-// Asynchronous_File_Write submits one bounded write without advancing the IO timeline.
-type Asynchronous_File_Write func(
-	path string, contents []byte,
-) (
-	ready Transition_Ready, complete Transition_Complete,
-	rearm Transition_Rearm, result Asynchronous_File_Write_Result,
-)
-
-// Asynchronous_Process_Result reports one result after the root observes completion.
-type Asynchronous_Process_Result func() (result sysio.Process_Result)
-
-// Asynchronous_Process submits one bounded process without advancing the IO timeline.
-type Asynchronous_Process func(
-	request sysio.Process_Request,
-) (
-	ready Transition_Ready, complete Transition_Complete,
-	rearm Transition_Rearm, result Asynchronous_Process_Result,
-)
-
-// File_Read_Adapter binds callback sequencing without receiving the root Driver.
-func File_Read_Adapter(loop sysio.IO) (read Asynchronous_File_Read) {
-	open := File_Open_Adapter(loop)
-	return func(path string, size int) (
-		ready Transition_Ready, complete Transition_Complete,
-		rearm Transition_Rearm, result Asynchronous_File_Read_Result,
-	) {
-		retired, done, close_next := false, false, false
-		completion, buffer := sysio.Completion{}, make([]byte, size)
-		total, found := 0, false
-		contents, result_err := []byte(nil), error(nil)
-		file, present, open_err := open(path, size)
-		result_err = open_err
-		done = open_err != nil || !bool(present)
-		var submit, close_submit func()
-		close_submit = func() {
-			loop.Close(&completion, func(_ *sysio.Completion, close_err error) {
-				result_err = errors.Join(result_err, close_err)
-				done, retired = true, true
-			}, file)
-		}
-		submit = func() {
-			loop.Read(&completion, func(
-				_ *sysio.Completion, count int, read_err error,
-			) {
-				if read_err != nil {
-					result_err, close_next, retired = read_err, true, true
-					return
-				}
-				if count < 0 {
-					result_err = errors.New(
-						"the file read returned a negative byte count")
-					close_next, retired = true, true
-					return
-				}
-				if count > len(buffer)-total {
-					result_err = errors.New(
-						"the file read returned an invalid byte count")
-					close_next, retired = true, true
-					return
-				}
-				total += count
-				if count == 0 {
-					contents, found, close_next = buffer[:total], true, true
-				}
-				if total == len(buffer) {
-					result_err = errors.New("the file exceeds its limit")
-					close_next = true
-				}
-				retired = true
-			}, file, buffer[total:], int64(total))
-		}
-		ready = func() (ready bool) { return retired }
-		complete = func() (complete bool) { return done }
-		rearm = func() {
-			retired = false
-			if close_next {
-				close_submit()
-				return
-			}
-			submit()
-		}
-		result = func() (read []byte, present bool, err error) {
-			return contents, found, result_err
-		}
-		if !done {
-			submit()
-		}
-		return ready, complete, rearm, result
+// File_read reads one bounded file through shared IO. The composition root drains each
+// submission before it returns, so policy can stay sequential without owning the Driver.
+func file_read(system sysio.IO, path File_Path) (
+	contents Dotfile_Bytes, found File_Presence, err error,
+) {
+	defer func() {
+		Dotfile_Bytes_Invariants(contents, "file_read.contents")
+		File_Presence_Invariants(found, "file_read.found")
+	}()
+	File_Path_Invariants(path, "file_read.path")
+	file_io_requirements(system, "file_read.system")
+	if len(path) < FILE_PATH_BYTES_MIN {
+		return nil, false, errors.New("the file path is outside its limit")
 	}
-}
-
-// File_Open_Adapter keeps unvalidated root values outside the typed setup policy.
-func File_Open_Adapter(loop sysio.IO) (open Asynchronous_File_Open) {
-	return func(path string, size int) (
-		file sysio.File, present File_Presence, err error,
-	) {
-		if len(path) < DESTINATION_PATH_BYTES_MIN {
-			return 0, false, errors.New("the file path is outside its limit")
-		}
-		if len(path) > DESTINATION_PATH_BYTES_MAX {
-			return 0, false, errors.New("the file path is outside its limit")
-		}
-		if size != DOTFILE_BYTES_MAX {
-			if size != COPY_BYTES_MAX {
-				return 0, false, errors.New("the file byte limit is invalid")
-			}
-		}
-		status, status_err := loop.Status(path)
-		if status_err != nil {
-			return 0, false, status_err
-		}
-		if !status.Exists {
-			return 0, false, nil
-		}
-		if !status.Is_Regular {
-			return 0, true, errors.New("the file path is not a regular file")
-		}
-		file, err = loop.Open(path)
-		return file, true, err
+	if len(path) > FILE_PATH_BYTES_MAX {
+		return nil, false, errors.New("the file path is outside its limit")
 	}
-}
-
-// Asynchronous_File_Create validates one write request before it returns a descriptor.
-type Asynchronous_File_Create func(path string) (file sysio.File, err error)
-
-// File_Write_Adapter binds callback sequencing without receiving the root Driver.
-func File_Write_Adapter(loop sysio.IO) (write Asynchronous_File_Write) {
-	create := File_Create_Adapter(loop)
-	return func(path string, contents []byte) (
-		ready Transition_Ready, complete Transition_Complete,
-		rearm Transition_Rearm, result Asynchronous_File_Write_Result,
-	) {
-		retired, done, close_next := false, false, false
+	status, status_err := system.Status(string(path))
+	if status_err != nil {
+		return nil, false, status_err
+	}
+	if !status.Exists {
+		return nil, false, nil
+	}
+	if !status.Is_Regular {
+		return nil, true, errors.New("the file path is not a regular file")
+	}
+	file, open_err := system.Open(string(path))
+	if open_err != nil {
+		return nil, true, open_err
+	}
+	buffer := make([]byte, DOTFILE_BYTES_MAX)
+	total := 0
+	for total < len(buffer) {
+		retired, count, read_err := false, 0, error(nil)
 		completion := sysio.Completion{}
-		written := 0
-		var result_err error
-		file, create_err := create(path)
-		if create_err != nil {
-			result_err, done = create_err, true
-		}
-		var submit, close_submit func()
-		close_submit = func() {
-			loop.Close(&completion, func(_ *sysio.Completion, close_err error) {
-				result_err = errors.Join(result_err, close_err)
-				done, retired = true, true
-			}, file)
-		}
-		submit = func() {
-			if written == len(contents) {
-				close_submit()
-				return
-			}
-			chunk := contents[written:]
-			loop.Write(&completion, func(
-				_ *sysio.Completion, count int, write_err error,
-			) {
-				if write_err != nil {
-					result_err, close_next, retired = write_err, true, true
-					return
-				}
-				if count <= 0 {
-					result_err = errors.New("the file write made no progress")
-					close_next, retired = true, true
-					return
-				}
-				if count > len(chunk) {
-					result_err = errors.New(
-						"the file write returned an invalid byte count")
-					close_next, retired = true, true
-					return
-				}
-				written, retired = written+count, true
-			}, file, chunk, int64(written))
-		}
-		ready = func() (ready bool) { return retired }
-		complete = func() (complete bool) { return done }
-		rearm = func() {
-			retired = false
-			if close_next {
-				close_submit()
-				return
-			}
-			submit()
-		}
-		result = func() (err error) { return result_err }
-		if !done {
-			submit()
-		}
-		return ready, complete, rearm, result
-	}
-}
-
-// File_Create_Adapter keeps unvalidated root values outside the typed setup policy.
-func File_Create_Adapter(loop sysio.IO) (create Asynchronous_File_Create) {
-	return func(path string) (file sysio.File, err error) {
-		if len(path) < DESTINATION_PATH_BYTES_MIN {
-			return 0, errors.New("the file path is outside its limit")
-		}
-		if len(path) > DESTINATION_PATH_BYTES_MAX {
-			return 0, errors.New("the file path is outside its limit")
-		}
-		if mkdir_err := loop.Make_Directory(filepath.Dir(path)); mkdir_err != nil {
-			return 0, mkdir_err
-		}
-		return loop.Create(path)
-	}
-}
-
-// Process_Adapter binds callback state without receiving the root Driver.
-func Process_Adapter(loop sysio.IO) (process Asynchronous_Process) {
-	return func(request sysio.Process_Request) (
-		ready Transition_Ready, complete Transition_Complete,
-		rearm Transition_Rearm, result Asynchronous_Process_Result,
-	) {
-		done := false
-		completed := sysio.Process_Result{}
-		var result_err error
-		completion := sysio.Completion{}
-		loop.Spawn(&completion, func(
-			_ *sysio.Completion, process_result sysio.Process_Result, err error,
+		system.Read(&completion, func(
+			_ *sysio.Completion, completed int, completed_err error,
 		) {
-			completed, result_err, done = process_result, err, true
-		}, request, PROCESS_DURATION_MAX)
-		ready = func() (ready bool) { return done }
-		complete = func() (complete bool) { return done }
-		rearm = func() {}
-		result = func() (process_result sysio.Process_Result) {
-			process_result = completed
-			if result_err != nil {
-				process_result.Exit = 1
-			}
-			return process_result
+			count, read_err, retired = completed, completed_err, true
+		}, file, buffer[total:], int64(total))
+		if !retired {
+			read_err = errors.New("the file read did not retire before return")
 		}
-		return ready, complete, rearm, result
+		if read_err != nil {
+			return nil, true, errors.Join(read_err, file_close(system, file))
+		}
+		if count < 0 {
+			return nil, true, errors.Join(
+				errors.New("the file read returned a negative byte count"),
+				file_close(system, file),
+			)
+		}
+		if count > len(buffer)-total {
+			return nil, true, errors.Join(
+				errors.New("the file read returned an invalid byte count"),
+				file_close(system, file),
+			)
+		}
+		total += count
+		if count == 0 {
+			return Dotfile_Bytes(buffer[:total]), true, file_close(system, file)
+		}
+		if total == len(buffer) {
+			return nil, true, errors.Join(
+				errors.New("the file exceeds its limit"), file_close(system, file))
+		}
 	}
+	return nil, true, errors.Join(
+		errors.New("the file exceeds its limit"), file_close(system, file))
+}
+
+// File_write replaces one bounded file through shared IO.
+func file_write(system sysio.IO, path Destination_Path, contents Dotfile_Bytes) (err error) {
+	Destination_Path_Invariants(path, "file_write.path")
+	Dotfile_Bytes_Invariants(contents, "file_write.contents")
+	file_io_requirements(system, "file_write.system")
+	if len(path) < DESTINATION_PATH_BYTES_MIN {
+		return errors.New("the file path is outside its limit")
+	}
+	if len(path) > DESTINATION_PATH_BYTES_MAX {
+		return errors.New("the file path is outside its limit")
+	}
+	if mkdir_err := system.Make_Directory(filepath.Dir(string(path))); mkdir_err != nil {
+		return mkdir_err
+	}
+	file, create_err := system.Create(string(path))
+	if create_err != nil {
+		return create_err
+	}
+	written := 0
+	for written < len(contents) {
+		retired, count, write_err := false, 0, error(nil)
+		chunk := contents[written:]
+		completion := sysio.Completion{}
+		system.Write(&completion, func(
+			_ *sysio.Completion, completed int, completed_err error,
+		) {
+			count, write_err, retired = completed, completed_err, true
+		}, file, chunk, int64(written))
+		if !retired {
+			write_err = errors.New("the file write did not retire before return")
+		}
+		if write_err != nil {
+			return errors.Join(write_err, file_close(system, file))
+		}
+		if count <= 0 {
+			return errors.Join(
+				errors.New("the file write made no progress"),
+				file_close(system, file),
+			)
+		}
+		if count > len(chunk) {
+			return errors.Join(
+				errors.New("the file write returned an invalid byte count"),
+				file_close(system, file),
+			)
+		}
+		written += count
+	}
+	return file_close(system, file)
+}
+
+// File_close keeps descriptor cleanup on the same shared IO boundary.
+func file_close(system sysio.IO, file sysio.File) (err error) {
+	retired := false
+	completion := sysio.Completion{}
+	system.Close(&completion, func(_ *sysio.Completion, close_err error) {
+		err, retired = close_err, true
+	}, file)
+	if !retired {
+		return errors.New("the file close did not retire before return")
+	}
+	return err
+}
+
+// Process_spawn submits one bounded process through shared IO.
+func process_spawn(system sysio.IO, request sysio.Process_Request) (
+	result sysio.Process_Result, err error,
+) {
+	process_io_requirements(system, "process_spawn.system")
+	retired := false
+	completion := sysio.Completion{}
+	system.Spawn(&completion, func(
+		_ *sysio.Completion, completed sysio.Process_Result, completed_err error,
+	) {
+		result, err, retired = completed, completed_err, true
+	}, request, PROCESS_DURATION_MAX)
+	if !retired {
+		return sysio.Process_Result{Exit: 1}, errors.New(
+			"the process spawn did not retire before return")
+	}
+	if err != nil {
+		result.Exit = 1
+	}
+	return result, err
 }
 
 // Main_Input contains the complete injected environment for one setup run.
 type Main_Input struct {
 	// Environment contains the operating-system facts that Main validates.
 	Environment *Environment_Input
-	// File_System supplies all setup file operations.
-	File_System File_System
-	// Shell supplies all setup process operations.
-	Shell Shell
+	// IO supplies every setup file and process operation.
+	IO sysio.IO
 }
 
 // Main_Input_Invariants states the complete setup dependency set.
 func Main_Input_Invariants(input *Main_Input, namespace invariant.Namespace) {
 	Environment_Input_Invariants(input.Environment, namespace)
-	File_System_Invariants(input.File_System, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	file_io_requirements(input.IO, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // New_Environment applies startup policy to operating-system facts and returns the required exit
@@ -484,8 +379,8 @@ func New_Environment(input *Environment_Input) (
 
 // Mirror_Input carries the injected dependencies Mirror needs to sync dotfiles.
 type Mirror_Input struct {
-	// File_System is the loop the dotfiles tree is walked, read, and written through.
-	File_System File_System
+	// IO is the shared boundary used to walk, read, write, and spawn.
+	IO sysio.IO
 	// Source_Directory is the absolute dotfiles tree walked in full from its root.
 	Source_Directory Source_Directory
 	// Destination_Directory is the absolute home directory writes land under, and the diff
@@ -494,25 +389,20 @@ type Mirror_Input struct {
 	// Operating_System gates the macos defaults step, which runs only on
 	// "darwin" (a runtime.GOOS value).
 	Operating_System Operating_System
-	// Run_Command runs an external program by name with arguments. It is injected
-	// so this library tier never executes anything; package main supplies the
-	// exec-backed runner used for the macos defaults.
-	Run_Command func(name string, arguments []string) (err error)
-	// Is_Ignored classifies a batch of source paths, returning the set that is
-	// gitignored; it is threaded to Plan so the install tree under .local is not
-	// mirrored into home. Batched because the gitignore probe is a subprocess and one
-	// spawn per path made a large tree scan for seconds. One call classifies one
-	// directory. Nil ignores nothing.
-	Is_Ignored func(relative_paths []string) (ignored map[string]bool)
 	// Logger records the sync's narration: one line per file written, the scan's
 	// progress, and a diagnostic when planning or a write fails. The zero Logger is a
 	// disabled no-op, so a caller wanting silence passes none.
 	Logger jlog.Logger
+	// Stdout receives live macOS defaults output.
+	Stdout io.Writer
+	// Stderr receives live macOS defaults diagnostics.
+	Stderr io.Writer
 }
 
 // Mirror_Input_Invariants states the mirror dependency set and its path facts.
 func Mirror_Input_Invariants(input *Mirror_Input, namespace invariant.Namespace) {
-	File_System_Invariants(input.File_System, namespace)
+	file_io_requirements(input.IO, namespace)
+	process_io_requirements(input.IO, namespace)
 	Source_Directory_Invariants(input.Source_Directory, namespace)
 	Destination_Directory_Invariants(input.Destination_Directory, namespace)
 	Operating_System_Invariants(input.Operating_System, namespace)
@@ -524,10 +414,9 @@ func Mirror(input *Mirror_Input) (succeeded Step_Success) {
 	defer func() { Step_Success_Invariants(succeeded, "Mirror.succeeded") }()
 	Mirror_Input_Invariants(input, "Mirror.input")
 	writes, plan_err := Plan(&Plan_Input{
-		File_System:           input.File_System,
+		IO:                    input.IO,
 		Source_Directory:      input.Source_Directory,
 		Destination_Directory: input.Destination_Directory,
-		Is_Ignored:            input.Is_Ignored,
 		Logger:                input.Logger,
 	})
 	if plan_err != nil {
@@ -536,8 +425,7 @@ func Mirror(input *Mirror_Input) (succeeded Step_Success) {
 	}
 	for element := writes.List.Front(); element != nil; element = element.Next() {
 		write := element.Value.(File_Write)
-		write_err := input.File_System.Write(
-			string(write.Destination_Path), []byte(write.Contents))
+		write_err := file_write(input.IO, write.Destination_Path, write.Contents)
 		if write_err != nil {
 			jlog.Logger_Error(input.Logger, "write failed", jlog.Err(write_err))
 			return false
@@ -554,15 +442,16 @@ func Mirror(input *Mirror_Input) (succeeded Step_Success) {
 	if input.Operating_System != "darwin" {
 		return true
 	}
-	return apply_macos_defaults(input.Run_Command, input.Logger)
+	return apply_macos_defaults(
+		input.IO, input.Stdout, input.Stderr, input.Logger)
 }
 
 // Reports whether the injected file system contains a path. A status error cannot prove that the
 // file exists, so the idempotency gate treats that result as absent.
-func file_present(system File_System, path Font_Path) (present File_Presence) {
+func file_present(system sysio.IO, path Font_Path) (present File_Presence) {
 	defer func() { File_Presence_Invariants(present, "file_present.present") }()
-	File_System_Invariants(system, "file_present.system")
 	Font_Path_Invariants(path, "file_present.path")
+	file_io_requirements(system, "file_present.system")
 	status, status_err := system.Status(string(path))
 	if status_err != nil {
 		return false
@@ -572,30 +461,160 @@ func file_present(system File_System, path Font_Path) (present File_Presence) {
 
 // Copies one bounded file through the injected file system. The larger font limit stays separate
 // from the dotfile limit because a font is binary installation data, not configuration text.
-func copy_file(system File_System, input *File_Copy_Input) (err error) {
-	File_System_Invariants(system, "copy_file.system")
+func copy_file(system sysio.IO, input *File_Copy_Input) (err error) {
 	File_Copy_Input_Invariants(input, "copy_file.input")
-	contents, found, read_err := system.Read(string(input.Source), COPY_BYTES_MAX)
-	if read_err != nil {
+	file_io_requirements(system, "copy_file.system")
+	copy := Font_Copy{IO: system, Input: input, Contents: list.New()}
+	if read_err := font_copy_read(&copy); read_err != nil {
 		return read_err
 	}
-	if !found {
-		return errors.New("copy source is absent")
-	}
-	return system.Write(string(input.Destination), contents)
+	return font_copy_write(&copy)
 }
 
-// Takes just the runner and the logger it uses, not the whole Mirror_Input. Runs
+// Font_Copy retains one bounded payload between its shared IO read and write submissions.
+type Font_Copy struct {
+	// IO submits every file operation.
+	IO sysio.IO
+	// Input identifies the typed source and destination paths.
+	Input *File_Copy_Input
+	// Contents retains bounded chunks until the source closes.
+	Contents *list.List
+}
+
+// Font_Copy_Invariants states the typed paths copied through shared IO.
+func Font_Copy_Invariants(copy *Font_Copy, namespace invariant.Namespace) {
+	File_Copy_Input_Invariants(copy.Input, namespace)
+	invariant.Always(copy.Contents != nil, "A font copy has a bounded chunk list.")
+}
+
+// Font_copy_read loads one font after shared IO proves that it is regular.
+func font_copy_read(copy *Font_Copy) (err error) {
+	Font_Copy_Invariants(copy, "font_copy_read.copy")
+	file_io_requirements(copy.IO, "font_copy_read.system")
+	status, status_err := copy.IO.Status(string(copy.Input.Source))
+	if status_err != nil {
+		return status_err
+	}
+	if !status.Exists {
+		return errors.New("copy source is absent")
+	}
+	if !status.Is_Regular {
+		return errors.New("copy source is not a regular file")
+	}
+	file, open_err := copy.IO.Open(string(copy.Input.Source))
+	if open_err != nil {
+		return open_err
+	}
+	content_bytes := 0
+	for content_bytes <= COPY_BYTES_MAX {
+		capacity := COPY_BYTES_MAX - content_bytes + 1
+		buffer_size := shared_bytes.SLICE_SIZE_MAXIMUM
+		if capacity < buffer_size {
+			buffer_size = capacity
+		}
+		buffer := make([]byte, buffer_size)
+		retired, count, read_err := false, 0, error(nil)
+		completion := sysio.Completion{}
+		copy.IO.Read(&completion, func(
+			_ *sysio.Completion, completed int, completed_err error,
+		) {
+			count, read_err, retired = completed, completed_err, true
+		}, file, buffer, int64(content_bytes))
+		if !retired {
+			read_err = errors.New("the font read did not retire before return")
+		}
+		if read_err != nil {
+			return errors.Join(read_err, file_close(copy.IO, file))
+		}
+		if count < 0 {
+			return errors.Join(
+				errors.New("the font read returned a negative byte count"),
+				file_close(copy.IO, file))
+		}
+		if count > len(buffer) {
+			return errors.Join(
+				errors.New("the font read returned an invalid byte count"),
+				file_close(copy.IO, file))
+		}
+		if count == 0 {
+			return file_close(copy.IO, file)
+		}
+		chunk := append([]byte(nil), buffer[:count]...)
+		copy.Contents.PushBack(chunk)
+		content_bytes += count
+	}
+	return errors.Join(
+		errors.New("the font exceeds its limit"), file_close(copy.IO, file))
+}
+
+// Font_copy_write replaces one font after its complete payload is retained.
+func font_copy_write(copy *Font_Copy) (err error) {
+	Font_Copy_Invariants(copy, "font_copy_write.copy")
+	file_io_requirements(copy.IO, "font_copy_write.system")
+	destination := string(copy.Input.Destination)
+	if mkdir_err := copy.IO.Make_Directory(filepath.Dir(destination)); mkdir_err != nil {
+		return mkdir_err
+	}
+	file, create_err := copy.IO.Create(destination)
+	if create_err != nil {
+		return create_err
+	}
+	written := 0
+	for element := copy.Contents.Front(); element != nil; element = element.Next() {
+		chunk := element.Value.([]byte)
+		chunk_written := 0
+		for chunk_written < len(chunk) {
+			retired, count, write_err := false, 0, error(nil)
+			completion := sysio.Completion{}
+			copy.IO.Write(&completion, func(
+				_ *sysio.Completion, completed int, completed_err error,
+			) {
+				count, write_err, retired = completed, completed_err, true
+			}, file, chunk[chunk_written:], int64(written))
+			if !retired {
+				write_err = errors.New(
+					"the font write did not retire before return")
+			}
+			if write_err != nil {
+				return errors.Join(write_err, file_close(copy.IO, file))
+			}
+			if count <= 0 {
+				return errors.Join(
+					errors.New("the font write made no progress"),
+					file_close(copy.IO, file))
+			}
+			if count > len(chunk)-chunk_written {
+				return errors.Join(errors.New(
+					"the font write returned an invalid byte count"),
+					file_close(copy.IO, file))
+			}
+			chunk_written += count
+			written += count
+		}
+	}
+	return file_close(copy.IO, file)
+}
+
+// Takes shared IO and the output policy, not the whole Mirror_Input. Runs
 // every macos defaults command, stopping at the first that fails. It logs
 // nothing per command — 35 lines of `defaults write` is noise, not progress.
 func apply_macos_defaults(
-	run func(name string, arguments []string) (err error), logger jlog.Logger,
+	system sysio.IO, stdout io.Writer, stderr io.Writer, logger jlog.Logger,
 ) (succeeded Step_Success) {
 	defer func() { Step_Success_Invariants(succeeded, "apply_macos_defaults.succeeded") }()
 	for _, command := range macos_commands() {
-		run_err := run(string(command.Name), []string(command.Arguments))
-		if run_err != nil {
-			jlog.Logger_Error(logger, "macos defaults failed", jlog.Err(run_err))
+		result, spawn_err := process_spawn(system, sysio.Process_Request{
+			Path: string(command.Name), Arguments: []string(command.Arguments),
+			Stdout: stdout, Stderr: stderr,
+		})
+		if spawn_err != nil {
+			jlog.Logger_Error(logger, "macos defaults failed", jlog.Err(spawn_err))
+			return false
+		}
+		if result.Exit != 0 {
+			spawn_err = fmt.Errorf(
+				"%s exited with status %d", command.Name, result.Exit)
+			jlog.Logger_Error(logger, "macos defaults failed", jlog.Err(spawn_err))
 			return false
 		}
 	}
@@ -707,14 +726,18 @@ func Macos_Command_Invariants(command Macos_Command, namespace invariant.Namespa
 func macos_commands() (commands Commands) {
 	defer func() { Commands_Invariants(commands, "macos_commands.commands") }()
 	commands = Commands{}
-	for line := range strings.Lines(MACOS_DEFAULTS_SCRIPT) {
-		fields := strings.Fields(line)
+	for line := range shared_strings.Lines(MACOS_DEFAULTS_SCRIPT) {
+		fields := shared_strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
+		arguments := make(Macos_Arguments, len(fields)-1)
+		for index := 1; index < len(fields); index++ {
+			arguments[index-1] = string(fields[index])
+		}
 		commands = append(commands, Macos_Command{
 			Name:      Step_Name(fields[0]),
-			Arguments: Macos_Arguments(fields[1:]),
+			Arguments: arguments,
 		})
 	}
 	return append(commands, Macos_Command{
@@ -744,20 +767,14 @@ func File_Write_Invariants(write File_Write, namespace invariant.Namespace) {
 
 // Plan_Input carries the injected dependencies Plan needs to decide what to sync.
 type Plan_Input struct {
-	// File_System is the loop the source tree is walked and read through, and the
+	// IO is the shared boundary the source tree is walked and read through, and the
 	// destination read through for diffing.
-	File_System File_System
+	IO sysio.IO
 	// Source_Directory is the absolute dotfiles tree, walked in full from its root.
 	Source_Directory Source_Directory
 	// Destination_Directory is the absolute home directory the relative source
 	// paths are mirrored under to form each write's Destination_Path.
 	Destination_Directory Destination_Directory
-	// Is_Ignored classifies a batch of source paths, each relative to the source root,
-	// returning the set that is gitignored. An ignored file is not synced and an ignored
-	// directory is pruned, so the generated install tree under .local never reaches the
-	// home directory. It takes one directory batch, not one path, because the gitignore
-	// probe is a subprocess. Nil ignores nothing, the sync's behavior before the filter.
-	Is_Ignored func(relative_paths []string) (ignored map[string]bool)
 	// Logger records one line naming each directory as the walk reads it. A converged
 	// scan writes nothing, so without this the step looks hung while it walks; narrating
 	// each directory proves the scan is live. The zero Logger is a disabled no-op, so a
@@ -767,7 +784,8 @@ type Plan_Input struct {
 
 // Plan_Input_Invariants states the mirror plan dependency set.
 func Plan_Input_Invariants(input *Plan_Input, namespace invariant.Namespace) {
-	File_System_Invariants(input.File_System, namespace)
+	file_io_requirements(input.IO, namespace)
+	process_io_requirements(input.IO, namespace)
 	Source_Directory_Invariants(input.Source_Directory, namespace)
 	Destination_Directory_Invariants(input.Destination_Directory, namespace)
 }
@@ -833,7 +851,7 @@ func plan_directory(
 	Plan_Input_Invariants(input, "plan_directory.input")
 	Traversal_Directory_Invariants(directory, "plan_directory.directory")
 	plan_narrate(input.Logger, directory)
-	entries, read_err := input.File_System.Read_Directory(
+	entries, read_err := input.IO.Read_Directory(
 		filepath.Join(string(input.Source_Directory), string(directory)))
 	if read_err != nil {
 		return read_err
@@ -848,10 +866,8 @@ func plan_directory(
 			return errors.New("mirror relative path exceeds its limit")
 		}
 	}
-	ignored := map[string]bool{}
-	if input.Is_Ignored != nil {
-		ignored = input.Is_Ignored(paths)
-	}
+	ignored := git_ignores(
+		input.IO, Directory(input.Source_Directory))(paths)
 	if len(ignored) > IGNORE_COUNT_MAX {
 		return errors.New("mirror ignore result exceeds its limit")
 	}
@@ -897,8 +913,8 @@ func plan_file(input *Plan_Input, relative Relative_File_Path) (
 		return File_Write{Destination_Path: destination_path}, false,
 			errors.New("mirror destination path exceeds its limit")
 	}
-	source_contents, found, read_err := input.File_System.Read(
-		filepath.Join(string(input.Source_Directory), string(relative)), DOTFILE_BYTES_MAX)
+	source_contents, found, read_err := file_read(input.IO, File_Path(filepath.Join(
+		string(input.Source_Directory), string(relative))))
 	if read_err != nil {
 		return File_Write{Destination_Path: destination_path}, false, read_err
 	}
@@ -908,7 +924,7 @@ func plan_file(input *Plan_Input, relative Relative_File_Path) (
 	write = File_Write{
 		Destination_Path: destination_path, Contents: Dotfile_Bytes(source_contents)}
 	if destination_matches(
-		input.File_System, Mirror_Path(destination_path), Dotfile_Bytes(source_contents)) {
+		input.IO, Mirror_Path(destination_path), Dotfile_Bytes(source_contents)) {
 		return write, false, nil
 	}
 	return write, true, nil
@@ -917,85 +933,84 @@ func plan_file(input *Plan_Input, relative Relative_File_Path) (
 // Reports whether the home directory already holds exactly source_contents at path. A
 // destination that is absent or unreadable counts as a mismatch, so the file is written.
 func destination_matches(
-	system File_System, path Mirror_Path, source_contents Dotfile_Bytes,
+	system sysio.IO, path Mirror_Path, source_contents Dotfile_Bytes,
 ) (
 	matches Plan_Decision,
 ) {
 	defer func() { Plan_Decision_Invariants(matches, "destination_matches.matches") }()
-	File_System_Invariants(system, "destination_matches.system")
 	Mirror_Path_Invariants(path, "destination_matches.path")
 	Dotfile_Bytes_Invariants(source_contents, "destination_matches.source_contents")
-	destination_contents, found, err := system.Read(string(path), DOTFILE_BYTES_MAX)
+	file_io_requirements(system, "destination_matches.system")
+	destination_contents, found, err := file_read(system, File_Path(path))
 	if err != nil {
 		return false
 	}
 	if !found {
 		return false
 	}
-	return Plan_Decision(bytes.Equal(source_contents, destination_contents))
+	return dotfile_contents_equal(source_contents, Dotfile_Bytes(destination_contents))
 }
 
-// Spawn runs one command to completion and returns its outcome — the synchronous adapter
-// over the shared/io loop's async Spawn. package main backs it with a Run_Until pump (the
-// loop is ticked only there) and tests with a recording fake, so this library tier submits
-// work but never drives the loop and spawns nothing itself.
-type Spawn func(request sysio.Process_Request) (result sysio.Process_Result)
-
-// Shell is the injected subprocess capability the install steps run commands through: Spawn
-// executes one command through the loop, the two sinks receive a build's streamed output, and
-// Logger records setup's own narration of the step. A thin carrier over the loop, not a revival
-// of a shell package — the library binds no process itself.
-type Shell struct {
-	// Spawn runs a command to completion and returns its outcome.
-	Spawn Spawn
-	// Stdout receives a build's streamed standard output.
-	Stdout io.Writer
-	// Stderr receives a build's streamed standard error.
-	Stderr io.Writer
-	// Logger records setup's narration of the install step — the "building"/"installed"
-	// progress and a diagnostic on failure. The zero Logger is a disabled no-op.
-	Logger jlog.Logger
-}
-
-// Shell_Invariants states that the required process operation is present.
-func Shell_Invariants(shell Shell, namespace invariant.Namespace) {
-	invariant.Always(shell.Spawn != nil, "A setup shell has a process operation.")
+// Shared byte operations have a smaller boundary than a dotfile, so each call compares one
+// bounded part while this package keeps its existing dotfile limit.
+func dotfile_contents_equal(left Dotfile_Bytes, right Dotfile_Bytes) (equal Plan_Decision) {
+	defer func() { Plan_Decision_Invariants(equal, "dotfile_contents_equal.equal") }()
+	Dotfile_Bytes_Invariants(left, "dotfile_contents_equal.left")
+	Dotfile_Bytes_Invariants(right, "dotfile_contents_equal.right")
+	if len(left) != len(right) {
+		return false
+	}
+	for offset := 0; offset < len(left); offset += shared_bytes.SLICE_SIZE_MAXIMUM {
+		end := offset + shared_bytes.SLICE_SIZE_MAXIMUM
+		if end > len(left) {
+			end = len(left)
+		}
+		if !shared_bytes.Equal(
+			shared_bytes.Slice(left[offset:end]), shared_bytes.Slice(right[offset:end]),
+		) {
+			return false
+		}
+	}
+	return true
 }
 
 // Runs path with arguments and returns its captured standard output, trimmed — the version
 // probes' one use. It passes no sink, so the loop captures the output for parsing rather than
 // streaming it. Trimming strips the trailing newline `which` appends, so a resolved path is
 // usable as the next probe's executable.
-func run_pipe(shell Shell, path Probe_Path, arguments Probe_Arguments) (
+func run_pipe(system sysio.IO, path Probe_Path, arguments Probe_Arguments) (
 	output Command_Output,
 ) {
 	defer func() { Command_Output_Invariants(output, "run_pipe.output") }()
-	Shell_Invariants(shell, "run_pipe.shell")
 	Probe_Path_Invariants(path, "run_pipe.path")
 	Probe_Arguments_Invariants(arguments, "run_pipe.arguments")
-	result := shell.Spawn(sysio.Process_Request{
+	process_io_requirements(system, "run_pipe.system")
+	result, _ := process_spawn(system, sysio.Process_Request{
 		Path: string(path), Arguments: []string(arguments)})
-	return Command_Output(strings.TrimSpace(string(result.Output)))
+	return Command_Output(shared_strings.Trim_Space(shared_strings.Text(result.Output)))
 }
 
 // Runs the command named by the first argument and reports success, streaming the process's
-// output live to the shell's sinks so a multi-minute build's progress reaches the user as it
+// output live to its sinks so a multi-minute build's progress reaches the user as it
 // happens rather than in one burst at the end.
-func run_spawn(shell Shell, arguments Spawn_Arguments) (ok Command_Success) {
+func run_spawn(
+	system sysio.IO, stdout io.Writer, stderr io.Writer, arguments Spawn_Arguments,
+) (ok Command_Success) {
 	defer func() { Command_Success_Invariants(ok, "run_spawn.ok") }()
-	Shell_Invariants(shell, "run_spawn.shell")
 	Spawn_Arguments_Invariants(arguments, "run_spawn.arguments")
-	return shell.Spawn(sysio.Process_Request{
+	process_io_requirements(system, "run_spawn.system")
+	result, spawn_err := process_spawn(system, sysio.Process_Request{
 		Path: arguments[0], Arguments: arguments[1:],
-		Stdout: shell.Stdout, Stderr: shell.Stderr,
-	}).Exit == 0
+		Stdout: stdout, Stderr: stderr,
+	})
+	return spawn_err == nil && result.Exit == 0
 }
 
 // Installed_Input names the binary an install step probes and the version it must
 // report. Two string fields, so it is a struct rather than two parameters.
 type Installed_Input struct {
-	// Shell runs the version probe.
-	Shell Shell
+	// IO runs the version probe.
+	IO sysio.IO
 	// Executable is the binary's exact managed path — probed directly, not via
 	// PATH, so a missing symlink never hides a present install.
 	Executable Managed_Executable
@@ -1006,7 +1021,7 @@ type Installed_Input struct {
 
 // Installed_Input_Invariants states one managed executable version probe.
 func Installed_Input_Invariants(input *Installed_Input, namespace invariant.Namespace) {
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 	Managed_Executable_Invariants(input.Executable, namespace)
 	Version_Prefix_Invariants(input.Version, namespace)
 }
@@ -1018,8 +1033,9 @@ func Installed_Input_Invariants(input *Installed_Input, namespace invariant.Name
 func Installed(input *Installed_Input) (yes File_Presence) {
 	defer func() { File_Presence_Invariants(yes, "Installed.yes") }()
 	Installed_Input_Invariants(input, "Installed.input")
-	version := run_pipe(input.Shell, Probe_Path(input.Executable), Probe_Arguments{"--version"})
-	return File_Presence(strings.HasPrefix(string(version), string(input.Version)))
+	version := run_pipe(input.IO, Probe_Path(input.Executable), Probe_Arguments{"--version"})
+	return File_Presence(shared_strings.Has_Prefix(
+		shared_strings.Text(version), shared_strings.Text(input.Version)))
 }
 
 // NEOVIM_SOURCE_SUBPATH locates the vendored Neovim source relative to the
@@ -1054,8 +1070,14 @@ type Install_Neovim_Input struct {
 	// Repository_Directory is the absolute checkout root the build subpaths join
 	// onto to form the source and prefix locations.
 	Repository_Directory Repository_Directory
-	// Shell runs make; its sinks receive setup's narration and the streamed make output.
-	Shell Shell
+	// IO runs every probe and make process.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed make output.
+	Stdout io.Writer
+	// Stderr receives streamed make diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Neovim_Input_Invariants states the Neovim build dependency set.
@@ -1063,7 +1085,7 @@ func Install_Neovim_Input_Invariants(
 	input *Install_Neovim_Input, namespace invariant.Namespace,
 ) {
 	Repository_Directory_Invariants(input.Repository_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Neovim builds the vendored Neovim and installs it under the local
@@ -1075,8 +1097,8 @@ func Install_Neovim(input *Install_Neovim_Input) (succeeded Step_Success) {
 	Install_Neovim_Input_Invariants(input, "Install_Neovim.input")
 	// Building Neovim is the expensive step, so it is gated on the checkout's own
 	// nvim not already being installed: a bootstrap that has it does no work.
-	if neovim_already_installed(input.Shell, input.Repository_Directory) {
-		jlog.Logger_Info(input.Shell.Logger, "neovim already installed",
+	if neovim_already_installed(input.IO, input.Repository_Directory) {
+		jlog.Logger_Info(input.Logger, "neovim already installed",
 			jlog.String("version", NEOVIM_VERSION))
 		return true
 	}
@@ -1085,11 +1107,11 @@ func Install_Neovim(input *Install_Neovim_Input) (succeeded Step_Success) {
 		if index != 0 {
 			phase = "installing neovim"
 		}
-		jlog.Logger_Info(input.Shell.Logger, phase)
+		jlog.Logger_Info(input.Logger, phase)
 		// The first argument is the executable; make's output streams to the sinks, so
 		// a generic line is all setup adds.
-		if !run_spawn(input.Shell, Spawn_Arguments(arguments)) {
-			jlog.Logger_Error(input.Shell.Logger, "neovim build failed")
+		if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(arguments)) {
+			jlog.Logger_Error(input.Logger, "neovim build failed")
 			return false
 		}
 	}
@@ -1117,7 +1139,7 @@ func neovim_make_invocations(
 		"CMAKE_BUILD_TYPE=" + NEOVIM_BUILD_TYPE,
 		"CMAKE_INSTALL_PREFIX=" + prefix,
 	}
-	install := append(slices.Clone(build), NEOVIM_INSTALL_GOAL)
+	install := append(shared_slices.Clone(build), NEOVIM_INSTALL_GOAL)
 	return Invocations{build, install}
 }
 
@@ -1128,12 +1150,12 @@ func neovim_make_invocations(
 func neovim_version_present(version_output Version_Output) (present File_Presence) {
 	defer func() { File_Presence_Invariants(present, "neovim_version_present.present") }()
 	Version_Output_Invariants(version_output, "neovim_version_present.version_output")
-	first_line, _, _ := strings.Cut(string(version_output), "\n")
-	for _, field := range strings.Fields(first_line) {
-		if !strings.HasPrefix(field, "v") {
+	first_line, _, _ := shared_strings.Cut(shared_strings.Text(version_output), "\n")
+	for _, field := range shared_strings.Fields(first_line) {
+		if !shared_strings.Has_Prefix(field, "v") {
 			continue
 		}
-		base, _, _ := strings.Cut(field, "-")
+		base, _, _ := shared_strings.Cut(field, "-")
 		return base == NEOVIM_VERSION
 	}
 	return false
@@ -1144,18 +1166,20 @@ func neovim_version_present(version_output Version_Output) (present File_Presenc
 // system package at the same version cannot stand in; only an in-repository
 // binary then has its version checked.
 func neovim_already_installed(
-	shell Shell, repository_directory Repository_Directory,
+	system sysio.IO, repository_directory Repository_Directory,
 ) (installed File_Presence) {
 	defer func() { File_Presence_Invariants(installed, "neovim_already_installed.installed") }()
-	Shell_Invariants(shell, "neovim_already_installed.shell")
 	Repository_Directory_Invariants(
 		repository_directory, "neovim_already_installed.repository_directory")
-	executable := run_pipe(shell, "which", Probe_Arguments{"nvim"})
-	if !strings.HasPrefix(string(executable), string(repository_directory)+"/") {
+	process_io_requirements(system, "neovim_already_installed.system")
+	executable := run_pipe(system, "which", Probe_Arguments{"nvim"})
+	if !shared_strings.Has_Prefix(
+		shared_strings.Text(executable), shared_strings.Text(repository_directory)+"/",
+	) {
 		return false
 	}
 	return neovim_version_present(Version_Output(run_pipe(
-		shell, Probe_Path(executable), Probe_Arguments{"--version"})))
+		system, Probe_Path(executable), Probe_Arguments{"--version"})))
 }
 
 // Returns the Iosevka TTF filenames the install copies. A function rather than a
@@ -1170,34 +1194,36 @@ func iosevka_font_files() (files File_Paths) {
 	}
 }
 
-// Install_Fonts_Input carries the injected dependencies Install_Fonts needs to
-// place the vendored fonts where the operating system's font system looks. The
-// filesystem effects are injected so this library tier never touches the OS;
-// package main backs them with os/io rather than by shelling out.
+// Install_Fonts_Input carries the shared IO and paths needed to place vendored fonts.
 type Install_Fonts_Input struct {
+	// IO supplies status, copy, and optional cache-refresh operations.
+	IO sysio.IO
+	// Home_Directory locates the vendored font source below the checkout.
+	Home_Directory Home_Directory
 	// Font_Directory is the absolute destination, already resolved per operating
 	// system. Empty means this OS has no known user font directory, so the step
 	// does nothing.
 	Font_Directory Font_Directory
-	// Font_Present reports whether a font filename already exists in the
-	// destination, so each missing face is copied and present ones are left alone.
-	Font_Present func(file string) (present bool)
-	// Copy_Font copies one vendored font filename into the destination, creating
-	// the directory as needed.
-	Copy_Font func(file string) (err error)
-	// Refresh rebuilds the font cache (Linux's fc-cache), run after the copies. Nil
-	// when the OS auto-detects fonts (macOS), so no cache step runs.
-	Refresh func() (err error)
+	// Refresh_Cache reports whether the operating system needs fc-cache after copies.
+	Refresh_Cache Cache_Refresh
 	// Logger records one line per face naming each copy and each skip, and a diagnostic
-	// when a copy or the refresh fails. The zero Logger is a disabled no-op.
+	// when a copy or refresh fails. The zero Logger is a disabled no-op.
 	Logger jlog.Logger
+	// Stdout receives live cache-refresh output.
+	Stdout io.Writer
+	// Stderr receives live cache-refresh diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Fonts_Input_Invariants states the font install destination.
 func Install_Fonts_Input_Invariants(
 	input *Install_Fonts_Input, namespace invariant.Namespace,
 ) {
+	file_io_requirements(input.IO, namespace)
+	process_io_requirements(input.IO, namespace)
+	Home_Directory_Invariants(input.Home_Directory, namespace)
 	Font_Directory_Invariants(input.Font_Directory, namespace)
+	Cache_Refresh_Invariants(input.Refresh_Cache, namespace)
 }
 
 // Install_Fonts places the vendored Iosevka faces into the per-OS user font
@@ -1209,12 +1235,17 @@ func Install_Fonts(input *Install_Fonts_Input) (succeeded Step_Success) {
 	Install_Fonts_Input_Invariants(input, "Install_Fonts.input")
 	copied := false
 	for _, file := range iosevka_font_files() {
-		if input.Font_Present(file) {
+		destination := Font_Path(filepath.Join(string(input.Font_Directory), file))
+		if file_present(input.IO, destination) {
 			jlog.Logger_Info(input.Logger, "font present, skipped",
 				jlog.String("file", file))
 			continue
 		}
-		copy_err := input.Copy_Font(file)
+		copy_err := copy_file(input.IO, &File_Copy_Input{
+			Source: Font_Source_Path(filepath.Join(
+				string(input.Home_Directory), IOSEVKA_SUBPATH, file)),
+			Destination: Font_Destination_Path(destination),
+		})
 		if copy_err != nil {
 			jlog.Logger_Error(input.Logger, "font copy failed", jlog.Err(copy_err))
 			return false
@@ -1225,11 +1256,19 @@ func Install_Fonts(input *Install_Fonts_Input) (succeeded Step_Success) {
 	if !copied {
 		return true
 	}
-	if input.Refresh == nil {
+	if !input.Refresh_Cache {
 		return true
 	}
-	refresh_err := input.Refresh()
+	result, refresh_err := process_spawn(input.IO, sysio.Process_Request{
+		Path: "fc-cache", Arguments: []string{"-f", string(input.Font_Directory)},
+		Stdout: input.Stdout, Stderr: input.Stderr,
+	})
 	if refresh_err != nil {
+		jlog.Logger_Error(input.Logger, "font cache refresh failed", jlog.Err(refresh_err))
+		return false
+	}
+	if result.Exit != 0 {
+		refresh_err = fmt.Errorf("fc-cache exited with status %d", result.Exit)
 		jlog.Logger_Error(input.Logger, "font cache refresh failed", jlog.Err(refresh_err))
 		return false
 	}
@@ -1250,8 +1289,14 @@ type Install_Direnv_Input struct {
 	// Binary_Directory is the directory on PATH direnv is built into; it is both the
 	// install location and the gate's probe target.
 	Binary_Directory Binary_Directory
-	// Shell runs the version gate and the go build.
-	Shell Shell
+	// IO runs the version gate and the Go build.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed build output.
+	Stdout io.Writer
+	// Stderr receives streamed build diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Direnv_Input_Invariants states the direnv build dependency set.
@@ -1260,7 +1305,7 @@ func Install_Direnv_Input_Invariants(
 ) {
 	Direnv_Directory_Invariants(input.Direnv_Directory, namespace)
 	Binary_Directory_Invariants(input.Binary_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Direnv builds the vendored direnv straight into the bin directory, where
@@ -1276,17 +1321,17 @@ func Install_Direnv(input *Install_Direnv_Input) (succeeded Step_Success) {
 	if input.Binary_Directory == "" {
 		return true
 	}
-	if direnv_built(input.Shell, input.Binary_Directory) {
-		jlog.Logger_Info(input.Shell.Logger, "direnv already installed")
+	if direnv_built(input.IO, input.Binary_Directory) {
+		jlog.Logger_Info(input.Logger, "direnv already installed")
 		return true
 	}
-	jlog.Logger_Info(input.Shell.Logger, "building direnv")
+	jlog.Logger_Info(input.Logger, "building direnv")
 	destination := filepath.Join(string(input.Binary_Directory), "direnv")
 	build := "cd " + string(input.Direnv_Directory) +
 		" && CGO_ENABLED=0 go build -mod=vendor" +
 		" -o " + destination + " ."
-	if !run_spawn(input.Shell, Spawn_Arguments{"sh", "-c", build}) {
-		jlog.Logger_Error(input.Shell.Logger, "direnv build failed")
+	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments{"sh", "-c", build}) {
+		jlog.Logger_Error(input.Logger, "direnv build failed")
 		return false
 	}
 	return true
@@ -1294,12 +1339,12 @@ func Install_Direnv(input *Install_Direnv_Input) (succeeded Step_Success) {
 
 // Reports whether the direnv binary in the bin directory already reports the
 // wanted version. Probing that exact path leaves a present build alone.
-func direnv_built(shell Shell, binary_directory Binary_Directory) (built File_Presence) {
+func direnv_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
 	defer func() { File_Presence_Invariants(built, "direnv_built.built") }()
-	Shell_Invariants(shell, "direnv_built.shell")
 	Binary_Directory_Invariants(binary_directory, "direnv_built.binary_directory")
+	process_io_requirements(system, "direnv_built.system")
 	return Installed(&Installed_Input{
-		Shell:      shell,
+		IO:         system,
 		Executable: Managed_Executable(filepath.Join(string(binary_directory), "direnv")),
 		Version:    DIRENV_VERSION,
 	})
@@ -1321,17 +1366,22 @@ type Install_Rust_Input struct {
 	// symlinked into, so PATH carries a single entry rather than CARGO_HOME/bin as
 	// well. Empty disables the step for the same reason as an empty Cargo_Directory.
 	Link_Directory Rust_Link_Directory
-	// Shell runs the `which` probes that gate the step, the rustup script, and the ln
-	// calls. rustup reads CARGO_HOME and RUSTUP_HOME from the inherited environment, so
-	// the toolchain lands under Cargo_Directory without plumbing.
-	Shell Shell
+	// IO runs the probes, rustup script, and link commands. Rustup reads CARGO_HOME and
+	// RUSTUP_HOME from the inherited environment.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed process output.
+	Stdout io.Writer
+	// Stderr receives streamed process diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Rust_Input_Invariants states the Rust install dependency set.
 func Install_Rust_Input_Invariants(input *Install_Rust_Input, namespace invariant.Namespace) {
 	Cargo_Directory_Invariants(input.Cargo_Directory, namespace)
 	Rust_Link_Directory_Invariants(input.Link_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Rust installs the Rust toolchain with rustup and symlinks cargo,
@@ -1347,23 +1397,28 @@ func Install_Rust(input *Install_Rust_Input) (succeeded Step_Success) {
 	if input.Link_Directory == "" {
 		return true
 	}
-	if rust_installed(input.Shell, Required_Cargo_Directory(input.Cargo_Directory)) {
-		jlog.Logger_Info(input.Shell.Logger, "rust already installed")
+	if rust_installed(input.IO, Required_Cargo_Directory(input.Cargo_Directory)) {
+		jlog.Logger_Info(input.Logger, "rust already installed")
 	} else {
-		jlog.Logger_Info(input.Shell.Logger, "installing rust")
-		if !run_spawn(input.Shell, Spawn_Arguments(rust_install_invocation())) {
-			jlog.Logger_Error(input.Shell.Logger, "rust install failed")
+		jlog.Logger_Info(input.Logger, "installing rust")
+		if !run_spawn(
+			input.IO, input.Stdout, input.Stderr,
+			Spawn_Arguments(rust_install_invocation()),
+		) {
+			jlog.Logger_Error(input.Logger, "rust install failed")
 			return false
 		}
 	}
 	// Always (re)link, even when the install was skipped, so a stale or missing
 	// symlink is repointed at the current CARGO_HOME without reinstalling.
 	if !rust_link(&Rust_Link_Input{
-		Shell:           input.Shell,
+		IO:              input.IO,
+		Stdout:          input.Stdout,
+		Stderr:          input.Stderr,
 		Cargo_Directory: Required_Cargo_Directory(input.Cargo_Directory),
 		Link_Directory:  input.Link_Directory,
 	}) {
-		jlog.Logger_Error(input.Shell.Logger, "rust link failed")
+		jlog.Logger_Error(input.Logger, "rust link failed")
 		return false
 	}
 	return true
@@ -1391,13 +1446,13 @@ func rust_install_invocation() (arguments Install_Arguments) {
 // install with it). A stale symlink to an old CARGO_HOME or a wrong version does
 // not pass, so a moved or mismatched toolchain is reinstalled.
 func rust_installed(
-	shell Shell, cargo_directory Required_Cargo_Directory,
+	system sysio.IO, cargo_directory Required_Cargo_Directory,
 ) (installed File_Presence) {
 	defer func() { File_Presence_Invariants(installed, "rust_installed.installed") }()
-	Shell_Invariants(shell, "rust_installed.shell")
 	Required_Cargo_Directory_Invariants(cargo_directory, "rust_installed.cargo_directory")
+	process_io_requirements(system, "rust_installed.system")
 	return Installed(&Installed_Input{
-		Shell: shell,
+		IO: system,
 		Executable: Managed_Executable(filepath.Join(
 			string(cargo_directory), "bin", "rustc")),
 		Version: "rustc " + RUST_VERSION,
@@ -1406,8 +1461,12 @@ func rust_installed(
 
 // Carries the arguments for symlinking the rust toolchain onto PATH.
 type Rust_Link_Input struct {
-	// Shell is the command runner the symlinks are created through.
-	Shell Shell
+	// IO runs the link commands.
+	IO sysio.IO
+	// Stdout receives link output.
+	Stdout io.Writer
+	// Stderr receives link diagnostics.
+	Stderr io.Writer
 	// Cargo_Directory is the CARGO_HOME whose bin holds the toolchain to link from.
 	Cargo_Directory Required_Cargo_Directory
 	// Link_Directory is the PATH entry the toolchain is symlinked into.
@@ -1416,7 +1475,7 @@ type Rust_Link_Input struct {
 
 // Rust_Link_Input_Invariants states the Rust link dependency set.
 func Rust_Link_Input_Invariants(input *Rust_Link_Input, namespace invariant.Namespace) {
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 	Required_Cargo_Directory_Invariants(input.Cargo_Directory, namespace)
 	Rust_Link_Directory_Invariants(input.Link_Directory, namespace)
 }
@@ -1430,7 +1489,10 @@ func rust_link(input *Rust_Link_Input) (linked Command_Success) {
 	for _, tool := range []string{"cargo", "rustup", "rustc"} {
 		source := filepath.Join(string(input.Cargo_Directory), "bin", tool)
 		target := filepath.Join(string(input.Link_Directory), tool)
-		if !run_spawn(input.Shell, Spawn_Arguments{"ln", "-sf", source, target}) {
+		if !run_spawn(
+			input.IO, input.Stdout, input.Stderr,
+			Spawn_Arguments{"ln", "-sf", source, target},
+		) {
 			return false
 		}
 	}
@@ -1451,15 +1513,21 @@ type Install_Fzf_Input struct {
 	// Binary_Directory is the directory on PATH the fzf binary is built into; it is
 	// both the install location and the gate's probe target.
 	Binary_Directory Binary_Directory
-	// Shell runs the version gate and the go build.
-	Shell Shell
+	// IO runs the version gate and the Go build.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed build output.
+	Stdout io.Writer
+	// Stderr receives streamed build diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Fzf_Input_Invariants states the fzf build dependency set.
 func Install_Fzf_Input_Invariants(input *Install_Fzf_Input, namespace invariant.Namespace) {
 	Fzf_Directory_Invariants(input.Fzf_Directory, namespace)
 	Binary_Directory_Invariants(input.Binary_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Fzf builds fzf from the vendored source straight into the bin directory.
@@ -1475,18 +1543,18 @@ func Install_Fzf(input *Install_Fzf_Input) (succeeded Step_Success) {
 	if input.Binary_Directory == "" {
 		return true
 	}
-	if fzf_built(input.Shell, input.Binary_Directory) {
-		jlog.Logger_Info(input.Shell.Logger, "fzf already installed")
+	if fzf_built(input.IO, input.Binary_Directory) {
+		jlog.Logger_Info(input.Logger, "fzf already installed")
 		return true
 	}
-	jlog.Logger_Info(input.Shell.Logger, "building fzf")
+	jlog.Logger_Info(input.Logger, "building fzf")
 	destination := filepath.Join(string(input.Binary_Directory), "fzf")
 	build := "cd " + string(input.Fzf_Directory) +
 		" && go build -mod=vendor" +
 		" -ldflags '-s -w -X main.version=" + FZF_VERSION + " -X main.revision='" +
 		" -o " + destination + " ."
-	if !run_spawn(input.Shell, Spawn_Arguments{"sh", "-c", build}) {
-		jlog.Logger_Error(input.Shell.Logger, "fzf build failed")
+	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments{"sh", "-c", build}) {
+		jlog.Logger_Error(input.Logger, "fzf build failed")
 		return false
 	}
 	return true
@@ -1494,12 +1562,12 @@ func Install_Fzf(input *Install_Fzf_Input) (succeeded Step_Success) {
 
 // Reports whether the fzf binary in the bin directory already reports the wanted
 // version. Probing that exact path leaves a present build alone.
-func fzf_built(shell Shell, binary_directory Binary_Directory) (built File_Presence) {
+func fzf_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
 	defer func() { File_Presence_Invariants(built, "fzf_built.built") }()
-	Shell_Invariants(shell, "fzf_built.shell")
 	Binary_Directory_Invariants(binary_directory, "fzf_built.binary_directory")
+	process_io_requirements(system, "fzf_built.system")
 	return Installed(&Installed_Input{
-		Shell:      shell,
+		IO:         system,
 		Executable: Managed_Executable(filepath.Join(string(binary_directory), "fzf")),
 		Version:    FZF_VERSION,
 	})
@@ -1519,8 +1587,14 @@ type Install_Command_Input struct {
 	// and the name the idempotency gate looks up. markdown_to_pdf installs as "m2p",
 	// so a command's name is not always its package directory's name.
 	Binary_Name Step_Name
-	// Shell runs the PATH-presence gate and the go build.
-	Shell Shell
+	// IO runs the PATH-presence gate and the Go build.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed build output.
+	Stdout io.Writer
+	// Stderr receives streamed build diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Command_Input_Invariants states one repository command build.
@@ -1530,7 +1604,7 @@ func Install_Command_Input_Invariants(
 	Command_Directory_Invariants(input.Package_Directory, namespace)
 	Binary_Directory_Invariants(input.Binary_Directory, namespace)
 	Step_Name_Invariants(input.Binary_Name, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Command builds a command from this repository straight into the bin
@@ -1551,18 +1625,18 @@ func Install_Command(input *Install_Command_Input) (succeeded Step_Success) {
 	if input.Binary_Name == "" {
 		return true
 	}
-	if command_on_path(input.Shell, input.Binary_Name) {
-		jlog.Logger_Info(input.Shell.Logger, "command already installed",
+	if command_on_path(input.IO, input.Binary_Name) {
+		jlog.Logger_Info(input.Logger, "command already installed",
 			jlog.String("command", string(input.Binary_Name)))
 		return true
 	}
-	jlog.Logger_Info(input.Shell.Logger, "building command",
+	jlog.Logger_Info(input.Logger, "building command",
 		jlog.String("command", string(input.Binary_Name)))
 	destination := filepath.Join(string(input.Binary_Directory), string(input.Binary_Name))
 	build := "cd " + string(input.Package_Directory) +
 		" && go build -o " + destination + " ."
-	if !run_spawn(input.Shell, Spawn_Arguments{"sh", "-c", build}) {
-		jlog.Logger_Error(input.Shell.Logger, "command build failed",
+	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments{"sh", "-c", build}) {
+		jlog.Logger_Error(input.Logger, "command build failed",
 			jlog.String("command", string(input.Binary_Name)))
 		return false
 	}
@@ -1573,11 +1647,11 @@ func Install_Command(input *Install_Command_Input) (succeeded Step_Success) {
 // idempotency gate for this repo's own commands. `which` prints the resolved path
 // on stdout and nothing when the name is unknown, so a non-empty result means the
 // command is present and the build is skipped.
-func command_on_path(shell Shell, name Step_Name) (present File_Presence) {
+func command_on_path(system sysio.IO, name Step_Name) (present File_Presence) {
 	defer func() { File_Presence_Invariants(present, "command_on_path.present") }()
-	Shell_Invariants(shell, "command_on_path.shell")
 	Step_Name_Invariants(name, "command_on_path.name")
-	return run_pipe(shell, "which", Probe_Arguments{string(name)}) != ""
+	process_io_requirements(system, "command_on_path.system")
+	return run_pipe(system, "which", Probe_Arguments{string(name)}) != ""
 }
 
 // JJ_VERSION is the release the bootstrap wants — the prefix of `jj --version`.
@@ -1595,15 +1669,21 @@ type Install_Jj_Input struct {
 	// writes into it via --root (its parent), the same directory the Go tools build
 	// into, so no symlink is needed.
 	Binary_Directory Binary_Directory
-	// Shell runs the `jj --version` gate and the cargo build.
-	Shell Shell
+	// IO runs the version gate and the Cargo build.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed build output.
+	Stdout io.Writer
+	// Stderr receives streamed build diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Jj_Input_Invariants states the jj build dependency set.
 func Install_Jj_Input_Invariants(input *Install_Jj_Input, namespace invariant.Namespace) {
 	Jj_Directory_Invariants(input.Jj_Directory, namespace)
 	Binary_Directory_Invariants(input.Binary_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Jj builds jj from the vendored workspace with cargo, installing the binary
@@ -1619,13 +1699,15 @@ func Install_Jj(input *Install_Jj_Input) (succeeded Step_Success) {
 	if input.Binary_Directory == "" {
 		return true
 	}
-	if jj_built(input.Shell, input.Binary_Directory) {
-		jlog.Logger_Info(input.Shell.Logger, "jj already built")
+	if jj_built(input.IO, input.Binary_Directory) {
+		jlog.Logger_Info(input.Logger, "jj already built")
 		return true
 	}
-	jlog.Logger_Info(input.Shell.Logger, "building jj")
-	if !run_spawn(input.Shell, Spawn_Arguments(jj_install_invocation(input))) {
-		jlog.Logger_Error(input.Shell.Logger, "jj build failed")
+	jlog.Logger_Info(input.Logger, "building jj")
+	if !run_spawn(
+		input.IO, input.Stdout, input.Stderr, Spawn_Arguments(jj_install_invocation(input)),
+	) {
+		jlog.Logger_Error(input.Logger, "jj build failed")
 		return false
 	}
 	return true
@@ -1652,12 +1734,12 @@ func jj_install_invocation(input *Install_Jj_Input) (arguments Install_Arguments
 // Reports whether the jj binary already installed in the binary directory reports
 // the wanted version. Probing the exact path, not PATH, keeps a build present at a
 // non-PATH location from being needlessly recompiled.
-func jj_built(shell Shell, binary_directory Binary_Directory) (built File_Presence) {
+func jj_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
 	defer func() { File_Presence_Invariants(built, "jj_built.built") }()
-	Shell_Invariants(shell, "jj_built.shell")
 	Binary_Directory_Invariants(binary_directory, "jj_built.binary_directory")
+	process_io_requirements(system, "jj_built.system")
 	return Installed(&Installed_Input{
-		Shell:      shell,
+		IO:         system,
 		Executable: Managed_Executable(filepath.Join(string(binary_directory), "jj")),
 		Version:    JJ_VERSION,
 	})
@@ -1678,8 +1760,14 @@ type Install_Ripgrep_Input struct {
 	// writes into it via --root (its parent), the same directory the Go tools build
 	// into, so no symlink is needed.
 	Binary_Directory Binary_Directory
-	// Shell runs the `rg --version` gate and the cargo build.
-	Shell Shell
+	// IO runs the version gate and the Cargo build.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed build output.
+	Stdout io.Writer
+	// Stderr receives streamed build diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Ripgrep_Input_Invariants states the ripgrep build dependency set.
@@ -1688,7 +1776,7 @@ func Install_Ripgrep_Input_Invariants(
 ) {
 	Ripgrep_Directory_Invariants(input.Ripgrep_Directory, namespace)
 	Binary_Directory_Invariants(input.Binary_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Ripgrep builds ripgrep from the vendored crate with cargo, installing the
@@ -1704,14 +1792,14 @@ func Install_Ripgrep(input *Install_Ripgrep_Input) (succeeded Step_Success) {
 	if input.Binary_Directory == "" {
 		return true
 	}
-	if ripgrep_built(input.Shell, input.Binary_Directory) {
-		jlog.Logger_Info(input.Shell.Logger, "ripgrep already built")
+	if ripgrep_built(input.IO, input.Binary_Directory) {
+		jlog.Logger_Info(input.Logger, "ripgrep already built")
 		return true
 	}
-	jlog.Logger_Info(input.Shell.Logger, "building ripgrep")
+	jlog.Logger_Info(input.Logger, "building ripgrep")
 	invocation := ripgrep_install_invocation(input)
-	if !run_spawn(input.Shell, Spawn_Arguments(invocation)) {
-		jlog.Logger_Error(input.Shell.Logger, "ripgrep build failed")
+	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(invocation)) {
+		jlog.Logger_Error(input.Logger, "ripgrep build failed")
 		return false
 	}
 	return true
@@ -1741,12 +1829,12 @@ func ripgrep_install_invocation(input *Install_Ripgrep_Input) (
 // Reports whether the rg binary already installed in the binary directory reports
 // the wanted version. Probing the exact path, not PATH, keeps a build present at a
 // non-PATH location from being needlessly recompiled.
-func ripgrep_built(shell Shell, binary_directory Binary_Directory) (built File_Presence) {
+func ripgrep_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
 	defer func() { File_Presence_Invariants(built, "ripgrep_built.built") }()
-	Shell_Invariants(shell, "ripgrep_built.shell")
 	Binary_Directory_Invariants(binary_directory, "ripgrep_built.binary_directory")
+	process_io_requirements(system, "ripgrep_built.system")
 	return Installed(&Installed_Input{
-		Shell:      shell,
+		IO:         system,
 		Executable: Managed_Executable(filepath.Join(string(binary_directory), "rg")),
 		Version:    RIPGREP_VERSION,
 	})
@@ -1766,8 +1854,14 @@ type Install_Fdcli_Input struct {
 	// writes into it via --root (its parent), the same directory the Go tools build
 	// into, so no symlink is needed.
 	Binary_Directory Binary_Directory
-	// Shell runs the `fd --version` gate and the cargo build.
-	Shell Shell
+	// IO runs the version gate and the Cargo build.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed build output.
+	Stdout io.Writer
+	// Stderr receives streamed build diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Fdcli_Input_Invariants states the fd build dependency set.
@@ -1776,7 +1870,7 @@ func Install_Fdcli_Input_Invariants(
 ) {
 	Fdcli_Directory_Invariants(input.Fdcli_Directory, namespace)
 	Binary_Directory_Invariants(input.Binary_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Fdcli builds fd from the vendored crate with cargo, installing the binary
@@ -1792,14 +1886,14 @@ func Install_Fdcli(input *Install_Fdcli_Input) (succeeded Step_Success) {
 	if input.Binary_Directory == "" {
 		return true
 	}
-	if fdcli_built(input.Shell, input.Binary_Directory) {
-		jlog.Logger_Info(input.Shell.Logger, "fd already built")
+	if fdcli_built(input.IO, input.Binary_Directory) {
+		jlog.Logger_Info(input.Logger, "fd already built")
 		return true
 	}
-	jlog.Logger_Info(input.Shell.Logger, "building fd")
+	jlog.Logger_Info(input.Logger, "building fd")
 	invocation := fdcli_install_invocation(input)
-	if !run_spawn(input.Shell, Spawn_Arguments(invocation)) {
-		jlog.Logger_Error(input.Shell.Logger, "fd build failed")
+	if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(invocation)) {
+		jlog.Logger_Error(input.Logger, "fd build failed")
 		return false
 	}
 	return true
@@ -1825,12 +1919,12 @@ func fdcli_install_invocation(input *Install_Fdcli_Input) (arguments Install_Arg
 // Reports whether the fd binary already installed in the binary directory reports
 // the wanted version. Probing the exact path, not PATH, keeps a build present at a
 // non-PATH location from being needlessly recompiled.
-func fdcli_built(shell Shell, binary_directory Binary_Directory) (built File_Presence) {
+func fdcli_built(system sysio.IO, binary_directory Binary_Directory) (built File_Presence) {
 	defer func() { File_Presence_Invariants(built, "fdcli_built.built") }()
-	Shell_Invariants(shell, "fdcli_built.shell")
 	Binary_Directory_Invariants(binary_directory, "fdcli_built.binary_directory")
+	process_io_requirements(system, "fdcli_built.system")
 	return Installed(&Installed_Input{
-		Shell:      shell,
+		IO:         system,
 		Executable: Managed_Executable(filepath.Join(string(binary_directory), "fd")),
 		Version:    FDCLI_VERSION,
 	})
@@ -1872,8 +1966,14 @@ type Install_Ghostty_Input struct {
 	// into, so `ghostty` works in a terminal as well as via the app. Empty disables
 	// the step.
 	Link_Directory Ghostty_Link_Directory
-	// Shell runs the version gate, the download-and-install script, and the ln call.
-	Shell Shell
+	// IO runs the version gate, install script, and link command.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed process output.
+	Stdout io.Writer
+	// Stderr receives streamed process diagnostics.
+	Stderr io.Writer
 }
 
 // Install_Ghostty_Input_Invariants states the Ghostty install dependency set.
@@ -1882,7 +1982,7 @@ func Install_Ghostty_Input_Invariants(
 ) {
 	Applications_Directory_Invariants(input.Applications_Directory, namespace)
 	Ghostty_Link_Directory_Invariants(input.Link_Directory, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Install_Ghostty installs Ghostty from its pinned DMG into the applications
@@ -1892,13 +1992,13 @@ func Install_Ghostty_Input_Invariants(
 func Install_Ghostty(input *Install_Ghostty_Input) (succeeded Step_Success) {
 	defer func() { Step_Success_Invariants(succeeded, "Install_Ghostty.succeeded") }()
 	Install_Ghostty_Input_Invariants(input, "Install_Ghostty.input")
-	if ghostty_installed(input.Shell, input.Applications_Directory) {
-		jlog.Logger_Info(input.Shell.Logger, "ghostty already installed")
+	if ghostty_installed(input.IO, input.Applications_Directory) {
+		jlog.Logger_Info(input.Logger, "ghostty already installed")
 	} else {
-		jlog.Logger_Info(input.Shell.Logger, "installing ghostty")
+		jlog.Logger_Info(input.Logger, "installing ghostty")
 		invocation := ghostty_install_invocation(input.Applications_Directory)
-		if !run_spawn(input.Shell, Spawn_Arguments(invocation)) {
-			jlog.Logger_Error(input.Shell.Logger, "ghostty install failed")
+		if !run_spawn(input.IO, input.Stdout, input.Stderr, Spawn_Arguments(invocation)) {
+			jlog.Logger_Error(input.Logger, "ghostty install failed")
 			return false
 		}
 	}
@@ -1907,8 +2007,11 @@ func Install_Ghostty(input *Install_Ghostty_Input) (succeeded Step_Success) {
 	source := filepath.Join(
 		string(input.Applications_Directory), GHOSTTY_APPLICATION_BINARY_SUBPATH)
 	target := filepath.Join(string(input.Link_Directory), "ghostty")
-	if !run_spawn(input.Shell, Spawn_Arguments{"ln", "-sf", source, target}) {
-		jlog.Logger_Error(input.Shell.Logger, "ghostty link failed")
+	if !run_spawn(
+		input.IO, input.Stdout, input.Stderr,
+		Spawn_Arguments{"ln", "-sf", source, target},
+	) {
+		jlog.Logger_Error(input.Logger, "ghostty link failed")
 		return false
 	}
 	return true
@@ -1947,10 +2050,14 @@ type Bootstrap_Steps_Input struct {
 	Cargo_Directory Cargo_Directory
 	// Data_Directory is the XDG_DATA_HOME value.
 	Data_Directory Data_Directory
-	// File_System supplies the dotfiles read and write operations.
-	File_System File_System
-	// Shell supplies the process operation and output streams.
-	Shell Shell
+	// IO supplies every file and process operation.
+	IO sysio.IO
+	// Logger records setup progress.
+	Logger jlog.Logger
+	// Stdout receives streamed process output.
+	Stdout io.Writer
+	// Stderr receives streamed process diagnostics.
+	Stderr io.Writer
 }
 
 // Bootstrap_Steps_Input_Invariants states the complete bootstrap dependency set.
@@ -1961,8 +2068,8 @@ func Bootstrap_Steps_Input_Invariants(
 	Operating_System_Invariants(input.Operating_System, namespace)
 	Cargo_Directory_Invariants(input.Cargo_Directory, namespace)
 	Data_Directory_Invariants(input.Data_Directory, namespace)
-	File_System_Invariants(input.File_System, namespace)
-	Shell_Invariants(input.Shell, namespace)
+	file_io_requirements(input.IO, namespace)
+	process_io_requirements(input.IO, namespace)
 }
 
 // Bootstrap_Steps returns the complete setup policy in execution order.
@@ -2005,7 +2112,8 @@ func direnv_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Succe
 				filepath.Join(repository, "third_party", "direnv")),
 			Binary_Directory: Binary_Directory(
 				filepath.Join(repository, "home", ".local", "bin")),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2016,14 +2124,12 @@ func dotfiles_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Suc
 	dotfiles_directory := filepath.Join(string(input.Home_Directory), DOTFILES_SUBPATH)
 	return func() (succeeded Step_Success) {
 		return Mirror(&Mirror_Input{
-			File_System:           input.File_System,
+			IO:                    input.IO,
 			Source_Directory:      Source_Directory(dotfiles_directory),
 			Destination_Directory: Destination_Directory(input.Home_Directory),
 			Operating_System:      input.Operating_System,
-			Run_Command:           run_command(input.Shell),
-			Is_Ignored: git_ignores(
-				input.Shell, Directory(dotfiles_directory)),
-			Logger: input.Shell.Logger,
+			Logger:                input.Logger,
+			Stdout:                input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2035,32 +2141,14 @@ func fonts_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Succes
 		Home_Directory: input.Home_Directory, Operating_System: input.Operating_System,
 		Data_Directory: input.Data_Directory,
 	})
-	font_source := filepath.Join(string(input.Home_Directory), IOSEVKA_SUBPATH)
-	var refresh func() (err error)
-	if refresh_cache {
-		refresh = func() (err error) {
-			return run_command(input.Shell)(
-				"fc-cache", []string{"-f", string(font_directory)})
-		}
-	}
 	return func() (succeeded Step_Success) {
 		if !supported {
 			return true
 		}
 		return Install_Fonts(&Install_Fonts_Input{
-			Font_Directory: font_directory,
-			Font_Present: func(file string) (present bool) {
-				path := filepath.Join(string(font_directory), file)
-				return bool(file_present(input.File_System, Font_Path(path)))
-			},
-			Copy_Font: func(file string) (err error) {
-				return copy_file(input.File_System, &File_Copy_Input{
-					Source: Font_Source_Path(filepath.Join(font_source, file)),
-					Destination: Font_Destination_Path(
-						filepath.Join(string(font_directory), file)),
-				})
-			},
-			Refresh: refresh, Logger: input.Shell.Logger,
+			IO: input.IO, Home_Directory: input.Home_Directory,
+			Font_Directory: font_directory, Refresh_Cache: refresh_cache,
+			Logger: input.Logger, Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2072,7 +2160,8 @@ func neovim_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Succe
 		return Install_Neovim(&Install_Neovim_Input{
 			Repository_Directory: Repository_Directory(filepath.Join(
 				string(input.Home_Directory), REPOSITORY_SUBPATH)),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2087,7 +2176,8 @@ func fzf_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success)
 				filepath.Join(repository, "third_party", "fzf")),
 			Binary_Directory: Binary_Directory(
 				filepath.Join(repository, "home", ".local", "bin")),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2122,7 +2212,10 @@ func command_step(input *Command_Step_Input) (run func() (succeeded Step_Success
 			Binary_Directory: Binary_Directory(
 				filepath.Join(repository, "home", ".local", "bin")),
 			Binary_Name: input.Binary_Name,
-			Shell:       input.Bootstrap.Shell,
+			IO:          input.Bootstrap.IO,
+			Logger:      input.Bootstrap.Logger,
+			Stdout:      input.Bootstrap.Stdout,
+			Stderr:      input.Bootstrap.Stderr,
 		})
 	}
 }
@@ -2135,7 +2228,8 @@ func rust_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success
 			Cargo_Directory: input.Cargo_Directory,
 			Link_Directory: Rust_Link_Directory(filepath.Join(
 				string(input.Home_Directory), REPOSITORY_SUBPATH, ".local", "bin")),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2150,7 +2244,8 @@ func jj_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Success))
 				filepath.Join(repository, "third_party", "jj")),
 			Binary_Directory: Binary_Directory(
 				filepath.Join(repository, "home", ".local", "bin")),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2165,7 +2260,8 @@ func ripgrep_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Succ
 				filepath.Join(repository, "third_party", "ripgrep")),
 			Binary_Directory: Binary_Directory(
 				filepath.Join(repository, "home", ".local", "bin")),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2180,7 +2276,8 @@ func fdcli_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Succes
 				filepath.Join(repository, "third_party", "fd")),
 			Binary_Directory: Binary_Directory(
 				filepath.Join(repository, "home", ".local", "bin")),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2197,7 +2294,8 @@ func ghostty_step(input *Bootstrap_Steps_Input) (run func() (succeeded Step_Succ
 			Applications_Directory: Applications_Directory("/Applications"),
 			Link_Directory: Ghostty_Link_Directory(
 				filepath.Join(repository, "home", ".local", "bin")),
-			Shell: input.Shell,
+			IO: input.IO, Logger: input.Logger,
+			Stdout: input.Stdout, Stderr: input.Stderr,
 		})
 	}
 }
@@ -2250,27 +2348,12 @@ func font_destination(input *Font_Destination_Input) (
 	}
 }
 
-// Returns an external-program runner that streams output through shell.
-func run_command(shell Shell) (run func(name string, arguments []string) (err error)) {
-	Shell_Invariants(shell, "run_command.shell")
-	return func(name string, arguments []string) (err error) {
-		result := shell.Spawn(sysio.Process_Request{
-			Path: name, Arguments: arguments,
-			Stdout: shell.Stdout, Stderr: shell.Stderr,
-		})
-		if result.Exit != 0 {
-			return fmt.Errorf("%s exited with status %d", name, result.Exit)
-		}
-		return nil
-	}
-}
-
 // Returns one batched gitignore classifier for directory.
 func git_ignores(
-	shell Shell, directory Directory,
+	system sysio.IO, directory Directory,
 ) (is_ignored func(relative_paths []string) (ignored map[string]bool)) {
-	Shell_Invariants(shell, "git_ignores.shell")
 	Directory_Invariants(directory, "git_ignores.directory")
+	process_io_requirements(system, "git_ignores.system")
 	return func(relative_paths []string) (ignored map[string]bool) {
 		ignored = map[string]bool{}
 		if len(relative_paths) == 0 {
@@ -2280,23 +2363,135 @@ func git_ignores(
 		for index, relative := range relative_paths {
 			targets[index] = filepath.Join(string(directory), relative)
 		}
-		result := shell.Spawn(sysio.Process_Request{
+		target_set := map[string]bool{}
+		for _, target := range targets {
+			target_set[target] = true
+		}
+		request := Check_Ignore_Request{
+			Targets: func(yield func(target string) (next bool)) {
+				for _, target := range targets {
+					if !yield(target) {
+						return
+					}
+				}
+			},
+		}
+		check_ignore_input(&request)
+		result, _ := process_spawn(system, sysio.Process_Request{
 			Path:      "git",
 			Arguments: []string{"-C", string(directory), "check-ignore", "--stdin"},
-			Input:     []byte(strings.Join(targets, "\n") + "\n"),
+			Input:     request.Process.Input,
 		})
-		printed := map[string]bool{}
-		for _, line := range strings.Split(string(result.Output), "\n") {
-			if line != "" {
-				printed[line] = true
-			}
+		response := Check_Ignore_Result{
+			Process: result,
+			Target: func(path string) (present bool) {
+				return target_set[path]
+			},
 		}
+		check_ignore_matches(&response)
 		for index, target := range targets {
-			if printed[target] {
+			if response.Contains(target) {
 				ignored[relative_paths[index]] = true
 			}
 		}
 		return ignored
+	}
+}
+
+// A batch can exceed one shared text value, so each joined group stays inside the shared
+// boundary while the complete process input keeps the setup batch limit.
+func check_ignore_input(request *Check_Ignore_Request) {
+	Check_Ignore_Request_Invariants(request, "check_ignore_input.request")
+	content := []byte{}
+	group := shared_strings.Texts{}
+	group_size := 0
+	flush := func() {
+		if len(group) == 0 {
+			return
+		}
+		content = append(content, string(shared_strings.Join(group, "\n"))...)
+		content = append(content, '\n')
+		group = group[:0]
+		group_size = 0
+	}
+	target_count := 0
+	request.Targets(func(target string) (next bool) {
+		invariant.Always(
+			target_count < PLAN_ENTRY_COUNT_MAX,
+			"A check-ignore request has at most PLAN_ENTRY_COUNT_MAX targets.",
+		)
+		target_count++
+		invariant.Always(
+			len(target) <= CHECK_IGNORE_TARGET_BYTES_MAX,
+			"A check-ignore target fits one source path.",
+		)
+		separator_size := 0
+		if len(group) != 0 {
+			separator_size = 1
+		}
+		if group_size+separator_size+len(target) > shared_strings.TEXT_SIZE_MAXIMUM {
+			flush()
+		}
+		group = append(group, shared_strings.Text(target))
+		group_size += len(target)
+		if len(group) > 1 {
+			group_size++
+		}
+		return true
+	})
+	flush()
+	invariant.Always(
+		len(content) <= CHECK_IGNORE_INPUT_BYTES_MAX,
+		"A check-ignore request input fits every bounded target path.",
+	)
+	request.Process.Input = content
+}
+
+// Process output is untrusted, so each newline search reads one bounded part. An overlong line
+// cannot become a map key.
+func check_ignore_matches(response *Check_Ignore_Result) {
+	Check_Ignore_Result_Invariants(response, "check_ignore_matches.response")
+	result := response.Process
+	printed := map[string]bool{}
+	line_start := 0
+	search_start := 0
+	for search_start < len(result.Output) {
+		search_end := search_start + shared_bytes.SLICE_SIZE_MAXIMUM
+		if search_end > len(result.Output) {
+			search_end = len(result.Output)
+		}
+		line_index := shared_bytes.Index_Byte(
+			shared_bytes.Slice(result.Output[search_start:search_end]), '\n')
+		if line_index == shared_bytes.INDEX_ABSENT {
+			search_start = search_end
+			continue
+		}
+		line_end := search_start + int(line_index)
+		if line_end != line_start {
+			if line_end-line_start <= CHECK_IGNORE_TARGET_BYTES_MAX {
+				line := string(result.Output[line_start:line_end])
+				if response.Target(line) {
+					printed[line] = true
+				}
+			}
+		}
+		line_start = line_end + 1
+		search_start = line_start
+	}
+	if line_start < len(result.Output) {
+		if len(result.Output)-line_start <= CHECK_IGNORE_TARGET_BYTES_MAX {
+			line := string(result.Output[line_start:])
+			if response.Target(line) {
+				printed[line] = true
+			}
+		}
+	}
+	invariant.Always(
+		len(printed) <= IGNORE_COUNT_MAX,
+		"A check-ignore result has at most IGNORE_COUNT_MAX matches.",
+	)
+	response.Contains = func(path string) (present bool) {
+		return printed[path]
 	}
 }
 
@@ -2338,16 +2533,16 @@ func ghostty_install_invocation(applications_directory Applications_Directory) (
 // a verifying code signature. Probing the app's own binary, not PATH, keeps a
 // missing symlink from forcing a needless re-download of an app already in place.
 func ghostty_installed(
-	shell Shell, applications_directory Applications_Directory,
+	system sysio.IO, applications_directory Applications_Directory,
 ) (installed File_Presence) {
 	defer func() { File_Presence_Invariants(installed, "ghostty_installed.installed") }()
-	Shell_Invariants(shell, "ghostty_installed.shell")
 	Applications_Directory_Invariants(
 		applications_directory, "ghostty_installed.applications_directory")
+	process_io_requirements(system, "ghostty_installed.system")
 	binary := Managed_Executable(filepath.Join(
 		string(applications_directory), GHOSTTY_APPLICATION_BINARY_SUBPATH))
 	version_present := Installed(&Installed_Input{
-		Shell:      shell,
+		IO:         system,
 		Executable: binary,
 		Version:    GHOSTTY_VERSION,
 	})
@@ -2361,7 +2556,7 @@ func ghostty_installed(
 	application := Application_Path(filepath.Join(
 		string(applications_directory), "Ghostty.app"))
 	return File_Presence(run_spawn(
-		shell, Spawn_Arguments(ghostty_codesign_invocation(application))))
+		system, nil, nil, Spawn_Arguments(ghostty_codesign_invocation(application))))
 }
 
 // Returns the codesign invocation that verifies the bundle and pins it to Ghostty's
@@ -2566,6 +2761,12 @@ const DESTINATION_PATH_BYTES_MIN = 5
 // DESTINATION_PATH_BYTES_MAX joins the longest home and relative path.
 const DESTINATION_PATH_BYTES_MAX = 4065
 
+// FILE_PATH_BYTES_MIN rejects a path that cannot name one absolute file.
+const FILE_PATH_BYTES_MIN = DESTINATION_PATH_BYTES_MIN
+
+// FILE_PATH_BYTES_MAX admits the longest validated source path submitted to shared IO.
+const FILE_PATH_BYTES_MAX = CHECK_IGNORE_TARGET_BYTES_MAX
+
 // FONT_PATH_BYTES_MIN is the shortest generated font destination.
 const FONT_PATH_BYTES_MIN = 36
 
@@ -2601,6 +2802,13 @@ const PLAN_ENTRY_COUNT_MAX = 4096
 
 // IGNORE_COUNT_MAX bounds ignored entries returned for one traversal level.
 const IGNORE_COUNT_MAX = 4096
+
+// CHECK_IGNORE_TARGET_BYTES_MAX joins the longest source directory and relative path.
+const CHECK_IGNORE_TARGET_BYTES_MAX = SOURCE_DIRECTORY_BYTES_MAX + 1 +
+	RELATIVE_FILE_PATH_BYTES_MAX
+
+// CHECK_IGNORE_INPUT_BYTES_MAX includes one newline after each longest target path.
+const CHECK_IGNORE_INPUT_BYTES_MAX = PLAN_ENTRY_COUNT_MAX * (CHECK_IGNORE_TARGET_BYTES_MAX + 1)
 
 // INVOCATION_COUNT_MIN permits an empty invocation list.
 const INVOCATION_COUNT_MIN = 0
@@ -2916,6 +3124,38 @@ func Dotfile_Bytes_Invariants(contents Dotfile_Bytes, namespace invariant.Namesp
 	invariant.Tree(contents, namespace).
 		Range_Int(len(contents), BYTE_SEQUENCE_COUNT_MIN, DOTFILE_PAYLOAD_BYTES_MAX).
 		Ensure()
+}
+
+// Check_Ignore_Request keeps the large process input behind its bounded serializer.
+type Check_Ignore_Request struct {
+	// Targets yields each path without exposing the source collection to the serializer.
+	Targets func(yield func(target string) (next bool))
+	// Process prevents the spawn boundary from repeating the serializer policy.
+	Process sysio.Process_Request
+}
+
+// Check_Ignore_Request_Invariants prevents a nil carrier from bypassing input validation.
+func Check_Ignore_Request_Invariants(
+	request *Check_Ignore_Request, _ invariant.Namespace,
+) {
+	invariant.Always(request != nil, "A check-ignore request is present.")
+	invariant.Always(request.Targets != nil, "A check-ignore target sequence is present.")
+}
+
+// Check_Ignore_Result keeps untrusted process output behind its bounded parser.
+type Check_Ignore_Result struct {
+	// Process stays unavailable to policy until the parser validates each printed line.
+	Process sysio.Process_Result
+	// Target rejects output that did not originate in the bounded request.
+	Target func(path string) (present bool)
+	// Contains exposes only lines that meet the count and path limits.
+	Contains func(path string) (present bool)
+}
+
+// Check_Ignore_Result_Invariants prevents a nil carrier from bypassing output validation.
+func Check_Ignore_Result_Invariants(response *Check_Ignore_Result, _ invariant.Namespace) {
+	invariant.Always(response != nil, "A check-ignore result is present.")
+	invariant.Always(response.Target != nil, "A check-ignore target predicate is present.")
 }
 
 // File_Presence reports whether one file exists.

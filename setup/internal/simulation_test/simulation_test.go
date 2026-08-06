@@ -7,14 +7,14 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
-	"slices"
-	"strings"
 	"testing"
 
 	setup "local/james-orcales/setup/internal"
 	invariant "local/james-orcales/shared/invariant/default"
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/random/prng"
+	shared_slices "local/james-orcales/shared/slices"
+	shared_strings "local/james-orcales/shared/strings"
 	systime "local/james-orcales/shared/time"
 )
 
@@ -60,6 +60,27 @@ func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m, "../**")
 }
 
+// The harness keeps setup's larger file and batch limits while each shared operation stays
+// inside its more narrow boundary.
+func Test_Shared_Algorithm_Adapters(t *testing.T) {
+	t.Parallel()
+	repeated := repeat_text("ab", shared_strings.TEXT_SIZE_MAXIMUM)
+	if len(repeated) != 2*shared_strings.TEXT_SIZE_MAXIMUM {
+		t.Fatalf("repeated text size = %d, want %d", len(repeated), 8192)
+	}
+	source := []byte(repeated)
+	clone := clone_bytes(source)
+	clone[0] = 'x'
+	if source[0] != 'a' {
+		t.Fatal("the byte clone aliases its source")
+	}
+	lines := []string{repeat_text("x", 4000), repeat_text("y", 4000)}
+	result := split_lines(newline_delimited_text(lines))
+	if !shared_slices.Equal(result, lines) {
+		t.Fatalf("newline-delimited text = %v, want the input lines", result)
+	}
+}
+
 // Fuzz_Main calls Main over the synchronous file model that each seed draws.
 func Fuzz_Main(f *testing.F) {
 	for seed := uint64(0); seed < HARNESS_CORPUS; seed++ {
@@ -89,8 +110,7 @@ func drive(t *testing.T, seed uint64) {
 			Cargo_Directory:           configuration.Cargo_Directory,
 			Data_Directory:            configuration.Data_Directory,
 		},
-		File_System: system,
-		Shell:       setup.Shell{Spawn: harness_shell(configuration)},
+		IO: system,
 	}
 	// The first run must succeed for every well-formed seed — with no faults injected, Main
 	// fails only on a Plan or write error, neither reachable here. If that ever changes this
@@ -107,7 +127,7 @@ func drive(t *testing.T, seed uint64) {
 		t.Fatal("the first mirror run over a fault-free tree failed")
 	}
 	writes := harness_count_writes(&system, configuration)
-	input.File_System = system
+	input.IO = system
 	second_status := setup.Main(input)
 	if second_status != 0 {
 		t.Fatalf("the second mirror run failed with status %d", second_status)
@@ -149,9 +169,9 @@ func harness_configuration(seed uint64) (configuration Harness_Configuration) {
 		&operating_system,
 		[]setup.Operating_System{"aix", "linux", "darwin", "freebsd", "dragonfly"})
 	configuration.Cargo_Directory = setup.Cargo_Directory(prng.Generator_Element(
-		&cargo, []string{"", "x", "xx", strings.Repeat("x", 64)}))
+		&cargo, []string{"", "x", "xx", repeat_text("x", 64)}))
 	configuration.Data_Directory = setup.Data_Directory(prng.Generator_Element(
-		&data, []string{"", "x", "xx", strings.Repeat("x", 64)}))
+		&data, []string{"", "x", "xx", repeat_text("x", 64)}))
 	configuration.Color = setup.Console_Color(prng.Generator_Boolean(&color))
 	configuration.Installed = prng.Generator_Boolean(&installed)
 	configuration.Version_Matches = prng.Generator_Boolean(&version)
@@ -225,7 +245,7 @@ func harness_align(input Harness_Configuration) (configuration Harness_Configura
 			configuration.Path_Boundary = 0
 		} else {
 			configuration.Home_Directory = setup.Home_Directory(
-				strings.Repeat("/h", 32))
+				repeat_text("/h", 32))
 			configuration.Operating_System = "linux"
 			configuration.Cargo_Directory = "xx"
 			configuration.Installed = true
@@ -235,68 +255,349 @@ func harness_align(input Harness_Configuration) (configuration Harness_Configura
 	return configuration
 }
 
+// Setup permits text that is larger than one shared text value, so the harness repeats one
+// bounded part at a time without changing the seed-derived size.
+func repeat_text(text string, count int) (repeated string) {
+	if count < 0 {
+		return string(shared_strings.Repeat(
+			shared_strings.Text(text), shared_strings.Repeat_Count(count)))
+	}
+	if count == 0 {
+		return ""
+	}
+	if len(text) == 0 {
+		return ""
+	}
+	if len(text) > shared_strings.TEXT_SIZE_MAXIMUM {
+		return string(shared_strings.Repeat(
+			shared_strings.Text(text), shared_strings.Repeat_Count(count)))
+	}
+	part_count_max := shared_strings.TEXT_SIZE_MAXIMUM / len(text)
+	content := make([]byte, len(text)*count)
+	position := 0
+	for copies := count; copies != 0; {
+		part_count := copies
+		if part_count > part_count_max {
+			part_count = part_count_max
+		}
+		part := shared_strings.Repeat(
+			shared_strings.Text(text), shared_strings.Repeat_Count(part_count))
+		position += copy(content[position:], string(part))
+		copies -= part_count
+	}
+	return string(content)
+}
+
+// A simulated dotfile can exceed the shared slice limit, so each cloned part stays bounded.
+func clone_bytes(content []byte) (clone []byte) {
+	if len(content) == 0 {
+		return content
+	}
+	clone = make([]byte, len(content))
+	for offset := 0; offset < len(content); offset += shared_slices.SLICE_COUNT_MAXIMUM {
+		end := offset + shared_slices.SLICE_COUNT_MAXIMUM
+		if end > len(content) {
+			end = len(content)
+		}
+		copy(clone[offset:end], shared_slices.Clone(content[offset:end]))
+	}
+	return clone
+}
+
+// Setup paths fit one shared text value, so path queries cross that boundary at one helper.
+func text_contains(text string, part string) (contains bool) {
+	return bool(shared_strings.Contains(
+		shared_strings.Text(text), shared_strings.Text(part)))
+}
+
+// Setup paths fit one shared text value, so prefix queries cross that boundary at one helper.
+func text_has_prefix(text string, prefix string) (present bool) {
+	return bool(shared_strings.Has_Prefix(
+		shared_strings.Text(text), shared_strings.Text(prefix)))
+}
+
+// Setup paths fit one shared text value, so prefix removal keeps the shared result bounded.
+func text_trim_prefix(text string, prefix string) (trimmed string) {
+	return string(shared_strings.Trim_Prefix(
+		shared_strings.Text(text), shared_strings.Text(prefix)))
+}
+
+// A check-ignore batch can exceed one shared text value, so each joined group stays inside the
+// shared boundary without changing the process input.
+func newline_delimited_text(lines []string) (content []byte) {
+	group := shared_strings.Texts{}
+	group_size := 0
+	flush := func() {
+		if len(group) == 0 {
+			return
+		}
+		content = append(content, string(shared_strings.Join(group, "\n"))...)
+		content = append(content, '\n')
+		group = group[:0]
+		group_size = 0
+	}
+	for _, line := range lines {
+		separator_size := 0
+		if len(group) != 0 {
+			separator_size = 1
+		}
+		if group_size+separator_size+len(line) > shared_strings.TEXT_SIZE_MAXIMUM {
+			flush()
+		}
+		group = append(group, shared_strings.Text(line))
+		group_size += len(line)
+		if len(group) > 1 {
+			group_size++
+		}
+	}
+	flush()
+	return content
+}
+
+// A generated batch can exceed one shared text value, so each newline search stays bounded.
+// The harness rejects an overlong process line before it allocates a map key.
+func split_lines(content []byte) (lines []string) {
+	line_start := 0
+	search_start := 0
+	for search_start < len(content) {
+		search_end := search_start + shared_strings.TEXT_SIZE_MAXIMUM
+		if search_end > len(content) {
+			search_end = len(content)
+		}
+		index := shared_strings.Index_Byte(
+			shared_strings.Text(content[search_start:search_end]), '\n')
+		if index == shared_strings.INDEX_ABSENT {
+			search_start = search_end
+			continue
+		}
+		line_end := search_start + int(index)
+		if line_end != line_start {
+			if line_end-line_start <= setup.CHECK_IGNORE_TARGET_BYTES_MAX {
+				lines = append(lines, string(content[line_start:line_end]))
+			}
+		}
+		line_start = line_end + 1
+		search_start = line_start
+	}
+	if line_start < len(content) {
+		if len(content)-line_start <= setup.CHECK_IGNORE_TARGET_BYTES_MAX {
+			lines = append(lines, string(content[line_start:]))
+		}
+	}
+	return lines
+}
+
 // The simulation injects a synchronous seeded model, so only the binary root owns an IO Driver.
 func simulation_file_system(
 	seed uint64, configuration Harness_Configuration,
-) (system setup.File_System) {
+) (system sysio.IO) {
 	files := simulation_files(seed)
-	directories := simulation_directories(files)
-	controlled_source := ""
-	read_directory := func(path string) (entries []sysio.Directory_Entry, err error) {
-		return simulation_read_directory(files, directories, path)
+	model := &Simulation_File_Model{
+		Files: files, Directories: simulation_directories(files),
+		Configuration: configuration, Handles: map[sysio.File]string{}, Next_File: 1,
 	}
-	system = setup.File_System{
+	system = sysio.IO{
 		Status: func(path string) (status sysio.File_Status, err error) {
-			mapped := harness_path(configuration, path)
-			_, status.Is_Regular = files[mapped]
-			status.Is_Directory = directories[mapped]
-			status.Exists = status.Is_Regular || status.Is_Directory
-			return status, nil
+			return simulation_status(model, path)
+		},
+		Open: func(path string) (file sysio.File, err error) {
+			return simulation_open(model, path)
+		},
+		Create: func(path string) (file sysio.File, err error) {
+			return simulation_create(model, path)
+		},
+		Make_Directory: func(path string) (err error) {
+			return simulation_make_directory(model, path)
 		},
 		Read: func(
-			path string, buffer_size int,
-		) (contents []byte, found bool, err error) {
-			if strings.Contains(path, "/third_party/iosevka_nerd_font_mono/") {
-				if configuration.Failure == "fonts" {
-					return nil, false, errors.New("simulated font read failure")
-				}
-				return []byte("simulated-font"), true, nil
-			}
-			mapped := harness_path(configuration, path)
-			contents, found = files[mapped]
-			if !found {
-				return nil, false, nil
-			}
-			if len(contents) >= buffer_size {
-				return nil, false,
-					errors.New("the simulated file exceeds its limit")
-			}
-			if configuration.Dotfile_Bytes < 0 {
-				return slices.Clone(contents), true, nil
-			}
-			if strings.HasPrefix(path, harness_source(configuration)+"/") {
-				if controlled_source == "" {
-					controlled_source = path
-				}
-				if path == controlled_source {
-					controlled_contents := strings.Repeat(
-						"x", configuration.Dotfile_Bytes)
-					return []byte(controlled_contents), true, nil
-				}
-			}
-			return slices.Clone(contents), true, nil
+			completion *sysio.Completion, callback sysio.Callback,
+			file sysio.File, buffer []byte, offset int64,
+		) {
+			simulation_read(model, completion, callback, file, buffer, offset)
 		},
-		Write: func(path string, contents []byte) (err error) {
-			mapped := harness_path(configuration, path)
-			files[mapped] = slices.Clone(contents)
-			simulation_add_directories(directories, filepath.Dir(mapped))
-			return nil
+		Write: func(
+			completion *sysio.Completion, callback sysio.Callback,
+			file sysio.File, buffer []byte, offset int64,
+		) {
+			simulation_write(model, completion, callback, file, buffer, offset)
 		},
+		Close: func(
+			completion *sysio.Completion, callback sysio.Timeout_Callback,
+			file sysio.File,
+		) {
+			simulation_close(model, completion, callback, file)
+		},
+	}
+	read_directory := func(path string) (entries []sysio.Directory_Entry, err error) {
+		return simulation_read_directory(model.Files, model.Directories, path)
 	}
 	system.Read_Directory = func(path string) (entries []sysio.Directory_Entry, err error) {
 		return harness_directory_entries(read_directory, configuration, path)
 	}
+	system.Spawn = harness_process_io(configuration)
 	return system
+}
+
+// Simulation_File_Model retains descriptor state behind one synchronous shared IO value.
+type Simulation_File_Model struct {
+	Files             map[string][]byte
+	Directories       map[string]bool
+	Configuration     Harness_Configuration
+	Controlled_Source string
+	Handles           map[sysio.File]string
+	Next_File         sysio.File
+}
+
+// Simulation_contents returns the seeded bytes for one external setup path.
+func simulation_contents(model *Simulation_File_Model, path string) (
+	contents []byte, found bool, err error,
+) {
+	if text_contains(path, "/third_party/iosevka_nerd_font_mono/") {
+		if model.Configuration.Failure == "fonts" {
+			return nil, false, errors.New("simulated font read failure")
+		}
+		return []byte("simulated-font"), true, nil
+	}
+	mapped := harness_path(model.Configuration, path)
+	contents, found = model.Files[mapped]
+	if !found {
+		return nil, false, nil
+	}
+	if model.Configuration.Dotfile_Bytes < 0 {
+		return clone_bytes(contents), true, nil
+	}
+	if text_has_prefix(path, harness_source(model.Configuration)+"/") {
+		if model.Controlled_Source == "" {
+			model.Controlled_Source = path
+		}
+		if path == model.Controlled_Source {
+			controlled := repeat_text("x", model.Configuration.Dotfile_Bytes)
+			return []byte(controlled), true, nil
+		}
+	}
+	return clone_bytes(contents), true, nil
+}
+
+// Simulation_status reports the seeded path type.
+func simulation_status(model *Simulation_File_Model, path string) (
+	status sysio.File_Status, err error,
+) {
+	if text_contains(path, "/third_party/iosevka_nerd_font_mono/") {
+		status.Exists, status.Is_Regular = true, true
+		return status, nil
+	}
+	mapped := harness_path(model.Configuration, path)
+	_, status.Is_Regular = model.Files[mapped]
+	status.Is_Directory = model.Directories[mapped]
+	status.Exists = status.Is_Regular
+	if status.Is_Directory {
+		status.Exists = true
+	}
+	return status, nil
+}
+
+// Simulation_open allocates one readable simulated descriptor.
+func simulation_open(
+	model *Simulation_File_Model, path string,
+) (file sysio.File, err error) {
+	_, found, read_err := simulation_contents(model, path)
+	if read_err != nil {
+		return 0, read_err
+	}
+	if !found {
+		return 0, errors.New("the simulated file is absent")
+	}
+	return simulation_open_handle(model, path), nil
+}
+
+// Simulation_create truncates one simulated path and allocates its descriptor.
+func simulation_create(
+	model *Simulation_File_Model, path string,
+) (file sysio.File, err error) {
+	mapped := harness_path(model.Configuration, path)
+	model.Files[mapped] = []byte{}
+	simulation_add_directories(model.Directories, filepath.Dir(mapped))
+	return simulation_open_handle(model, path), nil
+}
+
+// Simulation_open_handle retains one external path for later callback operations.
+func simulation_open_handle(model *Simulation_File_Model, path string) (file sysio.File) {
+	file = model.Next_File
+	model.Next_File++
+	model.Handles[file] = path
+	return file
+}
+
+// Simulation_make_directory adds every modeled parent.
+func simulation_make_directory(model *Simulation_File_Model, path string) (err error) {
+	simulation_add_directories(
+		model.Directories, harness_path(model.Configuration, path))
+	return nil
+}
+
+// Simulation_read copies one descriptor range and retires it inline.
+func simulation_read(
+	model *Simulation_File_Model,
+	completion *sysio.Completion, callback sysio.Callback,
+	file sysio.File, buffer []byte, offset int64,
+) {
+	path, present := model.Handles[file]
+	if !present {
+		callback(completion, 0, errors.New("the simulated file handle is absent"))
+		return
+	}
+	contents, found, read_err := simulation_contents(model, path)
+	if read_err != nil {
+		callback(completion, 0, read_err)
+		return
+	}
+	if !found {
+		callback(completion, 0, nil)
+		return
+	}
+	if offset < 0 {
+		callback(completion, 0, errors.New("the simulated read offset is invalid"))
+		return
+	}
+	if offset > int64(len(contents)) {
+		callback(completion, 0, errors.New("the simulated read offset is invalid"))
+		return
+	}
+	callback(completion, copy(buffer, contents[int(offset):]), nil)
+}
+
+// Simulation_write stores one descriptor range and retires it inline.
+func simulation_write(
+	model *Simulation_File_Model,
+	completion *sysio.Completion, callback sysio.Callback,
+	file sysio.File, buffer []byte, offset int64,
+) {
+	path, present := model.Handles[file]
+	if !present {
+		callback(completion, 0, errors.New("the simulated write is invalid"))
+		return
+	}
+	if offset < 0 {
+		callback(completion, 0, errors.New("the simulated write is invalid"))
+		return
+	}
+	mapped := harness_path(model.Configuration, path)
+	end := int(offset) + len(buffer)
+	if end > len(model.Files[mapped]) {
+		growth := make([]byte, end-len(model.Files[mapped]))
+		model.Files[mapped] = append(model.Files[mapped], growth...)
+	}
+	copy(model.Files[mapped][int(offset):], buffer)
+	callback(completion, len(buffer), nil)
+}
+
+// Simulation_close releases one simulated descriptor and retires it inline.
+func simulation_close(
+	model *Simulation_File_Model,
+	completion *sysio.Completion, callback sysio.Timeout_Callback, file sysio.File,
+) {
+	delete(model.Handles, file)
+	callback(completion, nil)
 }
 
 // Each payload uses its own stream, so a new file does not move an existing pinned payload.
@@ -359,10 +660,11 @@ func simulation_read_directory(
 		entries = append(entries, sysio.Directory_Entry{
 			Name: name, Is_Directory: is_directory})
 	}
-	slices.SortFunc(entries, func(
+	shared_slices.Sort_Function(entries, func(
 		left, right sysio.Directory_Entry,
-	) (comparison int) {
-		return strings.Compare(left.Name, right.Name)
+	) (comparison shared_slices.Comparison) {
+		return shared_slices.Comparison(shared_strings.Compare(
+			shared_strings.Text(left.Name), shared_strings.Text(right.Name)))
 	})
 	return entries, nil
 }
@@ -399,7 +701,7 @@ func harness_directory_entries(
 		if entries[index].Is_Directory != want_directory {
 			continue
 		}
-		alias := strings.Repeat("p", setup.RELATIVE_FILE_PATH_BYTES_MAX)
+		alias := repeat_text("p", setup.RELATIVE_FILE_PATH_BYTES_MAX)
 		alias_path := filepath.Join(path, alias)
 		configuration.Path_Aliases[alias_path] = filepath.Join(path, entries[index].Name)
 		entries[index].Name = alias
@@ -410,7 +712,7 @@ func harness_directory_entries(
 
 // Builds a bounded absolute home from two-byte path components.
 func harness_home(bytes int) (home string) {
-	return strings.Repeat("/h", bytes/2)
+	return repeat_text("/h", bytes/2)
 }
 
 // Returns Main's logical dotfile source for one configured home.
@@ -425,8 +727,8 @@ func harness_path(configuration Harness_Configuration, path string) (mapped stri
 			path = original
 			break
 		}
-		if strings.HasPrefix(path, alias+"/") {
-			path = original + strings.TrimPrefix(path, alias)
+		if text_has_prefix(path, alias+"/") {
+			path = original + text_trim_prefix(path, alias)
 			break
 		}
 	}
@@ -437,40 +739,48 @@ func harness_path(configuration Harness_Configuration, path string) (mapped stri
 		if path == data {
 			return "/dest/data"
 		}
-		if strings.HasPrefix(path, data+"/") {
-			return filepath.Join("/dest/data", strings.TrimPrefix(path, data+"/"))
+		if text_has_prefix(path, data+"/") {
+			return filepath.Join("/dest/data", text_trim_prefix(path, data+"/"))
 		}
 	}
 	if path == source {
 		return "/"
 	}
-	if strings.HasPrefix(path, source+"/") {
-		return "/" + strings.TrimPrefix(path, source+"/")
+	if text_has_prefix(path, source+"/") {
+		return "/" + text_trim_prefix(path, source+"/")
 	}
 	if path == home {
 		return filepath.Join("/", HARNESS_DESTINATION)
 	}
-	if strings.HasPrefix(path, home+"/") {
+	if text_has_prefix(path, home+"/") {
 		return filepath.Join(
-			"/", HARNESS_DESTINATION, strings.TrimPrefix(path, home+"/"))
+			"/", HARNESS_DESTINATION, text_trim_prefix(path, home+"/"))
 	}
 	return path
 }
 
 // Returns one seed-fixed process fabric and retains the tool named by its latest version probe.
-func harness_shell(configuration Harness_Configuration) (spawn setup.Spawn) {
+func harness_process_io(configuration Harness_Configuration) (
+	spawn func(
+		completion *sysio.Completion, callback sysio.Process_Callback,
+		request sysio.Process_Request, deadline systime.Duration,
+	),
+) {
 	tool := ""
-	return func(request sysio.Process_Request) (result sysio.Process_Result) {
+	return func(
+		completion *sysio.Completion, callback sysio.Process_Callback,
+		request sysio.Process_Request, _ systime.Duration,
+	) {
 		if request.Path == "which" {
 			tool = request.Arguments[0]
 		} else if harness_version(request) != "" {
 			tool = filepath.Base(request.Path)
 		}
-		result = harness_spawn(configuration, request)
+		result := harness_spawn(configuration, request)
 		if harness_command_fails(configuration.Failure, tool, request) {
 			result.Exit = 1
 		}
-		return result
+		callback(completion, result, nil)
 	}
 }
 
@@ -501,7 +811,7 @@ func harness_spawn(
 			if configuration.Version_Matches {
 				return sysio.Process_Result{Output: []byte(version + "\n")}
 			}
-			return sysio.Process_Result{Output: []byte(strings.Repeat(
+			return sysio.Process_Result{Output: []byte(repeat_text(
 				"x", configuration.Probe_Output_Bytes))}
 		}
 	}
@@ -551,8 +861,8 @@ func harness_git_ignore(
 	configuration Harness_Configuration, request sysio.Process_Request,
 ) (result sysio.Process_Result) {
 	ignored := []string{}
-	for _, target := range strings.Split(string(request.Input), "\n") {
-		relative := strings.TrimPrefix(target, harness_source(configuration)+"/")
+	for _, target := range split_lines(request.Input) {
+		relative := text_trim_prefix(target, harness_source(configuration)+"/")
 		if target != "" {
 			if harness_ignores_one(relative) {
 				ignored = append(ignored, target)
@@ -560,7 +870,7 @@ func harness_git_ignore(
 		}
 	}
 	if len(ignored) != 0 {
-		result.Output = []byte(strings.Join(ignored, "\n") + "\n")
+		result.Output = newline_delimited_text(ignored)
 	}
 	return result
 }
@@ -584,37 +894,37 @@ func harness_ignores_one(relative string) (ignored bool) {
 	if relative == HARNESS_DESTINATION {
 		return true
 	}
-	if strings.HasPrefix(relative, HARNESS_DESTINATION+"/") {
+	if text_has_prefix(relative, HARNESS_DESTINATION+"/") {
 		return true
 	}
 	if relative == HARNESS_IGNORED {
 		return true
 	}
-	return strings.HasPrefix(relative, HARNESS_IGNORED+"/")
+	return text_has_prefix(relative, HARNESS_IGNORED+"/")
 }
 
-// Wraps the loop's Create to count the files a mirror run writes, returning the live count.
+// Wraps shared IO Create to count the files a mirror run writes, returning the live count.
 func harness_count_writes(
-	system *setup.File_System, configuration Harness_Configuration,
+	system *sysio.IO, configuration Harness_Configuration,
 ) (writes *int) {
 	count := 0
 	destinations := map[string]bool{}
 	for _, relative := range harness_source_files(system, configuration) {
 		destinations[filepath.Join(string(configuration.Home_Directory), relative)] = true
 	}
-	write := system.Write
-	system.Write = func(path string, contents []byte) (err error) {
+	create := system.Create
+	system.Create = func(path string) (file sysio.File, err error) {
 		if destinations[path] {
 			count++
 		}
-		return write(path, contents)
+		return create(path)
 	}
 	return &count
 }
 
 // Asserts the ignored subtree never reached the destination.
 func harness_assert_pruned(
-	t *testing.T, system *setup.File_System, configuration Harness_Configuration,
+	t *testing.T, system *sysio.IO, configuration Harness_Configuration,
 ) {
 	status, _ := system.Status(filepath.Join(
 		string(configuration.Home_Directory), HARNESS_IGNORED))
@@ -626,7 +936,7 @@ func harness_assert_pruned(
 // Overwrites a seed-chosen subset of the destination's mirrored files with poison so they
 // differ from their source, returning how many were changed.
 func harness_mutate(
-	system *setup.File_System, configuration Harness_Configuration, seed uint64,
+	system *sysio.IO, configuration Harness_Configuration, seed uint64,
 ) (count int) {
 	generator := prng.New(seed ^ HARNESS_MUTATION_SALT)
 	for _, relative := range harness_source_files(system, configuration) {
@@ -644,7 +954,7 @@ func harness_mutate(
 
 // Lists the non-ignored source files under the root, walking the tree through Read_Directory.
 func harness_source_files(
-	system *setup.File_System, configuration Harness_Configuration,
+	system *sysio.IO, configuration Harness_Configuration,
 ) (relatives []string) {
 	relatives = []string{}
 	worklist := []string{"."}
@@ -673,6 +983,13 @@ func harness_source_files(
 
 // Overwrites path with the poison content through the loop, driving the write and the close
 // to completion.
-func harness_overwrite(system *setup.File_System, path string) {
-	system.Write(path, []byte(HARNESS_POISON))
+func harness_overwrite(system *sysio.IO, path string) {
+	file, create_err := system.Create(path)
+	if create_err != nil {
+		return
+	}
+	completion := sysio.Completion{}
+	system.Write(&completion, func(_ *sysio.Completion, _ int, _ error) {},
+		file, []byte(HARNESS_POISON), 0)
+	system.Close(&completion, func(_ *sysio.Completion, _ error) {}, file)
 }
