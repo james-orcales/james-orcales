@@ -205,9 +205,6 @@ const SIGNAL_INTERRUPT Signal = 1
 // finite watch retires before a signal arrives.
 type Signal_Callback func(completion *Completion, signal Signal, err error)
 
-// Compute_Callback fires on the loop thread once offloaded work has finished.
-type Compute_Callback func(completion *Completion)
-
 // Process_Request describes a subprocess to run: the executable, its arguments and
 // environment, the working directory, and the bytes fed to its standard input.
 type Process_Request struct {
@@ -530,10 +527,6 @@ type IO struct {
 		completion *Completion, callback Signal_Callback, signal Signal,
 		deadline time.Duration,
 	)
-	// ONLY FOR COMPUTE-INTENSIVE WORK THAT CAN BE HIGHLY PARALLELIZED — E.G. JSON
-	// PARSING, HIGH-TRAFFIC REQUEST PROCESSING. IT IS NOT AN ESCAPE HATCH FOR BLOCKING
-	// SYSCALLS OR IO; THOSE BELONG ON THE LOOP'S COMPLETION OPS.
-	Compute func(completion *Completion, callback Compute_Callback, work func())
 	// Spawn runs request off the loop thread until completion or deadline. Expiry kills the
 	// subprocess group and returns Deadline_Exceeded with any partial result. The simulator
 	// draws the exit code from the seed and returns no output, since scripted output is
@@ -623,14 +616,10 @@ type Loop_Counts struct {
 	Signal_Waiters int
 	// Posted is the number of completions finished off the loop thread awaiting the next drain.
 	Posted int
-	// Results is the number of finished compute jobs awaiting the next drain.
-	Results int
 	// Raw_Open is the number of raw descriptors the backend holds open.
 	Raw_Open int
 	// Wake_Active reports whether the wake pipe has been created and armed.
 	Wake_Active bool
-	// Compute_Active reports whether the compute worker pool has been started.
-	Compute_Active bool
 }
 
 // The sim type is the deterministic, in-memory IO backend — TigerBeetle's simulated
@@ -705,14 +694,11 @@ const SIM_OPERATION_SIGNAL Sim_Operation = 4
 // SIM_OPERATION_POSTED keeps deferred callbacks in one introspection class.
 const SIM_OPERATION_POSTED Sim_Operation = 5
 
-// SIM_OPERATION_RESULT keeps spawn results in one introspection class.
-const SIM_OPERATION_RESULT Sim_Operation = 6
-
 // SIM_OPERATION_NEXT_TICK keeps next-tick callbacks in one introspection class.
-const SIM_OPERATION_NEXT_TICK Sim_Operation = 7
+const SIM_OPERATION_NEXT_TICK Sim_Operation = 6
 
 // SIM_OPERATION_EVENT keeps event listeners in one introspection class.
-const SIM_OPERATION_EVENT Sim_Operation = 8
+const SIM_OPERATION_EVENT Sim_Operation = 7
 
 // Sim_Event is the deterministic counterpart of TigerBeetle's EVFILT_USER/eventfd primitive.
 type Sim_Event struct {
@@ -1135,7 +1121,7 @@ func sim_connect(
 	state.Operation_Files[completion] = socket
 }
 
-// Wires the effect operations — signal watch and compute offload — onto loop.
+// Wires the effect operations — signal watch, spawn, and self-exec — onto loop.
 func sim_wire_effects(state *Sim, loop *IO) {
 	loop.Watch_Signal = func(
 		completion *Completion, callback Signal_Callback, signal Signal,
@@ -1143,9 +1129,6 @@ func sim_wire_effects(state *Sim, loop *IO) {
 	) {
 		invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
 		sim_watch_signal(state, completion, callback, signal, deadline)
-	}
-	loop.Compute = func(completion *Completion, callback Compute_Callback, work func()) {
-		sim_compute(state, completion, callback, work)
 	}
 	loop.Spawn = func(
 		completion *Completion, callback Process_Callback, request Process_Request,
@@ -1551,18 +1534,6 @@ func sim_watch_signal(
 	state.Operations[completion] = SIM_OPERATION_SIGNAL
 }
 
-// Runs work inline after the drawn latency, then fires callback on the loop — the
-// deterministic counterpart of the OS backend's worker pool.
-func sim_compute(
-	state *Sim, completion *Completion, callback Compute_Callback, work func(),
-) {
-	sim_submit(state, completion, sim_latency(state), func() {
-		work()
-		callback(completion)
-	})
-	state.Operations[completion] = SIM_OPERATION_RESULT
-}
-
 // Builds the driver over state — the loop-advancing capability, held only by main or a
 // test, never by code that merely submits IO.
 func sim_to_driver(state *Sim) (driver Driver) {
@@ -1607,13 +1578,9 @@ func sim_introspect(state *Sim) (counts Loop_Counts) {
 		if operation == SIM_OPERATION_POSTED {
 			counts.Posted++
 		}
-		if operation == SIM_OPERATION_RESULT {
-			counts.Results++
-		}
 	}
 	counts.Raw_Open = len(state.Raw_Open)
-	counts.Wake_Active = counts.Posted > 0 || counts.Results > 0
-	counts.Compute_Active = counts.Results > 0
+	counts.Wake_Active = counts.Posted > 0
 	return counts
 }
 

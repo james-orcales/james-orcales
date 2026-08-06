@@ -138,11 +138,6 @@ Watch_Signal requires a positive finite deadline. A signal arriving first fires 
 wins ties and retires once with Deadline_Exceeded and no signal. This finite lifetime deliberately
 diverges from TigerBeetle, which has no signal-watch operation.
 
-### Compute
-
-Offloaded work runs and its completion fires on a later drain, on the loop's own
-timeline; the simulator runs it inline so the result stays reproducible.
-
 ### Spawn
 
 A spawn requires a positive finite deadline; natural completion returns the seed-drawn exit code,
@@ -173,8 +168,8 @@ existing directory converges, so a repeated mkdir is not an error.
 
 ### Introspect
 
-Introspect reports every queued simulator operation by class, the synthetic poll, wake, and
-compute lifecycle flags derived from those queues, and every descriptor tracked in Raw_Open.
+Introspect reports every queued simulator operation by class, the synthetic poll and wake
+lifecycle flags derived from those queues, and every descriptor tracked in Raw_Open.
 
 # Stream
 

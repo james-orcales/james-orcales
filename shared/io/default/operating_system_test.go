@@ -877,38 +877,19 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 	}
 }
 
-// Test_Operating_System_IO_Compute runs work on the pool and delivers on the loop.
-func Test_Operating_System_IO_Compute(t *testing.T) {
-	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := operating_system_loop(t, clock)
-	baseline := driver.Introspect().Raw_Open
-	ran := false
-	fired := false
-	var completion io.Completion
-	loop.Compute(&completion, func(_ *io.Completion) {
-		fired = true
-	}, func() { ran = true })
-	driver.Run_Until(func() (finished bool) { return fired }, REAL_DEADLINE)
-
-	if !ran {
-		t.Fatal("compute work did not run")
-	}
-	if !fired {
-		t.Fatal("compute callback did not fire on the loop")
-	}
-	if driver.Introspect().Raw_Open != baseline {
-		t.Fatal("internal extension wake resources changed caller-owned Raw_Open")
-	}
-}
-
 // Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension verifies Deinit cannot close the
-// Event/backend while a repository-extension completion is still owned by Compute.
+// Event/backend while a repository-extension completion is still owned by Spawn. Spawn is the
+// vehicle because it retires through the same off-loop post path the Event bridges.
 func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
 	loop, driver := operating_system_loop(t, clock)
 	drained := false
 	var completion io.Completion
-	loop.Compute(&completion, func(_ *io.Completion) { drained = true }, func() {})
+	loop.Spawn(&completion, func(
+		_ *io.Completion, _ io.Process_Result, _ error,
+	) {
+		drained = true
+	}, io.Process_Request{Path: "true"}, REAL_DEADLINE)
 	deinit_panicked := false
 	func() {
 		defer func() { deinit_panicked = recover() != nil }()
@@ -918,7 +899,7 @@ func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
 		t.Fatal("deinit with an undrained extension completion must panic")
 	}
 	if !operating_system_run_until(t, driver, func() (finished bool) { return drained }) {
-		t.Fatal("compute did not drain after rejected deinit")
+		t.Fatal("spawn did not drain after rejected deinit")
 	}
 	driver.Deinit()
 }

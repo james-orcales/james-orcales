@@ -684,24 +684,6 @@ func Test_Sim_Watch_Signal(t *testing.T) {
 	}
 }
 
-// Test_Sim_Compute verifies offloaded work runs and its callback fires on the loop.
-func Test_Sim_Compute(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	ran := false
-	fired := false
-	var completion io.Completion
-	loop.Compute(&completion, func(_ *io.Completion) {
-		fired = true
-	}, func() { ran = true })
-	driver.Run_For(16 * time.NANOSECOND)
-	if !ran {
-		t.Fatal("compute work did not run")
-	}
-	if !fired {
-		t.Fatal("compute callback did not fire")
-	}
-}
-
 // Test_Sim_Spawn verifies a spawn delivers a result on the loop.
 func Test_Sim_Spawn(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
@@ -841,7 +823,7 @@ func Test_Sim_Introspect(t *testing.T) {
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
-	var completed, timeout, read, write, signal, posted, result io.Completion
+	var completed, timeout, read, write, signal, posted io.Completion
 	loop.Write(&completed, func(_ *io.Completion, _ int, _ error) {}, file, nil, 0)
 	loop.Timeout(&timeout, func(_ *io.Completion, _ error) {}, time.MICROSECOND)
 	loop.Receive(&read, func(_ *io.Completion, _ int, _ error) {}, socket, nil)
@@ -854,8 +836,7 @@ func Test_Sim_Introspect(t *testing.T) {
 		_ *io.Completion, _ io.Process_Result, _ error,
 	) {
 	}, io.Process_Request{Path: "true"}, SIM_DEADLINE)
-	loop.Compute(&result, func(_ *io.Completion) {}, func() {})
-	snap.Expect(t, snap.Init(`{Completed:1 Timeouts:1 IO_Backlog:2 IO_Inflight:0 IO_Queued:0 IO_In_Kernel:0 Signal_Waiters:1 Posted:1 Results:1 Raw_Open:2 Wake_Active:true Compute_Active:true}`),
+	snap.Expect(t, snap.Init(`{Completed:1 Timeouts:1 IO_Backlog:2 IO_Inflight:0 IO_Queued:0 IO_In_Kernel:0 Signal_Waiters:1 Posted:1 Raw_Open:2 Wake_Active:true}`),
 		fmt.Sprintf("%+v", driver.Introspect()))
 }
 

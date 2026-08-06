@@ -37,9 +37,6 @@ const SIGNAL_QUEUE_DEPTH = 8
 // the loop re-checks the signal channel at least this often.
 const SIGNAL_POLL_INTERVAL = 10 * time.MILLISECOND
 
-// Buffers submitted compute jobs so bursts do not block the loop thread.
-const COMPUTE_QUEUE_DEPTH = 1024
-
 // Holds the host backend's state: the completed queue, Darwin timeout queue, platform scheduler,
 // and repository-extension effects which all retire through completed.
 type Operating_System struct {
@@ -59,14 +56,10 @@ type Operating_System struct {
 	Signals chan os.Signal
 	// Signal_Waiters are the registered signal watchers, fired one-shot on delivery.
 	Signal_Waiters []Signal_Waiter
-	// Jobs carries compute work to the worker pool; nil until the first Compute.
-	Jobs chan *Compute_Job
-	// Results holds finished compute jobs handed back from workers, guarded by the mutex.
-	Results []*Compute_Job
 	// Posted holds completions finished off the loop thread (spawn), guarded by the mutex.
 	Posted []*io.Completion
-	// Results_Mutex guards Results and Posted, the only cross-thread state.
-	Results_Mutex sync.Mutex
+	// Posted_Mutex guards Posted, the only cross-thread state.
+	Posted_Mutex sync.Mutex
 	// Wake_Event is TigerBeetle's Event used only to bridge marked repository extensions
 	// back to the loop thread. It is an internal backend resource excluded from Raw_Open.
 	Wake_Event io.Event
@@ -76,11 +69,9 @@ type Operating_System struct {
 	Wake_Identifier uint64
 	// Wake_Active reports whether the extension Event has been opened and armed.
 	Wake_Active bool
-	// Compute_Active reports whether the worker pool has been started.
-	Compute_Active bool
 	// Extension_Submitted counts repository-extension completions not yet delivered to callers.
 	Extension_Submitted int
-	// Extension_Workers joins compute and spawn goroutines before the Event/backend closes.
+	// Extension_Workers joins spawn goroutines before the Event/backend closes.
 	Extension_Workers sync.WaitGroup
 	// Extension_Stop suppresses Event reattachment during Deinit's internal final trigger.
 	Extension_Stop bool
@@ -104,17 +95,6 @@ type Signal_Waiter struct {
 	Callback io.Signal_Callback
 	// Deadline is the finite moment when this repository-extension operation retires.
 	Deadline time.Moment
-}
-
-// One offloaded compute job: the work to run on a worker thread and the completion and
-// callback to fire back on the loop thread once it finishes.
-type Compute_Job struct {
-	// Completion is the caller-owned completion fired once the work finishes.
-	Completion *io.Completion
-	// Callback is the typed callback run on the loop thread after the work.
-	Callback io.Compute_Callback
-	// Work is the offloaded function; it must touch only memory the loop leaves alone.
-	Work func()
 }
 
 // New_Operating_System_IO eagerly creates the TigerBeetle scheduler. Entries is the io_uring
@@ -163,7 +143,7 @@ func operating_system_submit(completion *io.Completion) {
 	})
 }
 
-// Wires the signal-watch and compute-offload operations onto loop.
+// Wires the signal-watch, spawn, and self-exec operations onto loop.
 func operating_system_wire_effects(state *Operating_System, loop *io.IO) {
 	loop.Watch_Signal = func(
 		completion *io.Completion, callback io.Signal_Callback, signal io.Signal,
@@ -178,14 +158,6 @@ func operating_system_wire_effects(state *Operating_System, loop *io.IO) {
 			state.Extension_Submitted--
 			callback(completed, delivered, watch_err)
 		}, signal, deadline)
-	}
-	loop.Compute = func(completion *io.Completion, callback io.Compute_Callback, work func()) {
-		state.Extension_Submitted++
-		operating_system_submit(completion)
-		operating_system_compute_submit(state, completion, func(completed *io.Completion) {
-			state.Extension_Submitted--
-			callback(completed)
-		}, work)
 	}
 	loop.Spawn = func(
 		completion *io.Completion, callback io.Process_Callback, request io.Process_Request,
@@ -702,13 +674,12 @@ func operating_system_to_driver(state *Operating_System) (driver io.Driver) {
 }
 
 // Samples the loop's queue depths for an admin state snapshot. Loop-thread fields are read
-// directly — Introspect is root-only and called from the drive goroutine — but Posted and Results
-// are written by off-loop workers under the mutex, so their lengths are taken under it.
+// directly — Introspect is root-only and called from the drive goroutine — but Posted is
+// written by off-loop workers under the mutex, so its length is taken under it.
 func operating_system_introspect(state *Operating_System) (counts io.Loop_Counts) {
-	state.Results_Mutex.Lock()
+	state.Posted_Mutex.Lock()
 	posted_count := len(state.Posted)
-	results_count := len(state.Results)
-	state.Results_Mutex.Unlock()
+	state.Posted_Mutex.Unlock()
 	backlog, inflight, queued, kernel := platform_counts(state)
 	return io.Loop_Counts{
 		Completed:      len(state.Completed),
@@ -719,10 +690,8 @@ func operating_system_introspect(state *Operating_System) (counts io.Loop_Counts
 		IO_In_Kernel:   kernel,
 		Signal_Waiters: len(state.Signal_Waiters),
 		Posted:         posted_count,
-		Results:        results_count,
 		Raw_Open:       len(state.Raw_Open),
 		Wake_Active:    state.Wake_Active,
-		Compute_Active: state.Compute_Active,
 	}
 }
 
@@ -821,7 +790,7 @@ func operating_system_flush(state *Operating_System, wait time.Moment) (err erro
 		return expire_err
 	}
 	operating_system_signals(state)
-	operating_system_compute(state)
+	operating_system_drain_posted(state)
 	platform_err := platform_run(state, wait)
 	if platform_err != nil {
 		return platform_err
@@ -1049,9 +1018,6 @@ func operating_system_deinitialize(state *Operating_System) {
 	if state.Signals != nil {
 		signal.Stop(state.Signals)
 	}
-	if state.Compute_Active {
-		close(state.Jobs)
-	}
 	state.Extension_Workers.Wait()
 	if state.Wake_Active {
 		state.Extension_Stop = true
@@ -1083,53 +1049,6 @@ func operating_system_user_operations(state *Operating_System) (count int) {
 	return count
 }
 
-// Submits work to the worker pool, delivering callback on the loop thread once it
-// finishes. A cancel on a compute is a no-op: the work is already queued off-thread.
-func operating_system_compute_submit(
-	state *Operating_System, completion *io.Completion,
-	callback io.Compute_Callback, work func(),
-) {
-	operating_system_compute_ensure(state)
-	state.Jobs <- &Compute_Job{Completion: completion, Callback: callback, Work: work}
-}
-
-// Starts the worker pool and the wake pipe on the first Compute.
-func operating_system_compute_ensure(state *Operating_System) {
-	if state.Compute_Active {
-		return
-	}
-	operating_system_wake_ensure(state)
-	state.Jobs = make(chan *Compute_Job, COMPUTE_QUEUE_DEPTH)
-	state.Compute_Active = true
-	workers := compute_worker_count()
-	state.Extension_Workers.Add(workers)
-	for index := 0; index < workers; index++ {
-		go operating_system_compute_worker(state)
-	}
-}
-
-// Returns the worker-pool size, one per GOMAXPROCS, floored at one.
-func compute_worker_count() (workers int) {
-	workers = runtime.GOMAXPROCS(0)
-	if workers < 1 {
-		return 1
-	}
-	return workers
-}
-
-// Runs jobs off the loop thread, pushing each finished job back through the mutex-guarded
-// Results and waking the loop.
-func operating_system_compute_worker(state *Operating_System) {
-	defer state.Extension_Workers.Done()
-	for job := range state.Jobs {
-		job.Work()
-		state.Results_Mutex.Lock()
-		state.Results = append(state.Results, job)
-		state.Results_Mutex.Unlock()
-		platform_event_trigger(state, state.Wake_Event, state.Wake_Identifier)
-	}
-}
-
 // Opens and arms TigerBeetle's Event primitive so marked repository extensions can wake the loop.
 func operating_system_wake_ensure(state *Operating_System) {
 	if state.Wake_Active {
@@ -1158,9 +1077,9 @@ func operating_system_wake_listen(state *Operating_System) {
 	)
 }
 
-// Drains finished compute jobs and posted spawn completions onto the completed queue, on
-// the loop thread; a no-op until the wake pipe exists.
-func operating_system_compute(state *Operating_System) {
+// Drains posted spawn completions onto the completed queue, on the loop thread. It is a
+// no-op until the wake pipe exists.
+func operating_system_drain_posted(state *Operating_System) {
 	if !state.Wake_Active {
 		return
 	}
@@ -1169,24 +1088,11 @@ func operating_system_compute(state *Operating_System) {
 			operating_system_wake_listen(state)
 		}
 	}
-	state.Results_Mutex.Lock()
-	results := state.Results
+	state.Posted_Mutex.Lock()
 	posted := state.Posted
-	state.Results = nil
 	state.Posted = nil
-	state.Results_Mutex.Unlock()
-	for index := 0; index < len(results); index++ {
-		operating_system_compute_finish(state, results[index])
-	}
+	state.Posted_Mutex.Unlock()
 	state.Completed = append(state.Completed, posted...)
-}
-
-// Queues a finished compute job's callback to run on the next flush.
-func operating_system_compute_finish(state *Operating_System, job *Compute_Job) {
-	completion := job.Completion
-	callback := job.Callback
-	completion.Callback = func() { callback(completion) }
-	state.Completed = append(state.Completed, completion)
 }
 
 // Registers a watcher for signal and starts OS notification for it.
@@ -1274,8 +1180,8 @@ func operating_system_post(
 	state *Operating_System, completion *io.Completion, callback func(),
 ) {
 	completion.Callback = callback
-	state.Results_Mutex.Lock()
+	state.Posted_Mutex.Lock()
 	state.Posted = append(state.Posted, completion)
-	state.Results_Mutex.Unlock()
+	state.Posted_Mutex.Unlock()
 	platform_event_trigger(state, state.Wake_Event, state.Wake_Identifier)
 }

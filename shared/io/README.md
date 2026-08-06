@@ -410,11 +410,13 @@ Each of these fails loudly where the runtime can make it:
 4. **Never copy a `Completion`** — the loop tracks the op by pointer; submitting a
    by-value copy panics. Keep each as its own value and pass `&completion`; store many as
    `[]*io.Completion`, never `[]io.Completion` (append moves the array under the loop).
-5. **Never block the loop thread — or anywhere else.** Blocking io is an async op on
-   the loop, a subprocess is `Spawn`, and `Compute` parallelizes compute with
-   goroutines — no more, no less; anything that waits on the world is an op. `Compute`
-   is **only** for compute-intensive work that parallelizes well — JSON parsing,
-   high-traffic request processing — never an escape hatch for blocking io.
+5. **Never block the loop thread — or anywhere else.** Blocking io is an async op on the
+   loop and a subprocess is `Spawn` — no more, no less; anything that waits on the world
+   is an op. There is no CPU-offload member: this surface is an io seam, and a member that
+   takes an arbitrary `func()` becomes the escape hatch for every syscall with no async
+   form. Work that is expensive but transfers no bytes — password hashing, key
+   generation — is a dependency the package that needs it declares and receives, the way
+   `secure_transport` receives its entropy.
 6. **Buffers belong to the loop until the callback fires.** Reusing or resizing a
    submitted buffer races the backend.
 7. **Every submission resolves exactly once** — including operations retired by descriptor
@@ -454,8 +456,7 @@ stop. That is the scripting API trying to come back.
 - **`shared/io`** — the `IO`/`Driver` surface and the deterministic simulator. No
   syscalls. This is what every binary's pure tier depends on.
 - **`shared/io/default`** — the real OS backend: kqueue and io_uring scheduling, inline file
-  syscalls, a compute worker pool with a self-pipe wake, TLS goroutines, process
-  spawning. The **only** place raw IO stdlib (`net`, `syscall`, `os/exec`, `crypto/tls`,
-  …) is allowed; the `io-gateway` lint rule keeps everyone else routing through
-  `shared/io`.
+  syscalls, process spawning with an Event wake back to the loop. The **only** place raw
+  IO stdlib (`net`, `syscall`, `os/exec`, `crypto/tls`, …) is allowed; the `io-gateway`
+  lint rule keeps everyone else routing through `shared/io`.
 - **`shared/time/default`** — the clock gateway, the only importer of stdlib time.
