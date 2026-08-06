@@ -1046,6 +1046,32 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 	}
 }
 
+// Reads the process identifier the deadline fixture wrote to path before it was killed.
+func spawn_recorded_identifier(t *testing.T, path string) (identifier int) {
+	process_file, open_err := os.Open(path)
+	if open_err != nil {
+		t.Fatalf("open process identifier: %v", open_err)
+	}
+	process_buffer := make([]byte, 64)
+	process_count, read_err := stdio.ReadFull(
+		stdio.LimitReader(process_file, int64(len(process_buffer))), process_buffer,
+	)
+	if read_err != nil {
+		if read_err != stdio.ErrUnexpectedEOF {
+			t.Fatalf("read process identifier: %v", read_err)
+		}
+	}
+	if close_err := process_file.Close(); close_err != nil {
+		t.Fatalf("close process identifier: %v", close_err)
+	}
+	identifier, parse_err := strconv.Atoi(
+		strings.TrimSpace(string(process_buffer[:process_count])))
+	if parse_err != nil {
+		t.Fatalf("parse process identifier: %v", parse_err)
+	}
+	return identifier
+}
+
 // Test_Operating_System_IO_Spawn_Deadline proves timeout kills the entire subprocess group,
 // preserves output captured before expiry, and delivers one terminal callback.
 func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
@@ -1084,27 +1110,7 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 	if string(result.Output) != "partial" {
 		t.Fatalf("partial output = %q, want partial", result.Output)
 	}
-	process_file, open_err := os.Open(process_path)
-	if open_err != nil {
-		t.Fatalf("open process identifier: %v", open_err)
-	}
-	process_buffer := make([]byte, 64)
-	process_count, read_err := stdio.ReadFull(
-		stdio.LimitReader(process_file, int64(len(process_buffer))), process_buffer,
-	)
-	if read_err != nil {
-		if read_err != stdio.ErrUnexpectedEOF {
-			t.Fatalf("read process identifier: %v", read_err)
-		}
-	}
-	if close_err := process_file.Close(); close_err != nil {
-		t.Fatalf("close process identifier: %v", close_err)
-	}
-	process_bytes := process_buffer[:process_count]
-	process_identifier, parse_err := strconv.Atoi(strings.TrimSpace(string(process_bytes)))
-	if parse_err != nil {
-		t.Fatalf("parse process identifier: %v", parse_err)
-	}
+	process_identifier := spawn_recorded_identifier(t, process_path)
 	group_exited, group_err := process_group_wait_for_exit(driver, process_identifier)
 	if group_err != nil {
 		t.Fatalf("wait for subprocess group %d: %v", process_identifier, group_err)
@@ -1115,6 +1121,258 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 	driver.Run_For(2 * REAL_OPERATION_DEADLINE)
 	if callback_count != 1 {
 		t.Fatalf("late spawn callback count = %d, want 1", callback_count)
+	}
+	if spawns := driver.Introspect().Spawns; spawns != 0 {
+		t.Fatalf("unreaped children after a deadline = %d, want 0", spawns)
+	}
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Spawn_Reaps_After_Deadline verifies the deadline path still reaps.
+// The completion retires early on Deadline_Exceeded, so the exit event arrives for a child
+// nobody waits on, and only the backend's own tracking keeps the reap on that path.
+func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	callback_count := 0
+	var operation_err error
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, _ io.Process_Result, err error,
+	) {
+		callback_count++
+		operation_err = err
+	}, io.Process_Request{Path: "/bin/sleep", Arguments: []string{"30"}}, 50*time.MILLISECOND)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("bounded spawn did not complete")
+	}
+	if operation_err != io.Deadline_Exceeded {
+		t.Fatalf("spawn error = %v, want %v", operation_err, io.Deadline_Exceeded)
+	}
+	if spawns := driver.Introspect().Spawns; spawns != 0 {
+		t.Fatalf("unreaped children = %d, want 0", spawns)
+	}
+	// Deinit asserts the spawn table is empty, so a missed reap panics here rather than
+	// leaking one process-table slot for every timed-out child.
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain verifies the pipe-cleanup bound starts
+// when the child exits, not when its deadline expires. A child that finishes at once but leaves
+// a grandchild holding standard output must retire about one second later, not wait out the
+// whole deadline. This is the bound exec.Cmd.WaitDelay supplied before.
+func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	const SPAWN_DEADLINE = 4 * time.SECOND
+	started := clock.Now_Monotonic()
+	callback_count := 0
+	result := io.Process_Result{}
+	var operation_err error
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, spawned io.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	}, io.Process_Request{
+		Path:      "/bin/sh",
+		Arguments: []string{"-c", "printf quick; sleep 30 & exit 0"},
+	}, SPAWN_DEADLINE)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("spawn with a lingering grandchild did not complete")
+	}
+	elapsed := time.Duration(int64(clock.Now_Monotonic()) - int64(started))
+	if elapsed >= SPAWN_DEADLINE {
+		t.Fatalf("drain took %v, want the cleanup bound rather than the deadline", elapsed)
+	}
+	// The child exited cleanly, so its code survives. The output is incomplete because the
+	// drain was cut short, and Deadline_Exceeded is how the caller learns that.
+	if result.Exit != 0 {
+		t.Fatalf("exit = %d, want 0", result.Exit)
+	}
+	if string(result.Output) != "quick" {
+		t.Fatalf("output = %q, want quick", result.Output)
+	}
+	if operation_err != io.Deadline_Exceeded {
+		t.Fatalf("error = %v, want %v", operation_err, io.Deadline_Exceeded)
+	}
+	if spawns := driver.Introspect().Spawns; spawns != 0 {
+		t.Fatalf("unreaped children = %d, want 0", spawns)
+	}
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Spawn_Concurrent verifies two children in flight at once keep their
+// pipes separate. A pipe end that leaks into the other child's fork would hold that child's
+// standard input open, so this fails by deadlock rather than by a wrong result.
+func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	const SPAWNS_COUNT = 4
+	finished := 0
+	outputs := make([]string, SPAWNS_COUNT)
+	completions := make([]*io.Completion, SPAWNS_COUNT)
+	for index := 0; index < SPAWNS_COUNT; index++ {
+		position := index
+		completions[position] = &io.Completion{}
+		loop.Spawn(completions[position], func(
+			_ *io.Completion, spawned io.Process_Result, err error,
+		) {
+			if err != nil {
+				t.Errorf("spawn %d: %v", position, err)
+			}
+			outputs[position] = string(spawned.Output)
+			finished++
+		}, io.Process_Request{
+			Path:  "/bin/cat",
+			Input: []byte(strconv.Itoa(position)),
+		}, REAL_DEADLINE)
+	}
+	if !operating_system_run_until(
+		t, driver, func() (finished_all bool) { return finished == SPAWNS_COUNT },
+	) {
+		t.Fatalf("only %d of %d concurrent spawns completed", finished, SPAWNS_COUNT)
+	}
+	for index := 0; index < SPAWNS_COUNT; index++ {
+		want := strconv.Itoa(index)
+		if outputs[index] != want {
+			t.Fatalf("spawn %d echoed %q, want %q", index, outputs[index], want)
+		}
+	}
+	if spawns := driver.Introspect().Spawns; spawns != 0 {
+		t.Fatalf("unreaped children = %d, want 0", spawns)
+	}
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Spawn_Feeds_Input verifies Process_Request.Input reaches the child's
+// standard input and that the write end closes, so the child observes end-of-file rather than
+// waiting for more.
+func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	callback_count := 0
+	result := io.Process_Result{}
+	var operation_err error
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, spawned io.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	}, io.Process_Request{Path: "/bin/cat", Input: []byte("fed through stdin")}, REAL_DEADLINE)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("spawn reading standard input did not complete")
+	}
+	if operation_err != nil {
+		t.Fatalf("spawn error = %v, want nil", operation_err)
+	}
+	if string(result.Output) != "fed through stdin" {
+		t.Fatalf("output = %q, want the fed input", result.Output)
+	}
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Spawn_Drains_Full_Pipe verifies output larger than one pipe buffer
+// still completes. A child that fills the pipe blocks until the loop reads it, so this fails by
+// deadlock if the reads are not armed for the child's whole life.
+func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	const LINES = 20000
+	callback_count := 0
+	result := io.Process_Result{}
+	var operation_err error
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, spawned io.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	}, io.Process_Request{
+		Path: "/bin/sh",
+		Arguments: []string{
+			"-c", "i=0; while [ $i -lt 20000 ]; do echo line; i=$((i+1)); done",
+		},
+	}, REAL_DEADLINE)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("spawn producing more than one pipe buffer did not complete")
+	}
+	if operation_err != nil {
+		t.Fatalf("spawn error = %v, want nil", operation_err)
+	}
+	if want := LINES * len("line\n"); len(result.Output) != want {
+		t.Fatalf("captured output = %d bytes, want %d", len(result.Output), want)
+	}
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Spawn_Resolves_Path verifies a bare command name still resolves
+// through PATH. exec.Command supplied this before, and syscall.StartProcess does not.
+func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	callback_count := 0
+	result := io.Process_Result{}
+	var operation_err error
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, spawned io.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	}, io.Process_Request{Path: "echo", Arguments: []string{"resolved"}}, REAL_DEADLINE)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("spawn of a bare command name did not complete")
+	}
+	if operation_err != nil {
+		t.Fatalf("spawn error = %v, want nil", operation_err)
+	}
+	if strings.TrimSpace(string(result.Output)) != "resolved" {
+		t.Fatalf("output = %q, want resolved", result.Output)
+	}
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Spawn_Reports_Missing_Command verifies an unresolvable command name
+// fails the spawn rather than starting anything.
+func Test_Operating_System_IO_Spawn_Reports_Missing_Command(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	callback_count := 0
+	var operation_err error
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, _ io.Process_Result, err error,
+	) {
+		callback_count++
+		operation_err = err
+	}, io.Process_Request{Path: "no-such-command-anywhere"}, REAL_DEADLINE)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("spawn of a missing command did not complete")
+	}
+	if operation_err == nil {
+		t.Fatal("spawn of a missing command reported no error")
+	}
+	if spawns := driver.Introspect().Spawns; spawns != 0 {
+		t.Fatalf("tracked children after a failed start = %d, want 0", spawns)
 	}
 	driver.Deinit()
 }

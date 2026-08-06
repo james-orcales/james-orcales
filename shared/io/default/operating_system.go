@@ -6,15 +6,11 @@
 package io
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"os/signal"
 	"runtime"
-	"sync"
-	"sync/atomic"
+	"strings"
 	"syscall"
 
 	invariant "local/james-orcales/shared/invariant/default"
@@ -56,25 +52,12 @@ type Operating_System struct {
 	Signals chan os.Signal
 	// Signal_Waiters are the registered signal watchers, fired one-shot on delivery.
 	Signal_Waiters []Signal_Waiter
-	// Posted holds completions finished off the loop thread (spawn), guarded by the mutex.
-	Posted []*io.Completion
-	// Posted_Mutex guards Posted, the only cross-thread state.
-	Posted_Mutex sync.Mutex
-	// Wake_Event is TigerBeetle's Event used only to bridge marked repository extensions
-	// back to the loop thread. It is an internal backend resource excluded from Raw_Open.
-	Wake_Event io.Event
-	// Wake_Completion is the one persistent listener rearmed after each extension drain.
-	Wake_Completion io.Completion
-	// Wake_Identifier is the immutable kernel token worker threads use to trigger Wake_Event.
-	Wake_Identifier uint64
-	// Wake_Active reports whether the extension Event has been opened and armed.
-	Wake_Active bool
+	// Spawns tracks every child the loop has started and not yet reaped, keyed by process
+	// identifier. An entry outlives its caller's completion, because a deadline retires that
+	// completion while the child is still running.
+	Spawns map[int]*Spawn
 	// Extension_Submitted counts repository-extension completions not yet delivered to callers.
 	Extension_Submitted int
-	// Extension_Workers joins spawn goroutines before the Event/backend closes.
-	Extension_Workers sync.WaitGroup
-	// Extension_Stop suppresses Event reattachment during Deinit's internal final trigger.
-	Extension_Stop bool
 	// Drive_Active is set while a Run* is driving the loop, so a Run* called from within a
 	// completion callback — which would re-enter the driver mid-drain — panics loudly.
 	Drive_Active bool
@@ -122,6 +105,7 @@ func New_Operating_System_IO(
 		Platform:   platform,
 		Operations: map[uint64]*Operating_System_Operation{},
 		Raw_Open:   map[int]bool{},
+		Spawns:     map[int]*Spawn{},
 	}
 	operating_system_wire_file(state, &loop)
 	operating_system_wire_timer(state, &loop)
@@ -200,122 +184,535 @@ func Self_Exec(input Self_Exec_Input) (err error) {
 	return syscall.Exec(input.Path, input.Arguments, input.Environment)
 }
 
-// Runs request's command on its own goroutine and posts the finished result to the loop.
+// Bounds one pipe read, so a chatty child is drained in repeated passes rather than into one
+// unbounded allocation.
+const PROCESS_PIPE_BYTES = 8192
+
+// Caps the wait for a killed child's pipes to close. A grandchild that inherited the write end
+// keeps the pipe open after its parent dies, so the drain needs its own bound.
+const PROCESS_CLEANUP_DURATION = 1 * time.SECOND
+
+// One spawned child the loop is tracking. It outlives the caller's completion: a deadline
+// retires that completion early, and the exit event still arrives afterward and still has to
+// reap. The entry leaves state.Spawns only when its reap finishes.
+type Spawn struct {
+	// Identifier is the child process id, and its process group id because Setpgid is set.
+	Identifier int
+	// Completion is the caller-owned completion the result is delivered on.
+	Completion *io.Completion
+	// Callback is the typed callback run once the result is whole.
+	Callback io.Process_Callback
+	// Started is the moment the child was forked, for the wall-time measurement.
+	Started time.Moment
+	// Exit_Descriptor is the Linux pidfd polled for exit, or -1 on Darwin.
+	Exit_Descriptor int
+	// Input_Descriptor is the write end of the child's standard input, -1 once closed.
+	Input_Descriptor int
+	// Output_Descriptor is the read end of the child's standard output, -1 once closed.
+	Output_Descriptor int
+	// Error_Descriptor is the read end of the child's standard error, -1 once closed.
+	Error_Descriptor int
+	// Input is the remaining bytes to write to the child's standard input.
+	Input []byte
+	// Output_Buffer receives one standard-output pass.
+	Output_Buffer []byte
+	// Error_Buffer receives one standard-error pass.
+	Error_Buffer []byte
+	// Result accumulates the captured output, exit code, and usage.
+	Result io.Process_Result
+	// Request retains the caller's live output sinks.
+	Request io.Process_Request
+	// Exit_Completion waits for the child to exit.
+	Exit_Completion io.Completion
+	// Output_Completion reads one standard-output pass.
+	Output_Completion io.Completion
+	// Error_Completion reads one standard-error pass.
+	Error_Completion io.Completion
+	// Input_Completion writes one standard-input pass.
+	Input_Completion io.Completion
+	// Deadline_Completion retires the caller's completion when the child outlives its deadline.
+	Deadline_Completion io.Completion
+	// Cleanup_Completion bounds the pipe drain after a deadline kill.
+	Cleanup_Completion io.Completion
+	// Exited reports the reap finished and Result carries the exit code and usage.
+	Exited bool
+	// Output_Drained reports the standard-output pipe reached its end.
+	Output_Drained bool
+	// Error_Drained reports the standard-error pipe reached its end.
+	Error_Drained bool
+	// Expired reports a deadline won, so the result carries Deadline_Exceeded.
+	Expired bool
+	// Cleanup_Armed reports the bounded pipe drain is already running, so neither the child's
+	// exit nor the deadline arms a second one.
+	Cleanup_Armed bool
+	// Delivered reports the caller's completion already retired.
+	Delivered bool
+}
+
+// Starts request's command and arms every operation that finishes it: one read for each output
+// pipe, one write for the input, the exit watch, and the deadline. Nothing runs off the loop
+// thread.
 func operating_system_spawn(
 	state *Operating_System, completion *io.Completion,
 	callback io.Process_Callback, request io.Process_Request, deadline time.Duration,
 ) {
-	operating_system_wake_ensure(state)
-	invariant.Always(state.Wake_Active, "A Spawn posts through an open TigerBeetle Event.")
-	state.Extension_Workers.Add(1)
-	go process_run(state, completion, callback, request, deadline)
+	spawn, start_err := process_start(state, request)
+	if start_err != nil {
+		completion.Callback = func() {
+			callback(completion, io.Process_Result{}, start_err)
+		}
+		state.Completed = append(state.Completed, completion)
+		return
+	}
+	spawn.Completion = completion
+	spawn.Callback = callback
+	spawn.Request = request
+	spawn.Started = state.Host.Now_Monotonic()
+	state.Spawns[spawn.Identifier] = spawn
+	process_arm_pipes(state)
+	process_watch_exit(state, spawn)
+	operating_system_submit(&spawn.Deadline_Completion)
+	operating_system_timeout(state, state.Host, &spawn.Deadline_Completion, func(
+		_ *io.Completion, _ error,
+	) {
+		process_expire(state, spawn)
+	}, deadline)
 }
 
-// Executes the command and posts its result — or a start failure — back on the loop.
-func process_run(
-	state *Operating_System, completion *io.Completion,
-	callback io.Process_Callback, request io.Process_Request, deadline time.Duration,
+// Forks the child with its three pipes and returns the tracking entry. Every descriptor is
+// released on a failure part-way through, so a failed start leaks nothing.
+func process_start(
+	state *Operating_System, request io.Process_Request,
+) (spawn *Spawn, err error) {
+	path, path_err := executable_path(request.Path, operating_system_search_path(request))
+	if path_err != nil {
+		return nil, path_err
+	}
+	spawn, child, pipe_err := process_pipes(request)
+	if pipe_err != nil {
+		return nil, pipe_err
+	}
+	attributes := &syscall.ProcAttr{
+		Dir:   request.Working_Directory,
+		Env:   request.Environment,
+		Files: child,
+		Sys:   process_attributes(spawn),
+	}
+	identifier, _, start_err := syscall.StartProcess(
+		path, process_argv(path, request.Arguments), attributes,
+	)
+	// The child holds its own copies once StartProcess returns, so the parent releases the
+	// three ends it handed over whether or not the fork succeeded.
+	for _, descriptor := range child {
+		syscall.Close(int(descriptor))
+	}
+	if start_err != nil {
+		process_close_pipes(spawn)
+		return nil, start_err
+	}
+	spawn.Identifier = identifier
+	if ready_err := process_watch_ready(spawn); ready_err != nil {
+		syscall.Kill(-identifier, syscall.SIGKILL)
+		process_close_pipes(spawn)
+		process_reap(identifier)
+		return nil, ready_err
+	}
+	return spawn, nil
+}
+
+// Creates the child's three pipes, returning the tracking entry that holds the ends the loop
+// keeps and the three ends the child receives as its standard descriptors.
+//
+// The kept ends take close-on-exec here, BEFORE the fork. StartProcess dups only the Files
+// entries and leaves every other open descriptor to the exec, so a kept end without the flag
+// reaches the child. The child would then hold a writer for its own standard input, and closing
+// the parent's end would never give it end-of-file.
+func process_pipes(
+	request io.Process_Request,
+) (spawn *Spawn, child []uintptr, err error) {
+	input_read, input_write, input_err := pipe_open()
+	if input_err != nil {
+		return nil, nil, input_err
+	}
+	output_read, output_write, output_err := pipe_open()
+	if output_err != nil {
+		syscall.Close(input_read)
+		syscall.Close(input_write)
+		return nil, nil, output_err
+	}
+	error_read, error_write, error_err := pipe_open()
+	if error_err != nil {
+		syscall.Close(input_read)
+		syscall.Close(input_write)
+		syscall.Close(output_read)
+		syscall.Close(output_write)
+		return nil, nil, error_err
+	}
+	spawn = &Spawn{
+		Exit_Descriptor:   -1,
+		Input_Descriptor:  input_write,
+		Output_Descriptor: output_read,
+		Error_Descriptor:  error_read,
+		Input:             request.Input,
+		Output_Buffer:     make([]byte, PROCESS_PIPE_BYTES),
+		Error_Buffer:      make([]byte, PROCESS_PIPE_BYTES),
+	}
+	child = []uintptr{
+		uintptr(input_read), uintptr(output_write), uintptr(error_write),
+	}
+	if retain_err := process_retain_pipes(spawn); retain_err != nil {
+		for _, descriptor := range child {
+			syscall.Close(int(descriptor))
+		}
+		process_close_pipes(spawn)
+		return nil, nil, retain_err
+	}
+	return spawn, child, nil
+}
+
+// Configures the three pipe ends the loop keeps.
+func process_retain_pipes(spawn *Spawn) (err error) {
+	if retain_err := pipe_retain(spawn.Input_Descriptor); retain_err != nil {
+		return retain_err
+	}
+	if retain_err := pipe_retain(spawn.Output_Descriptor); retain_err != nil {
+		return retain_err
+	}
+	return pipe_retain(spawn.Error_Descriptor)
+}
+
+// Builds the argv a child receives: the program name followed by the caller's arguments, which
+// exclude it. exec.Command supplied this before, and StartProcess does not.
+func process_argv(path string, arguments []string) (argv []string) {
+	argv = make([]string, 0, len(arguments)+1)
+	argv = append(argv, path)
+	return append(argv, arguments...)
+}
+
+// Reports the PATH a spawn resolves a bare command name against. A request carrying its own
+// environment resolves against that environment's PATH, so a caller cannot be surprised by the
+// parent's, and one with no environment inherits the parent's.
+func operating_system_search_path(request io.Process_Request) (search string) {
+	if request.Environment == nil {
+		return os.Getenv("PATH")
+	}
+	for index := len(request.Environment) - 1; index >= 0; index-- {
+		entry := request.Environment[index]
+		if strings.HasPrefix(entry, "PATH=") {
+			return strings.TrimPrefix(entry, "PATH=")
+		}
+	}
+	return ""
+}
+
+// Arms the read that drains the child's standard output.
+func process_read_output(state *Operating_System, spawn *Spawn) {
+	operating_system_submit(&spawn.Output_Completion)
+	operating_system_pipe_read(
+		state, &spawn.Output_Completion, spawn.Output_Descriptor, spawn.Output_Buffer,
+		func(count int, read_err error) {
+			process_output_pass(state, spawn, count, read_err)
+		},
+	)
+}
+
+// Arms the read that drains the child's standard error.
+func process_read_error(state *Operating_System, spawn *Spawn) {
+	operating_system_submit(&spawn.Error_Completion)
+	operating_system_pipe_read(
+		state, &spawn.Error_Completion, spawn.Error_Descriptor, spawn.Error_Buffer,
+		func(count int, read_err error) {
+			process_error_pass(state, spawn, count, read_err)
+		},
+	)
+}
+
+// Reports whether one output pass ended the pipe. A zero count is the child's write end
+// closing, and an error ends the drain the same way, so a broken pipe cannot leave the spawn
+// waiting forever.
+func process_pass_ended(count int, read_err error) (ended bool) {
+	if read_err != nil {
+		return true
+	}
+	return count == 0
+}
+
+// Accepts one standard-output pass, then either rearms the read or marks the pipe drained.
+func process_output_pass(
+	state *Operating_System, spawn *Spawn, count int, read_err error,
 ) {
-	defer state.Extension_Workers.Done()
-	start := state.Host.Now_Monotonic()
-	result, err := process_execute(request, deadline)
-	result.Usage.Wall = time.Duration(int64(state.Host.Now_Monotonic()) - int64(start))
-	operating_system_post(state, completion, func() {
-		callback(completion, result, err)
+	if process_pass_ended(count, read_err) {
+		spawn.Output_Drained = true
+		process_close_input_or_output(&spawn.Output_Descriptor)
+		process_finish(state, spawn)
+		return
+	}
+	pass := spawn.Output_Buffer[:count]
+	// A caller-supplied sink streams the pass live and leaves the captured field empty.
+	// Without one the bytes accumulate for the result. The two stay exclusive, as they were
+	// when os/exec owned the copy. The sink runs on the loop thread, so a Write that blocks
+	// stalls every other operation.
+	if spawn.Request.Stdout != nil {
+		spawn.Request.Stdout.Write(pass)
+	} else {
+		spawn.Result.Output = append(spawn.Result.Output, pass...)
+	}
+}
+
+// Accepts one standard-error pass, the counterpart of process_output_pass.
+func process_error_pass(
+	state *Operating_System, spawn *Spawn, count int, read_err error,
+) {
+	if process_pass_ended(count, read_err) {
+		spawn.Error_Drained = true
+		process_close_input_or_output(&spawn.Error_Descriptor)
+		process_finish(state, spawn)
+		return
+	}
+	pass := spawn.Error_Buffer[:count]
+	if spawn.Request.Stderr != nil {
+		spawn.Request.Stderr.Write(pass)
+	} else {
+		spawn.Result.Error_Output = append(spawn.Result.Error_Output, pass...)
+	}
+}
+
+// Accepts one standard-input pass. A write failure ends the feed by closing the end, which the
+// child observes as end-of-file.
+func process_input_pass(spawn *Spawn, count int, write_err error) {
+	if write_err != nil {
+		process_close_input_or_output(&spawn.Input_Descriptor)
+		return
+	}
+	spawn.Input = spawn.Input[count:]
+	if len(spawn.Input) == 0 {
+		process_close_input_or_output(&spawn.Input_Descriptor)
+	}
+}
+
+// Closes one pipe end once and marks it released.
+func process_close_input_or_output(descriptor *int) {
+	if *descriptor < 0 {
+		return
+	}
+	syscall.Close(*descriptor)
+	*descriptor = -1
+}
+
+// Arms every spawn pipe whose previous pass has retired and whose end is still open. The flush
+// loop calls this once each pass, so a pass rearms from the drain rather than from inside its
+// own callback. That keeps each pipe to one operation in flight and leaves the arming in one
+// place instead of a cycle between the arm and its handler.
+func process_arm_pipes(state *Operating_System) {
+	for _, spawn := range state.Spawns {
+		if process_pipe_idle(spawn.Output_Descriptor, &spawn.Output_Completion) {
+			process_read_output(state, spawn)
+		}
+		if process_pipe_idle(spawn.Error_Descriptor, &spawn.Error_Completion) {
+			process_read_error(state, spawn)
+		}
+		if process_pipe_idle(spawn.Input_Descriptor, &spawn.Input_Completion) {
+			process_write_input(state, spawn)
+		}
+	}
+}
+
+// Reports whether a pipe end is open and carries no operation in flight.
+func process_pipe_idle(descriptor int, completion *io.Completion) (idle bool) {
+	if descriptor < 0 {
+		return false
+	}
+	return completion.State == io.COMPLETION_IDLE
+}
+
+// Arms the write that feeds the child's standard input, or closes the end when the request
+// supplies none. The child reads end-of-file only once this end is closed.
+func process_write_input(state *Operating_System, spawn *Spawn) {
+	if len(spawn.Input) == 0 {
+		process_close_input_or_output(&spawn.Input_Descriptor)
+		return
+	}
+	operating_system_submit(&spawn.Input_Completion)
+	operating_system_pipe_write(
+		state, &spawn.Input_Completion, spawn.Input_Descriptor, spawn.Input,
+		func(count int, write_err error) {
+			process_input_pass(spawn, count, write_err)
+		},
+	)
+}
+
+// Arms the exit watch. Darwin watches the process identifier through EVFILT_PROC and Linux
+// polls the pidfd, so neither waits in wait4.
+func process_watch_exit(state *Operating_System, spawn *Spawn) {
+	operating_system_submit(&spawn.Exit_Completion)
+	operation := &Operating_System_Operation{
+		Completion:         &spawn.Exit_Completion,
+		Kind:               OPERATING_SYSTEM_OPERATION_PROCESS_EXIT,
+		Descriptor:         spawn.Exit_Descriptor,
+		Process_Identifier: spawn.Identifier,
+		Deliver: func(_ int, _ error) {
+			process_exit(state, spawn)
+		},
+	}
+	operating_system_operation_submit(state, operation)
+}
+
+// Reaps the exited child and records its outcome. The reap is unconditional and happens here
+// alone, so a spawn whose caller already retired on its deadline still releases the kernel's
+// process entry.
+func process_exit(state *Operating_System, spawn *Spawn) {
+	defer process_finish(state, spawn)
+	exit, usage, reap_err := process_reap(spawn.Identifier)
+	spawn.Exited = true
+	if spawn.Exit_Descriptor >= 0 {
+		syscall.Close(spawn.Exit_Descriptor)
+		spawn.Exit_Descriptor = -1
+	}
+	// A grandchild that inherited the pipes outlives the child and holds them open. Bound that
+	// drain from the exit, the way exec.Cmd's WaitDelay did, so a child that finishes at once
+	// does not wait out its whole deadline for a descendant it left behind.
+	process_bound_cleanup(state, spawn)
+	if reap_err != nil {
+		return
+	}
+	spawn.Result.Exit = exit
+	spawn.Result.Usage = usage
+}
+
+// Kills the child's whole process group when its deadline wins, then bounds the drain of the
+// pipes a surviving grandchild may still hold open.
+func process_expire(state *Operating_System, spawn *Spawn) {
+	if spawn.Delivered {
+		return
+	}
+	spawn.Expired = true
+	syscall.Kill(-spawn.Identifier, syscall.SIGKILL)
+	process_bound_cleanup(state, spawn)
+}
+
+// Starts the bounded pipe drain once. Both the child's exit and the deadline reach it, and only
+// the first arms the timer. It is a no-op when both pipes have already ended, so a spawn that
+// finished cleanly leaves no timer behind.
+func process_bound_cleanup(state *Operating_System, spawn *Spawn) {
+	if spawn.Cleanup_Armed {
+		return
+	}
+	if process_pipes_drained(spawn) {
+		return
+	}
+	spawn.Cleanup_Armed = true
+	operating_system_submit(&spawn.Cleanup_Completion)
+	operating_system_timeout(state, state.Host, &spawn.Cleanup_Completion, func(
+		_ *io.Completion, _ error,
+	) {
+		process_cleanup(state, spawn)
+	}, PROCESS_CLEANUP_DURATION)
+}
+
+// Reports whether both output pipes have reached their end.
+func process_pipes_drained(spawn *Spawn) (drained bool) {
+	if !spawn.Output_Drained {
+		return false
+	}
+	return spawn.Error_Drained
+}
+
+// Forces the drain to end after the pipes stayed open past the cleanup bound. Expired is set
+// even when the child itself exited cleanly, because the captured output is now incomplete and
+// a nil error would report a whole result the caller did not get.
+//
+// Each abandoned pass is retired before its descriptor closes, so no kernel registration
+// outlives the spawn. Deinit asserts the operation registry is empty, and a pass left armed
+// here would trip it.
+func process_cleanup(state *Operating_System, spawn *Spawn) {
+	spawn.Expired = true
+	spawn.Output_Drained = true
+	spawn.Error_Drained = true
+	process_retire_pass(state, &spawn.Output_Completion)
+	process_retire_pass(state, &spawn.Error_Completion)
+	process_retire_pass(state, &spawn.Input_Completion)
+	process_close_pipes(spawn)
+	process_finish(state, spawn)
+}
+
+// Retires one pipe pass the forced drain abandoned. A completion that already retired holds no
+// registry entry, so this is a no-op for it.
+func process_retire_pass(state *Operating_System, completion *io.Completion) {
+	operation := state.Operations[completion.Kernel_Identifier]
+	if operation == nil {
+		return
+	}
+	if operation.Completion != completion {
+		return
+	}
+	platform_expire_operation(state, operation)
+	operating_system_operation_complete(state, operation, -1, io.Canceled)
+}
+
+// Delivers the result once the child has been reaped and both pipes have ended. It runs on
+// every one of those paths and retires the caller's completion exactly once.
+func process_finish(state *Operating_System, spawn *Spawn) {
+	if spawn.Delivered {
+		return
+	}
+	if !spawn.Exited {
+		return
+	}
+	if !spawn.Output_Drained {
+		return
+	}
+	if !spawn.Error_Drained {
+		return
+	}
+	spawn.Delivered = true
+	delete(state.Spawns, spawn.Identifier)
+	process_close_pipes(spawn)
+	spawn.Result.Usage.Wall = time.Duration(
+		int64(state.Host.Now_Monotonic()) - int64(spawn.Started))
+	result := spawn.Result
+	err := error(nil)
+	if spawn.Expired {
+		err = io.Deadline_Exceeded
+	}
+	completion := spawn.Completion
+	callback := spawn.Callback
+	completion.Callback = func() { callback(completion, result, err) }
+	state.Completed = append(state.Completed, completion)
+}
+
+// Releases every pipe end the loop still holds.
+func process_close_pipes(spawn *Spawn) {
+	process_close_input_or_output(&spawn.Input_Descriptor)
+	process_close_input_or_output(&spawn.Output_Descriptor)
+	process_close_input_or_output(&spawn.Error_Descriptor)
+}
+
+// Submits one pipe read through the platform scheduler.
+func operating_system_pipe_read(
+	state *Operating_System, completion *io.Completion,
+	descriptor int, buffer []byte, deliver func(count int, err error),
+) {
+	operating_system_operation_submit(state, &Operating_System_Operation{
+		Completion: completion,
+		Kind:       OPERATING_SYSTEM_OPERATION_PIPE_READ,
+		Descriptor: descriptor,
+		Buffer:     platform_buffer_limit(buffer),
+		Deliver:    deliver,
 	})
 }
 
-// Runs the command to completion, capturing stdout and stderr. A non-zero exit is
-// reported in the result with a nil error; a failure to start is the error.
-func process_execute(
-	request io.Process_Request, deadline time.Duration,
-) (result io.Process_Result, err error) {
-	context_value, cancel := process_context(context.WithTimeout, deadline)
-	defer cancel()
-	command := exec.CommandContext(context_value, request.Path, request.Arguments...)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	deadline_triggered := atomic.Bool{}
-	command.Cancel = func() (cancel_err error) {
-		deadline_triggered.Store(true)
-		kill_err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-		if kill_err == syscall.ESRCH {
-			return os.ErrProcessDone
-		}
-		return kill_err
-	}
-	command.WaitDelay = 1_000_000_000
-	command.Dir = request.Working_Directory
-	command.Env = request.Environment
-	if len(request.Input) > 0 {
-		command.Stdin = bytes.NewReader(request.Input)
-	}
-	// A caller-supplied sink streams the child's output live as it runs; without one the
-	// output is captured into a buffer and returned. The two are exclusive: streamed
-	// output leaves the corresponding Result field empty.
-	output := bytes.Buffer{}
-	error_output := bytes.Buffer{}
-	if request.Stdout != nil {
-		command.Stdout = request.Stdout
-	} else {
-		command.Stdout = &output
-	}
-	if request.Stderr != nil {
-		command.Stderr = request.Stderr
-	} else {
-		command.Stderr = &error_output
-	}
-	run_err := command.Run()
-	result.Output = output.Bytes()
-	result.Error_Output = error_output.Bytes()
-	if command.ProcessState != nil {
-		result.Exit = command.ProcessState.ExitCode()
-		result.Usage = process_usage(command.ProcessState)
-	}
-	if deadline_triggered.Load() {
-		return result, io.Deadline_Exceeded
-	}
-	if errors.Is(context_value.Err(), context.DeadlineExceeded) {
-		return result, io.Deadline_Exceeded
-	}
-	return process_execute_result(result, run_err)
-}
-
-// Converts the repository duration into context.WithTimeout's duration type without importing
-// the standard time package outside shared/time/default.
-func process_context[Duration ~int64](
-	with_timeout func(context.Context, Duration) (
-		context_value context.Context, cancel context.CancelFunc,
-	),
-	deadline time.Duration,
-) (context_value context.Context, cancel context.CancelFunc) {
-	return with_timeout(context.Background(), Duration(deadline))
-}
-
-// Distinguishes a non-zero exit (reported in the result, nil error) from a real
-// start/run failure (returned as the error).
-func process_execute_result(
-	result io.Process_Result, run_err error,
-) (final io.Process_Result, err error) {
-	if run_err == nil {
-		return result, nil
-	}
-	var exit_err *exec.ExitError
-	if errors.As(run_err, &exit_err) {
-		return result, nil
-	}
-	return result, run_err
-}
-
-// Extracts CPU and peak-RSS accounting from a finished process's state.
-func process_usage(state *os.ProcessState) (usage io.Process_Usage) {
-	usage.CPU_User = time.Duration(int64(state.UserTime()))
-	usage.CPU_System = time.Duration(int64(state.SystemTime()))
-	rusage, ok := state.SysUsage().(*syscall.Rusage)
-	if !ok {
-		return usage
-	}
-	usage.RSS_Bytes_Max = process_rss_bytes(int64(rusage.Maxrss))
-	return usage
+// Submits one pipe write through the platform scheduler.
+func operating_system_pipe_write(
+	state *Operating_System, completion *io.Completion,
+	descriptor int, buffer []byte, deliver func(count int, err error),
+) {
+	operating_system_operation_submit(state, &Operating_System_Operation{
+		Completion: completion,
+		Kind:       OPERATING_SYSTEM_OPERATION_PIPE_WRITE,
+		Descriptor: descriptor,
+		Buffer:     platform_buffer_limit(buffer),
+		Deliver:    deliver,
+	})
 }
 
 // Normalizes a rusage Maxrss to bytes: Darwin reports bytes, Linux reports KiB.
@@ -673,13 +1070,9 @@ func operating_system_to_driver(state *Operating_System) (driver io.Driver) {
 	}
 }
 
-// Samples the loop's queue depths for an admin state snapshot. Loop-thread fields are read
-// directly — Introspect is root-only and called from the drive goroutine — but Posted is
-// written by off-loop workers under the mutex, so its length is taken under it.
+// Samples the loop's queue depths for an admin state snapshot. Every field is loop-thread state,
+// because Introspect is root-only and nothing in the backend runs off the loop thread.
 func operating_system_introspect(state *Operating_System) (counts io.Loop_Counts) {
-	state.Posted_Mutex.Lock()
-	posted_count := len(state.Posted)
-	state.Posted_Mutex.Unlock()
 	backlog, inflight, queued, kernel := platform_counts(state)
 	return io.Loop_Counts{
 		Completed:      len(state.Completed),
@@ -689,9 +1082,8 @@ func operating_system_introspect(state *Operating_System) (counts io.Loop_Counts
 		IO_Queued:      queued,
 		IO_In_Kernel:   kernel,
 		Signal_Waiters: len(state.Signal_Waiters),
-		Posted:         posted_count,
+		Spawns:         len(state.Spawns),
 		Raw_Open:       len(state.Raw_Open),
-		Wake_Active:    state.Wake_Active,
 	}
 }
 
@@ -744,7 +1136,7 @@ func operating_system_in_flight(state *Operating_System) (in_flight bool) {
 	if len(state.Signal_Waiters) > 0 {
 		return true
 	}
-	return state.Wake_Active
+	return len(state.Spawns) > 0
 }
 
 // Runs pump as the top-level drive, panicking if a drive is already in progress so a Run*
@@ -790,7 +1182,7 @@ func operating_system_flush(state *Operating_System, wait time.Moment) (err erro
 		return expire_err
 	}
 	operating_system_signals(state)
-	operating_system_drain_posted(state)
+	process_arm_pipes(state)
 	platform_err := platform_run(state, wait)
 	if platform_err != nil {
 		return platform_err
@@ -1009,90 +1401,18 @@ func operating_system_close(
 }
 
 // Operating system deinitialize enforces TigerBeetle's join-before-deinit contract and releases
-// the scheduler plus repository-extension wake resources.
+// the scheduler.
 func operating_system_deinitialize(state *Operating_System) {
 	invariant.Always(state.Extension_Submitted == 0,
 		"Driver Deinit follows joining every repository-extension completion.")
-	invariant.Always(operating_system_user_operations(state) == 0,
+	invariant.Always(len(state.Spawns) == 0,
+		"Every spawned child is reaped before backend deinit.")
+	invariant.Always(len(state.Operations) == 0,
 		"Driver Deinit follows joining every TigerBeetle operation.")
 	if state.Signals != nil {
 		signal.Stop(state.Signals)
 	}
-	state.Extension_Workers.Wait()
-	if state.Wake_Active {
-		state.Extension_Stop = true
-		platform_event_trigger(state, state.Wake_Event, state.Wake_Identifier)
-		for state.Wake_Completion.State == io.COMPLETION_ARMED {
-			flush_err := operating_system_flush(state, 0)
-			invariant.Always(flush_err == nil,
-				"The internal extension Event drains before backend deinit.")
-		}
-		platform_event_close(state, state.Wake_Event)
-		state.Wake_Active = false
-	}
-	invariant.Always(len(state.Operations) == 0,
-		"The internal Event is retired before backend deinit.")
 	platform_deinitialize(state)
-}
-
-// Counts core operations other than the internal extension Event listener.
-func operating_system_user_operations(state *Operating_System) (count int) {
-	for _, operation := range state.Operations {
-		internal_event := false
-		if operation.Kind == OPERATING_SYSTEM_OPERATION_EVENT {
-			internal_event = operation.Completion == &state.Wake_Completion
-		}
-		if !internal_event {
-			count++
-		}
-	}
-	return count
-}
-
-// Opens and arms TigerBeetle's Event primitive so marked repository extensions can wake the loop.
-func operating_system_wake_ensure(state *Operating_System) {
-	if state.Wake_Active {
-		return
-	}
-	event, err := platform_event_open(state)
-	if err != nil {
-		return
-	}
-	state.Wake_Event = event
-	state.Wake_Active = true
-	operating_system_wake_listen(state)
-	state.Wake_Identifier = state.Wake_Completion.Kernel_Identifier
-}
-
-// Rearms the persistent extension Event listener; its callback drains every result accumulated by
-// workers before attaching the same completion again.
-func operating_system_wake_listen(state *Operating_System) {
-	operating_system_submit(&state.Wake_Completion)
-	operating_system_event_listen(
-		state, state.Wake_Event, &state.Wake_Completion,
-		func(completion *io.Completion) {
-			invariant.Always(completion == &state.Wake_Completion,
-				"The internal Event delivers its registered completion.")
-		},
-	)
-}
-
-// Drains posted spawn completions onto the completed queue, on the loop thread. It is a
-// no-op until the wake pipe exists.
-func operating_system_drain_posted(state *Operating_System) {
-	if !state.Wake_Active {
-		return
-	}
-	if !state.Extension_Stop {
-		if state.Wake_Completion.State == io.COMPLETION_IDLE {
-			operating_system_wake_listen(state)
-		}
-	}
-	state.Posted_Mutex.Lock()
-	posted := state.Posted
-	state.Posted = nil
-	state.Posted_Mutex.Unlock()
-	state.Completed = append(state.Completed, posted...)
 }
 
 // Registers a watcher for signal and starts OS notification for it.
@@ -1172,16 +1492,4 @@ func operating_system_expire_signals(state *Operating_System, now time.Moment) {
 		state.Completed = append(state.Completed, expired.Completion)
 	}
 	state.Signal_Waiters = kept
-}
-
-// Posts a completion finished off the loop thread: records its callback under the mutex
-// and wakes the loop to run it on the next drain.
-func operating_system_post(
-	state *Operating_System, completion *io.Completion, callback func(),
-) {
-	completion.Callback = callback
-	state.Posted_Mutex.Lock()
-	state.Posted = append(state.Posted, completion)
-	state.Posted_Mutex.Unlock()
-	platform_event_trigger(state, state.Wake_Event, state.Wake_Identifier)
 }

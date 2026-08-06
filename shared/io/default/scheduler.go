@@ -57,6 +57,19 @@ const OPERATING_SYSTEM_OPERATION_STATX Operating_System_Operation_Kind = 11
 // OPERATING_SYSTEM_OPERATION_BOUNDED_DEADLINE identifies an internal linked deadline.
 const OPERATING_SYSTEM_OPERATION_BOUNDED_DEADLINE Operating_System_Operation_Kind = 12
 
+// OPERATING_SYSTEM_OPERATION_PROCESS_EXIT waits for one spawned child to exit. Darwin arms an
+// EVFILT_PROC/NOTE_EXIT kevent on the process identifier and Linux polls the child's pidfd, so
+// neither platform blocks a thread in wait4.
+const OPERATING_SYSTEM_OPERATION_PROCESS_EXIT Operating_System_Operation_Kind = 13
+
+// OPERATING_SYSTEM_OPERATION_PIPE_READ reads one buffer from a pipe. It is distinct from READ
+// because a pipe is not seekable: READ issues pread on Darwin and carries a file offset on Linux,
+// and both reject a pipe with ESPIPE.
+const OPERATING_SYSTEM_OPERATION_PIPE_READ Operating_System_Operation_Kind = 14
+
+// OPERATING_SYSTEM_OPERATION_PIPE_WRITE writes one buffer to a pipe, the counterpart of PIPE_READ.
+const OPERATING_SYSTEM_OPERATION_PIPE_WRITE Operating_System_Operation_Kind = 15
+
 // Kernel timespec is Linux's stable UAPI timespec layout. It lives with the operation so an
 // io_uring timeout never points at stack storage while it is in the kernel.
 type Kernel_Timespec struct {
@@ -91,6 +104,9 @@ type Operating_System_Operation struct {
 	Open_Options sharedio.Open_At_Options
 	// Event_Value correlates a synthetic event without a Go pointer.
 	Event_Value uint64
+	// Process_Identifier names the spawned child a PROCESS_EXIT operation waits for. Darwin
+	// uses it as the kevent Ident, and both platforms reap with it.
+	Process_Identifier int
 	// Initiated prevents Darwin from issuing connect twice after readiness.
 	Initiated bool
 	// Timespec retains timeout memory until the kernel retires it.
@@ -249,6 +265,12 @@ func operating_system_retryable_result(
 		return false
 	}
 	if operation.Kind == OPERATING_SYSTEM_OPERATION_READ {
+		return true
+	}
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_PIPE_READ {
+		return true
+	}
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_PIPE_WRITE {
 		return true
 	}
 	return operation.Kind == OPERATING_SYSTEM_OPERATION_WRITE

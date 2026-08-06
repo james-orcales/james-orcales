@@ -42,6 +42,16 @@ func operating_system_wire_platform(state *Operating_System, loop *sharedio.IO) 
 	loop.Platform_IO = sharedio.Platform_IO{}
 }
 
+// Builds the child's process attributes. Setpgid puts the child in its own group so a deadline
+// kills its descendants too. Darwin watches the exit by process identifier, so it needs no
+// descriptor from the fork.
+func process_attributes(_ *Spawn) (attributes *syscall.SysProcAttr) {
+	return &syscall.SysProcAttr{Setpgid: true}
+}
+
+// Reports nothing to check after the fork: EVFILT_PROC needs only the process identifier.
+func process_watch_ready(_ *Spawn) (err error) { return nil }
+
 // Applies TigerBeetle io.buffer_limit for Darwin before a length reaches a signed kernel result.
 func platform_buffer_limit(buffer []byte) (limited []byte) {
 	if len(buffer) > DARWIN_BUFFER_SIZE_MAX {
@@ -118,14 +128,7 @@ func socket_family(family sharedio.Address_Family) (system int) {
 // Marks descriptor close-on-exec while preserving the fcntl failure so socket_open can return
 // the original setup error after releasing the descriptor.
 func socket_close_on_exec(descriptor int) (err error) {
-	_, _, errno := syscall.Syscall(
-		syscall.SYS_FCNTL, uintptr(descriptor), uintptr(syscall.F_SETFD),
-		uintptr(syscall.FD_CLOEXEC),
-	)
-	if errno != 0 {
-		return errno
-	}
-	return nil
+	return descriptor_close_on_exec(descriptor)
 }
 
 // Applies the two Darwin accepted-socket guarantees from io/darwin.zig:324-360.
@@ -260,6 +263,14 @@ func operating_system_operation_do(
 		return count, socket_again(read_err), read_err
 	case OPERATING_SYSTEM_OPERATION_RECEIVE:
 		return socket_receive(operation.Descriptor, operation.Buffer)
+	case OPERATING_SYSTEM_OPERATION_PIPE_READ:
+		return pipe_read(operation.Descriptor, operation.Buffer)
+	case OPERATING_SYSTEM_OPERATION_PIPE_WRITE:
+		return pipe_write(operation.Descriptor, operation.Buffer)
+	case OPERATING_SYSTEM_OPERATION_PROCESS_EXIT:
+		// The kevent registration is the whole operation. Backlogging it hands it to
+		// platform_changes, and platform_complete_events retires it when NOTE_EXIT arrives.
+		return 0, true, nil
 	case OPERATING_SYSTEM_OPERATION_SEND:
 		count, would_block, send_err := socket_send(operation.Descriptor, operation.Buffer)
 		return count, would_block, socket_send_translate(send_err)
@@ -414,15 +425,33 @@ func platform_changes(state *Operating_System) (changes []Kernel_Event) {
 	for index := 0; index < count; index++ {
 		operation := state.Platform.IO_Backlog[index]
 		operation.Backlogged = false
-		changes[index] = Kernel_Event{
-			Ident:     uint64(operation.Descriptor),
-			Filter:    platform_filter(operation.Kind),
-			Flags:     syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-			User_Data: operation.Identifier,
-		}
+		changes[index] = platform_change(operation)
 	}
 	state.Platform.IO_Backlog = state.Platform.IO_Backlog[count:]
 	return changes
+}
+
+// Platform change encodes one backlogged operation as a kevent. A descriptor operation keys on
+// its descriptor and a readiness filter. A process-exit operation keys on the child's process
+// identifier under EVFILT_PROC instead, because there is no descriptor to watch on Darwin.
+func platform_change(operation *Operating_System_Operation) (change Kernel_Event) {
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_PROCESS_EXIT {
+		return Kernel_Event{
+			Ident:  uint64(operation.Process_Identifier),
+			Filter: syscall.EVFILT_PROC,
+			Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
+			// NOTE_EXITSTATUS makes the kernel return the wait status in Data, but the
+			// reap still has to run, so the operation reads its status from wait4.
+			Filter_Flags: syscall.NOTE_EXIT,
+			User_Data:    operation.Identifier,
+		}
+	}
+	return Kernel_Event{
+		Ident:     uint64(operation.Descriptor),
+		Filter:    platform_filter(operation.Kind),
+		Flags:     syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
+		User_Data: operation.Identifier,
+	}
 }
 
 // Platform restore changes puts changes back at the head if kevent rejects the changelist.
@@ -470,6 +499,11 @@ func platform_complete_events(
 			operating_system_operation_complete(state, operation, 0, nil)
 			continue
 		}
+		if operation.Kind == OPERATING_SYSTEM_OPERATION_PROCESS_EXIT {
+			// Re-attempting would only backlog it again. NOTE_EXIT fires once.
+			operating_system_operation_complete(state, operation, 0, nil)
+			continue
+		}
 		submit_err := platform_submit_registered(state, operation)
 		if submit_err != nil {
 			return submit_err
@@ -497,10 +531,9 @@ func platform_expire_operation(
 	if !operation.Kernel_Submitted {
 		return nil
 	}
-	change := Kernel_Event{
-		Ident: uint64(operation.Descriptor), Filter: platform_filter(operation.Kind),
-		Flags: syscall.EV_DELETE,
-	}
+	change := platform_change(operation)
+	change.Flags = syscall.EV_DELETE
+	change.Filter_Flags = 0
 	_, delete_err := kernel_kevent(&Kernel_Kevent_Input{
 		Descriptor: state.Platform.Descriptor,
 		Changes:    []Kernel_Event{change},

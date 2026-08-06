@@ -168,8 +168,8 @@ existing directory converges, so a repeated mkdir is not an error.
 
 ### Introspect
 
-Introspect reports every queued simulator operation by class, the synthetic poll and wake
-lifecycle flags derived from those queues, and every descriptor tracked in Raw_Open.
+Introspect reports every queued simulator operation by class, including the children a spawn has
+started and not yet retired, and every descriptor tracked in Raw_Open.
 
 # Stream
 

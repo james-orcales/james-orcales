@@ -54,6 +54,24 @@ type Platform_Operation struct {
 	Statx_Mask uint32
 }
 
+// Builds the child's process attributes. Setpgid puts the child in its own group so a deadline
+// kills its descendants too. PidFD asks the kernel for a descriptor naming the child, created
+// atomically at the fork, so the exit watch never names a process identifier that could be
+// reused.
+func process_attributes(spawn *Spawn) (attributes *syscall.SysProcAttr) {
+	return &syscall.SysProcAttr{Setpgid: true, PidFD: &spawn.Exit_Descriptor}
+}
+
+// Reports whether the kernel supplied the pidfd. StartProcess leaves it negative below Linux
+// 5.3, and the exit watch has nothing to poll without it, so the spawn fails loudly here
+// rather than hanging.
+func process_watch_ready(spawn *Spawn) (err error) {
+	if spawn.Exit_Descriptor < 0 {
+		return syscall.ENOSYS
+	}
+	return nil
+}
+
 // Wires Linux IORING_OP_STATX, the one operation absent from TigerBeetle's Darwin surface.
 func operating_system_wire_platform(state *Operating_System, loop *sharedio.IO) {
 	loop.Statx = func(
@@ -253,6 +271,16 @@ const KERNEL_RING_SUBMISSION_NEEDS_WAKEUP = 1
 
 // KERNEL_RING_OPERATION_FSYNC keeps the SQE opcode compatible with the Linux UAPI.
 const KERNEL_RING_OPERATION_FSYNC = 3
+
+// KERNEL_RING_OPERATION_POLL_ADD keeps the SQE opcode compatible with the Linux UAPI.
+const KERNEL_RING_OPERATION_POLL_ADD = 6
+
+// KERNEL_PIPE_OFFSET tells the kernel to read or write at the descriptor's current position.
+// A pipe is not seekable, so it rejects any other offset with ESPIPE.
+const KERNEL_PIPE_OFFSET = ^uint64(0)
+
+// KERNEL_POLL_INPUT is POLLIN. A pidfd reports it once its process has exited.
+const KERNEL_POLL_INPUT = 0x001
 
 // KERNEL_RING_OPERATION_TIMEOUT keeps the SQE opcode compatible with the Linux UAPI.
 const KERNEL_RING_OPERATION_TIMEOUT = 11
@@ -814,6 +842,16 @@ func platform_prepare_entry(
 		entry.Offset = operation.Offset
 	case OPERATING_SYSTEM_OPERATION_RECEIVE:
 		platform_prepare_buffer(entry, operation, KERNEL_RING_OPERATION_RECEIVE)
+	case OPERATING_SYSTEM_OPERATION_PIPE_READ:
+		platform_prepare_buffer(entry, operation, KERNEL_RING_OPERATION_READ)
+		entry.Offset = KERNEL_PIPE_OFFSET
+	case OPERATING_SYSTEM_OPERATION_PIPE_WRITE:
+		platform_prepare_buffer(entry, operation, KERNEL_RING_OPERATION_WRITE)
+		entry.Offset = KERNEL_PIPE_OFFSET
+	case OPERATING_SYSTEM_OPERATION_PROCESS_EXIT:
+		entry.Opcode = KERNEL_RING_OPERATION_POLL_ADD
+		entry.Descriptor = int32(operation.Descriptor)
+		entry.Operation_Flags = KERNEL_POLL_INPUT
 	case OPERATING_SYSTEM_OPERATION_SEND:
 		platform_prepare_buffer(entry, operation, KERNEL_RING_OPERATION_SEND)
 		entry.Operation_Flags = KERNEL_MESSAGE_NO_SIGNAL

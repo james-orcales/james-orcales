@@ -134,7 +134,7 @@ completed := driver.Run_Until(done, timeout)  // crank until done() — the root
 
 - It pumps, re-checking `done()` after every drain, and **returns the moment `done()`
   flips** — an op that completed inline returns immediately, and idle waits block until
-  the genuine next event (nearest timer, socket readiness, worker wake), never on a
+  the genuine next event (nearest timer, socket readiness, child exit), never on a
   polling interval.
 - `timeout` is a **guard, not a goal**: `completed` reports whether `done()` tripped
   (`true`) or the deadline did (`false`). Use `Run_For` when elapsed time *is* the goal.
@@ -456,7 +456,13 @@ stop. That is the scripting API trying to come back.
 - **`shared/io`** — the `IO`/`Driver` surface and the deterministic simulator. No
   syscalls. This is what every binary's pure tier depends on.
 - **`shared/io/default`** — the real OS backend: kqueue and io_uring scheduling, inline file
-  syscalls, process spawning with an Event wake back to the loop. The **only** place raw
-  IO stdlib (`net`, `syscall`, `os/exec`, `crypto/tls`, …) is allowed; the `io-gateway`
-  lint rule keeps everyone else routing through `shared/io`.
+  syscalls, and process spawning. A spawn runs wholly on the loop — fork and exec through
+  `syscall.StartProcess`, the child's three pipes read and written as loop operations, and
+  the exit delivered as a kernel event (`EVFILT_PROC`/`NOTE_EXIT` on Darwin, a polled pidfd
+  on Linux) rather than a thread waiting in `wait4`. A bare command name resolves against
+  `PATH`, taken from the request's own environment when it supplies one. The reap runs on
+  the exit event alone, so a child whose caller already retired on its deadline still
+  releases its process entry. Nothing in the backend runs off the loop thread. The **only**
+  place raw IO stdlib (`net`, `syscall`, `crypto/tls`, …) is allowed; the `io-gateway` lint
+  rule keeps everyone else routing through `shared/io`.
 - **`shared/time/default`** — the clock gateway, the only importer of stdlib time.

@@ -836,7 +836,7 @@ func Test_Sim_Introspect(t *testing.T) {
 		_ *io.Completion, _ io.Process_Result, _ error,
 	) {
 	}, io.Process_Request{Path: "true"}, SIM_DEADLINE)
-	snap.Expect(t, snap.Init(`{Completed:1 Timeouts:1 IO_Backlog:2 IO_Inflight:0 IO_Queued:0 IO_In_Kernel:0 Signal_Waiters:1 Posted:1 Raw_Open:2 Wake_Active:true}`),
+	snap.Expect(t, snap.Init(`{Completed:1 Timeouts:1 IO_Backlog:2 IO_Inflight:0 IO_Queued:0 IO_In_Kernel:0 Signal_Waiters:1 Spawns:1 Raw_Open:2}`),
 		fmt.Sprintf("%+v", driver.Introspect()))
 }
 

@@ -6,10 +6,19 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
+
+// A pipe has exactly two ends: the read end and the write end.
+const PIPE_ENDS = 2
+
+// Caps the EINTR retries of one reap. A signal can interrupt wait4, but only a broken kernel
+// interrupts it repeatedly, so a bound turns that into a reported error rather than a spin.
+const PROCESS_REAP_RETRIES_MAX = 16
 
 // Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated
 // passes rather than one unbounded allocation.
@@ -93,6 +102,135 @@ func file_read_directory(path string) (entries []io.Directory_Entry, err error) 
 		}
 	}
 	return nil, errors.New("io: directory exceeds the maximum entry count")
+}
+
+// Reads up to len(buffer) bytes from a pipe. A pipe is not seekable, so this is plain read
+// rather than the pread read_at uses; again is true when the writer has produced nothing yet,
+// and a zero count with no error is the writer's end closing.
+func pipe_read(descriptor int, buffer []byte) (count int, again bool, err error) {
+	count, err = syscall.Read(descriptor, buffer)
+	if err != nil {
+		return 0, socket_again(err), err
+	}
+	return count, false, nil
+}
+
+// Writes up to len(buffer) bytes to a pipe; again is true when the pipe buffer is full and the
+// operation must stay armed.
+func pipe_write(descriptor int, buffer []byte) (count int, again bool, err error) {
+	count, err = syscall.Write(descriptor, buffer)
+	if err != nil {
+		return 0, socket_again(err), socket_send_translate(err)
+	}
+	return count, false, nil
+}
+
+// Creates a pipe and returns its read and write ends. Neither end is configured: the caller
+// keeps one end and hands the other to the child, and only the kept end takes close-on-exec and
+// non-blocking mode. The two ends are separate open file descriptions, so configuring one does
+// not change what the child sees on the other.
+func pipe_open() (read int, write int, err error) {
+	descriptors := [PIPE_ENDS]int{}
+	if pipe_err := syscall.Pipe(descriptors[:]); pipe_err != nil {
+		return -1, -1, pipe_err
+	}
+	return descriptors[0], descriptors[1], nil
+}
+
+// Configures the end of a pipe the loop keeps: close-on-exec so a later spawn does not inherit
+// it, and non-blocking so the loop's eager attempt reports EAGAIN instead of waiting.
+func pipe_retain(descriptor int) (err error) {
+	if flag_err := descriptor_close_on_exec(descriptor); flag_err != nil {
+		return flag_err
+	}
+	return syscall.SetNonblock(descriptor, true)
+}
+
+// Sets FD_CLOEXEC on descriptor. Both platforms carry SYS_FCNTL, so one raw call covers them.
+func descriptor_close_on_exec(descriptor int) (err error) {
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_FCNTL, uintptr(descriptor), uintptr(syscall.F_SETFD),
+		uintptr(syscall.FD_CLOEXEC),
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+// Resolves an executable name the way a shell does, because syscall.StartProcess requires a
+// path while callers pass bare names such as sh or fc-cache. A name holding a slash is used as
+// given. This mirrors os/exec's own fallback: reject a directory, then accept any execute bit,
+// and let StartProcess report EACCES when the mode bits promise more than the file allows.
+func executable_path(name string, search string) (path string, err error) {
+	if name == "" {
+		return "", syscall.ENOENT
+	}
+	if strings.Contains(name, "/") {
+		return name, executable_check(name)
+	}
+	for _, directory := range strings.Split(search, ":") {
+		if directory == "" {
+			directory = "."
+		}
+		candidate := filepath.Join(directory, name)
+		if executable_check(candidate) == nil {
+			return candidate, nil
+		}
+	}
+	return "", syscall.ENOENT
+}
+
+// Reports whether path names a regular file carrying an execute bit.
+func executable_check(path string) (err error) {
+	metadata := syscall.Stat_t{}
+	if stat_err := syscall.Stat(path, &metadata); stat_err != nil {
+		return stat_err
+	}
+	if metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR {
+		return syscall.EISDIR
+	}
+	if metadata.Mode&0o111 == 0 {
+		return syscall.EACCES
+	}
+	return nil
+}
+
+// Reaps an exited child, returning its exit code and resource accounting. WNOHANG returns at
+// once because the caller runs this only after the kernel reported the exit.
+func process_reap(identifier int) (exit int, usage io.Process_Usage, err error) {
+	status := syscall.WaitStatus(0)
+	rusage := syscall.Rusage{}
+	reaped := false
+	for retry_index := 0; retry_index < PROCESS_REAP_RETRIES_MAX; retry_index++ {
+		_, wait_err := syscall.Wait4(identifier, &status, syscall.WNOHANG, &rusage)
+		if wait_err == syscall.EINTR {
+			continue
+		}
+		if wait_err != nil {
+			return 0, io.Process_Usage{}, wait_err
+		}
+		reaped = true
+		break
+	}
+	if !reaped {
+		return 0, io.Process_Usage{}, syscall.EINTR
+	}
+	usage.CPU_User = time.Duration(
+		rusage.Utime.Sec*1_000_000_000 + int64(rusage.Utime.Usec)*1_000)
+	usage.CPU_System = time.Duration(
+		rusage.Stime.Sec*1_000_000_000 + int64(rusage.Stime.Usec)*1_000)
+	usage.RSS_Bytes_Max = process_rss_bytes(int64(rusage.Maxrss))
+	return process_exit_code(status), usage, nil
+}
+
+// Reports the portable exit code: a signalled child reports 128 plus its signal, matching the
+// convention every shell uses and the value os.ProcessState.ExitCode reported before.
+func process_exit_code(status syscall.WaitStatus) (exit int) {
+	if status.Signaled() {
+		return 128 + int(status.Signal())
+	}
+	return status.ExitStatus()
 }
 
 // Reports the remote IP address of descriptor via getpeername; a non-IP peer yields the

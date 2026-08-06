@@ -614,12 +614,10 @@ type Loop_Counts struct {
 	IO_In_Kernel int
 	// Signal_Waiters is the number of registered signal watchers.
 	Signal_Waiters int
-	// Posted is the number of completions finished off the loop thread awaiting the next drain.
-	Posted int
+	// Spawns is the number of started children the backend has not yet reaped.
+	Spawns int
 	// Raw_Open is the number of raw descriptors the backend holds open.
 	Raw_Open int
-	// Wake_Active reports whether the wake pipe has been created and armed.
-	Wake_Active bool
 }
 
 // The sim type is the deterministic, in-memory IO backend — TigerBeetle's simulated
@@ -691,8 +689,8 @@ const SIM_OPERATION_WRITE_WAITER Sim_Operation = 3
 // SIM_OPERATION_SIGNAL keeps signal waits in one introspection class.
 const SIM_OPERATION_SIGNAL Sim_Operation = 4
 
-// SIM_OPERATION_POSTED keeps deferred callbacks in one introspection class.
-const SIM_OPERATION_POSTED Sim_Operation = 5
+// SIM_OPERATION_SPAWN keeps started children in one introspection class.
+const SIM_OPERATION_SPAWN Sim_Operation = 5
 
 // SIM_OPERATION_NEXT_TICK keeps next-tick callbacks in one introspection class.
 const SIM_OPERATION_NEXT_TICK Sim_Operation = 6
@@ -1164,13 +1162,13 @@ func sim_spawn(
 		sim_submit(state, completion, deadline, func() {
 			callback(completion, Process_Result{}, Deadline_Exceeded)
 		})
-		state.Operations[completion] = SIM_OPERATION_POSTED
+		state.Operations[completion] = SIM_OPERATION_SPAWN
 		return
 	}
 	sim_submit(state, completion, latency, func() {
 		callback(completion, Process_Result{Exit: exit}, nil)
 	})
-	state.Operations[completion] = SIM_OPERATION_POSTED
+	state.Operations[completion] = SIM_OPERATION_SPAWN
 }
 
 // Panics on a violated invariant, fail-closed — a tripped assert is always a bug in
@@ -1575,12 +1573,11 @@ func sim_introspect(state *Sim) (counts Loop_Counts) {
 		if operation == SIM_OPERATION_SIGNAL {
 			counts.Signal_Waiters++
 		}
-		if operation == SIM_OPERATION_POSTED {
-			counts.Posted++
+		if operation == SIM_OPERATION_SPAWN {
+			counts.Spawns++
 		}
 	}
 	counts.Raw_Open = len(state.Raw_Open)
-	counts.Wake_Active = counts.Posted > 0
 	return counts
 }
 
