@@ -9,7 +9,6 @@ package io
 
 import (
 	"errors"
-	"io"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -218,13 +217,17 @@ type Process_Request struct {
 	Working_Directory string
 	// Input is the bytes written to the process's standard input.
 	Input []byte
-	// Stdout, when non-nil, streams the process's standard output to the writer as it
-	// runs instead of capturing it into Result.Output — the affordance a long build
-	// needs so its progress reaches the user live. A nil sink keeps the captured-buffer
+	// Stdout, when its Procedure is set, streams the process's standard output to the stream
+	// as it runs instead of capturing it into Result.Output — the affordance a long build
+	// needs so its progress reaches the user live. A zero Stream keeps the captured-buffer
 	// default. The simulated backend produces no output and ignores it.
-	Stdout io.Writer
+	//
+	// The loop writes to the stream on its own thread, so a Stream that waits on the world
+	// stalls every other operation. A Stream moves memory only, which is what makes it the
+	// right sink here.
+	Stdout Stream
 	// Stderr is the standard-error counterpart, same live-or-capture rule.
-	Stderr io.Writer
+	Stderr Stream
 }
 
 // Process_Usage is the resource accounting a finished process reports.

@@ -452,8 +452,8 @@ func process_output_pass(
 	// Without one the bytes accumulate for the result. The two stay exclusive, as they were
 	// when os/exec owned the copy. The sink runs on the loop thread, so a Write that blocks
 	// stalls every other operation.
-	if spawn.Request.Stdout != nil {
-		spawn.Request.Stdout.Write(pass)
+	if spawn.Request.Stdout.Procedure != nil {
+		io.Write(spawn.Request.Stdout, pass)
 	} else {
 		spawn.Result.Output = append(spawn.Result.Output, pass...)
 	}
@@ -470,8 +470,8 @@ func process_error_pass(
 		return
 	}
 	pass := spawn.Error_Buffer[:count]
-	if spawn.Request.Stderr != nil {
-		spawn.Request.Stderr.Write(pass)
+	if spawn.Request.Stderr.Procedure != nil {
+		io.Write(spawn.Request.Stderr, pass)
 	} else {
 		spawn.Result.Error_Output = append(spawn.Result.Error_Output, pass...)
 	}

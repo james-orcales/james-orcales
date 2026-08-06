@@ -3192,12 +3192,9 @@ func run_spawn_start(
 ) {
 	Runner_State_Invariants(state, "run_spawn_start.state")
 	Spawn_Arguments_Invariants(arguments, "run_spawn_start.arguments")
-	request := sysio.Process_Request{Path: arguments[0], Arguments: arguments[1:]}
-	if stdout.Procedure != nil {
-		request.Stdout = Stream_Writer{Stream: stdout}
-	}
-	if stderr.Procedure != nil {
-		request.Stderr = Stream_Writer{Stream: stderr}
+	request := sysio.Process_Request{
+		Path: arguments[0], Arguments: arguments[1:],
+		Stdout: stdout, Stderr: stderr,
 	}
 	process_spawn_start(state, system, request, func(
 		result sysio.Process_Result, spawn_err error,
@@ -3385,12 +3382,9 @@ func process_sequence_rearm(sequence *Process_Sequence) {
 		sequence.Before(int(sequence.Index))
 	}
 	invocation := sequence.Invocations[int(sequence.Index)]
-	request := sysio.Process_Request{Path: invocation[0], Arguments: invocation[1:]}
-	if sequence.Stdout.Procedure != nil {
-		request.Stdout = Stream_Writer{Stream: sequence.Stdout}
-	}
-	if sequence.Stderr.Procedure != nil {
-		request.Stderr = Stream_Writer{Stream: sequence.Stderr}
+	request := sysio.Process_Request{
+		Path: invocation[0], Arguments: invocation[1:],
+		Stdout: sequence.Stdout, Stderr: sequence.Stderr,
 	}
 	process_spawn_start(
 		sequence.Runner, sequence.IO, request,

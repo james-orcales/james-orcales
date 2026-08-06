@@ -1,9 +1,7 @@
 package io_test
 
 import (
-	"bytes"
 	"errors"
-	stdio "io"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,6 +23,9 @@ const REAL_DEADLINE = 5 * time.SECOND
 
 // The short finite operation deadline used to prove a dormant kernel wait retires promptly.
 const REAL_OPERATION_DEADLINE = 25 * time.MILLISECOND
+
+// Bounds the buffer holding a process identifier read back from a fixture file.
+const PROCESS_IDENTIFIER_BYTES = 64
 
 // Creates the 32-entry test scheduler and fails at the composition root if initialization fails.
 func operating_system_loop(t *testing.T, clock time.Clock) (loop io.IO, driver io.Driver) {
@@ -1021,7 +1022,7 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
 	loop, driver := operating_system_loop(t, clock)
 
-	streamed := bytes.Buffer{}
+	streamed := io.Stream_Memory{Memory: make([]byte, 64)}
 	result := io.Process_Result{}
 	done := false
 	var completion io.Completion
@@ -1031,38 +1032,58 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 		}
 		result = spawned
 		done = true
-	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}, Stdout: &streamed},
-		REAL_DEADLINE)
+	}, io.Process_Request{
+		Path: "/bin/echo", Arguments: []string{"hi"},
+		Stdout: io.Memory_To_Stream(&streamed),
+	}, REAL_DEADLINE)
 	operating_system_run_until(t, driver, func() (finished bool) { return done })
 
 	if !done {
 		t.Fatal("echo did not complete")
 	}
-	if streamed.String() != "hi\n" {
-		t.Fatalf("streamed output = %q, want hi", streamed.String())
+	if written := string(streamed.Memory[:streamed.Cursor]); written != "hi\n" {
+		t.Fatalf("streamed output = %q, want hi", written)
 	}
 	if len(result.Output) != 0 {
 		t.Fatalf("Output = %q, want empty when streamed to a sink", result.Output)
 	}
 }
 
-// Reads the process identifier the deadline fixture wrote to path before it was killed.
-func spawn_recorded_identifier(t *testing.T, path string) (identifier int) {
-	process_file, open_err := os.Open(path)
+// Reads the process identifier the deadline fixture wrote to path, through the loop. This
+// package is the io gateway, so its own tests are where the loop's file operations belong. The
+// fixture writes one short decimal, so a regular file returns it whole in a single read.
+func spawn_recorded_identifier(
+	t *testing.T, loop io.IO, driver io.Driver, path string,
+) (identifier int) {
+	t.Helper()
+	file, open_err := loop.Open(path)
 	if open_err != nil {
 		t.Fatalf("open process identifier: %v", open_err)
 	}
-	process_buffer := make([]byte, 64)
-	process_count, read_err := stdio.ReadFull(
-		stdio.LimitReader(process_file, int64(len(process_buffer))), process_buffer,
-	)
-	if read_err != nil {
-		if read_err != stdio.ErrUnexpectedEOF {
-			t.Fatalf("read process identifier: %v", read_err)
+	process_buffer := make([]byte, PROCESS_IDENTIFIER_BYTES)
+	process_count := 0
+	read_done := false
+	var read_completion io.Completion
+	loop.Read(&read_completion, func(_ *io.Completion, count int, read_err error) {
+		if read_err != nil {
+			t.Errorf("read process identifier: %v", read_err)
 		}
+		process_count = count
+		read_done = true
+	}, file, process_buffer, 0)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
+		t.Fatal("the process identifier read did not complete")
 	}
-	if close_err := process_file.Close(); close_err != nil {
-		t.Fatalf("close process identifier: %v", close_err)
+	close_done := false
+	var close_completion io.Completion
+	loop.Close(&close_completion, func(_ *io.Completion, close_err error) {
+		if close_err != nil {
+			t.Errorf("close process identifier: %v", close_err)
+		}
+		close_done = true
+	}, file)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return close_done }) {
+		t.Fatal("the process identifier close did not complete")
 	}
 	identifier, parse_err := strconv.Atoi(
 		strings.TrimSpace(string(process_buffer[:process_count])))
@@ -1110,7 +1131,7 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 	if string(result.Output) != "partial" {
 		t.Fatalf("partial output = %q, want partial", result.Output)
 	}
-	process_identifier := spawn_recorded_identifier(t, process_path)
+	process_identifier := spawn_recorded_identifier(t, loop, driver, process_path)
 	group_exited, group_err := process_group_wait_for_exit(driver, process_identifier)
 	if group_err != nil {
 		t.Fatalf("wait for subprocess group %d: %v", process_identifier, group_err)
