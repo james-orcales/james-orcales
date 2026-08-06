@@ -9,6 +9,19 @@ description: >
 
 # Verifying that a check is worth something
 
+## The sweep that is not a sweep
+
+`simulation_drive(t, seed%SIMULATION_RECIPE_COUNT)` folds 2^64 inputs onto the corpus. `-fuzz`
+then runs without end and reaches nothing new. Use the seed whole, and keep the enumerated values
+only as the `f.Add` corpus.
+
+`seed%K == R` is a periodic filter, not a draw. Over 16 seeds the fault selectors `%5==1`,
+`%7==2`, `%11==3`, `%13==4` hold `{1,6,11}`, `{2,9}`, `{3,14}`, `{4}` — disjoint, thus no run ever
+crossed two faults. Enumerate the sets, then draw each fault from the generator.
+
+THIS IS BANNED. IT IS NON-NEGOTIABLE. DELETE EVERY SINGLE INSTANCE OF IT.
+
+
 ## Golden snapshots
 
 A pinned seed dies in silence, because a moved stream still passes the suite. `snap.Expect` the
@@ -40,6 +53,7 @@ with the cap removed. Drive the capping path `2 * max` times.
 durable artifact, and keep the seed as a bonus.
 
 Number 5 and number 6 survive a review, because each reads as exactly the property you wanted.
+
 
 ## Audit the full class
 
