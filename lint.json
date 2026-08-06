@@ -37,7 +37,8 @@
           "!shared/slices/**",
           "!shared/bytes/**",
           "!shared/strings/**",
-          "!shared/unicode/**"
+          "!shared/unicode/**",
+          "!setup/**"
   ],
   "word_replacements": {
     "len":       [],
