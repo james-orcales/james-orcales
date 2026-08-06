@@ -24,12 +24,14 @@ import (
 func Test_Main_Runs_Complete_Bootstrap(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
+	loop, _, clock := sysio.New_Sim(1)
 	status := setup.Main(&setup.Main_Input{
-		Environment: setup.Environment{
-			Home_Directory:   "/home/person",
-			Operating_System: "freebsd",
+		Environment: &setup.Environment_Input{
+			Clock: clock, Console: io.Discard, Effective_User_Identifier: 1,
+			Home_Directory: "/home/person", Operating_System: "freebsd",
 		},
-		Shell: recording_shell(&commands, nil, 1),
+		File_System: directory_file_system(t, loop),
+		Shell:       recording_shell(&commands, nil, 1),
 	})
 	if status != 1 {
 		t.Fatalf("status = %d, want the direnv failure status 1", status)
@@ -50,13 +52,17 @@ func Test_Main_Runs_Complete_Bootstrap(t *testing.T) {
 // policy in the order that the setup command requires.
 func Test_Bootstrap_Steps(t *testing.T) {
 	t.Parallel()
+	commands := []sysio.Process_Request{}
+	loop, _, _ := sysio.New_Sim(1)
 	steps := setup.Bootstrap_Steps(&setup.Bootstrap_Steps_Input{
 		Home_Directory:   "/home/person",
 		Operating_System: "freebsd",
+		File_System:      directory_file_system(t, loop),
+		Shell:            recording_shell(&commands, nil, 0),
 	})
 	names := []string{}
 	for _, step := range steps {
-		names = append(names, step.Name)
+		names = append(names, string(step.Name))
 	}
 	want := []string{
 		"direnv", "dotfiles", "fonts", "neovim", "fzf", "maddox", "m2p", "sloc",
@@ -74,25 +80,28 @@ func Test_Order_Of_Operations(t *testing.T) {
 	t.Parallel()
 	order := []int{}
 	log := &bytes.Buffer{}
-	status := setup.Bootstrap(&setup.Bootstrap_Input{
-		Logger: buffer_logger(log),
-		Steps: []setup.Step{
-			{Name: "first", Run: func() (status_code int) {
-				order = append(order, 1)
-				return 0
-			}},
-			{Name: "second", Run: func() (status_code int) {
-				order = append(order, 2)
-				return 1
-			}},
-			{Name: "third", Run: func() (status_code int) {
-				order = append(order, 3)
-				return 0
-			}},
-		},
-	})
-	if status != 1 {
-		t.Fatalf("expected the failing step's status, got %d", status)
+	steps := setup.Steps{
+		{Name: "first", Run: func() (succeeded setup.Step_Success) {
+			order = append(order, 1)
+			return true
+		}},
+		{Name: "second", Run: func() (succeeded setup.Step_Success) {
+			order = append(order, 2)
+			return false
+		}},
+		{Name: "third", Run: func() (succeeded setup.Step_Success) {
+			order = append(order, 3)
+			return true
+		}},
+	}
+	for len(steps) < 14 {
+		steps = append(steps, setup.Step{
+			Name: "rest", Run: func() (succeeded setup.Step_Success) { return true },
+		})
+	}
+	status := setup.Bootstrap(&setup.Bootstrap_Input{Logger: buffer_logger(log), Steps: steps})
+	if status {
+		t.Fatalf("expected the failing step's status, got %t", status)
 	}
 	if !slices.Equal(order, []int{1, 2}) {
 		t.Fatalf("expected steps to run in order and stop at the failure, ran %v", order)
@@ -111,9 +120,9 @@ func Test_Idempotency_Accepts_A_Matching_Version(t *testing.T) {
 	commands := []sysio.Process_Request{}
 	yes := setup.Installed(&setup.Installed_Input{
 		Shell: recording_shell(&commands, map[string]string{
-			"/bin/tool": "tool 1.2.3 (abc 2026-01-01)\n",
+			"/bin/tool-x": "tool 1.2.3 (abc 2026-01-01)\n",
 		}, 0),
-		Executable: "/bin/tool",
+		Executable: "/bin/tool-x",
 		Version:    "tool 1.2.3",
 	})
 	if !yes {
@@ -128,9 +137,9 @@ func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	commands := []sysio.Process_Request{}
 	yes := setup.Installed(&setup.Installed_Input{
 		Shell: recording_shell(&commands, map[string]string{
-			"/bin/tool": "tool 9.9.9\n",
+			"/bin/tool-x": "tool 9.9.9\n",
 		}, 0),
-		Executable: "/bin/tool",
+		Executable: "/bin/tool-x",
 		Version:    "tool 1.2.3",
 	})
 	if yes {
@@ -160,8 +169,8 @@ func Test_Mirror_Applies_Macos_Defaults(t *testing.T) {
 		},
 		Logger: buffer_logger(log),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if !ran_contains(ran, []string{"killall", "Dock"}) {
 		t.Fatal("expected killall Dock to run")
@@ -199,8 +208,8 @@ func Test_Mirror_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 			return nil
 		},
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if run_count != 0 {
 		t.Fatalf("expected no commands off darwin, got %d", run_count)
@@ -232,8 +241,8 @@ func Test_Mirror_Narrates_The_Scan(t *testing.T) {
 		},
 		Logger: buffer_logger(log),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	for _, want := range []string{
 		"{\"level\":\"debug\",\"dir\":\".\",\"message\":\"scanning\"}\n",
@@ -246,10 +255,10 @@ func Test_Mirror_Narrates_The_Scan(t *testing.T) {
 	}
 }
 
-// Test_Mirror_Probes_Ignore_In_One_Batch verifies the walk classifies a directory's
+// Test_Mirror_Probes_Each_Directory_In_One_Batch verifies the walk classifies a directory's
 // entries with a single Is_Ignored call carrying them all, not one call per entry —
-// the property that turns ~600 sequential git spawns into one probe per tree level.
-func Test_Mirror_Probes_Ignore_In_One_Batch(t *testing.T) {
+// the property that turns many sequential git spawns into one probe per directory.
+func Test_Mirror_Probes_Each_Directory_In_One_Batch(t *testing.T) {
 	t.Parallel()
 	loop, _, _ := sysio.New_Sim(0)
 	// Three sibling directories under the root, so a batched probe of the root sees
@@ -275,8 +284,8 @@ func Test_Mirror_Probes_Ignore_In_One_Batch(t *testing.T) {
 			return nil
 		},
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if len(batches) == 0 {
 		t.Fatal("expected the walk to probe ignores at least once")
@@ -300,8 +309,8 @@ func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) 
 			executable: "NVIM v0.12.3\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := make_commands(commands); len(builds) != 0 {
 		t.Fatalf("expected no make when installed from the checkout, ran %v", builds)
@@ -320,8 +329,8 @@ func Test_Install_Neovim_Builds_When_The_Match_Is_Outside_Repository(t *testing.
 			"which": "/opt/homebrew/bin/nvim\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := make_commands(commands); len(builds) != 2 {
 		t.Fatalf("expected the build to run, got %d make commands", len(builds))
@@ -342,8 +351,8 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 		Repository_Directory: TEST_REPOSITORY,
 		Shell:                shell,
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	want_progress := "{\"level\":\"info\",\"message\":\"configuring neovim prefix\"}\n" +
 		"{\"level\":\"info\",\"message\":\"installing neovim\"}\n"
@@ -380,33 +389,11 @@ func Test_Install_Neovim_Reports_Build_Failure(t *testing.T) {
 		Repository_Directory: TEST_REPOSITORY,
 		Shell:                recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on build failure")
 	}
 	if builds := make_commands(commands); len(builds) != 1 {
 		t.Fatalf("expected to stop after the first failing make, ran %d", len(builds))
-	}
-}
-
-// Test_Install_Fonts_Skips_Without_A_Font_Directory verifies an empty font
-// directory — an OS with no known user font location — does nothing.
-func Test_Install_Fonts_Skips_Without_A_Font_Directory(t *testing.T) {
-	t.Parallel()
-	copies := 0
-	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: "",
-		Font_Present:   func(file string) (present bool) { return false },
-		Copy_Font: func(file string) (err error) {
-			copies++
-			return nil
-		},
-		Refresh: nil,
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	if copies != 0 {
-		t.Fatalf("expected no copies without a font directory, ran %d", copies)
 	}
 }
 
@@ -428,8 +415,8 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 		Refresh: nil,
 		Logger:  buffer_logger(log),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if len(copied) != 3 {
 		t.Fatalf("expected the three missing faces copied, got %v", copied)
@@ -468,8 +455,8 @@ func Test_Install_Fonts_Skips_When_All_Present(t *testing.T) {
 			return nil
 		},
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if copies != 0 {
 		t.Fatal("expected no copies when every face is present")
@@ -493,8 +480,8 @@ func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 			return nil
 		},
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if !refreshed {
 		t.Fatal("expected the cache refresh after copying a face")
@@ -511,7 +498,7 @@ func Test_Install_Fonts_Reports_A_Copy_Failure(t *testing.T) {
 		Copy_Font:      func(file string) (err error) { return errors.New("disk full") },
 		Refresh:        nil,
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on copy failure")
 	}
 }
@@ -529,8 +516,8 @@ func Test_Install_Direnv_Skips_Build_When_Already_Built(t *testing.T) {
 			TEST_LINK_DIRECTORY + "/direnv": "2.37.1\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
@@ -547,8 +534,8 @@ func Test_Install_Direnv_Builds_When_Absent(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
@@ -565,7 +552,7 @@ func Test_Install_Direnv_Reports_A_Build_Failure(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on build failure")
 	}
 }
@@ -583,8 +570,8 @@ func Test_Install_Rust_Skips_Install_When_Already_Installed(t *testing.T) {
 			TEST_CARGO_DIRECTORY + "/bin/rustc": "rustc 1.96.0 (abc 2026-05-25)\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if installs := commands_named(commands, "sh"); len(installs) != 0 {
 		t.Fatalf("expected no install when already installed, ran %v", installs)
@@ -604,8 +591,8 @@ func Test_Install_Rust_Installs_Then_Links_When_Absent(t *testing.T) {
 		Link_Directory:  TEST_LINK_DIRECTORY,
 		Shell:           recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if installs := commands_named(commands, "sh"); len(installs) != 1 {
 		t.Fatalf("expected one install command, ran %d", len(installs))
@@ -625,7 +612,7 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 		Link_Directory:  TEST_LINK_DIRECTORY,
 		Shell:           recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on install failure")
 	}
 }
@@ -643,8 +630,8 @@ func Test_Install_Fzf_Skips_Build_When_Already_Built(t *testing.T) {
 			TEST_LINK_DIRECTORY + "/fzf": "0.73.1\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
@@ -661,8 +648,8 @@ func Test_Install_Fzf_Builds_When_Absent(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
@@ -679,7 +666,7 @@ func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on build failure")
 	}
 }
@@ -698,8 +685,8 @@ func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
 			"which": TEST_LINK_DIRECTORY + "/maddox\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already on PATH, ran %v", builds)
@@ -717,8 +704,8 @@ func Test_Install_Command_Builds_When_Absent(t *testing.T) {
 		Binary_Name:       "m2p",
 		Shell:             recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
@@ -736,7 +723,7 @@ func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 		Binary_Name:       "sloc",
 		Shell:             recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on build failure")
 	}
 }
@@ -754,8 +741,8 @@ func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 			TEST_LINK_DIRECTORY + "/jj": "jj 0.42.0-abc123\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
@@ -776,8 +763,8 @@ func Test_Install_Jj_Builds_When_Absent(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	builds := commands_named(commands, "sh")
 	if len(builds) != 1 {
@@ -801,7 +788,7 @@ func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on build failure")
 	}
 }
@@ -819,8 +806,8 @@ func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 			TEST_LINK_DIRECTORY + "/rg": "ripgrep 15.1.0 (rev abc123)\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
@@ -841,8 +828,8 @@ func Test_Install_Ripgrep_Builds_When_Absent(t *testing.T) {
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Shell:             recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	builds := commands_named(commands, "sh")
 	if len(builds) != 1 {
@@ -866,7 +853,7 @@ func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Shell:             recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on build failure")
 	}
 }
@@ -884,8 +871,8 @@ func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 			TEST_LINK_DIRECTORY + "/fd": "fd 10.4.2\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
@@ -906,8 +893,8 @@ func Test_Install_Fdcli_Builds_When_Absent(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	builds := commands_named(commands, "sh")
 	if len(builds) != 1 {
@@ -931,7 +918,7 @@ func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on build failure")
 	}
 }
@@ -950,8 +937,8 @@ func Test_Install_Ghostty_Skips_Install_When_Already_Installed(t *testing.T) {
 			binary: "Ghostty 1.3.1\n",
 		}, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if installs := commands_named(commands, "sh"); len(installs) != 0 {
 		t.Fatalf("expected no download when already installed, ran %v", installs)
@@ -975,8 +962,8 @@ func Test_Install_Ghostty_Reinstalls_When_Signature_Is_Invalid(t *testing.T) {
 			binary: "Ghostty 1.3.1\n",
 		}, map[string]int{"codesign": 1}),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if installs := commands_named(commands, "sh"); len(installs) != 1 {
 		t.Fatalf("expected a reinstall on an invalid signature, ran %d", len(installs))
@@ -1020,8 +1007,8 @@ func Test_Install_Ghostty_Installs_Then_Links_When_Absent(t *testing.T) {
 		Link_Directory:         TEST_LINK_DIRECTORY,
 		Shell:                  recording_shell(&commands, nil, 0),
 	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
+	if !status {
+		t.Fatalf("expected success, got status %t", status)
 	}
 	if installs := commands_named(commands, "sh"); len(installs) != 1 {
 		t.Fatalf("expected one install command, ran %d", len(installs))
@@ -1041,7 +1028,7 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 		Link_Directory:         TEST_LINK_DIRECTORY,
 		Shell:                  recording_shell(&commands, nil, 1),
 	})
-	if status == 0 {
+	if status {
 		t.Fatal("expected a non-zero status on install failure")
 	}
 	if links := commands_named(commands, "ln"); len(links) != 0 {
@@ -1055,6 +1042,7 @@ func directory_file_system(t *testing.T, loop sysio.IO) (system setup.File_Syste
 	t.Helper()
 	return setup.File_System{
 		Read_Directory: loop.Read_Directory,
+		Status:         loop.Status,
 		Read: func(
 			path string, buffer_size int,
 		) (contents []byte, found bool, err error) {
@@ -1074,15 +1062,15 @@ const TEST_HOME = "/home/user"
 
 // The fixed absolute source directory the macos-defaults tests walk — created empty so the
 // sync writes nothing and only the injected runner's behavior is under test.
-const TEST_SOURCE = "/source"
+const TEST_SOURCE = "/home/user/code/setup/home"
 
 // The fixed absolute checkout root the Neovim build subpaths are joined onto; a
 // constant keeps the expected make and link paths deterministic.
-const TEST_REPOSITORY = "/repo"
+const TEST_REPOSITORY = "/home/user/code/repository"
 
 // The fixed absolute font directory the Install_Fonts tests copy into; a constant
 // keeps the expected destinations deterministic.
-const TEST_FONT_DIRECTORY = "/fonts"
+const TEST_FONT_DIRECTORY = "/home/user/.local/share/fonts"
 
 // The fixed absolute CARGO_HOME the Install_Rust tests gate against; a constant
 // keeps the expected toolchain paths deterministic.
@@ -1090,35 +1078,35 @@ const TEST_CARGO_DIRECTORY = "/cargo"
 
 // The fixed absolute PATH directory the Install_Rust tests symlink into; a
 // constant keeps the expected link paths deterministic.
-const TEST_LINK_DIRECTORY = "/link"
+const TEST_LINK_DIRECTORY = "/home/user/code/james-orcales/home/.local/bin"
 
 // The fixed absolute direnv source directory the Install_Direnv tests build from; a
 // constant keeps the expected build paths deterministic.
-const TEST_DIRENV_DIRECTORY = "/direnv-src"
+const TEST_DIRENV_DIRECTORY = "/home/user/code/james-orcales/third_party/direnv"
 
 // The fixed absolute fzf source directory the Install_Fzf tests build from; a
 // constant keeps the expected build paths deterministic.
-const TEST_FZF_DIRECTORY = "/fzf"
+const TEST_FZF_DIRECTORY = "/home/user/code/james-orcales/third_party/fzf"
 
 // The fixed absolute package directory the Install_Command tests build from; a
 // constant keeps the expected build paths deterministic.
-const TEST_COMMAND_DIRECTORY = "/command-src"
+const TEST_COMMAND_DIRECTORY = "/home/user/code/james-orcales/maddox"
 
 // The fixed absolute jj source directory the Install_Jj tests build from; a
 // constant keeps the expected build paths deterministic.
-const TEST_JJ_DIRECTORY = "/jj"
+const TEST_JJ_DIRECTORY = "/home/user/code/james-orcales/third_party/jj"
 
 // The fixed absolute ripgrep source directory the Install_Ripgrep tests build
 // from; a constant keeps the expected build paths deterministic.
-const TEST_RIPGREP_DIRECTORY = "/ripgrep"
+const TEST_RIPGREP_DIRECTORY = "/home/user/code/james-orcales/third_party/ripgrep"
 
 // The fixed absolute fd source directory the Install_Fdcli tests build from; a
 // constant keeps the expected build paths deterministic.
-const TEST_FDCLI_DIRECTORY = "/fd-src"
+const TEST_FDCLI_DIRECTORY = "/home/user/code/james-orcales/third_party/fd"
 
 // The fixed absolute macOS applications directory the Install_Ghostty tests gate
 // against; a constant keeps the expected app and probe paths deterministic.
-const TEST_APPLICATIONS_DIRECTORY = "/apps"
+const TEST_APPLICATIONS_DIRECTORY = "/Applications"
 
 // Reports whether ran holds a command exactly equal to want — name and arguments
 // together — so a test can assert one specific invocation happened.

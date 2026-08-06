@@ -1,6 +1,9 @@
 
 # Main
 
+Main validates the injected host facts before it constructs policy. Invalid host input returns
+EXIT_USAGE; otherwise Main returns the first failing step status or EXIT_SUCCESS.
+
 ### Runs Complete Bootstrap
 
 Main constructs and runs the complete ordered bootstrap from the injected environment, file
@@ -49,10 +52,10 @@ On any operating system other than darwin no defaults commands run.
 Mirror names each source directory as the walk reads it, so a large silent tree scan shows it
 is advancing rather than looking hung, and reports an up-to-date tree when it writes nothing.
 
-### Probes Ignore In One Batch
+### Probes Each Directory In One Batch
 
-The walk classifies a directory's entries with one Is_Ignored call carrying them all, not a
-call per entry, so the gitignore probe is one subprocess per tree level rather than per file.
+The walk classifies each directory's entries with one Is_Ignored call carrying them all. It does
+not start one gitignore subprocess per entry.
 
 # Install Neovim
 
@@ -81,13 +84,9 @@ A failing make stops the bootstrap before installing and reports a non-zero exit
 
 # Install Fonts
 
-Install_Fonts copies the vendored Iosevka TTFs from `third_party/iosevka_nerd_font_mono` into the
-per-OS user font directory, copying only the faces not already there, and on Linux refreshes the
-font cache when it copies any. A repeat bootstrap with the fonts in place does no work.
-
-### Skips Without A Font Directory
-
-An empty font directory — an operating system with no known user font location — does nothing.
+Install_Fonts copies vendored Iosevka TTFs into the per-OS user font directory and on Linux
+refreshes the font cache after a copy. A repeat with the fonts in place does no work. The
+bootstrap omits this work on a host that has no managed font destination.
 
 ### Copies Only Missing Fonts
 

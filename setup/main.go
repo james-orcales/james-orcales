@@ -3,83 +3,87 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 
 	"local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
 	system_io "local/james-orcales/shared/io/default"
-	jlog "local/james-orcales/shared/jlog/default"
 	system_time "local/james-orcales/shared/time/default"
 )
 
 func main() {
 	clock, _ := system_time.New_Operating_System_Clock()
 	home, home_err := os.UserHomeDir()
-	color := false
-	if console, console_err := os.Stderr.Stat(); console_err == nil {
-		color = console.Mode()&os.ModeCharDevice != 0
-	}
-	environment, status := setup.New_Environment(&setup.Environment_Input{
-		Clock: clock, Console: os.Stderr, Effective_User_Identifier: os.Geteuid(),
-		Color: color, Home_Directory: home, Home_Error: home_err,
-		Operating_System: runtime.GOOS, Cargo_Directory: os.Getenv("CARGO_HOME"),
-		Data_Directory: os.Getenv("XDG_DATA_HOME"), Stdout: os.Stdout, Stderr: os.Stderr,
-	})
-	if status != 0 {
-		os.Exit(status)
-	}
+	console, console_err := os.Stderr.Stat()
+	color := console_err == nil && console.Mode()&os.ModeCharDevice != 0
 	loop, driver, loop_err := system_io.New_Operating_System_IO(
-		environment.Clock, setup.SCHEDULER_ENTRY_COUNT, setup.SCHEDULER_FLAGS)
+		clock, setup.SCHEDULER_ENTRY_COUNT, setup.SCHEDULER_FLAGS)
 	if loop_err != nil {
-		jlog.Logger_Error(environment.Logger, "cannot initialize IO", jlog.Err(loop_err))
-		os.Exit(setup.EXIT_USAGE)
-	}
-	// Internal code owns each transition. This root only advances one callback-owned operation.
-	drive := func(operation setup.Operation) (err error) {
-		for !operation.Complete() {
-			completed, drive_err := driver.Run_Until(operation.Ready, sysio.FOREVER)
-			if drive_err != nil {
-				return drive_err
-			}
-			if !completed {
-				return errors.New("the IO operation did not complete")
-			}
-			if !operation.Complete() {
-				if operation.Rearm != nil {
-					operation.Rearm()
-				}
-			}
-		}
-		return nil
+		fmt.Fprintln(os.Stderr, "cannot initialize IO:", loop_err)
+		os.Exit(int(setup.EXIT_USAGE))
 	}
 	file_system := setup.File_System{Read_Directory: loop.Read_Directory, Status: loop.Status}
-	file_system.Read = func(path string, buffer_size int) (
-		contents []byte, found bool, err error) {
-		operation := setup.Read_File(loop, path, buffer_size)
-		if drive_err := drive(operation.Operation); drive_err != nil {
+	read := setup.File_Read_Adapter(loop)
+	file_system.Read = func(path string, size int) (contents []byte, found bool, err error) {
+		ready, done, rearm, result := read(path, size)
+		if drive_err := drive(driver, ready, done, rearm); drive_err != nil {
 			return nil, false, drive_err
 		}
-		return setup.File_Read_Result(operation)
+		return result()
 	}
+	write := setup.File_Write_Adapter(loop)
 	file_system.Write = func(path string, contents []byte) (err error) {
-		operation := setup.Write_File(loop, path, contents)
-		if drive_err := drive(operation.Operation); drive_err != nil {
+		ready, done, rearm, result := write(path, contents)
+		if drive_err := drive(driver, ready, done, rearm); drive_err != nil {
 			return drive_err
 		}
-		return setup.File_Write_Error(operation)
+		return result()
 	}
-	shell := setup.Shell{Stdout: environment.Stdout, Stderr: environment.Stderr}
-	shell.Logger = environment.Logger
-	shell.Spawn = func(request sysio.Process_Request) (result sysio.Process_Result) {
-		operation := setup.Spawn_Process(loop, request)
-		if drive_err := drive(operation.Operation); drive_err != nil {
+	process := setup.Process_Adapter(loop)
+	shell := setup.Shell{Spawn: func(
+		request sysio.Process_Request,
+	) (result sysio.Process_Result) {
+		ready, done, rearm, process_result := process(request)
+		if drive_err := drive(driver, ready, done, rearm); drive_err != nil {
 			return sysio.Process_Result{Exit: 1}
 		}
-		return setup.Process_Operation_Result(operation)
+		return process_result()
+	}}
+	input := setup.Main_Input{
+		Environment: &setup.Environment_Input{
+			Clock: clock, Console: os.Stderr,
+			Effective_User_Identifier: setup.Effective_User_Identifier(os.Geteuid()),
+			Color:                     setup.Console_Color(color),
+			Home_Directory:            setup.Home_Directory(home), Home_Error: home_err,
+			Operating_System: setup.Operating_System(runtime.GOOS),
+			Cargo_Directory:  setup.Cargo_Directory(os.Getenv("CARGO_HOME")),
+			Data_Directory:   setup.Data_Directory(os.Getenv("XDG_DATA_HOME")),
+			Stdout:           os.Stdout, Stderr: os.Stderr,
+		}, File_System: file_system, Shell: shell,
 	}
-	input := setup.Main_Input{Environment: environment, File_System: file_system, Shell: shell}
-	status = setup.Main(&input)
+	status := setup.Main(&input)
 	driver.Deinit()
-	os.Exit(status)
+	os.Exit(int(status))
+}
+
+// Only the composition root can advance callback-owned transitions.
+func drive(
+	driver sysio.Driver, ready setup.Transition_Ready,
+	done setup.Transition_Complete, rearm setup.Transition_Rearm,
+) (err error) {
+	for !done() {
+		completed, drive_err := driver.Run_Until(ready, setup.PROCESS_DURATION_MAX)
+		if drive_err != nil {
+			return drive_err
+		}
+		if !completed {
+			return errors.New("the IO operation did not complete")
+		}
+		if !done() {
+			rearm()
+		}
+	}
+	return nil
 }
