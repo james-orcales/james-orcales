@@ -2,7 +2,8 @@
 # Parse Round Trips String
 
 Parse of a UUID's String returns the same 16 bytes, across the canonical, URN,
-braced, and unhyphenated forms; a wrong length or non-hex digit is an error.
+braced, and unhyphenated forms; a wrong length, a non-hex digit, or a 38-character
+string that is not brace-wrapped at the two ends is an error.
 
 # Version And Variant Are Stamped
 

@@ -30,6 +30,19 @@ func Test_Parse_Round_Trips_String(t *testing.T) {
 	if _, bad := uuid.Parse("not a uuid"); bad == nil {
 		t.Fatalf("expected an error for a malformed string")
 	}
+	// A 38-character string is the braced form only when both braces are present. Any
+	// other wrapper is a different encoding, not a UUID this package accepts.
+	mismatched := []string{
+		"(" + original.String() + ")",
+		"{" + original.String() + "!",
+		"!" + original.String() + "}",
+		" " + original.String() + " ",
+	}
+	for _, form := range mismatched {
+		if _, bad := uuid.Parse(form); bad == nil {
+			t.Fatalf("parse %q returned no error, want a bracket error", form)
+		}
+	}
 }
 
 // Test_Version_And_Variant_Are_Stamped checks each generator sets its version and variant.

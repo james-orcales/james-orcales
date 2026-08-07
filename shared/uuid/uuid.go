@@ -402,7 +402,15 @@ func Parse(s string) (uuid UUID, err error) {
 		}
 		return parse_canonical(s[9:])
 	case 2 + 36:
-		return parse_canonical(s[1:])
+		// The parse_canonical function reads only the leading 36 bytes. Thus the closing
+		// byte is checked here or never, and any two wrapper characters pass.
+		if s[0] != '{' {
+			return uuid, Error_Invalid_Bracketed_Format
+		}
+		if s[37] != '}' {
+			return uuid, Error_Invalid_Bracketed_Format
+		}
+		return parse_canonical(s[1:37])
 	case 32:
 		return parse_compact(s)
 	}
