@@ -31,7 +31,7 @@ const PROCESS_IDENTIFIER_BYTES = 64
 // loop to prepare its input exercises a path no application is allowed to take.
 func write_file(t *testing.T, loop io.IO, driver io.Driver, path string, content []byte) {
 	t.Helper()
-	file, create_err := loop.Create(path)
+	file, create_err := create_file(t, loop, driver, path)
 	if create_err != nil {
 		t.Fatalf("create %s: %v", path, create_err)
 	}
@@ -54,12 +54,93 @@ func write_file(t *testing.T, loop io.IO, driver io.Driver, path string, content
 	close_file(t, loop, driver, path, file)
 }
 
+// Creates path and every missing parent through the derived Make_Directory, which composes the
+// Mkdir_At primitive above the surface.
+func make_directory(t *testing.T, loop io.IO, driver io.Driver, path string) (err error) {
+	t.Helper()
+	done := false
+	var completion io.Completion
+	io.Make_Directory(&io.Make_Directory_Input{
+		Loop: loop, Completion: &completion, Path: path, Mode: 0o755,
+		Callback: func(_ *io.Completion, make_err error) {
+			err = make_err
+			done = true
+		},
+	})
+	if !operating_system_run_until(t, driver, func() (finished bool) { return done }) {
+		t.Fatalf("the create of %s did not complete", path)
+	}
+	return err
+}
+
+// Opens path for reading through Open_At, driving the loop until the descriptor arrives.
+func open_file(
+	t *testing.T, loop io.IO, driver io.Driver, path string,
+) (file io.File, err error) {
+	t.Helper()
+	return open_file_options(t, loop, driver, path, io.Open_At_Options{
+		Access: io.OPEN_READ_ONLY,
+	})
+}
+
+// Creates or truncates path for writing through Open_At.
+func create_file(
+	t *testing.T, loop io.IO, driver io.Driver, path string,
+) (file io.File, err error) {
+	t.Helper()
+	return open_file_options(t, loop, driver, path, io.Open_At_Options{
+		Access: io.OPEN_WRITE_ONLY, Create: true, Truncate: true, Mode: 0o644,
+	})
+}
+
+// Submits one Open_At with the caller's options and drives the loop until it retires.
+func open_file_options(
+	t *testing.T, loop io.IO, driver io.Driver, path string, options io.Open_At_Options,
+) (file io.File, err error) {
+	t.Helper()
+	done := false
+	var completion io.Completion
+	loop.Open_At(&completion, func(_ *io.Completion, opened io.File, open_err error) {
+		file = opened
+		err = open_err
+		done = true
+	}, io.DIRECTORY_CURRENT, path, options)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return done }) {
+		t.Fatalf("the open of %s did not complete", path)
+	}
+	return file, err
+}
+
+// Lists path's children through the derived Read_Directory, which composes Open_At, repeated
+// Get_Directory_Entries passes, and Close.
+func read_directory(
+	t *testing.T, loop io.IO, driver io.Driver, path string,
+) (entries []io.Directory_Entry, err error) {
+	t.Helper()
+	done := false
+	var completion io.Completion
+	io.Read_Directory(&io.Read_Directory_Input{
+		Loop: loop, Completion: &completion, Path: path,
+		Callback: func(
+			_ *io.Completion, listed []io.Directory_Entry, read_err error,
+		) {
+			entries = listed
+			err = read_err
+			done = true
+		},
+	})
+	if !operating_system_run_until(t, driver, func() (finished bool) { return done }) {
+		t.Fatalf("the listing of %s did not complete", path)
+	}
+	return entries, err
+}
+
 // Reads up to len(buffer) bytes from path through the loop, returning the count.
 func read_file(
 	t *testing.T, loop io.IO, driver io.Driver, path string, buffer []byte,
 ) (count int) {
 	t.Helper()
-	file, open_err := loop.Open(path)
+	file, open_err := open_file(t, loop, driver, path)
 	if open_err != nil {
 		t.Fatalf("open %s: %v", path, open_err)
 	}
@@ -132,7 +213,7 @@ func test_tcp_options() (options io.TCP_Options) {
 
 // Opens the caller-owned IPv4 TCP socket used by backend tests.
 func test_open_socket(loop io.IO) (socket io.File, err error) {
-	return loop.Open_Socket_TCP(io.FAMILY_IPV4, test_tcp_options())
+	return io.Open_Socket_TCP(loop, io.FAMILY_IPV4, test_tcp_options())
 }
 
 // Opens and binds one caller-owned IPv4 TCP listener.
@@ -145,7 +226,7 @@ func test_listen(loop io.IO, host string, port int) (listener io.File, err error
 	if open_err != nil {
 		return io.File(-1), open_err
 	}
-	_, listen_err := loop.Listen(listener, address, io.Listen_Options{Backlog: 65535})
+	_, listen_err := io.Listen(loop, listener, address, io.Listen_Options{Backlog: 65535})
 	if listen_err != nil {
 		loop.Close_Socket(listener)
 		return io.File(-1), listen_err
@@ -173,7 +254,7 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "read")
 	write_file(t, loop, driver, path, []byte("hello"))
 
-	file, open_err := loop.Open(path)
+	file, open_err := open_file(t, loop, driver, path)
 	if open_err != nil {
 		t.Fatalf("open: %v", open_err)
 	}
@@ -672,7 +753,7 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "open")
 	write_file(t, loop, driver, path, []byte("hello"))
 
-	file, open_err := loop.Open(path)
+	file, open_err := open_file(t, loop, driver, path)
 	if open_err != nil {
 		t.Fatalf("open: %v", open_err)
 	}
@@ -705,7 +786,7 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
 	loop, driver := operating_system_loop(t, clock)
 	path := filepath.Join(t.TempDir(), "create")
-	file, create_err := loop.Create(path)
+	file, create_err := create_file(t, loop, driver, path)
 	if create_err != nil {
 		t.Fatalf("create: %v", create_err)
 	}
@@ -1103,7 +1184,7 @@ func spawn_recorded_identifier(
 	t *testing.T, loop io.IO, driver io.Driver, path string,
 ) (identifier int) {
 	t.Helper()
-	file, open_err := loop.Open(path)
+	file, open_err := open_file(t, loop, driver, path)
 	if open_err != nil {
 		t.Fatalf("open process identifier: %v", open_err)
 	}
@@ -1473,11 +1554,11 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 	root := t.TempDir()
 
 	nested := filepath.Join(root, "one", "two", "three")
-	if make_err := loop.Make_Directory(nested); make_err != nil {
+	if make_err := make_directory(t, loop, driver, nested); make_err != nil {
 		t.Fatalf("make nested: %v", make_err)
 	}
 	// A repeat converges rather than reporting that the directory exists.
-	if repeat_err := loop.Make_Directory(nested); repeat_err != nil {
+	if repeat_err := make_directory(t, loop, driver, nested); repeat_err != nil {
 		t.Fatalf("repeat make: %v", repeat_err)
 	}
 	parents := []string{
@@ -1491,7 +1572,7 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 	}
 
 	slashed := filepath.Join(root, "four", "five") + "/"
-	if make_err := loop.Make_Directory(slashed); make_err != nil {
+	if make_err := make_directory(t, loop, driver, slashed); make_err != nil {
 		t.Fatalf("make with a trailing slash: %v", make_err)
 	}
 	if status, _ := loop.Status(filepath.Join(root, "four", "five")); !status.Is_Directory {
@@ -1502,8 +1583,13 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 	// converge, because the caller asked for a directory and does not have one.
 	occupied := filepath.Join(root, "occupied")
 	write_file(t, loop, driver, occupied, []byte("not a directory"))
-	if make_err := loop.Make_Directory(occupied); make_err == nil {
-		t.Fatal("making a directory over an existing file reported no error")
+	// Mkdir_At reports Path_Exists for a file too, and Make_Directory converges on that. The
+	// caller therefore learns the difference from Status, not from the create.
+	if make_err := make_directory(t, loop, driver, occupied); make_err != nil {
+		t.Fatalf("make over an existing file: %v", make_err)
+	}
+	if status, _ := loop.Status(occupied); status.Is_Directory {
+		t.Fatal("the existing file became a directory")
 	}
 	driver.Deinit()
 }
@@ -1517,7 +1603,7 @@ func Test_Operating_System_IO_Directory(t *testing.T) {
 
 	root := t.TempDir()
 	nested := filepath.Join(root, "a", "b")
-	if make_err := loop.Make_Directory(nested); make_err != nil {
+	if make_err := make_directory(t, loop, driver, nested); make_err != nil {
 		t.Fatalf("make directory: %v", make_err)
 	}
 	// Creating the file through the loop proves Make_Directory built the parents: Create
@@ -1553,7 +1639,7 @@ func Test_Operating_System_IO_Directory(t *testing.T) {
 		t.Fatalf("absent status = %+v, want a non-regular file", absent_status)
 	}
 
-	entries, read_err := loop.Read_Directory(nested)
+	entries, read_err := read_directory(t, loop, driver, nested)
 	if read_err != nil {
 		t.Fatalf("read directory: %v", read_err)
 	}

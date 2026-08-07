@@ -23,6 +23,22 @@ const SOCKET_NO_SIGPIPE = 0x1022
 // DARWIN_OPEN_AT_CALL keeps the raw syscall compatible with Darwin amd64.
 const DARWIN_OPEN_AT_CALL = 463
 
+// DARWIN_MKDIR_AT_CALL keeps the raw syscall compatible with Darwin amd64. Go's zsysnum table
+// stops before the at-family, the same gap that makes DARWIN_OPEN_AT_CALL a literal.
+const DARWIN_MKDIR_AT_CALL = 475
+
+// Caps the EINTR retries of one eager filesystem syscall. A signal can interrupt the call, but
+// only a broken kernel interrupts it repeatedly, so a bound reports an error rather than a spin.
+const PLATFORM_INTERRUPT_RETRIES_MAX = 16
+
+// PLATFORM_STAT_AT_CALL is Darwin fstatat64, the variant whose struct matches syscall.Stat_t.
+// Trap 469 is the legacy layout and returns fields that do not agree with syscall.Stat.
+const PLATFORM_STAT_AT_CALL = 470
+
+// PLATFORM_SYMBOLIC_LINK_NO_FOLLOW is Darwin AT_SYMLINK_NOFOLLOW, so a directory pass reports a
+// symbolic link as itself rather than as its target.
+const PLATFORM_SYMBOLIC_LINK_NO_FOLLOW = 0x0020
+
 // DARWIN_CURRENT_DIRECTORY keeps Open_At compatible with Darwin AT_FDCWD.
 const DARWIN_CURRENT_DIRECTORY = -2
 
@@ -60,30 +76,31 @@ func platform_buffer_limit(buffer []byte) (limited []byte) {
 	return buffer
 }
 
-// Opens and configures one non-blocking close-on-exec TCP socket, following
-// third-party/tigerbeetle/src/io/darwin.zig:914-929 and common.zig:65-117.
-func socket_open_tcp(
-	family sharedio.Address_Family, options sharedio.TCP_Options,
+// Opens one non-blocking close-on-exec socket. NOSIGPIPE is not a caller option on Darwin: a
+// send to a closed peer raises SIGPIPE without it, so the platform applies it to every stream
+// socket. Every caller-selected option arrives later through socket_option_set.
+func socket_open(
+	family sharedio.Address_Family, transport sharedio.Socket_Transport,
 ) (descriptor int, err error) {
+	if transport == sharedio.SOCKET_TRANSPORT_UDP {
+		return socket_create(&Socket_Create_Input{
+			Family: family, Type: syscall.SOCK_DGRAM, Protocol: syscall.IPPROTO_UDP,
+		})
+	}
 	descriptor, err = socket_create(&Socket_Create_Input{
 		Family: family, Type: syscall.SOCK_STREAM, Protocol: syscall.IPPROTO_TCP,
 	})
 	if err != nil {
 		return -1, err
 	}
-	setup_err := socket_configure(descriptor, options)
-	if setup_err != nil {
+	signal_err := syscall.SetsockoptInt(
+		descriptor, syscall.SOL_SOCKET, SOCKET_NO_SIGPIPE, 1,
+	)
+	if signal_err != nil {
 		syscall.Close(descriptor)
-		return -1, setup_err
+		return -1, signal_err
 	}
 	return descriptor, nil
-}
-
-// Opens one non-blocking close-on-exec UDP socket.
-func socket_open_udp(family sharedio.Address_Family) (descriptor int, err error) {
-	return socket_create(&Socket_Create_Input{
-		Family: family, Type: syscall.SOCK_DGRAM, Protocol: syscall.IPPROTO_UDP,
-	})
 }
 
 // Input for socket_create.
@@ -286,6 +303,8 @@ func operating_system_operation_do(
 	case OPERATING_SYSTEM_OPERATION_OPEN_AT:
 		descriptor, open_err := platform_open_at(operation)
 		return descriptor, false, open_err
+	case OPERATING_SYSTEM_OPERATION_MKDIR_AT:
+		return 0, false, file_translate(platform_mkdir_at(operation))
 	default:
 		return 0, false, syscall.EINVAL
 	}
@@ -314,6 +333,27 @@ func platform_open_at(operation *Operating_System_Operation) (descriptor int, er
 		return int(result), nil
 	}
 	return -1, syscall.EINTR
+}
+
+// Executes Darwin mkdirat synchronously when its eager completion runs, retrying EINTR. kqueue
+// carries no filesystem filter, so the syscall runs in the submit exactly as Open_At does.
+func platform_mkdir_at(operation *Operating_System_Operation) (err error) {
+	path := unsafe.Pointer(&operation.File_Path[0])
+	for retry_index := 0; retry_index < PLATFORM_INTERRUPT_RETRIES_MAX; retry_index++ {
+		_, _, errno := syscall.Syscall(
+			DARWIN_MKDIR_AT_CALL,
+			uintptr(operation.Descriptor), uintptr(path),
+			uintptr(operation.Open_Options.Mode),
+		)
+		if errno == syscall.EINTR {
+			continue
+		}
+		if errno != 0 {
+			return errno
+		}
+		return nil
+	}
+	return syscall.EINTR
 }
 
 // Translates the portable Open_At option fields to Darwin posix.O bits.

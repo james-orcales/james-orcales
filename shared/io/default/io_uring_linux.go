@@ -108,32 +108,22 @@ func platform_buffer_limit(buffer []byte) (limited []byte) {
 	return buffer
 }
 
-// Opens and configures one non-blocking close-on-exec TCP socket.
-func socket_open_tcp(
-	family sharedio.Address_Family, options sharedio.TCP_Options,
+// Opens one non-blocking close-on-exec socket. Linux carries both flags in the socket type, so
+// this is one syscall. Every caller-selected option arrives later through socket_option_set.
+func socket_open(
+	family sharedio.Address_Family, transport sharedio.Socket_Transport,
 ) (descriptor int, err error) {
-	descriptor, err = syscall.Socket(
+	if transport == sharedio.SOCKET_TRANSPORT_UDP {
+		return syscall.Socket(
+			socket_family(family),
+			syscall.SOCK_DGRAM|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC,
+			syscall.IPPROTO_UDP,
+		)
+	}
+	return syscall.Socket(
 		socket_family(family),
 		syscall.SOCK_STREAM|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC,
 		syscall.IPPROTO_TCP,
-	)
-	if err != nil {
-		return -1, err
-	}
-	setup_err := socket_configure(descriptor, options)
-	if setup_err != nil {
-		syscall.Close(descriptor)
-		return -1, setup_err
-	}
-	return descriptor, nil
-}
-
-// Opens one non-blocking close-on-exec UDP socket.
-func socket_open_udp(family sharedio.Address_Family) (descriptor int, err error) {
-	return syscall.Socket(
-		socket_family(family),
-		syscall.SOCK_DGRAM|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC,
-		syscall.IPPROTO_UDP,
 	)
 }
 
@@ -274,6 +264,17 @@ const KERNEL_RING_OPERATION_FSYNC = 3
 
 // KERNEL_RING_OPERATION_POLL_ADD keeps the SQE opcode compatible with the Linux UAPI.
 const KERNEL_RING_OPERATION_POLL_ADD = 6
+
+// KERNEL_RING_OPERATION_MKDIR_AT keeps the SQE opcode compatible with the Linux UAPI. The kernel
+// added it in 5.15.
+const KERNEL_RING_OPERATION_MKDIR_AT = 37
+
+// PLATFORM_STAT_AT_CALL is Linux newfstatat, whose struct matches syscall.Stat_t on amd64.
+const PLATFORM_STAT_AT_CALL = 262
+
+// PLATFORM_SYMBOLIC_LINK_NO_FOLLOW is Linux AT_SYMLINK_NOFOLLOW, so a directory pass reports a
+// symbolic link as itself rather than as its target.
+const PLATFORM_SYMBOLIC_LINK_NO_FOLLOW = 0x100
 
 // KERNEL_PIPE_OFFSET tells the kernel to read or write at the descriptor's current position.
 // A pipe is not seekable, so it rejects any other offset with ESPIPE.
@@ -848,6 +849,10 @@ func platform_prepare_entry(
 	case OPERATING_SYSTEM_OPERATION_PIPE_WRITE:
 		platform_prepare_buffer(entry, operation, KERNEL_RING_OPERATION_WRITE)
 		entry.Offset = KERNEL_PIPE_OFFSET
+	case OPERATING_SYSTEM_OPERATION_MKDIR_AT:
+		entry.Opcode = KERNEL_RING_OPERATION_MKDIR_AT
+		entry.Address = uint64(uintptr(unsafe.Pointer(&operation.File_Path[0])))
+		entry.Count = operation.Open_Options.Mode
 	case OPERATING_SYSTEM_OPERATION_PROCESS_EXIT:
 		entry.Opcode = KERNEL_RING_OPERATION_POLL_ADD
 		entry.Descriptor = int32(operation.Descriptor)

@@ -70,6 +70,10 @@ const OPERATING_SYSTEM_OPERATION_PIPE_READ Operating_System_Operation_Kind = 14
 // OPERATING_SYSTEM_OPERATION_PIPE_WRITE writes one buffer to a pipe, the counterpart of PIPE_READ.
 const OPERATING_SYSTEM_OPERATION_PIPE_WRITE Operating_System_Operation_Kind = 15
 
+// OPERATING_SYSTEM_OPERATION_MKDIR_AT creates one directory. It is the mkdirat primitive, so the
+// parent must exist and an existing path is an error.
+const OPERATING_SYSTEM_OPERATION_MKDIR_AT Operating_System_Operation_Kind = 16
+
 // Kernel timespec is Linux's stable UAPI timespec layout. It lives with the operation so an
 // io_uring timeout never points at stack storage while it is in the kernel.
 type Kernel_Timespec struct {
@@ -234,6 +238,9 @@ func operating_system_translate_result(
 	}
 	if errno == syscall.ECANCELED {
 		return 0, sharedio.Canceled
+	}
+	if errno == syscall.EEXIST {
+		return 0, sharedio.Path_Exists
 	}
 	if operation.Kind == OPERATING_SYSTEM_OPERATION_TIMEOUT {
 		if errno == syscall.ETIME {

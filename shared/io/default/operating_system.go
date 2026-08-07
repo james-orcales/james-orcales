@@ -759,29 +759,23 @@ func operating_system_wire_file(state *Operating_System, loop *io.IO) {
 			state, completion, callback, directory, file_path, options,
 		)
 	}
-	loop.Open = func(path string) (file io.File, err error) {
-		descriptor, open_err := file_open(path)
-		return io.File(descriptor), open_err
+	loop.Mkdir_At = func(
+		completion *io.Completion, callback io.Timeout_Callback, directory io.File,
+		file_path string, mode uint32,
+	) {
+		operating_system_submit(completion)
+		operating_system_mkdir_at(state, completion, callback, directory, file_path, mode)
 	}
-	loop.Create = func(path string) (file io.File, err error) {
-		descriptor, create_err := file_create(path)
-		return io.File(descriptor), create_err
-	}
-	loop.Read_Directory = func(path string) (entries []io.Directory_Entry, err error) {
-		return file_read_directory(path)
+	loop.Get_Directory_Entries = func(
+		completion *io.Completion, callback io.Directory_Callback, directory io.File,
+		buffer []byte,
+	) {
+		operating_system_submit(completion)
+		operating_system_directory_pass(state, completion, callback, directory, buffer)
 	}
 	loop.Status = func(path string) (status io.File_Status, err error) {
 		return file_status(path)
 	}
-	loop.Make_Directory = func(path string) (err error) {
-		return file_make_directory(path)
-	}
-}
-
-// Creates path and any missing parents; an existing directory is not an error, so a
-// repeated mkdir converges.
-func file_make_directory(path string) (err error) {
-	return directory_make(path)
 }
 
 // Wires Timeout, Next_Tick, Reset_Next_Tick, and both close primitives onto loop.
@@ -883,10 +877,14 @@ func operating_system_assert_file_drained(state *Operating_System, file io.File)
 // Wires the socket operations — listen, accept, connect, receive, send, peer address —
 // onto loop.
 func operating_system_wire_socket(state *Operating_System, loop *io.IO) {
-	loop.Listen = func(
-		socket io.File, address io.Address, options io.Listen_Options,
-	) (resolved io.Address, err error) {
-		return socket_listen(int(socket), address, options)
+	loop.Bind = func(socket io.File, address io.Address) (err error) {
+		return socket_bind(int(socket), address)
+	}
+	loop.Listen_Socket = func(socket io.File, backlog uint32) (err error) {
+		return socket_listen_mark(int(socket), backlog)
+	}
+	loop.Get_Socket_Name = func(socket io.File) (address io.Address, err error) {
+		return socket_name(int(socket))
 	}
 	loop.Accept = func(
 		completion *io.Completion, callback io.Socket_Callback, listener io.File,
@@ -896,23 +894,20 @@ func operating_system_wire_socket(state *Operating_System, loop *io.IO) {
 		operating_system_submit(completion)
 		operating_system_accept(state, completion, callback, listener, deadline)
 	}
-	loop.Open_Socket_TCP = func(
-		family io.Address_Family, options io.TCP_Options,
+	loop.Socket = func(
+		family io.Address_Family, transport io.Socket_Transport,
 	) (socket io.File, err error) {
-		descriptor, open_err := socket_open_tcp(family, options)
+		descriptor, open_err := socket_open(family, transport)
 		if open_err != nil {
 			return io.File(-1), open_err
 		}
 		state.Raw_Open[descriptor] = true
 		return io.File(descriptor), nil
 	}
-	loop.Open_Socket_UDP = func(family io.Address_Family) (socket io.File, err error) {
-		descriptor, open_err := socket_open_udp(family)
-		if open_err != nil {
-			return io.File(-1), open_err
-		}
-		state.Raw_Open[descriptor] = true
-		return io.File(descriptor), nil
+	loop.Set_Socket_Option = func(
+		socket io.File, option io.Socket_Option, value int,
+	) (err error) {
+		return socket_option_set(int(socket), option, value)
 	}
 	loop.Connect = func(
 		completion *io.Completion, callback io.Timeout_Callback, socket io.File,
@@ -1014,6 +1009,37 @@ func operating_system_open_at(
 		},
 	}
 	operating_system_operation_submit(state, operation)
+}
+
+// Submits one directory pass. getdents has no asynchronous form on either backend, so the read
+// runs inline and the completion retires on the next drain, exactly as Status does.
+func operating_system_directory_pass(
+	state *Operating_System, completion *io.Completion, callback io.Directory_Callback,
+	directory io.File, buffer []byte,
+) {
+	entries, pass_err := file_directory_pass(int(directory), buffer)
+	completion.Callback = func() { callback(completion, entries, pass_err) }
+	state.Completed = append(state.Completed, completion)
+}
+
+// Submits one mkdirat through the platform scheduler. Mode travels in Open_Options because both
+// operations carry a path and a creation mode, and the scheduler already retains that field.
+func operating_system_mkdir_at(
+	state *Operating_System, completion *io.Completion, callback io.Timeout_Callback,
+	directory io.File, file_path string, mode uint32,
+) {
+	descriptor := int(directory)
+	if directory == io.DIRECTORY_CURRENT {
+		descriptor = platform_current_directory()
+	}
+	operating_system_operation_submit(state, &Operating_System_Operation{
+		Completion:   completion,
+		Kind:         OPERATING_SYSTEM_OPERATION_MKDIR_AT,
+		Descriptor:   descriptor,
+		File_Path:    append([]byte(file_path), 0),
+		Open_Options: io.Open_At_Options{Mode: mode},
+		Deliver:      func(_ int, err error) { callback(completion, err) },
+	})
 }
 
 // Schedules a positive timeout to fire when the clock passes its deadline.

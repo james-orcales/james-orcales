@@ -20,21 +20,30 @@ const SYSCTL_READ_DEADLINE = 5 * time.SECOND
 // configured descriptor. Buffer gets may report the kernel's doubled accounting value, so the
 // requested size is a lower bound.
 func Test_Socket_Open_Linux_Profile(t *testing.T) {
-	descriptor, open_err := socket_open_tcp(sharedio.FAMILY_IPV4, sharedio.TCP_Options{
-		Receive_Buffer: SOCKET_RECEIVE_BUFFER_SIZE,
-		Send_Buffer:    SOCKET_SEND_BUFFER_SIZE,
-		Keepalive: &sharedio.TCP_Keepalive{
-			Idle_Seconds:     SOCKET_KEEPALIVE_IDLE_SECONDS,
-			Interval_Seconds: SOCKET_KEEPALIVE_INTERVAL_SECONDS,
-			Count:            SOCKET_KEEPALIVE_COUNT,
-		},
-		User_Timeout_Milliseconds: SOCKET_USER_TIMEOUT_MILLISECONDS,
-		No_Delay:                  true,
-	})
+	descriptor, open_err := socket_open(
+		sharedio.FAMILY_IPV4, sharedio.SOCKET_TRANSPORT_TCP,
+	)
 	if open_err != nil {
 		t.Fatalf("socket open: %v", open_err)
 	}
 	defer syscall.Close(descriptor)
+	// Every caller-selected option arrives through the setsockopt primitive now, so the test
+	// applies the profile itself and then reads each value back.
+	options := []struct {
+		Option sharedio.Socket_Option
+		Value  int
+	}{
+		{sharedio.SOCKET_OPTION_RECEIVE_BUFFER, SOCKET_RECEIVE_BUFFER_SIZE},
+		{sharedio.SOCKET_OPTION_SEND_BUFFER, SOCKET_SEND_BUFFER_SIZE},
+		{sharedio.SOCKET_OPTION_KEEPALIVE, 1},
+		{sharedio.SOCKET_OPTION_NO_DELAY, 1},
+	}
+	for _, option := range options {
+		set_err := socket_option_set(descriptor, option.Option, option.Value)
+		if set_err != nil {
+			t.Fatalf("set socket option: %v", set_err)
+		}
+	}
 	socket_option_at_least(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.SOL_SOCKET,
 		Option: syscall.SO_RCVBUF,
@@ -93,10 +102,21 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	if loop_err != nil {
 		t.Fatalf("scheduler: %v", loop_err)
 	}
-	file, open_err := loop.Open(path)
-	if open_err != nil {
-		t.Fatalf("open %s: %v", path, open_err)
-	}
+	file := sharedio.File(-1)
+	open_done := false
+	var open_completion sharedio.Completion
+	loop.Open_At(&open_completion, func(
+		_ *sharedio.Completion, opened sharedio.File, open_err error,
+	) {
+		if open_err != nil {
+			t.Errorf("open %s: %v", path, open_err)
+		}
+		file = opened
+		open_done = true
+	}, sharedio.DIRECTORY_CURRENT, path, sharedio.Open_At_Options{
+		Access: sharedio.OPEN_READ_ONLY,
+	})
+	driver.Run_Until(func() (finished bool) { return open_done }, SYSCTL_READ_DEADLINE)
 	read_done := false
 	var read_completion sharedio.Completion
 	loop.Read(&read_completion, func(_ *sharedio.Completion, read int, read_err error) {

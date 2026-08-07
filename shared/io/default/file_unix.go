@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"local/james-orcales/shared/io"
 	"local/james-orcales/shared/time"
@@ -106,37 +107,52 @@ func directory_make(path string) (err error) {
 	return nil
 }
 
-// Lists path's immediate children, each named with whether it is a directory. It reads the
-// directory's raw entries in fixed-size passes and stats each name for its kind — the same
-// per-entry stat a walk over os.DirFS performs.
-func file_read_directory(path string) (entries []io.Directory_Entry, err error) {
-	descriptor, open_err := syscall.Open(path, syscall.O_RDONLY, 0)
-	if open_err != nil {
-		return nil, open_err
+// Reads one pass of a directory's raw entries into buffer and returns the children it names.
+// The dirent layout is per-platform, so the parse stays here. The pass loop, the per-entry
+// kind, and the descriptor lifetime all compose above the surface in io.Read_Directory.
+func file_directory_pass(
+	descriptor int, buffer []byte,
+) (entries []io.Directory_Entry, err error) {
+	count, read_err := syscall.ReadDirent(descriptor, buffer)
+	if read_err != nil {
+		return nil, read_err
 	}
-	defer syscall.Close(descriptor)
-	buffer := make([]byte, DIRECTORY_READ_BYTES)
-	for pass_index := 0; pass_index < DIRECTORY_READ_PASSES_MAX; pass_index++ {
-		count, read_err := syscall.ReadDirent(descriptor, buffer)
-		if read_err != nil {
-			return nil, read_err
-		}
-		if count <= 0 {
-			return entries, nil
-		}
-		_, _, names := syscall.ParseDirent(buffer[:count], -1, nil)
-		for _, name := range names {
-			status, status_err := file_status(filepath.Join(path, name))
-			if status_err != nil {
-				return nil, status_err
-			}
-			entries = append(entries, io.Directory_Entry{
-				Name:         name,
-				Is_Directory: status.Is_Directory,
-			})
-		}
+	entries = []io.Directory_Entry{}
+	if count <= 0 {
+		return entries, nil
 	}
-	return nil, errors.New("io: directory exceeds the maximum entry count")
+	_, _, names := syscall.ParseDirent(buffer[:count], -1, nil)
+	for _, name := range names {
+		// ParseDirent discards the entry type, so the kind comes from one fstatat against
+		// the open directory. Naming the child relative to the descriptor means the pass
+		// needs no path of its own, and the caller keeps one operation for one listing.
+		directory_bit, stat_err := file_status_at(descriptor, name)
+		if stat_err != nil {
+			return nil, stat_err
+		}
+		entries = append(entries, io.Directory_Entry{
+			Name: name, Is_Directory: directory_bit,
+		})
+	}
+	return entries, nil
+}
+
+// Reports whether name, resolved against the open directory, is itself a directory. Go exports
+// no Fstatat on this platform, so the call goes by trap number the way Open_At and Mkdir_At do.
+func file_status_at(directory int, name string) (directory_bit bool, err error) {
+	bytes, convert_err := syscall.BytePtrFromString(name)
+	if convert_err != nil {
+		return false, convert_err
+	}
+	metadata := syscall.Stat_t{}
+	_, _, errno := syscall.Syscall6(
+		PLATFORM_STAT_AT_CALL, uintptr(directory), uintptr(unsafe.Pointer(bytes)),
+		uintptr(unsafe.Pointer(&metadata)), PLATFORM_SYMBOLIC_LINK_NO_FOLLOW, 0, 0,
+	)
+	if errno != 0 {
+		return false, errno
+	}
+	return metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR, nil
 }
 
 // Reads up to len(buffer) bytes from a pipe. A pipe is not seekable, so this is plain read
@@ -413,6 +429,69 @@ func socket_connect_error(descriptor int) (err error) {
 		return socket_connect_translate(syscall.Errno(value))
 	}
 	return nil
+}
+
+// Sets one portable socket option. It is the setsockopt primitive: every caller-selected socket
+// setting arrives here, and the platform-mandatory ones stay in socket_open.
+func socket_option_set(descriptor int, option io.Socket_Option, value int) (err error) {
+	level, name, known := socket_option_name(option)
+	if !known {
+		return syscall.EINVAL
+	}
+	return syscall.SetsockoptInt(descriptor, level, name, value)
+}
+
+// Maps a portable socket option to its level and name.
+func socket_option_name(option io.Socket_Option) (level int, name int, known bool) {
+	switch option {
+	case io.SOCKET_OPTION_RECEIVE_BUFFER:
+		return syscall.SOL_SOCKET, syscall.SO_RCVBUF, true
+	case io.SOCKET_OPTION_SEND_BUFFER:
+		return syscall.SOL_SOCKET, syscall.SO_SNDBUF, true
+	case io.SOCKET_OPTION_KEEPALIVE:
+		return syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, true
+	case io.SOCKET_OPTION_REUSE_ADDRESS:
+		return syscall.SOL_SOCKET, syscall.SO_REUSEADDR, true
+	case io.SOCKET_OPTION_NO_DELAY:
+		return syscall.IPPROTO_TCP, syscall.TCP_NODELAY, true
+	}
+	return 0, 0, false
+}
+
+// Gives a socket its local address, the bind primitive.
+func socket_bind(descriptor int, address io.Address) (err error) {
+	system, address_err := socket_address(address)
+	if address_err != nil {
+		return address_err
+	}
+	return syscall.Bind(descriptor, system)
+}
+
+// Marks a bound socket as accepting, the listen primitive.
+func socket_listen_mark(descriptor int, backlog uint32) (err error) {
+	if backlog == 0 {
+		return syscall.EINVAL
+	}
+	return syscall.Listen(descriptor, int(backlog))
+}
+
+// Reports a socket's own address, the getsockname primitive.
+func socket_name(descriptor int) (address io.Address, err error) {
+	name, name_err := syscall.Getsockname(descriptor)
+	if name_err != nil {
+		return io.Address{}, name_err
+	}
+	return socket_address_from_system(name)
+}
+
+// Translates a filesystem errno to the backend-independent sentinel. Darwin completes a
+// filesystem operation in its eager submit and never reaches the Linux result translation, so
+// the mapping lives here where both platforms use it.
+func file_translate(err error) (translated error) {
+	if err == syscall.EEXIST {
+		return io.Path_Exists
+	}
+	return err
 }
 
 // Translates platform-specific connect refusal to the backend-independent sentinel.

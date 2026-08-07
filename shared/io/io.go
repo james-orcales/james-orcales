@@ -211,7 +211,8 @@ type Process_Request struct {
 	Path string
 	// Arguments are the process arguments, excluding the program name.
 	Arguments []string
-	// Environment is the process environment; nil inherits the parent's.
+	// Environment is the complete process environment. A nil value gives the child none, so a
+	// caller that wants an ambient value must inject it from its root.
 	Environment []string
 	// Working_Directory is the process's directory; empty uses the current one.
 	Working_Directory string
@@ -259,6 +260,39 @@ type Process_Result struct {
 // could not be started at all.
 type Process_Callback func(completion *Completion, result Process_Result, err error)
 
+// Socket_Transport selects the transport a Socket carries.
+type Socket_Transport int
+
+// SOCKET_TRANSPORT_TCP selects a stream socket.
+const SOCKET_TRANSPORT_TCP Socket_Transport = 0
+
+// SOCKET_TRANSPORT_UDP selects a datagram socket.
+const SOCKET_TRANSPORT_UDP Socket_Transport = 1
+
+// Socket_Option names one integer socket option the backend can set.
+type Socket_Option int
+
+// SOCKET_OPTION_RECEIVE_BUFFER sets the receive buffer size in bytes.
+const SOCKET_OPTION_RECEIVE_BUFFER Socket_Option = 0
+
+// SOCKET_OPTION_SEND_BUFFER sets the send buffer size in bytes.
+const SOCKET_OPTION_SEND_BUFFER Socket_Option = 1
+
+// SOCKET_OPTION_KEEPALIVE enables the transport keepalive probe.
+const SOCKET_OPTION_KEEPALIVE Socket_Option = 2
+
+// SOCKET_OPTION_REUSE_ADDRESS lets a listener rebind a recently released local address.
+const SOCKET_OPTION_REUSE_ADDRESS Socket_Option = 3
+
+// SOCKET_OPTION_NO_DELAY disables the transport's send coalescing.
+const SOCKET_OPTION_NO_DELAY Socket_Option = 4
+
+// Directory_Callback receives one pass of directory entries, or the error that ended the walk.
+// An empty slice with a nil error reports the end of the directory.
+type Directory_Callback func(
+	completion *Completion, entries []Directory_Entry, err error,
+)
+
 // Directory_Entry is one child of a directory: its name and whether it is itself a
 // directory, the two facts a walk needs to recurse into subdirectories and sync files.
 type Directory_Entry struct {
@@ -293,6 +327,15 @@ var Socket_Not_Connected = errors.New("io: socket not connected")
 // Canceled is a raw kernel operation result, matching TigerBeetle's error.Canceled variants.
 // It is not an API for canceling an operation: shared/io deliberately has no generic Cancel.
 var Canceled = errors.New("io: operation canceled")
+
+// Path_Exists is the portable Mkdir_At result for a path that is already present. Make_Directory
+// treats it as convergence, so a repeated create is not an error.
+var Path_Exists = errors.New("io: file exists")
+
+// Retired_Twice reports that a backend retired one completion more than one time. A derived
+// function delivers it rather than hiding it, because the caller owns the completion and must
+// learn that its lifecycle broke.
+var Retired_Twice = errors.New("io: the completion retired more than once")
 
 // Deadline_Exceeded is returned after a finite operation retires without its external event.
 var Deadline_Exceeded = errors.New("io: deadline exceeded")
@@ -437,6 +480,14 @@ type IO struct {
 		completion *Completion, callback File_Callback, directory File, file_path string,
 		options Open_At_Options,
 	)
+	// Mkdir_At asynchronously creates one directory named by file_path relative to directory.
+	// It is the mkdirat primitive, not a parent-creating mkdir: the parent must exist, and an
+	// existing path reports the operating system error rather than converging. Make_Directory
+	// composes this primitive above the surface, so both backends run the same composition.
+	Mkdir_At func(
+		completion *Completion, callback Timeout_Callback, directory File, file_path string,
+		mode uint32,
+	)
 	// Timeout fires callback after the duration on the clock, off the same queue the
 	// IO completions use. Duration must be positive; use Next_Tick to yield.
 	Timeout func(completion *Completion, callback Timeout_Callback, duration time.Duration)
@@ -456,35 +507,30 @@ type IO struct {
 	Event_Trigger func(event Event, completion *Completion)
 	// Close_Event releases an Event after its listener has drained.
 	Close_Event func(event Event)
-	// Listen binds a caller-owned socket and returns the resolved address, including the actual
-	// port chosen for port zero (third-party/tigerbeetle/src/io/common.zig:32-59).
-	Listen func(
-		socket File, address Address, options Listen_Options,
-	) (resolved Address, err error)
-	// Open opens the file at path for reading, returning its descriptor synchronously —
-	// opening never blocks the loop, so it carries no Completion. A later Read of the
-	// descriptor yields the file's bytes.
-	Open func(path string) (file File, err error)
-	// Create opens path for writing, truncating it, and returns its descriptor
-	// synchronously; a later Write persists bytes to it.
-	Create func(path string) (file File, err error)
-	// Read_Directory lists path's immediate children synchronously — a readdir never blocks
-	// the loop, so it carries no Completion; each entry names a child and whether it is
-	// itself a directory.
-	Read_Directory func(path string) (entries []Directory_Entry, err error)
+	// Bind gives a caller-owned socket its local address. It is the bind primitive: Listen
+	// composes it with Listen_Socket and Get_Socket_Name above the surface.
+	Bind func(socket File, address Address) (err error)
+	// Listen_Socket marks a bound socket as accepting, with backlog as its queue depth.
+	Listen_Socket func(socket File, backlog uint32) (err error)
+	// Get_Socket_Name reports a socket's own address, which is how a caller learns the port
+	// the kernel chose for port zero.
+	Get_Socket_Name func(socket File) (address Address, err error)
+	// Socket creates one non-blocking close-on-exec socket of the given family and transport.
+	// Open_Socket_TCP and Open_Socket_UDP compose it with Set_Socket_Option above the surface.
+	Socket func(family Address_Family, transport Socket_Transport) (socket File, err error)
+	// Set_Socket_Option sets one integer socket option, the setsockopt primitive.
+	Set_Socket_Option func(socket File, option Socket_Option, value int) (err error)
+	// Get_Directory_Entries reads one pass of a directory's raw entries into buffer and
+	// returns the children it names, each with whether it is itself a directory. An empty
+	// slice reports the end. The dirent layout is per-platform, so the parse and the kind
+	// stay in the backend, and only the pass loop and the descriptor lifetime compose above.
+	Get_Directory_Entries func(
+		completion *Completion, callback Directory_Callback, directory File, buffer []byte,
+	)
 	// Status reports whether path exists, whether it is a directory, and its byte size,
 	// synchronously; an absent path is Exists false with a nil error, so a caller branches on
 	// the status, not the error.
 	Status func(path string) (status File_Status, err error)
-	// Make_Directory creates path and any missing parents synchronously; an existing
-	// directory is not an error, so a repeated mkdir converges.
-	Make_Directory func(path string) (err error)
-	// Open_Socket_TCP creates a non-blocking close-on-exec TCP socket with explicit options.
-	Open_Socket_TCP func(
-		family Address_Family, options TCP_Options,
-	) (socket File, err error)
-	// Open_Socket_UDP creates a non-blocking close-on-exec UDP socket.
-	Open_Socket_UDP func(family Address_Family) (socket File, err error)
 	// Accept yields one inbound connection on listener before deadline, or Deadline_Exceeded.
 	// The finite deadline deliberately diverges from TigerBeetle's unbounded IO.accept; it
 	// keeps every repository submission bounded. TLS termination remains a secure_transport
@@ -718,8 +764,10 @@ type Sim_Socket struct {
 	Datagram bool
 	// Connected reports whether Connect or Accept established the socket.
 	Connected bool
-	// Listener reports whether Listen consumed this socket.
+	// Listener reports whether Listen_Socket consumed this socket.
 	Listener bool
+	// Address is the local address Bind gave the socket.
+	Address Address
 	// Receive_Shutdown records SHUTDOWN_RECEIVE or SHUTDOWN_BOTH.
 	Receive_Shutdown bool
 	// Send_Shutdown records SHUTDOWN_SEND or SHUTDOWN_BOTH.
@@ -748,6 +796,9 @@ type Sim struct {
 	// Files binds an open file descriptor to its node, so Read/Write route to real tree
 	// bytes; a descriptor absent from this map is a socket, whose bytes stay synthetic.
 	Files map[File]*Sim_Node
+	// Directory_Drained records the descriptors whose entries one pass already reported, so
+	// a second Get_Directory_Entries reports the end as a real getdents does.
+	Directory_Drained map[File]bool
 	// Raw_Open tracks every synthetic descriptor until the caller submits Close.
 	Raw_Open map[File]bool
 	// Sockets holds lifecycle and directional-shutdown state for synthetic sockets.
@@ -774,15 +825,16 @@ type Sim struct {
 func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
 	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.NANOSECOND})
 	state := &Sim{
-		Clock:           clock,
-		Tick:            tick,
-		Generator:       prng.New(seed),
-		Files:           map[File]*Sim_Node{},
-		Raw_Open:        map[File]bool{},
-		Sockets:         map[File]*Sim_Socket{},
-		Events:          map[Event]*Sim_Event{},
-		Operations:      map[*Completion]Sim_Operation{},
-		Operation_Files: map[*Completion]File{},
+		Clock:             clock,
+		Tick:              tick,
+		Generator:         prng.New(seed),
+		Files:             map[File]*Sim_Node{},
+		Directory_Drained: map[File]bool{},
+		Raw_Open:          map[File]bool{},
+		Sockets:           map[File]*Sim_Socket{},
+		Events:            map[Event]*Sim_Event{},
+		Operations:        map[*Completion]Sim_Operation{},
+		Operation_Files:   map[*Completion]File{},
 	}
 	state.Root = sim_generate(&state.Generator)
 	sim_wire_bytes(state, &loop)
@@ -858,8 +910,8 @@ func sim_wire_bytes(state *Sim, loop *IO) {
 	}
 }
 
-// Wires timers, next ticks, filesystem lifecycle, and both close primitives onto loop.
-func sim_wire_lifecycle(state *Sim, loop *IO) {
+// Wires the two path primitives, Open_At and Mkdir_At, onto loop.
+func sim_wire_path(state *Sim, loop *IO) {
 	loop.Open_At = func(
 		completion *Completion, callback File_Callback, directory File, file_path string,
 		options Open_At_Options,
@@ -881,6 +933,23 @@ func sim_wire_lifecycle(state *Sim, loop *IO) {
 			callback(completion, file, open_err)
 		})
 	}
+	loop.Mkdir_At = func(
+		completion *Completion, callback Timeout_Callback, directory File, file_path string,
+		_ uint32,
+	) {
+		sim_submit(state, completion, sim_latency(state), func() {
+			if directory != DIRECTORY_CURRENT {
+				callback(completion, sim_not_a_directory)
+				return
+			}
+			callback(completion, sim_mkdir(state, file_path))
+		})
+	}
+}
+
+// Wires timers, next ticks, filesystem lifecycle, and both close primitives onto loop.
+func sim_wire_lifecycle(state *Sim, loop *IO) {
+	sim_wire_path(state, loop)
 	loop.Timeout = func(
 		completion *Completion, callback Timeout_Callback, duration time.Duration,
 	) {
@@ -929,40 +998,48 @@ func sim_wire_lifecycle(state *Sim, loop *IO) {
 
 // Wires simulated filesystem and socket lifecycle operations onto loop.
 func sim_wire_filesystem(state *Sim, loop *IO) {
-	loop.Listen = func(
-		socket File, address Address, options Listen_Options,
-	) (resolved Address, err error) {
+	loop.Bind = func(socket File, address Address) (err error) {
 		socket_state := state.Sockets[socket]
 		if socket_state == nil {
-			return Address{}, errors.New("io: listen requires an open TCP socket")
+			return errors.New("io: bind requires an open socket")
+		}
+		bound := address
+		if bound.Port == 0 {
+			bound.Port = uint16(socket)
+		}
+		socket_state.Address = bound
+		return nil
+	}
+	loop.Listen_Socket = func(socket File, backlog uint32) (err error) {
+		socket_state := state.Sockets[socket]
+		if socket_state == nil {
+			return errors.New("io: listen requires an open TCP socket")
 		}
 		if socket_state.Datagram {
-			return Address{}, errors.New("io: listen requires an open TCP socket")
+			return errors.New("io: listen requires an open TCP socket")
 		}
-		if options.Backlog == 0 {
-			return Address{}, errors.New("io: listen backlog must be positive")
+		if backlog == 0 {
+			return errors.New("io: listen backlog must be positive")
 		}
 		socket_state.Listener = true
-		resolved = address
-		if resolved.Port == 0 {
-			resolved.Port = uint16(socket)
+		return nil
+	}
+	loop.Get_Socket_Name = func(socket File) (address Address, err error) {
+		socket_state := state.Sockets[socket]
+		if socket_state == nil {
+			return Address{}, errors.New("io: getsockname requires an open socket")
 		}
-		return resolved, nil
+		return socket_state.Address, nil
 	}
-	loop.Open = func(path string) (file File, err error) {
-		return sim_open(state, path)
-	}
-	loop.Create = func(path string) (file File, err error) {
-		return sim_create(state, path)
-	}
-	loop.Read_Directory = func(path string) (entries []Directory_Entry, err error) {
-		return sim_read_directory(state.Root, path)
+	loop.Get_Directory_Entries = func(
+		completion *Completion, callback Directory_Callback, directory File, _ []byte,
+	) {
+		sim_submit(state, completion, sim_latency(state), func() {
+			callback(completion, sim_directory_pass(state, directory), nil)
+		})
 	}
 	loop.Status = func(path string) (status File_Status, err error) {
 		return sim_status(state.Root, path), nil
-	}
-	loop.Make_Directory = func(path string) (err error) {
-		return sim_make_directory(state.Root, path)
 	}
 	loop.Close = func(completion *Completion, callback Timeout_Callback, file File) {
 		sim_assert_file_drained(state, file)
@@ -1040,13 +1117,16 @@ func sim_wire_socket(state *Sim, loop *IO) {
 		state.Operations[completion] = SIM_OPERATION_READ_WAITER
 		state.Operation_Files[completion] = listener
 	}
-	loop.Open_Socket_TCP = func(
-		family Address_Family, options TCP_Options,
+	loop.Socket = func(
+		family Address_Family, transport Socket_Transport,
 	) (socket File, err error) {
-		return sim_open_socket(state, family, false), nil
+		return sim_open_socket(state, family, transport == SOCKET_TRANSPORT_UDP), nil
 	}
-	loop.Open_Socket_UDP = func(family Address_Family) (socket File, err error) {
-		return sim_open_socket(state, family, true), nil
+	loop.Set_Socket_Option = func(socket File, _ Socket_Option, _ int) (err error) {
+		if state.Sockets[socket] == nil {
+			return errors.New("io: setsockopt requires an open socket")
+		}
+		return nil
 	}
 	loop.Connect = func(
 		completion *Completion, callback Timeout_Callback,
@@ -1209,6 +1289,29 @@ func sim_path_names(path string) (names []string) {
 	return names
 }
 
+// Creates exactly one directory at path against state.Root. This is the mkdirat primitive, so
+// the parent must already exist and an existing path is an error. Make_Directory supplies the
+// convergence and the parent creation above the surface.
+func sim_mkdir(state *Sim, path string) (err error) {
+	names := sim_path_names(path)
+	if len(names) == 0 {
+		return Path_Exists
+	}
+	parent, found := sim_resolve(state.Root, strings.Join(names[:len(names)-1], "/"))
+	if !found {
+		return sim_file_absent
+	}
+	if !parent.Directory {
+		return sim_not_a_directory
+	}
+	name := names[len(names)-1]
+	if _, present := parent.Children[name]; present {
+		return Path_Exists
+	}
+	parent.Children[name] = sim_new_directory()
+	return nil
+}
+
 // Resolves path against root, returning the node it names and whether it was found.
 func sim_resolve(root *Sim_Node, path string) (node *Sim_Node, found bool) {
 	node = root
@@ -1260,6 +1363,29 @@ func sim_read_directory(root *Sim_Node, path string) (entries []Directory_Entry,
 	return entries, nil
 }
 
+// Returns one directory pass for an open directory descriptor. The simulated tree fits in one
+// pass, so the first call gives every child and the second gives none, which is how a real
+// getdents reports the end.
+func sim_directory_pass(state *Sim, directory File) (entries []Directory_Entry) {
+	node := state.Files[directory]
+	if node == nil {
+		return []Directory_Entry{}
+	}
+	if state.Directory_Drained[directory] {
+		return []Directory_Entry{}
+	}
+	state.Directory_Drained[directory] = true
+	entries = []Directory_Entry{}
+	for name, child := range node.Children {
+		entry := Directory_Entry{Name: name, Is_Directory: child.Directory}
+		entries = append(entries, entry)
+	}
+	slices.SortFunc(entries, func(left, right Directory_Entry) (order int) {
+		return strings.Compare(left.Name, right.Name)
+	})
+	return entries
+}
+
 // Creates path and any missing parents against root; an existing directory converges, and a
 // file where a directory is needed errors.
 func sim_make_directory(root *Sim_Node, path string) (err error) {
@@ -1288,9 +1414,8 @@ func sim_open(state *Sim, path string) (file File, err error) {
 	if !found {
 		return 0, sim_file_absent
 	}
-	if node.Directory {
-		return 0, sim_is_a_directory
-	}
+	// A directory opens, because Read_Directory composes Open_At with Get_Directory_Entries.
+	// A read of the descriptor still fails, the same as a read of a real directory.
 	descriptor := sim_descriptor(state)
 	state.Files[descriptor] = node
 	state.Raw_Open[descriptor] = true
@@ -2481,6 +2606,307 @@ func Read_At_Least(stream Stream, buffer []byte, minimum int64) (count int64, er
 		}
 	}
 	return count, err
+}
+
+// Make_Directory_Input names one parent-creating directory create.
+type Make_Directory_Input struct {
+	// Loop supplies the Mkdir_At primitive each component uses.
+	Loop IO
+	// Completion is the caller-owned completion the result retires on.
+	Completion *Completion
+	// Callback runs once, after the last component or after the first real failure.
+	Callback Timeout_Callback
+	// Path is the directory to create, including every missing parent.
+	Path string
+	// Mode is the permission mode each created component takes.
+	Mode uint32
+}
+
+// Make_Directory creates Path and every missing parent. It is a derived function, not a member
+// of IO: it walks the path in pure code and submits one Mkdir_At for each component, so the
+// simulated backend and the operating-system backend run this same walk.
+//
+// An existing component converges rather than failing, because Path_Exists is what mkdirat
+// reports for a directory that is already there. Any other error retires the completion at once.
+func Make_Directory(input *Make_Directory_Input) {
+	invariant.Always(input != nil, "A Make_Directory input is present.")
+	invariant.Always(input.Loop.Mkdir_At != nil, "Make_Directory needs the Mkdir_At primitive.")
+	state := &Make_Directory_State{Input: input, Bounds: make_directory_bounds(input.Path)}
+	// The continuation is a field, not a direct call, so one component's callback advances
+	// to the next without the step naming itself. It is the shape setup uses for its own
+	// rearms, and it keeps each component a separate submission rather than a nested call.
+	state.Continue = func() { make_directory_step(state) }
+	state.Continue()
+}
+
+// One parent-creating create in progress: the component boundaries and the index reached.
+type Make_Directory_State struct {
+	// Input holds the caller's loop, completion, callback, path, and mode.
+	Input *Make_Directory_Input
+	// Bounds are the end offsets of each path component, shortest first.
+	Bounds []int
+	// Index is the component the next step creates.
+	Index int
+	// Delivered reports the caller's callback already ran. A backend may retire the same
+	// completion more than once, and a derived function must still deliver one result.
+	Delivered bool
+	// Submitted reports one component create in flight, so a second retirement of the same
+	// completion does not submit the next component twice.
+	Submitted bool
+	// Continue advances to the next component. It is a field so a callback reaches the step
+	// without the step naming itself.
+	Continue func()
+}
+
+// One directory listing in progress: the descriptor, the pass buffer, and the entries so far.
+type Read_Directory_State struct {
+	// Input holds the caller's loop, completion, callback, and path.
+	Input *Read_Directory_Input
+	// Directory is the open descriptor every pass reads.
+	Directory File
+	// Buffer receives one pass of raw entries.
+	Buffer []byte
+	// Entries accumulates every child the passes reported.
+	Entries []Directory_Entry
+	// Passes counts the passes taken, so the walk stays bounded.
+	Passes int
+	// Failure is the error that ended the walk, delivered after the close.
+	Failure error
+	// Delivered reports the caller's callback already ran.
+	Delivered bool
+	// Continue takes the next pass. It is a field so a callback reaches the pass without the
+	// pass naming itself.
+	Continue func()
+}
+
+// Delivers the create's one result. A second retirement reaches this and returns.
+func make_directory_deliver(
+	state *Make_Directory_State, completion *Completion, err error,
+) {
+	if state.Delivered {
+		return
+	}
+	state.Delivered = true
+	state.Input.Callback(completion, err)
+}
+
+// Returns the end offset of every path component, so "/a/b" gives 2 and 4. The walk is bounded
+// by the path length, and a repeated separator contributes no bound.
+func make_directory_bounds(path string) (bounds []int) {
+	bounds = []int{}
+	for index := 1; index <= len(path); index++ {
+		if index < len(path) {
+			if path[index] != '/' {
+				continue
+			}
+		}
+		if path[index-1] == '/' {
+			continue
+		}
+		bounds = append(bounds, index)
+	}
+	return bounds
+}
+
+// Submits the next component, or retires the caller's completion once every component exists.
+func make_directory_step(state *Make_Directory_State) {
+	if state.Index == len(state.Bounds) {
+		make_directory_deliver(state, state.Input.Completion, nil)
+		return
+	}
+	component := state.Input.Path[:state.Bounds[state.Index]]
+	state.Index++
+	state.Submitted = true
+	state.Input.Loop.Mkdir_At(state.Input.Completion, func(
+		completion *Completion, mkdir_err error,
+	) {
+		// A second retirement of the same completion finds Pending already cleared and
+		// submits nothing, so each component is created one time.
+		if !state.Submitted {
+			return
+		}
+		state.Submitted = false
+		if mkdir_err != nil {
+			if mkdir_err != Path_Exists {
+				make_directory_deliver(state, completion, mkdir_err)
+				return
+			}
+		}
+		state.Continue()
+	}, DIRECTORY_CURRENT, component, state.Input.Mode)
+}
+
+// Bounds one directory pass, so a large directory is read in repeated passes rather than one
+// unbounded allocation.
+const DIRECTORY_PASS_BYTES = 8192
+
+// Caps the number of directory passes, so a pathological directory reports an error rather than
+// a walk without end.
+const DIRECTORY_PASSES_MAX = 4096
+
+// Read_Directory_Input names one directory listing.
+type Read_Directory_Input struct {
+	// Loop supplies the Open_At, Get_Directory_Entries, and Close primitives.
+	Loop IO
+	// Completion is the caller-owned completion the result retires on.
+	Completion *Completion
+	// Callback runs once, with every child or with the error that ended the walk.
+	Callback Directory_Callback
+	// Path is the directory to list.
+	Path string
+}
+
+// Read_Directory lists a directory's immediate children. It is a derived function: it opens the
+// directory, reads repeated passes until one reports none, and closes the descriptor. Both
+// backends run this same sequence, and only the single-pass primitive below it differs.
+func Read_Directory(input *Read_Directory_Input) {
+	invariant.Always(input != nil, "A Read_Directory input is present.")
+	invariant.Always(
+		input.Loop.Get_Directory_Entries != nil,
+		"Read_Directory needs the Get_Directory_Entries primitive.",
+	)
+	state := &Read_Directory_State{
+		Input:     input,
+		Buffer:    make([]byte, DIRECTORY_PASS_BYTES),
+		Entries:   []Directory_Entry{},
+		Directory: -1,
+	}
+	state.Continue = func() { read_directory_pass(state) }
+	input.Loop.Open_At(input.Completion, func(
+		completion *Completion, directory File, open_err error,
+	) {
+		if open_err != nil {
+			read_directory_deliver(state, completion, nil, open_err)
+			return
+		}
+		if state.Delivered {
+			return
+		}
+		if state.Directory >= 0 {
+			return
+		}
+		state.Directory = directory
+		state.Continue()
+	}, DIRECTORY_CURRENT, input.Path, Open_At_Options{Access: OPEN_READ_ONLY})
+}
+
+// Delivers the walk's one result. A second retirement of the same completion reaches this and
+// returns without a second callback.
+func read_directory_deliver(
+	state *Read_Directory_State, completion *Completion,
+	entries []Directory_Entry, err error,
+) {
+	if state.Delivered {
+		state.Input.Callback(completion, nil, Retired_Twice)
+		return
+	}
+	state.Delivered = true
+	state.Input.Callback(completion, entries, err)
+}
+
+// Reads one pass, then either takes another or closes the descriptor and delivers.
+func read_directory_pass(state *Read_Directory_State) {
+	if state.Passes == DIRECTORY_PASSES_MAX {
+		state.Failure = errors.New("io: directory exceeds the maximum entry count")
+		read_directory_close(state)
+		return
+	}
+	state.Passes++
+	state.Input.Loop.Get_Directory_Entries(state.Input.Completion, func(
+		_ *Completion, entries []Directory_Entry, pass_err error,
+	) {
+		if pass_err != nil {
+			state.Failure = pass_err
+			read_directory_close(state)
+			return
+		}
+		if len(entries) == 0 {
+			read_directory_close(state)
+			return
+		}
+		state.Entries = append(state.Entries, entries...)
+		state.Continue()
+	}, state.Directory, state.Buffer)
+}
+
+// Releases the descriptor, then delivers the listing or the failure that ended it.
+func read_directory_close(state *Read_Directory_State) {
+	state.Input.Loop.Close(state.Input.Completion, func(
+		completion *Completion, close_err error,
+	) {
+		if state.Delivered {
+			read_directory_deliver(state, completion, nil, nil)
+			return
+		}
+		if state.Failure != nil {
+			read_directory_deliver(state, completion, nil, state.Failure)
+			return
+		}
+		if close_err != nil {
+			read_directory_deliver(state, completion, nil, close_err)
+			return
+		}
+		read_directory_deliver(state, completion, state.Entries, nil)
+	}, state.Directory)
+}
+
+// Listen binds a caller-owned socket, marks it accepting, and reports the address the kernel
+// settled on — the actual port when the caller asked for port zero. It is a derived function
+// over the Bind, Listen_Socket, and Get_Socket_Name primitives, so both backends run this same
+// sequence (third-party/tigerbeetle/src/io/common.zig:32-59).
+func Listen(
+	loop IO, socket File, address Address, options Listen_Options,
+) (resolved Address, err error) {
+	invariant.Always(loop.Bind != nil, "Listen needs the Bind primitive.")
+	reuse_err := loop.Set_Socket_Option(socket, SOCKET_OPTION_REUSE_ADDRESS, 1)
+	if reuse_err != nil {
+		return Address{}, reuse_err
+	}
+	if bind_err := loop.Bind(socket, address); bind_err != nil {
+		return Address{}, bind_err
+	}
+	if listen_err := loop.Listen_Socket(socket, options.Backlog); listen_err != nil {
+		return Address{}, listen_err
+	}
+	return loop.Get_Socket_Name(socket)
+}
+
+// Open_Socket_TCP creates a stream socket and applies the caller's TCP options. It is a derived
+// function over the Socket and Set_Socket_Option primitives.
+func Open_Socket_TCP(
+	loop IO, family Address_Family, options TCP_Options,
+) (socket File, err error) {
+	invariant.Always(loop.Socket != nil, "Open_Socket_TCP needs the Socket primitive.")
+	socket, open_err := loop.Socket(family, SOCKET_TRANSPORT_TCP)
+	if open_err != nil {
+		return 0, open_err
+	}
+	settings := []struct {
+		Option Socket_Option
+		Value  int
+		Set    bool
+	}{
+		{SOCKET_OPTION_RECEIVE_BUFFER, options.Receive_Buffer, options.Receive_Buffer > 0},
+		{SOCKET_OPTION_SEND_BUFFER, options.Send_Buffer, options.Send_Buffer > 0},
+		{SOCKET_OPTION_KEEPALIVE, 1, options.Keepalive != nil},
+		{SOCKET_OPTION_NO_DELAY, 1, options.No_Delay},
+	}
+	for _, setting := range settings {
+		if !setting.Set {
+			continue
+		}
+		set_err := loop.Set_Socket_Option(socket, setting.Option, setting.Value)
+		if set_err != nil {
+			return 0, set_err
+		}
+	}
+	return socket, nil
+}
+
+// Open_Socket_UDP creates a datagram socket. It is a derived function over the Socket primitive.
+func Open_Socket_UDP(loop IO, family Address_Family) (socket File, err error) {
+	invariant.Always(loop.Socket != nil, "Open_Socket_UDP needs the Socket primitive.")
+	return loop.Socket(family, SOCKET_TRANSPORT_UDP)
 }
 
 // Read_Full reads until the buffer is full or the stream stops — Odin's read_full.

@@ -12,17 +12,28 @@ import (
 // Test_Socket_Open_Darwin_No_Sigpipe verifies the Darwin-only portable client option suppresses
 // SIGPIPE, complementing the common black-box buffer, keepalive, nonblocking, and CLOEXEC checks.
 func Test_Socket_Open_Darwin_No_Sigpipe(t *testing.T) {
-	descriptor, open_err := socket_open_tcp(sharedio.FAMILY_IPV4, sharedio.TCP_Options{
-		Receive_Buffer: SOCKET_RECEIVE_BUFFER_SIZE,
-		Send_Buffer:    SOCKET_SEND_BUFFER_SIZE,
-		Keepalive: &sharedio.TCP_Keepalive{
-			Idle_Seconds: 5, Interval_Seconds: 4, Count: 3,
-		},
-	})
+	descriptor, open_err := socket_open(
+		sharedio.FAMILY_IPV4, sharedio.SOCKET_TRANSPORT_TCP,
+	)
 	if open_err != nil {
 		t.Fatalf("socket open: %v", open_err)
 	}
 	defer syscall.Close(descriptor)
+	// The buffer sizes are caller options now, so the test applies them through the
+	// setsockopt primitive. NOSIGPIPE stays platform-mandatory inside socket_open.
+	buffers := []struct {
+		Option sharedio.Socket_Option
+		Value  int
+	}{
+		{sharedio.SOCKET_OPTION_RECEIVE_BUFFER, SOCKET_RECEIVE_BUFFER_SIZE},
+		{sharedio.SOCKET_OPTION_SEND_BUFFER, SOCKET_SEND_BUFFER_SIZE},
+	}
+	for _, buffer := range buffers {
+		set_err := socket_option_set(descriptor, buffer.Option, buffer.Value)
+		if set_err != nil {
+			t.Fatalf("set socket option: %v", set_err)
+		}
+	}
 	value, get_err := syscall.GetsockoptInt(
 		descriptor, syscall.SOL_SOCKET, SOCKET_NO_SIGPIPE)
 	if get_err != nil {
