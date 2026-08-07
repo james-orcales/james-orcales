@@ -9407,12 +9407,14 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 // Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
 // other package routes IO through shared/io. Exempt: the io/default and time/default
 // gateways (time is the clock the loop is built on, not IO the loop carries), the
-// instrumentation packages (a diagnostics side channel), tests, and package main.
+// instrumentation packages (a diagnostics side channel), tests, and package main. The
+// os/default gateway is exempt for syscall alone, not for the whole ban.
 func check_io_gateway(
 	parsed_files []Parsed_File, components *Component_Index, instrumentation []string,
 ) (diags []Diagnostic) {
 	gateway := source.IO_Gateway(components)
 	time_gateway := source.Time_Gateway(components)
+	operating_system_gateway := source.Operating_System_Gateway(components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -9436,17 +9438,32 @@ func check_io_gateway(
 		if source.Path_Matches_Glob(pf.Path, instrumentation) {
 			continue
 		}
-		diags = append(diags, io_gateway_import_diagnostics(pf)...)
+		exempt_import := ""
+		if operating_system_gateway != "" {
+			if source.Path_Matches_Glob(
+				pf.Path, []string{operating_system_gateway + "/**"}) {
+				exempt_import = "syscall"
+			}
+		}
+		diags = append(diags, io_gateway_import_diagnostics(pf, exempt_import)...)
 		diags = append(diags, io_gateway_call_diagnostics(pf)...)
 	}
 	return diags
 }
 
-// Flags each raw-IO stdlib import in one file.
-func io_gateway_import_diagnostics(pf Parsed_File) (diags []Diagnostic) {
+// Flags each raw-IO stdlib import in one file. exempt_import names the one banned path
+// this file may keep, or "" when it may keep none: the os/default gateway holds syscall
+// for process and environment ambient state, and stays under the rest of the ban.
+func io_gateway_import_diagnostics(
+	pf Parsed_File, exempt_import string,
+) (diags []Diagnostic) {
+
 	for _, implementation := range pf.File.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if !io_gateway_banned_import(import_path) {
+			continue
+		}
+		if import_path == exempt_import {
 			continue
 		}
 		diags = append(diags, Diagnostic{

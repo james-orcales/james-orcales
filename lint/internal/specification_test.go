@@ -1758,6 +1758,56 @@ func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 	}
 }
 
+// Test_IO_Gateway_Operating_System_Exempt verifies the os/default gateway may import
+// syscall — process and environment access is ambient state, not IO the loop carries.
+func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/os/default/system.go": &fstest.MapFile{Data: []byte(
+			"// Package os is a fixture.\npackage os\n\nimport \"syscall\"\n\n" +
+				"// Identifier reads the process identifier.\n" +
+				"func Identifier() (identifier int) {\n" +
+				"\treturn syscall.Getpid()\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "shared/os/default",
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "Route IO through shared/io") {
+		t.Fatal("the os/default gateway may import syscall")
+	}
+}
+
+// Test_IO_Gateway_Operating_System_Network_Flagged verifies the os/default gateway gets
+// no blanket exemption: syscall alone is permitted there, and net/http is still flagged.
+func Test_IO_Gateway_Operating_System_Network_Flagged(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/os/default/system.go": &fstest.MapFile{Data: []byte(
+			"// Package os is a fixture.\npackage os\n\nimport \"net/http\"\n\n" +
+				"// Client makes a client.\n" +
+				"func Client() (client *http.Client) {\n" +
+				"\treturn &http.Client{}\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "shared/os/default",
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if !specification_diagnosed(diags, "Route IO through shared/io") {
+		t.Fatal("the os/default gateway may not import net/http")
+	}
+}
+
 // Test_Sim_Script_Seed_Allowed verifies New_Sim taking only a seed is not flagged.
 func Test_Sim_Script_Seed_Allowed(t *testing.T) {
 	t.Parallel()

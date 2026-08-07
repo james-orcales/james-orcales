@@ -519,8 +519,8 @@ harness drives. The read-only clock constructors mint no Driver and are not gate
 
 ### Gateway
 
-Raw IO stdlib lives only in the io/default and time/default gateways: net/http, syscall, os/exec,
-bufio, crypto/tls, os/signal are unimportable elsewhere; os and net expose only their pure symbols.
+Raw IO stdlib (net/http, syscall, os/exec, bufio, crypto/tls, os/signal) lives only in io/default
+and time/default, and syscall alone also in os/default. os and net expose only their pure symbols.
 Route IO through shared/io; instrumentation, tests, generated files, and main are exempt.
 
 ### Seed

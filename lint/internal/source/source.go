@@ -653,14 +653,24 @@ func import_path_under_component(input *Import_Path_Under_Component_Input) (yes 
 // gateway (its time/default), or "" when no module is the shared library.
 func Time_Gateway(components *Component_Index) (gateway string) {
 
+	return shared_library_directory(components, "time/default")
+}
+
+// Returns the workspace-relative directory named by relative within the shared library
+// component, or "" when no module is the shared library. The gateways all sit at a fixed
+// path below the shared root, thus one resolver keeps them from drifting apart.
+func shared_library_directory(
+	components *Component_Index, relative string,
+) (directory string) {
+
 	for _, m := range components.Components {
 		if !m.Is_Shared_Library {
 			continue
 		}
 		if m.Root == "." {
-			return "time/default"
+			return relative
 		}
-		return m.Root + "/time/default"
+		return m.Root + "/" + relative
 	}
 	return ""
 }
@@ -679,16 +689,15 @@ func Shared_Import(components *Component_Index) (import_path string) {
 // Returns the workspace-relative directory of the shared module's raw-IO gateway (its
 // io/default), or "" when no module is the shared library.
 func IO_Gateway(components *Component_Index) (gateway string) {
-	for _, m := range components.Components {
-		if !m.Is_Shared_Library {
-			continue
-		}
-		if m.Root == "." {
-			return "io/default"
-		}
-		return m.Root + "/io/default"
-	}
-	return ""
+	return shared_library_directory(components, "io/default")
+}
+
+// Returns the workspace-relative directory of the shared module's operating-system
+// gateway (its os/default), or "" when no module is the shared library. The gateway
+// binds process and environment ambient state, thus it holds syscall alone — the rest of
+// the raw-IO stdlib stays banned there, because a file or a socket is not ambient state.
+func Operating_System_Gateway(components *Component_Index) (gateway string) {
+	return shared_library_directory(components, "os/default")
 }
 
 // Method_Satisfies_Stdlib reports whether the method's signature implements a
