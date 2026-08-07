@@ -692,12 +692,22 @@ func IO_Gateway(components *Component_Index) (gateway string) {
 	return shared_library_directory(components, "io/default")
 }
 
-// Returns the workspace-relative directory of the shared module's operating-system
-// gateway (its os/default), or "" when no module is the shared library. The gateway
-// binds process and environment ambient state, thus it holds syscall alone — the rest of
-// the raw-IO stdlib stays banned there, because a file or a socket is not ambient state.
-func Operating_System_Gateway(components *Component_Index) (gateway string) {
-	return shared_library_directory(components, "os/default")
+// Returns the workspace-relative directories of the shared module's syscall gateways
+// (its os/default and nbio/default), or nil when no module is the shared library. These
+// two bind what the loop is built on, not what it carries: os/default binds process and
+// environment ambient state, and nbio/default binds the readiness primitives. Thus they
+// hold syscall alone — the rest of the raw-IO stdlib stays banned there.
+// A directory earns a place in the list only when no shared/io surface can express what it
+// binds, so the list stays short and the ban stays the default.
+func Syscall_Gateways(components *Component_Index) (gateways []string) {
+	for _, relative := range []string{"os/default", "nbio/default"} {
+		directory := shared_library_directory(components, relative)
+		if directory == "" {
+			return nil
+		}
+		gateways = append(gateways, directory)
+	}
+	return gateways
 }
 
 // Method_Satisfies_Stdlib reports whether the method's signature implements a

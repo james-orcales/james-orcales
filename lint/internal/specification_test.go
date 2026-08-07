@@ -1783,6 +1783,31 @@ func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 	}
 }
 
+// Test_IO_Gateway_Non_Blocking_IO_Exempt verifies the nbio/default gateway may import
+// syscall — the readiness primitives it binds have no route through shared/io.
+func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/nbio/default/system.go": &fstest.MapFile{Data: []byte(
+			"// Package nbio is a fixture.\npackage nbio\n\nimport \"syscall\"\n\n" +
+				"// Poll makes a readiness queue.\n" +
+				"func Poll() (descriptor int, err error) {\n" +
+				"\treturn syscall.Kqueue()\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "shared/nbio/default",
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "Route IO through shared/io") {
+		t.Fatal("the nbio/default gateway may import syscall")
+	}
+}
+
 // Test_IO_Gateway_Operating_System_Network_Flagged verifies the os/default gateway gets
 // no blanket exemption: syscall alone is permitted there, and net/http is still flagged.
 func Test_IO_Gateway_Operating_System_Network_Flagged(t *testing.T) {
