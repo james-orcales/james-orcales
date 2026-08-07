@@ -446,7 +446,7 @@ type Platform_Scheduler struct {
 }
 
 // Platform initialize creates io_uring eagerly and rejects kernels without EXT_ARG, matching
-// third-party/tigerbeetle/src/io/linux.zig:37-68. No epoll fallback exists.
+// third-party/tigerbeetle/src/io/linux.zig:37-68.
 func platform_initialize(entries uint16, flags uint32) (platform Platform_Scheduler, err error) {
 	parameters := Kernel_Ring_Parameters{Flags: flags}
 	result, _, errno := syscall.Syscall(

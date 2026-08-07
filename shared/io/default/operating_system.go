@@ -18,12 +18,9 @@ import (
 	"local/james-orcales/shared/time"
 )
 
-// Caps one Darwin kqueue changelist and event batch, matching TigerBeetle's fixed flush buffer.
-const POLL_EVENTS_MAX = 256
-
-// Poll_forever, passed as an idle gap, blocks the readiness poll until an event arrives rather
-// than for a fixed span — the unbounded wait a run with no deadline needs, so the loop sleeps
-// exactly until there is work instead of waking on an interval.
+// Poll_forever, passed as an idle gap, blocks the wait until an event arrives rather than for a
+// fixed span — the unbounded wait a run with no deadline needs, so the loop sleeps exactly
+// until there is work instead of waking on an interval.
 const POLL_FOREVER time.Moment = -1
 
 // Buffers a few pending signals so a burst is not lost between drains.
@@ -1364,8 +1361,9 @@ func operating_system_accept(
 	operating_system_operation_submit(state, operation)
 }
 
-// Begins a connection to host_address:port on the caller-owned socket and arms it for
-// writability; on readiness it reports only the connect result.
+// Begins a connection on the caller-owned socket and reports only the connect result. How the
+// backend reaches that result is its own: io_uring submits a connect, and kqueue arms the
+// socket for writability and then issues the connect itself.
 func operating_system_connect(
 	state *Operating_System, completion *io.Completion,
 	callback io.Timeout_Callback, socket io.File, address io.Address, deadline time.Duration,
@@ -1382,8 +1380,8 @@ func operating_system_connect(
 	operating_system_operation_submit(state, operation)
 }
 
-// Arms socket for readability; on readiness it reads once into buffer and reports
-// the byte count.
+// Reads once from socket into buffer and reports the byte count. io_uring submits a receive,
+// and kqueue arms the socket for readability and then reads it.
 func operating_system_receive(
 	state *Operating_System, completion *io.Completion,
 	callback io.Callback, socket io.File, buffer []byte,
@@ -1397,8 +1395,8 @@ func operating_system_receive(
 	operating_system_operation_submit(state, operation)
 }
 
-// Arms socket for writability; on readiness it writes buffer once and reports the
-// byte count.
+// Writes buffer once to socket and reports the byte count. io_uring submits a send, and kqueue
+// arms the socket for writability and then writes it.
 func operating_system_send(
 	state *Operating_System, completion *io.Completion,
 	callback io.Callback, socket io.File, buffer []byte,

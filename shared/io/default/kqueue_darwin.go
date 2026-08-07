@@ -20,6 +20,9 @@ const SOCKET_SEND_BUFFER_SIZE = 2 * 1024 * 1024
 // SOCKET_NO_SIGPIPE identifies SO_NOSIGPIPE because syscall does not expose it.
 const SOCKET_NO_SIGPIPE = 0x1022
 
+// Caps one kqueue changelist and event batch, matching TigerBeetle's fixed flush buffer.
+const POLL_EVENTS_MAX = 256
+
 // DARWIN_OPEN_AT_CALL keeps the raw syscall compatible with Darwin amd64.
 const DARWIN_OPEN_AT_CALL = 463
 
