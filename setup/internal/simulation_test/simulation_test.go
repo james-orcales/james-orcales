@@ -15,6 +15,7 @@ import (
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/random/prng"
 	shared_slices "local/james-orcales/shared/slices"
+	shared_strconv "local/james-orcales/shared/strconv"
 	shared_strings "local/james-orcales/shared/strings"
 	systime "local/james-orcales/shared/time"
 )
@@ -54,6 +55,10 @@ const HARNESS_IO_TARGET_MIRROR = "mirror"
 
 // The font target crosses the separate large-file read and write loops.
 const HARNESS_IO_TARGET_FONT = "font"
+
+// The exit status of a fatal process error. The gitignore probe classifies with 0 and 1, thus a
+// fault that must stop setup at that site cannot use either one.
+const HARNESS_FATAL_EXIT = 128
 
 // A required site must stop setup after its selected IO fault.
 const HARNESS_IO_SITE_REQUIRED = "required"
@@ -116,6 +121,13 @@ type Harness_Configuration struct {
 	Boundary_Directory bool
 	IO_Witness         bool
 	Nested_File        bool
+	// Process_Environment_Count is the size of the environment the root injects.
+	Process_Environment_Count int
+	// Process_Environment_Oversized gives the last entry more bytes than a kernel argument
+	// holds, which the root must refuse.
+	Process_Environment_Oversized bool
+	// Version_Banner_Bytes is the size of the banner a matching version probe prints.
+	Version_Banner_Bytes int
 }
 
 // Harness_Configuration_Streams gives each configuration axis an independent sequence.
@@ -148,6 +160,12 @@ type Harness_Configuration_Streams struct {
 	Boundary_Directory prng.Generator
 	IO_Witness         prng.Generator
 	Nested_File        prng.Generator
+	// Process_Environment draws last, so a new axis leaves each earlier topology fixed.
+	Process_Environment prng.Generator
+	// Process_Environment_Oversized is separate, so the entry size never moves the count.
+	Process_Environment_Oversized prng.Generator
+	// Version_Banner is separate, so a banner size never moves an environment draw.
+	Version_Banner prng.Generator
 }
 
 // Harness_File_Streams gives each modeled payload an independent sequence.
@@ -270,6 +288,9 @@ func drive(t *testing.T, seed uint64) {
 			Operating_System:          configuration.Operating_System,
 			Cargo_Directory:           configuration.Cargo_Directory,
 			Data_Directory:            configuration.Data_Directory,
+			Process_Environment: harness_process_environment(
+				configuration.Process_Environment_Count,
+				configuration.Process_Environment_Oversized),
 		},
 		IO: system,
 	}
@@ -278,6 +299,9 @@ func drive(t *testing.T, seed uint64) {
 	// catches it instead of skipping the seed blind. When faults land it becomes an explicit,
 	// reason-carrying, mostly-false skip — never a silent return.
 	status := harness_main_status(t, input, root)
+	if observation.Spawn_Environment_Mismatch {
+		t.Fatal("a spawned child did not receive the injected environment")
+	}
 	if status == setup.EXIT_USAGE {
 		return
 	}
@@ -677,9 +701,36 @@ func harness_configuration(seed uint64) (configuration Harness_Configuration) {
 			},
 			[]uint64{1, 3, 2},
 		))
+	harness_environment_configuration(&streams, &configuration)
 	harness_fixture_configuration(&streams, &configuration)
 	configuration.Path_Aliases = map[string]string{}
 	return harness_align(configuration)
+}
+
+// Each environment feature draws once and stays fixed for the complete run.
+func harness_environment_configuration(
+	streams *Harness_Configuration_Streams, configuration *Harness_Configuration,
+) {
+	// The empty host, the two smallest environments, and the production limit. The four sizes
+	// draw equally, because the runner state carries this value into each step, and the rare
+	// steps — the darwin-only Ghostty install, a duplicate retirement — see the limit only
+	// when it is common.
+	configuration.Process_Environment_Count = prng.Generator_Sample(
+		&streams.Process_Environment, prng.New_Distribution(
+			[]int{0, 1, 2, setup.PROCESS_ENVIRONMENT_COUNT_MAX},
+			[]uint64{1, 1, 1, 1},
+		),
+	)
+	// An entry above the kernel limit must reach the root validator. It stays rare, because
+	// the run then stops with EXIT_USAGE before its first step.
+	configuration.Process_Environment_Oversized = prng.Generator_Sample(
+		&streams.Process_Environment_Oversized, prng.New_Distribution(
+			[]bool{false, true}, []uint64{31, 1},
+		),
+	)
+	// The release line alone, and the complete banner at the production bound.
+	configuration.Version_Banner_Bytes = prng.Generator_Element(
+		&streams.Version_Banner, []int{0, setup.COMMAND_OUTPUT_BYTES_MAX})
 }
 
 // Each fixture feature draws once and stays fixed for the complete run.
@@ -748,6 +799,9 @@ func harness_configuration_streams(seed uint64) (streams Harness_Configuration_S
 	streams.Boundary_Directory = prng.Generator_Split(&root)
 	streams.IO_Witness = prng.Generator_Split(&root)
 	streams.Nested_File = prng.Generator_Split(&root)
+	streams.Process_Environment = prng.Generator_Split(&root)
+	streams.Process_Environment_Oversized = prng.Generator_Split(&root)
+	streams.Version_Banner = prng.Generator_Split(&root)
 	return streams
 }
 
@@ -1269,6 +1323,9 @@ type Harness_Observation struct {
 	IO_Fault_Subject         string
 	Short_Read_Observed      bool
 	Short_Write_Observed     bool
+	// Spawn_Environment_Mismatch records a child that did not receive the injected
+	// environment, which no seed and no fault makes correct.
+	Spawn_Environment_Mismatch bool
 }
 
 // A duplicate becomes observable only when the Driver delivers its second callback.
@@ -1847,6 +1904,12 @@ func harness_stream_first_values(seed uint64) (values map[string]uint64) {
 			&configuration.IO_Witness),
 		"configuration_nested_file": prng.Generator_Next(
 			&configuration.Nested_File),
+		"configuration_process_environment": prng.Generator_Next(
+			&configuration.Process_Environment),
+		"configuration_process_environment_oversized": prng.Generator_Next(
+			&configuration.Process_Environment_Oversized),
+		"configuration_version_banner": prng.Generator_Next(
+			&configuration.Version_Banner),
 		"file_profile":         prng.Generator_Next(&files.Profile),
 		"file_configuration":   prng.Generator_Next(&files.Configuration),
 		"file_ignored":         prng.Generator_Next(&files.Ignored),
@@ -1856,6 +1919,29 @@ func harness_stream_first_values(seed uint64) (values map[string]uint64) {
 		"file_font":            prng.Generator_Next(&files.Font),
 		"mutation":             prng.Generator_Next(&mutation),
 	}
+}
+
+// Returns one environment of the drawn size. Each name is distinct, because a real host exports
+// no name two times, and a duplicate would hide an entry the harness thinks it injected. An
+// oversized draw replaces the last entry, so the count stays inside its own limit.
+func harness_process_environment(
+	count int, oversized bool,
+) (environment setup.Process_Environment) {
+	environment = make(setup.Process_Environment, 0, count)
+	for index := 0; index < count; index++ {
+		name := string(shared_strconv.Format_Decimal(shared_strconv.Machine_Integer(index)))
+		environment = append(environment, "HARNESS_ENVIRONMENT_"+name+"=value")
+	}
+	if !oversized {
+		return environment
+	}
+	entry := "HARNESS_ENVIRONMENT_OVERSIZED=" +
+		repeat_text("v", setup.PROCESS_ENVIRONMENT_ENTRY_BYTES_MAX)
+	if len(environment) == 0 {
+		return append(environment, entry)
+	}
+	environment[len(environment)-1] = entry
+	return environment
 }
 
 // The salt holds the mutation stream stable when the configuration root gains a new axis.
@@ -2030,6 +2116,11 @@ func harness_process_io(
 		request sysio.Process_Request, _ systime.Duration,
 	) {
 		harness_observe_operation(observation, "spawn")
+		// Every child receives the injected environment, thus a step that builds a
+		// request of its own cannot silently give a child an empty environment.
+		if len(request.Environment) != configuration.Process_Environment_Count {
+			observation.Spawn_Environment_Mismatch = true
+		}
 		if request.Path == "which" {
 			tool = request.Arguments[0]
 		} else if harness_version(request) != "" {
@@ -2111,7 +2202,7 @@ func harness_process_fault(
 		observation, configuration, "spawn-nonzero-exit",
 		HARNESS_IO_TARGET_MIRROR, site, false,
 	) {
-		result.Exit = 1
+		result.Exit = HARNESS_FATAL_EXIT
 		callback(completion, result, nil)
 		return true
 	}
@@ -2143,7 +2234,8 @@ func harness_spawn(
 	if version != "" {
 		if configuration.Installed {
 			if configuration.Version_Matches {
-				return sysio.Process_Result{Output: []byte(version + "\n")}
+				banner := harness_version_banner(configuration, version)
+				return sysio.Process_Result{Output: []byte(banner)}
 			}
 			return sysio.Process_Result{Output: []byte(repeat_text(
 				string(configuration.Probe_Output_Byte),
@@ -2151,6 +2243,23 @@ func harness_spawn(
 		}
 	}
 	return result
+}
+
+// Returns the banner a version probe prints. A real ghostty prints its complete build
+// configuration below its release line, thus the report always follows. The drawn size pads the
+// release line itself, because the gate reads that line and nothing below it, and one run must
+// reach the bound that a short release line never touches. The padding keeps a space in front
+// of it, so the release token stays a field of its own.
+func harness_version_banner(
+	configuration Harness_Configuration, version string,
+) (banner string) {
+	report := "Build Config\n" + repeat_text("  - setting : value\n", 8)
+	line := version
+	if configuration.Version_Banner_Bytes > len(line)+1 {
+		line += " " + repeat_text(
+			"b", configuration.Version_Banner_Bytes-len(line)-1)
+	}
+	return line + "\n" + report
 }
 
 // Reports the expected version for a direct executable probe.
@@ -2216,9 +2325,13 @@ func harness_git_ignore(
 			}
 		}
 	}
-	if len(ignored) != 0 {
-		result.Output = newline_delimited_text(ignored)
+	// Real git prints nothing and exits with its second classification when it excludes no
+	// probed path, thus most levels of a source tree give that status.
+	if len(ignored) == 0 {
+		result.Exit = setup.CHECK_IGNORE_EXIT_NO_MATCH
+		return result
 	}
+	result.Output = newline_delimited_text(ignored)
 	return result
 }
 

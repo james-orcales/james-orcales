@@ -40,7 +40,10 @@ func main() {
 			Operating_System: setup.Operating_System(runtime.GOOS),
 			Cargo_Directory:  setup.Cargo_Directory(os.Getenv("CARGO_HOME")),
 			Data_Directory:   setup.Data_Directory(os.Getenv("XDG_DATA_HOME")),
-			Stdout:           stdout, Stderr: stderr,
+			// Shared IO gives a child with no environment nothing at all, so the
+			// builds below need the root to read the ambient values one time.
+			Process_Environment: setup.Process_Environment(os.Environ()),
+			Stdout:              stdout, Stderr: stderr,
 		}, IO: loop,
 	}
 	runner := setup.Main(&input)

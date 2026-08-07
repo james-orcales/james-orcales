@@ -46,9 +46,38 @@ func Test_Main_Runs_Complete_Bootstrap(t *testing.T) {
 	}
 }
 
+// Test_Main_Injects_The_Process_Environment verifies each spawned child receives the environment
+// package main reads, so no step below the root reads an ambient value.
+func Test_Main_Injects_The_Process_Environment(t *testing.T) {
+	t.Parallel()
+	commands := []sysio.Process_Request{}
+	loop, _, clock := sysio.New_Sim(1)
+	want := Process_Environment{"PATH=/injected/bin", "HOME=/home/person"}
+	status := main_status(t, &Main_Input{
+		Environment: &Environment_Input{
+			Clock: clock, Effective_User_Identifier: 1,
+			Home_Directory: "/home/person", Operating_System: "freebsd",
+			Process_Environment: want,
+		},
+		IO: recording_io(directory_file_system(t, loop), &commands, nil, 1),
+	})
+	if status != 1 {
+		t.Fatalf("status = %d, want the direnv failure status 1", status)
+	}
+	if len(commands) == 0 {
+		t.Fatal("the bootstrap spawned no command")
+	}
+	for index, command := range commands {
+		if !shared_slices.Equal(command.Environment, []string(want)) {
+			t.Fatalf("command %d environment = %v, want %v",
+				index, command.Environment, want)
+		}
+	}
+}
+
 // A callback from a later loop pass must not depend on the first result remaining queued.
 func Test_Runner_Queues_Late_Duplicate_Retirement(t *testing.T) {
-	state, runner := new_runner()
+	state, runner := new_runner(nil)
 	first_retired := false
 	runner_queue(state, func() { first_retired = true })
 	if !runner.Rearm() {
@@ -71,7 +100,7 @@ func Test_Runner_Queues_Late_Duplicate_Retirement(t *testing.T) {
 
 // A terminal policy result cannot release the Driver before its callbacks retire.
 func Test_Runner_Stops_After_Submitted_IO_Retires(t *testing.T) {
-	state, runner := new_runner()
+	state, runner := new_runner(nil)
 	submission := runner_operation_start(state)
 	runner_stop(state, EXIT_FAILURE)
 	if runner.Stopped() {
@@ -155,37 +184,63 @@ func Test_Order_Of_Operations(t *testing.T) {
 	}
 }
 
-// Test_Idempotency_Accepts_A_Matching_Version verifies Installed reports true when
-// the binary's --version output starts with the wanted version.
+// Test_Idempotency_Accepts_A_Matching_Version verifies Installed reports true when the first
+// line of the binary's --version output starts with the wanted version, whatever follows it.
 func Test_Idempotency_Accepts_A_Matching_Version(t *testing.T) {
 	t.Parallel()
-	commands := []sysio.Process_Request{}
-	yes := Installed(&Installed_Input{
-		IO: recording_process_io(&commands, map[string]string{
-			"/bin/tool-x": "tool 1.2.3 (abc 2026-01-01)\n",
-		}, 0),
-		Executable: "/bin/tool-x",
-		Version:    "tool 1.2.3",
-	})
-	if !yes {
-		t.Fatal("expected Installed true when the version prefix matches")
+	// A real ghostty prints its build configuration below its release line, which is more
+	// than one bounded output on its own.
+	report := "tool 1.2.3 (abc 2026-01-01)\n"
+	for name, output := range map[string]string{
+		"one line": report,
+		"complete report": report + "Build Config\n" +
+			string(shared_strings.Repeat("  - setting : value\n", 20)),
+	} {
+		output := output
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			commands := []sysio.Process_Request{}
+			yes := Installed(&Installed_Input{
+				IO: recording_process_io(&commands, map[string]string{
+					"/bin/tool-x": output,
+				}, 0),
+				Executable: "/bin/tool-x",
+				Version:    "tool 1.2.3",
+			})
+			if !yes {
+				t.Fatalf("expected Installed true for a %s probe", name)
+			}
+		})
 	}
 }
 
 // Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary verifies Installed reports
-// false when the binary is absent or reports a different version.
+// false when the binary is absent, its probe prints more than one bounded output,
+// or it reports a different version.
 func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	t.Parallel()
-	commands := []sysio.Process_Request{}
-	yes := Installed(&Installed_Input{
-		IO: recording_process_io(&commands, map[string]string{
-			"/bin/tool-x": "tool 9.9.9\n",
-		}, 0),
-		Executable: "/bin/tool-x",
-		Version:    "tool 1.2.3",
-	})
-	if yes {
-		t.Fatal("expected Installed false when the version differs")
+	// A first line above the bound is no answer, and setup must treat it as one more
+	// uninstalled binary rather than fail on it.
+	overlong := string(shared_strings.Repeat("v", COMMAND_OUTPUT_BYTES_MAX+1))
+	for name, output := range map[string]string{
+		"stale version":   "tool 9.9.9\n",
+		"overlong output": "tool 1.2.3 " + overlong + "\n",
+	} {
+		output := output
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			commands := []sysio.Process_Request{}
+			yes := Installed(&Installed_Input{
+				IO: recording_process_io(&commands, map[string]string{
+					"/bin/tool-x": output,
+				}, 0),
+				Executable: "/bin/tool-x",
+				Version:    "tool 1.2.3",
+			})
+			if yes {
+				t.Fatalf("expected Installed false for a %s probe", name)
+			}
+		})
 	}
 }
 
@@ -353,11 +408,12 @@ func Test_Mirror_Rejects_A_Failed_Ignore_Probe(t *testing.T) {
 			callback(completion, sysio.Process_Result{}, nil)
 			callback(completion, sysio.Process_Result{}, nil)
 		},
-		"nonzero exit": func(
+		"fatal exit": func(
 			completion *sysio.Completion, callback sysio.Process_Callback,
 			_ sysio.Process_Request, _ systime.Duration,
 		) {
-			callback(completion, sysio.Process_Result{Exit: 1}, nil)
+			callback(completion, sysio.Process_Result{
+				Exit: TEST_CHECK_IGNORE_EXIT_FATAL}, nil)
 		},
 	} {
 		spawn := spawn
@@ -381,6 +437,40 @@ func Test_Mirror_Rejects_A_Failed_Ignore_Probe(t *testing.T) {
 	}
 }
 
+// Test_Mirror_Accepts_A_Probe_That_Excludes_No_Path verifies that the status git gives when it
+// excludes none of the probed paths lets the walk continue.
+func Test_Mirror_Accepts_A_Probe_That_Excludes_No_Path(t *testing.T) {
+	t.Parallel()
+	loop, _, _ := sysio.New_Sim(0)
+	// A nested directory, so the narration shows that the walk went past the probed level.
+	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
+		t.Fatalf("make source: %v", make_err)
+	}
+	if make_err := loop.Make_Directory(TEST_SOURCE + "/nested"); make_err != nil {
+		t.Fatalf("make nested: %v", make_err)
+	}
+	log := shared_bytes.New_Buffer(nil)
+	system := directory_file_system(t, loop)
+	system.Spawn = func(
+		completion *sysio.Completion, callback sysio.Process_Callback,
+		_ sysio.Process_Request, _ systime.Duration,
+	) {
+		callback(completion, sysio.Process_Result{Exit: CHECK_IGNORE_EXIT_NO_MATCH}, nil)
+	}
+	status := Mirror(&Mirror_Input{
+		IO: system, Source_Directory: TEST_SOURCE,
+		Destination_Directory: TEST_HOME, Operating_System: "linux",
+		Logger: buffer_logger(log),
+	})
+	if !status {
+		t.Fatal("the mirror rejected a probe that excludes no path")
+	}
+	want := "{\"level\":\"debug\",\"dir\":\"nested\",\"message\":\"scanning\"}\n"
+	if !shared_strings.Contains(buffer_text(log), shared_strings.Text(want)) {
+		t.Fatalf("expected the walk to read %q, got %q", want, buffer_text(log))
+	}
+}
+
 // Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout verifies that when
 // nvim resolves to a path inside the checkout and reports the wanted release, no
 // make runs.
@@ -391,8 +481,11 @@ func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) 
 	status := Install_Neovim(&Install_Neovim_Input{
 		Repository_Directory: TEST_REPOSITORY,
 		IO: recording_process_io(&commands, map[string]string{
-			"which":    executable + "\n",
-			executable: "NVIM v0.12.3\n",
+			"which": executable + "\n",
+			// The complete banner a real nvim prints, not the release line alone.
+			executable: "NVIM v0.12.3\nBuild type: RelWithDebInfo\n" +
+				"LuaJIT 2.1.1774638290\n" +
+				"Run \"nvim -V1 -v\" for more info\n",
 		}, 0),
 	})
 	if !status {
@@ -1131,6 +1224,10 @@ const TEST_HOME = "/home/user"
 // sync writes nothing and only the injected runner's behavior is under test.
 const TEST_SOURCE = "/home/user/code/setup/home"
 
+// The git status for a fatal check-ignore error. Git uses 0 and 1 for its two
+// classifications, so a test that must fail the probe cannot use either one.
+const TEST_CHECK_IGNORE_EXIT_FATAL = 128
+
 // The fixed absolute checkout root the Neovim build subpaths are joined onto; a
 // constant keeps the expected make and link paths deterministic.
 const TEST_REPOSITORY = "/home/user/code/repository"
@@ -1387,7 +1484,7 @@ func main_status(t *testing.T, input *Main_Input) (status Exit_Code) {
 func test_step(
 	start func(state *Runner_State, continuation func(succeeded Step_Success)),
 ) (succeeded Step_Success) {
-	state, _ := new_runner()
+	state, _ := new_runner(nil)
 	start(state, func(result Step_Success) {
 		succeeded = result
 		runner_stop(state, EXIT_SUCCESS)
@@ -1457,7 +1554,7 @@ func Mirror(input *Mirror_Input) (succeeded Step_Success) {
 
 // Plan drives the asynchronous planner against inline test IO.
 func Plan(input *Plan_Input) (writes Writes, err error) {
-	state, _ := new_runner()
+	state, _ := new_runner(nil)
 	plan_start(state, input, func(result Writes, plan_err error) {
 		writes, err = result, plan_err
 		runner_stop(state, EXIT_SUCCESS)
@@ -1470,7 +1567,7 @@ func Plan(input *Plan_Input) (writes Writes, err error) {
 
 // Installed drives the asynchronous version probe against inline test IO.
 func Installed(input *Installed_Input) (installed File_Presence) {
-	state, _ := new_runner()
+	state, _ := new_runner(nil)
 	installed_start(state, input, func(result File_Presence) {
 		installed = result
 		runner_stop(state, EXIT_SUCCESS)

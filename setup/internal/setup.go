@@ -66,8 +66,10 @@ const ROOT_REFUSAL = "run as your normal user, not root"
 func Main(input *Main_Input) (runner Runner) {
 	defer func() { Runner_Invariants(runner, "Main.runner") }()
 	Main_Input_Invariants(input, "Main.input")
-	state, runner := new_runner()
+	// The environment validates before the runner exists, because the runner gives each
+	// spawned child that value and never a later one.
 	environment, valid := New_Environment(input.Environment)
+	state, runner := new_runner(environment.Process_Environment)
 	if !valid {
 		runner_stop(state, EXIT_USAGE)
 		return runner
@@ -108,6 +110,10 @@ type Environment_Input struct {
 	Cargo_Directory Cargo_Directory
 	// Data_Directory preserves an explicit XDG_DATA_HOME value.
 	Data_Directory Data_Directory
+	// Process_Environment is the complete ambient environment, read one time by package main.
+	// Each spawned child receives it, because shared IO gives a child with no environment
+	// nothing at all.
+	Process_Environment Process_Environment
 	// Stdout receives live command output.
 	Stdout sysio.Stream
 	// Stderr receives live command diagnostics.
@@ -123,6 +129,7 @@ func Environment_Input_Invariants(input *Environment_Input, namespace invariant.
 	Operating_System_Invariants(input.Operating_System, namespace)
 	Cargo_Directory_Invariants(input.Cargo_Directory, namespace)
 	Data_Directory_Invariants(input.Data_Directory, namespace)
+	Process_Environment_Invariants(input.Process_Environment, namespace)
 }
 
 // Existing logger and process APIs require the standard writer method at their final boundary.
@@ -155,6 +162,8 @@ type Environment struct {
 	Cargo_Directory Cargo_Directory
 	// Data_Directory preserves an explicit XDG_DATA_HOME value.
 	Data_Directory Data_Directory
+	// Process_Environment is the environment every spawned child receives.
+	Process_Environment Process_Environment
 	// Stdout receives live command output.
 	Stdout sysio.Stream
 	// Stderr receives live command diagnostics.
@@ -167,6 +176,7 @@ func Environment_Invariants(environment Environment, namespace invariant.Namespa
 	Operating_System_Invariants(environment.Operating_System, namespace)
 	Cargo_Directory_Invariants(environment.Cargo_Directory, namespace)
 	Data_Directory_Invariants(environment.Data_Directory, namespace)
+	Process_Environment_Invariants(environment.Process_Environment, namespace)
 }
 
 // File operations require these shared IO members.
@@ -240,6 +250,7 @@ func New_Environment(input *Environment_Input) (
 		Logger: logger, Home_Directory: input.Home_Directory,
 		Operating_System: input.Operating_System, Cargo_Directory: input.Cargo_Directory,
 		Data_Directory: input.Data_Directory, Stdout: input.Stdout, Stderr: input.Stderr,
+		Process_Environment: input.Process_Environment,
 	}
 	if input.Effective_User_Identifier == 0 {
 		jlog.Logger_Error(logger, ROOT_REFUSAL)
@@ -249,6 +260,10 @@ func New_Environment(input *Environment_Input) (
 		jlog.Logger_Error(
 			logger, "cannot resolve home directory", jlog.Err(input.Home_Error),
 		)
+		return environment, false
+	}
+	if !process_environment_valid(input.Process_Environment) {
+		jlog.Logger_Error(logger, "an environment entry exceeds its limit")
 		return environment, false
 	}
 	return environment, true
@@ -1564,11 +1579,15 @@ const VERSION_PREFIX_BYTES_MIN = 6
 // VERSION_PREFIX_BYTES_MAX is the longest pinned version prefix.
 const VERSION_PREFIX_BYTES_MAX = 14
 
-// COMMAND_OUTPUT_BYTES_MAX is the longest bounded probe output.
-const COMMAND_OUTPUT_BYTES_MAX = 104
+// COMMAND_OUTPUT_BYTES_MAX is the longest first line that a probe can answer with. It holds
+// the two kinds setup reads: one resolved path from which, which reaches PROBE_PATH_BYTES_MAX,
+// and one release line. The lines below the first belong to the tool's own report, thus they
+// never count against this bound and a longer report cannot make a gate reinstall.
+const COMMAND_OUTPUT_BYTES_MAX = 256
 
-// VERSION_OUTPUT_BYTES_MAX is the longest Neovim version output under test.
-const VERSION_OUTPUT_BYTES_MAX = 12
+// VERSION_OUTPUT_BYTES_MAX is one probe output, because the version gate parses exactly what
+// the version probe returned and declares no second limit of its own.
+const VERSION_OUTPUT_BYTES_MAX = COMMAND_OUTPUT_BYTES_MAX
 
 // APPLICATION_PATH_BYTES is the fixed Ghostty application path.
 const APPLICATION_PATH_BYTES = 25
@@ -1633,6 +1652,16 @@ const WRITE_COUNT_MAX = 4096
 // TRAVERSAL_DIRECTORY_COUNT_MAX bounds one complete source traversal.
 const TRAVERSAL_DIRECTORY_COUNT_MAX = 4096
 
+// PROCESS_ENVIRONMENT_COUNT_MIN permits a host that exports nothing.
+const PROCESS_ENVIRONMENT_COUNT_MIN = 0
+
+// PROCESS_ENVIRONMENT_COUNT_MAX bounds the environment the root reads from the host.
+const PROCESS_ENVIRONMENT_COUNT_MAX = 4096
+
+// PROCESS_ENVIRONMENT_ENTRY_BYTES_MAX is the Linux MAX_ARG_STRLEN, 32 pages. A longer entry
+// cannot reach a child at all, thus setup rejects it before it builds one request.
+const PROCESS_ENVIRONMENT_ENTRY_BYTES_MAX = 131072
+
 // PLAN_ENTRY_COUNT_MAX bounds one classified traversal level.
 const PLAN_ENTRY_COUNT_MAX = 4096
 
@@ -1645,6 +1674,13 @@ const CHECK_IGNORE_TARGET_BYTES_MAX = SOURCE_DIRECTORY_BYTES_MAX + 1 +
 
 // CHECK_IGNORE_INPUT_BYTES_MAX includes one newline after each longest target path.
 const CHECK_IGNORE_INPUT_BYTES_MAX = PLAN_ENTRY_COUNT_MAX * (CHECK_IGNORE_TARGET_BYTES_MAX + 1)
+
+// CHECK_IGNORE_EXIT_MATCH is the git status that reports at least one excluded path.
+const CHECK_IGNORE_EXIT_MATCH = 0
+
+// CHECK_IGNORE_EXIT_NO_MATCH is the git status that reports no excluded path. Git gives it for
+// its second classification, not for a failure, so a level that excludes nothing gives it.
+const CHECK_IGNORE_EXIT_NO_MATCH = 1
 
 // INVOCATION_COUNT_MIN permits an empty invocation list.
 const INVOCATION_COUNT_MIN = 0
@@ -2292,6 +2328,35 @@ func Invocations_Invariants(invocations Invocations, namespace invariant.Namespa
 		len(invocations) == NEOVIM_INVOCATION_COUNT, "Neovim has both build invocations.")
 }
 
+// Process_Environment is the environment every spawned child receives.
+type Process_Environment []string
+
+// Process_Environment_Invariants bounds the environment the root reads from the host.
+func Process_Environment_Invariants(
+	environment Process_Environment, namespace invariant.Namespace,
+) {
+	invariant.Tree(environment, namespace).
+		Range_Int(
+			len(environment),
+			PROCESS_ENVIRONMENT_COUNT_MIN, PROCESS_ENVIRONMENT_COUNT_MAX).
+		Ensure()
+}
+
+// Reports whether each entry fits one kernel argument. The host writes the environment, thus
+// setup validates it at the root instead of letting an oversized entry fail the first spawn.
+func process_environment_valid(environment Process_Environment) (valid Environment_Valid) {
+	defer func() {
+		Environment_Valid_Invariants(valid, "process_environment_valid.valid")
+	}()
+	Process_Environment_Invariants(environment, "process_environment_valid.environment")
+	for _, entry := range environment {
+		if len(entry) > PROCESS_ENVIRONMENT_ENTRY_BYTES_MAX {
+			return false
+		}
+	}
+	return true
+}
+
 // File_Paths is one ordered file path list.
 type File_Paths []string
 
@@ -2371,21 +2436,28 @@ type Runner_State struct {
 	Operations *list.List
 	// Terminal returns the exit status after setup stops.
 	Terminal func() (status Exit_Code)
+	// Process_Environment is the environment each spawned child receives. It lives here
+	// because every step spawns through one submission, and no step selects its own.
+	Process_Environment Process_Environment
 }
 
 // Runner_State_Invariants requires one private state allocation.
-func Runner_State_Invariants(state *Runner_State, _ invariant.Namespace) {
+func Runner_State_Invariants(state *Runner_State, namespace invariant.Namespace) {
 	invariant.Always(state != nil, "A setup runner has private state.")
 	invariant.Always(state.Operations != nil, "A setup runner tracks armed IO operations.")
+	Process_Environment_Invariants(state.Process_Environment, namespace)
 }
 
 // New_runner returns the root surface for one private continuation state.
-func new_runner() (state *Runner_State, runner Runner) {
+func new_runner(
+	environment Process_Environment,
+) (state *Runner_State, runner Runner) {
 	defer func() {
 		Runner_State_Invariants(state, "new_runner.state")
 		Runner_Invariants(runner, "new_runner.runner")
 	}()
-	state = &Runner_State{Operations: list.New()}
+	Process_Environment_Invariants(environment, "new_runner.environment")
+	state = &Runner_State{Operations: list.New(), Process_Environment: environment}
 	runner = Runner{
 		Rearm: func() (armed Runner_Work_Queued) {
 			return runner_rearm(state)
@@ -2693,6 +2765,9 @@ func process_spawn_start(
 ) {
 	Runner_State_Invariants(state, "process_spawn_start.state")
 	process_io_requirements(system, "process_spawn_start.system")
+	// Shared IO gives a child with no environment nothing at all, and no step reads an
+	// ambient value, thus every child receives exactly what the root injected.
+	request.Environment = []string(state.Process_Environment)
 	retired := false
 	completion := &sysio.Completion{}
 	operation := runner_operation_start(state)
@@ -3180,8 +3255,20 @@ func run_pipe_start(
 			continuation("")
 			return
 		}
-		continuation(Command_Output(
-			shared_strings.Trim_Space(shared_strings.Text(result.Output))))
+		// A probe answers on its first line. A real ghostty prints its complete
+		// build configuration below that line, thus the answer must not carry the
+		// report, which grows with each release.
+		first_line, _, _ := shared_strings.Cut(
+			shared_strings.Text(result.Output), "\n")
+		// Process output is untrusted. A first line above the bound is not an
+		// answer, and an empty answer is the result setup already records for a
+		// probe that could not run.
+		output := shared_strings.Trim_Space(first_line)
+		if len(output) > COMMAND_OUTPUT_BYTES_MAX {
+			continuation("")
+			return
+		}
+		continuation(Command_Output(output))
 	})
 }
 
@@ -3929,9 +4016,16 @@ func plan_directory_rearm(operation *Plan_Operation) {
 			operation.Finish(Writes{}, spawn_err)
 			return
 		}
-		if result.Exit != 0 {
+		// Git prints no path and gives its second classification for a level that
+		// excludes no path, which is the usual result for a source tree. A third
+		// status is a fatal git error that leaves the ignore state unknown.
+		classified := result.Exit == CHECK_IGNORE_EXIT_MATCH
+		if result.Exit == CHECK_IGNORE_EXIT_NO_MATCH {
+			classified = true
+		}
+		if !classified {
 			operation.Finish(Writes{}, errors.New(
-				"the gitignore probe exited with a nonzero status"))
+				"the gitignore probe exited with a fatal status"))
 			return
 		}
 		response := plan_ignore_result(operation, result)

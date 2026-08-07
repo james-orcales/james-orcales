@@ -7,6 +7,11 @@ Main validates the host facts and stops invalid input with EXIT_USAGE. Otherwise
 complete bootstrap runner. The runner uses one shared `io.IO` value and stops with the first
 failing step status or EXIT_SUCCESS.
 
+### Injects The Process Environment
+
+Package main reads the ambient environment one time and gives it to Main. Each spawned child
+receives that value, thus no step below the root reads an ambient value.
+
 # Runner
 
 ### Queues Late Duplicate Retirement
@@ -39,11 +44,13 @@ Neovim its own way; Install_Command, for this repo's own unversioned commands, g
 
 ### Accepts A Matching Version
 
-Installed reports true when the binary's --version output starts with the wanted version.
+Installed reports true when the first line of the binary's --version output starts with the wanted
+version. The report below that line does not count.
 
 ### Rejects A Missing Or Stale Binary
 
-Installed reports false when the binary is absent, its probe fails, or it reports another version.
+Installed reports false when the binary is absent, its probe fails or answers with a first line
+above the output bound, or it reports another version.
 
 # Mirror
 
@@ -71,7 +78,12 @@ not start one gitignore subprocess per entry.
 ### Rejects A Failed Ignore Probe
 
 The walk stops before it writes a file when the gitignore probe returns an error, does not retire
-exactly one time, or exits with a nonzero status.
+exactly one time, or exits with a fatal status.
+
+### Accepts A Probe That Excludes No Path
+
+Git exits with status 1 when it excludes none of the probed paths. That status is a
+classification, not a failure, thus the walk reads an empty ignore set and continues.
 
 # Install Neovim
 
