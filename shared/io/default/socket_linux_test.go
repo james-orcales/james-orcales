@@ -3,14 +3,18 @@
 package io
 
 import (
-	"os"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 
 	sharedio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
+	timeos "local/james-orcales/shared/time/default"
 )
+
+// Caps the wait for a sysctl read, so a hang fails the test rather than blocking the package.
+const SYSCTL_READ_DEADLINE = 5 * time.SECOND
 
 // Test_Socket_Open_Linux_Profile verifies every Linux-only TigerBeetle client option on the
 // configured descriptor. Buffer gets may report the kernel's doubled accounting value, so the
@@ -77,20 +81,54 @@ type socket_option_input struct {
 	Expected   int
 }
 
+// Bounds the buffer holding one sysctl value. A kernel buffer limit is a short decimal.
+const SYSCTL_READ_BYTES = 64
+
+// Reads a sysctl file through the loop, returning the byte count. This package is the io
+// gateway, so even its internal tests read files through io.IO rather than around it.
+func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
+	t.Helper()
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver, loop_err := New_Operating_System_IO(clock, 32, 0)
+	if loop_err != nil {
+		t.Fatalf("scheduler: %v", loop_err)
+	}
+	file, open_err := loop.Open(path)
+	if open_err != nil {
+		t.Fatalf("open %s: %v", path, open_err)
+	}
+	read_done := false
+	var read_completion sharedio.Completion
+	loop.Read(&read_completion, func(_ *sharedio.Completion, read int, read_err error) {
+		if read_err != nil {
+			t.Errorf("read %s: %v", path, read_err)
+		}
+		count = read
+		read_done = true
+	}, file, content, 0)
+	driver.Run_Until(func() (finished bool) { return read_done }, SYSCTL_READ_DEADLINE)
+	if !read_done {
+		t.Fatalf("the read of %s did not complete", path)
+	}
+	close_done := false
+	var close_completion sharedio.Completion
+	loop.Close(&close_completion, func(_ *sharedio.Completion, close_err error) {
+		if close_err != nil {
+			t.Errorf("close %s: %v", path, close_err)
+		}
+		close_done = true
+	}, file)
+	driver.Run_Until(func() (finished bool) { return close_done }, SYSCTL_READ_DEADLINE)
+	driver.Deinit()
+	return count
+}
+
 // Returns the requested buffer size capped at the unprivileged kernel maximum. Forced sizing
 // reaches requested; its permission-denied fallback is capped by this sysctl.
 func socket_buffer_minimum(t *testing.T, path string, requested int) (minimum int) {
 	t.Helper()
-	file, open_err := os.Open(path)
-	if open_err != nil {
-		t.Fatalf("open %s: %v", path, open_err)
-	}
-	defer file.Close()
-	content := make([]byte, 64)
-	count, read_err := file.Read(content)
-	if read_err != nil {
-		t.Fatalf("read %s: %v", path, read_err)
-	}
+	content := make([]byte, SYSCTL_READ_BYTES)
+	count := socket_sysctl_read(t, path, content)
 	maximum, parse_err := strconv.Atoi(strings.TrimSpace(string(content[:count])))
 	if parse_err != nil {
 		t.Fatalf("parse %s: %v", path, parse_err)

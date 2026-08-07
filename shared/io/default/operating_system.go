@@ -161,7 +161,7 @@ func operating_system_wire_effects(state *Operating_System, loop *io.IO) {
 	// TigerBeetle's multiversion behavior does not inherit listeners; the new image rebinds.
 	loop.Self_Exec = func(path string, argv []string, environment []string) (err error) {
 		if environment == nil {
-			environment = os.Environ()
+			environment = syscall.Environ()
 		}
 		return Self_Exec(Self_Exec_Input{
 			Path: path, Arguments: argv, Environment: environment,
@@ -394,7 +394,8 @@ func process_argv(path string, arguments []string) (argv []string) {
 // parent's, and one with no environment inherits the parent's.
 func operating_system_search_path(request io.Process_Request) (search string) {
 	if request.Environment == nil {
-		return os.Getenv("PATH")
+		search, _ = syscall.Getenv("PATH")
+		return search
 	}
 	for index := len(request.Environment) - 1; index >= 0; index-- {
 		entry := request.Environment[index]
@@ -778,9 +779,9 @@ func operating_system_wire_file(state *Operating_System, loop *io.IO) {
 }
 
 // Creates path and any missing parents; an existing directory is not an error, so a
-// repeated mkdir converges. os.MkdirAll is the gateway's bounded parent-creating mkdir.
+// repeated mkdir converges.
 func file_make_directory(path string) (err error) {
-	return os.MkdirAll(path, 0o755)
+	return directory_make(path)
 }
 
 // Wires Timeout, Next_Tick, Reset_Next_Tick, and both close primitives onto loop.

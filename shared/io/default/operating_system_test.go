@@ -3,7 +3,6 @@ package io_test
 import (
 	"errors"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,6 +25,75 @@ const REAL_OPERATION_DEADLINE = 25 * time.MILLISECOND
 
 // Bounds the buffer holding a process identifier read back from a fixture file.
 const PROCESS_IDENTIFIER_BYTES = 64
+
+// Writes content to path through the loop. Fixture setup in this package goes through io.IO
+// like everything else: this is the io gateway's own suite, so a test that reaches around the
+// loop to prepare its input exercises a path no application is allowed to take.
+func write_file(t *testing.T, loop io.IO, driver io.Driver, path string, content []byte) {
+	t.Helper()
+	file, create_err := loop.Create(path)
+	if create_err != nil {
+		t.Fatalf("create %s: %v", path, create_err)
+	}
+	written := 0
+	write_done := false
+	var completion io.Completion
+	loop.Write(&completion, func(_ *io.Completion, count int, write_err error) {
+		if write_err != nil {
+			t.Errorf("write %s: %v", path, write_err)
+		}
+		written = count
+		write_done = true
+	}, file, content, 0)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return write_done }) {
+		t.Fatalf("the write of %s did not complete", path)
+	}
+	if written != len(content) {
+		t.Fatalf("wrote %d bytes to %s, want %d", written, path, len(content))
+	}
+	close_file(t, loop, driver, path, file)
+}
+
+// Reads up to len(buffer) bytes from path through the loop, returning the count.
+func read_file(
+	t *testing.T, loop io.IO, driver io.Driver, path string, buffer []byte,
+) (count int) {
+	t.Helper()
+	file, open_err := loop.Open(path)
+	if open_err != nil {
+		t.Fatalf("open %s: %v", path, open_err)
+	}
+	read_done := false
+	var completion io.Completion
+	loop.Read(&completion, func(_ *io.Completion, read_count int, read_err error) {
+		if read_err != nil {
+			t.Errorf("read %s: %v", path, read_err)
+		}
+		count = read_count
+		read_done = true
+	}, file, buffer, 0)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
+		t.Fatalf("the read of %s did not complete", path)
+	}
+	close_file(t, loop, driver, path, file)
+	return count
+}
+
+// Releases a descriptor through the loop's asynchronous Close.
+func close_file(t *testing.T, loop io.IO, driver io.Driver, path string, file io.File) {
+	t.Helper()
+	close_done := false
+	var completion io.Completion
+	loop.Close(&completion, func(_ *io.Completion, close_err error) {
+		if close_err != nil {
+			t.Errorf("close %s: %v", path, close_err)
+		}
+		close_done = true
+	}, file)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return close_done }) {
+		t.Fatalf("the close of %s did not complete", path)
+	}
+}
 
 // Creates the 32-entry test scheduler and fails at the composition root if initialization fails.
 func operating_system_loop(t *testing.T, clock time.Clock) (loop io.IO, driver io.Driver) {
@@ -100,17 +168,15 @@ func test_connect(
 // Test_Operating_System_IO_Read writes a temp file and reads it back through the
 // real backend, confirming the read runs in the loop and reports the bytes.
 func Test_Operating_System_IO_Read(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "io")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, write_err := file.WriteAt([]byte("hello"), 0)
-	if write_err != nil {
-		t.Fatal(write_err)
-	}
-
 	clock, _ := timeos.New_Operating_System_Clock()
 	loop, driver := operating_system_loop(t, clock)
+	path := filepath.Join(t.TempDir(), "read")
+	write_file(t, loop, driver, path, []byte("hello"))
+
+	file, open_err := loop.Open(path)
+	if open_err != nil {
+		t.Fatalf("open: %v", open_err)
+	}
 	buffer := make([]byte, 5)
 	count := -1
 	read_done := false
@@ -121,10 +187,11 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 		}
 		count = bytes
 		read_done = true
-	}, io.File(file.Fd()), buffer, 0)
+	}, file, buffer, 0)
 	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
 		t.Fatal("read did not complete")
 	}
+	close_file(t, loop, driver, path, file)
 
 	if count != 5 {
 		t.Fatalf("read %d bytes, want 5", count)
@@ -600,17 +667,12 @@ func Test_Operating_System_IO_Close_With_Armed_Receive(t *testing.T) {
 
 // Test_Operating_System_IO_Open opens a file through the loop and reads it back.
 func Test_Operating_System_IO_Open(t *testing.T) {
-	source, err := os.CreateTemp(t.TempDir(), "io")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, write_err := source.WriteAt([]byte("hello"), 0); write_err != nil {
-		t.Fatal(write_err)
-	}
-
 	clock, _ := timeos.New_Operating_System_Clock()
 	loop, driver := operating_system_loop(t, clock)
-	file, open_err := loop.Open(source.Name())
+	path := filepath.Join(t.TempDir(), "open")
+	write_file(t, loop, driver, path, []byte("hello"))
+
+	file, open_err := loop.Open(path)
 	if open_err != nil {
 		t.Fatalf("open: %v", open_err)
 	}
@@ -628,6 +690,7 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
 		t.Fatal("read did not complete")
 	}
+	close_file(t, loop, driver, path, file)
 
 	if count != 5 {
 		t.Fatalf("read %d bytes, want 5", count)
@@ -639,14 +702,10 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 
 // Test_Operating_System_IO_Create creates a file through the loop and writes to it.
 func Test_Operating_System_IO_Create(t *testing.T) {
-	source, err := os.CreateTemp(t.TempDir(), "io")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	clock, _ := timeos.New_Operating_System_Clock()
 	loop, driver := operating_system_loop(t, clock)
-	file, create_err := loop.Create(source.Name())
+	path := filepath.Join(t.TempDir(), "create")
+	file, create_err := loop.Create(path)
 	if create_err != nil {
 		t.Fatalf("create: %v", create_err)
 	}
@@ -667,24 +726,9 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 	if count != 5 {
 		t.Fatalf("wrote %d bytes, want 5", count)
 	}
-	verify, open_err := loop.Open(source.Name())
-	if open_err != nil {
-		t.Fatalf("open: %v", open_err)
-	}
+	close_file(t, loop, driver, path, file)
 	buffer := make([]byte, 5)
-	read := -1
-	read_done := false
-	var read_completion io.Completion
-	loop.Read(&read_completion, func(_ *io.Completion, bytes int, read_err error) {
-		if read_err != nil {
-			t.Errorf("read back: %v", read_err)
-		}
-		read = bytes
-		read_done = true
-	}, verify, buffer, 0)
-	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
-		t.Fatal("read back did not complete")
-	}
+	read := read_file(t, loop, driver, path, buffer)
 	if read != 5 {
 		t.Fatalf("read back %d bytes, want 5", read)
 	}
@@ -760,13 +804,16 @@ func Test_Operating_System_IO_Tiger_Beetle_File_Parity(t *testing.T) {
 // Test_Operating_System_IO_Open_At_No_Follow verifies that OPEN_AT_NO_FOLLOW rejects a symbolic
 // link in the final path part and does not reject an ordinary file.
 func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
+	clock_setup, _ := timeos.New_Operating_System_Clock()
+	loop_setup, driver_setup := operating_system_loop(t, clock_setup)
 	root := t.TempDir()
 	target := filepath.Join(root, "target")
 	link := filepath.Join(root, "link")
-	if write_err := os.WriteFile(target, []byte("secret"), 0o600); write_err != nil {
-		t.Fatalf("write target: %v", write_err)
-	}
-	if link_err := os.Symlink(target, link); link_err != nil {
+	write_file(t, loop_setup, driver_setup, target, []byte("secret"))
+	driver_setup.Deinit()
+	// A symbolic link is the one filesystem shape io.IO cannot make, so the link itself stays
+	// a raw call. That absence is what this test exists to guard against following.
+	if link_err := syscall.Symlink(target, link); link_err != nil {
 		t.Fatalf("make symbolic link: %v", link_err)
 	}
 
@@ -921,7 +968,7 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 		fired++
 		got = signal
 	}, io.SIGNAL_TERMINATE, REAL_DEADLINE)
-	if kill_err := syscall.Kill(os.Getpid(), syscall.SIGTERM); kill_err != nil {
+	if kill_err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); kill_err != nil {
 		t.Fatalf("kill: %v", kill_err)
 	}
 	driver.Run_Until(func() (finished bool) { return fired > 0 }, REAL_DEADLINE)
@@ -1418,22 +1465,65 @@ func process_group_wait_for_exit(
 	return false, nil
 }
 
+// Test_Operating_System_IO_Make_Directory covers what a converging mkdir can hide: a repeat
+// call, a relative path, a trailing slash, and a final component that already exists as a file.
+func Test_Operating_System_IO_Make_Directory(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	root := t.TempDir()
+
+	nested := filepath.Join(root, "one", "two", "three")
+	if make_err := loop.Make_Directory(nested); make_err != nil {
+		t.Fatalf("make nested: %v", make_err)
+	}
+	// A repeat converges rather than reporting that the directory exists.
+	if repeat_err := loop.Make_Directory(nested); repeat_err != nil {
+		t.Fatalf("repeat make: %v", repeat_err)
+	}
+	parents := []string{
+		filepath.Join(root, "one"), filepath.Join(root, "one", "two"),
+	}
+	for _, path := range parents {
+		status, _ := loop.Status(path)
+		if !status.Is_Directory {
+			t.Fatalf("parent %s = %+v, want a directory", path, status)
+		}
+	}
+
+	slashed := filepath.Join(root, "four", "five") + "/"
+	if make_err := loop.Make_Directory(slashed); make_err != nil {
+		t.Fatalf("make with a trailing slash: %v", make_err)
+	}
+	if status, _ := loop.Status(filepath.Join(root, "four", "five")); !status.Is_Directory {
+		t.Fatalf("trailing-slash path = %+v, want a directory", status)
+	}
+
+	// A final component that already exists as a file must report an error rather than
+	// converge, because the caller asked for a directory and does not have one.
+	occupied := filepath.Join(root, "occupied")
+	write_file(t, loop, driver, occupied, []byte("not a directory"))
+	if make_err := loop.Make_Directory(occupied); make_err == nil {
+		t.Fatal("making a directory over an existing file reported no error")
+	}
+	driver.Deinit()
+}
+
 // Test_Operating_System_IO_Directory exercises the filesystem-traversal ops on a real temp
 // tree: Make_Directory builds a nested path (into which the fixture file is seeded), and
 // Status and Read_Directory then report the tree's shape, including an absent path.
 func Test_Operating_System_IO_Directory(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, _ := operating_system_loop(t, clock)
+	loop, driver := operating_system_loop(t, clock)
 
 	root := t.TempDir()
 	nested := filepath.Join(root, "a", "b")
 	if make_err := loop.Make_Directory(nested); make_err != nil {
 		t.Fatalf("make directory: %v", make_err)
 	}
+	// Creating the file through the loop proves Make_Directory built the parents: Create
+	// fails when the directory above the path does not exist.
 	file_path := filepath.Join(nested, "file.txt")
-	if seed_err := os.WriteFile(file_path, []byte("hello"), 0o644); seed_err != nil {
-		t.Fatalf("seed file (proves Make_Directory built the parents): %v", seed_err)
-	}
+	write_file(t, loop, driver, file_path, []byte("hello"))
 
 	directory_status, _ := loop.Status(nested)
 	if !directory_status.Exists {

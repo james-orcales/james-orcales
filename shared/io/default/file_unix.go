@@ -71,6 +71,41 @@ func file_status(path string) (status io.File_Status, err error) {
 	}, nil
 }
 
+// The mode a created directory takes: readable and traversable by all, writable by the owner.
+const DIRECTORY_MODE = 0o755
+
+// Creates path and every missing parent. Each component is created in turn, and an existing
+// directory converges rather than failing, so a repeated call is not an error. The walk is
+// bounded by the path length, and the final Status check rejects a path whose last component
+// exists as something other than a directory — the one case a converging mkdir would hide.
+func directory_make(path string) (err error) {
+	if path == "" {
+		return syscall.ENOENT
+	}
+	for index := 1; index <= len(path); index++ {
+		if index < len(path) {
+			if path[index] != '/' {
+				continue
+			}
+		}
+		mkdir_err := syscall.Mkdir(path[:index], DIRECTORY_MODE)
+		if mkdir_err == nil {
+			continue
+		}
+		if mkdir_err != syscall.EEXIST {
+			return mkdir_err
+		}
+	}
+	status, status_err := file_status(path)
+	if status_err != nil {
+		return status_err
+	}
+	if !status.Is_Directory {
+		return syscall.ENOTDIR
+	}
+	return nil
+}
+
 // Lists path's immediate children, each named with whether it is a directory. It reads the
 // directory's raw entries in fixed-size passes and stats each name for its kind — the same
 // per-entry stat a walk over os.DirFS performs.
