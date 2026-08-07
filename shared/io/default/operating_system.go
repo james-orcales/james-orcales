@@ -154,31 +154,6 @@ func operating_system_wire_effects(state *Operating_System, loop *io.IO) {
 			callback(completed, result, spawn_err)
 		}, request, deadline)
 	}
-	// Repository extension: successful exec atomically closes every CLOEXEC descriptor.
-	// TigerBeetle's multiversion behavior does not inherit listeners; the new image rebinds.
-	loop.Self_Exec = func(path string, argv []string, environment []string) (err error) {
-		if environment == nil {
-			environment = syscall.Environ()
-		}
-		return Self_Exec(Self_Exec_Input{
-			Path: path, Arguments: argv, Environment: environment,
-		})
-	}
-}
-
-// Self_Exec_Input is an explicit process-image replacement, including its complete environment.
-type Self_Exec_Input struct {
-	// Path is the executable image that replaces the current process.
-	Path string
-	// Arguments become the replacement process argv.
-	Arguments []string
-	// Environment becomes the replacement process environment; an empty slice inherits nothing.
-	Environment []string
-}
-
-// Self_Exec replaces the current process image with exactly the injected arguments and environment.
-func Self_Exec(input Self_Exec_Input) (err error) {
-	return syscall.Exec(input.Path, input.Arguments, input.Environment)
 }
 
 // Bounds one pipe read, so a chatty child is drained in repeated passes rather than into one

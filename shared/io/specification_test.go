@@ -698,16 +698,6 @@ func Test_Sim_Spawn(t *testing.T) {
 	}
 }
 
-// Test_Sim_Self_Exec verifies the simulator refuses to replace its own process and reports
-// the failure synchronously, so a caller's fallback path runs in every simulated run.
-func Test_Sim_Self_Exec(t *testing.T) {
-	loop, _, _ := sim_loop(0)
-	err := loop.Self_Exec("/proc/self/exe", []string{"/proc/self/exe"}, []string{})
-	if err == nil {
-		t.Fatal("self-exec returned nil error; the simulator must always fail it")
-	}
-}
-
 // Test_Sim_Read_Directory verifies Read_Directory lists a directory's immediate children,
 // each named with whether it is itself a directory.
 func Test_Sim_Read_Directory(t *testing.T) {

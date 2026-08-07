@@ -598,11 +598,6 @@ type IO struct {
 		completion *Completion, callback Process_Callback, request Process_Request,
 		deadline time.Duration,
 	)
-	// Self_Exec is a repository extension that replaces the process image. All descriptors are
-	// close-on-exec, so a successful replacement closes listeners and the new image rebinds. A
-	// nil environment preserves the backend's ambient environment; a non-nil slice completely
-	// replaces it, including an explicitly empty slice that inherits nothing.
-	Self_Exec func(path string, argv []string, environment []string) (err error)
 }
 
 // Driver advances the loop — the only capability that moves time and delivers
@@ -1232,16 +1227,7 @@ func sim_wire_effects(state *Sim, loop *IO) {
 		invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
 		sim_spawn(state, completion, callback, request, deadline)
 	}
-	loop.Self_Exec = func(path string, argv []string, _ []string) (err error) {
-		return sim_self_exec_unsupported
-	}
 }
-
-// The error every simulated Self_Exec returns: the simulator cannot replace its own test
-// process, so it reports the failure rather than pretending to succeed (which would destroy
-// the run). A caller's real-backend success path never returns, so its fallback branch is
-// exactly what the simulator exercises.
-var sim_self_exec_unsupported = errors.New("io: self-exec is not supported by the simulator")
 
 // Delivers a subprocess result drawn from the seed: the exit code varies (usually zero,
 // occasionally non-zero for fault coverage) with no captured output — scripted output is

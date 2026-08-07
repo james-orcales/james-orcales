@@ -145,12 +145,6 @@ A spawn requires a positive finite deadline; natural completion returns the seed
 while the deadline wins ties with Deadline_Exceeded. The real backend kills its subprocess group,
 bounds pipe cleanup to one second, and returns partial output. TigerBeetle has no Spawn counterpart.
 
-### Self Exec
-
-Self_Exec replaces the image and returns only on failure; close-on-exec sockets make it rebind.
-A nil environment preserves ambient values; a non-nil slice is the complete replacement
-environment, so an empty slice inherits nothing. The simulator cannot replace its test process.
-
 ### Read Directory
 
 Read_Directory lists a directory's immediate children synchronously, sorted by name so the
