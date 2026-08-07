@@ -55,6 +55,7 @@ descriptor. This finite lifetime deliberately diverges from TigerBeetle's unboun
 
 Open_Socket_TCP and Open_Socket_UDP return fresh caller-owned descriptors synchronously and
 record them in Raw_Open. Only an explicit caller Close or Close_Socket releases them.
+Open_Socket_TCP applies TCP_Options through Set_Socket_Option, and Darwin has no user timeout.
 
 ### Connect
 

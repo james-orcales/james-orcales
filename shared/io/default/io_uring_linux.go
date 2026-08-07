@@ -127,97 +127,56 @@ func socket_open(
 	)
 }
 
-// Maps the backend-independent family to Linux's socket family constant.
-func socket_family(family sharedio.Address_Family) (system int) {
-	if family == sharedio.FAMILY_IPV6 {
-		return syscall.AF_INET6
-	}
-	return syscall.AF_INET
-}
-
 // Applies CLOEXEC to the synchronous accept helper; io_uring accept supplies it in the SQE.
 func socket_accept_configure(descriptor int) (err error) {
 	syscall.CloseOnExec(descriptor)
 	return nil
 }
 
-func socket_configure(descriptor int, options sharedio.TCP_Options) (err error) {
-	if options.Receive_Buffer > 0 {
-		err = syscall.SetsockoptInt(
-			descriptor, syscall.SOL_SOCKET,
-			SOCKET_RECEIVE_BUFFER_FORCE, options.Receive_Buffer,
-		)
-		if err == syscall.EPERM {
-			err = syscall.SetsockoptInt(
-				descriptor, syscall.SOL_SOCKET,
-				syscall.SO_RCVBUF, options.Receive_Buffer,
-			)
-		}
-		if err != nil {
-			return err
-		}
+// Applies one option that Linux names differently from Darwin, or that Linux offers in a
+// privileged variant. handled false sends the option on to the shared table.
+func platform_option_set(
+	descriptor int, option sharedio.Socket_Option, value int,
+) (handled bool, err error) {
+	if option == sharedio.SOCKET_OPTION_RECEIVE_BUFFER {
+		return true, socket_buffer_force(
+			descriptor, SOCKET_RECEIVE_BUFFER_FORCE, syscall.SO_RCVBUF, value)
 	}
-	if options.Send_Buffer > 0 {
-		err = syscall.SetsockoptInt(
-			descriptor, syscall.SOL_SOCKET,
-			SOCKET_SEND_BUFFER_FORCE, options.Send_Buffer,
-		)
-		if err == syscall.EPERM {
-			err = syscall.SetsockoptInt(
-				descriptor, syscall.SOL_SOCKET,
-				syscall.SO_SNDBUF, options.Send_Buffer,
-			)
-		}
-		if err != nil {
-			return err
-		}
+	if option == sharedio.SOCKET_OPTION_SEND_BUFFER {
+		return true, socket_buffer_force(
+			descriptor, SOCKET_SEND_BUFFER_FORCE, syscall.SO_SNDBUF, value)
 	}
-	if options.Keepalive != nil {
-		err = socket_configure_keepalive(descriptor, options.Keepalive)
-		if err != nil {
-			return err
-		}
+	name, known := platform_option_name(option)
+	if !known {
+		return false, nil
 	}
-	if options.User_Timeout_Milliseconds > 0 {
-		err = syscall.SetsockoptInt(
-			descriptor, syscall.IPPROTO_TCP, SOCKET_USER_TIMEOUT,
-			options.User_Timeout_Milliseconds,
-		)
-		if err != nil {
-			return err
-		}
-	}
-	if options.No_Delay {
-		return syscall.SetsockoptInt(
-			descriptor, syscall.IPPROTO_TCP, syscall.TCP_NODELAY, 1,
-		)
-	}
-	return nil
+	return true, syscall.SetsockoptInt(descriptor, syscall.IPPROTO_TCP, name, value)
 }
 
-// Applies Linux's full keepalive tuple after enabling SO_KEEPALIVE.
-func socket_configure_keepalive(
-	descriptor int, keepalive *sharedio.TCP_Keepalive,
-) (err error) {
-	err = syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, 1)
-	if err != nil {
-		return err
+// Maps the Linux-only transport options to their names.
+func platform_option_name(option sharedio.Socket_Option) (name int, known bool) {
+	switch option {
+	case sharedio.SOCKET_OPTION_KEEPALIVE_IDLE:
+		return syscall.TCP_KEEPIDLE, true
+	case sharedio.SOCKET_OPTION_KEEPALIVE_INTERVAL:
+		return syscall.TCP_KEEPINTVL, true
+	case sharedio.SOCKET_OPTION_KEEPALIVE_COUNT:
+		return syscall.TCP_KEEPCNT, true
+	case sharedio.SOCKET_OPTION_USER_TIMEOUT:
+		return SOCKET_USER_TIMEOUT, true
 	}
-	err = syscall.SetsockoptInt(
-		descriptor, syscall.IPPROTO_TCP, syscall.TCP_KEEPIDLE, keepalive.Idle_Seconds,
-	)
-	if err != nil {
-		return err
+	return 0, false
+}
+
+// Sizes a socket buffer through the privileged name first, because the unprivileged one silently
+// caps the request at the kernel's rmem_max or wmem_max. A process without CAP_NET_ADMIN takes
+// the capped size rather than failing, which is what TigerBeetle accepts on this platform.
+func socket_buffer_force(descriptor int, forced int, plain int, value int) (err error) {
+	err = syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, forced, value)
+	if err == syscall.EPERM {
+		return syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, plain, value)
 	}
-	err = syscall.SetsockoptInt(
-		descriptor, syscall.IPPROTO_TCP, syscall.TCP_KEEPINTVL, keepalive.Interval_Seconds,
-	)
-	if err != nil {
-		return err
-	}
-	return syscall.SetsockoptInt(
-		descriptor, syscall.IPPROTO_TCP, syscall.TCP_KEEPCNT, keepalive.Count,
-	)
+	return err
 }
 
 // KERNEL_RING_SETUP_CALL keeps the raw syscall compatible with Linux amd64.
@@ -275,6 +234,10 @@ const PLATFORM_STAT_AT_CALL = 262
 // PLATFORM_SYMBOLIC_LINK_NO_FOLLOW is Linux AT_SYMLINK_NOFOLLOW, so a directory pass reports a
 // symbolic link as itself rather than as its target.
 const PLATFORM_SYMBOLIC_LINK_NO_FOLLOW = 0x100
+
+// Caps the EINTR retries of one eager filesystem syscall. A signal can interrupt the call, but
+// only a broken kernel interrupts it repeatedly, so a bound reports an error rather than a spin.
+const PLATFORM_INTERRUPT_RETRIES_MAX = 16
 
 // KERNEL_PIPE_OFFSET tells the kernel to read or write at the descriptor's current position.
 // A pipe is not seekable, so it rejects any other offset with ESPIPE.
@@ -707,21 +670,29 @@ func platform_pin(operation *Operating_System_Operation) (err error) {
 	return nil
 }
 
-// Platform address encodes shared/io.Address as sockaddr_in or sockaddr_in6.
+// Platform address encodes shared/io.Address as sockaddr_in or sockaddr_in6. The SQE takes the
+// same bytes the synchronous calls pass, so both share one encoder. An address the encoder
+// rejects leaves the size at zero, and the kernel then fails the operation with EINVAL.
 func platform_address(operation *Operating_System_Operation) {
-	for index := range operation.Socket_Address {
-		operation.Socket_Address[index] = 0
-	}
-	binary.LittleEndian.PutUint16(operation.Socket_Address[0:2], uint16(
-		socket_family(operation.Address.Family)))
-	binary.BigEndian.PutUint16(operation.Socket_Address[2:4], operation.Address.Port)
-	if operation.Address.Family == sharedio.FAMILY_IPV4 {
-		copy(operation.Socket_Address[4:8], operation.Address.IP[:4])
-		operation.Socket_Address_Size = 16
+	size, encode_err := socket_address_encode(operation.Address, &operation.Socket_Address)
+	if encode_err != nil {
+		operation.Socket_Address_Size = 0
 		return
 	}
-	copy(operation.Socket_Address[8:24], operation.Address.IP[:])
-	operation.Socket_Address_Size = 28
+	operation.Socket_Address_Size = size
+}
+
+// Writes the two header bytes of a sockaddr. Linux holds the family as a host-order uint16 and
+// carries no length byte, so size goes unused here and Darwin is the reason it is a parameter.
+func platform_address_header(
+	storage *[SOCKET_ADDRESS_BYTES]byte, family int, size uint32,
+) {
+	binary.LittleEndian.PutUint16(storage[0:2], uint16(family))
+}
+
+// Reads the family from the sockaddr the kernel wrote.
+func platform_address_family(storage *[SOCKET_ADDRESS_BYTES]byte) (family int) {
+	return int(binary.LittleEndian.Uint16(storage[0:2]))
 }
 
 // Platform get entry reserves one SQE, flushing a full submission queue before retrying exactly
@@ -893,6 +864,33 @@ func platform_prepare_entry(
 
 // Returns Linux AT_FDCWD for TigerBeetle IO.openat.
 func platform_current_directory() (descriptor int) { return -100 }
+
+// Reads one pass of raw directory entries into buffer through getdents64, retrying EINTR. Go's
+// ReadDirent already reaches this trap directly, so the raw call only drops the wrapper and
+// keeps one shape with the Darwin backend, which needs the raw call for a stronger reason.
+func platform_directory_read(descriptor int, buffer []byte) (count int, err error) {
+	for retry_index := 0; retry_index < PLATFORM_INTERRUPT_RETRIES_MAX; retry_index++ {
+		result, _, errno := syscall.Syscall(
+			syscall.SYS_GETDENTS64, uintptr(descriptor),
+			uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)),
+		)
+		if errno == syscall.EINTR {
+			continue
+		}
+		if errno != 0 {
+			return 0, errno
+		}
+		return int(result), nil
+	}
+	return 0, syscall.EINTR
+}
+
+// Reports whether a directory record names a file the filesystem already removed. Linux never
+// does, so the answer is always false: an old XFS or a FUSE filesystem returns a valid file
+// with a zero inode, and syscall.ParseDirent excludes Linux from that test for the same reason.
+func platform_directory_absent(record *syscall.Dirent) (absent bool) {
+	return false
+}
 
 // Translates the portable Open_At option fields to Linux posix.O bits and always forces CLOEXEC.
 func platform_open_flags(options sharedio.Open_At_Options) (flags int) {

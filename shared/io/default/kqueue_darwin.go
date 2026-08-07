@@ -126,7 +126,7 @@ func socket_create(input *Socket_Create_Input) (descriptor int, err error) {
 		syscall.Close(descriptor)
 		return -1, non_block_err
 	}
-	close_on_exec_err := socket_close_on_exec(descriptor)
+	close_on_exec_err := descriptor_close_on_exec(descriptor)
 	if close_on_exec_err != nil {
 		syscall.Close(descriptor)
 		return -1, close_on_exec_err
@@ -134,51 +134,56 @@ func socket_create(input *Socket_Create_Input) (descriptor int, err error) {
 	return descriptor, nil
 }
 
-// Maps the backend-independent family to Darwin's socket family constant.
-func socket_family(family sharedio.Address_Family) (system int) {
-	if family == sharedio.FAMILY_IPV6 {
-		return syscall.AF_INET6
-	}
-	return syscall.AF_INET
+// Writes the two header bytes of a sockaddr. Darwin holds the byte count in the first byte and
+// the family in the second, which is the only reason the encode is not shared whole.
+func platform_address_header(
+	storage *[SOCKET_ADDRESS_BYTES]byte, family int, size uint32,
+) {
+	storage[0] = byte(size)
+	storage[1] = byte(family)
 }
 
-// Marks descriptor close-on-exec while preserving the fcntl failure so socket_open can return
-// the original setup error after releasing the descriptor.
-func socket_close_on_exec(descriptor int) (err error) {
-	return descriptor_close_on_exec(descriptor)
+// Reads the family from the sockaddr the kernel wrote.
+func platform_address_family(storage *[SOCKET_ADDRESS_BYTES]byte) (family int) {
+	return int(storage[1])
+}
+
+// Applies one option that Darwin names differently from Linux. handled false sends the option
+// on to the shared table.
+func platform_option_set(
+	descriptor int, option sharedio.Socket_Option, value int,
+) (handled bool, err error) {
+	// Darwin carries no TCP_USER_TIMEOUT. Accepting it keeps one TCP_Options profile portable,
+	// and the transport still drops a dead connection through the keepalive tuple.
+	if option == sharedio.SOCKET_OPTION_USER_TIMEOUT {
+		return true, nil
+	}
+	name, known := platform_option_name(option)
+	if !known {
+		return false, nil
+	}
+	return true, syscall.SetsockoptInt(descriptor, syscall.IPPROTO_TCP, name, value)
+}
+
+// Maps the Darwin-only transport options to their names. Darwin spells the idle time
+// TCP_KEEPALIVE, where Linux spells the same option TCP_KEEPIDLE.
+func platform_option_name(option sharedio.Socket_Option) (name int, known bool) {
+	switch option {
+	case sharedio.SOCKET_OPTION_KEEPALIVE_IDLE:
+		return syscall.TCP_KEEPALIVE, true
+	case sharedio.SOCKET_OPTION_KEEPALIVE_INTERVAL:
+		return syscall.TCP_KEEPINTVL, true
+	case sharedio.SOCKET_OPTION_KEEPALIVE_COUNT:
+		return syscall.TCP_KEEPCNT, true
+	}
+	return 0, false
 }
 
 // Applies the two Darwin accepted-socket guarantees from io/darwin.zig:324-360.
 func socket_accept_configure(descriptor int) (err error) {
-	close_err := socket_close_on_exec(descriptor)
+	close_err := descriptor_close_on_exec(descriptor)
 	if close_err != nil {
 		return close_err
-	}
-	return syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, SOCKET_NO_SIGPIPE, 1)
-}
-
-func socket_configure(descriptor int, options sharedio.TCP_Options) (err error) {
-	if options.Receive_Buffer > 0 {
-		err = syscall.SetsockoptInt(
-			descriptor, syscall.SOL_SOCKET, syscall.SO_RCVBUF, options.Receive_Buffer,
-		)
-		if err != nil {
-			return err
-		}
-	}
-	if options.Send_Buffer > 0 {
-		err = syscall.SetsockoptInt(
-			descriptor, syscall.SOL_SOCKET, syscall.SO_SNDBUF, options.Send_Buffer,
-		)
-		if err != nil {
-			return err
-		}
-	}
-	if options.Keepalive != nil {
-		err = syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, 1)
-		if err != nil {
-			return err
-		}
 	}
 	return syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, SOCKET_NO_SIGPIPE, 1)
 }
@@ -356,6 +361,37 @@ func platform_mkdir_at(operation *Operating_System_Operation) (err error) {
 	return syscall.EINTR
 }
 
+// Reads one pass of raw directory entries into buffer through getdirentries64, retrying EINTR.
+// Go's ReadDirent reaches this kernel through fdopendir and readdir_r rather than through the
+// syscall, and syscall_darwin.go:305 admits that the resulting restart is quadratic in the
+// entry count. The trap keeps the resume position in the file description, so one pass needs
+// no lseek, no duplicate descriptor, and no re-read of the entries already returned.
+func platform_directory_read(descriptor int, buffer []byte) (count int, err error) {
+	// The trap takes an in-out position, and the kernel rejects a null pointer for it.
+	position := int64(0)
+	for retry_index := 0; retry_index < PLATFORM_INTERRUPT_RETRIES_MAX; retry_index++ {
+		result, _, errno := syscall.Syscall6(
+			syscall.SYS_GETDIRENTRIES64, uintptr(descriptor),
+			uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)),
+			uintptr(unsafe.Pointer(&position)), 0, 0,
+		)
+		if errno == syscall.EINTR {
+			continue
+		}
+		if errno != 0 {
+			return 0, errno
+		}
+		return int(result), nil
+	}
+	return 0, syscall.EINTR
+}
+
+// Reports whether a directory record names a file the filesystem already removed. Darwin marks
+// such a record with a zero inode, and syscall.ParseDirent drops it here for that reason.
+func platform_directory_absent(record *syscall.Dirent) (absent bool) {
+	return record.Ino == 0
+}
+
 // Translates the portable Open_At option fields to Darwin posix.O bits.
 func platform_open_flags(options sharedio.Open_At_Options) (flags int) {
 	flags = syscall.O_RDONLY
@@ -385,11 +421,7 @@ func socket_connect_attempt(
 		return 0, false, socket_connect_error(operation.Descriptor)
 	}
 	operation.Initiated = true
-	system, address_err := socket_address(operation.Address)
-	if address_err != nil {
-		return 0, false, address_err
-	}
-	connect_err := syscall.Connect(operation.Descriptor, system)
+	connect_err := socket_connect_call(operation.Descriptor, operation.Address)
 	if connect_err == syscall.EINPROGRESS {
 		return 0, true, nil
 	}

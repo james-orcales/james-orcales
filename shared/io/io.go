@@ -287,6 +287,20 @@ const SOCKET_OPTION_REUSE_ADDRESS Socket_Option = 3
 // SOCKET_OPTION_NO_DELAY disables the transport's send coalescing.
 const SOCKET_OPTION_NO_DELAY Socket_Option = 4
 
+// SOCKET_OPTION_KEEPALIVE_IDLE sets the idle seconds before the first keepalive probe.
+const SOCKET_OPTION_KEEPALIVE_IDLE Socket_Option = 5
+
+// SOCKET_OPTION_KEEPALIVE_INTERVAL sets the seconds between two keepalive probes.
+const SOCKET_OPTION_KEEPALIVE_INTERVAL Socket_Option = 6
+
+// SOCKET_OPTION_KEEPALIVE_COUNT sets how many keepalive probes may fail before the transport
+// drops the connection.
+const SOCKET_OPTION_KEEPALIVE_COUNT Socket_Option = 7
+
+// SOCKET_OPTION_USER_TIMEOUT caps the milliseconds unacknowledged data may stay in flight
+// before the transport drops the connection. Darwin has no equivalent and ignores it.
+const SOCKET_OPTION_USER_TIMEOUT Socket_Option = 8
+
 // Directory_Callback receives one pass of directory entries, or the error that ended the walk.
 // An empty slice with a nil error reports the end of the directory.
 type Directory_Callback func(
@@ -2881,6 +2895,12 @@ func Open_Socket_TCP(
 	if open_err != nil {
 		return 0, open_err
 	}
+	keepalive := TCP_Keepalive{}
+	if options.Keepalive != nil {
+		keepalive = *options.Keepalive
+	}
+	// SOCKET_OPTION_KEEPALIVE must precede the tuple, because a transport rejects the timing
+	// of a probe it is not yet sending.
 	settings := []struct {
 		Option Socket_Option
 		Value  int
@@ -2889,6 +2909,16 @@ func Open_Socket_TCP(
 		{SOCKET_OPTION_RECEIVE_BUFFER, options.Receive_Buffer, options.Receive_Buffer > 0},
 		{SOCKET_OPTION_SEND_BUFFER, options.Send_Buffer, options.Send_Buffer > 0},
 		{SOCKET_OPTION_KEEPALIVE, 1, options.Keepalive != nil},
+		{SOCKET_OPTION_KEEPALIVE_IDLE, keepalive.Idle_Seconds, keepalive.Idle_Seconds > 0},
+		{
+			SOCKET_OPTION_KEEPALIVE_INTERVAL, keepalive.Interval_Seconds,
+			keepalive.Interval_Seconds > 0,
+		},
+		{SOCKET_OPTION_KEEPALIVE_COUNT, keepalive.Count, keepalive.Count > 0},
+		{
+			SOCKET_OPTION_USER_TIMEOUT, options.User_Timeout_Milliseconds,
+			options.User_Timeout_Milliseconds > 0,
+		},
 		{SOCKET_OPTION_NO_DELAY, 1, options.No_Delay},
 	}
 	for _, setting := range settings {

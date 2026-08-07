@@ -3,6 +3,7 @@
 package io
 
 import (
+	"encoding/binary"
 	"errors"
 	"net"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/io"
 	"local/james-orcales/shared/time"
 )
@@ -108,33 +110,83 @@ func directory_make(path string) (err error) {
 }
 
 // Reads one pass of a directory's raw entries into buffer and returns the children it names.
-// The dirent layout is per-platform, so the parse stays here. The pass loop, the per-entry
-// kind, and the descriptor lifetime all compose above the surface in io.Read_Directory.
+// The record layout is per-platform, so the walk casts to syscall.Dirent and lets the platform
+// struct supply the offsets rather than naming a byte position. The pass loop, the descriptor
+// lifetime, and the accumulation across passes all compose above the surface in Read_Directory.
 func file_directory_pass(
 	descriptor int, buffer []byte,
 ) (entries []io.Directory_Entry, err error) {
-	count, read_err := syscall.ReadDirent(descriptor, buffer)
+	count, read_err := platform_directory_read(descriptor, buffer)
 	if read_err != nil {
 		return nil, read_err
 	}
 	entries = []io.Directory_Entry{}
-	if count <= 0 {
-		return entries, nil
-	}
-	_, _, names := syscall.ParseDirent(buffer[:count], -1, nil)
-	for _, name := range names {
-		// ParseDirent discards the entry type, so the kind comes from one fstatat against
-		// the open directory. Naming the child relative to the descriptor means the pass
-		// needs no path of its own, and the caller keeps one operation for one listing.
-		directory_bit, stat_err := file_status_at(descriptor, name)
-		if stat_err != nil {
-			return nil, stat_err
+	for offset := 0; offset < count; {
+		record := (*syscall.Dirent)(unsafe.Pointer(&buffer[offset]))
+		record_bytes := int(record.Reclen)
+		invariant.Always(record_bytes > 0, "A directory record spans at least one byte.")
+		invariant.Always(offset+record_bytes <= count,
+			"A directory record ends inside the bytes the kernel returned.")
+		entry, keep, entry_err := file_directory_entry(descriptor, record, record_bytes)
+		if entry_err != nil {
+			return nil, entry_err
 		}
-		entries = append(entries, io.Directory_Entry{
-			Name: name, Is_Directory: directory_bit,
-		})
+		if keep {
+			entries = append(entries, entry)
+		}
+		offset += record_bytes
 	}
 	return entries, nil
+}
+
+// Decodes one directory record. keep is false for the two self-referencing entries and for a
+// record the filesystem already deleted, which is what syscall.ParseDirent dropped before this
+// walk replaced it.
+func file_directory_entry(
+	descriptor int, record *syscall.Dirent, record_bytes int,
+) (entry io.Directory_Entry, keep bool, err error) {
+	if platform_directory_absent(record) {
+		return io.Directory_Entry{}, false, nil
+	}
+	name := file_directory_name(record, record_bytes)
+	if name == "." {
+		return io.Directory_Entry{}, false, nil
+	}
+	if name == ".." {
+		return io.Directory_Entry{}, false, nil
+	}
+	directory_bit, kind_err := file_directory_kind(descriptor, record, name)
+	if kind_err != nil {
+		return io.Directory_Entry{}, false, kind_err
+	}
+	return io.Directory_Entry{Name: name, Is_Directory: directory_bit}, true, nil
+}
+
+// Returns the name a directory record holds. The kernel terminates the name with a NUL byte
+// inside the record, so the terminator bounds it on both platforms. Darwin also counts the name
+// bytes in a field of its own, but Linux does not, and the terminator serves both.
+func file_directory_name(record *syscall.Dirent, record_bytes int) (name string) {
+	start := int(unsafe.Offsetof(record.Name))
+	invariant.Always(record_bytes > start, "A directory record holds at least one name byte.")
+	bytes := unsafe.Slice((*byte)(unsafe.Pointer(&record.Name[0])), record_bytes-start)
+	for index, value := range bytes {
+		if value == 0 {
+			return string(bytes[:index])
+		}
+	}
+	return string(bytes)
+}
+
+// Reports whether a directory record names a directory. The kernel already wrote the kind into
+// the record, so the common case costs no syscall at all. Only a filesystem that leaves the
+// field empty — XFS made with ftype=0, or NFS without READDIRPLUS — costs one fstatat.
+func file_directory_kind(
+	descriptor int, record *syscall.Dirent, name string,
+) (directory_bit bool, err error) {
+	if record.Type == syscall.DT_UNKNOWN {
+		return file_status_at(descriptor, name)
+	}
+	return record.Type == syscall.DT_DIR, nil
 }
 
 // Reports whether name, resolved against the open directory, is itself a directory. Go exports
@@ -287,17 +339,27 @@ func process_exit_code(status syscall.WaitStatus) (exit int) {
 // Reports the remote IP address of descriptor via getpeername; a non-IP peer yields the
 // empty address with no error.
 func socket_peer_address(descriptor int) (address string, err error) {
-	name, get_err := syscall.Getpeername(descriptor)
-	if get_err != nil {
-		return "", get_err
+	storage := [SOCKET_ADDRESS_BYTES]byte{}
+	size := uint32(SOCKET_ADDRESS_BYTES)
+	_, _, errno := syscall.RawSyscall(
+		syscall.SYS_GETPEERNAME, uintptr(descriptor),
+		uintptr(unsafe.Pointer(&storage[0])), uintptr(unsafe.Pointer(&size)),
+	)
+	if errno != 0 {
+		return "", errno
 	}
-	switch peer := name.(type) {
-	case *syscall.SockaddrInet4:
-		return net.IP(peer.Addr[:]).String(), nil
-	case *syscall.SockaddrInet6:
-		return net.IP(peer.Addr[:]).String(), nil
+	peer, decode_err := socket_address_decode(&storage, size)
+	// A peer that is neither IPv4 nor IPv6 is not an error here, only an absent address.
+	if decode_err == syscall.EAFNOSUPPORT {
+		return "", nil
 	}
-	return "", nil
+	if decode_err != nil {
+		return "", decode_err
+	}
+	if peer.Family == io.FAMILY_IPV4 {
+		return net.IP(peer.IP[:io.IPV4_ADDRESS_BYTES]).String(), nil
+	}
+	return net.IP(peer.IP[:]).String(), nil
 }
 
 // Reports whether err is the non-blocking "try again" signal that keeps an operation
@@ -309,24 +371,77 @@ func socket_again(err error) (again bool) {
 	return err == syscall.EWOULDBLOCK
 }
 
-// Converts the backend-independent explicit-family address to a POSIX socket address.
-func socket_address(address io.Address) (system syscall.Sockaddr, err error) {
+// The wire size of a sockaddr_in, which bounds the bytes the kernel reads for an IPv4 address.
+const SOCKET_ADDRESS_IPV4_BYTES = 16
+
+// The wire size of a sockaddr_in6, which is also the full storage size a decode may receive.
+const SOCKET_ADDRESS_IPV6_BYTES = 28
+
+// Writes address into storage as a sockaddr and returns the byte count the kernel reads. The
+// kernel takes exactly these bytes, so this replaces syscall.Sockaddr: that interface costs an
+// allocation and a type switch to build a struct the wrapper converts straight back to this
+// same layout. The port and the address bytes sit at the same offsets on both platforms, so
+// only the two header bytes need the platform.
+func socket_address_encode(
+	address io.Address, storage *[SOCKET_ADDRESS_BYTES]byte,
+) (size uint32, err error) {
+	for index := range storage {
+		storage[index] = 0
+	}
 	if address.Family == io.FAMILY_IPV4 {
-		four := &syscall.SockaddrInet4{Port: int(address.Port)}
-		copy(four.Addr[:], address.IP[:4])
-		return four, nil
+		platform_address_header(storage, syscall.AF_INET, SOCKET_ADDRESS_IPV4_BYTES)
+		binary.BigEndian.PutUint16(storage[2:4], address.Port)
+		copy(storage[4:8], address.IP[:io.IPV4_ADDRESS_BYTES])
+		return SOCKET_ADDRESS_IPV4_BYTES, nil
 	}
 	if address.Family == io.FAMILY_IPV6 {
-		six := &syscall.SockaddrInet6{Port: int(address.Port)}
-		copy(six.Addr[:], address.IP[:])
-		return six, nil
+		platform_address_header(storage, syscall.AF_INET6, SOCKET_ADDRESS_IPV6_BYTES)
+		binary.BigEndian.PutUint16(storage[2:4], address.Port)
+		copy(storage[8:24], address.IP[:])
+		return SOCKET_ADDRESS_IPV6_BYTES, nil
 	}
-	return nil, syscall.EAFNOSUPPORT
+	return 0, syscall.EAFNOSUPPORT
 }
 
-// Resolve turns a host into the IPv4 literal socket_address requires: an IP literal passes through
-// unchanged, a name is looked up and its first IPv4 returned. socket_address rejects a name so no
-// lookup runs on the dial path; a caller resolves here first and hands Connect an address. It is
+// Reads the sockaddr the kernel wrote into storage. size is what the kernel reported it filled,
+// so a truncated answer fails rather than decodes whatever the zeroed remainder happens to say.
+func socket_address_decode(
+	storage *[SOCKET_ADDRESS_BYTES]byte, size uint32,
+) (address io.Address, err error) {
+	family := platform_address_family(storage)
+	port := binary.BigEndian.Uint16(storage[2:4])
+	if family == syscall.AF_INET {
+		if size < SOCKET_ADDRESS_IPV4_BYTES {
+			return io.Address{}, syscall.EINVAL
+		}
+		ip := [io.IPV4_ADDRESS_BYTES]byte{}
+		copy(ip[:], storage[4:8])
+		return io.Address_I_Pv4(ip, port), nil
+	}
+	if family == syscall.AF_INET6 {
+		if size < SOCKET_ADDRESS_IPV6_BYTES {
+			return io.Address{}, syscall.EINVAL
+		}
+		ip := [io.IPV6_ADDRESS_BYTES]byte{}
+		copy(ip[:], storage[8:24])
+		return io.Address_I_Pv6(ip, port), nil
+	}
+	return io.Address{}, syscall.EAFNOSUPPORT
+}
+
+// Maps the backend-independent family to the platform's socket family constant. Each platform's
+// syscall package carries its own value, so one function serves both.
+func socket_family(family io.Address_Family) (system int) {
+	if family == io.FAMILY_IPV6 {
+		return syscall.AF_INET6
+	}
+	return syscall.AF_INET
+}
+
+// Resolve turns a host into the IPv4 literal socket_address_encode requires: an IP literal passes
+// through unchanged, a name is looked up and its first IPv4 returned. The encode takes only an
+// explicit family so no lookup runs on the dial path — a caller resolves here first and hands
+// Connect an address, never a name. It is
 // the prod Resolver injected into the shared http client, failing closed when the host has no IPv4.
 func Resolve(host string) (address string, err error) {
 	if net.ParseIP(host) != nil {
@@ -342,36 +457,6 @@ func Resolve(host string) (address string, err error) {
 		}
 	}
 	return "", errors.New("io: no IPv4 address for host " + host)
-}
-
-// Binds and listens on a caller-owned socket, returning the resolved address for port zero.
-func socket_listen(
-	descriptor int, address io.Address, options io.Listen_Options,
-) (resolved io.Address, err error) {
-	system, address_err := socket_address(address)
-	if address_err != nil {
-		return io.Address{}, address_err
-	}
-	if options.Backlog == 0 {
-		return io.Address{}, syscall.EINVAL
-	}
-	reuse_err := syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-	if reuse_err != nil {
-		return io.Address{}, reuse_err
-	}
-	bind_err := syscall.Bind(descriptor, system)
-	if bind_err != nil {
-		return io.Address{}, bind_err
-	}
-	listen_err := syscall.Listen(descriptor, int(options.Backlog))
-	if listen_err != nil {
-		return io.Address{}, listen_err
-	}
-	name, name_err := syscall.Getsockname(descriptor)
-	if name_err != nil {
-		return io.Address{}, name_err
-	}
-	return socket_address_from_system(name)
 }
 
 // Accepts one pending connection on listener, returning a non-blocking connected
@@ -404,11 +489,7 @@ type Socket_Connect_Start_Input struct {
 
 // Begins connecting a caller-owned descriptor; an in-progress handshake completes later.
 func socket_connect_start(input *Socket_Connect_Start_Input) (err error) {
-	address, address_err := socket_address(input.Address)
-	if address_err != nil {
-		return address_err
-	}
-	connect_err := syscall.Connect(input.Descriptor, address)
+	connect_err := socket_connect_call(input.Descriptor, input.Address)
 	if connect_err == nil {
 		return nil
 	}
@@ -416,6 +497,24 @@ func socket_connect_start(input *Socket_Connect_Start_Input) (err error) {
 		return nil
 	}
 	return socket_connect_translate(connect_err)
+}
+
+// Issues one connect. Every socket here is non-blocking, so the call returns EINPROGRESS at
+// once when the handshake has further to go and never waits, which is what lets it go raw.
+func socket_connect_call(descriptor int, address io.Address) (err error) {
+	storage := [SOCKET_ADDRESS_BYTES]byte{}
+	size, encode_err := socket_address_encode(address, &storage)
+	if encode_err != nil {
+		return encode_err
+	}
+	_, _, errno := syscall.RawSyscall(
+		syscall.SYS_CONNECT, uintptr(descriptor),
+		uintptr(unsafe.Pointer(&storage[0])), uintptr(size),
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 // Returns the pending error on descriptor after a connect completes, or nil when the
@@ -434,6 +533,12 @@ func socket_connect_error(descriptor int) (err error) {
 // Sets one portable socket option. It is the setsockopt primitive: every caller-selected socket
 // setting arrives here, and the platform-mandatory ones stay in socket_open.
 func socket_option_set(descriptor int, option io.Socket_Option, value int) (err error) {
+	// A platform answers first, because one portable option can need a different name or a
+	// privileged variant there. The shared table covers what both platforms spell the same.
+	handled, platform_err := platform_option_set(descriptor, option, value)
+	if handled {
+		return platform_err
+	}
 	level, name, known := socket_option_name(option)
 	if !known {
 		return syscall.EINVAL
@@ -458,13 +563,23 @@ func socket_option_name(option io.Socket_Option) (level int, name int, known boo
 	return 0, 0, false
 }
 
-// Gives a socket its local address, the bind primitive.
+// Gives a socket its local address, the bind primitive. bind only records the address in the
+// kernel, so it cannot block and the raw call skips the scheduler handoff that syscall.Syscall
+// performs for a call that can.
 func socket_bind(descriptor int, address io.Address) (err error) {
-	system, address_err := socket_address(address)
-	if address_err != nil {
-		return address_err
+	storage := [SOCKET_ADDRESS_BYTES]byte{}
+	size, encode_err := socket_address_encode(address, &storage)
+	if encode_err != nil {
+		return encode_err
 	}
-	return syscall.Bind(descriptor, system)
+	_, _, errno := syscall.RawSyscall(
+		syscall.SYS_BIND, uintptr(descriptor),
+		uintptr(unsafe.Pointer(&storage[0])), uintptr(size),
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 // Marks a bound socket as accepting, the listen primitive.
@@ -475,13 +590,19 @@ func socket_listen_mark(descriptor int, backlog uint32) (err error) {
 	return syscall.Listen(descriptor, int(backlog))
 }
 
-// Reports a socket's own address, the getsockname primitive.
+// Reports a socket's own address, the getsockname primitive. The call only reads kernel state,
+// so it cannot block and goes raw.
 func socket_name(descriptor int) (address io.Address, err error) {
-	name, name_err := syscall.Getsockname(descriptor)
-	if name_err != nil {
-		return io.Address{}, name_err
+	storage := [SOCKET_ADDRESS_BYTES]byte{}
+	size := uint32(SOCKET_ADDRESS_BYTES)
+	_, _, errno := syscall.RawSyscall(
+		syscall.SYS_GETSOCKNAME, uintptr(descriptor),
+		uintptr(unsafe.Pointer(&storage[0])), uintptr(unsafe.Pointer(&size)),
+	)
+	if errno != 0 {
+		return io.Address{}, errno
 	}
-	return socket_address_from_system(name)
+	return socket_address_decode(&storage, size)
 }
 
 // Translates a filesystem errno to the backend-independent sentinel. Darwin completes a
@@ -548,17 +669,6 @@ func socket_shutdown(descriptor int, how io.Shutdown_How) (err error) {
 		return io.Socket_Not_Connected
 	}
 	return socket_send_translate(err)
-}
-
-// Converts a POSIX getsockname result to the backend-independent address.
-func socket_address_from_system(system syscall.Sockaddr) (address io.Address, err error) {
-	if four, ok := system.(*syscall.SockaddrInet4); ok {
-		return io.Address_I_Pv4(four.Addr, uint16(four.Port)), nil
-	}
-	if six, ok := system.(*syscall.SockaddrInet6); ok {
-		return io.Address_I_Pv6(six.Addr, uint16(six.Port)), nil
-	}
-	return io.Address{}, syscall.EAFNOSUPPORT
 }
 
 // Translates send-side broken-pipe errors to the portable result.
