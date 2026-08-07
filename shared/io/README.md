@@ -344,6 +344,8 @@ invariants have to hold on every one of those timelines.
   the binary off the op-level surface. The simulator can no longer sit under it, fault
   granularity collapses to whatever the verbs expose, and the untested wrappers become
   the actual io layer. That is mock-DI, the thing this library exists to kill.
+- **Loop-resumed coroutines** — this library rejects them permanently. Section g gives
+  the reasons.
 
 ### f. The flag smell — booleans sequencing io are a state machine in denial
 
@@ -396,6 +398,42 @@ func mirror_transition(state *mirror, from, to mirror_state) {
 The live exemplar is the `Completion` machine in `shared/io/io.go` — `Completion_State`,
 `Completion_Transition_Legal`, `Completion_Transition` — enforced identically by both
 backends.
+
+### g. Coroutines — rejected permanently
+
+We examined the loop-resumed coroutine (the ACTOR shape of FoundationDB). It lets pure
+code write sequential io — submit, park, resume — and the root stays the only driver.
+The determinism argument was correct. One goroutine can run at each instant, and the
+root resumes each task in completion order, thus a run stays a pure function of the
+seed. The rejection has different causes. This section records them, so that the next
+evaluation starts here and not at zero.
+
+- **A parked stack keeps each local variable alive across the wait.** Code can read a
+  value before a suspension and use the value after it. The world moved between the two
+  points. Thus each such use is a possible stale read, and the compiler accepts all of
+  them.
+- **Each known guard is worse than the state machine that it replaces.** The actor
+  compiler of FoundationDB deletes the ordinary locals at each `wait`. That scope
+  boundary is not visible in the text
+  (third_party/foundationdb/documentation/sphinx/source/flow.rst:108). The text and the
+  meaning of the code do not agree, and each reader pays for the difference. A lint
+  liveness rule moves a language rule into an external tool. A reviewer convention is
+  not enforcement.
+- **The only second stack in Go is a goroutine.** The task package would need the one
+  exemption from the goroutine ban. The guarantee then holds because one package is
+  correct, not because the primitive is absent. One goroutine that escapes makes the
+  scheduler an input again, and the seed does not control that input.
+- **The coroutine is the same state machine, but its fields are hidden.** The mechanism
+  of FoundationDB is the proof. An ACTOR compiles to a class, each `state` variable is
+  a field of that class, and each wait-delimited segment is a generated callback. The
+  machine exists in the two designs. The one choice is the location of the field names:
+  in the source, or behind a compiler. This codebase names them in the source.
+
+The approved shapes stay as sections a and b. A callback submits the next operation,
+iteration goes through a root-called rearm, and each value that crosses a wait lives in
+a named struct field. Re-entry through a function boundary makes a stale local
+impossible in the language itself. No actor compiler, no lint rule, and no exemption
+are necessary.
 
 ## 6. Rules of the loop
 
