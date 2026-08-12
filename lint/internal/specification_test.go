@@ -1783,17 +1783,19 @@ func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 	}
 }
 
-// Test_IO_Gateway_Non_Blocking_IO_Exempt verifies the nbio/default gateway may import
-// syscall — the readiness primitives it binds have no route through shared/io.
+// The nbio/default package cannot route its OS bindings through the IO implementation
+// that depends on those bindings.
 func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"shared/nbio/default/system.go": &fstest.MapFile{Data: []byte(
-			"// Package nbio is a fixture.\npackage nbio\n\nimport \"syscall\"\n\n" +
-				"// Poll makes a readiness queue.\n" +
-				"func Poll() (descriptor int, err error) {\n" +
-				"\treturn syscall.Kqueue()\n}\n")},
+			"// Package nbio is a fixture.\npackage nbio\n\n" +
+				"import (\n\t\"net\"\n\t\"os/signal\"\n\t\"syscall\"\n)\n\n" +
+				"// Resolve resolves a host.\n" +
+				"func Resolve() (addresses []net.IP, err error) {\n" +
+				"\tsignal.Ignore(syscall.SIGPIPE)\n" +
+				"\treturn net.LookupIP(\"localhost\")\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
@@ -1804,7 +1806,7 @@ func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	if specification_diagnosed(diags, "Route IO through shared/io") {
-		t.Fatal("the nbio/default gateway may import syscall")
+		t.Fatal("the nbio/default gateway may use raw IO")
 	}
 }
 

@@ -9404,15 +9404,15 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 	return diags
 }
 
-// Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
-// other package routes IO through shared/io. Exempt: the io/default and time/default
-// gateways (time is the clock the loop is built on, not IO the loop carries), the
-// instrumentation packages (a diagnostics side channel), tests, and package main. The
-// syscall gateways are exempt for syscall alone, not for the whole ban.
+// The nbio/default package supplies the OS bindings that shared/io uses. Thus, routing
+// those bindings through shared/io would make a dependency cycle. The io/default and
+// time/default gateways, instrumentation packages, tests, and package main are also exempt.
+// The syscall gateways are exempt for syscall alone, not for the whole ban.
 func check_io_gateway(
 	parsed_files []Parsed_File, components *Component_Index, instrumentation []string,
 ) (diags []Diagnostic) {
 	gateway := source.IO_Gateway(components)
+	non_blocking_io_gateway := source.Non_Blocking_IO_Gateway(components)
 	time_gateway := source.Time_Gateway(components)
 	syscall_gateways := io_gateway_syscall_globs(components)
 	for _, pf := range parsed_files {
@@ -9427,6 +9427,13 @@ func check_io_gateway(
 		}
 		if gateway != "" {
 			if source.Path_Matches_Glob(pf.Path, []string{gateway + "/**"}) {
+				continue
+			}
+		}
+		if non_blocking_io_gateway != "" {
+			if source.Path_Matches_Glob(
+				pf.Path, []string{non_blocking_io_gateway + "/**"},
+			) {
 				continue
 			}
 		}

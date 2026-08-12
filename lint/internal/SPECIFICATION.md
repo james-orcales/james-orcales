@@ -519,9 +519,9 @@ harness drives. The read-only clock constructors mint no Driver and are not gate
 
 ### Gateway
 
-Raw IO stdlib (net/http, syscall, os/exec, bufio, crypto/tls, os/signal) lives only in io/default
-and time/default. os/default and nbio/default hold syscall alone. os and net expose only their pure
-symbols. Route IO through shared/io; instrumentation, tests, generated files, and main are exempt.
+Raw IO stdlib lives only in io/default, time/default, and nbio/default. Instrumentation, tests,
+generated files, and package main are exempt. nbio/default supplies the OS bindings that shared/io
+uses, so a route through shared/io makes a cycle. os/default can import only syscall.
 
 ### Seed
 

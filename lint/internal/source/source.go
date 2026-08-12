@@ -692,22 +692,20 @@ func IO_Gateway(components *Component_Index) (gateway string) {
 	return shared_library_directory(components, "io/default")
 }
 
-// Returns the workspace-relative directories of the shared module's syscall gateways
-// (its os/default and nbio/default), or nil when no module is the shared library. These
-// two bind what the loop is built on, not what it carries: os/default binds process and
-// environment ambient state, and nbio/default binds the readiness primitives. Thus they
-// hold syscall alone — the rest of the raw-IO stdlib stays banned there.
-// A directory earns a place in the list only when no shared/io surface can express what it
-// binds, so the list stays short and the ban stays the default.
+// Non_Blocking_IO_Gateway prevents the raw-IO rule from routing shared/io through
+// one of its dependencies.
+func Non_Blocking_IO_Gateway(components *Component_Index) (gateway string) {
+	return shared_library_directory(components, "nbio/default")
+}
+
+// Syscall_Gateways permits the process bindings that shared/io cannot supply.
+// The raw-IO ban stays active for all other imports in these directories.
 func Syscall_Gateways(components *Component_Index) (gateways []string) {
-	for _, relative := range []string{"os/default", "nbio/default"} {
-		directory := shared_library_directory(components, relative)
-		if directory == "" {
-			return nil
-		}
-		gateways = append(gateways, directory)
+	directory := shared_library_directory(components, "os/default")
+	if directory == "" {
+		return nil
 	}
-	return gateways
+	return []string{directory}
 }
 
 // Method_Satisfies_Stdlib reports whether the method's signature implements a
