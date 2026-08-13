@@ -1630,7 +1630,7 @@ func F() {
 }
 `)},
 		{Snapshot: snap.Init(`a.go:8:9: The API "http.Get" is unbounded (unbounded-http). Use (&http.Client{Timeout: N}).Get(...) instead.
-a.go:4:8: Only io/default can import "net/http". Route IO through shared/io.`), Drop: "The stdlib call", Files: snapshot_package(`import "net/http"
+a.go:4:8: Only simulation/nbio/default can import "net/http". Route IO through shared/simulation/nbio.`), Drop: "The stdlib call", Files: snapshot_package(`import "net/http"
 
 // F fetches.
 func F(url string) (resp *http.Response, err error) {
@@ -2978,7 +2978,7 @@ func F(r *http.Request) (h http.Header) {
 }
 `,
 			},
-			Want_Diag: "Route IO through shared/io",
+			Want_Diag: "Route IO through shared/simulation/nbio",
 		},
 		{
 			Name: "library calls net.Dial",

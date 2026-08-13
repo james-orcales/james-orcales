@@ -1427,9 +1427,10 @@ func Test_Stdlib_Time(t *testing.T) {
 func Test_Event_Loop_Driver(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import io \"fixture/shared/io\"\n\n" +
-		"// Build makes a loop.\nfunc Build() (loop io.IO) {\n" +
-		"\tl, _ := io.Sim_To_IO(nil)\n\treturn l\n}\n")
+		"import time \"fixture/shared/simulation/time\"\n\n" +
+		"// Build makes a loop.\nfunc Build() (loop time.Timeline) {\n" +
+		"\tloop, _, _ = time.New_Virtual_Timeline(time.Virtual_Clock{})\n" +
+		"\treturn loop\n}\n")
 	if !specification_flags(t, files, "makes a loop driver") {
 		t.Fatal("a library call to an IO loop constructor must be flagged")
 	}
@@ -1442,7 +1443,7 @@ func Test_Event_Loop_Gateway(t *testing.T) {
 	files := specification_one_file("package fixture\n\nimport \"syscall\"\n\n" +
 		"// Read does.\nfunc Read() (n int, err error) {\n" +
 		"\treturn syscall.Read(0, nil)\n}\n")
-	if !specification_flags(t, files, "Route IO through shared/io") {
+	if !specification_flags(t, files, "Route IO through shared/simulation/nbio") {
 		t.Fatal("importing raw IO stdlib outside the gateway must be flagged")
 	}
 }
@@ -1547,8 +1548,8 @@ func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
-			"import io \"fixture/shared/io\"\n\n" +
-			"func main() {\n\tio.Sim_To_IO(nil)\n}\n"),
+			"import time \"fixture/shared/simulation/time\"\n\n" +
+			"func main() {\n\ttime.New_Virtual_Timeline(time.Virtual_Clock{})\n}\n"),
 	}
 	if specification_flags(t, files, "makes a loop driver") {
 		t.Fatal("package main must be allowed to construct a loop driver")
@@ -1562,7 +1563,7 @@ func Test_Driver_Gateway_Test_Allowed(t *testing.T) {
 		"pkg/rule.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
 		"pkg/rule_test.go": []byte("package fixture_test\n\n" +
 			"import (\n\t\"testing\"\n\n" +
-			"\tiodefault \"fixture/shared/io/default\"\n)\n\n" +
+			"\tiodefault \"fixture/shared/simulation/nbio/default\"\n)\n\n" +
 			"// Test_X is a fixture.\nfunc Test_X(t *testing.T) {\n" +
 			"\tiodefault.New_Operating_System_IO(nil)\n}\n"),
 	}
@@ -1577,7 +1578,7 @@ func Test_Driver_Gateway_Test_Allowed(t *testing.T) {
 func Test_Driver_Gateway_Logical_Clock_Allowed(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import time \"fixture/shared/time\"\n\n" +
+		"import time \"fixture/shared/simulation/time\"\n\n" +
 		"// Build makes a clock.\nfunc Build() (clock time.Clock) {\n" +
 		"\tc, _ := time.Virtual_Clock_To_Clock(time.Virtual_Clock{})\n\treturn c\n}\n")
 	if specification_flags(t, files, "makes a loop driver") {
@@ -1585,19 +1586,20 @@ func Test_Driver_Gateway_Logical_Clock_Allowed(t *testing.T) {
 	}
 }
 
-// Test_Driver_Gateway_Type_Flagged verifies a non-main package that names the io.Driver
-// type is flagged — internal takes io.IO, and only the harness holds the Driver.
+// Test_Driver_Gateway_Type_Flagged verifies a non-main package that names time.Driver
+// is flagged. Internal code takes the Timeline, and only the harness holds the Driver.
 func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
 	t.Parallel()
-	library := "// Package io is a fixture.\npackage io\n\n" +
+	library := "// Package time is a fixture.\npackage time\n\n" +
 		"// Driver drives.\ntype Driver struct{}\n"
 	consumer := "// Package fixture is a fixture.\npackage fixture\n\n" +
-		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
-		"// Main drives.\nfunc Main(driver io.Driver) {}\n"
+		"import time \"" +
+		"github.com/james-orcales/james-orcales/shared/simulation/time\"\n\n" +
+		"// Main drives.\nfunc Main(driver time.Driver) {}\n"
 	fsys := fstest.MapFS{
-		"go.mod":          &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
-		"pkg/rule.go":     &fstest.MapFile{Data: []byte(consumer)},
+		"go.mod":                         {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/simulation/time/time.go": {Data: []byte(library)},
+		"pkg/rule.go":                    {Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
@@ -1607,23 +1609,24 @@ func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(diags, "can hold an io.Driver") {
-		t.Fatal("naming io.Driver outside main or a test must be flagged")
+	if !specification_diagnosed(diags, "can hold a time.Driver") {
+		t.Fatal("naming time.Driver outside main or a test must be flagged")
 	}
 }
 
-// Test_Driver_Gateway_Type_Main_Allowed verifies package main may hold the io.Driver type.
+// Test_Driver_Gateway_Type_Main_Allowed verifies package main may hold the time.Driver type.
 func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
 	t.Parallel()
-	library := "// Package io is a fixture.\npackage io\n\n" +
+	library := "// Package time is a fixture.\npackage time\n\n" +
 		"// Driver drives.\ntype Driver struct{}\n"
 	consumer := "// Package main is a fixture.\npackage main\n\n" +
-		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
-		"// hold takes a driver.\nfunc hold(driver io.Driver) {}\n\nfunc main() {}\n"
+		"import time \"" +
+		"github.com/james-orcales/james-orcales/shared/simulation/time\"\n\n" +
+		"// hold takes a driver.\nfunc hold(driver time.Driver) {}\n\nfunc main() {}\n"
 	fsys := fstest.MapFS{
-		"go.mod":          &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
-		"pkg/main.go":     &fstest.MapFile{Data: []byte(consumer)},
+		"go.mod":                         {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/simulation/time/time.go": {Data: []byte(library)},
+		"pkg/main.go":                    {Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
@@ -1633,8 +1636,8 @@ func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "can hold an io.Driver") {
-		t.Fatal("package main may hold io.Driver")
+	if specification_diagnosed(diags, "can hold a time.Driver") {
+		t.Fatal("package main may hold time.Driver")
 	}
 }
 
@@ -1665,7 +1668,7 @@ func Test_IO_Gateway_Network_Pure(t *testing.T) {
 	files := specification_one_file("package fixture\n\nimport \"net\"\n\n" +
 		"// F parses.\nfunc F() (address net.IP) {\n" +
 		"\treturn net.ParseIP(\"127.0.0.1\")\n}\n")
-	if specification_flags(t, files, "Route IO through shared/io") {
+	if specification_flags(t, files, "Route IO through shared/simulation/nbio") {
 		t.Fatal("net.ParseIP is a pure address helper and must be allowed")
 	}
 }
@@ -1690,7 +1693,7 @@ func Test_IO_Gateway_Test_Exempt(t *testing.T) {
 			"import (\n\t\"net\"\n\t\"testing\"\n)\n\n// Test_X is a fixture.\n" +
 			"func Test_X(t *testing.T) {\n\tnet.ParseIP(\"\")\n}\n"),
 	}
-	if specification_flags(t, files, "Route IO through shared/io") {
+	if specification_flags(t, files, "Route IO through shared/simulation/nbio") {
 		t.Fatal("a test may import raw IO stdlib")
 	}
 }
@@ -1715,7 +1718,7 @@ func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/io") {
+	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
 		t.Fatal("an instrumentation package may do raw IO")
 	}
 }
@@ -1729,7 +1732,7 @@ func Test_IO_Gateway_Main_Exempt(t *testing.T) {
 			"import \"net\"\n\n" +
 			"// main dials.\nfunc main() {\n\tnet.ParseIP(\"\")\n}\n"),
 	}
-	if specification_flags(t, files, "Route IO through shared/io") {
+	if specification_flags(t, files, "Route IO through shared/simulation/nbio") {
 		t.Fatal("package main may do raw IO")
 	}
 }
@@ -1740,20 +1743,20 @@ func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/time/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/simulation/time/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package time is a fixture.\npackage time\n\nimport \"syscall\"\n\n" +
 				"// Now reads the clock.\nfunc Now() (n int64) {\n" +
 				"\tstamp := syscall.Timespec{}\n\treturn stamp.Sec\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/time/default",
+		Scope:            "shared/simulation/time/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/io") {
+	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
 		t.Fatal("the time/default clock gateway may import syscall")
 	}
 }
@@ -1764,7 +1767,7 @@ func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/os/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/simulation/os/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package os is a fixture.\npackage os\n\nimport \"syscall\"\n\n" +
 				"// Identifier reads the process identifier.\n" +
 				"func Identifier() (identifier int) {\n" +
@@ -1772,13 +1775,13 @@ func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/os/default",
+		Scope:            "shared/simulation/os/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/io") {
+	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
 		t.Fatal("the os/default gateway may import syscall")
 	}
 }
@@ -1789,7 +1792,7 @@ func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/nbio/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/simulation/nbio/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package nbio is a fixture.\npackage nbio\n\n" +
 				"import (\n\t\"net\"\n\t\"os/signal\"\n\t\"syscall\"\n)\n\n" +
 				"// Resolve resolves a host.\n" +
@@ -1799,14 +1802,37 @@ func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/nbio/default",
+		Scope:            "shared/simulation/nbio/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/io") {
+	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
 		t.Fatal("the nbio/default gateway may use raw IO")
+	}
+}
+
+// The memory stream cannot receive the OS exception that belongs to the nbio backend.
+func Test_IO_Gateway_Stream_Default_Flagged(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/simulation/io/default/system.go": {Data: []byte(
+			"// Package io is a fixture.\npackage io\n\nimport \"syscall\"\n\n" +
+				"// Read reads.\nfunc Read() (count int, err error) {\n" +
+				"\treturn syscall.Read(0, nil)\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "shared/simulation/io/default",
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if !specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
+		t.Fatal("the memory stream default package may not import raw IO")
 	}
 }
 
@@ -1816,7 +1842,7 @@ func Test_IO_Gateway_Operating_System_Network_Flagged(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/os/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/simulation/os/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package os is a fixture.\npackage os\n\nimport \"net/http\"\n\n" +
 				"// Client makes a client.\n" +
 				"func Client() (client *http.Client) {\n" +
@@ -1824,13 +1850,13 @@ func Test_IO_Gateway_Operating_System_Network_Flagged(t *testing.T) {
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/os/default",
+		Scope:            "shared/simulation/os/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(diags, "Route IO through shared/io") {
+	if !specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
 		t.Fatal("the os/default gateway may not import net/http")
 	}
 }

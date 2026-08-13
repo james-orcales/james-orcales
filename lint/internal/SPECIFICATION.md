@@ -503,7 +503,7 @@ parses every module.
 
 # Stdlib Time
 
-Stdlib time may be imported only by the shared module's time/default gateway;
+Stdlib time may be imported only by the shared module's simulation/time/default gateway;
 every other shared-module package injects the Clock instead.
 
 # Event Loop
@@ -513,15 +513,15 @@ mints it.
 
 ### Driver
 
-The Driver advances time and drives the loop; only package main or a test may mint it
-(Sim_To_IO, New_Operating_System_IO) or name the io.Driver type, so internal takes io.IO and the
-harness drives. The read-only clock constructors mint no Driver and are not gated.
+The Driver advances time and drives the loop. Only package main or a test can create it through
+New_Virtual_Timeline or New_Operating_System_IO. Only those packages can name time.Driver.
+Internal code takes time.Timeline, and the harness drives it.
 
 ### Gateway
 
-Raw IO stdlib lives only in io/default, time/default, and nbio/default. Instrumentation, tests,
-generated files, and package main are exempt. nbio/default supplies the OS bindings that shared/io
-uses, so a route through shared/io makes a cycle. os/default can import only syscall.
+Raw IO stdlib lives only in simulation/nbio/default and simulation/time/default. Instrumentation,
+tests, generated files, and package main are exempt. simulation/os/default can import only syscall.
+Route other raw IO through shared/simulation/nbio.
 
 ### Seed
 

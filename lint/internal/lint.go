@@ -9239,7 +9239,7 @@ func import_path_workspace_directory(
 // Stdlib time is the one ambient source of real wall-clock time. Funneling every
 // read through a single gateway keeps the injected Clock the only way the rest of
 // the shared module sees the clock, so within the shared library importing stdlib
-// "time" is allowed only in the time/default gateway; every other package injects
+// "time" is allowed only in simulation/time/default; every other package injects
 // a Clock. Binary components are out of scope — separate tools with their own needs.
 func check_time_import_gateway(
 	parsed_files []Parsed_File, components *Component_Index,
@@ -9267,7 +9267,7 @@ func check_time_import_gateway(
 			diags = append(diags, Diagnostic{
 				Position: pf.File_Set.Position(implementation.Pos()),
 				Name:     "stdlib-time",
-				Want:     "Import the time/default gateway and inject a Clock.",
+				Want:     "Import simulation/time/default and inject a Clock.",
 				Message: fmt.Sprintf(
 					"Only %q can import the stdlib time package. "+
 						"Inject the Clock.",
@@ -9281,7 +9281,7 @@ func check_time_import_gateway(
 
 // A package drives the loop only through package main or a test; elsewhere it may
 // submit IO and read the clock but never mint the loop Driver. This flags a call to an
-// IO loop constructor (Sim_To_IO, New_Operating_System_IO) outside main and _test.go.
+// IO loop constructor (New_Virtual_Timeline, New_Operating_System_IO) outside main and _test.go.
 // The read-only clock constructors mint no Driver, so they are not gated.
 func check_driver_gateway(parsed_files []Parsed_File) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
@@ -9296,8 +9296,7 @@ func check_driver_gateway(parsed_files []Parsed_File) (diags []Diagnostic) {
 	return diags
 }
 
-// The IO loop-constructor calls in one file. Both names are unique to shared/io, so a
-// selector match needs no import resolution.
+// The loop-constructor calls in one file have names that are unique to the simulation packages.
 func driver_gateway_file_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
 		call, is_call := node.(*ast.CallExpr)
@@ -9328,16 +9327,14 @@ func driver_gateway_file_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 // Reports whether name is an IO loop constructor that mints a Driver.
 func driver_gateway_constructor(name string) (constructor bool) {
 	switch name {
-	case "Sim_To_IO", "New_Operating_System_IO":
+	case "New_Virtual_Timeline", "New_Operating_System_IO":
 		return true
 	}
 	return false
 }
 
-// The Driver drives the loop; only package main or a test may hold it, so internal.Main
-// takes io.IO and the harness holds the Driver. This flags naming the io.Driver type
-// (a param, field, var, or return) outside main, tests, and the io backend that returns
-// it — the construction ban stops minting one, this stops receiving one.
+// The Driver drives the timeline. Only package main or a test may hold it. Internal.Main
+// takes time.Timeline, and the harness holds the Driver. The nbio backend can return it.
 func check_driver_type(
 	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
@@ -9345,7 +9342,7 @@ func check_driver_type(
 	if shared == "" {
 		return nil
 	}
-	driver_path := shared + "/io"
+	driver_path := shared + "/simulation/time"
 	gateway := source.IO_Gateway(components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -9364,8 +9361,7 @@ func check_driver_type(
 	return diags
 }
 
-// The io.Driver references in one file, resolved through the shared/io import's local
-// name so a same-named Driver from another package is not caught.
+// The time.Driver references in one file use the simulation/time import's local name.
 func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []Diagnostic) {
 	local := ""
 	for _, implementation := range pf.File.Imports {
@@ -9395,8 +9391,8 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 			Position: pf.File_Set.Position(selector.Pos()),
 			Name:     "driver-gateway",
 			Want:     "Hold the Driver only in package main or in a test.",
-			Message: "Only package main or a test can hold an io.Driver. " +
-				"An internal package takes io.IO and the harness runs it.",
+			Message: "Only package main or a test can hold a time.Driver. " +
+				"An internal package takes time.Timeline and the harness runs it.",
 			Tier: 1,
 		})
 		return true
@@ -9404,15 +9400,13 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 	return diags
 }
 
-// The nbio/default package supplies the OS bindings that shared/io uses. Thus, routing
-// those bindings through shared/io would make a dependency cycle. The io/default and
-// time/default gateways, instrumentation packages, tests, and package main are also exempt.
-// The syscall gateways are exempt for syscall alone, not for the whole ban.
+// The simulation/nbio/default package supplies the OS backend. The simulation/time/default
+// gateway, instrumentation packages, tests, and package main are also exempt. The syscall
+// gateways are exempt for syscall alone, not for the whole ban.
 func check_io_gateway(
 	parsed_files []Parsed_File, components *Component_Index, instrumentation []string,
 ) (diags []Diagnostic) {
 	gateway := source.IO_Gateway(components)
-	non_blocking_io_gateway := source.Non_Blocking_IO_Gateway(components)
 	time_gateway := source.Time_Gateway(components)
 	syscall_gateways := io_gateway_syscall_globs(components)
 	for _, pf := range parsed_files {
@@ -9427,13 +9421,6 @@ func check_io_gateway(
 		}
 		if gateway != "" {
 			if source.Path_Matches_Glob(pf.Path, []string{gateway + "/**"}) {
-				continue
-			}
-		}
-		if non_blocking_io_gateway != "" {
-			if source.Path_Matches_Glob(
-				pf.Path, []string{non_blocking_io_gateway + "/**"},
-			) {
 				continue
 			}
 		}
@@ -9482,10 +9469,10 @@ func io_gateway_import_diagnostics(
 		diags = append(diags, Diagnostic{
 			Position: pf.File_Set.Position(implementation.Pos()),
 			Name:     "io-gateway",
-			Want:     "Route IO through shared/io.",
+			Want:     "Route IO through shared/simulation/nbio.",
 			Message: fmt.Sprintf(
-				"Only io/default can import %q. "+
-					"Route IO through shared/io.",
+				"Only simulation/nbio/default can import %q. "+
+					"Route IO through shared/simulation/nbio.",
 				import_path),
 			Tier: 2,
 		})
@@ -9559,9 +9546,9 @@ func io_gateway_call_diagnostic(pf Parsed_File, selector *ast.SelectorExpr) (dia
 	return Diagnostic{
 		Position: pf.File_Set.Position(selector.Pos()),
 		Name:     "io-gateway",
-		Want:     "Route IO through shared/io.",
+		Want:     "Route IO through shared/simulation/nbio.",
 		Message: "The call " + identifier.Name + "." + selector.Sel.Name +
-			" does raw IO. Route it through shared/io.",
+			" does raw IO. Route it through shared/simulation/nbio.",
 		Tier: 2,
 	}
 }
