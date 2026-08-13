@@ -32,7 +32,6 @@
           "!maddox/**",
           "!sloc/**",
           "!shared/random/csprng/**",
-          "!shared/time/**",
           "!shared/math/**",
           "!shared/slices/**",
           "!shared/bytes/**",

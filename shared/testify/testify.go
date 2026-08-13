@@ -43,7 +43,6 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/diff/myers"
-	"local/james-orcales/shared/io"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/time"
 )
@@ -60,7 +59,7 @@ type Asserter struct {
 	Clock time.Clock
 	// IO is the loop the Eventually and Never poll rides: the assertion arms a repeating
 	// Timeout and the caller's driver fires it, because a library never drives the loop.
-	IO *io.IO
+	IO *time.Timeline
 }
 
 // Panics with message when condition is false. It is the local stand-in for a
@@ -1590,8 +1589,8 @@ func Asserter_Eventually(
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Eventually")
 	assert(a.IO != nil, "testify: Asserter io is required for Eventually")
 	deadline := a.Clock.Now_Monotonic() + time.Moment(input.Wait)
-	var poll io.Timeout_Callback
-	poll = func(completion *io.Completion, _ error) {
+	var poll time.Timeout_Callback
+	poll = func(completion *time.Completion, _ error) {
 		if condition() {
 			return
 		}
@@ -1603,7 +1602,7 @@ func Asserter_Eventually(
 		}
 		a.IO.Timeout(completion, poll, input.Tick)
 	}
-	a.IO.Timeout(&io.Completion{}, poll, input.Tick)
+	a.IO.Timeout(&time.Completion{}, poll, input.Tick)
 }
 
 // Asserter_Never_Input pairs the two durations of Asserter_Never, which repeat a type.
@@ -1624,8 +1623,8 @@ func Asserter_Never(
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Never")
 	assert(a.IO != nil, "testify: Asserter io is required for Never")
 	deadline := a.Clock.Now_Monotonic() + time.Moment(input.Wait)
-	var poll io.Timeout_Callback
-	poll = func(completion *io.Completion, _ error) {
+	var poll time.Timeout_Callback
+	poll = func(completion *time.Completion, _ error) {
 		if condition() {
 			Fail(t, "Condition satisfied, but should never be")
 			return
@@ -1635,5 +1634,5 @@ func Asserter_Never(
 		}
 		a.IO.Timeout(completion, poll, input.Tick)
 	}
-	a.IO.Timeout(&io.Completion{}, poll, input.Tick)
+	a.IO.Timeout(&time.Completion{}, poll, input.Tick)
 }

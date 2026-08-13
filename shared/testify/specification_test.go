@@ -10,7 +10,6 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"local/james-orcales/shared/io"
 	"local/james-orcales/shared/math/fixedpoint"
 	testify "local/james-orcales/shared/testify"
 	"local/james-orcales/shared/time"
@@ -306,7 +305,8 @@ func Test_Files(t *testing.T) {
 // Test_Eventually_And_Never checks the polling assertions under a driven sim loop.
 func Test_Eventually_And_Never(t *testing.T) {
 	t.Parallel()
-	loop, driver, clock := io.New_Sim(1)
+	loop, driver, clock := time.New_Virtual_Timeline(
+		time.Virtual_Clock{Resolution: time.NANOSECOND})
 	a := &testify.Asserter{Clock: clock, IO: &loop}
 	poll_count := 0
 	condition := func() (satisfied bool) {
@@ -320,7 +320,8 @@ func Test_Eventually_And_Never(t *testing.T) {
 	testify.Asserter_Eventually(a, t, condition, eventually)
 	driver.Run_For(100 * time.NANOSECOND)
 
-	never_loop, never_driver, never_clock := io.New_Sim(2)
+	never_loop, never_driver, never_clock := time.New_Virtual_Timeline(
+		time.Virtual_Clock{Resolution: time.NANOSECOND})
 	never_asserter := &testify.Asserter{Clock: never_clock, IO: &never_loop}
 	never := &testify.Asserter_Never_Input{
 		Wait: 50 * time.NANOSECOND,
