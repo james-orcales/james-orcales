@@ -60,19 +60,49 @@ func write_file(t *testing.T, loop io.IO, driver time.Driver, path string, conte
 // Mkdir_At primitive above the surface.
 func make_directory(t *testing.T, loop io.IO, driver time.Driver, path string) (err error) {
 	t.Helper()
-	done := false
-	var completion time.Completion
-	io.Make_Directory(&io.Make_Directory_Input{
-		Timeline: loop, Completion: &completion, Path: path, Mode: 0o755,
-		Callback: func(_ *time.Completion, make_err error) {
-			err = make_err
+	// The walk is the caller's now: Mkdir_At is the mkdirat primitive, so each component is
+	// its own submission and an existing one converges rather than failing.
+	for index, bound := range directory_bounds(path) {
+		done := false
+		var completion time.Completion
+		component := path[:bound]
+		loop.Mkdir_At(&completion, func(_ *time.Completion, make_err error) {
+			// An existing component converges: Path_Exists is what mkdirat
+			// reports for a directory already there, which a walk creating
+			// parents must accept.
+			if make_err != nil {
+				if make_err != io.Path_Exists {
+					err = make_err
+				}
+			}
 			done = true
-		},
-	})
-	if !operating_system_run_until(t, driver, func() (finished bool) { return done }) {
-		t.Fatalf("the create of %s did not complete", path)
+		}, io.DIRECTORY_CURRENT, component, 0o755)
+		if !operating_system_run_until(t, driver, func() (finished bool) { return done }) {
+			t.Fatalf("the create of component %d of %s did not complete", index, path)
+		}
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
+}
+
+// The end offsets of each path component, shortest first, so a walk creates every missing
+// parent before the leaf.
+func directory_bounds(path string) (bounds []int) {
+	for index := 1; index < len(path); index++ {
+		if path[index] != '/' {
+			continue
+		}
+		if index == 0 {
+			continue
+		}
+		bounds = append(bounds, index)
+	}
+	if len(path) > 0 {
+		bounds = append(bounds, len(path))
+	}
+	return bounds
 }
 
 // Opens path for reading through Open_At, driving the loop until the descriptor arrives.
@@ -113,26 +143,56 @@ func open_file_options(
 	return file, err
 }
 
-// Lists path's children through the derived Read_Directory, which composes Open_At, repeated
-// Get_Directory_Entries passes, and Close.
+// Bounds one listing pass, so a wide directory is drained in repeated passes rather than into
+// one unbounded allocation.
+const DIRECTORY_PASS_BYTES = 8192
+
+// Caps the passes one listing takes, so a backend that never reports an empty pass fails the
+// test rather than spinning it.
+const DIRECTORY_PASSES_MAX = 4096
+
+// Lists path's children by composing the primitives the caller now holds: Open_At, repeated
+// Get_Directory_Entries passes until one reports none, and Close.
 func read_directory(
 	t *testing.T, loop io.IO, driver time.Driver, path string,
 ) (entries []io.Directory_Entry, err error) {
 	t.Helper()
-	done := false
-	var completion time.Completion
-	io.Read_Directory(&io.Read_Directory_Input{
-		Timeline: loop, Completion: &completion, Path: path,
-		Callback: func(
+	directory, open_err := open_file(t, loop, driver, path)
+	if open_err != nil {
+		return nil, open_err
+	}
+	buffer := make([]byte, DIRECTORY_PASS_BYTES)
+	for pass_number_index := 0; pass_number_index < DIRECTORY_PASSES_MAX; pass_number_index++ {
+		done := false
+		var pass []io.Directory_Entry
+		var pass_err error
+		var completion time.Completion
+		loop.Get_Directory_Entries(&completion, func(
 			_ *time.Completion, listed []io.Directory_Entry, read_err error,
 		) {
-			entries = listed
-			err = read_err
+			pass = listed
+			pass_err = read_err
 			done = true
-		},
-	})
-	if !operating_system_run_until(t, driver, func() (finished bool) { return done }) {
-		t.Fatalf("the listing of %s did not complete", path)
+		}, directory, buffer)
+		if !operating_system_run_until(t, driver, func() (finished bool) { return done }) {
+			t.Fatalf("a listing pass of %s did not complete", path)
+		}
+		if pass_err != nil {
+			err = pass_err
+			break
+		}
+		if len(pass) == 0 {
+			break
+		}
+		entries = append(entries, pass...)
+	}
+	closed := false
+	var close_completion time.Completion
+	loop.Close(&close_completion, func(_ *time.Completion, _ error) {
+		closed = true
+	}, directory)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return closed }) {
+		t.Fatalf("the close of %s did not complete", path)
 	}
 	return entries, err
 }
@@ -226,9 +286,38 @@ func test_tcp_options() (options io.TCP_Options) {
 	}
 }
 
-// Opens the caller-owned IPv4 TCP socket used by backend tests.
+// Opens the caller-owned IPv4 TCP socket used by backend tests, applying the option set the
+// backend must carry to the kernel. The options ride the two primitives directly: what the
+// backend answers for each one is the fact these tests state.
 func test_open_socket(loop io.IO) (socket io.File, err error) {
-	return io.Open_Socket_TCP(loop, io.FAMILY_IPV4, test_tcp_options())
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
+	if open_err != nil {
+		return 0, open_err
+	}
+	options := test_tcp_options()
+	// Keepalive precedes its tuple, because a transport rejects the timing of a probe it is
+	// not yet sending.
+	settings := []struct {
+		Option io.Socket_Option
+		Value  int
+	}{
+		{io.SOCKET_OPTION_RECEIVE_BUFFER, options.Receive_Buffer},
+		{io.SOCKET_OPTION_SEND_BUFFER, options.Send_Buffer},
+		{io.SOCKET_OPTION_KEEPALIVE, 1},
+		{io.SOCKET_OPTION_KEEPALIVE_IDLE, options.Keepalive.Idle_Seconds},
+		{io.SOCKET_OPTION_KEEPALIVE_INTERVAL, options.Keepalive.Interval_Seconds},
+		{io.SOCKET_OPTION_KEEPALIVE_COUNT, options.Keepalive.Count},
+		{io.SOCKET_OPTION_USER_TIMEOUT, options.User_Timeout_Milliseconds},
+		{io.SOCKET_OPTION_NO_DELAY, 1},
+	}
+	for _, setting := range settings {
+		if set_err := loop.Set_Socket_Option(
+			socket, setting.Option, setting.Value,
+		); set_err != nil {
+			return 0, set_err
+		}
+	}
+	return socket, nil
 }
 
 // Opens and binds one caller-owned IPv4 TCP listener.
@@ -241,8 +330,17 @@ func test_listen(loop io.IO, host string, port int) (listener io.File, err error
 	if open_err != nil {
 		return io.File(-1), open_err
 	}
-	_, listen_err := io.Listen(loop, listener, address, io.Listen_Options{Backlog: 65535})
-	if listen_err != nil {
+	if reuse_err := loop.Set_Socket_Option(
+		listener, io.SOCKET_OPTION_REUSE_ADDRESS, 1,
+	); reuse_err != nil {
+		loop.Close_Socket(listener)
+		return io.File(-1), reuse_err
+	}
+	if bind_err := loop.Bind(listener, address); bind_err != nil {
+		loop.Close_Socket(listener)
+		return io.File(-1), bind_err
+	}
+	if listen_err := loop.Listen_Socket(listener, 65535); listen_err != nil {
 		loop.Close_Socket(listener)
 		return io.File(-1), listen_err
 	}

@@ -22,22 +22,11 @@ Open_At asynchronously opens or creates a file relative to DIRECTORY_CURRENT, fo
 close-on-exec ownership, and returns the new caller-owned descriptor through its callback.
 OPEN_AT_NO_FOLLOW rejects a symbolic link in the final path part. An unknown flag panics.
 
-### Listen
-
-Listen consumes a caller-owned TCP socket and returns the resolved address synchronously.
-When the requested port is zero, the simulator returns a non-zero synthetic port.
-
 ### Accept
 
 Accept requires a positive finite deadline and yields a descriptor distinct from its listener when
 inbound latency wins. The deadline wins ties, retires once with Deadline_Exceeded, and yields no
 descriptor. This finite lifetime deliberately diverges from TigerBeetle's unbounded accept.
-
-### Open Socket
-
-Open_Socket_TCP and Open_Socket_UDP return fresh caller-owned descriptors synchronously and
-record them in Raw_Open. Only an explicit caller Close or Close_Socket releases them.
-Open_Socket_TCP applies TCP_Options through Set_Socket_Option, and Darwin has no user timeout.
 
 ### Connect
 
@@ -92,21 +81,11 @@ later Write persists bytes to it on the loop.
 Peer_Address reports a connected descriptor's remote address synchronously — a
 getpeername has no completion; an unknown descriptor yields the empty address.
 
-### Read Directory
-
-Read_Directory lists a directory's immediate children synchronously, sorted by name so the
-run reproduces, each entry naming a child and whether it is itself a directory.
-
 ### Status
 
 Status reports synchronously whether a path exists and, if so, whether it is a directory and
 its size in bytes. It also reports if the path is a regular file. An absent path is not-exists
 with a nil error, so a caller branches on the status, not an error.
-
-### Make Directory
-
-Make_Directory creates a path and any missing parents synchronously against the tree; an
-existing directory converges, so a repeated mkdir is not an error.
 
 ### Introspect
 

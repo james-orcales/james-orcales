@@ -109,24 +109,6 @@ func Test_Sim_Open_At(t *testing.T) {
 	)
 }
 
-// Test_Sim_Listen verifies Listen returns a fresh descriptor synchronously.
-func Test_Sim_Listen(t *testing.T) {
-	loop, _, _ := sim_loop(0)
-
-	address := io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0)
-	listener, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
-	if open_err != nil {
-		t.Fatalf("open listener: %v", open_err)
-	}
-	resolved, err := io.Listen(loop, listener, address, io.Listen_Options{Backlog: 128})
-	if err != nil {
-		t.Fatalf("listen error: %v", err)
-	}
-	if resolved.Port == 0 {
-		t.Fatal("listen did not resolve port zero")
-	}
-}
-
 // Test_Sim_Accept verifies accept resolves exactly once with either a distinct accepted socket or
 // Deadline_Exceeded, with a tie belonging to the finite deadline.
 func Test_Sim_Accept(t *testing.T) {
@@ -134,12 +116,12 @@ func Test_Sim_Accept(t *testing.T) {
 	deadline_count := 0
 	for seed := uint64(0); seed < 64; seed++ {
 		loop, driver, _ := sim_loop(seed)
-		listener, _ := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
-		_, listen_err := io.Listen(loop,
-			listener, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0),
-			io.Listen_Options{Backlog: 128},
-		)
-		if listen_err != nil {
+		listener, _ := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
+		address := io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0)
+		if bind_err := loop.Bind(listener, address); bind_err != nil {
+			t.Fatalf("seed %d: bind: %v", seed, bind_err)
+		}
+		if listen_err := loop.Listen_Socket(listener, 128); listen_err != nil {
 			t.Fatalf("seed %d: listen: %v", seed, listen_err)
 		}
 		callback_count := 0
@@ -195,31 +177,6 @@ func Test_Sim_Accept(t *testing.T) {
 	}
 }
 
-// Test_Sim_Open_Socket verifies opening a synthetic outbound socket records caller ownership
-// immediately and only an explicit Close releases it.
-func Test_Sim_Open_Socket(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	baseline := driver.Introspect().Raw_Open
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
-	}
-	opened := driver.Introspect().Raw_Open
-	closed := false
-	var completion time.Completion
-	loop.Close(&completion, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("close socket: %v", err)
-		}
-		closed = true
-	}, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, SIM_DEADLINE)
-	snap.Expect(t, snap.Init(`baseline=0 opened=1 closed=0`), fmt.Sprintf(
-		"baseline=%d opened=%d closed=%d",
-		baseline, opened, driver.Introspect().Raw_Open,
-	))
-}
-
 // Test_Sim_Connect verifies success and refusal preserve the caller-owned socket until explicit
 // Close, and a seed sweep reaches both network outcomes.
 func Test_Sim_Connect(t *testing.T) {
@@ -255,7 +212,7 @@ func Test_Sim_Connect(t *testing.T) {
 // reports the buffer length.
 func Test_Sim_Receive(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -277,7 +234,7 @@ func Test_Sim_Receive(t *testing.T) {
 // the buffer length.
 func Test_Sim_Send(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -298,7 +255,7 @@ func Test_Sim_Send(t *testing.T) {
 // Test_Sim_Send_Now verifies the synchronous datagram send reports whether the bytes were accepted.
 func Test_Sim_Send_Now(t *testing.T) {
 	loop, _, _ := sim_loop(0)
-	socket, open_err := io.Open_Socket_UDP(loop, io.FAMILY_IPV4)
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_UDP)
 	if open_err != nil {
 		t.Fatalf("open UDP socket: %v", open_err)
 	}
@@ -315,7 +272,7 @@ func Test_Sim_Send_Now(t *testing.T) {
 // normal callbacks while leaving descriptor ownership with the caller.
 func Test_Sim_Shutdown(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -361,7 +318,7 @@ func Test_Sim_Shutdown(t *testing.T) {
 func Test_Sim_Close(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -419,7 +376,7 @@ func Test_Sim_Close(t *testing.T) {
 // Test_Sim_Close_Socket verifies setup cleanup releases a socket synchronously.
 func Test_Sim_Close_Socket(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -463,7 +420,7 @@ func Test_Sim_Create(t *testing.T) {
 // and the empty address for an unknown one.
 func Test_Sim_Peer_Address(t *testing.T) {
 	loop, _, _ := sim_loop(0)
-	socket, _ := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, _ := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	address, err := loop.Peer_Address(socket)
 	if err != nil {
 		t.Fatalf("peer address error: %v", err)
@@ -476,45 +433,19 @@ func Test_Sim_Peer_Address(t *testing.T) {
 	}
 }
 
-// Test_Sim_Read_Directory verifies Read_Directory lists a directory's immediate children,
-// each named with whether it is itself a directory.
-func Test_Sim_Read_Directory(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	if make_err := sim_directory(t, loop, driver, "/a/b"); make_err != nil {
-		t.Fatalf("make directory: %v", make_err)
-	}
-	if _, create_err := sim_create(t, loop, driver, "/a/b/file"); create_err != nil {
-		t.Fatalf("create: %v", create_err)
-	}
-	entries, err := sim_read_directory(t, loop, driver, "/a/b")
-	if err != nil {
-		t.Fatalf("read directory: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("entries = %v, want exactly one", entries)
-	}
-	if entries[0].Name != "file" {
-		t.Fatalf("entry name = %q, want file", entries[0].Name)
-	}
-	if entries[0].Is_Directory {
-		t.Fatal("file entry reported as a directory")
-	}
-	parents, _ := sim_read_directory(t, loop, driver, "/a")
-	if len(parents) != 1 {
-		t.Fatalf("parent entries = %v, want exactly one", parents)
-	}
-	if !parents[0].Is_Directory {
-		t.Fatal("nested entry b should be a directory")
-	}
-}
-
-// Test_Sim_Status verifies Status reports a directory, a file with its byte Size, and an
-// absent path.
+// Test_Sim_Status verifies Status reports existence, kind, and size, and reports an absent
+// path as not-exists with a nil error rather than as a failure.
 func Test_Sim_Status(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
-	if make_err := sim_directory(t, loop, driver, "/dir"); make_err != nil {
-		t.Fatalf("make directory: %v", make_err)
-	}
+	made := false
+	var mkdir time.Completion
+	loop.Mkdir_At(&mkdir, func(_ *time.Completion, err error) {
+		if err != nil {
+			t.Fatalf("mkdir at: %v", err)
+		}
+		made = true
+	}, io.DIRECTORY_CURRENT, "/dir", 0o755)
+	driver.Run_Until(func() (finished bool) { return made }, SIM_DEADLINE)
 	file, create_err := sim_create(t, loop, driver, "/dir/file")
 	if create_err != nil {
 		t.Fatalf("create: %v", create_err)
@@ -559,26 +490,6 @@ func Test_Sim_Status(t *testing.T) {
 	}
 }
 
-// Test_Sim_Make_Directory verifies Make_Directory creates a nested path and its parents,
-// and that a repeated call converges.
-func Test_Sim_Make_Directory(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	if make_err := sim_directory(t, loop, driver, "/x/y/z"); make_err != nil {
-		t.Fatalf("make directory: %v", make_err)
-	}
-	leaf, _ := loop.Status("/x/y/z")
-	if !leaf.Is_Directory {
-		t.Fatalf("leaf status = %+v, want a directory", leaf)
-	}
-	parent, _ := loop.Status("/x")
-	if !parent.Is_Directory {
-		t.Fatalf("parent status = %+v, want a directory created by mkdir -p", parent)
-	}
-	if repeat_err := sim_directory(t, loop, driver, "/x/y/z"); repeat_err != nil {
-		t.Fatalf("a repeated make directory converges, got %v", repeat_err)
-	}
-}
-
 // Test_Sim_Introspect verifies every simulator operation class, lifecycle flag, and raw-open
 // descriptor count is reported without exposing the simulator itself.
 func Test_Sim_Introspect(t *testing.T) {
@@ -587,7 +498,7 @@ func Test_Sim_Introspect(t *testing.T) {
 	if create_err != nil {
 		t.Fatalf("create: %v", create_err)
 	}
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -616,7 +527,7 @@ func sim_connect_lifecycle(t *testing.T, seed uint64) (snapshot string) {
 	t.Helper()
 	loop, driver, _ := sim_loop(seed)
 	baseline := driver.Introspect().Raw_Open
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -655,7 +566,7 @@ func sim_connect_with_deadline(
 ) (connect_err error) {
 	t.Helper()
 	loop, driver, _ := sim_loop(seed)
-	socket, open_err := io.Open_Socket_TCP(loop, io.FAMILY_IPV4, io.TCP_Options{})
+	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
 	if open_err != nil {
 		t.Fatalf("open socket: %v", open_err)
 	}
@@ -732,53 +643,6 @@ func sim_open_options(
 		t.Fatalf("the open of %s did not complete", path)
 	}
 	return file, err
-}
-
-// Lists path's children through the derived Read_Directory, which composes Open_At, repeated
-// Get_Directory_Entries passes, and Close.
-func sim_read_directory(
-	t *testing.T, loop io.IO, driver time.Driver, path string,
-) (entries []io.Directory_Entry, err error) {
-	t.Helper()
-	done := false
-	var completion time.Completion
-	io.Read_Directory(&io.Read_Directory_Input{
-		Timeline: loop, Completion: &completion, Path: path,
-		Callback: func(
-			_ *time.Completion, listed []io.Directory_Entry, read_err error,
-		) {
-			entries = listed
-			err = read_err
-			done = true
-		},
-	})
-	driver.Run_Until(func() (finished bool) { return done }, SIM_DEADLINE)
-	if !done {
-		t.Fatalf("the listing of %s did not complete", path)
-	}
-	return entries, err
-}
-
-// Creates path and every missing parent through the derived Make_Directory, which composes the
-// Mkdir_At primitive. The simulated backend and the operating-system backend run this same walk.
-func sim_directory(
-	t *testing.T, loop io.IO, driver time.Driver, path string,
-) (err error) {
-	t.Helper()
-	done := false
-	var completion time.Completion
-	io.Make_Directory(&io.Make_Directory_Input{
-		Timeline: loop, Completion: &completion, Path: path, Mode: 0o755,
-		Callback: func(_ *time.Completion, make_err error) {
-			err = make_err
-			done = true
-		},
-	})
-	driver.Run_Until(func() (finished bool) { return done }, SIM_DEADLINE)
-	if !done {
-		t.Fatalf("the create of %s did not complete", path)
-	}
-	return err
 }
 
 // The Run_Until cap for the sim tests, in virtual time: ample for ops that finish in a

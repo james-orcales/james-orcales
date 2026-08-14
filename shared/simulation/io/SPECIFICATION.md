@@ -90,26 +90,3 @@ tells the caller about the more narrow of the two destinations.
 
 The transforms compose. One encoder writes through a tee, a count, a limit, and memory. The
 tally, the truncation, and the stored bytes agree.
-
-### Derived
-
-The derived functions are the Odin util set: Read_At_Least, Write_String,
-Read_Byte, Write_Byte, Read_Rune, and Write_Rune. An end found after some bytes reports
-Stream_Unexpected_EOF, because the caller asked for a quantity and received a part of one.
-
-### Pointer
-
-Read_Pointer and Write_Pointer move raw memory of a size that the caller states. A size below
-zero reports Stream_Negative_Count.
-
-### Read Full
-
-Read_Full submits one asynchronous read per pass and rearms at the new offset on a short
-count, delivering one callback with the full buffer or the first error. A pass with no bytes
-delivers the count so far, so an exhausted file cannot spin the rearm loop.
-
-### Write Full
-
-Write_Full submits one asynchronous write per pass and rearms at the new offset on a short
-count, delivering one callback with the whole buffer written or the first error. A pass with
-no bytes delivers the count so far.
