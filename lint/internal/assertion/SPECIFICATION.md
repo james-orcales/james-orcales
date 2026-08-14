@@ -34,7 +34,7 @@ and opted-out packages are exempt.
 
 A defined type carries the kind of the type it stands over, and a chain of defined types resolves to
 its end. Thus a helper over a named integer owes the scalar mandate, and one over a named string,
-slice, or map owes the count mandate. A name of its own hides no type from either.
+slice, or map owes the count mandate. A bare or qualified name hides no type from either.
 
 ### Scalar Helper
 

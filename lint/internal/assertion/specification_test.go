@@ -109,6 +109,7 @@ func Test_Invariants_Underlying_Kind(t *testing.T) {
 		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a defined type over a named slice owes the count mandate")
 	}
+	qualified_base_resolves(t)
 }
 
 // Test_Invariants_Scalar_Helper verifies raw assertions cannot replace the canonical primitive,
@@ -1158,6 +1159,40 @@ func cross_package_constant_isolation(t *testing.T) {
 	diags := check_sources([]source.Parsed_File{foreign, local})
 	if !diagnosed(diags, "an argument that is not a package-level constant") {
 		t.Fatalf("foreign same-spelled constants satisfied the local helper: %v", diags)
+	}
+}
+
+// A qualified name states the boundary it crosses, thus it hides no type. A defined type over one
+// stands over the same string its far side does, and it owes the same count mandate.
+func qualified_base_resolves(t *testing.T) {
+	t.Helper()
+	foreign := parse(t, &parse_input{
+		Path: "other/target.go",
+		Source_Text: "package other\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
+			"// Request_Target is a fixture.\ntype Request_Target string\n\n" +
+			"// Request_Target_Invariants is a fixture.\n" +
+			"func Request_Target_Invariants(" +
+			"value Request_Target, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Tree(value, namespace)." +
+			"Range_Int(len(value), Span_Min, Span_Max).Ensure()\n}\n"})
+	local := parse(t, &parse_input{
+		Path: "pkg/parsed.go",
+		Source_Text: "package fixture\n\n" +
+			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"\tproxy \"fixture/other\"\n)\n\n" +
+			"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
+			"// Parsed_Request_Target is a fixture.\n" +
+			"type Parsed_Request_Target proxy.Request_Target\n\n" +
+			"// Parsed_Request_Target_Invariants is a fixture.\n" +
+			"func Parsed_Request_Target_Invariants(" +
+			"value Parsed_Request_Target, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Always(len(value) >= Span_Min, \"min\")\n" +
+			"\tinvariant.Always(len(value) <= Span_Max, \"max\")\n}\n"})
+	diags := check_sources([]source.Parsed_File{foreign, local})
+	if !diagnosed(diags, "Write a Range_Int family, an Enum_Int family") {
+		t.Fatalf("a qualified base hid the string it stands over: %v", diags)
 	}
 }
 

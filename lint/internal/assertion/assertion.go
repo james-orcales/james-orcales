@@ -96,6 +96,9 @@ func base_kind_declaration_index(
 			continue
 		}
 		package_path := helper_package_path(pf, components)
+		// A qualified base names its package by the local name this file gave it, thus the
+		// edge it declares resolves only against this file's own import table.
+		imports := helper_import_paths(pf.File)
 		for _, declaration := range pf.File.Decls {
 			general, is_general := declaration.(*ast.GenDecl)
 			if !is_general {
@@ -105,7 +108,7 @@ func base_kind_declaration_index(
 				continue
 			}
 			base_kind_declaration_specs(
-				general.Specs, package_path, base_kind, named)
+				general.Specs, package_path, imports, base_kind, named)
 		}
 	}
 	base_kind_resolve_named(base_kind, named)
@@ -115,7 +118,7 @@ func base_kind_declaration_index(
 // Records a type that stands directly over a kind this pass reads, and the name every other defined
 // type stands over, which a later walk resolves.
 func base_kind_declaration_specs(
-	specifications []ast.Spec, package_path string,
+	specifications []ast.Spec, package_path string, imports map[string]string,
 	base_kind map[string]ast.Expr, named map[string]string,
 ) {
 	for _, specification := range specifications {
@@ -127,6 +130,12 @@ func base_kind_declaration_specs(
 			continue
 		}
 		identity := package_path + "\x00" + type_specification.Name.Name
+		foreign, qualified := base_kind_foreign_identity(
+			type_specification.Type, imports)
+		if qualified {
+			named[identity] = foreign
+			continue
+		}
 		identifier, is_identifier := type_specification.Type.(*ast.Ident)
 		if !is_identifier {
 			base_kind[identity] = type_specification.Type
@@ -138,6 +147,27 @@ func base_kind_declaration_specs(
 		}
 		named[identity] = package_path + "\x00" + identifier.Name
 	}
+}
+
+// Names the declaration a qualified base stands over. A base outside this module, or under a
+// qualifier the file never imported, resolves to nothing and stays where the caller puts it.
+func base_kind_foreign_identity(
+	base ast.Expr, imports map[string]string,
+) (identity string, qualified bool) {
+
+	selector, is_selector := base.(*ast.SelectorExpr)
+	if !is_selector {
+		return "", false
+	}
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return "", false
+	}
+	import_path := imports[qualifier.Name]
+	if import_path == "" {
+		return "", false
+	}
+	return import_path + "\x00" + selector.Sel.Name, true
 }
 
 // Follows each named edge to the kind at its end until no more resolve.
