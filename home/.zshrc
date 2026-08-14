@@ -73,7 +73,7 @@ typeset -A abbreviations=(
         ae    'jj edit'
 
         ag    'jj git'
-        agp   'jj git push --bookmark james'
+        agp   'jj git push --bookmark $BRANCH'
         agf   'jj git fetch --tracked'
         ah    'jj --help'
 
@@ -109,7 +109,7 @@ typeset -A abbreviations=(
         gc1n  'git clone --depth=1 --no-single-branch'
         gcfb  'git clone --filter=blob:none'
 
-        ghpr 'jj git push --bookmark james && gh pr create --title="!!" --fill-verbose --base main --head james; gh pr view --web james'
+        ghpr 'jj git push --bookmark $BRANCH && gh pr create --title="!!" --fill-verbose --base main --head $BRANCH; gh pr view --web $BRANCH'
 
         stdrs 'cd $(rustc --print sysroot)/lib/rustlib/src/rust/library/ && nvim .'
         stdgo 'cd $(go env GOROOT)/src/ && nvim .'
