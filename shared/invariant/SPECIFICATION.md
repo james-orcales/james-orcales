@@ -257,9 +257,9 @@ Registration makes a chain instance for each literal callsite namespace.
 
 ### Descent
 
-Registration follows each called bundle through the module. Direct package selection does not stop
-this action. Registration records each called chain at the callsite namespace. Static-body and
-cycle validation apply to the full call graph.
+Registration follows each called bundle through the module, and direct package selection does not
+stop this action. Registration records each chain at the callsite namespace, and a second path to
+one bundle adds no second record. Static-body and cycle validation apply to the full call graph.
 
 ### Composition
 

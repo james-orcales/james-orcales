@@ -1069,6 +1069,7 @@ func Test_Bundles_Descent(t *testing.T) {
 		Namespace: "outer", Package: FIXTURE_PACKAGE, Type: "Inner",
 		Ordinal: 0, Message: "zero",
 	})
+	assert_qualified_descent_registers_once(t)
 }
 
 // Test_Bundles_Composition keeps a composed chain free of a cross product.
@@ -2086,6 +2087,35 @@ func axis_chain_fixture(axis_count int, namespace string) (source string) {
 	}
 	chain.WriteString(bundle_fixture_tail(namespace))
 	return chain.String()
+}
+
+// The file walk reaches one body, and each qualified descent reaches it again. Registration must
+// claim its eager message one time, thus a scan-root package that a second scan-root package calls
+// by qualifier reports no duplicate.
+func assert_qualified_descent_registers_once(t *testing.T) {
+	t.Helper()
+	files := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
+		"a/a.go": &fstest.MapFile{Data: []byte(`package a
+type Widget int
+func Widget_Invariants(value Widget, namespace invariant.Namespace) {
+	invariant.Always(value >= 0, "a widget is not negative")
+}
+`)},
+		"b/b.go": &fstest.MapFile{Data: []byte(`package b
+import part "fixture/a"
+func check(value part.Widget) { part.Widget_Invariants(value, "widget") }
+`)},
+	}
+	output := &bytes.Buffer{}
+	recorder := &core.Recorder{
+		File_System: files, Packages_To_Analyze: []string{"/a", "/b"},
+		Output: output, Exit: func(int) {}, Is_Test: true,
+	}
+	core.Recorder_Register_Packages_For_Analysis(recorder)
+	if output.String() != "" {
+		t.Fatalf("qualified descent output=%q, want no diagnostic", output.String())
+	}
 }
 
 // A bound built from two literals and one imported constant is still one static number. Each part

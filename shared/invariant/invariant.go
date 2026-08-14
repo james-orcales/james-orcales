@@ -631,6 +631,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Constants:        constants,
 		Package_Types:    package_types,
 	}
+	bundle_index_seed_walked(index, files)
 	reg := &Registration{
 		Planned_Keys:         map[string]bool{},
 		Message_Owner:        map[string]bool{},
@@ -2121,6 +2122,17 @@ func bundle_index_load(
 		return functions
 	}
 	files, _ := recorder_parse_directory(index.File_System, index.File_Set, directory)
+	return bundle_index_fill(index, import_path, functions, files)
+}
+
+// Indexes one package from files the caller holds. A second parse of one file gives the same syntax
+// at a different token.Pos, thus a caller that already parsed the package supplies its own files
+// here and keeps one position for one callsite.
+func bundle_index_fill(
+	index *Bundle_Index, import_path string,
+	functions map[string]Indexed_Function, files []*ast.File,
+) (filled map[string]Indexed_Function) {
+
 	constants := ast_index_constants(files)
 	index.Loaded_Constants[import_path] = constants
 	indexed := ast_index_functions(
@@ -2132,6 +2144,34 @@ func bundle_index_load(
 		functions[name] = function
 	}
 	return functions
+}
+
+// Indexes each package the file walk already parsed. Without this a qualified descent parses that
+// package a second time, and the eager-callsite guard, which keys on token.Pos, then sees the same
+// call at a position it never registered and claims its message twice.
+func bundle_index_seed_walked(index *Bundle_Index, files []*ast.File) {
+	grouped := map[string][]*ast.File{}
+	var order []string
+	for _, file := range files {
+		import_path := ast_file_package_path(
+			file, index.File_Set, index.Module_Path, index.Module_Root)
+		if import_path == "" {
+			continue
+		}
+		if grouped[import_path] == nil {
+			order = append(order, import_path)
+		}
+		grouped[import_path] = append(grouped[import_path], file)
+	}
+	// Source order keeps one walk deterministic, which map iteration alone would not.
+	for _, import_path := range order {
+		if _, done := index.Loaded[import_path]; done {
+			continue
+		}
+		functions := map[string]Indexed_Function{}
+		index.Loaded[import_path] = functions
+		bundle_index_fill(index, import_path, functions, grouped[import_path])
+	}
 }
 
 // Returns the called function's name: the Ident name for a bare call or the Sel
