@@ -616,7 +616,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	}
 	// One walk each. Bundle_Index and every Indexed_Function share these two indexes, so
 	// building them at both sites would walk every declaration of every file a second time.
-	constants := ast_index_constants(files)
+	constants := ast_index_package_constants(files, file_set, module_path, module_root)
 	package_types := ast_index_package_types(files)
 	index := &Bundle_Index{
 		File_System:   recorder.File_System,
@@ -626,10 +626,10 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Sugar_Package: recorder.Sugar_Package,
 		Same_Set: ast_index_functions(
 			files, file_set, module_path, module_root, constants, package_types),
-		Loaded:           map[string]map[string]Indexed_Function{},
-		Loaded_Constants: map[string]map[string]Constant_Declaration{},
-		Constants:        constants,
-		Package_Types:    package_types,
+		Loaded:            map[string]map[string]Indexed_Function{},
+		Loaded_Constants:  map[string]map[string]Constant_Declaration{},
+		Package_Constants: constants,
+		Package_Types:     package_types,
 	}
 	bundle_index_seed_walked(index, files)
 	reg := &Registration{
@@ -949,9 +949,10 @@ type Bundle_Index struct {
 	// Loaded_Constants caches those same packages' constants, keyed the same way. A qualified
 	// operand names one package, thus a flat bare-name index cannot answer it.
 	Loaded_Constants map[string]map[string]Constant_Declaration
-	// Constants maps package constants to their value expressions. A flat bare-name index, like
-	// Same_Set, is sufficient because one analysis covers one package tree.
-	Constants map[string]Constant_Declaration
+	// Package_Constants maps each package to its own bare-name index. One analysis covers a
+	// tree of packages, and a bare name belongs to one of them, thus a flat index would give
+	// the package that sorts last the last word on every name the tree spells.
+	Package_Constants map[string]map[string]Constant_Declaration
 	// Package_Types maps each package-level type declaration to its underlying expression.
 	// reflect reports one empty PkgPath and one shared Name for two function-local types that
 	// share a name, thus presence here is what lets a chain subject carry an identity. The
@@ -988,7 +989,8 @@ func ast_index_package_types(files []*ast.File) (types map[string]ast.Expr) {
 // descending *_Invariants bundles. A later definition wins on a name collision.
 func ast_index_functions(
 	files []*ast.File, file_set *token.FileSet, module_path string, module_root string,
-	constants map[string]Constant_Declaration, package_types map[string]ast.Expr,
+	constants map[string]map[string]Constant_Declaration,
+	package_types map[string]ast.Expr,
 ) (functions map[string]Indexed_Function) {
 	functions = map[string]Indexed_Function{}
 	for _, file := range files {
@@ -1003,7 +1005,7 @@ func ast_index_functions(
 				Declaration:   function,
 				Package:       package_path,
 				Imports:       imports,
-				Constants:     constants,
+				Constants:     constants[package_path],
 				Package_Types: package_types,
 			}
 		}
@@ -2133,11 +2135,14 @@ func bundle_index_fill(
 	functions map[string]Indexed_Function, files []*ast.File,
 ) (filled map[string]Indexed_Function) {
 
-	constants := ast_index_constants(files)
-	index.Loaded_Constants[import_path] = constants
+	// Both maps come from the same walk, thus the key ast_index_functions reads for a file
+	// is the key that holds that file's own constants.
+	by_package := ast_index_package_constants(
+		files, index.File_Set, index.Module_Path, index.Module_Root)
+	index.Loaded_Constants[import_path] = by_package[import_path]
 	indexed := ast_index_functions(
 		files, index.File_Set, index.Module_Path, index.Module_Root,
-		constants, ast_index_package_types(files))
+		by_package, ast_index_package_types(files))
 	for name, function := range indexed {
 		function.Is_Sugar = import_path == index.Sugar_Package
 		function.Package_Functions = functions
@@ -2146,24 +2151,49 @@ func bundle_index_fill(
 	return functions
 }
 
+// Groups files by the package each one declares, in the order the walk read them. Source order
+// keeps one walk deterministic, which map iteration alone would not.
+func ast_package_files(
+	files []*ast.File, file_set *token.FileSet,
+	module_path string, module_root string,
+) (grouped map[string][]*ast.File, order []string) {
+
+	grouped = map[string][]*ast.File{}
+	for _, file := range files {
+		package_path := ast_file_package_path(file, file_set, module_path, module_root)
+		if package_path == "" {
+			continue
+		}
+		if grouped[package_path] == nil {
+			order = append(order, package_path)
+		}
+		grouped[package_path] = append(grouped[package_path], file)
+	}
+	return grouped, order
+}
+
+// Indexes the bare names of each package on its own. A bare name resolves only in the package that
+// declares it, thus one index for the whole tree would let a same-spelled constant elsewhere supply
+// a different number in silence.
+func ast_index_package_constants(
+	files []*ast.File, file_set *token.FileSet,
+	module_path string, module_root string,
+) (by_package map[string]map[string]Constant_Declaration) {
+
+	by_package = map[string]map[string]Constant_Declaration{}
+	grouped, order := ast_package_files(files, file_set, module_path, module_root)
+	for _, package_path := range order {
+		by_package[package_path] = ast_index_constants(grouped[package_path])
+	}
+	return by_package
+}
+
 // Indexes each package the file walk already parsed. Without this a qualified descent parses that
 // package a second time, and the eager-callsite guard, which keys on token.Pos, then sees the same
 // call at a position it never registered and claims its message twice.
 func bundle_index_seed_walked(index *Bundle_Index, files []*ast.File) {
-	grouped := map[string][]*ast.File{}
-	var order []string
-	for _, file := range files {
-		import_path := ast_file_package_path(
-			file, index.File_Set, index.Module_Path, index.Module_Root)
-		if import_path == "" {
-			continue
-		}
-		if grouped[import_path] == nil {
-			order = append(order, import_path)
-		}
-		grouped[import_path] = append(grouped[import_path], file)
-	}
-	// Source order keeps one walk deterministic, which map iteration alone would not.
+	grouped, order := ast_package_files(
+		files, index.File_Set, index.Module_Path, index.Module_Root)
 	for _, import_path := range order {
 		if _, done := index.Loaded[import_path]; done {
 			continue
@@ -2966,8 +2996,9 @@ func recorder_register_assertion_files(
 			}
 			indexed := Indexed_Function{
 				Declaration: function, Package: file_package, Imports: imports,
-				Constants: index.Constants, Package_Functions: index.Same_Set,
-				Package_Types: index.Package_Types, Is_Sugar: allow_unqualified,
+				Constants:         index.Package_Constants[file_package],
+				Package_Functions: index.Same_Set,
+				Package_Types:     index.Package_Types, Is_Sugar: allow_unqualified,
 			}
 			recorder_register_assertion_function(
 				recorder, file_set, indexed, index, reg)

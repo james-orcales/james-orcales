@@ -580,6 +580,7 @@ func Test_Assertions_Registration_Cross_Package_Constants(t *testing.T) {
 	assert_constant_bytes_resolve(t)
 	assert_composed_bytes_resolve(t)
 	assert_foreign_declaration_scope(t)
+	assert_local_declaration_scope(t)
 }
 
 // Test_Assertions_Registration_Constant_Expression keeps one evaluator behind every operand, so a
@@ -2298,6 +2299,43 @@ func check(value Span) { Span_Invariants(value, "span") }
 		if !strings.Contains(output.String(), "not statically resolvable") {
 			t.Fatalf("%s output=%q, want unresolvable", operand, output.String())
 		}
+	}
+}
+
+// A bare name resolves only in the package that declares it. Two scan-root packages hold the same
+// name at different values, thus one index for the whole tree would give the package that sorts
+// first the number the package that sorts last declares.
+func assert_local_declaration_scope(t *testing.T) {
+	t.Helper()
+	files := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
+		"a/a.go": &fstest.MapFile{Data: []byte(`package a
+const SPAN_MINIMUM = 0
+const SPAN_MAXIMUM = 10
+type Span int
+func Span_Invariants(value Span, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SPAN_MINIMUM, SPAN_MAXIMUM).Ensure()
+}
+func check(value Span) { Span_Invariants(value, "root") }
+`)},
+		"b/b.go": &fstest.MapFile{Data: []byte(`package b
+const SPAN_MINIMUM = 0
+const SPAN_MAXIMUM = 4
+`)},
+	}
+	output := &bytes.Buffer{}
+	recorder := &core.Recorder{
+		File_System: files, Packages_To_Analyze: []string{"/a", "/b"},
+		Output: output, Exit: func(int) {}, Is_Test: true,
+	}
+	core.Recorder_Register_Packages_For_Analysis(recorder)
+	if output.String() != "" {
+		t.Fatalf("local scope output=%q, want no diagnostic", output.String())
+	}
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	if !strings.Contains(output.String(), "0..10") {
+		t.Fatalf("local bound = %q, want a 0..10 domain", output.String())
 	}
 }
 
