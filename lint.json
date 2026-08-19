@@ -39,7 +39,8 @@
           "!shared/unicode/**",
           "!shared/path/**",
           "!shared/container/**",
-          "!setup/**"
+          "!setup/**",
+          "!fuzzstall/**"
   ],
   "word_replacements": {
     "len":       [],
