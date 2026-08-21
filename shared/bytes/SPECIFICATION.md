@@ -1,68 +1,79 @@
 
+# Allocation
+
+Every exported operation performs zero heap allocations, measured separately by Zero_Allocation.
+API returns scalars, input views, or Buffer views. Output writes caller storage and returns count.
+Storage-owning returns, iterator closures, append growth, and hidden scratch allocation stay absent.
+
 # Constant Facts
 
-Constants with the same domain fact use one definition. Primitive-width bounds come from
+Constants with same domain fact use one definition. Primitive-width bounds come from
 shared/math/bits. Equal numbers with different meanings remain separate definitions.
 
 # Comparison
 
-Equal reports byte equality. Compare gives lexical order, and Equal_Fold compares UTF-8
-text through Unicode simple folding. A nil Slice is equal to an empty Slice.
+Equal reports byte equality. Compare gives normalized lexical order. Equal_Fold compares decoded
+characters through Unicode simple folding. Nil Slice and empty Slice are equal.
 
 # Search
 
-Count, Contains, and the Index forms find bytes, slices, characters, sets, or predicate
-matches. An empty separator occurs before and after each UTF-8 sequence.
+Count, Contains, and Index forms find Slices, bytes, characters, sets, or predicate matches. Empty
+separator occurs at each UTF-8 character boundary.
 
 # Split And Join
 
-Split and Split_After divide a Slice at non-overlapping separators. The N forms apply a
-Limit. Fields divides at Unicode space, Fields_Function uses a predicate, and Join joins.
+Split and field operations fill caller-owned Slice slots with clipped input views and return
+populated slot count. N forms apply Limit. Join_Into writes parts and separators into separate
+caller byte storage and returns byte count.
 
 # Transform
 
-Map changes each character. Repeat copies a Slice, the case forms apply Unicode mappings,
-To_Valid_UTF8 replaces invalid runs, and Runes decodes the Slice.
+Map, Repeat, case, title, UTF-8 repair, and rune decoding operations write caller storage and
+return populated count. Map, case, title, and UTF-8 repair destinations do not overlap source.
 
 # Trim
 
-The Trim forms remove prefixes, suffixes, Unicode space, cut-set characters, or predicate
-matches. A returned Slice aliases the input Slice.
+Trim forms remove prefixes, suffixes, Unicode space, cut-set characters, or predicate matches.
+Every returned Slice aliases input Slice.
 
 # Replace
 
-Replace substitutes at most a Replacement_Count of non-overlapping matches. A negative
-count and Replace_All substitute every match, including empty matches between characters.
+Replace_Into substitutes at most Replacement_Count non-overlapping matches. Negative count and
+Replace_All_Into substitute every match, including empty matches between characters. Destination
+storage remains separate from source, old value, and replacement.
 
 # Cut And Clone
 
-Cut and its prefix and suffix forms divide a Slice without allocation. Clone copies a
-non-nil Slice and keeps a nil Slice nil.
+Cut forms divide Slice without allocation. Clone_Into copies into caller storage and returns byte
+count. Clone destination may overlap source because copy order preserves bytes.
 
 # Iteration
 
-Lines yields each newline-terminated line and a final unterminated line. The sequence split
-and field forms yield the same Slices as their collection forms without a collection.
+Lines, split sequences, and field sequences synchronously yield clipped input views and return
+yielded count. Callback rejection stops traversal. No operation returns closure.
 
 # Buffer
 
-Buffer stores readable bytes. Buffer_To_Stream provides sequential Stream reads and writes.
-Free functions read and write bytes, characters, and text. Reads move the position. Reset removes
-content; Truncate keeps a readable prefix; Grow reserves capacity. Views can alias content.
+Buffer_Init and Buffer_Init_Text bind explicit caller storage. Buffer never grows beyond that
+storage. Grow validates or compacts existing storage. Writes return byte count. Reads return count,
+presence, or aliased views. Reset retains caller storage.
 
 # Reader
 
-Reader reads a fixed Slice. Reader_To_Stream provides Stream reads, positioned reads, seeks, and
-size queries. Free functions provide byte, character, and unread operations. Reset replaces the
-Slice and resets the position. Reader_Unread_Size reports the unread byte count.
+Reader_Reset binds caller Slice and resets cursor. Reads copy only into caller storage or return
+scalars. Unread restores eligible byte or character boundary. Seek accepts three bounded origins.
 
 # Size Limits
 
-A Slice and Text hold at most SLICE_SIZE_MAXIMUM bytes. An operation that would make a
-larger owned result causes an Error_Too_Large panic. Buffer content and Reader source Slices use
-the same limit.
+Slice and Text hold at most SLICE_SIZE_MAXIMUM bytes. Split slot count holds at most
+SLICES_COUNT_MAXIMUM. Buffer capacity uses same byte limit. Oversized malicious input causes panic.
 
 # Domain Errors
 
-An out-of-domain Limit, Repeat_Count, or Replacement_Count causes a panic. Join, Map,
-Repeat, case mapping, UTF-8 repair, and replacement reject results above the size limit.
+Invalid Limit, Repeat_Count, Replacement_Count, Reader offset, seek origin, unread request, short
+destination, harmful overlap, or Buffer growth causes panic.
+
+# Invariant Domains
+
+Tests reach both Boolean results, normalized orders, count boundaries, search sentinels, byte and
+character boundaries, Buffer states, Reader states, and each seek origin through public operations.
