@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	encoding_flatjson "local/james-orcales/shared/encoding/flatjson"
 	invariant "local/james-orcales/shared/invariant"
+	encoding_flatjson "local/james-orcales/shared/invariant/flatjson"
 )
 
 // Recorder re-exports the library type so callers importing only this package
