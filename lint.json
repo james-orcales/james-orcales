@@ -30,6 +30,7 @@
           "**",
           "!shared/strconv/**",
           "!shared/encoding/**",
+          "!shared/path/**",
           "!maddox/**",
           "!sloc/**",
           "!shared/random/csprng/**",
