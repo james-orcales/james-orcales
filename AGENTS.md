@@ -1,6 +1,5 @@
-## Communication style
-
-Always use `communication` skill when responding or writing documentation.
+Follow YAGNI principles
+Follow skill `caveman`
 
 ## Key Architecural Principle
 
