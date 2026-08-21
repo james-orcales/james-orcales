@@ -389,22 +389,15 @@ func Tail_Invariants(value Tail, namespace aver.Namespace) {
 	Tail_Byte_7_Invariants(value.Byte_7, namespace)
 }
 
-// Tail_Handle keeps partial-word state nonnil while one byte changes.
+// Tail_Handle gives partial-word state one pointer identity.
 type Tail_Handle *Tail
 
-// Tail_Handle_Invariants states partial-word bytes behind required handle.
+// Tail_Handle_Invariants composes present state.
 func Tail_Handle_Invariants(value Tail_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Map hash tail handle exists.")
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value.Byte_0), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Range_Uint8(uint8(value.Byte_1), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Range_Uint8(uint8(value.Byte_2), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Range_Uint8(uint8(value.Byte_3), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Range_Uint8(uint8(value.Byte_4), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Range_Uint8(uint8(value.Byte_5), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Range_Uint8(uint8(value.Byte_6), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Range_Uint8(uint8(value.Byte_7), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
+	Tail_Invariants(*value, namespace)
 }
 
 // Message_Size_Maximum is caller-selected logical message bound.
@@ -523,43 +516,15 @@ func Hash_Invariants(value Hash, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
-// Hash_Handle keeps caller-owned keyed state nonnil.
+// Hash_Handle gives caller state one pointer identity.
 type Hash_Handle *Hash
 
-// Hash_Handle_Invariants states keyed state behind required handle.
+// Hash_Handle_Invariants composes present state.
 func Hash_Handle_Invariants(value Hash_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Map hash handle exists.")
-	Seed_Invariants(value.Seed, namespace)
-	Tail_Invariants(value.Tail, namespace)
-	aver.Tree(value, namespace).
-		Range_Uint64(
-			uint64(value.State_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.State_1), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.State_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.State_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Int(
-			int(value.Tail_Count), TAIL_COUNT_MINIMUM, TAIL_COUNT_MAXIMUM,
-		).
-		Range_Uint32(
-			uint32(value.Total_Count), TOTAL_COUNT_MINIMUM, TOTAL_COUNT_MAXIMUM,
-		).
-		Range_Uint32(
-			uint32(value.Message_Size_Maximum),
-			TOTAL_COUNT_MINIMUM, TOTAL_COUNT_MAXIMUM,
-		).
-		Sometimes(bool(value.Ready), "Map hash handle is initialized.").
-		Ensure()
-	aver.Always(
-		uint32(value.Total_Count) <= uint32(value.Message_Size_Maximum),
-		"Map hash total count stays inside configured message bound.",
-	)
+	if value == nil {
+		return
+	}
+	Hash_Invariants(*value, namespace)
 }
 
 // Value is the complete keyed 64-bit result domain.
@@ -586,9 +551,6 @@ func Hash_Init_Bounded(value Hash_Handle, seed Seed, maximum Message_Size_Maximu
 	Message_Size_Maximum_Invariants(maximum, "Hash_Init_Bounded.maximum")
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
 	aver.Always(key != 0, "Hash_Init_Bounded requires at least one nonzero key word.")
-	if key == 0 {
-		panic("maphash: seed is unkeyed")
-	}
 	value.Seed = seed
 	value.State_0 = State_0(uint64(seed.Key_0) ^ SIP_INITIAL_0)
 	value.State_1 = State_1(uint64(seed.Key_1) ^ SIP_INITIAL_1)
@@ -623,12 +585,10 @@ func Hash_Write(
 		}
 	}
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("maphash: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Hash_Write source stays within source bound.",
+	)
 	source_size := len(source)
 	capacity := uint32(value.Message_Size_Maximum) - uint32(value.Total_Count)
 	if uint64(len(source)) > uint64(capacity) {
@@ -768,12 +728,10 @@ func Hash_Write_Text(
 	Hash_Handle_Invariants(value, "Hash_Write_Text.value")
 	Text_Invariants(text, "Hash_Write_Text.text")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Text requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
-	if len(text) > TEXT_SIZE_MAXIMUM {
-		panic("maphash: text exceeds bound")
-	}
+	aver.Always(
+		len(text) <= TEXT_SIZE_MAXIMUM,
+		"Hash_Write_Text text stays within text bound.",
+	)
 	var source [TEXT_SIZE_MAXIMUM]byte
 	copy(source[:], text)
 	return Hash_Write(value, source[:len(text)])
@@ -785,9 +743,6 @@ func Hash_Write_Byte(value Hash_Handle, item Byte) (status Write_Status) {
 	Hash_Handle_Invariants(value, "Hash_Write_Byte.value")
 	Byte_Invariants(item, "Hash_Write_Byte.item")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Byte requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
 	source := [binary.UINT_8_SIZE]byte{byte(item)}
 	_, status = Hash_Write(value, source[:])
 	return status
@@ -798,9 +753,6 @@ func Hash_Sum_64(value Hash_Handle) (result Value) {
 	defer func() { Value_Invariants(result, "Hash_Sum_64.result") }()
 	Hash_Handle_Invariants(value, "Hash_Sum_64.value")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Sum_64 requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
 	state_0 := uint64(value.State_0)
 	state_1 := uint64(value.State_1)
 	state_2 := uint64(value.State_2)
@@ -871,12 +823,10 @@ func Hash_Sum_Into(
 	Hash_Handle_Invariants(value, "Hash_Sum_Into.value")
 	Destination_Invariants(destination, "Hash_Sum_Into.destination")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Sum_Into requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("maphash: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Hash_Sum_Into destination stays within destination bound.",
+	)
 	if len(destination) < DIGEST_SIZE {
 		return OUTPUT_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
 	}
@@ -892,9 +842,6 @@ func Hash_Seed(value Hash_Handle) (seed Seed) {
 	defer func() { Seed_Invariants(seed, "Hash_Seed.seed") }()
 	Hash_Handle_Invariants(value, "Hash_Seed.value")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Seed requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
 	return value.Seed
 }
 
@@ -908,9 +855,6 @@ func Hash_Message_Size_Maximum(value Hash_Handle) (maximum Message_Size_Maximum)
 		value.Ready == READY_COMPLETE,
 		"Hash_Message_Size_Maximum requires Hash_Init.",
 	)
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
 	return value.Message_Size_Maximum
 }
 
@@ -918,9 +862,6 @@ func Hash_Message_Size_Maximum(value Hash_Handle) (maximum Message_Size_Maximum)
 func Hash_Reset(value Hash_Handle) {
 	Hash_Handle_Invariants(value, "Hash_Reset.value.input")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Reset requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
 	seed := value.Seed
 	maximum := value.Message_Size_Maximum
 	Hash_Init_Bounded(value, seed, maximum)
@@ -931,14 +872,8 @@ func Hash_Set_Seed(value Hash_Handle, seed Seed) {
 	Hash_Handle_Invariants(value, "Hash_Set_Seed.value.input")
 	Seed_Invariants(seed, "Hash_Set_Seed.seed")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Set_Seed requires Hash_Init.")
-	if value.Ready != READY_COMPLETE {
-		panic("maphash: hash is not initialized")
-	}
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
 	aver.Always(key != 0, "Hash_Set_Seed requires at least one nonzero key word.")
-	if key == 0 {
-		panic("maphash: seed is unkeyed")
-	}
 	Hash_Init_Bounded(value, seed, value.Message_Size_Maximum)
 }
 
@@ -953,9 +888,6 @@ func Hash_Clone_Into(destination Hash_Handle, source Hash_Handle) {
 		source.Ready == READY_COMPLETE,
 		"Hash_Clone_Into requires initialized source.",
 	)
-	if source.Ready != READY_COMPLETE {
-		panic("maphash: clone source is not initialized")
-	}
 	*destination = *source
 }
 
@@ -966,12 +898,10 @@ func Bytes(seed Seed, source Source) (result Value) {
 	Source_Invariants(source, "Bytes.source")
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
 	aver.Always(key != 0, "Bytes requires at least one nonzero key word.")
-	if key == 0 {
-		panic("maphash: seed is unkeyed")
-	}
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("maphash: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Bytes source stays within source bound.",
+	)
 	var value Hash
 	Hash_Init(&value, seed)
 	count, status := Hash_Write(&value, source)
@@ -989,12 +919,10 @@ func String(seed Seed, text Text) (result Value) {
 	Text_Invariants(text, "String.text")
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
 	aver.Always(key != 0, "String requires at least one nonzero key word.")
-	if key == 0 {
-		panic("maphash: seed is unkeyed")
-	}
-	if len(text) > TEXT_SIZE_MAXIMUM {
-		panic("maphash: text exceeds bound")
-	}
+	aver.Always(
+		len(text) <= TEXT_SIZE_MAXIMUM,
+		"String text stays within text bound.",
+	)
 	var value Hash
 	Hash_Init(&value, seed)
 	count, status := Hash_Write_Text(&value, text)

@@ -347,19 +347,15 @@ func Digest_32_Invariants(value Digest_32, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
-// Digest_32_Handle keeps caller-owned 32-bit state nonnil.
+// Digest_32_Handle gives caller state one pointer identity.
 type Digest_32_Handle *Digest_32
 
-// Digest_32_Handle_Invariants states 32-bit state behind required handle.
+// Digest_32_Handle_Invariants composes present state.
 func Digest_32_Handle_Invariants(value Digest_32_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "FNV-32 digest handle exists.")
-	aver.Tree(value, namespace).
-		Enum_Uint8(uint8(value.Kind), uint8(KIND_1), uint8(KIND_1A)).
-		Range_Uint32(
-			uint32(value.Value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM,
-		).
-		Sometimes(bool(value.Ready), "FNV-32 digest handle is initialized.").
-		Ensure()
+	if value == nil {
+		return
+	}
+	Digest_32_Invariants(*value, namespace)
 }
 
 // Digest_64 is caller-owned 64-bit streaming state.
@@ -379,19 +375,15 @@ func Digest_64_Invariants(value Digest_64, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
-// Digest_64_Handle keeps caller-owned 64-bit state nonnil.
+// Digest_64_Handle gives caller state one pointer identity.
 type Digest_64_Handle *Digest_64
 
-// Digest_64_Handle_Invariants states 64-bit state behind required handle.
+// Digest_64_Handle_Invariants composes present state.
 func Digest_64_Handle_Invariants(value Digest_64_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "FNV-64 digest handle exists.")
-	aver.Tree(value, namespace).
-		Enum_Uint8(uint8(value.Kind), uint8(KIND_1), uint8(KIND_1A)).
-		Range_Uint64(
-			uint64(value.Value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Sometimes(bool(value.Ready), "FNV-64 digest handle is initialized.").
-		Ensure()
+	if value == nil {
+		return
+	}
+	Digest_64_Invariants(*value, namespace)
 }
 
 // Digest_128 is caller-owned 128-bit streaming state.
@@ -411,17 +403,15 @@ func Digest_128_Invariants(value Digest_128, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
-// Digest_128_Handle keeps caller-owned 128-bit state nonnil.
+// Digest_128_Handle gives caller state one pointer identity.
 type Digest_128_Handle *Digest_128
 
-// Digest_128_Handle_Invariants states 128-bit state behind required handle.
+// Digest_128_Handle_Invariants composes present state.
 func Digest_128_Handle_Invariants(value Digest_128_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "FNV-128 digest handle exists.")
-	Value_128_Invariants(value.Value, namespace)
-	aver.Tree(value, namespace).
-		Enum_Uint8(uint8(value.Kind), uint8(KIND_1), uint8(KIND_1A)).
-		Sometimes(bool(value.Ready), "FNV-128 digest handle is initialized.").
-		Ensure()
+	if value == nil {
+		return
+	}
+	Digest_128_Invariants(*value, namespace)
 }
 
 // State_32_Count is either no state or one complete 32-bit state.
@@ -526,9 +516,10 @@ func Digest_32_Write(digest Digest_32_Handle, source Source) (count Count) {
 		Digest_32_Handle_Invariants(digest, "Digest_32_Write.digest.output")
 	}()
 	digest_32_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("fnv: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_32_Write source stays within source bound.",
+	)
 	value := digest.Value
 	for _, item := range source {
 		if digest.Kind == KIND_1A {
@@ -562,9 +553,10 @@ func Digest_32_Sum_Into(
 	Digest_32_Handle_Invariants(digest, "Digest_32_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_32_Sum_Into.destination")
 	digest_32_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("fnv: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_32_Sum_Into destination stays within destination bound.",
+	)
 	if len(destination) < DIGEST_32_SIZE {
 		return OUTPUT_32_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
 	}
@@ -626,9 +618,10 @@ func Digest_64_Write(digest Digest_64_Handle, source Source) (count Count) {
 		Digest_64_Handle_Invariants(digest, "Digest_64_Write.digest.output")
 	}()
 	digest_64_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("fnv: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_64_Write source stays within source bound.",
+	)
 	value := digest.Value
 	for _, item := range source {
 		if digest.Kind == KIND_1A {
@@ -662,9 +655,10 @@ func Digest_64_Sum_Into(
 	Digest_64_Handle_Invariants(digest, "Digest_64_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_64_Sum_Into.destination")
 	digest_64_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("fnv: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_64_Sum_Into destination stays within destination bound.",
+	)
 	if len(destination) < DIGEST_64_SIZE {
 		return OUTPUT_64_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
 	}
@@ -734,9 +728,10 @@ func Digest_128_Write(digest Digest_128_Handle, source Source) (count Count) {
 		Digest_128_Handle_Invariants(digest, "Digest_128_Write.digest.output")
 	}()
 	digest_128_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("fnv: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_128_Write source stays within source bound.",
+	)
 	high := uint64(digest.Value.High)
 	low := uint64(digest.Value.Low)
 	for _, item := range source {
@@ -785,9 +780,10 @@ func Digest_128_Sum_Into(
 	Digest_128_Handle_Invariants(digest, "Digest_128_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_128_Sum_Into.destination")
 	digest_128_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("fnv: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_128_Sum_Into destination stays within destination bound.",
+	)
 	if len(destination) < DIGEST_128_SIZE {
 		return OUTPUT_128_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
 	}
@@ -827,9 +823,10 @@ func Digest_32_Marshal_Into(
 	Digest_32_Handle_Invariants(digest, "Digest_32_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_32_Marshal_Into.destination")
 	digest_32_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("fnv: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_32_Marshal_Into destination stays within destination bound.",
+	)
 	if len(destination) < STATE_32_SIZE {
 		return STATE_32_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
 	}
@@ -855,9 +852,10 @@ func Digest_32_Unmarshal(digest Digest_32_Handle, source Source) (status State_I
 		Digest_32_Handle_Invariants(digest, "Digest_32_Unmarshal.digest.output")
 	}()
 	digest_32_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("fnv: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_32_Unmarshal source stays within source bound.",
+	)
 	if !state_identity_match(
 		source,
 		state_32_identity(digest.Kind),
@@ -887,9 +885,10 @@ func Digest_64_Marshal_Into(
 	Digest_64_Handle_Invariants(digest, "Digest_64_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_64_Marshal_Into.destination")
 	digest_64_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("fnv: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_64_Marshal_Into destination stays within destination bound.",
+	)
 	if len(destination) < STATE_64_SIZE {
 		return STATE_64_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
 	}
@@ -915,9 +914,10 @@ func Digest_64_Unmarshal(digest Digest_64_Handle, source Source) (status State_I
 		Digest_64_Handle_Invariants(digest, "Digest_64_Unmarshal.digest.output")
 	}()
 	digest_64_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("fnv: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_64_Unmarshal source stays within source bound.",
+	)
 	if !state_identity_match(
 		source,
 		state_64_identity(digest.Kind),
@@ -947,9 +947,10 @@ func Digest_128_Marshal_Into(
 	Digest_128_Handle_Invariants(digest, "Digest_128_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_128_Marshal_Into.destination")
 	digest_128_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("fnv: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_128_Marshal_Into destination stays within destination bound.",
+	)
 	if len(destination) < STATE_128_SIZE {
 		return STATE_128_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
 	}
@@ -978,9 +979,10 @@ func Digest_128_Unmarshal(digest Digest_128_Handle, source Source) (status State
 		Digest_128_Handle_Invariants(digest, "Digest_128_Unmarshal.digest.output")
 	}()
 	digest_128_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("fnv: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_128_Unmarshal source stays within source bound.",
+	)
 	if !state_identity_match(
 		source,
 		state_128_identity(digest.Kind),
@@ -1006,9 +1008,6 @@ func kind_require(kind Kind) {
 	Kind_Invariants(kind, "kind_require.kind")
 	valid := kind == KIND_1 || kind == KIND_1A
 	aver.Always(valid, "FNV Kind is FNV-1 or FNV-1a.")
-	if !valid {
-		panic("fnv: kind is invalid")
-	}
 }
 
 func digest_32_require(digest Digest_32_Handle) {
@@ -1018,9 +1017,6 @@ func digest_32_require(digest Digest_32_Handle) {
 		digest.Ready == READY_COMPLETE,
 		"FNV-32 operations require Digest_32_Init.",
 	)
-	if digest.Ready != READY_COMPLETE {
-		panic("fnv: digest-32 is not initialized")
-	}
 }
 
 func digest_64_require(digest Digest_64_Handle) {
@@ -1030,9 +1026,6 @@ func digest_64_require(digest Digest_64_Handle) {
 		digest.Ready == READY_COMPLETE,
 		"FNV-64 operations require Digest_64_Init.",
 	)
-	if digest.Ready != READY_COMPLETE {
-		panic("fnv: digest-64 is not initialized")
-	}
 }
 
 func digest_128_require(digest Digest_128_Handle) {
@@ -1042,9 +1035,6 @@ func digest_128_require(digest Digest_128_Handle) {
 		digest.Ready == READY_COMPLETE,
 		"FNV-128 operations require Digest_128_Init.",
 	)
-	if digest.Ready != READY_COMPLETE {
-		panic("fnv: digest-128 is not initialized")
-	}
 }
 
 func state_32_identity(kind Kind) (identity State_Identity) {

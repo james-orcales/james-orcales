@@ -229,6 +229,7 @@ func Test_Allocation(t *testing.T) {
 	}
 	adler32.Digest_Init(&fixture.Digest)
 	testify.Zero_Allocation(t, func() { adler32.Digest_Init(&fixture.Digest) })
+	testify.Zero_Allocation(t, func() { adler32.Digest_Reset(&fixture.Digest) })
 	testify.Zero_Allocation(t, func() {
 		fixture.Count = adler32.Digest_Write(&fixture.Digest, fixture.Source)
 	})

@@ -165,18 +165,15 @@ func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
-// Digest_Handle keeps caller-owned state nonnil at every digest boundary.
+// Digest_Handle gives caller state one pointer identity.
 type Digest_Handle *Digest
 
-// Digest_Handle_Invariants states state behind required handle without hiding pointer fields.
+// Digest_Handle_Invariants composes present state.
 func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Adler-32 digest handle exists.")
-	aver.Tree(value, namespace).
-		Range_Uint32(
-			uint32(value.Value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM,
-		).
-		Sometimes(bool(value.Ready), "Adler-32 digest handle is initialized.").
-		Ensure()
+	if value == nil {
+		return
+	}
+	Digest_Invariants(*value, namespace)
 }
 
 // Digest_Value is a direct observation of streaming state, including restored arbitrary state.
@@ -286,9 +283,10 @@ func Digest_Write(digest Digest_Handle, source Source) (count Count) {
 	Source_Invariants(source, "Digest_Write.source")
 	defer func() { Digest_Handle_Invariants(digest, "Digest_Write.digest.output") }()
 	digest_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("adler32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_Write source stays within source bound.",
+	)
 	// Standard state accepts arbitrary uint32 values; empty input must not normalize a restored
 	// value whose 16-bit components sit above MODULUS.
 	if len(source) != 0 {
@@ -324,9 +322,10 @@ func Digest_Sum_Into(
 	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
 	digest_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("adler32: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_Sum_Into destination stays within destination bound.",
+	)
 	if len(destination) < DIGEST_SIZE {
 		return OUTPUT_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
 	}
@@ -342,9 +341,10 @@ func Digest_Sum_Into(
 func Checksum(source Source) (checksum Value) {
 	defer func() { Value_Invariants(checksum, "Checksum.checksum") }()
 	Source_Invariants(source, "Checksum.source")
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("adler32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Checksum source stays within source bound.",
+	)
 	var digest Digest
 	Digest_Init(&digest)
 	Digest_Write(&digest, source)
@@ -365,9 +365,10 @@ func Digest_Marshal_Into(
 	Digest_Handle_Invariants(digest, "Digest_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_Marshal_Into.destination")
 	digest_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("adler32: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_Marshal_Into destination stays within destination bound.",
+	)
 	if len(destination) < STATE_SIZE {
 		return STATE_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
 	}
@@ -395,9 +396,10 @@ func Digest_Unmarshal(digest Digest_Handle, source Source) (status State_Input_S
 	Digest_Handle_Invariants(digest, "Digest_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_Unmarshal.source")
 	defer func() { Digest_Handle_Invariants(digest, "Digest_Unmarshal.digest.output") }()
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("adler32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_Unmarshal source stays within source bound.",
+	)
 	if len(source) < STATE_IDENTITY_SIZE {
 		return STATE_INPUT_STATUS_IDENTIFIER_INVALID
 	}
@@ -447,7 +449,4 @@ func digest_require(digest Digest_Handle) {
 		digest.Ready == READY_COMPLETE,
 		"Adler-32 operations require Digest_Init or Digest_Unmarshal.",
 	)
-	if digest.Ready != READY_COMPLETE {
-		panic("adler32: digest is not initialized")
-	}
 }

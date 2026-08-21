@@ -24,6 +24,6 @@ Digest_Write consumes and reports every byte.
 
 Digest_Reset returns a used Digest to the state of a fresh one with the same seed.
 
-# Hot Path Is Zero Allocation
+# Allocation
 
-A one-shot Hash of a preallocated slice performs no heap allocation.
+Every exported runtime operation performs zero heap allocation.

@@ -262,7 +262,8 @@ func buffer_write(
 		shift := uint(position%binary.UINT_64_SIZE) * binary.BITS_PER_BYTE
 		mask := uint64(bits.WORD_8_MAXIMUM) << shift
 		word := uint64(item) << shift
-		switch position / binary.UINT_64_SIZE {
+		lane_index := position / binary.UINT_64_SIZE
+		switch lane_index {
 		case 0:
 			updated.Lane_1 = Buffer_Lane_1(uint64(updated.Lane_1)&^mask | word)
 		case 1:
@@ -271,8 +272,6 @@ func buffer_write(
 			updated.Lane_3 = Buffer_Lane_3(uint64(updated.Lane_3)&^mask | word)
 		case 3:
 			updated.Lane_4 = Buffer_Lane_4(uint64(updated.Lane_4)&^mask | word)
-		default:
-			panic("xxhash: partial stripe exceeds bound")
 		}
 		position++
 	}
@@ -311,40 +310,15 @@ func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	Buffer_Invariants(value.Buffer, namespace)
 }
 
-// Digest_Handle keeps caller-owned streaming state nonnil.
+// Digest_Handle gives caller state one pointer identity.
 type Digest_Handle *Digest
 
-// Digest_Handle_Invariants states state behind required handle.
+// Digest_Handle_Invariants composes present state.
 func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "XXH64 digest handle exists.")
-	Buffer_Invariants(value.Buffer, namespace)
-	aver.Tree(value, namespace).
-		Range_Uint64(
-			uint64(value.Accumulator_1), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Accumulator_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Accumulator_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Accumulator_4), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Total_Bytes), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Seed), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Uint8(
-			uint8(value.Buffer_Fill), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		uint64(value.Buffer_Fill) <= uint64(value.Total_Bytes),
-		"Partial stripe cannot contain more bytes than complete message.",
-	)
+	if value == nil {
+		return
+	}
+	Digest_Invariants(*value, namespace)
 }
 
 // Hash returns XXH64 of source under seed. Seed zero is common default.
@@ -439,12 +413,11 @@ func Digest_Write(digest Digest_Handle, source Source) (consumed Count) {
 	Digest_Handle_Invariants(digest, "Digest_Write.digest.input")
 	Source_Invariants(source, "Digest_Write.source")
 	defer func() { Digest_Handle_Invariants(digest, "Digest_Write.digest.output") }()
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("xxhash: source exceeds bound")
-	}
-	if uint64(digest.Total_Bytes) > bits.WORD_64_MAXIMUM-uint64(len(source)) {
-		panic("xxhash: message exceeds bound")
-	}
+	aver.Always(len(source) <= SOURCE_SIZE_MAXIMUM, "Digest_Write source stays within bound.")
+	aver.Always(
+		uint64(digest.Total_Bytes) <= bits.WORD_64_MAXIMUM-uint64(len(source)),
+		"Digest_Write message stays within size bound.",
+	)
 	consumed = Count(len(source))
 	digest.Total_Bytes += Message_Size(len(source))
 

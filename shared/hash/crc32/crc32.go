@@ -226,21 +226,15 @@ func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
-// Digest_Handle keeps caller-owned state nonnil at every digest boundary.
+// Digest_Handle gives caller state one pointer identity.
 type Digest_Handle *Digest
 
-// Digest_Handle_Invariants states state behind required handle without hiding pointer fields.
+// Digest_Handle_Invariants composes present state.
 func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "CRC-32 digest handle exists.")
-	aver.Tree(value, namespace).
-		Range_Uint32(
-			uint32(value.Checksum), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM,
-		).
-		Range_Uint32(
-			uint32(value.Polynomial), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM,
-		).
-		Sometimes(bool(value.Ready), "CRC-32 digest handle is initialized.").
-		Ensure()
+	if value == nil {
+		return
+	}
+	Digest_Invariants(*value, namespace)
 }
 
 // State_Count is either no state or one complete standard state.
@@ -311,9 +305,10 @@ func Update(
 	Table_Invariants(table, "Update.table")
 	Source_Invariants(source, "Update.source")
 	table_require(table)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("crc32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Update source stays within source bound.",
+	)
 	register := ^uint32(checksum)
 	for _, value := range source {
 		register = table[byte(register)^value] ^ register>>bits.BIT_COUNT_8_MAXIMUM
@@ -327,9 +322,10 @@ func Checksum(source Source, table Table) (checksum Digest_Value) {
 	Source_Invariants(source, "Checksum.source")
 	Table_Invariants(table, "Checksum.table")
 	table_require(table)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("crc32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Checksum source stays within source bound.",
+	)
 	return Update(0, table, source)
 }
 
@@ -337,9 +333,10 @@ func Checksum(source Source, table Table) (checksum Digest_Value) {
 func Checksum_IEEE(source Source) (checksum Digest_Value) {
 	defer func() { Digest_Value_Invariants(checksum, "Checksum_IEEE.checksum") }()
 	Source_Invariants(source, "Checksum_IEEE.source")
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("crc32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Checksum_IEEE source stays within source bound.",
+	)
 	var table_storage [TABLE_WORD_COUNT]uint32
 	table := Table(table_storage[:])
 	Table_Make_Into(table, IEEE)
@@ -374,9 +371,10 @@ func Digest_Write(digest Digest_Handle, source Source) (count Count) {
 	Source_Invariants(source, "Digest_Write.source")
 	defer func() { Digest_Handle_Invariants(digest, "Digest_Write.digest.output") }()
 	digest_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("crc32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_Write source stays within source bound.",
+	)
 	var table_storage [TABLE_WORD_COUNT]uint32
 	table := Table(table_storage[:])
 	Table_Make_Into(table, digest.Polynomial)
@@ -403,9 +401,10 @@ func Digest_Sum_Into(
 	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
 	digest_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("crc32: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_Sum_Into destination stays within destination bound.",
+	)
 	if len(destination) < DIGEST_SIZE {
 		return OUTPUT_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
 	}
@@ -439,9 +438,10 @@ func Digest_Marshal_Into(
 	Digest_Handle_Invariants(digest, "Digest_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_Marshal_Into.destination")
 	digest_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("crc32: destination exceeds bound")
-	}
+	aver.Always(
+		len(destination) <= DESTINATION_SIZE_MAXIMUM,
+		"Digest_Marshal_Into destination stays within destination bound.",
+	)
 	if len(destination) < STATE_SIZE {
 		return STATE_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
 	}
@@ -480,9 +480,10 @@ func Digest_Unmarshal(digest Digest_Handle, source Source) (status State_Input_S
 		Digest_Handle_Invariants(digest, "Digest_Unmarshal.digest.output")
 	}()
 	digest_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("crc32: source exceeds bound")
-	}
+	aver.Always(
+		len(source) <= SOURCE_SIZE_MAXIMUM,
+		"Digest_Unmarshal source stays within source bound.",
+	)
 	if len(source) < STATE_IDENTITY_SIZE {
 		return STATE_INPUT_STATUS_IDENTIFIER_INVALID
 	}
@@ -538,9 +539,6 @@ func table_require(table Table) {
 		table[TABLE_READY_INDEX] == TABLE_READY_MARKER,
 		"CRC-32 table operations require Table_Make_Into.",
 	)
-	if table[TABLE_READY_INDEX] != TABLE_READY_MARKER {
-		panic("crc32: table is not initialized")
-	}
 }
 
 func digest_require(digest Digest_Handle) {
@@ -550,7 +548,4 @@ func digest_require(digest Digest_Handle) {
 		ready,
 		"CRC-32 digest operations require Digest_Init.",
 	)
-	if !ready {
-		panic("crc32: digest is not initialized")
-	}
 }

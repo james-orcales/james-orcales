@@ -101,8 +101,8 @@ func Test_Reset_Restores_Initial_State(t *testing.T) {
 	testify.Equal(t, want, got)
 }
 
-// Test_Hot_Path_Is_Zero_Allocation checks a one-shot Hash of a preallocated slice never allocates.
-func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
+// Test_Allocation proves every runtime operation owns no heap storage.
+func Test_Allocation(t *testing.T) {
 	fixture := xxhash_allocation_fixture{Source: make(xxhash.Source, 64)}
 	xxhash.Digest_Init(&fixture.Digest, 0)
 	testify.Zero_Allocation(t, func() {
