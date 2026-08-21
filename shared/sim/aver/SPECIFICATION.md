@@ -470,3 +470,9 @@ member and supplies the two branches for each member axis.
 Registration resolves the member constants. It records the membership guard and member axes. It
 rejects an unresolved member, duplicate member, incorrect order, incorrect argument count, or
 expansion above 70 links.
+
+# Build
+
+Injected `Build_Context` selects direct source, tests, transitive helpers, and constants through
+Go constraints, filename suffixes, and cgo. Excluded files add no obligations or diagnostics.
+Default recorder uses binary build settings; core callers supply context and `File_System`.

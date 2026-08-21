@@ -1948,6 +1948,13 @@ func Test_Enum_Registration(t *testing.T) {
 	}
 }
 
+// Excluded source must not affect any registration path.
+func Test_Build(t *testing.T) {
+	t.Run("constraints", registration_build_constraints)
+	t.Run("context", registration_build_context)
+	t.Run("transitive", registration_build_transitive)
+}
+
 func assert_range_cardinality(t *testing.T, suffix string, value_type string) {
 	t.Helper()
 	for legal_count := 1; legal_count <= 5; legal_count++ {

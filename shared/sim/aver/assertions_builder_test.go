@@ -5,6 +5,7 @@ package aver_test
 import (
 	"bytes"
 	"fmt"
+	"go/build"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -12,6 +13,123 @@ import (
 	"local/james-orcales/shared/sim/aver"
 	"local/james-orcales/shared/testify"
 )
+
+// Excluded declarations must not create obligations or poison registration checks.
+func registration_build_constraints(t *testing.T) {
+	for _, excluded := range []struct{ Name, Header string }{
+		{"modern.go", "//go:build absent\n\n"},
+		{"legacy.go", "// +build absent\n\n"},
+		{"excluded_test.go", "//go:build absent\n\n"},
+		{"_ignored.go", ""},
+		{".ignored.go", ""},
+	} {
+		files := fstest.MapFS{
+			"fixture/active.go": {Data: []byte("package fixture\n" +
+				"func check(ok bool) { aver.Always(ok, \"active\") }\n")},
+			"fixture/" + excluded.Name: {Data: []byte(excluded.Header +
+				"package fixture\n" +
+				"func excluded() { aver.Always(true, \"excluded\") }\n")},
+		}
+		var output bytes.Buffer
+		recorder := &aver.Recorder{
+			File_System: files, Output: &output, Is_Test: true, Exit: func(int) {},
+		}
+		aver.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+		if output.Len() != 0 {
+			t.Fatalf("%s: output=%q", excluded.Name, output.String())
+		}
+		if event_count(&recorder.Events) != 1 {
+			t.Fatalf("%s: events=%d", excluded.Name, event_count(&recorder.Events))
+		}
+	}
+}
+
+// Explicit target must govern every source-selection rule.
+func registration_build_context(t *testing.T) {
+	for _, test := range []struct {
+		Name, Header string
+		Included     bool
+	}{
+		{"active_linux_arm64.go", "", true},
+		{"excluded_windows.go", "", false},
+		{"excluded_amd64.go", "", false},
+		{"active.go", "//go:build custom && linux && arm64 && unix && gc && " +
+			"go1.26 && arm64.v8.0 && !cgo\n\n", true},
+		{"legacy.go", "// +build custom,linux absent\n\n", true},
+		{"excluded.go", "//go:build !custom || cgo\n\n", false},
+		{"modern_wins.go", "//go:build custom\n// +build absent\n\n", true},
+		{"cgo.go", "", false},
+	} {
+		source := test.Header + "package fixture\n"
+		if test.Name == "cgo.go" {
+			source += "import \"C\"\n"
+		}
+		source += "func check(ok bool) { aver.Always(ok, \"selected\") }\n"
+		var output bytes.Buffer
+		recorder := &aver.Recorder{
+			File_System: fstest.MapFS{"fixture/" + test.Name: {Data: []byte(source)}},
+			Build_Context: build.Context{GOOS: "linux", GOARCH: "arm64", Compiler: "gc",
+				BuildTags: []string{"custom"}, ReleaseTags: []string{"go1.26"},
+				ToolTags: []string{"arm64.v8.0"}},
+			Output: &output, Exit: func(int) {}, Is_Test: true,
+		}
+		aver.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+		_, included := recorder.Events.Load("selected")
+		if output.Len() != 0 {
+			t.Fatalf("%s: output=%q", test.Name, output.String())
+		}
+		if included != test.Included {
+			t.Fatalf("%s: included=%t want=%t", test.Name, included, test.Included)
+		}
+	}
+}
+
+// Root, helper, and constant packages must agree on selected declarations.
+func registration_build_transitive(t *testing.T) {
+	files := fstest.MapFS{
+		"go.mod": {Data: []byte("module fixture\n")},
+		"root/root.go": {Data: []byte(`package root
+import helper "fixture/helper"
+func check(value helper.Value) { helper.Value_Invariants(value, "root") }
+`)},
+		"helper/active.go": {Data: []byte(`//go:build custom
+
+package helper
+import bound "fixture/bound"
+type Value int
+func Value_Invariants(value Value, namespace aver.Namespace) {
+ aver.Tree(value, namespace).Range_Int(int(value), 0, bound.MAXIMUM).Ensure()
+}
+`)},
+		"helper/excluded.go": {Data: []byte(`//go:build !custom
+
+package helper
+type Value int
+func Value_Invariants(value Value, namespace aver.Namespace) {
+ aver.Tree(value, namespace).Range_Int(int(value), 0, 1).Ensure()
+}
+`)},
+		"bound/active.go": {Data: []byte(
+			"//go:build custom\n\npackage bound\nconst MAXIMUM = 10\n")},
+		"bound/excluded.go": {Data: []byte(
+			"//go:build !custom\n\npackage bound\nconst MAXIMUM = 1\n")},
+	}
+	var output bytes.Buffer
+	recorder := &aver.Recorder{
+		File_System: files, Build_Context: build.Context{BuildTags: []string{"custom"}},
+		Output: &output, Exit: func(int) {}, Is_Test: true}
+	aver.Recorder_Register_Packages_For_Analysis(recorder, "/root")
+	if output.Len() != 0 {
+		t.Fatalf("output=%q", output.String())
+	}
+	if event_count(&recorder.Events) == 0 {
+		t.Fatal("no transitive events")
+	}
+	aver.Recorder_Analyze_Assertion_Frequency(recorder)
+	if !strings.Contains(output.String(), "0..10") {
+		t.Fatalf("wrong imported bound: %q", output.String())
+	}
+}
 
 // Fixture_Subject stands in for a bundle subject where the test drives the builder directly. A
 // plan-free Recorder never reaches the chain-type lookup, so the type only has to compile.

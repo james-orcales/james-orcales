@@ -6,9 +6,12 @@
 package aver
 
 import (
+	"go/build"
 	"io"
 	"os"
 	"reflect"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -51,6 +54,7 @@ func Init_Default_Recorder() (recorder *aver.Recorder) {
 		Output:              os.Stderr,
 		Tty:                 tty,
 		File_System:         os.DirFS("/"),
+		Build_Context:       running_build_context(),
 		Exit:                os.Exit,
 		Is_Test:             is_test,
 		Is_Fuzz:             is_fuzz,
@@ -63,6 +67,42 @@ func Init_Default_Recorder() (recorder *aver.Recorder) {
 	recorder.Report_Overflow = coverage_gap_overflow_write
 	recorder_output_configure(recorder, os.Getenv(OUTPUT_ENVIRONMENT))
 	return recorder
+}
+
+// Runtime environment can differ from compiler invocation; binary settings own active tags.
+func running_build_context() (context build.Context) {
+	context = build.Default
+	context.GOOS = runtime.GOOS
+	context.GOARCH = runtime.GOARCH
+	context.Compiler = runtime.Compiler
+	context.BuildTags = nil
+	context.CgoEnabled = false
+	information, ok := debug.ReadBuildInfo()
+	if !ok {
+		return context
+	}
+	for _, setting := range information.Settings {
+		switch setting.Key {
+		case "-tags":
+			context.BuildTags = append(context.BuildTags,
+				strings.FieldsFunc(setting.Value, build_tag_separator)...)
+		case "CGO_ENABLED":
+			context.CgoEnabled = setting.Value == "1"
+		case "-race", "-msan", "-asan":
+			if setting.Value == "true" {
+				context.BuildTags = append(context.BuildTags,
+					strings.TrimPrefix(setting.Key, "-"))
+			}
+		}
+	}
+	return context
+}
+
+func build_tag_separator(character rune) (separator bool) {
+	if character == ',' {
+		return true
+	}
+	return character == ' '
 }
 
 // Persists a report too large for a terminal and returns where it put it. The file holds JSON in

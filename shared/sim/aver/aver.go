@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/constant"
 	"go/parser"
 	"go/printer"
@@ -186,6 +187,9 @@ type Recorder struct {
 	// File_System reads Go source files during AST analysis. Paths are absolute OS paths;
 	// lookups strip the leading "/" before calling fs.ReadFile.
 	File_System fs.FS
+	// Build_Context selects source for direct and transitive registration. Caller owns target
+	// and tags; source reads always use File_System, never context filesystem hooks.
+	Build_Context build.Context
 
 	// Events is the coverage tracker: one entry per registered assertion,
 	// keyed by message and credited as observations arrive.
@@ -594,7 +598,7 @@ func recorder_register_packages_for_analysis(recorder *Recorder, directories ...
 				}
 			}
 			parsed, parsed_tests := recorder_parse_directory(
-				recorder.File_System, file_set, expanded)
+				recorder.File_System, recorder.Build_Context, file_set, expanded)
 			files = append(files, parsed...)
 			test_files = append(test_files, parsed_tests...)
 		}
@@ -605,6 +609,7 @@ func recorder_register_packages_for_analysis(recorder *Recorder, directories ...
 	package_types := ast_index_package_types(files)
 	index := &Bundle_Index{
 		File_System:   recorder.File_System,
+		Build_Context: recorder.Build_Context,
 		File_Set:      file_set,
 		Module_Path:   module_path,
 		Module_Root:   module_root,
@@ -701,8 +706,11 @@ func parse_module_path(SOURCE []byte) (module_path string) {
 // Separates production and test source because tests can validate registration but cannot add
 // obligations or submit coverage directly.
 func recorder_parse_directory(
-	file_system fs.FS, file_set *token.FileSet, directory string,
+	file_system fs.FS, build_context build.Context, file_set *token.FileSet, directory string,
 ) (files []*ast.File, test_files []*ast.File) {
+	// MatchFile must see injected source even when caller supplied OS-backed context hooks.
+	build_context.JoinPath = path.Join
+	build_context.UseAllFiles = false
 	root := strings.TrimPrefix(directory, "/")
 	fs.WalkDir(file_system, root, func(
 		file_path string, entry fs.DirEntry, walk_error error,
@@ -723,11 +731,30 @@ func recorder_parse_directory(
 		if read_error != nil {
 			return nil
 		}
+		build_context.OpenFile = func(string) (reader io.ReadCloser, err error) {
+			return source_reader(SOURCE)
+		}
+		matches, match_error := build_context.MatchFile(root, entry.Name())
+		if match_error != nil {
+			return nil
+		}
+		if !matches {
+			return nil
+		}
 		name := "/" + file_path
 		file, parse_error := parser.ParseFile(
 			file_set, name, SOURCE, parser.SkipObjectResolution,
 		)
 		if parse_error == nil {
+			// Importing C requires cgo even without explicit tag.
+			if !build_context.CgoEnabled {
+				for _, imported := range file.Imports {
+					import_path, _ := strconv.Unquote(imported.Path.Value)
+					if import_path == "C" {
+						return nil
+					}
+				}
+			}
 			if strings.HasSuffix(file_path, "_test.go") {
 				test_files = append(test_files, file)
 			} else {
@@ -737,6 +764,10 @@ func recorder_parse_directory(
 		return nil
 	})
 	return files, test_files
+}
+
+func source_reader(source []byte) (reader io.ReadCloser, err error) {
+	return io.NopCloser(bytes.NewReader(source)), nil
 }
 
 // Test code must reach an assertion through production code. A direct writer can impersonate a
@@ -919,6 +950,8 @@ type Indexed_Function struct {
 type Bundle_Index struct {
 	// File_System is the filesystem the module's packages are parsed from.
 	File_System fs.FS
+	// Transitive packages must use same build selection as root packages.
+	Build_Context build.Context
 	// File_Set is the token file set cross-package parses are recorded in.
 	File_Set *token.FileSet
 	// Module_Path is the module's import-path prefix, used to detect in-module qualified calls.
@@ -2165,7 +2198,8 @@ func bundle_index_load(
 	if !resolved {
 		return functions
 	}
-	files, _ := recorder_parse_directory(index.File_System, index.File_Set, directory)
+	files, _ := recorder_parse_directory(
+		index.File_System, index.Build_Context, index.File_Set, directory)
 	return bundle_index_fill(index, import_path, functions, files)
 }
 
