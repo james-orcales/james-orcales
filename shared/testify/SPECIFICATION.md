@@ -53,6 +53,12 @@ moment against another or a range.
 Regexp and Not_Regexp report whether a pattern matches a string; JSON_Eq reports
 whether two JSON documents are semantically equal.
 
+# Allocation
+
+Zero_Allocation warms callback once, measures one execution, and passes only
+when callback performs zero heap allocations. Parallel tests cannot call it because
+Go allocation measurement temporarily changes GOMAXPROCS.
+
 # Control
 
 Condition reports the result of a caller predicate. Every failed assertion, including

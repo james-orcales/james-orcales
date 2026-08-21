@@ -44,7 +44,7 @@ import (
 
 	"local/james-orcales/shared/diff/myers"
 	"local/james-orcales/shared/math/fixedpoint"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/simulation/time"
 )
 
 // Asserter carries the ambient collaborators the environment-dependent assertions need.
@@ -1487,6 +1487,21 @@ func JSON_Eq[E, A ~string](
 	return Equal(t, expected_value, actual_value, message_and_args...)
 }
 
+// Zero_Allocation owns bounded run count so caller cannot turn assertion into
+// unbounded work.
+func Zero_Allocation(
+	t *testing.T, callback func(), message_and_args ...any,
+) (zero bool) {
+	t.Helper()
+	const RUN_COUNT = 1
+	allocations := testing.AllocsPerRun(RUN_COUNT, callback)
+	if allocations == 0 {
+		return true
+	}
+	message := fmt.Sprintf("callback allocated %.1f times per run; want zero", allocations)
+	return Fail(t, message, message_and_args...)
+}
+
 // Condition asserts that comparison returns true.
 func Condition(
 	t *testing.T, comparison func() (satisfied bool), message_and_args ...any,
@@ -1588,9 +1603,9 @@ func Asserter_Eventually(
 	t.Helper()
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Eventually")
 	assert(a.IO != nil, "testify: Asserter io is required for Eventually")
-	deadline := a.Clock.Now_Monotonic() + time.Moment(input.Wait)
-	var poll time.Timeout_Callback
-	poll = func(completion *time.Completion, _ error) {
+	deadline := a.Clock.Now_Monotonic() + time.Monotonic_Moment(input.Wait)
+	var poll time.Callback
+	poll = func(completion *time.Completion) {
 		if condition() {
 			return
 		}
@@ -1600,9 +1615,9 @@ func Asserter_Eventually(
 			Fail(t, message)
 			return
 		}
-		a.IO.Timeout(completion, poll, input.Tick)
+		a.IO.Timeout(completion, input.Tick, poll)
 	}
-	a.IO.Timeout(&time.Completion{}, poll, input.Tick)
+	a.IO.Timeout(&time.Completion{}, input.Tick, poll)
 }
 
 // Asserter_Never_Input pairs the two durations of Asserter_Never, which repeat a type.
@@ -1622,9 +1637,9 @@ func Asserter_Never(
 	t.Helper()
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Never")
 	assert(a.IO != nil, "testify: Asserter io is required for Never")
-	deadline := a.Clock.Now_Monotonic() + time.Moment(input.Wait)
-	var poll time.Timeout_Callback
-	poll = func(completion *time.Completion, _ error) {
+	deadline := a.Clock.Now_Monotonic() + time.Monotonic_Moment(input.Wait)
+	var poll time.Callback
+	poll = func(completion *time.Completion) {
 		if condition() {
 			Fail(t, "Condition satisfied, but should never be")
 			return
@@ -1632,7 +1647,7 @@ func Asserter_Never(
 		if a.Clock.Now_Monotonic() >= deadline {
 			return
 		}
-		a.IO.Timeout(completion, poll, input.Tick)
+		a.IO.Timeout(completion, input.Tick, poll)
 	}
-	a.IO.Timeout(&time.Completion{}, poll, input.Tick)
+	a.IO.Timeout(&time.Completion{}, input.Tick, poll)
 }

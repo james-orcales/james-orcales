@@ -11,8 +11,8 @@ import (
 	"testing/fstest"
 
 	"local/james-orcales/shared/math/fixedpoint"
-	testify "local/james-orcales/shared/testify"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/testify"
 )
 
 // Test_Equality checks the equality family passes on equal operands and its predicates
@@ -240,6 +240,47 @@ func Test_Regexp_And_JSON(t *testing.T) {
 	}
 	if !testify.JSON_Eq(t, `{"a":1,"b":2}`, `{"b":2,"a":1}`) {
 		t.Errorf("JSON_Eq should ignore key order")
+	}
+}
+
+// Test_Allocation stays serial because testing.AllocsPerRun changes GOMAXPROCS. Child
+// process makes FailNow observable without poisoning parent test.
+func Test_Allocation(t *testing.T) {
+	if os.Getenv("TESTIFY_ZERO_ALLOCATION") == "1" {
+		var allocation_sink *int
+		testify.Zero_Allocation(t, func() {
+			allocation_sink = new(int)
+		})
+		if allocation_sink == nil {
+			t.Fatal("allocating callback did not run")
+		}
+		t.Fatal("allocating callback returned")
+	}
+
+	callback_count := 0
+	if !testify.Zero_Allocation(t, func() {
+		callback_count++
+	}) {
+		t.Fatal("allocation-free callback should pass")
+	}
+	const WARM_UP_CALL_COUNT = 1
+	const MEASURED_CALL_COUNT = 1
+	if callback_count != WARM_UP_CALL_COUNT+MEASURED_CALL_COUNT {
+		t.Fatalf("callback count = %d; want %d",
+			callback_count, WARM_UP_CALL_COUNT+MEASURED_CALL_COUNT)
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^Test_Allocation$")
+	command.Env = append(os.Environ(), "TESTIFY_ZERO_ALLOCATION=1")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("allocating callback should fail child test")
+	}
+	if strings.Contains(string(output), "allocating callback returned") {
+		t.Fatal("allocation failure must terminate child test before return")
+	}
+	if !strings.Contains(string(output), "callback allocated 1.0 times per run; want zero") {
+		t.Fatalf("allocation failure lacks measured count:\n%s", output)
 	}
 }
 
