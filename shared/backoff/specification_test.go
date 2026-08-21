@@ -154,7 +154,7 @@ func Test_Seed_Reproduces_Delays(t *testing.T) {
 // Test_Retry_Returns_First_Success checks a first-try success stops immediately.
 func Test_Retry_Returns_First_Success(t *testing.T) {
 	calls := 0
-	operation := func(_ *backoff.Retry_State[int]) (value int, err error) {
+	operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
 		calls++
 		return 42, nil
 	}
@@ -176,7 +176,7 @@ func Test_Retry_Stops_On_Permanent(t *testing.T) {
 	cause := errors.New("fatal")
 	calls := 0
 	var permanent backoff.Permanent_Error
-	operation := func(_ *backoff.Retry_State[int]) (value int, err error) {
+	operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
 		calls++
 		return 0, backoff.Permanent(&permanent, cause)
 	}
@@ -197,7 +197,7 @@ func Test_Retry_Stops_On_Permanent(t *testing.T) {
 func Test_Retry_Exhausts_After_Tries(t *testing.T) {
 	transient := errors.New("transient")
 	calls := 0
-	operation := func(_ *backoff.Retry_State[int]) (value int, err error) {
+	operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
 		calls++
 		return 0, transient
 	}
@@ -220,7 +220,7 @@ func Test_Retry_Exhausts_After_Tries(t *testing.T) {
 func Test_Retry_Waits_On_Timeline(t *testing.T) {
 	interval := 5 * time.MILLISECOND
 	calls := 0
-	operation := func(_ *backoff.Retry_State[int]) (value int, err error) {
+	operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
 		calls++
 		if calls < 3 {
 			return 0, errors.New("transient")
@@ -247,7 +247,7 @@ func Test_Retry_After_Overrides_Delay(t *testing.T) {
 	override := 20 * time.MILLISECOND
 	calls := 0
 	var retry_after backoff.Retry_After_Error
-	operation := func(_ *backoff.Retry_State[int]) (value int, err error) {
+	operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
 		calls++
 		if calls == 1 {
 			return 0, backoff.Retry_After(
@@ -278,9 +278,8 @@ func Test_Invariant_Domains(t *testing.T) {
 }
 
 func policy_invariant_domains() {
-	generator := prng.New(11)
 	intervals := invariant_intervals()
-	states := invariant_policy_states(generator)
+	states := invariant_policy_states()
 	multipliers := [...]backoff.Multiplier{
 		{Numerator: 1, Denominator: 1},
 		{Numerator: 1, Denominator: 1},
@@ -299,23 +298,25 @@ func policy_invariant_domains() {
 			Denominator: backoff.Jitter_Denominator(^uint64(0)),
 		},
 	}
-	for index, interval := range intervals {
-		state := states[index]
+	for index := 0; index < INVARIANT_SENTINEL_COUNT; index++ {
+		generator := invariant_generator_at(index)
+		interval := interval_sentinel_at(intervals, index)
+		state := policy_state_sentinel_at(states, index)
 		policy := backoff.Constant(&state, interval)
 		backoff.Policy_Next(policy)
 		backoff.Policy_Reset(policy)
 
-		state = states[index]
+		state = policy_state_sentinel_at(states, index)
 		policy = backoff.Zero(&state)
 		backoff.Policy_Next(policy)
 		backoff.Policy_Reset(policy)
 
-		state = states[index]
+		state = policy_state_sentinel_at(states, index)
 		policy = backoff.Stopped(&state)
 		backoff.Policy_Next(policy)
 		backoff.Policy_Reset(policy)
 
-		state = states[index]
+		state = policy_state_sentinel_at(states, index)
 		policy = backoff.Exponential(
 			&state, &backoff.Exponential_Input{
 				Initial_Interval: interval,
@@ -327,11 +328,12 @@ func policy_invariant_domains() {
 		backoff.Policy_Next(policy)
 		backoff.Policy_Reset(policy)
 
-		state = states[index]
+		state = policy_state_sentinel_at(states, index)
 		policy = backoff.New_Exponential(&state, generator)
 		backoff.Policy_Next(policy)
 		backoff.Policy_Reset(policy)
 	}
+	generator := invariant_generator_at(1)
 	var exact_state backoff.Policy_State
 	exact_policy := backoff.Exponential(&exact_state, &backoff.Exponential_Input{
 		Initial_Interval: 2,
@@ -344,28 +346,39 @@ func policy_invariant_domains() {
 }
 
 func retry_invariant_domains() {
-	generator := prng.New(12)
 	intervals := invariant_intervals()
-	states := invariant_policy_states(generator)
+	states := invariant_policy_states()
 	loop, _, host := retry_loop(time.NANOSECOND, ALLOCATION_TIMELINE_CAPACITY)
 	tries := [...]backoff.Try_Count{1, 2, 2, backoff.TRY_COUNT_MAXIMUM}
 	attempts := [...]backoff.Attempt_Count{0, 1, 2, backoff.Attempt_Count(
 		backoff.TRY_COUNT_MAXIMUM,
 	)}
-	for index, interval := range intervals {
-		policy_storage := states[index]
+	results := [...]backoff.Result{
+		backoff.RESULT_MINIMUM, backoff.RESULT_MAXIMUM, -1, 2,
+	}
+	for index := 0; index < INVARIANT_SENTINEL_COUNT; index++ {
+		interval := interval_sentinel_at(intervals, index)
+		policy_storage := policy_state_sentinel_at(states, index)
 		policy := backoff.Zero(&policy_storage)
-		state := backoff.Retry_State[int]{
+		state := backoff.Retry_State{
 			Input: backoff.Retry_Input{
 				Timer: loop, Policy: policy, Tries_Max: tries[index], Clock: host,
 				Elapsed_Time_Max: backoff.Elapsed_Limit(interval),
 			},
 			Try_Count: attempts[index],
 			Started:   backoff.Started_Moment(interval),
+			Result:    results[index],
 			Stopped:   true,
+		}
+		if index > 1 {
+			state.Exhausted.Error_Identity = backoff.Error_Exhausted
+			state.Elapsed.Error_Identity = backoff.Error_Elapsed_Max
 		}
 		backoff.Retry_Rearm(&state)
 		backoff.Retry_Work_Queued(&state)
+		state.Result = 1
+		backoff.Retry_Work_Queued(&state)
+		state.Result = results[index]
 		backoff.Retry_Stopped(&state)
 		backoff.Retry_Status(&state)
 		state.Stopped = false
@@ -375,14 +388,15 @@ func retry_invariant_domains() {
 	}
 }
 
-func invariant_success(_ *backoff.Retry_State[int]) (result int, err error) {
+func invariant_success(_ backoff.Retry_State_Handle) (result backoff.Result, err error) {
 	return 1, nil
 }
 
 func error_invariant_domains(t *testing.T) {
 	intervals := invariant_intervals()
 	var retry_after backoff.Retry_After_Error
-	for _, interval := range intervals {
+	for index := 0; index < INVARIANT_SENTINEL_COUNT; index++ {
+		interval := interval_sentinel_at(intervals, index)
 		backoff.Retry_After(
 			&retry_after, backoff.Retry_Delay(interval), backoff.Error_Exhausted,
 		)
@@ -398,27 +412,100 @@ func error_invariant_domains(t *testing.T) {
 	}
 }
 
-func invariant_intervals() (
-	intervals [INVARIANT_SENTINEL_COUNT]backoff.Initial_Interval,
-) {
-	return [INVARIANT_SENTINEL_COUNT]backoff.Initial_Interval{
-		0, 1, 2, backoff.INTERVAL_MAXIMUM,
+// One field per sentinel, because a fixed array result is banned.
+type interval_sentinels struct {
+	Zero    backoff.Initial_Interval
+	One     backoff.Initial_Interval
+	Two     backoff.Initial_Interval
+	Maximum backoff.Initial_Interval
+}
+
+func invariant_intervals() (intervals interval_sentinels) {
+	return interval_sentinels{
+		Zero: 0, One: 1, Two: 2, Maximum: backoff.INTERVAL_MAXIMUM,
 	}
 }
 
-func invariant_policy_states(
-	generator prng.Xoshiro,
-) (states [INVARIANT_SENTINEL_COUNT]backoff.Policy_State) {
+// A switch, because the domain walks pair each sentinel with parallel local arrays by index.
+func interval_sentinel_at(
+	sentinels interval_sentinels, index int,
+) (interval backoff.Initial_Interval) {
+	switch index {
+	case 0:
+		return sentinels.Zero
+	case 1:
+		return sentinels.One
+	case 2:
+		return sentinels.Two
+	}
+	// INVARIANT_SENTINEL_COUNT bounds every caller's index, thus the last needs no case.
+	return sentinels.Maximum
+}
+
+// One field per sentinel, because a fixed array result is banned. Field order pairs with
+// interval_sentinels position for position.
+type policy_state_sentinels struct {
+	Zero    backoff.Policy_State
+	One     backoff.Policy_State
+	Two     backoff.Policy_State
+	Maximum backoff.Policy_State
+}
+
+func invariant_policy_states() (states policy_state_sentinels) {
 	ratio_parts := [...]uint64{0, 1, 2, ^uint64(0)}
-	return [INVARIANT_SENTINEL_COUNT]backoff.Policy_State{
-		policy_state(backoff.POLICY_KIND_CONSTANT, 0, ratio_parts[0], generator),
-		policy_state(backoff.POLICY_KIND_STOPPED, 1, ratio_parts[1], generator),
-		policy_state(backoff.POLICY_KIND_EXPONENTIAL, 2, ratio_parts[2], generator),
-		policy_state(
+	return policy_state_sentinels{
+		Zero: policy_state(
+			backoff.POLICY_KIND_CONSTANT, 0, ratio_parts[0], invariant_generator_at(0),
+		),
+		One: policy_state(
+			backoff.POLICY_KIND_STOPPED, 1, ratio_parts[1], invariant_generator_at(1),
+		),
+		Two: policy_state(
+			backoff.POLICY_KIND_EXPONENTIAL, 2, ratio_parts[2],
+			invariant_generator_at(2),
+		),
+		Maximum: policy_state(
 			backoff.POLICY_KIND_CONSTANT, backoff.INTERVAL_MAXIMUM,
-			ratio_parts[3], generator,
+			ratio_parts[3], invariant_generator_at(3),
 		),
 	}
+}
+
+func invariant_generator_at(index int) (generator prng.Xoshiro) {
+	maximum := ^uint64(0)
+	switch index {
+	case 0:
+		return prng.Xoshiro{
+			First: 0, Second: 1, Third: 2, Fourth: prng.Xoshiro_Fourth(maximum),
+		}
+	case 1:
+		return prng.Xoshiro{
+			First: 1, Second: 2, Third: prng.Xoshiro_Third(maximum), Fourth: 0,
+		}
+	case 2:
+		return prng.Xoshiro{
+			First: 2, Second: prng.Xoshiro_Second(maximum), Third: 0, Fourth: 1,
+		}
+	}
+	return prng.Xoshiro{
+		First: prng.Xoshiro_First(maximum), Second: 0, Third: 1, Fourth: 2,
+	}
+}
+
+// A switch, because the domain walks pair each sentinel with parallel local arrays by index.
+func policy_state_sentinel_at(
+	sentinels policy_state_sentinels, index int,
+) (state backoff.Policy_State) {
+	switch index {
+	case 0:
+		return sentinels.Zero
+	case 1:
+		return sentinels.One
+	case 2:
+		return sentinels.Two
+	}
+	// INVARIANT_SENTINEL_COUNT bounds every caller's index, thus the last needs no case.
+	return sentinels.Maximum
 }
 
 func policy_state(
@@ -458,8 +545,8 @@ type Allocation_Fixture struct {
 	Permanent          backoff.Permanent_Error
 	After              backoff.Retry_After_Error
 	Error              error
-	Retry_State        backoff.Retry_State[int]
-	Result             int
+	Retry_State        backoff.Retry_State
+	Result             backoff.Result
 	Result_Error       error
 	Operation_Error    error
 	Operation_Kind     uint8
@@ -480,7 +567,9 @@ const ALLOCATION_OPERATION_PERMANENT uint8 = 2
 
 const ALLOCATION_OPERATION_RETRY_AFTER uint8 = 3
 
-func allocation_operation(state *backoff.Retry_State[int]) (result int, err error) {
+func allocation_operation(
+	state backoff.Retry_State_Handle,
+) (result backoff.Result, err error) {
 	fixture := (*Allocation_Fixture)(state.Context)
 	fixture.Operation_Count++
 	switch fixture.Operation_Kind {
@@ -662,7 +751,7 @@ func allocation_retry_paths(t *testing.T, fixture *Allocation_Fixture) {
 
 func allocation_retry_state_reset(fixture *Allocation_Fixture) {
 	input := fixture.Retry_State.Input
-	fixture.Retry_State = backoff.Retry_State[int]{
+	fixture.Retry_State = backoff.Retry_State{
 		Input: input, Context: unsafe.Pointer(fixture),
 	}
 }

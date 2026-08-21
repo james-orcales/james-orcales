@@ -293,11 +293,11 @@ func Stored_Jitter_Invariants(value Stored_Jitter, namespace aver.Namespace) {
 type Generator_Storage prng.Xoshiro
 
 // Generator_Storage_Invariants fixes the xoshiro state width without requiring initialization.
-func Generator_Storage_Invariants(generator Generator_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(generator.State) == prng.XOSHIRO_STATE_WORD_COUNT,
-		"Generator storage keeps the xoshiro state width.",
-	)
+func Generator_Storage_Invariants(generator Generator_Storage, namespace aver.Namespace) {
+	prng.Xoshiro_First_Invariants(generator.First, namespace)
+	prng.Xoshiro_Second_Invariants(generator.Second, namespace)
+	prng.Xoshiro_Third_Invariants(generator.Third, namespace)
+	prng.Xoshiro_Fourth_Invariants(generator.Fourth, namespace)
 }
 
 // Required_Generator is active caller-owned jitter entropy.
@@ -305,7 +305,9 @@ type Required_Generator *prng.Xoshiro
 
 // Required_Generator_Invariants rejects missing entropy before dereferencing caller storage.
 func Required_Generator_Invariants(generator Required_Generator, namespace aver.Namespace) {
-	aver.Always(generator != nil, "Jitter has caller-owned entropy.")
+	if generator == nil {
+		return
+	}
 	prng.Xoshiro_Invariants(*generator, namespace)
 }
 
@@ -319,14 +321,30 @@ var Error_Exhausted = errors.New("backoff: retries exhausted")
 // Error_Elapsed_Max is the sentinel Retry returns when the next wait would exceed Elapsed_Time_Max.
 var Error_Elapsed_Max = errors.New("backoff: maximum elapsed time exceeded")
 
+// Error_Retry_After supplies static text without a custom Error method whose required string
+// result cannot carry a defined boundary type.
+var Error_Retry_After = errors.New("backoff: retry after")
+
+// Error_Identity preserves standard error method through embedding without declaring raw string
+// boundary. Distinct name lets embedded Error method remain promoted.
+type Error_Identity interface {
+	error
+}
+
+// Policy_Next_Procedure computes one delay without captured closure storage.
+type Policy_Next_Procedure func(state unsafe.Pointer) (delay Delay)
+
+// Policy_Reset_Procedure restores concrete policy state.
+type Policy_Reset_Procedure func(state unsafe.Pointer)
+
 // Policy is static retry procedure table over explicit caller-owned state.
 type Policy struct {
 	// State borrows concrete policy state where needed.
 	State unsafe.Pointer
 	// Next computes one delay without captured closure storage.
-	Next func(state unsafe.Pointer) (delay Delay)
+	Next Policy_Next_Procedure
 	// Reset restores concrete policy state.
-	Reset func(state unsafe.Pointer)
+	Reset Policy_Reset_Procedure
 }
 
 // Policy_Invariants requires complete static procedure table.
@@ -390,11 +408,23 @@ func Policy_State_Invariants(state Policy_State, namespace aver.Namespace) {
 	)
 }
 
+// Policy_State_Handle names caller-owned policy storage.
+type Policy_State_Handle *Policy_State
+
+// Policy_State_Handle_Invariants composes present policy storage.
+func Policy_State_Handle_Invariants(state Policy_State_Handle, namespace aver.Namespace) {
+	if state == nil {
+		return
+	}
+	Policy_State_Invariants(*state, namespace)
+}
+
 // Constant initializes caller state and returns fixed-delay policy.
-func Constant(state *Policy_State, interval Initial_Interval) (policy Policy) {
+func Constant(state Policy_State_Handle, interval Initial_Interval) (policy Policy) {
 	defer func() { Policy_Invariants(policy, "constant.policy") }()
-	Policy_State_Invariants(*state, "constant.state")
+	Policy_State_Handle_Invariants(state, "constant.state")
 	Initial_Interval_Invariants(interval, "constant.interval")
+	aver.Always(state != nil, "Constant has caller-owned policy storage.")
 	*state = Policy_State{
 		Kind: POLICY_KIND_CONSTANT, Initial_Interval: interval,
 		Current_Interval: Current_Interval(interval),
@@ -407,9 +437,10 @@ func Constant(state *Policy_State, interval Initial_Interval) (policy Policy) {
 }
 
 // Zero returns a Policy that never waits, retrying immediately.
-func Zero(state *Policy_State) (policy Policy) {
+func Zero(state Policy_State_Handle) (policy Policy) {
 	defer func() { Policy_Invariants(policy, "zero.policy") }()
-	Policy_State_Invariants(*state, "zero.state")
+	Policy_State_Handle_Invariants(state, "zero.state")
+	aver.Always(state != nil, "Zero has caller-owned policy storage.")
 	*state = Policy_State{
 		Kind:       POLICY_KIND_CONSTANT,
 		Multiplier: Stored_Multiplier{Numerator: 1, Denominator: 1},
@@ -420,9 +451,10 @@ func Zero(state *Policy_State) (policy Policy) {
 }
 
 // Stopped returns a Policy that never retries.
-func Stopped(state *Policy_State) (policy Policy) {
+func Stopped(state Policy_State_Handle) (policy Policy) {
 	defer func() { Policy_Invariants(policy, "stopped.policy") }()
-	Policy_State_Invariants(*state, "stopped.state")
+	Policy_State_Handle_Invariants(state, "stopped.state")
+	aver.Always(state != nil, "Stopped has caller-owned policy storage.")
 	*state = Policy_State{
 		Kind:       POLICY_KIND_STOPPED,
 		Multiplier: Stored_Multiplier{Numerator: 1, Denominator: 1},
@@ -461,6 +493,19 @@ func Exponential_Input_Invariants(input Exponential_Input, namespace aver.Namesp
 	exponential_ratio_validate(input.Multiplier, input.Jitter, input.Generator)
 }
 
+// Exponential_Input_Handle names borrowed exponential configuration.
+type Exponential_Input_Handle *Exponential_Input
+
+// Exponential_Input_Handle_Invariants composes present exponential configuration.
+func Exponential_Input_Handle_Invariants(
+	input Exponential_Input_Handle, namespace aver.Namespace,
+) {
+	if input == nil {
+		return
+	}
+	Exponential_Input_Invariants(*input, namespace)
+}
+
 func exponential_ratio_validate(
 	multiplier Multiplier, jitter_ratio Jitter, generator prng.Xoshiro,
 ) {
@@ -470,10 +515,14 @@ func exponential_ratio_validate(
 }
 
 // Exponential initializes caller state and returns growing jittered policy.
-func Exponential(state *Policy_State, input *Exponential_Input) (policy Policy) {
+func Exponential(
+	state Policy_State_Handle, input Exponential_Input_Handle,
+) (policy Policy) {
 	defer func() { Policy_Invariants(policy, "exponential.policy") }()
-	Policy_State_Invariants(*state, "exponential.state")
-	Exponential_Input_Invariants(*input, "exponential.input")
+	Policy_State_Handle_Invariants(state, "exponential.state")
+	Exponential_Input_Handle_Invariants(input, "exponential.input")
+	aver.Always(state != nil, "Exponential has caller-owned policy storage.")
+	aver.Always(input != nil, "Exponential has configuration.")
 	*state = Policy_State{
 		Kind:             POLICY_KIND_EXPONENTIAL,
 		Initial_Interval: input.Initial_Interval,
@@ -508,11 +557,12 @@ func Policy_Reset(policy Policy) {
 // New_Exponential returns an Exponential Policy with the classic defaults: a 500ms
 // initial interval, a 60s cap, 1.5x growth, and half-interval jitter from generator.
 func New_Exponential(
-	state *Policy_State, generator prng.Xoshiro,
+	state Policy_State_Handle, generator prng.Xoshiro,
 ) (policy Policy) {
 	defer func() { Policy_Invariants(policy, "new_exponential.policy") }()
-	Policy_State_Invariants(*state, "new_exponential.state")
+	Policy_State_Handle_Invariants(state, "new_exponential.state")
 	prng.Xoshiro_Invariants(generator, "new_exponential.generator")
+	aver.Always(state != nil, "New Exponential has caller-owned policy storage.")
 	return Exponential(state, &Exponential_Input{
 		Initial_Interval: Initial_Interval(DEFAULT_INITIAL_INTERVAL),
 		Interval_Max:     Maximum_Interval(DEFAULT_INTERVAL_MAX),
@@ -614,7 +664,9 @@ func jitter(
 	)
 	delta := Current_Interval(quotient)
 	span := int(2*delta + 1)
-	offset := Current_Interval(prng.Xoshiro_Below(generator, prng.Bound(span)))
+	offset := Current_Interval(prng.Xoshiro_Below(
+		prng.Xoshiro_Pointer(generator), prng.Bound(span),
+	))
 	value := interval - delta + offset
 	if value > Current_Interval(INTERVAL_MAXIMUM) {
 		return Wait(INTERVAL_MAXIMUM)
@@ -623,91 +675,134 @@ func jitter(
 }
 
 // Permanent marks cause as non-retryable, so Retry surfaces it immediately.
-func Permanent(storage *Permanent_Error, cause error) (permanent error) {
-	Permanent_Error_Invariants(*storage, "permanent.storage")
-	defer func() { Permanent_Error_Invariants(*storage, "permanent.error") }()
+func Permanent(storage Permanent_Error_Handle, cause error) (permanent error) {
+	Permanent_Error_Handle_Invariants(storage, "permanent.storage")
+	aver.Always(storage != nil, "Permanent has caller-owned error storage.")
+	defer func() { Permanent_Error_Handle_Invariants(storage, "permanent.error") }()
+	storage.Error_Identity = Error_Permanent
 	storage.Cause = cause
-	return storage
+	return (*Permanent_Error)(storage)
 }
+
+// ERROR_STORAGE_SIZE keeps marker identity and cause explicit.
+const ERROR_STORAGE_SIZE = unsafe.Sizeof(struct {
+	Error_Identity
+	Cause error
+}{})
 
 // Permanent_Error keeps cause without format-owned storage.
 type Permanent_Error struct {
+	// Embedded sentinel supplies error interface without raw string method boundary.
+	Error_Identity
 	// Cause is original failure.
 	Cause error
 }
 
-// Permanent_Error_Invariants requires original failure.
+// Permanent_Error_Invariants preserves explicit marker storage.
 func Permanent_Error_Invariants(permanent Permanent_Error, _ aver.Namespace) {
-	aver.Always((&permanent).Error() != "", "Permanent error has text.")
+	aver.Always(
+		unsafe.Sizeof(permanent) == ERROR_STORAGE_SIZE,
+		"Permanent error keeps identity and cause storage.",
+	)
 }
 
-// Error satisfies error without formatting storage.
-func (permanent *Permanent_Error) Error() (message string) {
-	return "backoff: permanent error"
+// Permanent_Error_Handle names caller-owned permanent error storage.
+type Permanent_Error_Handle *Permanent_Error
+
+// Permanent_Error_Handle_Invariants composes present permanent error storage.
+func Permanent_Error_Handle_Invariants(
+	permanent Permanent_Error_Handle, namespace aver.Namespace,
+) {
+	if permanent == nil {
+		return
+	}
+	Permanent_Error_Invariants(*permanent, namespace)
 }
+
+// RETRY_AFTER_ERROR_STORAGE_SIZE keeps marker, duration, and cause explicit.
+const RETRY_AFTER_ERROR_STORAGE_SIZE = unsafe.Sizeof(struct {
+	Error_Identity
+	Duration Retry_Delay
+	Cause    error
+}{})
 
 // Retry_After_Error asks Retry to wait a specific Duration before the next attempt,
 // overriding the policy for that one step.
 type Retry_After_Error struct {
+	// Embedded sentinel supplies error interface without raw string method boundary.
+	Error_Identity
 	// Duration is the delay Retry waits before retrying.
 	Duration Retry_Delay
 	// Cause is the underlying error, reported if retrying ultimately stops.
 	Cause error
 }
 
-// Retry_After_Error_Invariants bounds override delay and requires original failure.
-func Retry_After_Error_Invariants(
-	retry_after *Retry_After_Error, namespace aver.Namespace,
-) {
-	aver.Always(retry_after != nil, "Retry-after error has caller storage.")
+// Retry_After_Error_Invariants bounds override delay and preserves explicit storage.
+func Retry_After_Error_Invariants(retry_after Retry_After_Error, namespace aver.Namespace) {
 	Retry_Delay_Invariants(retry_after.Duration, namespace)
+	aver.Always(
+		unsafe.Sizeof(retry_after) == RETRY_AFTER_ERROR_STORAGE_SIZE,
+		"Retry-after error keeps identity, duration, and cause storage.",
+	)
+}
+
+// Retry_After_Error_Handle names caller-owned retry-after error storage.
+type Retry_After_Error_Handle *Retry_After_Error
+
+// Retry_After_Error_Handle_Invariants composes present retry-after error storage.
+func Retry_After_Error_Handle_Invariants(
+	retry_after Retry_After_Error_Handle, namespace aver.Namespace,
+) {
+	if retry_after == nil {
+		return
+	}
+	Retry_After_Error_Invariants(*retry_after, namespace)
 }
 
 // Retry_After returns an error that makes Retry wait duration before the next attempt.
-func Retry_After(storage *Retry_After_Error, duration Retry_Delay, cause error) (err error) {
+func Retry_After(
+	storage Retry_After_Error_Handle, duration Retry_Delay, cause error,
+) (err error) {
 	Retry_Delay_Invariants(duration, "retry_after.duration")
-	Retry_After_Error_Invariants(storage, "retry_after.storage")
-	defer func() { Retry_After_Error_Invariants(storage, "retry_after.error") }()
+	Retry_After_Error_Handle_Invariants(storage, "retry_after.storage")
+	aver.Always(storage != nil, "Retry After has caller-owned error storage.")
+	defer func() { Retry_After_Error_Handle_Invariants(storage, "retry_after.error") }()
+	storage.Error_Identity = Error_Retry_After
 	storage.Duration = duration
 	storage.Cause = cause
-	return storage
-}
-
-// Error renders the retry-after error in nanoseconds, satisfying the error interface.
-func (retry_after *Retry_After_Error) Error() (message string) {
-	return "backoff: retry after"
+	return (*Retry_After_Error)(storage)
 }
 
 // Exhausted_Error keeps final failure without format-owned storage.
 type Exhausted_Error struct {
+	// Embedded sentinel supplies error interface without raw string method boundary.
+	Error_Identity
 	// Cause is final failure.
 	Cause error
 }
 
-// Exhausted_Error_Invariants requires final failed attempt.
+// Exhausted_Error_Invariants preserves explicit marker storage.
 func Exhausted_Error_Invariants(exhausted Exhausted_Error, _ aver.Namespace) {
-	aver.Always((&exhausted).Error() != "", "Exhausted error has text.")
-}
-
-// Error satisfies error without formatting storage.
-func (exhausted *Exhausted_Error) Error() (message string) {
-	return "backoff: retries exhausted"
+	aver.Always(
+		unsafe.Sizeof(exhausted) == ERROR_STORAGE_SIZE,
+		"Exhausted error keeps identity and cause storage.",
+	)
 }
 
 // Elapsed_Max_Error keeps final failure without format-owned storage.
 type Elapsed_Limit_Error struct {
+	// Embedded sentinel supplies error interface without raw string method boundary.
+	Error_Identity
 	// Cause is final failure.
 	Cause error
 }
 
-// Elapsed_Error_Max_Invariants requires final failure.
+// Elapsed_Error_Max_Invariants preserves explicit marker storage.
 func Elapsed_Limit_Error_Invariants(elapsed Elapsed_Limit_Error, _ aver.Namespace) {
-	aver.Always((&elapsed).Error() != "", "Elapsed error has text.")
-}
-
-// Error satisfies error without formatting storage.
-func (elapsed *Elapsed_Limit_Error) Error() (message string) {
-	return "backoff: maximum elapsed time exceeded"
+	aver.Always(
+		unsafe.Sizeof(elapsed) == ERROR_STORAGE_SIZE,
+		"Elapsed error keeps identity and cause storage.",
+	)
 }
 
 // Error_Matches checks package sentinels and stored cause without allocating wrapper chains.
@@ -727,9 +822,21 @@ func Error_Matches(err error, target error) (matched Boolean) {
 	}
 }
 
-// Operation is the function Retry attempts. Return nil to succeed, a Permanent error
-// to stop at once, or a Retry_After error to override the next delay.
-type Operation[T any] func(state *Retry_State[T]) (result T, err error)
+// RESULT_MINIMUM is smallest concrete retry output.
+const RESULT_MINIMUM Result = Result(bits.INTEGER_MINIMUM)
+
+// RESULT_MAXIMUM is largest concrete retry output.
+const RESULT_MAXIMUM Result = Result(bits.INTEGER_MAXIMUM)
+
+// Result is concrete retry output; callers needing structure keep it behind Context.
+type Result int
+
+// Result_Invariants preserves complete machine-integer result domain.
+func Result_Invariants(result Result, namespace aver.Namespace) {
+	aver.Tree(result, namespace).
+		Range_Int(int(result), int(RESULT_MINIMUM), int(RESULT_MAXIMUM)).
+		Ensure()
+}
 
 // Try_Count counts bounded attempts.
 type Try_Count uint
@@ -786,6 +893,9 @@ func Started_Moment_Invariants(started Started_Moment, namespace aver.Namespace)
 		Ensure()
 }
 
+// Notify reports one retryable failure without captured closure storage.
+type Notify func(context unsafe.Pointer, err error, delay Delay)
+
 // Retry_Input configures Retry. It holds timeline submission, never Driver.
 type Retry_Input struct {
 	// Timer submits between-attempt wait on injected timeline.
@@ -799,7 +909,7 @@ type Retry_Input struct {
 	// Elapsed_Time_Max stops retrying once the next wait would exceed it; zero disables it.
 	Elapsed_Time_Max Elapsed_Limit
 	// Notify, when set, is called after each failed attempt that will be retried.
-	Notify func(context unsafe.Pointer, err error, delay Delay)
+	Notify Notify
 }
 
 // Retry_Input_Invariants bounds total attempts.
@@ -812,17 +922,17 @@ func Retry_Input_Invariants(input Retry_Input, namespace aver.Namespace) {
 }
 
 // Retry_State is caller-owned storage retained across timer completion.
-type Retry_State[T any] struct {
+type Retry_State struct {
 	// Completion retains timer lifecycle and records when root has work to rearm.
 	Completion nbio.Completion
 	// Input retains dependencies across asynchronous attempts.
 	Input Retry_Input
 	// Operation is caller procedure retried.
-	Operation Operation[T]
+	Operation Operation
 	// Context carries caller state into Operation and Notify.
 	Context unsafe.Pointer
 	// Result retains terminal operation value for root.
-	Result T
+	Result Result
 	// Result_Error retains terminal operation failure for root.
 	Result_Error error
 	// Stopped reports terminal state.
@@ -838,9 +948,9 @@ type Retry_State[T any] struct {
 }
 
 // Retry_State_Invariants keeps attempt count inside configured bound.
-func Retry_State_Invariants[T any](state *Retry_State[T], namespace aver.Namespace) {
-	aver.Always(state != nil, "Retry has caller state.")
+func Retry_State_Invariants(state Retry_State, namespace aver.Namespace) {
 	Retry_Input_Invariants(state.Input, namespace)
+	Result_Invariants(state.Result, namespace)
 	Boolean_Invariants(state.Stopped, namespace)
 	Attempt_Count_Invariants(state.Try_Count, namespace)
 	Started_Moment_Invariants(state.Started, namespace)
@@ -852,17 +962,30 @@ func Retry_State_Invariants[T any](state *Retry_State[T], namespace aver.Namespa
 	)
 }
 
+// Retry_State_Handle names caller-owned retry storage.
+type Retry_State_Handle *Retry_State
+
+// Retry_State_Handle_Invariants composes present retry storage.
+func Retry_State_Handle_Invariants(state Retry_State_Handle, namespace aver.Namespace) {
+	if state == nil {
+		return
+	}
+	Retry_State_Invariants(*state, namespace)
+}
+
+// Operation is function Retry attempts. Return nil to succeed, Permanent error to stop at once,
+// or Retry_After error to override next delay.
+type Operation func(state Retry_State_Handle) (result Result, err error)
+
 // Retry initializes runner and executes first attempt. Later waits only record work;
 // root calls Retry_Rearm after driving timeline.
-func Retry[T any](
-	state *Retry_State[T], operation Operation[T],
-) {
-	Retry_State_Invariants(state, "retry.state")
+func Retry(state Retry_State_Handle, operation Operation) {
+	Retry_State_Handle_Invariants(state, "retry.state")
+	aver.Always(state != nil, "Retry has caller-owned state.")
 	aver.Always(operation != nil, "Retry has operation.")
 	aver.Always(!state.Completion.Armed, "Retry state has no armed wait.")
 	state.Operation = operation
-	var zero T
-	state.Result = zero
+	state.Result = 0
 	state.Result_Error = nil
 	state.Stopped = false
 	state.Try_Count = 0
@@ -878,13 +1001,11 @@ func Retry[T any](
 }
 
 // Retry_Rearm executes one continuation recorded by completed wait.
-func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
+func Retry_Rearm(state Retry_State_Handle) (rearmed Boolean) {
 	defer func() { Boolean_Invariants(rearmed, "retry_rearm.rearmed") }()
-	Retry_State_Invariants(state, "retry_rearm.state")
-	if state.Stopped {
-		return false
-	}
-	if state.Completion.Data != RETRY_WORK_READY {
+	Retry_State_Handle_Invariants(state, "retry_rearm.state")
+	aver.Always(state != nil, "Retry rearm has caller-owned state.")
+	if retry_rearm_blocked(state) {
 		return false
 	}
 	aver.Always(state.Operation != nil, "Active Retry has operation.")
@@ -900,6 +1021,7 @@ func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
 		return true
 	}
 	if state.Try_Count >= Attempt_Count(state.Input.Tries_Max) {
+		state.Exhausted.Error_Identity = Error_Exhausted
 		state.Exhausted.Cause = attempt_error
 		state.Result, state.Result_Error, state.Stopped = result, &state.Exhausted, true
 		return true
@@ -911,6 +1033,7 @@ func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
 		Policy_Reset(state.Input.Policy)
 	}
 	if delay == STOP {
+		state.Exhausted.Error_Identity = Error_Exhausted
 		state.Exhausted.Cause = attempt_error
 		state.Result, state.Result_Error, state.Stopped = result, &state.Exhausted, true
 		return true
@@ -922,6 +1045,7 @@ func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
 	if state.Input.Elapsed_Time_Max > 0 {
 		elapsed := time.Duration(wait_started - time.Monotonic_Moment(state.Started))
 		if elapsed+time.Duration(delay) > time.Duration(state.Input.Elapsed_Time_Max) {
+			state.Elapsed.Error_Identity = Error_Elapsed_Max
 			state.Elapsed.Cause = attempt_error
 			state.Result, state.Result_Error, state.Stopped =
 				result, &state.Elapsed, true
@@ -947,26 +1071,42 @@ func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
 	return true
 }
 
+func retry_rearm_blocked(state Retry_State_Handle) (blocked Boolean) {
+	defer func() { Boolean_Invariants(blocked, "retry_rearm_blocked.blocked") }()
+	Retry_State_Handle_Invariants(state, "retry_rearm_blocked.state")
+	aver.Always(state != nil, "Retry rearm guard has caller-owned state.")
+	if state.Stopped {
+		return true
+	}
+	return Boolean(state.Completion.Data != RETRY_WORK_READY)
+}
+
 // Retry_Work_Queued reports completed wait root must rearm.
-func Retry_Work_Queued[T any](state *Retry_State[T]) (queued Boolean) {
+func Retry_Work_Queued(state Retry_State_Handle) (queued Boolean) {
 	defer func() { Boolean_Invariants(queued, "retry_work_queued.queued") }()
-	Retry_State_Invariants(state, "retry_work_queued.state")
+	Retry_State_Handle_Invariants(state, "retry_work_queued.state")
+	aver.Always(state != nil, "Retry work report has caller-owned state.")
 	return Boolean(!state.Stopped && state.Completion.Data == RETRY_WORK_READY)
 }
 
 // Retry_Stopped reports terminal result is ready.
-func Retry_Stopped[T any](state *Retry_State[T]) (stopped Boolean) {
+func Retry_Stopped(state Retry_State_Handle) (stopped Boolean) {
 	defer func() { Boolean_Invariants(stopped, "retry_stopped.stopped") }()
-	Retry_State_Invariants(state, "retry_stopped.state")
+	Retry_State_Handle_Invariants(state, "retry_stopped.state")
+	aver.Always(state != nil, "Retry stopped report has caller-owned state.")
 	return state.Stopped
 }
 
 // Retry_Status reports progress and retained result without confusing in-flight nil with success.
-func Retry_Status[T any](state *Retry_State[T]) (
-	stopped Boolean, result T, err error,
+func Retry_Status(state Retry_State_Handle) (
+	stopped Boolean, result Result, err error,
 ) {
-	defer func() { Boolean_Invariants(stopped, "retry_status.stopped") }()
-	Retry_State_Invariants(state, "retry_status.state")
+	defer func() {
+		Boolean_Invariants(stopped, "retry_status.stopped")
+		Result_Invariants(result, "retry_status.result")
+	}()
+	Retry_State_Handle_Invariants(state, "retry_status.state")
+	aver.Always(state != nil, "Retry status has caller-owned state.")
 	return state.Stopped, state.Result, state.Result_Error
 }
 
@@ -976,6 +1116,6 @@ const RETRY_WORK_IDLE = 0
 // RETRY_WORK_READY means root must call Retry_Rearm.
 const RETRY_WORK_READY = 1
 
-func retry_wait_complete(completion *nbio.Completion) {
+func retry_wait_complete(completion nbio.Completion_Handle) {
 	completion.Data = RETRY_WORK_READY
 }

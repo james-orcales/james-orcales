@@ -17,7 +17,7 @@ func TestMain(m *testing.M) {
 // Retry_Result captures what a driven Retry delivered plus the virtual time it took.
 type Retry_Result struct {
 	// Value is the result the operation ultimately returned.
-	Value int
+	Value backoff.Result
 	// Error is the error Retry delivered, or nil on success.
 	Error error
 	// Elapsed is virtual time retries consumed on timeline clock.
@@ -34,12 +34,20 @@ func retry_loop(
 ) (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
 	state := &nbio.Sim{}
 	surface, driver := nbio.New_Simulated_IO(state, 0, resolution, nbio.Sim_Memory{
-		Nodes:       make([]nbio.Sim_Node, RETRY_SLOT_CAPACITY),
-		Descriptors: make([]nbio.Sim_Descriptor, RETRY_SLOT_CAPACITY),
-		Operations:  make([]nbio.Sim_Operation, RETRY_SLOT_CAPACITY),
-		Queue:       make([]*nbio.Completion, timer_count),
-		Events:      make([]nbio.Virtual_Event, RETRY_SLOT_CAPACITY),
-		Clocks:      make([]nbio.Sim_Clock, RETRY_SLOT_CAPACITY),
+		Nodes: []nbio.Sim_Node{{
+			Name:     make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM),
+			Contents: make([]byte, nbio.SIM_FILE_BYTES_MAXIMUM),
+		}},
+		Descriptors: []nbio.Sim_Descriptor{{
+			Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
+			Peer_IP:    make([]byte, nbio.IPV6_ADDRESS_BYTES),
+		}},
+		Operations: []nbio.Sim_Operation{{
+			Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
+		}},
+		Queue:  make([]*nbio.Completion, timer_count),
+		Events: make([]nbio.Virtual_Event, RETRY_SLOT_CAPACITY),
+		Clocks: make([]nbio.Sim_Clock, RETRY_SLOT_CAPACITY),
 	})
 	return surface.Timeline, driver, nbio.Sim_Clock_To_Clock(&state.Clocks[0])
 }
@@ -48,14 +56,14 @@ func retry_loop(
 // delivered outcome with the virtual time the waits consumed.
 func run_retry(
 	policy backoff.Policy, tries_count backoff.Try_Count,
-	operation backoff.Operation[int],
+	operation backoff.Operation,
 ) (outcome Retry_Result) {
 	loop, driver, host := retry_loop(time.MILLISECOND, int(tries_count))
 	started := time.Clock_Now_Monotonic(host)
-	retry_state := backoff.Retry_State[int]{Input: backoff.Retry_Input{
+	retry_state := backoff.Retry_State{Input: backoff.Retry_Input{
 		Timer: loop, Policy: policy, Tries_Max: tries_count, Clock: host,
 	}}
-	backoff.Retry[int](&retry_state, operation)
+	backoff.Retry(&retry_state, operation)
 	attempt_max := backoff.Attempt_Count(tries_count)
 	for cycle_count := backoff.Attempt_Count(0); cycle_count < attempt_max; cycle_count++ {
 		for rearm_count := backoff.Try_Count(0); rearm_count < tries_count; rearm_count++ {
