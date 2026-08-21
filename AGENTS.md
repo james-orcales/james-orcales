@@ -1,11 +1,7 @@
 Follow YAGNI principles
-Follow skill `caveman`
-
-## Key Architecural Principle
-
-- End-to-end Dependency Injection
-- Everything must be bounded
-- Treat unvalidated input as intentionally malicious
+End-to-end Dependency Injection
+Everything must be bounded
+Treat unvalidated input as intentionally malicious
 
 ## Test-Driven Development
 
@@ -20,15 +16,6 @@ The code shows what it does; restating it is noise. A comment earns its place by
 the code cannot: why this approach over the alternative, why a constraint or invariant exists, why
 a value is what it is, why something that looks removable is load-bearing.
 
-## Planning
-
-Before finalizing a plan in plan mode, ask the user at least 20 questions.
-
-## Code Exploration
-
-Golang packages have a `SPECIFICATION.md`. Read that first then evaluate if you still need to read
-code.
-
 ## Naming
 
 Name a thing for what it is. Not a use case it serves, not a behavior it performs — what it *is*.
@@ -36,7 +23,3 @@ Name a thing for what it is. Not a use case it serves, not a behavior it perform
 a second caller appears.
 
 Use snake_case and Ada_Case.
-
-## Linting
-
-Do not side step the linter. Make the fundamental code change it's asking from you.
