@@ -31,7 +31,6 @@
           "shared/encoding/binary/",
           "shared/encoding/flatjson/",
           "shared/jlog/",
-          "shared/lru/",
           "shared/sim/aver/**",
           "shared/sim/nbio/",
           "shared/sim/time/",
