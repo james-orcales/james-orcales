@@ -8,7 +8,6 @@ import (
 	"errors"
 	"runtime"
 	"syscall"
-	"unsafe"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
@@ -78,6 +77,10 @@ type Operating_System_Memory struct {
 	Completed []*nbio.Completion
 	// Operations bound simultaneous kernel work, including internal linked deadlines.
 	Operations []Operating_System_Operation
+	// Operation_File_Paths supply one stable path region per operation.
+	Operation_File_Paths []byte
+	// Operation_Socket_Addresses supply one stable sockaddr region per operation.
+	Operation_Socket_Addresses []byte
 	// Operation_Registry bounds active operation lookup by kernel identifier.
 	Operation_Registry []*Operating_System_Operation
 	// Descriptors bound simultaneous caller-owned descriptors.
@@ -90,6 +93,27 @@ type Operating_System_Memory struct {
 	Spawn_Registry []*Spawn
 	// Platform_Operations bound Darwin readiness backlog or Linux retry backlog.
 	Platform_Operations []*Operating_System_Operation
+	// Platform_Changes bound one Darwin kevent changelist; Linux leaves it unused.
+	Platform_Changes []Kernel_Event
+	// Platform_Events bound one Darwin kevent result batch; Linux leaves it unused.
+	Platform_Events []Kernel_Event
+}
+
+// Kernel_Event is the Darwin kevent layout. Linux retains only its caller-memory type so one
+// composition root can provide platform memory without build-specific API shape.
+type Kernel_Event struct {
+	// Ident preserves the first UAPI word across the raw syscall.
+	Ident uint64
+	// Filter preserves the signed UAPI selector across the raw syscall.
+	Filter int16
+	// Flags preserves the UAPI control bits across the raw syscall.
+	Flags uint16
+	// Filter_Flags preserves filter-specific UAPI bits across the raw syscall.
+	Filter_Flags uint32
+	// Data preserves the signed UAPI result word across the raw syscall.
+	Data int64
+	// User_Data keeps correlation as integer, never a Go pointer retained by kernel.
+	User_Data uint64
 }
 
 // Static identity keeps validation failure outside caller allocation budget.
@@ -143,9 +167,7 @@ func New_Operating_System_IO(
 	if initialize_err != nil {
 		return nbio.IO{}, nbio.Driver{}, initialize_err
 	}
-	for index := range memory.Operations {
-		memory.Operations[index] = Operating_System_Operation{}
-	}
+	operating_system_operation_memory_initialize(memory)
 	for index := range memory.Descriptors {
 		memory.Descriptors[index] = Operating_System_Descriptor{}
 	}
@@ -164,7 +186,7 @@ func New_Operating_System_IO(
 		Spawns:           memory.Spawn_Registry[:0],
 		Spawn_Memory:     memory.Spawns,
 	}
-	platform_memory_set(&state.Platform, memory.Platform_Operations)
+	platform_memory_set(&state.Platform, memory)
 	operating_system_wire_file(state, &loop.Storage)
 	operating_system_wire_timer(state, &loop.Timeline)
 	operating_system_wire_socket(state, &loop.Network)
@@ -174,6 +196,29 @@ func New_Operating_System_IO(
 	nbio.IO_Invariants(loop, "new_operating_system_io.loop")
 	nbio.Timeline_Invariants(loop.Timeline, "new_operating_system_io.timeline")
 	return loop, operating_system_to_driver(state), nil
+}
+
+// Each kernel-retained pointer gets one disjoint caller region so slot reuse cannot alias work
+// still owned by the kernel.
+func operating_system_operation_memory_initialize(memory Operating_System_Memory) {
+	operation_count := len(memory.Operations)
+	aver.Always(len(memory.Operation_File_Paths) ==
+		operation_count*OPERATING_SYSTEM_PATH_BYTES_MAXIMUM,
+		"Operating-system operations have exact path storage.")
+	aver.Always(len(memory.Operation_Socket_Addresses) == operation_count*SOCKET_ADDRESS_BYTES,
+		"Operating-system operations have exact socket-address storage.")
+	for index := range memory.Operations {
+		path_start := index * OPERATING_SYSTEM_PATH_BYTES_MAXIMUM
+		path_end := path_start + OPERATING_SYSTEM_PATH_BYTES_MAXIMUM
+		socket_start := index * SOCKET_ADDRESS_BYTES
+		socket_end := socket_start + SOCKET_ADDRESS_BYTES
+		file_path := memory.Operation_File_Paths[path_start:path_end:path_end]
+		socket_address := memory.Operation_Socket_Addresses[socket_start:socket_end]
+		socket_address = socket_address[:len(socket_address):len(socket_address)]
+		memory.Operations[index] = Operating_System_Operation{
+			File_Path: file_path, Socket_Address: socket_address,
+		}
+	}
 }
 
 // Arm completion through idle-to-armed lifecycle edge, same edge virtual timeline stamp
@@ -197,10 +242,10 @@ func operating_system_wire_effects(state *Operating_System, loop *nbio.IO) {
 }
 
 func operating_system_watch_signal_procedure(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, signal nbio.Signal,
+	state_pointer nbio.State, completion *nbio.Completion, signal nbio.Signal,
 	deadline time.Duration, callback nbio.Signal_Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
 	state.Extension_Submitted++
 	operating_system_submit(completion)
@@ -208,10 +253,10 @@ func operating_system_watch_signal_procedure(
 }
 
 func operating_system_spawn_procedure(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, request nbio.Process_Request,
+	state_pointer nbio.State, completion *nbio.Completion, request nbio.Process_Request,
 	deadline time.Duration, callback nbio.Process_Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(deadline > 0, "A spawn deadline is positive and finite.")
 	state.Extension_Submitted++
 	operating_system_submit(completion)
@@ -299,7 +344,7 @@ func operating_system_spawn(
 ) {
 	spawn, start_err := process_start(state, request)
 	if start_err != nil {
-		completion.Callback = func(_ *nbio.Completion) {
+		completion.Callback = func(_ nbio.Completion_Handle) {
 			state.Extension_Submitted--
 			callback(completion, nbio.Process_Result{}, start_err)
 		}
@@ -318,7 +363,7 @@ func operating_system_spawn(
 	process_watch_exit(state, spawn)
 	operating_system_submit(&spawn.Deadline_Completion)
 	operating_system_internal_timeout(
-		state, &spawn.Deadline_Completion, deadline, func(_ *nbio.Completion) {
+		state, &spawn.Deadline_Completion, deadline, func(_ nbio.Completion_Handle) {
 			process_expire(state, spawn)
 		},
 	)
@@ -501,7 +546,7 @@ func process_output_pass(
 	if spawn.Request.Stdout.Procedure != nil {
 		nbio.Write(
 			spawn.Request.Stdout, &spawn.Output_Stream_Completion, pass,
-			func(completed *nbio.Completion) {
+			func(completed nbio.Completion_Handle) {
 				process_stream_pass(state, spawn, completed)
 			},
 		)
@@ -524,7 +569,7 @@ func process_error_pass(
 	if spawn.Request.Stderr.Procedure != nil {
 		nbio.Write(
 			spawn.Request.Stderr, &spawn.Error_Stream_Completion, pass,
-			func(completed *nbio.Completion) {
+			func(completed nbio.Completion_Handle) {
 				process_stream_pass(state, spawn, completed)
 			},
 		)
@@ -624,7 +669,7 @@ func process_watch_exit(state *Operating_System, spawn *Spawn) {
 			Kind:               OPERATING_SYSTEM_OPERATION_PROCESS_EXIT,
 			Descriptor:         spawn.Exit_Descriptor,
 			Process_Identifier: spawn.Identifier,
-			Deliver: func(_ *nbio.Completion) {
+			Deliver: func(_ nbio.Completion_Handle) {
 				process_exit(state, spawn)
 			},
 		}))
@@ -675,7 +720,7 @@ func process_bound_cleanup(state *Operating_System, spawn *Spawn) {
 	spawn.Cleanup_Armed = true
 	operating_system_submit(&spawn.Cleanup_Completion)
 	operating_system_internal_timeout(state, &spawn.Cleanup_Completion,
-		PROCESS_CLEANUP_DURATION, func(_ *nbio.Completion) {
+		PROCESS_CLEANUP_DURATION, func(_ nbio.Completion_Handle) {
 			process_cleanup(state, spawn)
 		})
 }
@@ -756,7 +801,7 @@ func process_finish(state *Operating_System, spawn *Spawn) {
 	}
 	completion := spawn.Completion
 	callback := spawn.Callback
-	completion.Callback = func(_ *nbio.Completion) {
+	completion.Callback = func(_ nbio.Completion_Handle) {
 		state.Extension_Submitted--
 		callback(completion, result, err)
 	}
@@ -796,7 +841,7 @@ func operating_system_pipe_read(
 			Kind:       OPERATING_SYSTEM_OPERATION_PIPE_READ,
 			Descriptor: descriptor,
 			Buffer:     platform_buffer_limit(buffer),
-			Deliver: func(completed *nbio.Completion) {
+			Deliver: func(completed nbio.Completion_Handle) {
 				deliver(completed.Data, completed.Error)
 			},
 		}))
@@ -813,7 +858,7 @@ func operating_system_pipe_write(
 			Kind:       OPERATING_SYSTEM_OPERATION_PIPE_WRITE,
 			Descriptor: descriptor,
 			Buffer:     platform_buffer_limit(buffer),
-			Deliver: func(completed *nbio.Completion) {
+			Deliver: func(completed nbio.Completion_Handle) {
 				deliver(completed.Data, completed.Error)
 			},
 		}))
@@ -829,7 +874,7 @@ func process_rss_bytes(maxrss int64) (size int64) {
 
 // Wire file operations — read, write, open, create — onto storage.
 func operating_system_wire_file(state *Operating_System, loop *nbio.Storage) {
-	loop.State = unsafe.Pointer(state)
+	loop.State = nbio.State(state)
 	loop.Read_Procedure = operating_system_storage_read
 	loop.Write_Procedure = operating_system_storage_write
 	loop.Fsync_Procedure = operating_system_storage_fsync
@@ -841,10 +886,10 @@ func operating_system_wire_file(state *Operating_System, loop *nbio.Storage) {
 }
 
 func operating_system_storage_read(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, file nbio.File, buffer []byte,
+	state_pointer nbio.State, completion *nbio.Completion, file nbio.File, buffer []byte,
 	offset int64, timeout time.Duration, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(timeout > 0, "A storage read timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
@@ -852,10 +897,10 @@ func operating_system_storage_read(
 }
 
 func operating_system_storage_write(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, file nbio.File, buffer []byte,
+	state_pointer nbio.State, completion *nbio.Completion, file nbio.File, buffer []byte,
 	offset int64, timeout time.Duration, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(timeout > 0, "A storage write timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
@@ -863,10 +908,10 @@ func operating_system_storage_write(
 }
 
 func operating_system_storage_fsync(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, file nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, file nbio.File,
 	timeout time.Duration, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(timeout > 0, "A storage fsync timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
@@ -874,10 +919,10 @@ func operating_system_storage_fsync(
 }
 
 func operating_system_storage_open_at(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, directory nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, directory nbio.File,
 	file_path string, options nbio.Open_At_Options, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(options.Flags & ^nbio.OPEN_AT_NO_FOLLOW == 0,
 		"Open_At options contain only known flags.")
 	operating_system_submit(completion)
@@ -885,31 +930,31 @@ func operating_system_storage_open_at(
 }
 
 func operating_system_storage_mkdir_at(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, directory nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, directory nbio.File,
 	file_path string, permissions nbio.File_Permissions, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	operating_system_submit(completion)
 	operating_system_mkdir_at(state, completion, directory, file_path, permissions, callback)
 }
 
 func operating_system_storage_directory_entries(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, directory nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, directory nbio.File,
 	buffer []byte, entries []nbio.Directory_Entry, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	operating_system_submit(completion)
 	operating_system_directory_pass(state, completion, directory, buffer, entries, callback)
 }
 
 func operating_system_storage_status(
-	_ unsafe.Pointer, path string,
+	_ nbio.State, path string,
 ) (status nbio.File_Status, err error) {
 	return file_status(path)
 }
 
 func operating_system_storage_read_link(
-	_ unsafe.Pointer, path string, destination []byte,
+	_ nbio.State, path string, destination []byte,
 ) (count int, err error) {
 	return file_read_link(path, destination)
 }
@@ -918,7 +963,7 @@ func operating_system_storage_read_link(
 // Close primitives are not here: they name descriptor, which is business of IO surface, not of
 // timeline.
 func operating_system_wire_timer(state *Operating_System, pump *nbio.Timeline) {
-	pump.State = unsafe.Pointer(state)
+	pump.State = nbio.State(state)
 	pump.Submit = operating_system_timeline_submit
 	pump.Open_Event = operating_system_timeline_open_event
 	pump.Event_Listen = operating_system_timeline_event_listen
@@ -927,39 +972,39 @@ func operating_system_wire_timer(state *Operating_System, pump *nbio.Timeline) {
 }
 
 func operating_system_timeline_submit(
-	state unsafe.Pointer, completion *nbio.Completion, delay time.Duration,
+	state nbio.State, completion *nbio.Completion, delay time.Duration,
 	callback nbio.Callback,
 ) {
-	system := (*Operating_System)(state)
+	system := state.(*Operating_System)
 	operating_system_submit(completion)
 	operating_system_timeout(system, system.Host, completion, delay, callback)
 }
 
 func operating_system_timeline_open_event(
-	state unsafe.Pointer,
+	state nbio.State,
 ) (event nbio.Event, err error) {
-	return platform_event_open((*Operating_System)(state))
+	return platform_event_open(state.(*Operating_System))
 }
 
 func operating_system_timeline_event_listen(
-	state unsafe.Pointer, event nbio.Event, completion *nbio.Completion,
+	state nbio.State, event nbio.Event, completion *nbio.Completion,
 	callback nbio.Callback,
 ) {
-	system := (*Operating_System)(state)
+	system := state.(*Operating_System)
 	operating_system_submit(completion)
 	operating_system_event_listen(system, event, completion, callback)
 }
 
 func operating_system_timeline_event_trigger(
-	state unsafe.Pointer, event nbio.Event, completion *nbio.Completion,
+	state nbio.State, event nbio.Event, completion *nbio.Completion,
 ) {
 	platform_event_trigger(
-		(*Operating_System)(state), event, completion.Kernel_Identifier,
+		state.(*Operating_System), event, completion.Kernel_Identifier,
 	)
 }
 
-func operating_system_timeline_close_event(state unsafe.Pointer, event nbio.Event) {
-	system := (*Operating_System)(state)
+func operating_system_timeline_close_event(state nbio.State, event nbio.Event) {
+	system := state.(*Operating_System)
 	operating_system_assert_event_drained(system, event)
 	platform_event_close(system, event)
 }
@@ -972,17 +1017,17 @@ func operating_system_wire_close(loop *nbio.IO) {
 }
 
 func operating_system_close_procedure(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, file nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, file nbio.File,
 	callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	operating_system_assert_file_drained(state, file)
 	operating_system_submit(completion)
 	operating_system_close(state, completion, file, callback)
 }
 
-func operating_system_deinit_procedure(state_pointer unsafe.Pointer) {
-	state := (*Operating_System)(state_pointer)
+func operating_system_deinit_procedure(state_pointer nbio.State) {
+	state := state_pointer.(*Operating_System)
 	aver.Always(operating_system_descriptor_count(state) == 0,
 		"Every descriptor the backend opened is closed before Deinit.")
 }
@@ -1033,7 +1078,7 @@ func operating_system_assert_file_drained(state *Operating_System, file nbio.Fil
 
 // Wire socket lifecycle separately from byte transfers so neither boundary hides in one table.
 func operating_system_wire_socket(state *Operating_System, loop *nbio.Network) {
-	loop.State = unsafe.Pointer(state)
+	loop.State = nbio.State(state)
 	loop.Bind_Procedure = operating_system_socket_bind
 	loop.Listen_Socket_Procedure = operating_system_socket_listen
 	loop.Get_Socket_Name_Procedure = operating_system_socket_name
@@ -1047,75 +1092,75 @@ func operating_system_wire_socket(state *Operating_System, loop *nbio.Network) {
 }
 
 func operating_system_socket_bind(
-	_ unsafe.Pointer, socket nbio.File, address nbio.Address,
+	_ nbio.State, socket nbio.File, address nbio.Address,
 ) (err error) {
 	return socket_bind(int(socket), address)
 }
 
 func operating_system_socket_listen(
-	_ unsafe.Pointer, socket nbio.File, backlog uint32,
+	_ nbio.State, socket nbio.File, backlog uint32,
 ) (err error) {
 	return socket_listen_mark(int(socket), backlog)
 }
 
 func operating_system_socket_name(
-	_ unsafe.Pointer, socket nbio.File,
-) (address nbio.Address, err error) {
-	return socket_name(int(socket))
+	_ nbio.State, socket nbio.File, destination *nbio.Address,
+) (err error) {
+	return socket_name(int(socket), destination)
 }
 
 func operating_system_socket_accept(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, listener nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, listener nbio.File,
 	timeout time.Duration, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(timeout > 0, "An accept timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_accept(state, completion, listener, timeout, callback)
 }
 
 func operating_system_socket_tcp(
-	state_pointer unsafe.Pointer, family nbio.Address_Family, options nbio.TCP_Options,
+	state_pointer nbio.State, family nbio.Address_Family, options nbio.TCP_Options,
 ) (socket nbio.File, err error) {
 	descriptor, open_err := socket_open_tcp(family, options)
 	if open_err != nil {
 		return nbio.File(-1), open_err
 	}
-	operating_system_descriptor_add((*Operating_System)(state_pointer), descriptor)
+	operating_system_descriptor_add(state_pointer.(*Operating_System), descriptor)
 	return nbio.File(descriptor), nil
 }
 
 func operating_system_socket_udp(
-	state_pointer unsafe.Pointer, family nbio.Address_Family, options nbio.UDP_Options,
+	state_pointer nbio.State, family nbio.Address_Family, options nbio.UDP_Options,
 ) (socket nbio.File, err error) {
 	descriptor, open_err := socket_open_udp(family, options)
 	if open_err != nil {
 		return nbio.File(-1), open_err
 	}
-	operating_system_descriptor_add((*Operating_System)(state_pointer), descriptor)
+	operating_system_descriptor_add(state_pointer.(*Operating_System), descriptor)
 	return nbio.File(descriptor), nil
 }
 
 func operating_system_socket_connect(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, socket nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, socket nbio.File,
 	address nbio.Address, timeout time.Duration, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(timeout > 0, "A connect timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_connect(state, completion, socket, address, timeout, callback)
 }
 
 func operating_system_socket_shutdown(
-	_ unsafe.Pointer, socket nbio.File, how nbio.Shutdown_How,
+	_ nbio.State, socket nbio.File, how nbio.Shutdown_How,
 ) (err error) {
 	return socket_shutdown(int(socket), how)
 }
 
 func operating_system_socket_peer_address(
-	_ unsafe.Pointer, file nbio.File,
-) (address nbio.Address, err error) {
-	return socket_peer_address(int(file))
+	_ nbio.State, file nbio.File, destination *nbio.Address,
+) (err error) {
+	return socket_peer_address(int(file), destination)
 }
 
 // Byte transfers share one required timeout contract on TCP and UDP descriptors.
@@ -1125,20 +1170,20 @@ func operating_system_wire_socket_transfers(loop *nbio.Network) {
 }
 
 func operating_system_socket_receive(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, socket nbio.File, buffer []byte,
+	state_pointer nbio.State, completion *nbio.Completion, socket nbio.File, buffer []byte,
 	timeout time.Duration, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(timeout > 0, "A receive timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_receive(state, completion, socket, buffer, timeout, callback)
 }
 
 func operating_system_socket_send(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, socket nbio.File, buffer []byte,
+	state_pointer nbio.State, completion *nbio.Completion, socket nbio.File, buffer []byte,
 	timeout time.Duration, callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	aver.Always(timeout > 0, "A send timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_send(state, completion, socket, buffer, timeout, callback)
@@ -1327,7 +1372,7 @@ func operating_system_completion_remove(
 // never code that only submit IO.
 func operating_system_to_driver(state *Operating_System) (driver nbio.Driver) {
 	return nbio.Driver{
-		State:     unsafe.Pointer(state),
+		State:     nbio.State(state),
 		Run:       operating_system_driver_run,
 		Run_For:   operating_system_driver_run_for,
 		Run_Until: operating_system_driver_run_until,
@@ -1335,33 +1380,33 @@ func operating_system_to_driver(state *Operating_System) (driver nbio.Driver) {
 	}
 }
 
-func operating_system_driver_run(state unsafe.Pointer) (err error) {
-	system := (*Operating_System)(state)
+func operating_system_driver_run(state nbio.State) (err error) {
+	system := state.(*Operating_System)
 	operating_system_drive_begin(system)
 	defer operating_system_drive_end(system)
 	return operating_system_run(system)
 }
 
 func operating_system_driver_run_for(
-	state unsafe.Pointer, duration time.Duration,
+	state nbio.State, duration time.Duration,
 ) (err error) {
-	system := (*Operating_System)(state)
+	system := state.(*Operating_System)
 	operating_system_drive_begin(system)
 	defer operating_system_drive_end(system)
 	return operating_system_run_for(system, duration)
 }
 
 func operating_system_driver_run_until(
-	state unsafe.Pointer, timeout time.Duration, done func() (finished bool),
+	state nbio.State, timeout time.Duration, done func() (finished bool),
 ) (completed bool, err error) {
-	system := (*Operating_System)(state)
+	system := state.(*Operating_System)
 	operating_system_drive_begin(system)
 	defer operating_system_drive_end(system)
 	return operating_system_drive_until(system, timeout, done)
 }
 
-func operating_system_driver_deinit(state unsafe.Pointer) {
-	operating_system_deinitialize((*Operating_System)(state))
+func operating_system_driver_deinit(state nbio.State) {
+	operating_system_deinitialize(state.(*Operating_System))
 }
 
 // Drive until done, or until host deadline. Propagate every scheduler error.
@@ -1770,7 +1815,7 @@ func operating_system_signal_deliver(
 			continue
 		}
 		delivered := waiter
-		delivered.Completion.Callback = func(_ *nbio.Completion) {
+		delivered.Completion.Callback = func(_ nbio.Completion_Handle) {
 			state.Extension_Submitted--
 			delivered.Callback(delivered.Completion, delivered.Kind, nil)
 		}
@@ -1790,7 +1835,7 @@ func operating_system_expire_signals(state *Operating_System, now time.Monotonic
 			continue
 		}
 		expired := waiter
-		expired.Completion.Callback = func(_ *nbio.Completion) {
+		expired.Completion.Callback = func(_ nbio.Completion_Handle) {
 			state.Extension_Submitted--
 			expired.Callback(
 				expired.Completion, nbio.SIGNAL_EXPIRED, nbio.Deadline_Exceeded,

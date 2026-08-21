@@ -14,6 +14,9 @@ import (
 	"local/james-orcales/shared/sim/time"
 )
 
+// State carries caller-owned procedure state without an unsafe pointer or captured closure.
+type State interface{}
+
 // IO is injected async IO submit surface. Code submit operation with
 // Completion and callback, then react to completion. Code never drive loop — that is
 // Driver job — thus holder submit IO, but cannot advance clock.
@@ -44,19 +47,19 @@ type IO struct {
 	// halves carry the backend pointer because each is handed out alone, and IO_Invariants
 	// hold them equal, thus flat operations read Storage and a third copy buy nothing.
 	Close_Procedure func(
-		state unsafe.Pointer, completion *Completion, file File,
+		state State, completion *Completion, file File,
 		callback Callback,
 	)
 	// Deinit assert every descriptor run open is closed. Surface own leak check, thus leaked
 	// descriptor fail run. Caller need no census it must remember to read.
-	Deinit_Procedure func(state unsafe.Pointer)
+	Deinit_Procedure func(state State)
 	// Watch_Signal fires callback when the process receives signal before the finite
 	// deadline, or with Deadline_Exceeded. The lifetime is finite deliberately: a
 	// permanent waiter is a process that cannot state when it is done. It sit here because
 	// signal readiness is discovered by the poll pass, not by a timer: the OS backend caps its
 	// own idle gap while a waiter live, and counts that waiter as work in flight.
 	Watch_Signal func(
-		state unsafe.Pointer, completion *Completion, signal Signal,
+		state State, completion *Completion, signal Signal,
 		deadline time.Duration, callback Signal_Callback,
 	)
 	// Spawn runs request until it finishes or the deadline expires. Expiry kills the
@@ -65,7 +68,7 @@ type IO struct {
 	// scripted output is disallowed. It sit here because a child's pipes and its exit are
 	// descriptor and kernel-event work this surface already owns.
 	Spawn func(
-		state unsafe.Pointer, completion *Completion, request Process_Request,
+		state State, completion *Completion, request Process_Request,
 		deadline time.Duration, callback Process_Callback,
 	)
 }
@@ -199,63 +202,63 @@ type Process_Callback func(completion *Completion, result Process_Result, err er
 // compose these raw operations under its own record layer.
 type Network struct {
 	// State remains caller-owned while static procedures borrow it.
-	State unsafe.Pointer
+	State State
 	// Socket_TCP make one configured non-blocking close-on-exec TCP socket.
 	Socket_TCP_Procedure func(
-		state unsafe.Pointer, family Address_Family, options TCP_Options,
+		state State, family Address_Family, options TCP_Options,
 	) (socket File, err error)
 	// Socket_UDP make one configured non-blocking close-on-exec UDP socket.
 	Socket_UDP_Procedure func(
-		state unsafe.Pointer, family Address_Family, options UDP_Options,
+		state State, family Address_Family, options UDP_Options,
 	) (socket File, err error)
 	// Bind enable address reuse and give caller-owned socket its local address.
-	Bind_Procedure func(state unsafe.Pointer, socket File, address Address) (err error)
+	Bind_Procedure func(state State, socket File, address Address) (err error)
 	// Listen_Socket mark bound socket accepting, with backlog as queue depth.
 	Listen_Socket_Procedure func(
-		state unsafe.Pointer, socket File, backlog uint32,
+		state State, socket File, backlog uint32,
 	) (err error)
 	// Get_Socket_Name report socket own address. That is how caller learn port kernel chose
 	// for port zero.
 	Get_Socket_Name_Procedure func(
-		state unsafe.Pointer, socket File,
-	) (address Address, err error)
+		state State, socket File, destination *Address,
+	) (err error)
 	// Accept yield one inbound connection on listener before timeout, or report
 	// Deadline_Exceeded. Timeout is finite deliberately: it keep every repository
 	// submission bounded.
 	Accept_Procedure func(
-		state unsafe.Pointer, completion *Completion, listener File,
+		state State, completion *Completion, listener File,
 		timeout time.Duration,
 		callback Callback,
 	)
 	// Connect borrow caller-owned socket until one kernel result or timeout. Callback report
 	// outcome only. Backend never make, transfer, or close descriptor.
 	Connect_Procedure func(
-		state unsafe.Pointer, completion *Completion, socket File, address Address,
+		state State, completion *Completion, socket File, address Address,
 		timeout time.Duration,
 		callback Callback,
 	)
 	// Receive read up to len(buffer) bytes before timeout. Callback report byte count once data
 	// arrive, or zero with Deadline_Exceeded after the kernel request retire.
 	Receive_Procedure func(
-		state unsafe.Pointer, completion *Completion, socket File, buffer []byte,
+		state State, completion *Completion, socket File, buffer []byte,
 		timeout time.Duration,
 		callback Callback,
 	)
 	// Send write buffer before timeout. Callback report byte count once kernel accept it, or
 	// zero with Deadline_Exceeded after the kernel request retire.
 	Send_Procedure func(
-		state unsafe.Pointer, completion *Completion, socket File, buffer []byte,
+		state State, completion *Completion, socket File, buffer []byte,
 		timeout time.Duration,
 		callback Callback,
 	)
 	// Shutdown synchronously disable one or both connected-socket direction. It neither own nor
 	// close socket.
-	Shutdown_Procedure func(state unsafe.Pointer, socket File, how Shutdown_How) (err error)
+	Shutdown_Procedure func(state State, socket File, how Shutdown_How) (err error)
 	// Peer_Address return remote IP address of connected socket, synchronously — getpeername
 	// has no completion. It is source a control-plane connection is gated on.
 	Peer_Address_Procedure func(
-		state unsafe.Pointer, file File,
-	) (address Address, err error)
+		state State, file File, destination *Address,
+	) (err error)
 }
 
 // Network_Socket_TCP passes caller-owned state to static TCP constructor.
@@ -286,9 +289,9 @@ func Network_Listen_Socket(network Network, socket File, backlog uint32) (err er
 
 // Network_Get_Socket_Name passes caller-owned state to static address reader.
 func Network_Get_Socket_Name(
-	network Network, socket File,
-) (address Address, err error) {
-	return network.Get_Socket_Name_Procedure(network.State, socket)
+	network Network, socket File, destination *Address,
+) (err error) {
+	return network.Get_Socket_Name_Procedure(network.State, socket, destination)
 }
 
 // Network_Accept preserves callback-last submit shape while state remains explicit.
@@ -333,8 +336,10 @@ func Network_Shutdown(network Network, socket File, how Shutdown_How) (err error
 }
 
 // Network_Peer_Address passes caller-owned state to static peer reader.
-func Network_Peer_Address(network Network, file File) (address Address, err error) {
-	return network.Peer_Address_Procedure(network.State, file)
+func Network_Peer_Address(
+	network Network, file File, destination *Address,
+) (err error) {
+	return network.Peer_Address_Procedure(network.State, file, destination)
 }
 
 // Storage is other half of IO: every transfer whose endpoint is file or directory, plus path
@@ -342,12 +347,12 @@ func Network_Peer_Address(network Network, file File) (address Address, err erro
 // socket.
 type Storage struct {
 	// State remains caller-owned while static procedures borrow it.
-	State unsafe.Pointer
+	State State
 	// Read read len(buffer) bytes from file at offset before timeout. Timeout does not work on
 	// Darwin because its current file path has no kernel timeout. Darwin completes the
 	// operation.
 	Read_Procedure func(
-		state unsafe.Pointer, completion *Completion, file File, buffer []byte,
+		state State, completion *Completion, file File, buffer []byte,
 		offset int64,
 		timeout time.Duration,
 		callback Callback,
@@ -355,7 +360,7 @@ type Storage struct {
 	// Write write buffer to file at offset before timeout. Timeout does not work on Darwin
 	// because its current file path has no kernel timeout. Darwin completes the operation.
 	Write_Procedure func(
-		state unsafe.Pointer, completion *Completion, file File, buffer []byte,
+		state State, completion *Completion, file File, buffer []byte,
 		offset int64,
 		timeout time.Duration,
 		callback Callback,
@@ -363,12 +368,12 @@ type Storage struct {
 	// Fsync synchronize file before timeout. Timeout does not work on Darwin because its
 	// current file path has no kernel timeout. Darwin completes the operation.
 	Fsync_Procedure func(
-		state unsafe.Pointer, completion *Completion, file File, timeout time.Duration,
+		state State, completion *Completion, file File, timeout time.Duration,
 		callback Callback,
 	)
 	// Open_At asynchronously open file_path relative to directory and force close-on-exec.
 	Open_At_Procedure func(
-		state unsafe.Pointer, completion *Completion, directory File, file_path string,
+		state State, completion *Completion, directory File, file_path string,
 		options Open_At_Options, callback Callback,
 	)
 	// Mkdir_At asynchronously make one directory named by file_path relative to directory. It
@@ -376,7 +381,7 @@ type Storage struct {
 	// report operating system error rather than converge. Make_Directory compose this
 	// primitive above surface, thus both backend run same composition.
 	Mkdir_At_Procedure func(
-		state unsafe.Pointer, completion *Completion, directory File, file_path string,
+		state State, completion *Completion, directory File, file_path string,
 		permissions File_Permissions,
 		callback Callback,
 	)
@@ -385,18 +390,18 @@ type Storage struct {
 	// Dirent layout is per-platform, thus parse and kind stay in backend, and only pass loop
 	// and descriptor lifetime compose above.
 	Get_Directory_Entries_Procedure func(
-		state unsafe.Pointer, completion *Completion, directory File, buffer []byte,
+		state State, completion *Completion, directory File, buffer []byte,
 		entries []Directory_Entry, callback Callback,
 	)
 	// Status report whether path exist, its portable mode, and its byte size, synchronously.
 	// Absent path is Exists false with nil error, thus caller branch on status, not on error.
 	Status_Procedure func(
-		state unsafe.Pointer, path string,
+		state State, path string,
 	) (status File_Status, err error)
 	// Read_Link writes symbolic-link target into caller storage. It is synchronous like Status:
 	// neither operation owns descriptor or waits for readiness.
 	Read_Link_Procedure func(
-		state unsafe.Pointer, path string, destination []byte,
+		state State, path string, destination []byte,
 	) (count int, err error)
 }
 
@@ -559,82 +564,110 @@ const ADDRESS_TEXT_BYTES_MAXIMUM = (ADDRESS_IPV6_GROUP_COUNT-2)*
 	ADDRESS_IPV6_GROUP_TEXT_BYTES_MAXIMUM +
 	(ADDRESS_IPV6_GROUP_COUNT - 2) + ADDRESS_IPV4_TEXT_BYTES_MAXIMUM
 
-// Address is IP address and port with explicit family. IP store IPv4 bytes in first four
-// positions, IPv6 bytes in all 16.
+// Address is IP address and port with explicit family. IP borrows exact family-sized caller
+// storage so value never hides allocation.
 type Address struct {
 	// Family select how IP is read.
 	Family Address_Family
 	// IP hold network address bytes.
-	IP [IPV6_ADDRESS_BYTES]byte
+	IP []byte
 	// Port is host-order TCP or UDP port.
 	Port uint16
 }
 
-// Address_IPV4 return IPv4 address from four octets and host-order port.
-func Address_IPV4(ip [IPV4_ADDRESS_BYTES]byte, port uint16) (address Address) {
-	address.Family = FAMILY_IPV4
-	copy(address.IP[:4], ip[:])
-	address.Port = port
-	return address
+// Address_IPV4 borrows four caller-owned octets and host-order port.
+func Address_IPV4(ip []byte, port uint16) (address Address) {
+	aver.Always(len(ip) == IPV4_ADDRESS_BYTES, "An IPv4 address has four octets.")
+	return Address{
+		Family: FAMILY_IPV4, IP: ip[:IPV4_ADDRESS_BYTES:IPV4_ADDRESS_BYTES], Port: port,
+	}
 }
 
-// Address_IPV6 return IPv6 address from 16 octets and host-order port.
-func Address_IPV6(ip [IPV6_ADDRESS_BYTES]byte, port uint16) (address Address) {
-	return Address{Family: FAMILY_IPV6, IP: ip, Port: port}
+// Address_IPV6 borrows 16 caller-owned octets and host-order port.
+func Address_IPV6(ip []byte, port uint16) (address Address) {
+	aver.Always(len(ip) == IPV6_ADDRESS_BYTES, "An IPv6 address has 16 octets.")
+	return Address{
+		Family: FAMILY_IPV6, IP: ip[:IPV6_ADDRESS_BYTES:IPV6_ADDRESS_BYTES], Port: port,
+	}
 }
 
-// Address_Parse parse IP literal without DNS and return explicit-family address. Host that hold
-// colon parse as IPv6, else as IPv4. Anything else error.
+// Address_Parse parse IP literal without DNS into caller-owned destination. Host that hold colon
+// parse as IPv6, else as IPv4. Anything else error.
 //
 // Parse is written here, not taken from net/netip, thus this tier import no part of net tree. One
 // import of net is one step from a resolver, and resolver block. Address is 20 bytes of plain
 // data, and its text form is small enough to read here.
-func Address_Parse(host string, port int) (address Address, err error) {
+func Address_Parse(destination *Address, host string, port int) (err error) {
+	storage, storage_err := address_destination_storage(destination)
+	if storage_err != nil {
+		return storage_err
+	}
 	if port < 0 {
-		return Address{}, address_port_outside_uint16
+		return address_port_outside_uint16
 	}
 	if port > 65535 {
-		return Address{}, address_port_outside_uint16
+		return address_port_outside_uint16
 	}
 	if len(host) > ADDRESS_TEXT_BYTES_MAXIMUM {
-		return Address{}, address_host_too_large
+		return address_host_too_large
 	}
 	if text_contains(host, ":") {
-		sextets, found := address_parse_ipv6(host)
+		found := address_parse_ipv6(host, storage)
 		if !found {
-			return Address{}, address_host_not_literal
+			return address_host_not_literal
 		}
-		return Address_IPV6(sextets, uint16(port)), nil
+		*destination = Address_IPV6(storage, uint16(port))
+		return nil
 	}
-	quad, found := address_parse_ipv4(host)
+	quad := storage[:IPV4_ADDRESS_BYTES:IPV4_ADDRESS_BYTES]
+	found := address_parse_ipv4(host, quad)
 	if !found {
-		return Address{}, address_host_not_literal
+		return address_host_not_literal
 	}
-	return Address_IPV4(quad, uint16(port)), nil
+	*destination = Address{
+		Family: FAMILY_IPV4, IP: storage[:IPV4_ADDRESS_BYTES:IPV6_ADDRESS_BYTES],
+		Port: uint16(port),
+	}
+	return nil
 }
 
+// Preserve backing capacity across IPv4, empty, and failed results so one destination can serve
+// every address family without heap ownership moving into this package.
+func address_destination_storage(destination *Address) (storage []byte, err error) {
+	if destination == nil {
+		return nil, address_storage_too_small
+	}
+	if cap(destination.IP) < IPV6_ADDRESS_BYTES {
+		return nil, address_storage_too_small
+	}
+	storage = destination.IP[:IPV6_ADDRESS_BYTES:IPV6_ADDRESS_BYTES]
+	*destination = Address{IP: storage[:0:IPV6_ADDRESS_BYTES]}
+	return storage, nil
+}
+
+var address_storage_too_small = errors.New("io: address storage is smaller than IPv6")
 var address_port_outside_uint16 = errors.New("io: port is outside uint16")
 var address_host_too_large = errors.New("io: host is too large")
 var address_host_not_literal = errors.New("io: host is not an IP literal")
 
 // Parse dotted-quad into four octets.
-func address_parse_ipv4(host string) (quad [IPV4_ADDRESS_BYTES]byte, found bool) {
+func address_parse_ipv4(host string, quad []byte) (found bool) {
 	parts := [IPV4_ADDRESS_BYTES]string{}
 	part_count, split := text_split(host, '.', parts[:])
 	if !split {
-		return [IPV4_ADDRESS_BYTES]byte{}, false
+		return false
 	}
 	if part_count != IPV4_ADDRESS_BYTES {
-		return [IPV4_ADDRESS_BYTES]byte{}, false
+		return false
 	}
 	for index, part := range parts {
 		octet, valid := address_parse_octet(part)
 		if !valid {
-			return [IPV4_ADDRESS_BYTES]byte{}, false
+			return false
 		}
 		quad[index] = octet
 	}
-	return quad, true
+	return true
 }
 
 // Parse one decimal octet: one to three digits, at most 255, and no leading zero. Leading zero is
@@ -675,87 +708,96 @@ const ADDRESS_IPV6_PARTS_MAX = 8
 
 // Parse IPv6 literal into 16 octets. It accept full form, one "::" run, and trailing embedded
 // IPv4. It reject zone identifier: Address hold no zone, thus accept of one would drop it silent.
-func address_parse_ipv6(host string) (sextets [IPV6_ADDRESS_BYTES]byte, found bool) {
+func address_parse_ipv6(host string, sextets []byte) (found bool) {
+	for index := range sextets {
+		sextets[index] = 0
+	}
 	if text_contains(host, "%") {
-		return [IPV6_ADDRESS_BYTES]byte{}, false
+		return false
 	}
 	head, tail, compressed := text_cut(host, "::")
 	if compressed {
-		return address_join_ipv6(head, tail)
+		return address_join_ipv6(head, tail, sextets)
 	}
-	values, value_count, valid := address_parse_ipv6_parts(host)
+	value_count, valid := address_parse_ipv6_parts(host, sextets)
 	if !valid {
-		return [IPV6_ADDRESS_BYTES]byte{}, false
+		return false
 	}
 	if value_count != IPV6_ADDRESS_BYTES {
-		return [IPV6_ADDRESS_BYTES]byte{}, false
+		return false
 	}
-	return values, true
+	return true
 }
 
 // Join both halves of a compressed literal, with zeros between them. Run must stand for at least
 // one group, thus the two halves together leave two bytes free.
-func address_join_ipv6(head string, tail string) (sextets [IPV6_ADDRESS_BYTES]byte, found bool) {
+func address_join_ipv6(head string, tail string, sextets []byte) (found bool) {
 	if text_contains(tail, "::") {
-		return [IPV6_ADDRESS_BYTES]byte{}, false
+		return false
 	}
-	front, front_count, front_valid := address_parse_ipv6_parts(head)
+	front_count, front_valid := address_parse_ipv6_parts(head, sextets)
 	if !front_valid {
-		return [IPV6_ADDRESS_BYTES]byte{}, false
+		return false
 	}
-	back, back_count, back_valid := address_parse_ipv6_parts(tail)
+	back_count, back_valid := address_parse_ipv6_parts(tail, sextets[front_count:])
 	if !back_valid {
-		return [IPV6_ADDRESS_BYTES]byte{}, false
+		return false
 	}
 	if front_count+back_count > IPV6_ADDRESS_BYTES-2 {
-		return [IPV6_ADDRESS_BYTES]byte{}, false
+		return false
 	}
-	copy(sextets[:front_count], front[:front_count])
-	copy(sextets[IPV6_ADDRESS_BYTES-back_count:], back[:back_count])
-	return sextets, true
+	copy(
+		sextets[IPV6_ADDRESS_BYTES-back_count:],
+		sextets[front_count:front_count+back_count],
+	)
+	for index := front_count; index < IPV6_ADDRESS_BYTES-back_count; index++ {
+		sextets[index] = 0
+	}
+	return true
 }
 
 // Parse one colon-separated group run into its bytes. Empty text yield no bytes. Trailing
 // dotted-quad contribute four bytes, which is how embedded IPv4 reach the low 32 bits.
 func address_parse_ipv6_parts(
-	text string,
-) (values [IPV6_ADDRESS_BYTES]byte, count int, valid bool) {
+	text string, values []byte,
+) (count int, valid bool) {
 	if text == "" {
-		return values, 0, true
+		return 0, true
 	}
 	parts := [ADDRESS_IPV6_PARTS_MAX]string{}
 	part_count, split := text_split(text, ':', parts[:])
 	if !split {
-		return values, 0, false
+		return 0, false
 	}
 	for index := 0; index < part_count; index++ {
 		part := parts[index]
 		if index == part_count-1 {
 			if text_contains(part, ".") {
-				quad, quad_valid := address_parse_ipv4(part)
+				quad := values[count:]
+				if len(quad) < IPV4_ADDRESS_BYTES {
+					return 0, false
+				}
+				quad = quad[:IPV4_ADDRESS_BYTES:IPV4_ADDRESS_BYTES]
+				quad_valid := address_parse_ipv4(part, quad)
 				if !quad_valid {
-					return values, 0, false
+					return 0, false
 				}
-				if count+IPV4_ADDRESS_BYTES > len(values) {
-					return values, 0, false
-				}
-				copy(values[count:], quad[:])
 				count += IPV4_ADDRESS_BYTES
-				return values, count, true
+				return count, true
 			}
 		}
 		high, low, group_valid := address_parse_group(part)
 		if !group_valid {
-			return values, 0, false
+			return 0, false
 		}
 		if count+2 > len(values) {
-			return values, 0, false
+			return 0, false
 		}
 		values[count] = high
 		values[count+1] = low
 		count += 2
 	}
-	return values, count, true
+	return count, true
 }
 
 // Parse one IPv6 group: one to four hexadecimal digits.
@@ -1408,14 +1450,14 @@ type Sim_Node struct {
 	Mode File_Mode
 	// Parent names another caller slot so tree edges need no pointer allocation.
 	Parent int
-	// Name keeps component bytes inline so generated paths need no string allocation.
-	Name [SIM_PATH_COMPONENT_BYTES_MAXIMUM]byte
+	// Name borrows exact caller storage so generated paths need no hidden allocation.
+	Name []byte
 	// Name_Count bounds valid bytes without making a slice escape.
 	Name_Count int
 	// Contents keeps file bytes inline so writes cannot grow heap storage. A symbolic link
 	// stores its target here, the way POSIX filesystems already do, thus link needs no second
 	// buffer and lstat size stays target length.
-	Contents [SIM_FILE_BYTES_MAXIMUM]byte
+	Contents []byte
 	// Contents_Count bounds valid bytes without reslicing stored state.
 	Contents_Count int
 }
@@ -1443,6 +1485,10 @@ type Sim_Socket struct {
 
 // Sim_Descriptor is caller-owned storage for one open file or socket descriptor.
 type Sim_Descriptor struct {
+	// Address_IP keeps bound-address bytes in caller storage after Bind input retires.
+	Address_IP []byte
+	// Peer_IP keeps connected peer bytes in caller storage after Connect input retires.
+	Peer_IP []byte
 	// Used separates free caller slots from owned descriptors.
 	Used bool
 	// File remains unique after a slot is recycled.
@@ -1461,6 +1507,8 @@ type Sim_Descriptor struct {
 
 // Sim_Operation is caller-owned storage retained until one asynchronous operation retires.
 type Sim_Operation struct {
+	// Address_IP keeps asynchronous address input in caller-owned operation storage.
+	Address_IP []byte
 	// Kind lets one static callback retire every operation shape.
 	Kind Sim_Operation_Kind
 	// State restores backend ownership without a captured callback.
@@ -1490,7 +1538,7 @@ type Sim_Operation struct {
 	// Data stores seeded integer result without a closure.
 	Data int
 	// Result carries platform result pointer without platform type in common file.
-	Result unsafe.Pointer
+	Result State
 	// Mask preserves platform stat selection until callback.
 	Mask uint32
 	// Borrowed marks descriptor count that retirement must release.
@@ -1648,15 +1696,7 @@ func New_Simulated_IO(
 	aver.Always(len(memory.Operations) > 0,
 		"A simulated IO backend has operation capacity.")
 	aver.Always(len(memory.Clocks) > 0, "A simulated IO backend has clock capacity.")
-	for index := range memory.Nodes {
-		memory.Nodes[index] = Sim_Node{}
-	}
-	for index := range memory.Descriptors {
-		memory.Descriptors[index] = Sim_Descriptor{}
-	}
-	for index := range memory.Operations {
-		memory.Operations[index] = Sim_Operation{}
-	}
+	sim_memory_initialize(memory)
 	root_generator := prng.New(prng.Seed(seed))
 	state.Generator = prng.Xoshiro_Split(&root_generator)
 	state.Timeout_Order_Generator = prng.Xoshiro_Split(&root_generator)
@@ -1681,10 +1721,11 @@ func New_Simulated_IO(
 	state.Nodes = memory.Nodes
 	state.Descriptors = memory.Descriptors
 	state.Operations = memory.Operations
-	state.Nodes[0] = Sim_Node{
-		Used: true, Mode: FILE_MODE_DIRECTORY | File_Mode(SIM_ROOT_PERMISSIONS),
-		Parent: -1,
-	}
+	root := &state.Nodes[0]
+	sim_node_reset(root)
+	root.Used = true
+	root.Mode = FILE_MODE_DIRECTORY | File_Mode(SIM_ROOT_PERMISSIONS)
+	root.Parent = -1
 	sim_generate(state)
 	sim_wire_network(state, &loop.Network)
 	sim_wire_storage(state, &loop.Storage)
@@ -1697,6 +1738,31 @@ func New_Simulated_IO(
 	IO_Invariants(loop, "new_simulated_io.loop")
 	Timeline_Invariants(loop.Timeline, "new_simulated_io.timeline")
 	return loop, virtual_timeline_to_driver(&state.Timeline)
+}
+
+func sim_memory_initialize(memory Sim_Memory) {
+	for index := range memory.Nodes {
+		node := &memory.Nodes[index]
+		aver.Always(len(node.Name) == SIM_PATH_COMPONENT_BYTES_MAXIMUM,
+			"A simulated node has component-name storage.")
+		aver.Always(len(node.Contents) == SIM_FILE_BYTES_MAXIMUM,
+			"A simulated node has file-content storage.")
+		sim_node_reset(node)
+	}
+	for index := range memory.Descriptors {
+		descriptor := &memory.Descriptors[index]
+		aver.Always(len(descriptor.Address_IP) == IPV6_ADDRESS_BYTES,
+			"A simulated descriptor has local-address storage.")
+		aver.Always(len(descriptor.Peer_IP) == IPV6_ADDRESS_BYTES,
+			"A simulated descriptor has peer-address storage.")
+		sim_descriptor_reset(descriptor)
+	}
+	for index := range memory.Operations {
+		operation := &memory.Operations[index]
+		aver.Always(len(operation.Address_IP) == IPV6_ADDRESS_BYTES,
+			"A simulated operation has address storage.")
+		sim_operation_reset(operation)
+	}
 }
 
 // Draw the wall-clock origin of this box. A box's boot time is an outcome, not an input.
@@ -1716,19 +1782,19 @@ func sim_skew_draw(state *Sim) (skew time.Offset) {
 }
 
 func sim_watch_signal_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, signal Signal,
+	state_pointer State, completion *Completion, signal Signal,
 	deadline time.Duration, callback Signal_Callback,
 ) {
 	aver.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
-	sim_watch_signal((*Sim)(state_pointer), completion, signal, deadline, callback)
+	sim_watch_signal(state_pointer.(*Sim), completion, signal, deadline, callback)
 }
 
 func sim_spawn_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, _ Process_Request,
+	state_pointer State, completion *Completion, _ Process_Request,
 	deadline time.Duration, callback Process_Callback,
 ) {
 	aver.Always(deadline > 0, "A spawn deadline is positive and finite.")
-	sim_spawn((*Sim)(state_pointer), completion, deadline, callback)
+	sim_spawn(state_pointer.(*Sim), completion, deadline, callback)
 }
 
 // Watches for a signal that, in the simulation, arrives at a seed-drawn grain — the operating
@@ -1740,6 +1806,11 @@ func sim_watch_signal(
 	// Callback slot stay nil: signal retire through its own typed static callback, thus the
 	// shared Callback dispatcher never decodes this kind.
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_SIGNAL, nil)
+	if operation == nil {
+		completion.Error = sim_operation_capacity_exceeded
+		callback(completion, 0, sim_operation_capacity_exceeded)
+		return
+	}
 	operation.Signal_Callback = callback
 	latency := sim_latency_from(&state.Signal_Generator)
 	if latency >= deadline {
@@ -1752,8 +1823,8 @@ func sim_watch_signal(
 	virtual_submit(&state.Timeline, completion, latency, sim_signal_complete)
 }
 
-func sim_signal_complete(completion *Completion) {
-	operation := (*Sim_Operation)(completion.Backend)
+func sim_signal_complete(completion Completion_Handle) {
+	operation := completion.Backend.(*Sim_Operation)
 	aver.Always(operation != nil,
 		"A simulated signal completion owns specialized operation state.")
 	aver.Always(operation.Kind == SIM_OPERATION_KIND_SIGNAL,
@@ -1761,7 +1832,7 @@ func sim_signal_complete(completion *Completion) {
 	callback := operation.Signal_Callback
 	signal := operation.Signal
 	err := operation.Operation_Err
-	*operation = Sim_Operation{}
+	sim_operation_reset(operation)
 	completion.Backend = nil
 	callback(completion, signal, err)
 }
@@ -1775,6 +1846,11 @@ func sim_spawn(
 ) {
 	// Callback slot stay nil for the same reason the signal watch leaves it nil.
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_PROCESS, nil)
+	if operation == nil {
+		completion.Error = sim_operation_capacity_exceeded
+		callback(completion, Process_Result{}, sim_operation_capacity_exceeded)
+		return
+	}
 	operation.Process_Callback = callback
 	exit := 0
 	if prng.Xoshiro_Below(&state.Process_Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
@@ -1790,8 +1866,8 @@ func sim_spawn(
 	virtual_submit(&state.Timeline, completion, latency, sim_process_complete)
 }
 
-func sim_process_complete(completion *Completion) {
-	operation := (*Sim_Operation)(completion.Backend)
+func sim_process_complete(completion Completion_Handle) {
+	operation := completion.Backend.(*Sim_Operation)
 	aver.Always(operation != nil,
 		"A simulated process completion owns specialized operation state.")
 	aver.Always(operation.Kind == SIM_OPERATION_KIND_PROCESS,
@@ -1799,24 +1875,27 @@ func sim_process_complete(completion *Completion) {
 	callback := operation.Process_Callback
 	result := operation.Process
 	err := operation.Operation_Err
-	*operation = Sim_Operation{}
+	sim_operation_reset(operation)
 	completion.Backend = nil
 	callback(completion, result, err)
 }
 
 func sim_close_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, file File,
+	state_pointer State, completion *Completion, file File,
 	callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	sim_assert_file_drained(state, file)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_CLOSE, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = file
 	sim_operation_submit(operation, completion, sim_latency(state))
 }
 
-func sim_deinit_procedure(state_pointer unsafe.Pointer) {
-	state := (*Sim)(state_pointer)
+func sim_deinit_procedure(state_pointer State) {
+	state := state_pointer.(*Sim)
 	open := false
 	for index := range state.Descriptors {
 		if state.Descriptors[index].Used {
@@ -1828,14 +1907,14 @@ func sim_deinit_procedure(state_pointer unsafe.Pointer) {
 
 // Wire whole socket half of simulator onto network.
 func sim_wire_network(state *Sim, network *Network) {
-	network.State = unsafe.Pointer(state)
+	network.State = State(state)
 	sim_wire_socket_lifecycle(network)
 	sim_wire_socket_bytes(network)
 }
 
 // Wire whole file half of simulator onto storage.
 func sim_wire_storage(state *Sim, storage *Storage) {
-	storage.State = unsafe.Pointer(state)
+	storage.State = State(state)
 	sim_wire_path(storage)
 	sim_wire_file_bytes(storage)
 	sim_wire_directory(storage)
@@ -1858,34 +1937,34 @@ var sim_bind_socket_closed = errors.New("io: bind requires an open socket")
 var sim_socket_name_closed = errors.New("io: getsockname requires an open socket")
 
 func sim_socket_tcp(
-	state_pointer unsafe.Pointer, family Address_Family, options TCP_Options,
+	state_pointer State, family Address_Family, options TCP_Options,
 ) (socket File, err error) {
 	if !tcp_options_valid(options) {
 		return File(-1), sim_invalid_socket_options
 	}
-	return sim_open_socket((*Sim)(state_pointer), family, false)
+	return sim_open_socket(state_pointer.(*Sim), family, false)
 }
 
 func sim_socket_udp(
-	state_pointer unsafe.Pointer, family Address_Family, options UDP_Options,
+	state_pointer State, family Address_Family, options UDP_Options,
 ) (socket File, err error) {
 	if !udp_options_valid(options) {
 		return File(-1), sim_invalid_socket_options
 	}
-	return sim_open_socket((*Sim)(state_pointer), family, true)
+	return sim_open_socket(state_pointer.(*Sim), family, true)
 }
 
 func sim_bind(
-	state_pointer unsafe.Pointer, socket File, address Address,
+	state_pointer State, socket File, address Address,
 ) (err error) {
-	descriptor := sim_descriptor_find((*Sim)(state_pointer), socket)
+	descriptor := sim_descriptor_find(state_pointer.(*Sim), socket)
 	if descriptor == nil {
 		return sim_bind_socket_closed
 	}
 	if !descriptor.Socket {
 		return sim_bind_socket_closed
 	}
-	bound := address
+	bound := sim_address_copy(descriptor.Address_IP, address)
 	if bound.Port == 0 {
 		bound.Port = uint16(socket)
 	}
@@ -1894,34 +1973,44 @@ func sim_bind(
 }
 
 func sim_listen_socket(
-	state_pointer unsafe.Pointer, socket File, backlog uint32,
+	state_pointer State, socket File, backlog uint32,
 ) (err error) {
-	return sim_listen((*Sim)(state_pointer), socket, backlog)
+	return sim_listen(state_pointer.(*Sim), socket, backlog)
 }
 
 func sim_get_socket_name(
-	state_pointer unsafe.Pointer, socket File,
-) (address Address, err error) {
-	descriptor := sim_descriptor_find((*Sim)(state_pointer), socket)
+	state_pointer State, socket File, destination *Address,
+) (err error) {
+	storage, storage_err := address_destination_storage(destination)
+	if storage_err != nil {
+		return storage_err
+	}
+	descriptor := sim_descriptor_find(state_pointer.(*Sim), socket)
 	if descriptor == nil {
-		return Address{}, sim_socket_name_closed
+		return sim_socket_name_closed
 	}
 	if !descriptor.Socket {
-		return Address{}, sim_socket_name_closed
+		return sim_socket_name_closed
 	}
-	return descriptor.Socket_State.Address, nil
+	*destination = sim_address_copy(storage, descriptor.Socket_State.Address)
+	return nil
 }
 
 func sim_shutdown_socket(
-	state_pointer unsafe.Pointer, socket File, how Shutdown_How,
+	state_pointer State, socket File, how Shutdown_How,
 ) (err error) {
-	return sim_shutdown((*Sim)(state_pointer), socket, how)
+	return sim_shutdown(state_pointer.(*Sim), socket, how)
 }
 
 func sim_peer_address_procedure(
-	state_pointer unsafe.Pointer, file File,
-) (address Address, err error) {
-	return sim_peer_address((*Sim)(state_pointer), file), nil
+	state_pointer State, file File, destination *Address,
+) (err error) {
+	storage, storage_err := address_destination_storage(destination)
+	if storage_err != nil {
+		return storage_err
+	}
+	*destination = sim_address_copy(storage, sim_peer_address(state_pointer.(*Sim), file))
+	return nil
 }
 
 // SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT uses one byte to keep readiness enabled.
@@ -2041,19 +2130,23 @@ var sim_listen_socket_required = errors.New("io: listen requires an open TCP soc
 var sim_listen_backlog_required = errors.New("io: listen backlog must be positive")
 var sim_socket_listener_required = errors.New("io: socket is not listening")
 var sim_descriptor_capacity_exceeded = errors.New("io: descriptor capacity exceeded")
+var sim_operation_capacity_exceeded = errors.New("io: operation capacity exceeded")
 var sim_node_capacity_exceeded = errors.New("io: node capacity exceeded")
 var sim_path_component_too_large = errors.New("io: path component too large")
 var sim_file_capacity_exceeded = errors.New("io: file capacity exceeded")
 var sim_file_offset_invalid = errors.New("io: file offset invalid")
 
 func sim_accept_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, listener File,
+	state_pointer State, completion *Completion, listener File,
 	timeout time.Duration, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "An accept timeout is positive and finite.")
 	latency := sim_latency(state)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_ACCEPT, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = listener
 	sim_operation_borrow(operation)
 	if sim_timeout_first(state, latency, timeout) {
@@ -2066,14 +2159,17 @@ func sim_accept_procedure(
 }
 
 func sim_connect_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, socket File, address Address,
+	state_pointer State, completion *Completion, socket File, address Address,
 	timeout time.Duration, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "A connect timeout is positive and finite.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_CONNECT, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = socket
-	operation.Address = address
+	operation.Address = sim_address_copy(operation.Address_IP, address)
 	sim_operation_borrow(operation)
 	if prng.Xoshiro_Below(&state.Generator, 4) == 0 {
 		operation.Operation_Err = Connection_Refused
@@ -2088,12 +2184,15 @@ func sim_connect_procedure(
 }
 
 func sim_receive_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, socket File, buffer []byte,
+	state_pointer State, completion *Completion, socket File, buffer []byte,
 	timeout time.Duration, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "A receive timeout is positive and finite.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_RECEIVE, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = socket
 	operation.Buffer = buffer
 	sim_operation_borrow(operation)
@@ -2107,12 +2206,15 @@ func sim_receive_procedure(
 }
 
 func sim_send_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, socket File, buffer []byte,
+	state_pointer State, completion *Completion, socket File, buffer []byte,
 	timeout time.Duration, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "A send timeout is positive and finite.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_SEND, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = socket
 	operation.Buffer = buffer
 	sim_operation_borrow(operation)
@@ -2178,13 +2280,16 @@ func sim_wire_path(storage *Storage) {
 }
 
 func sim_open_at_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, directory File,
+	state_pointer State, completion *Completion, directory File,
 	file_path string, options Open_At_Options, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(options.Flags&^OPEN_AT_NO_FOLLOW == 0,
 		"Open_At options contain only known flags.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_OPEN_AT, callback)
+	if operation == nil {
+		return
+	}
 	operation.Directory = directory
 	operation.File_Path = file_path
 	operation.Open_Options = options
@@ -2192,11 +2297,14 @@ func sim_open_at_procedure(
 }
 
 func sim_mkdir_at_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, directory File,
+	state_pointer State, completion *Completion, directory File,
 	file_path string, permissions File_Permissions, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_MKDIR_AT, callback)
+	if operation == nil {
+		return
+	}
 	operation.Directory = directory
 	operation.File_Path = file_path
 	// Mkdir has no other options, thus it borrows the open operand slot rather than making the
@@ -2213,15 +2321,18 @@ func sim_wire_file_bytes(storage *Storage) {
 }
 
 func sim_storage_read(
-	state_pointer unsafe.Pointer, completion *Completion, file File, buffer []byte,
+	state_pointer State, completion *Completion, file File, buffer []byte,
 	offset int64, timeout time.Duration, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "A storage read timeout is positive and finite.")
 	descriptor := sim_descriptor_find(state, file)
 	aver.Always(descriptor != nil, "A Storage read names an open descriptor.")
 	aver.Always(!descriptor.Socket, "A Storage read names an open file.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_READ, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = file
 	operation.Node = descriptor.Node
 	operation.Buffer = buffer
@@ -2241,15 +2352,18 @@ func sim_storage_read(
 }
 
 func sim_storage_write(
-	state_pointer unsafe.Pointer, completion *Completion, file File, buffer []byte,
+	state_pointer State, completion *Completion, file File, buffer []byte,
 	offset int64, timeout time.Duration, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "A storage write timeout is positive and finite.")
 	descriptor := sim_descriptor_find(state, file)
 	aver.Always(descriptor != nil, "A Storage write names an open descriptor.")
 	aver.Always(!descriptor.Socket, "A Storage write names an open file.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_WRITE, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = file
 	operation.Node = descriptor.Node
 	operation.Buffer = buffer
@@ -2269,15 +2383,18 @@ func sim_storage_write(
 }
 
 func sim_storage_fsync(
-	state_pointer unsafe.Pointer, completion *Completion, file File,
+	state_pointer State, completion *Completion, file File,
 	timeout time.Duration, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "A storage fsync timeout is positive and finite.")
 	descriptor := sim_descriptor_find(state, file)
 	aver.Always(descriptor != nil, "A Storage fsync names an open descriptor.")
 	aver.Always(!descriptor.Socket, "A Storage fsync names an open file.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_FSYNC, callback)
+	if operation == nil {
+		return
+	}
 	operation.File = file
 	sim_operation_borrow(operation)
 	latency := sim_latency(state)
@@ -2297,13 +2414,16 @@ func sim_wire_directory(storage *Storage) {
 }
 
 func sim_get_directory_entries(
-	state_pointer unsafe.Pointer, completion *Completion, directory File, _ []byte,
+	state_pointer State, completion *Completion, directory File, _ []byte,
 	entries []Directory_Entry, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	operation := sim_operation_acquire(
 		state, completion, SIM_OPERATION_KIND_DIRECTORY, callback,
 	)
+	if operation == nil {
+		return
+	}
 	operation.File = directory
 	operation.Entries = entries
 	sim_operation_borrow(operation)
@@ -2311,15 +2431,15 @@ func sim_get_directory_entries(
 }
 
 func sim_status_procedure(
-	state_pointer unsafe.Pointer, path string,
+	state_pointer State, path string,
 ) (status File_Status, err error) {
-	return sim_status((*Sim)(state_pointer), path), nil
+	return sim_status(state_pointer.(*Sim), path), nil
 }
 
 func sim_read_link_procedure(
-	state_pointer unsafe.Pointer, path string, destination []byte,
+	state_pointer State, path string, destination []byte,
 ) (count int, err error) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	node_index, found := sim_resolve_no_follow(state, path)
 	if !found {
 		return 0, sim_file_absent
@@ -2348,11 +2468,14 @@ func sim_descriptor_acquire(
 			continue
 		}
 		state.Next_File++
-		state.Descriptors[index] = Sim_Descriptor{
-			Used: true, File: state.Next_File, Node: node, Socket: socket,
-			Socket_State: socket_state,
-		}
-		return &state.Descriptors[index], nil
+		descriptor = &state.Descriptors[index]
+		sim_descriptor_reset(descriptor)
+		descriptor.Used = true
+		descriptor.File = state.Next_File
+		descriptor.Node = node
+		descriptor.Socket = socket
+		descriptor.Socket_State = socket_state
+		return descriptor, nil
 	}
 	return nil, sim_descriptor_capacity_exceeded
 }
@@ -2372,7 +2495,30 @@ func sim_descriptor_find(state *Sim, file File) (descriptor *Sim_Descriptor) {
 func sim_descriptor_release(state *Sim, file File) {
 	descriptor := sim_descriptor_find(state, file)
 	if descriptor != nil {
-		*descriptor = Sim_Descriptor{}
+		sim_descriptor_reset(descriptor)
+	}
+}
+
+// Reset keeps caller-provided address backing while descriptor ownership changes.
+func sim_descriptor_reset(descriptor *Sim_Descriptor) {
+	address_ip := descriptor.Address_IP
+	peer_ip := descriptor.Peer_IP
+	*descriptor = Sim_Descriptor{Address_IP: address_ip, Peer_IP: peer_ip}
+}
+
+// Copy breaks retained socket identity from caller mutation after operation retirement.
+func sim_address_copy(storage []byte, address Address) (copied Address) {
+	if len(address.IP) == 0 {
+		return Address{IP: storage[:0:IPV6_ADDRESS_BYTES]}
+	}
+	size := IPV4_ADDRESS_BYTES
+	if address.Family == FAMILY_IPV6 {
+		size = IPV6_ADDRESS_BYTES
+	}
+	aver.Always(len(address.IP) == size, "A socket address matches its family size.")
+	copy(storage[:size], address.IP)
+	return Address{
+		Family: address.Family, IP: storage[:size:IPV6_ADDRESS_BYTES], Port: address.Port,
 	}
 }
 
@@ -2610,10 +2756,13 @@ func sim_node_acquire(
 		if state.Nodes[index].Used {
 			continue
 		}
-		state.Nodes[index] = Sim_Node{
-			Used: true, Mode: mode, Parent: parent, Name_Count: len(name),
-		}
-		copy(state.Nodes[index].Name[:], name)
+		node := &state.Nodes[index]
+		sim_node_reset(node)
+		node.Used = true
+		node.Mode = mode
+		node.Parent = parent
+		node.Name_Count = len(name)
+		copy(node.Name, name)
 		return index, nil
 	}
 	return 0, sim_node_capacity_exceeded
@@ -2904,11 +3053,21 @@ func sim_generated_node_acquire(
 			continue
 		}
 		node := &state.Nodes[index]
-		*node = Sim_Node{Used: true, Mode: mode, Parent: parent}
-		node.Name_Count = sim_generated_name(value, node.Name[:])
+		sim_node_reset(node)
+		node.Used = true
+		node.Mode = mode
+		node.Parent = parent
+		node.Name_Count = sim_generated_name(value, node.Name)
 		return index, nil
 	}
 	return 0, sim_node_capacity_exceeded
+}
+
+// Reset keeps caller-provided node backing while filesystem ownership changes.
+func sim_node_reset(node *Sim_Node) {
+	name := node.Name
+	contents := node.Contents
+	*node = Sim_Node{Name: name, Contents: contents}
 }
 
 // Write one generated entry name into caller storage. Node naming and link targets share this
@@ -3017,11 +3176,33 @@ func sim_operation_acquire(
 			continue
 		}
 		operation = &state.Operations[index]
-		*operation = Sim_Operation{Kind: kind, State: state, Callback: callback}
-		completion.Backend = unsafe.Pointer(operation)
-		return operation
+		break
 	}
-	panic("io: simulated operation capacity exceeded")
+	if operation == nil {
+		if callback != nil {
+			sim_operation_reject(state, completion, callback)
+		}
+		return nil
+	}
+	sim_operation_reset(operation)
+	operation.Kind = kind
+	operation.State = state
+	operation.Callback = callback
+	completion.Backend = State(operation)
+	return operation
+}
+
+// Capacity exhaustion joins the same timeline as accepted work so rejection cannot reenter the
+// submitter and every callback still observes an ordinary idle completion.
+func sim_operation_reject(state *Sim, completion *Completion, callback Callback) {
+	virtual_submit(&state.Timeline, completion, 0, callback)
+	completion.Error = sim_operation_capacity_exceeded
+}
+
+// Reset keeps caller-provided address backing while one operation slot changes owner.
+func sim_operation_reset(operation *Sim_Operation) {
+	address_ip := operation.Address_IP
+	*operation = Sim_Operation{Address_IP: address_ip}
 }
 
 func sim_operation_borrow(operation *Sim_Operation) {
@@ -3038,12 +3219,17 @@ func sim_operation_submit(
 }
 
 // One static retirement callback decodes caller-owned state and frees it before user reentry.
-func sim_operation_complete(completion *Completion) {
-	operation := (*Sim_Operation)(completion.Backend)
+func sim_operation_complete(completion Completion_Handle) {
+	operation := completion.Backend.(*Sim_Operation)
 	aver.Always(operation != nil, "A simulated retirement has operation state.")
 	data := operation.Data
 	err := operation.Operation_Err
 	if err == nil {
+		aver.Always(
+			operation.Kind >= SIM_OPERATION_KIND_CLOSE &&
+				operation.Kind <= SIM_OPERATION_KIND_PROCESS,
+			"A simulated operation kind is known.",
+		)
 		switch operation.Kind {
 		case SIM_OPERATION_KIND_CLOSE:
 			sim_descriptor_release(operation.State, operation.File)
@@ -3054,7 +3240,9 @@ func sim_operation_complete(completion *Completion) {
 			if descriptor != nil {
 				if descriptor.Socket {
 					descriptor.Socket_State.Connected = true
-					descriptor.Socket_State.Peer = operation.Address
+					descriptor.Socket_State.Peer = sim_address_copy(
+						descriptor.Peer_IP, operation.Address,
+					)
 				}
 			}
 		case SIM_OPERATION_KIND_RECEIVE:
@@ -3083,8 +3271,6 @@ func sim_operation_complete(completion *Completion) {
 			)
 		case SIM_OPERATION_KIND_STATX:
 			data, err = sim_statx_operation_complete(operation)
-		default:
-			panic("io: unknown simulated operation kind")
 		}
 	}
 	sim_operation_deliver(operation, completion, data, err)
@@ -3110,13 +3296,14 @@ func sim_operation_accept(operation *Sim_Operation) (data int, err error) {
 	accepted := sim_descriptor_find(operation.State, socket)
 	accepted.Socket_State.Connected = true
 	if accepted.Socket_State.Family == FAMILY_IPV6 {
-		accepted.Socket_State.Peer = Address_IPV6(
-			[IPV6_ADDRESS_BYTES]byte{15: 1}, 0,
-		)
+		for index := range accepted.Peer_IP {
+			accepted.Peer_IP[index] = 0
+		}
+		accepted.Peer_IP[IPV6_ADDRESS_BYTES-1] = 1
+		accepted.Socket_State.Peer = Address_IPV6(accepted.Peer_IP, 0)
 	} else {
-		accepted.Socket_State.Peer = Address_IPV4(
-			[IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0,
-		)
+		copy(accepted.Peer_IP, []byte{127, 0, 0, 1})
+		accepted.Socket_State.Peer = Address_IPV4(accepted.Peer_IP[:IPV4_ADDRESS_BYTES], 0)
 	}
 	return int(socket), nil
 }
@@ -3212,7 +3399,7 @@ func sim_operation_deliver(
 			"A simulated retirement releases one descriptor borrow.")
 		descriptor.Borrowed--
 	}
-	*operation = Sim_Operation{}
+	sim_operation_reset(operation)
 	completion.Backend = nil
 	completion.Data = data
 	completion.Error = err
@@ -3223,7 +3410,7 @@ func sim_operation_deliver(
 // escape to heap before any operation starts.
 type Stream struct {
 	// State remains caller-owned because bound procedure state would allocate.
-	State unsafe.Pointer
+	State State
 	// Procedure stays static so returned Stream contains no closure environment.
 	Procedure Stream_Procedure
 }
@@ -3231,7 +3418,7 @@ type Stream struct {
 // Stream_Procedure owns completion policy because only concrete stream knows whether work is
 // immediate, simulated, or kernel-backed.
 type Stream_Procedure func(
-	state unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
+	state State, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 )
 
@@ -3239,7 +3426,7 @@ type Stream_Procedure func(
 // closure would escape until inner operation retires.
 type Stream_Callback struct {
 	// State restores composed Stream ownership without a closure.
-	State unsafe.Pointer
+	State State
 	// Data preserves adapter-specific integer state until inner retirement.
 	Data int
 	// Callback preserves final receiver while static adapter runs first.
@@ -3248,15 +3435,21 @@ type Stream_Callback struct {
 	Procedure Stream_Callback_Procedure
 }
 
+// Stream_Callback_Data is opaque integer state interpreted by one static adapter.
+type Stream_Callback_Data int
+
 // Stream_Callback_Procedure is static callback half of Stream_Callback.
 type Stream_Callback_Procedure func(
-	state unsafe.Pointer, data int, callback Callback, completion *Completion,
+	state State, data Stream_Callback_Data, callback Callback,
+	completion Completion_Handle,
 )
 
 // Stream_Callback_Call lets custom Stream procedures retire explicit callback state.
 func Stream_Callback_Call(callback Stream_Callback, completion *Completion) {
 	aver.Always(callback.Procedure != nil, "A Stream callback has a procedure.")
-	callback.Procedure(callback.State, callback.Data, callback.Callback, completion)
+	callback.Procedure(
+		callback.State, Stream_Callback_Data(callback.Data), callback.Callback, completion,
+	)
 }
 
 // Stream_Mode keeps the Odin stream operation set while result delivery uses the repository
@@ -3471,27 +3664,28 @@ func stream_final_callback(callback Callback) (stream_callback Stream_Callback) 
 }
 
 func stream_callback_final(
-	_ unsafe.Pointer, _ int, callback Callback, completion *Completion,
+	_ State, _ Stream_Callback_Data, callback Callback,
+	completion Completion_Handle,
 ) {
 	callback(completion)
 }
 
 func stream_read_complete(
-	_ unsafe.Pointer, buffer_count int, callback Callback,
-	completion *Completion,
+	_ State, buffer_count Stream_Callback_Data, callback Callback,
+	completion Completion_Handle,
 ) {
 	completion.Data, completion.Error = stream_read_checked(
-		completion.Data, completion.Error, buffer_count,
+		completion.Data, completion.Error, int(buffer_count),
 	)
 	callback(completion)
 }
 
 func stream_write_complete(
-	_ unsafe.Pointer, buffer_count int, callback Callback,
-	completion *Completion,
+	_ State, buffer_count Stream_Callback_Data, callback Callback,
+	completion Completion_Handle,
 ) {
 	completion.Data, completion.Error = stream_write_checked(
-		completion.Data, completion.Error, buffer_count,
+		completion.Data, completion.Error, int(buffer_count),
 	)
 	callback(completion)
 }
@@ -3570,15 +3764,15 @@ type Stream_Memory struct {
 // Memory_To_Stream keeps storage ownership in the caller state.
 func Memory_To_Stream(state *Stream_Memory) (stream Stream) {
 	aver.Always(state != nil, "A memory Stream has state.")
-	return Stream{State: unsafe.Pointer(state), Procedure: stream_memory_procedure}
+	return Stream{State: State(state), Procedure: stream_memory_procedure}
 }
 
 // Memory completes inline because its concrete operation cannot wait on an external endpoint.
 func stream_memory_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
+	state_pointer State, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 ) {
-	state := (*Stream_Memory)(state_pointer)
+	state := state_pointer.(*Stream_Memory)
 	count, operation_err := stream_memory(state, mode, buffer, offset, whence)
 	stream_complete(completion, count, operation_err, callback)
 }
@@ -3705,15 +3899,15 @@ type Stream_Discard struct {
 // Discard_To_Stream keeps lifecycle ownership in the caller state.
 func Discard_To_Stream(state *Stream_Discard) (stream Stream) {
 	aver.Always(state != nil, "A discard Stream has state.")
-	return Stream{State: unsafe.Pointer(state), Procedure: stream_discard_procedure}
+	return Stream{State: State(state), Procedure: stream_discard_procedure}
 }
 
 // Discard completes inline because it has no external endpoint or scheduled work.
 func stream_discard_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
+	state_pointer State, completion *Completion, mode Stream_Mode, buffer []byte,
 	_ int64, _ Seek_From, callback Stream_Callback,
 ) {
-	state := (*Stream_Discard)(state_pointer)
+	state := state_pointer.(*Stream_Discard)
 	count, operation_err := stream_discard(state, mode, buffer)
 	stream_complete(completion, count, operation_err, callback)
 }
@@ -3771,15 +3965,15 @@ type Stream_Limit struct {
 // Limit_To_Stream keeps the inner Stream completion policy unchanged.
 func Limit_To_Stream(state *Stream_Limit) (stream Stream) {
 	aver.Always(state != nil, "A limit Stream has state.")
-	return Stream{State: unsafe.Pointer(state), Procedure: stream_limit_procedure}
+	return Stream{State: State(state), Procedure: stream_limit_procedure}
 }
 
 // Limit forwards one submitted operation and adjusts its budget only after Inner retires.
 func stream_limit_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
+	state_pointer State, completion *Completion, mode Stream_Mode, buffer []byte,
 	_ int64, _ Seek_From, callback Stream_Callback,
 ) {
-	state := (*Stream_Limit)(state_pointer)
+	state := state_pointer.(*Stream_Limit)
 	if mode == STREAM_MODE_CLOSE {
 		stream_submit(
 			state.Inner, completion, mode, nil, 0, SEEK_FROM_START, callback,
@@ -3802,7 +3996,7 @@ func stream_limit_procedure(
 		stream_limit_begin(state, callback, 0)
 		stream_submit(state.Inner, completion, mode, nil, 0, SEEK_FROM_START,
 			Stream_Callback{
-				State:     unsafe.Pointer(state),
+				State:     State(state),
 				Procedure: stream_limit_query_complete,
 			})
 		return
@@ -3834,7 +4028,7 @@ func stream_limit_read(
 	stream_limit_begin(state, callback, len(buffer))
 	stream_submit(state.Inner, completion, STREAM_MODE_READ, buffer[:allowed_count], 0,
 		SEEK_FROM_START, Stream_Callback{
-			State: unsafe.Pointer(state), Data: allowed_count,
+			State: State(state), Data: allowed_count,
 			Procedure: stream_limit_read_complete,
 		})
 }
@@ -3855,7 +4049,7 @@ func stream_limit_write(
 	stream_limit_begin(state, callback, len(buffer))
 	stream_submit(state.Inner, completion, STREAM_MODE_WRITE, buffer[:allowed_count], 0,
 		SEEK_FROM_START, Stream_Callback{
-			State: unsafe.Pointer(state), Data: allowed_count,
+			State: State(state), Data: allowed_count,
 			Procedure: stream_limit_write_complete,
 		})
 }
@@ -3880,36 +4074,37 @@ func stream_limit_finish(
 }
 
 func stream_limit_query_complete(
-	state_pointer unsafe.Pointer, _ int, _ Callback, completion *Completion,
+	state_pointer State, _ Stream_Callback_Data, _ Callback,
+	completion Completion_Handle,
 ) {
-	state := (*Stream_Limit)(state_pointer)
+	state := state_pointer.(*Stream_Limit)
 	completion.Data = int(Stream_Mode_Set(completion.Data) & STREAM_LIMIT_MODES)
 	stream_limit_finish(state, completion)
 }
 
 func stream_limit_read_complete(
-	state_pointer unsafe.Pointer, allowed_count int, _ Callback,
-	completion *Completion,
+	state_pointer State, allowed_count Stream_Callback_Data, _ Callback,
+	completion Completion_Handle,
 ) {
-	state := (*Stream_Limit)(state_pointer)
+	state := state_pointer.(*Stream_Limit)
 	completion.Data, completion.Error = stream_read_checked(
-		completion.Data, completion.Error, allowed_count,
+		completion.Data, completion.Error, int(allowed_count),
 	)
 	state.Budget -= int64(completion.Data)
 	stream_limit_finish(state, completion)
 }
 
 func stream_limit_write_complete(
-	state_pointer unsafe.Pointer, allowed_count int, _ Callback,
-	completion *Completion,
+	state_pointer State, allowed_count Stream_Callback_Data, _ Callback,
+	completion Completion_Handle,
 ) {
-	state := (*Stream_Limit)(state_pointer)
+	state := state_pointer.(*Stream_Limit)
 	completion.Data, completion.Error = stream_write_checked(
-		completion.Data, completion.Error, allowed_count,
+		completion.Data, completion.Error, int(allowed_count),
 	)
 	state.Budget -= int64(completion.Data)
 	if completion.Error == nil {
-		if allowed_count < state.Buffer_Count {
+		if int(allowed_count) < state.Buffer_Count {
 			completion.Error = Stream_Short_Write
 		}
 	}
@@ -3933,16 +4128,16 @@ type Stream_Count struct {
 // Count_To_Stream keeps the inner Stream completion policy unchanged.
 func Count_To_Stream(state *Stream_Count) (stream Stream) {
 	aver.Always(state != nil, "A count Stream has state.")
-	return Stream{State: unsafe.Pointer(state), Procedure: stream_count_procedure}
+	return Stream{State: State(state), Procedure: stream_count_procedure}
 }
 
 // Count updates its tally inside Inner's callback, so callers cannot observe a result before
 // its accounting.
 func stream_count_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
+	state_pointer State, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 ) {
-	state := (*Stream_Count)(state_pointer)
+	state := state_pointer.(*Stream_Count)
 	if mode == STREAM_MODE_CLOSE {
 		stream_submit(state.Inner, completion, mode, nil, 0, whence, callback)
 		return
@@ -4028,27 +4223,27 @@ func stream_count_transfer(
 	state.Mode = mode
 	stream_submit(state.Inner, completion, mode, buffer, offset, SEEK_FROM_START,
 		Stream_Callback{
-			State: unsafe.Pointer(state), Data: len(buffer),
+			State: State(state), Data: len(buffer),
 			Procedure: stream_count_transfer_complete,
 		})
 }
 
 func stream_count_transfer_complete(
-	state_pointer unsafe.Pointer, buffer_count int, _ Callback,
-	completion *Completion,
+	state_pointer State, buffer_count Stream_Callback_Data, _ Callback,
+	completion Completion_Handle,
 ) {
-	state := (*Stream_Count)(state_pointer)
+	state := state_pointer.(*Stream_Count)
 	if state.Mode == STREAM_MODE_READ {
 		completion.Data, completion.Error = stream_read_checked(
-			completion.Data, completion.Error, buffer_count,
+			completion.Data, completion.Error, int(buffer_count),
 		)
 	} else if state.Mode == STREAM_MODE_READ_AT {
 		completion.Data, completion.Error = stream_read_checked(
-			completion.Data, completion.Error, buffer_count,
+			completion.Data, completion.Error, int(buffer_count),
 		)
 	} else {
 		completion.Data, completion.Error = stream_write_checked(
-			completion.Data, completion.Error, buffer_count,
+			completion.Data, completion.Error, int(buffer_count),
 		)
 	}
 	state.Tally += int64(completion.Data)
@@ -4088,15 +4283,15 @@ type Stream_Tee struct {
 // Tee_To_Stream sequences the two Stream policies instead of selecting a third policy.
 func Tee_To_Stream(state *Stream_Tee) (stream Stream) {
 	aver.Always(state != nil, "A tee Stream has state.")
-	return Stream{State: unsafe.Pointer(state), Procedure: stream_tee_procedure}
+	return Stream{State: State(state), Procedure: stream_tee_procedure}
 }
 
 // Tee submits Second only after First retires, so one caller-owned completion remains valid.
 func stream_tee_procedure(
-	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
+	state_pointer State, completion *Completion, mode Stream_Mode, buffer []byte,
 	_ int64, _ Seek_From, callback Stream_Callback,
 ) {
-	state := (*Stream_Tee)(state_pointer)
+	state := state_pointer.(*Stream_Tee)
 	if mode == STREAM_MODE_CLOSE {
 		stream_tee_pair(state, completion, STREAM_MODE_CLOSE, callback)
 		return
@@ -4148,14 +4343,15 @@ func stream_tee_begin(
 	state.Buffer = buffer
 	stream_submit(state.First, completion, mode, buffer, 0, SEEK_FROM_START,
 		Stream_Callback{
-			State: unsafe.Pointer(state), Procedure: stream_tee_first_complete,
+			State: State(state), Procedure: stream_tee_first_complete,
 		})
 }
 
 func stream_tee_first_complete(
-	state_pointer unsafe.Pointer, _ int, _ Callback, completion *Completion,
+	state_pointer State, _ Stream_Callback_Data, _ Callback,
+	completion Completion_Handle,
 ) {
-	state := (*Stream_Tee)(state_pointer)
+	state := state_pointer.(*Stream_Tee)
 	if state.Mode == STREAM_MODE_WRITE {
 		completion.Data, completion.Error = stream_write_checked(
 			completion.Data, completion.Error, len(state.Buffer),
@@ -4165,14 +4361,15 @@ func stream_tee_first_complete(
 	state.First_Err = completion.Error
 	stream_submit(state.Second, completion, state.Mode, state.Buffer, 0, SEEK_FROM_START,
 		Stream_Callback{
-			State: unsafe.Pointer(state), Procedure: stream_tee_second_complete,
+			State: State(state), Procedure: stream_tee_second_complete,
 		})
 }
 
 func stream_tee_second_complete(
-	state_pointer unsafe.Pointer, _ int, _ Callback, completion *Completion,
+	state_pointer State, _ Stream_Callback_Data, _ Callback,
+	completion Completion_Handle,
 ) {
-	state := (*Stream_Tee)(state_pointer)
+	state := state_pointer.(*Stream_Tee)
 	if state.Mode == STREAM_MODE_WRITE {
 		completion.Data, completion.Error = stream_write_checked(
 			completion.Data, completion.Error, len(state.Buffer),
@@ -4194,8 +4391,11 @@ func stream_tee_second_complete(
 	Stream_Callback_Call(callback, completion)
 }
 
+// Completion_Handle is one live caller-owned completion delivered by a backend.
+type Completion_Handle *Completion
+
 // Callback receives the caller-owned completion after the backend retires its operation.
-type Callback func(completion *Completion)
+type Callback func(completion Completion_Handle)
 
 // Retired_Twice report backend retire one completion more than one time. Derived function
 // deliver it, never hide it. Caller own completion. Caller must learn lifecycle broke.
@@ -4236,7 +4436,7 @@ type Completion struct {
 	Event Event
 	// Backend lets an outer backend correlate specialized result state without a captured
 	// adapter. Backend clears it before delivering callback.
-	Backend unsafe.Pointer
+	Backend State
 }
 
 // Event: cross-thread wakeup handle of backend. kqueue EVFILT_USER ident, or eventfd
@@ -4253,25 +4453,25 @@ type Event uintptr
 // timer take this half alone and cannot reach a socket or a file.
 type Timeline struct {
 	// State stays caller-owned because every backend operation shares one loop.
-	State unsafe.Pointer
+	State State
 	// Submit arm completion to retire one delay from now, in Ready_At order. Sim IO schedule
 	// every operation through it, so one queue hold the whole simulated order. OS backend
 	// keep IO order in its kernel queue and fill this slot as a timer.
 	Submit func(
-		state unsafe.Pointer, completion *Completion, delay time.Duration,
+		state State, completion *Completion, delay time.Duration,
 		callback Callback,
 	)
 	// Open_Event make platform Event primitive.
-	Open_Event func(state unsafe.Pointer) (event Event, err error)
+	Open_Event func(state State) (event Event, err error)
 	// Event_Listen arm completion for one Event notification.
 	Event_Listen func(
-		state unsafe.Pointer, event Event, completion *Completion, callback Callback,
+		state State, event Event, completion *Completion, callback Callback,
 	)
 	// Event_Trigger make armed Event completion ready. Only operation safe to call from other
 	// thread.
-	Event_Trigger func(state unsafe.Pointer, event Event, completion *Completion)
+	Event_Trigger func(state State, event Event, completion *Completion)
 	// Close_Event release Event after listener drain.
-	Close_Event func(state unsafe.Pointer, event Event)
+	Close_Event func(state State, event Event)
 }
 
 // Timeline_Invariants state every slot full. Timeline is vtable. Zero Timeline read as
@@ -4339,15 +4539,15 @@ func Timeline_Close_Event(loop Timeline, event Event) {
 // from inside own call stack. That destroy absolute order assembly exist to hold.
 type Driver struct {
 	// State stays caller-owned because binding it into each drive operation would allocate.
-	State unsafe.Pointer
+	State State
 	// Run drain every ready completion without block, then advance clock one tick. ROOT ONLY:
 	// never hand to library, never call from library.
-	Run func(state unsafe.Pointer) (err error)
+	Run func(state State) (err error)
 	// Run_For drive loop until duration elapse on clock. Deliver each completion as it come
 	// due. Time is GOAL here. Advance exactly duration, drain as it go, whatever complete.
 	// Use to let span of time pass, not to wait for one operation.
 	// ROOT ONLY: never hand to library, never call from library.
-	Run_For func(state unsafe.Pointer, duration time.Duration) (err error)
+	Run_For func(state State, duration time.Duration) (err error)
 	// Run_Until drive loop until done report true. Run-until-complete pump. Straight-line
 	// code wait for own operation inline with it. Completion is GOAL here. Time is GUARD.
 	// Stop instant done hold. Timeout only cap wait, thus stalled operation cannot hang
@@ -4362,10 +4562,10 @@ type Driver struct {
 	// ROOT ONLY: never inject it into library, and never inject func value of its shape.
 	// Library that write done predicate and timeout is driving loop.
 	Run_Until func(
-		state unsafe.Pointer, timeout time.Duration, done func() (finished bool),
+		state State, timeout time.Duration, done func() (finished bool),
 	) (completed bool, err error)
 	// Deinit release kernel resources of backend, after every submitted operation join.
-	Deinit func(state unsafe.Pointer)
+	Deinit func(state State)
 }
 
 // Driver_Run passes loop state explicitly because a bound driver would allocate.
@@ -4488,7 +4688,7 @@ func virtual_timeline_initialize(
 // Wire control plane onto vtable every backend and every caller hold.
 func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 	return Timeline{
-		State:         unsafe.Pointer(state),
+		State:         State(state),
 		Submit:        virtual_timeline_submit,
 		Open_Event:    virtual_timeline_open_event,
 		Event_Listen:  virtual_timeline_event_listen,
@@ -4498,14 +4698,14 @@ func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 }
 
 func virtual_timeline_submit(
-	state unsafe.Pointer, completion *Completion, delay time.Duration,
+	state State, completion *Completion, delay time.Duration,
 	callback Callback,
 ) {
-	virtual_submit((*Virtual_Timeline)(state), completion, delay, callback)
+	virtual_submit(state.(*Virtual_Timeline), completion, delay, callback)
 }
 
-func virtual_timeline_open_event(state unsafe.Pointer) (event Event, err error) {
-	timeline := (*Virtual_Timeline)(state)
+func virtual_timeline_open_event(state State) (event Event, err error) {
+	timeline := state.(*Virtual_Timeline)
 	for index := range timeline.Events {
 		if !timeline.Events[index].Open {
 			timeline.Events[index] = Virtual_Event{Open: true}
@@ -4516,19 +4716,19 @@ func virtual_timeline_open_event(state unsafe.Pointer) (event Event, err error) 
 }
 
 func virtual_timeline_event_listen(
-	state unsafe.Pointer, event Event, completion *Completion, callback Callback,
+	state State, event Event, completion *Completion, callback Callback,
 ) {
-	virtual_event_listen((*Virtual_Timeline)(state), event, completion, callback)
+	virtual_event_listen(state.(*Virtual_Timeline), event, completion, callback)
 }
 
 func virtual_timeline_event_trigger(
-	state unsafe.Pointer, event Event, completion *Completion,
+	state State, event Event, completion *Completion,
 ) {
-	virtual_event_trigger((*Virtual_Timeline)(state), event, completion)
+	virtual_event_trigger(state.(*Virtual_Timeline), event, completion)
 }
 
-func virtual_timeline_close_event(state unsafe.Pointer, event Event) {
-	timeline := (*Virtual_Timeline)(state)
+func virtual_timeline_close_event(state State, event Event) {
+	timeline := state.(*Virtual_Timeline)
 	entry := virtual_event_entry(timeline, event)
 	aver.Always(!entry.Armed, "An event listener is drained before close.")
 	*entry = Virtual_Event{}
@@ -4726,7 +4926,7 @@ func virtual_drive_end(state *Virtual_Timeline) {
 // Build driver over state. Capability that advance time. Only main or test hold it.
 func virtual_timeline_to_driver(state *Virtual_Timeline) (driver Driver) {
 	return Driver{
-		State:     unsafe.Pointer(state),
+		State:     State(state),
 		Run:       virtual_driver_run,
 		Run_For:   virtual_driver_run_for,
 		Run_Until: virtual_driver_run_until,
@@ -4734,16 +4934,16 @@ func virtual_timeline_to_driver(state *Virtual_Timeline) (driver Driver) {
 	}
 }
 
-func virtual_driver_run(state unsafe.Pointer) (err error) {
-	timeline := (*Virtual_Timeline)(state)
+func virtual_driver_run(state State) (err error) {
+	timeline := state.(*Virtual_Timeline)
 	virtual_drive_begin(timeline)
 	defer virtual_drive_end(timeline)
 	virtual_run(timeline)
 	return nil
 }
 
-func virtual_driver_run_for(state unsafe.Pointer, duration time.Duration) (err error) {
-	timeline := (*Virtual_Timeline)(state)
+func virtual_driver_run_for(state State, duration time.Duration) (err error) {
+	timeline := state.(*Virtual_Timeline)
 	virtual_drive_begin(timeline)
 	defer virtual_drive_end(timeline)
 	virtual_run_for(timeline, duration)
@@ -4751,14 +4951,14 @@ func virtual_driver_run_for(state unsafe.Pointer, duration time.Duration) (err e
 }
 
 func virtual_driver_run_until(
-	state unsafe.Pointer, timeout time.Duration, done func() (finished bool),
+	state State, timeout time.Duration, done func() (finished bool),
 ) (completed bool, err error) {
-	timeline := (*Virtual_Timeline)(state)
+	timeline := state.(*Virtual_Timeline)
 	virtual_drive_begin(timeline)
 	defer virtual_drive_end(timeline)
 	return virtual_run_until(timeline, timeout, done), nil
 }
 
-func virtual_driver_deinit(state unsafe.Pointer) {
+func virtual_driver_deinit(state State) {
 	aver.Always(state != nil, "A virtual driver deinitializes caller-owned state.")
 }

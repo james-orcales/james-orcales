@@ -9,9 +9,6 @@ import (
 // STATX_BASIC_STATS request basic Linux statx fields.
 const STATX_BASIC_STATS uint32 = 0x7ff
 
-// This bound keep Go struct layout equal to Linux struct statx.
-const STATX_RESERVED_VALUES = 12
-
 // Statx_Timestamp is stable UAPI layout of Linux struct statx_timestamp.
 type Statx_Timestamp struct {
 	// Seconds is seconds since Unix epoch.
@@ -70,8 +67,30 @@ type Statx struct {
 	Direct_IO_Memory_Alignment uint32
 	// Direct_IO_Offset_Alignment is direct-IO offset alignment.
 	Direct_IO_Offset_Alignment uint32
-	// Reserved keep remainder of kernel UAPI layout.
-	Reserved [STATX_RESERVED_VALUES]uint64
+	// Reserved_00 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_00 uint64
+	// Reserved_01 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_01 uint64
+	// Reserved_02 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_02 uint64
+	// Reserved_03 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_03 uint64
+	// Reserved_04 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_04 uint64
+	// Reserved_05 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_05 uint64
+	// Reserved_06 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_06 uint64
+	// Reserved_07 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_07 uint64
+	// Reserved_08 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_08 uint64
+	// Reserved_09 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_09 uint64
+	// Reserved_10 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_10 uint64
+	// Reserved_11 keeps kernel padding in the UAPI layout without collection semantics.
+	Reserved_11 uint64
 }
 
 // Platform_IO is Linux-only surface. It carry no state of own: statx is a path operation, and
@@ -79,7 +98,7 @@ type Statx struct {
 type Platform_IO struct {
 	// Statx asynchronously fill result from Linux IORING_OP_STATX.
 	Statx_Procedure func(
-		state unsafe.Pointer, completion *Completion, directory File, file_path string,
+		state State, completion *Completion, directory File, file_path string,
 		flags uint32, mask uint32, result *Statx, callback Callback,
 	)
 }
@@ -101,15 +120,18 @@ func sim_wire_platform(_ *Sim, loop *IO) {
 }
 
 func sim_statx(
-	state_pointer unsafe.Pointer, completion *Completion, directory File,
+	state_pointer State, completion *Completion, directory File,
 	file_path string, _ uint32, mask uint32, result *Statx, callback Callback,
 ) {
-	state := (*Sim)(state_pointer)
+	state := state_pointer.(*Sim)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_STATX, callback)
+	if operation == nil {
+		return
+	}
 	operation.Directory = directory
 	operation.File_Path = file_path
 	operation.Mask = mask
-	operation.Result = unsafe.Pointer(result)
+	operation.Result = State(result)
 	sim_operation_submit(operation, completion, sim_latency(state))
 }
 
@@ -121,7 +143,7 @@ func sim_statx_operation_complete(operation *Sim_Operation) (data int, err error
 	if !found {
 		return 0, sim_file_absent
 	}
-	result := (*Statx)(operation.Result)
+	result := operation.Result.(*Statx)
 	result.Mask = operation.Mask
 	result.Size = uint64(operation.State.Nodes[node_index].Contents_Count)
 	return 0, nil

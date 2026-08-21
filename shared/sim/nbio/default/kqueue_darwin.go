@@ -26,9 +26,6 @@ const SOCKET_TCP_NOT_SENT_LOW_WATER = 0x201
 // SOCKET_TCP_KEEPALIVE_IDLE keeps the portable test independent of platform option spelling.
 const SOCKET_TCP_KEEPALIVE_IDLE = syscall.TCP_KEEPALIVE
 
-// Cap one kqueue changelist and event batch to fixed flush buffer.
-const POLL_EVENTS_MAX = 256
-
 // DARWIN_OPEN_AT_CALL keep raw syscall compatible with Darwin amd64.
 const DARWIN_OPEN_AT_CALL = 463
 
@@ -147,14 +144,14 @@ func socket_create(input *Socket_Create_Input) (descriptor int, err error) {
 // Write two header bytes of sockaddr. Darwin hold byte count in first byte and family in
 // second. That is only reason encode is not shared whole.
 func platform_address_header(
-	storage *[SOCKET_ADDRESS_BYTES]byte, family int, size uint32,
+	storage []byte, family int, size uint32,
 ) {
 	storage[0] = byte(size)
 	storage[1] = byte(family)
 }
 
 // Read family from sockaddr kernel wrote.
-func platform_address_family(storage *[SOCKET_ADDRESS_BYTES]byte) (family int) {
+func platform_address_family(storage []byte) (family int) {
 	return int(storage[1])
 }
 
@@ -211,34 +208,23 @@ type Platform_Scheduler struct {
 	IO_Inflight int
 	// Next_Event keep synthetic event identifiers separate from pointer values.
 	Next_Event uint64
-	// Changes keeps one bounded changelist inline because returning local scratch allocates.
-	Changes [POLL_EVENTS_MAX]Kernel_Event
-	// Events keeps one bounded result batch inline across the kernel call.
-	Events [POLL_EVENTS_MAX]Kernel_Event
+	// Changes borrows one bounded changelist from the composition root.
+	Changes []Kernel_Event
+	// Events borrows one bounded result batch from the composition root.
+	Events []Kernel_Event
 }
 
 // Platform memory binds Darwin readiness backlog to caller capacity.
 func platform_memory_set(
-	platform *Platform_Scheduler, operations []*Operating_System_Operation,
+	platform *Platform_Scheduler, memory Operating_System_Memory,
 ) {
-	platform.IO_Backlog = operations[:0]
-}
-
-// Kernel event is 64-bit struct kevent layout of Darwin, with integer udata. Use of UAPI layout
-// avoid Go pointer in kernel while it keep completion correlation through kevent.udata.
-type Kernel_Event struct {
-	// Ident give kernel file descriptor, or synthetic event identifier.
-	Ident uint64
-	// Filter select kqueue operation class.
-	Filter int16
-	// Flags control one-shot registration and deletion.
-	Flags uint16
-	// Filter_Flags transfer operation-specific options to kqueue.
-	Filter_Flags uint32
-	// Data transfer count or error value between kernel and operation.
-	Data int64
-	// User_Data return operation identifier without Go pointer.
-	User_Data uint64
+	aver.Always(len(memory.Platform_Changes) == POLL_EVENTS_MAX,
+		"A Darwin scheduler has exact changelist storage.")
+	aver.Always(len(memory.Platform_Events) == POLL_EVENTS_MAX,
+		"A Darwin scheduler has exact event storage.")
+	platform.IO_Backlog = memory.Platform_Operations[:0]
+	platform.Changes = memory.Platform_Changes
+	platform.Events = memory.Platform_Events
 }
 
 // Platform initialize eagerly make kqueue. Darwin deliberately ignore entries and flags.

@@ -3,11 +3,12 @@
 package nbio
 
 import (
-	"path/filepath"
 	"syscall"
 	"unsafe"
 
+	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/filepath"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/nbio"
@@ -330,6 +331,7 @@ func executable_path(name string, search string) (path string, err error) {
 		}
 	}
 	start := 0
+	var candidate_storage [filepath.PATH_SIZE_MAXIMUM]byte
 	for position := 0; position <= len(search); position++ {
 		if position < len(search) {
 			if search[position] != ':' {
@@ -340,7 +342,15 @@ func executable_path(name string, search string) (path string, err error) {
 		if directory == "" {
 			directory = "."
 		}
-		candidate := filepath.Join(directory, name)
+		if len(directory)+1+len(name) > len(candidate_storage) {
+			start = position + 1
+			continue
+		}
+		count := filepath.Join_Into(
+			bytes.Slice(candidate_storage[:]),
+			filepath.Elements{bytes.Text(directory), bytes.Text(name)},
+		)
+		candidate := unsafe.String(&candidate_storage[0], int(count))
 		if executable_check(candidate) == nil {
 			return candidate, nil
 		}
@@ -402,7 +412,9 @@ func process_exit_code(status syscall.WaitStatus) (exit int) {
 }
 
 // Report remote address of descriptor through getpeername. Non-IP peer yields zero address.
-func socket_peer_address(descriptor int) (address nbio.Address, err error) {
+func socket_peer_address(
+	descriptor int, destination *nbio.Address,
+) (err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
 	size := uint32(SOCKET_ADDRESS_BYTES)
 	_, _, errno := syscall.RawSyscall(
@@ -410,17 +422,17 @@ func socket_peer_address(descriptor int) (address nbio.Address, err error) {
 		uintptr(unsafe.Pointer(&storage[0])), uintptr(unsafe.Pointer(&size)),
 	)
 	if errno != 0 {
-		return nbio.Address{}, errno
+		return errno
 	}
-	peer, decode_err := socket_address_decode(&storage, size)
+	decode_err := socket_address_decode(storage[:], size, destination)
 	// Peer that is neither IPv4 nor IPv6 is not error here, only absent address.
 	if decode_err == syscall.EAFNOSUPPORT {
-		return nbio.Address{}, nil
+		return socket_address_clear(destination)
 	}
 	if decode_err != nil {
-		return nbio.Address{}, decode_err
+		return decode_err
 	}
-	return peer, nil
+	return nil
 }
 
 // Report whether err is non-blocking "try again" signal that keep operation armed, not complete
@@ -443,8 +455,11 @@ const SOCKET_ADDRESS_IPV6_BYTES = 28
 // switch to build struct wrapper convert straight back to this same layout. Port and address
 // bytes sit at same offsets on both platform, thus only two header bytes need platform.
 func socket_address_encode(
-	address nbio.Address, storage *[SOCKET_ADDRESS_BYTES]byte,
+	address nbio.Address, storage []byte,
 ) (size uint32, err error) {
+	if len(storage) < SOCKET_ADDRESS_BYTES {
+		return 0, syscall.EINVAL
+	}
 	for index := range storage {
 		storage[index] = 0
 	}
@@ -470,27 +485,60 @@ func socket_address_encode(
 // Read sockaddr kernel wrote into storage. size is what kernel reported it filled, thus
 // truncated answer fail, not decode whatever zeroed remainder happen to say.
 func socket_address_decode(
-	storage *[SOCKET_ADDRESS_BYTES]byte, size uint32,
-) (address nbio.Address, err error) {
+	storage []byte, size uint32, destination *nbio.Address,
+) (err error) {
+	if len(storage) < SOCKET_ADDRESS_BYTES {
+		return syscall.EINVAL
+	}
+	address_storage, address_err := socket_address_destination(destination)
+	if address_err != nil {
+		return address_err
+	}
 	family := platform_address_family(storage)
 	port := uint16(binary.Uint_16(binary.Bytes(storage[2:4]), binary.BIG_ENDIAN))
 	if family == syscall.AF_INET {
 		if size < SOCKET_ADDRESS_IPV4_BYTES {
-			return nbio.Address{}, syscall.EINVAL
+			return syscall.EINVAL
 		}
-		ip := [nbio.IPV4_ADDRESS_BYTES]byte{}
-		copy(ip[:], storage[4:8])
-		return nbio.Address_IPV4(ip, port), nil
+		ip := address_storage[:nbio.IPV4_ADDRESS_BYTES:nbio.IPV4_ADDRESS_BYTES]
+		copy(ip, storage[4:8])
+		*destination = nbio.Address{
+			Family: nbio.FAMILY_IPV4,
+			IP:     address_storage[:nbio.IPV4_ADDRESS_BYTES:nbio.IPV6_ADDRESS_BYTES],
+			Port:   port,
+		}
+		return nil
 	}
 	if family == syscall.AF_INET6 {
 		if size < SOCKET_ADDRESS_IPV6_BYTES {
-			return nbio.Address{}, syscall.EINVAL
+			return syscall.EINVAL
 		}
-		ip := [nbio.IPV6_ADDRESS_BYTES]byte{}
-		copy(ip[:], storage[8:24])
-		return nbio.Address_IPV6(ip, port), nil
+		ip := address_storage[:nbio.IPV6_ADDRESS_BYTES:nbio.IPV6_ADDRESS_BYTES]
+		copy(ip, storage[8:24])
+		*destination = nbio.Address_IPV6(ip, port)
+		return nil
 	}
-	return nbio.Address{}, syscall.EAFNOSUPPORT
+	return syscall.EAFNOSUPPORT
+}
+
+// Capacity, not current length, lets one destination receive IPv4 after IPv6 and vice versa.
+func socket_address_destination(
+	destination *nbio.Address,
+) (storage []byte, err error) {
+	if destination == nil {
+		return nil, syscall.EINVAL
+	}
+	if cap(destination.IP) < nbio.IPV6_ADDRESS_BYTES {
+		return nil, syscall.EINVAL
+	}
+	storage = destination.IP[:nbio.IPV6_ADDRESS_BYTES:nbio.IPV6_ADDRESS_BYTES]
+	*destination = nbio.Address{IP: storage[:0:nbio.IPV6_ADDRESS_BYTES]}
+	return storage, nil
+}
+
+func socket_address_clear(destination *nbio.Address) (err error) {
+	_, err = socket_address_destination(destination)
+	return err
 }
 
 // Map backend-independent family to platform socket family constant. Each platform syscall
@@ -547,7 +595,7 @@ func socket_connect_start(input *Socket_Connect_Start_Input) (err error) {
 // when handshake has further to go, and never wait. That is what let it go raw.
 func socket_connect_call(descriptor int, address nbio.Address) (err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
-	size, encode_err := socket_address_encode(address, &storage)
+	size, encode_err := socket_address_encode(address, storage[:])
 	if encode_err != nil {
 		return encode_err
 	}
@@ -772,7 +820,7 @@ func socket_keepalive_duration_valid(value time.Duration) (valid bool) {
 // the same restart behavior and no caller can omit the option.
 func socket_bind(descriptor int, address nbio.Address) (err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
-	size, encode_err := socket_address_encode(address, &storage)
+	size, encode_err := socket_address_encode(address, storage[:])
 	if encode_err != nil {
 		return encode_err
 	}
@@ -801,7 +849,9 @@ func socket_listen_mark(descriptor int, backlog uint32) (err error) {
 
 // Report socket own address, getsockname primitive. Call only read kernel state, thus it cannot
 // block and go raw.
-func socket_name(descriptor int) (address nbio.Address, err error) {
+func socket_name(
+	descriptor int, destination *nbio.Address,
+) (err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
 	size := uint32(SOCKET_ADDRESS_BYTES)
 	_, _, errno := syscall.RawSyscall(
@@ -809,9 +859,9 @@ func socket_name(descriptor int) (address nbio.Address, err error) {
 		uintptr(unsafe.Pointer(&storage[0])), uintptr(unsafe.Pointer(&size)),
 	)
 	if errno != 0 {
-		return nbio.Address{}, errno
+		return errno
 	}
-	return socket_address_decode(&storage, size)
+	return socket_address_decode(storage[:], size, destination)
 }
 
 // Translate filesystem errno to backend-independent sentinel. Darwin complete filesystem

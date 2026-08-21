@@ -49,3 +49,33 @@ func Test_Socket_Option_Maximum_Formulas(t *testing.T) {
 	testify.Equal(t, uint32(bits.INTEGER_8_MAXIMUM),
 		nbio.TCP_KEEPALIVE_PROBE_COUNT_MAXIMUM)
 }
+
+// Interface state must preserve allocation-free static dispatch without unsafe pointer erasure.
+func Test_Safe_State_Heap_Allocation(t *testing.T) {
+	state := safe_state{}
+	stream := nbio.Stream{State: nbio.State(&state), Procedure: safe_state_procedure}
+	completion := nbio.Completion{}
+	testify.Zero_Allocation(t, func() {
+		nbio.Flush(stream, &completion, safe_state_callback)
+	})
+	// AllocsPerRun warms once before its measured run.
+	testify.Equal(t, 2, state.Calls)
+}
+
+type safe_state struct {
+	Calls int
+}
+
+func safe_state_procedure(
+	state nbio.State, completion *nbio.Completion, _ nbio.Stream_Mode, _ []byte,
+	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	state.(*safe_state).Calls++
+	nbio.Stream_Callback_Call(callback, completion)
+}
+
+func safe_state_callback(completion nbio.Completion_Handle) {
+	if completion == nil {
+		return
+	}
+}

@@ -80,11 +80,11 @@ func operating_system_wire_platform(_ *Operating_System, loop *nbio.IO) {
 }
 
 func operating_system_statx(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, directory nbio.File,
+	state_pointer nbio.State, completion *nbio.Completion, directory nbio.File,
 	file_path string, flags uint32, mask uint32, result *nbio.Statx,
 	callback nbio.Callback,
 ) {
-	state := (*Operating_System)(state_pointer)
+	state := state_pointer.(*Operating_System)
 	operating_system_submit(completion)
 	descriptor := int(directory)
 	if directory == nbio.DIRECTORY_CURRENT {
@@ -291,9 +291,6 @@ const KERNEL_RING_SUBMISSION_LINK = 1 << 2
 // KERNEL_MESSAGE_NO_SIGNAL stop SIGPIPE during socket send.
 const KERNEL_MESSAGE_NO_SIGNAL = 0x4000
 
-// KERNEL_RING_RESERVED_VALUES keep Kernel_Ring_Parameters equal to Linux UAPI layout.
-const KERNEL_RING_RESERVED_VALUES = 3
-
 // EVENTFD_VALUE_BYTES keep each eventfd notification equal to one uint64.
 const EVENTFD_VALUE_BYTES = 8
 
@@ -360,8 +357,12 @@ type Kernel_Ring_Parameters struct {
 	Features uint32
 	// Worker_Descriptor keep Linux UAPI layout.
 	Worker_Descriptor uint32
-	// Reserved keep Linux UAPI layout.
-	Reserved [KERNEL_RING_RESERVED_VALUES]uint32
+	// Reserved_Zero keep Linux UAPI layout without exposing kernel padding as collection state.
+	Reserved_Zero uint32
+	// Reserved_One keep Linux UAPI layout without exposing kernel padding as collection state.
+	Reserved_One uint32
+	// Reserved_Two keep Linux UAPI layout without exposing kernel padding as collection state.
+	Reserved_Two uint32
 	// Submission locate each submission-ring field.
 	Submission Kernel_Ring_Offsets
 	// Completion locate each completion-ring field.
@@ -453,9 +454,9 @@ type Platform_Scheduler struct {
 
 // Platform memory binds Linux retry backlog to caller capacity.
 func platform_memory_set(
-	platform *Platform_Scheduler, operations []*Operating_System_Operation,
+	platform *Platform_Scheduler, memory Operating_System_Memory,
 ) {
-	platform.Retry_Backlog = operations[:0]
+	platform.Retry_Backlog = memory.Platform_Operations[:0]
 }
 
 // Platform initialize make io_uring eagerly and reject kernel without EXT_ARG.
@@ -709,7 +710,7 @@ func platform_pin(operation *Operating_System_Operation) (err error) {
 // synchronous calls pass, thus both share one encoder. Address encoder reject leave size at zero,
 // and kernel then fail operation with EINVAL.
 func platform_address(operation *Operating_System_Operation) {
-	size, encode_err := socket_address_encode(operation.Address, &operation.Socket_Address)
+	size, encode_err := socket_address_encode(operation.Address, operation.Socket_Address)
 	if encode_err != nil {
 		operation.Socket_Address_Size = 0
 		return
@@ -720,7 +721,7 @@ func platform_address(operation *Operating_System_Operation) {
 // Write two header bytes of sockaddr. Linux hold family as host-order uint16 and carry no length
 // byte, thus size go unused here, and Darwin is reason it is parameter.
 func platform_address_header(
-	storage *[SOCKET_ADDRESS_BYTES]byte, family int, size uint32,
+	storage []byte, family int, size uint32,
 ) {
 	binary.Put_Uint_16(
 		binary.Bytes(storage[0:2]), binary.Word_16(family), binary.LITTLE_ENDIAN,
@@ -728,7 +729,7 @@ func platform_address_header(
 }
 
 // Read family from sockaddr kernel wrote.
-func platform_address_family(storage *[SOCKET_ADDRESS_BYTES]byte) (family int) {
+func platform_address_family(storage []byte) (family int) {
 	return int(binary.Uint_16(binary.Bytes(storage[0:2]), binary.LITTLE_ENDIAN))
 }
 

@@ -3,7 +3,6 @@
 package nbio
 
 import (
-	"path/filepath"
 	"syscall"
 	"testing"
 	"unsafe"
@@ -17,18 +16,37 @@ import (
 const PLATFORM_TEST_CAPACITY = 2 * nbio.IPV4_ADDRESS_BYTES
 
 type platform_test_memory struct {
-	State              Operating_System
-	Clock              clock_value
-	Operations         [PLATFORM_TEST_CAPACITY]Operating_System_Operation
-	Operation_Registry [PLATFORM_TEST_CAPACITY]*Operating_System_Operation
-	Completed          [PLATFORM_TEST_CAPACITY]*nbio.Completion
-	Retry              [PLATFORM_TEST_CAPACITY]*Operating_System_Operation
+	State               Operating_System
+	Clock               clock_value
+	Operations          []Operating_System_Operation
+	Operation_Registry  []*Operating_System_Operation
+	Operation_Paths     []byte
+	Operation_Addresses []byte
+	Completed           []*nbio.Completion
+	Retry               []*Operating_System_Operation
 }
 
 func platform_test_state(moment time.Monotonic_Moment) (state *Operating_System) {
 	memory := &platform_test_memory{Clock: clock_value{Moment: moment}}
+	memory.Operations = make([]Operating_System_Operation, PLATFORM_TEST_CAPACITY)
+	memory.Operation_Registry = make(
+		[]*Operating_System_Operation, PLATFORM_TEST_CAPACITY,
+	)
+	memory.Operation_Paths = make(
+		[]byte, PLATFORM_TEST_CAPACITY*OPERATING_SYSTEM_PATH_BYTES_MAXIMUM,
+	)
+	memory.Operation_Addresses = make(
+		[]byte, PLATFORM_TEST_CAPACITY*SOCKET_ADDRESS_BYTES,
+	)
+	memory.Completed = make([]*nbio.Completion, PLATFORM_TEST_CAPACITY)
+	memory.Retry = make([]*Operating_System_Operation, PLATFORM_TEST_CAPACITY)
+	operating_system_operation_memory_initialize(Operating_System_Memory{
+		Operations:                 memory.Operations,
+		Operation_File_Paths:       memory.Operation_Paths,
+		Operation_Socket_Addresses: memory.Operation_Addresses,
+	})
 	memory.State.Host = clock_value_to_clock(&memory.Clock)
-	memory.State.Operation_Memory = memory.Operations[:]
+	memory.State.Operation_Memory = memory.Operations
 	memory.State.Operations = memory.Operation_Registry[:0]
 	memory.State.Completed = memory.Completed[:0]
 	memory.State.Platform.Retry_Backlog = memory.Retry[:0]
@@ -38,7 +56,7 @@ func platform_test_state(moment time.Monotonic_Moment) (state *Operating_System)
 // Linux statx must stay in this platform suite because the linter permits one white-box file
 // for one build constraint.
 func Test_Operating_System_IO_Statx(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "statx")
+	path := test_path_join(t.TempDir(), "statx")
 	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	opened := nbio.File(-1)
@@ -47,7 +65,7 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 		nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true,
 			Permissions: 0o600,
-		}, func(completed *nbio.Completion) {
+		}, func(completed nbio.Completion_Handle) {
 			if !testify.No_Error(t, completed.Error) {
 				return
 			}
@@ -61,7 +79,7 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 	var write_completion nbio.Completion
 	nbio.Storage_Write(loop.Storage, &write_completion, opened, []byte("hello"), 10,
 		REAL_DEADLINE,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			testify.No_Error(t, completed.Error)
 			written = completed.Data == 5
 		})
@@ -75,7 +93,7 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 	nbio.Platform_Statx(
 		loop, &statx_completion, nbio.DIRECTORY_CURRENT, path, 0,
 		nbio.STATX_BASIC_STATS, &status,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			testify.No_Error(t, completed.Error)
 			statted = true
 		},
@@ -87,12 +105,12 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 
 // Test_Operating_System_Statx_Heap_Allocation guards Linux path pinning and CQE retirement.
 func Test_Operating_System_Statx_Heap_Allocation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "statx-allocation")
+	path := test_path_join(t.TempDir(), "statx-allocation")
 	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	write_file(t, loop, driver, path, []byte("data"))
 	harness := platform_statx_allocation_harness{Driver: driver}
-	harness.Completion.Backend = unsafe.Pointer(&harness)
+	harness.Completion.Backend = nbio.State(&harness)
 	harness.Done = func() (finished bool) { return harness.Called }
 	testify.Zero_Allocation(t, func() {
 		harness.Called = false
@@ -115,8 +133,8 @@ type platform_statx_allocation_harness struct {
 	Error      error
 }
 
-func platform_statx_allocation_callback(completion *nbio.Completion) {
-	harness := (*platform_statx_allocation_harness)(completion.Backend)
+func platform_statx_allocation_callback(completion nbio.Completion_Handle) {
+	harness := completion.Backend.(*platform_statx_allocation_harness)
 	harness.Called = true
 }
 
@@ -152,7 +170,7 @@ func Test_Platform_Retry_Is_Deferred(t *testing.T) {
 		Completion: completion,
 		Identifier: 1,
 		Kind:       OPERATING_SYSTEM_OPERATION_READ,
-		Deliver:    func(_ *nbio.Completion) {},
+		Deliver:    func(_ nbio.Completion_Handle) {},
 	})
 	operating_system_operation_register(state, operation)
 	err := platform_complete_entry(state, Kernel_Completion_Entry{
@@ -175,7 +193,7 @@ func Test_Platform_Retry_Uses_Remaining_Deadline(t *testing.T) {
 		Identifier: 1,
 		Kind:       OPERATING_SYSTEM_OPERATION_READ,
 		Deadline:   9,
-		Deliver:    func(_ *nbio.Completion) {},
+		Deliver:    func(_ nbio.Completion_Handle) {},
 	})
 	operating_system_operation_register(state, operation)
 	platform_retry_add(state, operation)
@@ -262,7 +280,7 @@ func Test_Platform_Expired_Accept_Submission_Yields_No_Descriptor(t *testing.T) 
 		Kind:       OPERATING_SYSTEM_OPERATION_ACCEPT,
 		Descriptor: 9,
 		Deadline:   9,
-		Deliver: func(completed *nbio.Completion) {
+		Deliver: func(completed nbio.Completion_Handle) {
 			delivered = completed.Data
 			delivered_err = completed.Error
 		},

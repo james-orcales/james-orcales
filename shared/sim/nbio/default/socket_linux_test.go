@@ -119,7 +119,7 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 		loop.Storage, &open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_ONLY,
 		}, func(
-			completed *nbio.Completion,
+			completed nbio.Completion_Handle,
 		) {
 			testify.No_Error(t, completed.Error, path)
 			file = nbio.File(completed.Data)
@@ -130,7 +130,7 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	read_done := false
 	var read_completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &read_completion, file, content, 0, SYSCTL_READ_DEADLINE,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			testify.No_Error(t, completed.Error, path)
 			count = completed.Data
 			read_done = true
@@ -140,7 +140,7 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	testify.True(t, read_done, path)
 	close_done := false
 	var close_completion nbio.Completion
-	nbio.IO_Close(loop, &close_completion, file, func(completed *nbio.Completion) {
+	nbio.IO_Close(loop, &close_completion, file, func(completed nbio.Completion_Handle) {
 		testify.No_Error(t, completed.Error, path)
 		close_done = true
 	})

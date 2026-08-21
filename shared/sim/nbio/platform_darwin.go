@@ -2,6 +2,8 @@
 
 package nbio
 
+import "errors"
+
 // Platform_IO is empty on Darwin, because Darwin backend has no statx operation.
 type Platform_IO struct{}
 
@@ -11,5 +13,7 @@ func sim_wire_platform(_ *Sim, loop *IO) {
 }
 
 func sim_statx_operation_complete(_ *Sim_Operation) (data int, err error) {
-	panic("io: Darwin has no statx operation")
+	return 0, statx_not_supported
 }
+
+var statx_not_supported = errors.New("io: Darwin has no statx operation")

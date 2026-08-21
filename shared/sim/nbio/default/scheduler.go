@@ -41,8 +41,9 @@ func operating_system_signal_receive(
 	select {
 	case value := <-channel.Channel:
 		system, valid := value.(syscall.Signal)
+		aver.Always(valid, "A signal notifier delivers an operating-system signal.")
 		if !valid {
-			panic("io: signal notifier returned an unknown signal type")
+			return 0, false
 		}
 		return system, true
 	default:
@@ -52,6 +53,9 @@ func operating_system_signal_receive(
 
 // This bound hold largest socket address of either supported platform.
 const SOCKET_ADDRESS_BYTES = 28
+
+// POLL_EVENTS_MAX bounds one Darwin changelist and result batch.
+const POLL_EVENTS_MAX = 256
 
 // Operating system operation kind is one kernel operation tag. Platform backend
 // translate tag direct to kqueue readiness plus syscall on Darwin, or to matching io_uring
@@ -147,8 +151,8 @@ type Operating_System_Operation struct {
 	Offset uint64
 	// Address hold typed socket address until submission.
 	Address nbio.Address
-	// File_Path holds zero-terminated path memory inline until kernel retirement.
-	File_Path [OPERATING_SYSTEM_PATH_BYTES_MAXIMUM]byte
+	// File_Path borrows zero-terminated path memory until kernel retirement.
+	File_Path []byte
 	// File_Path_Count includes the terminal zero and rejects absent path initialization.
 	File_Path_Count int
 	// Open_Options hold Open_At behavior until submission.
@@ -172,8 +176,8 @@ type Operating_System_Operation struct {
 	Bounded_State Operating_System_Bounded_Operation
 	// Internal_Completion gives a linked deadline stable storage without heap ownership.
 	Internal_Completion nbio.Completion
-	// Socket_Address hold sockaddr memory until kernel retire it.
-	Socket_Address [SOCKET_ADDRESS_BYTES]byte
+	// Socket_Address borrows sockaddr memory until kernel retire it.
+	Socket_Address []byte
 	// Socket_Address_Size tell kernel which sockaddr bytes are valid.
 	Socket_Address_Size uint32
 	// Deliver keeps callback delivery behind scheduler retirement, after Completion holds the
@@ -247,12 +251,17 @@ func operating_system_operation_acquire(
 	state *Operating_System, value Operating_System_Operation,
 ) (operation *Operating_System_Operation) {
 	for index := range state.Operation_Memory {
-		if state.Operation_Memory[index].Used {
+		slot := &state.Operation_Memory[index]
+		if slot.Used {
 			continue
 		}
+		file_path := slot.File_Path
+		socket_address := slot.Socket_Address
 		value.Used = true
-		state.Operation_Memory[index] = value
-		return &state.Operation_Memory[index]
+		*slot = value
+		slot.File_Path = file_path
+		slot.Socket_Address = socket_address
+		return slot
 	}
 	aver.Always(false, "The caller-owned operation pool has capacity before submission.")
 	return nil
@@ -289,7 +298,12 @@ func operating_system_operation_unregister(
 
 func operating_system_operation_release(operation *Operating_System_Operation) {
 	pinner := operation.Pinner
-	*operation = Operating_System_Operation{Pinner: pinner}
+	file_path := operation.File_Path
+	socket_address := operation.Socket_Address
+	*operation = Operating_System_Operation{
+		Pinner: pinner, File_Path: file_path,
+		Socket_Address: socket_address,
+	}
 }
 
 func operating_system_operation_path_set(
@@ -304,6 +318,7 @@ func operating_system_operation_path_set(
 		}
 		operation.File_Path[index] = path[index]
 	}
+	operation.File_Path[len(path)] = 0
 	operation.File_Path_Count = len(path) + 1
 	return nil
 }
