@@ -1612,7 +1612,7 @@ func New_Simulated_IO(
 	for index := range memory.Operations {
 		memory.Operations[index] = Sim_Operation{}
 	}
-	root_generator := prng.New(seed)
+	root_generator := prng.New(prng.Seed(seed))
 	state.Timeline = pump
 	state.Generator = prng.Generator_Split(&root_generator)
 	state.Timeout_Order_Generator = prng.Generator_Split(&root_generator)
@@ -2776,7 +2776,7 @@ func sim_generate(state *Sim) {
 			directory := prng.Generator_Chance(
 				&state.Generator, sim_subdirectory_chance(),
 			)
-			sim_generate_child(state, directory_index, entry_index, directory)
+			sim_generate_child(state, directory_index, entry_index, bool(directory))
 			generated_count++
 			entry_index++
 		}
@@ -2807,7 +2807,7 @@ func sim_generate_child(state *Sim, parent int, entry_index int, directory bool)
 // directory is never one and no generated link can dangle.
 func sim_generate_mode(state *Sim, directory bool, entry_index int) (mode File_Mode) {
 	mode = File_Mode(prng.Generator_Below(
-		&state.Permission_Generator, SIM_PERMISSION_DRAW_COUNT,
+		&state.Permission_Generator, prng.Bound(SIM_PERMISSION_DRAW_COUNT),
 	))
 	if directory {
 		return mode | FILE_MODE_DIRECTORY
