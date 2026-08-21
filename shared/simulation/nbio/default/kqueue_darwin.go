@@ -44,6 +44,9 @@ const PLATFORM_INTERRUPT_RETRIES_MAX = 16
 // 469 is legacy layout and return fields that do not agree with syscall.Stat.
 const PLATFORM_STAT_AT_CALL = 470
 
+// PLATFORM_READ_LINK_CALL reads final symbolic link without libc path conversion.
+const PLATFORM_READ_LINK_CALL = syscall.SYS_READLINK
+
 // PLATFORM_SYMBOLIC_LINK_NO_FOLLOW is Darwin AT_SYMLINK_NOFOLLOW, thus directory pass report
 // symbolic link as itself, not as its target.
 const PLATFORM_SYMBOLIC_LINK_NO_FOLLOW = 0x0020

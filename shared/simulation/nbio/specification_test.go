@@ -453,6 +453,11 @@ func Test_Sim_Status(t *testing.T) {
 	testify.False(t, directory.Is_Regular)
 	testify.Zero(t, directory.Size)
 	sim_status_regular(t, loop, content)
+	var link_target [nbio.SIM_PATH_TEXT_BYTES_MAXIMUM]byte
+	_, read_link_err := nbio.Storage_Read_Link(
+		loop.Storage, "/dir/file", link_target[:],
+	)
+	testify.Error_Is(t, read_link_err, nbio.Not_Symbolic_Link)
 	sim_close(t, loop, driver, file)
 	nbio.IO_Deinit(loop)
 }

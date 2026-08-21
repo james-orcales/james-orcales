@@ -838,6 +838,7 @@ func operating_system_wire_file(state *Operating_System, loop *nbio.Storage) {
 	loop.Mkdir_At_Procedure = operating_system_storage_mkdir_at
 	loop.Get_Directory_Entries_Procedure = operating_system_storage_directory_entries
 	loop.Status_Procedure = operating_system_storage_status
+	loop.Read_Link_Procedure = operating_system_storage_read_link
 }
 
 func operating_system_storage_read(
@@ -906,6 +907,12 @@ func operating_system_storage_status(
 	_ unsafe.Pointer, path string,
 ) (status nbio.File_Status, err error) {
 	return file_status(path)
+}
+
+func operating_system_storage_read_link(
+	_ unsafe.Pointer, path string, destination []byte,
+) (count int, err error) {
+	return file_read_link(path, destination)
 }
 
 // Wire loop own control plane — timer and cross-thread event — onto vtable shared/time own.

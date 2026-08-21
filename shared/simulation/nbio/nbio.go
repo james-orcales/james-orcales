@@ -372,6 +372,11 @@ type Storage struct {
 	Status_Procedure func(
 		state unsafe.Pointer, path string,
 	) (status File_Status, err error)
+	// Read_Link writes symbolic-link target into caller storage. It is synchronous like Status:
+	// neither operation owns descriptor or waits for readiness.
+	Read_Link_Procedure func(
+		state unsafe.Pointer, path string, destination []byte,
+	) (count int, err error)
 }
 
 // Storage_Read preserves callback-last submit shape while state remains explicit.
@@ -441,6 +446,13 @@ func Storage_Get_Directory_Entries(
 // Storage_Status passes caller-owned state to static path reader.
 func Storage_Status(storage Storage, path string) (status File_Status, err error) {
 	return storage.Status_Procedure(storage.State, path)
+}
+
+// Storage_Read_Link passes caller-owned path and result storage to static link reader.
+func Storage_Read_Link(
+	storage Storage, path string, destination []byte,
+) (count int, err error) {
+	return storage.Read_Link_Procedure(storage.State, path, destination)
 }
 
 // File identify one open file or socket. Simulated backend map it to tracked in-memory state.
@@ -953,6 +965,9 @@ type File_Status struct {
 	Is_Directory bool
 	// Is_Regular report whether existing path is regular file.
 	Is_Regular bool
+	// Is_Symbolic_Link reports whether final path component is symbolic link. Status never
+	// follows final link, so walkers cannot cross it by accident.
+	Is_Symbolic_Link bool
 	// Size is file length in bytes. Zero for directory or absent path.
 	Size int64
 }
@@ -973,6 +988,9 @@ var Canceled = errors.New("io: operation canceled")
 // Path_Exists is portable Mkdir_At result for path already present. Make_Directory treat it as
 // convergence, thus repeated create is not error.
 var Path_Exists = errors.New("io: file exists")
+
+// Not_Symbolic_Link reports Read_Link target path names another filesystem kind.
+var Not_Symbolic_Link = errors.New("io: not a symbolic link")
 
 // Number of virtual grains one simulated operation may take to complete, drawn from seed, thus
 // completion order vary per run and still reproduce.
@@ -1839,6 +1857,7 @@ func sim_storage_fsync(
 func sim_wire_directory(storage *Storage) {
 	storage.Get_Directory_Entries_Procedure = sim_get_directory_entries
 	storage.Status_Procedure = sim_status_procedure
+	storage.Read_Link_Procedure = sim_read_link_procedure
 }
 
 func sim_get_directory_entries(
@@ -1859,6 +1878,14 @@ func sim_status_procedure(
 	state_pointer unsafe.Pointer, path string,
 ) (status File_Status, err error) {
 	return sim_status((*Sim)(state_pointer), path), nil
+}
+
+func sim_read_link_procedure(
+	_ unsafe.Pointer, _ string, _ []byte,
+) (count int, err error) {
+	// Seeded simulator currently generates directories and regular files only. Explicit error
+	// preserves storage contract until link becomes generated feature.
+	return 0, Not_Symbolic_Link
 }
 
 // Close cannot release descriptor while any submitted operation still holds it.
@@ -1935,12 +1962,24 @@ func sim_resolve(state *Sim, path string) (node_index int, found bool) {
 			}
 		}
 		if position > start {
+			component := path[start:position]
+			if component == "." {
+				start = position + 1
+				continue
+			}
+			if component == ".." {
+				if node_index != 0 {
+					node_index = state.Nodes[node_index].Parent
+				}
+				start = position + 1
+				continue
+			}
 			node := &state.Nodes[node_index]
 			if !node.Directory {
 				return 0, false
 			}
 			child, child_found := sim_node_find_child(
-				state, node_index, path[start:position],
+				state, node_index, component,
 			)
 			if !child_found {
 				return 0, false

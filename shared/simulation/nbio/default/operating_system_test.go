@@ -624,6 +624,26 @@ func Test_Operating_System_Storage_API_Heap_Allocation(t *testing.T) {
 			operating_system_storage_allocation_case(t, test.Operation)
 		})
 	}
+	t.Run("Read_Link", operating_system_read_link_allocation_case)
+}
+
+func operating_system_read_link_allocation_case(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	link := filepath.Join(root, "link")
+	testify.No_Error(t, syscall.Symlink("target", link))
+	clock := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, clock)
+	var target [nbio.SIM_PATH_TEXT_BYTES_MAXIMUM]byte
+	count := 0
+	var read_err error
+	testify.Zero_Allocation(t, func() {
+		count, read_err = nbio.Storage_Read_Link(loop.Storage, link, target[:])
+	})
+	testify.No_Error(t, read_err)
+	testify.Equal(t, "target", string(target[:count]))
+	nbio.IO_Deinit(loop)
+	time.Driver_Deinit(driver)
 }
 
 // Rejected paths retire through same completion queue without error construction.
@@ -2165,6 +2185,19 @@ func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
 
 	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
+	link_status, status_err := nbio.Storage_Status(loop.Storage, link)
+	testify.No_Error(t, status_err)
+	testify.True(t, link_status.Is_Symbolic_Link)
+	target_buffer := make([]byte, nbio.SIM_PATH_TEXT_BYTES_MAXIMUM)
+	target_count, read_link_err := nbio.Storage_Read_Link(
+		loop.Storage, link, target_buffer,
+	)
+	testify.No_Error(t, read_link_err)
+	testify.Equal(t, target, string(target_buffer[:target_count]))
+	_, read_file_link_err := nbio.Storage_Read_Link(
+		loop.Storage, target, target_buffer,
+	)
+	testify.Error_Is(t, read_file_link_err, nbio.Not_Symbolic_Link)
 	assert_open_at_result(t, loop, driver, target, nil)
 	assert_open_at_result(t, loop, driver, link, errors.New("symbolic link must fail"))
 }

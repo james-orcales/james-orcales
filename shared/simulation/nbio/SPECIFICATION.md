@@ -91,9 +91,9 @@ completion. Unknown descriptor yield empty address.
 
 ### Status
 
-Status report synchronously whether path exist, and if so whether it is directory, and its size
-in bytes. It also report whether path is regular file. Absent path is not-exists with nil error,
-thus caller branch on status, not on error.
+Status reports path kind and size synchronously without following a final symbolic link.
+Absent path reports not-exists with nil error. Read_Link writes target into caller storage.
+Read_Link rejects other kinds with Not_Symbolic_Link.
 
 ### Watch Signal
 

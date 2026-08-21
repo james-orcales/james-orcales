@@ -232,6 +232,9 @@ const KERNEL_RING_OPERATION_MKDIR_AT = 37
 // PLATFORM_STAT_AT_CALL is Linux newfstatat, whose struct match syscall.Stat_t on amd64.
 const PLATFORM_STAT_AT_CALL = 262
 
+// PLATFORM_READ_LINK_CALL reads final symbolic link without libc path conversion.
+const PLATFORM_READ_LINK_CALL = syscall.SYS_READLINK
+
 // PLATFORM_SYMBOLIC_LINK_NO_FOLLOW is Linux AT_SYMLINK_NOFOLLOW, thus directory pass report
 // symbolic link as itself, not as its target.
 const PLATFORM_SYMBOLIC_LINK_NO_FOLLOW = 0x100

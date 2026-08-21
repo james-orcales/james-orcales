@@ -66,11 +66,32 @@ func file_status(path string) (status nbio.File_Status, err error) {
 		return nbio.File_Status{}, stat_err
 	}
 	return nbio.File_Status{
-		Exists:       true,
-		Is_Directory: metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
-		Is_Regular:   metadata.Mode&syscall.S_IFMT == syscall.S_IFREG,
-		Size:         metadata.Size,
+		Exists:           true,
+		Is_Directory:     metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
+		Is_Regular:       metadata.Mode&syscall.S_IFMT == syscall.S_IFREG,
+		Is_Symbolic_Link: metadata.Mode&syscall.S_IFMT == syscall.S_IFLNK,
+		Size:             metadata.Size,
 	}, nil
+}
+
+// Read symbolic-link target without following it. Caller storage bounds kernel answer.
+func file_read_link(path string, destination []byte) (count int, err error) {
+	path_bytes := [OPERATING_SYSTEM_PATH_BYTES_MAXIMUM]byte{}
+	path_pointer, path_err := file_path_pointer(path, path_bytes[:])
+	if path_err != nil {
+		return 0, path_err
+	}
+	read_count, _, errno := syscall.Syscall(
+		PLATFORM_READ_LINK_CALL, uintptr(unsafe.Pointer(path_pointer)),
+		uintptr(unsafe.Pointer(unsafe.SliceData(destination))), uintptr(len(destination)),
+	)
+	if errno == syscall.EINVAL {
+		return 0, nbio.Not_Symbolic_Link
+	}
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(read_count), nil
 }
 
 // Mode a made directory take: readable and traversable by all, writable by owner.
