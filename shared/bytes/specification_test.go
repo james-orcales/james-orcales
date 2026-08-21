@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/testify"
-	"local/james-orcales/shared/unicode/ucd"
 )
 
 // Test_Allocation proves each exported operation owns no heap storage.
@@ -31,22 +29,21 @@ func Test_Constant_Facts(t *testing.T) {
 	}
 }
 
-// Test_Comparison protects byte equality, lexical order, and Unicode folding.
+// Test_Comparison protects raw equality and lexical order.
 func Test_Comparison(t *testing.T) {
 	testify.True(t, bool(bytes.Equal(nil, []byte{})))
 	testify.False(t, bool(bytes.Equal([]byte("a"), []byte("b"))))
 	testify.Equal(t, bytes.Order(bytes.ORDER_BEFORE), bytes.Compare([]byte("ab"), []byte("ac")))
 	testify.Equal(t, bytes.Order(bytes.ORDER_AFTER), bytes.Compare([]byte("ac"), []byte("ab")))
 	testify.Equal(t, bytes.Order(bytes.ORDER_EQUAL), bytes.Compare([]byte("ab"), []byte("ab")))
-	testify.True(t, bool(bytes.Equal_Fold([]byte("Go"), []byte("gO"))))
 	storage := []byte("abcdef")
 	middle := len(storage) / 2
 	testify.False(t, bool(bytes.Overlap(storage[:middle], storage[middle:])))
 	testify.True(t, bool(bytes.Overlap(
-		storage[:middle+binary.UINT_8_SIZE], storage[middle:],
+		storage[:middle+TEST_SINGLE_COUNT], storage[middle:],
 	)))
 	testify.True(t, bool(bytes.Overlap(
-		storage[middle:], storage[:middle+binary.UINT_8_SIZE],
+		storage[middle:], storage[:middle+TEST_SINGLE_COUNT],
 	)))
 	testify.True(t, bool(bytes.Overlap(storage, storage)))
 	testify.False(t, bool(bytes.Overlap(storage[:bytes.SLICE_SIZE_MINIMUM], storage)))
@@ -58,26 +55,17 @@ func Test_Comparison(t *testing.T) {
 	testify.False(t, bool(bytes.Has_Text_Suffix([]byte("x"), "longer")))
 }
 
-// Test_Search protects every search form and empty UTF-8 boundaries.
+// Test_Search protects raw sequence, byte, and empty-boundary search.
 func Test_Search(t *testing.T) {
 	source := []byte("a☺b-a")
 	if bytes.Count(source, []byte("a")) != 2 {
 		t.Fatal("Count returned wrong match count")
 	}
-	if bytes.Count([]byte("a☺"), nil) != 3 {
-		t.Fatal("Count missed UTF-8 boundaries")
+	if bytes.Count([]byte("a☺"), nil) != 5 {
+		t.Fatal("Count missed byte boundaries")
 	}
 	if !bytes.Contains(source, []byte("☺b")) {
 		t.Fatal("Contains missed Slice")
-	}
-	if !bytes.Contains_Any(source, "x☺") {
-		t.Fatal("Contains_Any missed character")
-	}
-	if !bytes.Contains_Rune(source, '☺') {
-		t.Fatal("Contains_Rune missed character")
-	}
-	if !bytes.Contains_Function(source, is_dash) {
-		t.Fatal("Contains_Function missed predicate")
 	}
 	if bytes.Index(source, []byte("b")) != 4 {
 		t.Fatal("Index returned wrong byte index")
@@ -91,26 +79,11 @@ func Test_Search(t *testing.T) {
 	if bytes.Last_Index_Byte(source, 'a') != 6 {
 		t.Fatal("Last_Index_Byte missed final byte")
 	}
-	if bytes.Index_Rune(source, '☺') != 1 {
-		t.Fatal("Index_Rune returned wrong byte index")
-	}
-	if bytes.Index_Any(source, "☺x") != 1 {
-		t.Fatal("Index_Any returned wrong byte index")
-	}
-	if bytes.Last_Index_Any(source, "a") != 6 {
-		t.Fatal("Last_Index_Any missed final character")
-	}
-	if bytes.Index_Function(source, is_dash) != 5 {
-		t.Fatal("Index_Function returned wrong byte index")
-	}
-	if bytes.Last_Index_Function(source, is_letter_a) != 6 {
-		t.Fatal("Last_Index_Function missed final predicate match")
-	}
 }
 
-// Test_Split_And_Join protects caller slots, limits, fields, views, and join storage.
+// Test_Split_And_Join protects caller slots, limits, views, and join storage.
 func Test_Split_And_Join(t *testing.T) {
-	var slots [TEST_SLOT_COUNT][]byte
+	var slots [TEST_SLOT_COUNT]bytes.Slice
 	source := []byte("a,b,c")
 	count := bytes.Split_Into(slots[:], source, []byte(","))
 	assert_slices(t, slots[:int(count)], [][]byte{[]byte("a"), []byte("b"), []byte("c")})
@@ -121,15 +94,14 @@ func Test_Split_And_Join(t *testing.T) {
 	count = bytes.Split_After_N_Into(slots[:], source, []byte(","), 2)
 	assert_slices(t, slots[:int(count)], [][]byte{[]byte("a,"), []byte("b,c")})
 	count = bytes.Split_Into(slots[:], []byte("a☺"), nil)
-	assert_slices(t, slots[:int(count)], [][]byte{[]byte("a"), []byte("☺")})
-	var fields [TEST_SLOT_COUNT][]byte
-	field_count := bytes.Fields_Into(fields[:], []byte(" a\tb "))
-	assert_slices(t, fields[:int(field_count)], [][]byte{[]byte("a"), []byte("b")})
-	field_count = bytes.Fields_Function_Into(fields[:], []byte("a-b--c"), is_dash)
-	assert_slices(t, fields[:int(field_count)], [][]byte{[]byte("a"), []byte("b"), []byte("c")})
+	assert_slices(
+		t, slots[:int(count)],
+		[][]byte{{'a'}, {0xe2}, {0x98}, {0xba}},
+	)
 	var storage [TEST_STORAGE_COUNT]byte
-	joined := bytes.Join_Into(storage[:], slots[:3], []byte("-"))
-	if string(storage[:int(joined)]) != "a-☺-c" {
+	count = bytes.Split_Into(slots[:], source, []byte(","))
+	joined := bytes.Join_Into(storage[:], slots[:count], []byte("-"))
+	if string(storage[:int(joined)]) != "a-b-c" {
 		t.Fatal("Join_Into wrote wrong content")
 	}
 	if cap(slots[0]) != len(slots[0]) {
@@ -137,83 +109,17 @@ func Test_Split_And_Join(t *testing.T) {
 	}
 }
 
-// Test_Transform protects mapped, repeated, case, repaired, and rune output.
-func Test_Transform(t *testing.T) {
+// Test_Repeat protects caller-owned repeated output.
+func Test_Repeat(t *testing.T) {
 	var storage [TEST_STORAGE_COUNT]byte
-	count := bytes.Map_Into(storage[:], map_character, []byte("abx"))
-	if string(storage[:int(count)]) != "☺b" {
-		t.Fatal("Map_Into wrote wrong content")
-	}
-	count = bytes.Repeat_Into(storage[:], []byte("ab"), 3)
+	count := bytes.Repeat_Into(storage[:], []byte("ab"), 3)
 	if string(storage[:int(count)]) != "ababab" {
 		t.Fatal("Repeat_Into wrote wrong content")
 	}
-	count = bytes.To_Upper_Into(storage[:], []byte("Go"))
-	if string(storage[:int(count)]) != "GO" {
-		t.Fatal("To_Upper_Into wrote wrong content")
-	}
-	count = bytes.To_Lower_Into(storage[:], []byte("Go"))
-	if string(storage[:int(count)]) != "go" {
-		t.Fatal("To_Lower_Into wrote wrong content")
-	}
-	count = bytes.To_Title_Into(storage[:], []byte("ǳ"))
-	if string(storage[:int(count)]) != "ǲ" {
-		t.Fatal("To_Title_Into wrote wrong content")
-	}
-	var special_storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
-	special := ucd.Special_Case(ucd.Turkish_Case(special_storage[:]))
-	count = bytes.To_Upper_Special_Into(storage[:], special, []byte("i"))
-	if string(storage[:int(count)]) != "İ" {
-		t.Fatal("To_Upper_Special_Into ignored special mapping")
-	}
-	count = bytes.To_Lower_Special_Into(storage[:], special, []byte("I"))
-	if string(storage[:int(count)]) != "ı" {
-		t.Fatal("To_Lower_Special_Into ignored special mapping")
-	}
-	count = bytes.To_Title_Special_Into(storage[:], special, []byte("i"))
-	if string(storage[:int(count)]) != "İ" {
-		t.Fatal("To_Title_Special_Into ignored special mapping")
-	}
-	count = bytes.To_Valid_UTF8_Into(storage[:], []byte{'a', 0xff, 0xfe, 'b'}, []byte("?"))
-	if string(storage[:int(count)]) != "a?b" {
-		t.Fatal("To_Valid_UTF8_Into wrote wrong repair")
-	}
-	count = bytes.Title_Into(storage[:], []byte("go gopher"))
-	if string(storage[:int(count)]) != "Go Gopher" {
-		t.Fatal("Title_Into wrote wrong content")
-	}
-	var characters [TEST_CHARACTER_COUNT]rune
-	character_count := bytes.Runes_Into(characters[:], []byte{'a', 0xff})
-	want_characters := []rune{'a', '�'}
-	if !reflect.DeepEqual(characters[:int(character_count)], want_characters) {
-		t.Fatal("Runes_Into wrote wrong characters")
-	}
 }
 
-// Test_Trim protects predicate, cut-set, space, prefix, and suffix views.
+// Test_Trim protects exact prefix and suffix views.
 func Test_Trim(t *testing.T) {
-	source := []byte("xx abc xx")
-	if string(bytes.Trim(source, "x")) != " abc " {
-		t.Fatal("Trim returned wrong view")
-	}
-	if string(bytes.Trim_Left(source, "x")) != " abc xx" {
-		t.Fatal("Trim_Left returned wrong view")
-	}
-	if string(bytes.Trim_Right(source, "x")) != "xx abc " {
-		t.Fatal("Trim_Right returned wrong view")
-	}
-	if string(bytes.Trim_Function([]byte("--a--"), is_dash)) != "a" {
-		t.Fatal("Trim_Function returned wrong view")
-	}
-	if string(bytes.Trim_Left_Function([]byte("--a"), is_dash)) != "a" {
-		t.Fatal("Trim_Left_Function returned wrong view")
-	}
-	if string(bytes.Trim_Right_Function([]byte("a--"), is_dash)) != "a" {
-		t.Fatal("Trim_Right_Function returned wrong view")
-	}
-	if string(bytes.Trim_Space([]byte(" \ta\n"))) != "a" {
-		t.Fatal("Trim_Space returned wrong view")
-	}
 	if string(bytes.Trim_Prefix([]byte("abc"), []byte("a"))) != "bc" {
 		t.Fatal("Trim_Prefix returned wrong view")
 	}
@@ -286,7 +192,7 @@ func Test_Iteration(t *testing.T) {
 		yielded_count++
 		return true
 	})
-	assert_slices(t, yielded[:int(count)], [][]byte{[]byte("a\n"), []byte("b")})
+	assert_raw_slices(t, yielded[:int(count)], [][]byte{[]byte("a\n"), []byte("b")})
 	yielded_count = 0
 	count = bytes.Split_Sequence(
 		[]byte("a,b,c"), []byte(","),
@@ -303,17 +209,7 @@ func Test_Iteration(t *testing.T) {
 	count = bytes.Split_After_Sequence(
 		[]byte("a,b"), []byte(","), collect_yield(yielded[:], &yielded_count),
 	)
-	assert_slices(t, yielded[:int(count)], [][]byte{[]byte("a,"), []byte("b")})
-	yielded_count = 0
-	field_count := bytes.Fields_Sequence(
-		[]byte(" a b "), collect_yield(yielded[:], &yielded_count),
-	)
-	assert_slices(t, yielded[:int(field_count)], [][]byte{[]byte("a"), []byte("b")})
-	yielded_count = 0
-	field_count = bytes.Fields_Function_Sequence(
-		[]byte("a-b"), is_dash, collect_yield(yielded[:], &yielded_count),
-	)
-	assert_slices(t, yielded[:int(field_count)], [][]byte{[]byte("a"), []byte("b")})
+	assert_raw_slices(t, yielded[:int(count)], [][]byte{[]byte("a,"), []byte("b")})
 }
 
 // Test_Buffer protects caller storage, compaction, writes, reads, and unread state.
@@ -322,7 +218,7 @@ func Test_Buffer(t *testing.T) {
 	test_buffer_writes(t)
 }
 
-// Test_Reader protects caller reads, rune state, positioned reads, seek, and reset.
+// Test_Reader protects raw reads, positioned reads, seek, and reset.
 func Test_Reader(t *testing.T) {
 	var reader bytes.Reader
 	bytes.Reader_Reset(&reader, []byte("a☺b"))
@@ -332,17 +228,6 @@ func Test_Reader(t *testing.T) {
 	if bytes.Reader_Unread_Size(&reader) != 5 {
 		t.Fatal("Reader size reports are wrong")
 	}
-	character, size, found := bytes.Reader_Read_Character(&reader)
-	if !found {
-		t.Fatal("Reader_Read_Character returned wrong character")
-	}
-	if character != 'a' {
-		t.Fatal("Reader_Read_Character returned wrong character")
-	}
-	if size != 1 {
-		t.Fatal("Reader_Read_Character returned wrong character")
-	}
-	bytes.Reader_Unread_Character(&reader)
 	value, found := bytes.Reader_Read_Byte(&reader)
 	if !found {
 		t.Fatal("Reader_Read_Byte returned wrong byte")
@@ -385,7 +270,7 @@ func Test_Size_Limits(t *testing.T) {
 // Test_Domain_Errors protects invalid limits, overlaps, cursor states, and storage.
 func Test_Domain_Errors(t *testing.T) {
 	var storage [TEST_STORAGE_COUNT]byte
-	var slots [TEST_SINGLE_COUNT][]byte
+	var slots [TEST_SINGLE_COUNT]bytes.Slice
 	var buffer bytes.Buffer
 	var reader bytes.Reader
 	bytes.Reader_Reset(&reader, []byte("a"))
@@ -436,30 +321,6 @@ func test_buffer_reads(t *testing.T) {
 		t.Fatal("Buffer_Read_Byte returned wrong byte")
 	}
 	bytes.Buffer_Unread_Byte(&buffer)
-	character, size, found := bytes.Buffer_Read_Character(&buffer)
-	if !found {
-		t.Fatal("Buffer_Read_Character returned wrong character")
-	}
-	if character != 'a' {
-		t.Fatal("Buffer_Read_Character returned wrong character")
-	}
-	if size != 1 {
-		t.Fatal("Buffer_Read_Character returned wrong character")
-	}
-	character, size, found = bytes.Buffer_Read_Character(&buffer)
-	if !found {
-		t.Fatal("Buffer_Read_Character returned wrong UTF-8 character")
-	}
-	if character != '☺' {
-		t.Fatal("Buffer_Read_Character returned wrong UTF-8 character")
-	}
-	if size != 3 {
-		t.Fatal("Buffer_Read_Character returned wrong UTF-8 character")
-	}
-	bytes.Buffer_Unread_Character(&buffer)
-	if bytes.Buffer_Size(&buffer) != 4 {
-		t.Fatal("Buffer_Unread_Character restored wrong position")
-	}
 	var read [TEST_READ_COUNT]byte
 	if bytes.Buffer_Read_Into(&buffer, read[:]) != TEST_READ_COUNT {
 		t.Fatal("Buffer_Read_Into returned wrong count")
@@ -489,14 +350,12 @@ func test_buffer_writes(t *testing.T) {
 		t.Fatal("Buffer_Write_Text returned wrong count")
 	}
 	bytes.Buffer_Write_Byte(&buffer, '!')
-	if bytes.Buffer_Write_Character(&buffer, '☺') != 3 {
-		t.Fatal("Buffer_Write_Character returned wrong count")
-	}
 	if bytes.Buffer_Available(&buffer) == bytes.Buffer_Capacity(&buffer) {
 		t.Fatal("Buffer_Available ignored content")
 	}
-	if len(bytes.Buffer_Available_Slice(&buffer)) != 0 {
-		t.Fatal("Buffer_Available_Slice exposed readable bytes")
+	available := bytes.Buffer_Available_Slice(&buffer)
+	if len(available.Storage) != int(bytes.Buffer_Available(&buffer)) {
+		t.Fatal("Buffer_Available_Slice returned wrong writable storage")
 	}
 	bytes.Buffer_Reset(&buffer)
 	if len(bytes.Buffer_Bytes(&buffer)) != 0 {
@@ -513,17 +372,23 @@ const TEST_STORAGE_COUNT = 64
 
 const TEST_SLOT_COUNT = 8
 
-const TEST_CHARACTER_COUNT = 4
-
 const TEST_READ_COUNT = 2
 
 const TEST_SINGLE_COUNT = 1
 
-const TEST_TRIPLE_COUNT = 3
+func assert_slices(t *testing.T, got []bytes.Slice, want [][]byte) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("Slices = %q, want %q", got, want)
+	}
+	for index := range got {
+		if !reflect.DeepEqual([]byte(got[index]), want[index]) {
+			t.Fatalf("Slices = %q, want %q", got, want)
+		}
+	}
+}
 
-const TEST_FIVE_COUNT = 5
-
-func assert_slices(t *testing.T, got [][]byte, want [][]byte) {
+func assert_raw_slices(t *testing.T, got [][]byte, want [][]byte) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Slices = %q, want %q", got, want)
@@ -540,54 +405,8 @@ func collect_yield(
 	}
 }
 
-func is_dash(character rune) (matches bool) {
-	return character == '-'
-}
-
-func is_letter_a(character rune) (matches bool) {
-	return character == 'a'
-}
-
-func is_zero(character rune) (matches bool) {
-	return character == 0
-}
-
-func is_one(character rune) (matches bool) {
-	return character == 1
-}
-
-func is_two(character rune) (matches bool) {
-	return character == 2
-}
-
-func is_replacement(character rune) (matches bool) {
-	return character == '�'
-}
-
-func is_space(character rune) (matches bool) {
-	return character == ' '
-}
-
-func never_match(_ rune) (matches bool) {
-	return false
-}
-
-func identity_character(character rune) (mapped rune) {
-	return character
-}
-
 func reject_yield(_ bytes.Slice) (continued bytes.Boolean) {
 	return false
-}
-
-func map_character(character rune) (mapped_character rune) {
-	if character == 'a' {
-		return '☺'
-	}
-	if character == 'x' {
-		return -1
-	}
-	return character
 }
 
 func panic_text(action func()) (message string) {
@@ -601,24 +420,24 @@ func panic_text(action func()) (message string) {
 }
 
 type domain_fixture struct {
-	Maximum     [bytes.SLICE_SIZE_MAXIMUM]byte
-	Alternate   [bytes.SLICE_SIZE_MAXIMUM]byte
-	Lines       [bytes.SLICE_SIZE_MAXIMUM]byte
-	Fields      [bytes.SLICE_SIZE_MAXIMUM]byte
-	Slots       [bytes.SLICES_COUNT_MAXIMUM][]byte
-	Field_Slots [bytes.FIELDS_COUNT_MAXIMUM][]byte
-	Characters  [bytes.CHARACTERS_COUNT_MAXIMUM]rune
+	Maximum   []byte
+	Alternate []byte
+	Lines     []byte
+	Slots     bytes.Slices
 }
 
 func domain_fixture_value() (fixture domain_fixture) {
+	var maximum [bytes.SLICE_SIZE_MAXIMUM]byte
+	var alternate [bytes.SLICE_SIZE_MAXIMUM]byte
+	var lines [bytes.SLICE_SIZE_MAXIMUM]byte
+	var slots [bytes.SLICES_COUNT_MAXIMUM]bytes.Slice
+	fixture = domain_fixture{
+		Maximum: maximum[:], Alternate: alternate[:], Lines: lines[:], Slots: slots[:],
+	}
 	for index := range fixture.Maximum {
 		fixture.Maximum[index] = 0
 		fixture.Alternate[index] = 0
 		fixture.Lines[index] = '\n'
-		fixture.Fields[index] = 'a'
-		if index%2 == 1 {
-			fixture.Fields[index] = ' '
-		}
 	}
 	fixture.Maximum[1] = 1
 	fixture.Maximum[2] = 2
@@ -644,7 +463,6 @@ func cover_count_domains(fixture *domain_fixture) {
 	cover_collection_domains(fixture)
 	cover_output_count_domains(fixture)
 	cover_cut_output_domains(fixture)
-	cover_transform_maximum_outputs(fixture)
 	cover_argument_output_domains(fixture)
 	cover_trim_output_domains(fixture)
 }
@@ -657,14 +475,13 @@ func cover_search_domains(fixture *domain_fixture) {
 func cover_state_domains(fixture *domain_fixture) {
 	cover_buffer_domains(fixture)
 	cover_reader_domains(fixture)
-	cover_transform_special_domains(fixture)
 }
 
 func cover_slice_input_domains(fixture *domain_fixture) {
-	sources := [...]bytes.Slice{
+	sources := [...][]byte{
 		nil, fixture.Maximum[:1], fixture.Maximum[:2], fixture.Maximum[:],
 	}
-	destinations := [...]bytes.Slice{
+	destinations := [...][]byte{
 		nil, fixture.Alternate[:1], fixture.Alternate[:2], fixture.Alternate[:],
 	}
 	for index, source := range sources {
@@ -674,70 +491,41 @@ func cover_slice_input_domains(fixture *domain_fixture) {
 	}
 }
 
-func cover_query_slice_inputs(source bytes.Slice) {
-	text := bytes.Text(string(source))
+func cover_query_slice_inputs(source []byte) {
+	text := string(source)
 	bytes.Equal(source, source)
 	bytes.Compare(source, source)
 	bytes.Count(source, source)
 	bytes.Contains(source, source)
-	bytes.Contains_Any(source, text)
-	bytes.Contains_Rune(source, 0)
-	bytes.Contains_Function(source, is_zero)
 	bytes.Index_Byte(source, 0)
 	bytes.Last_Index(source, source)
 	bytes.Last_Index_Byte(source, 0)
-	bytes.Index_Rune(source, 0)
-	bytes.Index_Any(source, text)
-	bytes.Last_Index_Any(source, text)
 	bytes.Has_Prefix(source, source)
 	bytes.Has_Suffix(source, source)
-	bytes.Has_Text_Suffix(source, text)
-	bytes.Index_Function(source, is_zero)
-	bytes.Last_Index_Function(source, is_zero)
-	bytes.Equal_Fold(source, source)
+	bytes.Has_Text_Suffix(source, bytes.Text(text))
 	bytes.Index(source, source)
 }
 
 func cover_output_slice_inputs(
-	fixture *domain_fixture, destination bytes.Slice, source bytes.Slice,
+	fixture *domain_fixture, destination []byte, source []byte,
 ) {
-	parts := [...][]byte{source}
+	parts := [...]bytes.Slice{source}
 	panic_text(func() { bytes.Join_Into(destination, parts[:], source[:0]) })
-	panic_text(func() { bytes.Map_Into(destination, identity_character, source) })
 	panic_text(func() { bytes.Repeat_Into(destination, source, 1) })
-	panic_text(func() { bytes.To_Upper_Into(destination, source) })
-	panic_text(func() { bytes.To_Lower_Into(destination, source) })
-	panic_text(func() { bytes.To_Title_Into(destination, source) })
-	panic_text(func() { bytes.To_Upper_Special_Into(destination, nil, source) })
-	panic_text(func() { bytes.To_Lower_Special_Into(destination, nil, source) })
-	panic_text(func() { bytes.To_Title_Special_Into(destination, nil, source) })
-	panic_text(func() { bytes.To_Valid_UTF8_Into(destination, source, nil) })
-	panic_text(func() { bytes.Title_Into(destination, source) })
-	panic_text(func() { bytes.Runes_Into(fixture.Characters[:len(source)], source) })
 	panic_text(func() { bytes.Replace_Into(destination, source, nil, nil, -1) })
 	panic_text(func() { bytes.Replace_All_Into(destination, source, nil, nil) })
 	panic_text(func() { bytes.Clone_Into(destination, source) })
 }
 
-func cover_view_slice_inputs(source bytes.Slice) {
-	text := bytes.Text(string(source))
-	bytes.Trim_Left_Function(source, is_zero)
-	bytes.Trim_Right_Function(source, is_zero)
-	bytes.Trim_Function(source, is_zero)
+func cover_view_slice_inputs(source []byte) {
 	bytes.Trim_Prefix(source, source)
 	bytes.Trim_Suffix(source, source)
-	bytes.Trim(source, text)
-	bytes.Trim_Left(source, text)
-	bytes.Trim_Right(source, text)
-	bytes.Trim_Space(source)
 	bytes.Cut(source, source)
 	bytes.Cut_Prefix(source, source)
 	bytes.Cut_Suffix(source, source)
 	bytes.Lines(source, zero_allocation_yield)
 	bytes.Split_Sequence(source, nil, zero_allocation_yield)
 	bytes.Split_After_Sequence(source, nil, zero_allocation_yield)
-	bytes.Fields_Sequence(source, zero_allocation_yield)
-	bytes.Fields_Function_Sequence(source, is_zero, zero_allocation_yield)
 }
 
 func cover_boolean_query_results(fixture *domain_fixture) {
@@ -746,40 +534,27 @@ func cover_boolean_query_results(fixture *domain_fixture) {
 	different[0] = 'x'
 	bytes.Equal(one, different)
 	bytes.Contains(one, different)
-	bytes.Contains_Any(one, "x")
-	bytes.Contains_Rune(one, 'x')
-	bytes.Contains_Function(one, never_match)
 	bytes.Has_Prefix(one, different)
 	bytes.Has_Suffix(one, different)
-	bytes.Equal_Fold(one, different)
 	bytes.Cut(one, different)
 	bytes.Cut_Prefix(one, different)
 	bytes.Cut_Suffix(one, different)
-	panic_text(func() { bytes.Map_Into(one, identity_character, one) })
-	var title_destination [TEST_READ_COUNT]byte
-	bytes.Title_Into(title_destination[:], []byte("aa"))
 }
 
 func cover_boolean_read_results(fixture *domain_fixture) {
 	var buffer bytes.Buffer
 	bytes.Buffer_Init(&buffer, fixture.Alternate[:], nil)
 	bytes.Buffer_Read_Byte(&buffer)
-	bytes.Buffer_Read_Character(&buffer)
 	bytes.Buffer_Read_Until(&buffer, 0)
 	bytes.Buffer_Init(&buffer, fixture.Alternate[:], fixture.Maximum[:1])
 	bytes.Buffer_Read_Byte(&buffer)
-	bytes.Buffer_Init(&buffer, fixture.Alternate[:], fixture.Maximum[:1])
-	bytes.Buffer_Read_Character(&buffer)
 	bytes.Buffer_Init(&buffer, fixture.Alternate[:], fixture.Maximum[:1])
 	bytes.Buffer_Read_Until(&buffer, 0)
 	var reader bytes.Reader
 	bytes.Reader_Reset(&reader, nil)
 	bytes.Reader_Read_Byte(&reader)
-	bytes.Reader_Read_Character(&reader)
 	bytes.Reader_Reset(&reader, fixture.Maximum[:1])
 	bytes.Reader_Read_Byte(&reader)
-	bytes.Reader_Reset(&reader, fixture.Maximum[:1])
-	bytes.Reader_Read_Character(&reader)
 }
 
 func cover_boolean_yield_results(fixture *domain_fixture) {
@@ -798,16 +573,10 @@ func cover_count_results(fixture *domain_fixture) {
 	bytes.Lines(fixture.Lines[:1], zero_allocation_yield)
 	bytes.Lines(fixture.Lines[:2], zero_allocation_yield)
 	bytes.Lines(fixture.Lines[:], zero_allocation_yield)
-	bytes.Runes_Into(fixture.Characters[:], nil)
-	bytes.Runes_Into(fixture.Characters[:], fixture.Maximum[:1])
-	bytes.Runes_Into(fixture.Characters[:], fixture.Maximum[:2])
-	bytes.Runes_Into(fixture.Characters[:], fixture.Maximum[:])
-	bytes.Fields_Sequence(fixture.Fields[:3], zero_allocation_yield)
 }
 
 func cover_output_count_domains(fixture *domain_fixture) {
 	cover_split_count_domains(fixture)
-	cover_field_count_domains(fixture)
 	cover_repeat_replacement_count_domains(fixture)
 }
 
@@ -828,23 +597,6 @@ func cover_split_count_domains(fixture *domain_fixture) {
 	}
 }
 
-func cover_field_count_domains(fixture *domain_fixture) {
-	bytes.Fields_Into(fixture.Field_Slots[:], nil)
-	bytes.Fields_Into(fixture.Field_Slots[:], fixture.Fields[:1])
-	bytes.Fields_Into(fixture.Field_Slots[:], fixture.Fields[:3])
-	bytes.Fields_Into(fixture.Field_Slots[:], fixture.Fields[:bytes.INDEX_MAXIMUM])
-	bytes.Fields_Function_Into(fixture.Field_Slots[:], nil, is_space)
-	bytes.Fields_Function_Into(fixture.Field_Slots[:], fixture.Fields[:1], is_space)
-	bytes.Fields_Function_Into(fixture.Field_Slots[:], fixture.Fields[:3], is_space)
-	bytes.Fields_Function_Into(
-		fixture.Field_Slots[:], fixture.Fields[:bytes.INDEX_MAXIMUM], is_space,
-	)
-	bytes.Fields_Sequence(fixture.Fields[:bytes.INDEX_MAXIMUM], zero_allocation_yield)
-	bytes.Fields_Function_Sequence(
-		fixture.Fields[:bytes.INDEX_MAXIMUM], is_space, zero_allocation_yield,
-	)
-}
-
 func cover_repeat_replacement_count_domains(fixture *domain_fixture) {
 	repeat_counts := [...]bytes.Repeat_Count{0, 1, 2, bytes.REPEAT_COUNT_MAXIMUM}
 	for _, count := range repeat_counts {
@@ -860,9 +612,7 @@ func cover_repeat_replacement_count_domains(fixture *domain_fixture) {
 
 func cover_collection_domains(fixture *domain_fixture) {
 	cover_split_collection_domains(fixture)
-	cover_field_collection_domains(fixture)
 	cover_join_collection_domains(fixture)
-	cover_character_collection_domains(fixture)
 	cover_separator_size_domains(fixture)
 }
 
@@ -876,7 +626,7 @@ func cover_split_collection_domains(fixture *domain_fixture) {
 		bytes.Split_After_Into(destination, nil, nil)
 		bytes.Split_After_N_Into(destination, nil, nil, -1)
 	}
-	sources := [...]bytes.Slice{
+	sources := [...][]byte{
 		nil, fixture.Maximum[:1], fixture.Maximum[:2], fixture.Maximum[:],
 	}
 	for _, source := range sources {
@@ -887,24 +637,6 @@ func cover_split_collection_domains(fixture *domain_fixture) {
 	}
 }
 
-func cover_field_collection_domains(fixture *domain_fixture) {
-	destinations := [...]bytes.Field_Slices{
-		nil, fixture.Field_Slots[:1], fixture.Field_Slots[:2],
-		fixture.Field_Slots[:],
-	}
-	for _, destination := range destinations {
-		bytes.Fields_Into(destination, nil)
-		bytes.Fields_Function_Into(destination, nil, is_space)
-	}
-	sources := [...]bytes.Slice{
-		nil, fixture.Fields[:1], fixture.Fields[:2], fixture.Fields[:],
-	}
-	for _, source := range sources {
-		bytes.Fields_Into(fixture.Field_Slots[:], source)
-		bytes.Fields_Function_Into(fixture.Field_Slots[:], source, is_space)
-	}
-}
-
 func cover_join_collection_domains(fixture *domain_fixture) {
 	collections := [...]bytes.Slices{
 		nil, fixture.Slots[:1], fixture.Slots[:2], fixture.Slots[:],
@@ -912,21 +644,12 @@ func cover_join_collection_domains(fixture *domain_fixture) {
 	for _, parts := range collections {
 		bytes.Join_Into(fixture.Alternate[:], parts, nil)
 	}
-	parts := [...][]byte{
+	parts := [...]bytes.Slice{
 		nil, fixture.Maximum[:1], fixture.Maximum[:2], fixture.Maximum[:],
 	}
 	for _, part := range parts {
-		one_part := [...][]byte{part}
+		one_part := [...]bytes.Slice{part}
 		bytes.Join_Into(fixture.Alternate[:], one_part[:], nil)
-	}
-}
-
-func cover_character_collection_domains(fixture *domain_fixture) {
-	destinations := [...]bytes.Characters{
-		nil, fixture.Characters[:1], fixture.Characters[:2], fixture.Characters[:],
-	}
-	for _, destination := range destinations {
-		bytes.Runes_Into(destination, nil)
 	}
 }
 
@@ -940,23 +663,9 @@ func cover_separator_size_domains(fixture *domain_fixture) {
 	}
 }
 
-func cover_transform_special_domains(fixture *domain_fixture) {
-	var special_storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
-	turkish := ucd.Special_Case(ucd.Turkish_Case(special_storage[:]))
-	specials := [...]ucd.Special_Case{
-		turkish[:0], turkish[:1], turkish[:2], turkish[:],
-	}
-	for _, special := range specials {
-		bytes.To_Upper_Special_Into(fixture.Alternate[:0], special, nil)
-		bytes.To_Lower_Special_Into(fixture.Alternate[:0], special, nil)
-		bytes.To_Title_Special_Into(fixture.Alternate[:0], special, nil)
-	}
-}
-
 func cover_search_result_domains(fixture *domain_fixture) {
 	cover_first_index_domains(fixture)
 	cover_last_index_domains(fixture)
-	cover_function_index_domains(fixture)
 }
 
 func cover_first_index_domains(fixture *domain_fixture) {
@@ -971,20 +680,11 @@ func cover_first_index_domains(fixture *domain_fixture) {
 	bytes.Index_Byte(source, 1)
 	bytes.Index_Byte(source, 2)
 	bytes.Index_Byte(source, 255)
-	bytes.Index_Rune(source, 'x')
-	bytes.Index_Rune(source, 0)
-	bytes.Index_Rune(source, 1)
-	bytes.Index_Rune(source, 2)
-	bytes.Index_Rune(source, '�')
-	bytes.Index_Any(source, "x")
-	bytes.Index_Any(source, "\x00")
-	bytes.Index_Any(source, "\x01")
-	bytes.Index_Any(source, "\x02")
-	bytes.Index_Any(source, "\xff")
 }
 
 func cover_last_index_domains(fixture *domain_fixture) {
 	source := fixture.Maximum[:]
+	bytes.Last_Index(nil, fixture.Maximum[:1])
 	bytes.Last_Index(source, fixture.Alternate[:1])
 	bytes.Last_Index(source, source[:1])
 	bytes.Last_Index(source, source[1:2])
@@ -995,34 +695,12 @@ func cover_last_index_domains(fixture *domain_fixture) {
 	bytes.Last_Index_Byte(source, 1)
 	bytes.Last_Index_Byte(source, 2)
 	bytes.Last_Index_Byte(source, 255)
-	bytes.Last_Index_Any(source, "x")
-	bytes.Last_Index_Any(source, "\x00")
-	bytes.Last_Index_Any(source, "\x01")
-	bytes.Last_Index_Any(source, "\x02")
-	bytes.Last_Index_Any(source, "\xff")
-}
-
-func cover_function_index_domains(fixture *domain_fixture) {
-	source := fixture.Maximum[:]
-	predicates := [...]func(rune) (matches bool){
-		never_match, is_zero, is_one, is_two, is_replacement,
-	}
-	for _, predicate := range predicates {
-		bytes.Index_Function(source, predicate)
-		bytes.Last_Index_Function(source, predicate)
-	}
 }
 
 func cover_scalar_input_domains(fixture *domain_fixture) {
 	byte_values := [...]bytes.Byte{0, 1, 2, 255}
 	for _, value := range byte_values {
 		cover_byte_input_domains(fixture, value)
-	}
-	character_values := [...]bytes.Character{
-		-2147483648, -1, 0, 1, 2, 2147483647,
-	}
-	for _, character := range character_values {
-		cover_character_input_domains(fixture, character)
 	}
 	cover_reader_offset_domains(fixture)
 }
@@ -1035,16 +713,6 @@ func cover_byte_input_domains(fixture *domain_fixture, value bytes.Byte) {
 	bytes.Buffer_Write_Byte(&buffer, value)
 	bytes.Buffer_Init(&buffer, fixture.Alternate[:], nil)
 	bytes.Buffer_Read_Until(&buffer, value)
-}
-
-func cover_character_input_domains(
-	fixture *domain_fixture, character bytes.Character,
-) {
-	bytes.Contains_Rune(nil, character)
-	bytes.Index_Rune(nil, character)
-	var buffer bytes.Buffer
-	bytes.Buffer_Init(&buffer, fixture.Alternate[:], nil)
-	bytes.Buffer_Write_Character(&buffer, character)
 }
 
 func cover_reader_offset_domains(fixture *domain_fixture) {
@@ -1076,7 +744,7 @@ func cover_buffer_state_inputs(fixture *domain_fixture) {
 		{Content: fixture.Alternate[:2:2], Position: 2, Operation: 2},
 		{
 			Content: fixture.Alternate[:], Position: bytes.BOUNDARY_INDEX_MAXIMUM,
-			Operation: bytes.DECODED_SIZE_MAXIMUM,
+			Operation: bytes.READ_OPERATION_MAXIMUM,
 		},
 	}
 	for _, state := range states {
@@ -1118,8 +786,6 @@ func cover_buffer_state_edits(fixture *domain_fixture, state bytes.Buffer) {
 	panic_text(func() { bytes.Buffer_Write_Text(&candidate, "") })
 	candidate = state
 	panic_text(func() { bytes.Buffer_Write_Byte(&candidate, 0) })
-	candidate = state
-	panic_text(func() { bytes.Buffer_Write_Character(&candidate, 0) })
 }
 
 func cover_buffer_state_reads(fixture *domain_fixture, state bytes.Buffer) {
@@ -1129,10 +795,6 @@ func cover_buffer_state_reads(fixture *domain_fixture, state bytes.Buffer) {
 	bytes.Buffer_Next(&candidate, 0)
 	candidate = state
 	bytes.Buffer_Read_Byte(&candidate)
-	candidate = state
-	bytes.Buffer_Read_Character(&candidate)
-	candidate = state
-	panic_text(func() { bytes.Buffer_Unread_Character(&candidate) })
 	candidate = state
 	panic_text(func() { bytes.Buffer_Unread_Byte(&candidate) })
 	candidate = state
@@ -1198,7 +860,6 @@ func cover_buffer_size_inputs(fixture *domain_fixture) {
 
 func cover_buffer_scalar_outputs(fixture *domain_fixture) {
 	cover_buffer_byte_outputs(fixture)
-	cover_buffer_character_outputs(fixture)
 	cover_buffer_until_outputs(fixture)
 }
 
@@ -1210,29 +871,6 @@ func cover_buffer_byte_outputs(fixture *domain_fixture) {
 			&buffer, fixture.Alternate[:], fixture.Maximum[position:position+1],
 		)
 		bytes.Buffer_Read_Byte(&buffer)
-	}
-}
-
-func cover_buffer_character_outputs(fixture *domain_fixture) {
-	var buffer bytes.Buffer
-	characters := [...]bytes.Character{'a', 0x80, 0x800, 0x10000}
-	for _, character := range characters {
-		bytes.Buffer_Init(&buffer, fixture.Alternate[:], nil)
-		bytes.Buffer_Write_Character(&buffer, character)
-	}
-	encoded_zero := [TEST_SINGLE_COUNT]byte{0}
-	encoded_one := [TEST_SINGLE_COUNT]byte{1}
-	encoded_two := [TEST_SINGLE_COUNT]byte{2}
-	encoded_size_two := [TEST_READ_COUNT]byte{0xc2, 0x80}
-	encoded_size_three := [TEST_TRIPLE_COUNT]byte{0xe0, 0xa0, 0x80}
-	encoded_maximum := [TEST_CHARACTER_COUNT]byte{0xf4, 0x8f, 0xbf, 0xbf}
-	values := [...]bytes.Slice{
-		encoded_zero[:], encoded_one[:], encoded_two[:], encoded_size_two[:],
-		encoded_size_three[:], encoded_maximum[:],
-	}
-	for _, value := range values {
-		bytes.Buffer_Init(&buffer, fixture.Alternate[:], value)
-		bytes.Buffer_Read_Character(&buffer)
 	}
 }
 
@@ -1283,15 +921,11 @@ func cover_reader_state_queries(fixture *domain_fixture, state bytes.Reader) {
 	bytes.Reader_Read_At_Into(&candidate, fixture.Alternate[:0], 0)
 	candidate = state
 	bytes.Reader_Read_Byte(&candidate)
-	candidate = state
-	bytes.Reader_Read_Character(&candidate)
 }
 
 func cover_reader_state_cursor(fixture *domain_fixture, state bytes.Reader) {
 	candidate := state
 	panic_text(func() { bytes.Reader_Unread_Byte(&candidate) })
-	candidate = state
-	panic_text(func() { bytes.Reader_Unread_Character(&candidate) })
 	candidate = state
 	bytes.Reader_Seek(&candidate, 0, bytes.SEEK_FROM_START)
 	candidate = state
@@ -1337,7 +971,6 @@ func cover_reader_origins(fixture *domain_fixture) {
 
 func cover_reader_scalar_outputs(fixture *domain_fixture) {
 	cover_reader_byte_outputs(fixture)
-	cover_reader_character_outputs(fixture)
 }
 
 func cover_reader_byte_outputs(fixture *domain_fixture) {
@@ -1346,24 +979,6 @@ func cover_reader_byte_outputs(fixture *domain_fixture) {
 		var reader bytes.Reader
 		bytes.Reader_Reset(&reader, fixture.Maximum[position:position+1])
 		bytes.Reader_Read_Byte(&reader)
-	}
-}
-
-func cover_reader_character_outputs(fixture *domain_fixture) {
-	encoded_zero := [TEST_SINGLE_COUNT]byte{0}
-	encoded_one := [TEST_SINGLE_COUNT]byte{1}
-	encoded_two := [TEST_SINGLE_COUNT]byte{2}
-	encoded_size_two := [TEST_READ_COUNT]byte{0xc2, 0x80}
-	encoded_size_three := [TEST_TRIPLE_COUNT]byte{0xe0, 0xa0, 0x80}
-	encoded_maximum := [TEST_CHARACTER_COUNT]byte{0xf4, 0x8f, 0xbf, 0xbf}
-	values := [...]bytes.Slice{
-		encoded_zero[:], encoded_one[:], encoded_two[:], encoded_size_two[:],
-		encoded_size_three[:], encoded_maximum[:],
-	}
-	for _, value := range values {
-		var reader bytes.Reader
-		bytes.Reader_Reset(&reader, value)
-		bytes.Reader_Read_Character(&reader)
 	}
 }
 
@@ -1380,55 +995,25 @@ func cover_cut_output_domains(fixture *domain_fixture) {
 	}
 }
 
-func cover_transform_maximum_outputs(fixture *domain_fixture) {
-	source := fixture.Lines[:]
-	destination := fixture.Alternate[:]
-	bytes.Map_Into(destination, identity_character, source)
-	bytes.To_Upper_Into(destination, source)
-	bytes.To_Lower_Into(destination, source)
-	bytes.To_Title_Into(destination, source)
-	bytes.To_Upper_Special_Into(destination, nil, source)
-	bytes.To_Lower_Special_Into(destination, nil, source)
-	bytes.To_Title_Special_Into(destination, nil, source)
-	bytes.To_Valid_UTF8_Into(destination, source, nil)
-	bytes.Title_Into(destination, source)
-	maximum_character := [TEST_CHARACTER_COUNT]byte{0xf4, 0x8f, 0xbf, 0xbf}
-	bytes.Contains_Any(
-		maximum_character[:], bytes.Text(string(maximum_character[:])),
-	)
-	var title_source [TEST_FIVE_COUNT]byte
-	copy(title_source[:], maximum_character[:])
-	title_source[4] = 'a'
-	var title_destination [TEST_FIVE_COUNT]byte
-	bytes.Title_Into(title_destination[:], title_source[:])
-}
-
 func cover_argument_output_domains(fixture *domain_fixture) {
-	values := [...]bytes.Slice{
+	values := [...][]byte{
 		nil, fixture.Maximum[:1], fixture.Maximum[:2], fixture.Maximum[:],
 	}
 	for _, value := range values {
 		bytes.Join_Into(nil, nil, value)
 		panic_text(func() { bytes.Replace_Into(nil, nil, value, value, -1) })
 		panic_text(func() { bytes.Replace_All_Into(nil, nil, value, value) })
-		panic_text(func() { bytes.To_Valid_UTF8_Into(nil, nil, value) })
 	}
 }
 
 func cover_trim_output_domains(fixture *domain_fixture) {
-	sources := [...]bytes.Slice{
+	sources := [...][]byte{
 		nil, fixture.Lines[:1], fixture.Lines[:2], fixture.Lines[:],
 	}
 	absent := []byte("x")
 	for _, source := range sources {
-		bytes.Trim(source, "")
-		bytes.Trim_Left(source, "")
-		bytes.Trim_Right(source, "")
 		bytes.Trim_Prefix(source, absent)
 		bytes.Trim_Suffix(source, absent)
-		bytes.Trim_Function(source, never_match)
-		bytes.Trim_Left_Function(source, never_match)
-		bytes.Trim_Right_Function(source, never_match)
 	}
 }
 
@@ -1438,24 +1023,28 @@ type zero_allocation_check struct {
 }
 
 type zero_allocation_fixture struct {
-	Storage     [TEST_STORAGE_COUNT]byte
-	Alternate   [TEST_STORAGE_COUNT]byte
-	Source      [TEST_READ_COUNT]byte
-	Parts       [TEST_READ_COUNT][]byte
-	Slots       [TEST_SLOT_COUNT][]byte
-	Characters  [TEST_CHARACTER_COUNT]rune
-	Buffer      bytes.Buffer
-	Reader      bytes.Reader
-	Special     ucd.Special_Case
-	Case_Ranges [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
-	Observable  int
+	Storage    []byte
+	Alternate  []byte
+	Source     []byte
+	Parts      bytes.Slices
+	Slots      bytes.Slices
+	Buffer     bytes.Buffer
+	Reader     bytes.Reader
+	Observable int
 }
 
 func verify_api_is_zero_allocation(t *testing.T) {
+	var storage [TEST_STORAGE_COUNT]byte
+	var alternate [TEST_STORAGE_COUNT]byte
+	var source [TEST_READ_COUNT]byte
+	var parts [TEST_READ_COUNT]bytes.Slice
+	var slots [TEST_SLOT_COUNT]bytes.Slice
 	fixture := zero_allocation_fixture{
-		Source: [TEST_READ_COUNT]byte{'a', 'b'},
+		Storage: storage[:], Alternate: alternate[:], Source: source[:],
+		Parts: parts[:], Slots: slots[:],
 	}
-	fixture.Special = ucd.Special_Case(ucd.Turkish_Case(fixture.Case_Ranges[:]))
+	fixture.Source[0] = 'a'
+	fixture.Source[1] = 'b'
 	fixture.Parts[0] = fixture.Source[:1]
 	fixture.Parts[1] = fixture.Source[1:]
 	groups := [][]zero_allocation_check{
@@ -1503,7 +1092,8 @@ func buffer_allocation_checks(
 		}},
 		{Name: "Buffer_Available_Slice", Call: func() {
 			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], fixture.Source[:])
-			fixture.Observable = cap(bytes.Buffer_Available_Slice(&fixture.Buffer))
+			available := bytes.Buffer_Available_Slice(&fixture.Buffer)
+			fixture.Observable = len(available.Storage)
 		}},
 		{Name: "Buffer_Peek", Call: func() {
 			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], fixture.Source[:])
@@ -1558,12 +1148,6 @@ func buffer_io_allocation_checks(
 			bytes.Buffer_Write_Byte(&fixture.Buffer, 'a')
 			fixture.Observable = len(fixture.Buffer.Content)
 		}},
-		{Name: "Buffer_Write_Character", Call: func() {
-			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], nil)
-			fixture.Observable = int(bytes.Buffer_Write_Character(
-				&fixture.Buffer, '☺',
-			))
-		}},
 		{Name: "Buffer_Read_Into", Call: func() {
 			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], fixture.Source[:])
 			fixture.Observable = int(bytes.Buffer_Read_Into(
@@ -1578,18 +1162,6 @@ func buffer_io_allocation_checks(
 			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], fixture.Source[:])
 			value, found := bytes.Buffer_Read_Byte(&fixture.Buffer)
 			fixture.Observable = int(value) + zero_allocation_boolean(found)
-		}},
-		{Name: "Buffer_Read_Character", Call: func() {
-			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], fixture.Source[:])
-			character, size, found := bytes.Buffer_Read_Character(&fixture.Buffer)
-			fixture.Observable = int(character) + int(size)
-			fixture.Observable += zero_allocation_boolean(found)
-		}},
-		{Name: "Buffer_Unread_Character", Call: func() {
-			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], fixture.Source[:])
-			bytes.Buffer_Read_Character(&fixture.Buffer)
-			bytes.Buffer_Unread_Character(&fixture.Buffer)
-			fixture.Observable = int(fixture.Buffer.Position)
 		}},
 		{Name: "Buffer_Unread_Byte", Call: func() {
 			bytes.Buffer_Init(&fixture.Buffer, fixture.Storage[:], fixture.Source[:])
@@ -1647,18 +1219,6 @@ func reader_cursor_allocation_checks(
 			bytes.Reader_Unread_Byte(&fixture.Reader)
 			fixture.Observable = int(fixture.Reader.Position)
 		}},
-		{Name: "Reader_Read_Character", Call: func() {
-			bytes.Reader_Reset(&fixture.Reader, fixture.Source[:])
-			character, size, found := bytes.Reader_Read_Character(&fixture.Reader)
-			fixture.Observable = int(character) + int(size)
-			fixture.Observable += zero_allocation_boolean(found)
-		}},
-		{Name: "Reader_Unread_Character", Call: func() {
-			bytes.Reader_Reset(&fixture.Reader, fixture.Source[:])
-			bytes.Reader_Read_Character(&fixture.Reader)
-			bytes.Reader_Unread_Character(&fixture.Reader)
-			fixture.Observable = int(fixture.Reader.Position)
-		}},
 		{Name: "Reader_Seek", Call: func() {
 			bytes.Reader_Reset(&fixture.Reader, fixture.Source[:])
 			fixture.Observable = int(bytes.Reader_Seek(
@@ -1694,21 +1254,6 @@ func query_allocation_checks(
 				fixture.Source[:], fixture.Source[:1],
 			))
 		}},
-		{Name: "Contains_Any", Call: func() {
-			fixture.Observable = zero_allocation_boolean(bytes.Contains_Any(
-				fixture.Source[:], "a",
-			))
-		}},
-		{Name: "Contains_Rune", Call: func() {
-			fixture.Observable = zero_allocation_boolean(bytes.Contains_Rune(
-				fixture.Source[:], 'a',
-			))
-		}},
-		{Name: "Contains_Function", Call: func() {
-			fixture.Observable = zero_allocation_boolean(bytes.Contains_Function(
-				fixture.Source[:], is_letter_a,
-			))
-		}},
 		{Name: "Index_Byte", Call: func() {
 			fixture.Observable = int(bytes.Index_Byte(fixture.Source[:], 'a'))
 		}},
@@ -1719,15 +1264,6 @@ func query_allocation_checks(
 		}},
 		{Name: "Last_Index_Byte", Call: func() {
 			fixture.Observable = int(bytes.Last_Index_Byte(fixture.Source[:], 'a'))
-		}},
-		{Name: "Index_Rune", Call: func() {
-			fixture.Observable = int(bytes.Index_Rune(fixture.Source[:], 'a'))
-		}},
-		{Name: "Index_Any", Call: func() {
-			fixture.Observable = int(bytes.Index_Any(fixture.Source[:], "a"))
-		}},
-		{Name: "Last_Index_Any", Call: func() {
-			fixture.Observable = int(bytes.Last_Index_Any(fixture.Source[:], "a"))
 		}},
 	}
 }
@@ -1754,21 +1290,6 @@ func query_suffix_allocation_checks(
 		{Name: "Overlap", Call: func() {
 			fixture.Observable = zero_allocation_boolean(bytes.Overlap(
 				fixture.Source[:], fixture.Source[1:],
-			))
-		}},
-		{Name: "Index_Function", Call: func() {
-			fixture.Observable = int(bytes.Index_Function(
-				fixture.Source[:], is_letter_a,
-			))
-		}},
-		{Name: "Last_Index_Function", Call: func() {
-			fixture.Observable = int(bytes.Last_Index_Function(
-				fixture.Source[:], is_letter_a,
-			))
-		}},
-		{Name: "Equal_Fold", Call: func() {
-			fixture.Observable = zero_allocation_boolean(bytes.Equal_Fold(
-				fixture.Source[:], fixture.Source[:],
 			))
 		}},
 		{Name: "Index", Call: func() {
@@ -1801,16 +1322,6 @@ func output_allocation_checks(
 				fixture.Slots[:], fixture.Source[:], fixture.Source[:1], 1,
 			))
 		}},
-		{Name: "Fields_Into", Call: func() {
-			fixture.Observable = int(bytes.Fields_Into(
-				fixture.Slots[:], fixture.Source[:],
-			))
-		}},
-		{Name: "Fields_Function_Into", Call: func() {
-			fixture.Observable = int(bytes.Fields_Function_Into(
-				fixture.Slots[:], fixture.Source[:], is_dash,
-			))
-		}},
 		{Name: "Join_Into", Call: func() {
 			fixture.Observable = int(bytes.Join_Into(
 				fixture.Storage[:], fixture.Parts[:], fixture.Alternate[:1],
@@ -1823,54 +1334,9 @@ func transform_allocation_checks(
 	fixture *zero_allocation_fixture,
 ) (checks []zero_allocation_check) {
 	return []zero_allocation_check{
-		{Name: "Map_Into", Call: func() {
-			fixture.Observable = int(bytes.Map_Into(
-				fixture.Storage[:], map_character, fixture.Source[:],
-			))
-		}},
 		{Name: "Repeat_Into", Call: func() {
 			fixture.Observable = int(bytes.Repeat_Into(
 				fixture.Storage[:], fixture.Source[:], 2,
-			))
-		}},
-		{Name: "To_Upper_Into", Call: func() {
-			fixture.Observable = int(bytes.To_Upper_Into(
-				fixture.Storage[:], fixture.Source[:],
-			))
-		}},
-		{Name: "To_Lower_Into", Call: func() {
-			fixture.Observable = int(bytes.To_Lower_Into(
-				fixture.Storage[:], fixture.Source[:],
-			))
-		}},
-		{Name: "To_Title_Into", Call: func() {
-			fixture.Observable = int(bytes.To_Title_Into(
-				fixture.Storage[:], fixture.Source[:],
-			))
-		}},
-		{Name: "To_Upper_Special_Into", Call: func() {
-			fixture.Observable = int(bytes.To_Upper_Special_Into(
-				fixture.Storage[:], fixture.Special, fixture.Source[:],
-			))
-		}},
-		{Name: "To_Lower_Special_Into", Call: func() {
-			fixture.Observable = int(bytes.To_Lower_Special_Into(
-				fixture.Storage[:], fixture.Special, fixture.Source[:],
-			))
-		}},
-		{Name: "To_Title_Special_Into", Call: func() {
-			fixture.Observable = int(bytes.To_Title_Special_Into(
-				fixture.Storage[:], fixture.Special, fixture.Source[:],
-			))
-		}},
-		{Name: "To_Valid_UTF8_Into", Call: func() {
-			fixture.Observable = int(bytes.To_Valid_UTF8_Into(
-				fixture.Storage[:], fixture.Source[:], fixture.Alternate[:1],
-			))
-		}},
-		{Name: "Title_Into", Call: func() {
-			fixture.Observable = int(bytes.Title_Into(
-				fixture.Storage[:], fixture.Source[:],
 			))
 		}},
 	}
@@ -1880,11 +1346,6 @@ func copy_allocation_checks(
 	fixture *zero_allocation_fixture,
 ) (checks []zero_allocation_check) {
 	return []zero_allocation_check{
-		{Name: "Runes_Into", Call: func() {
-			fixture.Observable = int(bytes.Runes_Into(
-				fixture.Characters[:], fixture.Source[:],
-			))
-		}},
 		{Name: "Replace_Into", Call: func() {
 			fixture.Observable = int(bytes.Replace_Into(
 				fixture.Storage[:], fixture.Source[:], fixture.Source[:1],
@@ -1909,21 +1370,6 @@ func view_iteration_allocation_checks(
 	fixture *zero_allocation_fixture,
 ) (checks []zero_allocation_check) {
 	return []zero_allocation_check{
-		{Name: "Trim_Left_Function", Call: func() {
-			fixture.Observable = len(bytes.Trim_Left_Function(
-				fixture.Source[:], is_dash,
-			))
-		}},
-		{Name: "Trim_Right_Function", Call: func() {
-			fixture.Observable = len(bytes.Trim_Right_Function(
-				fixture.Source[:], is_dash,
-			))
-		}},
-		{Name: "Trim_Function", Call: func() {
-			fixture.Observable = len(bytes.Trim_Function(
-				fixture.Source[:], is_dash,
-			))
-		}},
 		{Name: "Trim_Prefix", Call: func() {
 			fixture.Observable = len(bytes.Trim_Prefix(
 				fixture.Source[:], fixture.Source[:1],
@@ -1933,18 +1379,6 @@ func view_iteration_allocation_checks(
 			fixture.Observable = len(bytes.Trim_Suffix(
 				fixture.Source[:], fixture.Source[1:],
 			))
-		}},
-		{Name: "Trim", Call: func() {
-			fixture.Observable = len(bytes.Trim(fixture.Source[:], "a"))
-		}},
-		{Name: "Trim_Left", Call: func() {
-			fixture.Observable = len(bytes.Trim_Left(fixture.Source[:], "a"))
-		}},
-		{Name: "Trim_Right", Call: func() {
-			fixture.Observable = len(bytes.Trim_Right(fixture.Source[:], "b"))
-		}},
-		{Name: "Trim_Space", Call: func() {
-			fixture.Observable = len(bytes.Trim_Space(fixture.Source[:]))
 		}},
 	}
 }
@@ -1985,16 +1419,6 @@ func cut_iteration_allocation_checks(
 		{Name: "Split_After_Sequence", Call: func() {
 			fixture.Observable = int(bytes.Split_After_Sequence(
 				fixture.Source[:], fixture.Source[:1], zero_allocation_yield,
-			))
-		}},
-		{Name: "Fields_Sequence", Call: func() {
-			fixture.Observable = int(bytes.Fields_Sequence(
-				fixture.Source[:], zero_allocation_yield,
-			))
-		}},
-		{Name: "Fields_Function_Sequence", Call: func() {
-			fixture.Observable = int(bytes.Fields_Function_Sequence(
-				fixture.Source[:], is_dash, zero_allocation_yield,
 			))
 		}},
 	}

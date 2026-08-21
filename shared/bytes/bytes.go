@@ -7,20 +7,18 @@ import (
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
-	"local/james-orcales/shared/unicode/ucd"
-	"local/james-orcales/shared/unicode/utf8"
 )
 
 // SLICE_SIZE_MINIMUM is the size of an empty Slice.
-const SLICE_SIZE_MINIMUM = utf8.SEQUENCE_SIZE_MINIMUM
+const SLICE_SIZE_MINIMUM = 0
 
 // SLICE_SIZE_MAXIMUM bounds each Slice that the package owns or reads.
-const SLICE_SIZE_MAXIMUM = utf8.SEQUENCE_SIZE_MAXIMUM
+const SLICE_SIZE_MAXIMUM = 4 * bits.KIBIBYTE_BYTES
 
 // TEXT_SIZE_MINIMUM is the size of empty Text.
 const TEXT_SIZE_MINIMUM = SLICE_SIZE_MINIMUM
 
-// TEXT_SIZE_MAXIMUM bounds text that defines a character or cut set.
+// TEXT_SIZE_MAXIMUM keeps string-backed bytes inside the Slice domain.
 const TEXT_SIZE_MAXIMUM = SLICE_SIZE_MAXIMUM
 
 // SLICES_COUNT_MINIMUM is the count in an absent split result.
@@ -28,18 +26,6 @@ const SLICES_COUNT_MINIMUM = SLICE_SIZE_MINIMUM
 
 // SLICES_COUNT_MAXIMUM includes both sides of a separator at every input byte.
 const SLICES_COUNT_MAXIMUM = SLICE_SIZE_MAXIMUM + 1
-
-// FIELDS_COUNT_MINIMUM is the field count of empty input.
-const FIELDS_COUNT_MINIMUM = SLICES_COUNT_MINIMUM
-
-// FIELDS_COUNT_MAXIMUM alternates one-byte fields and one-byte separators.
-const FIELDS_COUNT_MAXIMUM = SLICES_COUNT_MAXIMUM / 2
-
-// CHARACTERS_COUNT_MINIMUM is the character count of empty input.
-const CHARACTERS_COUNT_MINIMUM = SLICE_SIZE_MINIMUM
-
-// CHARACTERS_COUNT_MAXIMUM occurs when each input byte names one character.
-const CHARACTERS_COUNT_MAXIMUM = SLICE_SIZE_MAXIMUM
 
 // INDEX_ABSENT reports that a search found no match.
 const INDEX_ABSENT = -1
@@ -59,7 +45,7 @@ const COUNT_VALUE_MAXIMUM = SLICE_SIZE_MAXIMUM
 // OCCURRENCE_COUNT_MINIMUM is the smallest match count.
 const OCCURRENCE_COUNT_MINIMUM = SLICES_COUNT_MINIMUM
 
-// OCCURRENCE_COUNT_MAXIMUM includes both boundaries around every character.
+// OCCURRENCE_COUNT_MAXIMUM includes both boundaries around every byte.
 const OCCURRENCE_COUNT_MAXIMUM = SLICES_COUNT_MAXIMUM
 
 // LIMIT_MINIMUM requests all split results.
@@ -89,44 +75,20 @@ const ORDER_EQUAL = 0
 // ORDER_AFTER reports that the left Slice follows the right Slice.
 const ORDER_AFTER = 1
 
-// DECODED_CHARACTER_MINIMUM is the smallest decoded UTF-8 character.
-const DECODED_CHARACTER_MINIMUM int32 = utf8.DECODED_CHARACTER_MINIMUM
-
-// DECODED_CHARACTER_MAXIMUM is the largest decoded UTF-8 character.
-const DECODED_CHARACTER_MAXIMUM int32 = utf8.DECODED_CHARACTER_MAXIMUM
-
-// DECODED_SIZE_MINIMUM reports that no character was read.
-const DECODED_SIZE_MINIMUM = utf8.DECODED_SIZE_MINIMUM
-
-// DECODED_SIZE_MAXIMUM is the largest UTF-8 encoding.
-const DECODED_SIZE_MAXIMUM = utf8.DECODED_SIZE_MAXIMUM
-
-// ENCODED_SIZE_MINIMUM is the smallest UTF-8 encoding.
-const ENCODED_SIZE_MINIMUM = utf8.CHARACTER_SIZE_MINIMUM
-
-// ENCODED_SIZE_TWO is a two-byte UTF-8 encoding.
-const ENCODED_SIZE_TWO = utf8.CHARACTER_SIZE_TWO
-
-// ENCODED_SIZE_THREE is a three-byte UTF-8 encoding.
-const ENCODED_SIZE_THREE = utf8.CHARACTER_SIZE_THREE
-
-// ENCODED_SIZE_MAXIMUM is the largest UTF-8 encoding.
-const ENCODED_SIZE_MAXIMUM = DECODED_SIZE_MAXIMUM
-
-// READ_OPERATION_OTHER records a read that was not ReadRune.
+// READ_OPERATION_OTHER records a read that cannot restore its full width.
 const READ_OPERATION_OTHER = -1
 
 // READ_OPERATION_ABSENT records that no read can be reversed.
-const READ_OPERATION_ABSENT = DECODED_SIZE_MINIMUM
+const READ_OPERATION_ABSENT = 0
 
-// READ_OPERATION_RUNE_1 records a one-byte rune.
-const READ_OPERATION_RUNE_1 = ENCODED_SIZE_MINIMUM
+// READ_OPERATION_SINGLE records one reversible byte.
+const READ_OPERATION_SINGLE = 1
 
-// READ_OPERATION_MINIMUM records a non-rune read.
+// READ_OPERATION_MINIMUM records a read whose full width is unavailable.
 const READ_OPERATION_MINIMUM = READ_OPERATION_OTHER
 
-// READ_OPERATION_MAXIMUM records the largest UTF-8 rune.
-const READ_OPERATION_MAXIMUM = DECODED_SIZE_MAXIMUM
+// READ_OPERATION_MAXIMUM bounds extension-owned grouped reads.
+const READ_OPERATION_MAXIMUM = 4
 
 // GROWTH_COUNT_MINIMUM requests no additional Buffer space.
 const GROWTH_COUNT_MINIMUM = SLICE_SIZE_MINIMUM
@@ -182,9 +144,9 @@ func Separator_Size_Invariants(value Separator_Size, namespace aver.Namespace) {
 }
 
 // Empty_Slices is a split result for an empty separator.
-type Empty_Slices [][]byte
+type Empty_Slices []Slice
 
-// Empty_Slices_Invariants bounds results to one item for each source character.
+// Empty_Slices_Invariants bounds results to one item for each source byte.
 func Empty_Slices_Invariants(value Empty_Slices, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(len(value), SLICES_COUNT_MINIMUM, SLICE_SIZE_MAXIMUM).
@@ -201,7 +163,7 @@ func Slice_Invariants(value Slice, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Text is bounded text that supplies a character or cut set.
+// Text carries bounded string storage without changing its byte meaning.
 type Text string
 
 // Text_Invariants bounds Text to the Slice size domain.
@@ -212,42 +174,12 @@ func Text_Invariants(value Text, namespace aver.Namespace) {
 }
 
 // Slices is a split result or a collection that Join reads.
-type Slices [][]byte
+type Slices []Slice
 
 // Slices_Invariants bounds the number of Slices in a split or join collection.
 func Slices_Invariants(value Slices, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(len(value), SLICES_COUNT_MINIMUM, SLICES_COUNT_MAXIMUM).
-		Ensure()
-}
-
-// Field_Slices is the set of fields that one bounded Slice can hold.
-type Field_Slices [][]byte
-
-// Field_Slices_Invariants bounds the field count that alternating bytes can make.
-func Field_Slices_Invariants(value Field_Slices, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), FIELDS_COUNT_MINIMUM, FIELDS_COUNT_MAXIMUM).
-		Ensure()
-}
-
-// Field_Count is the number of fields produced from one bounded Slice.
-type Field_Count int
-
-// Field_Count_Invariants bounds fields through alternating byte delimiters.
-func Field_Count_Invariants(value Field_Count, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), FIELDS_COUNT_MINIMUM, FIELDS_COUNT_MAXIMUM).
-		Ensure()
-}
-
-// Characters is the decoded characters of a Slice.
-type Characters []rune
-
-// Characters_Invariants bounds the number of decoded characters.
-func Characters_Invariants(value Characters, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), CHARACTERS_COUNT_MINIMUM, CHARACTERS_COUNT_MAXIMUM).
 		Ensure()
 }
 
@@ -271,7 +203,7 @@ func Boundary_Index_Invariants(value Boundary_Index, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Count_Value is the number of produced split, line, or character items.
+// Count_Value is the number of produced split or line items.
 type Count_Value int
 
 // Count_Value_Invariants bounds one output item per source byte.
@@ -281,7 +213,7 @@ func Count_Value_Invariants(value Count_Value, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Occurrence_Count counts matches, including every empty UTF-8 boundary.
+// Occurrence_Count counts matches, including every empty byte boundary.
 type Occurrence_Count int
 
 // Occurrence_Count_Invariants bounds matches through every empty boundary.
@@ -345,16 +277,6 @@ func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Character is one rune that a search or mapping reads.
-type Character rune
-
-// Character_Invariants states the complete rune storage domain.
-func Character_Invariants(value Character, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
-		Ensure()
-}
-
 // Byte is one byte that a search reads.
 type Byte byte
 
@@ -365,56 +287,16 @@ func Byte_Invariants(value Byte, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Decoded_Character is a character returned by a UTF-8 decoder.
-type Decoded_Character rune
-
-// Decoded_Character_Invariants bounds a decoded character to valid Unicode values.
-func Decoded_Character_Invariants(value Decoded_Character, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(
-			int32(value), DECODED_CHARACTER_MINIMUM, DECODED_CHARACTER_MAXIMUM,
-		).
-		Ensure()
+// Available_Slice is writable Buffer storage beyond initialized content. Storage uses full length
+// because empty slice would falsely describe zero members while retaining large capacity.
+type Available_Slice struct {
+	// Storage aliases each writable byte after initialized content.
+	Storage Slice
 }
 
-// Decoded_Size is the byte count consumed by a character read.
-type Decoded_Size int
-
-// Decoded_Size_Invariants bounds a character read to one UTF-8 encoding.
-func Decoded_Size_Invariants(value Decoded_Size, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), DECODED_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Encoded_Size is the byte count written for one character.
-type Encoded_Size int
-
-// Encoded_Size_Invariants bounds a character write to one UTF-8 encoding.
-func Encoded_Size_Invariants(value Encoded_Size, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Int(
-			int(value),
-			ENCODED_SIZE_MINIMUM,
-			ENCODED_SIZE_TWO,
-			ENCODED_SIZE_THREE,
-			ENCODED_SIZE_MAXIMUM,
-		).
-		Ensure()
-}
-
-// Available_Slice is the empty capacity that Buffer exposes for append.
-type Available_Slice []byte
-
-// Available_Slice_Invariants bounds the available Buffer capacity.
+// Available_Slice_Invariants composes writable storage range.
 func Available_Slice_Invariants(value Available_Slice, namespace aver.Namespace) {
-	aver.Always(
-		len(value) == SLICE_SIZE_MINIMUM,
-		"Available Buffer storage has no readable bytes",
-	)
-	aver.Tree(value, namespace).
-		Range_Int(cap(value), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
-		Ensure()
+	Slice_Invariants(value.Storage, namespace)
 }
 
 // Growth_Count is the capacity that Buffer_Grow reserves.
@@ -430,7 +312,7 @@ func Growth_Count_Invariants(value Growth_Count, namespace aver.Namespace) {
 // Read_Operation records the read that Buffer can reverse.
 type Read_Operation int8
 
-// Read_Operation_Invariants bounds the read operation to UTF-8 sizes and non-rune reads.
+// Read_Operation_Invariants bounds reversible widths and other reads.
 func Read_Operation_Invariants(value Read_Operation, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int8(int8(value), READ_OPERATION_MINIMUM, READ_OPERATION_MAXIMUM).
@@ -494,7 +376,7 @@ type Buffer struct {
 	Operation Read_Operation
 }
 
-// Buffer_Invariants composes borrowed storage and read state.
+// Buffer_Invariants keeps cursor state inside caller-owned storage.
 func Buffer_Invariants(value Buffer, namespace aver.Namespace) {
 	Slice_Invariants(value.Content, namespace)
 	Boundary_Invariants(value.Position, namespace)
@@ -509,17 +391,41 @@ func Buffer_Invariants(value Buffer, namespace aver.Namespace) {
 	)
 }
 
+// Buffer_Handle keeps borrowed buffer state nonnil at every mutation boundary.
+type Buffer_Handle *Buffer
+
+// Buffer_Handle_Invariants composes the buffer behind a required handle.
+func Buffer_Handle_Invariants(value Buffer_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "Byte Buffer handle exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Content), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
+		Range_Int(int(value.Position), SLICE_SIZE_MINIMUM, BOUNDARY_INDEX_MAXIMUM).
+		Range_Int8(
+			int8(value.Operation), READ_OPERATION_MINIMUM, READ_OPERATION_MAXIMUM,
+		).
+		Ensure()
+	aver.Always(
+		int(value.Position) <= len(value.Content),
+		"Buffer handle position does not exceed content size.",
+	)
+	aver.Always(
+		cap(value.Content) <= SLICE_SIZE_MAXIMUM,
+		"Buffer handle capacity does not exceed Slice limit.",
+	)
+	Buffer_Invariants(*value, namespace)
+}
+
 // Reader borrows one bounded Slice and tracks its byte cursor.
 type Reader struct {
 	// Source remains caller-owned.
 	Source Slice
 	// Position selects unread suffix start.
 	Position Reader_Position
-	// Previous records character boundary eligible for unread.
+	// Previous lets an extension record one grouped read boundary.
 	Previous Index_Value
 }
 
-// Reader_Invariants composes borrowed source and cursor state.
+// Reader_Invariants keeps the cursor inside caller-owned source.
 func Reader_Invariants(value Reader, namespace aver.Namespace) {
 	Slice_Invariants(value.Source, namespace)
 	Reader_Position_Invariants(value.Position, namespace)
@@ -530,10 +436,30 @@ func Reader_Invariants(value Reader, namespace aver.Namespace) {
 	)
 }
 
+// Reader_Handle keeps borrowed reader state nonnil at every cursor boundary.
+type Reader_Handle *Reader
+
+// Reader_Handle_Invariants composes the reader behind a required handle.
+func Reader_Handle_Invariants(value Reader_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "Byte Reader handle exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
+		Range_Int64(
+			int64(value.Position), READER_POSITION_MINIMUM, READER_POSITION_MAXIMUM,
+		).
+		Range_Int(int(value.Previous), INDEX_ABSENT, INDEX_MAXIMUM).
+		Ensure()
+	aver.Always(
+		int(value.Position) <= len(value.Source),
+		"Reader handle position does not exceed source size.",
+	)
+	Reader_Invariants(*value, namespace)
+}
+
 // Buffer_Init borrows storage and copies initial content into it.
-func Buffer_Init(buffer *Buffer, storage Slice, content Slice) (count Boundary) {
+func Buffer_Init(buffer Buffer_Handle, storage Slice, content Slice) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "buffer_init.count") }()
-	Buffer_Invariants(*buffer, "buffer_init.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_init.buffer")
 	Slice_Invariants(storage, "buffer_init.storage")
 	Slice_Invariants(content, "buffer_init.content")
 	aver.Always(
@@ -548,9 +474,9 @@ func Buffer_Init(buffer *Buffer, storage Slice, content Slice) (count Boundary) 
 }
 
 // Buffer_Init_Text borrows storage and copies initial text into it.
-func Buffer_Init_Text(buffer *Buffer, storage Slice, content Text) (count Boundary) {
+func Buffer_Init_Text(buffer Buffer_Handle, storage Slice, content Text) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "buffer_init_text.count") }()
-	Buffer_Invariants(*buffer, "buffer_init_text.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_init_text.buffer")
 	Slice_Invariants(storage, "buffer_init_text.storage")
 	Text_Invariants(content, "buffer_init_text.content")
 	aver.Always(
@@ -565,25 +491,28 @@ func Buffer_Init_Text(buffer *Buffer, storage Slice, content Text) (count Bounda
 }
 
 // Buffer_Bytes returns the unread content and aliases Buffer storage.
-func Buffer_Bytes(buffer *Buffer) (content Slice) {
+func Buffer_Bytes(buffer Buffer_Handle) (content Slice) {
 	defer func() { Slice_Invariants(content, "buffer_bytes.content") }()
-	Buffer_Invariants(*buffer, "buffer_bytes.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_bytes.buffer")
 	return buffer.Content[buffer.Position:len(buffer.Content):len(buffer.Content)]
 }
 
-// Buffer_Available_Slice returns empty writable capacity from Buffer storage.
-func Buffer_Available_Slice(buffer *Buffer) (available Available_Slice) {
+// Buffer_Available_Slice returns full writable storage beyond initialized Buffer content.
+func Buffer_Available_Slice(buffer Buffer_Handle) (available Available_Slice) {
 	defer func() {
 		Available_Slice_Invariants(available, "buffer_available_slice.available")
 	}()
-	Buffer_Invariants(*buffer, "buffer_available_slice.buffer")
-	return Available_Slice(buffer.Content[len(buffer.Content):])
+	Buffer_Handle_Invariants(buffer, "buffer_available_slice.buffer")
+	capacity_count := cap(buffer.Content)
+	return Available_Slice{
+		Storage: buffer.Content[len(buffer.Content):capacity_count:capacity_count],
+	}
 }
 
 // Buffer_Peek returns up to size unread bytes without state change.
-func Buffer_Peek(buffer *Buffer, size Boundary) (content Slice) {
+func Buffer_Peek(buffer Buffer_Handle, size Boundary) (content Slice) {
 	defer func() { Slice_Invariants(content, "buffer_peek.content") }()
-	Buffer_Invariants(*buffer, "buffer_peek.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_peek.buffer")
 	Boundary_Invariants(size, "buffer_peek.size")
 	if size > Buffer_Size(buffer) {
 		size = Buffer_Size(buffer)
@@ -593,29 +522,29 @@ func Buffer_Peek(buffer *Buffer, size Boundary) (content Slice) {
 }
 
 // Buffer_Size returns the unread byte count in Buffer.
-func Buffer_Size(buffer *Buffer) (count Boundary) {
+func Buffer_Size(buffer Buffer_Handle) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "buffer_length.count") }()
-	Buffer_Invariants(*buffer, "buffer_len.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_len.buffer")
 	return Boundary(len(buffer.Content)) - buffer.Position
 }
 
 // Buffer_Capacity returns the storage capacity of Buffer.
-func Buffer_Capacity(buffer *Buffer) (capacity Boundary) {
+func Buffer_Capacity(buffer Buffer_Handle) (capacity Boundary) {
 	defer func() { Boundary_Invariants(capacity, "buffer_capacity.capacity") }()
-	Buffer_Invariants(*buffer, "buffer_capacity.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_capacity.buffer")
 	return Boundary(cap(buffer.Content))
 }
 
 // Buffer_Available returns the unused Buffer capacity.
-func Buffer_Available(buffer *Buffer) (available Boundary) {
+func Buffer_Available(buffer Buffer_Handle) (available Boundary) {
 	defer func() { Boundary_Invariants(available, "buffer_available.available") }()
-	Buffer_Invariants(*buffer, "buffer_available.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_available.buffer")
 	return Boundary(cap(buffer.Content) - len(buffer.Content))
 }
 
 // Buffer_Truncate keeps the first size unread bytes.
-func Buffer_Truncate(buffer *Buffer, size Boundary) {
-	Buffer_Invariants(*buffer, "buffer_truncate.buffer")
+func Buffer_Truncate(buffer Buffer_Handle, size Boundary) {
+	Buffer_Handle_Invariants(buffer, "buffer_truncate.buffer")
 	Boundary_Invariants(size, "buffer_truncate.size")
 	if size == 0 {
 		Buffer_Reset(buffer)
@@ -629,24 +558,24 @@ func Buffer_Truncate(buffer *Buffer, size Boundary) {
 }
 
 // Buffer_Reset makes Buffer empty and keeps its storage.
-func Buffer_Reset(buffer *Buffer) {
-	Buffer_Invariants(*buffer, "buffer_reset.buffer")
+func Buffer_Reset(buffer Buffer_Handle) {
+	Buffer_Handle_Invariants(buffer, "buffer_reset.buffer")
 	buffer.Content = buffer.Content[:0]
 	buffer.Position = 0
 	buffer.Operation = READ_OPERATION_ABSENT
 }
 
 // Buffer_Grow reserves count bytes after the current content.
-func Buffer_Grow(buffer *Buffer, count Growth_Count) {
-	Buffer_Invariants(*buffer, "buffer_grow_public.buffer")
+func Buffer_Grow(buffer Buffer_Handle, count Growth_Count) {
+	Buffer_Handle_Invariants(buffer, "buffer_grow_public.buffer")
 	Growth_Count_Invariants(count, "buffer_grow_public.count")
 	buffer_reserve(buffer, count)
 }
 
 // Buffer_Write appends source to Buffer.
-func Buffer_Write(buffer *Buffer, source Slice) (count Boundary) {
+func Buffer_Write(buffer Buffer_Handle, source Slice) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "buffer_write.count") }()
-	Buffer_Invariants(*buffer, "buffer_write.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_write.buffer")
 	Slice_Invariants(source, "buffer_write.source")
 	buffer.Operation = READ_OPERATION_ABSENT
 	buffer_reserve(buffer, Growth_Count(len(source)))
@@ -656,9 +585,9 @@ func Buffer_Write(buffer *Buffer, source Slice) (count Boundary) {
 }
 
 // Buffer_Write_Text appends source to Buffer.
-func Buffer_Write_Text(buffer *Buffer, source Text) (count Boundary) {
+func Buffer_Write_Text(buffer Buffer_Handle, source Text) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "buffer_write_text.count") }()
-	Buffer_Invariants(*buffer, "buffer_write_string.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_write_string.buffer")
 	Text_Invariants(source, "buffer_write_string.source")
 	buffer.Operation = READ_OPERATION_ABSENT
 	buffer_reserve(buffer, Growth_Count(len(source)))
@@ -668,8 +597,8 @@ func Buffer_Write_Text(buffer *Buffer, source Text) (count Boundary) {
 }
 
 // Buffer_Write_Byte appends value to Buffer.
-func Buffer_Write_Byte(buffer *Buffer, value Byte) {
-	Buffer_Invariants(*buffer, "buffer_write_byte.buffer")
+func Buffer_Write_Byte(buffer Buffer_Handle, value Byte) {
+	Buffer_Handle_Invariants(buffer, "buffer_write_byte.buffer")
 	Byte_Invariants(value, "buffer_write_byte.value")
 	buffer.Operation = READ_OPERATION_ABSENT
 	buffer_reserve(buffer, 1)
@@ -678,36 +607,10 @@ func Buffer_Write_Byte(buffer *Buffer, value Byte) {
 	buffer.Content[content_count] = byte(value)
 }
 
-// Buffer_Write_Character appends the UTF-8 form of character to Buffer.
-func Buffer_Write_Character(
-	buffer *Buffer,
-	character Character,
-) (count Encoded_Size) {
-	defer func() { Encoded_Size_Invariants(count, "buffer_write_character.count") }()
-	Buffer_Invariants(*buffer, "buffer_write_rune.buffer")
-	Character_Invariants(character, "buffer_write_rune.character")
-	if uint32(character) < uint32(utf8.CHARACTER_SELF) {
-		Buffer_Write_Byte(buffer, Byte(character))
-		return 1
-	}
-	buffer.Operation = READ_OPERATION_ABSENT
-	encoded_size := int(utf8.Character_Size(utf8.Character(character)))
-	if encoded_size < 0 {
-		encoded_size = int(utf8.Character_Size(utf8.Character(utf8.REPLACEMENT_CHARACTER)))
-	}
-	buffer_reserve(buffer, Growth_Count(encoded_size))
-	content_size := len(buffer.Content)
-	buffer.Content = buffer.Content[:content_size+encoded_size]
-	written := utf8.Encode_Character(
-		utf8.Bytes(buffer.Content[content_size:]), utf8.Character(character),
-	)
-	return Encoded_Size(written)
-}
-
 // Buffer_Read copies unread Buffer content into destination.
-func Buffer_Read_Into(buffer *Buffer, destination Slice) (count Boundary) {
+func Buffer_Read_Into(buffer Buffer_Handle, destination Slice) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "buffer_read_into.count") }()
-	Buffer_Invariants(*buffer, "buffer_read.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_read.buffer")
 	Slice_Invariants(destination, "buffer_read.destination")
 	buffer.Operation = READ_OPERATION_ABSENT
 	if Buffer_Size(buffer) == 0 {
@@ -723,9 +626,9 @@ func Buffer_Read_Into(buffer *Buffer, destination Slice) (count Boundary) {
 }
 
 // Buffer_Next returns and consumes up to count bytes.
-func Buffer_Next(buffer *Buffer, count Boundary) (content Slice) {
+func Buffer_Next(buffer Buffer_Handle, count Boundary) (content Slice) {
 	defer func() { Slice_Invariants(content, "buffer_next.content") }()
-	Buffer_Invariants(*buffer, "buffer_next.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_next.buffer")
 	Boundary_Invariants(count, "buffer_next.count")
 	buffer.Operation = READ_OPERATION_ABSENT
 	read_size := count
@@ -742,12 +645,12 @@ func Buffer_Next(buffer *Buffer, count Boundary) (content Slice) {
 }
 
 // Buffer_Read_Byte returns and consumes next Buffer byte.
-func Buffer_Read_Byte(buffer *Buffer) (value Byte, found Boolean) {
+func Buffer_Read_Byte(buffer Buffer_Handle) (value Byte, found Boolean) {
 	defer func() {
 		Byte_Invariants(value, "buffer_read_byte.value")
 		Boolean_Invariants(found, "buffer_read_byte.found")
 	}()
-	Buffer_Invariants(*buffer, "buffer_read_byte.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_read_byte.buffer")
 	if Buffer_Size(buffer) == 0 {
 		Buffer_Reset(buffer)
 		return 0, false
@@ -758,49 +661,9 @@ func Buffer_Read_Byte(buffer *Buffer) (value Byte, found Boolean) {
 	return value, true
 }
 
-// Buffer_Read_Character returns and consumes the next UTF-8 character from Buffer.
-func Buffer_Read_Character(
-	buffer *Buffer,
-) (character Decoded_Character, size Decoded_Size, found Boolean) {
-	defer func() {
-		Decoded_Character_Invariants(character, "buffer_read_character.character")
-		Decoded_Size_Invariants(size, "buffer_read_character.size")
-		Boolean_Invariants(found, "buffer_read_character.found")
-	}()
-	Buffer_Invariants(*buffer, "buffer_read_rune.buffer")
-	if Buffer_Size(buffer) == 0 {
-		Buffer_Reset(buffer)
-		return 0, 0, false
-	}
-	value := buffer.Content[buffer.Position]
-	if value < byte(utf8.CHARACTER_SELF) {
-		buffer.Position++
-		buffer.Operation = READ_OPERATION_RUNE_1
-		return Decoded_Character(value), 1, true
-	}
-	decoded, decoded_size := utf8.Decode_Character(
-		utf8.Bytes(buffer.Content[buffer.Position:]),
-	)
-	character = Decoded_Character(decoded)
-	size = Decoded_Size(decoded_size)
-	buffer.Position += Boundary(size)
-	buffer.Operation = Read_Operation(size)
-	return character, size, true
-}
-
-// Buffer_Unread_Character moves before the character from the last character read.
-func Buffer_Unread_Character(buffer *Buffer) {
-	Buffer_Invariants(*buffer, "buffer_unread_rune.buffer")
-	if buffer.Operation <= READ_OPERATION_ABSENT {
-		panic("bytes: no character to unread")
-	}
-	buffer.Position -= Boundary(buffer.Operation)
-	buffer.Operation = READ_OPERATION_ABSENT
-}
-
 // Buffer_Unread_Byte moves before the last byte from a successful read.
-func Buffer_Unread_Byte(buffer *Buffer) {
-	Buffer_Invariants(*buffer, "buffer_unread_byte.buffer")
+func Buffer_Unread_Byte(buffer Buffer_Handle) {
+	Buffer_Handle_Invariants(buffer, "buffer_unread_byte.buffer")
 	if buffer.Operation == READ_OPERATION_ABSENT {
 		panic("bytes: no byte to unread")
 	}
@@ -812,13 +675,13 @@ func Buffer_Unread_Byte(buffer *Buffer) {
 
 // Buffer_Read_Until returns aliased content through first delimiter.
 func Buffer_Read_Until(
-	buffer *Buffer, delimiter Byte,
+	buffer Buffer_Handle, delimiter Byte,
 ) (content Slice, found Boolean) {
 	defer func() {
 		Slice_Invariants(content, "buffer_read_until.content")
 		Boolean_Invariants(found, "buffer_read_until.found")
 	}()
-	Buffer_Invariants(*buffer, "buffer_read_bytes.buffer")
+	Buffer_Handle_Invariants(buffer, "buffer_read_bytes.buffer")
 	Byte_Invariants(delimiter, "buffer_read_bytes.delimiter")
 	index := Index_Byte(buffer.Content[buffer.Position:], delimiter)
 	end := Boundary(len(buffer.Content))
@@ -836,9 +699,9 @@ func Buffer_Read_Until(
 }
 
 // Reader_Unread_Size returns the unread byte count in Reader.
-func Reader_Unread_Size(reader *Reader) (count Boundary) {
+func Reader_Unread_Size(reader Reader_Handle) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "reader_length.count") }()
-	Reader_Invariants(*reader, "reader_len.reader")
+	Reader_Handle_Invariants(reader, "reader_len.reader")
 	if reader.Position >= Reader_Position(len(reader.Source)) {
 		return 0
 	}
@@ -846,16 +709,16 @@ func Reader_Unread_Size(reader *Reader) (count Boundary) {
 }
 
 // Reader_Size returns the original source size.
-func Reader_Size(reader *Reader) (size Size_Value) {
+func Reader_Size(reader Reader_Handle) (size Size_Value) {
 	defer func() { Size_Value_Invariants(size, "reader_size.size") }()
-	Reader_Invariants(*reader, "reader_size.reader")
+	Reader_Handle_Invariants(reader, "reader_size.reader")
 	return Size_Value(len(reader.Source))
 }
 
 // Reader_Read_Into copies unread Reader content into destination.
-func Reader_Read_Into(reader *Reader, destination Slice) (count Boundary) {
+func Reader_Read_Into(reader Reader_Handle, destination Slice) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "reader_read_into.count") }()
-	Reader_Invariants(*reader, "reader_read.reader")
+	Reader_Handle_Invariants(reader, "reader_read.reader")
 	Slice_Invariants(destination, "reader_read.destination")
 	if reader.Position >= Reader_Position(len(reader.Source)) {
 		return 0
@@ -868,12 +731,12 @@ func Reader_Read_Into(reader *Reader, destination Slice) (count Boundary) {
 
 // Reader_Read_At copies Reader content at position without a state change.
 func Reader_Read_At_Into(
-	reader *Reader,
+	reader Reader_Handle,
 	destination Slice,
 	offset Reader_Offset,
 ) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "reader_read_at_into.count") }()
-	Reader_Invariants(*reader, "reader_read_at.reader")
+	Reader_Handle_Invariants(reader, "reader_read_at.reader")
 	Slice_Invariants(destination, "reader_read_at.destination")
 	Reader_Offset_Invariants(offset, "reader_read_at.offset")
 	if offset < 0 {
@@ -890,12 +753,12 @@ func Reader_Read_At_Into(
 }
 
 // Reader_Read_Byte returns and consumes the next Reader byte.
-func Reader_Read_Byte(reader *Reader) (value Byte, found Boolean) {
+func Reader_Read_Byte(reader Reader_Handle) (value Byte, found Boolean) {
 	defer func() {
 		Byte_Invariants(value, "reader_read_byte.value")
 		Boolean_Invariants(found, "reader_read_byte.found")
 	}()
-	Reader_Invariants(*reader, "reader_read_byte.reader")
+	Reader_Handle_Invariants(reader, "reader_read_byte.reader")
 	reader.Previous = INDEX_ABSENT
 	if reader.Position >= Reader_Position(len(reader.Source)) {
 		return 0, false
@@ -906,8 +769,8 @@ func Reader_Read_Byte(reader *Reader) (value Byte, found Boolean) {
 }
 
 // Reader_Unread_Byte moves Reader back by one byte.
-func Reader_Unread_Byte(reader *Reader) {
-	Reader_Invariants(*reader, "reader_unread_byte.reader")
+func Reader_Unread_Byte(reader Reader_Handle) {
+	Reader_Handle_Invariants(reader, "reader_unread_byte.reader")
 	if reader.Position <= 0 {
 		panic("bytes: no Reader byte to unread")
 	}
@@ -915,56 +778,14 @@ func Reader_Unread_Byte(reader *Reader) {
 	reader.Position--
 }
 
-// Reader_Read_Character returns and consumes the next UTF-8 character from Reader.
-func Reader_Read_Character(
-	reader *Reader,
-) (character Decoded_Character, size Decoded_Size, found Boolean) {
-	defer func() {
-		Decoded_Character_Invariants(character, "reader_read_character.character")
-		Decoded_Size_Invariants(size, "reader_read_character.size")
-		Boolean_Invariants(found, "reader_read_character.found")
-	}()
-	Reader_Invariants(*reader, "reader_read_rune.reader")
-	if reader.Position >= Reader_Position(len(reader.Source)) {
-		reader.Previous = INDEX_ABSENT
-		return 0, 0, false
-	}
-	reader.Previous = Index_Value(reader.Position)
-	value := reader.Source[reader.Position]
-	if value < byte(utf8.CHARACTER_SELF) {
-		reader.Position++
-		return Decoded_Character(value), 1, true
-	}
-	decoded, decoded_size := utf8.Decode_Character(
-		utf8.Bytes(reader.Source[reader.Position:]),
-	)
-	character = Decoded_Character(decoded)
-	size = Decoded_Size(decoded_size)
-	reader.Position += Reader_Position(size)
-	return character, size, true
-}
-
-// Reader_Unread_Character returns Reader to the start of its last character read.
-func Reader_Unread_Character(reader *Reader) {
-	Reader_Invariants(*reader, "reader_unread_rune.reader")
-	if reader.Previous < 0 {
-		panic("bytes: no Reader character to unread")
-	}
-	if reader.Previous >= Index_Value(reader.Position) {
-		panic("bytes: no Reader character to unread")
-	}
-	reader.Position = Reader_Position(reader.Previous)
-	reader.Previous = INDEX_ABSENT
-}
-
 // Reader_Seek sets next Reader position from one origin.
 func Reader_Seek(
-	reader *Reader,
+	reader Reader_Handle,
 	offset Reader_Offset,
 	origin Seek_From,
 ) (position Reader_Position) {
 	defer func() { Reader_Position_Invariants(position, "reader_seek.position") }()
-	Reader_Invariants(*reader, "reader_seek.reader")
+	Reader_Handle_Invariants(reader, "reader_seek.reader")
 	Reader_Offset_Invariants(offset, "reader_seek.offset")
 	Seek_From_Invariants(origin, "reader_seek.origin")
 	reader.Previous = INDEX_ABSENT
@@ -986,16 +807,16 @@ func Reader_Seek(
 }
 
 // Reader_Reset replaces Reader source and returns to its first byte.
-func Reader_Reset(reader *Reader, source Slice) {
-	Reader_Invariants(*reader, "reader_reset.reader")
+func Reader_Reset(reader Reader_Handle, source Slice) {
+	Reader_Handle_Invariants(reader, "reader_reset.reader")
 	Slice_Invariants(source, "reader_reset.source")
 	reader.Source = source
 	reader.Position = 0
 	reader.Previous = INDEX_ABSENT
 }
 
-func buffer_reserve(buffer *Buffer, count Growth_Count) {
-	Buffer_Invariants(*buffer, "buffer_grow.buffer")
+func buffer_reserve(buffer Buffer_Handle, count Growth_Count) {
+	Buffer_Handle_Invariants(buffer, "buffer_grow.buffer")
 	Growth_Count_Invariants(count, "buffer_grow.count")
 	unread_size := int(Buffer_Size(buffer))
 	if int(count) > SLICE_SIZE_MAXIMUM-unread_size {
@@ -1064,7 +885,7 @@ func Count(source Slice, separator Slice) (count Occurrence_Count) {
 	Slice_Invariants(source, "count.source")
 	Slice_Invariants(separator, "count.separator")
 	if len(separator) == 0 {
-		return Occurrence_Count(utf8.Character_Count(utf8.Bytes(source))) + 1
+		return Occurrence_Count(len(source) + 1)
 	}
 	tail := source
 	for len(tail) >= len(separator) {
@@ -1084,31 +905,6 @@ func Contains(source Slice, separator Slice) (contained Boolean) {
 	Slice_Invariants(source, "contains.source")
 	Slice_Invariants(separator, "contains.separator")
 	return Boolean(Index(source, separator) >= 0)
-}
-
-// Contains_Any reports whether a character from Text occurs in source.
-func Contains_Any(source Slice, characters Text) (contained Boolean) {
-	defer func() { Boolean_Invariants(contained, "contains_any.contained") }()
-	Slice_Invariants(source, "contains_any.source")
-	Text_Invariants(characters, "contains_any.characters")
-	return Boolean(Index_Any(source, characters) >= 0)
-}
-
-// Contains_Rune reports whether a character occurs in source.
-func Contains_Rune(source Slice, character Character) (contained Boolean) {
-	defer func() { Boolean_Invariants(contained, "contains_rune.contained") }()
-	Slice_Invariants(source, "contains_rune.source")
-	Character_Invariants(character, "contains_rune.character")
-	return Boolean(Index_Rune(source, character) >= 0)
-}
-
-// Contains_Function reports whether a source character satisfies predicate.
-func Contains_Function(
-	source Slice, predicate func(rune) (matches bool),
-) (contained Boolean) {
-	defer func() { Boolean_Invariants(contained, "contains_func.contained") }()
-	Slice_Invariants(source, "contains_func.source")
-	return Boolean(Index_Function(source, predicate) >= 0)
 }
 
 // Index_Byte returns the first index of value or INDEX_ABSENT.
@@ -1151,64 +947,6 @@ func Last_Index_Byte(source Slice, value Byte) (index Index_Value) {
 	for source_index := len(source) - 1; source_index >= 0; source_index-- {
 		if Byte(source[source_index]) == value {
 			return Index_Value(source_index)
-		}
-	}
-	return INDEX_ABSENT
-}
-
-// Index_Rune returns the first byte index of character or INDEX_ABSENT.
-func Index_Rune(source Slice, character Character) (index Index_Value) {
-	defer func() { Index_Value_Invariants(index, "index_rune.index") }()
-	Slice_Invariants(source, "index_rune.source")
-	Character_Invariants(character, "index_rune.character")
-	if !utf8.Valid_Character(utf8.Character(character)) {
-		return INDEX_ABSENT
-	}
-	for source_index := 0; source_index < len(source); {
-		source_character, size := utf8.Decode_Character(
-			utf8.Bytes(source[source_index:]),
-		)
-		if Character(source_character) == character {
-			return Index_Value(source_index)
-		}
-		source_index += int(size)
-	}
-	return INDEX_ABSENT
-}
-
-// Index_Any returns the first byte index of a character from Text.
-func Index_Any(source Slice, characters Text) (index Index_Value) {
-	defer func() { Index_Value_Invariants(index, "index_any.index") }()
-	Slice_Invariants(source, "index_any.source")
-	Text_Invariants(characters, "index_any.characters")
-	if len(characters) == 0 {
-		return INDEX_ABSENT
-	}
-	for source_index := 0; source_index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		if text_contains_character(characters, Decoded_Character(character)) {
-			return Index_Value(source_index)
-		}
-		source_index += int(size)
-	}
-	return INDEX_ABSENT
-}
-
-// Last_Index_Any returns the last byte index of a character from Text.
-func Last_Index_Any(source Slice, characters Text) (index Index_Value) {
-	defer func() { Index_Value_Invariants(index, "last_index_any.index") }()
-	Slice_Invariants(source, "last_index_any.source")
-	Text_Invariants(characters, "last_index_any.characters")
-	if len(characters) == 0 {
-		return INDEX_ABSENT
-	}
-	for boundary_count := len(source); boundary_count > 0; {
-		character, size := utf8.Decode_Final_Character(
-			utf8.Bytes(source[:boundary_count]),
-		)
-		boundary_count -= int(size)
-		if text_contains_character(characters, Decoded_Character(character)) {
-			return Index_Value(boundary_count)
 		}
 	}
 	return INDEX_ABSENT
@@ -1322,10 +1060,9 @@ func split_empty_into(
 		if int(count) == len(destination) {
 			panic("bytes: destination too small")
 		}
-		_, size := utf8.Decode_Character(utf8.Bytes(tail))
-		destination[int(count)] = tail[:size:size]
+		destination[int(count)] = tail[:1:1]
 		count++
-		tail = tail[size:]
+		tail = tail[1:]
 	}
 	if len(tail) == 0 {
 		return count
@@ -1334,60 +1071,6 @@ func split_empty_into(
 		panic("bytes: destination too small")
 	}
 	destination[int(count)] = tail
-	return count + 1
-}
-
-// Fields_Into fills caller slots around Unicode space runs.
-func Fields_Into(destination Field_Slices, source Slice) (count Field_Count) {
-	defer func() { Field_Count_Invariants(count, "fields_into.count") }()
-	Field_Slices_Invariants(destination, "fields_into.destination")
-	Slice_Invariants(source, "fields_into.source")
-	space := func(character rune) (yes bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
-	}
-	return fields_into(destination, source, space)
-}
-
-// Fields_Function_Into fills caller slots around predicate runs.
-func Fields_Function_Into(
-	destination Field_Slices, source Slice, predicate func(rune) (matches bool),
-) (count Field_Count) {
-	defer func() { Field_Count_Invariants(count, "fields_function_into.count") }()
-	Field_Slices_Invariants(destination, "fields_function_into.destination")
-	Slice_Invariants(source, "fields_function_into.source")
-	return fields_into(destination, source, predicate)
-}
-
-func fields_into(
-	destination Field_Slices, source Slice, predicate func(rune) (matches bool),
-) (count Field_Count) {
-	defer func() { Field_Count_Invariants(count, "fields_internal.count") }()
-	Field_Slices_Invariants(destination, "fields_internal.destination")
-	Slice_Invariants(source, "fields_internal.source")
-	start := Index_Value(INDEX_ABSENT)
-	for source_index := 0; source_index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		if predicate(rune(character)) {
-			if start >= 0 {
-				if int(count) == len(destination) {
-					panic("bytes: destination too small")
-				}
-				destination[int(count)] = source[start:source_index:source_index]
-				count++
-				start = INDEX_ABSENT
-			}
-		} else if start == INDEX_ABSENT {
-			start = Index_Value(source_index)
-		}
-		source_index += int(size)
-	}
-	if start == INDEX_ABSENT {
-		return count
-	}
-	if int(count) == len(destination) {
-		panic("bytes: destination too small")
-	}
-	destination[int(count)] = source[start:len(source):len(source)]
 	return count + 1
 }
 
@@ -1479,40 +1162,6 @@ func Has_Text_Suffix(source Slice, suffix Text) (present Boolean) {
 	return true
 }
 
-// Map_Into writes mapped characters into caller storage.
-func Map_Into(
-	destination Slice, mapping func(rune) (mapped_character rune), source Slice,
-) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "map_into.count") }()
-	Slice_Invariants(destination, "map_into.destination")
-	Slice_Invariants(source, "map_into.source")
-	aver.Always(
-		!Overlap(destination, source),
-		"Map destination does not overlap source.",
-	)
-	written := 0
-	for source_index := 0; source_index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		source_index += int(size)
-		mapped_character := mapping(rune(character))
-		if mapped_character < 0 {
-			continue
-		}
-		encoded_size := utf8.Character_Size(utf8.Character(mapped_character))
-		if encoded_size == utf8.CHARACTER_SIZE_INVALID {
-			encoded_size = utf8.CHARACTER_SIZE_THREE
-		}
-		if int(encoded_size) > len(destination)-written {
-			panic("bytes: destination too small")
-		}
-		encoded := utf8.Encode_Character(
-			utf8.Bytes(destination[written:]), utf8.Character(mapped_character),
-		)
-		written += int(encoded)
-	}
-	return Boundary(written)
-}
-
 // Repeat_Into writes count consecutive source copies into caller storage.
 func Repeat_Into(
 	destination Slice, source Slice, count Repeat_Count,
@@ -1540,218 +1189,6 @@ func Repeat_Into(
 	return Boundary(written)
 }
 
-// To_Upper_Into writes Unicode uppercase mapping into caller storage.
-func To_Upper_Into(destination Slice, source Slice) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "to_upper_into.count") }()
-	Slice_Invariants(destination, "to_upper_into.destination")
-	Slice_Invariants(source, "to_upper_into.source")
-	return map_case_into(destination, source, ucd.UPPER_CASE, ucd.Special_Case{}, false)
-}
-
-// To_Lower_Into writes Unicode lowercase mapping into caller storage.
-func To_Lower_Into(destination Slice, source Slice) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "to_lower_into.count") }()
-	Slice_Invariants(destination, "to_lower_into.destination")
-	Slice_Invariants(source, "to_lower_into.source")
-	return map_case_into(destination, source, ucd.LOWER_CASE, ucd.Special_Case{}, false)
-}
-
-// To_Title_Into writes Unicode title mapping into caller storage.
-func To_Title_Into(destination Slice, source Slice) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "to_title_into.count") }()
-	Slice_Invariants(destination, "to_title_into.destination")
-	Slice_Invariants(source, "to_title_into.source")
-	return map_case_into(destination, source, ucd.TITLE_CASE, ucd.Special_Case{}, false)
-}
-
-// To_Upper_Special_Into applies special uppercase mapping.
-func To_Upper_Special_Into(
-	destination Slice, special ucd.Special_Case, source Slice,
-) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "to_upper_special_into.count") }()
-	Slice_Invariants(destination, "to_upper_special_into.destination")
-	ucd.Special_Case_Invariants(special, "to_upper_special_into.special")
-	Slice_Invariants(source, "to_upper_special_into.source")
-	return map_case_into(destination, source, ucd.UPPER_CASE, special, true)
-}
-
-// To_Lower_Special_Into applies special lowercase mapping.
-func To_Lower_Special_Into(
-	destination Slice, special ucd.Special_Case, source Slice,
-) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "to_lower_special_into.count") }()
-	Slice_Invariants(destination, "to_lower_special_into.destination")
-	ucd.Special_Case_Invariants(special, "to_lower_special_into.special")
-	Slice_Invariants(source, "to_lower_special_into.source")
-	return map_case_into(destination, source, ucd.LOWER_CASE, special, true)
-}
-
-// To_Title_Special_Into applies special title mapping.
-func To_Title_Special_Into(
-	destination Slice, special ucd.Special_Case, source Slice,
-) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "to_title_special_into.count") }()
-	Slice_Invariants(destination, "to_title_special_into.destination")
-	ucd.Special_Case_Invariants(special, "to_title_special_into.special")
-	Slice_Invariants(source, "to_title_special_into.source")
-	return map_case_into(destination, source, ucd.TITLE_CASE, special, true)
-}
-
-func map_case_into(
-	destination Slice, source Slice, mapping ucd.Case,
-	special ucd.Special_Case, use_special Boolean,
-) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "map_case_into.count") }()
-	Slice_Invariants(destination, "map_case_into.destination")
-	Slice_Invariants(source, "map_case_into.source")
-	ucd.Case_Invariants(mapping, "map_case_into.mapping")
-	ucd.Special_Case_Invariants(special, "map_case_into.special")
-	Boolean_Invariants(use_special, "map_case_into.use_special")
-	aver.Always(
-		!Overlap(destination, source),
-		"Case destination does not overlap source.",
-	)
-	written := 0
-	for source_index := 0; source_index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		source_index += int(size)
-		mapped_character := ucd.To(mapping, ucd.Character(character))
-		if use_special {
-			switch mapping {
-			case ucd.UPPER_CASE:
-				mapped_character = ucd.Special_Case_To_Upper(
-					special, ucd.Character(character),
-				)
-			case ucd.LOWER_CASE:
-				mapped_character = ucd.Special_Case_To_Lower(
-					special, ucd.Character(character),
-				)
-			case ucd.TITLE_CASE:
-				mapped_character = ucd.Special_Case_To_Title(
-					special, ucd.Character(character),
-				)
-			}
-		}
-		encoded_size := utf8.Character_Size(utf8.Character(mapped_character))
-		if int(encoded_size) > len(destination)-written {
-			panic("bytes: destination too small")
-		}
-		encoded := utf8.Encode_Character(
-			utf8.Bytes(destination[written:]), utf8.Character(mapped_character),
-		)
-		written += int(encoded)
-	}
-	return Boundary(written)
-}
-
-// To_Valid_UTF8_Into replaces each invalid-byte run in caller storage.
-func To_Valid_UTF8_Into(
-	destination Slice, source Slice, replacement Slice,
-) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "to_valid_utf8_into.count") }()
-	Slice_Invariants(destination, "to_valid_utf8_into.destination")
-	Slice_Invariants(source, "to_valid_utf8_into.source")
-	Slice_Invariants(replacement, "to_valid_utf8_into.replacement")
-	aver.Always(
-		!Overlap(destination, source),
-		"UTF-8 destination does not overlap source.",
-	)
-	written := 0
-	invalid := false
-	for source_index := 0; source_index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		if character == utf8.REPLACEMENT_CHARACTER {
-			if size == 1 {
-				source_index++
-				if invalid {
-					continue
-				}
-				invalid = true
-				if len(replacement) > len(destination)-written {
-					panic("bytes: destination too small")
-				}
-				written += copy(destination[written:], replacement)
-				continue
-			}
-		}
-		invalid = false
-		if int(size) > len(destination)-written {
-			panic("bytes: destination too small")
-		}
-		boundary := source_index + int(size)
-		written += copy(destination[written:], source[source_index:boundary])
-		source_index = boundary
-	}
-	return Boundary(written)
-}
-
-// Title_Into writes legacy Unicode word-start title mapping.
-func Title_Into(destination Slice, source Slice) (count Boundary) {
-	defer func() { Boundary_Invariants(count, "title_into.count") }()
-	Slice_Invariants(destination, "title_into.destination")
-	Slice_Invariants(source, "title_into.source")
-	aver.Always(
-		!Overlap(destination, source),
-		"Title destination does not overlap source.",
-	)
-	written := 0
-	previous := Decoded_Character(' ')
-	for source_index := 0; source_index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		source_index += int(size)
-		mapped_character := ucd.Character(character)
-		if title_separator(previous) {
-			mapped_character = ucd.To_Title(ucd.Character(character))
-		}
-		previous = Decoded_Character(character)
-		encoded_size := utf8.Character_Size(utf8.Character(mapped_character))
-		if int(encoded_size) > len(destination)-written {
-			panic("bytes: destination too small")
-		}
-		encoded := utf8.Encode_Character(
-			utf8.Bytes(destination[written:]), utf8.Character(mapped_character),
-		)
-		written += int(encoded)
-	}
-	return Boundary(written)
-}
-
-// Trim_Left_Function removes the leading characters that satisfy predicate.
-func Trim_Left_Function(
-	source Slice, predicate func(rune) (matches bool),
-) (trimmed Slice) {
-	defer func() { Slice_Invariants(trimmed, "trim_left_func.trimmed") }()
-	Slice_Invariants(source, "trim_left_func.source")
-	end := trim_left_boundary(source, predicate)
-	if int(end) == len(source) {
-		return nil
-	}
-	return source[end:]
-}
-
-// Trim_Right_Function removes the trailing characters that satisfy predicate.
-func Trim_Right_Function(
-	source Slice, predicate func(rune) (matches bool),
-) (trimmed Slice) {
-	defer func() { Slice_Invariants(trimmed, "trim_right_func.trimmed") }()
-	Slice_Invariants(source, "trim_right_func.source")
-	return source[:int(trim_right_boundary(source, predicate))]
-}
-
-// Trim_Function removes leading and trailing characters that satisfy predicate.
-func Trim_Function(
-	source Slice, predicate func(rune) (matches bool),
-) (trimmed Slice) {
-	defer func() { Slice_Invariants(trimmed, "trim_func.trimmed") }()
-	Slice_Invariants(source, "trim_func.source")
-	left := int(trim_left_boundary(source, predicate))
-	if left == len(source) {
-		return nil
-	}
-	right := int(trim_right_boundary(source[left:], predicate))
-	return source[left : left+right]
-}
-
 // Trim_Prefix removes prefix when source starts with it.
 func Trim_Prefix(source Slice, prefix Slice) (trimmed Slice) {
 	defer func() { Slice_Invariants(trimmed, "trim_prefix.trimmed") }()
@@ -1772,114 +1209,6 @@ func Trim_Suffix(source Slice, suffix Slice) (trimmed Slice) {
 		return source[:len(source)-len(suffix)]
 	}
 	return source
-}
-
-// Index_Function returns the first byte index of a predicate match.
-func Index_Function(
-	source Slice, predicate func(rune) (matches bool),
-) (index Index_Value) {
-	defer func() { Index_Value_Invariants(index, "index_func.index") }()
-	Slice_Invariants(source, "index_func.source")
-	for source_index := 0; source_index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		if predicate(rune(character)) {
-			return Index_Value(source_index)
-		}
-		source_index += int(size)
-	}
-	return INDEX_ABSENT
-}
-
-// Last_Index_Function returns the last byte index of a predicate match.
-func Last_Index_Function(
-	source Slice, predicate func(rune) (matches bool),
-) (index Index_Value) {
-	defer func() { Index_Value_Invariants(index, "last_index_func.index") }()
-	Slice_Invariants(source, "last_index_func.source")
-	for boundary_count := len(source); boundary_count > 0; {
-		character, size := utf8.Decode_Final_Character(
-			utf8.Bytes(source[:boundary_count]),
-		)
-		boundary_count -= int(size)
-		if predicate(rune(character)) {
-			return Index_Value(boundary_count)
-		}
-	}
-	return INDEX_ABSENT
-}
-
-// Trim removes leading and trailing characters in cutset.
-func Trim(source Slice, cutset Text) (trimmed Slice) {
-	defer func() { Slice_Invariants(trimmed, "trim.trimmed") }()
-	Slice_Invariants(source, "trim.source")
-	Text_Invariants(cutset, "trim.cutset")
-	predicate := func(character rune) (matches bool) {
-		return bool(text_contains_character(cutset, Decoded_Character(character)))
-	}
-	left := int(trim_left_boundary(source, predicate))
-	if left == len(source) {
-		return nil
-	}
-	right := int(trim_right_boundary(source[left:], predicate))
-	return source[left : left+right]
-}
-
-// Trim_Left removes leading characters in cutset.
-func Trim_Left(source Slice, cutset Text) (trimmed Slice) {
-	defer func() { Slice_Invariants(trimmed, "trim_left.trimmed") }()
-	Slice_Invariants(source, "trim_left.source")
-	Text_Invariants(cutset, "trim_left.cutset")
-	predicate := func(character rune) (matches bool) {
-		return bool(text_contains_character(cutset, Decoded_Character(character)))
-	}
-	end := trim_left_boundary(source, predicate)
-	if int(end) == len(source) {
-		return nil
-	}
-	return source[end:]
-}
-
-// Trim_Right removes trailing characters in cutset.
-func Trim_Right(source Slice, cutset Text) (trimmed Slice) {
-	defer func() { Slice_Invariants(trimmed, "trim_right.trimmed") }()
-	Slice_Invariants(source, "trim_right.source")
-	Text_Invariants(cutset, "trim_right.cutset")
-	predicate := func(character rune) (matches bool) {
-		return bool(text_contains_character(cutset, Decoded_Character(character)))
-	}
-	return source[:int(trim_right_boundary(source, predicate))]
-}
-
-// Trim_Space removes leading and trailing Unicode white space.
-func Trim_Space(source Slice) (trimmed Slice) {
-	defer func() { Slice_Invariants(trimmed, "trim_space.trimmed") }()
-	Slice_Invariants(source, "trim_space.source")
-	space := func(character rune) (yes bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
-	}
-	left := int(trim_left_boundary(source, space))
-	if left == len(source) {
-		return nil
-	}
-	right := int(trim_right_boundary(source[left:], space))
-	return source[left : left+right]
-}
-
-// Runes_Into decodes source characters into caller storage.
-func Runes_Into(destination Characters, source Slice) (count Count_Value) {
-	defer func() { Count_Value_Invariants(count, "runes_into.count") }()
-	Characters_Invariants(destination, "runes_into.destination")
-	Slice_Invariants(source, "runes_into.source")
-	for source_index := 0; source_index < len(source); {
-		if int(count) == len(destination) {
-			panic("bytes: destination too small")
-		}
-		character, size := utf8.Decode_Character(utf8.Bytes(source[source_index:]))
-		destination[int(count)] = rune(character)
-		count++
-		source_index += int(size)
-	}
-	return count
 }
 
 // Replace_Into writes bounded non-overlapping substitutions into caller storage.
@@ -1917,8 +1246,9 @@ func Replace_Into(
 		prefix_count := 0
 		if len(old) == 0 {
 			if replacement_index > 0 {
-				_, size := utf8.Decode_Character(utf8.Bytes(source[source_count:]))
-				prefix_count = int(size)
+				if source_count < len(source) {
+					prefix_count = 1
+				}
 			}
 		} else {
 			prefix_count = int(Index(source[source_count:], old))
@@ -1954,40 +1284,6 @@ func Replace_All_Into(
 	return Replace_Into(
 		destination, source, old, replacement, REPLACEMENT_COUNT_MINIMUM,
 	)
-}
-
-// Equal_Fold reports whether two UTF-8 Slices are equal under Unicode simple folding.
-func Equal_Fold(left Slice, right Slice) (equal Boolean) {
-	defer func() { Boolean_Invariants(equal, "equal_fold.equal") }()
-	Slice_Invariants(left, "equal_fold.left")
-	Slice_Invariants(right, "equal_fold.right")
-	left_index := 0
-	right_index := 0
-	for left_index < len(left) {
-		if right_index == len(right) {
-			return false
-		}
-		left_character, left_size := utf8.Decode_Character(
-			utf8.Bytes(left[left_index:]),
-		)
-		right_character, right_size := utf8.Decode_Character(
-			utf8.Bytes(right[right_index:]),
-		)
-		left_value := ucd.Character(left_character)
-		right_value := ucd.Character(right_character)
-		if left_value != right_value {
-			folded := ucd.Simple_Fold(left_value)
-			for folded != left_value && folded != right_value {
-				folded = ucd.Simple_Fold(folded)
-			}
-			if folded != right_value {
-				return false
-			}
-		}
-		left_index += int(left_size)
-		right_index += int(right_size)
-	}
-	return Boolean(right_index == len(right))
 }
 
 // Index returns the first separator index or INDEX_ABSENT.
@@ -2112,60 +1408,6 @@ func Split_After_Sequence(
 	return split_sequence(source, separator, Separator_Size(len(separator)), yield)
 }
 
-// Fields_Sequence synchronously yields Unicode-space-delimited fields.
-func Fields_Sequence(source Slice, yield Yield_Function) (count Field_Count) {
-	defer func() { Field_Count_Invariants(count, "fields_sequence.count") }()
-	Slice_Invariants(source, "fields_sequence.source")
-	space := func(character rune) (yes bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
-	}
-	return fields_sequence(source, space, yield)
-}
-
-// Fields_Function_Sequence synchronously yields predicate-delimited fields.
-func Fields_Function_Sequence(
-	source Slice, predicate func(rune) (matches bool), yield Yield_Function,
-) (count Field_Count) {
-	defer func() {
-		Field_Count_Invariants(count, "fields_function_sequence.count")
-	}()
-	Slice_Invariants(source, "fields_function_sequence.source")
-	return fields_sequence(source, predicate, yield)
-}
-
-func trim_left_boundary(
-	source Slice, predicate func(rune) (matches bool),
-) (end Boundary) {
-	defer func() { Boundary_Invariants(end, "trim_left_boundary.end") }()
-	Slice_Invariants(source, "trim_left_boundary.source")
-	for int(end) < len(source) {
-		character, character_size := utf8.Decode_Character(utf8.Bytes(source[int(end):]))
-		if !predicate(rune(character)) {
-			return end
-		}
-		end += Boundary(character_size)
-	}
-	return end
-}
-
-func trim_right_boundary(
-	source Slice, predicate func(rune) (matches bool),
-) (end Boundary) {
-	defer func() { Boundary_Invariants(end, "trim_right_boundary.end") }()
-	Slice_Invariants(source, "trim_right_boundary.source")
-	end = Boundary(len(source))
-	for end > 0 {
-		character, character_size := utf8.Decode_Final_Character(
-			utf8.Bytes(source[:int(end)]),
-		)
-		if !predicate(rune(character)) {
-			return end
-		}
-		end -= Boundary(character_size)
-	}
-	return end
-}
-
 func split_sequence(
 	source Slice, separator Slice, saved Separator_Size, yield Yield_Function,
 ) (count Count_Value) {
@@ -2176,13 +1418,12 @@ func split_sequence(
 	if len(separator) == 0 {
 		tail := source
 		for len(tail) > 0 {
-			_, character_size := utf8.Decode_Character(utf8.Bytes(tail))
-			continued := yield_content(yield, tail[:character_size:character_size])
+			continued := yield_content(yield, tail[:1:1])
 			count++
 			if !continued {
 				return count
 			}
-			tail = tail[character_size:]
+			tail = tail[1:]
 		}
 		return count
 	}
@@ -2202,82 +1443,10 @@ func split_sequence(
 	return count + 1
 }
 
-func fields_sequence(
-	source Slice, predicate func(rune) (matches bool), yield Yield_Function,
-) (count Field_Count) {
-	defer func() { Field_Count_Invariants(count, "fields_sequence_internal.count") }()
-	Slice_Invariants(source, "fields_sequence_internal.source")
-	start := Index_Value(INDEX_ABSENT)
-	for index := 0; index < len(source); {
-		character, size := utf8.Decode_Character(utf8.Bytes(source[index:]))
-		if predicate(rune(character)) {
-			if start >= 0 {
-				continued := yield_content(yield, source[start:index:index])
-				count++
-				if !continued {
-					return count
-				}
-				start = INDEX_ABSENT
-			}
-		} else if start == INDEX_ABSENT {
-			start = Index_Value(index)
-		}
-		index += int(size)
-	}
-	if start == INDEX_ABSENT {
-		return count
-	}
-	yield_content(yield, source[start:len(source):len(source)])
-	return count + 1
-}
-
 func yield_content(yield Yield_Function, content Slice) (continued Boolean) {
 	defer func() { Boolean_Invariants(continued, "yield_content.continued") }()
 	Slice_Invariants(content, "yield_content.content")
 	return yield(content)
-}
-
-func text_contains_character(text Text, character Decoded_Character) (contained Boolean) {
-	defer func() { Boolean_Invariants(contained, "text_contains_character.contained") }()
-	Text_Invariants(text, "text_contains_character.text")
-	Decoded_Character_Invariants(character, "text_contains_character.character")
-	for _, text_character := range text {
-		if Decoded_Character(text_character) == character {
-			return true
-		}
-	}
-	return false
-}
-
-func title_separator(character Decoded_Character) (separator Boolean) {
-	defer func() { Boolean_Invariants(separator, "title_separator.separator") }()
-	Decoded_Character_Invariants(character, "title_separator.character")
-	if character <= 0x7F {
-		if '0' <= character {
-			if character <= '9' {
-				return false
-			}
-		}
-		if 'a' <= character {
-			if character <= 'z' {
-				return false
-			}
-		}
-		if 'A' <= character {
-			if character <= 'Z' {
-				return false
-			}
-		}
-		return Boolean(character != '_')
-	}
-	ucd_character := ucd.Character(character)
-	if ucd.Is_Letter(ucd_character) {
-		return false
-	}
-	if ucd.Is_Digit(ucd_character) {
-		return false
-	}
-	return Boolean(ucd.Is_Space(ucd_character))
 }
 
 // Overlap uses address distance because nested scans let hostile maximum slices multiply work.

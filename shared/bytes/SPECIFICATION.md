@@ -12,35 +12,33 @@ shared/math/bits. Equal numbers with different meanings remain separate definiti
 
 # Comparison
 
-Equal reports byte equality. Compare gives normalized lexical order. Equal_Fold compares decoded
-characters. Has_Text_Suffix compares byte storage with string without conversion storage.
-Nil and empty Slice are equal. Overlap reports whether two nonempty views share byte storage.
+Equal reports byte equality. Compare gives normalized lexical order. Has_Text_Suffix compares raw
+byte storage with a string without conversion storage. Nil and empty Slice are equal. Overlap
+reports whether two nonempty views share byte storage.
 
 # Search
 
-Count, Contains, and Index forms find Slices, bytes, characters, sets, or predicate matches. Empty
-separator occurs at each UTF-8 character boundary.
+Count, Contains, and Index forms find byte sequences or individual bytes. Empty separator occurs
+at every byte boundary. No operation decodes Unicode.
 
 # Split And Join
 
-Split and field operations fill caller-owned Slice slots with clipped input views and return
-populated slot count. N forms apply Limit. Join_Into writes parts and separators into separate
-caller byte storage and returns byte count.
+Split operations fill caller-owned Slice slots with clipped input views and return populated slot
+count. Empty separator splits individual bytes. N forms apply Limit. Join_Into writes parts and
+separators into separate caller byte storage and returns byte count.
 
-# Transform
+# Repeat
 
-Map, Repeat, case, title, UTF-8 repair, and rune decoding operations write caller storage and
-return populated count. Map, case, title, and UTF-8 repair destinations do not overlap source.
+Repeat_Into writes consecutive raw copies into caller storage and returns byte count.
 
 # Trim
 
-Trim forms remove prefixes, suffixes, Unicode space, cut-set characters, or predicate matches.
-Every returned Slice aliases input Slice.
+Trim_Prefix and Trim_Suffix remove exact byte sequences. Returned Slice aliases input Slice.
 
 # Replace
 
 Replace_Into substitutes at most Replacement_Count non-overlapping matches. Negative count and
-Replace_All_Into substitute every match, including empty matches between characters. Destination
+Replace_All_Into substitute every match, including empty matches between bytes. Destination
 storage remains separate from source, old value, and replacement.
 
 # Cut And Clone
@@ -50,19 +48,21 @@ count. Clone destination may overlap source because copy order preserves bytes.
 
 # Iteration
 
-Lines, split sequences, and field sequences synchronously yield clipped input views and return
-yielded count. Callback rejection stops traversal. No operation returns closure.
+Lines and split sequences synchronously yield clipped input views and return yielded count. Empty
+separator yields individual bytes. Callback rejection stops traversal. No operation returns a
+closure.
 
 # Buffer
 
 Buffer_Init and Buffer_Init_Text bind explicit caller storage. Buffer never grows beyond that
-storage. Grow validates or compacts existing storage. Writes return byte count. Reads return count,
-presence, or aliased views. Reset retains caller storage.
+storage. Grow validates or compacts existing storage. Writes and reads operate on raw bytes. Reset
+retains caller storage. Read_Operation lets an encoding package record one bounded grouped read.
 
 # Reader
 
 Reader_Reset binds caller Slice and resets cursor. Reads copy only into caller storage or return
-scalars. Unread restores eligible byte or character boundary. Seek accepts three bounded origins.
+raw byte scalars. Unread restores one byte. Previous lets an encoding package record one grouped
+read boundary. Seek accepts three bounded origins.
 
 # Size Limits
 
@@ -76,5 +76,5 @@ destination, harmful overlap, or Buffer growth causes panic.
 
 # Invariant Domains
 
-Tests reach both Boolean results, normalized orders, count boundaries, search sentinels, byte and
-character boundaries, Buffer states, Reader states, and each seek origin through public operations.
+Tests reach both Boolean results, normalized orders, count boundaries, search sentinels, byte
+boundaries, Buffer states, Reader states, and each seek origin through public operations.
