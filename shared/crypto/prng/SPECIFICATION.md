@@ -52,9 +52,9 @@ stream bytes. A nil Chacha dies before binding.
 
 # Source Marks A Cryptographic Parameter
 
-Source is a distinct type over the simulation vtable, so a signature that takes it names a
-parameter that must carry real entropy. A simulation converts a xoshiro source into it explicitly,
-and bytes then come from the xoshiro stream; an unbound Source dies before any draw.
+Source is the vtable a signature takes to say a parameter must carry real entropy: state behind
+a pointer and one draw procedure. Source_Read packs each word little-endian and spends a whole
+word on a partial tail; an unbound Source or an oversized sink dies before any draw.
 
 # Hot Path Is Zero Allocation
 

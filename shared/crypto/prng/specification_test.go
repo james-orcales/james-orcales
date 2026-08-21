@@ -6,13 +6,12 @@ package prng
 
 import (
 	"testing"
+	"unsafe"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/encoding/hex"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/prng"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -120,7 +119,7 @@ func Test_Known_Sequence(t *testing.T) {
 	for index := 0; index < len(want); index++ {
 		var octet [WORD_BYTE_COUNT]byte
 		generator.Read(octet[:])
-		value := uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+		value := uint64(word_from_bytes(octet))
 		if value != want[index] {
 			t.Fatalf("draw %d was %d, want %d", index, value, want[index])
 		}
@@ -262,34 +261,51 @@ func Test_Source_Is_Transparent(t *testing.T) {
 	}
 	// A constructed buffer reaches each word edge of the slot deterministically; a keystream
 	// would take 2^64 draws to land on one of them by chance.
-	for _, word := range []uint64{0, 1, 2, bits.WORD_64_MAXIMUM} {
+	edges := []Word{WORD_MINIMUM, WORD_MINIMUM + 1, WORD_MINIMUM + 2, WORD_MAXIMUM}
+	for _, word := range edges {
 		edge := Chacha{}
-		binary.Put_Uint_64(edge.Buffer[:], binary.Word_64(word), binary.LITTLE_ENDIAN)
+		packed := word_to_bytes(word)
+		copy(edge.Buffer[:], packed[:])
 		var octet [WORD_BYTE_COUNT]byte
 		Source_Read(Chacha_To_Source(&edge), Sink(octet[:]))
-		if uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN)) != word {
+		if word_from_bytes(octet) != word {
 			t.Fatalf("constructed word %d did not pass through the slot", word)
 		}
 	}
 }
 
-// Test_Source_Marks_A_Cryptographic_Parameter checks a simulation enters only through an explicit
-// conversion, that the converted source reads the xoshiro stream, and that an unbound Source dies.
+// Test_Source_Marks_A_Cryptographic_Parameter checks a backend enters only through State and
+// Next, that Source_Read packs each word little-endian and spends a whole word on a partial tail,
+// and that an unbound Source dies.
 func Test_Source_Marks_A_Cryptographic_Parameter(t *testing.T) {
-	xoshiro := prng.New(7)
-	reference := prng.New(7)
-	source := Source(prng.Xoshiro_To_Source(&xoshiro))
-	var got, want [WORD_BYTE_COUNT]byte
+	counter := Word(0)
+	source := Source{State: unsafe.Pointer(&counter), Next: counter_next}
+	var got [WORD_BYTE_COUNT + 1]byte
 	Source_Read(source, Sink(got[:]))
-	prng.Source_Read(prng.Xoshiro_To_Source(&reference), prng.Sink(want[:]))
-	if got != want {
-		t.Fatalf("converted source did not read the xoshiro stream")
+	first := word_to_bytes(1)
+	if [WORD_BYTE_COUNT]byte(got[:WORD_BYTE_COUNT]) != first {
+		t.Fatalf("first word was not packed little-endian")
 	}
-	if !did_die(func() { Source_Read(Source{}, Sink(got[:])) }) {
-		t.Fatalf("unbound Source did not die")
+	if got[WORD_BYTE_COUNT] != byte(2) {
+		t.Fatalf("partial tail did not spend a whole second word")
 	}
-	// Sink boundaries through the wrapper, so its own bundle is witnessed at every edge.
-	var largest [SINK_MAX]byte
+	if counter != 2 {
+		t.Fatalf("nine bytes spent %d words, want 2", counter)
+	}
+	headless := source
+	headless.State = nil
+	if !did_die(func() { Source_Read(headless, Sink(got[:])) }) {
+		t.Fatalf("Source without state did not die")
+	}
+	inert := source
+	inert.Next = nil
+	if !did_die(func() { Source_Read(inert, Sink(got[:])) }) {
+		t.Fatalf("Source without procedure did not die")
+	}
+	var largest [SINK_MAX + 1]byte
+	if !did_die(func() { Source_Read(source, Sink(largest[:])) }) {
+		t.Fatalf("oversized sink did not die")
+	}
 	for _, size := range []int{SINK_MIN, SINK_MIN + 1, SINK_MIN + 2, SINK_MAX} {
 		Source_Read(source, Sink(largest[:size]))
 	}
@@ -306,6 +322,13 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 	if allocations != 0 {
 		t.Fatalf("Read allocated %.1f times per call, want zero", allocations)
 	}
+}
+
+// A slot that counts its draws, so a test can see how many words a read spent.
+func counter_next(state unsafe.Pointer) (value Word) {
+	counter := (*Word)(state)
+	*counter++
+	return *counter
 }
 
 // Runs action and reports whether it tripped a fatal invariant, used to assert preconditions. A

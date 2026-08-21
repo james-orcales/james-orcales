@@ -29,10 +29,8 @@ package prng
 import (
 	"unsafe"
 
-	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/prng"
 )
 
 // CHACHA_CONSTANT_FIRST is the little-endian word for ASCII "expa", first of the four constants
@@ -107,11 +105,20 @@ const INDEX_MIN Index = 0
 const INDEX_MAX Index = (1 << 62) - 1
 
 // SINK_MIN is the smallest fill request: an empty sink.
-const SINK_MIN = prng.SINK_SIZE_MINIMUM
+const SINK_MIN = 0
 
-// SINK_MAX inherits the prng Source bound so a fill the vtable admits can never exceed what this
-// backend accepts.
-const SINK_MAX = prng.SINK_SIZE_MAXIMUM
+// SINK_MAX keeps an accidental bulk fill bounded while staying far above any key, token, or nonce
+// a caller fills.
+const SINK_MAX = 1 << 20
+
+// WORD_MINIMUM preserves the complete draw domain of a Source slot.
+const WORD_MINIMUM Word = Word(bits.WORD_64_MINIMUM)
+
+// WORD_MAXIMUM preserves the complete draw domain of a Source slot.
+const WORD_MAXIMUM Word = Word(bits.WORD_64_MAXIMUM)
+
+// CHACHA_WORD_BYTE_COUNT is the byte width of one 32-bit ChaCha state word.
+const CHACHA_WORD_BYTE_COUNT = 4
 
 // Block_Counter is the ChaCha20 block index within one refill, running BLOCK_COUNTER_MIN to
 // BLOCK_COUNTER_MAX.
@@ -217,28 +224,51 @@ func (generator *Chacha) Read(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// Source is the random-byte vtable a cryptographic caller requires: the simulation vtable under a
-// distinct name, so a signature that takes it says the parameter must carry real entropy. A
-// production root binds a Chacha through Chacha_To_Source. A simulation converts a xoshiro
-// source into it, Source(prng.Xoshiro_To_Source(&xoshiro)), and that conversion is the one place a
-// fake enters, so a grep for it finds every test that signs with predictable bytes.
-type Source prng.Source
+// Word is one full draw through a Source slot.
+type Word uint64
 
-// Source_Invariants proves both halves of the vtable are bound before any draw.
-func Source_Invariants(source Source, namespace invariant.Namespace) {
-	prng.Source_Invariants(prng.Source(source), namespace)
+// Word_Invariants preserves the complete draw domain.
+func Word_Invariants(word Word, namespace invariant.Namespace) {
+	invariant.Tree(word, namespace).
+		Range_Uint64(uint64(word), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
 }
 
-// Source_Read fills sink through the vtable, one word per eight bytes; a partial tail spends a
-// whole word. The bound is this package's Sink, so a caller never names the simulation package.
+// Source is the C-style vtable a caller injects where it needs cryptographic bytes: caller-owned
+// backend state behind an unsafe.Pointer and one procedure that receives it. The house bans
+// interfaces and closures that capture state, so this is the one shape a backend can take. A
+// production root binds a Chacha through Chacha_To_Source. A simulation binds a xoshiro stream
+// through simulation/prng's Xoshiro_To_Source, and that call is the one place a fake enters, so a
+// grep for it finds every test that signs with predictable bytes.
+type Source struct {
+	// State is the caller-owned backend generator; the procedure casts it back to its own type.
+	State unsafe.Pointer
+	// Next draws one full word from the backend behind state. The slot returns a value and
+	// receives no sink, because a pointer handed to a procedure value escapes to the heap under
+	// Go's escape analysis, and a caller's stack sink must stay on its stack.
+	Next func(state unsafe.Pointer) (value Word)
+}
+
+// Source_Invariants proves both halves of the vtable are bound before any draw.
+func Source_Invariants(source Source, _ invariant.Namespace) {
+	invariant.Always(source.State != nil, "A Source has caller-owned state.")
+	invariant.Always(source.Next != nil, "A Source has a bound draw procedure.")
+}
+
+// Source_Read fills sink through the vtable, one word per eight bytes, little-endian so a shorter
+// read is a prefix of a longer one from the same state. A partial tail spends a whole word. The
+// bytes are packed here, on the caller's side of the slot, so the sink never crosses it.
 func Source_Read(source Source, sink Sink) {
 	Source_Invariants(source, "source_read.source")
 	Sink_Invariants(sink, "source_read.sink")
-	prng.Source_Read(prng.Source(source), prng.Sink(sink))
+	for filled := 0; filled < len(sink); filled += WORD_BYTE_COUNT {
+		octet := word_to_bytes(source.Next(source.State))
+		copy(sink[filled:], octet[:])
+	}
 }
 
 // Chacha_To_Source binds caller-owned state into Source without a captured function
-// environment. Only a production root calls this; a simulation converts a xoshiro source instead.
+// environment. Only a production root calls this; a simulation binds a xoshiro stream instead.
 func Chacha_To_Source(generator *Chacha) (source Source) {
 	defer func() { Source_Invariants(source, "chacha_to_source.source") }()
 	Chacha_Invariants(*generator, "chacha_to_source.generator")
@@ -250,12 +280,32 @@ func Chacha_To_Source(generator *Chacha) (source Source) {
 }
 
 // The vtable slot: eight stream bytes assembled little-endian, the same way Chacha_Below
-// assembles its draw, so prng.Source_Read unpacks them back into stream order.
-func chacha_source_next(state unsafe.Pointer) (value prng.Word) {
-	defer func() { prng.Word_Invariants(value, "chacha_source_next.value") }()
+// assembles its draw, so Source_Read unpacks them back into stream order.
+func chacha_source_next(state unsafe.Pointer) (value Word) {
+	defer func() { Word_Invariants(value, "chacha_source_next.value") }()
 	var octet [WORD_BYTE_COUNT]byte
 	chacha_drain((*Chacha)(state), Sink(octet[:]))
-	return prng.Word(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+	return word_from_bytes(octet)
+}
+
+// Assembles eight bytes into one little-endian word. Spelled here rather than through
+// encoding/binary, because that package reaches simulation/prng through nbio, and simulation/prng
+// imports this one to bind a Xoshiro into Source.
+func word_from_bytes(octet [WORD_BYTE_COUNT]byte) (word Word) {
+	defer func() { Word_Invariants(word, "word_from_bytes.word") }()
+	for index := WORD_BYTE_COUNT - 1; index >= 0; index-- {
+		word = word<<bits.BIT_COUNT_8_MAXIMUM | Word(octet[index])
+	}
+	return word
+}
+
+// Splits one word into eight little-endian bytes, the inverse of word_from_bytes.
+func word_to_bytes(word Word) (octet [WORD_BYTE_COUNT]byte) {
+	Word_Invariants(word, "word_to_bytes.word")
+	for index := 0; index < WORD_BYTE_COUNT; index++ {
+		octet[index] = byte(word >> (index * bits.BIT_COUNT_8_MAXIMUM))
+	}
+	return octet
 }
 
 // Chacha_Below returns a value in the half-open range zero to bound, never bound itself, using
@@ -269,7 +319,7 @@ func Chacha_Below(generator *Chacha, bound Bound) (index Index) {
 	// witnessable invariant, so the word is read into bytes and assembled here, not returned.
 	var octet [WORD_BYTE_COUNT]byte
 	chacha_drain(generator, Sink(octet[:]))
-	word := uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+	word := uint64(word_from_bytes(octet))
 	high_word, low_word := bits.Multiply_64(
 		bits.Word_64(word), bits.Multiplier_64(limit),
 	)
@@ -278,7 +328,7 @@ func Chacha_Below(generator *Chacha, bound Bound) (index Index) {
 		threshold := (-limit) % limit
 		for low < threshold {
 			chacha_drain(generator, Sink(octet[:]))
-			word = uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+			word = uint64(word_from_bytes(octet))
 			high_word, low_word = bits.Multiply_64(
 				bits.Word_64(word), bits.Multiplier_64(limit),
 			)
@@ -353,16 +403,20 @@ func chacha20_block(
 	state[1] = CHACHA_CONSTANT_SECOND
 	state[2] = CHACHA_CONSTANT_THIRD
 	state[3] = CHACHA_CONSTANT_FOURTH
+	// Key and nonce words assemble little-endian by hand: encoding/binary reaches
+	// simulation/prng through nbio, and simulation/prng imports this package to bind a Xoshiro.
 	for word_index := 0; word_index < 8; word_index++ {
-		state[4+word_index] = uint32(binary.Uint_32(
-			key[word_index*4:], binary.LITTLE_ENDIAN,
-		))
+		for byte_index := CHACHA_WORD_BYTE_COUNT - 1; byte_index >= 0; byte_index-- {
+			state[4+word_index] = state[4+word_index]<<bits.BIT_COUNT_8_MAXIMUM |
+				uint32(key[word_index*CHACHA_WORD_BYTE_COUNT+byte_index])
+		}
 	}
 	state[12] = uint32(counter)
 	for word_index := 0; word_index < 3; word_index++ {
-		state[13+word_index] = uint32(binary.Uint_32(
-			nonce[word_index*4:], binary.LITTLE_ENDIAN,
-		))
+		for byte_index := CHACHA_WORD_BYTE_COUNT - 1; byte_index >= 0; byte_index-- {
+			state[13+word_index] = state[13+word_index]<<bits.BIT_COUNT_8_MAXIMUM |
+				uint32(nonce[word_index*CHACHA_WORD_BYTE_COUNT+byte_index])
+		}
 	}
 	scratch := state
 	for round_index := 0; round_index < 10; round_index++ {
@@ -377,11 +431,10 @@ func chacha20_block(
 	}
 	for word_index := 0; word_index < 16; word_index++ {
 		scratch[word_index] += state[word_index]
-		binary.Put_Uint_32(
-			output[word_index*4:],
-			binary.Word_32(scratch[word_index]),
-			binary.LITTLE_ENDIAN,
-		)
+		for byte_index := 0; byte_index < CHACHA_WORD_BYTE_COUNT; byte_index++ {
+			output[word_index*CHACHA_WORD_BYTE_COUNT+byte_index] =
+				byte(scratch[word_index] >> (byte_index * bits.BIT_COUNT_8_MAXIMUM))
+		}
 	}
 }
 
