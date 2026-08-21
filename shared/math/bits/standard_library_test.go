@@ -48,7 +48,8 @@ type reference_entry struct {
 // Builds the reference counts for all 256 8-bit values with plain bit walks. The walks
 // share no code with the functions under test, thus they are independent evidence. The
 // linter bans a package variable and a function init, so each test asks for the table.
-func reference_table() (table [BYTE_VALUE_COUNT]reference_entry) {
+func reference_table() (table []reference_entry) {
+	table = make([]reference_entry, BYTE_VALUE_COUNT)
 	table[0] = reference_entry{Zeros_Above: 8, Zeros_Below: 8, Ones: 0}
 	for value_index := 1; value_index < BYTE_VALUE_COUNT; value_index++ {
 		above := 0

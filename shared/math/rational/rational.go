@@ -19,25 +19,53 @@ const TEXT_SIZE_MAXIMUM = integer.DIGIT_COUNT_MAXIMUM * 2
 const SEPARATOR = '/'
 
 // Numerator is the value above the line of a ratio.
-type Numerator integer.Integer
+type Numerator integer.Limbs
 
 // Numerator_Invariants states the width a numerator holds.
 func Numerator_Invariants(value Numerator, namespace aver.Namespace) {
-	aver.Always(
-		len(value.Limbs) == integer.LIMB_COUNT,
-		"A numerator holds one limb for every piece of its width.",
-	)
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value.Limb_0), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_1), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_2), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_3), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_4), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_5), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_6), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_7), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Ensure()
+}
+
+func numerator_integer(value Numerator) (result integer.Integer) {
+	defer func() {
+		integer.Integer_Invariants(result, "rational.numerator_integer.result")
+	}()
+	Numerator_Invariants(value, "rational.numerator_integer.value")
+	return integer.Integer{Limbs: integer.Limbs(value)}
 }
 
 // Denominator is the value below the line of a ratio. It is never zero and never negative.
-type Denominator integer.Integer
+type Denominator integer.Limbs
 
 // Denominator_Invariants states the width a denominator holds.
 func Denominator_Invariants(value Denominator, namespace aver.Namespace) {
-	aver.Always(
-		len(value.Limbs) == integer.LIMB_COUNT,
-		"A denominator holds one limb for every piece of its width.",
-	)
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value.Limb_0), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_1), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_2), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_3), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_4), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_5), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_6), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Range_Uint64(uint64(value.Limb_7), integer.LIMB_MINIMUM, integer.LIMB_MAXIMUM).
+		Ensure()
+}
+
+func denominator_integer(value Denominator) (result integer.Integer) {
+	defer func() {
+		integer.Integer_Invariants(result, "rational.denominator_integer.result")
+	}()
+	Denominator_Invariants(value, "rational.denominator_integer.value")
+	return integer.Integer{Limbs: integer.Limbs(value)}
 }
 
 // Boolean is a true or false report about one ratio.
@@ -84,223 +112,298 @@ func Rational_Invariants(value Rational, namespace aver.Namespace) {
 	Denominator_Invariants(value.Denominator, namespace)
 }
 
+// Rational_Handle keeps caller-owned ratio storage explicit.
+type Rational_Handle *Rational
+
+// Rational_Handle_Invariants composes present ratio storage.
+func Rational_Handle_Invariants(value Rational_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Rational_Invariants(*value, namespace)
+}
+
+// Numerator_Handle keeps caller-owned whole-number output explicit.
+type Numerator_Handle *Numerator
+
+// Numerator_Handle_Invariants composes present numerator storage.
+func Numerator_Handle_Invariants(value Numerator_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Numerator_Invariants(*value, namespace)
+}
+
 // Zero is the ratio every sum starts from.
-func Zero() (result Rational) {
-	defer func() { Rational_Invariants(result, "zero.result") }()
-	return Rational{
-		Numerator:   Numerator(integer.Zero()),
-		Denominator: Denominator(integer.One()),
+func Zero(destination Rational_Handle) {
+	Rational_Handle_Invariants(destination, "rational.zero.destination")
+	above := integer.Integer{}
+	integer.Zero(&above)
+	below := integer.Integer{}
+	integer.One(&below)
+	*destination = Rational{
+		Numerator:   Numerator(above.Limbs),
+		Denominator: Denominator(below.Limbs),
 	}
 }
 
 // One is the ratio every product starts from.
-func One() (result Rational) {
-	defer func() { Rational_Invariants(result, "one.result") }()
-	return Rational{
-		Numerator:   Numerator(integer.One()),
-		Denominator: Denominator(integer.One()),
+func One(destination Rational_Handle) {
+	Rational_Handle_Invariants(destination, "rational.one.destination")
+	unit := integer.Integer{}
+	integer.One(&unit)
+	*destination = Rational{
+		Numerator:   Numerator(unit.Limbs),
+		Denominator: Denominator(unit.Limbs),
 	}
 }
 
 // From_Integer lifts a whole value.
-func From_Integer(value Numerator) (result Rational) {
-	defer func() { Rational_Invariants(result, "from_integer.result") }()
-	Numerator_Invariants(value, "from_integer.value")
-	return Rational{Numerator: value, Denominator: Denominator(integer.One())}
+func From_Integer(destination Rational_Handle, value Numerator) {
+	Rational_Handle_Invariants(destination, "rational.from_integer.destination")
+	Numerator_Invariants(value, "rational.from_integer.value")
+	unit := integer.Integer{}
+	integer.One(&unit)
+	*destination = Rational{Numerator: value, Denominator: Denominator(unit.Limbs)}
 }
 
 // From_Ratio takes a numerator and a denominator and returns the ratio in lowest terms. A zero
 // denominator names no value and is refused.
 func From_Ratio(
-	numerator Numerator, denominator Denominator,
-) (result Rational, ok Boolean) {
-	defer func() {
-		Rational_Invariants(result, "from_ratio.result")
-		Boolean_Invariants(ok, "from_ratio.ok")
-	}()
-	Numerator_Invariants(numerator, "from_ratio.numerator")
-	Denominator_Invariants(denominator, "from_ratio.denominator")
-	above := integer.Integer(numerator)
-	below := integer.Integer(denominator)
+	destination Rational_Handle,
+	numerator Numerator,
+	denominator Denominator,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.from_ratio.ok") }()
+	Rational_Handle_Invariants(destination, "rational.from_ratio.destination")
+	Numerator_Invariants(numerator, "rational.from_ratio.numerator")
+	Denominator_Invariants(denominator, "rational.from_ratio.denominator")
+	above := numerator_integer(numerator)
+	below := denominator_integer(denominator)
 	if bool(integer.Is_Zero(below)) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if bool(integer.Is_Negative(below)) {
-		flipped_above, above_ok := integer.Negate(above)
-		flipped_below, below_ok := integer.Negate(below)
+		flipped_above := integer.Integer{}
+		above_ok := integer.Negate(&flipped_above, above)
+		flipped_below := integer.Integer{}
+		below_ok := integer.Negate(&flipped_below, below)
 		if !bool(above_ok) {
-			return Zero(), false
+			Zero(destination)
+			return false
 		}
 		if !bool(below_ok) {
-			return Zero(), false
+			Zero(destination)
+			return false
 		}
 		above = flipped_above
 		below = flipped_below
 	}
-	divisor, divisor_ok := integer.Greatest_Common_Divisor(above, below)
+	divisor := integer.Integer{}
+	divisor_ok := integer.Greatest_Common_Divisor(&divisor, above, below)
 	if !bool(divisor_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if bool(integer.Is_Zero(divisor)) {
-		return Zero(), true
+		Zero(destination)
+		return true
 	}
-	above, _, _ = integer.Divide(above, divisor)
-	below, _, _ = integer.Divide(below, divisor)
-	return Rational{Numerator: Numerator(above), Denominator: Denominator(below)}, true
+	quotient := integer.Integer{}
+	remainder := integer.Integer{}
+	integer.Divide(&quotient, &remainder, above, divisor)
+	above = quotient
+	integer.Divide(&quotient, &remainder, below, divisor)
+	below = quotient
+	*destination = Rational{
+		Numerator:   Numerator(above.Limbs),
+		Denominator: Denominator(below.Limbs),
+	}
+	return true
 }
 
 // Whole truncates a ratio toward zero.
-func Whole(value Rational) (result Numerator, ok Boolean) {
-	defer func() {
-		Numerator_Invariants(result, "whole.result")
-		Boolean_Invariants(ok, "whole.ok")
-	}()
-	Rational_Invariants(value, "whole.value")
-	quotient, _, divided := integer.Divide(
-		integer.Integer(value.Numerator), integer.Integer(value.Denominator))
-	return Numerator(quotient), Boolean(divided)
+func Whole(destination Numerator_Handle, value Rational) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.whole.ok") }()
+	Numerator_Handle_Invariants(destination, "rational.whole.destination")
+	Rational_Invariants(value, "rational.whole.value")
+	quotient := integer.Integer{}
+	remainder := integer.Integer{}
+	divided := integer.Divide(
+		&quotient, &remainder,
+		numerator_integer(value.Numerator), denominator_integer(value.Denominator))
+	*destination = Numerator(quotient.Limbs)
+	return Boolean(divided)
 }
 
 // Is_Whole reports whether a ratio names an integer.
 func Is_Whole(value Rational) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "is_whole.yes") }()
-	Rational_Invariants(value, "is_whole.value")
-	return integer.Compare(integer.Integer(value.Denominator), integer.One()) ==
+	Rational_Invariants(value, "rational.is_whole.value")
+	unit := integer.Integer{}
+	integer.One(&unit)
+	return integer.Compare(denominator_integer(value.Denominator), unit) ==
 		integer.ORDER_SAME
 }
 
 // Is_Zero reports whether a ratio names zero.
 func Is_Zero(value Rational) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "is_zero.yes") }()
-	Rational_Invariants(value, "is_zero.value")
-	return Boolean(integer.Is_Zero(integer.Integer(value.Numerator)))
+	Rational_Invariants(value, "rational.is_zero.value")
+	return Boolean(integer.Is_Zero(numerator_integer(value.Numerator)))
 }
 
 // Sign reports whether a ratio stands below, at, or above zero.
 func Sign(value Rational) (order integer.Order) {
 	defer func() { integer.Order_Invariants(order, "sign.order") }()
-	Rational_Invariants(value, "sign.value")
-	return integer.Sign(integer.Integer(value.Numerator))
+	Rational_Invariants(value, "rational.sign.value")
+	return integer.Sign(numerator_integer(value.Numerator))
 }
 
 // Add sums two ratios and normalises the result. Each step reports whether it held the width,
 // thus a caller learns of an overflow rather than reading a wrapped ratio.
-func Add(augend Rational, addend Rational) (sum Rational, ok Boolean) {
-	defer func() {
-		Rational_Invariants(sum, "add.sum")
-		Boolean_Invariants(ok, "add.ok")
-	}()
-	Rational_Invariants(augend, "add.augend")
-	Rational_Invariants(addend, "add.addend")
-	left, left_ok := integer.Multiply(
-		integer.Integer(augend.Numerator), integer.Integer(addend.Denominator))
-	right, right_ok := integer.Multiply(
-		integer.Integer(addend.Numerator), integer.Integer(augend.Denominator))
-	below, below_ok := integer.Multiply(
-		integer.Integer(augend.Denominator), integer.Integer(addend.Denominator))
-	above, above_ok := integer.Add(left, right)
+func Add(destination Rational_Handle, augend Rational, addend Rational) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.add.ok") }()
+	Rational_Handle_Invariants(destination, "rational.add.destination")
+	Rational_Invariants(augend, "rational.add.augend")
+	Rational_Invariants(addend, "rational.add.addend")
+	left := integer.Integer{}
+	left_ok := integer.Multiply(
+		&left, numerator_integer(augend.Numerator),
+		denominator_integer(addend.Denominator))
+	right := integer.Integer{}
+	right_ok := integer.Multiply(
+		&right, numerator_integer(addend.Numerator),
+		denominator_integer(augend.Denominator))
+	below := integer.Integer{}
+	below_ok := integer.Multiply(
+		&below, denominator_integer(augend.Denominator),
+		denominator_integer(addend.Denominator))
+	above := integer.Integer{}
+	above_ok := integer.Add(&above, left, right)
 	if !bool(left_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(right_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(below_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(above_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	return From_Ratio(Numerator(above), Denominator(below))
+	return From_Ratio(
+		destination, Numerator(above.Limbs), Denominator(below.Limbs))
 }
 
 // Negate reverses the sign of a ratio.
-func Negate(value Rational) (result Rational, ok Boolean) {
-	defer func() {
-		Rational_Invariants(result, "negate.result")
-		Boolean_Invariants(ok, "negate.ok")
-	}()
-	Rational_Invariants(value, "negate.value")
-	above, above_ok := integer.Negate(integer.Integer(value.Numerator))
+func Negate(destination Rational_Handle, value Rational) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.negate.ok") }()
+	Rational_Handle_Invariants(destination, "rational.negate.destination")
+	Rational_Invariants(value, "rational.negate.value")
+	above := integer.Integer{}
+	above_ok := integer.Negate(&above, numerator_integer(value.Numerator))
 	if !bool(above_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	return Rational{Numerator: Numerator(above), Denominator: value.Denominator}, true
+	*destination = Rational{
+		Numerator: Numerator(above.Limbs), Denominator: value.Denominator,
+	}
+	return true
 }
 
 // Subtract takes one ratio from another.
-func Subtract(minuend Rational, subtrahend Rational) (difference Rational, ok Boolean) {
-	defer func() {
-		Rational_Invariants(difference, "subtract.difference")
-		Boolean_Invariants(ok, "subtract.ok")
-	}()
-	Rational_Invariants(minuend, "subtract.minuend")
-	Rational_Invariants(subtrahend, "subtract.subtrahend")
-	flipped, flipped_ok := Negate(subtrahend)
+func Subtract(
+	destination Rational_Handle, minuend Rational, subtrahend Rational,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.subtract.ok") }()
+	Rational_Handle_Invariants(destination, "rational.subtract.destination")
+	Rational_Invariants(minuend, "rational.subtract.minuend")
+	Rational_Invariants(subtrahend, "rational.subtract.subtrahend")
+	flipped := Rational{}
+	flipped_ok := Negate(&flipped, subtrahend)
 	if !bool(flipped_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	return Add(minuend, flipped)
+	return Add(destination, minuend, flipped)
 }
 
 // Absolute reads the magnitude of a ratio.
-func Absolute(value Rational) (result Rational, ok Boolean) {
-	defer func() {
-		Rational_Invariants(result, "absolute.result")
-		Boolean_Invariants(ok, "absolute.ok")
-	}()
-	Rational_Invariants(value, "absolute.value")
+func Absolute(destination Rational_Handle, value Rational) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.absolute.ok") }()
+	Rational_Handle_Invariants(destination, "rational.absolute.destination")
+	Rational_Invariants(value, "rational.absolute.value")
 	if Sign(value) != integer.ORDER_BEFORE {
-		return value, true
+		*destination = value
+		return true
 	}
-	return Negate(value)
+	return Negate(destination, value)
 }
 
 // Multiply forms the product of two ratios and normalises it.
 func Multiply(
-	multiplicand Rational, multiplier Rational,
-) (product Rational, ok Boolean) {
-	defer func() {
-		Rational_Invariants(product, "multiply.product")
-		Boolean_Invariants(ok, "multiply.ok")
-	}()
-	Rational_Invariants(multiplicand, "multiply.multiplicand")
-	Rational_Invariants(multiplier, "multiply.multiplier")
-	above, above_ok := integer.Multiply(
-		integer.Integer(multiplicand.Numerator), integer.Integer(multiplier.Numerator))
-	below, below_ok := integer.Multiply(
-		integer.Integer(multiplicand.Denominator), integer.Integer(multiplier.Denominator))
+	destination Rational_Handle, multiplicand Rational, multiplier Rational,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.multiply.ok") }()
+	Rational_Handle_Invariants(destination, "rational.multiply.destination")
+	Rational_Invariants(multiplicand, "rational.multiply.multiplicand")
+	Rational_Invariants(multiplier, "rational.multiply.multiplier")
+	above := integer.Integer{}
+	above_ok := integer.Multiply(
+		&above, numerator_integer(multiplicand.Numerator),
+		numerator_integer(multiplier.Numerator))
+	below := integer.Integer{}
+	below_ok := integer.Multiply(
+		&below, denominator_integer(multiplicand.Denominator),
+		denominator_integer(multiplier.Denominator))
 	if !bool(above_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(below_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	return From_Ratio(Numerator(above), Denominator(below))
+	return From_Ratio(
+		destination, Numerator(above.Limbs), Denominator(below.Limbs))
 }
 
 // Divide forms the quotient of two ratios. A zero divisor names no quotient and is refused.
-func Divide(dividend Rational, divisor Rational) (quotient Rational, ok Boolean) {
-	defer func() {
-		Rational_Invariants(quotient, "divide.quotient")
-		Boolean_Invariants(ok, "divide.ok")
-	}()
-	Rational_Invariants(dividend, "divide.dividend")
-	Rational_Invariants(divisor, "divide.divisor")
+func Divide(destination Rational_Handle, dividend Rational, divisor Rational) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "rational.divide.ok") }()
+	Rational_Handle_Invariants(destination, "rational.divide.destination")
+	Rational_Invariants(dividend, "rational.divide.dividend")
+	Rational_Invariants(divisor, "rational.divide.divisor")
 	if bool(Is_Zero(divisor)) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	above, above_ok := integer.Multiply(
-		integer.Integer(dividend.Numerator), integer.Integer(divisor.Denominator))
-	below, below_ok := integer.Multiply(
-		integer.Integer(dividend.Denominator), integer.Integer(divisor.Numerator))
+	above := integer.Integer{}
+	above_ok := integer.Multiply(
+		&above, numerator_integer(dividend.Numerator),
+		denominator_integer(divisor.Denominator))
+	below := integer.Integer{}
+	below_ok := integer.Multiply(
+		&below, denominator_integer(dividend.Denominator),
+		numerator_integer(divisor.Numerator))
 	if !bool(above_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(below_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	return From_Ratio(Numerator(above), Denominator(below))
+	return From_Ratio(
+		destination, Numerator(above.Limbs), Denominator(below.Limbs))
 }
 
 // Compare cross-multiplies and reads the order of the products. Both denominators stand above
@@ -310,12 +413,16 @@ func Compare(left Rational, right Rational) (order integer.Order, ok Boolean) {
 		integer.Order_Invariants(order, "compare.order")
 		Boolean_Invariants(ok, "compare.ok")
 	}()
-	Rational_Invariants(left, "compare.left")
-	Rational_Invariants(right, "compare.right")
-	first, first_ok := integer.Multiply(
-		integer.Integer(left.Numerator), integer.Integer(right.Denominator))
-	second, second_ok := integer.Multiply(
-		integer.Integer(right.Numerator), integer.Integer(left.Denominator))
+	Rational_Invariants(left, "rational.compare.left")
+	Rational_Invariants(right, "rational.compare.right")
+	first := integer.Integer{}
+	first_ok := integer.Multiply(
+		&first, numerator_integer(left.Numerator),
+		denominator_integer(right.Denominator))
+	second := integer.Integer{}
+	second_ok := integer.Multiply(
+		&second, numerator_integer(right.Numerator),
+		denominator_integer(left.Denominator))
 	if !bool(first_ok) {
 		return integer.ORDER_SAME, false
 	}
@@ -330,9 +437,9 @@ func Compare(left Rational, right Rational) (order integer.Order, ok Boolean) {
 func Into_Text(destination Digits, value Rational) (count Text_Count) {
 	defer func() { Text_Count_Invariants(count, "into_text.count") }()
 	Digits_Invariants(destination, "into_text.destination")
-	Rational_Invariants(value, "into_text.value")
+	Rational_Invariants(value, "rational.into_text.value")
 	var storage [TEXT_SIZE_MAXIMUM]byte
-	above := integer.Into_Text(storage[:], integer.Integer(value.Numerator))
+	above := integer.Into_Text(storage[:], numerator_integer(value.Numerator))
 	written := int(above)
 	if written == 0 {
 		return TEXT_SIZE_MINIMUM
@@ -341,7 +448,7 @@ func Into_Text(destination Digits, value Rational) (count Text_Count) {
 		storage[written] = SEPARATOR
 		written++
 		below := integer.Into_Text(
-			storage[written:], integer.Integer(value.Denominator))
+			storage[written:], denominator_integer(value.Denominator))
 		if below == 0 {
 			return TEXT_SIZE_MINIMUM
 		}

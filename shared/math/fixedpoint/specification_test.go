@@ -209,7 +209,9 @@ func Test_Serialization(t *testing.T) {
 
 // Test_Allocation proves each operation keeps all result storage with its caller.
 func Test_Allocation(t *testing.T) {
-	fixture := allocation_fixture{}
+	fixture := allocation_fixture{
+		Storage: make([]byte, fixedpoint.TEXT_SIZE_MAXIMUM),
+	}
 	one := number_from_integer(1)
 	two := number_from_integer(2)
 	checks := [...]struct {
@@ -295,7 +297,7 @@ type allocation_fixture struct {
 	Root        fixedpoint.Root_Integer
 	Scaled_Root fixedpoint.Scaled_Root
 	Sine        fixedpoint.Sine
-	Storage     [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+	Storage     []byte
 	Text        fixedpoint.Text
 	Whole       fixedpoint.Whole_Integer
 }

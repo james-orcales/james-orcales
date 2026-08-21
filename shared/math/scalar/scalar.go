@@ -872,16 +872,7 @@ func Ceiling(value Value) (whole Whole_Number) {
 func Round(value Value) (whole Whole_Number) {
 	defer func() {
 		Whole_Number_Invariants(whole, "round.whole")
-		// The nearest whole is never more than a half away. A shift past the end of the
-		// storage lands far outside this, whatever the sign it wraps to.
-		distance := int64(value) - int64(whole)
-		if distance < 0 {
-			distance = -distance
-		}
-		aver.Always(
-			distance <= HALF,
-			"A rounded value is within one half of its own value.",
-		)
+		assert_round_result(value, whole)
 	}()
 	Value_Invariants(value, "round.value")
 	truncated := int64(value) / SCALE * SCALE
@@ -893,6 +884,21 @@ func Round(value Value) (whole Whole_Number) {
 		return Whole_Number(truncated - SCALE)
 	}
 	return Whole_Number(truncated)
+}
+
+func assert_round_result(value Value, whole Whole_Number) {
+	Value_Invariants(value, "assert_round_result.value")
+	Whole_Number_Invariants(whole, "assert_round_result.whole")
+	// The nearest whole is never more than a half away. A shift past the end of the
+	// storage lands far outside this, whatever the sign it wraps to.
+	distance := int64(value) - int64(whole)
+	if distance < 0 {
+		distance = -distance
+	}
+	aver.Always(
+		distance <= HALF,
+		"A rounded value is within one half of its own value.",
+	)
 }
 
 // Modulo returns the remainder of a truncated division and keeps the sign of the dividend.
@@ -911,17 +917,23 @@ func Modulo(dividend Dividend, divisor Divisor) (remainder Remainder) {
 func Square_Root(value Radicand) (root Root) {
 	defer func() {
 		Root_Invariants(root, "square_root.root")
-		// The square of a floored root never passes the radicand. The square stays in
-		// range because the root is the floor, thus this needs no wider arithmetic.
-		square := fixedpoint.Multiply(
-			fixedpoint.Multiplicand(root), fixedpoint.Multiplier(root))
-		aver.Always(
-			int64(square) <= int64(value),
-			"The square of a root never exceeds its radicand.",
-		)
+		assert_square_root_result(value, root)
 	}()
 	Radicand_Invariants(value, "square_root.value")
 	return Root(fixedpoint.Square_Root(fixedpoint.Number(value)))
+}
+
+func assert_square_root_result(value Radicand, root Root) {
+	Radicand_Invariants(value, "assert_square_root_result.value")
+	Root_Invariants(root, "assert_square_root_result.root")
+	// The square of a floored root never passes the radicand. The square stays in
+	// range because the root is the floor, thus this needs no wider arithmetic.
+	square := fixedpoint.Multiply(
+		fixedpoint.Multiplicand(root), fixedpoint.Multiplier(root))
+	aver.Always(
+		int64(square) <= int64(value),
+		"The square of a root never exceeds its radicand.",
+	)
 }
 
 // Cube_Root returns the cube root of a Number of either sign. Newton's iteration converges
@@ -1010,24 +1022,7 @@ func cube_root_estimate(magnitude Cube_Magnitude) (estimate Cube_Estimate) {
 func Hypotenuse(opposite Leg_Opposite, adjacent Leg_Adjacent) (distance Distance) {
 	defer func() {
 		Distance_Invariants(distance, "hypotenuse.distance")
-		// The hypotenuse is the longest side, thus it reaches at least as far as either
-		// leg. A product that overflows falls short of this, or turns negative.
-		opposite_reach := int64(opposite)
-		if opposite_reach < 0 {
-			opposite_reach = -opposite_reach
-		}
-		adjacent_reach := int64(adjacent)
-		if adjacent_reach < 0 {
-			adjacent_reach = -adjacent_reach
-		}
-		aver.Always(
-			int64(distance) >= opposite_reach,
-			"A hypotenuse reaches at least as far as the opposite leg.",
-		)
-		aver.Always(
-			int64(distance) >= adjacent_reach,
-			"A hypotenuse reaches at least as far as the adjacent leg.",
-		)
+		assert_hypotenuse_result(opposite, adjacent, distance)
 	}()
 	Leg_Opposite_Invariants(opposite, "hypotenuse.opposite")
 	Leg_Adjacent_Invariants(adjacent, "hypotenuse.adjacent")
@@ -1052,6 +1047,34 @@ func Hypotenuse(opposite Leg_Opposite, adjacent Leg_Adjacent) (distance Distance
 	root := fixedpoint.Square_Root(fixedpoint.Number(SCALE) + square)
 	return Distance(fixedpoint.Multiply(
 		fixedpoint.Multiplicand(larger), fixedpoint.Multiplier(fixedpoint.Number(root))))
+}
+
+func assert_hypotenuse_result(
+	opposite Leg_Opposite,
+	adjacent Leg_Adjacent,
+	distance Distance,
+) {
+	Leg_Opposite_Invariants(opposite, "assert_hypotenuse_result.opposite")
+	Leg_Adjacent_Invariants(adjacent, "assert_hypotenuse_result.adjacent")
+	Distance_Invariants(distance, "assert_hypotenuse_result.distance")
+	// The hypotenuse is the longest side, thus it reaches at least as far as either
+	// leg. A product that overflows falls short of this, or turns negative.
+	opposite_reach := int64(opposite)
+	if opposite_reach < 0 {
+		opposite_reach = -opposite_reach
+	}
+	adjacent_reach := int64(adjacent)
+	if adjacent_reach < 0 {
+		adjacent_reach = -adjacent_reach
+	}
+	aver.Always(
+		int64(distance) >= opposite_reach,
+		"A hypotenuse reaches at least as far as the opposite leg.",
+	)
+	aver.Always(
+		int64(distance) >= adjacent_reach,
+		"A hypotenuse reaches at least as far as the adjacent leg.",
+	)
 }
 
 // Exponential_2 raises two to a power. The whole part of the exponent is a shift, and each

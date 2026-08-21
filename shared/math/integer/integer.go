@@ -116,6 +116,86 @@ func Limb_Invariants(value Limb, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Limb_0 gives least-significant storage independent invariant identity.
+type Limb_0 Limb
+
+// Limb_0_Invariants states complete word domain.
+func Limb_0_Invariants(value Limb_0, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
+// Limb_1 gives second storage word independent invariant identity.
+type Limb_1 Limb
+
+// Limb_1_Invariants states complete word domain.
+func Limb_1_Invariants(value Limb_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
+// Limb_2 gives third storage word independent invariant identity.
+type Limb_2 Limb
+
+// Limb_2_Invariants states complete word domain.
+func Limb_2_Invariants(value Limb_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
+// Limb_3 gives fourth storage word independent invariant identity.
+type Limb_3 Limb
+
+// Limb_3_Invariants states complete word domain.
+func Limb_3_Invariants(value Limb_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
+// Limb_4 gives fifth storage word independent invariant identity.
+type Limb_4 Limb
+
+// Limb_4_Invariants states complete word domain.
+func Limb_4_Invariants(value Limb_4, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
+// Limb_5 gives sixth storage word independent invariant identity.
+type Limb_5 Limb
+
+// Limb_5_Invariants states complete word domain.
+func Limb_5_Invariants(value Limb_5, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
+// Limb_6 gives seventh storage word independent invariant identity.
+type Limb_6 Limb
+
+// Limb_6_Invariants states complete word domain.
+func Limb_6_Invariants(value Limb_6, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
+// Limb_7 gives sign-bearing storage word independent invariant identity.
+type Limb_7 Limb
+
+// Limb_7_Invariants states complete word domain.
+func Limb_7_Invariants(value Limb_7, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
+		Ensure()
+}
+
 // Limb_Index names one limb of a value.
 type Limb_Index int
 
@@ -236,47 +316,141 @@ func Digit_Count_Invariants(value Digit_Count, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Limbs is fixed-width storage. Separate fields keep value copies caller-owned without array
+// parameters or slice backing storage.
+type Limbs struct {
+	// Limb_0 stays inline so copies own least-significant storage.
+	Limb_0 Limb_0
+	// Limb_1 stays inline so copies own second storage word.
+	Limb_1 Limb_1
+	// Limb_2 stays inline so copies own third storage word.
+	Limb_2 Limb_2
+	// Limb_3 stays inline so copies own fourth storage word.
+	Limb_3 Limb_3
+	// Limb_4 stays inline so copies own fifth storage word.
+	Limb_4 Limb_4
+	// Limb_5 stays inline so copies own sixth storage word.
+	Limb_5 Limb_5
+	// Limb_6 stays inline so copies own seventh storage word.
+	Limb_6 Limb_6
+	// Limb_7 stays inline so copies own sign-bearing storage word.
+	Limb_7 Limb_7
+}
+
+// Limbs_Invariants states the width every value holds.
+func Limbs_Invariants(value Limbs, namespace aver.Namespace) {
+	Limb_0_Invariants(value.Limb_0, namespace)
+	Limb_1_Invariants(value.Limb_1, namespace)
+	Limb_2_Invariants(value.Limb_2, namespace)
+	Limb_3_Invariants(value.Limb_3, namespace)
+	Limb_4_Invariants(value.Limb_4, namespace)
+	Limb_5_Invariants(value.Limb_5, namespace)
+	Limb_6_Invariants(value.Limb_6, namespace)
+	Limb_7_Invariants(value.Limb_7, namespace)
+}
+
+func limb_at(value Limbs, index Limb_Index) (limb Limb) {
+	defer func() { Limb_Invariants(limb, "limb_at.limb") }()
+	Limbs_Invariants(value, "limb_at.value")
+	Limb_Index_Invariants(index, "limb_at.index")
+	switch index {
+	case 0:
+		return Limb(value.Limb_0)
+	case 1:
+		return Limb(value.Limb_1)
+	case 2:
+		return Limb(value.Limb_2)
+	case 3:
+		return Limb(value.Limb_3)
+	case 4:
+		return Limb(value.Limb_4)
+	case 5:
+		return Limb(value.Limb_5)
+	case 6:
+		return Limb(value.Limb_6)
+	case 7:
+		return Limb(value.Limb_7)
+	}
+	return 0
+}
+
+func limbs_with(value Limbs, index Limb_Index, limb Limb) (result Limbs) {
+	defer func() { Limbs_Invariants(result, "limbs_with.result") }()
+	Limbs_Invariants(value, "limbs_with.value")
+	Limb_Index_Invariants(index, "limbs_with.index")
+	Limb_Invariants(limb, "limbs_with.limb")
+	result = value
+	switch index {
+	case 0:
+		result.Limb_0 = Limb_0(limb)
+	case 1:
+		result.Limb_1 = Limb_1(limb)
+	case 2:
+		result.Limb_2 = Limb_2(limb)
+	case 3:
+		result.Limb_3 = Limb_3(limb)
+	case 4:
+		result.Limb_4 = Limb_4(limb)
+	case 5:
+		result.Limb_5 = Limb_5(limb)
+	case 6:
+		result.Limb_6 = Limb_6(limb)
+	case 7:
+		result.Limb_7 = Limb_7(limb)
+	}
+	return result
+}
+
 // Integer is a two's complement value of fixed width, least significant limb first.
 type Integer struct {
 	// Limbs holds the value, least significant limb first. The top bit of the final limb
 	// carries the sign, thus a negative value needs no field of its own.
-	Limbs [LIMB_COUNT]Limb
+	Limbs Limbs
 }
 
 // Integer_Invariants states the width every value holds.
 func Integer_Invariants(value Integer, namespace aver.Namespace) {
-	aver.Always(
-		len(value.Limbs) == LIMB_COUNT,
-		"An integer holds one limb for every piece of its width.",
-	)
+	Limbs_Invariants(value.Limbs, namespace)
+}
+
+// Integer_Handle keeps caller-owned storage explicit across mutation boundaries.
+type Integer_Handle *Integer
+
+// Integer_Handle_Invariants composes present integer storage.
+func Integer_Handle_Invariants(value Integer_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Integer_Invariants(*value, namespace)
 }
 
 // Zero is the value every magnitude starts from.
-func Zero() (result Integer) {
-	defer func() { Integer_Invariants(result, "zero.result") }()
-	return Integer{Limbs: [LIMB_COUNT]Limb{}}
+func Zero(destination Integer_Handle) {
+	Integer_Handle_Invariants(destination, "zero.destination")
+	*destination = Integer{Limbs: Limbs{}}
 }
 
 // One is the unit every count steps by.
-func One() (result Integer) {
-	defer func() { Integer_Invariants(result, "one.result") }()
-	result.Limbs[LIMB_INDEX_MINIMUM] = 1
-	return result
+func One(destination Integer_Handle) {
+	Integer_Handle_Invariants(destination, "one.destination")
+	*destination = Integer{}
+	destination.Limbs = limbs_with(destination.Limbs, LIMB_INDEX_MINIMUM, 1)
 }
 
 // From_Int_64 lifts a machine integer, carrying its sign into every limb above it.
-func From_Int_64(value Int_64) (result Integer) {
-	defer func() { Integer_Invariants(result, "from_int_64.result") }()
+func From_Int_64(destination Integer_Handle, value Int_64) {
+	Integer_Handle_Invariants(destination, "from_int_64.destination")
 	Int_64_Invariants(value, "from_int_64.value")
+	result := Integer{}
 	fill := Limb(0)
 	if value < 0 {
 		fill = LIMB_MAXIMUM
 	}
 	for index := range LIMB_COUNT {
-		result.Limbs[index] = fill
+		result.Limbs = limbs_with(result.Limbs, Limb_Index(index), fill)
 	}
-	result.Limbs[LIMB_INDEX_MINIMUM] = Limb(uint64(value))
-	return result
+	result.Limbs = limbs_with(result.Limbs, LIMB_INDEX_MINIMUM, Limb(uint64(value)))
+	*destination = result
 }
 
 // To_Int_64 lowers a value and reports whether it fits a machine integer.
@@ -291,11 +465,11 @@ func To_Int_64(value Integer) (result Int_64, ok Boolean) {
 		fill = LIMB_MAXIMUM
 	}
 	for index := LIMB_INDEX_MINIMUM + 1; index <= LIMB_INDEX_MAXIMUM; index++ {
-		if value.Limbs[index] != fill {
+		if limb_at(value.Limbs, Limb_Index(index)) != fill {
 			return 0, false
 		}
 	}
-	low := value.Limbs[LIMB_INDEX_MINIMUM]
+	low := limb_at(value.Limbs, LIMB_INDEX_MINIMUM)
 	if bool(Is_Negative(value)) != (low>>SIGN_BIT_INDEX == 1) {
 		return 0, false
 	}
@@ -306,7 +480,7 @@ func To_Int_64(value Integer) (result Int_64, ok Boolean) {
 func Is_Negative(value Integer) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "is_negative.yes") }()
 	Integer_Invariants(value, "is_negative.value")
-	return value.Limbs[LIMB_INDEX_MAXIMUM]>>SIGN_BIT_INDEX == 1
+	return limb_at(value.Limbs, LIMB_INDEX_MAXIMUM)>>SIGN_BIT_INDEX == 1
 }
 
 // Is_Zero reports whether every limb of a value is empty.
@@ -314,7 +488,7 @@ func Is_Zero(value Integer) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "is_zero.yes") }()
 	Integer_Invariants(value, "is_zero.value")
 	for index := range LIMB_COUNT {
-		if value.Limbs[index] != 0 {
+		if limb_at(value.Limbs, Limb_Index(index)) != 0 {
 			return false
 		}
 	}
@@ -336,90 +510,96 @@ func Sign(value Integer) (order Order) {
 
 // Add sums two values and reports whether the true sum fits the width. Two operands of one sign
 // whose sum carries the other sign left the width, which is the whole overflow test.
-func Add(augend Integer, addend Integer) (sum Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(sum, "add.sum")
-		Boolean_Invariants(ok, "add.ok")
-	}()
+func Add(destination Integer_Handle, augend Integer, addend Integer) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "add.ok") }()
+	Integer_Handle_Invariants(destination, "add.destination")
 	Integer_Invariants(augend, "add.augend")
 	Integer_Invariants(addend, "add.addend")
+	sum := Integer{}
 	carry := bits.Carry_In(0)
 	for index := range LIMB_COUNT {
 		total, next := bits.Add_64(
-			bits.Word_64(augend.Limbs[index]),
-			bits.Addend_64(addend.Limbs[index]),
+			bits.Word_64(limb_at(augend.Limbs, Limb_Index(index))),
+			bits.Addend_64(limb_at(addend.Limbs, Limb_Index(index))),
 			carry,
 		)
-		sum.Limbs[index] = Limb(total)
+		sum.Limbs = limbs_with(sum.Limbs, Limb_Index(index), Limb(total))
 		carry = bits.Carry_In(next)
 	}
+	*destination = sum
 	if Is_Negative(augend) != Is_Negative(addend) {
-		return sum, true
+		return true
 	}
-	return sum, Is_Negative(augend) == Is_Negative(sum)
+	return Is_Negative(augend) == Is_Negative(sum)
 }
 
 // Not flips every bit of a value.
-func Not(value Integer) (result Integer) {
-	defer func() { Integer_Invariants(result, "not.result") }()
+func Not(destination Integer_Handle, value Integer) {
+	Integer_Handle_Invariants(destination, "not.destination")
 	Integer_Invariants(value, "not.value")
+	result := Integer{}
 	for index := range LIMB_COUNT {
-		result.Limbs[index] = ^value.Limbs[index]
+		result.Limbs = limbs_with(
+			result.Limbs, Limb_Index(index), ^limb_at(value.Limbs, Limb_Index(index)))
 	}
-	return result
+	*destination = result
 }
 
 // Negate reverses the sign of a value. The most negative value has no positive twin inside the
 // width, thus it alone reports an overflow.
-func Negate(value Integer) (result Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(result, "negate.result")
-		Boolean_Invariants(ok, "negate.ok")
-	}()
+func Negate(destination Integer_Handle, value Integer) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "negate.ok") }()
+	Integer_Handle_Invariants(destination, "negate.destination")
 	Integer_Invariants(value, "negate.value")
-	result, ok = Add(Not(value), One())
+	inverted := Integer{}
+	Not(&inverted, value)
+	one := Integer{}
+	One(&one)
+	ok = Add(destination, inverted, one)
 	if bool(Is_Zero(value)) {
-		return result, true
+		return true
 	}
-	return result, Is_Negative(value) != Is_Negative(result)
+	return Is_Negative(value) != Is_Negative(*destination)
 }
 
 // Subtract takes one value from another and reports whether the difference fits the width.
-func Subtract(minuend Integer, subtrahend Integer) (difference Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(difference, "subtract.difference")
-		Boolean_Invariants(ok, "subtract.ok")
-	}()
+func Subtract(
+	destination Integer_Handle, minuend Integer, subtrahend Integer,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "subtract.ok") }()
+	Integer_Handle_Invariants(destination, "subtract.destination")
 	Integer_Invariants(minuend, "subtract.minuend")
 	Integer_Invariants(subtrahend, "subtract.subtrahend")
+	difference := Integer{}
 	borrow := bits.Borrow_In(0)
 	for index := range LIMB_COUNT {
 		total, next := bits.Subtract_64(
-			bits.Word_64(minuend.Limbs[index]),
-			bits.Subtrahend_64(subtrahend.Limbs[index]),
+			bits.Word_64(limb_at(minuend.Limbs, Limb_Index(index))),
+			bits.Subtrahend_64(limb_at(subtrahend.Limbs, Limb_Index(index))),
 			borrow,
 		)
-		difference.Limbs[index] = Limb(total)
+		difference.Limbs = limbs_with(
+			difference.Limbs, Limb_Index(index), Limb(total))
 		borrow = bits.Borrow_In(next)
 	}
+	*destination = difference
 	if Is_Negative(minuend) == Is_Negative(subtrahend) {
-		return difference, true
+		return true
 	}
-	return difference, Is_Negative(minuend) == Is_Negative(difference)
+	return Is_Negative(minuend) == Is_Negative(difference)
 }
 
 // Absolute reads the magnitude of a value. The most negative value has no magnitude inside the
 // width, thus it alone reports an overflow.
-func Absolute(value Integer) (result Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(result, "absolute.result")
-		Boolean_Invariants(ok, "absolute.ok")
-	}()
+func Absolute(destination Integer_Handle, value Integer) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "absolute.ok") }()
+	Integer_Handle_Invariants(destination, "absolute.destination")
 	Integer_Invariants(value, "absolute.value")
 	if !bool(Is_Negative(value)) {
-		return value, true
+		*destination = value
+		return true
 	}
-	return Negate(value)
+	return Negate(destination, value)
 }
 
 // Compare reports where the left value stands against the right one.
@@ -434,10 +614,12 @@ func Compare(left Integer, right Integer) (order Order) {
 		return ORDER_AFTER
 	}
 	for index := LIMB_INDEX_MAXIMUM; index >= LIMB_INDEX_MINIMUM; index-- {
-		if left.Limbs[index] == right.Limbs[index] {
+		left_limb := limb_at(left.Limbs, Limb_Index(index))
+		right_limb := limb_at(right.Limbs, Limb_Index(index))
+		if left_limb == right_limb {
 			continue
 		}
-		if left.Limbs[index] < right.Limbs[index] {
+		if left_limb < right_limb {
 			return ORDER_BEFORE
 		}
 		return ORDER_AFTER
@@ -447,47 +629,63 @@ func Compare(left Integer, right Integer) (order Order) {
 
 // And, Or, Exclusive_Or, and And_Not run limb by limb. Two's complement makes each exact for a
 // negative operand without a case of its own.
-func And(left Integer, right Integer) (result Integer) {
-	defer func() { Integer_Invariants(result, "and.result") }()
+func And(destination Integer_Handle, left Integer, right Integer) {
+	Integer_Handle_Invariants(destination, "and.destination")
 	Integer_Invariants(left, "and.left")
 	Integer_Invariants(right, "and.right")
+	result := Integer{}
 	for index := range LIMB_COUNT {
-		result.Limbs[index] = left.Limbs[index] & right.Limbs[index]
+		left_limb := limb_at(left.Limbs, Limb_Index(index))
+		right_limb := limb_at(right.Limbs, Limb_Index(index))
+		result.Limbs = limbs_with(result.Limbs, Limb_Index(index),
+			left_limb&right_limb)
 	}
-	return result
+	*destination = result
 }
 
 // Or joins the bits of two values.
-func Or(left Integer, right Integer) (result Integer) {
-	defer func() { Integer_Invariants(result, "or.result") }()
+func Or(destination Integer_Handle, left Integer, right Integer) {
+	Integer_Handle_Invariants(destination, "or.destination")
 	Integer_Invariants(left, "or.left")
 	Integer_Invariants(right, "or.right")
+	result := Integer{}
 	for index := range LIMB_COUNT {
-		result.Limbs[index] = left.Limbs[index] | right.Limbs[index]
+		left_limb := limb_at(left.Limbs, Limb_Index(index))
+		right_limb := limb_at(right.Limbs, Limb_Index(index))
+		result.Limbs = limbs_with(result.Limbs, Limb_Index(index),
+			left_limb|right_limb)
 	}
-	return result
+	*destination = result
 }
 
 // Exclusive_Or keeps the bits that stand in one value alone.
-func Exclusive_Or(left Integer, right Integer) (result Integer) {
-	defer func() { Integer_Invariants(result, "exclusive_or.result") }()
+func Exclusive_Or(destination Integer_Handle, left Integer, right Integer) {
+	Integer_Handle_Invariants(destination, "exclusive_or.destination")
 	Integer_Invariants(left, "exclusive_or.left")
 	Integer_Invariants(right, "exclusive_or.right")
+	result := Integer{}
 	for index := range LIMB_COUNT {
-		result.Limbs[index] = left.Limbs[index] ^ right.Limbs[index]
+		left_limb := limb_at(left.Limbs, Limb_Index(index))
+		right_limb := limb_at(right.Limbs, Limb_Index(index))
+		result.Limbs = limbs_with(result.Limbs, Limb_Index(index),
+			left_limb^right_limb)
 	}
-	return result
+	*destination = result
 }
 
 // And_Not clears the bits of the left value that stand in the right one.
-func And_Not(left Integer, right Integer) (result Integer) {
-	defer func() { Integer_Invariants(result, "and_not.result") }()
+func And_Not(destination Integer_Handle, left Integer, right Integer) {
+	Integer_Handle_Invariants(destination, "and_not.destination")
 	Integer_Invariants(left, "and_not.left")
 	Integer_Invariants(right, "and_not.right")
+	result := Integer{}
 	for index := range LIMB_COUNT {
-		result.Limbs[index] = left.Limbs[index] &^ right.Limbs[index]
+		left_limb := limb_at(left.Limbs, Limb_Index(index))
+		right_limb := limb_at(right.Limbs, Limb_Index(index))
+		result.Limbs = limbs_with(result.Limbs, Limb_Index(index),
+			left_limb&^right_limb)
 	}
-	return result
+	*destination = result
 }
 
 // Bit reports whether the bit at one position stands. A position past the width reads the sign,
@@ -501,268 +699,358 @@ func Bit(value Integer, position Shift_Count) (yes Boolean) {
 	}
 	limb := int(position) / LIMB_BIT_COUNT
 	offset := int(position) % LIMB_BIT_COUNT
-	return value.Limbs[limb]>>offset&1 == 1
+	return limb_at(value.Limbs, Limb_Index(limb))>>offset&1 == 1
 }
 
 // Bit_Size reads how many bits the magnitude of a value spans. Zero spans none.
 func Bit_Size(value Integer) (count Bit_Count) {
 	defer func() { Bit_Count_Invariants(count, "bit_size.count") }()
 	Integer_Invariants(value, "bit_size.value")
-	magnitude, ok := Absolute(value)
+	magnitude := Integer{}
+	ok := Absolute(&magnitude, value)
 	if !bool(ok) {
 		return BIT_COUNT_MAXIMUM
 	}
 	for index := LIMB_INDEX_MAXIMUM; index >= LIMB_INDEX_MINIMUM; index-- {
-		if magnitude.Limbs[index] == 0 {
+		magnitude_limb := limb_at(magnitude.Limbs, Limb_Index(index))
+		if magnitude_limb == 0 {
 			continue
 		}
 		return Bit_Count(index*LIMB_BIT_COUNT) +
-			Bit_Count(bits.Bit_Size_64(bits.Word_64(magnitude.Limbs[index])))
+			Bit_Count(bits.Bit_Size_64(bits.Word_64(magnitude_limb)))
 	}
 	return BIT_COUNT_MINIMUM
 }
 
 // Shift_Left moves every bit up and reports whether a bit left the width.
-func Shift_Left(value Integer, count Shift_Count) (result Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(result, "shift_left.result")
-		Boolean_Invariants(ok, "shift_left.ok")
-	}()
+func Shift_Left(
+	destination Integer_Handle, value Integer, count Shift_Count,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "shift_left.ok") }()
+	Integer_Handle_Invariants(destination, "shift_left.destination")
 	Integer_Invariants(value, "shift_left.value")
 	Shift_Count_Invariants(count, "shift_left.count")
 	if bool(Is_Zero(value)) {
-		return value, true
+		*destination = value
+		return true
 	}
 	if int(count) >= BIT_COUNT_MAXIMUM {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	result = value
+	result := value
 	for range count {
 		carry := Limb(0)
 		for index := range LIMB_COUNT {
-			next := result.Limbs[index] >> SIGN_BIT_INDEX
-			result.Limbs[index] = result.Limbs[index]<<1 | carry
+			limb := limb_at(result.Limbs, Limb_Index(index))
+			next := limb >> SIGN_BIT_INDEX
+			result.Limbs = limbs_with(
+				result.Limbs, Limb_Index(index), limb<<1|carry)
 			carry = next
 		}
 	}
-	back := Shift_Right(result, count)
-	return result, Compare(back, value) == ORDER_SAME
+	back := Integer{}
+	Shift_Right(&back, result, count)
+	*destination = result
+	return Compare(back, value) == ORDER_SAME
 }
 
 // Shift_Right moves every bit down and carries the sign into the vacated bits, which is the
 // arithmetic shift Go states for a signed value.
-func Shift_Right(value Integer, count Shift_Count) (result Integer) {
-	defer func() { Integer_Invariants(result, "shift_right.result") }()
+func Shift_Right(destination Integer_Handle, value Integer, count Shift_Count) {
+	Integer_Handle_Invariants(destination, "shift_right.destination")
 	Integer_Invariants(value, "shift_right.value")
 	Shift_Count_Invariants(count, "shift_right.count")
+	result := Integer{}
 	fill := Limb(0)
 	if bool(Is_Negative(value)) {
 		fill = LIMB_MAXIMUM
 	}
 	if int(count) >= BIT_COUNT_MAXIMUM {
 		for index := range LIMB_COUNT {
-			result.Limbs[index] = fill
+			result.Limbs = limbs_with(result.Limbs, Limb_Index(index), fill)
 		}
-		return result
+		*destination = result
+		return
 	}
 	result = value
 	for range count {
 		carry := fill << SIGN_BIT_INDEX
 		for index := LIMB_INDEX_MAXIMUM; index >= LIMB_INDEX_MINIMUM; index-- {
-			next := result.Limbs[index] & 1
-			result.Limbs[index] = result.Limbs[index]>>1 | carry
+			limb := limb_at(result.Limbs, Limb_Index(index))
+			next := limb & 1
+			result.Limbs = limbs_with(
+				result.Limbs, Limb_Index(index), limb>>1|carry)
 			carry = next << SIGN_BIT_INDEX
 		}
 	}
-	return result
+	*destination = result
 }
 
 // Multiply forms the product of two values and reports whether it fits the width. The magnitudes
 // multiply and the sign follows, because a two's complement product of the written limbs would
 // wrap without saying so.
-func Multiply(multiplicand Integer, multiplier Integer) (product Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(product, "multiply.product")
-		Boolean_Invariants(ok, "multiply.ok")
-	}()
+func Multiply(
+	destination Integer_Handle, multiplicand Integer, multiplier Integer,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "multiply.ok") }()
+	Integer_Handle_Invariants(destination, "multiply.destination")
 	Integer_Invariants(multiplicand, "multiply.multiplicand")
 	Integer_Invariants(multiplier, "multiply.multiplier")
 	negative := Is_Negative(multiplicand) != Is_Negative(multiplier)
-	left, left_ok := Absolute(multiplicand)
-	right, right_ok := Absolute(multiplier)
+	left := Integer{}
+	left_ok := Absolute(&left, multiplicand)
+	right := Integer{}
+	right_ok := Absolute(&right, multiplier)
 	if !bool(left_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(right_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	product, ok = multiply_magnitude(left, right)
+	ok = multiply_magnitude(destination, left, right)
 	if !bool(ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(negative) {
-		return product, !Is_Negative(product)
+		return !Is_Negative(*destination)
 	}
-	product, ok = Negate(product)
-	return product, ok
+	product := *destination
+	return Negate(destination, product)
 }
 
 // Multiplies two magnitudes and reports whether the product fits the width. A carry out of the
 // final limb, or a product that reaches the sign bit, has left the room a signed value has.
-func multiply_magnitude(left Integer, right Integer) (product Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(product, "multiply_magnitude.product")
-		Boolean_Invariants(ok, "multiply_magnitude.ok")
-	}()
+func multiply_magnitude(
+	destination Integer_Handle, left Integer, right Integer,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "multiply_magnitude.ok") }()
+	Integer_Handle_Invariants(destination, "multiply_magnitude.destination")
 	Integer_Invariants(left, "multiply_magnitude.left")
 	Integer_Invariants(right, "multiply_magnitude.right")
+	product := Integer{}
 	spill := Limb(0)
 	for outer := range LIMB_COUNT {
 		carry := Limb(0)
 		for inner := range LIMB_COUNT {
 			high, low := bits.Multiply_64(
-				bits.Word_64(left.Limbs[outer]),
-				bits.Multiplier_64(right.Limbs[inner]),
+				bits.Word_64(limb_at(left.Limbs, Limb_Index(outer))),
+				bits.Multiplier_64(limb_at(right.Limbs, Limb_Index(inner))),
 			)
 			if outer+inner >= LIMB_COUNT {
 				// Both words of the partial product fall outside the width, thus
 				// either one standing is a product the width cannot hold.
 				if low != 0 {
-					return Zero(), false
+					Zero(destination)
+					return false
 				}
 				if high != 0 {
-					return Zero(), false
+					Zero(destination)
+					return false
 				}
 				continue
 			}
 			total, first := bits.Add_64(
-				bits.Word_64(product.Limbs[outer+inner]),
+				bits.Word_64(limb_at(product.Limbs, Limb_Index(outer+inner))),
 				bits.Addend_64(low), bits.Carry_In(0))
 			rolled, second := bits.Add_64(
 				bits.Word_64(total), bits.Addend_64(carry), bits.Carry_In(0))
-			product.Limbs[outer+inner] = Limb(rolled)
+			product.Limbs = limbs_with(
+				product.Limbs, Limb_Index(outer+inner), Limb(rolled))
 			carry = Limb(high) + Limb(first) + Limb(second)
 		}
 		spill = spill | carry
 	}
 	if spill != 0 {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	return product, !Is_Negative(product)
+	*destination = product
+	return !Is_Negative(product)
 }
 
 // Divide truncates its quotient toward zero and gives the remainder the sign of the dividend,
 // which is what Go states. A zero divisor is refused rather than trapped.
 func Divide(
-	dividend Integer, divisor Integer,
-) (quotient Integer, remainder Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(quotient, "divide.quotient")
-		Integer_Invariants(remainder, "divide.remainder")
-		Boolean_Invariants(ok, "divide.ok")
-	}()
+	quotient Integer_Handle,
+	remainder Integer_Handle,
+	dividend Integer,
+	divisor Integer,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "divide.ok") }()
+	Integer_Handle_Invariants(quotient, "divide.quotient")
+	Integer_Handle_Invariants(remainder, "divide.remainder")
 	Integer_Invariants(dividend, "divide.dividend")
 	Integer_Invariants(divisor, "divide.divisor")
 	if bool(Is_Zero(divisor)) {
-		return Zero(), Zero(), false
+		Zero(quotient)
+		Zero(remainder)
+		return false
 	}
-	left, left_ok := Absolute(dividend)
-	right, right_ok := Absolute(divisor)
+	left := Integer{}
+	left_ok := Absolute(&left, dividend)
+	right := Integer{}
+	right_ok := Absolute(&right, divisor)
 	if !bool(left_ok) {
-		return Zero(), Zero(), false
+		Zero(quotient)
+		Zero(remainder)
+		return false
 	}
 	if !bool(right_ok) {
-		return Zero(), Zero(), false
+		Zero(quotient)
+		Zero(remainder)
+		return false
 	}
-	quotient, remainder = divide_magnitude(left, right)
+	divide_magnitude(quotient, remainder, left, right)
 	if Is_Negative(dividend) != Is_Negative(divisor) {
-		quotient, ok = Negate(quotient)
+		value := *quotient
+		ok = Negate(quotient, value)
 		if !bool(ok) {
-			return Zero(), Zero(), false
+			Zero(quotient)
+			Zero(remainder)
+			return false
 		}
 	}
 	if bool(Is_Negative(dividend)) {
-		remainder, ok = Negate(remainder)
+		value := *remainder
+		ok = Negate(remainder, value)
 		if !bool(ok) {
-			return Zero(), Zero(), false
+			Zero(quotient)
+			Zero(remainder)
+			return false
 		}
 	}
-	return quotient, remainder, true
+	return true
 }
 
 // Divides two magnitudes one bit at a time. The walk is a loop over the width rather than a
 // word-at-a-time estimate, because a bit walk needs no correction step and reads as what it is.
 func divide_magnitude(
-	dividend Integer, divisor Integer,
-) (quotient Integer, remainder Integer) {
-	defer func() {
-		Integer_Invariants(quotient, "divide_magnitude.quotient")
-		Integer_Invariants(remainder, "divide_magnitude.remainder")
-	}()
+	quotient Integer_Handle,
+	remainder Integer_Handle,
+	dividend Integer,
+	divisor Integer,
+) {
+	Integer_Handle_Invariants(quotient, "divide_magnitude.quotient")
+	Integer_Handle_Invariants(remainder, "divide_magnitude.remainder")
 	Integer_Invariants(dividend, "divide_magnitude.dividend")
 	Integer_Invariants(divisor, "divide_magnitude.divisor")
+	source := dividend.Limbs
+	dividend_limbs := [LIMB_COUNT]Limb{
+		Limb(source.Limb_0), Limb(source.Limb_1), Limb(source.Limb_2), Limb(source.Limb_3),
+		Limb(source.Limb_4), Limb(source.Limb_5), Limb(source.Limb_6), Limb(source.Limb_7),
+	}
+	source = divisor.Limbs
+	divisor_limbs := [LIMB_COUNT]Limb{
+		Limb(source.Limb_0), Limb(source.Limb_1), Limb(source.Limb_2), Limb(source.Limb_3),
+		Limb(source.Limb_4), Limb(source.Limb_5), Limb(source.Limb_6), Limb(source.Limb_7),
+	}
+	var quotient_limbs, remainder_limbs [LIMB_COUNT]Limb
 	for step := BIT_COUNT_MAXIMUM - 1; step >= 0; step-- {
 		carry := Limb(0)
 		for index := range LIMB_COUNT {
-			next := remainder.Limbs[index] >> SIGN_BIT_INDEX
-			remainder.Limbs[index] = remainder.Limbs[index]<<1 | carry
+			next := remainder_limbs[index] >> SIGN_BIT_INDEX
+			remainder_limbs[index] = remainder_limbs[index]<<1 | carry
 			carry = next
 		}
-		if bool(Bit(dividend, Shift_Count(step))) {
-			low := remainder.Limbs[LIMB_INDEX_MINIMUM]
-			remainder.Limbs[LIMB_INDEX_MINIMUM] = low | 1
+		limb := step / LIMB_BIT_COUNT
+		if dividend_limbs[limb]>>uint(step%LIMB_BIT_COUNT)&1 == 1 {
+			remainder_limbs[LIMB_INDEX_MINIMUM] |= 1
 		}
-		if Compare(remainder, divisor) == ORDER_BEFORE {
+		order := ORDER_SAME
+		for index := LIMB_INDEX_MAXIMUM; index >= LIMB_INDEX_MINIMUM; index-- {
+			if remainder_limbs[index] == divisor_limbs[index] {
+				continue
+			}
+			if remainder_limbs[index] < divisor_limbs[index] {
+				order = ORDER_BEFORE
+			} else {
+				order = ORDER_AFTER
+			}
+			break
+		}
+		if order == ORDER_BEFORE {
 			continue
 		}
-		remainder, _ = Subtract(remainder, divisor)
-		limb := step / LIMB_BIT_COUNT
-		quotient.Limbs[limb] = quotient.Limbs[limb] | 1<<(step%LIMB_BIT_COUNT)
+		borrow := bits.Borrow_In(0)
+		for index := range LIMB_COUNT {
+			total, next := bits.Subtract_64(
+				bits.Word_64(remainder_limbs[index]),
+				bits.Subtrahend_64(divisor_limbs[index]),
+				borrow,
+			)
+			remainder_limbs[index] = Limb(total)
+			borrow = bits.Borrow_In(next)
+		}
+		quotient_limbs[limb] |= 1 << uint(step%LIMB_BIT_COUNT)
 	}
-	return quotient, remainder
+	quotient.Limbs = Limbs{
+		Limb_0: Limb_0(quotient_limbs[0]), Limb_1: Limb_1(quotient_limbs[1]),
+		Limb_2: Limb_2(quotient_limbs[2]), Limb_3: Limb_3(quotient_limbs[3]),
+		Limb_4: Limb_4(quotient_limbs[4]), Limb_5: Limb_5(quotient_limbs[5]),
+		Limb_6: Limb_6(quotient_limbs[6]), Limb_7: Limb_7(quotient_limbs[7]),
+	}
+	remainder.Limbs = Limbs{
+		Limb_0: Limb_0(remainder_limbs[0]), Limb_1: Limb_1(remainder_limbs[1]),
+		Limb_2: Limb_2(remainder_limbs[2]), Limb_3: Limb_3(remainder_limbs[3]),
+		Limb_4: Limb_4(remainder_limbs[4]), Limb_5: Limb_5(remainder_limbs[5]),
+		Limb_6: Limb_6(remainder_limbs[6]), Limb_7: Limb_7(remainder_limbs[7]),
+	}
 }
 
 // Greatest_Common_Divisor runs Euclid over the magnitudes. The result is never negative, and the
 // divisor of zero and zero is zero.
-func Greatest_Common_Divisor(left Integer, right Integer) (result Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(result, "greatest_common_divisor.result")
-		Boolean_Invariants(ok, "greatest_common_divisor.ok")
-	}()
+func Greatest_Common_Divisor(
+	destination Integer_Handle, left Integer, right Integer,
+) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "greatest_common_divisor.ok") }()
+	Integer_Handle_Invariants(destination, "greatest_common_divisor.destination")
 	Integer_Invariants(left, "greatest_common_divisor.left")
 	Integer_Invariants(right, "greatest_common_divisor.right")
-	first, first_ok := Absolute(left)
-	second, second_ok := Absolute(right)
+	first := Integer{}
+	first_ok := Absolute(&first, left)
+	second := Integer{}
+	second_ok := Absolute(&second, right)
 	if !bool(first_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	if !bool(second_ok) {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
 	for range BIT_COUNT_MAXIMUM * 2 {
 		if bool(Is_Zero(second)) {
-			return first, true
+			*destination = first
+			return true
 		}
-		_, rest := divide_magnitude(first, second)
+		quotient := Integer{}
+		rest := Integer{}
+		divide_magnitude(&quotient, &rest, first, second)
 		first = second
 		second = rest
 	}
-	return Zero(), false
+	Zero(destination)
+	return false
 }
 
 // From_Text reads a Go integer literal in base two, eight, ten, or sixteen. An underscore groups
 // digits and carries no value. A literal that spells no digit, or one past the width, is refused.
-func From_Text(text Text) (result Integer, ok Boolean) {
-	defer func() {
-		Integer_Invariants(result, "from_text.result")
-		Boolean_Invariants(ok, "from_text.ok")
-	}()
+func From_Text(destination Integer_Handle, text Text) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "from_text.ok") }()
+	Integer_Handle_Invariants(destination, "from_text.destination")
 	Text_Invariants(text, "from_text.text")
 	base, rest := read_base(text)
 	if len(rest) == 0 {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	step := From_Int_64(Int_64(base))
+	step := Integer{}
+	From_Int_64(&step, Int_64(base))
+	result := Integer{}
 	digits := 0
 	for index := range len(rest) {
 		if rest[index] == '_' {
@@ -770,25 +1058,34 @@ func From_Text(text Text) (result Integer, ok Boolean) {
 		}
 		value := digit_value(Digit_Byte(rest[index]))
 		if int(value) == DIGIT_VALUE_ABSENT {
-			return Zero(), false
+			Zero(destination)
+			return false
 		}
 		if int(value) >= int(base) {
-			return Zero(), false
+			Zero(destination)
+			return false
 		}
 		digits++
-		scaled, scaled_ok := Multiply(result, step)
+		scaled := Integer{}
+		scaled_ok := Multiply(&scaled, result, step)
 		if !bool(scaled_ok) {
-			return Zero(), false
+			Zero(destination)
+			return false
 		}
-		result, ok = Add(scaled, From_Int_64(Int_64(value)))
+		digit := Integer{}
+		From_Int_64(&digit, Int_64(value))
+		ok = Add(&result, scaled, digit)
 		if !bool(ok) {
-			return Zero(), false
+			Zero(destination)
+			return false
 		}
 	}
 	if digits == 0 {
-		return Zero(), false
+		Zero(destination)
+		return false
 	}
-	return result, true
+	*destination = result
+	return true
 }
 
 // Reads the base a literal names and returns the digits behind the prefix.
@@ -837,19 +1134,23 @@ func Into_Text(destination Digits, value Integer) (count Digit_Count) {
 	Digits_Invariants(destination, "into_text.destination")
 	Integer_Invariants(value, "into_text.value")
 	var storage [DIGIT_COUNT_MAXIMUM]byte
-	magnitude, ok := Absolute(value)
+	magnitude := Integer{}
+	ok := Absolute(&magnitude, value)
 	if !bool(ok) {
 		return DIGIT_COUNT_MINIMUM
 	}
-	step := From_Int_64(DECIMAL_BASE)
+	step := Integer{}
+	From_Int_64(&step, DECIMAL_BASE)
 	written := 0
 	for range DIGIT_COUNT_MAXIMUM {
 		if bool(Is_Zero(magnitude)) {
 			break
 		}
+		quotient := Integer{}
 		rest := Integer{}
-		magnitude, rest = divide_magnitude(magnitude, step)
-		storage[written] = byte(rest.Limbs[LIMB_INDEX_MINIMUM]) + '0'
+		divide_magnitude(&quotient, &rest, magnitude, step)
+		magnitude = quotient
+		storage[written] = byte(rest.Limbs.Limb_0) + '0'
 		written++
 	}
 	if written == 0 {
