@@ -35,6 +35,7 @@
           "!shared/random/csprng/**",
           "!shared/compress/**",
           "!shared/math/**",
+          "!shared/archive/**",
           "!shared/slices/**",
           "!shared/bytes/**",
           "!shared/strings/**",
