@@ -1,4 +1,4 @@
-package specification_test
+package requirements_test
 
 import (
 	"go/ast"
@@ -7,7 +7,7 @@ import (
 	"local/james-orcales/lint/internal/strings"
 	"testing"
 
-	"local/james-orcales/lint/internal/specification"
+	"local/james-orcales/lint/internal/requirements"
 )
 
 // This file dogfoods the doctrine it enforces: each leaf test builds a Package,
@@ -21,7 +21,7 @@ func Test_Coverage_Presence(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Markdown = nil
-	if !flagged(target, "has no SPECIFICATION.md") {
+	if !flagged(target, "has no REQUIREMENTS.md") {
 		t.Fatal("an in-scope package missing the spec must be flagged")
 	}
 }
@@ -33,7 +33,7 @@ func Test_Coverage_Exemptions(t *testing.T) {
 	target := baseline(t)
 	target.Markdown = nil
 	target.Impure = true
-	if flagged(target, "has no SPECIFICATION.md") {
+	if flagged(target, "has no REQUIREMENTS.md") {
 		t.Fatal("an impure package must be exempt from the mandate")
 	}
 }
@@ -141,7 +141,7 @@ func Test_Tests_Presence(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
 	target.Test = nil
-	if !flagged(target, "has no specification_test.go") {
+	if !flagged(target, "has no requirements_test.go") {
 		t.Fatal("a package missing the test file must be flagged")
 	}
 }
@@ -198,13 +198,13 @@ func Test_Sole_Rule(t *testing.T) {
 }
 `
 
-// Parses a specification_test.go source into the AST Check consumes, mirroring
+// Parses a requirements_test.go source into the AST Check consumes, mirroring
 // the caller's single parse of the real file.
 func parse_test(t *testing.T, source string) (file *ast.File) {
 	t.Helper()
 	file_set := token.NewFileSet()
 	parsed, err := parser.ParseFile(
-		file_set, "pkg/specification_test.go", source, parser.SkipObjectResolution)
+		file_set, "pkg/requirements_test.go", source, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -213,9 +213,9 @@ func parse_test(t *testing.T, source string) (file *ast.File) {
 
 // Builds the clean Package: a pure in-scope module package carrying the baseline
 // spec and its matching test.
-func baseline(t *testing.T) (target specification.Package) {
+func baseline(t *testing.T) (target requirements.Package) {
 	t.Helper()
-	return specification.Package{
+	return requirements.Package{
 		Path: "pkg", Has_Module: true, Impure: false,
 		Markdown: []byte(BASELINE_MARKDOWN), Test: parse_test(t, BASELINE_MARKDOWN_TEST),
 	}
@@ -223,9 +223,9 @@ func baseline(t *testing.T) (target specification.Package) {
 
 // Reports whether Check emits a diagnostic whose message contains fragment for
 // the single package target, run scoped to it.
-func flagged(target specification.Package, fragment string) (found bool) {
-	diags := specification.Check(&specification.Check_Input{
-		Packages: []specification.Package{target}, Scope: "pkg"})
+func flagged(target requirements.Package, fragment string) (found bool) {
+	diags := requirements.Check(&requirements.Check_Input{
+		Packages: []requirements.Package{target}, Scope: "pkg"})
 	for _, d := range diags {
 		if strings.Contains(d.Message, fragment) {
 			return true

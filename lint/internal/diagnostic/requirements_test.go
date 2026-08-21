@@ -23,8 +23,8 @@ func Test_Diagnostic_Position(t *testing.T) {
 // Test_Diagnostic_Name verifies Name carries the machine-readable rule identity.
 func Test_Diagnostic_Name(t *testing.T) {
 	t.Parallel()
-	d := diagnostic.Diagnostic{Name: "specification"}
-	if d.Name != "specification" {
+	d := diagnostic.Diagnostic{Name: "requirements"}
+	if d.Name != "requirements" {
 		t.Fatal("Name must carry the rule identity")
 	}
 }
@@ -32,8 +32,8 @@ func Test_Diagnostic_Name(t *testing.T) {
 // Test_Diagnostic_Want verifies Want carries the suggested fix as an imperative.
 func Test_Diagnostic_Want(t *testing.T) {
 	t.Parallel()
-	d := diagnostic.Diagnostic{Want: "Add SPECIFICATION.md to the package."}
-	if d.Want != "Add SPECIFICATION.md to the package." {
+	d := diagnostic.Diagnostic{Want: "Add REQUIREMENTS.md to the package."}
+	if d.Want != "Add REQUIREMENTS.md to the package." {
 		t.Fatal("Want must carry the suggested fix")
 	}
 }

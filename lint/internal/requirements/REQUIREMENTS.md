@@ -1,11 +1,11 @@
 
 # Coverage
 
-Which packages must carry a SPECIFICATION.md, and which are exempt.
+Which packages must carry a REQUIREMENTS.md, and which are exempt.
 
 ### Presence
 
-A pure in-scope package whose SPECIFICATION.md is absent is flagged. The caller
+A pure in-scope package whose REQUIREMENTS.md is absent is flagged. The caller
 decides presence by the exact-cased name and passes a nil spec when it is gone.
 
 ### Exemptions
@@ -15,7 +15,7 @@ the file; its absence draws no diagnostic.
 
 # Format
 
-The structural rules the markdown of a present SPECIFICATION.md must obey.
+The structural rules the markdown of a present REQUIREMENTS.md must obey.
 
 ### Preamble
 
@@ -58,11 +58,11 @@ A section's body lines are contiguous; no blank line falls between them.
 
 # Tests
 
-How specification_test.go must mirror the spec's leaf headings.
+How requirements_test.go must mirror the spec's leaf headings.
 
 ### Presence
 
-A package whose specification_test.go is absent is flagged; the caller passes a
+A package whose requirements_test.go is absent is flagged; the caller passes a
 nil test AST when the file is gone.
 
 ### Per Heading

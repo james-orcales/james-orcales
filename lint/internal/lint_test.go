@@ -48,35 +48,35 @@ const FIXTURE_INVARIANT_IMPORT_PATH = "github.com/james-orcales/james-orcales/" 
 	"shared/sim/aver/v2/aver_default"
 const FIXTURE_INVARIANT_IMPORT = "import \"" + FIXTURE_INVARIANT_IMPORT_PATH + "\"\n"
 
-// A package whose SPECIFICATION.md, source, and specification_test.go all
+// A package whose REQUIREMENTS.md, source, and requirements_test.go all
 // satisfy the doctrine. Variant tests swap one artifact for a violating one so
 // each assertion isolates a single rule.
-const SPECIFICATION_CLEAN_SOURCE = "// Package greet is a fixture.\n" +
+const REQUIREMENTS_CLEAN_SOURCE = "// Package greet is a fixture.\n" +
 	"package greet\n\n" +
 	"// Greet greets.\nfunc Greet() { return }\n"
-const SPECIFICATION_CLEAN_TEST = "package greet_test\n\n" +
+const REQUIREMENTS_CLEAN_TEST = "package greet_test\n\n" +
 	"import \"testing\"\n\n" +
 	"// Test_Greeting is a fixture.\n" +
 	"func Test_Greeting(t *testing.T) { _ = t }\n"
-const SPECIFICATION_CLEAN_MD = "\n# Greeting\n\nIt greets the caller.\n"
+const REQUIREMENTS_CLEAN_MD = "\n# Greeting\n\nIt greets the caller.\n"
 
-// The one-heading SPECIFICATION.md a layout fixture carries so the coverage rule
-// is satisfied without the fixture growing a specification of its own.
-const SPECIFICATION_FIXTURE_MD = "\n# Function\n\nIt is a fixture.\n"
+// The one-heading REQUIREMENTS.md a layout fixture carries so the coverage rule
+// is satisfied without the fixture growing requirements of its own.
+const REQUIREMENTS_FIXTURE_MD = "\n# Function\n\nIt is a fixture.\n"
 
-// Builds the specification_test.go that pairs with SPECIFICATION_FIXTURE_MD for
+// Builds the requirements_test.go that pairs with REQUIREMENTS_FIXTURE_MD for
 // the named package.
-func fixture_specification_test(name string) (source string) {
+func fixture_requirements_test(name string) (source string) {
 	return "package " + name + "_test\n\n" +
 		"import \"testing\"\n\n" +
 		"// Test_Function is a fixture.\n" +
 		"func Test_Function(t *testing.T) { t.Parallel() }\n"
 }
 
-// The baseline SPECIFICATION.md + test pair a spec snapshot mutates: one clean
+// The baseline REQUIREMENTS.md + test pair a spec snapshot mutates: one clean
 // leaf and its matching test, so a single mutation isolates one spec diagnostic.
-const SNAPSHOT_SPECIFICATION_MARKDOWN = "\n# Sole Rule\n\nThe sole rule.\n"
-const SNAPSHOT_SPECIFICATION_TEST = "package fixture_test\n\nimport \"testing\"\n\n" +
+const SNAPSHOT_REQUIREMENTS_MARKDOWN = "\n# Sole Rule\n\nThe sole rule.\n"
+const SNAPSHOT_REQUIREMENTS_TEST = "package fixture_test\n\nimport \"testing\"\n\n" +
 	"// Test_Sole_Rule checks the sole rule.\n" +
 	"func Test_Sole_Rule(t *testing.T) {\n\tt.Parallel()\n}\n"
 
@@ -1851,7 +1851,7 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 				fsys_map[k] = &fstest.MapFile{
 					Data: []byte(v)}
 			}
-			code, output := lint_output_minus(t, fsys_map, "specification")
+			code, output := lint_output_minus(t, fsys_map, "requirements")
 			if tt.Want_Diags == nil {
 				if code != 0 {
 					t.Errorf("expected exit 0, got %d; output:\n%s",
@@ -1881,7 +1881,7 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 // Mirrors lint.Main's stdout emission — tier-2 gating and the same
 // "position: message" line format — but drops diagnostics from the named rule.
 // A doctrine table can then assert on its own rule's output without the coverage
-// mandate (which now fires for any module fixture lacking a SPECIFICATION.md)
+// mandate (which now fires for any module fixture lacking a REQUIREMENTS.md)
 // bleeding into the exit code.
 func lint_output_minus(
 	t *testing.T, fsys fstest.MapFS, exclude string,
@@ -3452,7 +3452,7 @@ func Test_Package_Split_Threshold(t *testing.T) {
 		"// Test_A verifies A.\nfunc Test_A(t *testing.T) { t.Helper() }\n"
 	test_b := "package foo_test\n\nimport \"testing\"\n\n" +
 		"// Test_B verifies B.\nfunc Test_B(t *testing.T) { t.Helper() }\n"
-	specification_exempt_test := "package foo_test\n\nimport \"testing\"\n\n" +
+	requirements_exempt_test := "package foo_test\n\nimport \"testing\"\n\n" +
 		"// Test_C verifies C.\nfunc Test_C(t *testing.T) { t.Helper() }\n"
 	linux_a := "//go:build linux\n\n// Package foo is a fixture.\npackage foo\n\n" +
 		"// A is a fixture.\nfunc A() { return }\n"
@@ -3485,10 +3485,10 @@ func Test_Package_Split_Threshold(t *testing.T) {
 			Want_Diag: "has 2 test files",
 		},
 		{
-			Name: "specification_test.go is exempt from the test-file count",
+			Name: "requirements_test.go is exempt from the test-file count",
 			Files: map[string]string{
 				"a.go": source_a, "a_test.go": test_a,
-				"specification_test.go": specification_exempt_test,
+				"requirements_test.go": requirements_exempt_test,
 			},
 			Want_Diag: "",
 		},
@@ -3745,8 +3745,8 @@ func Test_Variable_Shadow_Package_Wide(t *testing.T) {
 		return map[string]string{
 			"lib/foo/foo.go":                sibling,
 			"lib/foo/foo_test.go":           clause + "\n\n" + body,
-			"lib/foo/SPECIFICATION.md":      SPECIFICATION_FIXTURE_MD,
-			"lib/foo/specification_test.go": fixture_specification_test("foo"),
+			"lib/foo/REQUIREMENTS.md":      REQUIREMENTS_FIXTURE_MD,
+			"lib/foo/requirements_test.go": fixture_requirements_test("foo"),
 		}
 	}
 	internal := run_shared_component_output(t, workspace("package foo"), "lib")

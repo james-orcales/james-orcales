@@ -1024,7 +1024,7 @@ func assert_invalid_singleton_helper_identity(t *testing.T) {
 }
 
 // The passing case stays outside the leaf so each topology remains independently legible while
-// the specification leaf retains one mandate and the linter's bounded-function contract.
+// the requirements leaf retains one mandate and the linter's bounded-function contract.
 func parameter_helper_correct(t *testing.T) {
 	t.Helper()
 	correct := parse(t, &parse_input{

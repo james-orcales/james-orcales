@@ -588,11 +588,11 @@ func Test_Keyed_Struct_Init_Cross_Package(t *testing.T) {
 	workspace := func(beta_body string) (files map[string]string) {
 		return map[string]string{
 			"lib/alpha/alpha.go":              alpha,
-			"lib/alpha/SPECIFICATION.md":      SPECIFICATION_FIXTURE_MD,
-			"lib/alpha/specification_test.go": fixture_specification_test("alpha"),
+			"lib/alpha/REQUIREMENTS.md":      REQUIREMENTS_FIXTURE_MD,
+			"lib/alpha/requirements_test.go": fixture_requirements_test("alpha"),
 			"lib/beta/beta.go":                beta(beta_body),
-			"lib/beta/SPECIFICATION.md":       SPECIFICATION_FIXTURE_MD,
-			"lib/beta/specification_test.go":  fixture_specification_test("beta"),
+			"lib/beta/REQUIREMENTS.md":       REQUIREMENTS_FIXTURE_MD,
+			"lib/beta/requirements_test.go":  fixture_requirements_test("beta"),
 		}
 	}
 	unkeyed := run_shared_component_output(t, workspace(
@@ -684,8 +684,8 @@ func Test_Keyed_Struct_Init_Unparsed_Package(t *testing.T) {
 			"import \"go/token\"\n\n" +
 			"// Build is a fixture.\nfunc Build() (position token.Position) {\n" +
 			"\treturn token.Position{\"a\", 1, 2, 3}\n}\n",
-		"lib/gamma/SPECIFICATION.md":      SPECIFICATION_FIXTURE_MD,
-		"lib/gamma/specification_test.go": fixture_specification_test("gamma"),
+		"lib/gamma/REQUIREMENTS.md":      REQUIREMENTS_FIXTURE_MD,
+		"lib/gamma/requirements_test.go": fixture_requirements_test("gamma"),
 	}, "lib")
 	if strings.Contains(output, "literal has no field keys") {
 		t.Fatalf("an unparsed package's type is unknowable; got: %s", output)
@@ -1102,7 +1102,7 @@ func render_diags(diags []lint.Diagnostic) (output string) {
 // diagnostic it pins. Verbatim skips gofmt for fixtures that must reach the
 // linter byte-exact (the gofmt diagnostic, non-Go files). Drop removes output
 // lines containing it, to strip orthogonal noise a fixture cannot avoid (a
-// go.mod fixture's unavoidable missing-SPECIFICATION.md coverage diagnostic).
+// go.mod fixture's unavoidable missing-REQUIREMENTS.md coverage diagnostic).
 type snapshot_case struct {
 	Snapshot snap.Snapshot
 	Files    map[string]string
@@ -1156,77 +1156,77 @@ func snapshot_package(body string) (files map[string]string) {
 		"a.go": "// Package fixture is a fixture.\npackage fixture\n\n" + body}
 }
 
-// Builds the spec-fixture package around a SPECIFICATION.md body. Coverage is
+// Builds the spec-fixture package around a REQUIREMENTS.md body. Coverage is
 // satisfied (the file and its test exist), so the only diagnostic is the
 // structural one the mutated markdown introduces.
-func snapshot_specification(MARKDOWN string) (files map[string]string) {
+func snapshot_requirements(MARKDOWN string) (files map[string]string) {
 	return map[string]string{
 		"go.mod":                    DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 		"pkg/fixture.go":            "// Package fixture is a fixture.\npackage fixture\n",
-		"pkg/SPECIFICATION.md":      MARKDOWN,
-		"pkg/specification_test.go": SNAPSHOT_SPECIFICATION_TEST,
+		"pkg/REQUIREMENTS.md":      MARKDOWN,
+		"pkg/requirements_test.go": SNAPSHOT_REQUIREMENTS_TEST,
 	}
 }
 
-// Test_Snapshot_Specification pins the SPECIFICATION.md structural checks. The
+// Test_Snapshot_Requirements pins the REQUIREMENTS.md structural checks. The
 // section-level mutations target the baseline leaf (which keeps its test) so a
 // single spec diagnostic fires; a new leaf would also lack a test.
-func Test_Snapshot_Specification(t *testing.T) {
+func Test_Snapshot_Requirements(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 The content is before the first heading. Start the file with a heading.`), Files: snapshot_specification("Stray prose.\n" + SNAPSHOT_SPECIFICATION_MARKDOWN)},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 There is no blank line before the heading "Sole Rule". Write a blank line.`), Files: snapshot_specification("# Sole Rule\n\nThe sole rule.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 The section "Sole Rule" has no body line. Write a body line.`), Files: snapshot_specification("\n# Sole Rule\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:7: pkg/SPECIFICATION.md:7 The section "Sole Rule" has more than three lines. Write a maximum of three lines.`), Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:1: pkg/REQUIREMENTS.md:1 The content is before the first heading. Start the file with a heading.`), Files: snapshot_requirements("Stray prose.\n" + SNAPSHOT_REQUIREMENTS_MARKDOWN)},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:1: pkg/REQUIREMENTS.md:1 There is no blank line before the heading "Sole Rule". Write a blank line.`), Files: snapshot_requirements("# Sole Rule\n\nThe sole rule.\n")},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 The section "Sole Rule" has no body line. Write a body line.`), Files: snapshot_requirements("\n# Sole Rule\n")},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:7: pkg/REQUIREMENTS.md:7 The section "Sole Rule" has more than three lines. Write a maximum of three lines.`), Files: snapshot_requirements(
 			"\n# Sole Rule\n\none\ntwo\nthree\nfour\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 The section "Sole Rule" has a blank line between two body lines. Remove the blank line.`), Files: snapshot_specification("\n# Sole Rule\n\none\n\ntwo\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 The heading level is not "#" or "###". Write a "#" heading or a "###" heading.`), Files: snapshot_specification(
-			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n## Mid Level\n\nLevel two.\n")},
-		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 The file needs Test_Phantom for the leaf "Phantom". Declare the tests in leaf order at the top of the file.`), Files: snapshot_specification(
-			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n# Phantom\n\nIt has no test.\n")},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:6: pkg/REQUIREMENTS.md:6 The section "Sole Rule" has a blank line between two body lines. Remove the blank line.`), Files: snapshot_requirements("\n# Sole Rule\n\none\n\ntwo\n")},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:6: pkg/REQUIREMENTS.md:6 The heading level is not "#" or "###". Write a "#" heading or a "###" heading.`), Files: snapshot_requirements(
+			SNAPSHOT_REQUIREMENTS_MARKDOWN + "\n## Mid Level\n\nLevel two.\n")},
+		{Snapshot: snap.Init(`pkg/requirements_test.go: pkg/requirements_test.go:2 The file needs Test_Phantom for the leaf "Phantom". Declare the tests in leaf order at the top of the file.`), Files: snapshot_requirements(
+			SNAPSHOT_REQUIREMENTS_MARKDOWN + "\n# Phantom\n\nIt has no test.\n")},
 	})
 }
 
-// Test_Snapshot_Specification_Coverage pins the file-presence and test-mapping
+// Test_Snapshot_Requirements_Coverage pins the file-presence and test-mapping
 // spec checks. Each drops the companion noise it cannot avoid.
-func Test_Snapshot_Specification_Coverage(t *testing.T) {
+func Test_Snapshot_Requirements_Coverage(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md: The package "pkg" has no SPECIFICATION.md. Add SPECIFICATION.md.`), Drop: "specification_test.go", Files: map[string]string{
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md: The package "pkg" has no REQUIREMENTS.md. Add REQUIREMENTS.md.`), Drop: "requirements_test.go", Files: map[string]string{
 			"go.mod":         DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\npackage fixture\n"}},
-		{Snapshot: snap.Init(`pkg/specification_test.go: The package "pkg" has no specification_test.go. Add specification_test.go.`), Drop: "needs Test_", Files: map[string]string{
+		{Snapshot: snap.Init(`pkg/requirements_test.go: The package "pkg" has no requirements_test.go. Add requirements_test.go.`), Drop: "needs Test_", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
 				"package fixture\n",
-			"pkg/SPECIFICATION.md": SNAPSHOT_SPECIFICATION_MARKDOWN}},
-		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:1 The file needs Test_Sole_Rule for the leaf "Sole_Rule". Declare the tests in leaf order at the top of the file.`), Files: map[string]string{
+			"pkg/REQUIREMENTS.md": SNAPSHOT_REQUIREMENTS_MARKDOWN}},
+		{Snapshot: snap.Init(`pkg/requirements_test.go: pkg/requirements_test.go:1 The file needs Test_Sole_Rule for the leaf "Sole_Rule". Declare the tests in leaf order at the top of the file.`), Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
 				"package fixture\n",
-			"pkg/SPECIFICATION.md": SNAPSHOT_SPECIFICATION_MARKDOWN,
-			"pkg/specification_test.go": `package fixture_test
+			"pkg/REQUIREMENTS.md": SNAPSHOT_REQUIREMENTS_MARKDOWN,
+			"pkg/requirements_test.go": `package fixture_test
 
 import "testing"
 
 // Test_Wrong checks the wrong thing.
 func Test_Wrong(t *testing.T) { t.Parallel() }
 `}},
-		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 The file needs Test_Extra_Child for the leaf "Extra_Child". Declare the tests in leaf order at the top of the file.`), Files: snapshot_specification(
-			SNAPSHOT_SPECIFICATION_MARKDOWN +
+		{Snapshot: snap.Init(`pkg/requirements_test.go: pkg/requirements_test.go:2 The file needs Test_Extra_Child for the leaf "Extra_Child". Declare the tests in leaf order at the top of the file.`), Files: snapshot_requirements(
+			SNAPSHOT_REQUIREMENTS_MARKDOWN +
 				"\n# Extra\n\n### Child\n\nA child leaf.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 The heading "Sole-Rule" has a character that is not a letter or a digit. Write only letters and digits.`), Drop: "needs Test_", Files: snapshot_specification(
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 The heading "Sole-Rule" has a character that is not a letter or a digit. Write only letters and digits.`), Drop: "needs Test_", Files: snapshot_requirements(
 			"\n# Sole-Rule\n\nThe rule.\n")},
 	})
 }
 
-// Test_Snapshot_Specification_Headings pins the remaining heading-structure spec
+// Test_Snapshot_Requirements_Headings pins the remaining heading-structure spec
 // checks: a heading not followed by a blank line, a duplicate, and an orphan ###.
-func Test_Snapshot_Specification_Headings(t *testing.T) {
+func Test_Snapshot_Requirements_Headings(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 There is no blank line after the heading "Sole Rule". Write a blank line.`), Files: snapshot_specification("\n# Sole Rule\nThe sole rule.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 The heading "Sole Rule" is not unique. Write a different heading.`), Drop: "needs Test_", Files: snapshot_specification(
-			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n# Sole Rule\n\nAgain.\n")},
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 The "###" heading "Orphan" has no parent "#" heading. Put the heading below a "#" heading.`), Drop: "needs Test_", Files: snapshot_specification(
-			"\n### Orphan\n\nNo parent.\n" + SNAPSHOT_SPECIFICATION_MARKDOWN)},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 There is no blank line after the heading "Sole Rule". Write a blank line.`), Files: snapshot_requirements("\n# Sole Rule\nThe sole rule.\n")},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:6: pkg/REQUIREMENTS.md:6 The heading "Sole Rule" is not unique. Write a different heading.`), Drop: "needs Test_", Files: snapshot_requirements(
+			SNAPSHOT_REQUIREMENTS_MARKDOWN + "\n# Sole Rule\n\nAgain.\n")},
+		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 The "###" heading "Orphan" has no parent "#" heading. Put the heading below a "#" heading.`), Drop: "needs Test_", Files: snapshot_requirements(
+			"\n### Orphan\n\nNo parent.\n" + SNAPSHOT_REQUIREMENTS_MARKDOWN)},
 	})
 }
 
@@ -1519,20 +1519,20 @@ func Test_Snapshot_Stream_Markdown(t *testing.T) {
 
 // Test_Snapshot_Component_Layout pins the binary/shared component layout checks.
 // A binary fixture lives under app/, a shared fixture under shared/; each drops
-// the unavoidable missing-SPECIFICATION.md coverage noise it adds.
+// the unavoidable missing-REQUIREMENTS.md coverage noise it adds.
 func Test_Snapshot_Module_Layout(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`app/feature/feature.go:1:1: Move feature -> app/internal/feature.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`app/feature/feature.go:1:1: Move feature -> app/internal/feature.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			"app/feature/feature.go": "// Package feature is a fixture.\n" +
 				"package feature\n"}},
-		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: The binary component "github.com/james-orcales/james-orcales/app" has its main package at "cmd/app". Move the main package to the component root.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: The binary component "github.com/james-orcales/james-orcales/app" has its main package at "cmd/app". Move the main package to the component root.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			"app/cmd/app/main.go": "package main\n\n" +
 				"func main() {\n\tprintln(0)\n}\n"}},
-		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: A shared library permits no internal/ directory. Remove "shared/internal".`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: A shared library permits no internal/ directory. Remove "shared/internal".`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"shared/internal/x/x.go": "// Package x is a fixture.\npackage x\n"}},
-		{Snapshot: snap.Init(`shared/main.go:1:1: The shared library "github.com/james-orcales/james-orcales/shared" permits no package main. Move the entry point to a binary component.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/main.go:1:1: The shared library "github.com/james-orcales/james-orcales/shared" permits no package main. Move the entry point to a binary component.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"shared/main.go": "package main\n\nfunc main() {\n\tprintln(0)\n}\n"}},
 	})
 }
@@ -1541,7 +1541,7 @@ func Test_Snapshot_Module_Layout(t *testing.T) {
 // now governed by the single-module rule, snapshotted in Test_Snapshot_Single_Module.
 func Test_Snapshot_Module_Structure(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/a/b/c/c.go:1:1: The package "c" at "a/b/c" is below the library tier. It has 2 non-main ancestors: [a/b a].`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/a/b/c/c.go:1:1: The package "c" at "a/b/c" is below the library tier. It has 2 non-main ancestors: [a/b a].`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"shared/a/a.go":     "// Package a is a fixture.\npackage a\n",
 			"shared/a/b/b.go":   "// Package b is a fixture.\npackage b\n",
 			"shared/a/b/c/c.go": "// Package c is a fixture.\npackage c\n"}},
@@ -1552,7 +1552,7 @@ func Test_Snapshot_Module_Structure(t *testing.T) {
 // go.work, and a missing root go.mod are each flagged at the offending file.
 func Test_Snapshot_Single_Module(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/nested/go.mod:1:1: A nested go.mod divides the repository into more than one module. Remove "shared/nested/go.mod".`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/nested/go.mod:1:1: A nested go.mod divides the repository into more than one module. Remove "shared/nested/go.mod".`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"shared/nested/go.mod": "module example.com/nested\n",
 			"shared/x.go":          "// Package shared x.\npackage shared\n"}},
 	})
@@ -1561,14 +1561,14 @@ func Test_Snapshot_Single_Module(t *testing.T) {
 // Test_Snapshot_Purity pins the direct impure-stdlib checks.
 func Test_Snapshot_Purity(t *testing.T) {
 	run_snapshot_cases_shared(t, "lib", []snapshot_case{
-		{Snapshot: snap.Init(`lib/library.go:4:8: The stdlib import "runtime" is impure. See lint/README.md for the resolutions.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:4:8: The stdlib import "runtime" is impure. See lint/README.md for the resolutions.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
 
 import "runtime"
 `}},
-		{Snapshot: snap.Init(`lib/library.go:8:2: The stdlib call fmt.Println is impure. See lint/README.md for the resolutions.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:8:2: The stdlib call fmt.Println is impure. See lint/README.md for the resolutions.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
@@ -1587,7 +1587,7 @@ func F() {
 func Test_Snapshot_Transitive(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
 		{Snapshot: snap.Init(`shared/lib/library_test.go:3:8: Banned import "path/filepath" belongs to stdlib family "path". Use shared package.
-shared/lib/library_test.go:7:2: The transitive call path/filepath.Walk is impure. A pure package calls only pure APIs.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+shared/lib/library_test.go:7:2: The transitive call path/filepath.Walk is impure. A pure package calls only pure APIs.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"shared/lib/library.go": "// Package library x.\npackage library\n",
 			"shared/lib/library_test.go": `package library_test
 
@@ -1598,7 +1598,7 @@ func Test_F() {
 	filepath.Walk(".", nil)
 }
 `}},
-		{Snapshot: snap.Init(`shared/lib/library.go:4:8: The dependency "github.com/james-orcales/james-orcales/shared/widget/default" is impure. A pure package imports only pure packages.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/lib/library.go:4:8: The dependency "github.com/james-orcales/james-orcales/shared/widget/default" is impure. A pure package imports only pure packages.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
 			"shared/lib/library.go": `// Package library x.
 package library
 
@@ -2134,10 +2134,10 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	if err != nil {
 		t.Fatalf("control Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(control, "as a go script") {
+	if !requirements_diagnosed(control, "as a go script") {
 		t.Fatalf("control must flag the banned script: %v", control)
 	}
-	if !specification_diagnosed(control, "bad-Dir") {
+	if !requirements_diagnosed(control, "bad-Dir") {
 		t.Fatalf("control must flag the bad-cased directory: %v", control)
 	}
 	ignored, err := lint.Check_File_System(&lint.Check_File_System_Input{
@@ -2146,10 +2146,10 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ignored Check_File_System: %v", err)
 	}
-	if specification_diagnosed(ignored, "as a go script") {
+	if requirements_diagnosed(ignored, "as a go script") {
 		t.Error("ignore must silence the banned-scripts diagnostic")
 	}
-	if specification_diagnosed(ignored, "bad-Dir") {
+	if requirements_diagnosed(ignored, "bad-Dir") {
 		t.Error("ignore must silence the path-casing diagnostic")
 	}
 }
@@ -2728,7 +2728,7 @@ func Test_Banned_Stdlib_Import_Aver(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Check_Source %q: %v", filename, err)
 		}
-		if specification_diagnosed(diags, "Banned import") {
+		if requirements_diagnosed(diags, "Banned import") {
 			t.Errorf("aver file %q must be allowed", filename)
 		}
 	}
@@ -2738,7 +2738,7 @@ func Test_Banned_Stdlib_Import_Aver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_Source aver-like path: %v", err)
 	}
-	if !specification_diagnosed(named_like_aver, "Banned import") {
+	if !requirements_diagnosed(named_like_aver, "Banned import") {
 		t.Error("directory named like aver must stay banned")
 	}
 }
@@ -3534,7 +3534,7 @@ func Test_Default_Package_Name(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if specification_diagnosed(clean, "default package") {
+	if requirements_diagnosed(clean, "default package") {
 		t.Fatal("a default package declaring its parent name must not be flagged")
 	}
 
@@ -3542,7 +3542,7 @@ func Test_Default_Package_Name(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if !specification_diagnosed(wrong, "not \"package foo\"") {
+	if !requirements_diagnosed(wrong, "not \"package foo\"") {
 		t.Fatal("a default package with the wrong package clause must be flagged")
 	}
 }
@@ -4267,11 +4267,11 @@ func Test_Coverage_Backfill_Parse_Error(t *testing.T) {
 	}
 }
 
-// Test_Coverage_Backfill_Documented_Value_Specification exercises the
+// Test_Coverage_Backfill_Documented_Value_Requirements exercises the
 // per-spec doc comment branch of check_exported_documentation_comment,
-// firing specification_has_documentation = true for a value spec that
+// firing requirements_has_documentation = true for a value spec that
 // has its own doc comment instead of relying on the parent var-block.
-func Test_Coverage_Backfill_Documented_Value_Specification(t *testing.T) {
+func Test_Coverage_Backfill_Documented_Value_Requirements(t *testing.T) {
 	t.Parallel()
 	source := "// Package fixture is documented.\n" +
 		"package fixture\n\n" +
@@ -5133,8 +5133,8 @@ func Test_Coverage_Backfill_Check_File_Empty_Source(t *testing.T) {
 
 // Builds a MapFS — Go sources gofmt-normalised, other files verbatim — runs
 // the filesystem tier scoped to the fixture package, and returns only the
-// specification-rule diagnostics so a test sees this check in isolation.
-func specification_diagnostics(
+// requirements-rule diagnostics so a test sees this check in isolation.
+func requirements_diagnostics(
 	t *testing.T, files map[string]string,
 ) (diags []lint.Diagnostic) {
 	t.Helper()
@@ -5154,25 +5154,25 @@ func specification_diagnostics(
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	for _, d := range all {
-		if d.Name == "specification" {
+		if d.Name == "requirements" {
 			diags = append(diags, d)
 		}
 	}
 	return diags
 }
 
-func specification_clean_files() (files map[string]string) {
+func requirements_clean_files() (files map[string]string) {
 	return map[string]string{
 		// A go.mod gives greet an owning module; the coverage mandate no-ops on
 		// module-less directories, so without it the missing-file rule never fires.
 		"go.mod":                      "module fixture\n\ngo 1.25\n",
-		"greet/greet.go":              SPECIFICATION_CLEAN_SOURCE,
-		"greet/specification_test.go": SPECIFICATION_CLEAN_TEST,
-		"greet/SPECIFICATION.md":      SPECIFICATION_CLEAN_MD,
+		"greet/greet.go":              REQUIREMENTS_CLEAN_SOURCE,
+		"greet/requirements_test.go": REQUIREMENTS_CLEAN_TEST,
+		"greet/REQUIREMENTS.md":      REQUIREMENTS_CLEAN_MD,
 	}
 }
 
-func specification_message_contains(
+func requirements_message_contains(
 	diags []lint.Diagnostic, fragment string,
 ) (found bool) {
 	for _, d := range diags {
@@ -5183,128 +5183,128 @@ func specification_message_contains(
 	return false
 }
 
-// Test_Specification_Conformance verifies a fully conforming package emits no
-// specification diagnostics.
-func Test_Specification_Conformance(t *testing.T) {
+// Test_Requirements_Conformance verifies a fully conforming package emits no
+// requirements diagnostics.
+func Test_Requirements_Conformance(t *testing.T) {
 	t.Parallel()
-	diags := specification_diagnostics(t, specification_clean_files())
+	diags := requirements_diagnostics(t, requirements_clean_files())
 	if len(diags) != 0 {
 		t.Fatalf("conforming package should emit no diagnostics, got %v", diags)
 	}
 }
 
-// Test_Specification_Missing_File verifies a scoped package without the file is
+// Test_Requirements_Missing_File verifies a scoped package without the file is
 // flagged.
-func Test_Specification_Missing_File(t *testing.T) {
+func Test_Requirements_Missing_File(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	delete(files, "greet/SPECIFICATION.md")
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "has no SPECIFICATION.md") {
+	files := requirements_clean_files()
+	delete(files, "greet/REQUIREMENTS.md")
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "has no REQUIREMENTS.md") {
 		t.Fatalf("expected missing-file diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Heading_Level_Two_Flagged verifies a ## heading is flagged;
+// Test_Requirements_Heading_Level_Two_Flagged verifies a ## heading is flagged;
 // only # and ### are permitted levels.
-func Test_Specification_Heading_Level_Two_Flagged(t *testing.T) {
+func Test_Requirements_Heading_Level_Two_Flagged(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n## Greeting\n\nIt greets the caller.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "heading level is not") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n## Greeting\n\nIt greets the caller.\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "heading level is not") {
 		t.Fatalf("expected heading-level diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Heading_Missing_Blank_Line verifies an unfenced heading is
+// Test_Requirements_Heading_Missing_Blank_Line verifies an unfenced heading is
 // flagged.
-func Test_Specification_Heading_Missing_Blank_Line(t *testing.T) {
+func Test_Requirements_Heading_Missing_Blank_Line(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\nIt greets the caller.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "no blank line after the heading") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\nIt greets the caller.\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "no blank line after the heading") {
 		t.Fatalf("expected blank-line diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Section_Too_Long verifies a four-line section is flagged.
-func Test_Specification_Section_Too_Long(t *testing.T) {
+// Test_Requirements_Section_Too_Long verifies a four-line section is flagged.
+func Test_Requirements_Section_Too_Long(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\none\ntwo\nthree\nfour\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "has more than three lines") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\none\ntwo\nthree\nfour\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "has more than three lines") {
 		t.Fatalf("expected section-size diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Missing_Test_File verifies an absent specification_test.go
+// Test_Requirements_Missing_Test_File verifies an absent requirements_test.go
 // is flagged when the spec exists.
-func Test_Specification_Missing_Test_File(t *testing.T) {
+func Test_Requirements_Missing_Test_File(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	delete(files, "greet/specification_test.go")
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "has no specification_test.go") {
+	files := requirements_clean_files()
+	delete(files, "greet/requirements_test.go")
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "has no requirements_test.go") {
 		t.Fatalf("expected missing-test-file diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Heading_Without_Test verifies a heading with no matching
+// Test_Requirements_Heading_Without_Test verifies a heading with no matching
 // test is flagged.
-func Test_Specification_Heading_Without_Test(t *testing.T) {
+func Test_Requirements_Heading_Without_Test(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Farewell\n\nIt bids farewell.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "Test_Farewell") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Farewell\n\nIt bids farewell.\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "Test_Farewell") {
 		t.Fatalf("expected diagnostic naming Test_Farewell, got %v", diags)
 	}
 }
 
-// Test_Specification_Wrong_Test_Order verifies tests not in heading order are
+// Test_Requirements_Wrong_Test_Order verifies tests not in heading order are
 // flagged.
-func Test_Specification_Wrong_Test_Order(t *testing.T) {
+func Test_Requirements_Wrong_Test_Order(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] =
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] =
 		"\n# Greeting\n\nIt greets.\n\n# Farewell\n\nIt bids farewell.\n"
-	files["greet/specification_test.go"] = "package greet_test\n\n" +
+	files["greet/requirements_test.go"] = "package greet_test\n\n" +
 		"import \"testing\"\n\n" +
 		"// Test_Farewell is a fixture.\n" +
 		"func Test_Farewell(t *testing.T) { _ = t }\n\n" +
 		"// Test_Greeting is a fixture.\n" +
 		"func Test_Greeting(t *testing.T) { _ = t }\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "needs Test_Greeting") {
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "needs Test_Greeting") {
 		t.Fatalf("expected ordering diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Coverage_Respects_Package_Argument verifies the coverage
+// Test_Requirements_Coverage_Respects_Package_Argument verifies the coverage
 // rule is bounded by the package argument: an out-of-scope package missing the
 // file is not flagged, while that package is flagged when it is the target.
-func Test_Specification_Coverage_Respects_Package_Argument(t *testing.T) {
+func Test_Requirements_Coverage_Respects_Package_Argument(t *testing.T) {
 	t.Parallel()
 	other := "// Package other is a fixture.\npackage other\n\n" +
 		"// Other does.\nfunc Other() { return }\n"
 	files := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n\ngo 1.25\n")},
 		"greet/greet.go": &fstest.MapFile{
-			Data: gofmt_must(t, SPECIFICATION_CLEAN_SOURCE)},
-		"greet/specification_test.go": &fstest.MapFile{
-			Data: gofmt_must(t, SPECIFICATION_CLEAN_TEST)},
-		"greet/SPECIFICATION.md": &fstest.MapFile{
-			Data: []byte(SPECIFICATION_CLEAN_MD)},
+			Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
+		"greet/requirements_test.go": &fstest.MapFile{
+			Data: gofmt_must(t, REQUIREMENTS_CLEAN_TEST)},
+		"greet/REQUIREMENTS.md": &fstest.MapFile{
+			Data: []byte(REQUIREMENTS_CLEAN_MD)},
 		"other/other.go": &fstest.MapFile{Data: gofmt_must(t, other)},
 	}
 	input_greet := &strings.Builder{}
 	lint_main(t, &lint.Main_Input{
 		Fsys: files, Stdout: input_greet, Stderr: &strings.Builder{},
 		Scope_Prefix: "greet"})
-	if strings.Contains(input_greet.String(), "SPECIFICATION.md") {
+	if strings.Contains(input_greet.String(), "REQUIREMENTS.md") {
 		t.Fatalf("scoped to greet, other's missing file must not surface: %s",
 			input_greet.String())
 	}
@@ -5312,16 +5312,16 @@ func Test_Specification_Coverage_Respects_Package_Argument(t *testing.T) {
 	lint_main(t, &lint.Main_Input{
 		Fsys: files, Stdout: input_other, Stderr: &strings.Builder{},
 		Scope_Prefix: "other"})
-	if !strings.Contains(input_other.String(), "has no SPECIFICATION.md") {
+	if !strings.Contains(input_other.String(), "has no REQUIREMENTS.md") {
 		t.Fatalf("scoped to other, its missing file must surface: %s",
 			input_other.String())
 	}
 }
 
 // Runs the filesystem tier with no scope — the whole-workspace case — and
-// returns only specification diagnostics, so tests can assert the coverage
+// returns only requirements diagnostics, so tests can assert the coverage
 // mandate now fires without a package argument.
-func specification_diagnostics_workspace(
+func requirements_diagnostics_workspace(
 	t *testing.T, files map[string]string,
 ) (diags []lint.Diagnostic) {
 	t.Helper()
@@ -5342,14 +5342,14 @@ func specification_diagnostics_workspace(
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	for _, d := range all {
-		if d.Name == "specification" {
+		if d.Name == "requirements" {
 			diags = append(diags, d)
 		}
 	}
 	return diags
 }
 
-func specification_fixture_package(directory string) (files map[string]string) {
+func requirements_fixture_package(directory string) (files map[string]string) {
 	return map[string]string{
 		"go.mod": "module fixture\n\ngo 1.25\n",
 		directory + "/thing.go": "// Package thing is a fixture.\n" +
@@ -5357,80 +5357,80 @@ func specification_fixture_package(directory string) (files map[string]string) {
 	}
 }
 
-// Test_Specification_Coverage_Whole_Workspace verifies a scopeless run mandates
-// SPECIFICATION.md for every non-exempt package, not only a scoped target.
-func Test_Specification_Coverage_Whole_Workspace(t *testing.T) {
+// Test_Requirements_Coverage_Whole_Workspace verifies a scopeless run mandates
+// REQUIREMENTS.md for every non-exempt package, not only a scoped target.
+func Test_Requirements_Coverage_Whole_Workspace(t *testing.T) {
 	t.Parallel()
-	diags := specification_diagnostics_workspace(t, specification_fixture_package("thing"))
-	if !specification_message_contains(diags, "has no SPECIFICATION.md") {
+	diags := requirements_diagnostics_workspace(t, requirements_fixture_package("thing"))
+	if !requirements_message_contains(diags, "has no REQUIREMENTS.md") {
 		t.Fatalf("scopeless run must mandate the file, got %v", diags)
 	}
 }
 
-// Test_Specification_Coverage_Exempts_Third_Party verifies vendored third_party
+// Test_Requirements_Coverage_Exempts_Third_Party verifies vendored third_party
 // packages are not held to the coverage mandate even on a scopeless run.
-func Test_Specification_Coverage_Exempts_Third_Party(t *testing.T) {
+func Test_Requirements_Coverage_Exempts_Third_Party(t *testing.T) {
 	t.Parallel()
-	diags := specification_diagnostics_workspace(
-		t, specification_fixture_package("third_party/vendored"))
-	if specification_message_contains(diags, "has no SPECIFICATION.md") {
+	diags := requirements_diagnostics_workspace(
+		t, requirements_fixture_package("third_party/vendored"))
+	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
 		t.Fatalf("third_party must be exempt from coverage, got %v", diags)
 	}
 }
 
-// Test_Specification_Coverage_Exempts_Examples verifies example packages are not
+// Test_Requirements_Coverage_Exempts_Examples verifies example packages are not
 // held to the coverage mandate.
-func Test_Specification_Coverage_Exempts_Examples(t *testing.T) {
+func Test_Requirements_Coverage_Exempts_Examples(t *testing.T) {
 	t.Parallel()
-	diags := specification_diagnostics_workspace(
-		t, specification_fixture_package("snippets/examples/demo"))
-	if specification_message_contains(diags, "has no SPECIFICATION.md") {
+	diags := requirements_diagnostics_workspace(
+		t, requirements_fixture_package("snippets/examples/demo"))
+	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
 		t.Fatalf("examples must be exempt from coverage, got %v", diags)
 	}
 }
 
-// Test_Specification_Coverage_Exempts_Main verifies an impure package main is not
+// Test_Requirements_Coverage_Exempts_Main verifies an impure package main is not
 // held to the coverage mandate; only a pure package carries the file.
-func Test_Specification_Coverage_Exempts_Main(t *testing.T) {
+func Test_Requirements_Coverage_Exempts_Main(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
 		"go.mod":  "module example.com/mybinary\n\ngo 1.25\n",
 		"main.go": "// Package main is a fixture.\npackage main\n\nfunc main() {}\n",
 	}
-	diags := specification_diagnostics_workspace(t, files)
-	if specification_message_contains(diags, "has no SPECIFICATION.md") {
+	diags := requirements_diagnostics_workspace(t, files)
+	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
 		t.Fatalf("package main must be exempt from coverage, got %v", diags)
 	}
 }
 
-// Test_Specification_Coverage_Exempts_Default verifies an impure `default` package
+// Test_Requirements_Coverage_Exempts_Default verifies an impure `default` package
 // is not held to the coverage mandate; only a pure package carries the file.
-func Test_Specification_Coverage_Exempts_Default(t *testing.T) {
+func Test_Requirements_Coverage_Exempts_Default(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
 		"go.mod": "module fixture\n\ngo 1.25\n",
 		// Under the shared component, the only place a default tier is legal.
 		"shared/foo/default/wire.go": "// Package foo is a fixture.\npackage foo\n",
 	}
-	diags := specification_diagnostics_workspace(t, files)
-	if specification_message_contains(diags, "has no SPECIFICATION.md") {
+	diags := requirements_diagnostics_workspace(t, files)
+	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
 		t.Fatalf("a `default` package must be exempt from coverage, got %v", diags)
 	}
 }
 
-// Test_Specification_Coverage_Exempt_Specification_Validated verifies an impure package
-// that nonetheless ships a SPECIFICATION.md is still format-checked: the exemption
+// Test_Requirements_Coverage_Exempt_Requirements_Validated verifies an impure package
+// that nonetheless ships a REQUIREMENTS.md is still format-checked: the exemption
 // lifts the requirement to carry the file, not the rules a present file obeys.
-func Test_Specification_Coverage_Exempt_Specification_Validated(t *testing.T) {
+func Test_Requirements_Coverage_Exempt_Requirements_Validated(t *testing.T) {
 	t.Parallel()
 	main_source := "// Package main is a fixture.\npackage main\n\nfunc main() {}\n"
 	files := map[string]string{
 		"go.mod":           "module example.com/mybinary\n\ngo 1.25\n",
 		"main.go":          main_source,
-		"SPECIFICATION.md": "\n## Mid Level\n\nA level-two heading is banned.\n",
+		"REQUIREMENTS.md": "\n## Mid Level\n\nA level-two heading is banned.\n",
 	}
-	diags := specification_diagnostics_workspace(t, files)
-	if !specification_message_contains(diags, "heading level is not") {
+	diags := requirements_diagnostics_workspace(t, files)
+	if !requirements_message_contains(diags, "heading level is not") {
 		t.Fatalf("an impure package's present spec must still be validated, got %v", diags)
 	}
 }
@@ -5439,7 +5439,7 @@ func Test_Specification_Coverage_Exempt_Specification_Validated(t *testing.T) {
 // macOS APFS): a lookup resolves to an entry of any case, while the directory
 // listing still reports the real names. It lets a test prove the exact-name
 // rule, which fs.ReadFile alone cannot detect on such a filesystem — there the
-// doctrine's SPECIFICATION.md would silently resolve to a differently-cased file.
+// doctrine's REQUIREMENTS.md would silently resolve to a differently-cased file.
 type case_insensitive_file_system struct{ Inner fstest.MapFS }
 
 func (c case_insensitive_file_system) Open(name string) (file fs.File, err error) {
@@ -5455,222 +5455,222 @@ func (c case_insensitive_file_system) Open(name string) (file fs.File, err error
 	return file, err
 }
 
-// Test_Specification_File_Name_Exact_Case verifies a SPECIFICATION.md present
+// Test_Requirements_File_Name_Exact_Case verifies a REQUIREMENTS.md present
 // only under a different case is treated as missing — the exact byte-for-byte
 // name is enforced even where the filesystem would resolve the wrong case.
-func Test_Specification_File_Name_Exact_Case(t *testing.T) {
+func Test_Requirements_File_Name_Exact_Case(t *testing.T) {
 	t.Parallel()
 	inner := fstest.MapFS{
 		"go.mod":         {Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go": {Data: gofmt_must(t, SPECIFICATION_CLEAN_SOURCE)},
-		"greet/specification_test.go": {
-			Data: gofmt_must(t, SPECIFICATION_CLEAN_TEST)},
+		"greet/greet.go": {Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
+		"greet/requirements_test.go": {
+			Data: gofmt_must(t, REQUIREMENTS_CLEAN_TEST)},
 		// Wrong-case name; a case-insensitive FS resolves it for ReadFile.
-		"greet/specification.md": {Data: []byte(SPECIFICATION_CLEAN_MD)},
+		"greet/requirements.md": {Data: []byte(REQUIREMENTS_CLEAN_MD)},
 	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: case_insensitive_file_system{Inner: inner}, Scope: "greet"})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_message_contains(all, "has no SPECIFICATION.md") {
+	if !requirements_message_contains(all, "has no REQUIREMENTS.md") {
 		t.Fatalf("wrong-case spec file must be flagged, got %v", all)
 	}
 }
 
-// Test_Specification_Test_File_Name_Exact_Case verifies the same exact-name rule
-// for specification_test.go.
-func Test_Specification_Test_File_Name_Exact_Case(t *testing.T) {
+// Test_Requirements_Test_File_Name_Exact_Case verifies the same exact-name rule
+// for requirements_test.go.
+func Test_Requirements_Test_File_Name_Exact_Case(t *testing.T) {
 	t.Parallel()
 	inner := fstest.MapFS{
 		"go.mod":                 {Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go":         {Data: gofmt_must(t, SPECIFICATION_CLEAN_SOURCE)},
-		"greet/SPECIFICATION.md": {Data: []byte(SPECIFICATION_CLEAN_MD)},
+		"greet/greet.go":         {Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
+		"greet/REQUIREMENTS.md": {Data: []byte(REQUIREMENTS_CLEAN_MD)},
 		// Wrong-case name, still a _test.go so it parses as the test package.
-		"greet/Specification_test.go": {Data: gofmt_must(t, SPECIFICATION_CLEAN_TEST)},
+		"greet/Requirements_test.go": {Data: gofmt_must(t, REQUIREMENTS_CLEAN_TEST)},
 	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: case_insensitive_file_system{Inner: inner}, Scope: "greet"})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_message_contains(all, "has no specification_test.go") {
+	if !requirements_message_contains(all, "has no requirements_test.go") {
 		t.Fatalf("wrong-case test file must be flagged, got %v", all)
 	}
 }
 
-// Test_Specification_Preamble_Flagged verifies non-blank content before the first
+// Test_Requirements_Preamble_Flagged verifies non-blank content before the first
 // heading is flagged.
-func Test_Specification_Preamble_Flagged(t *testing.T) {
+func Test_Requirements_Preamble_Flagged(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "Stray prose.\n\n# Greeting\n\nIt greets.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "is before the first heading") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "Stray prose.\n\n# Greeting\n\nIt greets.\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "is before the first heading") {
 		t.Fatalf("expected preamble diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Section_Body verifies a heading with no body line is
+// Test_Requirements_Section_Body verifies a heading with no body line is
 // flagged.
-func Test_Specification_Section_Body(t *testing.T) {
+func Test_Requirements_Section_Body(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "has no body line") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "has no body line") {
 		t.Fatalf("expected section-body diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Section_Contiguity_Flagged verifies a blank line between a
+// Test_Requirements_Section_Contiguity_Flagged verifies a blank line between a
 // section's body lines is flagged.
-func Test_Specification_Section_Contiguity_Flagged(t *testing.T) {
+func Test_Requirements_Section_Contiguity_Flagged(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\none\n\ntwo\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "blank line between two body lines") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\none\n\ntwo\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "blank line between two body lines") {
 		t.Fatalf("expected contiguity diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Heading_Uniqueness_Flagged verifies two headings sharing a name
+// Test_Requirements_Heading_Uniqueness_Flagged verifies two headings sharing a name
 // are flagged.
-func Test_Specification_Heading_Uniqueness_Flagged(t *testing.T) {
+func Test_Requirements_Heading_Uniqueness_Flagged(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] =
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] =
 		"\n# Greeting\n\nIt greets.\n\n# Greeting\n\nAgain.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "is not unique") {
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "is not unique") {
 		t.Fatalf("expected duplicate-heading diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Heading_Words verifies a heading word containing a
+// Test_Requirements_Heading_Words verifies a heading word containing a
 // non-letter/digit rune is flagged, since it would not form a legal test name.
-func Test_Specification_Heading_Words(t *testing.T) {
+func Test_Requirements_Heading_Words(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting-Caller\n\nIt greets.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "Write only letters and digits") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting-Caller\n\nIt greets.\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "Write only letters and digits") {
 		t.Fatalf("expected heading-words diagnostic, got %v", diags)
 	}
 }
 
-// Test_Specification_Test_Order_Leading_Declaration verifies a var/const/type
+// Test_Requirements_Test_Order_Leading_Declaration verifies a var/const/type
 // declared before the heading tests is flagged: the tests must be the file's
 // first declarations, not merely in order among themselves.
-func Test_Specification_Test_Order_Leading_Declaration(t *testing.T) {
+func Test_Requirements_Test_Order_Leading_Declaration(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/specification_test.go"] = "package greet_test\n\n" +
+	files := requirements_clean_files()
+	files["greet/requirements_test.go"] = "package greet_test\n\n" +
 		"import \"testing\"\n\n" +
 		"// Fixture_value precedes the tests.\n" +
 		"var Fixture_value = 0\n\n" +
 		"// Test_Greeting is a fixture.\n" +
 		"func Test_Greeting(t *testing.T) { _ = t }\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "at the top of the file") {
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "at the top of the file") {
 		t.Fatalf("leading declaration must be flagged, got %v", diags)
 	}
 }
 
-// Test_Specification_Subheading_Leaf_Test verifies a ### leaf requires a test
+// Test_Requirements_Subheading_Leaf_Test verifies a ### leaf requires a test
 // named for its parent and itself, Test_<Parent>_<Heading>.
-func Test_Specification_Subheading_Leaf_Test(t *testing.T) {
+func Test_Requirements_Subheading_Leaf_Test(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\n### Hello\n\nIt says hello.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "Test_Greeting_Hello") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n### Hello\n\nIt says hello.\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "Test_Greeting_Hello") {
 		t.Fatalf("### leaf must require Test_Greeting_Hello, got %v", diags)
 	}
 }
 
-// Test_Specification_Branch_Needs_No_Test verifies a ## branch (one with ###
+// Test_Requirements_Branch_Needs_No_Test verifies a ## branch (one with ###
 // children) needs no test of its own; only its ### leaves do.
-func Test_Specification_Branch_Needs_No_Test(t *testing.T) {
+func Test_Requirements_Branch_Needs_No_Test(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\n### Hello\n\nIt says hello.\n"
-	files["greet/specification_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n### Hello\n\nIt says hello.\n"
+	files["greet/requirements_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
 		"// Test_Greeting_Hello is a fixture.\n" +
 		"func Test_Greeting_Hello(t *testing.T) { _ = t }\n"
-	diags := specification_diagnostics(t, files)
+	diags := requirements_diagnostics(t, files)
 	if len(diags) != 0 {
 		t.Fatalf("a branch needs no test of its own, got %v", diags)
 	}
 }
 
-// Test_Specification_Heading_Level_Four_Flagged verifies a #### heading is
+// Test_Requirements_Heading_Level_Four_Flagged verifies a #### heading is
 // flagged; only ## and ### are permitted.
-func Test_Specification_Heading_Level_Four_Flagged(t *testing.T) {
+func Test_Requirements_Heading_Level_Four_Flagged(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\n#### Deep\n\nToo deep.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "heading level is not") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n#### Deep\n\nToo deep.\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "heading level is not") {
 		t.Fatalf("a #### heading must be flagged, got %v", diags)
 	}
 }
 
-// Test_Specification_Subheading_Duplicate verifies two ### sharing a name under
+// Test_Requirements_Subheading_Duplicate verifies two ### sharing a name under
 // one parent are flagged.
-func Test_Specification_Subheading_Duplicate(t *testing.T) {
+func Test_Requirements_Subheading_Duplicate(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] =
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] =
 		"\n# Greeting\n\n### Hello\n\nHi.\n\n### Hello\n\nAgain.\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "is not unique") {
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "is not unique") {
 		t.Fatalf("a duplicate ### under one parent must be flagged, got %v", diags)
 	}
 }
 
-// Test_Specification_Subheading_Reuse_Across_Parents verifies the same ### name
+// Test_Requirements_Subheading_Reuse_Across_Parents verifies the same ### name
 // under two different parents is allowed (their leaf tests differ).
-func Test_Specification_Subheading_Reuse_Across_Parents(t *testing.T) {
+func Test_Requirements_Subheading_Reuse_Across_Parents(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] =
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] =
 		"\n# Greeting\n\n### Hello\n\nHi.\n\n# Farewell\n\n### Hello\n\nBye.\n"
-	files["greet/specification_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
+	files["greet/requirements_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
 		"// Test_Greeting_Hello is a fixture.\n" +
 		"func Test_Greeting_Hello(t *testing.T) { _ = t }\n\n" +
 		"// Test_Farewell_Hello is a fixture.\n" +
 		"func Test_Farewell_Hello(t *testing.T) { _ = t }\n"
-	diags := specification_diagnostics(t, files)
-	if specification_message_contains(diags, "is not unique") {
+	diags := requirements_diagnostics(t, files)
+	if requirements_message_contains(diags, "is not unique") {
 		t.Fatalf("the same ### under two parents must be allowed, got %v", diags)
 	}
 }
 
-// Test_Specification_Branch_Intro_Allowed verifies a branch ## may carry an
+// Test_Requirements_Branch_Intro_Allowed verifies a branch ## may carry an
 // intro body before its first ###.
-func Test_Specification_Branch_Intro_Allowed(t *testing.T) {
+func Test_Requirements_Branch_Intro_Allowed(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\nAn intro line.\n\n### Hello\n\nHi.\n"
-	files["greet/specification_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\nAn intro line.\n\n### Hello\n\nHi.\n"
+	files["greet/requirements_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
 		"// Test_Greeting_Hello is a fixture.\n" +
 		"func Test_Greeting_Hello(t *testing.T) { _ = t }\n"
-	diags := specification_diagnostics(t, files)
+	diags := requirements_diagnostics(t, files)
 	if len(diags) != 0 {
 		t.Fatalf("a branch intro body must be allowed, got %v", diags)
 	}
 }
 
-// Test_Specification_Subheading_Empty verifies a ### leaf with no body line is
+// Test_Requirements_Subheading_Empty verifies a ### leaf with no body line is
 // flagged.
-func Test_Specification_Subheading_Empty(t *testing.T) {
+func Test_Requirements_Subheading_Empty(t *testing.T) {
 	t.Parallel()
-	files := specification_clean_files()
-	files["greet/SPECIFICATION.md"] = "\n# Greeting\n\nIntro.\n\n### Hello\n\n"
-	diags := specification_diagnostics(t, files)
-	if !specification_message_contains(diags, "has no body line") {
+	files := requirements_clean_files()
+	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\nIntro.\n\n### Hello\n\n"
+	diags := requirements_diagnostics(t, files)
+	if !requirements_message_contains(diags, "has no body line") {
 		t.Fatalf("a bodyless ### leaf must be flagged, got %v", diags)
 	}
 }
@@ -6036,18 +6036,18 @@ func Test_Scope_Parses_Target_And_Shared_Components(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(
+	if !requirements_diagnosed(
 		diags_at(diags, "mybinary/internal/entry.go"),
 		"Do not use a dot import") {
 		t.Errorf("in-scope file mybinary/internal/entry.go was not parsed")
 	}
-	if !specification_diagnosed(
+	if !requirements_diagnosed(
 		diags_at(diags, "shared/lib/library.go"),
 		"Do not use a dot import") {
 		t.Errorf("shared-library file shared/lib/library.go was not parsed; " +
 			"transitive-purity resolution of imports into shared would fail open")
 	}
-	if specification_diagnosed(
+	if requirements_diagnosed(
 		diags_at(diags, "other/lib/library.go"),
 		"Do not use a dot import") {
 		t.Errorf("out-of-scope file other/lib/library.go was parsed; " +
@@ -6073,10 +6073,10 @@ func Test_Deterministic_Library_Glob(t *testing.T) {
 			"func G() {\n\tselect {}\n}\n"),
 	}
 	diags := deterministic_self_diagnostics(t, files, []string{"pkg/*"})
-	if specification_diagnosed(diags, "must not start a goroutine") {
+	if requirements_diagnosed(diags, "must not start a goroutine") {
 		t.Fatal("a * entry must release each direct child package")
 	}
-	if specification_diagnosed(diags, "must not use select") {
+	if requirements_diagnosed(diags, "must not use select") {
 		t.Fatal("a * entry must release each direct child package")
 	}
 }
@@ -6100,10 +6100,10 @@ func Test_Deterministic_Negation_Holds_Package(t *testing.T) {
 			"func G() {\n\tselect {}\n}\n"),
 	}
 	diags := deterministic_self_diagnostics(t, files, []string{"pkg/*", "!pkg/keep"})
-	if !specification_diagnosed(diags, "must not start a goroutine") {
+	if !requirements_diagnosed(diags, "must not start a goroutine") {
 		t.Fatal("!pkg/keep must hold pkg/keep to the deterministic tier")
 	}
-	if specification_diagnosed(diags, "must not use select") {
+	if requirements_diagnosed(diags, "must not use select") {
 		t.Fatal("pkg/* must still release pkg/other, which the negation does not name")
 	}
 }
@@ -6122,7 +6122,7 @@ func Test_Deterministic_Later_Positive_Refines_Negation(t *testing.T) {
 	}
 	diags := deterministic_self_diagnostics(
 		t, files, []string{"pkg/*", "!pkg/keep", "pkg/keep"})
-	if specification_diagnosed(diags, "must not start a goroutine") {
+	if requirements_diagnosed(diags, "must not start a goroutine") {
 		t.Fatal("later pkg/keep must release pkg/keep again")
 	}
 }
@@ -6147,10 +6147,10 @@ func Test_Deterministic_Sibling_Import(t *testing.T) {
 			"func G() {\n\treturn\n}\n"),
 	}
 	diags := deterministic_self_diagnostics(t, files, nil)
-	if !specification_diagnosed(diags, "must not start a goroutine") {
+	if !requirements_diagnosed(diags, "must not start a goroutine") {
 		t.Fatal("a pure package is held to the tier by default")
 	}
-	if specification_diagnosed(diags, "import only deterministic packages") {
+	if requirements_diagnosed(diags, "import only deterministic packages") {
 		t.Fatal("importing a deterministic sibling must satisfy the induction")
 	}
 }
@@ -6182,7 +6182,7 @@ func Test_Deterministic_Instrumentation_Auto_Released(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "must not start a goroutine") {
+	if requirements_diagnosed(diags, "must not start a goroutine") {
 		t.Fatal("instrumentation package must auto-release from determinism")
 	}
 }

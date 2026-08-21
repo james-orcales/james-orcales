@@ -1,9 +1,9 @@
-// Package specification enforces the doctrine governing SPECIFICATION.md files:
+// Package requirements enforces the doctrine governing REQUIREMENTS.md files:
 // the markdown structure every pure package's spec must obey and the
-// specification_test.go that must mirror its leaf headings. It reads and parses
+// requirements_test.go that must mirror its leaf headings. It reads and parses
 // nothing — the caller pre-computes each Package from its single parse — so it
 // is a pure, deterministic function of its input.
-package specification
+package requirements
 
 import (
 	"fmt"
@@ -26,9 +26,9 @@ type Package struct {
 	Has_Module bool
 	// Impure is true for a package main or default tier, exempt from the mandate.
 	Impure bool
-	// Markdown is the exact-cased SPECIFICATION.md content, or nil when absent.
+	// Markdown is the exact-cased REQUIREMENTS.md content, or nil when absent.
 	Markdown []byte
-	// Test is the specification_test.go parsed by the caller's single parse, or
+	// Test is the requirements_test.go parsed by the caller's single parse, or
 	// nil when the file is absent.
 	Test *ast.File
 }
@@ -43,7 +43,7 @@ type Check_Input struct {
 	Scope string
 }
 
-// Check enforces the SPECIFICATION.md doctrine over every package in the input.
+// Check enforces the REQUIREMENTS.md doctrine over every package in the input.
 func Check(input *Check_Input) (diags []diagnostic.Diagnostic) {
 	for _, target := range input.Packages {
 		diags = append(diags, check_package(target, input.Scope)...)
@@ -55,14 +55,14 @@ func check_package(target Package, scope string) (diags []diagnostic.Diagnostic)
 	if target.Markdown == nil {
 		return check_coverage(target, scope)
 	}
-	markdown_path := path.Join(target.Path, "SPECIFICATION.md")
+	markdown_path := path.Join(target.Path, "REQUIREMENTS.md")
 	lines := strings.Split(string(target.Markdown), "\n")
 	leaves, format_diags := check_format(markdown_path, lines)
 	diags = append(diags, format_diags...)
 	return append(diags, check_tests(target.Path, target.Test, leaves)...)
 }
 
-// Applies the mandate to a package whose SPECIFICATION.md is absent. Coverage
+// Applies the mandate to a package whose REQUIREMENTS.md is absent. Coverage
 // follows the package argument: an explicit scope demands the file within that
 // subtree, an empty scope demands it everywhere. Module-less, vendored/example,
 // and impure (package main or default) trees are never required to carry one.
@@ -89,7 +89,7 @@ func check_coverage(target Package, scope string) (diags []diagnostic.Diagnostic
 	return []diagnostic.Diagnostic{coverage_diag(target.Path)}
 }
 
-// Validates the structural rules a SPECIFICATION.md must obey — no preamble
+// Validates the structural rules a REQUIREMENTS.md must obey — no preamble
 // before the first heading, a single # / ### heading model, unique headings of
 // letters-and-digits words, a blank line either side of every heading, a
 // contiguous body of one to three lines per section. Line width is not checked
@@ -106,7 +106,7 @@ func check_format(
 	return names, append(diags, body_diags...)
 }
 
-// One heading found in a SPECIFICATION.md: its level (1 or 3), 1-based source
+// One heading found in a REQUIREMENTS.md: its level (1 or 3), 1-based source
 // line, the raw text after the marker, and its Ada_Case form.
 type Heading struct {
 	// Level is the heading level: 1 or 3.
@@ -180,7 +180,7 @@ func heading_line_diags(
 // named Ada(#); each ### is a leaf named Ada(#)_Ada(###). # names are unique
 // file-wide; ### names are unique within their parent #.
 type Tree struct {
-	// Path is the SPECIFICATION.md path being walked.
+	// Path is the REQUIREMENTS.md path being walked.
 	Path string
 	// Seen_H2 records the # names seen file-wide, for uniqueness.
 	Seen_H2 map[string]bool
@@ -262,7 +262,7 @@ func tree_duplicate(state *Tree, entry Heading) (diag diagnostic.Diagnostic) {
 // State for the body pass: the currently open section, its accumulated body line
 // count, and whether a blank line has already interrupted that body.
 type Body struct {
-	// Path is the SPECIFICATION.md path being walked.
+	// Path is the REQUIREMENTS.md path being walked.
 	Path string
 	// Leaf_Lines maps each leaf heading's line to true.
 	Leaf_Lines map[int]bool
@@ -403,7 +403,7 @@ func heading_words_invalid(raw string) (invalid bool) {
 
 func preamble_diag(position token.Position) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Start the file with a heading.",
 		Message: fmt.Sprintf(
 			"%s:%d The content is before the first heading. "+
@@ -414,7 +414,7 @@ func preamble_diag(position token.Position) (diag diagnostic.Diagnostic) {
 
 func section_body_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Write a body line in the section.",
 		Message: fmt.Sprintf(
 			"%s:%d The section %q has no body line. Write a body line.",
@@ -424,7 +424,7 @@ func section_body_diag(position token.Position, raw string) (diag diagnostic.Dia
 
 func section_contiguity_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Remove the blank line from the section body.",
 		Message: fmt.Sprintf(
 			"%s:%d The section %q has a blank line between two body lines. "+
@@ -435,7 +435,7 @@ func section_contiguity_diag(position token.Position, raw string) (diag diagnost
 
 func heading_duplicate_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Write a different heading.",
 		Message: fmt.Sprintf(
 			"%s:%d The heading %q is not unique. Write a different heading.",
@@ -445,7 +445,7 @@ func heading_duplicate_diag(position token.Position, raw string) (diag diagnosti
 
 func heading_words_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Write only letters and digits in the heading.",
 		Message: fmt.Sprintf(
 			"%s:%d The heading %q has a character that is not a letter or a "+
@@ -456,7 +456,7 @@ func heading_words_diag(position token.Position, raw string) (diag diagnostic.Di
 
 func heading_level_diag(position token.Position) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Write a \"#\" heading or a \"###\" heading.",
 		Message: fmt.Sprintf(
 			"%s:%d The heading level is not \"#\" or \"###\". "+
@@ -467,7 +467,7 @@ func heading_level_diag(position token.Position) (diag diagnostic.Diagnostic) {
 
 func orphan_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Put the subheading below a \"#\" heading.",
 		Message: fmt.Sprintf(
 			"%s:%d The \"###\" heading %q has no parent \"#\" heading. "+
@@ -478,7 +478,7 @@ func orphan_diag(position token.Position, raw string) (diag diagnostic.Diagnosti
 
 func section_diag(position token.Position, raw string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: position, Name: "specification",
+		Position: position, Name: "requirements",
 		Want: "Write a maximum of three lines in the section.",
 		Message: fmt.Sprintf(
 			"%s:%d The section %q has more than three lines. "+
@@ -489,7 +489,7 @@ func section_diag(position token.Position, raw string) (diag diagnostic.Diagnost
 
 // A directory is exempt from the coverage mandate when any path segment is
 // `third_party` (vendored code in a separate module) or `examples`
-// (illustrative, not a real package contract). An existing SPECIFICATION.md in
+// (illustrative, not a real package contract). An existing REQUIREMENTS.md in
 // such a tree is still format-validated; it just is never required to exist.
 func directory_exempt(directory string) (exempt bool) {
 	for _, segment := range strings.Split(directory, "/") {
@@ -505,23 +505,23 @@ func directory_exempt(directory string) (exempt bool) {
 
 func coverage_diag(directory string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: token.Position{Filename: path.Join(directory, "SPECIFICATION.md")},
-		Name:     "specification",
-		Want:     "Add SPECIFICATION.md to the package.",
+		Position: token.Position{Filename: path.Join(directory, "REQUIREMENTS.md")},
+		Name:     "requirements",
+		Want:     "Add REQUIREMENTS.md to the package.",
 		Message: fmt.Sprintf(
-			"The package %q has no SPECIFICATION.md. Add SPECIFICATION.md.",
+			"The package %q has no REQUIREMENTS.md. Add REQUIREMENTS.md.",
 			directory),
 	}
 }
 
 func test_file_diag(directory string) (diag diagnostic.Diagnostic) {
 	return diagnostic.Diagnostic{
-		Position: token.Position{Filename: path.Join(directory, "specification_test.go")},
-		Name:     "specification",
-		Want:     "Add specification_test.go to the package.",
+		Position: token.Position{Filename: path.Join(directory, "requirements_test.go")},
+		Name:     "requirements",
+		Want:     "Add requirements_test.go to the package.",
 		Message: fmt.Sprintf(
-			"The package %q has no specification_test.go. "+
-				"Add specification_test.go.",
+			"The package %q has no requirements_test.go. "+
+				"Add requirements_test.go.",
 			directory),
 	}
 }
@@ -535,7 +535,7 @@ func blank_lines(
 	}
 	if !preceded {
 		diags = append(diags, diagnostic.Diagnostic{
-			Position: position, Name: "specification",
+			Position: position, Name: "requirements",
 			Want: "Write a blank line before the heading.",
 			Message: fmt.Sprintf(
 				"%s:%d There is no blank line before the heading %q. "+
@@ -549,7 +549,7 @@ func blank_lines(
 	}
 	if !followed {
 		diags = append(diags, diagnostic.Diagnostic{
-			Position: position, Name: "specification",
+			Position: position, Name: "requirements",
 			Want: "Write a blank line after the heading.",
 			Message: fmt.Sprintf(
 				"%s:%d There is no blank line after the heading %q. "+
@@ -560,19 +560,19 @@ func blank_lines(
 	return diags
 }
 
-// Verifies the specification_test.go declarations are exactly Test_<Heading> for
+// Verifies the requirements_test.go declarations are exactly Test_<Heading> for
 // each leaf, in leaf order, as the file's leading functions. Comparing by index
 // enforces both the per-heading correspondence and the "tests at the very top,
 // in order" rule in one pass: a helper or a misordered test shifts the sequence
 // and surfaces as a mismatch at that position. A nil Test means the file is
-// absent — the caller found no exact-cased specification_test.go.
+// absent — the caller found no exact-cased requirements_test.go.
 func check_tests(
 	directory string, test *ast.File, leaves []string,
 ) (diags []diagnostic.Diagnostic) {
 	if test == nil {
 		return []diagnostic.Diagnostic{test_file_diag(directory)}
 	}
-	test_path := path.Join(directory, "specification_test.go")
+	test_path := path.Join(directory, "requirements_test.go")
 	functions := test_function_names(test)
 	for i, leaf := range leaves {
 		want := "Test_" + leaf
@@ -585,7 +585,7 @@ func check_tests(
 		}
 		diags = append(diags, diagnostic.Diagnostic{
 			Position: token.Position{Filename: test_path},
-			Name:     "specification",
+			Name:     "requirements",
 			Want:     "Declare func " + want + ".",
 			Message: fmt.Sprintf(
 				"%s:%d The file needs %s for the leaf %q. "+

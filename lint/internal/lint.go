@@ -25,7 +25,7 @@ import (
 	"local/james-orcales/lint/internal/diagnostic"
 	"local/james-orcales/lint/internal/resolution"
 	"local/james-orcales/lint/internal/source"
-	"local/james-orcales/lint/internal/specification"
+	"local/james-orcales/lint/internal/requirements"
 	"local/james-orcales/lint/internal/vcs"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/unicode/ucd"
@@ -2301,7 +2301,7 @@ type Check_File_System_Input struct {
 	// Readlink reads a symlink's target for the symlink check; nil disables it.
 	Readlink func(name string) (target string, err error)
 	// Scope is the package argument the linter was pointed at (relative to
-	// Fsys root, empty for a whole-workspace run). The SPECIFICATION.md
+	// Fsys root, empty for a whole-workspace run). The REQUIREMENTS.md
 	// coverage rule is enforced only for packages under this scope so that
 	// `lint ./some/pkg` demands the file there, while a scopeless run does
 	// not blanket-require it of every package in the tree.
@@ -2641,7 +2641,7 @@ func check_file_system_doctrine(
 		assertion_exemptions,
 	)...)
 	return append(output,
-		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
+		check_requirements(input.Fsys, parsed_files, components, input.Scope)...)
 }
 
 // Returns tracked with every path the lint.json ignore globs match dropped, so
@@ -2729,7 +2729,7 @@ func Git_Input_Check(input Git_Input) (diags []Diagnostic) {
 // package harder to read top-to-bottom and forces readers to chase symbols
 // across the filesystem. The rule: per package, expected_max files =
 // ceil(total_lines / LINES_PER_FILE_MAX). Source files, test files,
-// specification_test.go, and each distinct build-tag constraint form
+// requirements_test.go, and each distinct build-tag constraint form
 // independent groups (a Linux-only file and a generic file genuinely have
 // to live separately). SLOC is total lines per the user's directive —
 // comments and blanks count.
@@ -2738,8 +2738,8 @@ type Package_Group_Key struct {
 	Directory string
 	// Is_Test marks a test-file group.
 	Is_Test bool
-	// Is_Specification_Test marks the specification_test.go group.
-	Is_Specification_Test bool
+	// Is_Requirements_Test marks the requirements_test.go group.
+	Is_Requirements_Test bool
 	// Test_Is_External marks an external (package X_test) test group.
 	Test_Is_External bool
 	// Build is the file's build-tag constraint, which splits groups.
@@ -2761,7 +2761,7 @@ func check_file_system_package_split(parsed_files []Parsed_File) (diags []Diagno
 		key := Package_Group_Key{
 			Directory:             path.Dir(pf.Path),
 			Is_Test:               is_test,
-			Is_Specification_Test: path.Base(pf.Path) == "specification_test.go",
+			Is_Requirements_Test: path.Base(pf.Path) == "requirements_test.go",
 			// A whitebox (foo) test package and a blackbox (foo_test) test package
 			// compile into different binaries, so they fragment independently.
 			Test_Is_External: is_test && strings.Has_Suffix(pf.File.Name.Name, "_test"),
@@ -2819,8 +2819,8 @@ func package_group_key_diag(
 ) (diag Diagnostic) {
 
 	label := "source"
-	if key.Is_Specification_Test {
-		label = "specification_test"
+	if key.Is_Requirements_Test {
+		label = "requirements_test"
 	} else if key.Is_Test {
 		label = "test"
 		if !key.Test_Is_External {
@@ -3903,14 +3903,14 @@ func parsed_file_path_less(files []Parsed_File, i int, j int) (less bool) {
 	return files[i].Path < files[j].Path
 }
 
-// SPECIFICATION.md doctrine: every pure Go package carries a SPECIFICATION.md
+// REQUIREMENTS.md doctrine: every pure Go package carries a REQUIREMENTS.md
 // whose leaf headings each map, in order, to a leading Test_<Heading> in
-// specification_test.go. The rule logic lives in the specification package; this
+// requirements_test.go. The rule logic lives in the requirements package; this
 // adapter gathers, from the single parse, each directory's module membership,
-// impurity, exact-cased spec bytes, and already-parsed specification_test.go, so
+// impurity, exact-cased spec bytes, and already-parsed requirements_test.go, so
 // that package reads and parses nothing. Diagnostics attach under the package
 // directory so Main's scope filter limits the mandate to the package argument.
-func check_specification(
+func check_requirements(
 	fsys fs.FS, parsed_files []Parsed_File, index *Component_Index, scope string,
 ) (diags []Diagnostic) {
 	directories := map[string]bool{}
@@ -3926,7 +3926,7 @@ func check_specification(
 		if source.Is_Impure_Package(pf, index) {
 			impure[directory] = true
 		}
-		if path.Base(pf.Path) == "specification_test.go" {
+		if path.Base(pf.Path) == "requirements_test.go" {
 			test_ast[directory] = pf.File
 		}
 	}
@@ -3935,29 +3935,29 @@ func check_specification(
 		sorted = append(sorted, directory)
 	}
 	sort.Strings(sorted)
-	packages := make([]specification.Package, 0, len(sorted))
+	packages := make([]requirements.Package, 0, len(sorted))
 	for _, directory := range sorted {
-		packages = append(packages, specification.Package{
+		packages = append(packages, requirements.Package{
 			Path:       directory,
 			Has_Module: has_module[directory],
 			Impure:     impure[directory],
-			Markdown:   specification_content(fsys, directory),
+			Markdown:   requirements_content(fsys, directory),
 			Test:       test_ast[directory],
 		})
 	}
-	return specification.Check(&specification.Check_Input{Packages: packages, Scope: scope})
+	return requirements.Check(&requirements.Check_Input{Packages: packages, Scope: scope})
 }
 
-// Returns the bytes of an exact-cased SPECIFICATION.md in directory, or nil when
+// Returns the bytes of an exact-cased REQUIREMENTS.md in directory, or nil when
 // absent — the exact-name guard defeats a case-insensitive filesystem resolving
-// a differently-cased file. This is the specification tier's only I/O; the
-// specification package works purely from these bytes and the pre-parsed test AST.
-func specification_content(fsys fs.FS, directory string) (content []byte) {
-	specification_path := path.Join(directory, "SPECIFICATION.md")
-	if !specification_directory_has_exact(fsys, specification_path) {
+// a differently-cased file. This is the requirements tier's only I/O; the
+// requirements package works purely from these bytes and the pre-parsed test AST.
+func requirements_content(fsys fs.FS, directory string) (content []byte) {
+	requirements_path := path.Join(directory, "REQUIREMENTS.md")
+	if !requirements_directory_has_exact(fsys, requirements_path) {
 		return nil
 	}
-	data, err := fs.ReadFile(fsys, specification_path)
+	data, err := fs.ReadFile(fsys, requirements_path)
 	if err != nil {
 		return nil
 	}
@@ -3968,7 +3968,7 @@ func specification_content(fsys fs.FS, directory string) (content []byte) {
 // byte for byte. fs.ReadFile is insufficient on a case-insensitive filesystem
 // (it resolves a differently-cased file), so the doctrine's exact-name rule must
 // consult the real directory listing.
-func specification_directory_has_exact(
+func requirements_directory_has_exact(
 	fsys fs.FS, file_path string,
 ) (present bool) {
 	entries, err := fs.ReadDir(fsys, path.Dir(file_path))
@@ -6892,7 +6892,7 @@ func check_exported_documentation_comment_generic_specs(
 						"Write a doc comment.", s.Name.Name),
 			})
 		case *ast.ValueSpec:
-			specification_has_documentation :=
+			requirements_has_documentation :=
 				check_exported_documentation_comment_has_documentation(s.Doc)
 
 			for _, name := range s.Names {
@@ -6902,7 +6902,7 @@ func check_exported_documentation_comment_generic_specs(
 				if group_has_documentation {
 					continue
 				}
-				if specification_has_documentation {
+				if requirements_has_documentation {
 					continue
 				}
 				diags = append(diags, Diagnostic{

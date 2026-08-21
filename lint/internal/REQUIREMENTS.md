@@ -471,9 +471,9 @@ A package holds exactly ceil(total_sloc/10000) source files.
 Blackbox (foo_test) and whitebox (foo) test files each carry an independent total_sloc count,
 from source files and from each other.
 
-### File Count Specification Test
+### File Count Requirements Test
 
-specification_test.go carries its own independent total_sloc count from other test files.
+requirements_test.go carries its own independent total_sloc count from other test files.
 
 ### File Count Build Tags
 
