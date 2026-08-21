@@ -1559,6 +1559,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_gofmt,
 		check_no_dot_import,
 		check_import_alias_no_default,
+		make_check_import_alias_unnecessary(input.Declarations),
 		check_default_package_name,
 		check_no_empty_function_body,
 		check_no_interfaces,
@@ -5432,6 +5433,95 @@ func check_import_alias_no_default(
 		})
 	}
 	return diags
+}
+
+// Alias hides package's own name. Collision between two imported package names
+// is sole case where local renaming carries information instead of decoration.
+func make_check_import_alias_unnecessary(
+	index *source.Declaration_Index,
+) (check Check_Function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		return check_import_alias_unnecessary(file_set, file, index)
+	}
+}
+
+func check_import_alias_unnecessary(
+	file_set *token.FileSet,
+	file *ast.File,
+	index *source.Declaration_Index,
+) (diags []Diagnostic) {
+	file_path := ""
+	token_file := file_set.File(file.Pos())
+	if token_file != nil {
+		file_path = token_file.Name()
+	}
+	package_name_counts := make(map[string]int)
+	for _, import_specification := range file.Imports {
+		if import_specification.Name != nil {
+			local_name := import_specification.Name.Name
+			if local_name == "_" {
+				continue
+			}
+			if local_name == "." {
+				continue
+			}
+		}
+		package_name := import_declared_package_name(
+			index, file_path, import_specification)
+		if package_name == "" {
+			continue
+		}
+		package_name_counts[package_name]++
+	}
+	for _, import_specification := range file.Imports {
+		if import_specification.Name == nil {
+			continue
+		}
+		alias := import_specification.Name.Name
+		if alias == "_" {
+			continue
+		}
+		if alias == "." {
+			continue
+		}
+		package_name := import_declared_package_name(
+			index, file_path, import_specification)
+		if package_name_counts[package_name] > 1 {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(import_specification.Pos()),
+			Name:     "import-alias-unnecessary",
+			Want:     "Import package without alias.",
+			Message: fmt.Sprintf(
+				"Package import alias %q is unnecessary. Remove alias because no "+
+					"other imported package is named %q.",
+				alias, package_name),
+		})
+	}
+	return diags
+}
+
+func import_declared_package_name(
+	index *source.Declaration_Index,
+	file_path string,
+	import_specification *ast.ImportSpec,
+) (name string) {
+	import_path, err := strconv.Unquote(import_specification.Path.Value)
+	if err != nil {
+		return ""
+	}
+	if index != nil {
+		imported_package, found := index.Import_Paths[source.File_Import{
+			Path: file_path, Import_Path: import_path,
+		}]
+		if found {
+			return imported_package.Package
+		}
+	}
+	return path.Base(import_path)
 }
 
 // A composition-tier package lives in a directory named `default` nested under

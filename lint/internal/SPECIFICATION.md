@@ -181,8 +181,9 @@ a library is being imported solely for it's global side-effects, an implicit con
 
 ### Import Aliases
 
-An import alias holds no `default`, in any case. The alias names the package, and a default
-directory declares its parent's name; a tier label there fights the package's own clause.
+Import alias is permitted only when imported package's declared name collides with another import.
+It holds no `default`, in any case: default directory declares its parent's name, so tier label
+there fights package's own clause.
 
 ### Grouped Declarations
 

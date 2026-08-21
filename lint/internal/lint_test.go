@@ -48,7 +48,7 @@ const DOCTRINE_BINARY_INTERNAL_MAIN = "// Package entry is a fixture.\n" +
 
 const FIXTURE_INVARIANT_IMPORT_PATH = "github.com/james-orcales/james-orcales/" +
 	"shared/invariant/v2/invariant_default"
-const FIXTURE_INVARIANT_IMPORT = "import invariant \"" + FIXTURE_INVARIANT_IMPORT_PATH + "\"\n"
+const FIXTURE_INVARIANT_IMPORT = "import \"" + FIXTURE_INVARIANT_IMPORT_PATH + "\"\n"
 
 // A package whose SPECIFICATION.md, source, and specification_test.go all
 // satisfy the doctrine. Variant tests swap one artifact for a violating one so
@@ -108,7 +108,7 @@ const FIXTURE_DECLARATION_CALLEE_PAIR = "func g() (a *int, b *int) {\n" +
 // FIXTURE_CLEAN_GO is the canonical valid-Go fixture used by tests that
 // need an accompanying .go file but don't care about its specific shape.
 const FIXTURE_CLEAN_GO = "package main\n\n" +
-	"import invariant \"github.com/james-orcales/james-orcales/" +
+	"import \"github.com/james-orcales/james-orcales/" +
 	"shared/invariant/v2\"\n\n" +
 	"const FIXTURE_HI = 100\n\n" +
 	"func f() (result int) {\n" +
@@ -1540,7 +1540,7 @@ func Test_Gofmt(t *testing.T) {
 			Name: "clean source allowed",
 			Files: map[string]string{
 				"test.go": "package main\n\n" +
-					"import invariant \"" +
+					"import \"" +
 					"github.com/james-orcales/james-orcales/" +
 					"shared/invariant/v2\"\n\n" +
 					"const FIXTURE_HI = 100\n\n" +
@@ -3546,10 +3546,7 @@ func Test_Package_Split_Threshold_Part2(t *testing.T) {
 	}
 }
 
-// Test_Import_Alias_No_Default verifies an import alias holding "default" is
-// flagged in any case, while a blank import, a dot import, and an alias naming
-// the package are left alone. The blank and dot forms carry their own bans, so
-// this check stays silent on them rather than reporting the same import twice.
+// Test_Import_Alias_No_Default isolates default-name ban from other alias bans.
 func Test_Import_Alias_No_Default(t *testing.T) {
 	t.Parallel()
 	fixture := func(alias string) (files map[string]string) {
@@ -3579,12 +3576,134 @@ func Test_Import_Alias_No_Default(t *testing.T) {
 			Want_Diag: `import alias "default_text"`,
 		},
 		{
-			Name:      "alias naming the package is clean",
+			Name:      "alias naming another package is independently flagged",
 			Files:     fixture("text"),
+			Want_Diag: `import alias "text" is unnecessary`,
+		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Test_Import_Alias_Unnecessary keeps aliases reserved for package-name collisions.
+func Test_Import_Alias_Unnecessary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "different alias flagged",
+			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
+				"package foo\n\nimport text \"strings\"\n"},
+			Want_Diag: `import alias "text" is unnecessary`,
+		},
+		{
+			Name: "matching alias flagged",
+			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
+				"package foo\n\nimport strings \"strings\"\n"},
+			Want_Diag: `import alias "strings" is unnecessary`,
+		},
+		{
+			Name: "colliding package names allow aliases",
+			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
+				"package foo\n\nimport (\n" +
+				"\tfirst_text \"example.com/first/text\"\n" +
+				"\tsecond_text \"example.com/second/text\"\n)\n"},
+			Want_Diag: "",
+		},
+		{
+			Name: "collision does not release unrelated alias",
+			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
+				"package foo\n\nimport (\n" +
+				"\tfirst_text \"example.com/first/text\"\n" +
+				"\tsecond_text \"example.com/second/text\"\n" +
+				"\tbyte_text \"bytes\"\n)\n"},
+			Want_Diag: `import alias "byte_text" is unnecessary`,
+		},
+		{
+			Name: "blank import creates no collision",
+			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
+				"package foo\n\nimport (\n" +
+				"\tfirst_text \"example.com/first/text\"\n" +
+				"\t_ \"example.com/second/text\"\n)\n"},
+			Want_Diag: `import alias "first_text" is unnecessary`,
+		},
+		{
+			Name: "dot import creates no collision",
+			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
+				"package foo\n\nimport (\n" +
+				"\tfirst_text \"example.com/first/text\"\n" +
+				"\t. \"example.com/second/text\"\n)\n"},
+			Want_Diag: `import alias "first_text" is unnecessary`,
+		},
+		{
+			Name: "unaliased import clean",
+			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
+				"package foo\n\nimport \"strings\"\n"},
 			Want_Diag: "",
 		},
 	}
 	run_diag_table(t, tests)
+}
+
+// Test_Import_Alias_Unnecessary_Declared_Name makes package clause authoritative over path base.
+func Test_Import_Alias_Unnecessary_Declared_Name(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name       string
+		First      string
+		Second     string
+		Want_Count int
+	}{
+		{
+			Name: "declared collision allows aliases", First: "text", Second: "text",
+			Want_Count: 0,
+		},
+		{
+			Name:  "distinct declarations reject aliases",
+			First: "first", Second: "second",
+			Want_Count: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.Name, func(t *testing.T) {
+			fsys := fstest.MapFS{
+				"go.mod": {Data: []byte("module example.com\n")},
+				"shared/first/first.go": {Data: gofmt_must(t,
+					"// Package imported is a fixture.\n"+
+						"package "+test.First+"\n")},
+				"shared/second/second.go": {Data: gofmt_must(t,
+					"// Package imported is a fixture.\n"+
+						"package "+test.Second+"\n")},
+				"shared/consumer/consumer.go": {Data: gofmt_must(t,
+					"// Package consumer is a fixture.\npackage consumer\n\n"+
+						"import (\n"+
+						"\tfirst_text \"example.com/shared/first\"\n"+
+						"\tsecond_text \"example.com/shared/second\"\n"+
+						")\n")},
+			}
+			diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+				Fsys: fsys, CPU_Count: 1, Shared_Component: "shared",
+				Invariant_Exempt_Packages: []string{"**"},
+				Pure_But_Indeterministic:  []string{"**"},
+			})
+			if err != nil {
+				t.Fatalf("Check_File_System: %v", err)
+			}
+			diagnostic_count := 0
+			for _, diagnostic := range diags {
+				if diagnostic.Name == "import-alias-unnecessary" {
+					diagnostic_count++
+				}
+			}
+			if diagnostic_count != test.Want_Count {
+				t.Fatalf(
+					"alias diagnostics=%d, want %d", diagnostic_count,
+					test.Want_Count)
+			}
+		})
+	}
 }
 
 // Test_File_Size verifies the per-file line cap. The cap binds each file on its
@@ -3826,7 +3945,7 @@ func Test_Snap_Backtick(t *testing.T) {
 				"test.go": "package main\n\n" +
 					"import (\n" +
 					"\t\"x/snap\"\n\n" +
-					"\tinvariant \"github.com/james-orcales/james-orcales/" +
+					"\t\"github.com/james-orcales/james-orcales/" +
 					"shared/invariant/v2\"\n" +
 					")\n\n" +
 					"const FIXTURE_HI = 100\n\n" +

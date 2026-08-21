@@ -513,14 +513,24 @@ func Test_Source_And_Test_Bans_Blank_Imports(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Bans_Import_Aliases verifies an alias holding "default" is
-// flagged.
+// Test_Source_And_Test_Bans_Import_Aliases reserves aliases for package-name collisions.
 func Test_Source_And_Test_Bans_Import_Aliases(t *testing.T) {
 	t.Parallel()
-	files := specification_one_file(
+	default_alias := specification_one_file(
 		"package fixture\n\nimport iodefault \"strings\"\n")
-	if !specification_flags(t, files, "The import alias") {
-		t.Fatal("an alias holding \"default\" must be flagged")
+	if !specification_flags(t, default_alias, "The import alias") {
+		t.Fatal("alias holding \"default\" must be flagged")
+	}
+	unnecessary_alias := specification_one_file(
+		"package fixture\n\nimport text \"strings\"\n")
+	if !specification_flags(t, unnecessary_alias, "is unnecessary") {
+		t.Fatal("alias without package-name collision must be flagged")
+	}
+	collision := specification_one_file("package fixture\n\nimport (\n" +
+		"\tfirst_text \"example.com/first/text\"\n" +
+		"\tsecond_text \"example.com/second/text\"\n)\n")
+	if specification_flags(t, collision, "is unnecessary") {
+		t.Fatal("aliases resolving package-name collision must be allowed")
 	}
 }
 

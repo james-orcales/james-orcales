@@ -70,6 +70,10 @@ external test package shares a directory with the package it tests.
 Imports maps an importing file's local qualifier to the package it names. An
 import the workspace does not own is left out, so a lookup through it misses.
 
+### Import Paths
+
+Import Paths maps first-party import path in each file to imported package's declared name.
+
 ### File Package
 
 File Package maps a file path to its own directory and package clause, so a bare

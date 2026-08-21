@@ -170,6 +170,14 @@ type File_Qualifier struct {
 	Qualifier string
 }
 
+// File_Import names one imported path in one source file.
+type File_Import struct {
+	// Path is repo-relative path of importing file.
+	Path string
+	// Import_Path is path written by import specification.
+	Import_Path string
+}
+
 // Declaration_Index resolves a name to its declaration anywhere in the parsed
 // set, with no type checker and no second parse. The doctrine is what makes it
 // exact: dot and blank imports are banned, so no name enters a file's scope
@@ -182,6 +190,8 @@ type Declaration_Index struct {
 	// Imports maps an importing file's local qualifier to the imported package.
 	// The Name field of the value is empty: it names the package, not a member.
 	Imports map[File_Qualifier]Package_Symbol
+	// Import_Paths maps each first-party import path to its declared package.
+	Import_Paths map[File_Import]Package_Symbol
 	// File_Package maps a file path to its own package clause and directory, so
 	// an unqualified reference resolves without re-reading the AST.
 	File_Package map[string]Package_Symbol
@@ -198,6 +208,7 @@ func Build_Declaration_Index(
 	index = &Declaration_Index{
 		Declarations: make(map[Package_Symbol]Declaration, len(parsed_files)),
 		Imports:      make(map[File_Qualifier]Package_Symbol, len(parsed_files)),
+		Import_Paths: make(map[File_Import]Package_Symbol, len(parsed_files)),
 		File_Package: make(map[string]Package_Symbol, len(parsed_files)),
 	}
 	for _, pf := range parsed_files {
@@ -308,8 +319,14 @@ func declaration_index_imports(
 		if qualifier == "." {
 			continue
 		}
-		index.Imports[File_Qualifier{Path: pf.Path, Qualifier: qualifier}] =
-			Package_Symbol{Directory: directory, Package: package_name}
+		imported_package := Package_Symbol{
+			Directory: directory, Package: package_name}
+		index.Imports[File_Qualifier{
+			Path: pf.Path, Qualifier: qualifier,
+		}] = imported_package
+		index.Import_Paths[File_Import{
+			Path: pf.Path, Import_Path: import_path,
+		}] = imported_package
 	}
 }
 
@@ -345,8 +362,12 @@ func import_path_directory(
 	package_name = m.Directory_Package[canonical]
 	if package_name == "" {
 		// No parsed file declared the package, so the best available name is
-		// the path's own last segment — what an unaliased import binds anyway.
+		// path's last segment. Default tier is stronger: repository doctrine
+		// requires parent package name even when scoped run did not parse it.
 		package_name = import_path[strings.LastIndex(import_path, "/")+1:]
+		if package_name == "default" {
+			package_name = path.Base(path.Dir(import_path))
+		}
 	}
 	return directory, package_name, true
 }

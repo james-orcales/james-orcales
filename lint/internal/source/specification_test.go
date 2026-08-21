@@ -126,6 +126,22 @@ func Test_Declaration_Index_Imports(t *testing.T) {
 	}
 }
 
+// Test_Declaration_Index_Import_Paths verifies import path retains declared package name.
+func Test_Declaration_Index_Import_Paths(t *testing.T) {
+	t.Parallel()
+	index := declaration_workspace(t)
+	key := source.File_Import{
+		Path: "shared/beta/beta.go", Import_Path: "example.com/shared/alpha"}
+	if index.Import_Paths[key].Package != "alpha" {
+		t.Fatal("Import_Paths must map import path to declared package name")
+	}
+	default_key := source.File_Import{
+		Path: "shared/beta/beta.go", Import_Path: "example.com/shared/alpha/default"}
+	if index.Import_Paths[default_key].Package != "alpha" {
+		t.Fatal("Import_Paths must retain default tier parent package name")
+	}
+}
+
 // Test_Declaration_Index_File_Package verifies File Package carries each file's
 // own directory and package clause.
 func Test_Declaration_Index_File_Package(t *testing.T) {

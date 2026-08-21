@@ -308,7 +308,7 @@ func Test_Comments_Part3(t *testing.T) {
 func Test_Comments_Inline_Exempt(t *testing.T) {
 	t.Parallel()
 	source := "package main\n\n" +
-		"import invariant \"github.com/james-orcales/james-orcales/" +
+		"import \"github.com/james-orcales/james-orcales/" +
 		"shared/invariant/v2\"\n\n" +
 		"const FIXTURE_HI = 100\n\n" +
 		"func f() (result int) { // some inline note\n" +

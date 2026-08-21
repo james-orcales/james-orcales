@@ -56,7 +56,9 @@ func declaration_workspace(t *testing.T) (index *source.Declaration_Index) {
 		declaration_fixture(t, &declaration_fixture_input{
 			Path: "shared/beta/beta.go",
 			Text: "package beta\n\n" +
-				"import (\n\talpha \"example.com/shared/alpha\"\n\t\"fmt\"\n)\n\n" +
+				"import (\n\talpha \"example.com/shared/alpha\"\n" +
+				"\tcomposed \"example.com/shared/alpha/default\"\n" +
+				"\t\"fmt\"\n)\n\n" +
 				"func Use() (widget alpha.Widget) {\n" +
 				"\tfmt.Sprint()\n\treturn alpha.Make()\n}\n",
 		}),
