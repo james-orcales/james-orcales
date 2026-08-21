@@ -9,7 +9,7 @@
 package list
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/slices"
 )
 

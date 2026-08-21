@@ -46,6 +46,11 @@ library has no such operation, because a bounded pool needs one where a collecto
 A pool holds at most ELEMENT_COUNT_MAXIMUM nodes. A New that asks for more nodes than the pool
 holds free causes a panic.
 
+# Allocation
+
+Every operation allocates zero heap storage. Pool owns fixed node storage, and Release returns nodes
+to that storage for later New calls.
+
 # Domain Errors
 
 A handle that no live node holds causes a panic. This includes the free-chain sentinel, a handle

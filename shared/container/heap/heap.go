@@ -5,7 +5,7 @@
 package heap
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -90,7 +90,8 @@ func Initialize[S ~[]E, E any](
 	}
 }
 
-// Push adds one element to a heap and returns the grown slice.
+// Push uses caller-owned spare capacity because hidden growth would violate package allocation
+// boundary.
 func Push[S ~[]E, E any](
 	elements S, element E, comparison slices.Comparison_Function[E, E],
 ) (result S) {
@@ -100,7 +101,12 @@ func Push[S ~[]E, E any](
 		len(elements) < ELEMENT_COUNT_MAXIMUM,
 		"A heap Push keeps room for the new element.",
 	)
-	result = append(elements, element)
+	invariant.Always(
+		len(elements) < cap(elements),
+		"A heap Push uses room in caller-owned storage.",
+	)
+	result = elements[:len(elements)+1]
+	result[len(elements)] = element
 	sift_up(result, Position(len(result)-1), comparison)
 	return result
 }

@@ -41,6 +41,11 @@ the same list, and it keeps its own elements.
 A list holds at most ELEMENT_COUNT_MAXIMUM elements. An insertion above that limit causes a
 panic.
 
+# Allocation
+
+Every operation allocates zero heap storage. List owns fixed node pool, and removed nodes return to
+that pool for later insertion.
+
 # Domain Errors
 
 A position that no live element holds causes a panic. This includes POSITION_NONE, both sentinel

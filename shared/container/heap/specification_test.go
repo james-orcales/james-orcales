@@ -24,16 +24,26 @@ func Test_Initialization(t *testing.T) {
 	testify.Count(t, empty, 0, "Initialize must accept an empty slice")
 }
 
-// Test_Insertion verifies that Push grows the slice and keeps the minimum at position zero.
+// Test_Insertion keeps caller-owned growth executable because silent growth restores collector
+// dependence.
 func Test_Insertion(t *testing.T) {
 	t.Parallel()
-	elements := []int{}
+	var storage [INSERTION_ELEMENT_COUNT]int
+	elements := storage[:0]
 	for _, value := range []int{5, 2, 9, 1, 7} {
 		elements = heap.Push(elements, value, smallest_first)
 	}
 	testify.Count(t, elements, 5, "Push must grow the slice")
 	testify.Equal(t, 1, elements[0], "Push must keep the minimum at position zero")
 	testify.True(t, ordered(elements, smallest_first), "Push must keep the heap order")
+	without_storage := []int{}
+	testify.True(t, panicked(func() {
+		heap.Push(without_storage, 1, smallest_first)
+	}), "Push must reject a slice without room in caller storage")
+	full_storage := [...]int{1, 2}
+	testify.True(t, panicked(func() {
+		heap.Push(full_storage[:], 3, smallest_first)
+	}), "Push must reject exhausted caller storage below ELEMENT_COUNT_MAXIMUM")
 }
 
 // Test_Extraction verifies the Pop order and its equality with Remove at position zero.
@@ -104,6 +114,29 @@ func Test_Size_Limits(t *testing.T) {
 		"Push must reject a full slice")
 }
 
+// Test_Allocation keeps collector independence executable across every heap operation;
+// caller storage alone must absorb insertion.
+func Test_Allocation(t *testing.T) {
+	state := prepare_heap_allocation_state()
+	for _, one := range heap_allocation_cases(state) {
+		t.Run(one.Name, func(t *testing.T) {
+			testify.Zero_Allocation(
+				t, one.Run, "%s must allocate no heap storage", one.Name,
+			)
+		})
+	}
+	testify.Count(t, state.Push_Result, len(state.Push_Storage),
+		"Push allocation probe did not run")
+	testify.Count(t, state.Pop_Result, len(state.Pop_Storage)-1,
+		"Pop allocation probe did not run")
+	testify.Equal(t, 1, state.Popped, "Pop allocation probe returned wrong value")
+	testify.Count(t, state.Remove_Result, len(state.Remove_Storage)-1,
+		"Remove allocation probe did not run")
+	testify.Equal(t, 2, state.Removed, "Remove allocation probe returned wrong value")
+	testify.True(t, ordered(state.Fix_Storage[:], smallest_first),
+		"Fix allocation probe did not run")
+}
+
 // Test_Domain_Errors verifies the panic for an empty heap and for an absent position.
 func Test_Domain_Errors(t *testing.T) {
 	t.Parallel()
@@ -127,6 +160,12 @@ func Test_Invariant_Domains(t *testing.T) {
 	cover_count_domains()
 	cover_report_domains()
 }
+
+// INSERTION_ELEMENT_COUNT binds caller storage to values exercised by insertion contract.
+const INSERTION_ELEMENT_COUNT = 5
+
+// ALLOCATION_ELEMENT_COUNT keeps each destructive allocation probe above trivial boundaries.
+const ALLOCATION_ELEMENT_COUNT = 4
 
 // Reaches both position ends and both interior position sentinels.
 func cover_position_domains() {
@@ -244,4 +283,74 @@ func panicked(action func()) (raised bool) {
 	}()
 	action()
 	return false
+}
+
+type allocation_case struct {
+	Name string
+	Run  func()
+}
+
+type heap_allocation_state struct {
+	Initialize_Storage [ALLOCATION_ELEMENT_COUNT]int
+	Push_Storage       [ALLOCATION_ELEMENT_COUNT]int
+	Pop_Storage        [ALLOCATION_ELEMENT_COUNT]int
+	Remove_Storage     [ALLOCATION_ELEMENT_COUNT]int
+	Fix_Storage        [ALLOCATION_ELEMENT_COUNT]int
+	Push_Result        []int
+	Pop_Result         []int
+	Popped             int
+	Remove_Result      []int
+	Removed            int
+}
+
+// Shared state prevents probe setup from entering measured callbacks through closure creation.
+func prepare_heap_allocation_state() (state *heap_allocation_state) {
+	return &heap_allocation_state{}
+}
+
+// Separate callbacks name allocation proof for each operation.
+func heap_allocation_cases(state *heap_allocation_state) (cases []allocation_case) {
+	return []allocation_case{
+		{
+			Name: "Initialize",
+			Run: func() {
+				state.Initialize_Storage = [...]int{4, 2, 3, 1}
+				heap.Initialize(state.Initialize_Storage[:], smallest_first)
+			},
+		},
+		{
+			Name: "Push",
+			Run: func() {
+				state.Push_Storage = [...]int{1, 2, 3, 0}
+				state.Push_Result = heap.Push(
+					state.Push_Storage[:3], 0, smallest_first,
+				)
+			},
+		},
+		{
+			Name: "Pop",
+			Run: func() {
+				state.Pop_Storage = [...]int{1, 2, 3, 4}
+				state.Pop_Result, state.Popped = heap.Pop(
+					state.Pop_Storage[:], smallest_first,
+				)
+			},
+		},
+		{
+			Name: "Remove",
+			Run: func() {
+				state.Remove_Storage = [...]int{1, 2, 3, 4}
+				state.Remove_Result, state.Removed = heap.Remove(
+					state.Remove_Storage[:], 1, smallest_first,
+				)
+			},
+		},
+		{
+			Name: "Fix",
+			Run: func() {
+				state.Fix_Storage = [...]int{9, 2, 3, 4}
+				heap.Fix(state.Fix_Storage[:], 0, smallest_first)
+			},
+		},
+	}
 }

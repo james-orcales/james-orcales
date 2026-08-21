@@ -123,6 +123,23 @@ func Test_Size_Limits(t *testing.T) {
 		"Push_Back_List must reject a copy that does not fit")
 }
 
+// Test_Allocation keeps fixed pool meaningful; every public operation must use pool storage
+// without hidden collector work.
+func Test_Allocation(t *testing.T) {
+	state := prepare_list_allocation_state()
+	verify_zero_allocation_cases(t, list_read_allocation_cases(state))
+	verify_zero_allocation_cases(t, list_insertion_allocation_cases(state))
+	verify_zero_allocation_cases(t, list_move_allocation_cases(state))
+	testify.Equal(t, list.Count(2), state.Count_Result,
+		"Element_Count allocation probe did not run")
+	testify.Not_Equal(t, list.POSITION_NONE, state.Position_Result,
+		"position allocation probes did not run")
+	testify.True(t, state.Element_Position_Result >= list.FIRST_ELEMENT_POSITION,
+		"insertion allocation probes did not run")
+	testify.Equal(t, 1, state.Value_Result,
+		"value allocation probes did not run")
+}
+
 // Test_Domain_Errors verifies the panic for each handle that no live element holds.
 func Test_Domain_Errors(t *testing.T) {
 	t.Parallel()
@@ -346,4 +363,152 @@ func panicked(action func()) (raised bool) {
 	}()
 	action()
 	return false
+}
+
+type allocation_case struct {
+	Name string
+	Run  func()
+}
+
+type list_allocation_state struct {
+	Zero                    list.List[int]
+	Empty                   list.List[int]
+	Single                  list.List[int]
+	Pair                    list.List[int]
+	Source                  list.List[int]
+	Subject                 list.List[int]
+	First                   list.Position
+	Second                  list.Position
+	Count_Result            list.Count
+	Position_Result         list.Position
+	Element_Position_Result list.Element_Position
+	Value_Result            int
+}
+
+// Snapshots restore each destructive probe without asking pool API for fresh state.
+func prepare_list_allocation_state() (state *list_allocation_state) {
+	state = &list_allocation_state{}
+	list.Initialize(&state.Empty)
+	state.Single = state.Empty
+	state.First = list.Position(list.Push_Back(&state.Single, 1))
+	state.Pair = state.Single
+	state.Second = list.Position(list.Push_Back(&state.Pair, 2))
+	state.Source = state.Single
+	return state
+}
+
+// Each callback stays named so one failure identifies one regressed read operation.
+func list_read_allocation_cases(
+	state *list_allocation_state,
+) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Initialize", Run: func() {
+			state.Subject = state.Pair
+			list.Initialize(&state.Subject)
+		}},
+		{Name: "Element_Count", Run: func() {
+			state.Subject = state.Pair
+			state.Count_Result = list.Element_Count(&state.Subject)
+		}},
+		{Name: "Front", Run: func() {
+			state.Subject = state.Pair
+			state.Position_Result = list.Front(&state.Subject)
+		}},
+		{Name: "Back", Run: func() {
+			state.Subject = state.Pair
+			state.Position_Result = list.Back(&state.Subject)
+		}},
+		{Name: "Next", Run: func() {
+			state.Subject = state.Pair
+			state.Position_Result = list.Next(&state.Subject, state.First)
+		}},
+		{Name: "Previous", Run: func() {
+			state.Subject = state.Pair
+			state.Position_Result = list.Previous(&state.Subject, state.Second)
+		}},
+		{Name: "Value_At", Run: func() {
+			state.Subject = state.Pair
+			state.Value_Result = list.Value_At(&state.Subject, state.First)
+		}},
+	}
+}
+
+// Each callback stays named so one failure identifies one regressed storage operation.
+func list_insertion_allocation_cases(
+	state *list_allocation_state,
+) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Push_Back_Zero_Value", Run: func() {
+			state.Subject = state.Zero
+			state.Element_Position_Result = list.Push_Back(&state.Subject, 1)
+		}},
+		{Name: "Push_Front", Run: func() {
+			state.Subject = state.Empty
+			state.Element_Position_Result = list.Push_Front(&state.Subject, 1)
+		}},
+		{Name: "Push_Back", Run: func() {
+			state.Subject = state.Empty
+			state.Element_Position_Result = list.Push_Back(&state.Subject, 1)
+		}},
+		{Name: "Insert_Before", Run: func() {
+			state.Subject = state.Pair
+			state.Element_Position_Result = list.Insert_Before(
+				&state.Subject, 0, state.Second,
+			)
+		}},
+		{Name: "Insert_After", Run: func() {
+			state.Subject = state.Pair
+			state.Element_Position_Result = list.Insert_After(
+				&state.Subject, 3, state.First,
+			)
+		}},
+		{Name: "Remove", Run: func() {
+			state.Subject = state.Pair
+			state.Value_Result = list.Remove(&state.Subject, state.First)
+		}},
+	}
+}
+
+// Each callback stays named so one failure identifies one regressed relinking operation.
+func list_move_allocation_cases(
+	state *list_allocation_state,
+) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Move_To_Front", Run: func() {
+			state.Subject = state.Pair
+			list.Move_To_Front(&state.Subject, state.Second)
+		}},
+		{Name: "Move_To_Back", Run: func() {
+			state.Subject = state.Pair
+			list.Move_To_Back(&state.Subject, state.First)
+		}},
+		{Name: "Move_Before", Run: func() {
+			state.Subject = state.Pair
+			list.Move_Before(&state.Subject, state.Second, state.First)
+		}},
+		{Name: "Move_After", Run: func() {
+			state.Subject = state.Pair
+			list.Move_After(&state.Subject, state.First, state.Second)
+		}},
+		{Name: "Push_Back_List", Run: func() {
+			state.Subject = state.Empty
+			list.Push_Back_List(&state.Subject, &state.Source)
+		}},
+		{Name: "Push_Front_List", Run: func() {
+			state.Subject = state.Empty
+			list.Push_Front_List(&state.Subject, &state.Source)
+		}},
+	}
+}
+
+// Serial measurement keeps testing allocation counter isolated from parallel tests.
+func verify_zero_allocation_cases(t *testing.T, cases []allocation_case) {
+	t.Helper()
+	for _, one := range cases {
+		t.Run(one.Name, func(t *testing.T) {
+			testify.Zero_Allocation(
+				t, one.Run, "%s must allocate no heap storage", one.Name,
+			)
+		})
+	}
 }

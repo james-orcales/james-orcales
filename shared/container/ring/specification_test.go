@@ -135,6 +135,24 @@ func Test_Size_Limits(t *testing.T) {
 		"a full pool must reject a new ring")
 }
 
+// Test_Allocation keeps fixed pool meaningful; every public operation must use pool storage
+// without hidden collector work.
+func Test_Allocation(t *testing.T) {
+	state := prepare_ring_allocation_state()
+	verify_zero_allocation_cases(t, ring_construction_allocation_cases(state))
+	verify_zero_allocation_cases(t, ring_access_allocation_cases(state))
+	verify_zero_allocation_cases(t, ring_link_allocation_cases(state))
+	testify.Not_Equal(t, ring.POSITION_NONE, state.Position_Result,
+		"position allocation probes did not run")
+	testify.True(t, state.Element_Position_Result >= ring.FIRST_ELEMENT_POSITION,
+		"element position allocation probes did not run")
+	testify.Equal(t, ring.Count(3), state.Count_Result,
+		"Element_Count allocation probe did not run")
+	testify.Equal(t, 1, state.Value_Result,
+		"Value_At allocation probe did not run")
+	testify.Equal(t, 6, state.Visited, "For_Each allocation probe did not run")
+}
+
 // Test_Domain_Errors verifies the panic for each handle that no live node holds.
 func Test_Domain_Errors(t *testing.T) {
 	t.Parallel()
@@ -399,4 +417,155 @@ func panicked(action func()) (raised bool) {
 	}()
 	action()
 	return false
+}
+
+type allocation_case struct {
+	Name string
+	Run  func()
+}
+
+type ring_allocation_state struct {
+	Zero                    ring.Pool[int]
+	Empty                   ring.Pool[int]
+	Single                  ring.Pool[int]
+	Triple                  ring.Pool[int]
+	Linked                  ring.Pool[int]
+	Subject                 ring.Pool[int]
+	First                   ring.Position
+	Triple_First            ring.Position
+	Linked_First            ring.Position
+	Linked_Other            ring.Position
+	Position_Result         ring.Position
+	Element_Position_Result ring.Element_Position
+	Count_Result            ring.Count
+	Value_Result            int
+	Visited                 int
+	Visitor                 ring.Visitor_Function[int]
+}
+
+// Snapshots restore each destructive probe without asking pool API for fresh state.
+func prepare_ring_allocation_state() (state *ring_allocation_state) {
+	state = &ring_allocation_state{}
+	ring.Initialize(&state.Empty)
+	state.Single = state.Empty
+	state.First = ring.New(&state.Single, 1)
+	state.Triple = state.Empty
+	state.Triple_First = ring.New(&state.Triple, 3)
+	walk := ring.Element_Position(state.Triple_First)
+	for value := 1; value <= 3; value++ {
+		ring.Set_Value(&state.Triple, walk, value)
+		walk = ring.Next(&state.Triple, walk)
+	}
+	state.Linked = state.Empty
+	state.Linked_First = ring.New(&state.Linked, 2)
+	state.Linked_Other = ring.New(&state.Linked, 2)
+	state.Visitor = func(value int) {
+		state.Visited += value
+	}
+	return state
+}
+
+// Each callback stays named so one failure identifies one regressed construction operation.
+func ring_construction_allocation_cases(
+	state *ring_allocation_state,
+) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Initialize", Run: func() {
+			state.Subject = state.Triple
+			ring.Initialize(&state.Subject)
+		}},
+		{Name: "New_Zero_Value", Run: func() {
+			state.Subject = state.Zero
+			state.Position_Result = ring.New(&state.Subject, 2)
+		}},
+		{Name: "New", Run: func() {
+			state.Subject = state.Empty
+			state.Position_Result = ring.New(&state.Subject, 2)
+		}},
+	}
+}
+
+// Each callback stays named so one failure identifies one regressed access operation.
+func ring_access_allocation_cases(
+	state *ring_allocation_state,
+) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Next", Run: func() {
+			state.Subject = state.Triple
+			state.Element_Position_Result = ring.Next(
+				&state.Subject, ring.Element_Position(state.Triple_First),
+			)
+		}},
+		{Name: "Previous", Run: func() {
+			state.Subject = state.Triple
+			state.Element_Position_Result = ring.Previous(
+				&state.Subject, ring.Element_Position(state.Triple_First),
+			)
+		}},
+		{Name: "Value_At", Run: func() {
+			state.Subject = state.Triple
+			state.Value_Result = ring.Value_At(
+				&state.Subject, ring.Element_Position(state.Triple_First),
+			)
+		}},
+		{Name: "Set_Value", Run: func() {
+			state.Subject = state.Triple
+			ring.Set_Value(
+				&state.Subject, ring.Element_Position(state.Triple_First), 4,
+			)
+		}},
+		{Name: "Move", Run: func() {
+			state.Subject = state.Triple
+			state.Element_Position_Result = ring.Move(
+				&state.Subject, ring.Element_Position(state.Triple_First), 1,
+			)
+		}},
+		{Name: "Element_Count", Run: func() {
+			state.Subject = state.Triple
+			state.Count_Result = ring.Element_Count(&state.Subject, state.Triple_First)
+		}},
+		{Name: "For_Each", Run: func() {
+			state.Subject = state.Triple
+			state.Visited = 0
+			ring.For_Each(&state.Subject, state.Triple_First, state.Visitor)
+		}},
+	}
+}
+
+// Each callback stays named so one failure identifies one regressed relinking operation.
+func ring_link_allocation_cases(
+	state *ring_allocation_state,
+) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Link", Run: func() {
+			state.Subject = state.Linked
+			state.Element_Position_Result = ring.Link(
+				&state.Subject,
+				ring.Element_Position(state.Linked_First),
+				state.Linked_Other,
+			)
+		}},
+		{Name: "Unlink", Run: func() {
+			state.Subject = state.Triple
+			state.Position_Result = ring.Unlink(
+				&state.Subject, ring.Element_Position(state.Triple_First), 1,
+			)
+		}},
+		{Name: "Release", Run: func() {
+			state.Subject = state.Single
+			ring.Release(&state.Subject, state.First)
+		}},
+	}
+}
+
+// Serial measurement keeps testing allocation counter isolated from parallel tests.
+func verify_zero_allocation_cases(t *testing.T, cases []allocation_case) {
+	t.Helper()
+	for _, one := range cases {
+		t.Run(one.Name, func(t *testing.T) {
+			testify.Zero_Allocation(
+				t, one.Run, "%s must allocate no heap storage", one.Name,
+			)
+		})
+	}
 }

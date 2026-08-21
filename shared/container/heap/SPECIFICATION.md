@@ -6,8 +6,8 @@ can repeat it after an unspecified change to the elements.
 
 # Insertion
 
-Push adds one element and returns the grown slice. The result keeps the minimum element at
-position zero.
+Push adds one element into caller-owned spare capacity and returns the grown slice. Push rejects
+storage with no remaining position. Result keeps minimum element at position zero.
 
 # Extraction
 
@@ -32,7 +32,12 @@ comparison that exchanges its two operands gives a maximum heap.
 # Size Limits
 
 Each element slice holds at most ELEMENT_COUNT_MAXIMUM elements. Push rejects a full slice before
-it adds the new element.
+it adds the new element, even when backing storage has more capacity.
+
+# Allocation
+
+Every operation allocates zero heap storage. Caller owns element storage and Push uses only spare
+capacity already present in that storage.
 
 # Domain Errors
 

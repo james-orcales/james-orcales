@@ -9,6 +9,9 @@ import (
 	"local/james-orcales/shared/testify"
 )
 
+// STANDARD_HEAP_ELEMENT_COUNT preserves upstream workload while caller owns fixed storage.
+const STANDARD_HEAP_ELEMENT_COUNT = 20
+
 // Compares two integers from smallest to largest.
 func smallest_first(left int, right int) (comparison slices.Comparison) {
 	return slices.Comparison(cmp.Compare(left, right))
@@ -58,10 +61,12 @@ func Test_Standard_Library_Initialize_Distinct_Elements(t *testing.T) {
 // Pop over one heap and requires the smallest value at each extraction.
 func Test_Standard_Library_Push_And_Pop(t *testing.T) {
 	t.Parallel()
-	elements := []int{}
+	var storage [STANDARD_HEAP_ELEMENT_COUNT]int
+	elements := storage[:0]
 	verify_heap(t, elements)
 	for value := 20; value > 10; value-- {
-		elements = append(elements, value)
+		elements = elements[:len(elements)+1]
+		elements[len(elements)-1] = value
 	}
 	Initialize(elements, smallest_first)
 	verify_heap(t, elements)
@@ -153,7 +158,8 @@ func Test_Standard_Library_Remove_Interior(t *testing.T) {
 // then requires Fix to restore the heap order in both directions.
 func Test_Standard_Library_Fix(t *testing.T) {
 	t.Parallel()
-	elements := []int{}
+	var storage [STANDARD_HEAP_ELEMENT_COUNT]int
+	elements := storage[:0]
 	for value := 200; value > 0; value -= 10 {
 		elements = Push(elements, value, smallest_first)
 	}
