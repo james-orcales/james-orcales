@@ -1,21 +1,25 @@
 package strings_test
 
 import (
-	"reflect"
+	standard_strings "strings"
 	"testing"
 
-	shared_io "local/james-orcales/shared/io"
 	shared_strings "local/james-orcales/shared/strings"
+	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
-// Test_Comparison verifies lexical order, Unicode folding, and independent cloning.
+// Test_Allocation proves each retained operation owns no heap storage.
+func Test_Allocation(t *testing.T) {
+	verify_api_is_zero_allocation(t)
+}
+
+// Test_Comparison protects lexical order and Unicode simple folding.
 func Test_Comparison(t *testing.T) {
-	t.Parallel()
 	for _, one := range []struct {
-		Left  string
-		Right string
+		Left  shared_strings.Text
+		Right shared_strings.Text
 		Want  shared_strings.Order
 	}{
 		{Left: "", Right: "", Want: shared_strings.ORDER_EQUAL},
@@ -23,1072 +27,1630 @@ func Test_Comparison(t *testing.T) {
 		{Left: "b", Right: "a", Want: shared_strings.ORDER_AFTER},
 		{Left: "abc", Right: "ab", Want: shared_strings.ORDER_AFTER},
 	} {
-		got := shared_strings.Compare(text(one.Left), text(one.Right))
-		if got != one.Want {
+		if got := shared_strings.Compare(one.Left, one.Right); got != one.Want {
 			t.Fatalf(
 				"Compare(%q, %q) = %d, want %d", one.Left, one.Right, got, one.Want,
 			)
 		}
 	}
-	if !shared_strings.Equal_Fold("Go", "gO") {
-		t.Fatal("Equal_Fold must apply Unicode simple folding")
-	}
-	if shared_strings.Equal_Fold("Go", "stop") {
-		t.Fatal("Equal_Fold must reject different text")
-	}
-	source := text("clone")
-	clone := shared_strings.Clone(source)
-	if clone != source {
-		t.Fatal("Clone must keep the text value")
+	for _, one := range []struct {
+		Left  shared_strings.Text
+		Right shared_strings.Text
+	}{
+		{Left: "Go", Right: "gO"},
+		{Left: "Σ", Right: "ς"},
+		{Left: "\xff", Right: "�"},
+	} {
+		got := bool(shared_strings.Equal_Fold(one.Left, one.Right))
+		want := standard_strings.EqualFold(string(one.Left), string(one.Right))
+		if got != want {
+			t.Fatalf("Equal_Fold(%q, %q) = %t, want %t", one.Left, one.Right, got, want)
+		}
 	}
 }
 
-// Test_Search verifies every search form, empty separators, invalid UTF-8, and absence.
+// Test_Search protects byte indices, Unicode decoding, and empty separators.
 func Test_Search(t *testing.T) {
-	t.Parallel()
-	full := text(fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM-1) + "z")
-	if shared_strings.Count(full, "") != shared_strings.TEXT_SIZE_MAXIMUM+1 {
-		t.Fatal("an empty separator must occur at every character boundary")
+	if shared_strings.Count("a☺", "") != 3 {
+		t.Fatal("empty separator must occur at each UTF-8 boundary")
 	}
-	if !shared_strings.Contains(full, "z") {
-		t.Fatal("Contains must report present and absent text")
+	if !shared_strings.Contains("abc", "b") {
+		t.Fatal("Contains must report presence")
 	}
-	if shared_strings.Contains(full, "x") {
-		t.Fatal("Contains must report present and absent text")
+	if shared_strings.Contains("abc", "x") {
+		t.Fatal("Contains must report absence")
 	}
-	if !shared_strings.Contains_Any("abc", "zc") {
-		t.Fatal("Contains_Any must search a character set")
-	}
-	if shared_strings.Contains_Any("abc", "xy") {
-		t.Fatal("Contains_Any must search a character set")
+	if !shared_strings.Contains_Any("abc", "xb") {
+		t.Fatal("Contains_Any must search character set")
 	}
 	if !shared_strings.Contains_Rune("a☺", '☺') {
-		t.Fatal("Contains_Rune must find a Unicode character")
+		t.Fatal("Contains_Rune must search Unicode character")
 	}
-	space := func(character rune) (matches bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
+	if !shared_strings.Contains_Function("a b", allocation_space) {
+		t.Fatal("Contains_Function must search decoded characters")
 	}
-	if !shared_strings.Contains_Function("a b", space) {
-		t.Fatal("Contains_Function must find a predicate match")
+	verify_search_indices(t)
+}
+
+// Test_Split_And_Join proves caller storage owns collections and joined bytes.
+func Test_Split_And_Join(t *testing.T) {
+	var part_storage [TEST_TEXT_SLOT_COUNT]shared_strings.Text
+	part_count := shared_strings.Split_Into(part_storage[:], "a,b,", ",")
+	parts := part_storage[:int(part_count)]
+	if len(parts) != 3 {
+		t.Fatal("Split_Into must retain final empty part")
 	}
-	if shared_strings.Index(full, "z") != shared_strings.TEXT_SIZE_MAXIMUM-1 {
-		t.Fatal("Index must reach the final byte")
+	if parts[0] != "a" {
+		t.Fatal("Split_Into must return source views")
 	}
-	if shared_strings.Last_Index("abcabc", "bc") != 4 {
-		t.Fatal("Last_Index must find the final match")
+	if parts[1] != "b" {
+		t.Fatal("Split_Into must return source views")
+	}
+	if parts[2] != "" {
+		t.Fatal("Split_Into must return source views")
+	}
+	part_count = shared_strings.Split_After_Into(part_storage[:], "a,b,", ",")
+	parts = part_storage[:int(part_count)]
+	if parts[0] != "a," {
+		t.Fatal("Split_After_Into must retain separators")
+	}
+	if parts[1] != "b," {
+		t.Fatal("Split_After_Into must retain separators")
+	}
+	if parts[2] != "" {
+		t.Fatal("Split_After_Into must retain separators")
+	}
+	fields := shared_strings.Fields_Into(part_storage[:], "  a\t☺  ")
+	if len(fields) != 2 {
+		t.Fatal("Fields_Into must return non-space source views")
+	}
+	if fields[0] != "a" {
+		t.Fatal("Fields_Into must return non-space source views")
+	}
+	if fields[1] != "☺" {
+		t.Fatal("Fields_Into must return non-space source views")
+	}
+	verify_join_and_lines(t, shared_strings.Texts(fields))
+	verify_split_edges(t, part_storage[:])
+}
+
+// Test_Transform proves transformed bytes live only in caller storage.
+func Test_Transform(t *testing.T) {
+	var storage [shared_strings.TEXT_SIZE_MAXIMUM]byte
+	if got := shared_strings.Clone_Into(storage[:], "abc"); string(got) != "abc" {
+		t.Fatal("Clone_Into must copy into caller storage")
+	}
+	if got := shared_strings.Map_Into(storage[:], "a☺", map_upper_a); string(got) != "A☺" {
+		t.Fatal("Map_Into must encode mapped characters")
+	}
+	if got := shared_strings.Repeat_Into(storage[:], "ab", 3); string(got) != "ababab" {
+		t.Fatal("Repeat_Into must copy requested repetitions")
+	}
+	if got := shared_strings.Replace_Into(
+		storage[:], "a-b-a", "a", "xy", -1,
+	); string(got) != "xy-b-xy" {
+		t.Fatal("Replace_Into must replace non-overlapping matches")
+	}
+	verify_case_and_valid_transform(t, storage[:])
+	verify_transform_edges(t, storage[:])
+}
+
+// Test_Trim_And_Cut proves each result remains an input view.
+func Test_Trim_And_Cut(t *testing.T) {
+	if shared_strings.Trim("  abc  ", " ") != "abc" {
+		t.Fatal("Trim must remove both sides")
+	}
+	if shared_strings.Trim_Left("  abc  ", " ") != "abc  " {
+		t.Fatal("Trim_Left must preserve right side")
+	}
+	if shared_strings.Trim_Right("  abc  ", " ") != "  abc" {
+		t.Fatal("Trim_Right must preserve left side")
+	}
+	if shared_strings.Trim_Function(" abc ", allocation_space) != "abc" {
+		t.Fatal("Trim_Function must remove both predicate sides")
+	}
+	if shared_strings.Trim_Left_Function(" abc ", allocation_space) != "abc " {
+		t.Fatal("Trim_Left_Function must preserve right side")
+	}
+	if shared_strings.Trim_Right_Function(" abc ", allocation_space) != " abc" {
+		t.Fatal("Trim_Right_Function must preserve left side")
+	}
+	if shared_strings.Trim_Space("\u2000abc\u2000") != "abc" {
+		t.Fatal("Trim_Space must apply Unicode space table")
+	}
+	verify_affix_views(t)
+}
+
+// Test_Builder proves zero value owns fixed bounded storage.
+func Test_Builder(t *testing.T) {
+	var builder shared_strings.Builder
+	shared_strings.Builder_Write_Text(&builder, "a")
+	shared_strings.Builder_Write_Byte(&builder, 'b')
+	shared_strings.Builder_Write_Character(&builder, '☺')
+	if string(shared_strings.Builder_Bytes(&builder)) != "ab☺" {
+		t.Fatal("Builder writes must remain in fixed storage")
+	}
+	if shared_strings.Builder_Size(&builder) != 5 {
+		t.Fatal("Builder_Size must report encoded bytes")
+	}
+	shared_strings.Builder_Reset(&builder)
+	if len(shared_strings.Builder_Bytes(&builder)) != 0 {
+		t.Fatal("Builder_Reset must retain storage and remove content")
+	}
+}
+
+// Test_Reader proves cursor state needs no allocated wrapper.
+func Test_Reader(t *testing.T) {
+	var reader shared_strings.Reader
+	shared_strings.Reader_Reset(&reader, "a☺")
+	character, found := shared_strings.Reader_Read_Character(&reader)
+	if character != 'a' {
+		t.Fatal("Reader_Read_Character must decode first character")
+	}
+	if !found {
+		t.Fatal("Reader_Read_Character must report content")
+	}
+	shared_strings.Reader_Unread_Character(&reader)
+	character, found = shared_strings.Reader_Read_Character(&reader)
+	if character != 'a' {
+		t.Fatal("Reader_Unread_Character must restore prior boundary")
+	}
+	if !found {
+		t.Fatal("Reader_Unread_Character must preserve readable content")
+	}
+	var storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
+	read := shared_strings.Reader_Read_Into(&reader, storage[:])
+	if string(read) != "☺" {
+		t.Fatal("Reader_Read_Into must copy unread bytes")
+	}
+}
+
+// Test_Replacer proves rules and output remain caller-owned.
+func Test_Replacer(t *testing.T) {
+	rules := [...]shared_strings.Rule{
+		{Old: "ab", New: "x"},
+		{Old: "a", New: "y"},
+	}
+	replacer := shared_strings.Replacer_Init(rules[:])
+	var storage [shared_strings.TEXT_SIZE_MAXIMUM]byte
+	replaced := shared_strings.Replacer_Replace_Into(storage[:], replacer, "ab-a")
+	if string(replaced) != "x-y" {
+		t.Fatal("Replacer must honor rule order")
+	}
+}
+
+// Test_Size_Limit rejects oversized malicious input.
+func Test_Size_Limit(t *testing.T) {
+	maximum := shared_strings.Text(
+		standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM),
+	)
+	maximum_y := shared_strings.Text(
+		standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM-1) + "y",
+	)
+	maximum_separator := shared_strings.Text(
+		standard_strings.Repeat(":", shared_strings.TEXT_SIZE_MAXIMUM),
+	)
+	maximum_fields := shared_strings.Text(
+		standard_strings.Repeat("x ", shared_strings.FIELD_COUNT_MAXIMUM),
+	)
+	maximum_lines := shared_strings.Text(
+		standard_strings.Repeat("\n", shared_strings.LINE_COUNT_MAXIMUM),
+	)
+	if shared_strings.Index_Byte(maximum, 'x') != 0 {
+		t.Fatal("maximum Text must remain valid")
+	}
+	exercise_invariant_boundaries(maximum, maximum_y)
+	var byte_storage [shared_strings.TEXT_SIZE_MAXIMUM]byte
+	var text_storage [shared_strings.TEXT_COUNT_MAXIMUM]shared_strings.Text
+	exercise_destination_boundaries(
+		byte_storage[:], text_storage[:], maximum, maximum_separator,
+		maximum_fields, maximum_lines,
+	)
+	oversized := shared_strings.Text(
+		standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM+1),
+	)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("oversized Text must panic")
+		}
+	}()
+	shared_strings.Contains(oversized, "x")
+}
+
+const TEST_TEXT_SLOT_COUNT = 8
+
+const TEST_BYTE_STORAGE_SIZE = 16
+
+func verify_join_and_lines(t *testing.T, parts shared_strings.Texts) {
+	var byte_storage [TEST_BYTE_STORAGE_SIZE]byte
+	joined := shared_strings.Join_Into(byte_storage[:], parts, "|")
+	if string(joined) != "a|☺" {
+		t.Fatal("Join_Into must write into caller storage")
+	}
+	var line_storage [utf8.CHARACTER_SIZE_MAXIMUM]shared_strings.Text
+	lines := shared_strings.Lines_Into(line_storage[:], "a\nb")
+	if len(lines) != 2 {
+		t.Fatal("Lines_Into must return source views")
+	}
+	if lines[0] != "a\n" {
+		t.Fatal("Lines_Into must retain newline")
+	}
+	if lines[1] != "b" {
+		t.Fatal("Lines_Into must retain final unterminated line")
+	}
+}
+
+func verify_split_edges(t *testing.T, storage shared_strings.Texts) {
+	part_count := shared_strings.Split_Into(storage, "a☺", "")
+	parts := storage[:int(part_count)]
+	if len(parts) != 2 {
+		t.Fatal("empty separator must split at UTF-8 boundaries")
+	}
+	if parts[0] != "a" {
+		t.Fatal("empty separator must retain first character")
+	}
+	if parts[1] != "☺" {
+		t.Fatal("empty separator must retain multibyte character")
+	}
+	part_count = shared_strings.Split_N_Into(storage, "a:b:c", ":", 2)
+	parts = storage[:int(part_count)]
+	if parts[0] != "a" {
+		t.Fatal("Split_N_Into must retain first limited part")
+	}
+	if parts[1] != "b:c" {
+		t.Fatal("Split_N_Into must retain unsplit tail")
+	}
+	fields := shared_strings.Fields_Function_Into(storage, "a,b", allocation_comma)
+	if len(fields) != 2 {
+		t.Fatal("Fields_Function_Into must use injected separator")
+	}
+}
+
+func verify_case_and_valid_transform(t *testing.T, storage shared_strings.Bytes) {
+	if got := shared_strings.To_Upper_Into(storage, "Go☺"); string(got) != "GO☺" {
+		t.Fatal("To_Upper_Into must apply Unicode mapping")
+	}
+	if got := shared_strings.To_Lower_Into(storage, "Go☺"); string(got) != "go☺" {
+		t.Fatal("To_Lower_Into must apply Unicode mapping")
+	}
+	if got := shared_strings.To_Title_Into(storage, "go☺"); string(got) != "GO☺" {
+		t.Fatal("To_Title_Into must map each character to title case")
+	}
+	if got := shared_strings.Title_Into(storage, "go gopher"); string(got) != "Go Gopher" {
+		t.Fatal("Title_Into must map word starts")
+	}
+	invalid := shared_strings.Text("a\xffb")
+	if got := shared_strings.To_Valid_UTF8_Into(storage, invalid, "?"); string(got) != "a?b" {
+		t.Fatal("To_Valid_UTF8_Into must replace invalid runs")
+	}
+}
+
+func verify_transform_edges(t *testing.T, storage shared_strings.Bytes) {
+	if got := shared_strings.Map_Into(storage, "axb", allocation_drop_x); string(got) != "ab" {
+		t.Fatal("Map_Into must drop negative mappings")
+	}
+	if got := shared_strings.Repeat_Into(storage, "x", 0); len(got) != 0 {
+		t.Fatal("Repeat_Into must permit zero copies")
+	}
+	if got := shared_strings.Replace_All_Into(storage, "ab", "", "-"); string(got) != "-a-b-" {
+		t.Fatal("Replace_All_Into must replace UTF-8 boundaries")
+	}
+	turkish := ucd.Special_Case(ucd.Turkish_Case())
+	if got := shared_strings.To_Upper_Special_Into(storage, turkish, "i"); string(got) != "İ" {
+		t.Fatal("special case transform must use supplied language rules")
+	}
+}
+
+func map_upper_a(character rune) (mapped rune) {
+	if character == 'a' {
+		return 'A'
+	}
+	return character
+}
+
+func allocation_comma(character rune) (matches bool) {
+	return character == ','
+}
+
+func allocation_drop_x(character rune) (mapped rune) {
+	if character == 'x' {
+		return -1
+	}
+	return character
+}
+
+func verify_search_indices(t *testing.T) {
+	if shared_strings.Index("abc", "b") != 1 {
+		t.Fatal("Index must return byte index")
 	}
 	if shared_strings.Last_Index("abc", "") != 3 {
-		t.Fatal("Last_Index must return the final boundary for an empty separator")
+		t.Fatal("Last_Index must include final empty boundary")
 	}
-	if shared_strings.Index_Byte(full, 'z') != shared_strings.TEXT_SIZE_MAXIMUM-1 {
-		t.Fatal("Index_Byte must reach the final byte")
+	if shared_strings.Index_Byte("abc", 'b') != 1 {
+		t.Fatal("Index_Byte must return byte index")
 	}
-	verify_byte_or_non_ascii_search(t)
-	if shared_strings.Last_Index_Byte(full, 'x') != shared_strings.INDEX_ABSENT {
-		t.Fatal("Last_Index_Byte must report an absent byte")
+	if shared_strings.Last_Index_Byte("abcb", 'b') != 3 {
+		t.Fatal("Last_Index_Byte must return final byte index")
 	}
-	if shared_strings.Index_Rune("a☺b", '☺') != 1 {
-		t.Fatal("Index_Rune must return a byte index")
+	if shared_strings.Index_Rune("a☺", '☺') != 1 {
+		t.Fatal("Index_Rune must return byte index")
 	}
 	if shared_strings.Index_Rune(
-		text("\xff"), shared_strings.Character(utf8.REPLACEMENT_CHARACTER),
+		shared_strings.Text("\xff"), shared_strings.Character(utf8.REPLACEMENT_CHARACTER),
 	) != 0 {
-		t.Fatal("Index_Rune must find invalid UTF-8 through RuneError")
+		t.Fatal("Index_Rune must expose invalid UTF-8 through replacement character")
 	}
-	if shared_strings.Index_Any(full, "z") != shared_strings.TEXT_SIZE_MAXIMUM-1 {
-		t.Fatal("Index_Any must reach the final byte")
+	if shared_strings.Index_Any("a☺", "☺") != 1 {
+		t.Fatal("Index_Any must return first matching byte index")
 	}
-	if shared_strings.Last_Index_Any("abcabc", "ca") != 5 {
-		t.Fatal("Last_Index_Any must find the last set member")
+	if shared_strings.Last_Index_Any("abcb", "xb") != 3 {
+		t.Fatal("Last_Index_Any must return final matching byte index")
 	}
-	if shared_strings.Index_Function("a b", space) != 1 {
-		t.Fatal("Index_Function must find the first predicate match")
+	if shared_strings.Index_Function("a b", allocation_space) != 1 {
+		t.Fatal("Index_Function must return first predicate byte index")
 	}
-	if shared_strings.Last_Index_Function("a b c", space) != 3 {
-		t.Fatal("Last_Index_Function must find the last predicate match")
+	if shared_strings.Last_Index_Function("a b ", allocation_space) != 3 {
+		t.Fatal("Last_Index_Function must return final predicate byte index")
 	}
+	verify_byte_or_non_ascii(t)
 }
 
-// Test_Split_And_Join verifies collection forms, field forms, limits, and empty separators.
-func Test_Split_And_Join(t *testing.T) {
-	t.Parallel()
-	assert_texts(t, shared_strings.Split("a,b,c", ","), []string{"a", "b", "c"})
-	assert_texts(t, shared_strings.Split_After("a,b,c", ","), []string{"a,", "b,", "c"})
-	assert_texts(t, shared_strings.Split_N("a,b,c", ",", 2), []string{"a", "b,c"})
-	assert_texts(
-		t, shared_strings.Split_After_N("a,b,c", ",", 2), []string{"a,", "b,c"},
-	)
-	assert_texts(t, shared_strings.Split("", ""), []string{})
-	assert_texts(t, shared_strings.Split_After("", ""), []string{})
-	assert_texts(t, shared_strings.Split("\xff", ""), []string{"\xff"})
-	separators := text(fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
-	if len(shared_strings.Split(separators, "x")) != shared_strings.TEXTS_COUNT_MAXIMUM {
-		t.Fatal("Split must reach the text-count maximum")
-	}
-	space := func(character rune) (matches bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
-	}
+func verify_byte_or_non_ascii(t *testing.T) {
 	for _, one := range []struct {
-		Source string
-		Want   []string
+		Source shared_strings.Text
+		Values shared_strings.Text
+		Want   shared_strings.Index_Value
 	}{
-		{Source: "", Want: []string{}},
-		{Source: " a\tb\n", Want: []string{"a", "b"}},
-		{Source: "\u2000a\u2000b", Want: []string{"a", "b"}},
-		{Source: "abc", Want: []string{"abc"}},
+		{Source: "abc", Values: "x", Want: shared_strings.INDEX_ABSENT},
+		{Source: "abc", Values: "b", Want: 1},
+		{Source: "a☺", Values: "x", Want: 1},
+		{Source: shared_strings.Text("a\xff"), Values: "x", Want: 1},
 	} {
-		assert_texts(t, shared_strings.Fields(text(one.Source)), one.Want)
-		assert_texts(t, shared_strings.Fields_Function(text(one.Source), space), one.Want)
-	}
-	parts := shared_strings.Texts{"a", "b", ""}
-	if got := shared_strings.Join(parts, ","); got != "a,b," {
-		t.Fatalf("Join = %q, want %q", got, "a,b,")
+		got := shared_strings.Index_Byte_Or_Non_ASCII(one.Source, one.Values)
+		if got != one.Want {
+			t.Fatalf("Index_Byte_Or_Non_ASCII(%q, %q) = %d, want %d",
+				one.Source, one.Values, got, one.Want)
+		}
 	}
 }
 
-// Test_Transform verifies mapping, repetition, case forms, UTF-8 repair, and replacement.
-func Test_Transform(t *testing.T) {
-	t.Parallel()
-	mapping := func(character rune) (mapped rune) {
-		if character == 'a' {
-			return '☺'
-		}
-		if character == 'x' {
-			return -1
-		}
-		return character
-	}
-	for _, one := range []struct {
-		Source string
-		Want   string
-	}{
-		{Source: "", Want: ""},
-		{Source: "abx", Want: "☺b"},
-		{Source: "Hello, 世界", Want: "Hello, 世界"},
-	} {
-		if got := shared_strings.Map(mapping, text(one.Source)); string(got) != one.Want {
-			t.Fatalf("Map(%q) = %q, want %q", one.Source, got, one.Want)
-		}
-	}
-	if got := shared_strings.Repeat("ab", 3); got != "ababab" {
-		t.Fatalf("Repeat = %q, want %q", got, "ababab")
-	}
-	upper := shared_strings.To_Upper("Hello, 世界")
-	if string(upper) != "HELLO, 世界" {
-		t.Fatalf("To_Upper = %q, want %q", upper, "HELLO, 世界")
-	}
-	lower := shared_strings.To_Lower("Hello, 世界")
-	if string(lower) != "hello, 世界" {
-		t.Fatalf("To_Lower = %q, want %q", lower, "hello, 世界")
-	}
-	title := shared_strings.To_Title("hello")
-	if string(title) != "HELLO" {
-		t.Fatalf("To_Title = %q, want %q", title, "HELLO")
-	}
-	if got := shared_strings.To_Upper_Special(turkish_case(), "i"); got != "İ" {
-		t.Fatal("To_Upper_Special must apply the supplied case")
-	}
-	if got := shared_strings.To_Lower_Special(turkish_case(), "I"); got != "ı" {
-		t.Fatal("To_Lower_Special must apply the supplied case")
-	}
-	if got := shared_strings.To_Title_Special(turkish_case(), "i"); got != "İ" {
-		t.Fatal("To_Title_Special must apply the supplied case")
-	}
-	if got := shared_strings.To_Valid_UTF8(text("a\xff\xfeb"), "?"); got != "a?b" {
-		t.Fatalf("To_Valid_UTF8 = %q, want %q", got, "a?b")
-	}
-	word_title := shared_strings.Title("hello-world")
-	if string(word_title) != "Hello-World" {
-		t.Fatalf("Title = %q, want %q", word_title, "Hello-World")
-	}
-	verify_transform_replacement(t)
-}
-
-// Test_Trim_And_Cut verifies Unicode trim forms and the prefix, suffix, and cut forms.
-func Test_Trim_And_Cut(t *testing.T) {
-	t.Parallel()
-	verify_trim_forms(t)
+func verify_affix_views(t *testing.T) {
 	if shared_strings.Trim_Prefix("prefix", "pre") != "fix" {
-		t.Fatal("Trim_Prefix must remove a present prefix")
+		t.Fatal("Trim_Prefix must remove present prefix")
 	}
 	if shared_strings.Trim_Suffix("suffix", "fix") != "suf" {
-		t.Fatal("Trim_Suffix must remove a present suffix")
+		t.Fatal("Trim_Suffix must remove present suffix")
+	}
+	if !shared_strings.Has_Prefix("prefix", "pre") {
+		t.Fatal("Has_Prefix must report present prefix")
+	}
+	if !shared_strings.Has_Suffix("suffix", "fix") {
+		t.Fatal("Has_Suffix must report present suffix")
 	}
 	before, after, found := shared_strings.Cut("a:b", ":")
 	if before != "a" {
-		t.Fatal("Cut must divide text around the first separator")
+		t.Fatal("Cut must return both source views")
 	}
 	if after != "b" {
-		t.Fatal("Cut must divide text around the first separator")
+		t.Fatal("Cut must return both source views")
 	}
 	if !found {
-		t.Fatal("Cut must divide text around the first separator")
+		t.Fatal("Cut must report present separator")
 	}
 	after, found = shared_strings.Cut_Prefix("prefix", "pre")
 	if after != "fix" {
-		t.Fatal("Cut_Prefix must report a present prefix")
+		t.Fatal("Cut_Prefix must return suffix view")
 	}
 	if !found {
-		t.Fatal("Cut_Prefix must report a present prefix")
+		t.Fatal("Cut_Prefix must report present prefix")
 	}
 	before, found = shared_strings.Cut_Suffix("suffix", "fix")
 	if before != "suf" {
-		t.Fatal("Cut_Suffix must report a present suffix")
+		t.Fatal("Cut_Suffix must return prefix view")
 	}
 	if !found {
-		t.Fatal("Cut_Suffix must report a present suffix")
-	}
-	if !shared_strings.Has_Prefix("prefix", "pre") {
-		t.Fatal("the prefix and suffix queries must report present values")
-	}
-	if !shared_strings.Has_Suffix("suffix", "fix") {
-		t.Fatal("the prefix and suffix queries must report present values")
+		t.Fatal("Cut_Suffix must report present suffix")
 	}
 }
 
-// Test_Iteration verifies all sequence forms and an early consumer stop.
-func Test_Iteration(t *testing.T) {
-	t.Parallel()
-	assert_texts(t, collect(shared_strings.Lines("a\nb")), []string{"a\n", "b"})
-	assert_texts(t, collect(shared_strings.Split_Sequence("a,b,c", ",")),
-		[]string{"a", "b", "c"})
-	assert_texts(t, collect(shared_strings.Split_After_Sequence("a,b,c", ",")),
-		[]string{"a,", "b,", "c"})
-	assert_texts(t, collect(shared_strings.Fields_Sequence(" a\tb ")),
-		[]string{"a", "b"})
-	comma := func(character rune) (matches bool) { return character == ',' }
-	assert_texts(t, collect(shared_strings.Fields_Function_Sequence("a,,b", comma)),
-		[]string{"a", "b"})
-	count := 0
-	for range shared_strings.Lines("a\nb\n") {
-		count++
-		break
-	}
-	if count != 1 {
-		t.Fatal("a sequence must stop after its consumer stops")
-	}
+type allocation_check struct {
+	Name string
+	Call func()
 }
 
-// Test_Builder verifies each write form, capacity growth, and reset.
-func Test_Builder(t *testing.T) {
-	t.Parallel()
-	var builder shared_strings.Builder
-	shared_strings.Builder_Grow(&builder, 16)
-	if shared_strings.Builder_Capacity(&builder) < 16 {
-		t.Fatal("Builder_Grow must reserve the requested capacity")
-	}
-	stream := shared_strings.Builder_To_Stream(&builder)
-	write_count, write_error := shared_io.Write(stream, []byte("ab"))
-	if write_count != 2 {
-		t.Fatalf("the Builder stream write count = %d, want 2", write_count)
-	}
-	if write_error != nil {
-		t.Fatalf("the Builder stream write returned %v", write_error)
-	}
-	byte_error := shared_io.Write_Byte(stream, 'c')
-	if byte_error != nil {
-		t.Fatalf("the Builder stream byte write returned %v", byte_error)
-	}
-	character_count, character_error := shared_io.Write_Rune(stream, '☺')
-	if character_count != 3 {
-		t.Fatalf("the Builder character write count = %d, want 3", character_count)
-	}
-	if character_error != nil {
-		t.Fatalf("the Builder character write returned %v", character_error)
-	}
-	text_count, text_error := shared_io.Write_String(stream, "de")
-	if text_count != 2 {
-		t.Fatalf("the Builder text write count = %d, want 2", text_count)
-	}
-	if text_error != nil {
-		t.Fatalf("the Builder text write returned %v", text_error)
-	}
-	if shared_strings.Builder_Text(&builder) != "abc☺de" {
-		t.Fatalf(
-			"Builder_Text = %q, want %q",
-			shared_strings.Builder_Text(&builder),
-			"abc☺de",
-		)
-	}
-	if int(shared_strings.Builder_Size(&builder)) != len("abc☺de") {
-		t.Fatal("Builder_Size must report the byte count")
-	}
-	shared_strings.Builder_Reset(&builder)
-	if shared_strings.Builder_Text(&builder) != "" {
-		t.Fatal("Builder_Reset must remove all content")
-	}
-	if shared_strings.Builder_Size(&builder) != 0 {
-		t.Fatal("Builder_Reset must remove all content")
-	}
-}
-
-// Test_Interface_Boundary verifies that package values expose only package functions.
-func Test_Interface_Boundary(t *testing.T) {
-	t.Parallel()
-	for _, value := range []any{
-		&shared_strings.Builder{},
-		&shared_strings.Reader{},
-		&shared_strings.Replacer{},
-	} {
-		value_type := reflect.TypeOf(value)
-		if value_type.NumMethod() != 0 {
-			t.Fatalf(
-				"%s has %d exported methods, want none",
-				value_type,
-				value_type.NumMethod(),
-			)
-		}
-	}
-}
-
-// Test_Reader verifies sequential, random, byte, character, seek, reset, and writer reads.
-func Test_Reader(t *testing.T) {
-	t.Parallel()
-	reader := shared_strings.New_Reader("a☺b")
-	stream := shared_strings.Reader_To_Stream(reader)
-	verify_reader_sequential(t, reader, stream)
-	verify_reader_random_and_reset(t, reader, stream)
-}
-
-// Test_Replacer verifies rule priority, empty matches, output, and writer behavior.
-func Test_Replacer(t *testing.T) {
-	t.Parallel()
-	replacer := shared_strings.New_Replacer(shared_strings.Replacement_Pairs{
-		{"ab", "x"}, {"a", "y"}, {"", "."},
-	})
-	want := "xxy."
-	if got := shared_strings.Replacer_Replace(replacer, "ababa"); string(got) != want {
-		t.Fatalf("Replacer_Replace = %q, want %q", got, want)
-	}
-	output := make([]byte, len(want))
-	output_state := shared_io.Stream_Memory{Memory: output}
-	count, err := shared_strings.Replacer_Write_Text(
-		replacer, shared_io.Memory_To_Stream(&output_state), "ababa",
+func verify_api_is_zero_allocation(t *testing.T) {
+	maximum := shared_strings.Text(
+		standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM),
 	)
-	if int(count) != len(want) {
-		t.Fatalf("Replacer_Write_Text count = %d", count)
-	}
-	if err != nil {
-		t.Fatalf("Replacer_Write_Text returned %v", err)
-	}
-	if string(output) != want {
-		t.Fatalf("Replacer_Write_Text content = %q, want %q", output, want)
-	}
-}
-
-// Test_Size_Limits verifies exact maximum results and rejects each larger owned result.
-func Test_Size_Limits(t *testing.T) {
-	t.Parallel()
-	exercise_invariant_boundaries()
-	maximum := text(fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
-	if shared_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM) != maximum {
-		t.Fatal("Repeat must reach the text-size maximum")
-	}
-	assert_panic(t, func() { shared_strings.Repeat("xx", shared_strings.TEXT_SIZE_MAXIMUM) })
-	assert_panic(t, func() { shared_strings.Join(shared_strings.Texts{maximum, "x"}, "") })
-	assert_panic(t, func() { shared_strings.Replace_All(maximum, "x", "xx") })
+	maximum_y := shared_strings.Text(
+		standard_strings.Repeat("x", shared_strings.TEXT_SIZE_MAXIMUM-1) + "y",
+	)
+	var byte_storage [shared_strings.TEXT_SIZE_MAXIMUM]byte
+	var text_storage [shared_strings.TEXT_COUNT_MAXIMUM]shared_strings.Text
 	var builder shared_strings.Builder
-	stream := shared_strings.Builder_To_Stream(&builder)
-	shared_io.Write_String(stream, string(maximum))
-	assert_panic(t, func() { shared_io.Write_Byte(stream, 'x') })
-	replacer := shared_strings.New_Replacer(shared_strings.Replacement_Pairs{{"x", "xx"}})
-	assert_panic(t, func() { shared_strings.Replacer_Replace(replacer, maximum) })
-}
-
-// Test_Domain_Errors verifies that invalid bounded arguments fail at their boundaries.
-func Test_Domain_Errors(t *testing.T) {
-	t.Parallel()
-	assert_panic(t, func() { shared_strings.Split_N("", "", -2) })
-	assert_panic(t, func() { shared_strings.Repeat("", -1) })
-	assert_panic(t, func() { shared_strings.Replace("", "", "", -2) })
-	assert_panic(t, func() { shared_strings.Builder_Grow(&shared_strings.Builder{}, -1) })
-	oversized_builder := shared_strings.Builder{
-		Content: make(
-			shared_strings.Slice,
-			0,
-			shared_strings.BUILDER_CAPACITY_MAXIMUM+1,
+	var reader shared_strings.Reader
+	rules := [...]shared_strings.Rule{{Old: "x", New: "y"}}
+	observable := 0
+	groups := [][]allocation_check{
+		comparison_allocation_checks(&observable, maximum),
+		search_allocation_checks(&observable, maximum_y),
+		index_allocation_checks(&observable, maximum_y),
+		collection_allocation_checks(
+			&observable, byte_storage[:], text_storage[:], maximum_y,
 		),
+		transform_allocation_checks(&observable, byte_storage[:], maximum_y),
+		trim_allocation_checks(&observable, maximum),
+		cut_allocation_checks(&observable),
+		builder_allocation_checks(&observable, &builder, byte_storage[:]),
+		reader_allocation_checks(&observable, &reader, byte_storage[:]),
+		replacer_allocation_checks(&observable, rules[:], byte_storage[:]),
 	}
-	assert_panic(t, func() { shared_strings.Builder_To_Stream(&oversized_builder) })
-	too_many_pairs := make(
-		shared_strings.Replacement_Pairs,
-		shared_strings.REPLACEMENT_PAIRS_COUNT_MAXIMUM+1,
-	)
-	assert_panic(t, func() { shared_strings.New_Replacer(too_many_pairs) })
-}
-
-func verify_transform_replacement(t *testing.T) {
-	t.Helper()
-	for _, one := range []struct {
-		Count shared_strings.Replacement_Count
-		Want  string
-	}{
-		{Count: -1, Want: "xybcxybc"},
-		{Count: 0, Want: "abcabc"},
-		{Count: 1, Want: "xybcabc"},
-		{Count: 2, Want: "xybcxybc"},
-	} {
-		got := shared_strings.Replace("abcabc", "a", "xy", one.Count)
-		if string(got) != one.Want {
-			t.Fatalf("Replace count %d = %q, want %q", one.Count, got, one.Want)
+	for _, group := range groups {
+		for _, one := range group {
+			t.Run(one.Name, func(t *testing.T) {
+				testify.Zero_Allocation(t, one.Call)
+			})
 		}
 	}
-	if got := shared_strings.Replace_All("abcabc", "a", "xy"); got != "xybcxybc" {
-		t.Fatalf("Replace_All = %q, want %q", got, "xybcxybc")
+	if observable == -1 {
+		t.Fatal("allocation operations produced impossible observation")
 	}
 }
 
-func verify_trim_forms(t *testing.T) {
-	t.Helper()
-	space := func(character rune) (matches bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
+func comparison_allocation_checks(
+	observable *int, maximum shared_strings.Text,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Compare", Call: func() {
+			*observable = int(shared_strings.Compare(maximum, maximum))
+		}},
+		{Name: "Equal_Fold", Call: func() {
+			*observable = allocation_boolean(shared_strings.Equal_Fold("Go", "gO"))
+		}},
 	}
-	for _, one := range []struct {
-		Source      string
-		Cut         string
-		Cut_Left    string
-		Cut_Right   string
-		Whitespace  string
-		Space_Left  string
-		Space_Right string
-	}{
-		{
-			Source: "", Cut: "", Cut_Left: "", Cut_Right: "", Whitespace: "",
-			Space_Left: "", Space_Right: "",
-		},
-		{
-			Source: "  abc  ", Cut: "abc", Cut_Left: "abc  ", Cut_Right: "  abc",
-			Whitespace: "abc", Space_Left: "abc  ", Space_Right: "  abc",
-		},
-		{
-			Source: "xxabcxx", Cut: "abc", Cut_Left: "abcxx", Cut_Right: "xxabc",
-			Whitespace: "xxabcxx", Space_Left: "xxabcxx", Space_Right: "xxabcxx",
-		},
-		{
-			Source: "\u2000abc\u2000", Cut: "\u2000abc\u2000",
-			Cut_Left: "\u2000abc\u2000", Cut_Right: "\u2000abc\u2000",
-			Whitespace: "abc",
-			Space_Left: "abc\u2000", Space_Right: "\u2000abc",
-		},
-	} {
-		if shared_strings.Trim(text(one.Source), " x") != text(one.Cut) {
-			t.Fatalf("Trim(%q) did not return %q", one.Source, one.Cut)
-		}
-		if shared_strings.Trim_Left(text(one.Source), " x") != text(one.Cut_Left) {
-			t.Fatalf("Trim_Left(%q) did not return %q", one.Source, one.Cut_Left)
-		}
-		if shared_strings.Trim_Right(text(one.Source), " x") != text(one.Cut_Right) {
-			t.Fatalf("Trim_Right(%q) did not return %q", one.Source, one.Cut_Right)
-		}
-		if shared_strings.Trim_Space(text(one.Source)) != text(one.Whitespace) {
-			t.Fatalf("Trim_Space(%q) did not return %q", one.Source, one.Whitespace)
-		}
-		if shared_strings.Trim_Function(text(one.Source), space) != text(one.Whitespace) {
-			t.Fatalf("Trim_Function(%q) did not return %q", one.Source, one.Whitespace)
-		}
-		if shared_strings.Trim_Left_Function(
-			text(one.Source), space,
-		) != text(one.Space_Left) {
-			t.Fatalf(
-				"Trim_Left_Function(%q) did not return %q",
-				one.Source, one.Space_Left,
+}
+
+func search_allocation_checks(
+	observable *int, maximum_y shared_strings.Text,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Contains", Call: func() {
+			*observable = allocation_boolean(shared_strings.Contains(maximum_y, "y"))
+		}},
+		{Name: "Contains_Any", Call: func() {
+			*observable = allocation_boolean(
+				shared_strings.Contains_Any(maximum_y, "y"),
 			)
-		}
-		if shared_strings.Trim_Right_Function(
-			text(one.Source), space,
-		) != text(one.Space_Right) {
-			t.Fatalf(
-				"Trim_Right_Function(%q) did not return %q",
-				one.Source, one.Space_Right,
+		}},
+		{Name: "Contains_Rune", Call: func() {
+			*observable = allocation_boolean(
+				shared_strings.Contains_Rune(maximum_y, 'y'),
 			)
-		}
+		}},
+		{Name: "Contains_Function", Call: func() {
+			*observable = allocation_boolean(
+				shared_strings.Contains_Function(maximum_y, allocation_y),
+			)
+		}},
+		{Name: "Count", Call: func() {
+			*observable = int(shared_strings.Count("xyxy", "xy"))
+		}},
+		{Name: "Has_Prefix", Call: func() {
+			*observable = allocation_boolean(shared_strings.Has_Prefix(maximum_y, "x"))
+		}},
+		{Name: "Has_Suffix", Call: func() {
+			*observable = allocation_boolean(shared_strings.Has_Suffix(maximum_y, "y"))
+		}},
 	}
 }
 
-func verify_reader_sequential(
-	t *testing.T, reader *shared_strings.Reader, stream shared_io.Stream,
+func index_allocation_checks(
+	observable *int, maximum_y shared_strings.Text,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Index", Call: func() {
+			*observable = int(shared_strings.Index(maximum_y, "y"))
+		}},
+		{Name: "Last_Index", Call: func() {
+			*observable = int(shared_strings.Last_Index(maximum_y, "y"))
+		}},
+		{Name: "Index_Byte", Call: func() {
+			*observable = int(shared_strings.Index_Byte(maximum_y, 'y'))
+		}},
+		{Name: "Index_Byte_Or_Non_ASCII", Call: func() {
+			*observable = int(shared_strings.Index_Byte_Or_Non_ASCII(maximum_y, "y"))
+		}},
+		{Name: "Last_Index_Byte", Call: func() {
+			*observable = int(shared_strings.Last_Index_Byte(maximum_y, 'y'))
+		}},
+		{Name: "Index_Rune", Call: func() {
+			*observable = int(shared_strings.Index_Rune(maximum_y, 'y'))
+		}},
+		{Name: "Index_Any", Call: func() {
+			*observable = int(shared_strings.Index_Any(maximum_y, "y"))
+		}},
+		{Name: "Last_Index_Any", Call: func() {
+			*observable = int(shared_strings.Last_Index_Any(maximum_y, "y"))
+		}},
+		{Name: "Index_Function", Call: func() {
+			*observable = int(shared_strings.Index_Function(maximum_y, allocation_y))
+		}},
+		{Name: "Last_Index_Function", Call: func() {
+			*observable = int(
+				shared_strings.Last_Index_Function(maximum_y, allocation_y),
+			)
+		}},
+	}
+}
+
+func collection_allocation_checks(
+	observable *int, byte_storage shared_strings.Bytes,
+	text_storage shared_strings.Texts, maximum_y shared_strings.Text,
+) (checks []allocation_check) {
+	parts := [...]shared_strings.Text{"x", "y"}
+	return []allocation_check{
+		{Name: "Clone_Into", Call: func() {
+			*observable = len(shared_strings.Clone_Into(byte_storage, maximum_y))
+		}},
+		{Name: "Split_Into", Call: func() {
+			*observable = int(shared_strings.Split_Into(text_storage, "x:y", ":"))
+		}},
+		{Name: "Split_N_Into", Call: func() {
+			*observable = int(shared_strings.Split_N_Into(text_storage, "x:y", ":", 1))
+		}},
+		{Name: "Split_After_Into", Call: func() {
+			*observable = int(shared_strings.Split_After_Into(text_storage, "x:y", ":"))
+		}},
+		{Name: "Split_After_N_Into", Call: func() {
+			*observable = int(
+				shared_strings.Split_After_N_Into(text_storage, "x:y", ":", 1),
+			)
+		}},
+		{Name: "Fields_Into", Call: func() {
+			*observable = len(shared_strings.Fields_Into(text_storage, "x y"))
+		}},
+		{Name: "Fields_Function_Into", Call: func() {
+			*observable = len(
+				shared_strings.Fields_Function_Into(
+					text_storage, "x y", allocation_space,
+				),
+			)
+		}},
+		{Name: "Join_Into", Call: func() {
+			*observable = len(shared_strings.Join_Into(byte_storage, parts[:], ":"))
+		}},
+		{Name: "Lines_Into", Call: func() {
+			*observable = len(shared_strings.Lines_Into(text_storage, "x\ny"))
+		}},
+	}
+}
+
+func transform_allocation_checks(
+	observable *int, storage shared_strings.Bytes, maximum_y shared_strings.Text,
+) (checks []allocation_check) {
+	turkish := ucd.Special_Case(ucd.Turkish_Case())
+	return []allocation_check{
+		{Name: "Map_Into", Call: func() {
+			*observable = len(shared_strings.Map_Into(storage, maximum_y, map_upper_a))
+		}},
+		{Name: "Repeat_Into", Call: func() {
+			*observable = len(shared_strings.Repeat_Into(storage, "xy", 2))
+		}},
+		{Name: "To_Upper_Into", Call: func() {
+			*observable = len(shared_strings.To_Upper_Into(storage, "go"))
+		}},
+		{Name: "To_Lower_Into", Call: func() {
+			*observable = len(shared_strings.To_Lower_Into(storage, "GO"))
+		}},
+		{Name: "To_Title_Into", Call: func() {
+			*observable = len(shared_strings.To_Title_Into(storage, "go"))
+		}},
+		{Name: "To_Upper_Special_Into", Call: func() {
+			*observable = len(
+				shared_strings.To_Upper_Special_Into(storage, turkish, "i"),
+			)
+		}},
+		{Name: "To_Lower_Special_Into", Call: func() {
+			*observable = len(
+				shared_strings.To_Lower_Special_Into(storage, turkish, "I"),
+			)
+		}},
+		{Name: "To_Title_Special_Into", Call: func() {
+			*observable = len(
+				shared_strings.To_Title_Special_Into(storage, turkish, "i"),
+			)
+		}},
+		{Name: "To_Valid_UTF8_Into", Call: func() {
+			*observable = len(
+				shared_strings.To_Valid_UTF8_Into(
+					storage, shared_strings.Text("x\xff"), "?",
+				),
+			)
+		}},
+		{Name: "Title_Into", Call: func() {
+			*observable = len(shared_strings.Title_Into(storage, "go gopher"))
+		}},
+		{Name: "Replace_Into", Call: func() {
+			*observable = len(shared_strings.Replace_Into(storage, "x:x", "x", "y", -1))
+		}},
+		{Name: "Replace_All_Into", Call: func() {
+			*observable = len(shared_strings.Replace_All_Into(storage, "x:x", "x", "y"))
+		}},
+	}
+}
+
+func trim_allocation_checks(
+	observable *int, maximum shared_strings.Text,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Trim", Call: func() {
+			*observable = len(shared_strings.Trim(maximum, "y"))
+		}},
+		{Name: "Trim_Left", Call: func() {
+			*observable = len(shared_strings.Trim_Left(maximum, "y"))
+		}},
+		{Name: "Trim_Right", Call: func() {
+			*observable = len(shared_strings.Trim_Right(maximum, "y"))
+		}},
+		{Name: "Trim_Function", Call: func() {
+			*observable = len(shared_strings.Trim_Function(maximum, allocation_never))
+		}},
+		{Name: "Trim_Left_Function", Call: func() {
+			*observable = len(
+				shared_strings.Trim_Left_Function(maximum, allocation_never),
+			)
+		}},
+		{Name: "Trim_Right_Function", Call: func() {
+			*observable = len(
+				shared_strings.Trim_Right_Function(maximum, allocation_never),
+			)
+		}},
+		{Name: "Trim_Space", Call: func() {
+			*observable = len(shared_strings.Trim_Space(maximum))
+		}},
+		{Name: "Trim_Prefix", Call: func() {
+			*observable = len(shared_strings.Trim_Prefix(maximum, "y"))
+		}},
+		{Name: "Trim_Suffix", Call: func() {
+			*observable = len(shared_strings.Trim_Suffix(maximum, "y"))
+		}},
+	}
+}
+
+func cut_allocation_checks(observable *int) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Cut", Call: func() {
+			before, after, found := shared_strings.Cut("x:y", ":")
+			*observable = len(before) + len(after) + allocation_boolean(found)
+		}},
+		{Name: "Cut_Prefix", Call: func() {
+			after, found := shared_strings.Cut_Prefix("prefix", "pre")
+			*observable = len(after) + allocation_boolean(found)
+		}},
+		{Name: "Cut_Suffix", Call: func() {
+			before, found := shared_strings.Cut_Suffix("suffix", "fix")
+			*observable = len(before) + allocation_boolean(found)
+		}},
+	}
+}
+
+func builder_allocation_checks(
+	observable *int, builder *shared_strings.Builder, source shared_strings.Bytes,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Builder_Bytes", Call: func() {
+			*observable = len(shared_strings.Builder_Bytes(builder))
+		}},
+		{Name: "Builder_Size", Call: func() {
+			*observable = int(shared_strings.Builder_Size(builder))
+		}},
+		{Name: "Builder_Capacity", Call: func() {
+			*observable = int(shared_strings.Builder_Capacity(builder))
+		}},
+		{Name: "Builder_Reset", Call: func() {
+			shared_strings.Builder_Reset(builder)
+			*observable = int(builder.Size)
+		}},
+		{Name: "Builder_Write", Call: func() {
+			*builder = shared_strings.Builder{}
+			*observable = int(shared_strings.Builder_Write(builder, source[:2]))
+		}},
+		{Name: "Builder_Write_Text", Call: func() {
+			*builder = shared_strings.Builder{}
+			*observable = int(shared_strings.Builder_Write_Text(builder, "xy"))
+		}},
+		{Name: "Builder_Write_Byte", Call: func() {
+			*builder = shared_strings.Builder{}
+			shared_strings.Builder_Write_Byte(builder, 'x')
+			*observable = int(builder.Size)
+		}},
+		{Name: "Builder_Write_Character", Call: func() {
+			*builder = shared_strings.Builder{}
+			shared_strings.Builder_Write_Character(builder, '☺')
+			*observable = int(builder.Size)
+		}},
+	}
+}
+
+func reader_allocation_checks(
+	observable *int, reader *shared_strings.Reader, storage shared_strings.Bytes,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Reader_Reset", Call: func() {
+			shared_strings.Reader_Reset(reader, "x")
+			*observable = int(reader.Position)
+		}},
+		{Name: "Reader_Size", Call: func() {
+			*reader = shared_strings.Reader{Source: "x", Previous: -1}
+			*observable = int(shared_strings.Reader_Size(reader))
+		}},
+		{Name: "Reader_Read_Into", Call: func() {
+			*reader = shared_strings.Reader{Source: "xy", Previous: -1}
+			*observable = len(shared_strings.Reader_Read_Into(reader, storage[:2]))
+		}},
+		{Name: "Reader_Read_Byte", Call: func() {
+			*reader = shared_strings.Reader{Source: "x", Previous: -1}
+			value, found := shared_strings.Reader_Read_Byte(reader)
+			*observable = int(value) + allocation_boolean(found)
+		}},
+		{Name: "Reader_Unread_Byte", Call: func() {
+			*reader = shared_strings.Reader{Source: "x", Position: 1, Previous: -1}
+			shared_strings.Reader_Unread_Byte(reader)
+			*observable = int(reader.Position)
+		}},
+		{Name: "Reader_Read_Character", Call: func() {
+			*reader = shared_strings.Reader{Source: "☺", Previous: -1}
+			character, found := shared_strings.Reader_Read_Character(reader)
+			*observable = int(character) + allocation_boolean(found)
+		}},
+		{Name: "Reader_Unread_Character", Call: func() {
+			*reader = shared_strings.Reader{Source: "x", Position: 1, Previous: 0}
+			shared_strings.Reader_Unread_Character(reader)
+			*observable = int(reader.Position)
+		}},
+	}
+}
+
+func replacer_allocation_checks(
+	observable *int, rules shared_strings.Rules, storage shared_strings.Bytes,
+) (checks []allocation_check) {
+	replacer := shared_strings.Replacer{Rules: rules}
+	return []allocation_check{
+		{Name: "Replacer_Init", Call: func() {
+			value := shared_strings.Replacer_Init(rules)
+			*observable = len(value.Rules)
+		}},
+		{Name: "Replacer_Replace_Into", Call: func() {
+			*observable = len(
+				shared_strings.Replacer_Replace_Into(storage, replacer, "x:x"),
+			)
+		}},
+	}
+}
+
+func exercise_invariant_boundaries(
+	maximum shared_strings.Text, maximum_y shared_strings.Text,
 ) {
-	t.Helper()
-	stream_size, size_error := shared_io.Size(stream)
-	if stream_size != int64(len("a☺b")) {
-		t.Fatalf("the Reader stream size = %d", stream_size)
-	}
-	if size_error != nil {
-		t.Fatalf("the Reader stream size returned %v", size_error)
-	}
-	value, byte_error := shared_io.Read_Byte(stream)
-	if value != 'a' {
-		t.Fatalf("the Reader stream byte read = %q, want 'a'", value)
-	}
-	if byte_error != nil {
-		t.Fatalf("the Reader stream byte read returned %v", byte_error)
-	}
-	character, character_size, character_error := shared_strings.Reader_Read_Character(reader)
-	if character != '☺' {
-		t.Fatalf("the Reader character = %U, want %U", character, '☺')
-	}
-	if character_size != 3 {
-		t.Fatalf("the Reader character size = %d, want 3", character_size)
-	}
-	if character_error != nil {
-		t.Fatalf("the Reader character read returned %v", character_error)
-	}
-	unread_character_error := shared_strings.Reader_Unread_Character(reader)
-	if unread_character_error != nil {
-		t.Fatalf("Reader_Unread_Character returned %v", unread_character_error)
-	}
-	second_character, second_size, second_error := shared_strings.Reader_Read_Character(reader)
-	if second_character != '☺' {
-		t.Fatal("Reader_Unread_Character must restore the last character")
-	}
-	if second_size != 3 {
-		t.Fatal("Reader_Unread_Character must restore the character size")
-	}
-	if second_error != nil {
-		t.Fatalf("the restored character read returned %v", second_error)
-	}
-	unread_byte_error := shared_strings.Reader_Unread_Byte(reader)
-	if unread_byte_error != nil {
-		t.Fatalf("Reader_Unread_Byte returned %v", unread_byte_error)
-	}
+	exercise_comparison_boundaries(maximum)
+	exercise_search_boundaries(maximum, maximum_y)
+	exercise_index_boundaries(maximum, maximum_y)
+	exercise_trim_boundaries(maximum)
+	exercise_cut_boundaries(maximum)
 }
 
-func verify_reader_random_and_reset(
-	t *testing.T, reader *shared_strings.Reader, stream shared_io.Stream,
-) {
-	t.Helper()
-	position, seek_error := shared_io.Seek(stream, 0, shared_io.SEEK_FROM_START)
-	if position != 0 {
-		t.Fatalf("the Reader stream seek position = %d, want 0", position)
-	}
-	if seek_error != nil {
-		t.Fatalf("the Reader stream seek returned %v", seek_error)
-	}
-	destination := make(shared_strings.Slice, 3)
-	read_count, read_error := shared_io.Read_At(stream, destination, 1)
-	if read_count != 3 {
-		t.Fatalf("the Reader read-at count = %d, want 3", read_count)
-	}
-	if read_error != nil {
-		t.Fatalf("the Reader read-at returned %v", read_error)
-	}
-	if string(destination) != "☺" {
-		t.Fatalf("the Reader read-at content = %q", destination)
-	}
-	output := make([]byte, len("a☺b"))
-	output_state := shared_io.Stream_Memory{Memory: output}
-	written, write_error := shared_strings.Reader_Write_To(
-		reader, shared_io.Memory_To_Stream(&output_state),
-	)
-	if int64(written) != int64(len("a☺b")) {
-		t.Fatalf("Reader_Write_To count = %d", written)
-	}
-	if write_error != nil {
-		t.Fatalf("Reader_Write_To returned %v", write_error)
-	}
-	if string(output) != "a☺b" {
-		t.Fatalf("Reader_Write_To content = %q", output)
-	}
-	shared_strings.Reader_Reset(reader, "xy")
-	if shared_strings.Reader_Unread_Size(reader) != 2 {
-		t.Fatal("Reader_Reset must restore the first position")
-	}
-	read := make([]byte, 2)
-	stream = shared_strings.Reader_To_Stream(reader)
-	reset_count, reset_error := shared_io.Read(stream, read)
-	if reset_count != 2 {
-		t.Fatalf("the reset Reader count = %d, want 2", reset_count)
-	}
-	if reset_error != nil {
-		t.Fatalf("the reset Reader returned %v", reset_error)
-	}
-	if string(read) != "xy" {
-		t.Fatalf("the reset Reader content = %q", read)
-	}
-}
-
-func verify_byte_or_non_ascii_search(t *testing.T) {
-	t.Helper()
-	if shared_strings.Index_Byte_Or_Non_ASCII("aaaaaaaa", "\"\\\n") !=
-		shared_strings.INDEX_ABSENT {
-		t.Fatal("Index_Byte_Or_Non_ASCII must prove a uniform byte absent")
-	}
-	if shared_strings.Index_Byte_Or_Non_ASCII("abcdefgh", "\"\\\n") !=
-		shared_strings.INDEX_ABSENT {
-		t.Fatal("Index_Byte_Or_Non_ASCII must report an absent selected byte")
-	}
-	if shared_strings.Index_Byte_Or_Non_ASCII("abc\\def", "\"\\\n") != 3 {
-		t.Fatal("Index_Byte_Or_Non_ASCII must find a selected byte")
-	}
-	if shared_strings.Index_Byte_Or_Non_ASCII("abcdef☺", "\"\\\n") != 6 {
-		t.Fatal("Index_Byte_Or_Non_ASCII must find a non-ASCII byte")
-	}
-}
-
-func exercise_invariant_boundaries() {
-	values := boundary_texts()
-	exercise_comparison_boundaries(values)
-	exercise_search_boundaries(values)
-	exercise_split_boundaries(values)
-	exercise_transform_boundaries(values)
-	exercise_trim_boundaries(values)
-	exercise_replace_boundaries(values)
-	exercise_cut_boundaries(values)
-	exercise_iteration_boundaries(values)
-	exercise_builder_boundaries(values)
-	exercise_reader_boundaries(values)
-	exercise_replacer_boundaries(values)
-}
-
-func boundary_texts() (values []shared_strings.Text) {
-	return []shared_strings.Text{
-		"",
-		"a",
-		"aa",
-		text(fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM)),
-	}
-}
-
-func exercise_comparison_boundaries(values []shared_strings.Text) {
-	for _, value := range values {
-		shared_strings.Compare(value, value)
-		shared_strings.Equal_Fold(value, value)
-		shared_strings.Has_Prefix(value, value)
-		shared_strings.Has_Suffix(value, value)
-		shared_strings.Clone(value)
-	}
+func exercise_comparison_boundaries(maximum shared_strings.Text) {
+	shared_strings.Compare("", "")
+	shared_strings.Compare("x", "x")
+	shared_strings.Compare("xx", "xx")
+	shared_strings.Compare(maximum, maximum)
 	shared_strings.Compare("a", "b")
 	shared_strings.Compare("b", "a")
-	shared_strings.Equal_Fold("a", "b")
-	shared_strings.Has_Prefix("a", "b")
-	shared_strings.Has_Suffix("a", "b")
+	shared_strings.Equal_Fold("", "")
+	shared_strings.Equal_Fold("x", "x")
+	shared_strings.Equal_Fold("xx", "xx")
+	shared_strings.Equal_Fold(maximum, maximum)
+	shared_strings.Equal_Fold("x", "y")
 }
 
-func exercise_search_boundaries(values []shared_strings.Text) {
-	full := values[len(values)-1]
-	last := text(
-		fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM-1) + "z",
+func exercise_search_boundaries(
+	maximum shared_strings.Text, maximum_y shared_strings.Text,
+) {
+	exercise_text_text_boolean(shared_strings.Contains, maximum)
+	exercise_text_text_boolean(shared_strings.Contains_Any, maximum)
+	exercise_text_text_boolean(shared_strings.Has_Prefix, maximum)
+	exercise_text_text_boolean(shared_strings.Has_Suffix, maximum)
+	exercise_contains_rune_boundaries(maximum)
+	shared_strings.Contains_Function("", allocation_never)
+	shared_strings.Contains_Function("x", allocation_x)
+	shared_strings.Contains_Function("xx", allocation_never)
+	shared_strings.Contains_Function(maximum, allocation_x)
+	shared_strings.Count("", maximum)
+	shared_strings.Count("x", "x")
+	shared_strings.Count("xx", "x")
+	shared_strings.Count("xx", "xx")
+	shared_strings.Count(maximum, "")
+	exercise_byte_or_non_ascii_boundaries(maximum, maximum_y)
+}
+
+func exercise_text_text_boolean(
+	operation func(
+		shared_strings.Text, shared_strings.Text,
+	) (result shared_strings.Boolean),
+	maximum shared_strings.Text,
+) {
+	operation("", "")
+	operation("x", "x")
+	operation("xx", "xx")
+	operation(maximum, maximum)
+	operation("", maximum)
+}
+
+func exercise_contains_rune_boundaries(maximum shared_strings.Text) {
+	shared_strings.Contains_Rune(
+		"", shared_strings.Character(shared_strings.CHARACTER_MINIMUM),
 	)
-	for _, value := range values {
-		shared_strings.Count(value, value)
-		shared_strings.Contains(value, value)
-		shared_strings.Index(value, value)
-		shared_strings.Last_Index(value, value)
-	}
-	shared_strings.Count("", "z")
-	shared_strings.Count("a", "a")
-	shared_strings.Count("aa", "a")
-	shared_strings.Count(full, "")
-	index_sources := []shared_strings.Text{"", "z", "az", "aaz", last}
-	for _, source := range index_sources {
-		shared_strings.Index(source, "z")
-		shared_strings.Last_Index(source, "z")
-		shared_strings.Index_Byte(source, 'z')
-		shared_strings.Last_Index_Byte(source, 'z')
-		shared_strings.Index_Rune(source, 'z')
-		shared_strings.Index_Any(source, "z")
-		shared_strings.Last_Index_Any(source, "z")
-	}
-	exercise_byte_or_non_ascii_boundaries(last)
-	shared_strings.Last_Index(full, "")
-	for _, value := range []shared_strings.Byte{0, 1, 2, 255} {
-		shared_strings.Index_Byte("", value)
-		shared_strings.Last_Index_Byte("", value)
-	}
-	characters := []shared_strings.Character{
-		shared_strings.Character(shared_strings.CHARACTER_MINIMUM),
-		-1,
-		0,
-		1,
-		2,
-		shared_strings.Character(shared_strings.CHARACTER_MAXIMUM),
-	}
-	for _, character := range characters {
-		shared_strings.Contains_Rune("", character)
-		shared_strings.Index_Rune("", character)
-	}
-	for _, value := range values {
-		shared_strings.Contains_Rune(value, 'z')
-	}
-	shared_strings.Contains_Rune("z", 'z')
-	for index, character_set := range values {
-		source := values[index]
-		shared_strings.Contains_Any(source, character_set)
-		shared_strings.Index_Any(source, character_set)
-		shared_strings.Last_Index_Any(source, character_set)
-	}
-	match_z := func(character rune) (matches bool) { return character == 'z' }
-	never := func(character rune) (matches bool) { return false }
-	for _, source := range values {
-		shared_strings.Contains_Function(source, never)
-		shared_strings.Index_Function(source, never)
-		shared_strings.Last_Index_Function(source, never)
-	}
-	for _, source := range index_sources[1:] {
-		shared_strings.Contains_Function(source, match_z)
-		shared_strings.Index_Function(source, match_z)
-		shared_strings.Last_Index_Function(source, match_z)
-	}
-}
-
-func exercise_byte_or_non_ascii_boundaries(last shared_strings.Text) {
-	shared_strings.Index_Byte_Or_Non_ASCII("", "")
-	shared_strings.Index_Byte_Or_Non_ASCII("z", "z")
-	shared_strings.Index_Byte_Or_Non_ASCII("az", "xz")
-	shared_strings.Index_Byte_Or_Non_ASCII("aaz", "z")
-	shared_strings.Index_Byte_Or_Non_ASCII(last, "z")
-	shared_strings.Index_Byte_Or_Non_ASCII(
-		"a", text("a"+fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM-1)),
+	shared_strings.Contains_Rune("\x00", 0)
+	shared_strings.Contains_Rune("x\x01", 1)
+	shared_strings.Contains_Rune("xx", 2)
+	shared_strings.Contains_Rune(maximum, 'x')
+	shared_strings.Contains_Rune("x", -1)
+	shared_strings.Contains_Rune(
+		"x", shared_strings.Character(shared_strings.CHARACTER_MAXIMUM),
 	)
 }
 
-func exercise_split_boundaries(values []shared_strings.Text) {
-	space := func(character rune) (matches bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
-	}
-	full := values[len(values)-1]
-	separators := text(fixture_repeat("x", shared_strings.TEXT_SIZE_MAXIMUM))
-	for index, value := range values {
-		other := values[len(values)-1-index]
-		shared_strings.Split(value, other)
-		shared_strings.Split_After(value, other)
-		shared_strings.Split_N(value, other, shared_strings.Limit(index))
-		shared_strings.Split_After_N(value, other, shared_strings.Limit(index))
-	}
-	for _, limit := range []shared_strings.Limit{
-		-1, 0, 1, 2, shared_strings.LIMIT_MAXIMUM,
-	} {
-		shared_strings.Split_N(separators, "x", limit)
-		shared_strings.Split_After_N(separators, "x", limit)
-	}
-	shared_strings.Split(full, "")
-	shared_strings.Split(full, "a")
-	shared_strings.Split_After(separators, "x")
-	shared_strings.Split("a", "a")
-	shared_strings.Split_After("a", "a")
-	full_fields := text(fixture_repeat("a ", shared_strings.FIELDS_COUNT_MAXIMUM))
-	for _, value := range values {
-		shared_strings.Fields(value)
-		shared_strings.Fields_Function(value, space)
-	}
-	shared_strings.Fields("a b")
-	shared_strings.Fields_Function("a b", space)
-	shared_strings.Fields(full_fields)
-	shared_strings.Fields_Function(full_fields, space)
-	parts_values := []shared_strings.Texts{
-		nil,
-		{""},
-		{"", ""},
-		make(shared_strings.Texts, shared_strings.TEXTS_COUNT_MAXIMUM),
-	}
-	for _, parts := range parts_values {
-		shared_strings.Join(parts, "")
-	}
-	for _, value := range values {
-		shared_strings.Join(shared_strings.Texts{""}, value)
-		shared_strings.Join(shared_strings.Texts{value}, "")
-	}
+func exercise_byte_or_non_ascii_boundaries(
+	maximum shared_strings.Text, maximum_y shared_strings.Text,
+) {
+	shared_strings.Index_Byte_Or_Non_ASCII("", maximum)
+	shared_strings.Index_Byte_Or_Non_ASCII("x", "")
+	shared_strings.Index_Byte_Or_Non_ASCII("xx", "xx")
+	shared_strings.Index_Byte_Or_Non_ASCII("ax", "x")
+	shared_strings.Index_Byte_Or_Non_ASCII("aax", "x")
+	shared_strings.Index_Byte_Or_Non_ASCII(maximum_y, "y")
 }
 
-func exercise_transform_boundaries(values []shared_strings.Text) {
-	identity := func(character rune) (mapped rune) { return character }
-	special := turkish_case()
-	for _, size := range []int{0, 1, 2, len(special)} {
-		shared_strings.To_Upper_Special(special[:size], "")
-		shared_strings.To_Lower_Special(special[:size], "")
-		shared_strings.To_Title_Special(special[:size], "")
-	}
-	for _, value := range values {
-		shared_strings.Map(identity, value)
-		shared_strings.To_Upper(value)
-		shared_strings.To_Lower(value)
-		shared_strings.To_Title(value)
-		shared_strings.To_Upper_Special(special, value)
-		shared_strings.To_Lower_Special(special, value)
-		shared_strings.To_Title_Special(special, value)
-		shared_strings.To_Valid_UTF8(value, value)
-		shared_strings.Title(value)
-	}
-	for _, count := range []shared_strings.Repeat_Count{
-		0, 1, 2, shared_strings.REPEAT_COUNT_MAXIMUM,
-	} {
-		shared_strings.Repeat("a", count)
-	}
-	shared_strings.Repeat("", 0)
-	shared_strings.Repeat(values[len(values)-1], 1)
+func exercise_index_boundaries(
+	maximum shared_strings.Text, maximum_y shared_strings.Text,
+) {
+	exercise_index_text_boundaries(shared_strings.Index, maximum, maximum_y)
+	exercise_last_index_boundaries(maximum, maximum_y)
+	exercise_byte_index_boundaries(shared_strings.Index_Byte, maximum_y)
+	exercise_byte_index_boundaries(shared_strings.Last_Index_Byte, maximum_y)
+	exercise_rune_index_boundaries(maximum_y)
+	exercise_index_text_boundaries(shared_strings.Index_Any, maximum, maximum_y)
+	exercise_index_text_boundaries(shared_strings.Last_Index_Any, maximum, maximum_y)
+	exercise_function_index_boundaries(shared_strings.Index_Function, maximum_y)
+	exercise_function_index_boundaries(shared_strings.Last_Index_Function, maximum_y)
 }
 
-func exercise_trim_boundaries(values []shared_strings.Text) {
-	never := func(character rune) (matches bool) { return false }
-	for index, value := range values {
-		cutset := values[index]
-		shared_strings.Trim(value, cutset)
-		shared_strings.Trim_Left(value, cutset)
-		shared_strings.Trim_Right(value, cutset)
-		shared_strings.Trim(value, "z")
-		shared_strings.Trim_Left(value, "z")
-		shared_strings.Trim_Right(value, "z")
-		shared_strings.Trim_Function(value, never)
-		shared_strings.Trim_Left_Function(value, never)
-		shared_strings.Trim_Right_Function(value, never)
-		shared_strings.Trim_Space(value)
-		shared_strings.Trim_Prefix(value, "")
-		shared_strings.Trim_Suffix(value, "")
-		shared_strings.Trim_Prefix("", value)
-		shared_strings.Trim_Suffix("", value)
-	}
+func exercise_index_text_boundaries(
+	operation func(
+		shared_strings.Text, shared_strings.Text,
+	) (index shared_strings.Index_Value),
+	maximum shared_strings.Text, maximum_y shared_strings.Text,
+) {
+	operation("", maximum)
+	operation("x", "")
+	operation("x", "x")
+	operation("ax", "x")
+	operation("aax", "x")
+	operation("xx", "xx")
+	operation(maximum_y, "y")
 }
 
-func exercise_replace_boundaries(values []shared_strings.Text) {
-	empty := values[0]
-	full := values[len(values)-1]
-	for _, value := range values {
-		shared_strings.Replace(value, full, empty, 0)
-		shared_strings.Replace(empty, value, empty, 1)
-		shared_strings.Replace(empty, full, value, 2)
-		shared_strings.Replace_All(value, full, empty)
-		shared_strings.Replace_All(empty, value, empty)
-		shared_strings.Replace_All(empty, full, value)
-		shared_strings.Replace_All(value, "z", empty)
-	}
-	for _, count := range []shared_strings.Replacement_Count{
-		-1, 0, 1, 2, shared_strings.REPLACEMENT_COUNT_MAXIMUM,
-	} {
-		shared_strings.Replace(empty, full, empty, count)
-	}
+func exercise_last_index_boundaries(
+	maximum shared_strings.Text, maximum_y shared_strings.Text,
+) {
+	shared_strings.Last_Index("", maximum)
+	shared_strings.Last_Index("x", "x")
+	shared_strings.Last_Index("ax", "x")
+	shared_strings.Last_Index("aax", "x")
+	shared_strings.Last_Index("xx", "xx")
+	shared_strings.Last_Index(maximum_y, "y")
+	shared_strings.Last_Index(maximum, "")
 }
 
-func exercise_cut_boundaries(values []shared_strings.Text) {
-	for _, value := range values {
-		shared_strings.Cut(value, value)
-		shared_strings.Cut(value, "z")
-		shared_strings.Cut(value, "")
-		shared_strings.Cut_Prefix(value, "")
-		shared_strings.Cut_Suffix(value, "")
-		shared_strings.Cut_Prefix("", value)
-		shared_strings.Cut_Suffix("", value)
-	}
-	shared_strings.Cut("za", "z")
-	shared_strings.Cut("zaa", "z")
+func exercise_byte_index_boundaries(
+	operation func(
+		shared_strings.Text, shared_strings.Byte,
+	) (index shared_strings.Index_Value),
+	maximum_y shared_strings.Text,
+) {
+	operation("", 0)
+	operation("\x01", 1)
+	operation("x\x02", 2)
+	operation("xx\x02", 2)
+	operation(maximum_y, 'y')
+	operation("x", shared_strings.Byte(shared_strings.BYTE_MAXIMUM))
 }
 
-func exercise_iteration_boundaries(values []shared_strings.Text) {
-	space := func(character rune) (matches bool) {
-		return bool(ucd.Is_Space(ucd.Character(character)))
-	}
-	for index, value := range values {
-		other := values[len(values)-1-index]
-		collect(shared_strings.Lines(value))
-		collect(shared_strings.Split_Sequence(value, other))
-		collect(shared_strings.Split_After_Sequence(value, other))
-		collect(shared_strings.Fields_Sequence(value))
-		collect(shared_strings.Fields_Function_Sequence(value, space))
-	}
+func exercise_rune_index_boundaries(maximum_y shared_strings.Text) {
+	shared_strings.Index_Rune(
+		"", shared_strings.Character(shared_strings.CHARACTER_MINIMUM),
+	)
+	shared_strings.Index_Rune("\x00", 0)
+	shared_strings.Index_Rune("x\x01", 1)
+	shared_strings.Index_Rune("xx\x02", 2)
+	shared_strings.Index_Rune(maximum_y, 'y')
+	shared_strings.Index_Rune("x", -1)
+	shared_strings.Index_Rune(
+		"x", shared_strings.Character(shared_strings.CHARACTER_MAXIMUM),
+	)
 }
 
-func exercise_builder_boundaries(values []shared_strings.Text) {
-	for _, value := range values {
-		content := make(shared_strings.Slice, len(value), len(value))
-		copy(content, value)
-		prefilled := &shared_strings.Builder{
-			Content: content,
-		}
-		shared_strings.Builder_To_Stream(prefilled)
-		builder := &shared_strings.Builder{}
-		stream := shared_strings.Builder_To_Stream(builder)
-		shared_io.Write_String(stream, string(value))
-		shared_io.Query(stream)
-		shared_strings.Builder_Text(builder)
+func exercise_function_index_boundaries(
+	operation func(
+		shared_strings.Text, func(rune) (matches bool),
+	) (index shared_strings.Index_Value),
+	maximum_y shared_strings.Text,
+) {
+	operation("", allocation_never)
+	operation("x", allocation_x)
+	operation("ax", allocation_x)
+	operation("aax", allocation_x)
+	operation("xx", allocation_never)
+	operation(maximum_y, allocation_y)
+}
+
+func exercise_trim_boundaries(maximum shared_strings.Text) {
+	exercise_cutset_trim_boundaries(shared_strings.Trim, maximum)
+	exercise_cutset_trim_boundaries(shared_strings.Trim_Left, maximum)
+	exercise_cutset_trim_boundaries(shared_strings.Trim_Right, maximum)
+	exercise_function_trim_boundaries(shared_strings.Trim_Function, maximum)
+	exercise_function_trim_boundaries(shared_strings.Trim_Left_Function, maximum)
+	exercise_function_trim_boundaries(shared_strings.Trim_Right_Function, maximum)
+	exercise_trim_space_boundaries(maximum)
+	exercise_affix_trim_boundaries(shared_strings.Trim_Prefix, maximum)
+	exercise_affix_trim_boundaries(shared_strings.Trim_Suffix, maximum)
+}
+
+func exercise_cutset_trim_boundaries(
+	operation func(
+		shared_strings.Text, shared_strings.Text,
+	) (trimmed shared_strings.Text),
+	maximum shared_strings.Text,
+) {
+	operation("", maximum)
+	operation("x", "x")
+	operation("xx", "")
+	operation(" x ", " ")
+	operation(" x", " ")
+	operation(" x", "yz")
+	operation("x ", "yz")
+	operation(maximum, "")
+}
+
+func exercise_function_trim_boundaries(
+	operation func(
+		shared_strings.Text, func(rune) (matches bool),
+	) (trimmed shared_strings.Text),
+	maximum shared_strings.Text,
+) {
+	operation("", allocation_space)
+	operation("x", allocation_x)
+	operation("xx", allocation_never)
+	operation(" x ", allocation_space)
+	operation(" x", allocation_space)
+	operation("x ", allocation_space)
+	operation(maximum, allocation_never)
+}
+
+func exercise_trim_space_boundaries(maximum shared_strings.Text) {
+	shared_strings.Trim_Space("")
+	shared_strings.Trim_Space(" ")
+	shared_strings.Trim_Space("xx")
+	shared_strings.Trim_Space(" x ")
+	shared_strings.Trim_Space(" x")
+	shared_strings.Trim_Space("x ")
+	shared_strings.Trim_Space(maximum)
+}
+
+func exercise_affix_trim_boundaries(
+	operation func(
+		shared_strings.Text, shared_strings.Text,
+	) (trimmed shared_strings.Text),
+	maximum shared_strings.Text,
+) {
+	operation("", maximum)
+	operation("x", "x")
+	operation("xx", "")
+	operation("xx", "x")
+	operation("xx", "xx")
+	operation(maximum, "")
+}
+
+func exercise_cut_boundaries(maximum shared_strings.Text) {
+	shared_strings.Cut("", maximum)
+	shared_strings.Cut("x", "")
+	shared_strings.Cut("xx", "x")
+	shared_strings.Cut("x:xx", ":")
+	shared_strings.Cut("xx:x", ":")
+	shared_strings.Cut("x::y", "::")
+	shared_strings.Cut(maximum, "y")
+	shared_strings.Cut(maximum, "")
+	exercise_cut_prefix_boundaries(maximum)
+	exercise_cut_suffix_boundaries(maximum)
+}
+
+func exercise_cut_prefix_boundaries(maximum shared_strings.Text) {
+	shared_strings.Cut_Prefix("", maximum)
+	shared_strings.Cut_Prefix("x", "")
+	shared_strings.Cut_Prefix("x", "x")
+	shared_strings.Cut_Prefix("xx", "x")
+	shared_strings.Cut_Prefix("xx", "xx")
+	shared_strings.Cut_Prefix("xxx", "x")
+	shared_strings.Cut_Prefix(maximum, "")
+	shared_strings.Cut_Prefix(maximum, "y")
+}
+
+func exercise_cut_suffix_boundaries(maximum shared_strings.Text) {
+	shared_strings.Cut_Suffix("", maximum)
+	shared_strings.Cut_Suffix("x", "")
+	shared_strings.Cut_Suffix("x", "x")
+	shared_strings.Cut_Suffix("xx", "x")
+	shared_strings.Cut_Suffix("xx", "xx")
+	shared_strings.Cut_Suffix("xxx", "x")
+	shared_strings.Cut_Suffix(maximum, "")
+	shared_strings.Cut_Suffix(maximum, "y")
+}
+
+func allocation_space(character rune) (matches bool) {
+	return character == ' '
+}
+
+func allocation_never(rune) (matches bool) {
+	return false
+}
+
+func allocation_x(character rune) (matches bool) {
+	return character == 'x'
+}
+
+func allocation_y(character rune) (matches bool) {
+	return character == 'y'
+}
+
+func allocation_boolean(value shared_strings.Boolean) (number int) {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func exercise_destination_boundaries(
+	byte_storage shared_strings.Bytes, text_storage shared_strings.Texts,
+	maximum shared_strings.Text, maximum_separator shared_strings.Text,
+	maximum_fields shared_strings.Text, maximum_lines shared_strings.Text,
+) {
+	exercise_collection_boundaries(
+		byte_storage, text_storage, maximum, maximum_separator,
+		maximum_fields, maximum_lines,
+	)
+	exercise_transform_boundaries(byte_storage, maximum)
+	exercise_builder_boundaries(byte_storage, maximum)
+	exercise_reader_boundaries(byte_storage, maximum)
+	exercise_replacer_boundaries(byte_storage, maximum)
+}
+
+func exercise_collection_boundaries(
+	byte_storage shared_strings.Bytes, text_storage shared_strings.Texts,
+	maximum shared_strings.Text, maximum_separator shared_strings.Text,
+	maximum_fields shared_strings.Text, maximum_lines shared_strings.Text,
+) {
+	exercise_split_boundaries(
+		shared_strings.Split_Into, text_storage, maximum, maximum_separator,
+	)
+	exercise_split_boundaries(
+		shared_strings.Split_After_Into, text_storage, maximum, maximum_separator,
+	)
+	exercise_limited_split_boundaries(
+		shared_strings.Split_N_Into, text_storage, maximum, maximum_separator,
+	)
+	exercise_limited_split_boundaries(
+		shared_strings.Split_After_N_Into, text_storage, maximum, maximum_separator,
+	)
+	exercise_fields_boundaries(text_storage, maximum_fields)
+	exercise_lines_boundaries(text_storage, maximum_lines)
+	exercise_join_boundaries(byte_storage, text_storage, maximum)
+}
+
+func exercise_split_boundaries(
+	operation func(
+		shared_strings.Texts, shared_strings.Text, shared_strings.Text,
+	) (count shared_strings.Count_Value),
+	storage shared_strings.Texts, maximum shared_strings.Text,
+	maximum_separator shared_strings.Text,
+) {
+	operation(storage[:0], "", "")
+	operation(storage[:1], "x", "")
+	operation(storage[:2], "xx", "")
+	operation(storage, maximum_separator, ":")
+	operation(storage[:2], "xx", "xx")
+	operation(storage[:2], maximum, maximum)
+}
+
+func exercise_limited_split_boundaries(
+	operation func(
+		shared_strings.Texts, shared_strings.Text, shared_strings.Text,
+		shared_strings.Limit,
+	) (count shared_strings.Count_Value),
+	storage shared_strings.Texts, maximum shared_strings.Text,
+	maximum_separator shared_strings.Text,
+) {
+	operation(storage[:0], "", ":", 0)
+	operation(storage[:1], "x", "", 1)
+	operation(storage[:2], "xx", "", 2)
+	operation(storage, maximum_separator, ":", shared_strings.LIMIT_MAXIMUM)
+	operation(storage, maximum, "", shared_strings.LIMIT_MAXIMUM)
+	operation(storage[:2], maximum, maximum, shared_strings.LIMIT_MINIMUM)
+	operation(storage[:2], "xx", "xx", shared_strings.LIMIT_MINIMUM)
+}
+
+func exercise_fields_boundaries(
+	storage shared_strings.Texts, maximum_fields shared_strings.Text,
+) {
+	shared_strings.Fields_Into(storage[:0], "")
+	shared_strings.Fields_Into(storage[:1], "x")
+	shared_strings.Fields_Into(storage[:1], "xx")
+	shared_strings.Fields_Into(storage[:2], "x y")
+	shared_strings.Fields_Into(storage, maximum_fields)
+	shared_strings.Fields_Function_Into(storage[:0], "", allocation_space)
+	shared_strings.Fields_Function_Into(storage[:1], "x", allocation_space)
+	shared_strings.Fields_Function_Into(storage[:1], "xx", allocation_space)
+	shared_strings.Fields_Function_Into(storage[:2], "x y", allocation_space)
+	shared_strings.Fields_Function_Into(storage, maximum_fields, allocation_space)
+}
+
+func exercise_lines_boundaries(
+	storage shared_strings.Texts, maximum_lines shared_strings.Text,
+) {
+	shared_strings.Lines_Into(storage[:0], "")
+	shared_strings.Lines_Into(storage[:1], "x")
+	shared_strings.Lines_Into(storage[:1], "xx")
+	shared_strings.Lines_Into(storage[:2], "x\ny")
+	shared_strings.Lines_Into(storage, maximum_lines)
+}
+
+func exercise_join_boundaries(
+	storage shared_strings.Bytes, text_storage shared_strings.Texts,
+	maximum shared_strings.Text,
+) {
+	text_storage[0] = "x"
+	text_storage[1] = "x"
+	shared_strings.Join_Into(storage[:0], text_storage[:0], maximum)
+	shared_strings.Join_Into(storage[:1], text_storage[:1], "")
+	shared_strings.Join_Into(storage[:2], text_storage[:2], "")
+	text_storage[0] = maximum
+	shared_strings.Join_Into(storage, text_storage[:1], "xx")
+	text_storage[0] = "xx"
+	shared_strings.Join_Into(storage[:2], text_storage[:1], "x")
+	var empty_parts [shared_strings.TEXT_COUNT_MAXIMUM]shared_strings.Text
+	shared_strings.Join_Into(storage[:0], empty_parts[:], "")
+}
+
+func exercise_transform_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	exercise_text_transform_boundaries(shared_strings.Clone_Into, storage, maximum)
+	exercise_text_transform_boundaries(shared_strings.To_Upper_Into, storage, maximum)
+	exercise_text_transform_boundaries(shared_strings.To_Lower_Into, storage, maximum)
+	exercise_text_transform_boundaries(shared_strings.To_Title_Into, storage, maximum)
+	exercise_map_boundaries(storage, maximum)
+	exercise_special_case_boundaries(storage, maximum)
+	exercise_valid_utf8_boundaries(storage, maximum)
+	exercise_title_boundaries(storage, maximum)
+	exercise_repeat_boundaries(storage, maximum)
+	exercise_replace_boundaries(storage, maximum)
+}
+
+func exercise_text_transform_boundaries(
+	operation func(
+		shared_strings.Bytes, shared_strings.Text,
+	) (result shared_strings.Bytes),
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	operation(storage[:0], "")
+	operation(storage[:1], "x")
+	operation(storage[:2], "xx")
+	operation(storage, maximum)
+}
+
+func exercise_map_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	shared_strings.Map_Into(storage[:0], "", map_upper_a)
+	shared_strings.Map_Into(storage[:1], "x", map_upper_a)
+	shared_strings.Map_Into(storage[:2], "xx", map_upper_a)
+	shared_strings.Map_Into(storage, maximum, map_upper_a)
+	shared_strings.Map_Into(storage[:0], "x", allocation_drop)
+}
+
+func exercise_special_case_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	turkish := ucd.Special_Case(ucd.Turkish_Case())
+	exercise_special_transform_boundaries(
+		shared_strings.To_Upper_Special_Into, storage, maximum, turkish,
+	)
+	exercise_special_transform_boundaries(
+		shared_strings.To_Lower_Special_Into, storage, maximum, turkish,
+	)
+	exercise_special_transform_boundaries(
+		shared_strings.To_Title_Special_Into, storage, maximum, turkish,
+	)
+}
+
+func exercise_special_transform_boundaries(
+	operation func(
+		shared_strings.Bytes, ucd.Special_Case, shared_strings.Text,
+	) (result shared_strings.Bytes),
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+	turkish ucd.Special_Case,
+) {
+	operation(storage[:0], turkish[:0], "")
+	operation(storage[:1], turkish[:1], "x")
+	operation(storage[:2], turkish[:2], "xx")
+	operation(storage, turkish, maximum)
+}
+
+func exercise_valid_utf8_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	shared_strings.To_Valid_UTF8_Into(storage[:0], "", maximum)
+	shared_strings.To_Valid_UTF8_Into(storage[:1], "x", "")
+	shared_strings.To_Valid_UTF8_Into(storage[:2], "xx", "xx")
+	shared_strings.To_Valid_UTF8_Into(storage, maximum, "x")
+	shared_strings.To_Valid_UTF8_Into(storage[:1], shared_strings.Text("\xff"), "x")
+}
+
+func exercise_title_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	shared_strings.Title_Into(storage[:0], "")
+	shared_strings.Title_Into(storage[:1], "x")
+	shared_strings.Title_Into(storage[:2], "xx")
+	shared_strings.Title_Into(storage, maximum)
+	shared_strings.Title_Into(storage, "\x00\x01\x02\U0010ffff go")
+}
+
+func exercise_repeat_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	shared_strings.Repeat_Into(storage[:0], "", 0)
+	shared_strings.Repeat_Into(storage[:1], "x", 1)
+	shared_strings.Repeat_Into(storage[:2], "x", 2)
+	shared_strings.Repeat_Into(storage, "x", shared_strings.REPEAT_COUNT_MAXIMUM)
+	shared_strings.Repeat_Into(storage, maximum, 1)
+}
+
+func exercise_replace_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	shared_strings.Replace_Into(storage[:0], "", maximum, maximum, 0)
+	shared_strings.Replace_Into(storage[:1], "x", "", "", 1)
+	shared_strings.Replace_Into(storage[:2], "xx", "xx", "xx", 2)
+	shared_strings.Replace_Into(
+		storage, maximum, "x", "x", shared_strings.REPLACEMENT_COUNT_MAXIMUM,
+	)
+	shared_strings.Replace_Into(storage, maximum, "x", "x", -1)
+	shared_strings.Replace_All_Into(storage[:0], "", maximum, maximum)
+	shared_strings.Replace_All_Into(storage[:1], "x", "", "")
+	shared_strings.Replace_All_Into(storage[:2], "xx", "xx", "xx")
+	shared_strings.Replace_All_Into(storage, maximum, "x", "x")
+}
+
+func allocation_drop(rune) (mapped rune) {
+	return -1
+}
+
+func exercise_builder_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	exercise_builder_query_boundaries(maximum)
+	exercise_builder_write_boundaries(storage, maximum)
+	exercise_builder_scalar_write_boundaries()
+}
+
+func exercise_builder_query_boundaries(maximum shared_strings.Text) {
+	builders := [...]shared_strings.Builder{
+		{},
+		{Size: 1},
+		{Size: 2},
+		{Size: shared_strings.SIZE_VALUE_MAXIMUM},
+	}
+	for builder_index := range builders {
+		builder := &builders[builder_index]
+		shared_strings.Builder_Bytes(builder)
 		shared_strings.Builder_Size(builder)
 		shared_strings.Builder_Capacity(builder)
-		shared_strings.Builder_Grow(builder, 0)
-		shared_strings.Builder_Reset(builder)
 	}
-	for _, count := range []shared_strings.Growth_Count{
-		0, 1, 2, shared_strings.GROWTH_COUNT_MAXIMUM,
-	} {
-		shared_strings.Builder_Grow(&shared_strings.Builder{}, count)
+	for builder_index := range builders {
+		builder := builders[builder_index]
+		shared_strings.Builder_Reset(&builder)
 	}
+	var full shared_strings.Builder
+	shared_strings.Builder_Write_Text(&full, maximum)
+	shared_strings.Builder_Bytes(&full)
 }
 
-func exercise_reader_boundaries(values []shared_strings.Text) {
-	for _, value := range values {
-		shared_strings.New_Reader(value)
-	}
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_To_Stream(reader)
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_io.Query(shared_strings.Reader_To_Stream(reader))
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_Unread_Size(reader)
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_Read_Byte(reader)
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_Unread_Byte(reader)
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_Read_Character(reader)
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_Unread_Character(reader)
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_Write_To(reader, discard_stream())
-	})
-	exercise_reader_state_boundaries(func(reader *shared_strings.Reader) {
-		shared_strings.Reader_Reset(reader, "")
-	})
-	for _, value := range values {
-		shared_strings.Reader_Reset(shared_strings.New_Reader(""), value)
-	}
-	for _, value := range []byte{0, 1, 2, 255} {
-		reader := shared_strings.New_Reader(text(string([]byte{value})))
-		shared_strings.Reader_Read_Byte(reader)
-	}
-	for _, character := range []rune{0, 1, 2, 0x80, rune(utf8.RUNE_MAX)} {
-		shared_strings.Reader_Read_Character(
-			shared_strings.New_Reader(text(string(character))),
-		)
-	}
-	shared_strings.Reader_Read_Character(shared_strings.New_Reader(""))
-	reader := shared_strings.New_Reader(values[len(values)-1])
-	stream := shared_strings.Reader_To_Stream(reader)
-	for _, size := range []int{0, 1, 2, shared_strings.SLICE_SIZE_MAXIMUM} {
-		shared_io.Read_At(stream, make([]byte, size), 0)
-	}
-	exercise_reader_stream_offsets(values)
-}
-
-func exercise_reader_stream_offsets(values []shared_strings.Text) {
-	offsets := []int64{
-		shared_strings.STREAM_OFFSET_MINIMUM,
-		-1,
-		0,
-		1,
-		2,
-		shared_strings.STREAM_OFFSET_MAXIMUM,
-	}
-	for _, value := range values {
-		stream := shared_strings.Reader_To_Stream(shared_strings.New_Reader(value))
-		shared_io.Read_At(stream, make([]byte, 2), 0)
-		shared_io.Seek(stream, 0, shared_io.SEEK_FROM_START)
-	}
-	maximum := values[len(values)-1]
-	reader := shared_strings.New_Reader(maximum)
-	stream := shared_strings.Reader_To_Stream(reader)
-	for _, offset := range offsets {
-		shared_io.Read_At(stream, make([]byte, 2), offset)
-		shared_io.Seek(stream, offset, shared_io.SEEK_FROM_START)
-		shared_strings.Reader_Unread_Size(reader)
-	}
-}
-
-func exercise_reader_state_boundaries(operation func(*shared_strings.Reader)) {
-	for _, reader := range reader_boundary_states() {
-		operation(reader)
-	}
-}
-
-func reader_boundary_states() (readers []*shared_strings.Reader) {
-	maximum := text(fixture_repeat("a", shared_strings.TEXT_SIZE_MAXIMUM))
-	readers = append(readers, shared_strings.New_Reader(""))
-	readers = append(readers, shared_strings.New_Reader(maximum))
-	for _, position := range []int64{0, 1, 2, shared_strings.TEXT_SIZE_MAXIMUM - 1} {
-		reader := shared_strings.New_Reader(maximum)
-		stream := shared_strings.Reader_To_Stream(reader)
-		shared_io.Seek(stream, position, shared_io.SEEK_FROM_START)
-		shared_strings.Reader_Read_Character(reader)
-		readers = append(readers, reader)
-	}
-	reader := shared_strings.New_Reader(maximum)
-	stream := shared_strings.Reader_To_Stream(reader)
-	shared_io.Seek(stream, shared_strings.TEXT_SIZE_MAXIMUM, shared_io.SEEK_FROM_START)
-	readers = append(readers, reader)
-	readers = append(readers, shared_strings.New_Reader("a"))
-	readers = append(readers, shared_strings.New_Reader("aa"))
-	return readers
-}
-
-func exercise_replacer_boundaries(values []shared_strings.Text) {
-	for _, value := range values {
-		shared_strings.New_Replacer(shared_strings.Replacement_Pairs{{value, ""}})
-		replacer := shared_strings.New_Replacer(shared_strings.Replacement_Pairs{{"z", ""}})
-		shared_strings.Replacer_Replace(replacer, value)
-		shared_strings.Replacer_Write_Text(replacer, discard_stream(), value)
-	}
-	maximum := values[len(values)-1]
-	maximum_pairs := make(
-		shared_strings.Replacement_Pairs,
-		shared_strings.REPLACEMENT_PAIRS_COUNT_MAXIMUM,
-	)
-	pair_sets := []shared_strings.Replacement_Pairs{
-		nil,
-		{{maximum, maximum}},
-		{{"a", "b"}, {"c", "d"}},
-		maximum_pairs,
-	}
-	for _, pairs := range pair_sets {
-		replacer := shared_strings.New_Replacer(pairs)
-		shared_strings.Replacer_Replace(replacer, "")
-		shared_strings.Replacer_Write_Text(replacer, discard_stream(), "")
-	}
-}
-
-func discard_stream() (stream shared_io.Stream) {
-	state := &shared_io.Stream_Discard{}
-	return shared_io.Discard_To_Stream(state)
-}
-
-func fixture_repeat(fragment string, count int) (value string) {
-	size := len(fragment) * count
-	content := make([]byte, size)
-	for offset := 0; offset < size; offset += len(fragment) {
-		copy(content[offset:], fragment)
-	}
-	return string(content)
-}
-
-func text(value string) (converted shared_strings.Text) {
-	return shared_strings.Text(value)
-}
-
-func collect(
-	sequence func(func(shared_strings.Text) (continue_iteration bool)),
-) (values shared_strings.Texts) {
-	for value := range sequence {
-		values = append(values, value)
-	}
-	return values
-}
-
-func assert_texts[Collection ~[]shared_strings.Text](
-	t *testing.T, got Collection, want []string,
+func exercise_builder_write_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
 ) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("text count = %d, want %d: %q", len(got), len(want), got)
-	}
-	for index := range want {
-		if string(got[index]) != want[index] {
-			t.Fatalf("text %d = %q, want %q", index, got[index], want[index])
-		}
-	}
+	var builder shared_strings.Builder
+	shared_strings.Builder_Write(&builder, storage[:0])
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write(&builder, storage[:1])
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write(&builder, storage[:2])
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write(&builder, storage)
+	builder = shared_strings.Builder{Size: shared_strings.SIZE_VALUE_MAXIMUM}
+	shared_strings.Builder_Write(&builder, storage[:0])
+	builder = shared_strings.Builder{Size: 1}
+	shared_strings.Builder_Write(&builder, storage[:0])
+	builder = shared_strings.Builder{Size: 2}
+	shared_strings.Builder_Write(&builder, storage[:0])
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write_Text(&builder, "")
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write_Text(&builder, "x")
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write_Text(&builder, "xx")
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write_Text(&builder, maximum)
+	builder = shared_strings.Builder{Size: shared_strings.SIZE_VALUE_MAXIMUM}
+	shared_strings.Builder_Write_Text(&builder, "")
+	builder = shared_strings.Builder{Size: 1}
+	shared_strings.Builder_Write_Text(&builder, "")
+	builder = shared_strings.Builder{Size: 2}
+	shared_strings.Builder_Write_Text(&builder, "")
 }
 
-func assert_panic(t *testing.T, operation func()) {
-	t.Helper()
-	defer func() {
-		if recover() == nil {
-			t.Fatal("the operation must panic")
-		}
-	}()
-	operation()
+func exercise_builder_scalar_write_boundaries() {
+	builder := shared_strings.Builder{}
+	shared_strings.Builder_Write_Byte(&builder, 0)
+	builder = shared_strings.Builder{Size: 1}
+	shared_strings.Builder_Write_Byte(&builder, 1)
+	builder = shared_strings.Builder{Size: 2}
+	shared_strings.Builder_Write_Byte(&builder, 2)
+	builder = shared_strings.Builder{Size: shared_strings.SIZE_VALUE_MAXIMUM}
+	exercise_panicking_call(func() {
+		shared_strings.Builder_Write_Byte(
+			&builder, shared_strings.Byte(shared_strings.BYTE_MAXIMUM),
+		)
+	})
+	exercise_builder_character_boundaries()
 }
 
-func turkish_case() (special ucd.Special_Case) {
-	return ucd.Special_Case(ucd.Turkish_Case())
+func exercise_builder_character_boundaries() {
+	builder := shared_strings.Builder{}
+	shared_strings.Builder_Write_Character(&builder, 0)
+	builder = shared_strings.Builder{Size: 1}
+	shared_strings.Builder_Write_Character(&builder, 1)
+	builder = shared_strings.Builder{Size: 2}
+	shared_strings.Builder_Write_Character(&builder, 2)
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write_Character(
+		&builder, shared_strings.Character(shared_strings.CHARACTER_MINIMUM),
+	)
+	builder = shared_strings.Builder{}
+	shared_strings.Builder_Write_Character(
+		&builder, shared_strings.Character(shared_strings.CHARACTER_MAXIMUM),
+	)
+	builder = shared_strings.Builder{Size: shared_strings.SIZE_VALUE_MAXIMUM}
+	exercise_panicking_call(func() {
+		shared_strings.Builder_Write_Character(&builder, -1)
+	})
+}
+
+func exercise_reader_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	exercise_reader_reset_boundaries(maximum)
+	exercise_reader_size_boundaries(maximum)
+	exercise_reader_read_into_boundaries(storage, maximum)
+	exercise_reader_byte_boundaries(maximum)
+	exercise_reader_character_boundaries(maximum)
+	exercise_reader_unread_boundaries(maximum)
+}
+
+func exercise_reader_reset_boundaries(maximum shared_strings.Text) {
+	reader := shared_strings.Reader{Previous: -1}
+	shared_strings.Reader_Reset(&reader, "")
+	reader = shared_strings.Reader{Source: "x", Position: 1, Previous: 0}
+	shared_strings.Reader_Reset(&reader, "x")
+	reader = shared_strings.Reader{Source: "xx", Position: 2, Previous: 1}
+	shared_strings.Reader_Reset(&reader, "xx")
+	reader = shared_strings.Reader{Source: "xxx", Position: 3, Previous: 2}
+	shared_strings.Reader_Reset(&reader, "xxx")
+	reader = shared_strings.Reader{
+		Source: maximum, Position: shared_strings.SIZE_VALUE_MAXIMUM,
+		Previous: shared_strings.INDEX_MAXIMUM,
+	}
+	shared_strings.Reader_Reset(&reader, maximum)
+}
+
+func exercise_reader_size_boundaries(maximum shared_strings.Text) {
+	reader := shared_strings.Reader{Previous: -1}
+	shared_strings.Reader_Size(&reader)
+	reader = shared_strings.Reader{Source: "x", Previous: 0}
+	shared_strings.Reader_Size(&reader)
+	reader = shared_strings.Reader{Source: "xx", Previous: 1}
+	shared_strings.Reader_Size(&reader)
+	reader = shared_strings.Reader{Source: "xx", Position: 2, Previous: 1}
+	shared_strings.Reader_Size(&reader)
+	reader = shared_strings.Reader{Source: "xxx", Position: 1, Previous: 2}
+	shared_strings.Reader_Size(&reader)
+	reader = shared_strings.Reader{Source: maximum, Previous: 2}
+	shared_strings.Reader_Size(&reader)
+	reader = shared_strings.Reader{
+		Source: maximum, Position: shared_strings.SIZE_VALUE_MAXIMUM,
+		Previous: shared_strings.INDEX_MAXIMUM,
+	}
+	shared_strings.Reader_Size(&reader)
+}
+
+func exercise_reader_read_into_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	reader := shared_strings.Reader{Previous: -1}
+	shared_strings.Reader_Read_Into(&reader, storage[:0])
+	reader = shared_strings.Reader{Source: "x", Previous: 0}
+	shared_strings.Reader_Read_Into(&reader, storage[:1])
+	reader = shared_strings.Reader{Source: "xx", Previous: 1}
+	shared_strings.Reader_Read_Into(&reader, storage[:2])
+	reader = shared_strings.Reader{Source: "xx", Position: 2, Previous: 1}
+	shared_strings.Reader_Read_Into(&reader, storage[:0])
+	reader = shared_strings.Reader{Source: maximum, Previous: 2}
+	shared_strings.Reader_Read_Into(&reader, storage)
+	reader = shared_strings.Reader{
+		Source: maximum, Position: shared_strings.SIZE_VALUE_MAXIMUM,
+		Previous: shared_strings.INDEX_MAXIMUM,
+	}
+	shared_strings.Reader_Read_Into(&reader, storage[:0])
+}
+
+func exercise_reader_byte_boundaries(maximum shared_strings.Text) {
+	reader := shared_strings.Reader{Previous: -1}
+	shared_strings.Reader_Read_Byte(&reader)
+	reader = shared_strings.Reader{Source: "\x00", Previous: 0}
+	shared_strings.Reader_Read_Byte(&reader)
+	reader = shared_strings.Reader{Source: "\x01x", Previous: 1}
+	shared_strings.Reader_Read_Byte(&reader)
+	reader = shared_strings.Reader{Source: "\x02xx", Previous: 2}
+	shared_strings.Reader_Read_Byte(&reader)
+	reader = shared_strings.Reader{Source: "\xff", Previous: -1}
+	shared_strings.Reader_Read_Byte(&reader)
+	reader = shared_strings.Reader{Source: "x", Position: 1, Previous: 0}
+	shared_strings.Reader_Read_Byte(&reader)
+	reader = shared_strings.Reader{Source: "xx", Position: 2, Previous: 1}
+	shared_strings.Reader_Read_Byte(&reader)
+	reader = shared_strings.Reader{
+		Source: maximum, Position: shared_strings.SIZE_VALUE_MAXIMUM,
+		Previous: shared_strings.INDEX_MAXIMUM,
+	}
+	shared_strings.Reader_Read_Byte(&reader)
+}
+
+func exercise_reader_character_boundaries(maximum shared_strings.Text) {
+	reader := shared_strings.Reader{Previous: -1}
+	shared_strings.Reader_Read_Character(&reader)
+	reader = shared_strings.Reader{Source: "\x00", Previous: 0}
+	shared_strings.Reader_Read_Character(&reader)
+	reader = shared_strings.Reader{Source: "\x01x", Previous: 1}
+	shared_strings.Reader_Read_Character(&reader)
+	reader = shared_strings.Reader{Source: "\x02xx", Previous: 2}
+	shared_strings.Reader_Read_Character(&reader)
+	reader = shared_strings.Reader{Source: "\U0010ffff", Previous: -1}
+	shared_strings.Reader_Read_Character(&reader)
+	reader = shared_strings.Reader{Source: "x", Position: 1, Previous: 0}
+	shared_strings.Reader_Read_Character(&reader)
+	reader = shared_strings.Reader{Source: "xx", Position: 2, Previous: 1}
+	shared_strings.Reader_Read_Character(&reader)
+	reader = shared_strings.Reader{
+		Source: maximum, Position: shared_strings.SIZE_VALUE_MAXIMUM,
+		Previous: shared_strings.INDEX_MAXIMUM,
+	}
+	shared_strings.Reader_Read_Character(&reader)
+}
+
+func exercise_reader_unread_boundaries(maximum shared_strings.Text) {
+	reader := shared_strings.Reader{Previous: -1}
+	exercise_panicking_call(func() { shared_strings.Reader_Unread_Byte(&reader) })
+	reader = shared_strings.Reader{Source: "x", Position: 1, Previous: 0}
+	shared_strings.Reader_Unread_Byte(&reader)
+	reader = shared_strings.Reader{Source: "xx", Position: 2, Previous: 1}
+	shared_strings.Reader_Unread_Byte(&reader)
+	reader = shared_strings.Reader{Source: "xxx", Position: 3, Previous: 2}
+	shared_strings.Reader_Unread_Byte(&reader)
+	reader = shared_strings.Reader{
+		Source: maximum, Position: shared_strings.SIZE_VALUE_MAXIMUM,
+		Previous: shared_strings.INDEX_MAXIMUM,
+	}
+	shared_strings.Reader_Unread_Byte(&reader)
+	exercise_reader_unread_character_boundaries(maximum)
+}
+
+func exercise_reader_unread_character_boundaries(maximum shared_strings.Text) {
+	reader := shared_strings.Reader{Previous: -1}
+	exercise_panicking_call(func() { shared_strings.Reader_Unread_Character(&reader) })
+	reader = shared_strings.Reader{Source: "x", Position: 1, Previous: 0}
+	shared_strings.Reader_Unread_Character(&reader)
+	reader = shared_strings.Reader{Source: "xx", Position: 2, Previous: 1}
+	shared_strings.Reader_Unread_Character(&reader)
+	reader = shared_strings.Reader{Source: "xxx", Position: 3, Previous: 2}
+	shared_strings.Reader_Unread_Character(&reader)
+	reader = shared_strings.Reader{
+		Source: maximum, Position: shared_strings.SIZE_VALUE_MAXIMUM,
+		Previous: shared_strings.INDEX_MAXIMUM,
+	}
+	shared_strings.Reader_Unread_Character(&reader)
+}
+
+func exercise_replacer_boundaries(
+	storage shared_strings.Bytes, maximum shared_strings.Text,
+) {
+	var maximum_rules [shared_strings.RULE_COUNT_MAXIMUM]shared_strings.Rule
+	exercise_replacer_init_boundaries(maximum_rules[:], maximum)
+	exercise_replacer_replace_boundaries(storage, maximum_rules[:], maximum)
+}
+
+func exercise_replacer_init_boundaries(
+	maximum_rules shared_strings.Rules, maximum shared_strings.Text,
+) {
+	shared_strings.Replacer_Init(maximum_rules[:0])
+	one := [...]shared_strings.Rule{{Old: "x", New: "x"}}
+	shared_strings.Replacer_Init(one[:])
+	two := [...]shared_strings.Rule{{Old: "xx", New: "xx"}, {}}
+	shared_strings.Replacer_Init(two[:])
+	shared_strings.Replacer_Init(maximum_rules)
+	one[0] = shared_strings.Rule{Old: "", New: ""}
+	shared_strings.Replacer_Init(one[:])
+	one[0] = shared_strings.Rule{Old: "x", New: "x"}
+	shared_strings.Replacer_Init(one[:])
+	one[0] = shared_strings.Rule{Old: "xx", New: "xx"}
+	shared_strings.Replacer_Init(one[:])
+	one[0] = shared_strings.Rule{
+		Old: shared_strings.Old_Text(maximum),
+		New: shared_strings.New_Text(maximum),
+	}
+	shared_strings.Replacer_Init(one[:])
+}
+
+func exercise_replacer_replace_boundaries(
+	storage shared_strings.Bytes, maximum_rules shared_strings.Rules,
+	maximum shared_strings.Text,
+) {
+	shared_strings.Replacer_Replace_Into(
+		storage[:0], shared_strings.Replacer{}, "",
+	)
+	one := [...]shared_strings.Rule{{Old: "x", New: "x"}}
+	shared_strings.Replacer_Replace_Into(
+		storage[:1], shared_strings.Replacer{Rules: one[:]}, "x",
+	)
+	two := [...]shared_strings.Rule{{Old: "xx", New: "xx"}, {}}
+	shared_strings.Replacer_Replace_Into(
+		storage[:2], shared_strings.Replacer{Rules: two[:]}, "xx",
+	)
+	maximum_rules[0] = shared_strings.Rule{Old: "x", New: "x"}
+	shared_strings.Replacer_Replace_Into(
+		storage, shared_strings.Replacer{Rules: maximum_rules}, maximum,
+	)
+	one[0] = shared_strings.Rule{Old: "", New: ""}
+	shared_strings.Replacer_Replace_Into(
+		storage[:0], shared_strings.Replacer{Rules: one[:]}, "",
+	)
+	one[0] = shared_strings.Rule{
+		Old: shared_strings.Old_Text(maximum),
+		New: shared_strings.New_Text(maximum),
+	}
+	shared_strings.Replacer_Replace_Into(
+		storage, shared_strings.Replacer{Rules: one[:]}, maximum,
+	)
+}
+
+func exercise_panicking_call(callback func()) {
+	defer func() { recover() }()
+	callback()
 }
