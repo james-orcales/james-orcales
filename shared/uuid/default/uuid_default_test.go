@@ -6,16 +6,10 @@ import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/uuid"
 	system_uuid "local/james-orcales/shared/uuid/default"
 )
-
-// TestMain register operating-system UUID invariant roots before smoke run.
-func TestMain(m *testing.M) {
-	aver.Run_Test_Main(m)
-}
 
 // Test_Operating_System_Generator_Smoke checks the host-wired generator mints valid,
 // distinct V4 and V7 UUIDs. Real entropy is non-deterministic, so this is a smoke test.
