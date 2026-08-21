@@ -135,13 +135,12 @@ func Point_Invariants(value Point, _ invariant.Namespace) {
 	)
 }
 
-// Point_Handle gives mutable caller placement a nonnil invariant identity.
+// Point_Handle gives mutable caller placement a nonnil storage identity.
 type Point_Handle *Point
 
-// Point_Handle_Invariants composes one mutable point after proving storage exists.
-func Point_Handle_Invariants(value Point_Handle, namespace invariant.Namespace) {
+// Point_Handle_Invariants proves storage exists before separate point validation.
+func Point_Handle_Invariants(value Point_Handle, _ invariant.Namespace) {
 	invariant.Always(value != nil, "A Point handle has caller-owned storage.")
-	Point_Invariants(*value, namespace)
 }
 
 // Encoding_Unvalidated is one bounded hostile SEC 1 encoding.
@@ -278,9 +277,10 @@ func Point_Set_Bytes(
 ) (status Parse_Status) {
 	defer func() {
 		Parse_Status_Invariants(status, "Point_Set_Bytes.status")
-		Point_Handle_Invariants(destination, "Point_Set_Bytes.destination.output")
+		Point_Invariants(*destination, "Point_Set_Bytes.destination.output")
 	}()
-	Point_Handle_Invariants(destination, "Point_Set_Bytes.destination.input")
+	Point_Handle_Invariants(destination, "Point_Set_Bytes.destination.input.handle")
+	Point_Invariants(*destination, "Point_Set_Bytes.destination.input.point")
 	Encoding_Unvalidated_Invariants(source, "Point_Set_Bytes.source")
 	if len(source) > ENCODING_UNVALIDATED_SIZE_MAXIMUM {
 		panic("elliptic: encoding exceeds bound")
@@ -352,7 +352,8 @@ func Point_Bytes_Into(
 		Output_Status_Invariants(status, "Point_Bytes_Into.status")
 	}()
 	Destination_Invariants(destination, "Point_Bytes_Into.destination")
-	Point_Handle_Invariants(point, "Point_Bytes_Into.point")
+	Point_Handle_Invariants(point, "Point_Bytes_Into.point.handle")
+	Point_Invariants(*point, "Point_Bytes_Into.point.value")
 	Encoding_Kind_Invariants(kind, "Point_Bytes_Into.kind")
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
 		panic("elliptic: destination exceeds bound")
@@ -398,19 +399,24 @@ func Point_Bytes_Into(
 
 // Point_Add uses a complete formula so identity and exceptional inputs need no secret branch.
 func Point_Add(destination Point_Handle, left Point_Handle, right Point_Handle) {
-	Point_Handle_Invariants(destination, "Point_Add.destination.input")
-	Point_Handle_Invariants(left, "Point_Add.left")
-	Point_Handle_Invariants(right, "Point_Add.right")
+	Point_Handle_Invariants(destination, "Point_Add.destination.input.handle")
+	Point_Invariants(*destination, "Point_Add.destination.input.point")
+	Point_Handle_Invariants(left, "Point_Add.left.handle")
+	Point_Invariants(*left, "Point_Add.left.point")
+	Point_Handle_Invariants(right, "Point_Add.right.handle")
+	Point_Invariants(*right, "Point_Add.right.point")
 	point_add(destination, left, right)
-	Point_Handle_Invariants(destination, "Point_Add.destination.output")
+	Point_Invariants(*destination, "Point_Add.destination.output")
 }
 
 // Point_Double uses the same complete curve model as addition.
 func Point_Double(destination Point_Handle, source Point_Handle) {
-	Point_Handle_Invariants(destination, "Point_Double.destination.input")
-	Point_Handle_Invariants(source, "Point_Double.source")
+	Point_Handle_Invariants(destination, "Point_Double.destination.input.handle")
+	Point_Invariants(*destination, "Point_Double.destination.input.point")
+	Point_Handle_Invariants(source, "Point_Double.source.handle")
+	Point_Invariants(*source, "Point_Double.source.point")
 	point_double(destination, source)
-	Point_Handle_Invariants(destination, "Point_Double.destination.output")
+	Point_Invariants(*destination, "Point_Double.destination.output")
 }
 
 // Point_Scalar_Multiply commits only after exact-width scalar validation.
@@ -419,10 +425,14 @@ func Point_Scalar_Multiply(
 ) (status Scalar_Status) {
 	defer func() {
 		Scalar_Status_Invariants(status, "Point_Scalar_Multiply.status")
-		Point_Handle_Invariants(destination, "Point_Scalar_Multiply.destination.output")
+		Point_Invariants(*destination, "Point_Scalar_Multiply.destination.output")
 	}()
-	Point_Handle_Invariants(destination, "Point_Scalar_Multiply.destination.input")
-	Point_Handle_Invariants(point, "Point_Scalar_Multiply.point")
+	Point_Handle_Invariants(
+		destination, "Point_Scalar_Multiply.destination.input.handle",
+	)
+	Point_Invariants(*destination, "Point_Scalar_Multiply.destination.input.point")
+	Point_Handle_Invariants(point, "Point_Scalar_Multiply.point.handle")
+	Point_Invariants(*point, "Point_Scalar_Multiply.point.value")
 	Scalar_Unvalidated_Invariants(scalar, "Point_Scalar_Multiply.scalar")
 	if len(scalar) > SCALAR_UNVALIDATED_SIZE_MAXIMUM {
 		panic("elliptic: scalar exceeds bound")
@@ -446,11 +456,14 @@ func Point_Scalar_Base_Multiply(
 ) (status Scalar_Status) {
 	defer func() {
 		Scalar_Status_Invariants(status, "Point_Scalar_Base_Multiply.status")
-		Point_Handle_Invariants(
-			destination, "Point_Scalar_Base_Multiply.destination.output",
-		)
+		Point_Invariants(*destination, "Point_Scalar_Base_Multiply.destination.output")
 	}()
-	Point_Handle_Invariants(destination, "Point_Scalar_Base_Multiply.destination.input")
+	Point_Handle_Invariants(
+		destination, "Point_Scalar_Base_Multiply.destination.input.handle",
+	)
+	Point_Invariants(
+		*destination, "Point_Scalar_Base_Multiply.destination.input.point",
+	)
 	Scalar_Unvalidated_Invariants(scalar, "Point_Scalar_Base_Multiply.scalar")
 	if len(scalar) > SCALAR_UNVALIDATED_SIZE_MAXIMUM {
 		panic("elliptic: scalar exceeds bound")
@@ -465,8 +478,10 @@ func Point_Scalar_Base_Multiply(
 // Point_Equal compares projective coordinates without affine inversion.
 func Point_Equal(left Point_Handle, right Point_Handle) (equal Equality) {
 	defer func() { Equality_Invariants(equal, "Point_Equal.equal") }()
-	Point_Handle_Invariants(left, "Point_Equal.left")
-	Point_Handle_Invariants(right, "Point_Equal.right")
+	Point_Handle_Invariants(left, "Point_Equal.left.handle")
+	Point_Invariants(*left, "Point_Equal.left.point")
+	Point_Handle_Invariants(right, "Point_Equal.right.handle")
+	Point_Invariants(*right, "Point_Equal.right.point")
 	left_zero := field_is_zero(&left.Z)
 	right_zero := field_is_zero(&right.Z)
 	var left_x, right_x, left_y, right_y [FIELD_LIMB_COUNT]uint64
@@ -487,7 +502,7 @@ func Point_Equal(left Point_Handle, right Point_Handle) (equal Equality) {
 
 // Complete addition formula for a = -3 from Renes, Costello, and Batina section A.2.
 func point_add(destination Point_Handle, left Point_Handle, right Point_Handle) {
-	Point_Handle_Invariants(destination, "point_add.destination.input")
+	Point_Handle_Invariants(destination, "point_add.destination")
 	Point_Handle_Invariants(left, "point_add.left")
 	Point_Handle_Invariants(right, "point_add.right")
 	var first, second Point
@@ -541,12 +556,11 @@ func point_add(destination Point_Handle, left Point_Handle, right Point_Handle) 
 	field_multiply(&t1, &t3, &t0)
 	field_add(&z3, &z3, &t1)
 	destination.X, destination.Y, destination.Z = x3, y3, z3
-	Point_Handle_Invariants(destination, "point_add.destination.output")
 }
 
 // Complete doubling formula keeps zero and all finite intermediates inside one path.
 func point_double(destination Point_Handle, source Point_Handle) {
-	Point_Handle_Invariants(destination, "point_double.destination.input")
+	Point_Handle_Invariants(destination, "point_double.destination")
 	Point_Handle_Invariants(source, "point_double.source")
 	var point Point
 	point_canonicalize_identity(&point, source)
@@ -589,7 +603,6 @@ func point_double(destination Point_Handle, source Point_Handle) {
 	field_add(&z3, &z3, &z3)
 	field_add(&z3, &z3, &z3)
 	destination.X, destination.Y, destination.Z = x3, y3, z3
-	Point_Handle_Invariants(destination, "point_double.destination.output")
 }
 
 func point_scalar_multiply(
@@ -597,11 +610,11 @@ func point_scalar_multiply(
 	point Point_Handle,
 	scalar *[FIELD_LIMB_COUNT]uint64,
 ) {
-	Point_Handle_Invariants(destination, "point_scalar_multiply.destination.input")
+	Point_Handle_Invariants(destination, "point_scalar_multiply.destination")
 	Point_Handle_Invariants(point, "point_scalar_multiply.point")
 	var base Point
 	point_canonicalize_identity(&base, point)
-	result := Point_Identity()
+	result := Point{Y: field_one()}
 	for bit_count := P256_BIT_COUNT; bit_count > bits.BIT_COUNT_MINIMUM; bit_count-- {
 		bit_index := bit_count - binary.UINT_8_SIZE
 		var doubled, added Point
@@ -615,16 +628,14 @@ func point_scalar_multiply(
 		)
 	}
 	*destination = result
-	Point_Handle_Invariants(destination, "point_scalar_multiply.destination.output")
 }
 
 func point_canonicalize_identity(destination Point_Handle, source Point_Handle) {
-	Point_Handle_Invariants(destination, "point_canonicalize_identity.destination.input")
+	Point_Handle_Invariants(destination, "point_canonicalize_identity.destination")
 	Point_Handle_Invariants(source, "point_canonicalize_identity.source")
-	identity := Point_Identity()
+	identity := Point{Y: field_one()}
 	z_zero := field_is_zero(&source.Z)
 	point_select(destination, &identity, source, z_zero)
-	Point_Handle_Invariants(destination, "point_canonicalize_identity.destination.output")
 }
 
 func point_select(
@@ -633,13 +644,12 @@ func point_select(
 	second Point_Handle,
 	condition [CONDITION_LIMB_COUNT]uint64,
 ) {
-	Point_Handle_Invariants(destination, "point_select.destination.input")
+	Point_Handle_Invariants(destination, "point_select.destination")
 	Point_Handle_Invariants(first, "point_select.first")
 	Point_Handle_Invariants(second, "point_select.second")
 	field_select(&destination.X, &first.X, &second.X, condition)
 	field_select(&destination.Y, &first.Y, &second.Y, condition)
 	field_select(&destination.Z, &first.Z, &second.Z, condition)
-	Point_Handle_Invariants(destination, "point_select.destination.output")
 }
 
 func point_affine_on_curve(
