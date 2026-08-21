@@ -223,6 +223,37 @@ func Test_Sim_Holes(t *testing.T) {
 	nbio.IO_Deinit(loop)
 }
 
+// Test_Sim_Cursor verify FILE_POSITION_CURRENT write append at descriptor position, while
+// positioned write leave that position alone.
+func Test_Sim_Cursor(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	file, err := sim_create(t, loop, driver, "file")
+	if !testify.No_Error(t, err) {
+		return
+	}
+	current := nbio.FILE_POSITION_CURRENT
+	data, write_err := sim_write_at(t, loop, driver, file, []byte("ab"), current)
+	testify.No_Error(t, write_err)
+	testify.Equal(t, 2, data)
+	data, write_err = sim_write_at(t, loop, driver, file, []byte("cd"), current)
+	testify.No_Error(t, write_err)
+	testify.Equal(t, 2, data)
+	data, write_err = sim_write_at(t, loop, driver, file, []byte("X"), 0)
+	testify.No_Error(t, write_err)
+	testify.Equal(t, 1, data)
+	data, write_err = sim_write_at(t, loop, driver, file, []byte("e"), current)
+	testify.No_Error(t, write_err)
+	testify.Equal(t, 1, data)
+	sim_close(t, loop, driver, file)
+	reader, err := sim_open(t, loop, driver, "file")
+	if !testify.No_Error(t, err) {
+		return
+	}
+	testify.Equal(t, "Xbcde", sim_storage_read(t, loop, driver, reader, 5))
+	sim_close(t, loop, driver, reader)
+	nbio.IO_Deinit(loop)
+}
+
 // Test_Sim_Socket verify each transport requires all limits and transfers descriptor ownership
 // only through its result.
 func Test_Sim_Socket(t *testing.T) {

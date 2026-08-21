@@ -2234,6 +2234,44 @@ func Test_Operating_System_IO_File_Chain(t *testing.T) {
 	self_exec_close(loop, driver, opened)
 }
 
+// Test_Operating_System_IO_Write_Cursor verify FILE_POSITION_CURRENT write append at kernel file
+// position, while positioned write leave that position alone.
+func Test_Operating_System_IO_Write_Cursor(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	path := test_path_join(t.TempDir(), "cursor")
+	file, create_err := create_file(t, loop, driver, path)
+	if !testify.No_Error(t, create_err) {
+		return
+	}
+	current := nbio.FILE_POSITION_CURRENT
+	testify.Equal(t, 2, storage_write(t, loop, driver, file, []byte("ab"), current))
+	testify.Equal(t, 2, storage_write(t, loop, driver, file, []byte("cd"), current))
+	testify.Equal(t, 1, storage_write(t, loop, driver, file, []byte("X"), 0))
+	testify.Equal(t, 1, storage_write(t, loop, driver, file, []byte("e"), current))
+	close_file(t, loop, driver, path, file)
+	buffer := make([]byte, 5)
+	testify.Equal(t, 5, read_file(t, loop, driver, path, buffer))
+	testify.Equal(t, "Xbcde", string(buffer))
+}
+
+func storage_write(
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File, buffer []byte, offset int64,
+) (count int) {
+	t.Helper()
+	count = -1
+	var completion nbio.Completion
+	nbio.Storage_Write(loop.Storage, &completion, file, buffer, offset, REAL_DEADLINE, func(
+		completed nbio.Completion_Handle,
+	) {
+		testify.No_Error(t, completed.Error)
+		count = completed.Data
+	})
+	testify.True(t,
+		operating_system_run_until(t, driver, func() (finished bool) { return count >= 0 }))
+	return count
+}
+
 // Test_Operating_System_IO_Open_At_No_Follow verify OPEN_AT_NO_FOLLOW reject symbolic link in
 // final path part, and does not reject ordinary file.
 func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {

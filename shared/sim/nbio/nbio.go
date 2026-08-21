@@ -342,6 +342,11 @@ func Network_Peer_Address(
 	return network.Peer_Address_Procedure(network.State, file, destination)
 }
 
+// FILE_POSITION_CURRENT makes Storage.Write use and advance descriptor file position instead of
+// explicit offset. It is -1 because no real offset is negative, and io_uring read -1 as same
+// request, thus Linux pass it through unchanged.
+const FILE_POSITION_CURRENT int64 = -1
+
 // Storage is other half of IO: every transfer whose endpoint is file or directory, plus path
 // primitives that name one. Holder that only read and write file take this and cannot reach
 // socket.
@@ -357,8 +362,9 @@ type Storage struct {
 		timeout time.Duration,
 		callback Callback,
 	)
-	// Write write buffer to file at offset before timeout. Timeout does not work on Darwin
-	// because its current file path has no kernel timeout. Darwin completes the operation.
+	// Write write buffer to file at offset, or at file position when offset is
+	// FILE_POSITION_CURRENT, before timeout. Timeout does not work on Darwin because its
+	// current file path has no kernel timeout. Darwin completes the operation.
 	Write_Procedure func(
 		state State, completion *Completion, file File, buffer []byte,
 		offset int64,
@@ -1500,6 +1506,8 @@ type Sim_Descriptor struct {
 	Node int
 	// Access belongs to this open, so reopening cannot change another descriptor's rights.
 	Access Open_Access
+	// Position belongs to this open, like kernel file position, so reopening start at zero.
+	Position int64
 	// Socket selects inline socket state instead of node state.
 	Socket bool
 	// Directory_Drained preserves one-pass getdents behavior.
@@ -3393,9 +3401,18 @@ func sim_operation_write(operation *Sim_Operation) (data int, err error) {
 	if File_Mode_Is_Directory(node.Mode) {
 		return 0, sim_is_a_directory
 	}
-	write_err := sim_node_write(node, operation.Buffer, operation.Offset)
+	offset := operation.Offset
+	// Position resolve at retirement, not submit, because kernel read file position when
+	// operation run, and earlier cursor write may still be in flight.
+	if offset == FILE_POSITION_CURRENT {
+		offset = descriptor.Position
+	}
+	write_err := sim_node_write(node, operation.Buffer, offset)
 	if write_err != nil {
 		return 0, write_err
+	}
+	if operation.Offset == FILE_POSITION_CURRENT {
+		descriptor.Position = offset + int64(len(operation.Buffer))
 	}
 	return len(operation.Buffer), nil
 }

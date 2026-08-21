@@ -880,6 +880,7 @@ func platform_prepare_entry(
 		entry.Count = 1
 	case OPERATING_SYSTEM_OPERATION_WRITE:
 		platform_prepare_buffer(entry, operation, KERNEL_RING_OPERATION_WRITE)
+		// FILE_POSITION_CURRENT become KERNEL_PIPE_OFFSET, thus kernel use file position.
 		entry.Offset = operation.Offset
 	case OPERATING_SYSTEM_OPERATION_FSYNC:
 		entry.Opcode = KERNEL_RING_OPERATION_FSYNC

@@ -45,6 +45,11 @@ Empty transfers succeed without access checks, matching real backend's skipped k
 Write beyond file end fills gap with zero bytes, including after truncation. Empty write leaves
 file size and contents unchanged.
 
+### Cursor
+
+Storage.Write at FILE_POSITION_CURRENT writes at descriptor file position and advances it by bytes
+written. Positioned write neither reads nor moves that position. New descriptor starts at zero.
+
 ### Socket
 
 Socket_TCP and Socket_UDP make non-blocking close-on-exec descriptors. Each limit is positive.

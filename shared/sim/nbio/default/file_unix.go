@@ -33,8 +33,12 @@ func read_at(file nbio.File, buffer []byte, offset int64) (count int, err error)
 	return syscall.Pread(int(file), buffer, offset)
 }
 
-// Write buffer to file at offset through pwrite syscall.
+// Write buffer to file at offset through pwrite syscall, or at file position through write
+// syscall when offset is FILE_POSITION_CURRENT: pwrite reject negative offset with EINVAL.
 func write_at(file nbio.File, buffer []byte, offset int64) (count int, err error) {
+	if offset == nbio.FILE_POSITION_CURRENT {
+		return syscall.Write(int(file), buffer)
+	}
 	return syscall.Pwrite(int(file), buffer, offset)
 }
 
