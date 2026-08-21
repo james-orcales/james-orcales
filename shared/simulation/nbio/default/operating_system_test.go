@@ -12,7 +12,6 @@ import (
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
@@ -480,24 +479,13 @@ func operating_system_loop(
 	t *testing.T, clock time.Clock,
 ) (loop nbio.IO, pump time.Timeline, driver time.Driver) {
 	t.Helper()
-	loop, pump, driver, _ = operating_system_all(t, clock)
-	return loop, pump, driver
-}
-
-// Make same scheduler and return OS beside it, for tests that spawn subprocess, or watch signal
-// — two operations OS surface own.
-func operating_system_all(
-	t *testing.T, clock time.Clock,
-) (loop nbio.IO, pump time.Timeline, driver time.Driver, system os.OS) {
-	t.Helper()
 	memory := &operating_system_test_memory{}
-	loop, pump, driver, system, err := New_Operating_System_IO(
-		&memory.State, operating_system_memory_view(memory),
-		clock, 32, 0, operating_system_ambient())
+	loop, pump, driver, err := New_Operating_System_IO(
+		&memory.State, operating_system_memory_view(memory), clock, 32, 0)
 	if !testify.No_Error(t, err) {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{}
+		return nbio.IO{}, time.Timeline{}, time.Driver{}
 	}
-	return loop, pump, driver, system
+	return loop, pump, driver
 }
 
 // Test_Operating_System_Constructor_Heap_Allocation guards backend ownership before submission.
@@ -508,15 +496,14 @@ func Test_Operating_System_Constructor_Heap_Allocation(t *testing.T) {
 		Now_Monotonic: operating_system_clock_now_monotonic,
 		Now_Realtime:  operating_system_clock_now_realtime,
 	}
-	ambient := operating_system_ambient()
 	memory := operating_system_test_memory{}
 	var loop nbio.IO
 	var driver time.Driver
 	var construct_err error
 	testify.Zero_Allocation(t, func() {
-		loop, _, driver, _, construct_err = New_Operating_System_IO(
+		loop, _, driver, construct_err = New_Operating_System_IO(
 			&memory.State, operating_system_memory_view(&memory),
-			clock, 32, 0, ambient,
+			clock, 32, 0,
 		)
 		if construct_err == nil {
 			nbio.IO_Deinit(loop)
@@ -529,13 +516,12 @@ func Test_Operating_System_Constructor_Heap_Allocation(t *testing.T) {
 // Invalid input belongs in allocation contract because validation runs before any kernel state.
 func Test_Operating_System_Constructor_Error_Heap_Allocation(t *testing.T) {
 	clock := new_operating_system_clock()
-	ambient := operating_system_ambient()
 	memory := operating_system_test_memory{}
 	var construct_err error
 	testify.Zero_Allocation(t, func() {
-		_, _, _, _, construct_err = New_Operating_System_IO(
+		_, _, _, construct_err = New_Operating_System_IO(
 			&memory.State, operating_system_memory_view(&memory),
-			clock, 0, 0, ambient,
+			clock, 0, 0,
 		)
 	})
 	testify.Error(t, construct_err)
@@ -1396,12 +1382,6 @@ func operating_system_network_allocation_callback(completion *time.Completion) {
 		harness.Count++
 	}
 	harness.Called = true
-}
-
-// Tests need ambient state only to complete OS vtable owned by platform backend.
-func operating_system_ambient() (system os.OS) {
-	virtual := os.Virtual_OS{Process_Identifier: 1}
-	return os.Virtual_OS_To_OS(&virtual)
 }
 
 // Drive real test predicate. Fail at once on backend scheduler error.
@@ -2327,11 +2307,11 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 // it retire through same off-loop post path Event bridge.
 func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	drained := false
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, os.Process_Request{Path: "true"}, REAL_DEADLINE, func(
-		_ *time.Completion, _ os.Process_Result, _ error,
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "true"}, REAL_DEADLINE, func(
+		_ *time.Completion, _ nbio.Process_Result, _ error,
 	) {
 		drained = true
 	})
@@ -2346,12 +2326,12 @@ func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
 // Test_Operating_System_IO_Watch_Signal deliver real SIGTERM onto loop.
 func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
-	got := os.SIGNAL_EXPIRED
+	loop, _, driver := operating_system_loop(t, clock)
+	got := nbio.SIGNAL_EXPIRED
 	fired := 0
 	var completion time.Completion
-	os.OS_Watch_Signal(system, &completion, os.SIGNAL_TERMINATE, REAL_DEADLINE, func(
-		_ *time.Completion, signal os.Signal, err error,
+	nbio.IO_Watch_Signal(loop, &completion, nbio.SIGNAL_TERMINATE, REAL_DEADLINE, func(
+		_ *time.Completion, signal nbio.Signal, err error,
 	) {
 		testify.No_Error(t, err)
 		fired++
@@ -2361,22 +2341,22 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	time.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return fired > 0 })
 
 	testify.Equal(t, 1, fired)
-	testify.Equal(t, os.SIGNAL_TERMINATE, got)
+	testify.Equal(t, nbio.SIGNAL_TERMINATE, got)
 }
 
 // Test_Operating_System_IO_Watch_Signal_Deadline prove signal that never arrive retire extension
 // completion exactly once, and permit backend deinitialization.
 func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	callback_count := 0
-	got := os.SIGNAL_EXPIRED
+	got := nbio.SIGNAL_EXPIRED
 	var operation_err error
 	var completion time.Completion
-	os.OS_Watch_Signal(
-		system,
-		&completion, os.SIGNAL_TERMINATE, REAL_OPERATION_DEADLINE, func(
-			_ *time.Completion, signal os.Signal, err error,
+	nbio.IO_Watch_Signal(
+		loop,
+		&completion, nbio.SIGNAL_TERMINATE, REAL_OPERATION_DEADLINE, func(
+			_ *time.Completion, signal nbio.Signal, err error,
 		) {
 			callback_count++
 			got = signal
@@ -2387,7 +2367,7 @@ func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
 	))
 	testify.Equal(t, 1, callback_count)
 	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
-	testify.Equal(t, os.SIGNAL_EXPIRED, got)
+	testify.Equal(t, nbio.SIGNAL_EXPIRED, got)
 	time.Driver_Deinit(driver)
 }
 
@@ -2395,18 +2375,18 @@ func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
 // and non-zero exit reported without start error.
 func Test_Operating_System_IO_Spawn(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 
-	echo := os.Process_Result{}
+	echo := nbio.Process_Result{}
 	echoed := false
 	var echo_completion time.Completion
-	os.OS_Spawn(
-		system,
+	nbio.IO_Spawn(
+		loop,
 		&echo_completion,
-		os.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}},
+		nbio.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}},
 		REAL_DEADLINE,
 		func(
-			_ *time.Completion, result os.Process_Result, err error,
+			_ *time.Completion, result nbio.Process_Result, err error,
 		) {
 			testify.No_Error(t, err)
 			echo = result
@@ -2418,13 +2398,13 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 	testify.Zero(t, echo.Exit)
 	testify.Equal(t, "hi\n", string(echo.Output))
 
-	fail := os.Process_Result{}
+	fail := nbio.Process_Result{}
 	failed := false
 	var fail_completion time.Completion
-	os.OS_Spawn(system, &fail_completion, os.Process_Request{
+	nbio.IO_Spawn(loop, &fail_completion, nbio.Process_Request{
 		Path: "/bin/sh", Arguments: []string{"-c", "exit 1"},
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, result os.Process_Result, err error,
+		_ *time.Completion, result nbio.Process_Result, err error,
 	) {
 		testify.No_Error(t, err)
 		fail = result
@@ -2441,17 +2421,17 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 // build need — and leave Output empty.
 func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 
 	streamed := nbio.Stream_Memory{Memory: make([]byte, 64)}
-	result := os.Process_Result{}
+	result := nbio.Process_Result{}
 	done := false
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, os.Process_Request{
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/echo", Arguments: []string{"hi"},
 		Stdout: nbio.Memory_To_Stream(&streamed),
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned os.Process_Result, err error,
+		_ *time.Completion, spawned nbio.Process_Result, err error,
 	) {
 		testify.No_Error(t, err)
 		result = spawned
@@ -2506,9 +2486,9 @@ func spawn_recorded_identifier(
 // captured before expiry, and deliver one terminal callback.
 func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 	clock := new_operating_system_clock()
-	loop, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	process_path := filepath.Join(t.TempDir(), "process")
-	request := os.Process_Request{
+	request := nbio.Process_Request{
 		Path: "/bin/sh",
 		Arguments: []string{
 			"-c", "printf '%d' $$ > \"$1\"; printf partial; sleep 30 & wait",
@@ -2516,11 +2496,11 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 		},
 	}
 	callback_count := 0
-	result := os.Process_Result{}
+	result := nbio.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, request, 100*time.MILLISECOND, func(
-		_ *time.Completion, spawned os.Process_Result, err error,
+	nbio.IO_Spawn(loop, &completion, request, 100*time.MILLISECOND, func(
+		_ *time.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2546,14 +2526,14 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 // and only own tracking of backend keep reap on that path.
 func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	callback_count := 0
 	var operation_err error
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, os.Process_Request{
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/sleep", Arguments: []string{"30"},
 	}, 50*time.MILLISECOND, func(
-		_ *time.Completion, _ os.Process_Result, err error,
+		_ *time.Completion, _ nbio.Process_Result, err error,
 	) {
 		callback_count++
 		operation_err = err
@@ -2573,18 +2553,18 @@ func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
 // is bound exec.Cmd.WaitDelay supplied before.
 func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	const SPAWN_DEADLINE = 4 * time.SECOND
 	started := time.Clock_Now_Monotonic(clock)
 	callback_count := 0
-	result := os.Process_Result{}
+	result := nbio.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, os.Process_Request{
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path:      "/bin/sh",
 		Arguments: []string{"-c", "printf quick; sleep 30 & exit 0"},
 	}, SPAWN_DEADLINE, func(
-		_ *time.Completion, spawned os.Process_Result, err error,
+		_ *time.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2608,7 +2588,7 @@ func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
 // child open, thus this fail by deadlock, not by wrong result.
 func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	const SPAWNS_COUNT = 4
 	finished := 0
 	outputs := make([]string, SPAWNS_COUNT)
@@ -2616,11 +2596,11 @@ func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 	for index := 0; index < SPAWNS_COUNT; index++ {
 		position := index
 		completions[position] = &time.Completion{}
-		os.OS_Spawn(system, completions[position], os.Process_Request{
+		nbio.IO_Spawn(loop, completions[position], nbio.Process_Request{
 			Path:  "/bin/cat",
 			Input: []byte(test_decimal_text(position)),
 		}, REAL_DEADLINE, func(
-			_ *time.Completion, spawned os.Process_Result, err error,
+			_ *time.Completion, spawned nbio.Process_Result, err error,
 		) {
 			testify.No_Error(t, err, position)
 			outputs[position] = string(spawned.Output)
@@ -2641,15 +2621,15 @@ func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 // input, and write end close, thus child observe end-of-file, not wait for more.
 func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	callback_count := 0
-	result := os.Process_Result{}
+	result := nbio.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, os.Process_Request{
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/cat", Input: []byte("fed through stdin"),
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned os.Process_Result, err error,
+		_ *time.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2668,19 +2648,19 @@ func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
 // reads are not armed for whole life of child.
 func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	const LINES = 20000
 	callback_count := 0
-	result := os.Process_Result{}
+	result := nbio.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, os.Process_Request{
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/sh",
 		Arguments: []string{
 			"-c", "i=0; while [ $i -lt 20000 ]; do echo line; i=$((i+1)); done",
 		},
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned os.Process_Result, err error,
+		_ *time.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2698,18 +2678,18 @@ func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
 // PATH. exec.Command supplied this before, and syscall.StartProcess does not.
 func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	callback_count := 0
-	result := os.Process_Result{}
+	result := nbio.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	os.OS_Spawn(
-		system,
+	nbio.IO_Spawn(
+		loop,
 		&completion,
-		os.Process_Request{Path: "echo", Arguments: []string{"resolved"}},
+		nbio.Process_Request{Path: "echo", Arguments: []string{"resolved"}},
 		REAL_DEADLINE,
 		func(
-			_ *time.Completion, spawned os.Process_Result, err error,
+			_ *time.Completion, spawned nbio.Process_Result, err error,
 		) {
 			callback_count++
 			result = spawned
@@ -2727,13 +2707,13 @@ func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
 // spawn, not start anything.
 func Test_Operating_System_IO_Spawn_Reports_Missing_Command(t *testing.T) {
 	clock := new_operating_system_clock()
-	_, _, driver, system := operating_system_all(t, clock)
+	loop, _, driver := operating_system_loop(t, clock)
 	callback_count := 0
 	var operation_err error
 	var completion time.Completion
-	os.OS_Spawn(system, &completion, os.Process_Request{Path: "no-such-command-anywhere"},
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "no-such-command-anywhere"},
 		REAL_DEADLINE, func(
-			_ *time.Completion, _ os.Process_Result, err error,
+			_ *time.Completion, _ nbio.Process_Result, err error,
 		) {
 			callback_count++
 			operation_err = err

@@ -457,6 +457,66 @@ func Test_Sim_Status(t *testing.T) {
 	nbio.IO_Deinit(loop)
 }
 
+// Test_Sim_Watch_Signal verify one-shot signal watch: seed decide whether signal or deadline win,
+// callback fire exactly one time either way, and expired watch report SIGNAL_EXPIRED.
+func Test_Sim_Watch_Signal(t *testing.T) {
+	signal_count := 0
+	deadline_count := 0
+	for seed := uint64(0); seed < 64; seed++ {
+		loop, driver, _ := sim_loop(seed)
+		got := nbio.SIGNAL_EXPIRED
+		callback_count := 0
+		var operation_err error
+		var completion time.Completion
+		nbio.IO_Watch_Signal(
+			loop, &completion, nbio.SIGNAL_TERMINATE, time.NANOSECOND, func(
+				_ *time.Completion, signal nbio.Signal, err error,
+			) {
+				callback_count++
+				got = signal
+				operation_err = err
+			})
+		completed, drive_err := time.Driver_Run_Until(driver,
+			16*time.NANOSECOND, func() (finished bool) { return callback_count > 0 })
+		testify.No_Error(t, drive_err, seed)
+		testify.True(t, completed, seed)
+		testify.Equal(t, 1, callback_count, seed)
+		if operation_err == time.Deadline_Exceeded {
+			deadline_count++
+			testify.Equal(t, nbio.SIGNAL_EXPIRED, got, seed)
+		} else {
+			testify.No_Error(t, operation_err, seed)
+			signal_count++
+			testify.Equal(t, nbio.SIGNAL_TERMINATE, got, seed)
+		}
+		time.Driver_Run_For(driver, 16*time.NANOSECOND)
+		testify.Equal(t, 1, callback_count, seed)
+		testify.Nil(t, completion.Backend, seed)
+		nbio.IO_Deinit(loop)
+	}
+	testify.Positive(t, signal_count)
+	testify.Positive(t, deadline_count)
+}
+
+// Test_Sim_Spawn verify spawn deliver one seed-drawn result on loop and capture no output.
+func Test_Sim_Spawn(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	callback_count := 0
+	result := nbio.Process_Result{}
+	var completion time.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "echo"}, SIM_DEADLINE,
+		func(_ *time.Completion, spawned nbio.Process_Result, _ error) {
+			callback_count++
+			result = spawned
+		})
+	time.Driver_Run_For(driver, 16*time.NANOSECOND)
+	testify.Equal(t, 1, callback_count)
+	testify.Nil(t, completion.Backend)
+	testify.Nil(t, result.Output)
+	testify.Nil(t, result.Error_Output)
+	nbio.IO_Deinit(loop)
+}
+
 // Test_Sim_Deinit verify surface own leak check: Deinit reject run that still hold descriptor,
 // and accept same run once caller closed it.
 func Test_Sim_Deinit(t *testing.T) {
@@ -874,6 +934,8 @@ func sim_api_heap_allocation(t *testing.T) {
 		{Name: "Status", Operation: SIM_ALLOCATION_STATUS},
 		{Name: "Close", Operation: SIM_ALLOCATION_CLOSE},
 		{Name: "Deinit", Operation: SIM_ALLOCATION_DEINIT},
+		{Name: "Watch_Signal", Operation: SIM_ALLOCATION_WATCH_SIGNAL},
+		{Name: "Spawn", Operation: SIM_ALLOCATION_SPAWN},
 	}
 	for _, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
@@ -972,6 +1034,8 @@ const SIM_ALLOCATION_DIRECTORY sim_allocation_operation = 16
 const SIM_ALLOCATION_STATUS sim_allocation_operation = 17
 const SIM_ALLOCATION_CLOSE sim_allocation_operation = 18
 const SIM_ALLOCATION_DEINIT sim_allocation_operation = 19
+const SIM_ALLOCATION_WATCH_SIGNAL sim_allocation_operation = 20
+const SIM_ALLOCATION_SPAWN sim_allocation_operation = 21
 
 type sim_allocation_harness struct {
 	Timeline_State    time.Virtual_Timeline
@@ -1018,6 +1082,10 @@ func sim_allocation_run(
 	sim_allocation_reset(harness)
 	if operation <= SIM_ALLOCATION_PEER_ADDRESS {
 		sim_allocation_network_run(harness, operation)
+		return
+	}
+	if operation >= SIM_ALLOCATION_WATCH_SIGNAL {
+		sim_allocation_effects_run(harness, operation)
 		return
 	}
 	sim_allocation_storage_run(harness, operation)
@@ -1159,6 +1227,24 @@ func sim_allocation_storage_run(
 	}
 }
 
+func sim_allocation_effects_run(
+	harness *sim_allocation_harness, operation sim_allocation_operation,
+) {
+	if operation == SIM_ALLOCATION_WATCH_SIGNAL {
+		nbio.IO_Watch_Signal(
+			harness.Loop, &harness.Completion, nbio.SIGNAL_TERMINATE, SIM_DEADLINE,
+			sim_allocation_signal_callback,
+		)
+		sim_allocation_drive(harness)
+		return
+	}
+	nbio.IO_Spawn(
+		harness.Loop, &harness.Completion, nbio.Process_Request{Path: "true"},
+		SIM_DEADLINE, sim_allocation_process_callback,
+	)
+	sim_allocation_drive(harness)
+}
+
 func sim_allocation_open_tcp(harness *sim_allocation_harness) {
 	harness.File, harness.Error = nbio.Network_Socket_TCP(
 		harness.Loop.Network, nbio.FAMILY_IPV4, sim_tcp_options(),
@@ -1254,6 +1340,20 @@ func sim_allocation_callback(completion *time.Completion) {
 	if completion == nil {
 		panic("nbio: simulator delivered nil completion")
 	}
+}
+
+func sim_allocation_signal_callback(
+	completion *time.Completion, signal nbio.Signal, err error,
+) {
+	completion.Data = int(signal)
+	completion.Error = err
+}
+
+func sim_allocation_process_callback(
+	completion *time.Completion, result nbio.Process_Result, err error,
+) {
+	completion.Data = result.Exit
+	completion.Error = err
 }
 
 // The Stream function owns callback time because only it knows if the concrete operation is
@@ -2401,6 +2501,193 @@ func Test_Storage_Rejects_Disabled_Timeouts_Sim(t *testing.T) {
 		}
 	}
 }
+
+// One slot leaves no second entry, thus a nested submit proves retirement frees before it runs.
+const SIM_EFFECTS_OPERATION_CAPACITY = 1
+
+// Test root keeps caller-owned state alive beside the vtable that points into it.
+type sim_effects_harness struct {
+	Timeline_State time.Virtual_Timeline
+	Queue          [SIM_TIMELINE_CAPACITY]*time.Completion
+	Events         [SIM_EVENT_CAPACITY]time.Virtual_Event
+	Sim            nbio.Sim
+	Nodes          [SIM_NODE_CAPACITY]nbio.Sim_Node
+	Descriptors    [SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor
+	Operations     [SIM_EFFECTS_OPERATION_CAPACITY]nbio.Sim_Operation
+}
+
+func sim_effects_loop(
+	harness *sim_effects_harness,
+) (loop nbio.IO, driver time.Driver) {
+	pump, driver, _ := time.New_Virtual_Timeline(&harness.Timeline_State,
+		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
+			Queue: harness.Queue[:], Events: harness.Events[:],
+		})
+	return nbio.New_Simulated_IO(&harness.Sim, 0, pump, nbio.Sim_Memory{
+		Nodes:       harness.Nodes[:],
+		Descriptors: harness.Descriptors[:],
+		Operations:  harness.Operations[:],
+	}), driver
+}
+
+// Test_Sim_Effects_Operation_Capacity verifies the sole slot rejects a second owner before it
+// arms that caller's completion.
+func Test_Sim_Effects_Operation_Capacity(t *testing.T) {
+	harness := sim_effects_harness{}
+	loop, driver := sim_effects_loop(&harness)
+	var first time.Completion
+	nbio.IO_Watch_Signal(loop, &first, nbio.SIGNAL_TERMINATE, SIM_DEADLINE,
+		sim_allocation_signal_callback)
+	var rejected time.Completion
+	testify.Panics(t, func() {
+		nbio.IO_Spawn(loop, &rejected, nbio.Process_Request{Path: "true"}, SIM_DEADLINE,
+			sim_allocation_process_callback)
+	})
+	testify.Nil(t, rejected.Backend)
+	time.Driver_Run_For(driver, SIM_DEADLINE)
+	testify.Nil(t, first.Backend)
+	nbio.IO_Deinit(loop)
+}
+
+// Test_Sim_Effects_Callback_Can_Submit verifies retirement releases the sole slot before the
+// callback runs, so that callback can arm the next operation.
+func Test_Sim_Effects_Callback_Can_Submit(t *testing.T) {
+	harness := sim_effects_harness{}
+	loop, driver := sim_effects_loop(&harness)
+	callback_count := 0
+	var signal_completion time.Completion
+	var spawn_completion time.Completion
+	nbio.IO_Watch_Signal(
+		loop, &signal_completion, nbio.SIGNAL_TERMINATE, SIM_DEADLINE,
+		func(_ *time.Completion, _ nbio.Signal, signal_err error) {
+			testify.No_Error(t, signal_err)
+			callback_count++
+			nbio.IO_Spawn(
+				loop, &spawn_completion, nbio.Process_Request{Path: "true"},
+				SIM_DEADLINE,
+				func(_ *time.Completion, _ nbio.Process_Result, spawn_err error) {
+					testify.No_Error(t, spawn_err)
+					callback_count++
+				},
+			)
+		},
+	)
+	time.Driver_Run_For(driver, SIM_DEADLINE)
+	testify.Equal(t, 2, callback_count)
+	testify.Nil(t, signal_completion.Backend)
+	testify.Nil(t, spawn_completion.Backend)
+	nbio.IO_Deinit(loop)
+}
+
+// Runs one bounded simulated spawn past its modeled completion time and reports its sole result.
+func sim_spawn_with_deadline(
+	t *testing.T, seed uint64, deadline time.Duration,
+) (spawn_err error) {
+	t.Helper()
+	loop, driver, _ := sim_loop(seed)
+	callback_count := 0
+	var completion time.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "true"}, deadline, func(
+		_ *time.Completion, _ nbio.Process_Result, err error,
+	) {
+		callback_count++
+		spawn_err = err
+	})
+	time.Driver_Run_Until(driver, SIM_DEADLINE,
+		func() (finished bool) { return callback_count > 0 })
+	time.Driver_Run_For(driver, 16*time.NANOSECOND)
+	testify.Equal(t, 1, callback_count, seed)
+	nbio.IO_Deinit(loop)
+	return spawn_err
+}
+
+// Test_Spawn_Deadline_Sim verifies a finite spawn deadline wins a latency tie and retires once.
+func Test_Spawn_Deadline_Sim(t *testing.T) {
+	saw_deadline := false
+	saw_tie := false
+	for seed := uint64(0); seed < 64; seed++ {
+		at_deadline := sim_spawn_with_deadline(t, seed, 4*time.NANOSECOND)
+		after_deadline := sim_spawn_with_deadline(t, seed, 5*time.NANOSECOND)
+		if at_deadline == time.Deadline_Exceeded {
+			saw_deadline = true
+		}
+		if at_deadline == time.Deadline_Exceeded {
+			if after_deadline != time.Deadline_Exceeded {
+				saw_tie = true
+			}
+		}
+	}
+	testify.True(t, saw_deadline)
+	testify.True(t, saw_tie)
+}
+
+// Fuzz_Sim_Effects keeps seed whole so every modeled signal grain and exit outcome stays
+// reachable.
+func Fuzz_Sim_Effects(f *testing.F) {
+	f.Add(uint64(0))
+	f.Add(uint64(1))
+	f.Add(^uint64(0))
+	f.Fuzz(func(t *testing.T, seed uint64) {
+		loop, driver, _ := sim_loop(seed)
+		fuzz_signal(t, loop, driver)
+		fuzz_spawn(t, loop, driver)
+		nbio.IO_Deinit(loop)
+	})
+}
+
+func fuzz_signal(t *testing.T, loop nbio.IO, driver time.Driver) {
+	t.Helper()
+	callback_count := 0
+	delivered := nbio.SIGNAL_EXPIRED
+	var operation_err error
+	var completion time.Completion
+	nbio.IO_Watch_Signal(
+		loop, &completion, nbio.SIGNAL_INTERRUPT, SIM_FUZZ_OPERATION_DEADLINE,
+		func(_ *time.Completion, signal nbio.Signal, err error) {
+			callback_count++
+			delivered = signal
+			operation_err = err
+		},
+	)
+	time.Driver_Run_For(driver, SIM_DEADLINE)
+	testify.Equal(t, 1, callback_count, operation_err)
+	testify.Nil(t, completion.Backend)
+	if operation_err == nil {
+		testify.Equal(t, nbio.SIGNAL_INTERRUPT, delivered)
+		return
+	}
+	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Equal(t, nbio.SIGNAL_EXPIRED, delivered)
+}
+
+func fuzz_spawn(t *testing.T, loop nbio.IO, driver time.Driver) {
+	t.Helper()
+	callback_count := 0
+	result := nbio.Process_Result{}
+	var operation_err error
+	var completion time.Completion
+	nbio.IO_Spawn(
+		loop, &completion, nbio.Process_Request{Path: "true"},
+		SIM_FUZZ_OPERATION_DEADLINE,
+		func(_ *time.Completion, spawned nbio.Process_Result, err error) {
+			callback_count++
+			result = spawned
+			operation_err = err
+		},
+	)
+	time.Driver_Run_For(driver, SIM_DEADLINE)
+	testify.Equal(t, 1, callback_count, operation_err)
+	testify.Nil(t, completion.Backend)
+	if operation_err == nil {
+		testify.True(t, result.Exit == 0 || result.Exit == 1, result.Exit)
+		return
+	}
+	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Zero(t, result.Exit)
+}
+
+// Mid-range deadline makes seed sweep reach both modeled event and deadline winner.
+const SIM_FUZZ_OPERATION_DEADLINE = 4 * time.NANOSECOND
 
 // Independent operation and timeout inputs keep one corpus case from suppressing another path.
 func Fuzz_Sim_Network_Timeouts(f *testing.F) {

@@ -48,6 +48,24 @@ type IO struct {
 	// Deinit assert every descriptor run open is closed. Surface own leak check, thus leaked
 	// descriptor fail run. Caller need no census it must remember to read.
 	Deinit_Procedure func(state unsafe.Pointer)
+	// Watch_Signal fires callback when the process receives signal before the finite
+	// deadline, or with time.Deadline_Exceeded. The lifetime is finite deliberately: a
+	// permanent waiter is a process that cannot state when it is done. It sit here because
+	// signal readiness is discovered by the poll pass, not by a timer: the OS backend caps its
+	// own idle gap while a waiter live, and counts that waiter as work in flight.
+	Watch_Signal func(
+		state unsafe.Pointer, completion *time.Completion, signal Signal,
+		deadline time.Duration, callback Signal_Callback,
+	)
+	// Spawn runs request until it finishes or the deadline expires. Expiry kills the
+	// subprocess group and returns time.Deadline_Exceeded with any partial result. The
+	// simulated backend draws the exit code from its seed and returns no output, since
+	// scripted output is disallowed. It sit here because a child's pipes and its exit are
+	// descriptor and kernel-event work this surface already owns.
+	Spawn func(
+		state unsafe.Pointer, completion *time.Completion, request Process_Request,
+		deadline time.Duration, callback Process_Callback,
+	)
 }
 
 // IO_Close keeps backend state explicit because bound method state would allocate.
@@ -62,6 +80,95 @@ func IO_Close(
 func IO_Deinit(loop IO) {
 	loop.Deinit_Procedure(loop.State)
 }
+
+// IO_Watch_Signal keeps backend state explicit so operation needs no captured environment.
+func IO_Watch_Signal(
+	loop IO, completion *time.Completion, signal Signal, deadline time.Duration,
+	callback Signal_Callback,
+) {
+	loop.Watch_Signal(loop.State, completion, signal, deadline, callback)
+}
+
+// IO_Spawn keeps backend state explicit so operation needs no captured environment.
+func IO_Spawn(
+	loop IO, completion *time.Completion, request Process_Request, deadline time.Duration,
+	callback Process_Callback,
+) {
+	loop.Spawn(loop.State, completion, request, deadline, callback)
+}
+
+// Signal identifies an operating-system signal in backend-independent form, so the
+// deterministic and OS backends agree on a value without the pure tier importing syscall.
+type Signal int
+
+// SIGNAL_EXPIRED names no delivered signal. Caller retain signal it armed to identify watch.
+const SIGNAL_EXPIRED Signal = -1
+
+// SIGNAL_TERMINATE is the graceful-termination request (SIGTERM on the OS backend).
+const SIGNAL_TERMINATE Signal = 0
+
+// SIGNAL_INTERRUPT is the interactive interrupt (SIGINT on the OS backend).
+const SIGNAL_INTERRUPT Signal = 1
+
+// Signal_Callback receives a delivered signal on the loop thread, or Deadline_Exceeded when
+// finite watch retires before a signal arrives.
+type Signal_Callback func(completion *time.Completion, signal Signal, err error)
+
+// Process_Request describes a subprocess to run: the executable, its arguments and
+// environment, the working directory, and the bytes fed to its standard input.
+type Process_Request struct {
+	// Path is the executable to run.
+	Path string
+	// Arguments are the process arguments, excluding the program name.
+	Arguments []string
+	// Environment is the complete process environment. A nil value gives the child none, so a
+	// caller that wants an ambient value must inject it from its root.
+	Environment []string
+	// Working_Directory is the process's directory; empty uses the current one.
+	Working_Directory string
+	// Input is the bytes written to the process's standard input.
+	Input []byte
+	// Stdout, when its Procedure is set, streams the process's standard output to the stream
+	// as it runs instead of capturing it into Result.Output — the affordance a long build
+	// needs so its progress reaches the user live. A zero Stream keeps the captured-buffer
+	// default. The simulated backend produces no output and ignores it.
+	//
+	// The loop writes to the stream on its own thread, so a Stream that waits on the world
+	// stalls every other operation. A Stream moves memory only, which is what makes it the
+	// right sink here.
+	Stdout Stream
+	// Stderr is the standard-error counterpart, same live-or-capture rule.
+	Stderr Stream
+}
+
+// Process_Usage is the resource accounting a finished process reports.
+type Process_Usage struct {
+	// Wall is the elapsed wall-clock time the process ran.
+	Wall time.Duration
+	// CPU_User is the user-mode CPU time consumed.
+	CPU_User time.Duration
+	// CPU_System is the kernel-mode CPU time consumed.
+	CPU_System time.Duration
+	// RSS_Bytes_Max is the peak resident set size in bytes.
+	RSS_Bytes_Max int64
+}
+
+// Process_Result is a finished process's outcome: its exit code, captured output, and
+// resource usage.
+type Process_Result struct {
+	// Exit is the process exit code; zero on success.
+	Exit int
+	// Output is the captured standard output.
+	Output []byte
+	// Error_Output is the captured standard error.
+	Error_Output []byte
+	// Usage is the process's resource accounting.
+	Usage Process_Usage
+}
+
+// Process_Callback receives a finished process's result, or an error when the process
+// could not be started at all.
+type Process_Callback func(completion *time.Completion, result Process_Result, err error)
 
 // Network is half of IO: every transfer whose endpoint is socket, plus socket lifecycle that
 // open one. Holder that only speak to socket take this and cannot reach file.
@@ -871,6 +978,10 @@ var Path_Exists = errors.New("io: file exists")
 // completion order vary per run and still reproduce.
 const SIM_LATENCY_GRAINS = 8
 
+// One in this many simulated spawns exits non-zero, so a seed sweep exercises both the success
+// and the failure path without a scripted outcome.
+const SIM_SPAWN_FAIL_GRAINS = 4
+
 // Returned when path resolve to nothing — simulator ENOENT.
 var sim_file_absent = errors.New("io: no such file or directory")
 
@@ -983,6 +1094,14 @@ type Sim_Operation struct {
 	Mask uint32
 	// Borrowed marks descriptor count that retirement must release.
 	Borrowed bool
+	// Signal preserves seed outcome until timeline reaches retirement grain.
+	Signal Signal
+	// Process preserves seed outcome until timeline reaches retirement grain.
+	Process Process_Result
+	// Signal_Callback avoids captured adapter state between arm and retirement.
+	Signal_Callback Signal_Callback
+	// Process_Callback avoids captured adapter state between arm and retirement.
+	Process_Callback Process_Callback
 }
 
 // Sim_Operation_Kind makes one static retirement procedure decode bounded operation state.
@@ -1026,6 +1145,12 @@ const SIM_OPERATION_KIND_DIRECTORY Sim_Operation_Kind = 11
 
 // SIM_OPERATION_KIND_STATX fills Linux caller result at retirement.
 const SIM_OPERATION_KIND_STATX Sim_Operation_Kind = 12
+
+// SIM_OPERATION_KIND_SIGNAL makes static signal callback reject process state.
+const SIM_OPERATION_KIND_SIGNAL Sim_Operation_Kind = 13
+
+// SIM_OPERATION_KIND_PROCESS makes static process callback reject signal state.
+const SIM_OPERATION_KIND_PROCESS Sim_Operation_Kind = 14
 
 // Sim_Memory states each independent bounded simulator resource without scripting outcomes.
 type Sim_Memory struct {
@@ -1075,6 +1200,11 @@ type Sim struct {
 	// Storage_Timeout_Order_Generator isolates storage ordering from the existing network
 	// stream.
 	Storage_Timeout_Order_Generator prng.Generator
+	// Signal_Generator isolates signal arrival from every transfer stream, thus a run that
+	// arms one more read cannot move which grain a signal lands on.
+	Signal_Generator prng.Generator
+	// Process_Generator isolates exit code and child latency the same way.
+	Process_Generator prng.Generator
 	// Next_File is synthetic descriptor counter. Listen, Accept, Open_Socket, Open, and Create
 	// hand out next value, thus every descriptor is distinct.
 	Next_File File
@@ -1113,6 +1243,10 @@ func New_Simulated_IO(
 	state.Generator = prng.Generator_Split(&root_generator)
 	state.Timeout_Order_Generator = prng.Generator_Split(&root_generator)
 	state.Storage_Timeout_Order_Generator = prng.Generator_Split(&root_generator)
+	// Split after every existing stream, thus adding these two axes leaves the grain each
+	// older stream draws for a given seed unchanged.
+	state.Signal_Generator = prng.Generator_Split(&root_generator)
+	state.Process_Generator = prng.Generator_Split(&root_generator)
 	state.Next_File = 0
 	state.Nodes = memory.Nodes
 	state.Descriptors = memory.Descriptors
@@ -1125,7 +1259,98 @@ func New_Simulated_IO(
 	sim_wire_platform(state, &loop)
 	loop.Close_Procedure = sim_close_procedure
 	loop.Deinit_Procedure = sim_deinit_procedure
+	loop.Watch_Signal = sim_watch_signal_procedure
+	loop.Spawn = sim_spawn_procedure
 	return loop
+}
+
+func sim_watch_signal_procedure(
+	state_pointer unsafe.Pointer, completion *time.Completion, signal Signal,
+	deadline time.Duration, callback Signal_Callback,
+) {
+	invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
+	sim_watch_signal((*Sim)(state_pointer), completion, signal, deadline, callback)
+}
+
+func sim_spawn_procedure(
+	state_pointer unsafe.Pointer, completion *time.Completion, _ Process_Request,
+	deadline time.Duration, callback Process_Callback,
+) {
+	invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
+	sim_spawn((*Sim)(state_pointer), completion, deadline, callback)
+}
+
+// Watches for a signal that, in the simulation, arrives at a seed-drawn grain — the operating
+// system event modeled as a seed outcome. It fires callback exactly once.
+func sim_watch_signal(
+	state *Sim, completion *time.Completion, signal Signal, deadline time.Duration,
+	callback Signal_Callback,
+) {
+	// Callback slot stay nil: signal retire through its own typed static callback, thus the
+	// shared time.Callback dispatcher never decodes this kind.
+	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_SIGNAL, nil)
+	operation.Signal_Callback = callback
+	latency := sim_latency_from(&state.Signal_Generator)
+	if latency >= deadline {
+		operation.Signal = SIGNAL_EXPIRED
+		operation.Operation_Err = time.Deadline_Exceeded
+		time.Timeline_Submit(state.Timeline, completion, deadline, sim_signal_complete)
+		return
+	}
+	operation.Signal = signal
+	time.Timeline_Submit(state.Timeline, completion, latency, sim_signal_complete)
+}
+
+func sim_signal_complete(completion *time.Completion) {
+	operation := (*Sim_Operation)(completion.Backend)
+	invariant.Always(operation != nil,
+		"A simulated signal completion owns specialized operation state.")
+	invariant.Always(operation.Kind == SIM_OPERATION_KIND_SIGNAL,
+		"A simulated signal completion owns signal state.")
+	callback := operation.Signal_Callback
+	signal := operation.Signal
+	err := operation.Operation_Err
+	*operation = Sim_Operation{}
+	completion.Backend = nil
+	callback(completion, signal, err)
+}
+
+// Delivers a subprocess result drawn from the seed: the exit code varies (usually zero,
+// occasionally non-zero for fault coverage) with no captured output — scripted output is
+// disallowed, so the seed decides success or failure, not a canned payload.
+func sim_spawn(
+	state *Sim, completion *time.Completion, deadline time.Duration,
+	callback Process_Callback,
+) {
+	// Callback slot stay nil for the same reason the signal watch leaves it nil.
+	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_PROCESS, nil)
+	operation.Process_Callback = callback
+	exit := 0
+	if prng.Generator_Below(&state.Process_Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
+		exit = 1
+	}
+	latency := sim_latency_from(&state.Process_Generator)
+	if latency >= deadline {
+		operation.Operation_Err = time.Deadline_Exceeded
+		time.Timeline_Submit(state.Timeline, completion, deadline, sim_process_complete)
+		return
+	}
+	operation.Process.Exit = exit
+	time.Timeline_Submit(state.Timeline, completion, latency, sim_process_complete)
+}
+
+func sim_process_complete(completion *time.Completion) {
+	operation := (*Sim_Operation)(completion.Backend)
+	invariant.Always(operation != nil,
+		"A simulated process completion owns specialized operation state.")
+	invariant.Always(operation.Kind == SIM_OPERATION_KIND_PROCESS,
+		"A simulated process completion owns process state.")
+	callback := operation.Process_Callback
+	result := operation.Process
+	err := operation.Operation_Err
+	*operation = Sim_Operation{}
+	completion.Backend = nil
+	callback(completion, result, err)
 }
 
 func sim_close_procedure(
@@ -2072,7 +2297,12 @@ func sim_generate_bytes(generator *prng.Generator, node *Sim_Node) {
 // Draw next operation completion delay from seed, thus completion order vary per run yet
 // reproduce exact.
 func sim_latency(state *Sim) (latency time.Duration) {
-	return time.Duration(prng.Generator_Below(&state.Generator, SIM_LATENCY_GRAINS))
+	return sim_latency_from(&state.Generator)
+}
+
+// Draws one simulated operation's virtual latency from the stream that owns its axis.
+func sim_latency_from(generator *prng.Generator) (latency time.Duration) {
+	return time.Duration(prng.Generator_Below(generator, SIM_LATENCY_GRAINS))
 }
 
 // Kernels can publish either terminal event when operation and timeout become ready together.

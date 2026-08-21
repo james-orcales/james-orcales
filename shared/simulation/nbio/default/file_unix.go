@@ -11,7 +11,6 @@ import (
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -340,7 +339,7 @@ func executable_check(path string) (err error) {
 
 // Reap exited child. Return its exit code and resource accounting. WNOHANG return at once,
 // because caller run this only after kernel reported exit.
-func process_reap(identifier int) (exit int, usage os.Process_Usage, err error) {
+func process_reap(identifier int) (exit int, usage nbio.Process_Usage, err error) {
 	status := syscall.WaitStatus(0)
 	rusage := syscall.Rusage{}
 	reaped := false
@@ -350,13 +349,13 @@ func process_reap(identifier int) (exit int, usage os.Process_Usage, err error) 
 			continue
 		}
 		if wait_err != nil {
-			return 0, os.Process_Usage{}, wait_err
+			return 0, nbio.Process_Usage{}, wait_err
 		}
 		reaped = true
 		break
 	}
 	if !reaped {
-		return 0, os.Process_Usage{}, syscall.EINTR
+		return 0, nbio.Process_Usage{}, syscall.EINTR
 	}
 	usage.CPU_User = time.Duration(
 		rusage.Utime.Sec*1_000_000_000 + int64(rusage.Utime.Usec)*1_000)

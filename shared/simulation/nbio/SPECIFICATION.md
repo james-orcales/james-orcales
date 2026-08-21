@@ -95,6 +95,18 @@ Status report synchronously whether path exist, and if so whether it is director
 in bytes. It also report whether path is regular file. Absent path is not-exists with nil error,
 thus caller branch on status, not on error.
 
+### Watch Signal
+
+Watch_Signal requires positive finite deadline; signal arriving first fires once, and deadline wins
+ties with Deadline_Exceeded and SIGNAL_EXPIRED. Caller retains armed signal because expired value
+identifies no watch. Simulator draws arrival grain from its own seed stream.
+
+### Spawn
+
+A spawn requires a positive finite deadline; natural completion returns the seed-drawn exit code,
+while the deadline wins ties with Deadline_Exceeded. Real backend kills its subprocess group, bounds
+pipe cleanup to one second, and returns partial output; simulator captures none.
+
 ### Deinit
 
 Deinit assert every descriptor run open is closed. Run that still hold one panic. Surface own

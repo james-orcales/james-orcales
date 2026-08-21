@@ -12,7 +12,6 @@ import (
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -101,24 +100,23 @@ type Signal_Waiter struct {
 	// System is OS signal this watcher await.
 	System syscall.Signal
 	// Kind is backend-independent signal reported to callback.
-	Kind os.Signal
+	Kind nbio.Signal
 	// Completion is caller-owned completion fired on delivery.
 	Completion *time.Completion
 	// Callback is typed callback run with delivered signal.
-	Callback os.Signal_Callback
+	Callback nbio.Signal_Callback
 	// Deadline is finite moment this repository-extension operation retire at.
 	Deadline time.Monotonic_Moment
 }
 
 // New_Operating_System_IO eagerly make platform scheduler. Entries is io_uring queue size on
 // Linux, and kqueue on Darwin accept but ignore it. It must fit in twelve bits. Flags
-// pass direct to io_uring setup, and Darwin ignore them. ambient state process values host read
-// back — os/default supply them — and returned system is that OS completed with signal watch and
-// spawn, which retire on queue of this backend.
+// pass direct to io_uring setup, and Darwin ignore them. Ambient process values host read back
+// come from os/default, which needs nothing from here.
 func New_Operating_System_IO(
 	state *Operating_System, memory Operating_System_Memory,
-	host time.Clock, entries uint16, flags uint32, ambient os.OS,
-) (loop nbio.IO, pump time.Timeline, driver time.Driver, system os.OS, err error) {
+	host time.Clock, entries uint16, flags uint32,
+) (loop nbio.IO, pump time.Timeline, driver time.Driver, err error) {
 	invariant.Always(state != nil, "An operating-system IO backend has caller-owned state.")
 	invariant.Always(len(memory.Timeouts) > 0,
 		"An operating-system IO backend has timeout capacity.")
@@ -135,16 +133,16 @@ func New_Operating_System_IO(
 	invariant.Always(len(memory.Platform_Operations) > 0,
 		"An operating-system IO backend has platform-operation capacity.")
 	if entries == 0 {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{},
+		return nbio.IO{}, time.Timeline{}, time.Driver{},
 			scheduler_entries_outside_range
 	}
 	if entries > 4095 {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{},
+		return nbio.IO{}, time.Timeline{}, time.Driver{},
 			scheduler_entries_outside_range
 	}
 	platform, initialize_err := platform_initialize(entries, flags)
 	if initialize_err != nil {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{}, initialize_err
+		return nbio.IO{}, time.Timeline{}, time.Driver{}, initialize_err
 	}
 	for index := range memory.Operations {
 		memory.Operations[index] = Operating_System_Operation{}
@@ -173,12 +171,10 @@ func New_Operating_System_IO(
 	operating_system_wire_timer(state, &pump)
 	operating_system_wire_socket(state, &loop.Network)
 	operating_system_wire_close(&loop)
-	system = ambient
-	operating_system_wire_effects(state, &system)
+	operating_system_wire_effects(state, &loop)
 	operating_system_wire_platform(state, &loop)
 	time.Timeline_Invariants(pump, "new_operating_system_io.pump")
-	os.OS_Invariants(system, "new_operating_system_io.system")
-	return loop, pump, operating_system_to_driver(state), system, nil
+	return loop, pump, operating_system_to_driver(state), nil
 }
 
 // Arm completion through idle-to-armed lifecycle edge, same edge virtual timeline stamp
@@ -194,17 +190,16 @@ func operating_system_submit(completion *time.Completion) {
 	completion.Armed = true
 }
 
-// Wire signal watch and spawn onto OS surface that own them. Both retire on same completed queue
+// Wire signal watch and spawn onto IO surface that own them. Both retire on same completed queue
 // every IO operation use, thus one timeline hold whole run.
-func operating_system_wire_effects(state *Operating_System, system *os.OS) {
-	system.State = unsafe.Pointer(state)
-	system.Watch_Signal = operating_system_watch_signal_procedure
-	system.Spawn = operating_system_spawn_procedure
+func operating_system_wire_effects(state *Operating_System, loop *nbio.IO) {
+	loop.Watch_Signal = operating_system_watch_signal_procedure
+	loop.Spawn = operating_system_spawn_procedure
 }
 
 func operating_system_watch_signal_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, signal os.Signal,
-	deadline time.Duration, callback os.Signal_Callback,
+	state_pointer unsafe.Pointer, completion *time.Completion, signal nbio.Signal,
+	deadline time.Duration, callback nbio.Signal_Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
 	invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
@@ -214,8 +209,8 @@ func operating_system_watch_signal_procedure(
 }
 
 func operating_system_spawn_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, request os.Process_Request,
-	deadline time.Duration, callback os.Process_Callback,
+	state_pointer unsafe.Pointer, completion *time.Completion, request nbio.Process_Request,
+	deadline time.Duration, callback nbio.Process_Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
 	invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
@@ -243,7 +238,7 @@ type Spawn struct {
 	// Completion is caller-owned completion result is delivered on.
 	Completion *time.Completion
 	// Callback is typed callback run once result is whole.
-	Callback os.Process_Callback
+	Callback nbio.Process_Callback
 	// Started is moment child was forked, for wall-time measurement.
 	Started time.Monotonic_Moment
 	// Exit_Descriptor is Linux pidfd polled for exit, or -1 on Darwin.
@@ -261,9 +256,9 @@ type Spawn struct {
 	// Error_Buffer receive one standard-error pass.
 	Error_Buffer []byte
 	// Result accumulate captured output, exit code, and usage.
-	Result os.Process_Result
+	Result nbio.Process_Result
 	// Request hold caller live output sinks.
-	Request os.Process_Request
+	Request nbio.Process_Request
 	// Exit_Completion wait for child to exit.
 	Exit_Completion time.Completion
 	// Output_Completion read one standard-output pass.
@@ -300,14 +295,14 @@ type Spawn struct {
 // Start command of request and arm every operation that finish it: one read for each output
 // pipe, one write for input, exit watch, and deadline. Nothing run off loop thread.
 func operating_system_spawn(
-	state *Operating_System, completion *time.Completion, request os.Process_Request,
-	deadline time.Duration, callback os.Process_Callback,
+	state *Operating_System, completion *time.Completion, request nbio.Process_Request,
+	deadline time.Duration, callback nbio.Process_Callback,
 ) {
 	spawn, start_err := process_start(state, request)
 	if start_err != nil {
 		completion.Callback = func(_ *time.Completion) {
 			state.Extension_Submitted--
-			callback(completion, os.Process_Result{}, start_err)
+			callback(completion, nbio.Process_Result{}, start_err)
 		}
 		operating_system_completion_add(state, completion)
 		return
@@ -333,7 +328,7 @@ func operating_system_spawn(
 // Fork child with its three pipes and return tracking entry. Every descriptor is released on
 // failure part-way through, thus failed start leak nothing.
 func process_start(
-	state *Operating_System, request os.Process_Request,
+	state *Operating_System, request nbio.Process_Request,
 ) (spawn *Spawn, err error) {
 	path, path_err := executable_path(request.Path, operating_system_search_path(request))
 	if path_err != nil {
@@ -379,7 +374,7 @@ func process_start(
 // hold writer for its own standard input, and close of parent end would never give it
 // end-of-file.
 func process_pipes(
-	request os.Process_Request,
+	request nbio.Process_Request,
 ) (spawn *Spawn, child []uintptr, err error) {
 	input_read, input_write, input_err := pipe_open()
 	if input_err != nil {
@@ -443,7 +438,7 @@ func process_argv(path string, arguments []string) (argv []string) {
 // Report PATH a spawn resolve bare command name against. Request carrying its own environment
 // resolve against PATH of that environment, thus parent PATH cannot surprise caller. Request with
 // no environment inherit parent PATH.
-func operating_system_search_path(request os.Process_Request) (search string) {
+func operating_system_search_path(request nbio.Process_Request) (search string) {
 	if request.Environment == nil {
 		search, _ = syscall.Getenv("PATH")
 		return search
@@ -1726,8 +1721,8 @@ func operating_system_deinitialize(state *Operating_System) {
 
 // Register watcher for signal and start OS notification for it.
 func operating_system_watch_signal(
-	state *Operating_System, completion *time.Completion, kind os.Signal,
-	deadline time.Duration, callback os.Signal_Callback,
+	state *Operating_System, completion *time.Completion, kind nbio.Signal,
+	deadline time.Duration, callback nbio.Signal_Callback,
 ) {
 	operating_system_signal_ensure(state)
 	system := signal_to_operating_system(kind)
@@ -1749,8 +1744,8 @@ func operating_system_signal_ensure(state *Operating_System) {
 }
 
 // Map backend-independent signal to its OS signal.
-func signal_to_operating_system(kind os.Signal) (system syscall.Signal) {
-	if kind == os.SIGNAL_INTERRUPT {
+func signal_to_operating_system(kind nbio.Signal) (system syscall.Signal) {
+	if kind == nbio.SIGNAL_INTERRUPT {
 		return syscall.SIGINT
 	}
 	return syscall.SIGTERM
@@ -1802,7 +1797,7 @@ func operating_system_expire_signals(state *Operating_System, now time.Monotonic
 		expired.Completion.Callback = func(_ *time.Completion) {
 			state.Extension_Submitted--
 			expired.Callback(
-				expired.Completion, os.SIGNAL_EXPIRED, time.Deadline_Exceeded,
+				expired.Completion, nbio.SIGNAL_EXPIRED, time.Deadline_Exceeded,
 			)
 		}
 		operating_system_completion_add(state, expired.Completion)
