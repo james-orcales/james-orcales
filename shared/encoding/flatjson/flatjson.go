@@ -1,79 +1,234 @@
-// Package flatjson encodes Go values as FLAT JSON: a nested struct field is not emitted as
-// a nested object but flattened into the parent, its leaves keyed by the field path joined
-// with an underscore (Addr.City becomes "addr_city").
-//
-//	type Place struct {
-//	    Name string  `json:"name"`
-//	    Addr Address `json:"addr"`
-//	}
-//	// flatjson.Marshal(place) => {"name":"...","addr_city":"...","addr_zip":...}
-//
-// Flat means flat (see documentation/resources/kellybrazil.*): the output is an object, or a
-// top-level array of objects, with NO further nesting. The package is encode-only — there is
-// no Unmarshal — because flattening cannot be inverted: a delimiter-joined key is not
-// self-describing, and a nil sub-object has no flat key to carry its absence, so a round trip
-// cannot be lossless. For data you read back, use nested encoding/json; see README.md.
-//
-// Struct nesting flattens to prefixed keys; scalars and scalar slices pass through; a
-// json.Marshaler (such as time.Time) is a leaf. Anything that would nest and cannot flatten —
-// a map, or a slice of structs — is a marshal error, not silent nesting. Nothing is ever
-// dropped: a nil pointer emits null (a nested nil emits null for each of its leaf keys), and
-// two fields producing the same key are a marshal error. Embedded structs of an exported type
-// promote without a path segment, matching encoding/json. The tree is walked with an explicit
-// stack because the house style bans recursion.
+// Package flatjson writes one flat JSON object, or one array of flat objects.
+// Nested struct paths become underscore-separated keys. Maps and nested arrays stay rejected.
 package flatjson
 
 import (
-	"encoding"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
-	"strings"
 
-	invariant_flatjson "local/james-orcales/shared/invariant/flatjson"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/strconv"
+	"local/james-orcales/shared/strings"
 )
 
-// The path-segment joiner: Addr.City becomes "addr_city".
+// KEY_SEPARATOR preserves the external flat-json path convention.
 const KEY_SEPARATOR = "_"
 
-// One node of the explicit DFS stack that stands in for recursion through the struct tree.
-type Frame struct {
-	// Structure is the struct value whose fields this frame is walking.
-	Structure reflect.Value
-	// Index is the next field to visit; advancing it before descending into a child
-	// preserves in-place depth-first order.
-	Index int
-	// Prefix is the key prefix accumulated from the ancestor path.
-	Prefix string
-	// Null marks a subtree under a nil pointer: its leaves emit null rather than a value,
-	// so the key set stays stable whether or not the pointer is nil.
-	Null bool
+// FRAME_COUNT_MAXIMUM bounds hostile reflected nesting independently from output size.
+const FRAME_COUNT_MAXIMUM = 64
+
+// FRAME_COUNT_MINIMUM keeps one root while traversal is active.
+const FRAME_COUNT_MINIMUM = 1
+
+// JSON_ESCAPE_SIZE is one forced four-digit Unicode escape.
+const JSON_ESCAPE_SIZE = 6
+
+// NUMBER_BASE fixes JSON integers to decimal text.
+const NUMBER_BASE = strconv.DECIMAL_BASE
+
+// MARSHALER_INPUT_COUNT includes one receiver.
+const MARSHALER_INPUT_COUNT = 1
+
+// MARSHALER_OUTPUT_COUNT includes bytes and error.
+const MARSHALER_OUTPUT_COUNT = 2
+
+// MARSHALER_BYTES_OUTPUT is encoded bytes.
+const MARSHALER_BYTES_OUTPUT = 0
+
+// MARSHALER_ERROR_OUTPUT is method failure.
+const MARSHALER_ERROR_OUTPUT = 1
+
+// MARSHAL_JSON_NAME avoids importing the interface package only to identify its method.
+const MARSHAL_JSON_NAME = "MarshalJSON"
+
+// MARSHAL_TEXT_NAME avoids importing the interface package only to identify its method.
+const MARSHAL_TEXT_NAME = "MarshalText"
+
+// IMPOSSIBLE_DATA_SIZE separates errors from the smallest valid JSON document.
+const IMPOSSIBLE_DATA_SIZE = 1
+
+// Data is either empty on error or one complete bounded JSON document.
+type Data []byte
+
+// Data_Invariants excludes the byte count no complete JSON value can have.
+func Data_Invariants(value Data, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM,
+			IMPOSSIBLE_DATA_SIZE, IMPOSSIBLE_DATA_SIZE,
+			IMPOSSIBLE_DATA_SIZE, IMPOSSIBLE_DATA_SIZE,
+		).
+		Ensure()
 }
 
-// Marshal encodes value as flat JSON: a flat object for a struct, or — the resource's other
-// allowed top-level shape — a flat array for a slice or array of them. value may be a pointer.
-func Marshal(value any) (data []byte, err error) {
+// Field_Index includes root and final struct field boundaries.
+type Field_Index int
+
+// Field_Index_Invariants matches bounded reflected struct width.
+func Field_Index_Invariants(value Field_Index, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// IMPOSSIBLE_PREFIX_SIZE excludes a path that cannot hold a name and separator.
+const IMPOSSIBLE_PREFIX_SIZE = 1
+
+// Prefix is empty at root or one bounded ancestor path ending in a separator.
+type Prefix string
+
+// Prefix_Invariants excludes the one-byte shape no nested path can produce.
+func Prefix_Invariants(value Prefix, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM,
+			IMPOSSIBLE_PREFIX_SIZE, IMPOSSIBLE_PREFIX_SIZE,
+			IMPOSSIBLE_PREFIX_SIZE, IMPOSSIBLE_PREFIX_SIZE,
+		).
+		Ensure()
+}
+
+// KEY_SIZE_MINIMUM is one exported Go field name byte.
+const KEY_SIZE_MINIMUM = 1
+
+// Key is one nonempty bounded flattened field path.
+type Key string
+
+// Key_Invariants rejects empty object member names from generated field paths.
+func Key_Invariants(value Key, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), KEY_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Json_Text is bounded string content before JSON quoting.
+type Json_Text string
+
+// Json_Text_Invariants includes empty string values and largest hostile inputs.
+func Json_Text_Invariants(value Json_Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// NONEMPTY_TEXT_SIZE_MINIMUM is one output byte.
+const NONEMPTY_TEXT_SIZE_MINIMUM = 1
+
+// Nonempty_Text is one bounded fragment copied into the encoder.
+type Nonempty_Text string
+
+// Nonempty_Text_Invariants rejects writes that cannot advance output.
+func Nonempty_Text_Invariants(value Nonempty_Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), NONEMPTY_TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Frame owns one explicit DFS position so no recursive call can consume an unbounded stack.
+type Frame struct {
+	// Structure stays reflective because generated struct shapes have no static type.
+	Structure reflect.Value
+	// Index includes the end boundary needed to pop a completed frame.
+	Index Field_Index
+	// Prefix carries the already-validated ancestor path.
+	Prefix Prefix
+	// Null preserves leaf keys beneath an absent pointer.
+	Null strings.Boolean
+}
+
+// Frame_Invariants composes one bounded traversal position.
+func Frame_Invariants(value Frame, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Structure.IsValid(), "A traversal frame holds a valid structure.",
+	)
+	Field_Index_Invariants(value.Index, namespace)
+	Prefix_Invariants(value.Prefix, namespace)
+	strings.Boolean_Invariants(value.Null, namespace)
+}
+
+// Frames is the single bounded ownership stack for one traversal.
+type Frames []Frame
+
+// Frames_Invariants prevents reflection depth from becoming process exhaustion.
+func Frames_Invariants(value Frames, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), FRAME_COUNT_MINIMUM, FRAME_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Encoder is the nonnil handle shared by bounded, nonrecursive encoding stages.
+type Encoder *strings.Builder
+
+// Encoder_Invariants rejects missing storage before any stage mutates it.
+func Encoder_Invariants(value Encoder, _ invariant.Namespace) {
+	invariant.Always(value != nil, "An Encoder has storage.")
+}
+
+// Marshaler_Kind selects direct JSON, quoted text, or ordinary scalar encoding.
+type Marshaler_Kind int
+
+// Marshaler_Kind_Invariants keeps method precedence explicit.
+func Marshaler_Kind_Invariants(value Marshaler_Kind, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Int(
+			int(value), int(MARSHALER_NONE), int(MARSHALER_JSON), int(MARSHALER_TEXT),
+		).
+		Ensure()
+}
+
+// Method_Kind selects one method that is known to exist.
+type Method_Kind int
+
+// Method_Kind_Invariants excludes ordinary scalar encoding from method invocation.
+func Method_Kind_Invariants(value Method_Kind, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_Int(int(value), int(MARSHALER_JSON), int(MARSHALER_TEXT)).
+		Ensure()
+}
+
+// MARSHALER_NONE uses ordinary scalar encoding.
+const MARSHALER_NONE Marshaler_Kind = 0
+
+// MARSHALER_JSON delegates unquoted JSON.
+const MARSHALER_JSON Marshaler_Kind = 1
+
+// MARSHALER_TEXT delegates text and then quotes it.
+const MARSHALER_TEXT Marshaler_Kind = 2
+
+// Marshal owns output because callers cannot know reflection-expanded size beforehand.
+func Marshal(value any) (data Data, err error) {
+	defer func() { Data_Invariants(data, "marshal.data") }()
 	root := reflect.ValueOf(value)
-	for root.Kind() == reflect.Pointer {
+	for depth := 0; root.IsValid() && root.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return nil, errors.New("flatjson: pointer nesting exceeds limit")
+		}
 		if root.IsNil() {
 			return nil, errors.New("flatjson: Marshal of a nil pointer")
 		}
 		root = root.Elem()
 	}
-	if root.Kind() == reflect.Slice {
-		return marshal_array(root)
-	}
-	if root.Kind() == reflect.Array {
-		return marshal_array(root)
-	}
-	if root.Kind() != reflect.Struct {
+	if !root.IsValid() {
 		return nil, errors.New("flatjson: Marshal requires a struct or a slice of them")
 	}
-	return marshal_object(root)
+	var builder strings.Builder
+	switch root.Kind() {
+	case reflect.Slice, reflect.Array:
+		err = marshal_array(&builder, root)
+	case reflect.Struct:
+		err = marshal_object(&builder, root)
+	default:
+		return nil, errors.New("flatjson: Marshal requires a struct or a slice of them")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return Data(strings.Builder_Bytes(&builder)), nil
 }
 
-// Marshal_Write encodes value as flat JSON and writes it to writer.
+// Marshal_Write keeps writer failure separate from reflection failure.
 func Marshal_Write(writer io.Writer, value any) (err error) {
 	data, marshal_err := Marshal(value)
 	if marshal_err != nil {
@@ -89,261 +244,538 @@ func Marshal_Write(writer io.Writer, value any) (err error) {
 	return nil
 }
 
-// Encodes one struct as a flat JSON object.
-func marshal_object(root reflect.Value) (data []byte, err error) {
-	data = []byte{'{'}
-	data, err = flatten_struct(data, root, map[string]struct{}{})
-	if err != nil {
-		return nil, err
+func marshal_object(builder Encoder, root reflect.Value) (err error) {
+	Encoder_Invariants(builder, "marshal_object.builder")
+	if root.NumField() > strings.TEXT_SIZE_MAXIMUM {
+		return errors.New("flatjson: structure field count exceeds limit")
 	}
-	data = append(data, '}')
-	invariant_flatjson.Always(data[0] == '{', "A marshalled object opens with a brace.")
-	invariant_flatjson.Always(
-		data[len(data)-1] == '}', "A marshalled object closes with a brace.")
-	return data, nil
+	if err = write_text(builder, "{"); err != nil {
+		return err
+	}
+	if err = flatten_struct(builder, root); err != nil {
+		return err
+	}
+	if err = write_text(builder, "}"); err != nil {
+		return err
+	}
+	content := strings.Builder_Bytes(builder)
+	invariant.Always(content[0] == '{', "A marshalled object opens with a brace.")
+	invariant.Always(
+		content[len(content)-1] == '}', "A marshalled object closes with a brace.",
+	)
+	return nil
 }
 
-// Encodes a slice or array as a top-level JSON array of flat elements — the array-of-objects
-// shape the resource allows.
-func marshal_array(root reflect.Value) (data []byte, err error) {
-	data = []byte{'['}
+func marshal_array(builder Encoder, root reflect.Value) (err error) {
+	Encoder_Invariants(builder, "marshal_array.builder")
+	if root.Len() > strings.TEXT_SIZE_MAXIMUM {
+		return errors.New("flatjson: array element count exceeds limit")
+	}
+	if err = write_text(builder, "["); err != nil {
+		return err
+	}
 	for index := 0; index < root.Len(); index++ {
 		if index > 0 {
-			data = append(data, ',')
+			if err = write_text(builder, ","); err != nil {
+				return err
+			}
 		}
-		data, err = marshal_element(data, root.Index(index))
-		if err != nil {
-			return nil, err
+		if err = marshal_element(builder, root.Index(index)); err != nil {
+			return err
 		}
 	}
-	data = append(data, ']')
-	invariant_flatjson.Always(data[0] == '[', "A marshalled array opens with a bracket.")
-	invariant_flatjson.Always(
-		data[len(data)-1] == ']', "A marshalled array closes with a bracket.")
-	return data, nil
+	if err = write_text(builder, "]"); err != nil {
+		return err
+	}
+	content := strings.Builder_Bytes(builder)
+	invariant.Always(content[0] == '[', "A marshalled array opens with a bracket.")
+	invariant.Always(
+		content[len(content)-1] == ']', "A marshalled array closes with a bracket.",
+	)
+	return nil
 }
 
-// Encodes one array element: a flat object for a struct, otherwise a flat scalar.
-func marshal_element(destination []byte, value reflect.Value) (output []byte, err error) {
-	for value.Kind() == reflect.Pointer {
+func marshal_element(builder Encoder, value reflect.Value) (err error) {
+	Encoder_Invariants(builder, "marshal_element.builder")
+	for depth := 0; value.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return errors.New("flatjson: pointer nesting exceeds limit")
+		}
 		if value.IsNil() {
-			return append(destination, 'n', 'u', 'l', 'l'), nil
+			return write_text(builder, "null")
 		}
 		value = value.Elem()
 	}
 	if is_leaf(value.Type()) {
-		return marshal_flat_value(destination, value)
+		return marshal_flat_value(builder, value)
 	}
-	destination = append(destination, '{')
-	destination, err = flatten_struct(destination, value, map[string]struct{}{})
-	if err != nil {
-		return nil, err
+	if value.Kind() != reflect.Struct {
+		return errors.New("flatjson: array element is not flat")
 	}
-	return append(destination, '}'), nil
+	if err = write_text(builder, "{"); err != nil {
+		return err
+	}
+	if err = flatten_struct(builder, value); err != nil {
+		return err
+	}
+	return write_text(builder, "}")
 }
 
-// Appends a single flat scalar value, rejecting anything that would nest.
-func marshal_flat_value(destination []byte, value reflect.Value) (output []byte, err error) {
-	if !is_flat_leaf(value.Type()) {
-		return nil, errors.New("flatjson: array element is not flat")
+func marshal_flat_value(builder Encoder, value reflect.Value) (err error) {
+	Encoder_Invariants(builder, "marshal_flat_value.builder")
+	for depth := 0; value.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return errors.New("flatjson: pointer nesting exceeds limit")
+		}
+		if value.IsNil() {
+			return write_text(builder, "null")
+		}
+		value = value.Elem()
 	}
-	raw, marshal_err := json.Marshal(value.Interface())
-	if marshal_err != nil {
-		return nil, marshal_err
+	switch value.Kind() {
+	case reflect.Slice, reflect.Array:
+	default:
+		return marshal_scalar(builder, value)
 	}
-	return append(destination, raw...), nil
+	if value.Kind() == reflect.Slice {
+		if value.IsNil() {
+			return write_text(builder, "null")
+		}
+	}
+	if value.Len() > strings.TEXT_SIZE_MAXIMUM {
+		return errors.New("flatjson: scalar array element count exceeds limit")
+	}
+	if err = write_text(builder, "["); err != nil {
+		return err
+	}
+	for index := 0; index < value.Len(); index++ {
+		if index > 0 {
+			if err = write_text(builder, ","); err != nil {
+				return err
+			}
+		}
+		if err = marshal_scalar(builder, value.Index(index)); err != nil {
+			return err
+		}
+	}
+	return write_text(builder, "]")
 }
 
-// Walks root depth-first with an explicit stack, appending each leaf as a "key":value pair
-// and descending into nested and embedded structs. seen carries the keys already written so a
-// collision is rejected rather than emitted as a duplicate.
-func flatten_struct(
-	destination []byte, root reflect.Value, seen map[string]struct{},
-) (output []byte, err error) {
-	stack := []Frame{{Structure: root, Index: 0, Prefix: "", Null: false}}
+func marshal_scalar(builder Encoder, value reflect.Value) (err error) {
+	Encoder_Invariants(builder, "marshal_scalar.builder")
+	for depth := 0; value.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return errors.New("flatjson: pointer nesting exceeds limit")
+		}
+		if value.IsNil() {
+			return write_text(builder, "null")
+		}
+		value = value.Elem()
+	}
+	kind := marshaler_kind(value.Type())
+	if kind != MARSHALER_NONE {
+		return marshal_method(builder, value, Method_Kind(kind))
+	}
+	switch value.Kind() {
+	case reflect.Bool:
+		if value.Bool() {
+			return write_text(builder, "true")
+		}
+		return write_text(builder, "false")
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		var storage [strconv.INTEGER_TEXT_SIZE_MAXIMUM]byte
+		number := strconv.Signed_Integer(value.Int())
+		count := strconv.Format_Integer_Into(storage[:], number, NUMBER_BASE)
+		return write_text(builder, Nonempty_Text(storage[:count]))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		var storage [strconv.DIGIT_TEXT_SIZE_MAXIMUM]byte
+		number := strconv.Unsigned_Integer(value.Uint())
+		count := strconv.Format_Unsigned_Integer_Into(storage[:], number, NUMBER_BASE)
+		return write_text(builder, Nonempty_Text(storage[:count]))
+	case reflect.Float32, reflect.Float64:
+		formatted := fmt.Sprint(value.Interface())
+		switch formatted {
+		case "NaN", "+Inf", "-Inf":
+			return errors.New("flatjson: unsupported floating-point value")
+		}
+		return write_text(builder, Nonempty_Text(formatted))
+	case reflect.String:
+		if value.Len() > strings.TEXT_SIZE_MAXIMUM {
+			return errors.New("flatjson: string exceeds limit")
+		}
+		return append_json_string(builder, Json_Text(value.String()))
+	}
+	return errors.New("flatjson: value is not flat")
+}
+
+// Reflection lookup retains json.Marshaler precedence without importing banned encoders.
+func marshal_method(
+	builder Encoder, value reflect.Value, kind Method_Kind,
+) (err error) {
+	Encoder_Invariants(builder, "marshal_method.builder")
+	Method_Kind_Invariants(kind, "marshal_method.kind")
+	name := MARSHAL_JSON_NAME
+	if kind == Method_Kind(MARSHALER_TEXT) {
+		name = MARSHAL_TEXT_NAME
+	}
+	receiver := value
+	method := receiver.MethodByName(name)
+	if !method.IsValid() {
+		pointer := reflect.New(value.Type())
+		pointer.Elem().Set(value)
+		receiver = pointer
+		method = receiver.MethodByName(name)
+	}
+	if !method.IsValid() {
+		return errors.New("flatjson: marshaler method is unavailable")
+	}
+	results := method.Call(nil)
+	if !results[MARSHALER_ERROR_OUTPUT].IsNil() {
+		method_err, valid := results[MARSHALER_ERROR_OUTPUT].Interface().(error)
+		if !valid {
+			return errors.New("flatjson: marshaler returned a non-error failure")
+		}
+		return method_err
+	}
+	raw := results[MARSHALER_BYTES_OUTPUT].Bytes()
+	if len(raw) > strings.TEXT_SIZE_MAXIMUM {
+		return errors.New("flatjson: marshaler output exceeds limit")
+	}
+	if kind == Method_Kind(MARSHALER_TEXT) {
+		return append_json_string(builder, Json_Text(raw))
+	}
+	if len(raw) == 0 {
+		return errors.New("flatjson: marshaler returned empty JSON")
+	}
+	switch raw[0] {
+	case '{', '[':
+		return errors.New("flatjson: marshaler returned nested JSON")
+	}
+	return write_text(builder, Nonempty_Text(raw))
+}
+
+func flatten_struct(builder Encoder, root reflect.Value) (err error) {
+	Encoder_Invariants(builder, "flatten_struct.builder")
+	seen := map[Key]struct{}{}
+	stack := Frames{{Structure: root}}
 	for len(stack) > 0 {
+		Frames_Invariants(stack, "flatten_struct.stack")
 		depth := len(stack) - 1
 		current := stack[depth]
-		if current.Index >= current.Structure.NumField() {
+		Frame_Invariants(current, "flatten_struct.frame")
+		if int(current.Index) >= current.Structure.NumField() {
 			stack = stack[:depth]
 			continue
 		}
 		stack[depth].Index++
-		field := current.Structure.Type().Field(current.Index)
+		field := current.Structure.Type().Field(int(current.Index))
 		if field.PkgPath != "" {
 			continue
 		}
-		name, skip := field_json(field)
+		field_name, skip, field_err := field_json(field)
+		if field_err != nil {
+			return field_err
+		}
 		if skip {
 			continue
 		}
-		value := current.Structure.Field(current.Index)
-		prefix := current.Prefix
-		if is_embedded_struct(field) {
-			child, child_null := deref_struct(value)
-			child_null = child_null || current.Null
-			next := Frame{Structure: child, Index: 0, Prefix: prefix, Null: child_null}
-			stack = append(stack, next)
+		name := Key(field_name)
+		value := current.Structure.Field(int(current.Index))
+		structure, prefix, null, descend, child_err := nested_frame(
+			field, value, name, current.Prefix, current.Null,
+		)
+		if child_err != nil {
+			return child_err
+		}
+		if descend {
+			if len(stack) == FRAME_COUNT_MAXIMUM {
+				return errors.New("flatjson: structure nesting exceeds limit")
+			}
+			if structure.NumField() > strings.TEXT_SIZE_MAXIMUM {
+				return errors.New("flatjson: structure field count exceeds limit")
+			}
+			stack = append(stack, Frame{
+				Structure: structure, Prefix: prefix, Null: null,
+			})
 			continue
 		}
-		if !is_leaf(field.Type) {
-			child, child_null := deref_struct(value)
-			child_null = child_null || current.Null
-			is_struct := child.Kind() == reflect.Struct
-			invariant_flatjson.Always(
-				is_struct, "Marshal only descends into struct values.")
-			nested := prefix + name + KEY_SEPARATOR
-			next := Frame{Structure: child, Index: 0, Prefix: nested, Null: child_null}
-			stack = append(stack, next)
-			continue
+		key_text := string(current.Prefix) + string(name)
+		if len(key_text) > strings.TEXT_SIZE_MAXIMUM {
+			return errors.New("flatjson: flattened key exceeds limit")
 		}
-		destination, err = flatten_leaf(destination, prefix+name, value, current.Null, seen)
-		if err != nil {
-			return nil, err
+		key := Key(key_text)
+		if _, duplicate := seen[key]; duplicate {
+			message := "flatjson: key " + string(key) +
+				" set by two fields; rename a json tag"
+			return errors.New(message)
+		}
+		if len(seen) == strings.TEXT_SIZE_MAXIMUM {
+			return errors.New("flatjson: flattened field count exceeds limit")
+		}
+		seen[key] = struct{}{}
+		if err = flatten_leaf(builder, key, value, current.Null); err != nil {
+			return err
 		}
 	}
-	return destination, nil
+	return nil
 }
 
-// Dereferences a possibly-pointer struct value. null is true for a nil pointer, in which case
-// it returns a zero value of the element type so the walk can still emit its leaf keys (as
-// null), keeping the schema stable.
-func deref_struct(value reflect.Value) (structure reflect.Value, null bool) {
-	for value.Kind() == reflect.Pointer {
+func nested_frame(
+	field reflect.StructField, value reflect.Value, name Key,
+	prefix Prefix, parent_null strings.Boolean,
+) (
+	structure reflect.Value, child_prefix Prefix, child_null strings.Boolean,
+	descend strings.Boolean, err error,
+) {
+	defer func() {
+		Prefix_Invariants(child_prefix, "nested_frame.child_prefix")
+		strings.Boolean_Invariants(child_null, "nested_frame.child_null")
+		strings.Boolean_Invariants(descend, "nested_frame.descend")
+	}()
+	Key_Invariants(name, "nested_frame.name")
+	Prefix_Invariants(prefix, "nested_frame.prefix")
+	strings.Boolean_Invariants(parent_null, "nested_frame.parent_null")
+	child_prefix = prefix
+	child_null = parent_null
+	if !is_embedded_struct(field) {
+		if is_leaf(field.Type) {
+			return reflect.Value{}, child_prefix, child_null, false, nil
+		}
+		nested_text := string(prefix) + string(name) + KEY_SEPARATOR
+		if len(nested_text) > strings.TEXT_SIZE_MAXIMUM {
+			return reflect.Value{}, child_prefix, child_null, false,
+				errors.New("flatjson: flattened key exceeds limit")
+		}
+		child_prefix = Prefix(nested_text)
+	}
+	child, is_null, deref_err := deref_struct(value)
+	if deref_err != nil {
+		return reflect.Value{}, child_prefix, child_null, false, deref_err
+	}
+	if child.Kind() != reflect.Struct {
+		return reflect.Value{}, child_prefix, child_null, false,
+			errors.New("flatjson: Marshal only descends into struct values")
+	}
+	child_null = strings.Boolean(bool(is_null) || bool(parent_null))
+	return child, child_prefix, child_null, true, nil
+}
+
+func deref_struct(
+	value reflect.Value,
+) (structure reflect.Value, null strings.Boolean, err error) {
+	defer func() { strings.Boolean_Invariants(null, "deref_struct.null") }()
+	for depth := 0; value.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return reflect.Value{}, false,
+				errors.New("flatjson: pointer nesting exceeds limit")
+		}
 		if value.IsNil() {
 			element := value.Type().Elem()
-			for element.Kind() == reflect.Pointer {
+			for pointer_depth := 0; element.Kind() == reflect.Pointer; pointer_depth++ {
+				if pointer_depth == FRAME_COUNT_MAXIMUM {
+					return reflect.Value{}, false,
+						errors.New(
+							"flatjson: pointer nesting exceeds limit",
+						)
+				}
 				element = element.Elem()
 			}
-			return reflect.New(element).Elem(), true
+			return reflect.New(element).Elem(), true, nil
 		}
 		value = value.Elem()
 	}
-	return value, false
+	return value, false, nil
 }
 
-// Appends one "key":value pair for a leaf, rejecting a colliding key or a non-flat type. A
-// null leaf (under a nil subtree) emits null without consulting the value.
 func flatten_leaf(
-	destination []byte, key string, value reflect.Value, null bool, seen map[string]struct{},
-) (output []byte, err error) {
-	if _, duplicate := seen[key]; duplicate {
-		return nil, errors.New(
-			"flatjson: key " + key + " set by two fields; rename a json tag")
-	}
+	builder Encoder, key Key, value reflect.Value, null strings.Boolean,
+) (err error) {
+	Encoder_Invariants(builder, "flatten_leaf.builder")
+	Key_Invariants(key, "flatten_leaf.key")
+	strings.Boolean_Invariants(null, "flatten_leaf.null")
 	if !null {
 		if !is_flat_leaf(value.Type()) {
-			return nil, errors.New("flatjson: " + key + " is not flat")
+			return errors.New("flatjson: " + string(key) + " is not flat")
 		}
 	}
-	seen[key] = struct{}{}
-	destination = append_comma(destination)
-	destination = append_key(destination, key)
-	destination = append(destination, ':')
+	if builder.Storage[int(builder.Size)-1] != '{' {
+		if err = write_text(builder, ","); err != nil {
+			return err
+		}
+	}
+	if err = append_json_string(builder, Json_Text(key)); err != nil {
+		return err
+	}
+	if err = write_text(builder, ":"); err != nil {
+		return err
+	}
 	if null {
-		return append(destination, 'n', 'u', 'l', 'l'), nil
+		return write_text(builder, "null")
 	}
-	invariant_flatjson.Always(value.CanInterface(), "A marshalled leaf is an exported value.")
-	raw, marshal_err := json.Marshal(value.Interface())
-	if marshal_err != nil {
-		return nil, marshal_err
+	if !value.CanInterface() {
+		return errors.New("flatjson: marshalled leaf is not exported")
 	}
-	return append(destination, raw...), nil
+	return marshal_flat_value(builder, value)
 }
 
-// Separates object members: appends a comma unless the object is still empty.
-func append_comma(destination []byte) (output []byte) {
-	if len(destination) == 0 {
-		return destination
+func append_json_string(builder Encoder, text Json_Text) (err error) {
+	Encoder_Invariants(builder, "append_json_string.builder")
+	Json_Text_Invariants(text, "append_json_string.text")
+	if err = write_text(builder, "\""); err != nil {
+		return err
 	}
-	if destination[len(destination)-1] == '{' {
-		return destination
+	const HEXADECIMAL = "0123456789abcdef"
+	for _, character := range text {
+		switch character {
+		case '"', '\\':
+			escaped := Nonempty_Text([]rune{'\\', character})
+			if err = write_text(builder, escaped); err != nil {
+				return err
+			}
+		case '\b':
+			err = write_text(builder, "\\b")
+		case '\f':
+			err = write_text(builder, "\\f")
+		case '\n':
+			err = write_text(builder, "\\n")
+		case '\r':
+			err = write_text(builder, "\\r")
+		case '\t':
+			err = write_text(builder, "\\t")
+		case '<', '>', '&', '\u2028', '\u2029':
+			var escaped [JSON_ESCAPE_SIZE]byte
+			escaped[0] = '\\'
+			escaped[1] = 'u'
+			escaped[2] = HEXADECIMAL[character>>12]
+			escaped[3] = HEXADECIMAL[character>>8&0x0f]
+			escaped[4] = HEXADECIMAL[character>>4&0x0f]
+			escaped[5] = HEXADECIMAL[character&0x0f]
+			err = write_text(builder, Nonempty_Text(escaped[:]))
+		default:
+			if character < ' ' {
+				var escaped [JSON_ESCAPE_SIZE]byte
+				escaped[0] = '\\'
+				escaped[1] = 'u'
+				escaped[2] = '0'
+				escaped[3] = '0'
+				escaped[4] = HEXADECIMAL[character>>4&0x0f]
+				escaped[5] = HEXADECIMAL[character&0x0f]
+				err = write_text(builder, Nonempty_Text(escaped[:]))
+			} else {
+				err = write_text(builder, Nonempty_Text(string(character)))
+			}
+		}
+		if err != nil {
+			return err
+		}
 	}
-	return append(destination, ',')
+	return write_text(builder, "\"")
 }
 
-// Appends key as a JSON string. A string never fails to marshal; the guard is defensive.
-func append_key(destination []byte, key string) (output []byte) {
-	encoded, marshal_err := json.Marshal(key)
-	if marshal_err != nil {
-		return append(destination, '"', '"')
+func write_text(builder Encoder, text Nonempty_Text) (err error) {
+	Encoder_Invariants(builder, "write_text.builder")
+	Nonempty_Text_Invariants(text, "write_text.text")
+	start := int(builder.Size)
+	if len(text) > len(builder.Storage)-start {
+		return errors.New("flatjson: encoded output exceeds limit")
 	}
-	return append(destination, encoded...)
+	copy(builder.Storage[start:], text)
+	builder.Size += strings.Size_Value(len(text))
+	return nil
 }
 
-// Reads a field's json tag, returning its key name and whether the field is skipped. The tag's
-// options (omitempty and friends) are ignored: flatjson never drops a field, for a stable schema.
-func field_json(field reflect.StructField) (name string, skip bool) {
+func field_json(
+	field reflect.StructField,
+) (name Json_Text, skip strings.Boolean, err error) {
+	defer func() {
+		Json_Text_Invariants(name, "field_json.name")
+		strings.Boolean_Invariants(skip, "field_json.skip")
+	}()
 	tag := field.Tag.Get("json")
 	if tag == "-" {
-		return "", true
+		return "", true, nil
 	}
-	name = field.Name
-	leaf := strings.Split(tag, ",")[0]
+	leaf := tag
+	for index := 0; index < len(tag); index++ {
+		if tag[index] == ',' {
+			leaf = tag[:index]
+			break
+		}
+	}
+	selected := field.Name
 	if leaf != "" {
-		name = leaf
+		selected = leaf
 	}
-	return name, false
+	if len(selected) > strings.TEXT_SIZE_MAXIMUM {
+		return "", false, errors.New("flatjson: field name exceeds limit")
+	}
+	return Json_Text(selected), false, nil
 }
 
-// Reports whether field is an anonymous embedded struct, whose fields are promoted to the
-// parent object without a path segment.
-func is_embedded_struct(field reflect.StructField) (embedded bool) {
+func is_embedded_struct(field reflect.StructField) (embedded strings.Boolean) {
+	defer func() {
+		strings.Boolean_Invariants(embedded, "is_embedded_struct.embedded")
+	}()
 	if !field.Anonymous {
 		return false
 	}
 	return !is_leaf(field.Type)
 }
 
-// Reports whether t is encoded as a value rather than flattened: anything that is not a plain
-// struct, plus any struct that marshals itself (json.Marshaler / TextMarshaler).
-func is_leaf(t reflect.Type) (leaf bool) {
-	base := t
-	for base.Kind() == reflect.Pointer {
+func is_leaf(value_type reflect.Type) (leaf strings.Boolean) {
+	defer func() { strings.Boolean_Invariants(leaf, "is_leaf.leaf") }()
+	base := value_type
+	for depth := 0; base.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return false
+		}
 		base = base.Elem()
 	}
-	if implements_marshaler(base) {
+	if marshaler_kind(base) != MARSHALER_NONE {
 		return true
 	}
-	return base.Kind() != reflect.Struct
+	return strings.Boolean(base.Kind() != reflect.Struct)
 }
 
-// Reports whether a leaf type encodes to a flat value — a scalar or a slice/array of scalars —
-// keeping the output flat. A map or an array of objects is not flat.
-func is_flat_leaf(t reflect.Type) (flat bool) {
-	base := t
-	for base.Kind() == reflect.Pointer {
+func is_flat_leaf(value_type reflect.Type) (flat strings.Boolean) {
+	defer func() { strings.Boolean_Invariants(flat, "is_flat_leaf.flat") }()
+	base := value_type
+	for depth := 0; base.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return false
+		}
 		base = base.Elem()
 	}
-	if implements_marshaler(base) {
+	if marshaler_kind(base) != MARSHALER_NONE {
 		return true
 	}
 	if is_scalar_kind(base.Kind()) {
 		return true
 	}
-	if base.Kind() == reflect.Slice {
-		return is_scalar_element(base.Elem())
-	}
-	if base.Kind() == reflect.Array {
+	switch base.Kind() {
+	case reflect.Slice, reflect.Array:
 		return is_scalar_element(base.Elem())
 	}
 	return false
 }
 
-// Reports whether a slice or array element type is a scalar (or self-marshalling) value.
-func is_scalar_element(t reflect.Type) (scalar bool) {
-	base := t
-	for base.Kind() == reflect.Pointer {
+func is_scalar_element(value_type reflect.Type) (scalar strings.Boolean) {
+	defer func() { strings.Boolean_Invariants(scalar, "is_scalar_element.scalar") }()
+	base := value_type
+	for depth := 0; base.Kind() == reflect.Pointer; depth++ {
+		if depth == FRAME_COUNT_MAXIMUM {
+			return false
+		}
 		base = base.Elem()
 	}
-	if implements_marshaler(base) {
+	if marshaler_kind(base) != MARSHALER_NONE {
 		return true
 	}
 	return is_scalar_kind(base.Kind())
 }
 
-// Reports whether kind is a JSON scalar kind.
-func is_scalar_kind(kind reflect.Kind) (scalar bool) {
+func is_scalar_kind(kind reflect.Kind) (scalar strings.Boolean) {
+	defer func() { strings.Boolean_Invariants(scalar, "is_scalar_kind.scalar") }()
 	switch kind {
 	case reflect.Bool,
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
@@ -354,22 +786,54 @@ func is_scalar_kind(kind reflect.Kind) (scalar bool) {
 	return false
 }
 
-// Reports whether base or its pointer implements json.Marshaler or encoding.TextMarshaler.
-func implements_marshaler(base reflect.Type) (yes bool) {
+func marshaler_kind(base reflect.Type) (kind Marshaler_Kind) {
+	defer func() { Marshaler_Kind_Invariants(kind, "marshaler_kind.kind") }()
+	bytes_type := reflect.TypeOf([]byte(nil))
+	error_type := reflect.TypeFor[error]()
+	if method, found := base.MethodByName(MARSHAL_JSON_NAME); found {
+		if method.Type.NumIn() == MARSHALER_INPUT_COUNT {
+			if method.Type.NumOut() == MARSHALER_OUTPUT_COUNT {
+				if method.Type.Out(MARSHALER_BYTES_OUTPUT) == bytes_type {
+					if method.Type.Out(MARSHALER_ERROR_OUTPUT) == error_type {
+						return MARSHALER_JSON
+					}
+				}
+			}
+		}
+	}
 	pointer := reflect.PointerTo(base)
-	json_marshaler := reflect.TypeFor[json.Marshaler]()
-	text_marshaler := reflect.TypeFor[encoding.TextMarshaler]()
-	if base.Implements(json_marshaler) {
-		return true
+	if method, found := pointer.MethodByName(MARSHAL_JSON_NAME); found {
+		if method.Type.NumIn() == MARSHALER_INPUT_COUNT {
+			if method.Type.NumOut() == MARSHALER_OUTPUT_COUNT {
+				if method.Type.Out(MARSHALER_BYTES_OUTPUT) == bytes_type {
+					if method.Type.Out(MARSHALER_ERROR_OUTPUT) == error_type {
+						return MARSHALER_JSON
+					}
+				}
+			}
+		}
 	}
-	if pointer.Implements(json_marshaler) {
-		return true
+	if method, found := base.MethodByName(MARSHAL_TEXT_NAME); found {
+		if method.Type.NumIn() == MARSHALER_INPUT_COUNT {
+			if method.Type.NumOut() == MARSHALER_OUTPUT_COUNT {
+				if method.Type.Out(MARSHALER_BYTES_OUTPUT) == bytes_type {
+					if method.Type.Out(MARSHALER_ERROR_OUTPUT) == error_type {
+						return MARSHALER_TEXT
+					}
+				}
+			}
+		}
 	}
-	if base.Implements(text_marshaler) {
-		return true
+	if method, found := pointer.MethodByName(MARSHAL_TEXT_NAME); found {
+		if method.Type.NumIn() == MARSHALER_INPUT_COUNT {
+			if method.Type.NumOut() == MARSHALER_OUTPUT_COUNT {
+				if method.Type.Out(MARSHALER_BYTES_OUTPUT) == bytes_type {
+					if method.Type.Out(MARSHALER_ERROR_OUTPUT) == error_type {
+						return MARSHALER_TEXT
+					}
+				}
+			}
+		}
 	}
-	if pointer.Implements(text_marshaler) {
-		return true
-	}
-	return false
+	return MARSHALER_NONE
 }
