@@ -64,7 +64,9 @@ func Test_Size_Limits(t *testing.T) {
 
 // Test_Allocation proves every exported operation uses zero heap storage.
 func Test_Allocation(t *testing.T) {
-	fixture := new_allocation_fixture()
+	var work_storage [ALLOCATION_ELEMENT_COUNT]int
+	var stable_storage [ALLOCATION_ELEMENT_COUNT]stable_item
+	fixture := new_allocation_fixture(work_storage[:], stable_storage[:])
 	for _, check := range allocation_cases(fixture) {
 		t.Run(check.Name, func(t *testing.T) {
 			testify.Zero_Allocation(t, check.Call)
@@ -166,8 +168,10 @@ type allocation_check struct {
 }
 
 type allocation_fixture struct {
-	Work       [ALLOCATION_ELEMENT_COUNT]int
-	Stable     [ALLOCATION_ELEMENT_COUNT]stable_item
+	// Work and Stable view fixed arrays owned by Test_Allocation: slice headers allocate
+	// nothing and no fixed array sits in a struct field.
+	Work       []int
+	Stable     []stable_item
 	Search     search_state
 	Observable int
 }
@@ -283,8 +287,12 @@ func compare_target(
 	return slices.Comparison(state.Target - state.Values[position])
 }
 
-func new_allocation_fixture() (fixture *allocation_fixture) {
+func new_allocation_fixture(
+	work []int, stable []stable_item,
+) (fixture *allocation_fixture) {
 	fixture = &allocation_fixture{
+		Work:   work,
+		Stable: stable,
 		Search: search_state{Values: []int{1, 3, 5, 7}, Target: 5},
 	}
 	reset_allocation_fixture(fixture)
@@ -305,17 +313,17 @@ func allocation_cases(fixture *allocation_fixture) (cases []allocation_check) {
 	return []allocation_check{
 		{Name: "Sort", Call: func() {
 			reset_allocation_fixture(fixture)
-			sort.Sort(fixture.Work[:], compare_integer)
+			sort.Sort(fixture.Work, compare_integer)
 			fixture.Observable = fixture.Work[0]
 		}},
 		{Name: "Stable", Call: func() {
 			reset_allocation_fixture(fixture)
-			sort.Stable(fixture.Stable[:], compare_stable_item)
+			sort.Stable(fixture.Stable, compare_stable_item)
 			fixture.Observable = fixture.Stable[0].Key
 		}},
 		{Name: "Is_Sorted", Call: func() {
 			fixture.Observable = boolean_number(
-				sort.Is_Sorted(fixture.Work[:], compare_integer),
+				sort.Is_Sorted(fixture.Work, compare_integer),
 			)
 		}},
 		{Name: "Search", Call: func() {
