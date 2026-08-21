@@ -31,12 +31,9 @@
   "opt_out_assertion_mandate_packages": [
           "**",
           "!shared/**",
-          "shared/sim/aver/**",
           "shared/vsr/**",
           "shared/testify/**",
-          "shared/snap/**",
-          "shared/jlog/**",
-          "shared/sim/**",
+          "shared/sim/nbio/**",
 
           "!maddox/**",
           "!sloc/**",
