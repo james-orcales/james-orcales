@@ -238,8 +238,9 @@ corresponding helper for each field.
 
 ### Static
 
-A bundle body has straight-line code. A branch or a loop makes its assertion set conditional. Thus,
-registration rejects the bundle.
+A bundle body has straight-line code. A branch or a loop makes its assertion set conditional, thus
+registration rejects it. One exception: a defined pointer subject holds `if value == nil { return }`
+as first statement, no init, no else, one bare return. Any other shape or subject is rejected.
 
 ### Namespace Source
 

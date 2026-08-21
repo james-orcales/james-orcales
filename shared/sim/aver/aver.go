@@ -641,7 +641,7 @@ func recorder_check_registration(
 	recorder_collect_aliases(file_set, files, reg)
 	recorder_check_aliases(recorder, reg)
 	recorder_check_test_assertion_calls(recorder, file_set, test_files, reg)
-	recorder_check_bundle_control_flow(recorder, file_set, files, reg)
+	recorder_check_bundle_control_flow(recorder, file_set, files, index.Package_Types, reg)
 	recorder_check_bundle_literal_namespaces(recorder, file_set, files, reg)
 	recorder_check_duplicate_bundle_namespaces(recorder, file_set, files, reg)
 	recorder_check_assertion_bundle_contract(recorder, file_set, files, index, reg)
@@ -1690,9 +1690,11 @@ func recorder_report_registration_failure(
 // branching or looping statement (if, switch, type-switch, for, range, select) — banned,
 // because it would make the axes the bundle self-emits depend on runtime values the static scan
 // cannot read, silently under-registering coverage. A bundle body must be straight-line.
+// One exception: pointer bundle nil exit, see recorder_pointer_nil_guard.
 // Reports every violation under one banner and exits 1.
 func recorder_check_bundle_control_flow(
-	recorder *Recorder, file_set *token.FileSet, files []*ast.File, reg *Registration,
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
+	package_types map[string]ast.Expr, reg *Registration,
 ) {
 	var violations []string
 	for _, file := range files {
@@ -1708,7 +1710,11 @@ func recorder_check_bundle_control_flow(
 				continue
 			}
 			name := function.Name.Name
+			guard := recorder_pointer_nil_guard(function, package_types)
 			ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+				if guard != nil && node == ast.Node(guard) {
+					return false
+				}
 				if !ast_is_control_flow(node) {
 					return true
 				}
@@ -1928,6 +1934,57 @@ func recorder_is_builtin_type_name(name string) (yes bool) {
 	default:
 		return false
 	}
+}
+
+// Gives the one control-flow statement a bundle body may hold: `if value == nil { return }` at
+// first position, when value is a defined pointer type. Dereference of nil storage panics
+// before any assertion runs, thus pointer bundle exits first. Bare return holds no assertion,
+// thus no axis hides behind it. Any other shape, position, or subject type returns nil and
+// stays banned. No other exception exists and none is authorized.
+func recorder_pointer_nil_guard(
+	function *ast.FuncDecl, package_types map[string]ast.Expr,
+) (guard *ast.IfStmt) {
+	if function.Type.Params == nil || len(function.Type.Params.List) == 0 {
+		return nil
+	}
+	subject := function.Type.Params.List[0]
+	if len(subject.Names) != 1 {
+		return nil
+	}
+	subject_type, is_identifier := subject.Type.(*ast.Ident)
+	if !is_identifier {
+		return nil
+	}
+	if _, is_pointer := package_types[subject_type.Name].(*ast.StarExpr); !is_pointer {
+		return nil
+	}
+	if len(function.Body.List) == 0 {
+		return nil
+	}
+	statement, is_if := function.Body.List[0].(*ast.IfStmt)
+	if !is_if || statement.Init != nil || statement.Else != nil {
+		return nil
+	}
+	condition, is_binary := statement.Cond.(*ast.BinaryExpr)
+	if !is_binary || condition.Op != token.EQL {
+		return nil
+	}
+	left, is_identifier := condition.X.(*ast.Ident)
+	if !is_identifier || left.Name != subject.Names[0].Name {
+		return nil
+	}
+	right, is_identifier := condition.Y.(*ast.Ident)
+	if !is_identifier || right.Name != "nil" {
+		return nil
+	}
+	if len(statement.Body.List) != 1 {
+		return nil
+	}
+	exit, is_return := statement.Body.List[0].(*ast.ReturnStmt)
+	if !is_return || len(exit.Results) != 0 {
+		return nil
+	}
+	return statement
 }
 
 // Reports whether node is a branching or looping statement banned in a bundle body.

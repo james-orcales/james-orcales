@@ -997,6 +997,54 @@ func Number_Invariants(value Number, namespace aver.Namespace) {
 	if !strings.Contains(output.String(), "control flow") {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
+	pointee := "package fixture\n" +
+		"type Number int\n" +
+		"func Number_Invariants(value Number, namespace aver.Namespace) {\n" +
+		"\taver.Tree(value, namespace).Sometimes(value == 0, \"zero\").Ensure()\n}\n"
+	_, output, code = registered_fixture(pointee + `type Number_Pointer *Number
+func Number_Pointer_Invariants(value Number_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Number_Invariants(*value, namespace)
+}
+`)
+	if code != -1 {
+		t.Fatalf("pointer nil guard exit=%d output=%q", code, output.String())
+	}
+	_, output, code = registered_fixture(pointee + `type Number_Pointer *Number
+func Number_Pointer_Invariants(value Number_Pointer, namespace aver.Namespace) {
+	if value != nil {
+		Number_Invariants(*value, namespace)
+	}
+}
+`)
+	if code != 1 || !strings.Contains(output.String(), "control flow") {
+		t.Fatalf("pointer off-shape guard exit=%d output=%q", code, output.String())
+	}
+	_, output, code = registered_fixture(pointee + `type Number_Pointer *Number
+func Number_Pointer_Invariants(value Number_Pointer, namespace aver.Namespace) {
+	Number_Invariants(*value, namespace)
+	if value == nil {
+		return
+	}
+}
+`)
+	if code != 1 || !strings.Contains(output.String(), "control flow") {
+		t.Fatalf("pointer late guard exit=%d output=%q", code, output.String())
+	}
+	_, output, code = registered_fixture(`package fixture
+type Bytes []byte
+func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	aver.Tree(value, namespace).Sometimes(len(value) == 0, "empty").Ensure()
+}
+`)
+	if code != 1 || !strings.Contains(output.String(), "control flow") {
+		t.Fatalf("non-pointer nil guard exit=%d output=%q", code, output.String())
+	}
 }
 
 // Test_Bundles_Namespace_Source keeps a nested bundle namespace at its callsite.

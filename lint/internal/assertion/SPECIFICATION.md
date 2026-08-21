@@ -77,29 +77,17 @@ A struct type's helper directly calls the exact package-qualified _Invariants he
 Foreign, nested, or shadowed calls never substitute. A pointer field composes its pointee, and an
 immediate mutex is exempt.
 
-### Inherited Fields
-
-A defined type over a struct states each inherited field by a link of its own Tree or by a direct
-Always, because one tree holds a type at one position. A struct field has no inline form, thus the
-defined type composes it, through a defined type of its own when the field type is occupied.
-
 ### Defined Pointers
 
-Defined pointer whose pointee has helper calls that helper on dereferenced value. No exemption:
-struct pointee owes helper same as non-struct pointee. Defined pointer to struct also inherits
-its fields. Nil guard states pointer presence, never pointed value properties.
+Defined pointer helper body is exactly `if value == nil { return }` then
+`Base_Invariants(*value, namespace)`. Nothing else. Struct, non-struct, foreign pointee: same body.
+Pointee without helper or unnamed pointee is a diagnostic. No exemption exists, none is authorized.
 
 ### Embedded Fields
 
 An embedded field carries the same duty as a named one, and its name is the type it embeds. A
 pointer embeds the name of its pointee. Anonymity hides a field from a reader and never from the
 mandate.
-
-### Inline Form
-
-An inline statement is a Range or an Enum link whose subject is the field, or a direct singleton
-Always over the field. Only a Boolean field takes a Sometimes, because two values have no bound and
-no member. Another link states nothing about the field's domain and never counts.
 
 ### Always Condition
 
