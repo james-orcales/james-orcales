@@ -3,6 +3,7 @@
 
 New_Configuration validates minimum width, tab width, padding, pad character, and flags.
 Tab padding always forces left alignment. Configuration owns no output or process driver.
+A zero Configuration is unconfigured; a stored scalar outside its domain is a caller defect.
 
 # Source
 

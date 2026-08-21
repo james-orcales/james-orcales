@@ -33,14 +33,30 @@ func Test_Configuration(t *testing.T) {
 		_, status := tabwriter.New_Configuration(input)
 		testify.Equal_Values(t, tabwriter.STATUS_CONFIGURATION_INVALID, status)
 	}
-	corrupt := configuration
-	corrupt.Minimum_Width = tabwriter.Minimum_Width(TEST_WIDTH_NEGATIVE_ONE)
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
 	workspace := workspace_new()
 	_, status := tabwriter.Format_Into(
-		output[:], source_from(t, "x"), corrupt, workspace_from(&workspace),
+		output[:], source_from(t, "x"), tabwriter.Configuration{},
+		workspace_from(&workspace),
 	)
 	testify.Equal_Values(t, tabwriter.STATUS_CONFIGURATION_INVALID, status)
+	testify.False(t, bool(tabwriter.Configuration_Valid(tabwriter.Configuration{})))
+	// A stored width outside its validated domain is a caller defect, not a status.
+	corrupt := configuration
+	corrupt.Policy.Minimum_Width = tabwriter.Minimum_Width_Stored(TEST_WIDTH_NEGATIVE_ONE)
+	testify.Panics(t, func() {
+		tabwriter.Format_Into(
+			output[:], source_from(t, "x"), corrupt, workspace_from(&workspace),
+		)
+	})
+	tab_right := configuration
+	tab_right.Policy.Pad_Character = '\t'
+	tab_right.Policy.Flags = tabwriter.Flags_Stored(tabwriter.ALIGN_RIGHT)
+	_, status = tabwriter.Format_Into(
+		output[:], source_from(t, "x"), tab_right, workspace_from(&workspace),
+	)
+	testify.Equal_Values(t, tabwriter.STATUS_CONFIGURATION_INVALID, status)
+	test_policy_domains(t)
 }
 
 // Test_Source rejects oversize before workspace mutation.
@@ -205,6 +221,16 @@ func Test_Allocation(t *testing.T) {
 		configuration, configuration_status = tabwriter.New_Configuration(input)
 	})
 	testify.Equal_Values(t, tabwriter.STATUS_OK, configuration_status)
+	// Widths past 255 leave the runtime small-integer cache, so any boxing of stored
+	// policy shows up only here.
+	wide := input
+	wide.Minimum_Width = TEST_WIDTH_LARGE
+	testify.Zero_Allocation(t, func() {
+		configuration, configuration_status = tabwriter.New_Configuration(wide)
+	})
+	testify.Equal_Values(t, tabwriter.STATUS_OK, configuration_status)
+	configuration, configuration_status = tabwriter.New_Configuration(input)
+	testify.Equal_Values(t, tabwriter.STATUS_OK, configuration_status)
 	var configuration_valid tabwriter.Configuration_Validity
 	testify.Zero_Allocation(t, func() {
 		configuration_valid = tabwriter.Configuration_Valid(configuration)
@@ -239,7 +265,45 @@ func Test_Allocation(t *testing.T) {
 	test_format_branch_allocation(t)
 }
 
+// Every stored policy scalar has boundary branches in each namespace a policy passes
+// through, so one sweep drives every boundary through a source that reaches every
+// parser and renderer path.
+func test_policy_domains(t *testing.T) {
+	t.Helper()
+	source := source_from(t, "a\tb\tc\n\xffe\xff\t<t>&amp;\td\f\te\n\tx\v\t\t\n")
+	inputs := [...]tabwriter.Configuration_Input{
+		{},
+		{
+			Minimum_Width: TEST_WIDTH_ONE, Tab_Width: TEST_WIDTH_ONE,
+			Padding: TEST_WIDTH_ONE, Pad_Character: TEST_WIDTH_ONE,
+			Flags: tabwriter.FILTER_HTML,
+		},
+		{
+			Minimum_Width: TEST_WIDTH_TWO, Tab_Width: TEST_WIDTH_TWO,
+			Padding: TEST_WIDTH_TWO, Pad_Character: TEST_WIDTH_TWO,
+			Flags: tabwriter.STRIP_ESCAPE,
+		},
+		{
+			Minimum_Width: tabwriter.WIDTH_MAXIMUM, Tab_Width: tabwriter.WIDTH_MAXIMUM,
+			Padding:       tabwriter.WIDTH_MAXIMUM,
+			Pad_Character: tabwriter.Pad_Character(bits.WORD_8_MAXIMUM),
+			Flags:         tabwriter.FLAGS_MAXIMUM,
+		},
+		{Pad_Character: '\t', Flags: tabwriter.TAB_INDENT | tabwriter.DEBUG},
+	}
+	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
+	for _, input := range inputs {
+		configuration := configuration_from(t, input)
+		workspace := workspace_new()
+		tabwriter.Format_Into(output[:], source, configuration, workspace_from(&workspace))
+		tabwriter.Format_Into(output[:0], source, configuration, workspace_from(&workspace))
+	}
+}
+
 const TEST_WIDTH_ZERO = tabwriter.WIDTH_MINIMUM
+
+// TEST_WIDTH_LARGE exceeds the 256-entry small-integer cache the runtime boxes for free.
+const TEST_WIDTH_LARGE = tabwriter.Minimum_Width(300)
 const TEST_WIDTH_ONE = TEST_WIDTH_ZERO + utf8.CHARACTER_SIZE_MINIMUM
 const TEST_WIDTH_TWO = TEST_WIDTH_ONE + TEST_WIDTH_ONE
 const TEST_WIDTH_FOUR = TEST_WIDTH_TWO * TEST_WIDTH_TWO

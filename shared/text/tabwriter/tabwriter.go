@@ -255,62 +255,100 @@ func Configuration_Input_Invariants(
 	Flags_Invariants(value.Flags, namespace)
 }
 
-// Minimum_Width_Storage keeps caller mutation status-reportable.
-type Minimum_Width_Storage interface{}
+// Minimum_Width_Stored is a validated least cell width; a scalar so a width past
+// the runtime small-integer cache never boxes.
+type Minimum_Width_Stored int
 
-// Tab_Width_Storage keeps caller mutation status-reportable.
-type Tab_Width_Storage interface{}
+// Minimum_Width_Stored_Invariants keeps stored width inside the validated domain.
+func Minimum_Width_Stored_Invariants(value Minimum_Width_Stored, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), WIDTH_MINIMUM, WIDTH_MAXIMUM).
+		Ensure()
+}
 
-// Padding_Storage keeps caller mutation status-reportable.
-type Padding_Storage interface{}
+// Tab_Width_Stored is a validated tab display width.
+type Tab_Width_Stored int
 
-// Pad_Character_Storage keeps caller mutation status-reportable.
-type Pad_Character_Storage interface{}
+// Tab_Width_Stored_Invariants keeps stored width inside the validated domain.
+func Tab_Width_Stored_Invariants(value Tab_Width_Stored, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), WIDTH_MINIMUM, WIDTH_MAXIMUM).
+		Ensure()
+}
 
-// Flags_Storage keeps caller mutation status-reportable.
-type Flags_Storage interface{}
+// Padding_Stored is a validated extra cell width.
+type Padding_Stored int
+
+// Padding_Stored_Invariants keeps stored width inside the validated domain.
+func Padding_Stored_Invariants(value Padding_Stored, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), WIDTH_MINIMUM, WIDTH_MAXIMUM).
+		Ensure()
+}
+
+// Flags_Stored holds only defined formatting flags.
+type Flags_Stored uint
+
+// Flags_Stored_Invariants admits every combination of defined flags.
+func Flags_Stored_Invariants(value Flags_Stored, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint(uint(value), uint(bits.WORD_MINIMUM), uint(FLAGS_MAXIMUM)).
+		Ensure()
+}
+
+// Policy is the validated formatting policy the parser and renderer read. It carries
+// no marker: no unconfigured value reaches them, so a marker bundle here could never
+// reach its zero branch.
+type Policy struct {
+	// Minimum_Width is the least aligned cell width.
+	Minimum_Width Minimum_Width_Stored
+	// Tab_Width is the displayed width of tab padding.
+	Tab_Width Tab_Width_Stored
+	// Padding extends each aligned cell width.
+	Padding Padding_Stored
+	// Pad_Character fills non-tab padding.
+	Pad_Character Pad_Character
+	// Flags selects formatting rules.
+	Flags Flags_Stored
+}
+
+// Policy_Invariants composes every validated policy scalar once.
+func Policy_Invariants(value Policy, namespace aver.Namespace) {
+	Minimum_Width_Stored_Invariants(value.Minimum_Width, namespace)
+	Tab_Width_Stored_Invariants(value.Tab_Width, namespace)
+	Padding_Stored_Invariants(value.Padding, namespace)
+	Pad_Character_Invariants(value.Pad_Character, namespace)
+	Flags_Stored_Invariants(value.Flags, namespace)
+}
+
+// Configured marks a Configuration that passed construction; the zero value is unvalidated.
+type Configured uint8
+
+// Configured_Invariants lists the unvalidated zero value and the configured marker.
+func Configured_Invariants(value Configured, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(UNCONFIGURED), uint8(CONFIGURED)).
+		Ensure()
+}
+
+// UNCONFIGURED is the zero-value marker of a zero Configuration.
+const UNCONFIGURED Configured = 0
+
+// CONFIGURED marks a Configuration that passed New_Configuration.
+const CONFIGURED = UNCONFIGURED + 1
 
 // Configuration stores validated formatting policy by value.
 type Configuration struct {
-	// Minimum_Width stays shape-safe when caller corrupts its value.
-	Minimum_Width Minimum_Width_Storage
-	// Tab_Width stays shape-safe when caller corrupts its value.
-	Tab_Width Tab_Width_Storage
-	// Padding stays shape-safe when caller corrupts its value.
-	Padding Padding_Storage
-	// Pad_Character stays shape-safe when caller corrupts its value.
-	Pad_Character Pad_Character_Storage
-	// Flags stays shape-safe when caller corrupts its value.
-	Flags Flags_Storage
+	// Policy is meaningful only when Validated is CONFIGURED.
+	Policy Policy
+	// Validated separates a zero value from a constructed one.
+	Validated Configured
 }
 
-// Configuration_Invariants admits zero failure output and typed configured storage.
-func Configuration_Invariants(value Configuration, _ aver.Namespace) {
-	_, minimum_width_valid := value.Minimum_Width.(Minimum_Width)
-	_, tab_width_valid := value.Tab_Width.(Tab_Width)
-	_, padding_valid := value.Padding.(Padding)
-	_, pad_character_valid := value.Pad_Character.(Pad_Character)
-	_, flags_valid := value.Flags.(Flags)
-	aver.Always(
-		minimum_width_valid == (value.Minimum_Width != nil),
-		"Configuration minimum width has expected type.",
-	)
-	aver.Always(
-		tab_width_valid == (value.Tab_Width != nil),
-		"Configuration tab width has expected type.",
-	)
-	aver.Always(
-		padding_valid == (value.Padding != nil),
-		"Configuration padding has expected type.",
-	)
-	aver.Always(
-		pad_character_valid == (value.Pad_Character != nil),
-		"Configuration pad character has expected type.",
-	)
-	aver.Always(
-		flags_valid == (value.Flags != nil),
-		"Configuration flags have expected type.",
-	)
+// Configuration_Invariants admits zero failure output and marked configured policy.
+func Configuration_Invariants(value Configuration, namespace aver.Namespace) {
+	Policy_Invariants(value.Policy, namespace)
+	Configured_Invariants(value.Validated, namespace)
 }
 
 // Configuration_Validity reports whether visible storage remains bounded.
@@ -333,49 +371,13 @@ func Configuration_Valid(
 		Configuration_Validity_Invariants(valid, "configuration_valid.valid")
 	}()
 	Configuration_Invariants(configuration, "configuration_valid.configuration")
-	minimum_width, minimum_width_valid := configuration.Minimum_Width.(Minimum_Width)
-	tab_width, tab_width_valid := configuration.Tab_Width.(Tab_Width)
-	padding, padding_valid := configuration.Padding.(Padding)
-	pad_character, pad_character_valid := configuration.Pad_Character.(Pad_Character)
-	flags, flags_valid := configuration.Flags.(Flags)
-	if !minimum_width_valid {
+	if configuration.Validated != CONFIGURED {
 		return false
 	}
-	if !tab_width_valid {
-		return false
-	}
-	if !padding_valid {
-		return false
-	}
-	if !pad_character_valid {
-		return false
-	}
-	if !flags_valid {
-		return false
-	}
-	if minimum_width < WIDTH_MINIMUM {
-		return false
-	}
-	if minimum_width > WIDTH_MAXIMUM {
-		return false
-	}
-	if tab_width < WIDTH_MINIMUM {
-		return false
-	}
-	if tab_width > WIDTH_MAXIMUM {
-		return false
-	}
-	if padding < WIDTH_MINIMUM {
-		return false
-	}
-	if padding > WIDTH_MAXIMUM {
-		return false
-	}
-	if flags > FLAGS_MAXIMUM {
-		return false
-	}
-	if pad_character == '\t' {
-		if flags&ALIGN_RIGHT != Flags(bits.WORD_MINIMUM) {
+	// Width and flag domains are asserted by the bundle; only the cross-field rule
+	// that construction enforces can still be broken by a caller.
+	if configuration.Policy.Pad_Character == '\t' {
+		if Flags(configuration.Policy.Flags)&ALIGN_RIGHT != Flags(bits.WORD_MINIMUM) {
 			return false
 		}
 	}
@@ -1202,11 +1204,14 @@ func New_Configuration(
 		flags &^= ALIGN_RIGHT
 	}
 	configuration = Configuration{
-		Minimum_Width: input.Minimum_Width,
-		Tab_Width:     input.Tab_Width,
-		Padding:       input.Padding,
-		Pad_Character: input.Pad_Character,
-		Flags:         flags,
+		Policy: Policy{
+			Minimum_Width: Minimum_Width_Stored(input.Minimum_Width),
+			Tab_Width:     Tab_Width_Stored(input.Tab_Width),
+			Padding:       Padding_Stored(input.Padding),
+			Pad_Character: input.Pad_Character,
+			Flags:         Flags_Stored(flags),
+		},
+		Validated: CONFIGURED,
 	}
 	return configuration, STATUS_OK
 }
@@ -1260,10 +1265,10 @@ func Format_Into(
 	if bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))) {
 		return Output_Count(OUTPUT_SIZE_MINIMUM), STATUS_STORAGE_INVALID
 	}
-	line_count := parse_unchecked(source, configuration, &state)
+	line_count := parse_unchecked(source, configuration.Policy, &state)
 	var append_status Append_Status
 	count, append_status = render_unchecked(
-		nil, source, configuration, &state, line_count, false,
+		nil, source, configuration.Policy, &state, line_count, false,
 	)
 	if append_status != STATUS_OK {
 		return count, Format_Status(append_status)
@@ -1272,19 +1277,19 @@ func Format_Into(
 		return count, STATUS_OUTPUT_TOO_SMALL
 	}
 	count, append_status = render_unchecked(
-		destination, source, configuration, &state, line_count, true,
+		destination, source, configuration.Policy, &state, line_count, true,
 	)
 	return count, Format_Status(append_status)
 }
 
 func parse_unchecked(
-	source Source, configuration Configuration, workspace Workspace_Pointer,
+	source Source, policy Policy, workspace Workspace_Pointer,
 ) (line_count Parsed_Line_Count) {
 	defer func() {
 		Parsed_Line_Count_Invariants(line_count, "parse_unchecked.line_count")
 	}()
 	Source_Invariants(source, "parse_unchecked.source")
-	Configuration_Invariants(configuration, "parse_unchecked.configuration")
+	Policy_Invariants(policy, "parse_unchecked.policy")
 	Workspace_Pointer_Invariants(workspace, "parse_unchecked.workspace")
 	cell_start, segment_start := CELL_INDEX_MINIMUM, CELL_INDEX_MINIMUM
 	cell_width, cell_output_size := WIDTH_MINIMUM, OUTPUT_SIZE_MINIMUM
@@ -1295,7 +1300,7 @@ func parse_unchecked(
 		if end_character != End_Character(LINE_TERMINATOR_NONE) {
 			cell_output_size += int(escaped_output_size(
 				Input_Byte(character),
-				Active_End_Character(end_character), configuration,
+				Active_End_Character(end_character), policy,
 			))
 			if Input_Byte(character) == Input_Byte(end_character) {
 				cell_width += int(escaped_width(
@@ -1330,13 +1335,13 @@ func parse_unchecked(
 			}
 			continue
 		}
-		start_end := escape_start_unchecked(Input_Byte(character), configuration)
+		start_end := escape_start_unchecked(Input_Byte(character), policy)
 		if start_end != End_Character(LINE_TERMINATOR_NONE) {
 			cell_width += int(character_count(source[segment_start:index]))
 			end_character = start_end
 			segment_start = index + utf8.CHARACTER_SIZE_MINIMUM
 			cell_output_size += int(escape_start_output_size(
-				Escape_Start_Byte(character), configuration,
+				Escape_Start_Byte(character), policy,
 			))
 			continue
 		}
@@ -1394,15 +1399,15 @@ func parse_finish_unchecked(
 }
 
 func escape_start_unchecked(
-	character Input_Byte, configuration Configuration,
+	character Input_Byte, policy Policy,
 ) (end End_Character) {
 	defer func() { End_Character_Invariants(end, "escape_start_unchecked.end") }()
 	Input_Byte_Invariants(character, "escape_start_unchecked.character")
-	Configuration_Invariants(configuration, "escape_start_unchecked.configuration")
+	Policy_Invariants(policy, "escape_start_unchecked.policy")
 	if character == Input_Byte(ESCAPE) {
 		return End_Character(escape_end(Escape_Start_Byte(character)))
 	}
-	if configuration.Flags.(Flags)&FILTER_HTML == Flags(bits.WORD_MINIMUM) {
+	if Flags(policy.Flags)&FILTER_HTML == Flags(bits.WORD_MINIMUM) {
 		return End_Character(LINE_TERMINATOR_NONE)
 	}
 	if character == Input_Byte(ESCAPE_START_HTML_TAG) {
@@ -1417,18 +1422,17 @@ func escape_start_unchecked(
 func escaped_output_size(
 	character Input_Byte,
 	end_character Active_End_Character,
-	configuration Configuration,
+	policy Policy,
 ) (size Escape_Output_Size) {
 	defer func() {
 		Escape_Output_Size_Invariants(size, "escaped_output_size.size")
 	}()
 	Input_Byte_Invariants(character, "escaped_output_size.character")
 	Active_End_Character_Invariants(end_character, "escaped_output_size.end_character")
-	Configuration_Invariants(configuration, "escaped_output_size.configuration")
+	Policy_Invariants(policy, "escaped_output_size.policy")
 	if character == Input_Byte(end_character) {
 		if end_character == Active_End_Character(ESCAPE) {
-			if configuration.Flags.(Flags)&STRIP_ESCAPE !=
-				Flags(bits.WORD_MINIMUM) {
+			if Flags(policy.Flags)&STRIP_ESCAPE != Flags(bits.WORD_MINIMUM) {
 				return Escape_Output_Size(OUTPUT_SIZE_MINIMUM)
 			}
 		}
@@ -1477,16 +1481,15 @@ func escape_end(character Escape_Start_Byte) (end Active_End_Character) {
 }
 
 func escape_start_output_size(
-	character Escape_Start_Byte, configuration Configuration,
+	character Escape_Start_Byte, policy Policy,
 ) (size Escape_Output_Size) {
 	defer func() {
 		Escape_Output_Size_Invariants(size, "escape_start_output_size.size")
 	}()
 	Escape_Start_Byte_Invariants(character, "escape_start_output_size.character")
-	Configuration_Invariants(configuration, "escape_start_output_size.configuration")
+	Policy_Invariants(policy, "escape_start_output_size.policy")
 	if character == Escape_Start_Byte(ESCAPE) {
-		if configuration.Flags.(Flags)&STRIP_ESCAPE !=
-			Flags(bits.WORD_MINIMUM) {
+		if Flags(policy.Flags)&STRIP_ESCAPE != Flags(bits.WORD_MINIMUM) {
 			return Escape_Output_Size(OUTPUT_SIZE_MINIMUM)
 		}
 	}
@@ -1542,7 +1545,7 @@ func add_line_unchecked(
 func render_unchecked(
 	destination Output,
 	source Source,
-	configuration Configuration,
+	policy Policy,
 	workspace Workspace_Pointer,
 	line_count Parsed_Line_Count,
 	write Write_Output,
@@ -1550,7 +1553,7 @@ func render_unchecked(
 	defer func() { Append_Status_Invariants(status, "render_unchecked.status") }()
 	Output_Invariants(destination, "render_unchecked.destination")
 	Source_Invariants(source, "render_unchecked.source")
-	Configuration_Invariants(configuration, "render_unchecked.configuration")
+	Policy_Invariants(policy, "render_unchecked.policy")
 	Workspace_Pointer_Invariants(workspace, "render_unchecked.workspace")
 	Parsed_Line_Count_Invariants(line_count, "render_unchecked.line_count")
 	Write_Output_Invariants(write, "render_unchecked.write")
@@ -1560,7 +1563,7 @@ func render_unchecked(
 	for line_index := LINE_INDEX_MINIMUM; line_index < int(line_count); line_index++ {
 		var append_status Append_Status
 		offset, append_status = render_line_unchecked(
-			destination, source, configuration, workspace,
+			destination, source, policy, workspace,
 			Line_Index(line_index), line_count, write, offset,
 		)
 		if append_status != STATUS_OK {
@@ -1580,8 +1583,7 @@ func render_unchecked(
 			}
 		}
 		if terminator == '\f' {
-			if configuration.Flags.(Flags)&DEBUG !=
-				Flags(bits.WORD_MINIMUM) {
+			if Flags(policy.Flags)&DEBUG != Flags(bits.WORD_MINIMUM) {
 				for _, character := range [...]byte{'-', '-', '-', '\n'} {
 					var appended Appended_Offset
 					appended, append_status = append_byte_unchecked(
@@ -1603,7 +1605,7 @@ func render_unchecked(
 func render_line_unchecked(
 	destination Output,
 	source Source,
-	configuration Configuration,
+	policy Policy,
 	workspace Workspace_Pointer,
 	line_index Line_Index,
 	line_count Parsed_Line_Count,
@@ -1613,7 +1615,7 @@ func render_line_unchecked(
 	defer func() { Append_Status_Invariants(status, "render_line_unchecked.status") }()
 	Output_Invariants(destination, "render_line_unchecked.destination")
 	Source_Invariants(source, "render_line_unchecked.source")
-	Configuration_Invariants(configuration, "render_line_unchecked.configuration")
+	Policy_Invariants(policy, "render_line_unchecked.policy")
 	Workspace_Pointer_Invariants(workspace, "render_line_unchecked.workspace")
 	Line_Index_Invariants(line_index, "render_line_unchecked.line_index")
 	Parsed_Line_Count_Invariants(line_count, "render_line_unchecked.line_count")
@@ -1623,7 +1625,7 @@ func render_line_unchecked(
 	defer func() { Append_Offset_Invariants(count, "render_line_unchecked.count") }()
 	first := int(workspace.Line_First_Cells[line_index])
 	cell_count := int(workspace.Line_Cell_Counts[line_index])
-	flags := configuration.Flags.(Flags)
+	flags := Flags(policy.Flags)
 	use_tabs := flags&TAB_INDENT != Flags(bits.WORD_MINIMUM)
 	for column_index := COLUMN_INDEX_MINIMUM; column_index < cell_count; column_index++ {
 		index := first + column_index
@@ -1641,14 +1643,14 @@ func render_line_unchecked(
 		column_width := Column_Width(WIDTH_MINIMUM)
 		if column_index < cell_count-utf8.CHARACTER_SIZE_MINIMUM {
 			column_width = column_width_unchecked(
-				workspace, configuration, Column_Line_Index(line_index),
+				workspace, policy, Column_Line_Index(line_index),
 				Column_Index(column_index), Column_Line_Count(line_count),
 			)
 		}
 		if workspace.Cell_Output_Size[index] == Cell_Output_Size(OUTPUT_SIZE_MINIMUM) {
 			if column_index < cell_count-utf8.CHARACTER_SIZE_MINIMUM {
 				count, status = append_padding_unchecked(
-					destination, configuration,
+					destination, policy,
 					Aligned_Cell_Width(workspace.Cell_Widths[index]),
 					column_width, Use_Tabs(use_tabs), write, count,
 				)
@@ -1659,7 +1661,7 @@ func render_line_unchecked(
 				column_index < cell_count-utf8.CHARACTER_SIZE_MINIMUM,
 			)
 			appended, append_status := append_nonempty_cell_unchecked(
-				destination, Nonempty_Source(source), configuration,
+				destination, Nonempty_Source(source), policy,
 				workspace, Cell_Index(index),
 				column_width, aligned, write, count,
 			)
@@ -1675,7 +1677,7 @@ func render_line_unchecked(
 func append_nonempty_cell_unchecked(
 	destination Output,
 	source Nonempty_Source,
-	configuration Configuration,
+	policy Policy,
 	workspace Workspace_Pointer,
 	index Cell_Index,
 	column_width Column_Width,
@@ -1688,7 +1690,7 @@ func append_nonempty_cell_unchecked(
 	}()
 	Output_Invariants(destination, "append_nonempty_cell_unchecked.destination")
 	Nonempty_Source_Invariants(source, "append_nonempty_cell_unchecked.source")
-	Configuration_Invariants(configuration, "append_nonempty_cell_unchecked.configuration")
+	Policy_Invariants(policy, "append_nonempty_cell_unchecked.policy")
 	Workspace_Pointer_Invariants(workspace, "append_nonempty_cell_unchecked.workspace")
 	Cell_Index_Invariants(index, "append_nonempty_cell_unchecked.index")
 	Column_Width_Invariants(column_width, "append_nonempty_cell_unchecked.column_width")
@@ -1700,12 +1702,11 @@ func append_nonempty_cell_unchecked(
 		Appended_Offset_Invariants(count, "append_nonempty_cell_unchecked.count")
 	}()
 	offset := Append_Offset(count_value)
-	right := configuration.Flags.(Flags)&ALIGN_RIGHT !=
-		Flags(bits.WORD_MINIMUM)
+	right := Flags(policy.Flags)&ALIGN_RIGHT != Flags(bits.WORD_MINIMUM)
 	if bool(aligned) {
 		if right {
 			offset, status = append_padding_unchecked(
-				destination, configuration,
+				destination, policy,
 				Aligned_Cell_Width(workspace.Cell_Widths[index]),
 				column_width, false, write, offset,
 			)
@@ -1716,7 +1717,7 @@ func append_nonempty_cell_unchecked(
 		}
 	}
 	count, status = append_cell_unchecked(
-		destination, source, configuration,
+		destination, source, policy,
 		workspace.Cell_Starts[index],
 		Nonempty_Cell_End(workspace.Cell_Ends[index]), write, offset,
 	)
@@ -1731,7 +1732,7 @@ func append_nonempty_cell_unchecked(
 		return count, status
 	}
 	offset, status = append_padding_unchecked(
-		destination, configuration,
+		destination, policy,
 		Aligned_Cell_Width(workspace.Cell_Widths[index]),
 		column_width, false, write, offset,
 	)
@@ -1741,14 +1742,14 @@ func append_nonempty_cell_unchecked(
 
 func column_width_unchecked(
 	workspace Workspace_Pointer,
-	configuration Configuration,
+	policy Policy,
 	line_index Column_Line_Index,
 	column_index Column_Index,
 	line_count Column_Line_Count,
 ) (width Column_Width) {
 	defer func() { Column_Width_Invariants(width, "column_width_unchecked.width") }()
 	Workspace_Pointer_Invariants(workspace, "column_width_unchecked.workspace")
-	Configuration_Invariants(configuration, "column_width_unchecked.configuration")
+	Policy_Invariants(policy, "column_width_unchecked.policy")
 	Column_Line_Index_Invariants(line_index, "column_width_unchecked.line_index")
 	Column_Index_Invariants(column_index, "column_width_unchecked.column_index")
 	Column_Line_Count_Invariants(line_count, "column_width_unchecked.line_count")
@@ -1774,12 +1775,11 @@ func column_width_unchecked(
 		}
 		end++
 	}
-	width = Column_Width(configuration.Minimum_Width.(Minimum_Width))
+	width = Column_Width(policy.Minimum_Width)
 	discardable := true
 	for row := first; row < end; row++ {
 		index := int(workspace.Line_First_Cells[row]) + int(column_index)
-		candidate := int(workspace.Cell_Widths[index]) +
-			int(configuration.Padding.(Padding))
+		candidate := int(workspace.Cell_Widths[index]) + int(policy.Padding)
 		if candidate > int(width) {
 			width = Column_Width(candidate)
 		}
@@ -1791,8 +1791,7 @@ func column_width_unchecked(
 		}
 	}
 	if discardable {
-		if configuration.Flags.(Flags)&DISCARD_EMPTY_COLUMNS !=
-			Flags(bits.WORD_MINIMUM) {
+		if Flags(policy.Flags)&DISCARD_EMPTY_COLUMNS != Flags(bits.WORD_MINIMUM) {
 			return Column_Width(WIDTH_MINIMUM)
 		}
 	}
@@ -1801,7 +1800,7 @@ func column_width_unchecked(
 
 func append_padding_unchecked(
 	destination Output,
-	configuration Configuration,
+	policy Policy,
 	text_width Aligned_Cell_Width,
 	cell_width Column_Width,
 	use_tabs Use_Tabs,
@@ -1810,7 +1809,7 @@ func append_padding_unchecked(
 ) (_ Append_Offset, status Append_Status) {
 	defer func() { Append_Status_Invariants(status, "append_padding_unchecked.status") }()
 	Output_Invariants(destination, "append_padding_unchecked.destination")
-	Configuration_Invariants(configuration, "append_padding_unchecked.configuration")
+	Policy_Invariants(policy, "append_padding_unchecked.policy")
 	Aligned_Cell_Width_Invariants(text_width, "append_padding_unchecked.text_width")
 	Column_Width_Invariants(cell_width, "append_padding_unchecked.cell_width")
 	Use_Tabs_Invariants(use_tabs, "append_padding_unchecked.use_tabs")
@@ -1818,17 +1817,17 @@ func append_padding_unchecked(
 	Append_Offset_Invariants(count_value, "append_padding_unchecked.count_value")
 	count := Append_Offset(count_value)
 	defer func() { Append_Offset_Invariants(count, "append_padding_unchecked.count") }()
-	padding_character := Output_Byte(configuration.Pad_Character.(Pad_Character))
+	padding_character := Output_Byte(policy.Pad_Character)
 	padding_count := int(cell_width) - int(text_width)
-	tab_padding := configuration.Pad_Character.(Pad_Character) == '\t'
+	tab_padding := policy.Pad_Character == '\t'
 	if bool(use_tabs) {
 		tab_padding = true
 	}
 	if tab_padding {
-		if configuration.Tab_Width.(Tab_Width) == WIDTH_MINIMUM {
+		if policy.Tab_Width == WIDTH_MINIMUM {
 			return count, STATUS_OK
 		}
-		tab_width := int(configuration.Tab_Width.(Tab_Width))
+		tab_width := int(policy.Tab_Width)
 		rounded_width := (int(cell_width) + tab_width - utf8.CHARACTER_SIZE_MINIMUM) /
 			tab_width * tab_width
 		padding_count = (rounded_width - int(text_width) + tab_width -
@@ -1850,7 +1849,7 @@ func append_padding_unchecked(
 func append_cell_unchecked(
 	destination Output,
 	source Nonempty_Source,
-	configuration Configuration,
+	policy Policy,
 	start Stored_Cell_Start,
 	end Nonempty_Cell_End,
 	write Write_Output,
@@ -1859,7 +1858,7 @@ func append_cell_unchecked(
 	defer func() { Append_Status_Invariants(status, "append_cell_unchecked.status") }()
 	Output_Invariants(destination, "append_cell_unchecked.destination")
 	Nonempty_Source_Invariants(source, "append_cell_unchecked.source")
-	Configuration_Invariants(configuration, "append_cell_unchecked.configuration")
+	Policy_Invariants(policy, "append_cell_unchecked.policy")
 	Stored_Cell_Start_Invariants(start, "append_cell_unchecked.start")
 	Nonempty_Cell_End_Invariants(end, "append_cell_unchecked.end")
 	Write_Output_Invariants(write, "append_cell_unchecked.write")
@@ -1868,7 +1867,7 @@ func append_cell_unchecked(
 	defer func() { Appended_Offset_Invariants(count, "append_cell_unchecked.count") }()
 	offset := Append_Offset(count_value)
 	end_character := End_Character(LINE_TERMINATOR_NONE)
-	flags := configuration.Flags.(Flags)
+	flags := Flags(policy.Flags)
 	for index := int(start); index < int(end); index++ {
 		character := source[index]
 		strip := false
