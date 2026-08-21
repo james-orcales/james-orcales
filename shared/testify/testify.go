@@ -478,8 +478,30 @@ func value_diff[E, A any](expected E, actual A) (difference string) {
 	if expected_text == actual_text {
 		return ""
 	}
-	differ := myers.New(myers.New_Input{Old: expected_text, New: actual_text})
-	return "\n\nDiff:\n" + myers.Differ_Line_Diff(differ)
+	if len(expected_text) > myers.TEXT_SIZE_MAXIMUM {
+		return ""
+	}
+	if len(actual_text) > myers.TEXT_SIZE_MAXIMUM {
+		return ""
+	}
+	workspace := myers.Workspace{
+		Old_Runes: make(myers.Old_Rune_Storage, len(expected_text)+1),
+		New_Runes: make(myers.New_Rune_Storage, len(actual_text)+1),
+		Matrix: make(
+			myers.Matrix_Storage, (len(expected_text)+2)*(len(actual_text)+2),
+		),
+	}
+	output := make(myers.Line_Output, myers.LINE_DIFF_SIZE_MAXIMUM)
+	count, status := myers.Line_Diff_Into(myers.Line_Diff_Input{
+		Output:    output,
+		Workspace: &workspace,
+		Old:       myers.Line_Old_Text_Unvalidated(expected_text),
+		New:       myers.Line_New_Text_Unvalidated(actual_text),
+	})
+	if status != myers.STATUS_OK {
+		return ""
+	}
+	return "\n\nDiff:\n" + string(output[:count])
 }
 
 // Reports whether a kind renders into a diff worth showing.
