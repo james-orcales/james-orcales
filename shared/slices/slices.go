@@ -608,10 +608,12 @@ func overlap_suffix[Haystack ~[]E, Needle ~[]E, E any](
 ) (suffix Haystack) {
 	for candidate := range haystack {
 		if &haystack[candidate] == &needle[0] {
-			return haystack[candidate:]
+			suffix = haystack[candidate:]
+			break
 		}
 	}
-	panic("The overlapping slice has no start index.")
+	aver.Always(len(suffix) > 0, "The overlapping slice has a start index.")
+	return suffix
 }
 
 func rotate_right[S ~[]E, E any](slice S, moved S) {
@@ -796,9 +798,7 @@ func Is_Sorted_Function[S ~[]E, E any](
 // Minimum returns the least ordered element and panics for an empty slice.
 func Minimum[S ~[]E, E cmp.Ordered](slice S) (minimum E) {
 	enforce_slice(slice)
-	if len(slice) < 1 {
-		panic("Minimum cannot read an empty slice.")
-	}
+	aver.Always(len(slice) > 0, "Minimum cannot read an empty slice.")
 	minimum = slice[0]
 	for index := 1; index < len(slice); index++ {
 		minimum = min(minimum, slice[index])
@@ -811,9 +811,7 @@ func Minimum_Function[S ~[]E, E any](
 	slice S, comparison Comparison_Function[E, E],
 ) (minimum E) {
 	enforce_slice(slice)
-	if len(slice) < 1 {
-		panic("Minimum_Function cannot read an empty slice.")
-	}
+	aver.Always(len(slice) > 0, "Minimum_Function cannot read an empty slice.")
 	minimum = slice[0]
 	for index := 1; index < len(slice); index++ {
 		if comparison(slice[index], minimum) < ORDERING_EQUAL {
@@ -826,9 +824,7 @@ func Minimum_Function[S ~[]E, E any](
 // Maximum returns the greatest ordered element and panics for an empty slice.
 func Maximum[S ~[]E, E cmp.Ordered](slice S) (maximum E) {
 	enforce_slice(slice)
-	if len(slice) < 1 {
-		panic("Maximum cannot read an empty slice.")
-	}
+	aver.Always(len(slice) > 0, "Maximum cannot read an empty slice.")
 	maximum = slice[0]
 	for index := 1; index < len(slice); index++ {
 		maximum = max(maximum, slice[index])
@@ -841,9 +837,7 @@ func Maximum_Function[S ~[]E, E any](
 	slice S, comparison Comparison_Function[E, E],
 ) (maximum E) {
 	enforce_slice(slice)
-	if len(slice) < 1 {
-		panic("Maximum_Function cannot read an empty slice.")
-	}
+	aver.Always(len(slice) > 0, "Maximum_Function cannot read an empty slice.")
 	maximum = slice[0]
 	for index := 1; index < len(slice); index++ {
 		if comparison(slice[index], maximum) > ORDERING_EQUAL {

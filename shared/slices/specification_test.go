@@ -77,6 +77,10 @@ func Test_Edits(t *testing.T) {
 	assert_slice(t, destination[:int(count)], []int{1, 3, 4, 5})
 	verify_overlapping_edits(t)
 	verify_delete_clear(t)
+	// Values span replaced range and expansion; suffix must survive overwritten source.
+	overlap := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	count = slices.Replace_Into(overlap, overlap[:6], 1, 3, overlap[2:8])
+	assert_slice(t, overlap[:int(count)], []int{0, 2, 3, 4, 5, 6, 7, 3, 4, 5})
 }
 
 // Test_Copy_And_Capacity protects copied ownership and explicit reserve checks.
@@ -646,18 +650,21 @@ type zero_allocation_check struct {
 }
 
 type zero_allocation_fixture struct {
-	Destination [TEST_DESTINATION_COUNT]int
-	Work        [TEST_QUADRUPLE_COUNT]int
-	Source      [TEST_TRIPLE_COUNT]int
-	Values      [TEST_PAIR_COUNT]int
-	Parts       [TEST_PAIR_COUNT][]int
+	Destination []int
+	Work        []int
+	Source      []int
+	Values      []int
+	Parts       [][]int
 	Observable  int
 }
 
 func verify_api_is_zero_allocation(t *testing.T) {
 	fixture := zero_allocation_fixture{
-		Source: [TEST_TRIPLE_COUNT]int{3, 1, 2},
-		Values: [TEST_PAIR_COUNT]int{7, 8},
+		Destination: make([]int, TEST_DESTINATION_COUNT),
+		Work:        make([]int, TEST_QUADRUPLE_COUNT),
+		Source:      []int{3, 1, 2},
+		Values:      []int{7, 8},
+		Parts:       make([][]int, TEST_PAIR_COUNT),
 	}
 	fixture.Parts[0] = fixture.Source[:1]
 	fixture.Parts[1] = fixture.Source[1:]
