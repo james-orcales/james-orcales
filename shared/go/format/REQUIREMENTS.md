@@ -17,6 +17,18 @@ The imports of one run stand in the order of the paths they name, and the note a
 travels with it. An empty line and a declaration of any other kind each close a run, thus the
 groups the author wrote stand where the author put them.
 
+# Names
+
+A declared name takes the case the linter asks: SCREAMING_SNAKE_CASE for a constant, else Ada_Case
+or snake_case by its first letter. Each identifier that spells it takes the new spelling too. A
+name that opens with no letter, or TestMain, stands as written.
+
+# Declarations
+
+Format renames by the table alone. Declare takes the names of one file into it, thus a caller that
+declares each file of a program renames a name in every file that spells it. Forget empties the
+table, and a name past the storage of the table reports that the table is full.
+
 # Refusals
 
 A form that fills the storage the caller supplied stops and reports it, and a tree the parser

@@ -56,8 +56,42 @@ const PLACE_MIDDLE = 9
 // PLACE_TO holds the byte just past one turn of the form.
 const PLACE_TO = 10
 
-// PLACE_SLOT_COUNT is the byte slot count one formatter holds.
-const PLACE_SLOT_COUNT = 11
+// PLACE_WORD holds the byte one identifier of the form opens at.
+const PLACE_WORD = 11
+
+// PLACE_WORD_END holds the byte just past one identifier of the form.
+const PLACE_WORD_END = 12
+
+// PLACE_NAMES holds the count of names the rename table holds.
+const PLACE_NAMES = 13
+
+// PLACE_FOUND holds the entry of the rename table one word names, or the count of names when no
+// entry names it.
+const PLACE_FOUND = 14
+
+// PLACE_SIZE holds the byte count of the name one spell writes.
+const PLACE_SIZE = 15
+
+// PLACE_START holds the byte of a name one word of it opens at.
+const PLACE_START = 16
+
+// PLACE_END holds the byte of a name just past one word of it.
+const PLACE_END = 17
+
+// PLACE_TEXT holds the byte count of the table text the table holds.
+const PLACE_TEXT = 18
+
+// PLACE_TOKEN holds the token of the candidate name one declaration tests.
+const PLACE_TOKEN = 19
+
+// PLACE_SLOT holds the empty slot of the hash index one probe stops at.
+const PLACE_SLOT = 20
+
+// PLACE_DROPPED holds the count of names one declaration found no room for.
+const PLACE_DROPPED = 21
+
+// PLACE_SLOT_COUNT is the slot count one formatter holds.
+const PLACE_SLOT_COUNT = 22
 
 // FORM_SLOT holds the storage the format wrote its form into.
 const FORM_SLOT = 0
@@ -71,7 +105,8 @@ const HEAD_SLOT = 0
 // HEAD_SLOT_COUNT is the text slot count one formatter holds.
 const HEAD_SLOT_COUNT = 1
 
-// Place names one byte of the form a format writes.
+// Place names one position a format reads or writes: a byte of the form, a byte of a name, or an
+// entry of the rename table. Each fits the widest form.
 type Place int32
 
 // Place_Invariants states every byte one form holds.
@@ -146,21 +181,218 @@ func Place_Storage_Invariants(value Place_Storage, namespace aver.Namespace) {
 	Places_Invariants(value.Values, namespace)
 }
 
+// NAME_COUNT_MAXIMUM is the widest table of names one formatter renames by. Each declared name
+// holds one node of its own at least, thus one tree declares no more.
+const NAME_COUNT_MAXIMUM = ast.NODE_COUNT_MAXIMUM
+
+// NAME_SLOT_COUNT is the entry count one name storage holds: the table and the one candidate a
+// declaration tests before it takes it.
+const NAME_SLOT_COUNT = NAME_COUNT_MAXIMUM + 1
+
+// NAME_TEXT_SIZE_MAXIMUM is the byte count of every name text one table holds, which is the text
+// of the widest source.
+const NAME_TEXT_SIZE_MAXIMUM = token.SOURCE_SIZE_MAXIMUM
+
+// SLOT_COUNT is the slot count of the hash index over the table. It is a power of two past twice
+// the widest table, thus a probe masks rather than divides and never walks a full index.
+const SLOT_COUNT = 262144
+
+// HASH_OFFSET is the FNV-1a offset basis.
+const HASH_OFFSET = 2166136261
+
+// HASH_PRIME is the FNV-1a prime.
+const HASH_PRIME = 16777619
+
+// CASE_SNAKE is the case of a name that opens lowercase.
+const CASE_SNAKE Case = 1
+
+// CASE_ADA is the case of a name that opens uppercase.
+const CASE_ADA Case = 2
+
+// CASE_CONSTANT is the case of a constant.
+const CASE_CONSTANT Case = 3
+
+// Case names one of the three cases the linter asks of a declared name.
+type Case uint8
+
+// Case_Invariants states every case.
+func Case_Invariants(value Case, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), uint8(CASE_SNAKE), uint8(CASE_ADA), uint8(CASE_CONSTANT),
+		).
+		Ensure()
+}
+
+// Name is one declared name some file spells in the wrong case. The text stands in the table
+// rather than in the source, because the source of one file is gone when the next file formats.
+type Name struct {
+	// Text is the span of the name text in the table text.
+	Text Span
+	// Case is the case the name takes.
+	Case Case
+}
+
+// Name_Invariants composes one declared name.
+func Name_Invariants(value Name, namespace aver.Namespace) {
+	Span_Invariants(value.Text, namespace)
+	Case_Invariants(value.Case, namespace)
+}
+
+// Span is the bytes of one name text in the table text.
+type Span struct {
+	// Start is the byte the text opens at.
+	Start Place
+	// Size is the byte count of the text.
+	Size Text_Size
+}
+
+// Span_Invariants composes one text span.
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	Place_Invariants(value.Start, namespace)
+	Text_Size_Invariants(value.Size, namespace)
+}
+
+// Text_Size is the byte count of one name text.
+type Text_Size int32
+
+// Text_Size_Invariants states every name text size. A name holds one byte at least.
+func Text_Size_Invariants(value Text_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TEXT_SIZE_MINIMUM, NAME_TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Names keeps the rename table in caller storage.
+type Names []Name
+
+// Names_Invariants fixes the rename table and prevents growth. No entry is proved here, because
+// every step of a format would read the whole table.
+func Names_Invariants(value Names, _ aver.Namespace) {
+	aver.Always(len(value) == NAME_SLOT_COUNT, "Formatter names have complete length.")
+	aver.Always(cap(value) == NAME_SLOT_COUNT, "Formatter names cannot grow.")
+}
+
+// Name_Storage keeps caller-owned names distinct from their view.
+type Name_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Names
+}
+
+// Name_Storage_Invariants composes name storage.
+func Name_Storage_Invariants(value Name_Storage, namespace aver.Namespace) {
+	Names_Invariants(value.Values, namespace)
+}
+
+// Text keeps every name text of the table in caller storage.
+type Text []byte
+
+// Text_Invariants fixes the table text and prevents growth.
+func Text_Invariants(value Text, _ aver.Namespace) {
+	aver.Always(len(value) == NAME_TEXT_SIZE_MAXIMUM, "Formatter text has complete length.")
+	aver.Always(cap(value) == NAME_TEXT_SIZE_MAXIMUM, "Formatter text cannot grow.")
+}
+
+// Text_Storage keeps caller-owned name text distinct from its view.
+type Text_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Text
+}
+
+// Text_Storage_Invariants composes text storage.
+func Text_Storage_Invariants(value Text_Storage, namespace aver.Namespace) {
+	Text_Invariants(value.Values, namespace)
+}
+
+// SLOT_EMPTY is the slot that names no entry.
+const SLOT_EMPTY = 0
+
+// TEXT_SIZE_MINIMUM is the byte count of the shortest name, which holds one letter.
+const TEXT_SIZE_MINIMUM = 1
+
+// Slot is one slot of the hash index: zero when empty, else one past the entry it names, thus a
+// zeroed index is an empty one.
+type Slot int32
+
+// Slot_Invariants states every slot.
+func Slot_Invariants(value Slot, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), SLOT_EMPTY, NAME_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Slots keeps the hash index in caller storage.
+type Slots []Slot
+
+// Slots_Invariants fixes the hash index and prevents growth.
+func Slots_Invariants(value Slots, _ aver.Namespace) {
+	aver.Always(len(value) == SLOT_COUNT, "Formatter slots have complete length.")
+	aver.Always(cap(value) == SLOT_COUNT, "Formatter slots cannot grow.")
+}
+
+// Slot_Storage keeps caller-owned slots distinct from their view.
+type Slot_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Slots
+}
+
+// Slot_Storage_Invariants composes slot storage.
+func Slot_Storage_Invariants(value Slot_Storage, namespace aver.Namespace) {
+	Slots_Invariants(value.Values, namespace)
+}
+
+// Sources keeps the source one declaration reads names from in named storage.
+type Sources struct {
+	// Value survives every step of a declaration, each of which reads a name from it.
+	Value token.Source
+}
+
+// Sources_Invariants composes the source domain.
+func Sources_Invariants(value Sources, namespace aver.Namespace) {
+	token.Source_Invariants(value.Value, namespace)
+}
+
+// Probes keeps the text one search of the table looks for in named storage.
+type Probes struct {
+	// Value survives the probe, which reads it at every slot it tests.
+	Value Destination
+}
+
+// Probes_Invariants composes the probe domain.
+func Probes_Invariants(value Probes, namespace aver.Namespace) {
+	Destination_Invariants(value.Value, namespace)
+}
+
 // Formatter_Fields states the concrete storage layout independently of its validated view.
 type Formatter_Fields struct {
 	// Places holds the bytes one sort of imports reads and writes.
 	Places Place_Storage
+	// Names holds the declared names one rename spells anew.
+	Names Name_Storage
+	// Texts holds the text of every declared name.
+	Texts Text_Storage
+	// Slots holds the hash index over the declared names.
+	Slots Slot_Storage
 	// Forms holds the storage the sort reads the form from.
 	Forms Forms
 	// Heads holds the text one read of a line asks the line to open with.
 	Heads Heads
+	// Sources holds the source one declaration reads names from.
+	Sources Sources
+	// Probes holds the text one search of the table looks for.
+	Probes Probes
 }
 
 // Formatter_Fields_Invariants composes every concrete field once.
 func Formatter_Fields_Invariants(value Formatter_Fields, namespace aver.Namespace) {
 	Place_Storage_Invariants(value.Places, namespace)
+	Name_Storage_Invariants(value.Names, namespace)
+	Text_Storage_Invariants(value.Texts, namespace)
+	Slot_Storage_Invariants(value.Slots, namespace)
 	Forms_Invariants(value.Forms, namespace)
 	Heads_Invariants(value.Heads, namespace)
+	Sources_Invariants(value.Sources, namespace)
+	Probes_Invariants(value.Probes, namespace)
 }
 
 // Forms_Stored prevents one sort step from proving every destination length.
@@ -181,14 +413,37 @@ func Heads_Stored_Invariants(value Heads_Stored, _ aver.Namespace) {
 	aver.Always(valid == (value != nil), "Formatter heads have expected storage type.")
 }
 
+// Sources_Stored prevents one declaration step from proving every source length.
+type Sources_Stored interface{}
+
+// Sources_Stored_Invariants fixes source representation.
+func Sources_Stored_Invariants(value Sources_Stored, _ aver.Namespace) {
+	_, valid := value.(Sources)
+	aver.Always(valid == (value != nil), "Formatter sources have expected storage type.")
+}
+
+// Probes_Stored prevents one search step from proving every probe length.
+type Probes_Stored interface{}
+
+// Probes_Stored_Invariants fixes probe representation.
+func Probes_Stored_Invariants(value Probes_Stored, _ aver.Namespace) {
+	_, valid := value.(Probes)
+	aver.Always(valid == (value != nil), "Formatter probes have expected storage type.")
+}
+
 // Formatter is one validated view over caller-owned format storage.
 type Formatter Formatter_Fields
 
 // Formatter_Invariants fixes sort storage without proving stale mutable views.
 func Formatter_Invariants(value Formatter, namespace aver.Namespace) {
 	Place_Storage_Invariants(value.Places, namespace)
+	Name_Storage_Invariants(value.Names, namespace)
+	Text_Storage_Invariants(value.Texts, namespace)
+	Slot_Storage_Invariants(value.Slots, namespace)
 	Forms_Stored_Invariants(Forms_Stored(value.Forms), namespace)
 	Heads_Stored_Invariants(Heads_Stored(value.Heads), namespace)
+	Sources_Stored_Invariants(Sources_Stored(value.Sources), namespace)
+	Probes_Stored_Invariants(Probes_Stored(value.Probes), namespace)
 }
 
 // Formatter_Handle gives caller-owned format state one identity.
@@ -203,8 +458,9 @@ func Formatter_Handle_Invariants(value Formatter_Handle, namespace aver.Namespac
 }
 
 // Format writes the canonical form of one parsed tree into caller storage and reports whether the
-// whole form fit. A tree the parser refused writes what it holds, because a caller reads more
-// from a partial form than from nothing.
+// whole form fit. It renames by the table Declare fills and never by the tree alone, because a
+// name the tree declares is spelled in files the format never sees. A tree the parser refused
+// writes what it holds, because a caller reads more from a partial form than from nothing.
 func Format(
 	subject Formatter_Handle, writer printer.Printer_Handle, destination printer.Form,
 	tree ast.Parse_State_Handle, source token.Source,
@@ -219,7 +475,43 @@ func Format(
 	subject.Forms.Value = Destination(destination)
 	subject.Places.Values[PLACE_LIMIT] = Place(result.Count)
 	sort_imports(subject)
+	// A table that holds no name reads no byte of the form again, thus the rename costs a
+	// program that declares every name in its case nothing.
+	if subject.Places.Values[PLACE_NAMES] == 0 {
+		return result
+	}
+	fit := rename(subject)
+	result.Count = printer.Form_Count(subject.Places.Values[PLACE_LIMIT])
+	if !bool(fit) {
+		result.OK = false
+	}
 	return result
+}
+
+// Declare takes each name one file declares in the wrong case into the table every later format
+// renames by, and reports whether the table held room for all of them. A name one file declares
+// is spelled in other files too, thus a caller declares every file of a program before it formats
+// any, and the rename reaches every file that spells the name.
+func Declare(
+	subject Formatter_Handle, tree ast.Parse_State_Handle, source token.Source,
+) (fit printer.Boolean) {
+	defer func() { printer.Boolean_Invariants(fit, "declare.fit") }()
+	Formatter_Handle_Invariants(subject, "declare.subject")
+	ast.Parse_State_Handle_Invariants(tree, "declare.tree")
+	token.Source_Invariants(source, "declare.source")
+	subject.Sources.Value = source
+	return take_names(subject, tree)
+}
+
+// Forget empties the table, thus a caller that formats another program renames by its names
+// alone.
+func Forget(subject Formatter_Handle) {
+	Formatter_Handle_Invariants(subject, "forget.subject")
+	subject.Places.Values[PLACE_NAMES] = 0
+	subject.Places.Values[PLACE_TEXT] = 0
+	for slot := range subject.Slots.Values {
+		subject.Slots.Values[slot] = 0
+	}
 }
 
 // Fit distinguishes complete canonical forms from bounded prefixes.
@@ -539,4 +831,525 @@ func reverse(subject Formatter_Handle) {
 		head = head + 1
 		tail = tail - 1
 	}
+}
+
+// LETTER_COUNT is the count of letters one case of the alphabet holds. A byte below the first
+// letter wraps past it in a subtraction, thus one comparison tests both ends of the alphabet.
+const LETTER_COUNT = 26
+
+// DIGIT_COUNT is the count of decimal digits.
+const DIGIT_COUNT = 10
+
+// LETTER_CASE_BIT is the bit that tells a lowercase letter from its uppercase letter: setting it
+// lowers a letter, and clearing it raises one.
+const LETTER_CASE_BIT = 0x20
+
+// TEST_MAIN is the function name the testing package reserves.
+const TEST_MAIN = "TestMain"
+
+// Reads every declared name the tree holds into the rename table, and reports whether the table
+// held room for each. A declaration node states where its first name stands, and the list behind
+// that name states the rest.
+func take_names(subject Formatter_Handle, tree ast.Parse_State_Handle) (fit printer.Boolean) {
+	defer func() { printer.Boolean_Invariants(fit, "take_names.fit") }()
+	Formatter_Handle_Invariants(subject, "take_names.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_names.tree")
+	subject.Places.Values[PLACE_DROPPED] = 0
+	for slot := ast.INDEX_FIRST; slot < ast.Index(tree.Node_Cursors.Count); slot++ {
+		node := ast.Node_At(tree, slot)
+		place := node.Token
+		want := CASE_SNAKE
+		switch node.Kind {
+		case ast.NODE_CONSTANT_NAME:
+			want = CASE_CONSTANT
+		case ast.NODE_FIELD_NAME, ast.NODE_PARAMETER_NAME, ast.NODE_DEFINE,
+			ast.NODE_TYPE_PARAMETER:
+		// A var or a type node stands on its keyword, and its name stands one token behind.
+		case ast.NODE_VARIABLE, ast.NODE_TYPE:
+			place = node.Token + 1
+		// A function states its name in its first identifier child, because its receiver
+		// stands in a node of its own.
+		case ast.NODE_FUNCTION:
+			child := ast.Index(node.First_Child)
+			for child != ast.INDEX_ABSENT {
+				if ast.Node_At(tree, child).Kind == ast.NODE_IDENTIFIER {
+					break
+				}
+				child = ast.Index(ast.Node_At(tree, child).Next)
+			}
+			if child == ast.INDEX_ABSENT {
+				continue
+			}
+			place = ast.Node_At(tree, child).Token
+			one := ast.Token_At(tree, place)
+			if string(token.Text(subject.Sources.Value, one)) == TEST_MAIN {
+				continue
+			}
+		default:
+			continue
+		}
+		subject.Places.Values[PLACE_TOKEN] = Place(place)
+		subject.Names.Values[subject.Places.Values[PLACE_NAMES]].Case = want
+		take_name_list(subject, tree)
+	}
+	return printer.Boolean(subject.Places.Values[PLACE_DROPPED] == 0)
+}
+
+// Reads the list of names the candidate opens, joined by commas, which is how a var, a define, a
+// field, a parameter, and a type parameter each declare more than one.
+func take_name_list(subject Formatter_Handle, tree ast.Parse_State_Handle) {
+	Formatter_Handle_Invariants(subject, "take_name_list.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_name_list.tree")
+	place := ast.Token_Index(subject.Places.Values[PLACE_TOKEN])
+	want := subject.Names.Values[subject.Places.Values[PLACE_NAMES]].Case
+	token_count := ast.Token_Index(tree.Token_Cursors.Count)
+	for place < token_count {
+		subject.Places.Values[PLACE_TOKEN] = Place(place)
+		subject.Names.Values[subject.Places.Values[PLACE_NAMES]].Case = want
+		take_name(subject, tree)
+		comma := place + 1
+		if comma == token_count {
+			return
+		}
+		if ast.Token_At(tree, comma).Kind != token.KIND_COMMA {
+			return
+		}
+		place = comma + 1
+	}
+}
+
+// Takes the candidate name, whose case stands in the slot just past the table, into the table. A
+// name that is no identifier, opens with no letter, stands in its case already, or stands in the
+// table already takes no entry. A name that is no constant takes its case from its first letter.
+func take_name(subject Formatter_Handle, tree ast.Parse_State_Handle) {
+	Formatter_Handle_Invariants(subject, "take_name.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_name.tree")
+	count := subject.Places.Values[PLACE_NAMES]
+	one := ast.Token_At(tree, ast.Token_Index(subject.Places.Values[PLACE_TOKEN]))
+	if one.Kind != token.KIND_IDENTIFIER {
+		return
+	}
+	text := token.Text(subject.Sources.Value, one)
+	want := subject.Names.Values[count].Case
+	if want != CASE_CONSTANT {
+		if text[0]-'a' < LETTER_COUNT {
+			want = CASE_SNAKE
+		} else if text[0]-'A' < LETTER_COUNT {
+			want = CASE_ADA
+		} else {
+			return
+		}
+	}
+	subject.Names.Values[count].Case = want
+	subject.Probes.Value = Destination(text)
+	if bool(in_case(subject)) {
+		return
+	}
+	find_slot(subject)
+	if subject.Places.Values[PLACE_FOUND] != count {
+		return
+	}
+	start := subject.Places.Values[PLACE_TEXT]
+	// A full table drops the name and counts it, because a name the table never holds is a name
+	// no format renames, and the caller must learn the form it reads is no canonical form.
+	if int(count) == NAME_COUNT_MAXIMUM {
+		subject.Places.Values[PLACE_DROPPED] = subject.Places.Values[PLACE_DROPPED] + 1
+		return
+	}
+	if int(start)+len(text) > NAME_TEXT_SIZE_MAXIMUM {
+		subject.Places.Values[PLACE_DROPPED] = subject.Places.Values[PLACE_DROPPED] + 1
+		return
+	}
+	copy(subject.Texts.Values[start:], text)
+	subject.Names.Values[count] = Name{
+		Text: Span{Start: start, Size: Text_Size(len(text))}, Case: want,
+	}
+	subject.Slots.Values[subject.Places.Values[PLACE_SLOT]] = Slot(count + 1)
+	subject.Places.Values[PLACE_NAMES] = count + 1
+	subject.Places.Values[PLACE_TEXT] = start + Place(len(text))
+}
+
+// Reads the entry of the table whose text the probe holds into the found place, or the count of
+// names when none holds it, and the slot the probe stops at into the slot place. The index holds
+// at most half its slots, thus a probe meets an empty slot before it walks the whole index.
+func find_slot(subject Formatter_Handle) {
+	Formatter_Handle_Invariants(subject, "find_slot.subject")
+	probe := subject.Probes.Value
+	hash := uint32(HASH_OFFSET)
+	for _, value := range probe {
+		hash = (hash ^ uint32(value)) * HASH_PRIME
+	}
+	slot := hash & (SLOT_COUNT - 1)
+	for range SLOT_COUNT {
+		held := subject.Slots.Values[slot]
+		if held == SLOT_EMPTY {
+			break
+		}
+		entry := subject.Names.Values[held-1]
+		end := entry.Text.Start + Place(entry.Text.Size)
+		text := subject.Texts.Values[entry.Text.Start:end]
+		if string(text) == string(probe) {
+			subject.Places.Values[PLACE_FOUND] = Place(held - 1)
+			return
+		}
+		slot = (slot + 1) & (SLOT_COUNT - 1)
+	}
+	aver.Always(subject.Slots.Values[slot] == SLOT_EMPTY, "A probe meets an empty slot.")
+	subject.Places.Values[PLACE_FOUND] = subject.Places.Values[PLACE_NAMES]
+	subject.Places.Values[PLACE_SLOT] = Place(slot)
+}
+
+// Reports whether the probe stands in the case of the candidate, which is the pattern the linter
+// matches. A doubled or closing underscore states an empty segment, which no case admits.
+func in_case(subject Formatter_Handle) (yes printer.Boolean) {
+	defer func() { printer.Boolean_Invariants(yes, "in_case.yes") }()
+	Formatter_Handle_Invariants(subject, "in_case.subject")
+	text := subject.Probes.Value
+	start := 0
+	for index := range len(text) + 1 {
+		if index < len(text) {
+			if text[index] != '_' {
+				continue
+			}
+		}
+		if index == start {
+			return false
+		}
+		subject.Places.Values[PLACE_START] = Place(start)
+		subject.Places.Values[PLACE_END] = Place(index)
+		if !bool(in_segment(subject)) {
+			return false
+		}
+		start = index + 1
+	}
+	return true
+}
+
+// Reports whether one segment of the candidate name between underscores stands in its case. An
+// Ada_Case segment is a capitalized word, an acronym, an acronym plural, or a number that follows
+// the first segment, because a capacity names its own segment and Go opens a name on a letter.
+func in_segment(subject Formatter_Handle) (yes printer.Boolean) {
+	defer func() { printer.Boolean_Invariants(yes, "in_segment.yes") }()
+	Formatter_Handle_Invariants(subject, "in_segment.subject")
+	entry := subject.Names.Values[subject.Places.Values[PLACE_NAMES]]
+	text := subject.Probes.Value
+	start := int(subject.Places.Values[PLACE_START])
+	segment := text[start:subject.Places.Values[PLACE_END]]
+	lower_count := 0
+	upper_count := 0
+	for _, value := range segment[1:] {
+		if value-'a' < LETTER_COUNT {
+			lower_count = lower_count + 1
+		} else if value-'A' < LETTER_COUNT {
+			upper_count = upper_count + 1
+		}
+	}
+	head := segment[0]
+	if head-'0' < DIGIT_COUNT {
+		if start == 0 {
+			return false
+		}
+		switch entry.Case {
+		case CASE_SNAKE:
+			return printer.Boolean(upper_count == 0)
+		case CASE_CONSTANT:
+			return printer.Boolean(lower_count == 0)
+		}
+		return printer.Boolean(lower_count+upper_count == 0)
+	}
+	switch entry.Case {
+	case CASE_SNAKE:
+		if head-'a' > LETTER_COUNT-1 {
+			return false
+		}
+		return printer.Boolean(upper_count == 0)
+	case CASE_CONSTANT:
+		if head-'A' > LETTER_COUNT-1 {
+			return false
+		}
+		return printer.Boolean(lower_count == 0)
+	}
+	if head-'A' > LETTER_COUNT-1 {
+		return false
+	}
+	if upper_count == 0 {
+		return true
+	}
+	if lower_count == 0 {
+		return true
+	}
+	// An acronym takes a plural, as in IDs, because Go names a run of them that way.
+	if lower_count == 1 {
+		return printer.Boolean(segment[len(segment)-1] == 's')
+	}
+	return false
+}
+
+// Spells each identifier of the form that names an entry of the rename table in the case the
+// entry takes, and reports whether the form still fits the storage. A spelling that grows the form
+// past the storage drops the bytes that no longer fit, as a print past the storage does.
+func rename(subject Formatter_Handle) (fit printer.Boolean) {
+	defer func() { printer.Boolean_Invariants(fit, "rename.fit") }()
+	Formatter_Handle_Invariants(subject, "rename.subject")
+	form := subject.Forms.Value
+	fit = true
+	subject.Places.Values[PLACE_CURSOR] = PLACE_MINIMUM
+	for subject.Places.Values[PLACE_CURSOR] < subject.Places.Values[PLACE_LIMIT] {
+		take_word(subject)
+		place := subject.Places.Values[PLACE_WORD]
+		end := subject.Places.Values[PLACE_WORD_END]
+		if end == place {
+			skip_inert(subject)
+			continue
+		}
+		subject.Places.Values[PLACE_CURSOR] = end
+		subject.Probes.Value = form[place:end]
+		find_slot(subject)
+		if subject.Places.Values[PLACE_FOUND] == subject.Places.Values[PLACE_NAMES] {
+			continue
+		}
+		// A spell at the end of the storage writes no byte, thus the first spell measures
+		// the name and the second writes it behind the bytes the measure made room for.
+		subject.Places.Values[PLACE_WORD] = Place(len(form))
+		spell(subject)
+		size := Place(subject.Places.Values[PLACE_SIZE])
+		limit := subject.Places.Values[PLACE_LIMIT]
+		if int(place+size) < len(form) {
+			copy(form[place+size:], form[end:limit])
+		}
+		subject.Places.Values[PLACE_WORD] = place
+		spell(subject)
+		limit = limit + size - (end - place)
+		if int(limit) > len(form) {
+			fit = false
+			limit = Place(len(form))
+		}
+		subject.Places.Values[PLACE_LIMIT] = limit
+		subject.Places.Values[PLACE_CURSOR] = place + size
+	}
+	return fit
+}
+
+// Reads the identifier the cursor stands on. A cursor on a byte that opens no identifier reads an
+// empty one, which the caller tells by the end standing on the opening.
+func take_word(subject Formatter_Handle) {
+	Formatter_Handle_Invariants(subject, "take_word.subject")
+	form := subject.Forms.Value
+	cursor := subject.Places.Values[PLACE_CURSOR]
+	limit := subject.Places.Values[PLACE_LIMIT]
+	subject.Places.Values[PLACE_WORD] = cursor
+	subject.Places.Values[PLACE_WORD_END] = cursor
+	opens := form[cursor] == '_'
+	if (form[cursor]|LETTER_CASE_BIT)-'a' < LETTER_COUNT {
+		opens = true
+	}
+	if !opens {
+		return
+	}
+	end := cursor + 1
+	for end < limit {
+		value := form[end]
+		word := value == '_'
+		if (value|LETTER_CASE_BIT)-'a' < LETTER_COUNT {
+			word = true
+		}
+		if value-'0' < DIGIT_COUNT {
+			word = true
+		}
+		if !word {
+			break
+		}
+		end = end + 1
+	}
+	subject.Places.Values[PLACE_WORD_END] = end
+}
+
+// Moves the cursor past the unit of the form that names nothing: a note, a string, a character, a
+// number, or one byte of any other kind. A spelling inside one of them names nothing, and a unit
+// the form never closed runs to the limit, because a refused print writes no closing mark.
+func skip_inert(subject Formatter_Handle) {
+	Formatter_Handle_Invariants(subject, "skip_inert.subject")
+	form := subject.Forms.Value[:subject.Places.Values[PLACE_LIMIT]]
+	place := int(subject.Places.Values[PLACE_CURSOR])
+	value := form[place]
+	end := place + 1
+	subject.Places.Values[PLACE_CURSOR] = Place(end)
+	mark := value
+	switch value {
+	case '/':
+		if end == len(form) {
+			return
+		}
+		mark = form[end]
+		if mark == '/' {
+			mark = '\n'
+		}
+		if mark != '\n' {
+			if mark != '*' {
+				return
+			}
+		}
+		end = end + 1
+	case '"', '\'', '`':
+	default:
+		skip_number(subject)
+		return
+	}
+	for end < len(form) {
+		held := form[end]
+		end = end + 1
+		// A string and a character escape the byte behind a backslash, and a note and a raw
+		// string hold a backslash as written.
+		if held == '\\' {
+			if value != '`' {
+				if value != '/' {
+					end = end + 1
+					continue
+				}
+			}
+		}
+		if held != mark {
+			continue
+		}
+		if mark != '*' {
+			break
+		}
+		if end < len(form) {
+			if form[end] == '/' {
+				end = end + 1
+				break
+			}
+		}
+	}
+	subject.Places.Values[PLACE_CURSOR] = Place(min(end, len(form)))
+}
+
+// Moves the cursor past the number it stands just behind the opening of. A number opens on a
+// digit, or on a point a digit follows, and runs over every letter, digit, underscore, and point
+// behind it, thus no identifier opens inside it.
+func skip_number(subject Formatter_Handle) {
+	Formatter_Handle_Invariants(subject, "skip_number.subject")
+	form := subject.Forms.Value[:subject.Places.Values[PLACE_LIMIT]]
+	end := int(subject.Places.Values[PLACE_CURSOR])
+	value := form[end-1]
+	if value-'0' > DIGIT_COUNT-1 {
+		if value != '.' {
+			return
+		}
+		if end == len(form) {
+			return
+		}
+		if form[end]-'0' > DIGIT_COUNT-1 {
+			return
+		}
+	}
+	for end < len(form) {
+		held := form[end]
+		unit := held == '_'
+		if (held|LETTER_CASE_BIT)-'a' < LETTER_COUNT {
+			unit = true
+		}
+		if held-'0' < DIGIT_COUNT {
+			unit = true
+		}
+		if held == '.' {
+			unit = true
+		}
+		if !unit {
+			break
+		}
+		end = end + 1
+	}
+	subject.Places.Values[PLACE_CURSOR] = Place(end)
+}
+
+// Writes the found name in the case its entry takes at the word place, and reads the size of the
+// spelling into the size place. A byte the storage holds no room for takes no write. An Ada_Case
+// word that holds no lowercase letter stands as written, because an acronym keeps its capitals.
+func spell(subject Formatter_Handle) {
+	Formatter_Handle_Invariants(subject, "spell.subject")
+	form := subject.Forms.Value
+	place := int(subject.Places.Values[PLACE_WORD])
+	entry := subject.Names.Values[subject.Places.Values[PLACE_FOUND]]
+	text := subject.Texts.Values[entry.Text.Start : entry.Text.Start+Place(entry.Text.Size)]
+	subject.Probes.Value = Destination(text)
+	size := 0
+	for start := 0; start < len(text); start = int(subject.Places.Values[PLACE_END]) {
+		subject.Places.Values[PLACE_START] = Place(start)
+		word_end(subject)
+		end := int(subject.Places.Values[PLACE_END])
+		if end == start {
+			subject.Places.Values[PLACE_END] = Place(start + 1)
+			continue
+		}
+		if size > 0 {
+			if place+size < len(form) {
+				form[place+size] = '_'
+			}
+			size = size + 1
+		}
+		acronym := true
+		for _, value := range text[start:end] {
+			if value-'a' < LETTER_COUNT {
+				acronym = false
+			}
+		}
+		for index := start; index < end; index++ {
+			value := text[index]
+			if value-'0' > DIGIT_COUNT-1 {
+				switch entry.Case {
+				case CASE_SNAKE:
+					value = value | LETTER_CASE_BIT
+				case CASE_CONSTANT:
+					value = value &^ LETTER_CASE_BIT
+				case CASE_ADA:
+					if !acronym {
+						value = value | LETTER_CASE_BIT
+						if index == start {
+							value = value &^ LETTER_CASE_BIT
+						}
+					}
+				}
+			}
+			if place+size < len(form) {
+				form[place+size] = value
+			}
+			size = size + 1
+		}
+	}
+	subject.Places.Values[PLACE_SIZE] = Place(size)
+}
+
+// Reads the byte just past the word of the probe that opens at the start place into the end place.
+// Words stand where the linter splits them: at an underscore, at an uppercase letter behind a
+// lowercase letter or a digit, and at the last capital of a run a lowercase letter follows. An
+// underscore at the start states an empty word.
+func word_end(subject Formatter_Handle) {
+	Formatter_Handle_Invariants(subject, "word_end.subject")
+	text := subject.Probes.Value
+	start := int(subject.Places.Values[PLACE_START])
+	end := start
+	for end < len(text) {
+		value := text[end]
+		if value == '_' {
+			break
+		}
+		if end > start {
+			if value-'A' < LETTER_COUNT {
+				if text[end-1]-'a' < LETTER_COUNT {
+					break
+				}
+				if text[end-1]-'0' < DIGIT_COUNT {
+					break
+				}
+				if end+1 < len(text) {
+					if text[end+1]-'a' < LETTER_COUNT {
+						break
+					}
+				}
+			}
+		}
+		end = end + 1
+	}
+	subject.Places.Values[PLACE_END] = Place(end)
 }

@@ -25,6 +25,16 @@ func Test_Imports(t *testing.T) {
 	test_imports(t)
 }
 
+// Test_Names binds the Names specification leaf before fixture declarations.
+func Test_Names(t *testing.T) {
+	test_names(t)
+}
+
+// Test_Declarations binds the Declarations specification leaf before fixture declarations.
+func Test_Declarations(t *testing.T) {
+	test_declarations(t)
+}
+
 // Test_Refusals binds the Refusals specification leaf before fixture declarations.
 func Test_Refusals(t *testing.T) {
 	test_refusals(t)
@@ -52,7 +62,114 @@ func format_state() (state *format.Formatter) {
 		Places: format.Place_Storage{
 			Values: make(format.Places, format.PLACE_SLOT_COUNT),
 		},
+		Names: format.Name_Storage{
+			Values: make(format.Names, format.NAME_SLOT_COUNT),
+		},
+		Texts: format.Text_Storage{
+			Values: make(format.Text, format.NAME_TEXT_SIZE_MAXIMUM),
+		},
+		Slots: format.Slot_Storage{
+			Values: make(format.Slots, format.SLOT_COUNT),
+		},
 	}
+}
+
+type name_case struct {
+	Source string
+	Form   string
+}
+
+// States each source whose declared names the format renames, beside the form it expects.
+func name_cases() (cases []name_case) {
+	return []name_case{
+		{
+			Source: "const fooBar = 1\n\nvar held = fooBar\n",
+			Form:   "const FOO_BAR = 1\n\nvar held = FOO_BAR\n",
+		},
+		{
+			Source: "var someValue, Other_value = 1, 2\n",
+			Form:   "var some_value, Other_Value = 1, 2\n",
+		},
+		{
+			Source: "type HTTPServer struct {\n\tFieldOne int\n\tfieldTwo int\n}\n",
+			Form:   "type HTTP_Server struct {\n\tField_One int\n\tfield_two int\n}\n",
+		},
+		{
+			Source: "func DoWork(inputValue int) (resultValue int) {\n" +
+				"\tlocalValue := inputValue\n\tresultValue = localValue\n" +
+				"\treturn resultValue\n}\n",
+			Form: "func Do_Work(input_value int) (result_value int) {\n" +
+				"\tlocal_value := input_value\n\tresult_value = local_value\n" +
+				"\treturn result_value\n}\n",
+		},
+		{
+			Source: "var heldValue = \"heldValue\"\n",
+			Form:   "var held_value = \"heldValue\"\n",
+		},
+		{
+			Source: "import \"zz\"\n\nvar held = zz.MustCompile\n",
+			Form:   "import \"zz\"\n\nvar held = zz.MustCompile\n",
+		},
+		{
+			Source: "func TestMain(value int) {\n\treturn\n}\n",
+			Form:   "func TestMain(value int) {\n\treturn\n}\n",
+		},
+		{
+			Source: "var foo__bar_ = 1\n",
+			Form:   "var foo_bar = 1\n",
+		},
+		{
+			Source: "var heldValue = `heldValue\\` + \"held\\\"heldValue\" + " +
+				"'\\'' // heldValue\n",
+			Form: "var held_value = `heldValue\\` + \"held\\\"heldValue\" + " +
+				"'\\'' // heldValue\n",
+		},
+		{
+			Source: "var heldValue = 1e6 + .5e1 + 0x1Fe /* heldValue */ + 2\n",
+			Form:   "var held_value = 1e6 + .5e1 + 0x1Fe + 2 /* heldValue */\n",
+		},
+		{
+			Source: "type Enum_3_Int int\n\ntype User_IDs int\n\ntype V2Layer int\n\n" +
+				"type HtTP int\n\ntype Pair[elemType, keyType any] int\n",
+			Form: "type Enum_3_Int int\n\ntype User_IDs int\n\ntype V2_Layer int\n\n" +
+				"type Ht_TP int\n\ntype Pair[elem_type, key_type any] int\n",
+		},
+		{
+			Source: "const MAX_2 = 1\n\nconst BAD_ = 2\n\nconst X9y = 3\n\n" +
+				"var a2B = 4\n",
+			Form: "const MAX_2 = 1\n\nconst BAD = 2\n\nconst X9Y = 3\n\n" +
+				"var a2_b = 4\n",
+		},
+		{
+			Source: "func (heldPair Pair) Fold() (sum int) {\n" +
+				"\tfor keyA, valueB := range heldPair {\n" +
+				"\t\tsum = keyA + valueB\n\t}\n\treturn sum\n}\n",
+			Form: "func (held_pair Pair) Fold() (sum int) {\n" +
+				"\tfor key_a, value_b := range held_pair {\n" +
+				"\t\tsum = key_a + value_b\n\t}\n\treturn sum\n}\n",
+		},
+	}
+}
+
+func test_names(t *testing.T) {
+	head := "package one\n\n"
+	for _, one := range name_cases() {
+		form := formatted(t, head+one.Source)
+		testify.Equal(t, head+one.Form, form,
+			"a declared name stands in the case the linter asks")
+		testify.Equal(t, form, formatted(t, form), "a renamed form formats as itself")
+	}
+	state := format_state()
+	subject := printer_state()
+	tree := parse_state()
+	source := token.Source(head + "var fooBar = 1\n")
+	ast.Parse(tree, source)
+	format.Declare(state, tree, source)
+	narrow := make([]byte, len(source))
+	result := format.Format(state, subject, narrow, tree, source)
+	testify.False(t, bool(result.OK), "a rename past the storage is refused")
+	testify.Equal(t, printer.Form_Count(len(narrow)), result.Count,
+		"a refused rename states the storage it filled")
 }
 
 // Caller allocation keeps the printer free of hidden storage growth.
@@ -120,6 +237,7 @@ func formatted(t *testing.T, source string) (form string) {
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	held := token.Source(source)
 	ast.Parse(tree, held)
+	format.Declare(state, tree, held)
 	result := format.Format(state, subject, storage, tree, held)
 	testify.True(t, bool(result.OK), "the format holds the whole form")
 	return string(storage[:result.Count])
@@ -317,5 +435,75 @@ func test_imports(t *testing.T) {
 	} {
 		testify.Equal(t, one.Form, formatted(t, one.Source),
 			"the imports of one run stand in the order of the paths they name")
+	}
+}
+
+// Builds one source that declares a run of long names in the wrong case, each distinct by the
+// number that closes it, thus a few of them fill the name table past its storage.
+func long_names_source(first int) (source string) {
+	body := make([]byte, 0, token.SOURCE_SIZE_MAXIMUM)
+	body = append(body, "package one\n\n"...)
+	// Each line spells six digits, thus every line stands the same size and no two names clash.
+	line_size := len("var aB") + 200 + 6 + len(" = 1\n")
+	for index := first; len(body)+line_size < token.SOURCE_SIZE_MAXIMUM; index++ {
+		body = append(body, "var aB"...)
+		for range 200 {
+			body = append(body, 'c')
+		}
+		divisor := 100000
+		for range 6 {
+			body = append(body, byte('0'+index/divisor%10))
+			divisor = divisor / 10
+		}
+		body = append(body, " = 1\n"...)
+	}
+	// A space states no token, thus the padding that carries the source to the widest admitted
+	// size declares nothing.
+	for len(body) < token.SOURCE_SIZE_MAXIMUM {
+		body = append(body, ' ')
+	}
+	return string(body)
+}
+
+func test_declarations(t *testing.T) {
+	state := format_state()
+	subject := printer_state()
+	tree := parse_state()
+	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
+	declared := token.Source("package one\n\nvar someValue = 1\n\nconst maxSize = 2\n")
+	ast.Parse(tree, declared)
+	testify.True(t, bool(format.Declare(state, tree, declared)),
+		"a table with room takes every name of the file")
+	source := token.Source("package one\n\nvar held = someValue + maxSize\n")
+	ast.Parse(tree, source)
+	result := format.Format(state, subject, storage, tree, source)
+	testify.True(t, bool(result.OK), "the format holds the whole form")
+	testify.Equal(t, "package one\n\nvar held = some_value + MAX_SIZE\n",
+		string(storage[:result.Count]),
+		"a name another file declares takes its case in every file that spells it")
+	format.Forget(state)
+	source = token.Source("package one\n\nvar heldValue = 1\n")
+	ast.Parse(tree, source)
+	result = format.Format(state, subject, storage, tree, source)
+	testify.Equal(t, string(source), string(storage[:result.Count]),
+		"a name no declaration took stands as written, though the file declares it")
+	format.Forget(state)
+	ast.Parse(tree, source)
+	result = format.Format(state, subject, storage, tree, source)
+	testify.Equal(t, string(source), string(storage[:result.Count]),
+		"a forgotten table renames nothing the file does not declare")
+	full := true
+	for first := 0; full; first = first + 100000 {
+		many := token.Source(long_names_source(first))
+		ast.Parse(tree, many)
+		full = bool(format.Declare(state, tree, many))
+	}
+	testify.False(t, full, "a table past its storage reports it")
+	format.Forget(state)
+	for _, text := range []string{"", "p", "pa"} {
+		narrow := token.Source(text)
+		ast.Parse(tree, narrow)
+		testify.True(t, bool(format.Declare(state, tree, narrow)),
+			"a source of a few bytes declares nothing")
 	}
 }
