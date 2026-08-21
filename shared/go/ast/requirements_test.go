@@ -156,6 +156,11 @@ func Test_Refused_Syntax_Type_Aliases(t *testing.T) {
 	test_type_aliases(t)
 }
 
+// Test_Refused_Syntax_Closure_Bodies binds the Closure Bodies leaf before fixture declarations.
+func Test_Refused_Syntax_Closure_Bodies(t *testing.T) {
+	test_closure_bodies(t)
+}
+
 // Test_Refused_Syntax_Missing_Package_Clause binds the Missing Package Clause leaf
 // before fixture declarations.
 func Test_Refused_Syntax_Missing_Package_Clause(t *testing.T) {
@@ -465,8 +470,6 @@ func test_statements(t *testing.T) {
 		[]ast.Node_Kind{ast.NODE_RETURN})
 	accepts(t, state, TEST_HEAD+"func f() (a A, b B) {\nif c {\nreturn\n}\nreturn a, b\n}\n",
 		[]ast.Node_Kind{ast.NODE_RETURN})
-	accepts(t, state, TEST_HEAD+"func f() {\ng(func() (a A) {\nreturn\n})\n}\n",
-		[]ast.Node_Kind{ast.NODE_FUNCTION_LITERAL})
 	accepts(t, state, statement_source(body, "if a {\nb()\n} else {\nc()\n}"),
 		[]ast.Node_Kind{ast.NODE_IF})
 	accepts(t, state, statement_source(body, "if a := f(); a {\nb()\n} else if c {\n}"),
@@ -506,7 +509,7 @@ func test_expressions(t *testing.T) {
 	accepts(t, state, TEST_HEAD+"var a = T{B: c}\n",
 		[]ast.Node_Kind{ast.NODE_COMPOSITE, ast.NODE_KEY_VALUE})
 	accepts(t, state, TEST_HEAD+"var a = []T{{B: c}}\n", []ast.Node_Kind{ast.NODE_COMPOSITE})
-	accepts(t, state, TEST_HEAD+"var a = func(b B) (c C) {\nreturn b\n}\n",
+	accepts(t, state, TEST_HEAD+"var a = func(b B) (c C) {\nreturn g(b)\n}\n",
 		[]ast.Node_Kind{ast.NODE_FUNCTION_LITERAL})
 	accepts(t, state, TEST_HEAD+"var a = make([]T, SIZE)\n",
 		[]ast.Node_Kind{ast.NODE_SLICE_TYPE})
@@ -716,6 +719,45 @@ func test_type_aliases(t *testing.T) {
 	accepts(t, state, TEST_HEAD+"type T U\n", []ast.Node_Kind{ast.NODE_TYPE})
 	accepts(t, state, TEST_HEAD+"type T pkg.U\n", []ast.Node_Kind{ast.NODE_SELECTOR})
 	accepts(t, state, TEST_HEAD+"var a = b\n", []ast.Node_Kind{ast.NODE_VARIABLE})
+}
+
+func test_closure_bodies(t *testing.T) {
+	state := parse_state()
+	closure := ast.FAILURE_CLOSURE_BODY
+	body := TEST_HEAD + "func f() {\n"
+	for _, one := range []string{
+		"g(func() {\nreturn\n})",
+		"g(func() {\na := b()\n})",
+		"g(func() {\na = 1\n})",
+		"g(func() (r R) {\nreturn a\n})",
+		"g(func() (a A, b B) {\nreturn c(), d()\n})",
+		"g(func() (r R) {\nreturn h()\nh()\n})",
+		"g(func() {\ndefer h()\n})",
+		"go func() {\nh(<-c)\nif a {\nh()\n}\n}()",
+		"g(func() {\nlabel:\nh()\n})",
+		"g(func() {\n<-c\n})",
+		"g(func() {\nh(func() {\na++\n})\n})",
+	} {
+		refuses(t, state, statement_source(body, one), closure)
+	}
+	literal := []ast.Node_Kind{ast.NODE_FUNCTION_LITERAL}
+	for _, one := range []string{
+		"g(func() {\n})",
+		"g(func() {})",
+		"g(func() {\nh()\n})",
+		"g(func() {\nh()\n\n// note\nh(a + b)\n})",
+		"g(func() (r R) {\nh()\nreturn h()\n})",
+		"g(func() (r R) {\nreturn (h())\n})",
+		"g(func() {\n(h())\n})",
+		"g(func() {\nh(i(), a[0])\n})",
+		"g(func() (r []byte) {\nreturn []byte(a)\n})",
+		"defer func() {\nh()\n}()",
+		"g(func() {\nh(func() {\ni()\n})\n})",
+	} {
+		accepts(t, state, statement_source(body, one), literal)
+	}
+	accepts(t, state, statement_source(body, "a := 1\nreturn"),
+		[]ast.Node_Kind{ast.NODE_DEFINE})
 }
 
 func test_missing_package_clause(t *testing.T) {
@@ -1074,6 +1116,7 @@ func test_failures_codes(t *testing.T) {
 		{ast.FAILURE_INTERFACE_METHOD,
 			TEST_HEAD + "type R interface{\nRead(p []byte) int\n}\n"},
 		{ast.FAILURE_WIDE_IDENTIFIER, TEST_HEAD + "var é = 1\n"},
+		{ast.FAILURE_CLOSURE_BODY, TEST_HEAD + "func f() {\ng(func() {\nreturn\n})\n}\n"},
 		{ast.FAILURE_PACKAGE_CLAUSE, "var a = 1\n"},
 		{ast.FAILURE_TOKEN_COUNT, filled_run_source(ast.TOKEN_COUNT_MAXIMUM)},
 		{ast.FAILURE_NODE_COUNT, filled_arena_source(full)},

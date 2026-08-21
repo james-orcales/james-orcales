@@ -154,6 +154,12 @@ and its type, thus a result standing as a type alone names nothing.
 A type declaration bound by the assignment sign fails with FAILURE_TYPE_ALIAS. An alias gives one
 type a second name, and a reader who meets the second name learns nothing about the first.
 
+### Closure Bodies
+
+A function literal whose body holds anything but calls fails with FAILURE_CLOSURE_BODY. Only the
+last may return one call, and a grouped call is a call. Logic a closure hides stays out of reach
+of a test, and a named function lays it open.
+
 ### Missing Package Clause
 
 A file that opens with anything but the package keyword fails with FAILURE_PACKAGE_CLAUSE.

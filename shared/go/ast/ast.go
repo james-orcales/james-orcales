@@ -178,17 +178,21 @@ const FAILURE_UNNAMED_RESULT Failure_Code = 12
 // type a second name instead of declaring a type of its own.
 const FAILURE_TYPE_ALIAS Failure_Code = 13
 
+// FAILURE_CLOSURE_BODY marks a function literal whose body holds anything but calls, which
+// hides logic a named function would lay open to a test.
+const FAILURE_CLOSURE_BODY Failure_Code = 14
+
 // FAILURE_PACKAGE_CLAUSE marks a file that opens with anything but the package keyword.
-const FAILURE_PACKAGE_CLAUSE Failure_Code = 14
+const FAILURE_PACKAGE_CLAUSE Failure_Code = 15
 
 // FAILURE_TOKEN_COUNT marks a source holding more tokens than one run admits.
-const FAILURE_TOKEN_COUNT Failure_Code = 15
+const FAILURE_TOKEN_COUNT Failure_Code = 16
 
 // FAILURE_NODE_COUNT marks a source holding more syntax than the arena admits.
-const FAILURE_NODE_COUNT Failure_Code = 16
+const FAILURE_NODE_COUNT Failure_Code = 17
 
 // FAILURE_NESTING_DEPTH marks a source nesting deeper than one parse admits.
-const FAILURE_NESTING_DEPTH Failure_Code = 17
+const FAILURE_NESTING_DEPTH Failure_Code = 18
 
 // FAILURE_CODE_MINIMUM is the clean parse, the smallest code.
 const FAILURE_CODE_MINIMUM = uint8(FAILURE_NONE)
@@ -1134,6 +1138,8 @@ func Parse(subject Parse_State_Handle, source token.Source) (result Parse_Result
 	name_constant_case(subject, source)
 	name_bare_loop(subject, source)
 	name_unnamed_result(subject)
+	name_closure_statement(subject)
+	name_closure_call(subject)
 	name_banned_identifier(subject, source)
 	result.OK = Boolean(!bool(subject.Flags.Failed))
 	return result
@@ -2942,6 +2948,8 @@ func Failure_Message(code Failure_Code) (text Message) {
 		return "Name every result the signature sends back."
 	case FAILURE_TYPE_ALIAS:
 		return "Declare a type of its own instead of an alias."
+	case FAILURE_CLOSURE_BODY:
+		return "Move closure logic into a named function; keep only calls."
 	case FAILURE_PACKAGE_CLAUSE:
 		return "Open the file with the package keyword and one name."
 	case FAILURE_TOKEN_COUNT:
@@ -3292,6 +3300,114 @@ func name_unnamed_result(subject Parse_State_Handle) {
 		}
 		fail(subject, Cause(FAILURE_UNNAMED_RESULT))
 		subject.Token_Cursors.Failure = Refusal_Token(subject.Nodes.Values[slot].Token)
+		return
+	}
+}
+
+// Names a statement of a function literal that is no call and no return, and a return that
+// stands ahead of another statement, because a call behind a return never runs. Trivia states
+// nothing the closure runs, thus a comment or an empty line between calls passes.
+func name_closure_statement(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "name_closure_statement.subject")
+	if subject.Causes.Cause != FAILURE_NONE {
+		return
+	}
+	nodes := subject.Nodes.Values
+	count := subject.Node_Cursors.Count
+	for slot := INDEX_FIRST; slot < Index(count); slot++ {
+		block := Index(nodes[slot].Parent)
+		if nodes[block].Kind != NODE_BLOCK {
+			continue
+		}
+		if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
+			continue
+		}
+		kind := nodes[slot].Kind
+		if kind == NODE_COMMENT {
+			continue
+		}
+		if kind == NODE_BLANK {
+			continue
+		}
+		refused := kind != NODE_EXPRESSION_STATEMENT
+		if kind == NODE_RETURN {
+			refused = false
+			for sibling := Index(nodes[slot].Next); sibling != INDEX_ABSENT; {
+				if nodes[sibling].Kind != NODE_COMMENT {
+					if nodes[sibling].Kind != NODE_BLANK {
+						refused = true
+						break
+					}
+				}
+				sibling = Index(nodes[sibling].Next)
+			}
+		}
+		if !refused {
+			continue
+		}
+		fail(subject, Cause(FAILURE_CLOSURE_BODY))
+		subject.Token_Cursors.Failure = Refusal_Token(nodes[slot].Token)
+		return
+	}
+}
+
+// Names a statement of a function literal, or a grouping inside one, that holds anything but one
+// call or one grouping. A return of two values holds two children, thus it fails here too, and
+// a grouping climbs to the statement it stands in, because only that statement says it is judged.
+func name_closure_call(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "name_closure_call.subject")
+	if subject.Causes.Cause != FAILURE_NONE {
+		return
+	}
+	nodes := subject.Nodes.Values
+	count := subject.Node_Cursors.Count
+	for slot := INDEX_FIRST; slot < Index(count); slot++ {
+		// The statement pass refuses every other statement kind, and trivia holds no
+		// child, thus only these three stand to be judged.
+		kind := nodes[slot].Kind
+		judged := kind == NODE_EXPRESSION_STATEMENT
+		if kind == NODE_RETURN {
+			judged = true
+		}
+		if kind == NODE_PARENTHESIS {
+			judged = true
+		}
+		if !judged {
+			continue
+		}
+		statement := slot
+		for nodes[statement].Kind == NODE_PARENTHESIS {
+			statement = Index(nodes[statement].Parent)
+		}
+		block := Index(nodes[statement].Parent)
+		if nodes[block].Kind != NODE_BLOCK {
+			continue
+		}
+		if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
+			continue
+		}
+		held := 0
+		call := false
+		for child := Index(nodes[slot].First_Child); child != INDEX_ABSENT; {
+			child_kind := nodes[child].Kind
+			if child_kind != NODE_COMMENT {
+				if child_kind != NODE_BLANK {
+					held++
+					call = child_kind == NODE_CALL
+					if child_kind == NODE_PARENTHESIS {
+						call = true
+					}
+				}
+			}
+			child = Index(nodes[child].Next)
+		}
+		if held == 1 {
+			if call {
+				continue
+			}
+		}
+		fail(subject, Cause(FAILURE_CLOSURE_BODY))
+		subject.Token_Cursors.Failure = Refusal_Token(nodes[slot].Token)
 		return
 	}
 }
