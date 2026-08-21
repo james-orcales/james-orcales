@@ -11,12 +11,12 @@ import (
 func Test_Invariants_Unnamed_Default_Import(t *testing.T) {
 	t.Parallel()
 	code := "package fixture\n\n" +
-		"import \"fixture/shared/invariant/default\"\n\n" +
+		"import \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(value, namespace).Range_Int(" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
+		"\taver.Tree(value, namespace).Range_Int(" +
 		"int(value), Value_Min, Value_Max).Ensure()\n}\n"
 	pf := parse(t, &parse_input{Path: "pkg/rule.go", Source_Text: code})
 	type_diags := assertion.Check_Type(pf.File_Set, pf.File, nil)

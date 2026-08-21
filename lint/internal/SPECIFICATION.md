@@ -181,7 +181,7 @@ a library is being imported solely for it's global side-effects, an implicit con
 
 ### Banned Imports
 
-Outside `shared/invariant/**`, banned stdlib families are archive, bytes, compress, container,
+Outside `shared/simulation/aver/**`, banned stdlib families are archive, bytes, compress, container,
 encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid. `os/**` and
 simulation/nbio/default import os; only the latter imports os/signal. Invariant gets no exemption.
 
@@ -232,7 +232,7 @@ A function body holds at least one statement; an empty body is banned.
 
 ### Methods
 
-A package named invariant may declare methods. Elsewhere, a method is banned unless its exact
+A package named aver may declare methods. Elsewhere, a method is banned unless its exact
 signature satisfies a stdlib interface — error, fmt.Stringer, io.Reader/Writer/Closer/Seeker,
 sort.Interface, marshalers, fs.FS and kin; otherwise make it a free function with the receiver.
 

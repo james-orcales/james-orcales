@@ -486,7 +486,7 @@ func component_index_resolve(file_path string, components []Component) (index in
 }
 
 // Returns ancestor directories of `directory` from nearest to module
-// root, exclusive of "." itself. invariant.GameLoop annotates the loop
+// root, exclusive of "." itself. aver.GameLoop annotates the loop
 // as intentionally unbounded — path.Dir's fixed point on "." provides
 // the real termination.
 func check_component_tier_depth_ancestors(directory string) (ancestors []string) {

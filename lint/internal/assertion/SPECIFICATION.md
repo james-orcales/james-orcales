@@ -1,8 +1,8 @@
 
 # Invariants
 
-Every type states its properties in a companion function beside it, the shared/invariant bundle
-convention made mandatory.
+Every type states its properties in a companion function beside it, the
+shared/simulation/aver bundle convention made mandatory.
 
 ### Presence
 
@@ -17,7 +17,7 @@ _invariants suffix when it is unexported.
 ### Signature
 
 The function takes the type, by value or pointer, as its first parameter and an
-invariant.Namespace as its last.
+aver.Namespace as its last.
 
 ### Orphan
 
@@ -62,7 +62,7 @@ one form that shares a fact. A foreign helper never satisfies a local typed subj
 
 ### Helper Identity
 
-All canonical calls are direct shared/invariant/default statements with qualifier invariant. An
+All canonical calls are direct shared/simulation/aver/default statements with qualifier aver. An
 unnamed default-tier import binds parent package name. Tree root takes helper subject before
 namespace. Always uses `subject == CONSTANT` with literal message; every impersonation fails.
 
@@ -126,7 +126,7 @@ when both subjects have the same type and require the same helper.
 
 ### Recorder Registration
 
-A non-exempt shared-library package's TestMain body is exactly `invariant.Run_Test_Main(m)`. Thus,
+A non-exempt shared-library package's TestMain body is exactly `aver.Run_Test_Main(m)`. Thus,
 the suite registers the coverage recorder. A binary component uses its simulation. Any other body,
 or no TestMain, is banned.
 
@@ -154,7 +154,7 @@ isolated test binary, witnesses the component's invariants. Other declarations a
 
 ### Test Main
 
-The simulation TestMain body is exactly `invariant.Run_Test_Main(m, "../**")`. Any other body, or a
+The simulation TestMain body is exactly `aver.Run_Test_Main(m, "../**")`. Any other body, or a
 missing TestMain, is banned.
 
 ### Coverage

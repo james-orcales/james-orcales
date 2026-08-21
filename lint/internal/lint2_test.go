@@ -319,13 +319,13 @@ func Test_Comments_Inline_Exempt(t *testing.T) {
 	t.Parallel()
 	source := "package main\n\n" +
 		"import \"github.com/james-orcales/james-orcales/" +
-		"shared/invariant/v2\"\n\n" +
+		"shared/simulation/aver/v2\"\n\n" +
 		"const FIXTURE_HI = 100\n\n" +
 		"func f() (result int) { // some inline note\n" +
 		"\tdefer func() {\n" +
 		"\t\tinvariant.Cross_Product(\n" +
 		"\t\t\tinvariant.Distinct_Boundary(" +
-		"&invariant.Boundary_Input[int]{\n" +
+		"&aver.Boundary_Input[int]{\n" +
 		"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI,\n" +
 		"\t\t\t}),\n" +
 		"\t\t\tinvariant.Always(" +
@@ -2695,32 +2695,32 @@ func Test_Git_No_Fixup_Commits(t *testing.T) {
 	}
 }
 
-// Test_Banned_Stdlib_Import_Invariant verifies invariant library keeps cycle-breaking
+// Test_Banned_Stdlib_Import_Aver verifies aver library keeps cycle-breaking
 // stdlib access while similarly named directories stay banned.
-func Test_Banned_Stdlib_Import_Invariant(t *testing.T) {
+func Test_Banned_Stdlib_Import_Aver(t *testing.T) {
 	t.Parallel()
-	invariant_files := []string{
-		"shared/invariant/rule.go",
-		"shared/invariant/default/rule.go",
+	aver_files := []string{
+		"shared/simulation/aver/rule.go",
+		"shared/simulation/aver/default/rule.go",
 	}
-	for _, filename := range invariant_files {
+	for _, filename := range aver_files {
 		diags, err := lint.Check_Source(
-			filename, "package invariant\n\nimport \"encoding/json\"\n")
+			filename, "package aver\n\nimport \"encoding/json\"\n")
 		if err != nil {
 			t.Fatalf("Check_Source %q: %v", filename, err)
 		}
 		if specification_diagnosed(diags, "Banned import") {
-			t.Errorf("invariant file %q must be allowed", filename)
+			t.Errorf("aver file %q must be allowed", filename)
 		}
 	}
-	named_like_invariant, err := lint.Check_Source(
-		"shared/invariant_extra/rule.go",
-		"package invariant_extra\n\nimport \"encoding/json\"\n")
+	named_like_aver, err := lint.Check_Source(
+		"shared/simulation/aver_extra/rule.go",
+		"package aver_extra\n\nimport \"encoding/json\"\n")
 	if err != nil {
-		t.Fatalf("Check_Source invariant-like path: %v", err)
+		t.Fatalf("Check_Source aver-like path: %v", err)
 	}
-	if !specification_diagnosed(named_like_invariant, "Banned import") {
-		t.Error("directory named like invariant must stay banned")
+	if !specification_diagnosed(named_like_aver, "Banned import") {
+		t.Error("directory named like aver must stay banned")
 	}
 }
 
@@ -3432,7 +3432,7 @@ func main() {
 
 // Test_No_Bare_For_Clean verifies that for-loops with a real condition,
 // C-style headers, range loops, and the documented escape hatch
-// `for range invariant.GameLoop()` are not flagged.
+// `for range aver.GameLoop()` are not flagged.
 func Test_No_Bare_For_Clean(t *testing.T) {
 	tests := []struct {
 		Name      string
@@ -3491,7 +3491,7 @@ func main() {
 ` + FIXTURE_INVARIANT_IMPORT + `
 
 func main() {
-	for range invariant.Game_Loop() {
+	for range aver.Game_Loop() {
 		break
 	}
 }

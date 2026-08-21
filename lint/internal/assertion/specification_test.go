@@ -43,7 +43,7 @@ func Test_Invariants_Casing(t *testing.T) {
 	}
 }
 
-// Test_Invariants_Signature verifies a bundle missing its invariant.Namespace
+// Test_Invariants_Signature verifies a bundle missing its aver.Namespace
 // parameter is flagged.
 func Test_Invariants_Signature(t *testing.T) {
 	t.Parallel()
@@ -55,7 +55,7 @@ func Test_Invariants_Signature(t *testing.T) {
 			"// Widget_Invariants is a fixture.\n" +
 			"func Widget_Invariants(w Widget) {\n\tprintln(0)\n}\n"})
 	diags := assertion.Check_Type(pf.File_Set, pf.File, nil)
-	if !diagnosed(diags, "Write the parameters (Widget or *Widget, invariant.Namespace).") {
+	if !diagnosed(diags, "Write the parameters (Widget or *Widget, aver.Namespace).") {
 		t.Fatal("a bundle without the namespace parameter must be flagged")
 	}
 }
@@ -93,18 +93,18 @@ func Test_Invariants_Scope(t *testing.T) {
 // over, thus a named integer still owes the scalar mandate and a named slice the count mandate.
 func Test_Invariants_Underlying_Kind(t *testing.T) {
 	t.Parallel()
-	loose := "\tinvariant.Always(int(v) > Span_Min, \"loose\")"
+	loose := "\taver.Always(int(v) > Span_Min, \"loose\")"
 	if !diagnosed(check_fixture(t, chained_helper_source(CHAINED_INTEGER, loose)),
 		"does not call a canonical helper") {
 		t.Fatal("a defined type over a named integer owes the scalar mandate")
 	}
-	exact := "\tinvariant.Tree(v, namespace)." +
+	exact := "\taver.Tree(v, namespace)." +
 		"Range_Int(int(v), Span_Min, Span_Max).Ensure()"
 	if diagnosed(check_fixture(t, chained_helper_source(CHAINED_INTEGER, exact)),
 		"does not call a canonical helper") {
 		t.Fatal("the exact Range helper must satisfy the resolved scalar mandate")
 	}
-	counted := "\tinvariant.Always(len(v) > Span_Min, \"loose\")"
+	counted := "\taver.Always(len(v) > Span_Min, \"loose\")"
 	if !diagnosed(check_fixture(t, chained_helper_source(CHAINED_SLICE, counted)),
 		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a defined type over a named slice owes the count mandate")
@@ -116,64 +116,64 @@ func Test_Invariants_Underlying_Kind(t *testing.T) {
 // Range, or Enum helper required by a defined scalar.
 func Test_Invariants_Scalar_Helper(t *testing.T) {
 	t.Parallel()
-	raw := integer_helper_source("\tinvariant.Always(value >= Value_Min, \"min\")\n" +
-		"\tinvariant.Always(value <= Value_Max, \"max\")\n" +
-		"\tinvariant.Tree(value, namespace).Sometimes(value == Value_Min, \"min\")." +
+	raw := integer_helper_source("\taver.Always(value >= Value_Min, \"min\")\n" +
+		"\taver.Always(value <= Value_Max, \"max\")\n" +
+		"\taver.Tree(value, namespace).Sometimes(value == Value_Min, \"min\")." +
 		"Sometimes(value == Value_Max, \"max\").Ensure()")
 	if !diagnosed(check_fixture(t, raw), "does not call a canonical helper") {
 		t.Fatal("individual scalar assertions must not satisfy the helper mandate")
 	}
-	range_body := "\tinvariant.Tree(value, namespace)." +
+	range_body := "\taver.Tree(value, namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(range_body)),
 		"does not call a canonical helper") {
 		t.Fatal("the exact Range helper must satisfy the scalar mandate")
 	}
 	scalar_range_holed_helper(t)
-	enum_body := "\tinvariant.Tree(value, namespace)." +
+	enum_body := "\taver.Tree(value, namespace)." +
 		"Enum_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_body)),
 		"does not call a canonical helper") {
 		t.Fatal("the exact Enum helper must satisfy the scalar mandate")
 	}
-	enum_3_body := "\tinvariant.Tree(value, namespace)." +
+	enum_3_body := "\taver.Tree(value, namespace)." +
 		"Enum_3_Int(int(value), int(Value_Min), int(Value_Third), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_3_body)),
 		"does not call a canonical helper") {
 		t.Fatal("the exact Enum_3 helper must satisfy the scalar mandate")
 	}
-	enum_4_body := "\tinvariant.Tree(value, namespace)." +
+	enum_4_body := "\taver.Tree(value, namespace)." +
 		"Enum_4_Int(int(value), int(Value_Min), int(Value_Third), " +
 		"int(Value_Fourth), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_4_body)),
 		"does not call a canonical helper") {
 		t.Fatal("the exact Enum_4 helper must satisfy the scalar mandate")
 	}
-	retired := "\tinvariant.Int_Invariants(int(value), namespace)"
+	retired := "\taver.Int_Invariants(int(value), namespace)"
 	if !diagnosed(check_fixture(t, integer_helper_source(retired)),
 		"does not call a canonical helper") {
 		t.Fatal("a deleted primitive preset must not satisfy the scalar mandate")
 	}
-	singleton := "\tinvariant.Always(int(value) == int(Value_Min), " +
+	singleton := "\taver.Always(int(value) == int(Value_Min), " +
 		"\"The value is the only member.\")"
 	if diagnosed(check_fixture(t, integer_helper_source(singleton)),
 		"does not call a canonical helper") {
 		t.Fatal("a direct singleton Always must satisfy the integer mandate")
 	}
 	// A float has no builder preset, thus Always is all it can state.
-	float_singleton := "\tinvariant.Always(float64(value) == float64(Value_Min), \"only\")"
+	float_singleton := "\taver.Always(float64(value) == float64(Value_Min), \"only\")"
 	if diagnosed(check_fixture(t, float_helper_source(float_singleton)),
 		"does not call a canonical helper") {
 		t.Fatal("a float singleton must satisfy the scalar mandate")
 	}
 	// A Boolean has two legal values, thus a Tree with one Sometimes states the whole type. A
 	// singleton Always would claim the type is constant, which the library rejects outright.
-	boolean := "\tinvariant.Tree(value, namespace).Sometimes(bool(value), \"set\").Ensure()"
+	boolean := "\taver.Tree(value, namespace).Sometimes(bool(value), \"set\").Ensure()"
 	if diagnosed(check_fixture(t, boolean_helper_source(boolean)),
 		"does not call a canonical helper") {
 		t.Fatal("one Sometimes must satisfy the Boolean mandate")
 	}
-	boolean_singleton := "\tinvariant.Always(bool(value) == true, \"only\")"
+	boolean_singleton := "\taver.Always(bool(value) == true, \"only\")"
 	if !diagnosed(check_fixture(t, boolean_helper_source(boolean_singleton)),
 		"does not call a canonical helper") {
 		t.Fatal("a singleton Always must not satisfy the Boolean mandate")
@@ -185,39 +185,39 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 // over its own length, regardless of equivalent individual assertions.
 func Test_Invariants_Count_Helper(t *testing.T) {
 	t.Parallel()
-	raw := "\tinvariant.Always(len(value) >= Value_Min, \"min\")\n" +
-		"\tinvariant.Always(len(value) <= Value_Max, \"max\")\n" +
-		"\tinvariant.Tree(value, namespace).Sometimes(len(value) == Value_Min, \"min\")." +
+	raw := "\taver.Always(len(value) >= Value_Min, \"min\")\n" +
+		"\taver.Always(len(value) <= Value_Max, \"max\")\n" +
+		"\taver.Tree(value, namespace).Sometimes(len(value) == Value_Min, \"min\")." +
 		"Sometimes(len(value) == Value_Max, \"max\").Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(raw)),
 		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("individual count assertions must not satisfy the helper mandate")
 	}
-	valid := "\tinvariant.Tree(value, namespace)." +
+	valid := "\taver.Tree(value, namespace)." +
 		"Range_Holed_Int(len(value), Value_Min, Value_Max, 1, 2, 2, 2).Ensure()"
 	if diagnosed(check_fixture(t, count_helper_source(valid)),
 		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("Range_Holed_Int over the counted value must satisfy the mandate")
 	}
-	wrong_suffix := "\tinvariant.Tree(value, namespace)." +
+	wrong_suffix := "\taver.Tree(value, namespace)." +
 		"Range_Int64(int64(len(value)), int64(Value_Min), int64(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(wrong_suffix)),
 		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a differently typed Range helper must not substitute")
 	}
-	wrong_subject := "\tinvariant.Tree(value, namespace)." +
+	wrong_subject := "\taver.Tree(value, namespace)." +
 		"Range_Int(len(value[:0]), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(wrong_subject)),
 		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a Range_Int over another subject must not satisfy the mandate")
 	}
-	split := "\tassertions := invariant.Tree(value, namespace)\n" +
+	split := "\tassertions := aver.Tree(value, namespace)\n" +
 		"\tassertions.Range_Int(len(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(split)),
 		"Write a Range_Int family, an Enum_Int family") {
 		t.Fatal("a split builder must not satisfy the helper mandate")
 	}
-	singleton := "\tinvariant.Always(len(value) == Value_Min, " +
+	singleton := "\taver.Always(len(value) == Value_Min, " +
 		"\"The count is the only member.\")"
 	if diagnosed(check_fixture(t, count_helper_source(singleton)),
 		"Write a Range_Int family, an Enum_Int family") {
@@ -229,32 +229,32 @@ func Test_Invariants_Count_Helper(t *testing.T) {
 // identity for Range edges and Enum members.
 func Test_Invariants_Helper_Constants(t *testing.T) {
 	t.Parallel()
-	inline_range := "\tinvariant.Tree(value, namespace)." +
+	inline_range := "\taver.Tree(value, namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(7)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_range)),
 		"an argument that is not a package-level constant") {
 		t.Fatal("an inline Range edge must not satisfy the helper mandate")
 	}
-	inline_enum := "\tinvariant.Tree(value, namespace)." +
+	inline_enum := "\taver.Tree(value, namespace)." +
 		"Enum_Int(int(value), int(Value_Min), int(7)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_enum)),
 		"an argument that is not a package-level constant") {
 		t.Fatal("an inline Enum member must not satisfy the helper mandate")
 	}
-	converted := "\tinvariant.Tree(value, namespace)." +
+	converted := "\taver.Tree(value, namespace)." +
 		"Range_Holed_Int(int(value), int(Value_Min), int(Value_Max), 1, 2, 2, 2).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(converted)),
 		"an argument that is not a package-level constant") {
 		t.Fatal("exactly converted package constants must satisfy the mandate")
 	}
 	shadowed := "\tValue_Min := 0\n" +
-		"\tinvariant.Tree(value, namespace)." +
+		"\taver.Tree(value, namespace)." +
 		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(shadowed)),
 		"an argument that is not a package-level constant") {
 		t.Fatal("a local shadow of a package constant must not satisfy the mandate")
 	}
-	inline_singleton := "\tinvariant.Always(int(value) == 1, \"only\")"
+	inline_singleton := "\taver.Always(int(value) == 1, \"only\")"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_singleton)),
 		"an argument that is not a package-level constant") {
 		t.Fatal("an inline singleton member must not satisfy the helper mandate")
@@ -262,12 +262,12 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 	// A qualified constant states the boundary it crosses, thus one shared bound serves every
 	// type that names it and no type has to copy the number.
 	qualified := "package fixture\n\n" +
-		"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+		"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 		"\tbound \"fixture/other\"\n)\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(value, namespace).Range_Int(" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
+		"\taver.Tree(value, namespace).Range_Int(" +
 		"int(value), bound.SPAN_MINIMUM, bound.SPAN_MAXIMUM).Ensure()\n}\n"
 	if diagnosed(check_fixture(t, qualified),
 		"an argument that is not a package-level constant") {
@@ -283,17 +283,17 @@ func Test_Invariants_Cross_Package_Identity(t *testing.T) {
 	cross_package_helper_isolation(t)
 }
 
-// Test_Invariants_Helper_Identity verifies only a direct builder rooted at the actual invariant
+// Test_Invariants_Helper_Identity verifies only a direct builder rooted at the actual aver
 // package and the helper's namespace parameter satisfies the body mandate.
 func Test_Invariants_Helper_Identity(t *testing.T) {
 	t.Parallel()
-	literal := "\tinvariant.Assertions(\"manual\")." +
+	literal := "\taver.Assertions(\"manual\")." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(literal)),
 		"does not call a canonical helper") {
 		t.Fatal("a literal namespace must not satisfy a helper template")
 	}
-	nested := "\tif true {\n\t\tinvariant.Tree(value, namespace)." +
+	nested := "\tif true {\n\t\taver.Tree(value, namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n\t}"
 	if !diagnosed(check_fixture(t, integer_helper_source(nested)),
 		"does not call a canonical helper") {
@@ -305,41 +305,41 @@ func Test_Invariants_Helper_Identity(t *testing.T) {
 	}
 	aliased := aliased_scalar_helper_source()
 	if !diagnosed(check_fixture(t, aliased), "does not call a canonical helper") {
-		t.Fatal("an import alias must not impersonate the literal invariant qualifier")
+		t.Fatal("an import alias must not impersonate the literal aver qualifier")
 	}
 	parent := strings.Replace(integer_helper_source(
-		"\tinvariant.Tree(value, namespace).Range_Int("+
+		"\taver.Tree(value, namespace).Range_Int("+
 			"int(value), int(Value_Min), int(Value_Max)).Ensure()"), "/default", "", 1)
 	if !diagnosed(check_fixture(t, parent), "does not call a canonical helper") {
-		t.Fatal("the pure invariant package must not impersonate its default builder")
+		t.Fatal("the pure aver package must not impersonate its default builder")
 	}
-	recorder := "\tinvariant.Recorder_Assertions(namespace)." +
+	recorder := "\taver.Recorder_Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(recorder)),
 		"does not call a canonical helper") {
 		t.Fatal("Recorder_Assertions must not satisfy the helper mandate")
 	}
-	legacy := "\tinvariant.Dot_Product(namespace)." +
+	legacy := "\taver.Dot_Product(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(legacy)),
 		"does not call a canonical helper") {
 		t.Fatal("the old Dot_Product root must not satisfy the helper mandate")
 	}
-	retired := "\tinvariant.Assertions(namespace)." +
+	retired := "\taver.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(retired)),
 		"does not call a canonical helper") {
 		t.Fatal("the old Assertions root must not satisfy the helper mandate")
 	}
 	conversion := "\tint := func(Value) int { return 0 }\n" +
-		"\tinvariant.Tree(value, namespace)." +
+		"\taver.Tree(value, namespace)." +
 		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(conversion)),
 		"does not call a canonical helper") {
 		t.Fatal("a local function shadowing the primitive conversion must not substitute")
 	}
 	count := "\tlen := func(Value) int { return 0 }\n" +
-		"\tinvariant.Tree(value, namespace)." +
+		"\taver.Tree(value, namespace)." +
 		"Range_Int(len(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(count)),
 		"Write a Range_Int family, an Enum_Int family") {
@@ -371,28 +371,28 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 			"\tforeign \"fixture/foreign\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Lexeme is a fixture.\ntype Lexeme struct {\n" +
 			"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
 			"// Lexeme_Invariants is a fixture.\n" +
-			"func Lexeme_Invariants(v Lexeme, namespace invariant.Namespace) {\n" +
+			"func Lexeme_Invariants(v Lexeme, namespace aver.Namespace) {\n" +
 			"\tforeign.Token_Invariants(v.Tok, \"wrong\")\n" +
 			"\tif false { Token_Invariants(v.Tok, \"nested\") }\n" +
-			"\tToken_Invariants := func(Token, invariant.Namespace) {}\n" +
+			"\tToken_Invariants := func(Token, aver.Namespace) {}\n" +
 			"\tToken_Invariants(v.Tok, namespace)\n" +
-			"\tinvariant.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n\n" +
+			"\taver.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n\n" +
 			"// Phrase is a fixture.\ntype Phrase struct {\n" +
 			"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 			"// Phrase_Invariants is a fixture.\n" +
-			"func Phrase_Invariants(v Phrase, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Phrase_Invariants(v Phrase, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Sometimes(true, \"y\").Ensure()\n}\n"})
 	diags := check_source(pf)
 	if !diagnosed(diags, "Lexeme_Invariants does not call a helper for the field v.Tok") {
@@ -406,29 +406,29 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	external := parse(t, &parse_input{
 		Path: "other/token.go",
 		Source_Text: "package other\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n"})
 	composed := parse(t, &parse_input{
 		Path: "pkg/composed.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 			"\texternal \"fixture/other\"\n)\n\n" +
 			"const Count_Min = 0\n\nconst Count_Max = 4\n\n" +
 			"// Count is a fixture.\ntype Count int\n\n" +
 			"// Count_Invariants is a fixture.\n" +
-			"func Count_Invariants(value Count, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace)." +
+			"func Count_Invariants(value Count, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace)." +
 			"Range_Int(int(value), int(Count_Min), int(Count_Max)).Ensure()\n}\n\n" +
 			"// Holder is a fixture.\ntype Holder struct {\n" +
 			"\t// Token is external.\n\tToken external.Token\n" +
 			"\t// Count is local.\n\tCount Count\n}\n\n" +
 			"// Holder_Invariants is a fixture.\n" +
-			"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
+			"func Holder_Invariants(v Holder, namespace aver.Namespace) {\n" +
 			"\texternal.Token_Invariants(v.Token, \"token\")\n" +
 			"\tCount_Invariants(v.Count, \"count\")\n}\n"})
 	if diagnosed(check_sources([]source.Parsed_File{external, composed}),
@@ -450,33 +450,33 @@ func Test_Invariants_Inherited_Fields(t *testing.T) {
 func Test_Invariants_Defined_Pointers(t *testing.T) {
 	t.Parallel()
 	head := "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
 		"// Mark is a fixture.\ntype Mark int\n\n" +
 		"// Mark_Invariants is a fixture.\n" +
-		"func Mark_Invariants(v Mark, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
 		"// Frame is a fixture.\ntype Frame struct {\n" +
 		"\t// Mk is a fixture.\n\tMk Mark\n\t// Other is a fixture.\n\tOther Mark\n}\n\n" +
 		"// Frame_Invariants is a fixture.\n" +
-		"func Frame_Invariants(v Frame, namespace invariant.Namespace) {\n" +
+		"func Frame_Invariants(v Frame, namespace aver.Namespace) {\n" +
 		"\tMark_Invariants(v.Mk, namespace)\n" +
 		"\tMark_Invariants(v.Other, namespace)\n}\n\n" +
 		"// Handle is a fixture.\ntype Handle *Frame\n\n"
 	guarded := head + "// Handle_Invariants is a fixture.\n" +
-		"func Handle_Invariants(v Handle, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(v != nil, \"the handle is present\")\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Handle_Invariants(v Handle, namespace aver.Namespace) {\n" +
+		"\taver.Always(v != nil, \"the handle is present\")\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
 	if !diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: guarded})), "v.Other") {
 		t.Fatal("a defined pointer that omits an inherited field must be flagged")
 	}
 	whole := head + "// Handle_Invariants is a fixture.\n" +
-		"func Handle_Invariants(v Handle, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(v != nil, \"the handle is present\")\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Handle_Invariants(v Handle, namespace aver.Namespace) {\n" +
+		"\taver.Always(v != nil, \"the handle is present\")\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v.Mk), Mark_Min, Mark_Max)." +
 		"Range_Int(int(v.Other), Mark_Min, Mark_Max).Ensure()\n}\n"
 	if diagnosed(check_source(parse(t, &parse_input{
@@ -490,30 +490,30 @@ func Test_Invariants_Defined_Pointers(t *testing.T) {
 func Test_Invariants_Embedded_Fields(t *testing.T) {
 	t.Parallel()
 	head := "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
 		"// Mark is a fixture.\ntype Mark int\n\n" +
 		"// Mark_Invariants is a fixture.\n" +
-		"func Mark_Invariants(v Mark, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
 		"// Frame is a fixture.\ntype Frame struct {\n" +
 		"\t// Mk is a fixture.\n\tMk Mark\n}\n\n" +
 		"// Frame_Invariants is a fixture.\n" +
-		"func Frame_Invariants(v Frame, namespace invariant.Namespace) {\n" +
+		"func Frame_Invariants(v Frame, namespace aver.Namespace) {\n" +
 		"\tMark_Invariants(v.Mk, namespace)\n}\n\n" +
 		"// Reference is a fixture.\ntype Reference struct {\n\t*Frame\n}\n\n"
 	bare := head + "// Reference_Invariants is a fixture.\n" +
-		"func Reference_Invariants(v Reference, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(v.Frame != nil, \"the frame is present\")\n}\n"
+		"func Reference_Invariants(v Reference, namespace aver.Namespace) {\n" +
+		"\taver.Always(v.Frame != nil, \"the frame is present\")\n}\n"
 	want := "Call Frame_Invariants(v.Frame, ...)."
 	if !diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: bare})), want) {
 		t.Fatal("an embedded pointer that states only its presence must be flagged")
 	}
 	composed := head + "// Reference_Invariants is a fixture.\n" +
-		"func Reference_Invariants(v Reference, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(v.Frame != nil, \"the frame is present\")\n" +
+		"func Reference_Invariants(v Reference, namespace aver.Namespace) {\n" +
+		"\taver.Always(v.Frame != nil, \"the frame is present\")\n" +
 		"\tFrame_Invariants(*v.Frame, namespace)\n}\n"
 	if diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: composed})), "Call Frame_Invariants") {
@@ -526,8 +526,8 @@ func Test_Invariants_Embedded_Fields(t *testing.T) {
 func Test_Invariants_Inline_Form(t *testing.T) {
 	t.Parallel()
 	loose := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
-		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
-		INHERITED_STRUCT_LINK + "\tinvariant.Tree(v, namespace)." +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		INHERITED_STRUCT_LINK + "\taver.Tree(v, namespace)." +
 		"Sometimes(int(v.Mk) == Mark_Min, \"the mark is least\").Ensure()\n}\n"
 	if !diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: loose})),
@@ -538,8 +538,8 @@ func Test_Invariants_Inline_Form(t *testing.T) {
 	for _, condition := range []string{
 		"int(v.Mk) > Mark_Min", "int(v.Mk) == 0", "int(v.Mk) != Mark_Min"} {
 		partial := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
-			"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Always(" + condition + ", \"partial\")\n" +
+			"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+			"\taver.Always(" + condition + ", \"partial\")\n" +
 			INHERITED_STRUCT_LINK + "}\n"
 		if !diagnosed(check_source(parse(t, &parse_input{
 			Path: "pkg/rule.go", Source_Text: partial})),
@@ -548,20 +548,20 @@ func Test_Invariants_Inline_Form(t *testing.T) {
 		}
 	}
 	boolean := "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Flag is a fixture.\ntype Flag bool\n\n" +
 		"// Flag_Invariants is a fixture.\n" +
-		"func Flag_Invariants(v Flag, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace).Sometimes(bool(v), \"set\").Ensure()\n}\n\n" +
+		"func Flag_Invariants(v Flag, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace).Sometimes(bool(v), \"set\").Ensure()\n}\n\n" +
 		"// Switchboard is a fixture.\ntype Switchboard struct {\n" +
 		"\t// Flg is a fixture.\n\tFlg Flag\n}\n\n" +
 		"// Switchboard_Invariants is a fixture.\n" +
-		"func Switchboard_Invariants(v Switchboard, namespace invariant.Namespace) {\n" +
+		"func Switchboard_Invariants(v Switchboard, namespace aver.Namespace) {\n" +
 		"\tFlag_Invariants(v.Flg, namespace)\n}\n\n" +
 		"// Panel is a fixture.\ntype Panel Switchboard\n\n" +
 		"// Panel_Invariants is a fixture.\n" +
-		"func Panel_Invariants(v Panel, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Panel_Invariants(v Panel, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Sometimes(bool(v.Flg), \"set\").Ensure()\n}\n"
 	if diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: boolean})), "v.Flg") {
@@ -574,20 +574,20 @@ func Test_Invariants_Inline_Form(t *testing.T) {
 func Test_Invariants_Always_Condition(t *testing.T) {
 	t.Parallel()
 	bound := integer_helper_source(
-		"\tinvariant.Always(int(value) >= int(Value_Min) && " +
+		"\taver.Always(int(value) >= int(Value_Min) && " +
 			"int(value) <= int(Value_Max), \"in range\")")
 	if !diagnosed(check_fixture(t, bound), "The Always condition has the compound operator") {
 		t.Fatal("a hand-written Range must be flagged")
 	}
 	membership := integer_helper_source(
-		"\tinvariant.Always(int(value) == int(Value_Min) || " +
+		"\taver.Always(int(value) == int(Value_Min) || " +
 			"int(value) == int(Value_Max), \"a member\")")
 	if !diagnosed(check_fixture(t, membership),
 		"The Always condition has the compound operator") {
 		t.Fatal("a hand-written Enum must be flagged")
 	}
 	single := integer_helper_source(
-		"\tinvariant.Always(int(value) == int(Value_Min), \"the only member\")")
+		"\taver.Always(int(value) == int(Value_Min), \"the only member\")")
 	if diagnosed(check_fixture(t, single), "The Always condition has the compound operator") {
 		t.Fatal("a single-term Always must be accepted")
 	}
@@ -600,18 +600,18 @@ func Test_Invariants_Parameter_Helper(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 			"\tforeign \"fixture/foreign\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume does.\nfunc Consume(tok Token) {\n" +
 			"\tforeign.Token_Invariants(tok, \"wrong\")\n" +
-			"\tinvariant.Always(true, \"raw guard\")\n" +
-			"\tinvariant.Assertions(\"raw builder\")." +
+			"\taver.Always(true, \"raw guard\")\n" +
+			"\taver.Assertions(\"raw builder\")." +
 			"Sometimes(true, \"raw axis\").Ensure()\n" +
 			"\tprintln(0)\n}\n"})
 	if !diagnosed(check_source(pf), "does not call a helper for the input tok") {
@@ -629,20 +629,20 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 			"\tforeign \"fixture/foreign\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Make does.\nfunc Make() (tok Token) {\n\tdefer func() {\n" +
 			"\t\tforeign.Token_Invariants(tok, \"wrong\")\n" +
 			"\t\tif false { Token_Invariants(tok, \"nested\") }\n" +
-			"\t\tToken_Invariants := func(Token, invariant.Namespace) {}\n" +
+			"\t\tToken_Invariants := func(Token, aver.Namespace) {}\n" +
 			"\t\tToken_Invariants(tok, \"shadowed\")\n" +
-			"\t\tinvariant.Always(true, \"raw guard\")\n\t}()\n\treturn \"\"\n}\n"})
+			"\t\taver.Always(true, \"raw guard\")\n\t}()\n\treturn \"\"\n}\n"})
 	if !diagnosed(check_source(pf), "does not call a helper for the output tok. "+
 		"Call Token_Invariants(tok, ...) in the output defer.") {
 		t.Fatal("foreign and direct assertions must not satisfy the output helper")
@@ -650,12 +650,12 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 	correct := parse(t, &parse_input{
 		Path: "pkg/correct_output.go",
 		Source_Text: "package fixture\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Make uses the exact output helper.\nfunc Make() (tok Token) {\n" +
 			"\tdefer func() {\n\t\tToken_Invariants(tok, \"token\")\n" +
@@ -688,7 +688,7 @@ func Test_Invariants_Recorder_Registration(t *testing.T) {
 				"func Test_Widget(t *testing.T) {}\n"}),
 	}
 	if !diagnosed(recorder_diagnostics(files),
-		"has no TestMain that calls invariant.Run_Test_Main") {
+		"has no TestMain that calls aver.Run_Test_Main") {
 		t.Fatal("a package with no TestMain must be flagged")
 	}
 }
@@ -747,9 +747,9 @@ func Test_Simulation_Presence(t *testing.T) {
 func Test_Simulation_Contents(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
-		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
-		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n"
+		"\taver.Run_Test_Main(m, \"../**\")\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
 		"The simulation package has no fuzz function for internal.Main.") {
 		t.Fatal("a simulation package without a fuzz function must be flagged")
@@ -757,13 +757,13 @@ func Test_Simulation_Contents(t *testing.T) {
 }
 
 // Test_Simulation_Test_Main verifies a simulation TestMain that is not exactly
-// invariant.Run_Test_Main(m, <dirs>) is flagged.
+// aver.Run_Test_Main(m, <dirs>) is flagged.
 func Test_Simulation_Test_Main(t *testing.T) {
 	t.Parallel()
-	sim := simulation_fixture_source("invariant.Run_Test_Main(m)")
+	sim := simulation_fixture_source("aver.Run_Test_Main(m)")
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
 		"The body of the simulation TestMain is not "+
-			"invariant.Run_Test_Main(m, \"../**\").") {
+			"aver.Run_Test_Main(m, \"../**\").") {
 		t.Fatal("a simulation TestMain without directory arguments must be flagged")
 	}
 }
@@ -772,10 +772,10 @@ func Test_Simulation_Test_Main(t *testing.T) {
 // do not register every internal package is flagged.
 func Test_Simulation_Coverage(t *testing.T) {
 	t.Parallel()
-	sim := simulation_fixture_source("invariant.Run_Test_Main(m, \"../*\")")
+	sim := simulation_fixture_source("aver.Run_Test_Main(m, \"../*\")")
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
 		"The body of the simulation TestMain is not "+
-			"invariant.Run_Test_Main(m, \"../**\").") {
+			"aver.Run_Test_Main(m, \"../**\").") {
 		t.Fatal("a narrower glob that omits nested internal packages must be flagged")
 	}
 }
@@ -786,9 +786,9 @@ func Test_Simulation_Entry(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
 		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
-		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
-		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\tinternal.Extra()\n}\n"
 	files := []source.Parsed_File{
 		parse(t, &parse_input{
@@ -815,9 +815,9 @@ func Test_Simulation_Entry(t *testing.T) {
 func Test_Simulation_Blackbox(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation\n\nimport (\n\t\"testing\"\n\n" +
-		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
-		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
 		"The simulation package simulation is not an external test package.") {
@@ -828,27 +828,27 @@ func Test_Simulation_Blackbox(t *testing.T) {
 // INHERITED_FIELD_HEAD declares a struct over a scalar and a struct field, its composing bundle,
 // and a defined type over it. Each case appends that defined type's own bundle.
 const INHERITED_FIELD_HEAD = "package fixture\n\n" +
-	"import invariant \"fixture/shared/invariant/default\"\n\n" +
+	"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 	"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
 	"// Mark is a fixture.\ntype Mark int\n\n" +
 	"// Mark_Invariants is a fixture.\n" +
-	"func Mark_Invariants(v Mark, namespace invariant.Namespace) {\n" +
-	"\tinvariant.Tree(v, namespace)." +
+	"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
+	"\taver.Tree(v, namespace)." +
 	"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
 	"// Token is a fixture.\ntype Token string\n\n" +
 	"// Token_Invariants is a fixture.\n" +
-	"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-	"\tinvariant.Tree(v, namespace)." +
+	"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+	"\taver.Tree(v, namespace)." +
 	"Range_Int(len(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
 	"// Inner is a fixture.\ntype Inner struct {\n" +
 	"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
 	"// Inner_Invariants is a fixture.\n" +
-	"func Inner_Invariants(v Inner, namespace invariant.Namespace) {\n" +
+	"func Inner_Invariants(v Inner, namespace aver.Namespace) {\n" +
 	"\tToken_Invariants(v.Tok, namespace)\n}\n\n" +
 	"// Holder is a fixture.\ntype Holder struct {\n" +
 	"\t// Mk is a fixture.\n\tMk Mark\n\t// In is a fixture.\n\tIn Inner\n}\n\n" +
 	"// Holder_Invariants is a fixture.\n" +
-	"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
+	"func Holder_Invariants(v Holder, namespace aver.Namespace) {\n" +
 	"\tMark_Invariants(v.Mk, namespace)\n\tInner_Invariants(v.In, namespace)\n}\n\n" +
 	"// Kept is a fixture.\ntype Kept Holder\n\n"
 
@@ -860,7 +860,7 @@ const INHERITED_STRUCT_LINK = "\tInner_Invariants(v.In, namespace)\n"
 func assert_inherited_scalar_is_inline(t *testing.T) {
 	t.Helper()
 	composed := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
-		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
 		"\tMark_Invariants(v.Mk, namespace)\n" + INHERITED_STRUCT_LINK + "}\n"
 	if !diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: composed})),
@@ -868,8 +868,8 @@ func assert_inherited_scalar_is_inline(t *testing.T) {
 		t.Fatal("a composed inherited scalar field must be flagged")
 	}
 	inline := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
-		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
-		INHERITED_STRUCT_LINK + "\tinvariant.Tree(v, namespace)." +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		INHERITED_STRUCT_LINK + "\taver.Tree(v, namespace)." +
 		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
 	if diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: inline})), "v.Mk") {
@@ -877,8 +877,8 @@ func assert_inherited_scalar_is_inline(t *testing.T) {
 	}
 	// A singleton value has no Range and no Enum, thus a direct Always is all that states it.
 	singleton := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
-		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(int(v.Mk) == Mark_Min, \"the only mark\")\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		"\taver.Always(int(v.Mk) == Mark_Min, \"the only mark\")\n" +
 		INHERITED_STRUCT_LINK + "}\n"
 	if diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: singleton})), "v.Mk") {
@@ -891,8 +891,8 @@ func assert_inherited_scalar_is_inline(t *testing.T) {
 func assert_inherited_struct_is_composed(t *testing.T) {
 	t.Helper()
 	inline_only := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
-		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
 	if !diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: inline_only})),
@@ -900,13 +900,13 @@ func assert_inherited_struct_is_composed(t *testing.T) {
 		t.Fatal("an omitted inherited struct field must be flagged")
 	}
 	converted := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
-		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
 		"\tSpare_Invariants(Spare(v.In), namespace)\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
 		"// Spare is a fixture.\ntype Spare Inner\n\n" +
 		"// Spare_Invariants is a fixture.\n" +
-		"func Spare_Invariants(v Spare, namespace invariant.Namespace) {\n" +
+		"func Spare_Invariants(v Spare, namespace aver.Namespace) {\n" +
 		"\tToken_Invariants(v.Tok, namespace)\n}\n"
 	if diagnosed(check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: converted})), "v.In") {
@@ -953,7 +953,7 @@ func scalar_helper_remedy_text(t *testing.T) {
 
 func scalar_range_holed_helper(t *testing.T) {
 	t.Helper()
-	body := "\tinvariant.Tree(value, namespace)." +
+	body := "\taver.Tree(value, namespace)." +
 		"Range_Holed_Int(int(value), int(Value_Min), int(Value_Max), " +
 		"int(Value_Third), int(Value_Fourth), int(Value_Fourth), " +
 		"int(Value_Fourth)).Ensure()"
@@ -966,12 +966,12 @@ func scalar_range_holed_helper(t *testing.T) {
 func assert_invalid_singleton_helper_identity(t *testing.T) {
 	t.Helper()
 	invalid_singletons := []string{
-		"\tinvariant.Always(int(Value_Min) == int(value), \"reversed\")",
-		"\tinvariant.Always(int(value) != int(Value_Min), \"not equal\")",
+		"\taver.Always(int(Value_Min) == int(value), \"reversed\")",
+		"\taver.Always(int(value) != int(Value_Min), \"not equal\")",
 		"\tmessage := \"dynamic\"\n" +
-			"\tinvariant.Always(int(value) == int(Value_Min), message)",
-		"\tinvariant.Always(int(value + 1) == int(Value_Min), \"wrong subject\")",
-		"\tif true { invariant.Always(int(value) == int(Value_Min), \"nested\") }",
+			"\taver.Always(int(value) == int(Value_Min), message)",
+		"\taver.Always(int(value + 1) == int(Value_Min), \"wrong subject\")",
+		"\tif true { aver.Always(int(value) == int(Value_Min), \"nested\") }",
 	}
 	for _, body := range invalid_singletons {
 		if !diagnosed(check_fixture(t, integer_helper_source(body)),
@@ -980,14 +980,14 @@ func assert_invalid_singleton_helper_identity(t *testing.T) {
 		}
 	}
 	parent_singleton := strings.Replace(integer_helper_source(
-		"\tinvariant.Always(int(value) == int(Value_Min), \"only\")"),
+		"\taver.Always(int(value) == int(Value_Min), \"only\")"),
 		"/default", "", 1)
 	if !diagnosed(check_fixture(t, parent_singleton), "does not call a canonical helper") {
-		t.Fatal("the pure invariant package must not provide the singleton helper")
+		t.Fatal("the pure aver package must not provide the singleton helper")
 	}
 	aliased_singleton := strings.Replace_All(integer_helper_source(
-		"\tinvariant.Always(int(value) == int(Value_Min), \"only\")"),
-		"invariant", "contract")
+		"\taver.Always(int(value) == int(Value_Min), \"only\")"),
+		"aver", "contract")
 	if !diagnosed(check_fixture(t, aliased_singleton), "does not call a canonical helper") {
 		t.Fatal("an import alias must not provide the singleton helper")
 	}
@@ -1000,12 +1000,12 @@ func parameter_helper_correct(t *testing.T) {
 	correct := parse(t, &parse_input{
 		Path: "pkg/correct.go",
 		Source_Text: "package fixture\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume uses exact helpers.\nfunc Consume(tok Token) {\n" +
 			"\tToken_Invariants(tok, \"token\")\n}\n"})
@@ -1020,16 +1020,16 @@ func parameter_helper_shadowed(t *testing.T) {
 	shadowed := parse(t, &parse_input{
 		Path: "pkg/shadowed.go",
 		Source_Text: "package fixture\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace)." +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume shadows the helper.\n" +
 			"func Consume(tok Token, Token_Invariants " +
-			"func(Token, invariant.Namespace)) {\n" +
+			"func(Token, aver.Namespace)) {\n" +
 			"\tToken_Invariants(tok, \"shadowed\")\n}\n"})
 	if !diagnosed(check_source(shadowed), "does not call a helper for the input tok") {
 		t.Fatal("a parameter shadowing the exact helper must not satisfy the mandate")
@@ -1043,12 +1043,12 @@ func parameter_helper_external(t *testing.T) {
 	external := parse(t, &parse_input{
 		Path: "other/input.go",
 		Source_Text: "package other\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Input_Min = -4\n\nconst Input_Max = 4\n\n" +
 			"// Input is a fixture.\ntype Input int\n\n" +
 			"// Input_Invariants is a fixture.\n" +
-			"func Input_Invariants(v Input, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(v, namespace).Range_Int(" +
+			"func Input_Invariants(v Input, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace).Range_Int(" +
 			"int(v), int(Input_Min), int(Input_Max)).Ensure()\n}\n"})
 	consumer := parse(t, &parse_input{
 		Path: "pkg/external.go",
@@ -1068,18 +1068,18 @@ func field_subject_isolation(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/field_isolation.go",
 		Source_Text: "package fixture\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace)." +
+			"func Token_Invariants(value Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace)." +
 			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Pair is a fixture.\ntype Pair struct {\n" +
 			"\t// First is a fixture.\n\tFirst Token\n" +
 			"\t// Second is a fixture.\n\tSecond Token\n}\n\n" +
 			"// Pair_Invariants is a fixture.\n" +
-			"func Pair_Invariants(value Pair, namespace invariant.Namespace) {\n" +
+			"func Pair_Invariants(value Pair, namespace aver.Namespace) {\n" +
 			"\tToken_Invariants(value.First, \"first\")\n}\n"})
 	diags := check_source(pf)
 	if !diagnosed(diags, "The function Pair_Invariants does not call a helper for "+
@@ -1096,12 +1096,12 @@ func parameter_subject_isolation(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/parameter_isolation.go",
 		Source_Text: "package fixture\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace)." +
+			"func Token_Invariants(value Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace)." +
 			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume is a fixture.\n" +
 			"func Consume(first Token, second Token) {\n" +
@@ -1122,12 +1122,12 @@ func output_subject_isolation(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/output_isolation.go",
 		Source_Text: "package fixture\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace)." +
+			"func Token_Invariants(value Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace)." +
 			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Make is a fixture.\nfunc Make() (first Token, second Token) {\n" +
 			"\tdefer func() { Token_Invariants(first, \"first\") }()\n" +
@@ -1150,11 +1150,11 @@ func cross_package_constant_isolation(t *testing.T) {
 	local := parse(t, &parse_input{
 		Path: "pkg/local_constants.go",
 		Source_Text: "package fixture\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"// Value is a fixture.\ntype Value int\n\n" +
 			"// Value_Invariants is a fixture.\n" +
-			"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace).Range_Int(" +
+			"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace).Range_Int(" +
 			"int(value), Value_Min, Value_Max).Ensure()\n}\n"})
 	diags := check_sources([]source.Parsed_File{foreign, local})
 	if !diagnosed(diags, "an argument that is not a package-level constant") {
@@ -1169,27 +1169,27 @@ func qualified_base_resolves(t *testing.T) {
 	foreign := parse(t, &parse_input{
 		Path: "other/target.go",
 		Source_Text: "package other\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
 			"// Request_Target is a fixture.\ntype Request_Target string\n\n" +
 			"// Request_Target_Invariants is a fixture.\n" +
 			"func Request_Target_Invariants(" +
-			"value Request_Target, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace)." +
+			"value Request_Target, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace)." +
 			"Range_Int(len(value), Span_Min, Span_Max).Ensure()\n}\n"})
 	local := parse(t, &parse_input{
 		Path: "pkg/parsed.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 			"\tproxy \"fixture/other\"\n)\n\n" +
 			"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
 			"// Parsed_Request_Target is a fixture.\n" +
 			"type Parsed_Request_Target proxy.Request_Target\n\n" +
 			"// Parsed_Request_Target_Invariants is a fixture.\n" +
 			"func Parsed_Request_Target_Invariants(" +
-			"value Parsed_Request_Target, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Always(len(value) >= Span_Min, \"min\")\n" +
-			"\tinvariant.Always(len(value) <= Span_Max, \"max\")\n}\n"})
+			"value Parsed_Request_Target, namespace aver.Namespace) {\n" +
+			"\taver.Always(len(value) >= Span_Min, \"min\")\n" +
+			"\taver.Always(len(value) <= Span_Max, \"max\")\n}\n"})
 	diags := check_sources([]source.Parsed_File{foreign, local})
 	if !diagnosed(diags, "Write a Range_Int family, an Enum_Int family") {
 		t.Fatalf("a qualified base hid the string it stands over: %v", diags)
@@ -1201,23 +1201,23 @@ func cross_package_helper_isolation(t *testing.T) {
 	foreign := parse(t, &parse_input{
 		Path: "other/token.go",
 		Source_Text: "package other\n\n" +
-			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace)." +
+			"func Token_Invariants(value Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace)." +
 			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n"})
 	local := parse(t, &parse_input{
 		Path: "pkg/local_helper.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 			"\tforeign \"fixture/other\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Tree(value, namespace)." +
+			"func Token_Invariants(value Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(value, namespace)." +
 			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume is a fixture.\nfunc Consume(value Token) {\n" +
 			"\tforeign.Token_Invariants(foreign.Token(value), \"foreign\")\n}\n"})
@@ -1274,12 +1274,12 @@ func check_fixture(t *testing.T, code string) (diags []diagnostic.Diagnostic) {
 // judgment, without introducing an argument bundle merely to share fixture text.
 func integer_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Third = -1\n\n" +
 		"const Value_Fourth = 1\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
 		body + "\n}\n"
 }
 
@@ -1296,27 +1296,27 @@ const CHAINED_SLICE chained_subject = "Readings"
 // Only a walk to the end of that chain can see the kind the subject owes its mandate to.
 func chained_helper_source(subject chained_subject, body string) (code string) {
 	return "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
 		"// Reading_Representation is a fixture.\ntype Reading_Representation int\n\n" +
 		"// Reading_Representation_Invariants is a fixture.\n" +
 		"func Reading_Representation_Invariants(" +
-		"v Reading_Representation, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"v Reading_Representation, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v), Span_Min, Span_Max).Ensure()\n}\n\n" +
 		"// Reading is a fixture.\ntype Reading Reading_Representation\n\n" +
 		"// Reading_Invariants is a fixture.\n" +
-		"func Reading_Invariants(v Reading, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Reading_Invariants(v Reading, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v), Span_Min, Span_Max).Ensure()\n}\n\n" +
 		"// Readings is a fixture.\ntype Readings []Reading\n\n" +
 		"// Readings_Invariants is a fixture.\n" +
-		"func Readings_Invariants(v Readings, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Readings_Invariants(v Readings, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(len(v), Span_Min, Span_Max).Ensure()\n}\n\n" +
 		"// Value is a fixture.\ntype Value " + string(subject) + "\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(v Value, namespace invariant.Namespace) {\n" +
+		"func Value_Invariants(v Value, namespace aver.Namespace) {\n" +
 		body + "\n}\n"
 }
 
@@ -1324,11 +1324,11 @@ func chained_helper_source(subject chained_subject, body string) (code string) {
 // input whose bundling would improve the API.
 func float_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value float64\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
 		body + "\n}\n"
 }
 
@@ -1336,34 +1336,34 @@ func float_helper_source(body string) (code string) {
 // primitive preset the leaf is proving.
 func boolean_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value bool\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
 		body + "\n}\n"
 }
 
 // Builds a defined byte-slice helper, the same counted shape as Report_Invariants.
 func count_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Value_Min = 0\n\nconst Value_Max = 32\n\n" +
 		"// Value is a fixture.\ntype Value []byte\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
 		body + "\n}\n"
 }
 
-// A same-shaped fluent builder owned by another package cannot impersonate invariant.Assertions.
+// A same-shaped fluent builder owned by another package cannot impersonate aver.Assertions.
 func foreign_scalar_helper_source() (code string) {
 	return "package fixture\n\n" +
-		"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+		"import (\n\taver \"fixture/shared/simulation/aver/default\"\n" +
 		"\tforeign \"fixture/other\"\n)\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
 		"\tforeign.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n}\n"
 }
@@ -1371,7 +1371,7 @@ func foreign_scalar_helper_source() (code string) {
 // The mandated literal qualifier keeps helper bodies visually and statically canonical.
 func aliased_scalar_helper_source() (code string) {
 	return "package fixture\n\n" +
-		"import contract \"fixture/shared/invariant/default\"\n\n" +
+		"import contract \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
@@ -1382,7 +1382,7 @@ func aliased_scalar_helper_source() (code string) {
 
 // Builds one Range assertion after enough neutral links to pin the expanded-link boundary exactly.
 func assertions_builder_body(link_count int) (body string) {
-	return "\tinvariant.Tree(value, namespace)." +
+	return "\taver.Tree(value, namespace)." +
 		strings.Repeat("Sometimes(true, \"axis\").", link_count-1) +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 }
@@ -1481,7 +1481,7 @@ func simulation_files(t *testing.T, sim string) (files []source.Parsed_File) {
 func simulation_fixture_source(call string) (code string) {
 	return "package simulation_test\n\n" +
 		"import (\n\t\"testing\"\n\n" +
-		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n"

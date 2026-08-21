@@ -45,7 +45,7 @@ const DOCTRINE_BINARY_INTERNAL_MAIN = "// Package entry is a fixture.\n" +
 	"package entry\n\n// Main is a fixture entry point.\nfunc Main() { return }\n"
 
 const FIXTURE_INVARIANT_IMPORT_PATH = "github.com/james-orcales/james-orcales/" +
-	"shared/invariant/v2/invariant_default"
+	"shared/simulation/aver/v2/aver_default"
 const FIXTURE_INVARIANT_IMPORT = "import \"" + FIXTURE_INVARIANT_IMPORT_PATH + "\"\n"
 
 // A package whose SPECIFICATION.md, source, and specification_test.go all
@@ -107,13 +107,13 @@ const FIXTURE_DECLARATION_CALLEE_PAIR = "func g() (a *int, b *int) {\n" +
 // need an accompanying .go file but don't care about its specific shape.
 const FIXTURE_CLEAN_GO = "package main\n\n" +
 	"import \"github.com/james-orcales/james-orcales/" +
-	"shared/invariant/v2\"\n\n" +
+	"shared/simulation/aver/v2\"\n\n" +
 	"const FIXTURE_HI = 100\n\n" +
 	"func f() (result int) {\n" +
 	"\tdefer func() {\n" +
 	"\t\tinvariant.Cross_Product(\n" +
 	"\t\t\tinvariant.Distinct_Boundary(" +
-	"&invariant.Boundary_Input[int]{\n" +
+	"&aver.Boundary_Input[int]{\n" +
 	"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI}),\n" +
 	"\t\t\tinvariant.Always(" +
 	"result == 0, \"result is zero\"),\n" +
@@ -133,12 +133,12 @@ const PRELUDE_WITH_H = PRELUDE_SINGLE +
 	"\tdefer func() {\n" +
 	"\t\tinvariant.Cross_Product(\n" +
 	"\t\t\tinvariant.Distinct_Boundary(" +
-	"&invariant.Boundary_Input[int]{" +
+	"&aver.Boundary_Input[int]{" +
 	"X: out, Lo: 0, Hi: 1}),\n" +
 	"\t\t)\n" +
 	"\t}()\n" +
 	"\tinvariant.Cross_Product(" +
-	"invariant.Always(p != nil, \"p is non-nil\"))\n" +
+	"aver.Always(p != nil, \"p is non-nil\"))\n" +
 	"\treturn 0\n" +
 	"}\n\n"
 
@@ -1540,13 +1540,13 @@ func Test_Gofmt(t *testing.T) {
 				"test.go": "package main\n\n" +
 					"import \"" +
 					"github.com/james-orcales/james-orcales/" +
-					"shared/invariant/v2\"\n\n" +
+					"shared/simulation/aver/v2\"\n\n" +
 					"const FIXTURE_HI = 100\n\n" +
 					"func f() (result int) {\n" +
 					"\tdefer func() {\n" +
 					"\t\tinvariant.Cross_Product(\n" +
 					"\t\t\tinvariant.Distinct_Boundary(" +
-					"&invariant.Boundary_Input[int]{\n" +
+					"&aver.Boundary_Input[int]{\n" +
 					"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI,\n" +
 					"\t\t\t}),\n" +
 					"\t\t\tinvariant.Always(" +
@@ -3933,13 +3933,13 @@ func Test_Snap_Backtick(t *testing.T) {
 					"import (\n" +
 					"\t\"x/snap\"\n\n" +
 					"\t\"github.com/james-orcales/james-orcales/" +
-					"shared/invariant/v2\"\n" +
+					"shared/simulation/aver/v2\"\n" +
 					")\n\n" +
 					"const FIXTURE_HI = 100\n\n" +
 					"func f(s string) {\n" +
 					"\tinvariant.Cross_Product(\n" +
 					"\t\tinvariant.Distinct_Boundary(" +
-					"&invariant.Boundary_Input[int]{\n" +
+					"&aver.Boundary_Input[int]{\n" +
 					"\t\t\tX: len(s), Lo: 0, Hi: FIXTURE_HI, " +
 					"Message: \"len in range\",\n" +
 					"\t\t}),\n" +

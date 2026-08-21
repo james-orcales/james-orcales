@@ -52,7 +52,7 @@ const TAB_WIDTH = 8
 // production identifier is 83 chars.
 const IDENTIFIER_CHARS_MAX = 128
 
-// INVARIANT_HELPER_NAME_CHARS_MAX caps the longest invariant.X helper name
+// INVARIANT_HELPER_NAME_CHARS_MAX caps the longest aver.X helper name
 // the linter recognises; "Recorder_Is_Distinct_Boundary" is the longest
 // (29 chars). The constant ALSO serves as a sanity bound on helper_name
 // strings passed between extractor helpers, all of which receive non-
@@ -60,7 +60,7 @@ const IDENTIFIER_CHARS_MAX = 128
 // is paired with `Always(helper_name != "", ...)`).
 const INVARIANT_HELPER_NAME_CHARS_MAX = 29
 
-// INVARIANT_HELPER_NAME_CHARS_MIN is the shortest recognised invariant.X
+// INVARIANT_HELPER_NAME_CHARS_MIN is the shortest recognised aver.X
 // helper name: "Always" (6 chars). Paired with the max as the Lo/Hi of
 // helper_name Distinct_Boundary axes in extract_nil_comparison_path /
 // extract_eq_nil_path / nil_predicate_index / nil_allows_neq.
@@ -266,7 +266,7 @@ const DEFER_POSITION_WANT_CHARS_MAX = 103
 // check_invariant_assertions_build_declaration_diagnostic. Want strings come
 // in two shapes: a short single-LHS suggestion (`add an invariant assertion
 // ... covering: <list>`) and a long multi-LHS suggestion (`use
-// invariant.Cross_Product ... covering: <list>`).
+// aver.Cross_Product ... covering: <list>`).
 const DECLARATION_DIAGNOSTIC_WANT_CHARS_MIN = 65
 
 // DECLARATION_DIAGNOSTIC_WANT_CHARS_MAX is the Hi end: long multi-LHS Cross_Product suggestion.
@@ -368,7 +368,7 @@ const SIGN_NEGATIVE = -1
 const SIGN_POSITIVE = 1
 
 // INVARIANT_SUGGESTION_CHARS_MIN / INVARIANT_SUGGESTION_CHARS_MAX cap the
-// `use invariant.X(...)` remediation string rendered into assertion-coverage
+// `use aver.X(...)` remediation string rendered into assertion-coverage
 // diagnostics. Sized empirically from the shortest (`pointer` shape) and
 // longest (`boundary_float` shape) wrappers around the axis call.
 const INVARIANT_SUGGESTION_CHARS_MIN = 167
@@ -4047,7 +4047,7 @@ func check_no_recursion_packages(
 // and that also rules out the package-qualified self-call — a package cannot
 // import itself.
 //
-// At each cycle's diagnostic, invariant.Ensure asserts that no edge in the
+// At each cycle's diagnostic, aver.Ensure asserts that no edge in the
 // cycle is shadowed by a local of the same name as the callee. That property
 // is enforced by check_shadow, whose outer scope is now the whole package, which
 // is exactly the set this graph draws its nodes from; a shadowed cycle edge means
@@ -5123,10 +5123,10 @@ func check_no_banned_stdlib_import(
 	token_file := file_set.File(file.Pos())
 	if token_file != nil {
 		directory = path.Dir(path.Clean(token_file.Name()))
-		if directory == "shared/invariant" {
+		if directory == "shared/simulation/aver" {
 			invariant_directory = true
 		}
-		if strings.Has_Prefix(directory, "shared/invariant/") {
+		if strings.Has_Prefix(directory, "shared/simulation/aver/") {
 			invariant_directory = true
 		}
 	}
@@ -6210,7 +6210,7 @@ func check_no_package_vars_all_allowed(vs *ast.ValueSpec) (yes bool) {
 func check_unnecessary_method(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
-	if file.Name.Name == "invariant" {
+	if file.Name.Name == "aver" {
 		return nil
 	}
 
@@ -8867,7 +8867,7 @@ func is_transitive_stdlib_ident(input *Is_Transitive_Stdlib_Ident_Input) (yes bo
 // Bare `for {}` (and its twins `for ;; {}` and `for true {}`) hide the
 // loop's termination condition inside the body. Readers can no longer cap
 // iteration from the header alone. The intentional-unbounded escape hatch
-// is `for range invariant.GameLoop()`, which is a *ast.RangeStmt and thus
+// is `for range aver.GameLoop()`, which is a *ast.RangeStmt and thus
 // not caught here — choosing a different syntactic form *is* the assertion
 // that the loop is unbounded on purpose.
 func check_no_bare_for(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {

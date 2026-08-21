@@ -696,12 +696,12 @@ func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 	if !specification_diagnosed(diags, "satisfies no stdlib interface") {
 		t.Fatal("a non-interface method must be flagged")
 	}
-	files = specification_one_file("package invariant\n\n// T is a fixture.\n" +
+	files = specification_one_file("package aver\n\n// T is a fixture.\n" +
 		"type T struct {\n\t// X is a fixture.\n\tX int\n}\n\n// Compute does.\n" +
 		"func (t T) Compute() (n int) {\n\treturn t.X\n}\n")
 	diags = invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
 	if specification_diagnosed(diags, "satisfies no stdlib interface") {
-		t.Fatal("a package named invariant may declare methods")
+		t.Fatal("a package named aver may declare methods")
 	}
 }
 
@@ -1628,9 +1628,12 @@ func Test_Configuration_Packages_Only(t *testing.T) {
 func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
-			"import nbio \"fixture/shared/simulation/nbio\"\n\n" +
-			"func main() {\n\tnbio.New_Simulated_IO(nil, 0, 1, nbio.Sim_Memory{})\n}\n"),
+		"pkg/main.go": []byte(
+			"// Package main is a fixture.\npackage main\n\n" +
+				"import nbio \"fixture/shared/simulation/nbio\"\n\n" +
+				"func main() {\n" +
+				"\tnbio.New_Simulated_IO(nil, 0, 1, nbio.Sim_Memory{})\n" +
+				"}\n"),
 	}
 	if specification_flags(t, files, "makes a loop driver") {
 		t.Fatal("package main must be allowed to construct a loop driver")
@@ -2165,7 +2168,7 @@ func specification_signal_gateway_boundary(t *testing.T) {
 		}
 	}
 	for _, filename := range []string{
-		"shared/invariant/rule.go",
+		"shared/simulation/aver/rule.go",
 		"shared/simulation/nbio/rule.go",
 		"shared/os/rule.go",
 		"shared/os/default/rule.go",
@@ -2344,11 +2347,11 @@ func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
 func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Widget is a fixture.\ntype Widget struct {\n" +
 		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
-		"func Widget_Invariants(w Widget, namespace invariant.Namespace) {\n" +
+		"func Widget_Invariants(w Widget, namespace aver.Namespace) {\n" +
 		"\tprintln(0)\n}\n")
 	if specification_flags(t, files, "directly below the type Widget") {
 		t.Fatal("a well-formed pair must not be flagged")
@@ -2363,11 +2366,11 @@ func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
 func Test_Type_Invariant_Pointer_First_Parameter_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
+		"import \"fixture/shared/simulation/aver\"\n\n" +
 		"// Widget is a fixture.\ntype Widget struct {\n" +
 		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
-		"func Widget_Invariants(w *Widget, namespace invariant.Namespace) {\n" +
+		"func Widget_Invariants(w *Widget, namespace aver.Namespace) {\n" +
 		"\tprintln(0)\n}\n")
 	if specification_flags(t, files, "Write the parameters") {
 		t.Fatal("a pointer first parameter must satisfy the signature")
@@ -2379,11 +2382,11 @@ func Test_Type_Invariant_Pointer_First_Parameter_Passes(t *testing.T) {
 func Test_Type_Invariant_Generic_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
+		"import \"fixture/shared/simulation/aver\"\n\n" +
 		"// Box is a fixture.\ntype Box[T any] struct {\n" +
 		"\t// Item is a fixture.\n\tItem T\n}\n\n" +
 		"// Box_Invariants is a fixture.\n" +
-		"func Box_Invariants[T any](b Box[T], namespace invariant.Namespace) {\n" +
+		"func Box_Invariants[T any](b Box[T], namespace aver.Namespace) {\n" +
 		"\tprintln(0)\n}\n")
 	if specification_flags(t, files, "directly below the type Box") {
 		t.Fatal("a matching generic bundle must not be flagged")
@@ -2412,11 +2415,11 @@ func Test_Type_Invariant_Exempt_Kinds_Pass(t *testing.T) {
 func Test_Type_Invariant_Before_A_Consumer(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
+		"import \"fixture/shared/simulation/aver\"\n\n" +
 		"// Payload is a fixture.\ntype Payload struct {\n" +
 		"\t// A is a fixture.\n\tA int\n\t// B is a fixture.\n\tB int\n}\n\n" +
 		"// Payload_Invariants is a fixture.\n" +
-		"func Payload_Invariants(input Payload, namespace invariant.Namespace) {\n" +
+		"func Payload_Invariants(input Payload, namespace aver.Namespace) {\n" +
 		"\tprintln(0)\n}\n\n" +
 		"// Foo does.\nfunc Foo(input *Payload) (n int) {\n" +
 		"\treturn input.A + input.B\n}\n")
@@ -2430,10 +2433,10 @@ func Test_Type_Invariant_Before_A_Consumer(t *testing.T) {
 func Test_Type_Invariant_Helper_Body_Mandate(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Level is a fixture.\ntype Level int8\n\n" +
 		"// Level_Invariants is deliberately empty.\n" +
-		"func Level_Invariants(v Level, namespace invariant.Namespace) {}\n")
+		"func Level_Invariants(v Level, namespace aver.Namespace) {}\n")
 	if !specification_flags(t, files, "does not call a canonical helper") {
 		t.Fatal("an empty scalar helper must not evade the canonical helper mandate")
 	}
@@ -2444,27 +2447,27 @@ func Test_Type_Invariant_Helper_Body_Mandate(t *testing.T) {
 func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
-		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 		"const Count_Min = 0\n\nconst Count_Max = 4\n\n" +
 		"// Count is a fixture.\ntype Count int\n\n" +
 		"// Count_Invariants is a fixture.\n" +
-		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace)." +
+		"func Count_Invariants(v Count, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
 		"Range_Int(int(v), Count_Min, Count_Max).Ensure()\n}\n\n" +
 		"// Pair is a fixture.\ntype Pair struct {\n" +
 		"\t// Tok is a fixture.\n\tTok Token\n" +
 		"\t// Count is a fixture.\n\tCount Count\n}\n\n" +
 		"// Pair_Invariants is a fixture.\n" +
-		"func Pair_Invariants(v Pair, namespace invariant.Namespace) {\n" +
+		"func Pair_Invariants(v Pair, namespace aver.Namespace) {\n" +
 		"\tToken_Invariants(v.Tok, \"Pair.Tok\")\n" +
 		"\tCount_Invariants(v.Count, \"Pair.Count\")\n" +
-		"\tinvariant.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"\taver.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "does not call a helper") {
 		t.Fatal("a struct composing all field invariants must not be flagged")
 	}
@@ -2475,12 +2478,12 @@ func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\nimport \"sync\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\nimport \"sync\"\n\n" +
 		"// Guarded is a fixture.\ntype Guarded struct {\n" +
 		"\t// Mu is a fixture.\n\tMu sync.Mutex\n\t// N is a fixture.\n\tN int\n}\n\n" +
 		"// Guarded_Invariants is a fixture.\n" +
-		"func Guarded_Invariants(v Guarded, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"func Guarded_Invariants(v Guarded, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "does not call a helper") {
 		t.Fatal("a struct with a sync.Mutex field must be skipped entirely")
 	}
@@ -2491,12 +2494,12 @@ func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
 func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Ops is a fixture.\ntype Ops struct {\n" +
 		"\t// Run is a fixture.\n\tRun func()\n}\n\n" +
 		"// Ops_Invariants is a fixture.\n" +
-		"func Ops_Invariants(v Ops, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"func Ops_Invariants(v Ops, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "does not call a helper") {
 		t.Fatal("a func-typed field has no invariant and must be exempt")
 	}
@@ -2507,12 +2510,12 @@ func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Flag is a fixture.\ntype Flag struct {\n" +
 		"\t// On is a fixture.\n\tOn bool\n}\n\n" +
 		"// Flag_Invariants is a fixture.\n" +
-		"func Flag_Invariants(v Flag, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"func Flag_Invariants(v Flag, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if !specification_flags(t, files, "The declaration Flag has a raw bool field (On).") {
 		t.Fatal("a raw bool field must be rejected, not composed")
 	}
@@ -2524,17 +2527,17 @@ func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
-		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace)." +
+		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace)." +
 		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 		"// Holder is a fixture.\ntype Holder struct {\n" +
 		"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 		"// Holder_Invariants is a fixture.\n" +
-		"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"func Holder_Invariants(v Holder, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if !specification_flags(t, files, "Call Token_Invariants(v.Tok, ...).") {
 		t.Fatal("a pointer field whose pointee invariant is omitted must be flagged")
 	}
@@ -2545,16 +2548,16 @@ func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 func Test_Function_Helper_Complete_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
-		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace)." +
+		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace)." +
 		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 		"// Count is a fixture.\ntype Count int\n\n" +
 		"// Count_Invariants is a fixture.\n" +
-		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace).Sometimes(v == 0, \"x\").Ensure()\n}\n\n" +
+		"func Count_Invariants(v Count, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace).Sometimes(v == 0, \"x\").Ensure()\n}\n\n" +
 		"// Process does.\nfunc Process(tok Token) (n Count) {\n" +
 		"\tdefer func() {\n\t\tCount_Invariants(n, \"Process.n\")\n\t}()\n" +
 		"\tToken_Invariants(tok, \"Process.tok\")\n\treturn 0\n}\n")
@@ -2580,11 +2583,11 @@ func Test_Function_Helper_Exempt_Subjects(t *testing.T) {
 func Test_Function_Helper_Raw_Slice_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
-		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace)." +
+		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace)." +
 		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 		"// Scan does.\nfunc Scan(toks []Token) {\n" +
 		"\tfor _, t := range toks {\n\t\tToken_Invariants(t, \"Scan.tok\")\n\t}\n" +
@@ -2599,11 +2602,11 @@ func Test_Function_Helper_Raw_Slice_Exempt(t *testing.T) {
 func Test_Function_Helper_Companion_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
-		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace)." +
+		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+		"\taver.Assertions(namespace)." +
 		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "does not call a helper") {
 		t.Fatal("a companion helper must not be required to call itself")
@@ -2693,7 +2696,7 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 	}
 	return "package simulation_test\n\n" +
 		"import (\n\t\"testing\"\n\n" +
-		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n" +
@@ -2705,9 +2708,9 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 func simulation_entry_source(body string) (source string) {
 	return "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
 		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
-		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
-		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" + body + "\n}\n"
 }
 
@@ -2716,7 +2719,7 @@ func simulation_entry_source(body string) (source string) {
 func Test_Simulation_Wired_Passes(t *testing.T) {
 	t.Parallel()
 	files := simulation_test_files(
-		simulation_fixture_source("invariant.Run_Test_Main(m, \"../**\")"))
+		simulation_fixture_source("aver.Run_Test_Main(m, \"../**\")"))
 	if specification_named(specification_self_diagnostics(t, files), "simulation") {
 		t.Fatal("a canonical simulation package must not be flagged")
 	}
@@ -2738,7 +2741,7 @@ func Test_Simulation_Exempt_Passes(t *testing.T) {
 func Test_Simulation_Helpers_Allowed(t *testing.T) {
 	t.Parallel()
 	files := simulation_test_files(simulation_fixture_source(
-		"invariant.Run_Test_Main(m, \"../**\")",
+		"aver.Run_Test_Main(m, \"../**\")",
 		"\n// Extra is a fixture.\nfunc extra() (n int) { return 0 }\n"))
 	if specification_named(specification_self_diagnostics(t, files), "simulation") {
 		t.Fatal("a helper declaration must not be flagged")
@@ -2760,7 +2763,7 @@ func Test_Simulation_Entry_Main_Allowed(t *testing.T) {
 func Test_Simulation_No_Source(t *testing.T) {
 	t.Parallel()
 	files := simulation_test_files(
-		simulation_fixture_source("invariant.Run_Test_Main(m, \"../**\")"))
+		simulation_fixture_source("aver.Run_Test_Main(m, \"../**\")"))
 	files["pkg/internal/simulation_test/source.go"] =
 		[]byte("// Package simulation is a fixture.\npackage simulation\n")
 	if !specification_flags(t, files,
@@ -2803,7 +2806,7 @@ func Test_File_Count_Whitebox(t *testing.T) {
 func Test_Recorder_Registration_No_Tests(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{"pkg/rule.go": []byte(RECORDER_FIXTURE_SOURCE)}
-	if !recorder_flags(t, files, "has no TestMain that calls invariant.Run_Test_Main") {
+	if !recorder_flags(t, files, "has no TestMain that calls aver.Run_Test_Main") {
 		t.Fatal("a package with no test file must be flagged")
 	}
 }
@@ -2816,7 +2819,7 @@ func Test_Recorder_Registration_Unwired(t *testing.T) {
 		"package fixture_test\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\tos.Exit(m.Run())\n}\n")
 	if !recorder_flags(t, files,
-		"The body of TestMain is not invariant.Run_Test_Main(m).") {
+		"The body of TestMain is not aver.Run_Test_Main(m).") {
 		t.Fatal("a TestMain that never calls Run_Test_Main must be flagged")
 	}
 }
@@ -2827,11 +2830,11 @@ func Test_Recorder_Registration_Extra_Statements(t *testing.T) {
 	t.Parallel()
 	files := recorder_test_files(
 		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
-			"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
-			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n" +
-			"\tinvariant.Run_Test_Main(m)\n}\n")
+			"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\taver.Run_Test_Main(m)\n" +
+			"\taver.Run_Test_Main(m)\n}\n")
 	if !recorder_flags(t, files,
-		"The body of TestMain is not invariant.Run_Test_Main(m).") {
+		"The body of TestMain is not aver.Run_Test_Main(m).") {
 		t.Fatal("a TestMain with extra statements must be flagged")
 	}
 }
@@ -2842,8 +2845,8 @@ func Test_Recorder_Registration_Wired_Passes(t *testing.T) {
 	t.Parallel()
 	files := recorder_test_files(
 		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
-			"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
-			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n}\n")
+			"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\taver.Run_Test_Main(m)\n}\n")
 	if recorder_flags(t, files, "Run_Test_Main") {
 		t.Fatal("a TestMain wiring Run_Test_Main must not be flagged")
 	}

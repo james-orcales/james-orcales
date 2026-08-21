@@ -14,9 +14,10 @@ import (
 func Test_Import_Local_Name_Default_Tier(t *testing.T) {
 	t.Parallel()
 	implementation := &ast.ImportSpec{}
-	got := source.Import_Local_Name(implementation, "example.com/shared/invariant/default")
-	if got != "invariant" {
-		t.Fatalf("unnamed default-tier import: got %q want %q", got, "invariant")
+	got := source.Import_Local_Name(
+		implementation, "example.com/shared/simulation/aver/default")
+	if got != "aver" {
+		t.Fatalf("unnamed default-tier import: got %q want %q", got, "aver")
 	}
 }
 
@@ -192,9 +193,9 @@ func Test_Path_Matches_Glob_Negation_Overrides_Broader_Match(t *testing.T) {
 // subtrees remain exempt.
 func Test_Path_Matches_Glob_Later_Positive_Refines_Negation(t *testing.T) {
 	t.Parallel()
-	patterns := []string{"**", "!shared/**", "shared/invariant/**", "shared/vsr/**"}
-	if !source.Path_Matches_Glob("shared/invariant/invariant.go", patterns) {
-		t.Error("shared/invariant/** must re-exempt its subtree")
+	patterns := []string{"**", "!shared/**", "shared/simulation/aver/**", "shared/vsr/**"}
+	if !source.Path_Matches_Glob("shared/simulation/aver/aver.go", patterns) {
+		t.Error("shared/simulation/aver/** must re-exempt its subtree")
 	}
 	if !source.Path_Matches_Glob("shared/vsr/vsr.go", patterns) {
 		t.Error("shared/vsr/** must re-exempt its subtree")

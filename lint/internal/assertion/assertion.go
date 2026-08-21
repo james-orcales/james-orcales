@@ -473,7 +473,7 @@ func invariant_direct_singleton(
 	if !is_qualifier {
 		return false, false
 	}
-	if qualifier.Name != "invariant" {
+	if qualifier.Name != "aver" {
 		return false, false
 	}
 	if selector.Sel.Name != "Always" {
@@ -703,7 +703,7 @@ func invariant_builder_root(
 	if !is_qualifier {
 		return false
 	}
-	if qualifier.Name != "invariant" {
+	if qualifier.Name != "aver" {
 		return false
 	}
 	if scope.Shadowed[qualifier.Name] {
@@ -1008,20 +1008,20 @@ func helper_default_package(
 ) (import_path string) {
 	shared := source.Shared_Import(components)
 	if shared != "" {
-		return shared + "/invariant/default"
+		return shared + "/simulation/aver/default"
 	}
 	for _, candidate := range imports {
-		if strings.Has_Suffix(candidate, "/invariant/default") {
+		if strings.Has_Suffix(candidate, "/simulation/aver/default") {
 			return candidate
 		}
-		if strings.Has_Suffix(candidate, "/invariant") {
+		if strings.Has_Suffix(candidate, "/simulation/aver") {
 			import_path = candidate + "/default"
 		}
 	}
 	if import_path != "" {
 		return import_path
 	}
-	return "<invariant/default>"
+	return "<simulation/aver/default>"
 }
 
 // A selector resolves only through the file's import table. A method whose receiver happens to
@@ -2551,7 +2551,7 @@ func function_form(requirement Helper_Requirement) (form string) {
 }
 
 // Flags every non-exempt, non-main package whose test binary fails to wire the
-// invariant coverage recorder. invariant.Run_Test_Main is the canonical TestMain
+// invariant coverage recorder. aver.Run_Test_Main is the canonical TestMain
 // body; without it a package's mandated _Invariants bundles run but their
 // Sometimes axes and Always reachability are never verified — the discipline
 // silently evaporates. Package-level because the TestMain may live in any of the
@@ -2704,7 +2704,7 @@ func recorder_test_main_parameter(function *ast.FuncDecl) (name string) {
 }
 
 // Reports whether the function is the one allowed shape exactly:
-// func TestMain(m *testing.M) { invariant.Run_Test_Main(m) } — its parameter
+// func TestMain(m *testing.M) { aver.Run_Test_Main(m) } — its parameter
 // named m and its body that sole call, nothing more.
 func recorder_test_main_canonical(
 	function *ast.FuncDecl, parameter string,
@@ -2730,7 +2730,7 @@ func recorder_test_main_canonical(
 	return recorder_canonical_call(call)
 }
 
-// Reports whether the call is exactly invariant.Run_Test_Main(m).
+// Reports whether the call is exactly aver.Run_Test_Main(m).
 func recorder_canonical_call(call *ast.CallExpr) (canonical bool) {
 	selector, is_selector := call.Fun.(*ast.SelectorExpr)
 	if !is_selector {
@@ -2740,7 +2740,7 @@ func recorder_canonical_call(call *ast.CallExpr) (canonical bool) {
 	if !is_qualifier {
 		return false
 	}
-	if qualifier.Name != "invariant" {
+	if qualifier.Name != "aver" {
 		return false
 	}
 	if selector.Sel.Name != "Run_Test_Main" {
@@ -2768,15 +2768,15 @@ func recorder_group_diagnostics(group *Recorder_Group) (diags []Diagnostic) {
 			Position: anchor,
 			Message: fmt.Sprintf(
 				"The directory %s has no TestMain that calls "+
-					"invariant.Run_Test_Main. Write a TestMain that calls "+
-					"invariant.Run_Test_Main.", group.Directory),
+					"aver.Run_Test_Main. Write a TestMain that calls "+
+					"aver.Run_Test_Main.", group.Directory),
 		}}
 	}
 	if !group.Test_Main_Canonical {
 		return []Diagnostic{{
 			Position: group.Test_Main_Position,
-			Message: "The body of TestMain is not invariant.Run_Test_Main(m). " +
-				"Write invariant.Run_Test_Main(m).",
+			Message: "The body of TestMain is not aver.Run_Test_Main(m). " +
+				"Write aver.Run_Test_Main(m).",
 		}}
 	}
 	return nil
@@ -3083,7 +3083,7 @@ func simulation_fuzz_parameter(function *ast.FuncDecl) (name string) {
 	return ""
 }
 
-// The simulation's TestMain body must be exactly invariant.Run_Test_Main(m, "../**"):
+// The simulation's TestMain body must be exactly aver.Run_Test_Main(m, "../**"):
 // that one glob registers the internal package and every package beneath it, so the
 // isolated simulation binary seeds and judges them all without enumerating each.
 func simulation_test_main_diagnostics(
@@ -3093,19 +3093,19 @@ func simulation_test_main_diagnostics(
 	if function == nil {
 		return simulation_diagnostic(position,
 			"The simulation package has no TestMain. "+
-				"Write a TestMain that calls invariant.Run_Test_Main.")
+				"Write a TestMain that calls aver.Run_Test_Main.")
 	}
 	if simulation_test_main_canonical(function) {
 		return nil
 	}
 	return simulation_diagnostic(position, fmt.Sprintf(
 		"The body of the simulation TestMain is not "+
-			"invariant.Run_Test_Main(m, %q). "+
-			"Write invariant.Run_Test_Main(m, %q).",
+			"aver.Run_Test_Main(m, %q). "+
+			"Write aver.Run_Test_Main(m, %q).",
 		SIMULATION_GLOB, SIMULATION_GLOB))
 }
 
-// Reports whether the TestMain body is exactly invariant.Run_Test_Main(m, "../**").
+// Reports whether the TestMain body is exactly aver.Run_Test_Main(m, "../**").
 func simulation_test_main_canonical(function *ast.FuncDecl) (canonical bool) {
 	directories, ok := simulation_test_main_directories(function)
 	if !ok {
@@ -3138,7 +3138,7 @@ func simulation_find_test_main(files []Parsed_File) (function *ast.FuncDecl) {
 }
 
 // The directory arguments of the simulation TestMain's sole statement, and whether
-// that statement is exactly invariant.Run_Test_Main(m, <string literals>).
+// that statement is exactly aver.Run_Test_Main(m, <string literals>).
 func simulation_test_main_directories(
 	function *ast.FuncDecl,
 ) (directories []string, canonical bool) {
@@ -3163,7 +3163,7 @@ func simulation_test_main_directories(
 }
 
 // The string-literal directory arguments after m, and whether the call is exactly
-// invariant.Run_Test_Main(m, <one or more string literals>).
+// aver.Run_Test_Main(m, <one or more string literals>).
 func simulation_call_directories(call *ast.CallExpr) (directories []string, canonical bool) {
 	selector, is_selector := call.Fun.(*ast.SelectorExpr)
 	if !is_selector {
@@ -3173,7 +3173,7 @@ func simulation_call_directories(call *ast.CallExpr) (directories []string, cano
 	if !is_qualifier {
 		return nil, false
 	}
-	if qualifier.Name != "invariant" {
+	if qualifier.Name != "aver" {
 		return nil, false
 	}
 	if selector.Sel.Name != "Run_Test_Main" {
@@ -3440,13 +3440,13 @@ func type_invariants_absent(
 		Position: file_set.Position(type_specification.Name.Pos()),
 		Message: fmt.Sprintf(
 			"The type %s has no invariants function. "+
-				"Declare %s(%s, invariant.Namespace) directly below the type %s.",
+				"Declare %s(%s, aver.Namespace) directly below the type %s.",
 			type_name, want, type_name, type_name),
 	}
 }
 
 // Builds the diagnostic for a bundle whose parameters
-// are not the type, by value or pointer, first and an invariant.Namespace last.
+// are not the type, by value or pointer, first and an aver.Namespace last.
 func type_invariants_bad_signature(
 	file_set *token.FileSet, function *ast.FuncDecl, type_specification *ast.TypeSpec,
 ) (diag Diagnostic) {
@@ -3456,7 +3456,7 @@ func type_invariants_bad_signature(
 		Position: file_set.Position(function.Name.Pos()),
 		Message: fmt.Sprintf(
 			"The function %s has incorrect parameters. "+
-				"Write the parameters (%s or *%s, invariant.Namespace).",
+				"Write the parameters (%s or *%s, aver.Namespace).",
 			function.Name.Name, type_name, type_name),
 	}
 }
@@ -3587,7 +3587,7 @@ func type_invariants_is_bundle_name(name string) (yes bool) {
 }
 
 // Reports whether the bundle takes its type, by
-// value or pointer, first and an invariant.Namespace last.
+// value or pointer, first and an aver.Namespace last.
 func type_invariants_signature_ok(
 	function *ast.FuncDecl, type_specification *ast.TypeSpec,
 	invariant_names map[string]bool,
@@ -3743,10 +3743,10 @@ func type_invariants_import_names(file *ast.File) (names map[string]bool) {
 }
 
 // Reports whether an import path has a segment
-// named invariant — the framework package, wherever it sits in the module.
+// named aver — the framework package, wherever it sits in the module.
 func type_invariants_path_is_invariant(import_path string) (yes bool) {
 	for _, segment := range strings.Split(import_path, "/") {
-		if segment == "invariant" {
+		if segment == "aver" {
 			return true
 		}
 	}
