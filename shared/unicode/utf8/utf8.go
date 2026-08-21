@@ -918,9 +918,10 @@ func Buffer_Read_Character(
 // Buffer_Unread_Character restores character boundary recorded by UTF-8 read.
 func Buffer_Unread_Character(buffer bytes.Buffer_Handle) {
 	bytes.Buffer_Handle_Invariants(buffer, "buffer_unread_character.buffer")
-	if buffer.Operation <= 0 {
-		panic("utf8: no character to unread")
-	}
+	aver.Always(
+		buffer.Operation > 0,
+		"UTF-8 Buffer unread follows character read.",
+	)
 	size := Encoded_Size(buffer.Operation)
 	Encoded_Size_Invariants(size, "buffer_unread_character.size")
 	buffer.Position -= bytes.Boundary(size)
@@ -950,12 +951,14 @@ func Reader_Read_Character(
 // Reader_Unread_Character restores boundary recorded by UTF-8 read.
 func Reader_Unread_Character(reader bytes.Reader_Handle) {
 	bytes.Reader_Handle_Invariants(reader, "reader_unread_character.reader")
-	if reader.Previous < 0 {
-		panic("utf8: no Reader character to unread")
-	}
-	if reader.Previous >= bytes.Index_Value(reader.Position) {
-		panic("utf8: no Reader character to unread")
-	}
+	aver.Always(
+		reader.Previous >= 0,
+		"UTF-8 Reader unread follows character read.",
+	)
+	aver.Always(
+		reader.Previous < bytes.Index_Value(reader.Position),
+		"UTF-8 Reader unread restores earlier boundary.",
+	)
 	reader.Position = bytes.Reader_Position(reader.Previous)
 	reader.Previous = bytes.INDEX_ABSENT
 }
@@ -1110,9 +1113,10 @@ func Map_Into(
 			mapped = Character(REPLACEMENT_CHARACTER)
 			encoded_size = CHARACTER_SIZE_THREE
 		}
-		if int(encoded_size) > len(destination)-written {
-			panic("utf8: destination too small")
-		}
+		aver.Always(
+			int(encoded_size) <= len(destination)-written,
+			"Map destination holds complete result.",
+		)
 		written += int(Encode_Character(destination[written:], mapped))
 	}
 	return Byte_Count(written)
@@ -1198,17 +1202,19 @@ func To_Valid_UTF8_Into(
 					continue
 				}
 				invalid = true
-				if len(replacement) > len(destination)-written {
-					panic("utf8: destination too small")
-				}
+				aver.Always(
+					len(replacement) <= len(destination)-written,
+					"UTF-8 repair destination holds replacement.",
+				)
 				written += copy(destination[written:], replacement)
 				continue
 			}
 		}
 		invalid = false
-		if int(size) > len(destination)-written {
-			panic("utf8: destination too small")
-		}
+		aver.Always(
+			int(size) <= len(destination)-written,
+			"UTF-8 repair destination holds source character.",
+		)
 		boundary := source_index + int(size)
 		written += copy(destination[written:], source[source_index:boundary])
 		source_index = boundary
@@ -1236,9 +1242,10 @@ func Title_Into(destination Bytes, source Bytes) (count Byte_Count) {
 		}
 		previous = character
 		encoded_size := Character_Size(Character(mapped))
-		if int(encoded_size) > len(destination)-written {
-			panic("utf8: destination too small")
-		}
+		aver.Always(
+			int(encoded_size) <= len(destination)-written,
+			"Title destination holds complete result.",
+		)
 		written += int(Encode_Character(destination[written:], Character(mapped)))
 	}
 	return Byte_Count(written)
@@ -1251,7 +1258,7 @@ func Trim_Left_Function(
 	defer func() { Bytes_Invariants(trimmed, "trim_left_function.trimmed") }()
 	Bytes_Invariants(source, "trim_left_function.source")
 	end := trim_left_boundary(source, predicate)
-	if end == len(source) {
+	if int(end) == len(source) {
 		return nil
 	}
 	return source[end:]
@@ -1273,7 +1280,7 @@ func Trim_Function(
 	defer func() { Bytes_Invariants(trimmed, "trim_function.trimmed") }()
 	Bytes_Invariants(source, "trim_function.source")
 	left := trim_left_boundary(source, predicate)
-	if left == len(source) {
+	if int(left) == len(source) {
 		return nil
 	}
 	right := trim_right_boundary(source[left:], predicate)
@@ -1325,9 +1332,10 @@ func Runes_Into(destination Characters, source Bytes) (count Count) {
 	Characters_Invariants(destination, "runes_into.destination")
 	Bytes_Invariants(source, "runes_into.source")
 	for source_index := 0; source_index < len(source); {
-		if int(count) == len(destination) {
-			panic("utf8: destination too small")
-		}
+		aver.Always(
+			int(count) < len(destination),
+			"Rune destination holds decoded result.",
+		)
 		character, size := Decode_Character(source[source_index:])
 		destination[int(count)] = character
 		count++
@@ -1395,9 +1403,10 @@ func fields_into(
 		character, size := Decode_Character(source[source_index:])
 		if predicate(rune(character)) {
 			if start >= 0 {
-				if int(count) == len(destination) {
-					panic("utf8: destination too small")
-				}
+				aver.Always(
+					int(count) < len(destination),
+					"Field destination holds delimited result.",
+				)
 				destination[int(count)] = source[start:source_index:source_index]
 				count++
 				start = BYTE_INDEX_ABSENT
@@ -1410,9 +1419,10 @@ func fields_into(
 	if start == BYTE_INDEX_ABSENT {
 		return count
 	}
-	if int(count) == len(destination) {
-		panic("utf8: destination too small")
-	}
+	aver.Always(
+		int(count) < len(destination),
+		"Field destination holds final result.",
+	)
 	destination[int(count)] = source[start:len(source):len(source)]
 	return count + 1
 }
@@ -1453,9 +1463,10 @@ func map_case_into(
 			}
 		}
 		encoded_size := Character_Size(Character(mapped))
-		if int(encoded_size) > len(destination)-written {
-			panic("utf8: destination too small")
-		}
+		aver.Always(
+			int(encoded_size) <= len(destination)-written,
+			"Case destination holds complete result.",
+		)
 		written += int(Encode_Character(destination[written:], Character(mapped)))
 	}
 	return Byte_Count(written)
@@ -1463,29 +1474,31 @@ func map_case_into(
 
 func trim_left_boundary(
 	source Bytes, predicate Predicate,
-) (end int) {
+) (end bytes.Boundary) {
+	defer func() { bytes.Boundary_Invariants(end, "trim_left_boundary.end") }()
 	Bytes_Invariants(source, "trim_left_boundary.source")
-	for end < len(source) {
-		character, size := Decode_Character(source[end:])
+	for int(end) < len(source) {
+		character, size := Decode_Character(source[int(end):])
 		if !predicate(rune(character)) {
 			return end
 		}
-		end += int(size)
+		end += bytes.Boundary(size)
 	}
 	return end
 }
 
 func trim_right_boundary(
 	source Bytes, predicate Predicate,
-) (end int) {
+) (end bytes.Boundary) {
+	defer func() { bytes.Boundary_Invariants(end, "trim_right_boundary.end") }()
 	Bytes_Invariants(source, "trim_right_boundary.source")
-	end = len(source)
+	end = bytes.Boundary(len(source))
 	for end > 0 {
-		character, size := Decode_Final_Character(source[:end])
+		character, size := Decode_Final_Character(source[:int(end)])
 		if !predicate(rune(character)) {
 			return end
 		}
-		end -= int(size)
+		end -= bytes.Boundary(size)
 	}
 	return end
 }

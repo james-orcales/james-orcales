@@ -385,6 +385,16 @@ func membership_allocation_cases(state *allocation_state) (cases []allocation_ca
 
 func conversion_allocation_cases(state *allocation_state) (cases []allocation_case) {
 	return []allocation_case{
+		{Name: "Special_Case_Of", Run: func() {
+			state.Special = ucd.Special_Case_Of(
+				1,
+				ucd.Case_Range{
+					Minimum: 'a', Maximum: 'z',
+					Deltas: case_delta(-32, 0, -32),
+				},
+				ucd.Case_Range{}, ucd.Case_Range{}, ucd.Case_Range{},
+			)
+		}},
 		{Name: "Named_Table", Run: func() {
 			state.Table, state.Found = ucd.Named_Table(
 				ucd.TABLE_KIND_CATEGORY, "L",

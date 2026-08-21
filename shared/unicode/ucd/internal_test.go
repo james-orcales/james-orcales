@@ -528,137 +528,137 @@ func example_is(output *example_buffer) {
 
 	const MIXED = "\b5Ὂg̀9! ℃ᾭG"
 	for _, c := range MIXED {
-		fmt.Fprintf(output, "For %q:\n", c)
+		*output = fmt.Appendf(*output, "For %q:\n", c)
 		if bool(Is_Control(Character(c))) {
-			fmt.Fprintln(output, "\tis control rune")
+			*output = fmt.Appendln(*output, "\tis control rune")
 		}
 		if bool(Is_Digit(Character(c))) {
-			fmt.Fprintln(output, "\tis digit rune")
+			*output = fmt.Appendln(*output, "\tis digit rune")
 		}
 		if bool(Is_Graphic(Character(c))) {
-			fmt.Fprintln(output, "\tis graphic rune")
+			*output = fmt.Appendln(*output, "\tis graphic rune")
 		}
 		if bool(Is_Letter(Character(c))) {
-			fmt.Fprintln(output, "\tis letter rune")
+			*output = fmt.Appendln(*output, "\tis letter rune")
 		}
 		if bool(Is_Lower(Character(c))) {
-			fmt.Fprintln(output, "\tis lower case rune")
+			*output = fmt.Appendln(*output, "\tis lower case rune")
 		}
 		if bool(Is_Mark(Character(c))) {
-			fmt.Fprintln(output, "\tis mark rune")
+			*output = fmt.Appendln(*output, "\tis mark rune")
 		}
 		if bool(Is_Number(Character(c))) {
-			fmt.Fprintln(output, "\tis number rune")
+			*output = fmt.Appendln(*output, "\tis number rune")
 		}
 		if bool(Is_Print(Character(c))) {
-			fmt.Fprintln(output, "\tis printable rune")
+			*output = fmt.Appendln(*output, "\tis printable rune")
 		}
 		if !bool(Is_Print(Character(c))) {
-			fmt.Fprintln(output, "\tis not printable rune")
+			*output = fmt.Appendln(*output, "\tis not printable rune")
 		}
 		if bool(Is_Punctuation(Character(c))) {
-			fmt.Fprintln(output, "\tis punct rune")
+			*output = fmt.Appendln(*output, "\tis punct rune")
 		}
 		if bool(Is_Space(Character(c))) {
-			fmt.Fprintln(output, "\tis space rune")
+			*output = fmt.Appendln(*output, "\tis space rune")
 		}
 		if bool(Is_Symbol(Character(c))) {
-			fmt.Fprintln(output, "\tis symbol rune")
+			*output = fmt.Appendln(*output, "\tis symbol rune")
 		}
 		if bool(Is_Title(Character(c))) {
-			fmt.Fprintln(output, "\tis title case rune")
+			*output = fmt.Appendln(*output, "\tis title case rune")
 		}
 		if bool(Is_Upper(Character(c))) {
-			fmt.Fprintln(output, "\tis upper case rune")
+			*output = fmt.Appendln(*output, "\tis upper case rune")
 		}
 	}
 
 }
 
 func example_simple_fold(output *example_buffer) {
-	fmt.Fprintf(output, "%#U\n", Simple_Fold(Character('A')))
-	fmt.Fprintf(output, "%#U\n", Simple_Fold(Character('a')))
-	fmt.Fprintf(output, "%#U\n", Simple_Fold(Character('K')))
-	fmt.Fprintf(output, "%#U\n", Simple_Fold(Character('k')))
-	fmt.Fprintf(output, "%#U\n", Simple_Fold(Character('\u212A')))
-	fmt.Fprintf(output, "%#U\n", Simple_Fold(Character('1')))
+	*output = fmt.Appendf(*output, "%#U\n", Simple_Fold(Character('A')))
+	*output = fmt.Appendf(*output, "%#U\n", Simple_Fold(Character('a')))
+	*output = fmt.Appendf(*output, "%#U\n", Simple_Fold(Character('K')))
+	*output = fmt.Appendf(*output, "%#U\n", Simple_Fold(Character('k')))
+	*output = fmt.Appendf(*output, "%#U\n", Simple_Fold(Character('\u212A')))
+	*output = fmt.Appendf(*output, "%#U\n", Simple_Fold(Character('1')))
 }
 
 func example_to(output *example_buffer) {
 	const LC_G = 'g'
-	fmt.Fprintf(output, "%#U\n", To(UPPER_CASE, Character(LC_G)))
-	fmt.Fprintf(output, "%#U\n", To(LOWER_CASE, Character(LC_G)))
-	fmt.Fprintf(output, "%#U\n", To(TITLE_CASE, Character(LC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To(UPPER_CASE, Character(LC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To(LOWER_CASE, Character(LC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To(TITLE_CASE, Character(LC_G)))
 
 	const UC_G = 'G'
-	fmt.Fprintf(output, "%#U\n", To(UPPER_CASE, Character(UC_G)))
-	fmt.Fprintf(output, "%#U\n", To(LOWER_CASE, Character(UC_G)))
-	fmt.Fprintf(output, "%#U\n", To(TITLE_CASE, Character(UC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To(UPPER_CASE, Character(UC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To(LOWER_CASE, Character(UC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To(TITLE_CASE, Character(UC_G)))
 }
 
 func example_to_lower(output *example_buffer) {
 	const UC_G = 'G'
-	fmt.Fprintf(output, "%#U\n", To_Lower(Character(UC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To_Lower(Character(UC_G)))
 }
 func example_to_title(output *example_buffer) {
 	const UC_G = 'g'
-	fmt.Fprintf(output, "%#U\n", To_Title(Character(UC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To_Title(Character(UC_G)))
 }
 
 func example_to_upper(output *example_buffer) {
 	const UC_G = 'g'
-	fmt.Fprintf(output, "%#U\n", To_Upper(Character(UC_G)))
+	*output = fmt.Appendf(*output, "%#U\n", To_Upper(Character(UC_G)))
 }
 
 func example_special_case(output *example_buffer) {
 	special := turkish_case()
 
 	const LCI = 'i'
-	fmt.Fprintf(output, "%#U\n", Special_Case_To_Lower(special, LCI))
-	fmt.Fprintf(output, "%#U\n", Special_Case_To_Title(special, LCI))
-	fmt.Fprintf(output, "%#U\n", Special_Case_To_Upper(special, LCI))
+	*output = fmt.Appendf(*output, "%#U\n", Special_Case_To_Lower(special, LCI))
+	*output = fmt.Appendf(*output, "%#U\n", Special_Case_To_Title(special, LCI))
+	*output = fmt.Appendf(*output, "%#U\n", Special_Case_To_Upper(special, LCI))
 
 	const UCI = 'İ'
-	fmt.Fprintf(output, "%#U\n", Special_Case_To_Lower(special, UCI))
-	fmt.Fprintf(output, "%#U\n", Special_Case_To_Title(special, UCI))
-	fmt.Fprintf(output, "%#U\n", Special_Case_To_Upper(special, UCI))
+	*output = fmt.Appendf(*output, "%#U\n", Special_Case_To_Lower(special, UCI))
+	*output = fmt.Appendf(*output, "%#U\n", Special_Case_To_Title(special, UCI))
+	*output = fmt.Appendf(*output, "%#U\n", Special_Case_To_Upper(special, UCI))
 }
 
 func example_is_digit(output *example_buffer) {
-	fmt.Fprintf(output, "%t\n", bool(Is_Digit(Character('৩'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Digit(Character('A'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Digit(Character('৩'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Digit(Character('A'))))
 }
 
 func example_is_number(output *example_buffer) {
-	fmt.Fprintf(output, "%t\n", bool(Is_Number(Character('Ⅷ'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Number(Character('A'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Number(Character('Ⅷ'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Number(Character('A'))))
 }
 
 func example_is_letter(output *example_buffer) {
-	fmt.Fprintf(output, "%t\n", bool(Is_Letter(Character('A'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Letter(Character('7'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Letter(Character('A'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Letter(Character('7'))))
 }
 
 func example_is_lower(output *example_buffer) {
-	fmt.Fprintf(output, "%t\n", bool(Is_Lower(Character('a'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Lower(Character('A'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Lower(Character('a'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Lower(Character('A'))))
 }
 
 func example_is_upper(output *example_buffer) {
-	fmt.Fprintf(output, "%t\n", bool(Is_Upper(Character('A'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Upper(Character('a'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Upper(Character('A'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Upper(Character('a'))))
 }
 
 func example_is_title(output *example_buffer) {
-	fmt.Fprintf(output, "%t\n", bool(Is_Title(Character('ǅ'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Title(Character('a'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Title(Character('ǅ'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Title(Character('a'))))
 }
 
 func example_is_space(output *example_buffer) {
-	fmt.Fprintf(output, "%t\n", bool(Is_Space(Character(' '))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Space(Character('\n'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Space(Character('\t'))))
-	fmt.Fprintf(output, "%t\n", bool(Is_Space(Character('a'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Space(Character(' '))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Space(Character('\n'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Space(Character('\t'))))
+	*output = fmt.Appendf(*output, "%t\n", bool(Is_Space(Character('a'))))
 }
 
 // UPSTREAM_EXAMPLE_OUTPUT prevents output drift during the example adaptation.
@@ -751,12 +751,6 @@ false
 `
 
 type example_buffer []byte
-
-// Write keeps captured example output inside the shared dependency graph.
-func (buffer *example_buffer) Write(data []byte) (count int, err error) {
-	*buffer = append(*buffer, data...)
-	return len(data), nil
-}
 
 // Test_Upstream_Examples preserves every upstream example.
 func Test_Upstream_Examples(t *testing.T) {
@@ -867,8 +861,8 @@ func Test_Is_Graphic_Latin_1(t *testing.T) {
 // Test_Derived_Classification_Tables prevents generated data from drifting from Unicode.
 func Test_Derived_Classification_Tables(t *testing.T) {
 	t.Parallel()
-	print_tables := reference_classification_tables("L", "M", "N", "P", "S")
-	graphic_tables := reference_classification_tables("L", "M", "N", "P", "S", "Zs")
+	print_tables := reference_classification_tables(t, "L", "M", "N", "P", "S")
+	graphic_tables := reference_classification_tables(t, "L", "M", "N", "P", "S", "Zs")
 	print := func(character rune) (yes bool) {
 		return reference_is_print(print_tables, character)
 	}
@@ -916,11 +910,14 @@ func reference_is_graphic(tables []Range_Table, character rune) (yes bool) {
 	return reference_in_tables(tables, character)
 }
 
-func reference_classification_tables(names ...Name) (tables []Range_Table) {
+func reference_classification_tables(
+	t *testing.T, names ...Name,
+) (tables []Range_Table) {
+	t.Helper()
 	for _, name := range names {
 		table, found := named_table(TABLE_KIND_CATEGORY, name)
 		if !found {
-			panic("missing classification table")
+			t.Fatalf("missing classification table %q", name)
 		}
 		tables = append(tables, table)
 	}

@@ -180,6 +180,33 @@ func Test_Validation(t *testing.T) {
 	}
 }
 
+// Raw storage stays byte-owned while grouped cursor movement stays UTF-8-owned.
+func Test_Raw_Storage_Extensions(t *testing.T) {
+	test_buffer_character_operations(t)
+	test_reader_character_operations(t)
+}
+
+// Decoded search must never drift back to raw byte boundaries.
+func Test_Search(t *testing.T) {
+	test_text_search(t)
+}
+
+// Fields and iteration must share decoded delimiter boundaries.
+func Test_Fields_And_Iteration(t *testing.T) {
+	test_text_fields(t)
+	test_text_iteration(t)
+}
+
+// Transforms must map decoded characters into caller-owned storage.
+func Test_Transform(t *testing.T) {
+	test_text_transform(t)
+}
+
+// Trim views must start and end on decoded character boundaries.
+func Test_Trim(t *testing.T) {
+	test_text_trim(t)
+}
+
 // Test_Allocation proves each public operation keeps heap allocation at zero.
 func Test_Allocation(t *testing.T) {
 	state := allocation_state{
@@ -190,6 +217,7 @@ func Test_Allocation(t *testing.T) {
 	for _, one := range allocation_cases(&state) {
 		t.Run(one.Name, func(t *testing.T) { testify.Zero_Allocation(t, one.Run) })
 	}
+	test_text_allocation(t)
 }
 
 // Copyright 2009 The Go Authors. All rights reserved.
@@ -219,6 +247,7 @@ func Test_Domain_Errors(t *testing.T) {
 	testify.Panics(t, func() {
 		utf8.Append_Character(nil, '世')
 	}, "missing append storage")
+	test_text_api_domains()
 }
 
 type allocation_case struct {
@@ -612,8 +641,13 @@ const TEXT_STORAGE_SIZE = 64
 // TEXT_BUFFER_STORAGE_SIZE leaves room for two maximum-width encodings.
 const TEXT_BUFFER_STORAGE_SIZE = 8
 
-// Test_Text_Search keeps decoded search from drifting back into raw-byte semantics.
-func Test_Text_Search(t *testing.T) {
+// TEXT_FIELD_STORAGE_SIZE holds every field view produced by small fixtures.
+const TEXT_FIELD_STORAGE_SIZE = 8
+
+// TEXT_CHARACTER_STORAGE_SIZE holds valid and replacement characters together.
+const TEXT_CHARACTER_STORAGE_SIZE = 2
+
+func test_text_search(t *testing.T) {
 	source := utf8.Bytes("a☺b-a")
 	if !utf8.Contains_Any(source, "x☺") {
 		t.Fatal("Contains_Any missed character")
@@ -647,9 +681,8 @@ func Test_Text_Search(t *testing.T) {
 	}
 }
 
-// Test_Text_Fields keeps delimiter predicates attached to decoded characters.
-func Test_Text_Fields(t *testing.T) {
-	var slots [8]utf8.Bytes
+func test_text_fields(t *testing.T) {
+	var slots [TEXT_FIELD_STORAGE_SIZE]utf8.Bytes
 	count := utf8.Fields_Into(slots[:], utf8.Bytes(" a\tb "))
 	text_assert_slices(t, slots[:count], []string{"a", "b"})
 	count = utf8.Fields_Function_Into(
@@ -661,8 +694,7 @@ func Test_Text_Fields(t *testing.T) {
 	}
 }
 
-// Test_Text_Transform keeps mapping and repair at decoded UTF-8 boundaries.
-func Test_Text_Transform(t *testing.T) {
+func test_text_transform(t *testing.T) {
 	var storage [TEXT_STORAGE_SIZE]byte
 	count := utf8.Map_Into(storage[:], text_map_character, utf8.Bytes("abx"))
 	if string(storage[:count]) != "☺b" {
@@ -704,18 +736,20 @@ func Test_Text_Transform(t *testing.T) {
 	if string(storage[:count]) != "Go Gopher" {
 		t.Fatal("Title_Into wrote wrong content")
 	}
-	var characters [2]utf8.Decoded_Character
+	var characters [TEXT_CHARACTER_STORAGE_SIZE]utf8.Decoded_Character
 	character_count := utf8.Runes_Into(characters[:], utf8.Bytes{'a', 0xff})
 	if character_count != 2 {
 		t.Fatal("Runes_Into returned wrong count")
 	}
-	if characters[0] != 'a' || characters[1] != utf8.REPLACEMENT_CHARACTER {
+	if characters[0] != 'a' {
+		t.Fatal("Runes_Into wrote wrong characters")
+	}
+	if characters[1] != utf8.REPLACEMENT_CHARACTER {
 		t.Fatal("Runes_Into wrote wrong characters")
 	}
 }
 
-// Test_Text_Trim keeps cut sets and predicates on decoded character boundaries.
-func Test_Text_Trim(t *testing.T) {
+func test_text_trim(t *testing.T) {
 	source := utf8.Bytes("xx abc xx")
 	if string(utf8.Trim(source, "x")) != " abc " {
 		t.Fatal("Trim returned wrong view")
@@ -740,9 +774,8 @@ func Test_Text_Trim(t *testing.T) {
 	}
 }
 
-// Test_Text_Iteration keeps yielded views aligned to decoded field boundaries.
-func Test_Text_Iteration(t *testing.T) {
-	var yielded [8]utf8.Bytes
+func test_text_iteration(t *testing.T) {
+	var yielded [TEXT_FIELD_STORAGE_SIZE]utf8.Bytes
 	yielded_count := 0
 	count := utf8.Fields_Sequence(
 		utf8.Bytes(" a b "),
@@ -768,8 +801,7 @@ func Test_Text_Iteration(t *testing.T) {
 	text_assert_slices(t, yielded[:count], []string{"a", "b"})
 }
 
-// Test_Buffer_Character_Operations keeps UTF-8 cursor state outside raw-byte ownership.
-func Test_Buffer_Character_Operations(t *testing.T) {
+func test_buffer_character_operations(t *testing.T) {
 	var storage [TEXT_BUFFER_STORAGE_SIZE]byte
 	var buffer bytes.Buffer
 	bytes.Buffer_Init(&buffer, storage[:], nil)
@@ -786,28 +818,44 @@ func Test_Buffer_Character_Operations(t *testing.T) {
 	}
 	utf8.Buffer_Unread_Character(&buffer)
 	character, size, found = utf8.Buffer_Read_Character(&buffer)
-	if !found || character != '☺' || size != 3 {
+	if !found {
+		t.Fatal("Buffer_Unread_Character restored wrong boundary")
+	}
+	if character != '☺' {
+		t.Fatal("Buffer_Unread_Character restored wrong boundary")
+	}
+	if size != 3 {
 		t.Fatal("Buffer_Unread_Character restored wrong boundary")
 	}
 }
 
-// Test_Reader_Character_Operations keeps grouped reads above raw Reader ownership.
-func Test_Reader_Character_Operations(t *testing.T) {
+func test_reader_character_operations(t *testing.T) {
 	var reader bytes.Reader
 	bytes.Reader_Reset(&reader, bytes.Slice("☺a"))
 	character, size, found := utf8.Reader_Read_Character(&reader)
-	if !found || character != '☺' || size != 3 {
+	if !found {
+		t.Fatal("Reader_Read_Character returned wrong encoding")
+	}
+	if character != '☺' {
+		t.Fatal("Reader_Read_Character returned wrong encoding")
+	}
+	if size != 3 {
 		t.Fatal("Reader_Read_Character returned wrong encoding")
 	}
 	utf8.Reader_Unread_Character(&reader)
 	character, size, found = utf8.Reader_Read_Character(&reader)
-	if !found || character != '☺' || size != 3 {
+	if !found {
+		t.Fatal("Reader_Unread_Character restored wrong boundary")
+	}
+	if character != '☺' {
+		t.Fatal("Reader_Unread_Character restored wrong boundary")
+	}
+	if size != 3 {
 		t.Fatal("Reader_Unread_Character restored wrong boundary")
 	}
 }
 
-// Test_Text_Allocation protects caller-owned storage across the moved API boundary.
-func Test_Text_Allocation(t *testing.T) {
+func test_text_allocation(t *testing.T) {
 	fixture := text_allocation_fixture{
 		Storage:     make(utf8.Bytes, 64),
 		Source:      utf8.Bytes("a-b"),
@@ -822,8 +870,7 @@ func Test_Text_Allocation(t *testing.T) {
 	}
 }
 
-// Test_Text_API_Domains keeps every moved contract observable in its new package.
-func Test_Text_API_Domains(_ *testing.T) {
+func test_text_api_domains() {
 	maximum := make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM)
 	alternate := make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM)
 	fields := make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM)

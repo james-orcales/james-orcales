@@ -60,7 +60,6 @@ caller-owned storage.
 
 # Domain Errors
 
-Bytes and Text contain at most SEQUENCE_SIZE_MAXIMUM bytes. Fields and decoded character storage
-use derived bounded counts. A result above these limits, short destination, overlapping transform
-storage, or invalid unread request causes panic. Encode_Character and Append_Character also cause
-panic when caller storage is too short.
+Bytes and Text contain at most SEQUENCE_SIZE_MAXIMUM bytes. Fields and decoded character storage use
+derived bounds. Oversize input or result, short destination, overlapping transform storage, or
+invalid unread request causes panic.

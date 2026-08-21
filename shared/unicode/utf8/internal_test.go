@@ -14,7 +14,7 @@ func example_decode_final_character(output *example_buffer) {
 
 	for len(b) > 0 {
 		r, size := upstream_decode_final_character(b)
-		fmt.Fprintf(output, "%c %v\n", r, size)
+		*output = fmt.Appendf(*output, "%c %v\n", r, size)
 
 		b = b[:len(b)-size]
 	}
@@ -25,7 +25,7 @@ func example_decode_final_character_text(output *example_buffer) {
 
 	for len(text) > 0 {
 		r, size := upstream_decode_final_character_text(text)
-		fmt.Fprintf(output, "%c %v\n", r, size)
+		*output = fmt.Appendf(*output, "%c %v\n", r, size)
 
 		text = text[:len(text)-size]
 	}
@@ -36,7 +36,7 @@ func example_decode_character(output *example_buffer) {
 
 	for len(b) > 0 {
 		r, size := upstream_decode_character(b)
-		fmt.Fprintf(output, "%c %v\n", r, size)
+		*output = fmt.Appendf(*output, "%c %v\n", r, size)
 
 		b = b[size:]
 	}
@@ -47,7 +47,7 @@ func example_decode_character_text(output *example_buffer) {
 
 	for len(text) > 0 {
 		r, size := upstream_decode_character_text(text)
-		fmt.Fprintf(output, "%c %v\n", r, size)
+		*output = fmt.Appendf(*output, "%c %v\n", r, size)
 
 		text = text[size:]
 	}
@@ -59,8 +59,8 @@ func example_encode_character(output *example_buffer) {
 
 	n_count := upstream_encode_character(buffer, r)
 
-	fmt.Fprintln(output, buffer)
-	fmt.Fprintln(output, n_count)
+	*output = fmt.Appendln(*output, buffer)
+	*output = fmt.Appendln(*output, n_count)
 }
 
 func example_encode_character_invalid(output *example_buffer) {
@@ -75,75 +75,75 @@ func example_encode_character_invalid(output *example_buffer) {
 	for item_index, c := range runes {
 		buffer := make([]byte, 3)
 		size := upstream_encode_character(buffer, c)
-		fmt.Fprintf(output, "%d: %d %[2]s %d\n", item_index, buffer, size)
+		*output = fmt.Appendf(*output, "%d: %d %[2]s %d\n", item_index, buffer, size)
 	}
 }
 
 func example_full_character(output *example_buffer) {
 	buffer := []byte{228, 184, 150} // 世
-	fmt.Fprintln(output, upstream_full_character(buffer))
-	fmt.Fprintln(output, upstream_full_character(buffer[:2]))
+	*output = fmt.Appendln(*output, upstream_full_character(buffer))
+	*output = fmt.Appendln(*output, upstream_full_character(buffer[:2]))
 }
 
 func example_full_character_text(output *example_buffer) {
 	text := "世"
-	fmt.Fprintln(output, upstream_full_character_text(text))
-	fmt.Fprintln(output, upstream_full_character_text(text[:2]))
+	*output = fmt.Appendln(*output, upstream_full_character_text(text))
+	*output = fmt.Appendln(*output, upstream_full_character_text(text[:2]))
 }
 
 func example_character_count(output *example_buffer) {
 	buffer := []byte("Hello, 世界")
-	fmt.Fprintln(output, "bytes =", len(buffer))
-	fmt.Fprintln(output, "runes =", upstream_character_count(buffer))
+	*output = fmt.Appendln(*output, "bytes =", len(buffer))
+	*output = fmt.Appendln(*output, "runes =", upstream_character_count(buffer))
 }
 
 func example_character_count_text(output *example_buffer) {
 	text := "Hello, 世界"
-	fmt.Fprintln(output, "bytes =", len(text))
-	fmt.Fprintln(output, "runes =", upstream_character_count_text(text))
+	*output = fmt.Appendln(*output, "bytes =", len(text))
+	*output = fmt.Appendln(*output, "runes =", upstream_character_count_text(text))
 }
 
 func example_character_size(output *example_buffer) {
-	fmt.Fprintln(output, upstream_character_size('a'))
-	fmt.Fprintln(output, upstream_character_size('界'))
+	*output = fmt.Appendln(*output, upstream_character_size('a'))
+	*output = fmt.Appendln(*output, upstream_character_size('界'))
 }
 
 func example_character_start(output *example_buffer) {
 	buffer := []byte("a界")
-	fmt.Fprintln(output, upstream_character_start(buffer[0]))
-	fmt.Fprintln(output, upstream_character_start(buffer[1]))
-	fmt.Fprintln(output, upstream_character_start(buffer[2]))
+	*output = fmt.Appendln(*output, upstream_character_start(buffer[0]))
+	*output = fmt.Appendln(*output, upstream_character_start(buffer[1]))
+	*output = fmt.Appendln(*output, upstream_character_start(buffer[2]))
 }
 
 func example_valid(output *example_buffer) {
 	valid := []byte("Hello, 世界")
 	invalid := []byte{0xff, 0xfe, 0xfd}
 
-	fmt.Fprintln(output, upstream_valid(valid))
-	fmt.Fprintln(output, upstream_valid(invalid))
+	*output = fmt.Appendln(*output, upstream_valid(valid))
+	*output = fmt.Appendln(*output, upstream_valid(invalid))
 }
 
 func example_valid_character(output *example_buffer) {
 	valid := 'a'
 	invalid := rune(0xfffffff)
 
-	fmt.Fprintln(output, upstream_valid_character(valid))
-	fmt.Fprintln(output, upstream_valid_character(invalid))
+	*output = fmt.Appendln(*output, upstream_valid_character(valid))
+	*output = fmt.Appendln(*output, upstream_valid_character(invalid))
 }
 
 func example_valid_text(output *example_buffer) {
 	valid := "Hello, 世界"
 	invalid := string([]byte{0xff, 0xfe, 0xfd})
 
-	fmt.Fprintln(output, upstream_valid_text(valid))
-	fmt.Fprintln(output, upstream_valid_text(invalid))
+	*output = fmt.Appendln(*output, upstream_valid_text(valid))
+	*output = fmt.Appendln(*output, upstream_valid_text(invalid))
 }
 
 func example_append_character(output *example_buffer) {
 	buf1 := upstream_append_character(nil, 0x10000)
 	buf2 := upstream_append_character([]byte("init"), 0x10000)
-	fmt.Fprintln(output, string(buf1))
-	fmt.Fprintln(output, string(buf2))
+	*output = fmt.Appendln(*output, string(buf1))
+	*output = fmt.Appendln(*output, string(buf2))
 }
 
 func upstream_full_character(source []byte) (yes bool) {
@@ -1211,12 +1211,6 @@ init𐀀
 `
 
 type example_buffer []byte
-
-// Write keeps captured example output inside the shared dependency graph.
-func (buffer *example_buffer) Write(data []byte) (count int, err error) {
-	*buffer = append(*buffer, data...)
-	return len(data), nil
-}
 
 // Test_Upstream_Examples checks every example from the upstream suite.
 func Test_Upstream_Examples(t *testing.T) {

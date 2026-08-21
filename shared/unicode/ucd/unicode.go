@@ -637,29 +637,15 @@ func Range_Table_Invariants(value Range_Table, namespace aver.Namespace) {
 	)
 }
 
-// Range_Table_Handle is nonnil caller-owned table storage.
+// Range_Table_Handle names caller-owned table storage.
 type Range_Table_Handle *Range_Table
 
-// Range_Table_Handle_Invariants rejects missing table storage before reading it.
+// Range_Table_Handle_Invariants composes present table storage.
 func Range_Table_Handle_Invariants(value Range_Table_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Unicode range table handle exists.")
-	aver.Tree(Ranges_16(value.Ranges_16), namespace).
-		Range_Int(
-			len(value.Ranges_16), RANGES_16_COUNT_MINIMUM, RANGES_16_COUNT_MAXIMUM,
-		).
-		Ensure()
-	aver.Tree(Ranges_32(value.Ranges_32), namespace).
-		Range_Int(
-			len(value.Ranges_32), RANGES_32_COUNT_MINIMUM, RANGES_32_COUNT_MAXIMUM,
-		).
-		Ensure()
-	aver.Tree(Latin_Offset(value.Latin_Offset), namespace).
-		Range_Int(int(value.Latin_Offset), LATIN_OFFSET_MINIMUM, LATIN_OFFSET_MAXIMUM).
-		Ensure()
-	aver.Always(
-		int(value.Latin_Offset) <= len(value.Ranges_16),
-		"Unicode range table handle has valid Latin offset.",
-	)
+	if value == nil {
+		return
+	}
+	Range_Table_Invariants(*value, namespace)
 }
 
 // Range_Tables is a bounded collection for a union query.
@@ -1209,23 +1195,17 @@ func Special_Case_Invariants(value Special_Case, namespace aver.Namespace) {
 	Fourth_Special_Case_Range_Invariants(value.Fourth, namespace)
 }
 
-// Special_Case_Destination is nonnil caller-owned override storage.
+// Special_Case_Destination names caller-owned override storage.
 type Special_Case_Destination *Special_Case
 
-// Special_Case_Destination_Invariants rejects missing storage before writing it.
+// Special_Case_Destination_Invariants composes present override storage.
 func Special_Case_Destination_Invariants(
 	value Special_Case_Destination, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Unicode special case destination exists.")
-	aver.Tree(Special_Case_Count(value.Count), namespace).
-		Range_Int(
-			int(value.Count), SPECIAL_CASE_COUNT_MINIMUM, SPECIAL_CASE_COUNT_MAXIMUM,
-		).
-		Ensure()
-	First_Special_Case_Range_Invariants(value.First, namespace)
-	Second_Special_Case_Range_Invariants(value.Second, namespace)
-	Third_Special_Case_Range_Invariants(value.Third, namespace)
-	Fourth_Special_Case_Range_Invariants(value.Fourth, namespace)
+	if value == nil {
+		return
+	}
+	Special_Case_Invariants(*value, namespace)
 }
 
 // Special_Case_Of copies bounded rules so no caller collection can escape.
