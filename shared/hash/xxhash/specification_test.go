@@ -1,22 +1,18 @@
 package xxhash_test
 
 import (
-	"bytes"
-	"io"
 	"testing"
 
 	"local/james-orcales/shared/hash/xxhash"
 	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/testify"
 )
 
 // Test_Hash_Matches_Reference_Vectors checks the one-shot Hash against the published XXH64 vectors.
 func Test_Hash_Matches_Reference_Vectors(t *testing.T) {
 	for _, test_case := range reference_cases() {
-		got := xxhash.Hash([]byte(test_case.Input), test_case.Seed)
-		if got != test_case.Want {
-			t.Fatalf("Hash %q seed %d = %#016x, want %#016x",
-				test_case.Name, test_case.Seed, got, test_case.Want)
-		}
+		got := xxhash.Hash(xxhash.Source(test_case.Input), test_case.Seed)
+		testify.Equal(t, test_case.Want, got, test_case.Name)
 	}
 }
 
@@ -27,7 +23,7 @@ func Test_Digest_Matches_Reference_Vectors(t *testing.T) {
 	for _, test_case := range reference_cases() {
 		for _, chunk := range chunk_sizes {
 			digest := xxhash.New_Digest(test_case.Seed)
-			input := []byte(test_case.Input)
+			input := xxhash.Source(test_case.Input)
 			for offset := 0; offset < len(input); offset += chunk {
 				end := offset + chunk
 				if end > len(input) {
@@ -35,11 +31,8 @@ func Test_Digest_Matches_Reference_Vectors(t *testing.T) {
 				}
 				digest.Write(input[offset:end])
 			}
-			got := xxhash.Digest_Sum64(&digest)
-			if got != test_case.Want {
-				t.Fatalf("Digest %q seed %d chunk %d = %#016x, want %#016x",
-					test_case.Name, test_case.Seed, chunk, got, test_case.Want)
-			}
+			got := xxhash.Digest_Sum_64(&digest)
+			testify.Equal(t, test_case.Want, got, test_case.Name, chunk)
 		}
 	}
 }
@@ -48,11 +41,11 @@ func Test_Digest_Matches_Reference_Vectors(t *testing.T) {
 // chunk sizes — the case fixed vectors underweight.
 func Test_Digest_Equals_One_Shot(t *testing.T) {
 	generator := prng.New(99)
-	data := make([]byte, 1000)
+	data := make(xxhash.Source, 1000)
 	for index := 0; index < len(data); index++ {
 		data[index] = byte(prng.Generator_Next(&generator))
 	}
-	seed := uint64(0xabcdef)
+	seed := xxhash.Seed(0xabcdef)
 	want := xxhash.Hash(data, seed)
 	chunk_sizes := []int{1, 5, 8, 31, 32, 33, 64, 257}
 	for _, chunk := range chunk_sizes {
@@ -64,64 +57,51 @@ func Test_Digest_Equals_One_Shot(t *testing.T) {
 			}
 			digest.Write(data[offset:end])
 		}
-		got := xxhash.Digest_Sum64(&digest)
-		if got != want {
-			t.Fatalf("Digest chunk %d = %#016x, want one-shot %#016x", chunk, got, want)
-		}
+		got := xxhash.Digest_Sum_64(&digest)
+		testify.Equal(t, want, got, chunk)
 	}
 }
 
 // Test_Write_Reports_Full_Count checks Write consumes and reports every byte and never errors,
 // and that *Digest works as an io.Writer, so io.Copy produces the same result as Hash.
 func Test_Write_Reports_Full_Count(t *testing.T) {
-	digest := xxhash.New_Digest(0)
+	digest := xxhash.New_Digest(xxhash.Seed(0))
 	count, write_error := digest.Write(make([]byte, 50))
-	if write_error != nil {
-		t.Fatalf("Write errored: %v", write_error)
-	}
-	if count != 50 {
-		t.Fatalf("Write reported %d bytes, want 50", count)
-	}
+	testify.No_Error(t, write_error)
+	testify.Equal(t, 50, count)
 
-	data := []byte("streamed through io.Copy into the digest")
-	streamed := xxhash.New_Digest(0)
-	var writer io.Writer = &streamed
-	_, copy_error := io.CopyN(writer, bytes.NewReader(data), int64(len(data)))
-	if copy_error != nil {
-		t.Fatalf("io.CopyN errored: %v", copy_error)
-	}
-	if got, want := xxhash.Digest_Sum64(&streamed), xxhash.Hash(data, 0); got != want {
-		t.Fatalf("io.Copy digest = %#016x, want %#016x", got, want)
-	}
+	data := xxhash.Source("streamed through writer method into digest")
+	streamed := xxhash.New_Digest(xxhash.Seed(0))
+	var write func([]byte) (count int, write_error error) = streamed.Write
+	count, write_error = write(data)
+	testify.No_Error(t, write_error)
+	testify.Equal(t, len(data), count)
+	testify.Equal(
+		t, xxhash.Hash(data, xxhash.Seed(0)), xxhash.Digest_Sum_64(&streamed),
+	)
 }
 
 // Test_Reset_Restores_Initial_State checks Digest_Reset returns a used Digest to the state of a
 // fresh one with the same seed.
 func Test_Reset_Restores_Initial_State(t *testing.T) {
-	digest := xxhash.New_Digest(7)
+	digest := xxhash.New_Digest(xxhash.Seed(7))
 	digest.Write([]byte("garbage that should be forgotten on reset"))
 	xxhash.Digest_Reset(&digest)
 	digest.Write([]byte("asdf"))
-	got := xxhash.Digest_Sum64(&digest)
+	got := xxhash.Digest_Sum_64(&digest)
 
-	fresh := xxhash.New_Digest(7)
+	fresh := xxhash.New_Digest(xxhash.Seed(7))
 	fresh.Write([]byte("asdf"))
-	want := xxhash.Digest_Sum64(&fresh)
-
-	if got != want {
-		t.Fatalf("after reset = %#016x, want fresh %#016x", got, want)
-	}
+	want := xxhash.Digest_Sum_64(&fresh)
+	testify.Equal(t, want, got)
 }
 
 // Test_Hot_Path_Is_Zero_Allocation checks a one-shot Hash of a preallocated slice never allocates.
 func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
-	data := make([]byte, 64)
-	allocations := testing.AllocsPerRun(1000, func() {
-		xxhash.Hash(data, 0)
+	data := make(xxhash.Source, 64)
+	testify.Zero_Allocation(t, func() {
+		xxhash.Hash(data, xxhash.Seed(0))
 	})
-	if allocations != 0 {
-		t.Fatalf("Hash allocated %.1f times per call, want zero", allocations)
-	}
 }
 
 // SENTENCE_63 is a 63-byte input: long enough to run one full 32-byte stripe and then a 31-byte
@@ -133,8 +113,8 @@ const SENTENCE_63 = "Call me Ishmael. Some years ago--never mind how long precis
 type reference_case struct {
 	Name  string
 	Input string
-	Seed  uint64
-	Want  uint64
+	Seed  xxhash.Seed
+	Want  xxhash.Value
 }
 
 // The official XXH64 vectors (from cespare/xxhash, tested against the C reference): empty,
@@ -148,7 +128,30 @@ func reference_cases() (cases []reference_case) {
 		{Name: "asdf", Input: "asdf", Seed: 0, Want: 0x415872f599cea71e},
 		{Name: "sentence", Input: SENTENCE_63, Seed: 0, Want: 0x02a2e85470d6fd96},
 		{Name: "empty/123", Input: "", Seed: 123, Want: 0xe0db84de91f3e198},
-		{Name: "asdf/max", Input: "asdf", Seed: ^uint64(0), Want: 0x9a2fd8473be539b6},
+		{
+			Name: "asdf/max", Input: "asdf",
+			Seed: xxhash.Seed(^uint64(0)), Want: 0x9a2fd8473be539b6,
+		},
 		{Name: "sentence/seed", Input: SENTENCE_63, Seed: 54321, Want: 0x1736d186daf5d1cd},
+	}
+}
+
+// Benchmark_Hash measures one-shot hash over mid-sized bounded buffer.
+func Benchmark_Hash(b *testing.B) {
+	data := make(xxhash.Source, 1024)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		xxhash.Hash(data, xxhash.Seed(0))
+	}
+}
+
+// Benchmark_Digest measures streaming same buffer through Write then Sum.
+func Benchmark_Digest(b *testing.B) {
+	data := make(xxhash.Source, 1024)
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		digest := xxhash.New_Digest(xxhash.Seed(0))
+		digest.Write(data)
+		xxhash.Digest_Sum_64(&digest)
 	}
 }

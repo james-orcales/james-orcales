@@ -1,0 +1,319 @@
+package maphash_test
+
+import (
+	"testing"
+
+	"local/james-orcales/shared/hash/maphash"
+	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/testify"
+)
+
+// Test_Package_Owned_State verifies streaming operations need no common dispatcher.
+func Test_Package_Owned_State(t *testing.T) {
+	var value maphash.Hash
+	maphash.Hash_Init(&value, test_seed())
+	count, write_status := maphash.Hash_Write(&value, maphash.Source("abc"))
+	testify.Equal(t, maphash.Count(len("abc")), count)
+	testify.Equal(t, maphash.WRITE_STATUS_OK, write_status)
+	var output [maphash.DIGEST_SIZE]byte
+	output_count, output_status := maphash.Hash_Sum_Into(&value, output[:])
+	testify.Equal(t, maphash.OUTPUT_COUNT_COMPLETE, output_count)
+	testify.Equal(t, maphash.OUTPUT_STATUS_OK, output_status)
+}
+
+// Test_Reference_Values keeps the injected-key algorithm tied to SipHash-2-4 vectors.
+func Test_Reference_Values(t *testing.T) {
+	seed := maphash.Seed{
+		Key_0: 0x0706050403020100,
+		Key_1: 0x0f0e0d0c0b0a0908,
+	}
+	tests := [...]struct {
+		Size int
+		Want maphash.Value
+	}{
+		{Size: 0, Want: 0x726fdb47dd0e0e31},
+		{Size: 1, Want: 0x74f839c593dc67fd},
+		{Size: 2, Want: 0x0d6c8009d9a94f5a},
+		{Size: 3, Want: 0x85676696d7fb7e2d},
+		{Size: 4, Want: 0xcf2794e0277187b7},
+		{Size: 8, Want: 0x93f5f5799a932462},
+	}
+	var source [maphash.BLOCK_SIZE]byte
+	for index := range source {
+		source[index] = byte(index)
+	}
+	for _, test := range tests {
+		testify.Equal(t, test.Want, maphash.Bytes(seed, source[:test.Size]))
+	}
+}
+
+// Test_Write_Division proves bytes, text, single bytes, and chunks form one stream.
+func Test_Write_Division(t *testing.T) {
+	seed := test_seed()
+	want := maphash.Bytes(seed, maphash.Source("write division is irrelevant"))
+	testify.Equal(t, want, maphash.String(seed, maphash.Text("write division is irrelevant")))
+
+	var value maphash.Hash
+	maphash.Hash_Init(&value, seed)
+	maphash.Hash_Write(&value, maphash.Source("write "))
+	maphash.Hash_Write_Text(&value, maphash.Text("division "))
+	for _, item := range []byte("is irrelevant") {
+		maphash.Hash_Write_Byte(&value, maphash.Byte(item))
+	}
+	testify.Equal(t, want, maphash.Hash_Sum_64(&value))
+}
+
+// Test_Seed_Reset_And_Clone protects explicit function identity and caller-owned state.
+func Test_Seed_Reset_And_Clone(t *testing.T) {
+	seed := test_seed()
+	other := maphash.Seed{
+		Key_0: seed.Key_0 + 1, Key_1: seed.Key_1, Output_Mask: seed.Output_Mask,
+	}
+	message := maphash.Source("seeded")
+	testify.Not_Equal(t, maphash.Bytes(seed, message), maphash.Bytes(other, message))
+
+	var source maphash.Hash
+	maphash.Hash_Init(&source, seed)
+	maphash.Hash_Write(&source, maphash.Source("seed"))
+	var clone maphash.Hash
+	maphash.Hash_Init(&clone, other)
+	maphash.Hash_Clone_Into(&clone, &source)
+	maphash.Hash_Write(&source, maphash.Source("ed"))
+	testify.Equal(t, maphash.Bytes(seed, maphash.Source("seed")), maphash.Hash_Sum_64(&clone))
+	testify.Equal(t, seed, maphash.Hash_Seed(&clone))
+
+	maphash.Hash_Reset(&source)
+	maphash.Hash_Write(&source, message)
+	testify.Equal(t, maphash.Bytes(seed, message), maphash.Hash_Sum_64(&source))
+	maphash.Hash_Set_Seed(&source, other)
+	maphash.Hash_Write(&source, message)
+	testify.Equal(t, maphash.Bytes(other, message), maphash.Hash_Sum_64(&source))
+}
+
+// Test_Caller_Owned_Output uses standard maphash little-endian order.
+func Test_Caller_Owned_Output(t *testing.T) {
+	seed := test_seed()
+	var value maphash.Hash
+	maphash.Hash_Init(&value, seed)
+	maphash.Hash_Write(&value, maphash.Source("output"))
+	want := maphash.Hash_Sum_64(&value)
+	var short [maphash.DIGEST_SIZE - 1]byte
+	count, status := maphash.Hash_Sum_Into(&value, short[:])
+	testify.Equal(t, maphash.OUTPUT_COUNT_EMPTY, count)
+	testify.Equal(t, maphash.OUTPUT_STATUS_TOO_SMALL, status)
+	var output [maphash.DIGEST_SIZE]byte
+	count, status = maphash.Hash_Sum_Into(&value, output[:])
+	testify.Equal(t, maphash.OUTPUT_COUNT_COMPLETE, count)
+	testify.Equal(t, maphash.OUTPUT_STATUS_OK, status)
+	for index := range output {
+		testify.Equal(t, byte(uint64(want)>>(index*maphash.BITS_PER_BYTE)), output[index])
+	}
+}
+
+// Test_Bounds rejects oversized calls, total overflow, and an unkeyed seed.
+func Test_Bounds(t *testing.T) {
+	seed := test_seed()
+	var value maphash.Hash
+	maphash.Hash_Init(&value, seed)
+	var source [maphash.SOURCE_SIZE_MAXIMUM + 1]byte
+	var text [maphash.TEXT_SIZE_MAXIMUM + 1]byte
+	testify.Panics(t, func() { maphash.Bytes(seed, source[:]) })
+	testify.Panics(t, func() { maphash.String(seed, maphash.Text(string(text[:]))) })
+	testify.Panics(t, func() { maphash.Hash_Write(&value, source[:]) })
+	testify.Panics(t, func() { maphash.Hash_Write_Text(&value, maphash.Text(string(text[:]))) })
+	testify.Panics(t, func() { maphash.Hash_Init(&value, maphash.Seed{}) })
+
+	maphash.Hash_Init_Bounded(&value, seed, 0)
+	before := value
+	count, status := maphash.Hash_Write(&value, maphash.Source{1})
+	testify.Equal(t, maphash.Count(0), count)
+	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, status)
+	testify.Equal(t, before, value)
+	_, status = maphash.Hash_Write_Text(&value, "x")
+	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, status)
+	status = maphash.Hash_Write_Byte(&value, 'x')
+	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, status)
+}
+
+// Test_Invariant_Domains reaches seed, state, count, and caller-byte sentinels.
+func Test_Invariant_Domains(t *testing.T) {
+	var source [maphash.SOURCE_SIZE_MAXIMUM]byte
+	var output [maphash.DESTINATION_SIZE_MAXIMUM]byte
+	maphash_seed_domains(source[:], output[:])
+	seed := test_seed()
+	for _, size := range [...]int{0, 1, 2, maphash.DESTINATION_SIZE_MAXIMUM} {
+		var value maphash.Hash
+		maphash.Hash_Init(&value, seed)
+		maphash.Hash_Sum_Into(&value, output[:size])
+	}
+	states := [...]uint64{
+		bits.WORD_64_MINIMUM,
+		bits.WORD_64_MINIMUM + 1,
+		bits.WORD_64_MINIMUM + 1 + 1,
+		bits.WORD_64_MAXIMUM,
+	}
+	for _, maximum := range [...]maphash.Message_Size_Maximum{
+		maphash.Message_Size_Maximum(maphash.TOTAL_COUNT_MINIMUM),
+		maphash.Message_Size_Maximum(maphash.TOTAL_COUNT_MINIMUM + 1),
+		maphash.Message_Size_Maximum(maphash.TOTAL_COUNT_MINIMUM + 1 + 1),
+		maphash.Message_Size_Maximum(maphash.TOTAL_COUNT_MAXIMUM),
+	} {
+		var value maphash.Hash
+		maphash.Hash_Init_Bounded(&value, seed, maximum)
+		testify.Equal(t, maximum, maphash.Hash_Message_Size_Maximum(&value))
+		maphash.Hash_Init_Bounded(&value, seed, maximum)
+	}
+	var byte_value maphash.Hash
+	maphash.Hash_Init(&byte_value, seed)
+	maphash.Hash_Write_Byte(&byte_value, maphash.Byte(bits.WORD_8_MAXIMUM))
+	base_seed := test_seed()
+	base := maphash.Bytes(base_seed, nil)
+	for _, target := range states {
+		masked := base_seed
+		masked.Output_Mask = maphash.Output_Mask(
+			uint64(base) ^ uint64(base_seed.Output_Mask) ^ target,
+		)
+		testify.Equal(t, maphash.Value(target), maphash.Bytes(masked, nil))
+		testify.Equal(t, maphash.Value(target), maphash.String(masked, ""))
+		var value maphash.Hash
+		maphash.Hash_Init(&value, masked)
+		testify.Equal(t, maphash.Value(target), maphash.Hash_Sum_64(&value))
+	}
+}
+
+// Test_Allocation proves byte, text, stream, clone, reset, and output paths own no heap storage.
+func Test_Allocation(t *testing.T) {
+	fixture := allocation_fixture{
+		Seed: test_seed(), Source: maphash.Source("allocation"), Text: "allocation",
+		Message_Size_Maximum: maphash.Message_Size_Maximum(maphash.SOURCE_SIZE_MAXIMUM),
+	}
+	maphash.Hash_Init(&fixture.Hash, fixture.Seed)
+	maphash.Hash_Init(&fixture.Clone, fixture.Seed)
+	testify.Zero_Allocation(t, func() {
+		fixture.Value = maphash.Bytes(fixture.Seed, fixture.Source)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Value = maphash.String(fixture.Seed, fixture.Text)
+	})
+	testify.Zero_Allocation(t, func() { maphash.Hash_Init(&fixture.Hash, fixture.Seed) })
+	testify.Zero_Allocation(t, func() {
+		maphash.Hash_Init_Bounded(&fixture.Hash, fixture.Seed, fixture.Message_Size_Maximum)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Count, fixture.Write_Status = maphash.Hash_Write(
+			&fixture.Hash, fixture.Source,
+		)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Count, fixture.Write_Status = maphash.Hash_Write_Text(
+			&fixture.Hash, fixture.Text,
+		)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Write_Status = maphash.Hash_Write_Byte(&fixture.Hash, 'x')
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Value = maphash.Hash_Sum_64(&fixture.Hash)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Output_Count, fixture.Output_Status = maphash.Hash_Sum_Into(
+			&fixture.Hash, fixture.Output[:],
+		)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Observed_Seed = maphash.Hash_Seed(&fixture.Hash)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Observed_Message_Size_Maximum = maphash.Hash_Message_Size_Maximum(
+			&fixture.Hash,
+		)
+	})
+	testify.Zero_Allocation(t, func() { maphash.Hash_Reset(&fixture.Hash) })
+	testify.Zero_Allocation(t, func() {
+		maphash.Hash_Set_Seed(&fixture.Hash, fixture.Seed)
+	})
+	testify.Zero_Allocation(t, func() {
+		maphash.Hash_Clone_Into(&fixture.Clone, &fixture.Hash)
+	})
+	testify.True(t, fixture.Value >= 0)
+}
+
+func test_seed() (seed maphash.Seed) {
+	return maphash.Seed{
+		Key_0:       0x0706050403020100,
+		Key_1:       0x0f0e0d0c0b0a0908,
+		Output_Mask: 0x9e3779b97f4a7c15,
+	}
+}
+
+func maphash_seed_domains(source maphash.Source, output maphash.Destination) {
+	seeds := [...]maphash.Seed{
+		{Key_0: 0, Key_1: 1, Output_Mask: 0},
+		{Key_0: 1, Key_1: 0, Output_Mask: 1},
+		{Key_0: 2, Key_1: 2, Output_Mask: 2},
+		{
+			Key_0:       maphash.Key_0(bits.WORD_64_MAXIMUM),
+			Key_1:       maphash.Key_1(bits.WORD_64_MAXIMUM),
+			Output_Mask: maphash.Output_Mask(bits.WORD_64_MAXIMUM),
+		},
+	}
+	for _, seed := range seeds {
+		for _, size := range [...]int{0, 1, 2, maphash.SOURCE_SIZE_MAXIMUM} {
+			maphash.Bytes(seed, source[:size])
+			maphash.String(seed, maphash.Text(string(source[:size])))
+			var value maphash.Hash
+			maphash.Hash_Init(&value, seed)
+			maphash.Hash_Write(&value, source[:size])
+			maphash.Hash_Init(&value, seed)
+			maphash.Hash_Write_Text(&value, maphash.Text(string(source[:size])))
+			maphash.Hash_Init_Bounded(&value, seed, maphash.MESSAGE_SIZE_MAXIMUM)
+		}
+		maphash_tail_domains(seed, source, output)
+	}
+}
+
+func maphash_tail_domains(
+	seed maphash.Seed, source maphash.Source, output maphash.Destination,
+) {
+	for _, tail_count := range [...]int{
+		maphash.TAIL_COUNT_MINIMUM,
+		maphash.TAIL_COUNT_MINIMUM + 1,
+		maphash.TAIL_COUNT_MINIMUM + 1 + 1,
+		maphash.TAIL_COUNT_MAXIMUM,
+	} {
+		var value maphash.Hash
+		maphash.Hash_Init(&value, seed)
+		maphash.Hash_Write(&value, source[:tail_count])
+		maphash.Hash_Write(&value, nil)
+		maphash.Hash_Write_Text(&value, "")
+		maphash.Hash_Sum_64(&value)
+		maphash.Hash_Sum_Into(&value, output)
+		maphash.Hash_Seed(&value)
+		maphash.Hash_Message_Size_Maximum(&value)
+		var clone maphash.Hash
+		maphash.Hash_Clone_Into(&clone, &value)
+		byte_value := value
+		maphash.Hash_Write_Byte(&byte_value, maphash.Byte(tail_count))
+		seed_value := value
+		maphash.Hash_Set_Seed(&seed_value, seed)
+		maphash.Hash_Init_Bounded(&value, seed, maphash.MESSAGE_SIZE_MAXIMUM)
+		maphash.Hash_Reset(&value)
+	}
+}
+
+type allocation_fixture struct {
+	Seed                          maphash.Seed
+	Observed_Seed                 maphash.Seed
+	Hash                          maphash.Hash
+	Clone                         maphash.Hash
+	Source                        maphash.Source
+	Text                          maphash.Text
+	Output                        [maphash.DIGEST_SIZE]byte
+	Value                         maphash.Value
+	Count                         maphash.Count
+	Write_Status                  maphash.Write_Status
+	Output_Count                  maphash.Output_Count
+	Output_Status                 maphash.Output_Status
+	Message_Size_Maximum          maphash.Message_Size_Maximum
+	Observed_Message_Size_Maximum maphash.Message_Size_Maximum
+}
