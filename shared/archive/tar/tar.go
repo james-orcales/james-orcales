@@ -1575,18 +1575,6 @@ func PAX_Key_Name_Invariants(value PAX_Key_Name, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Wire_Literal_Field is one fixed marker field compared as a complete value.
-type Wire_Literal_Field []byte
-
-// Wire_Literal_Field_Invariants bounds version, trailer, and magic widths.
-func Wire_Literal_Field_Invariants(
-	value Wire_Literal_Field, namespace aver.Namespace,
-) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), VERSION_FIELD_SIZE, MAGIC_FIELD_SIZE).
-		Ensure()
-}
-
 // Wire_Literal is one fixed marker literal.
 type Wire_Literal string
 
@@ -1594,6 +1582,21 @@ type Wire_Literal string
 func Wire_Literal_Invariants(value Wire_Literal, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(len(value), VERSION_FIELD_SIZE, MAGIC_FIELD_SIZE).
+		Ensure()
+}
+
+// Wire_Literal_Offset locates one fixed marker inside a header block.
+type Wire_Literal_Offset int
+
+// Wire_Literal_Offset_Invariants admits only fields compared with fixed markers.
+func Wire_Literal_Offset_Invariants(
+	value Wire_Literal_Offset, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_3_Int(
+			int(value), MAGIC_FIELD_OFFSET, VERSION_FIELD_OFFSET,
+			STAR_TRAILER_FIELD_OFFSET,
+		).
 		Ensure()
 }
 
@@ -6738,15 +6741,11 @@ func block_format(block Header_Block) (format Format, valid bytes.Boolean) {
 		}
 	}
 	if wire_literal_equal(
-		Wire_Literal_Field(
-			block[MAGIC_FIELD_OFFSET:MAGIC_FIELD_OFFSET+MAGIC_FIELD_SIZE],
-		),
+		block, Wire_Literal_Offset(MAGIC_FIELD_OFFSET),
 		Wire_Literal(USTAR_MAGIC),
 	) {
 		if wire_literal_equal(
-			Wire_Literal_Field(
-				block[STAR_TRAILER_FIELD_OFFSET:][:STAR_TRAILER_FIELD_SIZE],
-			),
+			block, Wire_Literal_Offset(STAR_TRAILER_FIELD_OFFSET),
 			Wire_Literal(STAR_TRAILER),
 		) {
 			return FORMAT_STAR, true
@@ -6754,15 +6753,11 @@ func block_format(block Header_Block) (format Format, valid bytes.Boolean) {
 		return FORMAT_USTAR, true
 	}
 	if wire_literal_equal(
-		Wire_Literal_Field(
-			block[MAGIC_FIELD_OFFSET:MAGIC_FIELD_OFFSET+MAGIC_FIELD_SIZE],
-		),
+		block, Wire_Literal_Offset(MAGIC_FIELD_OFFSET),
 		Wire_Literal(GNU_MAGIC),
 	) {
 		if wire_literal_equal(
-			Wire_Literal_Field(
-				block[VERSION_FIELD_OFFSET:VERSION_FIELD_OFFSET+VERSION_FIELD_SIZE],
-			),
+			block, Wire_Literal_Offset(VERSION_FIELD_OFFSET),
 			Wire_Literal(GNU_VERSION),
 		) {
 			return FORMAT_GNU, true
@@ -9209,16 +9204,18 @@ func contains_nul(value NUL_Checked_Text) (contains bytes.Boolean) {
 }
 
 func wire_literal_equal(
-	value Wire_Literal_Field, literal Wire_Literal,
+	block Header_Block, offset Wire_Literal_Offset, literal Wire_Literal,
 ) (equal bytes.Boolean) {
 	defer func() { bytes.Boolean_Invariants(equal, "wire_literal_equal.equal") }()
-	Wire_Literal_Field_Invariants(value, "wire_literal_equal.value")
+	Header_Block_Invariants(block, "wire_literal_equal.block")
+	Wire_Literal_Offset_Invariants(offset, "wire_literal_equal.offset")
 	Wire_Literal_Invariants(literal, "wire_literal_equal.literal")
-	if len(value) != len(literal) {
+	start_position := int(offset)
+	if len(literal) > len(block)-start_position {
 		return false
 	}
-	for position := range value {
-		if value[position] != literal[position] {
+	for position := range literal {
+		if block[start_position+position] != literal[position] {
 			return false
 		}
 	}

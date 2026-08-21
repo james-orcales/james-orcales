@@ -1707,11 +1707,6 @@ func assert_public_name_bounds(t *testing.T) {
 	zip.Decode_Into(maximum_name_archive, maximum_suffix, nil)
 }
 
-type compression_workspace struct {
-	Heads    [flate.HASH_COUNT]int32
-	Previous [flate.WINDOW_SIZE]int32
-}
-
 // Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by BSD-style license in Go source tree LICENSE file.
 
@@ -3248,16 +3243,16 @@ func standard_library_domain_file_mode(marker int) (mode nbio.File_Mode) {
 }
 
 type standard_library_stream_harness struct {
-	Output         [bytes.SLICE_SIZE_MAXIMUM]byte
-	Archive        [bytes.SLICE_SIZE_MAXIMUM]byte
-	Reader_Archive [bytes.SLICE_SIZE_MAXIMUM]byte
-	Central        [bytes.SLICE_SIZE_MAXIMUM]byte
-	Content        [bytes.SLICE_SIZE_MAXIMUM]byte
-	Compressed     [bytes.SLICE_SIZE_MAXIMUM]byte
-	Comment        [bytes.SLICE_SIZE_MAXIMUM]byte
-	Name           [bytes.SLICE_SIZE_MAXIMUM]byte
-	Heads          [flate.HASH_COUNT]int32
-	Previous       [flate.WINDOW_SIZE]int32
+	Output         []byte
+	Archive        []byte
+	Reader_Archive []byte
+	Central        []byte
+	Content        []byte
+	Compressed     []byte
+	Comment        []byte
+	Name           []byte
+	Heads          []int32
+	Previous       []int32
 	Memory         nbio.Stream_Memory
 	Writer         zip.Writer
 }
@@ -3266,6 +3261,18 @@ func standard_library_stream_harness_init(
 	t *testing.T, harness *standard_library_stream_harness,
 ) {
 	t.Helper()
+	if harness.Output == nil {
+		harness.Output = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Archive = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Reader_Archive = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Central = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Content = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Compressed = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Comment = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Name = make([]byte, bytes.SLICE_SIZE_MAXIMUM)
+		harness.Heads = make([]int32, flate.HASH_COUNT)
+		harness.Previous = make([]int32, flate.WINDOW_SIZE)
+	}
 	harness.Memory = nbio.Stream_Memory{Memory: harness.Output[:]}
 	status := zip.Writer_Init(
 		&harness.Writer,
@@ -3378,10 +3385,9 @@ func deflated_level(
 ) (compressed []byte) {
 	t.Helper()
 	var compressed_storage [bytes.SLICE_SIZE_MAXIMUM]byte
-	var workspace_storage compression_workspace
 	workspace := flate.Workspace_Unvalidated{
-		Heads:    workspace_storage.Heads[:],
-		Previous: workspace_storage.Previous[:],
+		Heads:    make([]int32, flate.HASH_COUNT),
+		Previous: make([]int32, flate.WINDOW_SIZE),
 	}
 	count, status := flate.Encode_Into(
 		compressed_storage[:], workspace, content,

@@ -2900,19 +2900,30 @@ type reader_fixture struct {
 	Reader      tar.Reader
 	Memory      nbio.Stream_Memory
 	Header      tar.Header
-	Block       [tar.BLOCK_SIZE]byte
-	Metadata    [tar.SPECIAL_FILE_SIZE_MAXIMUM + tar.BLOCK_SIZE - 1]byte
-	Name        [TEST_FIELD_SIZE]byte
-	Link_Name   [TEST_FIELD_SIZE]byte
-	User_Name   [TEST_FIELD_SIZE]byte
-	Group_Name  [TEST_FIELD_SIZE]byte
-	Destination [TEST_FIELD_SIZE]byte
+	Block       []byte
+	Metadata    []byte
+	Name        []byte
+	Link_Name   []byte
+	User_Name   []byte
+	Group_Name  []byte
+	Destination []byte
 	Called      bool
 }
 
 func reader_fixture_init(
 	fixture *reader_fixture, archive []byte,
 ) (status tar.Initialization_Status) {
+	if fixture.Block == nil {
+		fixture.Block = make([]byte, tar.BLOCK_SIZE)
+		fixture.Metadata = make(
+			[]byte, tar.SPECIAL_FILE_SIZE_MAXIMUM+tar.BLOCK_SIZE-1,
+		)
+		fixture.Name = make([]byte, TEST_FIELD_SIZE)
+		fixture.Link_Name = make([]byte, TEST_FIELD_SIZE)
+		fixture.User_Name = make([]byte, TEST_FIELD_SIZE)
+		fixture.Group_Name = make([]byte, TEST_FIELD_SIZE)
+		fixture.Destination = make([]byte, TEST_FIELD_SIZE)
+	}
 	fixture.Memory = nbio.Stream_Memory{Memory: archive}
 	status = tar.Reader_Init(
 		&fixture.Reader,
@@ -2954,13 +2965,18 @@ func reader_fixture_read(fixture *reader_fixture, destination []byte) {
 type writer_fixture struct {
 	Writer    tar.Writer
 	Memory    nbio.Stream_Memory
-	Workspace [TEST_WRITER_WORKSPACE_BLOCK_COUNT * tar.BLOCK_SIZE]byte
+	Workspace []byte
 	Called    bool
 }
 
 func writer_fixture_init(
 	fixture *writer_fixture, archive []byte,
 ) (status tar.Initialization_Status) {
+	if fixture.Workspace == nil {
+		fixture.Workspace = make(
+			[]byte, TEST_WRITER_WORKSPACE_BLOCK_COUNT*tar.BLOCK_SIZE,
+		)
+	}
 	fixture.Memory = nbio.Stream_Memory{Memory: archive}
 	status = tar.Writer_Init(
 		&fixture.Writer,
