@@ -319,6 +319,11 @@ These forms are required in source and test files alike.
 
 Imports are grouped and ordered as goimports writes them.
 
+### Type Resolution
+
+Every bare type in a package declaration or function signature resolves to a predeclared type or a
+type declared by that package. Qualified types outside parsed scope remain unjudged.
+
 ### Default Package Name
 
 A package in a directory named `default` declares the package clause of its parent directory,

@@ -892,6 +892,29 @@ func Test_Source_And_Test_Requirements_Goimports(t *testing.T) {
 	}
 }
 
+// Test_Source_And_Test_Requirements_Type_Resolution keeps plain syntax from hiding deleted types.
+func Test_Source_And_Test_Requirements_Type_Resolution(t *testing.T) {
+	t.Parallel()
+	field := specification_one_file("package fixture\n\n" +
+		"// Output_Reference stores output.\n" +
+		"type Output_Reference struct {\n" +
+		"\t// Value stores output.\n\tValue Builder_Handle\n}\n")
+	if !specification_flags(t, field, "Builder_Handle does not resolve to type") {
+		t.Fatal("unresolved struct field type must be flagged")
+	}
+	parameter := specification_one_file("package fixture\n\n" +
+		"// Use consumes builder.\nfunc Use(value Builder_Handle) {\n\tprintln(value)\n}\n")
+	if !specification_flags(t, parameter, "Builder_Handle does not resolve to type") {
+		t.Fatal("unresolved parameter type must be flagged")
+	}
+	declared := specification_one_file("package fixture\n\n" +
+		"// Builder_Handle stores builder.\ntype Builder_Handle struct{}\n\n" +
+		"// Use consumes builder.\nfunc Use(value Builder_Handle) {\n\tprintln(value)\n}\n")
+	if specification_flags(t, declared, "Builder_Handle does not resolve to type") {
+		t.Fatal("declared type must resolve")
+	}
+}
+
 // Test_Source_And_Test_Requirements_Default_Package_Name verifies a package in a
 // `default/` directory that does not declare its parent's package clause is flagged.
 func Test_Source_And_Test_Requirements_Default_Package_Name(t *testing.T) {

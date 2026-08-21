@@ -1,9 +1,7 @@
-// Package lint is the monorepo's static checker. It enforces the
-// workspace organization doctrine (library tier vs. composition tier,
-// binary vs. shared library), Tiger-style local conventions
-// (snake_case / Ada_Case naming, no compound ifs, no recursion, …),
-// and a small set of cross-file rules (package fragmentation, git
-// history hygiene, package/exported-identifier documentation).
+// Package lint enforces workspace organization doctrine: library and composition tiers,
+// binary and shared libraries, Tiger-style local conventions (snake_case / Ada_Case naming,
+// no compound ifs, no recursion), and cross-file rules (package fragmentation, git history,
+// package and exported-identifier documentation).
 package lint
 
 import (
@@ -25,6 +23,7 @@ import (
 
 	"local/james-orcales/lint/internal/assertion"
 	"local/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/resolution"
 	"local/james-orcales/lint/internal/source"
 	"local/james-orcales/lint/internal/specification"
 	"local/james-orcales/lint/internal/vcs"
@@ -1609,7 +1608,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		make_check_import_alias_unnecessary(input.Declarations),
 		check_default_package_name,
 		check_no_empty_function_body,
-		check_no_generics,
+		check_no_generics, resolution.Make(input.Declarations),
 		check_no_interfaces,
 		make_check_names_vocabulary(input.Word_Replacements),
 		check_test_documentation_comment,

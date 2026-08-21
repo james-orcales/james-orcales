@@ -549,6 +549,8 @@ type Foo struct {
 type Foo struct {
 	Bar
 }
+
+type Bar struct{}
 `,
 			},
 			Want_Diag: "",
@@ -574,6 +576,8 @@ func Test_Public_Struct_Fields_Part2(t *testing.T) {
 type Foo struct {
 	*Bar
 }
+
+type Bar struct{}
 `,
 			},
 			Want_Diag: "",
