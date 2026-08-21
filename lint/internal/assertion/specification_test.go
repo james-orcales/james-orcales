@@ -693,83 +693,49 @@ func Test_Invariants_Recorder_Registration(t *testing.T) {
 	}
 }
 
-// Test_Invariants_Primitive_Types verifies any builtin in a function signature or
-// struct field is flagged: wrap it in a defined type.
-func Test_Invariants_Primitive_Types(t *testing.T) {
-	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"// Greet does.\n" +
-			"func Greet(name string) (greeting string) {\n\treturn \"\"\n}\n"})
-	diags := check_source(pf)
-	if !diagnosed(diags, "The declaration Greet has a raw string parameter (name). "+
-		"Declare a defined type for the parameter.") {
-		t.Fatal("a raw string parameter must be flagged")
-	}
-	if !diagnosed(diags, "The declaration Greet has a raw string result (greeting). "+
-		"Declare a defined type for the result.") {
-		t.Fatal("a raw string result must be flagged")
-	}
-	// The presets are gone, thus every builtin needs a defined type, not only string.
-	numeric := parse(t, &parse_input{
-		Path: "pkg/numeric.go",
-		Source_Text: "package fixture\n\n" +
-			"// Count does.\n" +
-			"func Count(workers int) (done bool) {\n\treturn false\n}\n\n" +
-			"// Holder is a fixture.\ntype Holder struct {\n" +
-			"\t// Ratio is a fixture.\n\tRatio float64\n}\n"})
-	diags = check_source(numeric)
-	if !diagnosed(diags, "The declaration Count has a raw int parameter (workers).") {
-		t.Fatal("a raw int parameter must be flagged")
-	}
-	if !diagnosed(diags, "The declaration Count has a raw bool result (done).") {
-		t.Fatal("a raw bool result must be flagged")
-	}
-	if !diagnosed(diags, "The declaration Holder has a raw float64 field (Ratio). "+
-		"Declare a defined type for the field.") {
-		t.Fatal("a raw float64 field must be flagged")
-	}
-	nested := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"// Field_Slices is a fixture.\ntype Field_Slices [][]byte\n",
-	})
-	diags = check_source(nested)
-	if !diagnosed(diags, "The declaration Field_Slices has a raw slice element. "+
-		"Declare a defined type for the element.") {
-		t.Fatal("a named outer slice must not hide its raw slice element")
-	}
-}
-
-// Test_Invariants_Primitive_Inline_Struct verifies structural type cannot bypass defined type
-// boundary because its fields already use defined types.
-func Test_Invariants_Primitive_Inline_Struct(t *testing.T) {
+// Test_Invariants_Raw_Types verifies boundary syntax alone decides ownership: identifiers name
+// types, while every constructed expression needs declaration first.
+func Test_Invariants_Raw_Types(t *testing.T) {
 	t.Parallel()
 	parsed := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"// Slice names defined fixture type.\ntype Slice struct{}\n\n" +
+			"import outside \"fixture/outside\"\n\n" +
+			"// Token names fixture type.\ntype Token int\n\n" +
 			"// Holder names fixture owner.\ntype Holder struct {\n" +
-			"\tExpansion struct {\n\t\tResult Slice\n\t}\n}\n\n" +
-			"// Replace_Expansion exercises raw boundaries.\n" +
-			"func Replace_Expansion(expansion *struct {\n" +
-			"\tResult Slice\n\tOriginal Slice\n\tPrefix Slice\n\tSuffix Slice\n\tValues Slice\n" +
-			"}) (replaced struct {\n\tResult Slice\n}) {\n" +
-			"\tprintln(expansion)\n\treturn replaced\n}\n",
+			"\tLocal Token\n\tQualified outside.Token\n\tBuiltin int\n" +
+			"\tPointer *Token\n\tInline struct { Value Token }\n}\n\n" +
+			"// Convert exercises type boundaries.\n" +
+			"func Convert(local Token, qualified outside.Token, builtin string, raw *Token) " +
+			"(local_result Token, qualified_result outside.Token, raw_result *Token) {\n" +
+			"\tprintln(local, qualified, builtin, raw)\n\treturn local, qualified, raw\n}\n",
 	})
 	diags := check_source(parsed)
-	if !diagnosed(diags, "The declaration Replace_Expansion has a raw struct parameter "+
-		"(expansion). Declare a defined type for the parameter.") {
-		t.Fatal("inline struct parameter must be flagged")
+	if !diagnosed(diags, "The declaration Convert has a raw type parameter (raw). "+
+		"Declare a defined type for the parameter.") {
+		t.Fatal("constructed parameter type must be flagged")
 	}
-	if !diagnosed(diags, "The declaration Replace_Expansion has a raw struct result "+
-		"(replaced). Declare a defined type for the result.") {
-		t.Fatal("inline struct result must be flagged")
+	if !diagnosed(diags, "The declaration Convert has a raw type result (raw_result). "+
+		"Declare a defined type for the result.") {
+		t.Fatal("constructed result type must be flagged")
 	}
-	if !diagnosed(diags, "The declaration Holder has a raw struct field "+
-		"(Expansion). Declare a defined type for the field.") {
+	if !diagnosed(diags, "The declaration Holder has a raw type field (Pointer). "+
+		"Declare a defined type for the field.") {
+		t.Fatal("constructed field type must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Holder has a raw type field (Inline).") {
 		t.Fatal("inline struct field must be flagged")
+	}
+	for _, accepted := range []string{"Local", "Qualified", "Builtin", "local", "qualified", "builtin",
+		"local_result", "qualified_result"} {
+		for _, entry := range diags {
+			if !strings.Contains(entry.Message, "has a raw ") {
+				continue
+			}
+			if strings.Contains(entry.Message, "("+accepted+")") {
+				t.Fatalf("identifier type %s must pass", accepted)
+			}
+		}
 	}
 }
 

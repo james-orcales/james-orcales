@@ -130,12 +130,11 @@ A non-exempt shared-library package's TestMain body is exactly `aver.Run_Test_Ma
 the suite registers the coverage recorder. A binary component uses its simulation. Any other body,
 or no TestMain, is banned.
 
-### Primitive Types
+### Raw Types
 
-Builtin or inline struct types may not appear as function parameters, results, or struct fields;
-wrap each in a defined type because no bundle or preset exists. Stdlib-interface methods, _test.go
-files, and opted-out packages are exempt. A defined slice may not hide a raw slice element; define
-the element type first.
+Function parameters, results, and struct fields use plain or package-qualified type identifiers.
+Any other type expression is raw and banned; declare it first. Predeclared identifiers count as
+plain. Stdlib-interface methods, test files, and opted-out packages are exempt.
 
 ### Small Slices
 

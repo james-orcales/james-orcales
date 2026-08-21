@@ -1990,39 +1990,37 @@ func Test_Sim_Script_Exported_Type_Allowed(t *testing.T) {
 	}
 }
 
-// Test_Primitive_Field_Flagged verifies a raw slice struct field is flagged.
-func Test_Primitive_Field_Flagged(t *testing.T) {
+// Test_Raw_Type_Field_Flagged verifies constructed field type needs declaration.
+func Test_Raw_Type_Field_Flagged(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"// Bag is a fixture.\ntype Bag struct {\n" +
 		"\t// Items is a fixture.\n\tItems []int\n}\n")
-	if !specification_flags(t, files, "raw slice field") {
-		t.Fatal("a raw slice field must be flagged")
+	if !specification_flags(t, files, "raw type field") {
+		t.Fatal("raw field type must be flagged")
 	}
 }
 
-// Test_Primitive_Defined_Type_Passes verifies a defined wrapper over a primitive
-// is allowed in a signature.
-func Test_Primitive_Defined_Type_Passes(t *testing.T) {
+// Test_Raw_Type_Identifier_Passes verifies identifier hides constructed representation.
+func Test_Raw_Type_Identifier_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"// Name is a fixture.\ntype Name string\n\n" +
 		"// Greet does.\nfunc Greet(who Name) {\n}\n")
 	if specification_flags(t, files, "raw ") {
-		t.Fatal("a defined type wrapping a primitive must not be flagged")
+		t.Fatal("identifier type must not be flagged")
 	}
 }
 
-// Test_Primitive_Stdlib_Method_Exempt verifies a method satisfying a stdlib
-// interface keeps its dictated primitive signature.
-func Test_Primitive_Stdlib_Method_Exempt(t *testing.T) {
+// Test_Raw_Type_Stdlib_Method_Exempt verifies dictated stdlib signature keeps exemption.
+func Test_Raw_Type_Stdlib_Method_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"// Level is a fixture.\ntype Level int\n\n" +
-		"// String is a fixture.\n" +
-		"func (l Level) String() (name string) {\n\treturn \"\"\n}\n")
+		"// Writer names fixture type.\ntype Writer struct{}\n\n" +
+		"// Write implements io.Writer.\n" +
+		"func (w Writer) Write(data []byte) (count int, failure error) {\n\treturn 0, nil\n}\n")
 	if specification_flags(t, files, "raw ") {
-		t.Fatal("a stdlib-interface method must keep its primitive signature")
+		t.Fatal("stdlib-interface method must keep dictated signature")
 	}
 }
 
@@ -2516,9 +2514,9 @@ func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 	}
 }
 
-// Test_Type_Invariant_Struct_Boolean_Field_Required verifies a raw bool field is
-// rejected outright, because no preset remains to assert one.
-func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
+// Test_Type_Invariant_Struct_Predeclared_Field_Exempt verifies predeclared identifier owns no
+// package invariant helper.
+func Test_Type_Invariant_Struct_Predeclared_Field_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
@@ -2527,8 +2525,11 @@ func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 		"// Flag_Invariants is a fixture.\n" +
 		"func Flag_Invariants(v Flag, namespace aver.Namespace) {\n" +
 		"\taver.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
-	if !specification_flags(t, files, "The declaration Flag has a raw bool field (On).") {
-		t.Fatal("a raw bool field must be rejected, not composed")
+	if specification_flags(t, files, "The declaration Flag has a raw") {
+		t.Fatal("predeclared identifier must not be flagged")
+	}
+	if specification_flags(t, files, "does not call a helper for the field v.On") {
+		t.Fatal("predeclared identifier must not need package helper")
 	}
 }
 

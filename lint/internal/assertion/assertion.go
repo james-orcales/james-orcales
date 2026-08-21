@@ -54,7 +54,7 @@ func Check(
 		check_function_invariants(parsed_files, components, exempt)...)
 	diags = append(diags,
 		check_recorder_test_main(parsed_files, components, exempt)...)
-	diags = append(diags, check_primitive_types(parsed_files, exempt)...)
+	diags = append(diags, check_raw_types(parsed_files, exempt)...)
 	diags = append(diags, check_collection_types(parsed_files, components)...)
 	diags = append(diags, check_always_condition(parsed_files, components, exempt)...)
 	diags = append(diags,
@@ -2025,10 +2025,10 @@ func struct_field_invariant(
 	}
 	switch typed := field_type.(type) {
 	case *ast.ArrayType:
-		// A raw slice field is banned by check_primitive_types, not composed here.
+		// Raw slice field is banned by check_raw_types, not composed here.
 		return ""
 	case *ast.MapType:
-		// A raw map field is banned by check_primitive_types, not composed here.
+		// Raw map field is banned by check_raw_types, not composed here.
 		return ""
 	case *ast.SelectorExpr:
 		package_path := struct_selector_package(typed, scope.Imports)
@@ -2078,9 +2078,7 @@ func struct_selector_package(
 	return imports[qualifier.Name]
 }
 
-// Maps a field ident to its expected bundle: a struct type param is exempt, a builtin is exempt
-// because check_primitive_types bans it outright, else it is a defined type whose own bundle (by
-// casing) is expected.
+// Predeclared identifiers own no package bundle; user-declared identifiers may own one.
 func struct_field_ident_invariant(
 	name string, scope *Invariant_Scope,
 ) (identity string) {
@@ -2088,12 +2086,7 @@ func struct_field_ident_invariant(
 	if scope.Type_Parameters[name] {
 		return ""
 	}
-	if name == "string" {
-		// A raw string field is banned by check_primitive_types, not composed here.
-		return ""
-	}
 	if struct_is_builtin(name) {
-		// Banned by check_primitive_types, thus nothing to compose here.
 		return ""
 	}
 	return scope.Current_Package + "\x00" + source.Invariant_Name(name)
@@ -2102,6 +2095,9 @@ func struct_field_ident_invariant(
 // Reports whether name is a predeclared type that has no preset, so a field of it
 // is exempt rather than mistaken for a defined type.
 func struct_is_builtin(name string) (yes bool) {
+	if suffix, _, _ := invariant_identifier_kind(name); suffix != "" {
+		return true
+	}
 	switch name {
 	case "uintptr", "complex64", "complex128", "error", "any", "comparable":
 		return true
@@ -2353,9 +2349,7 @@ func function_requirements(
 	return requirements
 }
 
-// Derives one subject's requirement: a defined type asks for a flat _Invariants
-// call. A raw slice, variadic, or map is banned by check_primitive_types rather
-// than asserted here, so it carries no requirement.
+// Constructed collection types own no helper name; check_raw_types diagnoses boundary instead.
 func function_requirement(
 	field_type ast.Expr, scope *Invariant_Scope,
 ) (expected string, required bool) {
@@ -2412,12 +2406,7 @@ func function_named_invariant(
 	if scope.Type_Parameters[identifier.Name] {
 		return "", false
 	}
-	if identifier.Name == "string" {
-		// A raw string subject is banned by check_primitive_types, not asserted here.
-		return "", false
-	}
 	if struct_is_builtin(identifier.Name) {
-		// Banned by check_primitive_types, thus nothing to require here.
 		return "", false
 	}
 	identity := scope.Current_Package + "\x00" + source.Invariant_Name(identifier.Name)
@@ -3228,11 +3217,9 @@ func simulation_diagnostic(position token.Position, message string) (diags []Dia
 	}}
 }
 
-// Flags a raw string, slice, or map used as a function/method parameter or result,
-// or as a struct field. Such a type has no preset and cannot carry its own bundle;
-// a defined wrapper gives it well-defined coverage. A method satisfying a stdlib
-// interface keeps its dictated signature. Shares the type-invariant opt-out.
-func check_primitive_types(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
+// Boundary types need names because only names can own invariant bundles. Shares type-invariant
+// exemptions.
+func check_raw_types(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
@@ -3240,85 +3227,44 @@ func check_primitive_types(parsed_files []Parsed_File, exempt []string) (diags [
 		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
-		diags = append(diags, primitive_file_diagnostics(pf)...)
+		diags = append(diags, raw_type_file_diagnostics(pf)...)
 	}
 	return diags
 }
 
-// Checks every function signature and struct field in one file.
-func primitive_file_diagnostics(file Parsed_File) (diags []Diagnostic) {
+// One file walk keeps function and field enforcement under same syntax rule.
+func raw_type_file_diagnostics(file Parsed_File) (diags []Diagnostic) {
 	for _, declaration := range file.File.Decls {
 		switch typed := declaration.(type) {
 		case *ast.FuncDecl:
-			diags = append(diags, primitive_function_diagnostics(file, typed)...)
+			diags = append(diags, raw_type_function_diagnostics(file, typed)...)
 		case *ast.GenDecl:
-			diags = append(diags, primitive_type_diagnostics(file, typed)...)
-			diags = append(diags, primitive_struct_diagnostics(file, typed)...)
+			diags = append(diags, raw_type_struct_diagnostics(file, typed)...)
 		}
 	}
 	return diags
 }
 
-// Naming only an outer collection leaves an inner collection with no invariant bundle.
-func primitive_type_diagnostics(
-	file Parsed_File, general *ast.GenDecl,
-) (diags []Diagnostic) {
-	if general.Tok != token.TYPE {
-		return nil
-	}
-	for _, specification := range general.Specs {
-		type_specification, is_type := specification.(*ast.TypeSpec)
-		if !is_type {
-			continue
-		}
-		if type_specification.Assign.IsValid() {
-			continue
-		}
-		gaps := primitive_type_gaps(type_specification.Type)
-		position := file.File_Set.Position(type_specification.Name.Pos())
-		owner := type_specification.Name.Name
-		diags = append(diags, primitive_owner_diagnostics(gaps, owner, position)...)
-	}
-	return diags
-}
-
-// Only nested collections need another name; scalar elements stay bounded by their Go type.
-func primitive_type_gaps(expression ast.Expr) (gaps []string) {
-	collection, is_collection := expression.(*ast.ArrayType)
-	if !is_collection {
-		return nil
-	}
-	if collection.Len != nil {
-		return nil
-	}
-	kind := raw_type_kind(collection.Elt)
-	if kind != "slice" {
-		return nil
-	}
-	return []string{"has a raw " + kind + " element. " +
-		"Declare a defined type for the element."}
-}
-
-// Flags a non-stdlib function's raw string/slice/map parameters and results.
-func primitive_function_diagnostics(
+func raw_type_function_diagnostics(
 	file Parsed_File, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
-
+	// Interface contract controls method shape, so local naming doctrine cannot rewrite it.
 	if source.Method_Satisfies_Stdlib(function) {
 		return nil
 	}
 	position := file.File_Set.Position(function.Name.Pos())
-	parameter_gaps := primitive_field_gaps(function.Type.Params, "parameter")
+	parameter_gaps := raw_type_field_gaps(function.Type.Params, "parameter")
 	diags = append(diags,
-		primitive_owner_diagnostics(parameter_gaps, function.Name.Name, position)...)
-	result_gaps := primitive_field_gaps(function.Type.Results, "result")
+		boundary_owner_diagnostics(parameter_gaps, function.Name.Name, position)...)
+	result_gaps := raw_type_field_gaps(function.Type.Results, "result")
 	diags = append(diags,
-		primitive_owner_diagnostics(result_gaps, function.Name.Name, position)...)
+		boundary_owner_diagnostics(result_gaps, function.Name.Name, position)...)
 	return diags
 }
 
-// Flags each struct type's raw string/slice/map fields.
-func primitive_struct_diagnostics(file Parsed_File, general *ast.GenDecl) (diags []Diagnostic) {
+// Only named struct declarations create field boundaries; inline structs get caught at owner
+// boundary that contains them.
+func raw_type_struct_diagnostics(file Parsed_File, general *ast.GenDecl) (diags []Diagnostic) {
 	if general.Tok != token.TYPE {
 		return nil
 	}
@@ -3331,43 +3277,39 @@ func primitive_struct_diagnostics(file Parsed_File, general *ast.GenDecl) (diags
 		if !is_struct {
 			continue
 		}
-		gaps := primitive_field_gaps(struct_type.Fields, "field")
+		gaps := raw_type_field_gaps(struct_type.Fields, "field")
 		position := file.File_Set.Position(type_specification.Name.Pos())
 		diags = append(diags,
-			primitive_owner_diagnostics(
+			boundary_owner_diagnostics(
 				gaps, type_specification.Name.Name, position)...)
 	}
 	return diags
 }
 
-// Separating raw-field discovery from declaration ownership keeps role, owner, and position out
-// of an argument-bundling struct.
-func primitive_field_gaps(fields *ast.FieldList, role string) (gaps []string) {
+// Same AST field list represents every boundary role, keeping syntax judgment identical.
+func raw_type_field_gaps(fields *ast.FieldList, role string) (gaps []string) {
 	if fields == nil {
 		return nil
 	}
 	for _, field := range fields.List {
-		kind := raw_type_kind(field.Type)
-		if kind == "" {
+		if type_is_identifier(field.Type) {
 			continue
 		}
-		for _, identifier := range primitive_field_names(field) {
-			// An embedded field declares no name, thus the parenthetical that
-			// names the subject has nothing to hold and is left out.
+		for _, identifier := range field_declaration_names(field) {
+			// Embedded field owns no explicit identifier, so diagnostic omits subject decoration.
 			named := ""
 			if identifier != "" {
 				named = " (" + identifier + ")"
 			}
-			gaps = append(gaps, "has a raw "+kind+" "+role+named+
+			gaps = append(gaps, "has a raw type "+role+named+
 				". Declare a defined type for the "+role+".")
 		}
 	}
 	return gaps
 }
 
-// Adds the declaration identity and position only after the field scan, keeping scan inputs
-// direct and diagnostics uniform between function and struct subjects.
-func primitive_owner_diagnostics(
+// Ownership stays separate because collection rule uses same declaration-shaped diagnostics.
+func boundary_owner_diagnostics(
 	gaps []string, owner string, position token.Position,
 ) (diags []Diagnostic) {
 	for _, gap := range gaps {
@@ -3379,9 +3321,8 @@ func primitive_owner_diagnostics(
 	return diags
 }
 
-// Returns a field's declared names, or one empty name for an anonymous field so it
-// still yields a diagnostic.
-func primitive_field_names(field *ast.Field) (names []string) {
+// Anonymous field still needs diagnostic even though no declared name can decorate message.
+func field_declaration_names(field *ast.Field) (names []string) {
 	if len(field.Names) == 0 {
 		return []string{""}
 	}
@@ -3391,37 +3332,17 @@ func primitive_field_names(field *ast.Field) (names []string) {
 	return names
 }
 
-// Defined types anchor invariant bundles; type literals cannot. One pointer layer cannot hide raw
-// type, while fixed arrays remain collection rule's responsibility.
-func raw_type_kind(expression ast.Expr) (kind string) {
-	core := expression
-	if star, is_star := core.(*ast.StarExpr); is_star {
-		core = star.X
+// Selector must start at package identifier; arbitrary selector expression names no type.
+func type_is_identifier(expression ast.Expr) (yes bool) {
+	if _, is_identifier := expression.(*ast.Ident); is_identifier {
+		return true
 	}
-	if _, is_ellipsis := core.(*ast.Ellipsis); is_ellipsis {
-		return "slice"
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
 	}
-	switch typed := core.(type) {
-	case *ast.Ident:
-		// Every builtin primitive, not only string. The framework supplies no preset for
-		// any of them now, thus none carries an invariant without a defined type first.
-		// invariant_identifier_kind names exactly that set.
-		if suffix, _, _ := invariant_identifier_kind(typed.Name); suffix != "" {
-			return typed.Name
-		}
-		return ""
-	case *ast.ArrayType:
-		if typed.Len != nil {
-			return ""
-		}
-		return "slice"
-	case *ast.MapType:
-		return "map"
-	case *ast.StructType:
-		return "struct"
-	default:
-		return ""
-	}
+	_, is_qualifier := selector.X.(*ast.Ident)
+	return is_qualifier
 }
 
 // SMALL_SLICE_COUNT_MAX is the largest len a slice may be bounded to and stay a slice. At or below
@@ -3907,7 +3828,7 @@ func collection_function_diagnostics(
 	position := file.File_Set.Position(function.Name.Pos())
 	gaps := collection_field_gaps(function.Type.Params, "parameter", scope, index)
 	gaps = append(gaps, collection_field_gaps(function.Type.Results, "result", scope, index)...)
-	return primitive_owner_diagnostics(gaps, function.Name.Name, position)
+	return boundary_owner_diagnostics(gaps, function.Name.Name, position)
 }
 
 // Flags each struct type's fixed-array and small-slice fields.
@@ -3929,13 +3850,13 @@ func collection_struct_diagnostics(
 		gaps := collection_field_gaps(struct_type.Fields, "field", scope, index)
 		position := file.File_Set.Position(type_specification.Name.Pos())
 		diags = append(diags,
-			primitive_owner_diagnostics(gaps, type_specification.Name.Name, position)...)
+			boundary_owner_diagnostics(gaps, type_specification.Name.Name, position)...)
 	}
 	return diags
 }
 
 // Describes each field whose type is a fixed array or a small bounded slice, in the same shape
-// primitive_field_gaps uses so the two bans read alike.
+// raw_type_field_gaps uses so both bans read alike.
 func collection_field_gaps(
 	fields *ast.FieldList, role string, scope *Invariant_Scope, index *Collection_Index,
 ) (gaps []string) {
@@ -3947,7 +3868,7 @@ func collection_field_gaps(
 		if gap == "" {
 			continue
 		}
-		for _, identifier := range primitive_field_names(field) {
+		for _, identifier := range field_declaration_names(field) {
 			named := ""
 			if identifier != "" {
 				named = " (" + identifier + ")"
