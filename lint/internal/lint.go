@@ -5113,10 +5113,21 @@ func unquote_literal(text string) (unquoted string, err error) {
 	return string(destination[:int(count)]), nil
 }
 
-// Direct stdlib imports bypass shared bounds and package contracts. Keep boundary absolute.
+// Shared ports depend on invariant enforcement. Routing invariant back through them creates
+// import cycle, so invariant owns sole stdlib exception.
 func check_no_banned_stdlib_import(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
+	token_file := file_set.File(file.Pos())
+	if token_file != nil {
+		directory := path.Dir(path.Clean(token_file.Name()))
+		if directory == "shared/invariant" {
+			return nil
+		}
+		if strings.Has_Prefix(directory, "shared/invariant/") {
+			return nil
+		}
+	}
 	for _, import_specification := range file.Imports {
 		import_path, err := unquote_literal(import_specification.Path.Value)
 		if err != nil {

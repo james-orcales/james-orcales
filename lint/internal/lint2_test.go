@@ -2706,6 +2706,35 @@ func Test_Git_No_Fixup_Commits(t *testing.T) {
 	}
 }
 
+// Test_Banned_Stdlib_Import_Invariant verifies invariant library keeps cycle-breaking
+// stdlib access while similarly named directories stay banned.
+func Test_Banned_Stdlib_Import_Invariant(t *testing.T) {
+	t.Parallel()
+	invariant_files := []string{
+		"shared/invariant/rule.go",
+		"shared/invariant/default/rule.go",
+	}
+	for _, filename := range invariant_files {
+		diags, err := lint.Check_Source(
+			filename, "package invariant\n\nimport \"encoding/json\"\n")
+		if err != nil {
+			t.Fatalf("Check_Source %q: %v", filename, err)
+		}
+		if specification_diagnosed(diags, "Banned import") {
+			t.Errorf("invariant file %q must be allowed", filename)
+		}
+	}
+	named_like_invariant, err := lint.Check_Source(
+		"shared/invariant_extra/rule.go",
+		"package invariant_extra\n\nimport \"encoding/json\"\n")
+	if err != nil {
+		t.Fatalf("Check_Source invariant-like path: %v", err)
+	}
+	if !specification_diagnosed(named_like_invariant, "Banned import") {
+		t.Error("directory named like invariant must stay banned")
+	}
+}
+
 // Test_No_Impure_Stdlib_Hard_Imports verifies that hard-banned imports
 // (os, crypto/rand, math/rand v1, flag) fire in library packages.
 func Test_No_Impure_Stdlib_Hard_Imports(t *testing.T) {

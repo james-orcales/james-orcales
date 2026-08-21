@@ -181,9 +181,9 @@ a library is being imported solely for it's global side-effects, an implicit con
 
 ### Banned Imports
 
-Code never imports stdlib bytes, strings, slices, strconv, archive, compress, container,
-encoding, math, rand, unicode, or uuid families. No file is exempt. Local shared and third-party
-imports stay allowed because they are not stdlib. Use shared ports for bounded contracts.
+Code outside `shared/invariant/**` never imports stdlib bytes, strings, slices, strconv, archive,
+compress, container, encoding, math, rand, unicode, or uuid families. Invariant stays exempt because
+shared ports depend on its enforcement; routing invariant through them forms import cycle.
 
 ### Import Aliases
 
