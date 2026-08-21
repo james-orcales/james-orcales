@@ -1,16 +1,13 @@
 package simulation_test
 
 import (
-	"bytes"
 	"fmt"
-	"os"
-	"strconv"
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/jlog"
 	"local/james-orcales/shared/random/prng"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/vsr"
 )
 
@@ -286,13 +283,8 @@ type simulator struct {
 	// interval boundary, which under constant faults would otherwise leave a run with no
 	// reconfiguration at all.
 	Reconfigure_After int
-	// Trace is a synchronous jlog logger emitting one structured JSON line per simulation event
-	// (delivery, fault, commit, the ending violation) into Trace_Sink, read offline with jq.
-	// The zero Logger is a disabled no-op, so when VSR_TRACE does not select this seed every
-	// trace call costs nothing and the sweep is unaffected.
+	// Trace is zero during the bounded sweep, so dormant diagnostics cannot perturb its seed.
 	Trace jlog.Logger
-	// Trace_Sink buffers the trace lines; nil when tracing off, flushed to a file at run end.
-	Trace_Sink *bytes.Buffer
 }
 
 // How many committed ops pass between checkpoints in the simulated cluster — small, so compaction
@@ -372,8 +364,6 @@ func run_simulation(t *testing.T, seed int64) (result simulation_result) {
 func run_simulation_with(t *testing.T, seed int64, clock_skew bool) (result simulation_result) {
 	t.Helper()
 	state := new_simulator(t, seed, clock_skew)
-	// Flush even when a safety Fatalf unwinds this goroutine, so the trace ends at the fork.
-	defer simulator_flush_trace(state)
 	simulator_run_main(state)
 	// Fault-free tail: heal every fault, then drain. After faults cease the cluster must
 	// converge (every open request commits, the voting set settles to Normal) or it has
@@ -404,18 +394,20 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 	if seed%2 == 0 {
 		cluster_count = 5 // Exercise both quorum sizes.
 	}
-	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.MILLISECOND})
+	virtual := time.Virtual_Clock{Resolution: time.MILLISECOND}
+	clock := time.Virtual_Clock_To_Clock(&virtual)
+	tick := func() { time.Virtual_Clock_Tick(&virtual) }
 	state = &simulator{
 		T:              t,
 		Seed:           seed,
-		Generator:      prng.New(uint64(seed)),
+		Generator:      prng.New(prng.Seed(seed)),
 		Clock:          clock,
 		Tick:           tick,
 		Replica_Clocks: make([]time.Clock, SIM_SUPERSET),
 		Replica_Ticks:  make([]func(), SIM_SUPERSET),
 		// Clock stream seeded apart from Generator so per-replica clocks draw without
 		// shifting the main fault schedule the regression seeds reproduce.
-		Clock_Generator:    prng.New(uint64(seed) ^ 0xc10cc10cc10cc10c),
+		Clock_Generator:    prng.New(prng.Seed(seed) ^ 0xc10cc10cc10cc10c),
 		Clock_Skew:         clock_skew,
 		Clock_Fault_Until:  make([]time.Moment, SIM_SUPERSET),
 		Clock_Fault_Offset: make([]time.Duration, SIM_SUPERSET),
@@ -443,17 +435,6 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 		Reconfigure_After: SIM_RECONFIGURE_EVERY,
 	}
 	simulator_allocate(state, cluster_count)
-	if trace_enabled(seed) {
-		state.Trace_Sink = &bytes.Buffer{}
-		state.Trace = jlog.New(jlog.New_Input{
-			Writer: state.Trace_Sink,
-			Floor:  jlog.LEVEL_TRACE,
-		})
-		jlog.Logger_Info(state.Trace, "seed",
-			jlog.Int64("seed", seed),
-			jlog.Boolean("skew", clock_skew),
-			jlog.Integer("cluster", cluster_count))
-	}
 	return state
 }
 
@@ -468,7 +449,7 @@ func simulator_run_main(state *simulator) {
 		for index := range state.Replica_Clocks {
 			state.Replica_Ticks[index]()
 		}
-		now := state.Clock.Now_Monotonic()
+		now := time.Moment(time.Clock_Now_Monotonic(state.Clock))
 		simulator_inject_faults(state, tick_index, now)
 		simulator_inject_reconfiguration(state, tick_index, now)
 		simulator_tick_clients(state, now)
@@ -490,7 +471,7 @@ func simulator_run_tail(state *simulator) (converged bool) {
 		for index := range state.Replica_Clocks {
 			state.Replica_Ticks[index]()
 		}
-		now := state.Clock.Now_Monotonic()
+		now := time.Moment(time.Clock_Now_Monotonic(state.Clock))
 		simulator_tick_clients(state, now)
 		simulator_tick_replicas(state, now)
 		simulator_assert_safety(state)
@@ -555,7 +536,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			Checkpoint_Interval: SIM_CHECKPOINT_INTERVAL,
 			Log_Retain:          SIM_LOG_RETAIN,
 			Batch_Max:           SIM_BATCH_MAX,
-			Now:                 state.Replica_Clocks[index].Now_Realtime(),
+			Now:                 time.Clock_Now_Realtime(state.Replica_Clocks[index]),
 		})
 		state.Previous_Status[index] = state.Replicas[index].Status
 	}
@@ -578,9 +559,11 @@ func simulator_replica_clock(state *simulator) (clock time.Clock, tick func()) {
 		// Drift A ns/tick shifts the effective rate to Resolution-A; |A| far below
 		// Resolution keeps the clock monotonic while still drifting up to ~2%.
 		rate := time.Duration(prng.Generator_Below(&state.Clock_Generator, 40001) - 20000)
-		virtual.Skew = time.Skew(time.Skew_Input{Kind: time.SKEW_KIND_LINEAR, A: rate})
+		virtual.Skew = time.Skew(time.SKEW_KIND_LINEAR, rate, 0)
 	}
-	return time.Virtual_Clock_To_Clock(virtual)
+	clock = time.Virtual_Clock_To_Clock(&virtual)
+	tick = func() { time.Virtual_Clock_Tick(&virtual) }
+	return clock, tick
 }
 
 // A dormant pre-allocated node's placeholder configuration: three members including itself,
@@ -611,7 +594,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 	machine = vsr.State_Machine{
 		Execute: func(command []byte, prediction []byte) (result []byte) {
 			simulator_observe_execution(state, index, command)
-			if state.Trace_Sink != nil {
+			if state.Trace.Configuration != nil {
 				defer func() {
 					jlog.Logger_Info(state.Trace, "execute",
 						jlog.Integer("id", index),
@@ -626,8 +609,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 				// reflects the accumulator at this op, which is identical on every
 				// replica that executed the same committed prefix.
 				result = uint64_to_bytes(state.Accumulator[index])
-				state.Executed[index][string(command)] = true
-				state.Executed_Result[index][string(command)] = result
+				simulator_record_execution_result(state, index, command, result)
 				return result
 			}
 			state.Accumulator[index] = accumulator_fold(&accumulator_fold_input{
@@ -639,8 +621,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 				Command:    command,
 				Prediction: prediction,
 			})
-			state.Executed[index][string(command)] = true
-			state.Executed_Result[index][string(command)] = result
+			simulator_record_execution_result(state, index, command, result)
 			return result
 		},
 		Predict: func(command []byte) (prediction []byte) {
@@ -651,7 +632,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 		},
 		Restore: func(snapshot []byte) {
 			state.Accumulator[index] = bytes_to_uint64(snapshot)
-			if state.Trace_Sink != nil {
+			if state.Trace.Configuration != nil {
 				jlog.Logger_Info(state.Trace, "restore",
 					jlog.Integer("id", index),
 					jlog.Uint64("acc", state.Accumulator[index]))
@@ -724,7 +705,7 @@ func simulator_inject_clock_fault(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[prng.Generator_Below(&state.Clock_Generator, len(active))]
+	victim := active[prng.Generator_Below(&state.Clock_Generator, prng.Bound(len(active)))]
 	jump := time.Duration(20+prng.Generator_Below(&state.Clock_Generator, 40)) *
 		time.Duration(time.MILLISECOND)
 	state.Clock_Fault_Offset[victim] = jump
@@ -741,7 +722,7 @@ func simulator_inject_isolation(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[prng.Generator_Below(&state.Generator, len(active))]
+	victim := active[prng.Generator_Below(&state.Generator, prng.Bound(len(active)))]
 	if !is_standby(&state.Replicas[victim]) {
 		if !simulator_group_settled(state) {
 			return
@@ -764,7 +745,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[prng.Generator_Below(&state.Generator, len(active))]
+	victim := active[prng.Generator_Below(&state.Generator, prng.Bound(len(active)))]
 	if state.Replicas[victim].Status != vsr.STATUS_NORMAL {
 		return
 	}
@@ -939,10 +920,10 @@ func simulator_active_indices(state *simulator) (indices []int) {
 // With skew off this equals the true clock; the skew step bends Epoch/drift per replica and an
 // injected clock fault offsets it for a window.
 func simulator_replica_now(state *simulator, index int) (now time.Moment) {
-	now = state.Replica_Clocks[index].Now_Realtime()
+	now = time.Clock_Now_Realtime(state.Replica_Clocks[index])
 	// A transient clock fault shifts perceived time until it heals at Clock_Fault_Until; a zero
 	// (unset) deadline is always in the past, so a replica with no fault is unaffected.
-	if state.Clock.Now_Monotonic() < state.Clock_Fault_Until[index] {
+	if time.Moment(time.Clock_Now_Monotonic(state.Clock)) < state.Clock_Fault_Until[index] {
 		now += time.Moment(state.Clock_Fault_Offset[index])
 	}
 	return now
@@ -1226,11 +1207,14 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		}
 	}
 	state.Network = held_back
-	prng.Generator_Shuffle(&state.Generator, due)
+	for index := len(due) - 1; index > 0; index-- {
+		swap_index := prng.Generator_Below(&state.Generator, prng.Bound(index+1))
+		due[index], due[swap_index] = due[swap_index], due[index]
+	}
 	for _, flight := range due {
 		message := flight.Message
 		if reason := simulator_drop_reason(state, message, now); reason != "" {
-			if state.Trace_Sink != nil {
+			if state.Trace.Configuration != nil {
 				log_message(state.Trace, reason, now, message)
 			}
 			continue // Partition, or shut-down/dormant target; senders' timers retry.
@@ -1243,7 +1227,7 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		}
 		target := &state.Replicas[message.To]
 		target_transition := target.Status == vsr.STATUS_TRANSITION
-		if state.Trace_Sink != nil {
+		if state.Trace.Configuration != nil {
 			log_message(state.Trace, "deliver", now, message)
 			log_replica(state.Trace, "before", target)
 		}
@@ -1256,7 +1240,7 @@ func simulator_deliver(state *simulator, now time.Moment) {
 			Message: message,
 			Now:     simulator_replica_now(state, int(message.To)),
 		})
-		if state.Trace_Sink != nil {
+		if state.Trace.Configuration != nil {
 			log_replica(state.Trace, "after", target)
 			for index := range output.Messages {
 				log_message(state.Trace, "send", now, output.Messages[index])
@@ -1531,7 +1515,6 @@ func simulator_assert_safety(state *simulator) {
 	}
 	simulator_check_single_primary(state)
 	simulator_check_agreement(state)
-	simulator_check_result_agreement(state)
 	simulator_check_checkpoint_agreement(state)
 	simulator_check_accumulator(state)
 	simulator_check_fault_model(state)
@@ -1570,24 +1553,29 @@ func simulator_check_fault_model(state *simulator) {
 // application state. A divergence means a replica's state machine reached the checkpoint op along a
 // different (buggy) execution path than its peers.
 func simulator_check_checkpoint_agreement(state *simulator) {
-	at_op := map[vsr.Op][]byte{}
-	owner := map[vsr.Op]int{}
-	for index := range state.Replicas {
-		replica := &state.Replicas[index]
-		if replica.Checkpoint_Op == 0 {
+	replica_count := len(state.Replicas)
+	for left_index := range state.Replicas {
+		left := &state.Replicas[left_index]
+		if left.Checkpoint_Op == 0 {
 			continue
 		}
-		seen, ok := at_op[replica.Checkpoint_Op]
-		if !ok {
-			at_op[replica.Checkpoint_Op] = replica.Checkpoint_State
-			owner[replica.Checkpoint_Op] = index
-			continue
-		}
-		if string(seen) != string(replica.Checkpoint_State) {
-			state.T.Fatalf(
-				"seed %d: checkpoint op %d diverges: r%d=%x r%d=%x",
-				state.Seed, replica.Checkpoint_Op, owner[replica.Checkpoint_Op],
-				seen, index, replica.Checkpoint_State)
+		for right_index := left_index + 1; right_index < replica_count; right_index++ {
+			right := &state.Replicas[right_index]
+			if right.Checkpoint_Op != left.Checkpoint_Op {
+				continue
+			}
+			equal := byte_slices_equal(left.Checkpoint_State, right.Checkpoint_State)
+			if !equal {
+				state.T.Fatalf(
+					"seed %d: checkpoint op %d diverges: r%d=%x r%d=%x",
+					state.Seed,
+					left.Checkpoint_Op,
+					left_index,
+					left.Checkpoint_State,
+					right_index,
+					right.Checkpoint_State,
+				)
+			}
 		}
 	}
 }
@@ -1638,25 +1626,35 @@ func simulator_check_accumulator(state *simulator) {
 // prediction once and every replica copies it verbatim, the results must match. A divergence here
 // would mean a replica executed the op against a different value than its peers — the very
 // failure predetermination exists to prevent.
-func simulator_check_result_agreement(state *simulator) {
-	results := map[string][]byte{}
-	owners := map[string]int{}
-	for index := range state.Replicas {
-		for command, result := range state.Executed_Result[index] {
-			seen, ok := results[command]
-			if !ok {
-				results[command] = result
-				owners[command] = index
-				continue
-			}
-			if string(seen) != string(result) {
+func simulator_record_execution_result(
+	state *simulator, index int, command []byte, result []byte,
+) {
+	key := string(command)
+	for peer_index := range state.Executed_Result {
+		seen, ok := state.Executed_Result[peer_index][key]
+		if ok {
+			if !byte_slices_equal(seen, result) {
 				state.T.Fatalf(
 					"seed %d: command %q executed to two results: "+
 						"replica %d=%q replica %d=%q",
-					state.Seed, command, owners[command], seen, index, result)
+					state.Seed, command, peer_index, seen, index, result)
 			}
 		}
 	}
+	state.Executed[index][key] = true
+	state.Executed_Result[index][key] = result
+}
+
+func byte_slices_equal(left []byte, right []byte) (equal bool) {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // Records the per-replica liveness coverage axes and tallies the phase-completion counters for one
@@ -1777,7 +1775,7 @@ func simulator_record_coverage(state *simulator) {
 
 // Reports whether any active replica is currently inside a transient clock-fault window.
 func simulator_clock_fault_active(state *simulator) (active bool) {
-	now := state.Clock.Now_Monotonic()
+	now := time.Moment(time.Clock_Now_Monotonic(state.Clock))
 	for index := range state.Replicas {
 		if !state.Active[index] {
 			continue
@@ -2078,39 +2076,6 @@ func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input)
 	}
 }
 
-// The trace facility emits one structured jlog line per simulation event — every delivery with the
-// target's state before and after the step, every message produced, every commit, every injected
-// fault, and the safety violation that ends the run — into a per-seed buffer flushed to a file, so
-// a fork can be read offline with jq instead of being chased with throwaway prints that perturb the
-// schedule. It is inert unless VSR_TRACE names the running seed, so the sweep pays nothing for it.
-
-// Trace_enabled reports whether VSR_TRACE selects this seed. Both the skew-off and skew-on runs of
-// the seed trace, to separate files, because a fork often reproduces under only one of them.
-func trace_enabled(seed int64) (enabled bool) {
-	want := os.Getenv("VSR_TRACE")
-	if want == "" {
-		return false
-	}
-	parsed, err := strconv.ParseInt(want, 10, 64)
-	if err != nil {
-		return false
-	}
-	return parsed == seed
-}
-
-// Simulator_flush_trace writes the buffered trace to /tmp once the run ends — including when a
-// safety Fatalf unwinds the goroutine, since the caller defers this. The filename carries the seed
-// and skew so the off and on runs do not clobber each other.
-func simulator_flush_trace(state *simulator) {
-	if state.Trace_Sink == nil {
-		return
-	}
-	name := fmt.Sprintf("/tmp/vsr_trace_%d_skew_%v.log", state.Seed, state.Clock_Skew)
-	if err := os.WriteFile(name, state.Trace_Sink.Bytes(), 0o644); err != nil {
-		state.T.Logf("trace flush to %s failed: %v", name, err)
-	}
-}
-
 // Log_message logs a message's whole state as one structured line under the given event. It takes
 // the logger and the value and writes the fields straight to jlog's pooled buffer — no String()
 // blob allocated per call. Whichever log slice the kind carries shows under entries (Prepare), log
@@ -2166,7 +2131,7 @@ func log_replica(logger jlog.Logger, event string, replica *vsr.Replica) {
 func configuration_strings(configuration vsr.Configuration) (ids []string) {
 	ids = make([]string, 0, len(configuration))
 	for index := range configuration {
-		ids = append(ids, strconv.FormatUint(uint64(configuration[index]), 10))
+		ids = append(ids, fmt.Sprintf("%d", configuration[index]))
 	}
 	return ids
 }

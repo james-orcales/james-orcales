@@ -3,8 +3,8 @@ package vsr_test
 import (
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/vsr"
 )
 

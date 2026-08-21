@@ -12,8 +12,8 @@
 package vsr
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/time"
 )
 
 // View is a monotonically increasing epoch with one primary; the primary of a view is the replica
