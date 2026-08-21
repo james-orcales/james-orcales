@@ -1,9 +1,9 @@
 
 # Module
 
-A Module is the caller-owned state one module of Go source folds into. The caller feeds every file
-to Declare, then every file to Resolve, then every body to Check, thus one parse tree at a time
-serves a module of any size.
+A Module is caller-owned state one module of Go source folds into. Caller supplies every arena and
+cursor store, then feeds every file to Declare, every file to Resolve, and every body to Check.
+One parse tree at a time therefore serves a module of any size.
 
 # Files
 
@@ -71,5 +71,5 @@ binds at most 8,192 names.
 
 # Allocation
 
-Every call performs zero heap allocation. The caller makes one Module and one Parse_State, and
-every pass writes only inside them.
+Every call performs zero heap allocation. Caller supplies Module, Body, Parse_State, and every
+backing store; every pass writes only inside them.

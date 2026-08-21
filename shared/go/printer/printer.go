@@ -455,95 +455,909 @@ func Width_Invariants(value Width, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Printer is the whole print. Every field is an array, and every cursor lives in an array slot
-// rather than in a field of its own, because a cursor field would owe its whole domain at every
-// step that receives the state and a step deep in one declaration can never see a cursor at zero.
-type Printer struct {
-	// Nodes holds the tree slot the walk stands on at each depth.
-	Nodes [DEPTH_MAXIMUM]ast.Index
-	// Widths holds the name width of each field of the alignment run ahead.
-	Widths [FIELD_COUNT_MAXIMUM]Width
-	// Spans holds the widths one measure answers with, which a caller reads rather than
-	// takes, because a width the print states in a signature owes a domain no source reaches.
-	Spans [SPAN_SLOT_COUNT]Width
-	// Positions holds the run positions one search answers with and one scan runs between.
-	Positions [POSITION_SLOT_COUNT]Position
-	// Offsets holds the source bytes one read of the source runs between.
-	Offsets [OFFSET_SLOT_COUNT]token.Offset
-	// Kinds holds the class of the form the print stands inside of.
-	Kinds [KIND_SLOT_COUNT]ast.Node_Kind
-	// Types holds the tree slots of the type forms one elision of a repeated type reads.
-	Types [TYPE_SLOT_COUNT]ast.Index
-	// Marks holds the run positions of the tokens the print writes of its own.
-	Marks [MARK_SLOT_COUNT]ast.Token_Index
-	// Results holds the tokens of the result names the signature the print stands inside of
-	// binds, which a return that names no value writes.
-	Results [RESULT_COUNT_MAXIMUM]ast.Token_Index
-	// Aliases holds the name tokens of the imports whose name the print drops.
-	Aliases [IMPORT_COUNT_MAXIMUM]ast.Token_Index
-	// Paths holds the path token of each of those imports, which names the package the forms
-	// that read the name now name.
-	Paths [IMPORT_COUNT_MAXIMUM]ast.Token_Index
-	// Signs holds the classes of the tokens one reader of the run stands between.
-	Signs [SIGN_SLOT_COUNT]token.Kind
-	// Words holds the keyword one form opens with, which the tree drops.
-	Words [WORD_SLOT_COUNT]Word
-	// Directives holds the name one read of a note asks that note to open with.
-	Directives [DIRECTIVE_SLOT_COUNT]string
-	// Comments holds the run position of each comment the line the print stands on carries.
-	Comments [COMMENT_COUNT_MAXIMUM]Position
-	// Forms holds the storage the print writes into.
-	Forms [FORM_SLOT_COUNT]Form
-	// Sources holds the source the tree stands for.
-	Sources [SOURCE_SLOT_COUNT]token.Source
-	// Counts holds every counter and cursor the print keeps.
-	Counts [COUNT_SLOT_COUNT]Count
-	// Flags holds what the print met: full storage, deep nest, and a fresh line.
-	Flags [FLAG_COUNT]Boolean
+// Node_Stack keeps bounded traversal state in caller storage.
+type Node_Stack []ast.Index
+
+// Node_Stack_Invariants fixes traversal depth and prevents growth.
+func Node_Stack_Invariants(value Node_Stack, _ aver.Namespace) {
+	aver.Always(len(value) == DEPTH_MAXIMUM, "Printer node stack has complete length.")
+	aver.Always(cap(value) == DEPTH_MAXIMUM, "Printer node stack cannot grow.")
 }
 
-// Printer_Invariants states the storage the caller supplies. Each cursor is an array slot, thus
-// it proves its own domain where a body reads it.
-func Printer_Invariants(subject *Printer, namespace aver.Namespace) {
-	aver.Always(
-		len(subject.Nodes) == DEPTH_MAXIMUM,
-		"A printer holds one walk slot for every admitted depth.",
-	)
+// Field_Widths keeps bounded alignment state in caller storage.
+type Field_Widths []Width
+
+// Field_Widths_Invariants fixes widest alignment run and prevents growth.
+func Field_Widths_Invariants(value Field_Widths, _ aver.Namespace) {
+	aver.Always(len(value) == FIELD_COUNT_MAXIMUM, "Field widths have complete length.")
+	aver.Always(cap(value) == FIELD_COUNT_MAXIMUM, "Field widths cannot grow.")
+}
+
+// Measured_Width is the width returned by one measurement.
+type Measured_Width Width
+
+// Measured_Width_Invariants states every width a measurement can return.
+func Measured_Width_Invariants(value Measured_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), FORM_SIZE_MINIMUM, WIDTH_MAXIMUM).
+		Ensure()
+}
+
+// Column_Width is the column at which one measured form begins.
+type Column_Width Width
+
+// Column_Width_Invariants states every measured starting column.
+func Column_Width_Invariants(value Column_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), FORM_SIZE_MINIMUM, WIDTH_MAXIMUM).
+		Ensure()
+}
+
+// Line_Width is the width already spent on one line.
+type Line_Width Width
+
+// Line_Width_Invariants states every occupied line width.
+func Line_Width_Invariants(value Line_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), FORM_SIZE_MINIMUM, WIDTH_MAXIMUM).
+		Ensure()
+}
+
+// Measured_Spans keeps unlike width answers in named storage.
+type Measured_Spans struct {
+	// Found separates the returned width from the caller's opening column.
+	Found Measured_Width
+	// Column survives nested measurements that replace the returned width.
+	Column Column_Width
+	// Line survives flat measurements that temporarily replace both other widths.
+	Line Line_Width
+}
+
+// Measured_Spans_Invariants composes each independent width domain once.
+func Measured_Spans_Invariants(value Measured_Spans, namespace aver.Namespace) {
+	Measured_Width_Invariants(value.Found, namespace)
+	Column_Width_Invariants(value.Column, namespace)
+	Line_Width_Invariants(value.Line, namespace)
+}
+
+// Found_Position is the token one search found.
+type Found_Position Position
+
+// Found_Position_Invariants states the complete token run.
+func Found_Position_Invariants(value Found_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Ensure()
+}
+
+// From_Position is the first token one bounded scan admits.
+type From_Position Position
+
+// From_Position_Invariants states the complete token run.
+func From_Position_Invariants(value From_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Ensure()
+}
+
+// To_Position is the final token one bounded scan admits.
+type To_Position Position
+
+// To_Position_Invariants states the complete token run.
+func To_Position_Invariants(value To_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Ensure()
+}
+
+// Check_Position is the token whose neighborhood one check reads.
+type Check_Position Position
+
+// Check_Position_Invariants states the complete token run.
+func Check_Position_Invariants(value Check_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Ensure()
+}
+
+// Bound_Position is the token that bounds one nested search.
+type Bound_Position Position
+
+// Bound_Position_Invariants states the complete token run.
+func Bound_Position_Invariants(value Bound_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Ensure()
+}
+
+// Positions keeps unlike search positions in named storage.
+type Positions struct {
+	// Found separates a search answer from every bound used to find it.
+	Found Found_Position
+	// From survives searches that replace the current answer.
+	From From_Position
+	// To survives searches that replace the current answer.
+	To To_Position
+	// Check survives the tree walk between an assignment and its check.
+	Check Check_Position
+	// Bound survives the tree walk between names and their values.
+	Bound Bound_Position
+}
+
+// Positions_Invariants composes each independent position domain once.
+func Positions_Invariants(value Positions, namespace aver.Namespace) {
+	Found_Position_Invariants(value.Found, namespace)
+	From_Position_Invariants(value.From, namespace)
+	To_Position_Invariants(value.To, namespace)
+	Check_Position_Invariants(value.Check, namespace)
+	Bound_Position_Invariants(value.Bound, namespace)
+}
+
+// From_Offset is the first source byte one bounded read admits.
+type From_Offset token.Offset
+
+// From_Offset_Invariants states the complete source range.
+func From_Offset_Invariants(value From_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), token.OFFSET_MINIMUM, token.OFFSET_MAXIMUM).
+		Ensure()
+}
+
+// To_Offset is one past the final source byte one bounded read admits.
+type To_Offset token.Offset
+
+// To_Offset_Invariants states the complete source range.
+func To_Offset_Invariants(value To_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), token.OFFSET_MINIMUM, token.OFFSET_MAXIMUM).
+		Ensure()
+}
+
+// Offsets keeps unlike source positions in named storage.
+type Offsets struct {
+	// From remains distinct because a read advances only its local cursor.
+	From From_Offset
+	// To remains fixed while the local cursor advances toward it.
+	To To_Offset
+}
+
+// Offsets_Invariants composes each independent source position once.
+func Offsets_Invariants(value Offsets, namespace aver.Namespace) {
+	From_Offset_Invariants(value.From, namespace)
+	To_Offset_Invariants(value.To, namespace)
+}
+
+// Clause_Kind is the syntax class of one active clause.
+type Clause_Kind ast.Node_Kind
+
+// Clause_Kind_Invariants states every syntax class.
+func Clause_Kind_Invariants(value Clause_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), ast.NODE_KIND_MINIMUM, ast.NODE_KIND_MAXIMUM).
+		Ensure()
+}
+
+// Declaration_Kind is the syntax class of one active declaration.
+type Declaration_Kind ast.Node_Kind
+
+// Declaration_Kind_Invariants states every syntax class.
+func Declaration_Kind_Invariants(value Declaration_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), ast.NODE_KIND_MINIMUM, ast.NODE_KIND_MAXIMUM).
+		Ensure()
+}
+
+// TYPE_NODE_MINIMUM admits absence before a search finds a node.
+const TYPE_NODE_MINIMUM = int32(ast.INDEX_ABSENT)
+
+// TYPE_NODE_MAXIMUM follows the caller-owned tree bound.
+const TYPE_NODE_MAXIMUM = ast.NODE_COUNT_MAXIMUM - 1
+
+// Node_Kinds keeps unlike syntax classes in named storage.
+type Node_Kinds struct {
+	// Clause survives nested clauses that temporarily replace the active class.
+	Clause Clause_Kind
+	// Declaration survives printing the children that declaration holds.
+	Declaration Declaration_Kind
+}
+
+// Node_Kinds_Invariants composes each independent syntax class once.
+func Node_Kinds_Invariants(value Node_Kinds, namespace aver.Namespace) {
+	Clause_Kind_Invariants(value.Clause, namespace)
+	Declaration_Kind_Invariants(value.Declaration, namespace)
+}
+
+// Element_Node is the element type one repeated-type check compares.
+type Element_Node ast.Index
+
+// Element_Node_Invariants states every node slot.
+func Element_Node_Invariants(value Element_Node, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TYPE_NODE_MINIMUM, TYPE_NODE_MAXIMUM).
+		Ensure()
+}
+
+// Key_Node is the key type one repeated-type check compares.
+type Key_Node ast.Index
+
+// Key_Node_Invariants states every node slot.
+func Key_Node_Invariants(value Key_Node, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TYPE_NODE_MINIMUM, TYPE_NODE_MAXIMUM).
+		Ensure()
+}
+
+// Left_Node is the left type one repeated-type check compares.
+type Left_Node ast.Index
+
+// Left_Node_Invariants states every node slot.
+func Left_Node_Invariants(value Left_Node, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TYPE_NODE_MINIMUM, TYPE_NODE_MAXIMUM).
+		Ensure()
+}
+
+// Right_Node is the right type one repeated-type check compares.
+type Right_Node ast.Index
+
+// Right_Node_Invariants states every node slot.
+func Right_Node_Invariants(value Right_Node, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TYPE_NODE_MINIMUM, TYPE_NODE_MAXIMUM).
+		Ensure()
+}
+
+// Named_Node is the named type one repeated-type check compares.
+type Named_Node ast.Index
+
+// Named_Node_Invariants states every node slot.
+func Named_Node_Invariants(value Named_Node, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TYPE_NODE_MINIMUM, TYPE_NODE_MAXIMUM).
+		Ensure()
+}
+
+// Found_Node is the type node one search found.
+type Found_Node ast.Index
+
+// Found_Node_Invariants states every node slot.
+func Found_Node_Invariants(value Found_Node, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TYPE_NODE_MINIMUM, TYPE_NODE_MAXIMUM).
+		Ensure()
+}
+
+// Own_Node is the type node owned by one literal.
+type Own_Node ast.Index
+
+// Own_Node_Invariants states every node slot.
+func Own_Node_Invariants(value Own_Node, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TYPE_NODE_MINIMUM, TYPE_NODE_MAXIMUM).
+		Ensure()
+}
+
+// Type_Nodes keeps unlike elision candidates in named storage.
+type Type_Nodes struct {
+	// Element survives nested literals that temporarily replace their inherited type.
+	Element Element_Node
+	// Key stays independent because only map elements inherit it.
+	Key Key_Node
+	// Left separates the first side of a structural comparison.
+	Left Left_Node
+	// Right separates the second side of a structural comparison.
+	Right Right_Node
+	// Named survives walks away from the declaration being inspected.
+	Named Named_Node
+	// Found separates a search answer from the declaration that started it.
+	Found Found_Node
+	// Own survives the element walk that derives an inherited type.
+	Own Own_Node
+}
+
+// Type_Nodes_Invariants composes each independent node slot once.
+func Type_Nodes_Invariants(value Type_Nodes, namespace aver.Namespace) {
+	Element_Node_Invariants(value.Element, namespace)
+	Key_Node_Invariants(value.Key, namespace)
+	Left_Node_Invariants(value.Left, namespace)
+	Right_Node_Invariants(value.Right, namespace)
+	Named_Node_Invariants(value.Named, namespace)
+	Found_Node_Invariants(value.Found, namespace)
+	Own_Node_Invariants(value.Own, namespace)
+}
+
+// Sign_Mark is the emitted token that carries one operator sign.
+type Sign_Mark ast.Token_Index
+
+// Sign_Mark_Invariants states every token slot.
+func Sign_Mark_Invariants(value Sign_Mark, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), ast.TOKEN_INDEX_MINIMUM, ast.TOKEN_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Text_Mark is the emitted token that carries source text.
+type Text_Mark ast.Token_Index
+
+// Text_Mark_Invariants states every token slot.
+func Text_Mark_Invariants(value Text_Mark, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), ast.TOKEN_INDEX_MINIMUM, ast.TOKEN_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Token_Marks keeps unlike emitted-token positions in named storage.
+type Token_Marks struct {
+	// Sign survives printing the value behind an operation.
+	Sign Sign_Mark
+	// Text separates the token to emit from the node currently visited.
+	Text Text_Mark
+}
+
+// Token_Marks_Invariants composes each independent token position once.
+func Token_Marks_Invariants(value Token_Marks, namespace aver.Namespace) {
+	Sign_Mark_Invariants(value.Sign, namespace)
+	Text_Mark_Invariants(value.Text, namespace)
+}
+
+// Result_Tokens keeps bounded signature result names in caller storage.
+type Result_Tokens []ast.Token_Index
+
+// Result_Tokens_Invariants fixes result-name storage and prevents growth.
+func Result_Tokens_Invariants(value Result_Tokens, _ aver.Namespace) {
+	aver.Always(len(value) == RESULT_COUNT_MAXIMUM, "Result tokens have complete length.")
+	aver.Always(cap(value) == RESULT_COUNT_MAXIMUM, "Result tokens cannot grow.")
+}
+
+// Import_Aliases keeps bounded imported-name tokens in caller storage.
+type Import_Aliases []ast.Token_Index
+
+// Import_Aliases_Invariants fixes imported-name storage and prevents growth.
+func Import_Aliases_Invariants(value Import_Aliases, _ aver.Namespace) {
+	aver.Always(len(value) == IMPORT_COUNT_MAXIMUM, "Import aliases have complete length.")
+	aver.Always(cap(value) == IMPORT_COUNT_MAXIMUM, "Import aliases cannot grow.")
+}
+
+// Import_Paths keeps bounded import-path tokens in caller storage.
+type Import_Paths []ast.Token_Index
+
+// Import_Paths_Invariants fixes import-path storage and prevents growth.
+func Import_Paths_Invariants(value Import_Paths, _ aver.Namespace) {
+	aver.Always(len(value) == IMPORT_COUNT_MAXIMUM, "Import paths have complete length.")
+	aver.Always(cap(value) == IMPORT_COUNT_MAXIMUM, "Import paths cannot grow.")
+}
+
+// Held_Sign is the operator class one reader currently holds.
+type Held_Sign token.Kind
+
+// Held_Sign_Invariants states every token class.
+func Held_Sign_Invariants(value Held_Sign, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), token.KIND_MINIMUM, token.KIND_MAXIMUM).
+		Ensure()
+}
+
+// Behind_Sign is the operator class behind one reader.
+type Behind_Sign token.Kind
+
+// Behind_Sign_Invariants states every token class.
+func Behind_Sign_Invariants(value Behind_Sign, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), token.KIND_MINIMUM, token.KIND_MAXIMUM).
+		Ensure()
+}
+
+// Token_Signs keeps unlike operator classes in named storage.
+type Token_Signs struct {
+	// Held separates the active sign from the sign around it.
+	Held Held_Sign
+	// Behind survives the recursive read of the active sign.
+	Behind Behind_Sign
+}
+
+// Token_Signs_Invariants composes each independent operator class once.
+func Token_Signs_Invariants(value Token_Signs, namespace aver.Namespace) {
+	Held_Sign_Invariants(value.Held, namespace)
+	Behind_Sign_Invariants(value.Behind, namespace)
+}
+
+// Synthetic_Word is the keyword one form opens with.
+type Synthetic_Word Word
+
+// Synthetic_Word_Invariants states every synthetic keyword.
+func Synthetic_Word_Invariants(value Synthetic_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), WORD_MINIMUM, WORD_MAXIMUM).
+		Ensure()
+}
+
+// Words keeps the synthetic keyword in named storage.
+type Words struct {
+	// Value survives printing every child of the declaration it opens.
+	Value Synthetic_Word
+}
+
+// Words_Invariants composes the synthetic keyword domain.
+func Words_Invariants(value Words, namespace aver.Namespace) {
+	Synthetic_Word_Invariants(value.Value, namespace)
+}
+
+// DIRECTIVE_SIZE_MAXIMUM is the widest directive prefix this printer recognizes.
+const DIRECTIVE_SIZE_MAXIMUM = len("export ")
+
+// Directive is one recognized note prefix, including its separating space where required.
+type Directive string
+
+// Directive_Invariants admits absence and every bounded directive prefix.
+func Directive_Invariants(value Directive, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), FORM_SIZE_MINIMUM, DIRECTIVE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Directives keeps the active note prefix in named storage.
+type Directives struct {
+	// Value survives scanning the note text that follows it.
+	Value Directive
+}
+
+// Directives_Invariants composes the note-prefix domain.
+func Directives_Invariants(value Directives, namespace aver.Namespace) {
+	Directive_Invariants(value.Value, namespace)
+}
+
+// Comment_Positions keeps bounded trailing comments in caller storage.
+type Comment_Positions []Position
+
+// Comment_Positions_Invariants fixes trailing-comment storage and prevents growth.
+func Comment_Positions_Invariants(value Comment_Positions, _ aver.Namespace) {
+	aver.Always(len(value) == COMMENT_COUNT_MAXIMUM, "Comment positions have complete length.")
+	aver.Always(cap(value) == COMMENT_COUNT_MAXIMUM, "Comment positions cannot grow.")
+}
+
+// Destination is the caller-owned form one print fills.
+type Destination Form
+
+// Destination_Invariants states every bounded output view.
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), FORM_SIZE_MINIMUM, FORM_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Forms keeps the destination in named storage.
+type Forms struct {
+	// Value stays distinct because writing advances a count, not the slice.
+	Value Destination
+}
+
+// Forms_Invariants composes the destination domain.
+func Forms_Invariants(value Forms, namespace aver.Namespace) {
+	Destination_Invariants(value.Value, namespace)
+}
+
+// Source_View is the complete source represented by the tree.
+type Source_View token.Source
+
+// Source_View_Invariants states every bounded source view.
+func Source_View_Invariants(value Source_View, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, token.SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Text_View is the source text of one token.
+type Text_View token.Source
+
+// Text_View_Invariants states every bounded token-text view.
+func Text_View_Invariants(value Text_View, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, token.SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Name_View is one imported name retained across a tree walk.
+type Name_View token.Source
+
+// Name_View_Invariants states every bounded imported-name view.
+func Name_View_Invariants(value Name_View, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, token.SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Sources keeps unlike source views in named storage.
+type Sources struct {
+	// Source survives every token view taken from it.
+	Source Source_View
+	// Text separates a token view from the complete source that owns it.
+	Text Text_View
+	// Name survives walks that temporarily replace the current token text.
+	Name Name_View
+}
+
+// Sources_Invariants composes each independent source view once.
+func Sources_Invariants(value Sources, namespace aver.Namespace) {
+	Source_View_Invariants(value.Source, namespace)
+	Text_View_Invariants(value.Text, namespace)
+	Name_View_Invariants(value.Name, namespace)
+}
+
+// Counts keeps bounded printer cursors in caller storage.
+type Counts []Count
+
+// Counts_Invariants fixes cursor storage and prevents growth.
+func Counts_Invariants(value Counts, _ aver.Namespace) {
+	aver.Always(len(value) == COUNT_SLOT_COUNT, "Printer counts have complete length.")
+	aver.Always(cap(value) == COUNT_SLOT_COUNT, "Printer counts cannot grow.")
+}
+
+// Flags keeps bounded printer control bits in caller storage.
+type Flags []Boolean
+
+// Flags_Invariants fixes control storage and prevents growth.
+func Flags_Invariants(value Flags, _ aver.Namespace) {
+	aver.Always(len(value) == FLAG_COUNT, "Printer flags have complete length.")
+	aver.Always(cap(value) == FLAG_COUNT, "Printer flags cannot grow.")
+}
+
+// Node_Stack_Storage keeps the caller-owned traversal stack distinct from its view.
+type Node_Stack_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Node_Stack
+}
+
+// Node_Stack_Storage_Invariants composes traversal storage.
+func Node_Stack_Storage_Invariants(value Node_Stack_Storage, namespace aver.Namespace) {
+	Node_Stack_Invariants(value.Values, namespace)
+}
+
+// Field_Width_Storage keeps caller-owned alignment storage distinct from its view.
+type Field_Width_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Field_Widths
+}
+
+// Field_Width_Storage_Invariants composes alignment storage.
+func Field_Width_Storage_Invariants(value Field_Width_Storage, namespace aver.Namespace) {
+	Field_Widths_Invariants(value.Values, namespace)
+}
+
+// Result_Token_Storage keeps caller-owned result storage distinct from its view.
+type Result_Token_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Result_Tokens
+}
+
+// Result_Token_Storage_Invariants composes result-name storage.
+func Result_Token_Storage_Invariants(value Result_Token_Storage, namespace aver.Namespace) {
+	Result_Tokens_Invariants(value.Values, namespace)
+}
+
+// Import_Alias_Storage keeps caller-owned alias storage distinct from its view.
+type Import_Alias_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Import_Aliases
+}
+
+// Import_Alias_Storage_Invariants composes import-alias storage.
+func Import_Alias_Storage_Invariants(value Import_Alias_Storage, namespace aver.Namespace) {
+	Import_Aliases_Invariants(value.Values, namespace)
+}
+
+// Import_Path_Storage keeps caller-owned path storage distinct from its view.
+type Import_Path_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Import_Paths
+}
+
+// Import_Path_Storage_Invariants composes import-path storage.
+func Import_Path_Storage_Invariants(value Import_Path_Storage, namespace aver.Namespace) {
+	Import_Paths_Invariants(value.Values, namespace)
+}
+
+// Comment_Position_Storage keeps caller-owned comment storage distinct from its view.
+type Comment_Position_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Comment_Positions
+}
+
+// Comment_Position_Storage_Invariants composes trailing-comment storage.
+func Comment_Position_Storage_Invariants(value Comment_Position_Storage, namespace aver.Namespace) {
+	Comment_Positions_Invariants(value.Values, namespace)
+}
+
+// Count_Storage keeps caller-owned counters distinct from their view.
+type Count_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Counts
+}
+
+// Count_Storage_Invariants composes counter storage.
+func Count_Storage_Invariants(value Count_Storage, namespace aver.Namespace) {
+	Counts_Invariants(value.Values, namespace)
+}
+
+// Flag_Storage keeps caller-owned control bits distinct from their view.
+type Flag_Storage struct {
+	// Values makes ownership explicit at the package boundary.
+	Values Flags
+}
+
+// Flag_Storage_Invariants composes control storage.
+func Flag_Storage_Invariants(value Flag_Storage, namespace aver.Namespace) {
+	Flags_Invariants(value.Values, namespace)
+}
+
+// Printer_Fields states the concrete storage layout independently of its validated view.
+type Printer_Fields struct {
+	// Nodes holds the tree slot the walk stands on at each depth.
+	Nodes Node_Stack_Storage
+	// Widths holds the name width of each field of the alignment run ahead.
+	Widths Field_Width_Storage
+	// Spans holds the widths one measure answers with, which a caller reads rather than
+	// takes, because a width the print states in a signature owes a domain no source reaches.
+	Spans Measured_Spans
+	// Positions holds the run positions one search answers with and one scan runs between.
+	Positions Positions
+	// Offsets holds the source bytes one read of the source runs between.
+	Offsets Offsets
+	// Kinds holds the class of the form the print stands inside of.
+	Kinds Node_Kinds
+	// Types holds the tree slots of the type forms one elision of a repeated type reads.
+	Types Type_Nodes
+	// Marks holds the run positions of the tokens the print writes of its own.
+	Marks Token_Marks
+	// Results holds the tokens of the result names the signature the print stands inside of
+	// binds, which a return that names no value writes.
+	Results Result_Token_Storage
+	// Aliases holds the name tokens of the imports whose name the print drops.
+	Aliases Import_Alias_Storage
+	// Paths holds the path token of each of those imports, which names the package the forms
+	// that read the name now name.
+	Paths Import_Path_Storage
+	// Signs holds the classes of the tokens one reader of the run stands between.
+	Signs Token_Signs
+	// Words holds the keyword one form opens with, which the tree drops.
+	Words Words
+	// Directives holds the name one read of a note asks that note to open with.
+	Directives Directives
+	// Comments holds the run position of each comment the line the print stands on carries.
+	Comments Comment_Position_Storage
+	// Forms holds the storage the print writes into.
+	Forms Forms
+	// Sources holds the source the tree stands for.
+	Sources Sources
+	// Counts holds every counter and cursor the print keeps.
+	Counts Count_Storage
+	// Flags holds what the print met: full storage, deep nest, and a fresh line.
+	Flags Flag_Storage
+}
+
+// Printer_Fields_Invariants composes every concrete field once.
+func Printer_Fields_Invariants(value Printer_Fields, namespace aver.Namespace) {
+	Node_Stack_Storage_Invariants(value.Nodes, namespace)
+	Field_Width_Storage_Invariants(value.Widths, namespace)
+	Measured_Spans_Invariants(value.Spans, namespace)
+	Positions_Invariants(value.Positions, namespace)
+	Offsets_Invariants(value.Offsets, namespace)
+	Node_Kinds_Invariants(value.Kinds, namespace)
+	Type_Nodes_Invariants(value.Types, namespace)
+	Token_Marks_Invariants(value.Marks, namespace)
+	Result_Token_Storage_Invariants(value.Results, namespace)
+	Import_Alias_Storage_Invariants(value.Aliases, namespace)
+	Import_Path_Storage_Invariants(value.Paths, namespace)
+	Token_Signs_Invariants(value.Signs, namespace)
+	Words_Invariants(value.Words, namespace)
+	Directives_Invariants(value.Directives, namespace)
+	Comment_Position_Storage_Invariants(value.Comments, namespace)
+	Forms_Invariants(value.Forms, namespace)
+	Sources_Invariants(value.Sources, namespace)
+	Count_Storage_Invariants(value.Counts, namespace)
+	Flag_Storage_Invariants(value.Flags, namespace)
+}
+
+// Measured_Spans_Stored prevents one print step from proving stale width answers.
+type Measured_Spans_Stored interface{}
+
+// Measured_Spans_Stored_Invariants fixes width-answer representation.
+func Measured_Spans_Stored_Invariants(value Measured_Spans_Stored, _ aver.Namespace) {
+	_, valid := value.(Measured_Spans)
+	aver.Always(valid == (value != nil), "Printer spans have expected storage type.")
+}
+
+// Positions_Stored prevents one print step from proving unrelated search positions.
+type Positions_Stored interface{}
+
+// Positions_Stored_Invariants fixes search-position representation.
+func Positions_Stored_Invariants(value Positions_Stored, _ aver.Namespace) {
+	_, valid := value.(Positions)
+	aver.Always(valid == (value != nil), "Printer positions have expected storage type.")
+}
+
+// Offsets_Stored prevents one print step from proving unrelated source offsets.
+type Offsets_Stored interface{}
+
+// Offsets_Stored_Invariants fixes source-offset representation.
+func Offsets_Stored_Invariants(value Offsets_Stored, _ aver.Namespace) {
+	_, valid := value.(Offsets)
+	aver.Always(valid == (value != nil), "Printer offsets have expected storage type.")
+}
+
+// Node_Kinds_Stored prevents one print step from proving unrelated syntax classes.
+type Node_Kinds_Stored interface{}
+
+// Node_Kinds_Stored_Invariants fixes syntax-class representation.
+func Node_Kinds_Stored_Invariants(value Node_Kinds_Stored, _ aver.Namespace) {
+	_, valid := value.(Node_Kinds)
+	aver.Always(valid == (value != nil), "Printer node kinds have expected storage type.")
+}
+
+// Type_Nodes_Stored prevents one print step from proving unrelated elision candidates.
+type Type_Nodes_Stored interface{}
+
+// Type_Nodes_Stored_Invariants fixes elision-candidate representation.
+func Type_Nodes_Stored_Invariants(value Type_Nodes_Stored, _ aver.Namespace) {
+	_, valid := value.(Type_Nodes)
+	aver.Always(valid == (value != nil), "Printer type nodes have expected storage type.")
+}
+
+// Token_Marks_Stored prevents one print step from proving unrelated emitted tokens.
+type Token_Marks_Stored interface{}
+
+// Token_Marks_Stored_Invariants fixes emitted-token representation.
+func Token_Marks_Stored_Invariants(value Token_Marks_Stored, _ aver.Namespace) {
+	_, valid := value.(Token_Marks)
+	aver.Always(valid == (value != nil), "Printer token marks have expected storage type.")
+}
+
+// Token_Signs_Stored prevents one print step from proving unrelated token classes.
+type Token_Signs_Stored interface{}
+
+// Token_Signs_Stored_Invariants fixes token-class representation.
+func Token_Signs_Stored_Invariants(value Token_Signs_Stored, _ aver.Namespace) {
+	_, valid := value.(Token_Signs)
+	aver.Always(valid == (value != nil), "Printer token signs have expected storage type.")
+}
+
+// Words_Stored prevents one print step from proving every synthetic keyword.
+type Words_Stored interface{}
+
+// Words_Stored_Invariants fixes synthetic-keyword representation.
+func Words_Stored_Invariants(value Words_Stored, _ aver.Namespace) {
+	_, valid := value.(Words)
+	aver.Always(valid == (value != nil), "Printer words have expected storage type.")
+}
+
+// Directives_Stored prevents one print step from proving every directive prefix.
+type Directives_Stored interface{}
+
+// Directives_Stored_Invariants fixes directive representation.
+func Directives_Stored_Invariants(value Directives_Stored, _ aver.Namespace) {
+	_, valid := value.(Directives)
+	aver.Always(valid == (value != nil), "Printer directives have expected storage type.")
+}
+
+// Forms_Stored prevents one print step from proving every destination length.
+type Forms_Stored interface{}
+
+// Forms_Stored_Invariants fixes destination representation.
+func Forms_Stored_Invariants(value Forms_Stored, _ aver.Namespace) {
+	_, valid := value.(Forms)
+	aver.Always(valid == (value != nil), "Printer forms have expected storage type.")
+}
+
+// Sources_Stored prevents one print step from proving every source-view length.
+type Sources_Stored interface{}
+
+// Sources_Stored_Invariants fixes source-view representation.
+func Sources_Stored_Invariants(value Sources_Stored, _ aver.Namespace) {
+	_, valid := value.(Sources)
+	aver.Always(valid == (value != nil), "Printer sources have expected storage type.")
+}
+
+// Printer_Fields_Stored prevents every inner print step from reproving fixed caller storage.
+type Printer_Fields_Stored interface{}
+
+// Printer_Fields_Stored_Invariants fixes the validated storage representation.
+func Printer_Fields_Stored_Invariants(value Printer_Fields_Stored, _ aver.Namespace) {
+	_, valid := value.(Printer_Fields)
+	aver.Always(valid == (value != nil), "Printer fields have expected storage type.")
+}
+
+// Printer_Envelope keeps fixed caller storage behind one representation boundary.
+type Printer_Envelope struct {
+	// Printer_Fields stays embedded so callers retain concrete field access.
+	Printer_Fields
+}
+
+// Printer_Envelope_Invariants composes the caller storage.
+func Printer_Envelope_Invariants(value Printer_Envelope, namespace aver.Namespace) {
+	Printer_Fields_Invariants(value.Printer_Fields, namespace)
+}
+
+// Printer is one validated view over caller-owned formatting storage.
+type Printer Printer_Envelope
+
+// Printer_Invariants keeps inner steps bounded by the storage Print validated once.
+func Printer_Invariants(value Printer, namespace aver.Namespace) {
+	Printer_Fields_Stored_Invariants(Printer_Fields_Stored(value.Printer_Fields), namespace)
+}
+
+// Printer_Handle gives caller-owned formatting state one identity.
+type Printer_Handle *Printer
+
+// Printer_Handle_Invariants composes present printer storage.
+func Printer_Handle_Invariants(value Printer_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Printer_Invariants(*value, namespace)
+}
+
+// Print_Result keeps written size and storage outcome at one output boundary.
+type Print_Result struct {
+	// Count remains available when caller storage fills.
+	Count Form_Count
+	// OK distinguishes complete forms from bounded prefixes.
+	OK Boolean
+}
+
+// Print_Result_Invariants composes one print outcome.
+func Print_Result_Invariants(value Print_Result, namespace aver.Namespace) {
+	Form_Count_Invariants(value.Count, namespace)
+	Boolean_Invariants(value.OK, namespace)
 }
 
 // Print writes the canonical form of one tree into caller storage and reports whether the whole
 // form fit. A tree the parser refused still prints what it holds, because a caller reads more
 // from a partial print than from nothing.
 func Print(
-	subject *Printer, destination Form, tree *ast.Parse_State, source token.Source,
-) (count Form_Count, ok Boolean) {
-	defer func() {
-		Form_Count_Invariants(count, "print.count")
-		Boolean_Invariants(ok, "print.ok")
-	}()
-	Printer_Invariants(subject, "print.subject")
+	subject Printer_Handle, destination Form, tree ast.Parse_State_Handle, source token.Source,
+) (result Print_Result) {
+	defer func() { Print_Result_Invariants(result, "print.result") }()
+	Printer_Handle_Invariants(subject, "print.subject")
+	Node_Stack_Storage_Invariants(subject.Nodes, "print.nodes")
+	Field_Width_Storage_Invariants(subject.Widths, "print.widths")
+	Measured_Spans_Stored_Invariants(Measured_Spans_Stored(subject.Spans), "print.spans")
+	Positions_Stored_Invariants(Positions_Stored(subject.Positions), "print.positions")
+	Offsets_Stored_Invariants(Offsets_Stored(subject.Offsets), "print.offsets")
+	Node_Kinds_Stored_Invariants(Node_Kinds_Stored(subject.Kinds), "print.kinds")
+	Type_Nodes_Stored_Invariants(Type_Nodes_Stored(subject.Types), "print.types")
+	Token_Marks_Stored_Invariants(Token_Marks_Stored(subject.Marks), "print.marks")
+	Result_Token_Storage_Invariants(subject.Results, "print.results")
+	Import_Alias_Storage_Invariants(subject.Aliases, "print.aliases")
+	Import_Path_Storage_Invariants(subject.Paths, "print.paths")
+	Token_Signs_Stored_Invariants(Token_Signs_Stored(subject.Signs), "print.signs")
+	Words_Stored_Invariants(Words_Stored(subject.Words), "print.words")
+	Directives_Stored_Invariants(Directives_Stored(subject.Directives), "print.directives")
+	Comment_Position_Storage_Invariants(subject.Comments, "print.comments")
+	Forms_Stored_Invariants(Forms_Stored(subject.Forms), "print.forms")
+	Sources_Stored_Invariants(Sources_Stored(subject.Sources), "print.sources")
+	Count_Storage_Invariants(subject.Counts, "print.counts")
+	Flag_Storage_Invariants(subject.Flags, "print.flags")
 	Form_Invariants(destination, "print.destination")
-	ast.Parse_State_Invariants(tree, "print.tree")
+	ast.Parse_State_Handle_Invariants(tree, "print.tree")
 	token.Source_Invariants(source, "print.source")
-	subject.Forms[FORM_SLOT] = destination
-	subject.Sources[SOURCE_SLOT] = source
-	for slot := range subject.Counts {
-		subject.Counts[slot] = 0
+	subject.Forms.Value = Destination(destination)
+	subject.Sources.Source = Source_View(source)
+	for slot := range subject.Counts.Values {
+		subject.Counts.Values[slot] = 0
 	}
-	for slot := range subject.Types {
-		subject.Types[slot] = ast.INDEX_ABSENT
-	}
+	subject.Types = Type_Nodes{}
 	// An expression a declaration or a statement states stands at one, which is the nest
 	// the canonical form spaces every sign at.
-	subject.Counts[COUNT_NEST] = 1
-	subject.Flags[FLAG_FULL] = false
-	subject.Flags[FLAG_DEEP] = false
-	subject.Flags[FLAG_LINE] = true
-	subject.Nodes[0] = TREE_ROOT
+	subject.Counts.Values[COUNT_NEST] = 1
+	subject.Flags.Values[FLAG_FULL] = false
+	subject.Flags.Values[FLAG_DEEP] = false
+	subject.Flags.Values[FLAG_LINE] = true
+	subject.Nodes.Values[0] = TREE_ROOT
 	print_file(subject, tree)
-	held := !subject.Flags[FLAG_FULL]
-	held = held && !subject.Flags[FLAG_DEEP]
-	return Form_Count(subject.Counts[COUNT_WRITTEN]), held
+	held := !subject.Flags.Values[FLAG_FULL]
+	held = held && !subject.Flags.Values[FLAG_DEEP]
+	return Print_Result{
+		Count: Form_Count(subject.Counts.Values[COUNT_WRITTEN]), OK: held,
+	}
 }
 
 // TREE_ROOT is the arena slot the parser writes the file node into, thus a caller hands over the
@@ -552,73 +1366,73 @@ const TREE_ROOT ast.Index = 1
 
 // Writes one byte into the storage. A storage the byte no longer fits marks the print full, thus
 // every later write is a test and never a write past the array.
-func emit_byte(subject *Printer, value Symbol) {
+func emit_byte(subject Printer_Handle, value Symbol) {
 	Symbol_Invariants(value, "emit_byte.value")
-	Printer_Invariants(subject, "emit_byte.subject")
-	written := int(subject.Counts[COUNT_WRITTEN])
-	if written >= len(subject.Forms[FORM_SLOT]) {
-		subject.Flags[FLAG_FULL] = true
+	Printer_Handle_Invariants(subject, "emit_byte.subject")
+	written := int(subject.Counts.Values[COUNT_WRITTEN])
+	if written >= len(subject.Forms.Value) {
+		subject.Flags.Values[FLAG_FULL] = true
 		return
 	}
-	subject.Forms[FORM_SLOT][written] = byte(value)
-	subject.Counts[COUNT_WRITTEN] = Count(written + 1)
-	subject.Flags[FLAG_LINE] = false
+	subject.Forms.Value[written] = byte(value)
+	subject.Counts.Values[COUNT_WRITTEN] = Count(written + 1)
+	subject.Flags.Values[FLAG_LINE] = false
 }
 
 // Writes one space.
-func emit_space(subject *Printer) {
-	Printer_Invariants(subject, "emit_space.subject")
+func emit_space(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_space.subject")
 	emit_byte(subject, ' ')
 }
 
 // Writes one line feed and marks the line that follows as still unopened.
-func emit_line(subject *Printer) {
-	Printer_Invariants(subject, "emit_line.subject")
+func emit_line(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_line.subject")
 	emit_byte(subject, '\n')
-	subject.Flags[FLAG_LINE] = true
-	subject.Counts[COUNT_OPENING] = subject.Counts[COUNT_WRITTEN]
+	subject.Flags.Values[FLAG_LINE] = true
+	subject.Counts.Values[COUNT_OPENING] = subject.Counts.Values[COUNT_WRITTEN]
 }
 
 // Writes the tabs the open line owes, which is one for each depth the walk stands under. A line
 // that already holds a byte owes none, thus a caller writes the indent before anything else.
-func emit_indent(subject *Printer) {
-	Printer_Invariants(subject, "emit_indent.subject")
-	if !bool(subject.Flags[FLAG_LINE]) {
+func emit_indent(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_indent.subject")
+	if !bool(subject.Flags.Values[FLAG_LINE]) {
 		return
 	}
-	written := int(subject.Counts[COUNT_WRITTEN])
-	indent_count := int(subject.Counts[COUNT_INDENT])
-	available_count := len(subject.Forms[FORM_SLOT]) - written
+	written := int(subject.Counts.Values[COUNT_WRITTEN])
+	indent_count := int(subject.Counts.Values[COUNT_INDENT])
+	available_count := len(subject.Forms.Value) - written
 	if available_count < indent_count {
 		indent_count = available_count
-		subject.Flags[FLAG_FULL] = true
+		subject.Flags.Values[FLAG_FULL] = true
 	}
 	for index := range indent_count {
-		subject.Forms[FORM_SLOT][written+index] = '\t'
+		subject.Forms.Value[written+index] = '\t'
 	}
 	if indent_count > 0 {
-		subject.Counts[COUNT_WRITTEN] = Count(written + indent_count)
-		subject.Flags[FLAG_LINE] = false
+		subject.Counts.Values[COUNT_WRITTEN] = Count(written + indent_count)
+		subject.Flags.Values[FLAG_LINE] = false
 	}
 }
 
 // Writes the source bytes the token of the node the walk stands on spans.
-func emit_token(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_token.subject")
-	ast.Parse_State_Invariants(tree, "emit_token.tree")
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
-	subject.Marks[MARK_TEXT] = node.Token
+func emit_token(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_token.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_token.tree")
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
+	subject.Marks.Text = Text_Mark(node.Token)
 	emit_text(subject, tree)
 }
 
 // Writes the text of the token the slot names. A number states its base and its exponent in the
 // case the canonical form states them, thus the print writes the literal the source means rather
 // than the bytes the author typed.
-func emit_text(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_text.subject")
-	ast.Parse_State_Invariants(tree, "emit_text.tree")
-	one := ast.Token_At(tree, subject.Marks[MARK_TEXT])
-	subject.Sources[SOURCE_TEXT] = token.Text(subject.Sources[SOURCE_SLOT], one)
+func emit_text(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_text.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_text.tree")
+	one := ast.Token_At(tree, ast.Token_Index(subject.Marks.Text))
+	subject.Sources.Text = Text_View(token.Text(token.Source(subject.Sources.Source), one))
 	kind := one.Kind
 	number := Boolean(false)
 	if kind == token.KIND_INTEGER {
@@ -638,7 +1452,7 @@ func emit_text(subject *Printer, tree *ast.Parse_State) {
 		emit_note(subject)
 		return
 	}
-	text := subject.Sources[SOURCE_TEXT]
+	text := subject.Sources.Text
 	for index := range len(text) {
 		emit_byte(subject, Symbol(text[index]))
 	}
@@ -647,9 +1461,9 @@ func emit_text(subject *Printer, tree *ast.Parse_State) {
 // Holds one comment or one empty line until the line it stands behind closes. The parser hangs
 // each one behind the node whose span it follows, thus a form that still owes a bracket writes
 // that bracket first and the trivia behind it.
-func print_trivia(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_trivia.subject")
-	ast.Parse_State_Invariants(tree, "print_trivia.tree")
+func print_trivia(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_trivia.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_trivia.tree")
 	kind := node_kind(subject, tree)
 	if kind == ast.NODE_BLANK {
 		// A body opens at its first part and closes at its last one, thus an empty line
@@ -663,46 +1477,46 @@ func print_trivia(subject *Printer, tree *ast.Parse_State) {
 		if bool(stands_behind_sign(subject, tree)) {
 			return
 		}
-		subject.Flags[FLAG_BLANK] = true
+		subject.Flags.Values[FLAG_BLANK] = true
 		return
 	}
 	if kind != ast.NODE_COMMENT {
 		return
 	}
-	if int(subject.Counts[COUNT_COMMENT]) >= COMMENT_COUNT_MAXIMUM {
+	if int(subject.Counts.Values[COUNT_COMMENT]) >= COMMENT_COUNT_MAXIMUM {
 		return
 	}
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
-	subject.Comments[subject.Counts[COUNT_COMMENT]] = Position(node.Token)
-	subject.Counts[COUNT_COMMENT] = subject.Counts[COUNT_COMMENT] + 1
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
+	subject.Comments.Values[subject.Counts.Values[COUNT_COMMENT]] = Position(node.Token)
+	subject.Counts.Values[COUNT_COMMENT] = subject.Counts.Values[COUNT_COMMENT] + 1
 	// An empty line ahead of a note belongs to that note, and the writing of the note reads it
 	// from the source, thus the line the print still owes is the one behind every note.
-	subject.Flags[FLAG_BLANK] = false
+	subject.Flags.Values[FLAG_BLANK] = false
 }
 
 // Closes the line the print stands on: the comments it carries stand at its end, and the empty
 // line it owes stands behind it.
-func close_line(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "close_line.subject")
-	ast.Parse_State_Invariants(tree, "close_line.tree")
+func close_line(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "close_line.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_line.tree")
 	flush_comments(subject, tree)
 	emit_line(subject)
-	if bool(subject.Flags[FLAG_BLANK]) {
+	if bool(subject.Flags.Values[FLAG_BLANK]) {
 		emit_line(subject)
-		subject.Flags[FLAG_BLANK] = false
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Flags.Values[FLAG_BLANK] = false
+		subject.Counts.Values[COUNT_WIDTH] = 0
 	}
 }
 
 // Writes one comment: it takes the tabs of a line it opens, and one space where it follows what
 // already stands on the line.
-func emit_comment(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_comment.subject")
-	ast.Parse_State_Invariants(tree, "emit_comment.tree")
-	position := subject.Positions[POSITION_FOUND]
+func emit_comment(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_comment.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_comment.tree")
+	position := subject.Positions.Found
 	// The indent the print writes opens the line, thus the report the writing reads must be
 	// the one that stood before it wrote anything.
-	opening := subject.Flags[FLAG_LINE]
+	opening := subject.Flags.Values[FLAG_LINE]
 	if bool(opening) {
 		emit_indent(subject)
 	}
@@ -710,24 +1524,24 @@ func emit_comment(subject *Printer, tree *ast.Parse_State) {
 	// run rather than hunting for each one at the end of its line.
 	if !bool(opening) {
 		line_width(subject)
-		subject.Spans[SPAN_COLUMN] = Width(subject.Counts[COUNT_COLUMN])
+		subject.Spans.Column = Column_Width(subject.Counts.Values[COUNT_COLUMN])
 		emit_column(subject)
 	}
 	// A note the print holds until the line closes reads the same as one it writes where it
 	// stands, thus both run through one writing and a note of a line of its own wraps here
 	// too.
 	one := ast.Token_At(tree, ast.Token_Index(position))
-	subject.Sources[SOURCE_TEXT] = token.Text(subject.Sources[SOURCE_SLOT], one)
+	subject.Sources.Text = Text_View(token.Text(token.Source(subject.Sources.Source), one))
 	emit_note(subject)
 }
 
 // Moves the walk to the first child that states a part of the form, and writes every comment and
 // empty line it steps over. The parser hangs trivia behind the node its span follows, thus a walk
 // over the parts of a form meets trivia anywhere and prints it where it stands.
-func descend_part(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
+func descend_part(subject Printer_Handle, tree ast.Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "descend_part.ok") }()
-	Printer_Invariants(subject, "descend_part.subject")
-	ast.Parse_State_Invariants(tree, "descend_part.tree")
+	Printer_Handle_Invariants(subject, "descend_part.subject")
+	ast.Parse_State_Handle_Invariants(tree, "descend_part.tree")
 	if !bool(descend(subject, tree)) {
 		return false
 	}
@@ -742,10 +1556,10 @@ func descend_part(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
 
 // Moves the walk to the sibling that states the next part of the form, and writes every comment
 // and empty line it steps over.
-func advance_part(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
+func advance_part(subject Printer_Handle, tree ast.Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "advance_part.ok") }()
-	Printer_Invariants(subject, "advance_part.subject")
-	ast.Parse_State_Invariants(tree, "advance_part.tree")
+	Printer_Handle_Invariants(subject, "advance_part.subject")
+	ast.Parse_State_Handle_Invariants(tree, "advance_part.tree")
 	if !bool(advance(subject, tree)) {
 		return false
 	}
@@ -754,9 +1568,9 @@ func advance_part(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
 
 // Steps past every part and every piece of trivia the walk still stands ahead of, thus a form
 // that stopped at its final part still holds the comments and empty lines behind it.
-func finish_parts(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "finish_parts.subject")
-	ast.Parse_State_Invariants(tree, "finish_parts.tree")
+func finish_parts(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "finish_parts.subject")
+	ast.Parse_State_Handle_Invariants(tree, "finish_parts.tree")
 	for bool(advance_part(subject, tree)) {
 		continue
 	}
@@ -764,10 +1578,10 @@ func finish_parts(subject *Printer, tree *ast.Parse_State) {
 
 // Writes the trivia the walk stands on and steps past it, and reports whether a part stands where
 // the walk stopped.
-func skip_trivia(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
+func skip_trivia(subject Printer_Handle, tree ast.Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "skip_trivia.ok") }()
-	Printer_Invariants(subject, "skip_trivia.subject")
-	ast.Parse_State_Invariants(tree, "skip_trivia.tree")
+	Printer_Handle_Invariants(subject, "skip_trivia.subject")
+	ast.Parse_State_Handle_Invariants(tree, "skip_trivia.tree")
 	for bool(trivia_kind(subject, tree)) {
 		print_trivia(subject, tree)
 		if !bool(advance(subject, tree)) {
@@ -779,9 +1593,9 @@ func skip_trivia(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
 
 // Writes every comment and empty line the walk still stands ahead of. A line already closed
 // stands behind them, thus each one takes a line of its own rather than the end of that line.
-func drain_trivia(subject *Printer, tree *ast.Parse_State, open Boolean) {
-	Printer_Invariants(subject, "drain_trivia.subject")
-	ast.Parse_State_Invariants(tree, "drain_trivia.tree")
+func drain_trivia(subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean) {
+	Printer_Handle_Invariants(subject, "drain_trivia.subject")
+	ast.Parse_State_Handle_Invariants(tree, "drain_trivia.tree")
 	Boolean_Invariants(open, "drain_trivia.open")
 	stand := open
 	for bool(stand) {
@@ -791,9 +1605,9 @@ func drain_trivia(subject *Printer, tree *ast.Parse_State, open Boolean) {
 }
 
 // Writes one comment or one empty line that stands behind a line the print already closed.
-func print_behind(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_behind.subject")
-	ast.Parse_State_Invariants(tree, "print_behind.tree")
+func print_behind(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_behind.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_behind.tree")
 	kind := node_kind(subject, tree)
 	if kind == ast.NODE_BLANK {
 		if bool(stands_against(subject, tree)) {
@@ -817,66 +1631,67 @@ func print_behind(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Reads the class of the node the walk stands on.
-func node_kind(subject *Printer, tree *ast.Parse_State) (kind ast.Node_Kind) {
+func node_kind(subject Printer_Handle, tree ast.Parse_State_Handle) (kind ast.Node_Kind) {
 	defer func() { ast.Node_Kind_Invariants(kind, "node_kind.kind") }()
-	Printer_Invariants(subject, "node_kind.subject")
-	ast.Parse_State_Invariants(tree, "node_kind.tree")
-	return ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Kind
+	Printer_Handle_Invariants(subject, "node_kind.subject")
+	ast.Parse_State_Handle_Invariants(tree, "node_kind.tree")
+	return ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Kind
 }
 
 // Reads the byte count the token of the node the walk stands on spans.
-func node_width(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "node_width.subject")
-	ast.Parse_State_Invariants(tree, "node_width.tree")
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
-	text := token.Text(subject.Sources[SOURCE_SLOT], ast.Token_At(tree, node.Token))
-	subject.Spans[SPAN_FOUND] = Width(len(text))
+func node_width(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "node_width.subject")
+	ast.Parse_State_Handle_Invariants(tree, "node_width.tree")
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
+	text := token.Text(token.Source(subject.Sources.Source), ast.Token_At(tree, node.Token))
+	subject.Spans.Found = Measured_Width(len(text))
 }
 
 // Moves the walk to the first child of the node it stands on.
-func descend(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
+func descend(subject Printer_Handle, tree ast.Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "descend.ok") }()
-	Printer_Invariants(subject, "descend.subject")
-	ast.Parse_State_Invariants(tree, "descend.tree")
-	child := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).First_Child
+	Printer_Handle_Invariants(subject, "descend.subject")
+	ast.Parse_State_Handle_Invariants(tree, "descend.tree")
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	child := ast.Node_At(tree, index).First_Child
 	if ast.Index(child) == 0 {
 		return false
 	}
-	if int(subject.Counts[COUNT_DEPTH])+1 >= DEPTH_MAXIMUM {
-		subject.Flags[FLAG_DEEP] = true
+	if int(subject.Counts.Values[COUNT_DEPTH])+1 >= DEPTH_MAXIMUM {
+		subject.Flags.Values[FLAG_DEEP] = true
 		return false
 	}
-	subject.Counts[COUNT_DEPTH] = subject.Counts[COUNT_DEPTH] + 1
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = ast.Index(child)
+	subject.Counts.Values[COUNT_DEPTH] = subject.Counts.Values[COUNT_DEPTH] + 1
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = ast.Index(child)
 	return true
 }
 
 // Moves the walk to the sibling after the node it stands on.
-func advance(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
+func advance(subject Printer_Handle, tree ast.Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "advance.ok") }()
-	Printer_Invariants(subject, "advance.subject")
-	ast.Parse_State_Invariants(tree, "advance.tree")
-	next := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Next
+	Printer_Handle_Invariants(subject, "advance.subject")
+	ast.Parse_State_Handle_Invariants(tree, "advance.tree")
+	next := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Next
 	if ast.Index(next) == 0 {
 		return false
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = ast.Index(next)
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = ast.Index(next)
 	return true
 }
 
 // Leaves the child chain the walk stands in.
-func ascend(subject *Printer) {
-	Printer_Invariants(subject, "ascend.subject")
-	if subject.Counts[COUNT_DEPTH] == 0 {
+func ascend(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "ascend.subject")
+	if subject.Counts.Values[COUNT_DEPTH] == 0 {
 		return
 	}
-	subject.Counts[COUNT_DEPTH] = subject.Counts[COUNT_DEPTH] - 1
+	subject.Counts.Values[COUNT_DEPTH] = subject.Counts.Values[COUNT_DEPTH] - 1
 }
 
 // Writes one file: the package clause and each declaration behind it.
-func print_file(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_file.subject")
-	ast.Parse_State_Invariants(tree, "print_file.tree")
+func print_file(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_file.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_file.tree")
 	// A print walks one file and the declarations it holds, thus a tree standing for anything
 	// else writes nothing at all.
 	if node_kind(subject, tree) != ast.NODE_FILE {
@@ -893,7 +1708,7 @@ func print_file(subject *Printer, tree *ast.Parse_State) {
 	named := Boolean(false)
 	// No declaration stands yet, thus the first one opens a run of its own and stands behind
 	// the empty line the package clause closes on.
-	subject.Kinds[KIND_DECLARATION] = ast.NODE_FILE
+	subject.Kinds.Declaration = Declaration_Kind(ast.NODE_FILE)
 	commented := Boolean(false)
 	// Two declarations that each span more than one line stand apart, thus the print reads
 	// the lines the run it wrote spans and the lines the run behind it spanned.
@@ -913,7 +1728,7 @@ func print_file(subject *Printer, tree *ast.Parse_State) {
 		}
 		open_declaration(subject, tree, commented)
 		if !bool(commented) {
-			subject.Counts[COUNT_DECLARED] = subject.Counts[COUNT_WRITTEN]
+			subject.Counts.Values[COUNT_DECLARED] = subject.Counts.Values[COUNT_WRITTEN]
 		}
 		print_declaration(subject, tree)
 		commented = Boolean(kind == ast.NODE_COMMENT)
@@ -922,7 +1737,7 @@ func print_file(subject *Printer, tree *ast.Parse_State) {
 		}
 		if kind != ast.NODE_COMMENT {
 			if kind != ast.NODE_BLANK {
-				subject.Kinds[KIND_DECLARATION] = kind
+				subject.Kinds.Declaration = Declaration_Kind(kind)
 			}
 		}
 		if kind == ast.NODE_TYPE {
@@ -937,11 +1752,11 @@ func print_file(subject *Printer, tree *ast.Parse_State) {
 // Closes the file on one line feed. Each declaration carries the empty line that stood behind it,
 // and the declaration the author wrote last carries none, thus a file whose last declaration now
 // stands under a type would close on a line that states nothing.
-func close_file(subject *Printer) {
-	Printer_Invariants(subject, "close_file.subject")
-	form := subject.Forms[FORM_SLOT]
-	for subject.Counts[COUNT_WRITTEN] > 1 {
-		written := int(subject.Counts[COUNT_WRITTEN])
+func close_file(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "close_file.subject")
+	form := subject.Forms.Value
+	for subject.Counts.Values[COUNT_WRITTEN] > 1 {
+		written := int(subject.Counts.Values[COUNT_WRITTEN])
 		if written > len(form) {
 			return
 		}
@@ -951,51 +1766,53 @@ func close_file(subject *Printer) {
 		if form[written-2] != '\n' {
 			return
 		}
-		subject.Counts[COUNT_WRITTEN] = Count(written - 1)
+		subject.Counts.Values[COUNT_WRITTEN] = Count(written - 1)
 	}
 }
 
 // Writes the run of declarations that states the invariants of the type the walk stands on, which
 // is the function of that name and the notes above it. It reports whether the run it wrote spans
 // more than one line, which is what the declaration behind it stands apart from.
-func print_invariant_run(subject *Printer, tree *ast.Parse_State, spread Boolean) (held Boolean) {
+func print_invariant_run(
+	subject Printer_Handle, tree ast.Parse_State_Handle, spread Boolean,
+) (held Boolean) {
 	defer func() { Boolean_Invariants(held, "print_invariant_run.held") }()
-	Printer_Invariants(subject, "print_invariant_run.subject")
-	ast.Parse_State_Invariants(tree, "print_invariant_run.tree")
+	Printer_Handle_Invariants(subject, "print_invariant_run.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_invariant_run.tree")
 	Boolean_Invariants(spread, "print_invariant_run.spread")
-	subject.Types[TYPE_NAMED] = subject.Nodes[subject.Counts[COUNT_DEPTH]]
+	subject.Types.Named = Named_Node(subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
 	take_invariant_run(subject, tree)
-	node := subject.Types[TYPE_FOUND]
-	stand := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+	node := ast.Index(subject.Types.Found)
+	stand := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	commented := Boolean(false)
 	for node != ast.INDEX_ABSENT {
-		subject.Nodes[subject.Counts[COUNT_DEPTH]] = node
+		subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = node
 		kind := node_kind(subject, tree)
 		open_declaration(subject, tree, commented)
 		if !bool(commented) {
-			subject.Counts[COUNT_DECLARED] = subject.Counts[COUNT_WRITTEN]
+			subject.Counts.Values[COUNT_DECLARED] = subject.Counts.Values[COUNT_WRITTEN]
 		}
 		print_declaration(subject, tree)
 		commented = Boolean(kind == ast.NODE_COMMENT)
 		if !bool(commented) {
 			spread = open_spread(subject, spread)
-			subject.Kinds[KIND_DECLARATION] = kind
+			subject.Kinds.Declaration = Declaration_Kind(kind)
 			break
 		}
 		node = ast.Index(ast.Node_At(tree, node).Next)
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = stand
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = stand
 	return spread
 }
 
 // Reports whether the declaration the walk stands on stands under a type of the file rather than
 // where the author wrote it: a function that states the invariants of such a type, or a note that
 // opens one. The type carries both, thus the walk writes neither where it finds them.
-func moves_under_type(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func moves_under_type(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "moves_under_type.yes") }()
-	Printer_Invariants(subject, "moves_under_type.subject")
-	ast.Parse_State_Invariants(tree, "moves_under_type.tree")
-	one := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+	Printer_Handle_Invariants(subject, "moves_under_type.subject")
+	ast.Parse_State_Handle_Invariants(tree, "moves_under_type.tree")
+	one := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	for range ast.NODE_COUNT_MAXIMUM {
 		if ast.Node_At(tree, one).Kind != ast.NODE_COMMENT {
 			break
@@ -1005,18 +1822,18 @@ func moves_under_type(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 			return false
 		}
 	}
-	subject.Types[TYPE_NAMED] = one
+	subject.Types.Named = Named_Node(one)
 	return states_own_type(subject, tree)
 }
 
 // Reports whether the declaration the named slot holds is a function that states the invariants
 // of a type the file itself declares. A function that answers for a type of another file names no
 // type to stand under, thus it stands where the author wrote it.
-func states_own_type(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func states_own_type(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "states_own_type.yes") }()
-	Printer_Invariants(subject, "states_own_type.subject")
-	ast.Parse_State_Invariants(tree, "states_own_type.tree")
-	one := subject.Types[TYPE_NAMED]
+	Printer_Handle_Invariants(subject, "states_own_type.subject")
+	ast.Parse_State_Handle_Invariants(tree, "states_own_type.tree")
+	one := ast.Index(subject.Types.Named)
 	if one == ast.INDEX_ABSENT {
 		return false
 	}
@@ -1031,8 +1848,8 @@ func states_own_type(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		held := ast.Node_At(tree, child)
 		if held.Kind == ast.NODE_TYPE {
-			subject.Types[TYPE_LEFT] = child
-			subject.Types[TYPE_RIGHT] = one
+			subject.Types.Left = Left_Node(child)
+			subject.Types.Right = Right_Node(one)
 			if bool(names_pair(subject, tree)) {
 				return true
 			}
@@ -1045,11 +1862,11 @@ func states_own_type(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Reads the run of declarations that states the invariants of the type the named slot holds: the
 // function of that name and the notes standing above it. A type that states none names no run at
 // all, thus the found slot holds no node.
-func take_invariant_run(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_invariant_run.subject")
-	ast.Parse_State_Invariants(tree, "take_invariant_run.tree")
-	named := subject.Types[TYPE_NAMED]
-	subject.Types[TYPE_FOUND] = ast.INDEX_ABSENT
+func take_invariant_run(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_invariant_run.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_invariant_run.tree")
+	named := ast.Index(subject.Types.Named)
+	subject.Types.Found = Found_Node(ast.INDEX_ABSENT)
 	if ast.Node_At(tree, named).Kind != ast.NODE_TYPE {
 		return
 	}
@@ -1068,16 +1885,16 @@ func take_invariant_run(subject *Printer, tree *ast.Parse_State) {
 			child = ast.Index(held.Next)
 			continue
 		}
-		subject.Types[TYPE_LEFT] = named
-		subject.Types[TYPE_RIGHT] = child
+		subject.Types.Left = Left_Node(named)
+		subject.Types.Right = Right_Node(child)
 		paired := Boolean(held.Kind == ast.NODE_FUNCTION)
 		if bool(paired) {
 			paired = names_pair(subject, tree)
 		}
 		if bool(paired) {
-			subject.Types[TYPE_FOUND] = child
+			subject.Types.Found = Found_Node(child)
 			if head != ast.INDEX_ABSENT {
-				subject.Types[TYPE_FOUND] = head
+				subject.Types.Found = Found_Node(head)
 			}
 			return
 		}
@@ -1089,16 +1906,16 @@ func take_invariant_run(subject *Printer, tree *ast.Parse_State) {
 // Reports whether the function the right slot names states the invariants of the type the left
 // slot names, which the name of that function says: the name of the type and the tail every such
 // function closes with.
-func names_pair(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func names_pair(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "names_pair.yes") }()
-	Printer_Invariants(subject, "names_pair.subject")
-	ast.Parse_State_Invariants(tree, "names_pair.tree")
-	subject.Types[TYPE_NAMED] = subject.Types[TYPE_LEFT]
+	Printer_Handle_Invariants(subject, "names_pair.subject")
+	ast.Parse_State_Handle_Invariants(tree, "names_pair.tree")
+	subject.Types.Named = Named_Node(subject.Types.Left)
 	take_name(subject, tree)
-	named := subject.Sources[SOURCE_NAME]
-	subject.Types[TYPE_NAMED] = subject.Types[TYPE_RIGHT]
+	named := subject.Sources.Name
+	subject.Types.Named = Named_Node(subject.Types.Right)
 	take_name(subject, tree)
-	held := subject.Sources[SOURCE_NAME]
+	held := subject.Sources.Name
 	if len(named) == 0 {
 		return false
 	}
@@ -1115,11 +1932,11 @@ func names_pair(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Reads the text of the name the declaration the named slot holds binds, which stands as the
 // first child of that declaration. A declaration that binds no name states no text at all.
-func take_name(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_name.subject")
-	ast.Parse_State_Invariants(tree, "take_name.tree")
-	subject.Sources[SOURCE_NAME] = nil
-	one := subject.Types[TYPE_NAMED]
+func take_name(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_name.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_name.tree")
+	subject.Sources.Name = nil
+	one := ast.Index(subject.Types.Named)
 	if one == ast.INDEX_ABSENT {
 		return
 	}
@@ -1131,21 +1948,21 @@ func take_name(subject *Printer, tree *ast.Parse_State) {
 	if held.Kind != ast.NODE_IDENTIFIER {
 		return
 	}
-	source := subject.Sources[SOURCE_SLOT]
-	subject.Sources[SOURCE_NAME] = token.Text(source, ast.Token_At(tree, held.Token))
+	source := token.Source(subject.Sources.Source)
+	subject.Sources.Name = Name_View(token.Text(source, ast.Token_At(tree, held.Token)))
 }
 
 // Writes one node that stands ahead of the declarations: the doc comment of the file, or the
 // package clause that closes the opening. It reports whether the clause now stands written.
-func print_opening(subject *Printer, tree *ast.Parse_State) (named Boolean) {
+func print_opening(subject Printer_Handle, tree ast.Parse_State_Handle) (named Boolean) {
 	defer func() { Boolean_Invariants(named, "print_opening.named") }()
-	Printer_Invariants(subject, "print_opening.subject")
-	ast.Parse_State_Invariants(tree, "print_opening.tree")
+	Printer_Handle_Invariants(subject, "print_opening.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_opening.tree")
 	kind := node_kind(subject, tree)
 	// A file opens at its first line however many empty lines stand ahead of it, thus a blank
 	// the print has written nothing before is no line of the form.
 	if kind == ast.NODE_BLANK {
-		if subject.Counts[COUNT_WRITTEN] == 0 {
+		if subject.Counts.Values[COUNT_WRITTEN] == 0 {
 			return false
 		}
 		print_behind(subject, tree)
@@ -1219,8 +2036,8 @@ func Word_Invariants(value Word, namespace aver.Namespace) {
 }
 
 // Writes one keyword the print owes.
-func emit_word(subject *Printer, word Word) {
-	Printer_Invariants(subject, "emit_word.subject")
+func emit_word(subject Printer_Handle, word Word) {
+	Printer_Handle_Invariants(subject, "emit_word.subject")
 	Word_Invariants(word, "emit_word.word")
 	text := "package"
 	switch word {
@@ -1255,14 +2072,14 @@ func emit_word(subject *Printer, word Word) {
 }
 
 // Reports whether the token before the node the walk stands on opens another name.
-func opens_name(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func opens_name(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_name.yes") }()
-	Printer_Invariants(subject, "opens_name.subject")
-	ast.Parse_State_Invariants(tree, "opens_name.tree")
+	Printer_Handle_Invariants(subject, "opens_name.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_name.tree")
 	// A form names the token it opens with and never the token its own text begins at, thus
 	// the test reads the token ahead of the leftmost one the form spans.
 	leftmost_position(subject, tree)
-	position := subject.Positions[POSITION_FOUND]
+	position := subject.Positions.Found
 	if position == 0 {
 		return false
 	}
@@ -1279,15 +2096,15 @@ func opens_name(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Reports whether one statement states a variable the short sign binds: a run of names, the
 // values behind them, and no type at all. A declaration that wears a type states a form the short
 // sign cannot hold, and a constant binds no short sign of any kind.
-func states_short(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func states_short(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "states_short.yes") }()
-	Printer_Invariants(subject, "states_short.subject")
-	ast.Parse_State_Invariants(tree, "states_short.tree")
+	Printer_Handle_Invariants(subject, "states_short.subject")
+	ast.Parse_State_Handle_Invariants(tree, "states_short.tree")
 	if node_kind(subject, tree) != ast.NODE_VARIABLE {
 		return false
 	}
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	short := Boolean(false)
 	open := descend(subject, tree)
 	for bool(open) {
@@ -1305,18 +2122,18 @@ func states_short(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	return short
 }
 
 // Reports whether the token before the node the walk stands on opens the value of a declaration.
-func opens_value(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func opens_value(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_value.yes") }()
-	Printer_Invariants(subject, "opens_value.subject")
-	ast.Parse_State_Invariants(tree, "opens_value.tree")
+	Printer_Handle_Invariants(subject, "opens_value.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_value.tree")
 	leftmost_position(subject, tree)
-	position := subject.Positions[POSITION_FOUND]
+	position := subject.Positions.Found
 	if position == 0 {
 		return false
 	}
@@ -1324,17 +2141,13 @@ func opens_value(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Writes the one declaration the walk stands on.
-func print_declaration(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_declaration.subject")
-	ast.Parse_State_Invariants(tree, "print_declaration.tree")
+func print_declaration(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_declaration.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_declaration.tree")
 	// A declaration the author broke across lines indents its continuations, and the tabs it
 	// owed stand again at the declaration behind it.
-	held := subject.Counts[COUNT_INDENT]
-	subject.Flags[FLAG_BROKEN] = false
-	defer func() {
-		subject.Counts[COUNT_INDENT] = held
-		subject.Flags[FLAG_BROKEN] = false
-	}()
+	held := subject.Counts.Values[COUNT_INDENT]
+	subject.Flags.Values[FLAG_BROKEN] = false
 	switch node_kind(subject, tree) {
 	case ast.NODE_BLANK:
 		close_line(subject, tree)
@@ -1345,10 +2158,10 @@ func print_declaration(subject *Printer, tree *ast.Parse_State) {
 	case ast.NODE_IMPORT:
 		print_import(subject, tree)
 	case ast.NODE_CONSTANT:
-		subject.Words[WORD_SLOT] = WORD_CONSTANT
+		subject.Words.Value = Synthetic_Word(WORD_CONSTANT)
 		print_values(subject, tree)
 	case ast.NODE_VARIABLE:
-		subject.Words[WORD_SLOT] = WORD_VARIABLE
+		subject.Words.Value = Synthetic_Word(WORD_VARIABLE)
 		print_values(subject, tree)
 	case ast.NODE_TYPE:
 		print_type_declaration(subject, tree)
@@ -1357,27 +2170,29 @@ func print_declaration(subject *Printer, tree *ast.Parse_State) {
 	default:
 		print_statement(subject, tree)
 	}
+	subject.Counts.Values[COUNT_INDENT] = held
+	subject.Flags.Values[FLAG_BROKEN] = false
 }
 
 // Reports whether the name the walk stands on is one the print dropped from an import, and reads
 // the name that import's path states into the name slot where it is. A name of any other form
 // stands as the author wrote it, thus only the head of a selector answers here.
-func names_alias(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func names_alias(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "names_alias.yes") }()
-	Printer_Invariants(subject, "names_alias.subject")
-	ast.Parse_State_Invariants(tree, "names_alias.tree")
+	Printer_Handle_Invariants(subject, "names_alias.subject")
+	ast.Parse_State_Handle_Invariants(tree, "names_alias.tree")
 	if node_kind(subject, tree) != ast.NODE_IDENTIFIER {
 		return false
 	}
-	one := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
-	source := subject.Sources[SOURCE_SLOT]
+	one := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Token
+	source := token.Source(subject.Sources.Source)
 	text := token.Text(source, ast.Token_At(tree, one))
-	for slot := range int(subject.Counts[COUNT_ALIAS]) {
-		held := token.Text(source, ast.Token_At(tree, subject.Aliases[slot]))
+	for slot := range int(subject.Counts.Values[COUNT_ALIAS]) {
+		held := token.Text(source, ast.Token_At(tree, subject.Aliases.Values[slot]))
 		if string(held) != string(text) {
 			continue
 		}
-		subject.Marks[MARK_TEXT] = subject.Paths[slot]
+		subject.Marks.Text = Text_Mark(subject.Paths.Values[slot])
 		take_package_name(subject, tree)
 		return true
 	}
@@ -1385,9 +2200,9 @@ func names_alias(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Writes the name one import path states, which the name slot holds.
-func emit_package_name(subject *Printer) {
-	Printer_Invariants(subject, "emit_package_name.subject")
-	text := subject.Sources[SOURCE_NAME]
+func emit_package_name(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_package_name.subject")
+	text := subject.Sources.Name
 	for index := range len(text) {
 		emit_byte(subject, Symbol(text[index]))
 	}
@@ -1395,13 +2210,13 @@ func emit_package_name(subject *Printer) {
 
 // Reports whether the print drops the import name the walk stands on, which the run of names it
 // read from the imports of the file states.
-func drops_alias(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func drops_alias(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "drops_alias.yes") }()
-	Printer_Invariants(subject, "drops_alias.subject")
-	ast.Parse_State_Invariants(tree, "drops_alias.tree")
-	one := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
-	for slot := range int(subject.Counts[COUNT_ALIAS]) {
-		if subject.Aliases[slot] == one {
+	Printer_Handle_Invariants(subject, "drops_alias.subject")
+	ast.Parse_State_Handle_Invariants(tree, "drops_alias.tree")
+	one := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Token
+	for slot := range int(subject.Counts.Values[COUNT_ALIAS]) {
+		if subject.Aliases.Values[slot] == one {
 			return true
 		}
 	}
@@ -1411,12 +2226,12 @@ func drops_alias(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Reads the name the path the text mark names states, which is the element that path closes with.
 // A path closing at the default or the internal element names the element ahead of that one,
 // because such a directory holds what its parent names rather than a package of its own.
-func take_package_name(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_package_name.subject")
-	ast.Parse_State_Invariants(tree, "take_package_name.tree")
-	one := ast.Token_At(tree, subject.Marks[MARK_TEXT])
-	text := token.Text(subject.Sources[SOURCE_SLOT], one)
-	subject.Sources[SOURCE_NAME] = nil
+func take_package_name(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_package_name.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_package_name.tree")
+	one := ast.Token_At(tree, ast.Token_Index(subject.Marks.Text))
+	text := token.Text(token.Source(subject.Sources.Source), one)
+	subject.Sources.Name = nil
 	if len(text) < 3 {
 		return
 	}
@@ -1432,7 +2247,7 @@ func take_package_name(subject *Printer, tree *ast.Parse_State) {
 		held := text[opening_count:]
 		if string(held) != DEFAULT_TAIL {
 			if string(held) != INTERNAL_TAIL {
-				subject.Sources[SOURCE_NAME] = held
+				subject.Sources.Name = Name_View(held)
 				return
 			}
 		}
@@ -1441,18 +2256,18 @@ func take_package_name(subject *Printer, tree *ast.Parse_State) {
 		}
 		text = text[:opening_count-1]
 	}
-	subject.Sources[SOURCE_NAME] = text
+	subject.Sources.Name = Name_View(text)
 }
 
 // Reads the imports of the file whose name the print drops. An import states a name the path
 // already names, or a name the forms that read it can name by the path instead, thus the print
 // writes the path alone. A name another import of the file already binds stands as the author
 // wrote it, because two packages of one name name neither.
-func take_aliases(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_aliases.subject")
-	ast.Parse_State_Invariants(tree, "take_aliases.tree")
-	subject.Counts[COUNT_ALIAS] = 0
-	file := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+func take_aliases(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_aliases.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_aliases.tree")
+	subject.Counts.Values[COUNT_ALIAS] = 0
+	file := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	child := ast.Index(ast.Node_At(tree, file).First_Child)
 	for range ast.NODE_COUNT_MAXIMUM {
 		if child == ast.INDEX_ABSENT {
@@ -1460,7 +2275,7 @@ func take_aliases(subject *Printer, tree *ast.Parse_State) {
 		}
 		held := ast.Node_At(tree, child)
 		if held.Kind == ast.NODE_IMPORT {
-			subject.Types[TYPE_NAMED] = child
+			subject.Types.Named = Named_Node(child)
 			hold_alias(subject, tree)
 		}
 		child = ast.Index(held.Next)
@@ -1468,10 +2283,10 @@ func take_aliases(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Holds the name of the import the named slot states where the print drops that name.
-func hold_alias(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "hold_alias.subject")
-	ast.Parse_State_Invariants(tree, "hold_alias.tree")
-	one := subject.Types[TYPE_NAMED]
+func hold_alias(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "hold_alias.subject")
+	ast.Parse_State_Handle_Invariants(tree, "hold_alias.tree")
+	one := ast.Index(subject.Types.Named)
 	name := ast.Index(ast.Node_At(tree, one).First_Child)
 	if name == ast.INDEX_ABSENT {
 		return
@@ -1483,31 +2298,31 @@ func hold_alias(subject *Printer, tree *ast.Parse_State) {
 	if path == ast.INDEX_ABSENT {
 		return
 	}
-	subject.Marks[MARK_TEXT] = ast.Node_At(tree, path).Token
+	subject.Marks.Text = Text_Mark(ast.Node_At(tree, path).Token)
 	take_package_name(subject, tree)
-	if len(subject.Sources[SOURCE_NAME]) == 0 {
+	if len(subject.Sources.Name) == 0 {
 		return
 	}
 	if bool(clobbers_name(subject, tree)) {
 		return
 	}
-	count := int(subject.Counts[COUNT_ALIAS])
+	count := int(subject.Counts.Values[COUNT_ALIAS])
 	if count >= IMPORT_COUNT_MAXIMUM {
 		return
 	}
-	subject.Aliases[count] = ast.Node_At(tree, name).Token
-	subject.Paths[count] = ast.Node_At(tree, path).Token
-	subject.Counts[COUNT_ALIAS] = Count(count + 1)
+	subject.Aliases.Values[count] = ast.Node_At(tree, name).Token
+	subject.Paths.Values[count] = ast.Node_At(tree, path).Token
+	subject.Counts.Values[COUNT_ALIAS] = Count(count + 1)
 }
 
 // Reports whether another import of the file already binds the name the named slot's import would
 // take once the print drops the name the author wrote for it.
-func clobbers_name(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func clobbers_name(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "clobbers_name.yes") }()
-	Printer_Invariants(subject, "clobbers_name.subject")
-	ast.Parse_State_Invariants(tree, "clobbers_name.tree")
-	named := subject.Sources[SOURCE_NAME]
-	one := subject.Types[TYPE_NAMED]
+	Printer_Handle_Invariants(subject, "clobbers_name.subject")
+	ast.Parse_State_Handle_Invariants(tree, "clobbers_name.tree")
+	named := subject.Sources.Name
+	one := ast.Index(subject.Types.Named)
 	file := ast.Index(ast.Node_At(tree, one).Parent)
 	child := ast.Index(ast.Node_At(tree, file).First_Child)
 	for range ast.NODE_COUNT_MAXIMUM {
@@ -1524,12 +2339,12 @@ func clobbers_name(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 					return false
 				}
 				node := ast.Node_At(tree, first)
-				source := subject.Sources[SOURCE_SLOT]
+				source := token.Source(subject.Sources.Source)
 				text := token.Text(source, ast.Token_At(tree, node.Token))
 				if node.Kind != ast.NODE_IMPORT_NAME {
-					subject.Marks[MARK_TEXT] = node.Token
+					subject.Marks.Text = Text_Mark(node.Token)
 					take_package_name(subject, tree)
-					text = subject.Sources[SOURCE_NAME]
+					text = token.Source(subject.Sources.Name)
 				}
 				if string(text) == string(named) {
 					return true
@@ -1542,9 +2357,9 @@ func clobbers_name(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Writes one import: the word, the name the file binds where it states one, and the path.
-func print_import(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_import.subject")
-	ast.Parse_State_Invariants(tree, "print_import.tree")
+func print_import(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_import.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_import.tree")
 	emit_indent(subject)
 	emit_word(subject, WORD_IMPORT)
 	emit_space(subject)
@@ -1570,9 +2385,9 @@ func print_import(subject *Printer, tree *ast.Parse_State) {
 // Reads the trivia the walk stands ahead of into the line the print stands on. A note the author
 // left on that line keeps it, thus the line closes holding everything the author wrote on it and
 // a note of a line of its own still opens one.
-func take_trivia(subject *Printer, tree *ast.Parse_State, open Boolean) {
-	Printer_Invariants(subject, "take_trivia.subject")
-	ast.Parse_State_Invariants(tree, "take_trivia.tree")
+func take_trivia(subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean) {
+	Printer_Handle_Invariants(subject, "take_trivia.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_trivia.tree")
 	Boolean_Invariants(open, "take_trivia.open")
 	stand := open
 	for bool(stand) {
@@ -1583,12 +2398,12 @@ func take_trivia(subject *Printer, tree *ast.Parse_State, open Boolean) {
 
 // Writes one constant or variable declaration: its names, the type they wear, and the values
 // behind them.
-func print_values(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_values.subject")
-	ast.Parse_State_Invariants(tree, "print_values.tree")
+func print_values(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_values.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_values.tree")
 	emit_indent(subject)
-	if !bool(subject.Flags[FLAG_SHORT]) {
-		emit_word(subject, subject.Words[WORD_SLOT])
+	if !bool(subject.Flags.Values[FLAG_SHORT]) {
+		emit_word(subject, Word(subject.Words.Value))
 		emit_space(subject)
 	}
 	open := descend(subject, tree)
@@ -1624,10 +2439,10 @@ func print_values(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Reports whether the node the walk stands on is a comment or an empty line.
-func trivia_kind(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func trivia_kind(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "trivia_kind.yes") }()
-	Printer_Invariants(subject, "trivia_kind.subject")
-	ast.Parse_State_Invariants(tree, "trivia_kind.tree")
+	Printer_Handle_Invariants(subject, "trivia_kind.subject")
+	ast.Parse_State_Handle_Invariants(tree, "trivia_kind.tree")
 	kind := node_kind(subject, tree)
 	if kind == ast.NODE_BLANK {
 		return true
@@ -1637,16 +2452,20 @@ func trivia_kind(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Writes one child of a value declaration: a name, the type behind the names, or a value.
 func print_value_child(
-	subject *Printer, tree *ast.Parse_State, named Boolean, valued Boolean, behind Boolean,
+	subject Printer_Handle,
+	tree ast.Parse_State_Handle,
+	named Boolean,
+	valued Boolean,
+	behind Boolean,
 ) {
-	Printer_Invariants(subject, "print_value_child.subject")
-	ast.Parse_State_Invariants(tree, "print_value_child.tree")
+	Printer_Handle_Invariants(subject, "print_value_child.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_value_child.tree")
 	Boolean_Invariants(named, "print_value_child.named")
 	Boolean_Invariants(valued, "print_value_child.valued")
 	Boolean_Invariants(behind, "print_value_child.behind")
 	if bool(valued) {
 		emit_separator(subject, !behind)
-		subject.Counts[COUNT_NEST] = 1
+		subject.Counts.Values[COUNT_NEST] = 1
 		print_expression(subject, tree)
 		return
 	}
@@ -1664,12 +2483,12 @@ func print_value_child(
 
 // Writes what stands between one value and the value or the name before it: the assignment sign
 // opens the run and a comma holds the rest of it.
-func emit_separator(subject *Printer, first Boolean) {
-	Printer_Invariants(subject, "emit_separator.subject")
+func emit_separator(subject Printer_Handle, first Boolean) {
+	Printer_Handle_Invariants(subject, "emit_separator.subject")
 	Boolean_Invariants(first, "emit_separator.first")
 	if bool(first) {
 		emit_space(subject)
-		if bool(subject.Flags[FLAG_SHORT]) {
+		if bool(subject.Flags.Values[FLAG_SHORT]) {
 			emit_byte(subject, ':')
 		}
 		emit_byte(subject, '=')
@@ -1693,9 +2512,9 @@ func names_one(named Boolean, valued Boolean) (yes Boolean) {
 
 // Writes one type declaration: the word, the name, the parameters it states, and the type behind
 // them.
-func print_type_declaration(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_type_declaration.subject")
-	ast.Parse_State_Invariants(tree, "print_type_declaration.tree")
+func print_type_declaration(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_type_declaration.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_type_declaration.tree")
 	emit_indent(subject)
 	emit_word(subject, WORD_TYPE)
 	emit_space(subject)
@@ -1742,13 +2561,13 @@ func print_type_declaration(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one type parameter and the bracket that opens the list where it stands first.
-func print_type_parameter(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_type_parameter.subject")
-	ast.Parse_State_Invariants(tree, "print_type_parameter.tree")
+func print_type_parameter(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_type_parameter.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_type_parameter.tree")
 	// The tree names every part of one type parameter the same way, thus the parts ahead of
 	// the last one state the names and the last one states the constraint they bind against.
 	part_count(subject, tree)
-	names := int(subject.Counts[COUNT_PART]) - 1
+	names := int(subject.Counts.Values[COUNT_PART]) - 1
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
@@ -1778,9 +2597,9 @@ func print_type_parameter(subject *Printer, tree *ast.Parse_State) {
 
 // Writes one function declaration: the word, the receiver where it states one, the name, the
 // parameters, the results, and the block behind them.
-func print_function(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_function.subject")
-	ast.Parse_State_Invariants(tree, "print_function.tree")
+func print_function(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_function.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_function.tree")
 	emit_indent(subject)
 	emit_word(subject, WORD_FUNCTION)
 	emit_space(subject)
@@ -1800,9 +2619,9 @@ func print_function(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes the receiver of a method, which stands between the word and the name.
-func print_receiver(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_receiver.subject")
-	ast.Parse_State_Invariants(tree, "print_receiver.tree")
+func print_receiver(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_receiver.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_receiver.tree")
 	emit_byte(subject, '(')
 	if bool(descend_part(subject, tree)) {
 		print_parameter(subject, tree)
@@ -1813,20 +2632,17 @@ func print_receiver(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes the parameters, the results, and the block of one signature.
-func print_signature(subject *Printer, tree *ast.Parse_State, open Boolean) {
-	Printer_Invariants(subject, "print_signature.subject")
-	ast.Parse_State_Invariants(tree, "print_signature.tree")
+func print_signature(subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean) {
+	Printer_Handle_Invariants(subject, "print_signature.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_signature.tree")
 	Boolean_Invariants(open, "print_signature.open")
 	// One signature binds the names a return of its body writes, and a signature inside that
 	// body binds its own, thus each print holds the names it found and hands back the ones
 	// the signature around it bound.
-	held := subject.Results
-	names := subject.Counts[COUNT_RESULT]
-	subject.Counts[COUNT_RESULT] = 0
-	defer func() {
-		subject.Results = held
-		subject.Counts[COUNT_RESULT] = names
-	}()
+	var held [RESULT_COUNT_MAXIMUM]ast.Token_Index
+	copy(held[:], subject.Results.Values)
+	names := subject.Counts.Values[COUNT_RESULT]
+	subject.Counts.Values[COUNT_RESULT] = 0
 	// A signature that runs the line past the widest one states one parameter to a line. The
 	// results answer to the parameters, thus the print reads the whole signature once and
 	// breaks the run that holds it.
@@ -1841,25 +2657,27 @@ func print_signature(subject *Printer, tree *ast.Parse_State, open Boolean) {
 		emit_space(subject)
 		// The body one function states closes up against its braces however many
 		// statements it holds.
-		subject.Flags[FLAG_BODY] = true
+		subject.Flags.Values[FLAG_BODY] = true
 		print_block(subject, tree)
 		stand = advance(subject, tree)
 	}
 	if bool(stand) {
 		close_line(subject, tree)
 		drain_trivia(subject, tree, stand)
-		subject.Flags[FLAG_LINE] = false
+		subject.Flags.Values[FLAG_LINE] = false
 	}
+	copy(subject.Results.Values, held[:])
+	subject.Counts.Values[COUNT_RESULT] = names
 }
 
 // Writes the type parameters and the parameters of one signature, and reports where the walk
 // stopped.
 func print_signature_parameters(
-	subject *Printer, tree *ast.Parse_State, open Boolean, over Boolean,
+	subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean, over Boolean,
 ) (stand Boolean) {
 	defer func() { Boolean_Invariants(stand, "print_signature_parameters.stand") }()
-	Printer_Invariants(subject, "print_signature_parameters.subject")
-	ast.Parse_State_Invariants(tree, "print_signature_parameters.tree")
+	Printer_Handle_Invariants(subject, "print_signature_parameters.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_signature_parameters.tree")
 	Boolean_Invariants(open, "print_signature_parameters.open")
 	Boolean_Invariants(over, "print_signature_parameters.over")
 	stand = print_type_parameters(subject, tree, open)
@@ -1869,7 +2687,7 @@ func print_signature_parameters(
 	opened := Boolean(false)
 	tail := Boolean(false)
 	carries := Boolean(false)
-	indent := subject.Counts[COUNT_INDENT]
+	indent := subject.Counts.Values[COUNT_INDENT]
 	for bool(stand) {
 		if node_kind(subject, tree) != ast.NODE_PARAMETER {
 			break
@@ -1893,7 +2711,7 @@ func print_signature_parameters(
 		stand = advance_part(subject, tree)
 	}
 	if bool(broken) {
-		subject.Counts[COUNT_COLUMN_INDENT] = indent
+		subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
 		// A signature the author broke across lines closes on a line of its own, thus the
 		// brace of the body stands where a reader looks for it rather than behind the last
 		// parameter.
@@ -1906,26 +2724,26 @@ func print_signature_parameters(
 // Reports whether the bracket that closes the list the walk stands in the first part of stands on
 // a line of its own. The list itself holds no node, thus the print counts brackets from the part
 // it stands on rather than from a bracket a node names.
-func closes_list(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func closes_list(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_list.yes") }()
-	Printer_Invariants(subject, "closes_list.subject")
-	ast.Parse_State_Invariants(tree, "closes_list.tree")
-	if bool(subject.Flags[FLAG_FLAT]) {
+	Printer_Handle_Invariants(subject, "closes_list.subject")
+	ast.Parse_State_Handle_Invariants(tree, "closes_list.tree")
+	if bool(subject.Flags.Values[FLAG_FLAT]) {
 		return false
 	}
 	depth := 1
 	leftmost_position(subject, tree)
-	opening := int(subject.Positions[POSITION_FOUND])
+	opening := int(subject.Positions.Found)
 	for position := opening; position <= ast.TOKEN_INDEX_MAXIMUM; position++ {
 		kind := ast.Token_At(tree, ast.Token_Index(position)).Kind
 		if kind == token.KIND_END_OF_FILE {
 			return false
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if !bool(closes_bracket(subject)) {
 			continue
 		}
@@ -1935,8 +2753,8 @@ func closes_list(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		behind := ast.Token_At(tree, ast.Token_Index(position-1))
 		ahead := ast.Token_At(tree, ast.Token_Index(position))
-		subject.Offsets[OFFSET_FROM] = token.Offset(int(behind.Offset) + int(behind.Size))
-		subject.Offsets[OFFSET_TO] = ahead.Offset
+		subject.Offsets.From = From_Offset(int(behind.Offset) + int(behind.Size))
+		subject.Offsets.To = To_Offset(ahead.Offset)
 		return feeds(subject)
 	}
 	return false
@@ -1945,21 +2763,21 @@ func closes_list(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Reports whether the brace of a body stands on the line the bracket of the list the walk stands
 // in the first part of closes. A signature the author broke across lines closes on a line of its
 // own, thus a list that carries the brace of the body opens one line for that brace.
-func closes_signature(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func closes_signature(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_signature.yes") }()
-	Printer_Invariants(subject, "closes_signature.subject")
-	ast.Parse_State_Invariants(tree, "closes_signature.tree")
-	count := int(tree.Token_Cursors[ast.CURSOR_TOKEN_COUNT])
+	Printer_Handle_Invariants(subject, "closes_signature.subject")
+	ast.Parse_State_Handle_Invariants(tree, "closes_signature.tree")
+	count := int(tree.Token_Cursors.Count)
 	depth := 1
 	leftmost_position(subject, tree)
 	closer := 0
-	for position := int(subject.Positions[POSITION_FOUND]); position < count; position++ {
+	for position := int(subject.Positions.Found); position < count; position++ {
 		kind := ast.Token_At(tree, ast.Token_Index(position)).Kind
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 			if depth == 0 {
@@ -1981,16 +2799,16 @@ func closes_signature(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		if one.Kind == token.KIND_BRACE_LEFT {
 			if depth == 0 {
 				from := int(behind.Offset) + int(behind.Size)
-				subject.Offsets[OFFSET_FROM] = token.Offset(from)
-				subject.Offsets[OFFSET_TO] = one.Offset
+				subject.Offsets.From = From_Offset(from)
+				subject.Offsets.To = To_Offset(one.Offset)
 				return !feeds(subject)
 			}
 		}
-		subject.Signs[SIGN_HELD] = one.Kind
+		subject.Signs.Held = Held_Sign(one.Kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = one.Kind
+		subject.Signs.Held = Held_Sign(one.Kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 		}
@@ -2000,11 +2818,11 @@ func closes_signature(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Writes the results of one signature and reports where the walk stopped.
 func print_signature_results(
-	subject *Printer, tree *ast.Parse_State, open Boolean,
+	subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean,
 ) (stand Boolean) {
 	defer func() { Boolean_Invariants(stand, "print_signature_results.stand") }()
-	Printer_Invariants(subject, "print_signature_results.subject")
-	ast.Parse_State_Invariants(tree, "print_signature_results.tree")
+	Printer_Handle_Invariants(subject, "print_signature_results.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_signature_results.tree")
 	Boolean_Invariants(open, "print_signature_results.open")
 	stand = open
 	// One bare result needs no parentheses to read, and the canonical form writes none.
@@ -2017,7 +2835,7 @@ func print_signature_results(
 	opened := Boolean(false)
 	tail := Boolean(false)
 	carries := Boolean(false)
-	indent := subject.Counts[COUNT_INDENT]
+	indent := subject.Counts.Values[COUNT_INDENT]
 	for bool(stand) {
 		if node_kind(subject, tree) != ast.NODE_RESULT {
 			break
@@ -2028,7 +2846,7 @@ func print_signature_results(
 			if !bool(bare) {
 				emit_byte(subject, '(')
 			}
-			indent = subject.Counts[COUNT_INDENT]
+			indent = subject.Counts.Values[COUNT_INDENT]
 			carries = closes_signature(subject, tree) || over
 			tail = closes_list(subject, tree)
 			print_first_break(subject, tree, here)
@@ -2047,7 +2865,7 @@ func print_signature_results(
 		stand = advance_part(subject, tree)
 	}
 	if bool(broken) {
-		subject.Counts[COUNT_COLUMN_INDENT] = indent
+		subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
 		close_broken(subject, tree, tail || carries)
 	}
 	if results > 0 {
@@ -2061,18 +2879,18 @@ func print_signature_results(
 // Writes the result names the signature bound behind a return that names no value of its own. A
 // statement of any other word names nothing to write, and a signature that binds no name states
 // nothing either, thus both write the word alone.
-func emit_result_names(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_result_names.subject")
-	ast.Parse_State_Invariants(tree, "emit_result_names.tree")
+func emit_result_names(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_result_names.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_result_names.tree")
 	if node_kind(subject, tree) != ast.NODE_RETURN {
 		return
 	}
-	for slot := range int(subject.Counts[COUNT_RESULT]) {
+	for slot := range int(subject.Counts.Values[COUNT_RESULT]) {
 		if slot > 0 {
 			emit_byte(subject, ',')
 		}
 		emit_space(subject)
-		subject.Marks[MARK_TEXT] = subject.Results[slot]
+		subject.Marks.Text = Text_Mark(subject.Results.Values[slot])
 		emit_text(subject, tree)
 	}
 }
@@ -2080,55 +2898,55 @@ func emit_result_names(subject *Printer, tree *ast.Parse_State) {
 // Reads the names one result of a signature binds into the run a return writes for it. A name
 // spelled as the blank names nothing a return can read, and a signature that binds more names
 // than the run holds states a form no return writes, thus either one empties the run.
-func take_result_names(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_result_names.subject")
-	ast.Parse_State_Invariants(tree, "take_result_names.tree")
+func take_result_names(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_result_names.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_result_names.tree")
 	if node_kind(subject, tree) != ast.NODE_RESULT {
 		return
 	}
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	open := descend_quiet(subject, tree)
 	for bool(open) {
 		if node_kind(subject, tree) != ast.NODE_PARAMETER_NAME {
 			break
 		}
 		if !bool(holds_result_name(subject, tree)) {
-			subject.Counts[COUNT_RESULT] = 0
+			subject.Counts.Values[COUNT_RESULT] = 0
 			break
 		}
 		open = advance_quiet(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 }
 
 // Writes the name the walk stands on into the run of result names, and reports whether the run
 // still holds every name the signature bound.
-func holds_result_name(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func holds_result_name(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_result_name.yes") }()
-	Printer_Invariants(subject, "holds_result_name.subject")
-	ast.Parse_State_Invariants(tree, "holds_result_name.tree")
-	names := int(subject.Counts[COUNT_RESULT])
+	Printer_Handle_Invariants(subject, "holds_result_name.subject")
+	ast.Parse_State_Handle_Invariants(tree, "holds_result_name.tree")
+	names := int(subject.Counts.Values[COUNT_RESULT])
 	if names >= RESULT_COUNT_MAXIMUM {
 		return false
 	}
-	one := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
-	source := subject.Sources[SOURCE_SLOT]
+	one := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Token
+	source := token.Source(subject.Sources.Source)
 	if string(token.Text(source, ast.Token_At(tree, one))) == "_" {
 		return false
 	}
-	subject.Results[names] = one
-	subject.Counts[COUNT_RESULT] = Count(names + 1)
+	subject.Results.Values[names] = one
+	subject.Counts.Values[COUNT_RESULT] = Count(names + 1)
 	return true
 }
 
 // Reports whether one signature states a single result that binds no name. Parentheses around
 // such a result state nothing the reader needs, thus the canonical form drops them.
-func bare_result(subject *Printer, tree *ast.Parse_State, open Boolean) (yes Boolean) {
+func bare_result(subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "bare_result.yes") }()
-	Printer_Invariants(subject, "bare_result.subject")
-	ast.Parse_State_Invariants(tree, "bare_result.tree")
+	Printer_Handle_Invariants(subject, "bare_result.subject")
+	ast.Parse_State_Handle_Invariants(tree, "bare_result.tree")
 	Boolean_Invariants(open, "bare_result.open")
 	if !bool(open) {
 		return false
@@ -2139,7 +2957,7 @@ func bare_result(subject *Printer, tree *ast.Parse_State, open Boolean) (yes Boo
 	if bool(named_result(subject, tree)) {
 		return false
 	}
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	alone := Boolean(true)
 	for bool(advance_quiet(subject, tree)) {
 		if node_kind(subject, tree) == ast.NODE_RESULT {
@@ -2147,15 +2965,15 @@ func bare_result(subject *Printer, tree *ast.Parse_State, open Boolean) (yes Boo
 			break
 		}
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
 	return alone
 }
 
 // Reports whether the result the walk stands on binds a name.
-func named_result(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func named_result(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "named_result.yes") }()
-	Printer_Invariants(subject, "named_result.subject")
-	ast.Parse_State_Invariants(tree, "named_result.tree")
+	Printer_Handle_Invariants(subject, "named_result.subject")
+	ast.Parse_State_Handle_Invariants(tree, "named_result.tree")
 	if !bool(descend_quiet(subject, tree)) {
 		return false
 	}
@@ -2165,9 +2983,9 @@ func named_result(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Writes one parameter or result: the name it states and the type behind it.
-func print_parameter(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_parameter.subject")
-	ast.Parse_State_Invariants(tree, "print_parameter.tree")
+func print_parameter(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_parameter.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_parameter.tree")
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
@@ -2210,19 +3028,19 @@ func print_parameter(subject *Printer, tree *ast.Parse_State) {
 
 // Writes one block: the brace that opens it, its statements one tab deeper, and the brace that
 // closes it on a line of its own.
-func print_block(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_block.subject")
-	ast.Parse_State_Invariants(tree, "print_block.tree")
+func print_block(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_block.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_block.tree")
 	if bool(spans_one_line(subject, tree)) {
 		print_inline_block(subject, tree)
 		return
 	}
 	closer_position(subject, tree)
-	subject.Positions[POSITION_FROM] = subject.Positions[POSITION_FOUND]
+	subject.Positions.From = From_Position(subject.Positions.Found)
 	// A body of one statement alone, and the body one function states, each close up against
 	// their braces; every other block keeps the lines the author wrote.
-	tight := subject.Flags[FLAG_BODY] || holds_one_part(subject, tree)
-	subject.Flags[FLAG_BODY] = false
+	tight := subject.Flags.Values[FLAG_BODY] || holds_one_part(subject, tree)
+	subject.Flags.Values[FLAG_BODY] = false
 	defer restore_tight(subject, hold_tight(subject, tight))
 	emit_byte(subject, '{')
 	open := descend(subject, tree)
@@ -2234,7 +3052,7 @@ func print_block(subject *Printer, tree *ast.Parse_State) {
 		open = advance(subject, tree)
 	}
 	close_line(subject, tree)
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
 	trail := Boolean(false)
 	for bool(open) {
 		// An empty line the scanner counted at a token the brace stands ahead of falls
@@ -2255,43 +3073,43 @@ func print_block(subject *Printer, tree *ast.Parse_State) {
 		}
 		// The statements that each carry a note behind them stand in one run, and every
 		// note of that run opens at one column.
-		if subject.Counts[COUNT_COLUMN] == 0 {
+		if subject.Counts.Values[COUNT_COLUMN] == 0 {
 			take_statement_column(subject, tree)
 		}
 		trails := trails_comment(subject, tree) && !spans_form(subject, tree)
 		print_statement(subject, tree)
 		if !bool(trails) {
-			subject.Counts[COUNT_COLUMN] = 0
+			subject.Counts.Values[COUNT_COLUMN] = 0
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_COLUMN] = 0
+	subject.Counts.Values[COUNT_COLUMN] = 0
 	if bool(entered) {
 		ascend(subject)
 	}
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] - 1
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] - 1
 	// The empty line a statement carried behind it stands against the closing brace, thus the
 	// body closes at its last statement and that line is never written.
-	subject.Flags[FLAG_BLANK] = false
+	subject.Flags.Values[FLAG_BLANK] = false
 	emit_indent(subject)
 	emit_byte(subject, '}')
 	if bool(trail) {
-		subject.Flags[FLAG_BLANK] = true
+		subject.Flags.Values[FLAG_BLANK] = true
 	}
 }
 
 // Reads the token the simple error check behind the statement the walk stands on opens at, and
 // names the first token of the file where no such check stands. The author writes the check of
 // an error against the call that states it, thus the empty line between the two states nothing.
-func take_check(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_check.subject")
-	ast.Parse_State_Invariants(tree, "take_check.tree")
-	subject.Positions[POSITION_CHECK] = POSITION_MINIMUM
+func take_check(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_check.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_check.tree")
+	subject.Positions.Check = POSITION_MINIMUM
 	if !bool(assigns_error(subject, tree)) {
 		return
 	}
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	// A note between the two forms names the check rather than the value it stands behind,
 	// thus the walk steps over the trivia to the statement the author wrote next.
 	open := advance(subject, tree)
@@ -2303,41 +3121,42 @@ func take_check(subject *Printer, tree *ast.Parse_State) {
 	}
 	if bool(open) {
 		if bool(states_check(subject, tree)) {
-			node := ast.Node_At(tree, subject.Nodes[depth])
-			subject.Positions[POSITION_CHECK] = Position(node.Token)
+			node := ast.Node_At(tree, subject.Nodes.Values[depth])
+			subject.Positions.Check = Check_Position(node.Token)
 		}
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 }
 
 // Reports whether the statement the walk stands on binds one error: an assignment of any run of
 // names whose last name spells the error, which is the run the check behind it reads.
-func assigns_error(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func assigns_error(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "assigns_error.yes") }()
-	Printer_Invariants(subject, "assigns_error.subject")
-	ast.Parse_State_Invariants(tree, "assigns_error.tree")
+	Printer_Handle_Invariants(subject, "assigns_error.subject")
+	ast.Parse_State_Handle_Invariants(tree, "assigns_error.tree")
 	kind := node_kind(subject, tree)
 	if kind != ast.NODE_ASSIGN {
 		if kind != ast.NODE_DEFINE {
 			return false
 		}
 	}
-	first := int(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	first := int(ast.Node_At(tree, index).Token)
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	named := Boolean(false)
 	open := descend(subject, tree)
 	for bool(open) {
 		if bool(opens_bound(subject, tree)) {
 			// The sign stands behind the last name of the run, thus the name the
 			// check reads stands two tokens ahead of the value it binds.
-			position := int(subject.Positions[POSITION_FOUND]) - 2
+			position := int(subject.Positions.Found) - 2
 			if position < first {
 				break
 			}
 			name := ast.Token_At(tree, ast.Token_Index(position))
-			if string(token.Text(subject.Sources[SOURCE_SLOT], name)) != "err" {
+			if string(token.Text(token.Source(subject.Sources.Source), name)) != "err" {
 				break
 			}
 			named = Boolean(position == first)
@@ -2349,19 +3168,19 @@ func assigns_error(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	return named
 }
 
 // Reads how many names of the assignment the walk stands on the print writes. A range clause
 // binds the names the author wrote to values the body may read, thus a name that reads nothing
 // states nothing and the canonical form drops it along with the sign it stood behind.
-func take_names(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_names.subject")
-	ast.Parse_State_Invariants(tree, "take_names.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+func take_names(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_names.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_names.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	names := 0
 	ranged := Boolean(false)
 	first := ast.Token_Index(0)
@@ -2373,7 +3192,7 @@ func take_names(subject *Printer, tree *ast.Parse_State) {
 			break
 		}
 		if !bool(trivia_kind(subject, tree)) {
-			one := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+			one := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 			last = ast.Node_At(tree, one).Token
 			if names == 0 {
 				first = last
@@ -2382,10 +3201,10 @@ func take_names(subject *Printer, tree *ast.Parse_State) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	if bool(ranged) {
-		source := subject.Sources[SOURCE_SLOT]
+		source := token.Source(subject.Sources.Source)
 		if names == 2 {
 			if string(token.Text(source, ast.Token_At(tree, last))) == "_" {
 				names = 1
@@ -2397,54 +3216,54 @@ func take_names(subject *Printer, tree *ast.Parse_State) {
 			}
 		}
 	}
-	subject.Counts[COUNT_NAME] = Count(names)
+	subject.Counts.Values[COUNT_NAME] = Count(names)
 }
 
 // Reads the token the values of the assignment the walk stands on open at, and names the first
 // token of the file where the statement binds no values at all.
-func take_bound(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_bound.subject")
-	ast.Parse_State_Invariants(tree, "take_bound.tree")
-	subject.Positions[POSITION_BOUND] = POSITION_MINIMUM
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+func take_bound(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_bound.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_bound.tree")
+	subject.Positions.Bound = POSITION_MINIMUM
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	open := descend(subject, tree)
 	for bool(open) {
 		if bool(opens_bound(subject, tree)) {
-			subject.Positions[POSITION_BOUND] = subject.Positions[POSITION_FOUND]
+			subject.Positions.Bound = Bound_Position(subject.Positions.Found)
 			break
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 }
 
 // Reports whether the empty line the walk stands on stands between the sign of an assignment and
 // the value that sign binds, which is a line that states nothing: the value stands on the line
 // the sign closes.
-func stands_behind_sign(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func stands_behind_sign(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "stands_behind_sign.yes") }()
-	Printer_Invariants(subject, "stands_behind_sign.subject")
-	ast.Parse_State_Invariants(tree, "stands_behind_sign.tree")
+	Printer_Handle_Invariants(subject, "stands_behind_sign.subject")
+	ast.Parse_State_Handle_Invariants(tree, "stands_behind_sign.tree")
 	if node_kind(subject, tree) != ast.NODE_BLANK {
 		return false
 	}
-	if subject.Positions[POSITION_BOUND] == POSITION_MINIMUM {
+	if subject.Positions.Bound == POSITION_MINIMUM {
 		return false
 	}
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
-	return Boolean(Position(node.Token) == subject.Positions[POSITION_BOUND])
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
+	return Boolean(Bound_Position(node.Token) == subject.Positions.Bound)
 }
 
 // Reports whether the token before the node the walk stands on binds the names of a run to their
 // values, by either sign the source states for it.
-func opens_bound(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func opens_bound(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_bound.yes") }()
-	Printer_Invariants(subject, "opens_bound.subject")
-	ast.Parse_State_Invariants(tree, "opens_bound.tree")
+	Printer_Handle_Invariants(subject, "opens_bound.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_bound.tree")
 	leftmost_position(subject, tree)
-	position := subject.Positions[POSITION_FOUND]
+	position := subject.Positions.Found
 	if position == POSITION_MINIMUM {
 		return false
 	}
@@ -2458,18 +3277,19 @@ func opens_bound(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Reports whether the statement the walk stands on states the simple check of one error: the
 // words that read the error against nothing and the block behind them. An initializer, another
 // branch, or a condition of any other spelling each state a check the empty line still opens.
-func states_check(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func states_check(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "states_check.yes") }()
-	Printer_Invariants(subject, "states_check.subject")
-	ast.Parse_State_Invariants(tree, "states_check.tree")
+	Printer_Handle_Invariants(subject, "states_check.subject")
+	ast.Parse_State_Handle_Invariants(tree, "states_check.tree")
 	if node_kind(subject, tree) != ast.NODE_IF {
 		return false
 	}
-	position := int(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
-	if position+4 >= int(tree.Token_Cursors[ast.CURSOR_TOKEN_COUNT]) {
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	position := int(ast.Node_At(tree, index).Token)
+	if position+4 >= int(tree.Token_Cursors.Count) {
 		return false
 	}
-	source := subject.Sources[SOURCE_SLOT]
+	source := token.Source(subject.Sources.Source)
 	if string(token.Text(source, ast.Token_At(tree, ast.Token_Index(position+1)))) != "err" {
 		return false
 	}
@@ -2488,12 +3308,12 @@ func states_check(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Reports whether the form the walk stands on holds two parts alone, counting neither the empty
 // lines nor the notes standing between them. A check of two parts states a condition and a block
 // and no branch behind them.
-func holds_two_parts(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func holds_two_parts(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_two_parts.yes") }()
-	Printer_Invariants(subject, "holds_two_parts.subject")
-	ast.Parse_State_Invariants(tree, "holds_two_parts.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	Printer_Handle_Invariants(subject, "holds_two_parts.subject")
+	ast.Parse_State_Handle_Invariants(tree, "holds_two_parts.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	parts := 0
 	open := descend(subject, tree)
 	for bool(open) {
@@ -2502,29 +3322,29 @@ func holds_two_parts(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	return Boolean(parts == 2)
 }
 
 // Reports whether the empty line the walk stands on stands ahead of the simple error check the
 // statement that holds it opens.
-func stands_before_check(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func stands_before_check(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "stands_before_check.yes") }()
-	Printer_Invariants(subject, "stands_before_check.subject")
-	ast.Parse_State_Invariants(tree, "stands_before_check.tree")
+	Printer_Handle_Invariants(subject, "stands_before_check.subject")
+	ast.Parse_State_Handle_Invariants(tree, "stands_before_check.tree")
 	if node_kind(subject, tree) != ast.NODE_BLANK {
 		return false
 	}
-	if subject.Positions[POSITION_CHECK] == POSITION_MINIMUM {
+	if subject.Positions.Check == POSITION_MINIMUM {
 		return false
 	}
 	// The empty line names the token ahead of it. A semicolon a line feed stands for spans no
 	// byte, and a note between the two forms stands with the check rather than with the value
 	// the check reads, thus the read steps over both to the word the check opens with.
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
 	position := int(node.Token)
-	count := int(tree.Token_Cursors[ast.CURSOR_TOKEN_COUNT])
+	count := int(tree.Token_Cursors.Count)
 	for position < count {
 		one := ast.Token_At(tree, ast.Token_Index(position))
 		held := one.Kind == token.KIND_COMMENT
@@ -2536,28 +3356,28 @@ func stands_before_check(subject *Printer, tree *ast.Parse_State) (yes Boolean) 
 		}
 		position = position + 1
 	}
-	return Boolean(Position(position) == subject.Positions[POSITION_CHECK])
+	return Boolean(Check_Position(position) == subject.Positions.Check)
 }
 
 // Reports whether the node the walk stands on is an empty line the scanner counted behind the
 // brace that closes the block rather than inside it.
-func closes_block(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func closes_block(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_block.yes") }()
-	Printer_Invariants(subject, "closes_block.subject")
-	ast.Parse_State_Invariants(tree, "closes_block.tree")
+	Printer_Handle_Invariants(subject, "closes_block.subject")
+	ast.Parse_State_Handle_Invariants(tree, "closes_block.tree")
 	if node_kind(subject, tree) != ast.NODE_BLANK {
 		return false
 	}
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
 	// An empty line the scanner counted at the last brace stands inside the block, and one
 	// it counted at a token behind that brace stands behind the block.
 	return Boolean(ast.Token_At(tree, node.Token).Kind != token.KIND_BRACE_RIGHT)
 }
 
 // Writes one statement of a block, on a line of its own.
-func print_statement(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_statement.subject")
-	ast.Parse_State_Invariants(tree, "print_statement.tree")
+func print_statement(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_statement.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_statement.tree")
 	take_check(subject, tree)
 	switch node_kind(subject, tree) {
 	case ast.NODE_BLANK:
@@ -2585,14 +3405,16 @@ func print_statement(subject *Printer, tree *ast.Parse_State) {
 	}
 	// A statement that the author broke across lines indents its continuations, and the tabs
 	// it owed stand again at the statement behind it.
-	held := subject.Counts[COUNT_INDENT]
-	subject.Flags[FLAG_BROKEN] = false
+	held := subject.Counts.Values[COUNT_INDENT]
+	subject.Flags.Values[FLAG_BROKEN] = false
 	// A label names the statement behind it rather than stand inside it, thus it stands one
 	// tab shallower than the statements around it and closes no line of its own.
-	labelled := node_kind(subject, tree) == ast.NODE_LABEL
+	kind := node_kind(subject, tree)
+	labelled := kind == ast.NODE_LABEL
 	if labelled {
-		if subject.Counts[COUNT_INDENT] > 0 {
-			subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] - 1
+		indent := subject.Counts.Values[COUNT_INDENT]
+		if indent > 0 {
+			subject.Counts.Values[COUNT_INDENT] = indent - 1
 		}
 	}
 	// A clause closes its own line, because the comments behind its body take lines of their
@@ -2603,17 +3425,17 @@ func print_statement(subject *Printer, tree *ast.Parse_State) {
 	if !closed {
 		close_line(subject, tree)
 	}
-	subject.Counts[COUNT_INDENT] = held
-	subject.Flags[FLAG_BROKEN] = false
+	subject.Counts.Values[COUNT_INDENT] = held
+	subject.Flags.Values[FLAG_BROKEN] = false
 }
 
 // Writes the form of one statement, which every kind states its own way.
-func print_statement_form(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_statement_form.subject")
-	ast.Parse_State_Invariants(tree, "print_statement_form.tree")
+func print_statement_form(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_statement_form.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_statement_form.tree")
 	// A statement opens a form of its own, thus every sign it states spaces the way a
 	// statement spaces however deep the form that holds the statement stands.
-	subject.Counts[COUNT_NEST] = 1
+	subject.Counts.Values[COUNT_NEST] = 1
 	switch node_kind(subject, tree) {
 	case ast.NODE_ASSIGN, ast.NODE_DEFINE, ast.NODE_OPERATION_ASSIGN, ast.NODE_SEND:
 		print_assignment(subject, tree)
@@ -2637,9 +3459,9 @@ func print_statement_form(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes the expression one statement stands for, which is the one child it holds.
-func print_inner(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_inner.subject")
-	ast.Parse_State_Invariants(tree, "print_inner.tree")
+func print_inner(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_inner.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_inner.tree")
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
@@ -2649,40 +3471,40 @@ func print_inner(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one local declaration, which states the same form a file-level one does.
-func print_declaration_statement(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_declaration_statement.subject")
-	ast.Parse_State_Invariants(tree, "print_declaration_statement.tree")
+func print_declaration_statement(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_declaration_statement.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_declaration_statement.tree")
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
-	held_short := subject.Flags[FLAG_SHORT]
-	subject.Flags[FLAG_SHORT] = states_short(subject, tree)
-	defer func() { subject.Flags[FLAG_SHORT] = held_short }()
+	held_short := subject.Flags.Values[FLAG_SHORT]
+	subject.Flags.Values[FLAG_SHORT] = states_short(subject, tree)
 	print_declaration(subject, tree)
 	finish_parts(subject, tree)
 	// The declaration closed its own line, thus the notes the walk stepped over behind it
 	// take lines of their own rather than the end of the line the statement behind it writes.
 	close_debts(subject, tree)
 	ascend(subject)
+	subject.Flags.Values[FLAG_SHORT] = held_short
 }
 
 // Writes one assignment: the values on its left, the sign the source states, and the values on
 // its right.
-func print_assignment(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_assignment.subject")
-	ast.Parse_State_Invariants(tree, "print_assignment.tree")
+func print_assignment(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_assignment.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_assignment.tree")
 	// An assignment of a run of values against a run of names states each value as one part of
 	// a wider form, thus its signs close up the way the parts of any other form do.
-	nest := subject.Counts[COUNT_NEST]
+	nest := subject.Counts.Values[COUNT_NEST]
 	if bool(assigns_runs(subject, tree)) {
 		nest = nest + 1
 	}
-	held_bound := subject.Positions[POSITION_BOUND]
+	held_bound := subject.Positions.Bound
 	take_bound(subject, tree)
-	defer func() { subject.Positions[POSITION_BOUND] = held_bound }()
 	take_names(subject, tree)
-	names := int(subject.Counts[COUNT_NAME])
+	names := int(subject.Counts.Values[COUNT_NAME])
 	if !bool(descend_part(subject, tree)) {
+		subject.Positions.Bound = held_bound
 		return
 	}
 	// The tree holds no node for the sign of an assignment, thus the print reads it from the
@@ -2691,8 +3513,8 @@ func print_assignment(subject *Printer, tree *ast.Parse_State) {
 	open := Boolean(true)
 	// The names on the left indent their own continuations, and the values on the right answer
 	// to the statement rather than to the line the names ended on.
-	indent := subject.Counts[COUNT_INDENT]
-	marked := subject.Flags[FLAG_BROKEN]
+	indent := subject.Counts.Values[COUNT_INDENT]
+	marked := subject.Flags.Values[FLAG_BROKEN]
 	for bool(open) {
 		right := opens_right(subject, tree)
 		// A name a range clause binds to nothing states nothing, thus the print steps
@@ -2708,8 +3530,8 @@ func print_assignment(subject *Printer, tree *ast.Parse_State) {
 				emit_space(subject)
 				emit_sign(subject, tree)
 			}
-			subject.Counts[COUNT_INDENT] = indent
-			subject.Flags[FLAG_BROKEN] = marked
+			subject.Counts.Values[COUNT_INDENT] = indent
+			subject.Flags.Values[FLAG_BROKEN] = marked
 			values = 0
 		}
 		if values > 0 {
@@ -2724,21 +3546,24 @@ func print_assignment(subject *Printer, tree *ast.Parse_State) {
 			behind = Boolean(names > 0)
 		}
 		open_value(subject, tree, behind, right)
-		subject.Counts[COUNT_NEST] = nest
+		subject.Counts.Values[COUNT_NEST] = nest
 		print_expression(subject, tree)
 		values = values + 1
 		open = advance_part(subject, tree)
 	}
 	finish_parts(subject, tree)
 	ascend(subject)
+	subject.Positions.Bound = held_bound
 }
 
 // Opens the line one value of an assignment stands on: the break the author wrote ahead of it, or
 // the space that holds it against the value before it. The value a sign binds stands on the line
 // the sign closes, thus a break the author wrote behind the sign itself states nothing at all.
-func open_value(subject *Printer, tree *ast.Parse_State, behind Boolean, right Boolean) {
-	Printer_Invariants(subject, "open_value.subject")
-	ast.Parse_State_Invariants(tree, "open_value.tree")
+func open_value(
+	subject Printer_Handle, tree ast.Parse_State_Handle, behind Boolean, right Boolean,
+) {
+	Printer_Handle_Invariants(subject, "open_value.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_value.tree")
 	Boolean_Invariants(behind, "open_value.behind")
 	Boolean_Invariants(right, "open_value.right")
 	here := Boolean(false)
@@ -2757,10 +3582,10 @@ func open_value(subject *Printer, tree *ast.Parse_State, behind Boolean, right B
 
 // Names the run position of the first token the node the walk stands on spans. A node names the
 // token its own form opens with, thus an operation names its sign and never its left value.
-func leftmost_position(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "leftmost_position.subject")
-	ast.Parse_State_Invariants(tree, "leftmost_position.tree")
-	index := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+func leftmost_position(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "leftmost_position.subject")
+	ast.Parse_State_Handle_Invariants(tree, "leftmost_position.tree")
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	smallest := Position(ast.Node_At(tree, index).Token)
 	for range DEPTH_MAXIMUM {
 		child := ast.Node_At(tree, index).First_Child
@@ -2772,29 +3597,29 @@ func leftmost_position(subject *Printer, tree *ast.Parse_State) {
 			smallest = Position(ast.Node_At(tree, index).Token)
 		}
 	}
-	subject.Positions[POSITION_FOUND] = smallest
+	subject.Positions.Found = Found_Position(smallest)
 }
 
 // Reports whether the node the walk stands on opens the right side of an assignment, which the
 // sign that stands ahead of it states.
-func opens_right(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func opens_right(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_right.yes") }()
-	Printer_Invariants(subject, "opens_right.subject")
-	ast.Parse_State_Invariants(tree, "opens_right.tree")
+	Printer_Handle_Invariants(subject, "opens_right.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_right.tree")
 	leftmost_position(subject, tree)
-	position := subject.Positions[POSITION_FOUND]
+	position := subject.Positions.Found
 	if position == 0 {
 		return false
 	}
-	subject.Signs[SIGN_HELD] = ast.Token_At(tree, ast.Token_Index(position-1)).Kind
+	subject.Signs.Held = Held_Sign(ast.Token_At(tree, ast.Token_Index(position-1)).Kind)
 	return signs(subject)
 }
 
 // Reports whether one class names a sign an assignment or a send states.
-func signs(subject *Printer) (yes Boolean) {
+func signs(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "signs.yes") }()
-	Printer_Invariants(subject, "signs.subject")
-	switch subject.Signs[SIGN_HELD] {
+	Printer_Handle_Invariants(subject, "signs.subject")
+	switch token.Kind(subject.Signs.Held) {
 	case token.KIND_ASSIGN, token.KIND_DEFINE, token.KIND_ARROW, token.KIND_PLUS_ASSIGN,
 		token.KIND_MINUS_ASSIGN, token.KIND_STAR_ASSIGN, token.KIND_SLASH_ASSIGN,
 		token.KIND_PERCENT_ASSIGN, token.KIND_AND_ASSIGN, token.KIND_OR_ASSIGN,
@@ -2806,13 +3631,13 @@ func signs(subject *Printer) (yes Boolean) {
 }
 
 // Writes the sign that stands ahead of the node the walk stands on.
-func emit_sign(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_sign.subject")
-	ast.Parse_State_Invariants(tree, "emit_sign.tree")
+func emit_sign(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_sign.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_sign.tree")
 	leftmost_position(subject, tree)
-	position := subject.Positions[POSITION_FOUND]
-	text := token.Text(
-		subject.Sources[SOURCE_SLOT], ast.Token_At(tree, ast.Token_Index(position-1)))
+	position := subject.Positions.Found
+	one := ast.Token_At(tree, ast.Token_Index(position-1))
+	text := token.Text(token.Source(subject.Sources.Source), one)
 	for index := range len(text) {
 		emit_byte(subject, Symbol(text[index]))
 	}
@@ -2833,9 +3658,9 @@ func Position_Invariants(value Position, namespace aver.Namespace) {
 
 // Writes one increment or decrement: the value and the two signs behind it. The tree holds one
 // node for the whole step, thus its class states which pair of signs the print owes.
-func print_step(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_step.subject")
-	ast.Parse_State_Invariants(tree, "print_step.tree")
+func print_step(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_step.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_step.tree")
 	value := byte('+')
 	if node_kind(subject, tree) == ast.NODE_DECREMENT {
 		value = '-'
@@ -2852,9 +3677,9 @@ func print_step(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one statement that opens with a word: the word the source states and the values behind it.
-func print_word_statement(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_word_statement.subject")
-	ast.Parse_State_Invariants(tree, "print_word_statement.tree")
+func print_word_statement(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_word_statement.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_word_statement.tree")
 	emit_token(subject, tree)
 	open := descend_part(subject, tree)
 	entered := open
@@ -2892,34 +3717,34 @@ func print_word_statement(subject *Printer, tree *ast.Parse_State) {
 
 // Writes one clause statement: the word it opens with, the header it states, and the block behind
 // it.
-func print_clause(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_clause.subject")
-	ast.Parse_State_Invariants(tree, "print_clause.tree")
+func print_clause(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_clause.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_clause.tree")
 	// The tree holds no node for the word an else branch opens with, thus the print writes it
 	// wherever a second branch stands behind the first.
 	kind := node_kind(subject, tree)
-	subject.Kinds[KIND_CLAUSE] = kind
+	subject.Kinds.Clause = Clause_Kind(kind)
 	// A body of one case alone closes up against the braces that hold it, the way a body of
 	// one statement does; a body of more cases keeps the lines the author wrote.
 	defer restore_tight(subject, hold_tight(subject, holds_one_case(subject, tree)))
 	// The tree drops the semicolons a clause states between its headers, and a loop that
 	// leaves a header out states a semicolon the tree names nothing at all for, thus the print
 	// reads them from the token run, opening at the word the clause states.
-	cursor := Position(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	cursor := Position(ast.Node_At(tree, index).Token)
 	emit_token(subject, tree)
 	open := descend_part(subject, tree)
 	entered := open
-	bodies := 0
-	cases := 0
+	bodies, cases := 0, 0
 	// A header the author broke across lines indents its continuations, and the body it opens
 	// stands at the tabs the clause itself opened at.
-	indent := subject.Counts[COUNT_INDENT]
+	indent := subject.Counts.Values[COUNT_INDENT]
 	headers := 0
 	closed := false
 	for bool(open) {
 		// A clause inside this one names itself in the slot while it prints, thus the
 		// slot states this clause again before the branch of this clause is read.
-		subject.Kinds[KIND_CLAUSE] = kind
+		subject.Kinds.Clause = Clause_Kind(kind)
 		if bool(opens_branch(subject, tree, Boolean(bodies > 0))) {
 			emit_space(subject)
 			emit_word(subject, WORD_ELSE)
@@ -2934,25 +3759,25 @@ func print_clause(subject *Printer, tree *ast.Parse_State) {
 			continue
 		}
 		if bool(opens_case(subject, tree)) {
-			subject.Positions[POSITION_FROM] = cursor
-			subject.Counts[COUNT_COLUMN_INDENT] = indent
+			subject.Positions.From = From_Position(cursor)
+			subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
 			print_switch_case(subject, tree, Boolean(cases == 0))
 			cases = cases + 1
 			open = advance_part(subject, tree)
 			continue
 		}
 		if node_kind(subject, tree) == ast.NODE_BLOCK {
-			subject.Positions[POSITION_FROM] = cursor
-			subject.Counts[COUNT_COLUMN_INDENT] = indent
+			subject.Positions.From = From_Position(cursor)
+			subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
 			open_body(subject, tree)
 			print_block(subject, tree)
 			bodies = bodies + 1
 			open = advance_part(subject, tree)
 			continue
 		}
-		subject.Positions[POSITION_FROM] = cursor
+		subject.Positions.From = From_Position(cursor)
 		print_header(subject, tree, Boolean(headers == 0))
-		cursor = subject.Positions[POSITION_FROM]
+		cursor = Position(subject.Positions.From)
 		headers = headers + 1
 		open = advance_part(subject, tree)
 	}
@@ -2965,9 +3790,11 @@ func print_clause(subject *Printer, tree *ast.Parse_State) {
 
 // Closes one clause: the brace its cases stand between, the line it wrote, and the comments and
 // the empty line a branch that closed its own line left standing.
-func close_clause(subject *Printer, tree *ast.Parse_State, cased Boolean, closed Boolean) {
-	Printer_Invariants(subject, "close_clause.subject")
-	ast.Parse_State_Invariants(tree, "close_clause.tree")
+func close_clause(
+	subject Printer_Handle, tree ast.Parse_State_Handle, cased Boolean, closed Boolean,
+) {
+	Printer_Handle_Invariants(subject, "close_clause.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_clause.tree")
 	Boolean_Invariants(cased, "close_clause.cased")
 	Boolean_Invariants(closed, "close_clause.closed")
 	if bool(cased) {
@@ -2984,26 +3811,26 @@ func close_clause(subject *Printer, tree *ast.Parse_State, cased Boolean, closed
 // Writes what a closed line still owes: the comments the walk stepped over and the empty line
 // behind them. A branch that closed its own line leaves them stand, thus the clause that holds
 // it writes them rather than the statement behind it.
-func close_debts(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "close_debts.subject")
-	ast.Parse_State_Invariants(tree, "close_debts.tree")
-	if subject.Counts[COUNT_COMMENT] > 0 {
+func close_debts(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "close_debts.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_debts.tree")
+	if subject.Counts.Values[COUNT_COMMENT] > 0 {
 		flush_comments(subject, tree)
 		emit_line(subject)
 	}
-	if bool(subject.Flags[FLAG_BLANK]) {
+	if bool(subject.Flags.Values[FLAG_BLANK]) {
 		emit_line(subject)
-		subject.Flags[FLAG_BLANK] = false
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Flags.Values[FLAG_BLANK] = false
+		subject.Counts.Values[COUNT_WIDTH] = 0
 	}
 }
 
 // Reports whether one statement closes the line it stands on of its own. A clause writes a body
 // and the comments behind that body, thus the statement that holds it closes no line for it.
-func closes_own_line(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func closes_own_line(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_own_line.yes") }()
-	Printer_Invariants(subject, "closes_own_line.subject")
-	ast.Parse_State_Invariants(tree, "closes_own_line.tree")
+	Printer_Handle_Invariants(subject, "closes_own_line.subject")
+	ast.Parse_State_Handle_Invariants(tree, "closes_own_line.tree")
 	kind := node_kind(subject, tree)
 	if kind == ast.NODE_IF {
 		return true
@@ -3022,10 +3849,10 @@ func closes_own_line(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Writes one case of a switch or a select: the word, the values it names, and the statements it
 // holds one tab deeper.
-func print_case(subject *Printer, tree *ast.Parse_State) (closed Boolean) {
+func print_case(subject Printer_Handle, tree ast.Parse_State_Handle) (closed Boolean) {
 	defer func() { Boolean_Invariants(closed, "print_case.closed") }()
-	Printer_Invariants(subject, "print_case.subject")
-	ast.Parse_State_Invariants(tree, "print_case.tree")
+	Printer_Handle_Invariants(subject, "print_case.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_case.tree")
 	body := false
 	printed := false
 	// The tree names a default case by the colon it stands on and holds no node for the word
@@ -3037,8 +3864,8 @@ func print_case(subject *Printer, tree *ast.Parse_State) (closed Boolean) {
 		emit_token(subject, tree)
 	}
 	colon_position(subject, tree)
-	colon := subject.Positions[POSITION_FOUND]
-	subject.Positions[POSITION_FROM] = colon
+	colon := subject.Positions.Found
+	subject.Positions.From = From_Position(colon)
 	// A case of few values reads on one line however the author wrote it, thus the print
 	// closes up a head that fits and keeps the lines of a head that does not.
 	flat := fits_case(subject, tree)
@@ -3047,7 +3874,7 @@ func print_case(subject *Printer, tree *ast.Parse_State) (closed Boolean) {
 	for bool(open) {
 		// The colon closes the values a case stands for, thus every child behind it
 		// states a statement of the body, a note the body opens with counted.
-		subject.Positions[POSITION_FROM] = colon
+		subject.Positions.From = From_Position(colon)
 		if !body {
 			body = bool(opens_body(subject, tree))
 		}
@@ -3072,36 +3899,36 @@ func print_case(subject *Printer, tree *ast.Parse_State) (closed Boolean) {
 		ascend(subject)
 	}
 	if printed {
-		subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] - 1
+		subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] - 1
 	}
 	return Boolean(printed)
 }
 
 // Writes one case of a switch on the line it opens. A case that holds statements closes its own
 // line, thus the print owes a line only to a case that holds none.
-func print_case_line(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_case_line.subject")
-	ast.Parse_State_Invariants(tree, "print_case_line.tree")
-	held := subject.Counts[COUNT_INDENT]
-	subject.Flags[FLAG_BROKEN] = false
+func print_case_line(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_case_line.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_case_line.tree")
+	held := subject.Counts.Values[COUNT_INDENT]
+	subject.Flags.Values[FLAG_BROKEN] = false
 	emit_indent(subject)
 	closed := print_case(subject, tree)
 	if !bool(closed) {
 		close_line(subject, tree)
 	}
-	subject.Counts[COUNT_INDENT] = held
-	subject.Flags[FLAG_BROKEN] = false
+	subject.Counts.Values[COUNT_INDENT] = held
+	subject.Flags.Values[FLAG_BROKEN] = false
 }
 
 // Writes one statement of a case body and opens the body where it stands first.
-func print_case_body(subject *Printer, tree *ast.Parse_State, open Boolean) {
-	Printer_Invariants(subject, "print_case_body.subject")
-	ast.Parse_State_Invariants(tree, "print_case_body.tree")
+func print_case_body(subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean) {
+	Printer_Handle_Invariants(subject, "print_case_body.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_case_body.tree")
 	Boolean_Invariants(open, "print_case_body.open")
 	if !bool(open) {
 		emit_byte(subject, ':')
 		emit_line(subject)
-		subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
+		subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
 	}
 	print_statement(subject, tree)
 }
@@ -3109,34 +3936,34 @@ func print_case_body(subject *Printer, tree *ast.Parse_State, open Boolean) {
 // Reports whether the node the walk stands on opens the body of a case rather than one more value
 // the case names. A colon stands between the values and the body, thus the token behind one
 // states which side of it a node stands on.
-func opens_body(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func opens_body(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_body.yes") }()
-	Printer_Invariants(subject, "opens_body.subject")
-	ast.Parse_State_Invariants(tree, "opens_body.tree")
-	colon := subject.Positions[POSITION_FROM]
+	Printer_Handle_Invariants(subject, "opens_body.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_body.tree")
+	colon := subject.Positions.From
 	leftmost_position(subject, tree)
-	return Boolean(subject.Positions[POSITION_FOUND] > colon)
+	return Boolean(subject.Positions.Found > Found_Position(colon))
 }
 
 // Names the run position of the colon that closes the values one case states. A note may stand
 // between that colon and the first statement of the body, thus the print reads the colon from the
 // token run rather than from the token ahead of a statement.
-func colon_position(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "colon_position.subject")
-	ast.Parse_State_Invariants(tree, "colon_position.tree")
+func colon_position(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "colon_position.subject")
+	ast.Parse_State_Handle_Invariants(tree, "colon_position.tree")
 	depth := 0
-	opening := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
-	subject.Positions[POSITION_FOUND] = 0
+	opening := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Token
+	subject.Positions.Found = 0
 	for offset := int(opening); offset <= ast.TOKEN_INDEX_MAXIMUM; offset++ {
 		kind := ast.Token_At(tree, ast.Token_Index(offset)).Kind
 		if kind == token.KIND_END_OF_FILE {
 			return
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 		}
@@ -3144,16 +3971,16 @@ func colon_position(subject *Printer, tree *ast.Parse_State) {
 			continue
 		}
 		if depth == 0 {
-			subject.Positions[POSITION_FOUND] = Position(offset)
+			subject.Positions.Found = Found_Position(offset)
 			return
 		}
 	}
 }
 
 // Writes one label and the statement it names.
-func print_label(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_label.subject")
-	ast.Parse_State_Invariants(tree, "print_label.tree")
+func print_label(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_label.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_label.tree")
 	emit_token(subject, tree)
 	emit_byte(subject, ':')
 	if !bool(descend_part(subject, tree)) {
@@ -3165,7 +3992,7 @@ func print_label(subject *Printer, tree *ast.Parse_State) {
 	stand := advance_part(subject, tree)
 	close_line(subject, tree)
 	if bool(stand) {
-		subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
+		subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
 		print_statement(subject, tree)
 		// The statement closed its line, thus every comment behind it takes a line of
 		// its own rather than the end of a line already written.
@@ -3178,9 +4005,9 @@ func print_label(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one expression, which every kind states its own way.
-func print_expression(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_expression.subject")
-	ast.Parse_State_Invariants(tree, "print_expression.tree")
+func print_expression(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_expression.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_expression.tree")
 	switch node_kind(subject, tree) {
 	case ast.NODE_BINARY:
 		print_binary(subject, tree)
@@ -3228,9 +4055,9 @@ func Wrap_Invariants(value Wrap, namespace aver.Namespace) {
 }
 
 // Writes one form that wraps its parts in brackets: a call, an index, or a grouping.
-func print_wrapped(subject *Printer, tree *ast.Parse_State, wrap Wrap) {
-	Printer_Invariants(subject, "print_wrapped.subject")
-	ast.Parse_State_Invariants(tree, "print_wrapped.tree")
+func print_wrapped(subject Printer_Handle, tree ast.Parse_State_Handle, wrap Wrap) {
+	Printer_Handle_Invariants(subject, "print_wrapped.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_wrapped.tree")
 	Wrap_Invariants(wrap, "print_wrapped.wrap")
 	// A call and an index state parts of an expression, not a body, thus an empty line the
 	// author left against their brackets stands where the author put it.
@@ -3242,13 +4069,13 @@ func print_wrapped(subject *Printer, tree *ast.Parse_State, wrap Wrap) {
 	// operation outside them states nothing about the runs they hold.
 	defer restore_split(subject, hold_split(subject, false))
 	tail := closes_line(subject, tree)
-	indent := subject.Counts[COUNT_INDENT]
-	marked := subject.Flags[FLAG_BROKEN]
-	held := subject.Counts[COUNT_NEST]
+	indent := subject.Counts.Values[COUNT_INDENT]
+	marked := subject.Flags.Values[FLAG_BROKEN]
+	held := subject.Counts.Values[COUNT_NEST]
 	inner_nest(subject, tree, wrap)
 	head_nest(subject, wrap)
-	inner := subject.Counts[COUNT_INNER]
-	head := subject.Counts[COUNT_HEAD]
+	inner := subject.Counts.Values[COUNT_INNER]
+	head := subject.Counts.Values[COUNT_HEAD]
 	open := descend_part(subject, tree)
 	entered := open
 	parts := 0
@@ -3271,28 +4098,29 @@ func print_wrapped(subject *Printer, tree *ast.Parse_State, wrap Wrap) {
 			// the parts answer to the indent the bracket opened at. A bracket the
 			// author left on a line of its own closes a broken form however the
 			// parts before it stand.
-			indent = subject.Counts[COUNT_INDENT]
-			marked = subject.Flags[FLAG_BROKEN]
+			indent = subject.Counts.Values[COUNT_INDENT]
+			marked = subject.Flags.Values[FLAG_BROKEN]
 			opened = breaks_before(subject, tree) || over
 			heads = opened && Boolean(wrap == WRAP_CALL)
 			print_first_break(subject, tree, opened)
 			broken = opened || tail
 		}
 		if parts > 1 {
-			subject.Counts[COUNT_COLUMN_INDENT] = indent
-			opened, broken = open_argument(subject, tree, opened, broken, marked, over)
+			subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
+			result := open_argument(subject, tree, opened, broken, marked, over)
+			opened, broken = result.Stand, Boolean(result.Spread)
 		}
-		subject.Counts[COUNT_NEST] = inner
+		subject.Counts.Values[COUNT_NEST] = inner
 		if parts == 0 {
-			subject.Counts[COUNT_NEST] = head
+			subject.Counts.Values[COUNT_NEST] = head
 		}
 		print_part(subject, tree, opened, Boolean(parts > 0))
-		subject.Counts[COUNT_NEST] = held
+		subject.Counts.Values[COUNT_NEST] = held
 		parts = parts + 1
 		open = advance_part(subject, tree)
 	}
 	if bool(broken) {
-		subject.Counts[COUNT_COLUMN_INDENT] = indent
+		subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
 		close_broken(subject, tree, tail || heads)
 	}
 	close_wrapped(subject, tree, wrap, entered, Boolean(parts < 2))
@@ -3301,10 +4129,14 @@ func print_wrapped(subject *Printer, tree *ast.Parse_State, wrap Wrap) {
 // Closes one wrapped form: the parts the walk still stands ahead of, the bracket a form of one
 // part alone still owes, and the bracket every form closes with.
 func close_wrapped(
-	subject *Printer, tree *ast.Parse_State, wrap Wrap, entered Boolean, alone Boolean,
+	subject Printer_Handle,
+	tree ast.Parse_State_Handle,
+	wrap Wrap,
+	entered Boolean,
+	alone Boolean,
 ) {
-	Printer_Invariants(subject, "close_wrapped.subject")
-	ast.Parse_State_Invariants(tree, "close_wrapped.tree")
+	Printer_Handle_Invariants(subject, "close_wrapped.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_wrapped.tree")
 	Wrap_Invariants(wrap, "close_wrapped.wrap")
 	Boolean_Invariants(entered, "close_wrapped.entered")
 	Boolean_Invariants(alone, "close_wrapped.alone")
@@ -3319,23 +4151,23 @@ func close_wrapped(
 }
 
 // Opens the line the first part of a broken form stands on and indents its parts one level.
-func print_first_break(subject *Printer, tree *ast.Parse_State, broken Boolean) {
-	Printer_Invariants(subject, "print_first_break.subject")
-	ast.Parse_State_Invariants(tree, "print_first_break.tree")
+func print_first_break(subject Printer_Handle, tree ast.Parse_State_Handle, broken Boolean) {
+	Printer_Handle_Invariants(subject, "print_first_break.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_first_break.tree")
 	Boolean_Invariants(broken, "print_first_break.broken")
 	if !bool(broken) {
 		return
 	}
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
 	close_line(subject, tree)
 	emit_indent(subject)
 }
 
 // Writes what stands between two parts of a form: a comma and a space, or a comma and the line
 // the author broke.
-func print_element_break(subject *Printer, tree *ast.Parse_State, broken Boolean) {
-	Printer_Invariants(subject, "print_element_break.subject")
-	ast.Parse_State_Invariants(tree, "print_element_break.tree")
+func print_element_break(subject Printer_Handle, tree ast.Parse_State_Handle, broken Boolean) {
+	Printer_Handle_Invariants(subject, "print_element_break.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_element_break.tree")
 	Boolean_Invariants(broken, "print_element_break.broken")
 	if !bool(broken) {
 		emit_byte(subject, ',')
@@ -3348,13 +4180,13 @@ func print_element_break(subject *Printer, tree *ast.Parse_State, broken Boolean
 // Closes a broken form. A bracket the author left on the line of the final part stays there and
 // takes no comma; a bracket the author gave a line of its own keeps it, and the part before it
 // takes the comma that a line feed there demands.
-func close_broken(subject *Printer, tree *ast.Parse_State, tail Boolean) {
-	Printer_Invariants(subject, "close_broken.subject")
-	ast.Parse_State_Invariants(tree, "close_broken.tree")
+func close_broken(subject Printer_Handle, tree ast.Parse_State_Handle, tail Boolean) {
+	Printer_Handle_Invariants(subject, "close_broken.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_broken.tree")
 	Boolean_Invariants(tail, "close_broken.tail")
 	// A part the author broke across lines of its own indented what stood behind it, thus the
 	// bracket that closes the form stands where the form opened and not where a part left it.
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_COLUMN_INDENT]
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_COLUMN_INDENT]
 	if !bool(tail) {
 		return
 	}
@@ -3369,13 +4201,13 @@ func close_broken(subject *Printer, tree *ast.Parse_State, tail Boolean) {
 // Writes the comments the line the print stands on carries behind it. A comment the author wrote
 // on a line of its own keeps that line, thus a note about the statement behind it never lands at
 // the end of the statement ahead of it.
-func flush_comments(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "flush_comments.subject")
-	ast.Parse_State_Invariants(tree, "flush_comments.tree")
-	for slot := range int(subject.Counts[COUNT_COMMENT]) {
-		subject.Positions[POSITION_FOUND] = subject.Comments[slot]
+func flush_comments(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "flush_comments.subject")
+	ast.Parse_State_Handle_Invariants(tree, "flush_comments.tree")
+	for slot := range int(subject.Counts.Values[COUNT_COMMENT]) {
+		subject.Positions.Found = Found_Position(subject.Comments.Values[slot])
 		if bool(stands_alone(subject, tree)) {
-			if !bool(subject.Flags[FLAG_LINE]) {
+			if !bool(subject.Flags.Values[FLAG_LINE]) {
 				emit_line(subject)
 			}
 		}
@@ -3384,28 +4216,28 @@ func flush_comments(subject *Printer, tree *ast.Parse_State) {
 		}
 		emit_comment(subject, tree)
 	}
-	subject.Counts[COUNT_COMMENT] = 0
+	subject.Counts.Values[COUNT_COMMENT] = 0
 }
 
 // Reports whether the comment at one run position opens the line it stands on.
-func stands_alone(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func stands_alone(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "stands_alone.yes") }()
-	Printer_Invariants(subject, "stands_alone.subject")
-	ast.Parse_State_Invariants(tree, "stands_alone.tree")
-	position := subject.Positions[POSITION_FOUND]
+	Printer_Handle_Invariants(subject, "stands_alone.subject")
+	ast.Parse_State_Handle_Invariants(tree, "stands_alone.tree")
+	position := subject.Positions.Found
 	if position == 0 {
 		return false
 	}
 	behind := ast.Token_At(tree, ast.Token_Index(position-1))
 	ahead := ast.Token_At(tree, ast.Token_Index(position))
-	subject.Offsets[OFFSET_FROM] = token.Offset(int(behind.Offset) + int(behind.Size))
-	subject.Offsets[OFFSET_TO] = ahead.Offset
+	subject.Offsets.From = From_Offset(int(behind.Offset) + int(behind.Size))
+	subject.Offsets.To = To_Offset(ahead.Offset)
 	return feeds(subject)
 }
 
 // Writes the bracket that opens one wrapped form.
-func emit_open(subject *Printer, wrap Wrap) {
-	Printer_Invariants(subject, "emit_open.subject")
+func emit_open(subject Printer_Handle, wrap Wrap) {
+	Printer_Handle_Invariants(subject, "emit_open.subject")
 	Wrap_Invariants(wrap, "emit_open.wrap")
 	if wrap == WRAP_INDEX {
 		emit_byte(subject, '[')
@@ -3415,8 +4247,8 @@ func emit_open(subject *Printer, wrap Wrap) {
 }
 
 // Writes the bracket that closes one wrapped form.
-func emit_close(subject *Printer, wrap Wrap) {
-	Printer_Invariants(subject, "emit_close.subject")
+func emit_close(subject Printer_Handle, wrap Wrap) {
+	Printer_Handle_Invariants(subject, "emit_close.subject")
 	Wrap_Invariants(wrap, "emit_close.wrap")
 	if wrap == WRAP_INDEX {
 		emit_byte(subject, ']')
@@ -3428,9 +4260,9 @@ func emit_close(subject *Printer, wrap Wrap) {
 // Writes one operation over two values. A sign that binds loosely stands between spaces and one
 // that binds tightly stands against its values, thus the reader sees which value binds to which
 // sign without counting precedence.
-func print_binary(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_binary.subject")
-	ast.Parse_State_Invariants(tree, "print_binary.tree")
+func print_binary(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_binary.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_binary.tree")
 	spaced := binary_spaced(subject, tree)
 	binary_kind(subject, tree)
 	level := precedence(subject)
@@ -3439,45 +4271,45 @@ func print_binary(subject *Printer, tree *ast.Parse_State) {
 	// answer. An operation that binds tighter states a run of its own and reads its own width,
 	// because a value the run holds reads as one value however the run around it stands.
 	split := Boolean(false)
-	if bool(subject.Flags[FLAG_SPLIT]) {
-		split = Boolean(int(subject.Counts[COUNT_SPLIT]) == int(level))
+	if bool(subject.Flags.Values[FLAG_SPLIT]) {
+		split = Boolean(int(subject.Counts.Values[COUNT_SPLIT]) == int(level))
 	}
 	if !bool(split) {
 		split = runs_over(subject, tree)
 	}
-	held_level := subject.Counts[COUNT_SPLIT]
-	subject.Counts[COUNT_SPLIT] = Count(level)
-	defer func() { subject.Counts[COUNT_SPLIT] = held_level }()
+	held_level := subject.Counts.Values[COUNT_SPLIT]
+	subject.Counts.Values[COUNT_SPLIT] = Count(level)
 	defer restore_split(subject, hold_split(subject, split))
-	sign := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
-	held := subject.Counts[COUNT_NEST]
+	sign := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Token
+	held := subject.Counts.Values[COUNT_NEST]
 	if !bool(descend_part(subject, tree)) {
+		subject.Counts.Values[COUNT_SPLIT] = held_level
 		return
 	}
 	// A left value that states the same sign holds the same nest, thus a run of one sign
 	// spaces the same way however long it runs.
-	subject.Counts[COUNT_NEST] = held + 1
+	subject.Counts.Values[COUNT_NEST] = held + 1
 	if bool(left_holds(subject, tree, level)) {
-		subject.Counts[COUNT_NEST] = held
+		subject.Counts.Values[COUNT_NEST] = held
 	}
 	print_expression(subject, tree)
-	subject.Counts[COUNT_NEST] = held
+	subject.Counts.Values[COUNT_NEST] = held
 	if spaced {
 		emit_space(subject)
 	}
 	// A value the operation holds states a sign of its own while it prints, thus the slot
 	// states this sign again before the print writes it.
-	subject.Marks[MARK_SIGN] = sign
+	subject.Marks.Sign = Sign_Mark(sign)
 	emit_token_at(subject, tree)
 	if bool(advance_part(subject, tree)) {
 		// An operation the author broke behind its sign keeps that break, and its right
 		// value stands one tab deeper than the operation that holds it. The tab closes
 		// with the operation, thus an operation inside another one steps deeper again
 		// while a run of one sign holds one column.
-		indent := subject.Counts[COUNT_INDENT]
+		indent := subject.Counts.Values[COUNT_INDENT]
 		here := breaks_before(subject, tree) || split
 		if bool(here) {
-			subject.Counts[COUNT_INDENT] = indent + 1
+			subject.Counts.Values[COUNT_INDENT] = indent + 1
 			close_line(subject, tree)
 			emit_indent(subject)
 		}
@@ -3486,21 +4318,22 @@ func print_binary(subject *Printer, tree *ast.Parse_State) {
 				emit_space(subject)
 			}
 		}
-		subject.Counts[COUNT_NEST] = held + 1
+		subject.Counts.Values[COUNT_NEST] = held + 1
 		print_expression(subject, tree)
-		subject.Counts[COUNT_NEST] = held
-		subject.Counts[COUNT_INDENT] = indent
+		subject.Counts.Values[COUNT_NEST] = held
+		subject.Counts.Values[COUNT_INDENT] = indent
 	}
 	finish_parts(subject, tree)
 	ascend(subject)
+	subject.Counts.Values[COUNT_SPLIT] = held_level
 }
 
 // Writes one token of the run the caller names, which is the token of a node the walk already
 // stepped past.
-func emit_token_at(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_token_at.subject")
-	ast.Parse_State_Invariants(tree, "emit_token_at.tree")
-	subject.Marks[MARK_TEXT] = subject.Marks[MARK_SIGN]
+func emit_token_at(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_token_at.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_token_at.tree")
+	subject.Marks.Text = Text_Mark(subject.Marks.Sign)
 	emit_text(subject, tree)
 }
 
@@ -3575,10 +4408,10 @@ func Level_Invariants(value Level, namespace aver.Namespace) {
 // Reports whether the left value of one operation states the sign that operation states. Such a
 // value stands at the level the operation stands at, which keeps one run of a sign spacing as one
 // form.
-func left_holds(subject *Printer, tree *ast.Parse_State, level Level) (yes Boolean) {
+func left_holds(subject Printer_Handle, tree ast.Parse_State_Handle, level Level) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "left_holds.yes") }()
-	Printer_Invariants(subject, "left_holds.subject")
-	ast.Parse_State_Invariants(tree, "left_holds.tree")
+	Printer_Handle_Invariants(subject, "left_holds.subject")
+	ast.Parse_State_Handle_Invariants(tree, "left_holds.tree")
 	Level_Invariants(level, "left_holds.level")
 	if node_kind(subject, tree) != ast.NODE_BINARY {
 		return false
@@ -3589,10 +4422,10 @@ func left_holds(subject *Printer, tree *ast.Parse_State, level Level) (yes Boole
 
 // Names how tightly one sign binds its values. The minimum names a token that is no operation
 // sign.
-func precedence(subject *Printer) (level Level) {
+func precedence(subject Printer_Handle) (level Level) {
 	defer func() { Level_Invariants(level, "precedence.level") }()
-	Printer_Invariants(subject, "precedence.subject")
-	switch subject.Signs[SIGN_HELD] {
+	Printer_Handle_Invariants(subject, "precedence.subject")
+	switch token.Kind(subject.Signs.Held) {
 	case token.KIND_STAR, token.KIND_SLASH, token.KIND_PERCENT, token.KIND_SHIFT_LEFT,
 		token.KIND_SHIFT_RIGHT, token.KIND_AND, token.KIND_AND_NOT:
 		return LEVEL_SIGN_MAXIMUM
@@ -3605,21 +4438,22 @@ func precedence(subject *Printer) (level Level) {
 }
 
 // Reads the sign of the operation the walk stands on.
-func binary_kind(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "binary_kind.subject")
-	ast.Parse_State_Invariants(tree, "binary_kind.tree")
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
-	subject.Signs[SIGN_HELD] = ast.Token_At(tree, node.Token).Kind
+func binary_kind(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "binary_kind.subject")
+	ast.Parse_State_Handle_Invariants(tree, "binary_kind.tree")
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
+	subject.Signs.Held = Held_Sign(ast.Token_At(tree, node.Token).Kind)
 }
 
 // Reports whether the sign of the operation the walk stands on takes spaces around it. The
 // canonical form spaces every sign of an operation a statement states on its own, and closes up
 // the tighter signs of an operation that stands inside another form or mixes two levels.
-func binary_spaced(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func binary_spaced(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "binary_spaced.yes") }()
-	Printer_Invariants(subject, "binary_spaced.subject")
-	ast.Parse_State_Invariants(tree, "binary_spaced.tree")
-	adds, multiplies, clash := binary_levels(subject, tree)
+	Printer_Handle_Invariants(subject, "binary_spaced.subject")
+	ast.Parse_State_Handle_Invariants(tree, "binary_spaced.tree")
+	levels := binary_levels(subject, tree)
+	adds, multiplies, clash := levels.Adds, levels.Multiplies, levels.Clash
 	// A sign that would read as another sign against the value behind it takes spaces
 	// however deep it stands, thus the clash sets the cut on its own.
 	cut := Cut(CUT_MINIMUM)
@@ -3627,7 +4461,7 @@ func binary_spaced(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		cut = Cut(clash) + 1
 	}
 	if clash == 0 {
-		cut = plain_cut(subject, adds, multiplies)
+		cut = plain_cut(subject, adds, Boolean(multiplies))
 	}
 	binary_kind(subject, tree)
 	return Boolean(Cut(precedence(subject)) < cut)
@@ -3636,12 +4470,12 @@ func binary_spaced(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Names the level at and above which the signs of one operation close up. An operation that mixes
 // the two levels the canonical form spaces by states the tighter of them, and one that holds a
 // single level spaces every sign a statement states on its own.
-func plain_cut(subject *Printer, adds Boolean, multiplies Boolean) (cut Cut) {
+func plain_cut(subject Printer_Handle, adds Boolean, multiplies Boolean) (cut Cut) {
 	defer func() { Cut_Invariants(cut, "plain_cut.cut") }()
-	Printer_Invariants(subject, "plain_cut.subject")
+	Printer_Handle_Invariants(subject, "plain_cut.subject")
 	Boolean_Invariants(adds, "plain_cut.adds")
 	Boolean_Invariants(multiplies, "plain_cut.multiplies")
-	plain := subject.Counts[COUNT_NEST] == 1
+	plain := subject.Counts.Values[COUNT_NEST] == 1
 	if bool(adds) {
 		if bool(multiplies) {
 			if plain {
@@ -3658,11 +4492,11 @@ func plain_cut(subject *Printer, adds Boolean, multiplies Boolean) (cut Cut) {
 
 // Names the level a sign must space at to stand apart from the sign of the value behind it. Zero
 // names an operation no reading of which runs the two signs together.
-func clash_level(subject *Printer) (level Clash) {
+func clash_level(subject Printer_Handle) (level Clash) {
 	defer func() { Clash_Invariants(level, "clash_level.level") }()
-	Printer_Invariants(subject, "clash_level.subject")
-	operation := subject.Signs[SIGN_BEHIND]
-	unary := subject.Signs[SIGN_HELD]
+	Printer_Handle_Invariants(subject, "clash_level.subject")
+	operation := token.Kind(subject.Signs.Behind)
+	unary := token.Kind(subject.Signs.Held)
 	if operation == token.KIND_SLASH {
 		if unary == token.KIND_STAR {
 			return CLASH_TIGHT
@@ -3689,59 +4523,87 @@ func clash_level(subject *Printer) (level Clash) {
 	return CLASH_NONE
 }
 
+// Multiplication_Level distinguishes tighter-sign presence from addition presence.
+type Multiplication_Level Boolean
+
+// Multiplication_Level_Invariants states both tighter-level outcomes.
+func Multiplication_Level_Invariants(value Multiplication_Level, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Operation contains multiplication level.").
+		Ensure()
+}
+
+// Binary_Levels_Result keeps spacing evidence at one output boundary.
+type Binary_Levels_Result struct {
+	// Adds states loose-sign presence independently from tighter signs.
+	Adds Boolean
+	// Multiplies states tighter-sign presence independently from loose signs.
+	Multiplies Multiplication_Level
+	// Clash names adjacent unary signs requiring spaces.
+	Clash Clash
+}
+
+// Binary_Levels_Result_Invariants composes one spacing classification.
+func Binary_Levels_Result_Invariants(value Binary_Levels_Result, namespace aver.Namespace) {
+	Boolean_Invariants(value.Adds, namespace)
+	Multiplication_Level_Invariants(value.Multiplies, namespace)
+	Clash_Invariants(value.Clash, namespace)
+}
+
 // Reports which of the two levels the canonical form spaces by stand inside the operation the
 // walk stands on. A value the source parenthesised states its own form, thus the walk stops at
 // it and never reads the levels it holds.
 func binary_levels(
-	subject *Printer, tree *ast.Parse_State,
-) (adds Boolean, multiplies Boolean, clash Clash) {
-	defer func() {
-		Boolean_Invariants(adds, "binary_levels.adds")
-		Boolean_Invariants(multiplies, "binary_levels.multiplies")
-		Clash_Invariants(clash, "binary_levels.clash")
-	}()
-	Printer_Invariants(subject, "binary_levels.subject")
-	ast.Parse_State_Invariants(tree, "binary_levels.tree")
+	subject Printer_Handle, tree ast.Parse_State_Handle,
+) (result Binary_Levels_Result) {
+	defer func() { Binary_Levels_Result_Invariants(result, "binary_levels.result") }()
+	Printer_Handle_Invariants(subject, "binary_levels.subject")
+	ast.Parse_State_Handle_Invariants(tree, "binary_levels.tree")
 	binary_kind(subject, tree)
-	operation := subject.Signs[SIGN_HELD]
+	operation := subject.Signs.Held
 	level := precedence(subject)
-	adds = Boolean(level == LEVEL_ADDITION)
-	multiplies = Boolean(level == LEVEL_SIGN_MAXIMUM)
+	adds := Boolean(level == LEVEL_ADDITION)
+	multiplies := Boolean(level == LEVEL_SIGN_MAXIMUM)
+	clash := Clash(CLASH_NONE)
 	if !bool(descend_quiet(subject, tree)) {
-		return adds, multiplies, clash
+		return Binary_Levels_Result{
+			Adds: adds, Multiplies: Multiplication_Level(multiplies), Clash: clash,
+		}
 	}
 	if bool(reads_levels(subject, tree, level, false)) {
-		left, right, held := binary_levels(subject, tree)
-		adds = adds || left
-		multiplies = multiplies || right
-		clash = max(clash, held)
+		nested := binary_levels(subject, tree)
+		adds = adds || nested.Adds
+		multiplies = multiplies || Boolean(nested.Multiplies)
+		clash = max(clash, nested.Clash)
 	}
 	if bool(advance_quiet(subject, tree)) {
 		if bool(reads_levels(subject, tree, level, true)) {
-			left, right, held := binary_levels(subject, tree)
-			adds = adds || left
-			multiplies = multiplies || right
-			clash = max(clash, held)
+			nested := binary_levels(subject, tree)
+			adds = adds || nested.Adds
+			multiplies = multiplies || Boolean(nested.Multiplies)
+			clash = max(clash, nested.Clash)
 		}
 		if node_kind(subject, tree) == ast.NODE_UNARY {
 			binary_kind(subject, tree)
-			subject.Signs[SIGN_BEHIND] = operation
+			subject.Signs.Behind = Behind_Sign(operation)
 			clash = max(clash, clash_level(subject))
 		}
 	}
 	ascend(subject)
-	return adds, multiplies, clash
+	return Binary_Levels_Result{
+		Adds: adds, Multiplies: Multiplication_Level(multiplies), Clash: clash,
+	}
 }
 
 // Reports whether the value the walk stands on states an operation the form above it spaces as
 // one. A value the printer will parenthesise stands as its own form, thus the levels it holds
 // say nothing about the form above it.
 func reads_levels(
-	subject *Printer, tree *ast.Parse_State, level Level, loose Boolean,
+	subject Printer_Handle, tree ast.Parse_State_Handle, level Level, loose Boolean,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "reads_levels.yes") }()
-	Printer_Invariants(subject, "reads_levels.subject")
-	ast.Parse_State_Invariants(tree, "reads_levels.tree")
+	Printer_Handle_Invariants(subject, "reads_levels.subject")
+	ast.Parse_State_Handle_Invariants(tree, "reads_levels.tree")
 	Level_Invariants(level, "reads_levels.level")
 	Boolean_Invariants(loose, "reads_levels.loose")
 	if node_kind(subject, tree) != ast.NODE_BINARY {
@@ -3759,10 +4621,10 @@ func reads_levels(
 
 // Moves the walk to the first part of the node it stands on, over trivia and writing nothing,
 // thus a measure the print takes leaves the form it wrote untouched.
-func descend_quiet(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
+func descend_quiet(subject Printer_Handle, tree ast.Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "descend_quiet.ok") }()
-	Printer_Invariants(subject, "descend_quiet.subject")
-	ast.Parse_State_Invariants(tree, "descend_quiet.tree")
+	Printer_Handle_Invariants(subject, "descend_quiet.subject")
+	ast.Parse_State_Handle_Invariants(tree, "descend_quiet.tree")
 	if !bool(descend(subject, tree)) {
 		return false
 	}
@@ -3779,10 +4641,10 @@ func descend_quiet(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
 }
 
 // Moves the walk to the next part of the form it stands in, over trivia and writing nothing.
-func advance_quiet(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
+func advance_quiet(subject Printer_Handle, tree ast.Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "advance_quiet.ok") }()
-	Printer_Invariants(subject, "advance_quiet.subject")
-	ast.Parse_State_Invariants(tree, "advance_quiet.tree")
+	Printer_Handle_Invariants(subject, "advance_quiet.subject")
+	ast.Parse_State_Handle_Invariants(tree, "advance_quiet.tree")
 	for bool(advance(subject, tree)) {
 		if !bool(trivia_kind(subject, tree)) {
 			return true
@@ -3792,44 +4654,47 @@ func advance_quiet(subject *Printer, tree *ast.Parse_State) (ok Boolean) {
 }
 
 // Writes one operation over a single value, which stands against the value it reads.
-func print_unary(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_unary.subject")
-	ast.Parse_State_Invariants(tree, "print_unary.tree")
+func print_unary(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_unary.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_unary.tree")
 	// A literal that states the address of the type the run it stands in names repeats that
 	// type twice over, thus the canonical form writes neither the sign nor the type.
-	held := subject.Types[TYPE_ELEMENT]
-	defer func() { subject.Types[TYPE_ELEMENT] = held }()
+	held := subject.Types.Element
 	if bool(elides_address(subject, tree)) {
-		subject.Types[TYPE_ELEMENT] = ast.Index(ast.Node_At(tree, held).First_Child)
+		subject.Types.Element = Element_Node(ast.Node_At(tree, ast.Index(held)).First_Child)
 		if bool(descend_part(subject, tree)) {
 			print_expression(subject, tree)
 			finish_parts(subject, tree)
 			ascend(subject)
 		}
+		subject.Types.Element = held
 		return
 	}
 	emit_token(subject, tree)
 	if !bool(descend_part(subject, tree)) {
+		subject.Types.Element = held
 		return
 	}
 	print_expression(subject, tree)
 	finish_parts(subject, tree)
 	ascend(subject)
+	subject.Types.Element = held
 }
 
 // Writes one slice suffix: the value it reads and the bounds it states between colons.
-func print_slice_expression(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_slice_expression.subject")
-	ast.Parse_State_Invariants(tree, "print_slice_expression.tree")
+func print_slice_expression(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_slice_expression.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_slice_expression.tree")
 	// The tree holds no node for a bound the source left out, thus the print reads the colons
 	// from the token run and writes as many as the author wrote.
 	take_bounds(subject, tree)
-	written := int(subject.Counts[COUNT_BOUND])
+	written := int(subject.Counts.Values[COUNT_BOUND])
 	closer_position(subject, tree)
-	closer := subject.Positions[POSITION_FOUND]
-	opener := Position(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	closer := subject.Positions.Found
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	opener := Position(ast.Node_At(tree, index).Token)
 	blanks := slice_blanks(subject, tree)
-	held := subject.Counts[COUNT_NEST]
+	held := subject.Counts.Values[COUNT_NEST]
 	// The count of brackets opens behind the bracket the slice itself stands on, thus a colon
 	// the slice holds counts at the depth the count opens at.
 	cursor := opener + 1
@@ -3839,22 +4704,22 @@ func print_slice_expression(subject *Printer, tree *ast.Parse_State) {
 	for bool(open) {
 		if parts > 0 {
 			leftmost_position(subject, tree)
-			start := subject.Positions[POSITION_FOUND]
-			subject.Positions[POSITION_FROM] = cursor
-			subject.Positions[POSITION_TO] = start
+			start := subject.Positions.Found
+			subject.Positions.From = From_Position(cursor)
+			subject.Positions.To = To_Position(start)
 			emit_colons(subject, tree, blanks)
-			cursor = start
+			cursor = Position(start)
 		}
 		if parts >= written {
 			open = advance_part(subject, tree)
 			continue
 		}
-		subject.Counts[COUNT_NEST] = held + 1
+		subject.Counts.Values[COUNT_NEST] = held + 1
 		if parts == 0 {
-			subject.Counts[COUNT_NEST] = 1
+			subject.Counts.Values[COUNT_NEST] = 1
 		}
 		print_expression(subject, tree)
-		subject.Counts[COUNT_NEST] = held
+		subject.Counts.Values[COUNT_NEST] = held
 		if parts == 0 {
 			emit_byte(subject, '[')
 		}
@@ -3868,8 +4733,8 @@ func print_slice_expression(subject *Printer, tree *ast.Parse_State) {
 	if parts == 0 {
 		emit_byte(subject, '[')
 	}
-	subject.Positions[POSITION_FROM] = cursor
-	subject.Positions[POSITION_TO] = closer
+	subject.Positions.From = From_Position(cursor)
+	subject.Positions.To = To_Position(closer)
 	emit_colons(subject, tree, blanks)
 	emit_byte(subject, ']')
 }
@@ -3877,12 +4742,12 @@ func print_slice_expression(subject *Printer, tree *ast.Parse_State) {
 // Reads how many bounds of the slice the walk stands on the print writes. A slice that closes at
 // the length of the value it reads closes where the brackets already close it, thus that bound
 // states nothing and the canonical form drops it.
-func take_bounds(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_bounds.subject")
-	ast.Parse_State_Invariants(tree, "take_bounds.tree")
+func take_bounds(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_bounds.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_bounds.tree")
 	elide := elides_bound(subject, tree)
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	written := 0
 	open := descend(subject, tree)
 	for bool(open) {
@@ -3891,24 +4756,25 @@ func take_bounds(subject *Printer, tree *ast.Parse_State) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	if bool(elide) {
 		written = written - 1
 	}
-	subject.Counts[COUNT_BOUND] = Count(written)
+	subject.Counts.Values[COUNT_BOUND] = Count(written)
 }
 
 // Reports whether the bound that closes one slice states the length of the value that slice
 // reads. A slice of three bounds names a capacity of its own, thus its closing bound stands
 // however it reads, and a slice of one colon closes at its own end with no bound at all.
-func elides_bound(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func elides_bound(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "elides_bound.yes") }()
-	Printer_Invariants(subject, "elides_bound.subject")
-	ast.Parse_State_Invariants(tree, "elides_bound.tree")
+	Printer_Handle_Invariants(subject, "elides_bound.subject")
+	ast.Parse_State_Handle_Invariants(tree, "elides_bound.tree")
 	closer_position(subject, tree)
-	closer := int(subject.Positions[POSITION_FOUND])
-	opener := int(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	closer := int(subject.Positions.Found)
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	opener := int(ast.Node_At(tree, index).Token)
 	if closer < opener+4 {
 		return false
 	}
@@ -3938,7 +4804,7 @@ func elides_bound(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 	if place <= opener+1 {
 		return false
 	}
-	source := subject.Sources[SOURCE_SLOT]
+	source := token.Source(subject.Sources.Source)
 	if string(token.Text(source, ast.Token_At(tree, ast.Token_Index(place-1)))) != "len" {
 		return false
 	}
@@ -3948,26 +4814,27 @@ func elides_bound(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 	// A value of one name reads the same twice however the package binds it, and a value of
 	// any wider form may read otherwise, thus only a name closes a slice at its own length.
 	leftmost_position(subject, tree)
-	if int(subject.Positions[POSITION_FOUND])+1 != opener {
+	if int(subject.Positions.Found)+1 != opener {
 		return false
 	}
-	subject.Positions[POSITION_FROM] = Position(place + 1)
-	subject.Positions[POSITION_TO] = Position(closer - 1)
+	subject.Positions.From = From_Position(place + 1)
+	subject.Positions.To = To_Position(closer - 1)
 	return reads_same(subject, tree)
 }
 
 // Reports whether the value the length of one slice reads is the value the slice itself reads,
 // token for token. Two forms of one spelling state one value, thus a slice that closes at the
 // length of its own value closes at its end.
-func reads_same(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func reads_same(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "reads_same.yes") }()
-	Printer_Invariants(subject, "reads_same.subject")
-	ast.Parse_State_Invariants(tree, "reads_same.tree")
-	left := int(subject.Positions[POSITION_FOUND])
-	opener := int(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
-	right := int(subject.Positions[POSITION_FROM])
-	closer := int(subject.Positions[POSITION_TO])
-	source := subject.Sources[SOURCE_SLOT]
+	Printer_Handle_Invariants(subject, "reads_same.subject")
+	ast.Parse_State_Handle_Invariants(tree, "reads_same.tree")
+	left := int(subject.Positions.Found)
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	opener := int(ast.Node_At(tree, index).Token)
+	right := int(subject.Positions.From)
+	closer := int(subject.Positions.To)
+	source := token.Source(subject.Sources.Source)
 	for left < opener {
 		if right >= closer {
 			return false
@@ -3988,21 +4855,22 @@ func reads_same(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Reports whether the slice the walk stands on holds one colon alone, counting no colon a bracket
 // of its own holds.
-func holds_one_colon(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func holds_one_colon(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_one_colon.yes") }()
-	Printer_Invariants(subject, "holds_one_colon.subject")
-	ast.Parse_State_Invariants(tree, "holds_one_colon.tree")
-	closer := int(subject.Positions[POSITION_FOUND])
-	opener := int(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	Printer_Handle_Invariants(subject, "holds_one_colon.subject")
+	ast.Parse_State_Handle_Invariants(tree, "holds_one_colon.tree")
+	closer := int(subject.Positions.Found)
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	opener := int(ast.Node_At(tree, index).Token)
 	depth := 0
 	colons := 0
 	for place := opener + 1; place < closer; place = place + 1 {
 		kind := ast.Token_At(tree, ast.Token_Index(place)).Kind
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 		}
@@ -4018,20 +4886,20 @@ func holds_one_colon(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Writes the colons the source states between two run positions. A colon inside a bracket of its
 // own belongs to the form that bracket opens, thus only a colon the slice itself holds counts.
-func emit_colons(subject *Printer, tree *ast.Parse_State, blanks Boolean) {
-	Printer_Invariants(subject, "emit_colons.subject")
-	ast.Parse_State_Invariants(tree, "emit_colons.tree")
+func emit_colons(subject Printer_Handle, tree ast.Parse_State_Handle, blanks Boolean) {
+	Printer_Handle_Invariants(subject, "emit_colons.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_colons.tree")
 	Boolean_Invariants(blanks, "emit_colons.blanks")
-	from := subject.Positions[POSITION_FROM]
-	to := subject.Positions[POSITION_TO]
+	from := subject.Positions.From
+	to := subject.Positions.To
 	depth := 0
 	for position := int(from); position < int(to); position++ {
 		kind := ast.Token_At(tree, ast.Token_Index(position)).Kind
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 		}
@@ -4041,28 +4909,28 @@ func emit_colons(subject *Printer, tree *ast.Parse_State, blanks Boolean) {
 		if depth != 0 {
 			continue
 		}
-		subject.Positions[POSITION_FOUND] = Position(position)
+		subject.Positions.Found = Found_Position(position)
 		emit_colon(subject, tree, blanks)
 	}
 }
 
 // Writes one colon of a slice and the spaces the canonical form states around it. A space stands
 // only against a bound the source states, thus an absent bound takes none.
-func emit_colon(subject *Printer, tree *ast.Parse_State, blanks Boolean) {
-	Printer_Invariants(subject, "emit_colon.subject")
-	ast.Parse_State_Invariants(tree, "emit_colon.tree")
+func emit_colon(subject Printer_Handle, tree ast.Parse_State_Handle, blanks Boolean) {
+	Printer_Handle_Invariants(subject, "emit_colon.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_colon.tree")
 	Boolean_Invariants(blanks, "emit_colon.blanks")
-	position := subject.Positions[POSITION_FOUND]
+	position := subject.Positions.Found
 	behind := ast.Token_At(tree, ast.Token_Index(position-1)).Kind
 	ahead := ast.Token_At(tree, ast.Token_Index(position+1)).Kind
-	subject.Signs[SIGN_HELD] = behind
-	subject.Signs[SIGN_BEHIND] = token.KIND_BRACKET_LEFT
+	subject.Signs.Held = Held_Sign(behind)
+	subject.Signs.Behind = Behind_Sign(token.KIND_BRACKET_LEFT)
 	if bool(bounds(subject, blanks)) {
 		emit_space(subject)
 	}
 	emit_byte(subject, ':')
-	subject.Signs[SIGN_HELD] = ahead
-	subject.Signs[SIGN_BEHIND] = token.KIND_BRACKET_RIGHT
+	subject.Signs.Held = Held_Sign(ahead)
+	subject.Signs.Behind = Behind_Sign(token.KIND_BRACKET_RIGHT)
 	if bool(bounds(subject, blanks)) {
 		emit_space(subject)
 	}
@@ -4070,15 +4938,15 @@ func emit_colon(subject *Printer, tree *ast.Parse_State, blanks Boolean) {
 
 // Reports whether a space stands on one side of the colon of a slice. A space stands only against
 // a bound the source states, thus a bracket or a second colon on that side takes none.
-func bounds(subject *Printer, blanks Boolean) (yes Boolean) {
+func bounds(subject Printer_Handle, blanks Boolean) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "bounds.yes") }()
-	Printer_Invariants(subject, "bounds.subject")
+	Printer_Handle_Invariants(subject, "bounds.subject")
 	Boolean_Invariants(blanks, "bounds.blanks")
-	kind := subject.Signs[SIGN_HELD]
+	kind := token.Kind(subject.Signs.Held)
 	if !bool(blanks) {
 		return false
 	}
-	if kind == subject.Signs[SIGN_BEHIND] {
+	if kind == token.Kind(subject.Signs.Behind) {
 		return false
 	}
 	return Boolean(kind != token.KIND_COLON)
@@ -4086,15 +4954,15 @@ func bounds(subject *Printer, blanks Boolean) (yes Boolean) {
 
 // Reports whether the colons of one slice stand between spaces. Two bounds one of which states
 // an operation read harder closed up than spaced, thus the canonical form spaces them.
-func slice_blanks(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func slice_blanks(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "slice_blanks.yes") }()
-	Printer_Invariants(subject, "slice_blanks.subject")
-	ast.Parse_State_Invariants(tree, "slice_blanks.tree")
-	if subject.Counts[COUNT_NEST] > 1 {
+	Printer_Handle_Invariants(subject, "slice_blanks.subject")
+	ast.Parse_State_Handle_Invariants(tree, "slice_blanks.tree")
+	if subject.Counts.Values[COUNT_NEST] > 1 {
 		return false
 	}
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	held_bounds := 0
 	operations := 0
 	open := descend_quiet(subject, tree)
@@ -4105,8 +4973,8 @@ func slice_blanks(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance_quiet(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	if held_bounds <= 2 {
 		return false
 	}
@@ -4114,9 +4982,9 @@ func slice_blanks(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Writes one selector: the value it reads, the period, and the name behind it.
-func print_selector(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_selector.subject")
-	ast.Parse_State_Invariants(tree, "print_selector.tree")
+func print_selector(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_selector.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_selector.tree")
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
@@ -4139,25 +5007,25 @@ func print_selector(subject *Printer, tree *ast.Parse_State) {
 
 // Opens the line a continuation of the statement stands on. One statement takes one tab however
 // many lines the author broke it into, which is what the canonical form states for a chain.
-func open_continuation(subject *Printer, tree *ast.Parse_State, broken Boolean) {
-	Printer_Invariants(subject, "open_continuation.subject")
-	ast.Parse_State_Invariants(tree, "open_continuation.tree")
+func open_continuation(subject Printer_Handle, tree ast.Parse_State_Handle, broken Boolean) {
+	Printer_Handle_Invariants(subject, "open_continuation.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_continuation.tree")
 	Boolean_Invariants(broken, "open_continuation.broken")
 	if !bool(broken) {
 		return
 	}
-	if !bool(subject.Flags[FLAG_BROKEN]) {
-		subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
-		subject.Flags[FLAG_BROKEN] = true
+	if !bool(subject.Flags.Values[FLAG_BROKEN]) {
+		subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
+		subject.Flags.Values[FLAG_BROKEN] = true
 	}
 	close_line(subject, tree)
 	emit_indent(subject)
 }
 
 // Writes one assertion: the value it reads and the type it names between brackets.
-func print_assertion(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_assertion.subject")
-	ast.Parse_State_Invariants(tree, "print_assertion.tree")
+func print_assertion(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_assertion.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_assertion.tree")
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
@@ -4179,85 +5047,90 @@ func print_assertion(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one composite literal: the type it names and the elements between its braces.
-func print_composite(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_composite.subject")
-	ast.Parse_State_Invariants(tree, "print_composite.tree")
+func print_composite(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_composite.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_composite.tree")
 	// A literal opens a form of its own, thus its parts space their signs the way a
 	// statement does however deep the literal stands.
-	nest := subject.Counts[COUNT_NEST]
-	width := subject.Counts[COUNT_WIDTH]
-	subject.Counts[COUNT_WIDTH] = 0
+	nest := subject.Counts.Values[COUNT_NEST]
+	width := subject.Counts.Values[COUNT_WIDTH]
+	subject.Counts.Values[COUNT_WIDTH] = 0
 	defer restore_tight(subject, hold_tight(subject, true))
 	// A literal that runs the line past the widest one states one element to a line, the way
 	// a literal the author broke does.
 	over := runs_over(subject, tree)
 	defer restore_split(subject, hold_split(subject, false))
-	held_apart := subject.Flags[FLAG_APART]
-	subject.Flags[FLAG_APART] = over
-	defer func() { subject.Flags[FLAG_APART] = held_apart }()
-	force, between := take_spread(subject, tree, closes_line(subject, tree))
-	force, between = force || over, between || over
-	tail := force
-	indent := subject.Counts[COUNT_INDENT]
-	marked := subject.Flags[FLAG_BROKEN]
+	held_apart := subject.Flags.Values[FLAG_APART]
+	subject.Flags.Values[FLAG_APART] = over
+	spread_result := take_spread(subject, tree, closes_line(subject, tree))
+	force := spread_result.Force || over
+	between := Boolean(spread_result.Between) || over
+	indent := subject.Counts.Values[COUNT_INDENT]
+	marked := subject.Flags.Values[FLAG_BROKEN]
 	// A literal that stands as an element of another one states no type of its own, thus the
 	// print reads whether a type stands ahead of the brace rather than assuming one does.
-	brace := Position(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	brace := Position(ast.Node_At(tree, index).Token)
 	open := descend_part(subject, tree)
 	entered := open
-	head := 0
-	subject.Positions[POSITION_FROM] = brace
-	held_element := subject.Types[TYPE_ELEMENT]
-	defer func() { subject.Types[TYPE_ELEMENT] = held_element }()
+	subject.Positions.From = From_Position(brace)
+	held_element := subject.Types.Element
 	open = opens_type(subject, tree, open)
-	head = int(subject.Counts[COUNT_HEAD])
-	own := subject.Types[TYPE_OWN]
+	head := int(subject.Counts.Values[COUNT_HEAD])
+	own := subject.Types.Own
 	parts := 0
 	broken := Boolean(false)
 	opened := Boolean(false)
 	after := Boolean(false)
 	for bool(open) {
-		subject.Types[TYPE_ELEMENT] = own
+		subject.Types.Element = Element_Node(own)
 		take_element_type(subject, tree)
 		if parts == head {
 			emit_byte(subject, '{')
-			indent = subject.Counts[COUNT_INDENT]
-			marked = subject.Flags[FLAG_BROKEN]
+			indent = subject.Counts.Values[COUNT_INDENT]
+			marked = subject.Flags.Values[FLAG_BROKEN]
 			opened = open_literal(subject, tree, force)
-			broken = opened || tail
+			broken = opened || force
 		}
-		subject.Counts[COUNT_COLUMN_INDENT] = indent
+		subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
 		if parts > head {
-			opened, broken = open_element(
+			result := open_element(
 				subject, tree, opened, broken, marked, between, after, over,
 			)
+			opened, broken = result.Stand, Boolean(result.Spread)
 		}
 		after = Boolean(node_kind(subject, tree) == ast.NODE_COMPOSITE)
-		subject.Counts[COUNT_NEST] = 1
+		subject.Counts.Values[COUNT_NEST] = 1
 		spans := spans_form(subject, tree)
 		if bool(over) {
 			spans = spans || runs_over(subject, tree)
 		}
 		print_part(subject, tree, opened, true)
-		subject.Counts[COUNT_NEST] = nest
+		subject.Counts.Values[COUNT_NEST] = nest
 		close_key_run(subject, tree, spans)
 		parts = parts + 1
 		open = advance_part(subject, tree)
 	}
-	subject.Counts[COUNT_COLUMN_INDENT] = indent
-	close_literal(subject, tree, broken, entered, Boolean(parts <= head), tail)
-	subject.Counts[COUNT_WIDTH] = width
+	subject.Counts.Values[COUNT_COLUMN_INDENT] = indent
+	close_literal(subject, tree, broken, entered, Boolean(parts <= head), force)
+	subject.Counts.Values[COUNT_WIDTH] = width
+	subject.Types.Element = held_element
+	subject.Flags.Values[FLAG_APART] = held_apart
 }
 
 // Closes one literal: the line the parts of a broken form stand apart on, the walk the print
 // opened, and the braces. A literal of no parts at all opens its brace here, because the print
 // writes that brace at its first part and no part stood.
 func close_literal(
-	subject *Printer, tree *ast.Parse_State,
-	broken Boolean, entered Boolean, empty Boolean, tail Boolean,
+	subject Printer_Handle,
+	tree ast.Parse_State_Handle,
+	broken Boolean,
+	entered Boolean,
+	empty Boolean,
+	tail Boolean,
 ) {
-	Printer_Invariants(subject, "close_literal.subject")
-	ast.Parse_State_Invariants(tree, "close_literal.tree")
+	Printer_Handle_Invariants(subject, "close_literal.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_literal.tree")
 	Boolean_Invariants(broken, "close_literal.broken")
 	Boolean_Invariants(entered, "close_literal.entered")
 	Boolean_Invariants(empty, "close_literal.empty")
@@ -4278,11 +5151,11 @@ func close_literal(
 // Reports whether the sign that takes the address of one literal states the pointer the run that
 // literal stands in already names. The run names the type of every element it holds, thus an
 // element that names it again states nothing.
-func elides_address(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func elides_address(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "elides_address.yes") }()
-	Printer_Invariants(subject, "elides_address.subject")
-	ast.Parse_State_Invariants(tree, "elides_address.tree")
-	element := subject.Types[TYPE_ELEMENT]
+	Printer_Handle_Invariants(subject, "elides_address.subject")
+	ast.Parse_State_Handle_Invariants(tree, "elides_address.tree")
+	element := ast.Index(subject.Types.Element)
 	if element == ast.INDEX_ABSENT {
 		return false
 	}
@@ -4290,7 +5163,7 @@ func elides_address(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 	if pointer.Kind != ast.NODE_POINTER_TYPE {
 		return false
 	}
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
 	if ast.Token_At(tree, node.Token).Kind != token.KIND_AND {
 		return false
 	}
@@ -4311,17 +5184,19 @@ func elides_address(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 	if ast.Node_At(tree, head).Token >= one.Token {
 		return false
 	}
-	subject.Types[TYPE_LEFT] = head
-	subject.Types[TYPE_RIGHT] = ast.Index(pointer.First_Child)
+	subject.Types.Left = Left_Node(head)
+	subject.Types.Right = Right_Node(pointer.First_Child)
 	return same_form(subject, tree)
 }
 
 // Opens the body of one literal: the break the author left behind the brace, and the widths the
 // run of pairs behind it aligns on. It reports whether that break stands.
-func open_literal(subject *Printer, tree *ast.Parse_State, force Boolean) (opened Boolean) {
+func open_literal(
+	subject Printer_Handle, tree ast.Parse_State_Handle, force Boolean,
+) (opened Boolean) {
 	defer func() { Boolean_Invariants(opened, "open_literal.opened") }()
-	Printer_Invariants(subject, "open_literal.subject")
-	ast.Parse_State_Invariants(tree, "open_literal.tree")
+	Printer_Handle_Invariants(subject, "open_literal.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_literal.tree")
 	Boolean_Invariants(force, "open_literal.force")
 	opened = breaks_before(subject, tree) || force
 	print_first_break(subject, tree, opened)
@@ -4331,18 +5206,39 @@ func open_literal(subject *Printer, tree *ast.Parse_State, force Boolean) (opene
 	return opened
 }
 
+// Spread distinguishes a broken form from one that stays on its opening line.
+type Spread Boolean
+
+// Spread_Invariants states both layout outcomes.
+func Spread_Invariants(value Spread, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Form stands broken.").
+		Ensure()
+}
+
+// Open_Result keeps current-line and whole-form layout at one output boundary.
+type Open_Result struct {
+	// Stand reports whether current part opened another line.
+	Stand Boolean
+	// Spread reports whether any part broke whole form.
+	Spread Spread
+}
+
+// Open_Result_Invariants composes one layout step.
+func Open_Result_Invariants(value Open_Result, namespace aver.Namespace) {
+	Boolean_Invariants(value.Stand, namespace)
+	Spread_Invariants(value.Spread, namespace)
+}
+
 // Opens the line one element of a literal stands on and reports what the run states behind it:
 // whether a break now stands ahead of the elements, and whether the literal stands broken.
 func open_element(
-	subject *Printer, tree *ast.Parse_State, opened Boolean, broken Boolean,
+	subject Printer_Handle, tree ast.Parse_State_Handle, opened Boolean, broken Boolean,
 	marked Boolean, between Boolean, after Boolean, over Boolean,
-) (stand Boolean, spread Boolean) {
-	defer func() {
-		Boolean_Invariants(stand, "open_element.stand")
-		Boolean_Invariants(spread, "open_element.spread")
-	}()
-	Printer_Invariants(subject, "open_element.subject")
-	ast.Parse_State_Invariants(tree, "open_element.tree")
+) (result Open_Result) {
+	defer func() { Open_Result_Invariants(result, "open_element.result") }()
+	Printer_Handle_Invariants(subject, "open_element.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_element.tree")
 	Boolean_Invariants(opened, "open_element.opened")
 	Boolean_Invariants(broken, "open_element.broken")
 	Boolean_Invariants(marked, "open_element.marked")
@@ -4361,44 +5257,66 @@ func open_element(
 		}
 	}
 	if bool(open_column(here, opened)) {
-		subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_COLUMN_INDENT] + 1
-		subject.Flags[FLAG_BROKEN] = marked
+		subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_COLUMN_INDENT] + 1
+		subject.Flags.Values[FLAG_BROKEN] = marked
 	}
 	print_element_break(subject, tree, here)
 	open_key_run(subject, tree, here)
-	return opened || here, broken || here
+	return Open_Result{Stand: opened || here, Spread: Spread(broken || here)}
+}
+
+// Between distinguishes interior breaks from opening and closing breaks.
+type Between Boolean
+
+// Between_Invariants states both interior-layout outcomes.
+func Between_Invariants(value Between, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Break stands between parts.").
+		Ensure()
+}
+
+// Take_Spread_Result keeps forced and interior breaks at one output boundary.
+type Take_Spread_Result struct {
+	// Force reports whether literal must open broken.
+	Force Boolean
+	// Between reports whether any two elements have a break.
+	Between Between
+}
+
+// Take_Spread_Result_Invariants composes one literal-layout reading.
+func Take_Spread_Result_Invariants(value Take_Spread_Result, namespace aver.Namespace) {
+	Boolean_Invariants(value.Force, namespace)
+	Between_Invariants(value.Between, namespace)
 }
 
 // Reads how the elements of one literal stand: whether the braces or the elements open lines of
 // their own, and whether a break stands between two elements. A literal the author broke states
 // one element to a line, thus the print reads the whole run before it writes the first element.
 func take_spread(
-	subject *Printer, tree *ast.Parse_State, tail Boolean,
-) (force Boolean, between Boolean) {
-	defer func() {
-		Boolean_Invariants(force, "take_spread.force")
-		Boolean_Invariants(between, "take_spread.between")
-	}()
-	Printer_Invariants(subject, "take_spread.subject")
-	ast.Parse_State_Invariants(tree, "take_spread.tree")
+	subject Printer_Handle, tree ast.Parse_State_Handle, tail Boolean,
+) (result Take_Spread_Result) {
+	defer func() { Take_Spread_Result_Invariants(result, "take_spread.result") }()
+	Printer_Handle_Invariants(subject, "take_spread.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_spread.tree")
 	Boolean_Invariants(tail, "take_spread.tail")
-	if bool(subject.Flags[FLAG_FLAT]) {
-		return false, false
+	if bool(subject.Flags.Values[FLAG_FLAT]) {
+		return Take_Spread_Result{Force: false, Between: false}
 	}
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	brace := Position(ast.Node_At(tree, held).Token)
-	force = tail
+	force := tail
+	separated := Boolean(false)
 	parts := 0
 	open := descend_quiet(subject, tree)
 	for bool(open) {
 		leftmost_position(subject, tree)
 		// The type one literal names stands ahead of its brace, thus a part that opens
 		// behind the brace is an element and every other one names the type.
-		if subject.Positions[POSITION_FOUND] > brace {
+		if Position(subject.Positions.Found) > brace {
 			here := breaks_before(subject, tree)
 			if parts > 0 {
-				between = between || here
+				separated = separated || here
 			}
 			if parts == 0 {
 				force = force || here
@@ -4407,29 +5325,31 @@ func take_spread(
 		}
 		open = advance_quiet(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
-	return force || between, between
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
+	return Take_Spread_Result{Force: force || separated, Between: Between(separated)}
 }
 
 // Reports whether the type one literal names is the type the literal that holds it already named,
 // which the canonical form writes once. It reads the types the parts of this literal wear as
 // well, because both answers stand in the type this literal names.
-func repeats_type(subject *Printer, tree *ast.Parse_State, typed Boolean) (yes Boolean) {
+func repeats_type(
+	subject Printer_Handle, tree ast.Parse_State_Handle, typed Boolean,
+) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "repeats_type.yes") }()
-	Printer_Invariants(subject, "repeats_type.subject")
-	ast.Parse_State_Invariants(tree, "repeats_type.tree")
+	Printer_Handle_Invariants(subject, "repeats_type.subject")
+	ast.Parse_State_Handle_Invariants(tree, "repeats_type.tree")
 	Boolean_Invariants(typed, "repeats_type.typed")
 	own := ast.Index(ast.INDEX_ABSENT)
 	repeats := Boolean(false)
 	if bool(typed) {
-		here := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-		subject.Types[TYPE_LEFT] = here
-		subject.Types[TYPE_RIGHT] = subject.Types[TYPE_ELEMENT]
+		here := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+		subject.Types.Left = Left_Node(here)
+		subject.Types.Right = Right_Node(subject.Types.Element)
 		repeats = same_form(subject, tree)
 		own = here
 	}
-	subject.Types[TYPE_ELEMENT] = own
+	subject.Types.Element = Element_Node(own)
 	take_element_type(subject, tree)
 	return repeats
 }
@@ -4439,37 +5359,38 @@ func repeats_type(subject *Printer, tree *ast.Parse_State, typed Boolean) (yes B
 // where the author put it, on the line the part before it holds or on a line of its own, and a
 // part that indented lines of its own leaves them behind at the column the form opened at.
 func open_argument(
-	subject *Printer, tree *ast.Parse_State,
-	opened Boolean, broken Boolean, marked Boolean, over Boolean,
-) (stand Boolean, spread Boolean) {
-	defer func() {
-		Boolean_Invariants(stand, "open_argument.stand")
-		Boolean_Invariants(spread, "open_argument.spread")
-	}()
-	Printer_Invariants(subject, "open_argument.subject")
-	ast.Parse_State_Invariants(tree, "open_argument.tree")
+	subject Printer_Handle,
+	tree ast.Parse_State_Handle,
+	opened Boolean,
+	broken Boolean,
+	marked Boolean,
+	over Boolean,
+) (result Open_Result) {
+	defer func() { Open_Result_Invariants(result, "open_argument.result") }()
+	Printer_Handle_Invariants(subject, "open_argument.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_argument.tree")
 	Boolean_Invariants(opened, "open_argument.opened")
 	Boolean_Invariants(broken, "open_argument.broken")
 	Boolean_Invariants(marked, "open_argument.marked")
 	Boolean_Invariants(over, "open_argument.over")
 	here := breaks_before(subject, tree) || over
 	if bool(open_column(here, opened)) {
-		subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_COLUMN_INDENT] + 1
-		subject.Flags[FLAG_BROKEN] = marked
+		subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_COLUMN_INDENT] + 1
+		subject.Flags.Values[FLAG_BROKEN] = marked
 	}
 	print_element_break(subject, tree, here)
-	return opened || here, broken || here
+	return Open_Result{Stand: opened || here, Spread: Spread(broken || here)}
 }
 
 // Reports whether the two forms the type slots name state one type, token for token. A literal
 // whose element repeats the type the literal itself names states that type twice, thus the
 // canonical form writes it once.
-func same_form(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func same_form(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "same_form.yes") }()
-	Printer_Invariants(subject, "same_form.subject")
-	ast.Parse_State_Invariants(tree, "same_form.tree")
-	left := subject.Types[TYPE_LEFT]
-	right := subject.Types[TYPE_RIGHT]
+	Printer_Handle_Invariants(subject, "same_form.subject")
+	ast.Parse_State_Handle_Invariants(tree, "same_form.tree")
+	left := ast.Index(subject.Types.Left)
+	right := ast.Index(subject.Types.Right)
 	if left == ast.INDEX_ABSENT {
 		return false
 	}
@@ -4481,7 +5402,7 @@ func same_form(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 	if one.Kind != two.Kind {
 		return false
 	}
-	source := subject.Sources[SOURCE_SLOT]
+	source := token.Source(subject.Sources.Source)
 	head := token.Text(source, ast.Token_At(tree, one.Token))
 	tail := token.Text(source, ast.Token_At(tree, two.Token))
 	if string(head) != string(tail) {
@@ -4493,8 +5414,8 @@ func same_form(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		if second == ast.INDEX_ABSENT {
 			return false
 		}
-		subject.Types[TYPE_LEFT] = first
-		subject.Types[TYPE_RIGHT] = second
+		subject.Types.Left = Left_Node(first)
+		subject.Types.Right = Right_Node(second)
 		if !bool(same_form(subject, tree)) {
 			return false
 		}
@@ -4506,12 +5427,12 @@ func same_form(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Reads the types the elements and the keys of one literal wear out of the type that literal
 // names. A literal of any other type states no type its parts repeat, thus the read names none.
-func take_element_type(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_element_type.subject")
-	ast.Parse_State_Invariants(tree, "take_element_type.tree")
-	held := subject.Types[TYPE_ELEMENT]
-	subject.Types[TYPE_ELEMENT] = ast.INDEX_ABSENT
-	subject.Types[TYPE_KEY] = ast.INDEX_ABSENT
+func take_element_type(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_element_type.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_element_type.tree")
+	held := ast.Index(subject.Types.Element)
+	subject.Types.Element = Element_Node(ast.INDEX_ABSENT)
+	subject.Types.Key = Key_Node(ast.INDEX_ABSENT)
 	if held == ast.INDEX_ABSENT {
 		return
 	}
@@ -4535,9 +5456,9 @@ func take_element_type(subject *Printer, tree *ast.Parse_State) {
 	for ast.Index(ast.Node_At(tree, last).Next) != ast.INDEX_ABSENT {
 		last = ast.Index(ast.Node_At(tree, last).Next)
 	}
-	subject.Types[TYPE_ELEMENT] = last
+	subject.Types.Element = Element_Node(last)
 	if keyed {
-		subject.Types[TYPE_KEY] = first
+		subject.Types.Key = Key_Node(first)
 	}
 }
 
@@ -4547,34 +5468,35 @@ func take_element_type(subject *Printer, tree *ast.Parse_State) {
 // states elements of a type no form of the source spells, thus the print reads no type for them
 // however the literal that holds it stands. A literal that names the type the literal above it
 // already named writes it once, thus the walk steps over the type it wrote twice.
-func opens_type(subject *Printer, tree *ast.Parse_State, open Boolean) (stand Boolean) {
+func opens_type(subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean) (stand Boolean) {
 	defer func() { Boolean_Invariants(stand, "opens_type.stand") }()
-	Printer_Invariants(subject, "opens_type.subject")
-	ast.Parse_State_Invariants(tree, "opens_type.tree")
+	Printer_Handle_Invariants(subject, "opens_type.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_type.tree")
 	Boolean_Invariants(open, "opens_type.open")
-	subject.Types[TYPE_OWN] = ast.INDEX_ABSENT
-	subject.Counts[COUNT_HEAD] = 0
+	subject.Types.Own = Own_Node(ast.INDEX_ABSENT)
+	subject.Counts.Values[COUNT_HEAD] = 0
 	typed := typed_head(subject, tree, open)
 	if bool(typed) {
-		subject.Counts[COUNT_HEAD] = 1
-		subject.Types[TYPE_OWN] = subject.Nodes[subject.Counts[COUNT_DEPTH]]
+		subject.Counts.Values[COUNT_HEAD] = 1
+		depth := subject.Counts.Values[COUNT_DEPTH]
+		subject.Types.Own = Own_Node(subject.Nodes.Values[depth])
 	}
-	own := subject.Types[TYPE_OWN]
+	own := subject.Types.Own
 	if bool(repeats_type(subject, tree, typed)) {
-		subject.Counts[COUNT_HEAD] = 0
+		subject.Counts.Values[COUNT_HEAD] = 0
 		open = advance_part(subject, tree)
 	}
-	subject.Types[TYPE_OWN] = own
+	subject.Types.Own = own
 	return open
 }
 
 // Reads the widest key of the run of pairs the walk stands at the opening of. Every value of one
 // run stands in the same column, thus the print owes the widest key before it writes the first
 // one. A run stops where a pair stops, because a literal that holds anything else aligns nothing.
-func take_key_width(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_key_width.subject")
-	ast.Parse_State_Invariants(tree, "take_key_width.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+func take_key_width(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_key_width.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_key_width.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	widest := Width(0)
 	pairs := 0
 	open := Boolean(true)
@@ -4583,7 +5505,7 @@ func take_key_width(subject *Printer, tree *ast.Parse_State) {
 			break
 		}
 		key_width(subject, tree)
-		width := subject.Spans[SPAN_FOUND]
+		width := Width(subject.Spans.Found)
 		// A pair that runs over lines of its own stands in no column with the pairs
 		// around it, thus it opens and closes a run holding itself alone.
 		if bool(spans_form(subject, tree)) {
@@ -4610,58 +5532,58 @@ func take_key_width(subject *Printer, tree *ast.Parse_State) {
 		// the author stopped opening a line for each pair. A form the print writes one
 		// part to a line opens that line itself, thus no pair of it shares one.
 		if bool(open) {
-			if !bool(subject.Flags[FLAG_APART]) {
+			if !bool(subject.Flags.Values[FLAG_APART]) {
 				if !bool(breaks_before(subject, tree)) {
 					break
 				}
 			}
 		}
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
-	subject.Counts[COUNT_WIDTH] = Count(widest)
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
+	subject.Counts.Values[COUNT_WIDTH] = Count(widest)
 }
 
 // Reports whether the form the walk stands on writes over more than one line.
-func spans_form(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func spans_form(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "spans_form.yes") }()
-	Printer_Invariants(subject, "spans_form.subject")
-	ast.Parse_State_Invariants(tree, "spans_form.tree")
+	Printer_Handle_Invariants(subject, "spans_form.subject")
+	ast.Parse_State_Handle_Invariants(tree, "spans_form.tree")
 	leftmost_position(subject, tree)
-	opening := ast.Token_At(tree, ast.Token_Index(subject.Positions[POSITION_FOUND]))
+	opening := ast.Token_At(tree, ast.Token_Index(subject.Positions.Found))
 	rightmost_position(subject, tree)
-	last := ast.Token_At(tree, ast.Token_Index(subject.Positions[POSITION_FOUND]))
+	last := ast.Token_At(tree, ast.Token_Index(subject.Positions.Found))
 	// A raw literal spans the lines it holds, thus the span closes at the end of the final
 	// token rather than at the byte that token opens.
-	subject.Offsets[OFFSET_FROM] = opening.Offset
-	subject.Offsets[OFFSET_TO] = token.Offset(int(last.Offset) + int(last.Size))
+	subject.Offsets.From = From_Offset(opening.Offset)
+	subject.Offsets.To = To_Offset(int(last.Offset) + int(last.Size))
 	return feeds(subject)
 }
 
 // Reads how wide the key of the pair the walk stands on writes.
-func key_width(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "key_width.subject")
-	ast.Parse_State_Invariants(tree, "key_width.tree")
-	subject.Spans[SPAN_FOUND] = 0
+func key_width(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "key_width.subject")
+	ast.Parse_State_Handle_Invariants(tree, "key_width.tree")
+	subject.Spans.Found = 0
 	if !bool(descend_quiet(subject, tree)) {
 		return
 	}
 	// A key states a whole expression rather than one word, thus the column it opens the
 	// value at answers for the form the print writes and not for the token the key names.
-	held := subject.Counts[COUNT_NEST]
-	subject.Counts[COUNT_NEST] = 1
+	held := subject.Counts.Values[COUNT_NEST]
+	subject.Counts.Values[COUNT_NEST] = 1
 	measure_expression(subject, tree)
-	subject.Counts[COUNT_NEST] = held
+	subject.Counts.Values[COUNT_NEST] = held
 	ascend(subject)
 }
 
 // Reports whether the pair the walk stands on closes the run it stands in. A comment or an empty
 // line behind a pair closes the run, thus the pairs behind that line align on a width of their
 // own.
-func breaks_run(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func breaks_run(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "breaks_run.yes") }()
-	Printer_Invariants(subject, "breaks_run.subject")
-	ast.Parse_State_Invariants(tree, "breaks_run.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+	Printer_Handle_Invariants(subject, "breaks_run.subject")
+	ast.Parse_State_Handle_Invariants(tree, "breaks_run.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	stand := advance(subject, tree)
 	// A note the pair carries behind it stands in a column of its own rather than last
 	// the run, thus the walk steps over it to read what stands behind the pair.
@@ -4671,16 +5593,16 @@ func breaks_run(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 	}
 	closes := closes_run(subject, tree, stand)
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
 	return closes
 }
 
 // Reports whether the run of pairs closes where the walk stands. Nothing behind the pair, trivia
 // behind it, or a pair that shares its line each close the run the pair stood in.
-func closes_run(subject *Printer, tree *ast.Parse_State, stand Boolean) (yes Boolean) {
+func closes_run(subject Printer_Handle, tree ast.Parse_State_Handle, stand Boolean) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_run.yes") }()
-	Printer_Invariants(subject, "closes_run.subject")
-	ast.Parse_State_Invariants(tree, "closes_run.tree")
+	Printer_Handle_Invariants(subject, "closes_run.subject")
+	ast.Parse_State_Handle_Invariants(tree, "closes_run.tree")
 	Boolean_Invariants(stand, "closes_run.stand")
 	if !bool(stand) {
 		return true
@@ -4690,63 +5612,63 @@ func closes_run(subject *Printer, tree *ast.Parse_State, stand Boolean) (yes Boo
 	}
 	// A form the print writes one part to a line opens a line for every pair it holds, thus
 	// the run closes at nothing the author wrote on one line.
-	if bool(subject.Flags[FLAG_APART]) {
+	if bool(subject.Flags.Values[FLAG_APART]) {
 		return false
 	}
 	return !breaks_before(subject, tree)
 }
 
 // Reports whether the node the walk stands on states a note that closes the line before it.
-func trails_note(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func trails_note(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "trails_note.yes") }()
-	Printer_Invariants(subject, "trails_note.subject")
-	ast.Parse_State_Invariants(tree, "trails_note.tree")
+	Printer_Handle_Invariants(subject, "trails_note.subject")
+	ast.Parse_State_Handle_Invariants(tree, "trails_note.tree")
 	if node_kind(subject, tree) != ast.NODE_COMMENT {
 		return false
 	}
-	subject.Positions[POSITION_FOUND] = Position(ast.Node_At(tree,
-		subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	subject.Positions.Found = Found_Position(ast.Node_At(tree,
+		subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Token)
 	return !stands_alone(subject, tree)
 }
 
 // Writes one keyed element: the key, the colon, and the value behind it.
-func print_key_value(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_key_value.subject")
-	ast.Parse_State_Invariants(tree, "print_key_value.tree")
+func print_key_value(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_key_value.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_key_value.tree")
 	// The key of a pair wears the type the map states for its keys, and a measure of that key
 	// prints it, thus the read stands ahead of every measure the print takes.
-	keyed := subject.Types[TYPE_KEY]
+	keyed := subject.Types.Key
 	key_width(subject, tree)
-	width := subject.Spans[SPAN_FOUND]
-	held := subject.Counts[COUNT_WIDTH]
+	width := Measured_Width(subject.Spans.Found)
+	held := subject.Counts.Values[COUNT_WIDTH]
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
-	element := subject.Types[TYPE_ELEMENT]
-	subject.Types[TYPE_ELEMENT] = keyed
+	element := subject.Types.Element
+	subject.Types.Element = Element_Node(keyed)
 	print_expression(subject, tree)
-	subject.Types[TYPE_ELEMENT] = element
+	subject.Types.Element = element
 	emit_byte(subject, ':')
 	if held == 0 {
 		emit_space(subject)
 	}
 	if held > 0 {
-		subject.Spans[SPAN_FOUND] = width
+		subject.Spans.Found = width
 		emit_padding(subject)
 	}
 	if bool(advance_part(subject, tree)) {
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 		print_expression(subject, tree)
-		subject.Counts[COUNT_WIDTH] = held
+		subject.Counts.Values[COUNT_WIDTH] = held
 	}
 	finish_parts(subject, tree)
 	ascend(subject)
 }
 
 // Writes one function literal: the word, its signature, and the block behind it.
-func print_function_literal(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_function_literal.subject")
-	ast.Parse_State_Invariants(tree, "print_function_literal.tree")
+func print_function_literal(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_function_literal.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_function_literal.tree")
 	emit_word(subject, WORD_FUNCTION)
 	open := descend_part(subject, tree)
 	entered := open
@@ -4757,9 +5679,9 @@ func print_function_literal(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one range clause: the word and the value it steps over.
-func print_range(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_range.subject")
-	ast.Parse_State_Invariants(tree, "print_range.tree")
+func print_range(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_range.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_range.tree")
 	emit_word(subject, WORD_RANGE)
 	if !bool(descend_part(subject, tree)) {
 		return
@@ -4771,9 +5693,9 @@ func print_range(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one type form, which is what an expression that names a type states.
-func print_type_form(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_type_form.subject")
-	ast.Parse_State_Invariants(tree, "print_type_form.tree")
+func print_type_form(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_type_form.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_type_form.tree")
 	switch node_kind(subject, tree) {
 	case ast.NODE_POINTER_TYPE:
 		print_prefixed(subject, tree, PREFIX_POINTER)
@@ -4841,9 +5763,9 @@ func Prefix_Invariants(value Prefix, namespace aver.Namespace) {
 }
 
 // Writes one type that opens with a prefix and reads one type behind it.
-func print_prefixed(subject *Printer, tree *ast.Parse_State, prefix Prefix) {
-	Printer_Invariants(subject, "print_prefixed.subject")
-	ast.Parse_State_Invariants(tree, "print_prefixed.tree")
+func print_prefixed(subject Printer_Handle, tree ast.Parse_State_Handle, prefix Prefix) {
+	Printer_Handle_Invariants(subject, "print_prefixed.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_prefixed.tree")
 	Prefix_Invariants(prefix, "print_prefixed.prefix")
 	emit_prefix(subject, prefix)
 	if !bool(descend_part(subject, tree)) {
@@ -4855,8 +5777,8 @@ func print_prefixed(subject *Printer, tree *ast.Parse_State, prefix Prefix) {
 }
 
 // Writes the bytes one prefix spells.
-func emit_prefix(subject *Printer, prefix Prefix) {
-	Printer_Invariants(subject, "emit_prefix.subject")
+func emit_prefix(subject Printer_Handle, prefix Prefix) {
+	Printer_Handle_Invariants(subject, "emit_prefix.subject")
 	Prefix_Invariants(prefix, "emit_prefix.prefix")
 	switch prefix {
 	case PREFIX_POINTER:
@@ -4885,9 +5807,9 @@ func emit_prefix(subject *Printer, prefix Prefix) {
 }
 
 // Writes one array type: the count between brackets and the element behind them.
-func print_array(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_array.subject")
-	ast.Parse_State_Invariants(tree, "print_array.tree")
+func print_array(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_array.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_array.tree")
 	emit_byte(subject, '[')
 	if !bool(descend_part(subject, tree)) {
 		emit_byte(subject, ']')
@@ -4903,9 +5825,9 @@ func print_array(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one map type: the key between brackets and the value behind them.
-func print_map(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_map.subject")
-	ast.Parse_State_Invariants(tree, "print_map.tree")
+func print_map(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_map.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_map.tree")
 	emit_word(subject, WORD_MAP)
 	emit_byte(subject, '[')
 	if !bool(descend_part(subject, tree)) {
@@ -4922,9 +5844,9 @@ func print_map(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one union of terms, which stand between signs.
-func print_union(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_union.subject")
-	ast.Parse_State_Invariants(tree, "print_union.tree")
+func print_union(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_union.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_union.tree")
 	open := descend_part(subject, tree)
 	entered := open
 	terms := 0
@@ -4945,9 +5867,9 @@ func print_union(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Writes one term of a constraint, which the tilde opens where it admits a type of its own shape.
-func print_term(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_term.subject")
-	ast.Parse_State_Invariants(tree, "print_term.tree")
+func print_term(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_term.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_term.tree")
 	if bool(approximate(subject, tree)) {
 		emit_byte(subject, '~')
 	}
@@ -4960,11 +5882,12 @@ func print_term(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Reports whether one term admits every type of its shape, which the tilde ahead of it states.
-func approximate(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func approximate(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "approximate.yes") }()
-	Printer_Invariants(subject, "approximate.subject")
-	ast.Parse_State_Invariants(tree, "approximate.tree")
-	position := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
+	Printer_Handle_Invariants(subject, "approximate.subject")
+	ast.Parse_State_Handle_Invariants(tree, "approximate.tree")
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	position := ast.Node_At(tree, index).Token
 	if position == 0 {
 		return false
 	}
@@ -4973,9 +5896,9 @@ func approximate(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Writes one struct type: the word, the fields one tab deeper, and the brace that closes it. A
 // struct that states no field stands on one line, which is the form the canonical printer writes.
-func print_structure(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_structure.subject")
-	ast.Parse_State_Invariants(tree, "print_structure.tree")
+func print_structure(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_structure.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_structure.tree")
 	emit_word(subject, WORD_STRUCTURE)
 	if bool(spans_one_line(subject, tree)) {
 		print_inline_structure(subject, tree)
@@ -4991,20 +5914,20 @@ func print_structure(subject *Printer, tree *ast.Parse_State) {
 	emit_space(subject)
 	emit_byte(subject, '{')
 	close_line(subject, tree)
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
-	subject.Counts[COUNT_WIDTH] = 0
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
+	subject.Counts.Values[COUNT_WIDTH] = 0
 	// A run of fields closes up against its braces, thus the struct opens at its first field
 	// and closes at its last one.
-	held_tight := subject.Flags[FLAG_TIGHT]
-	subject.Flags[FLAG_TIGHT] = true
+	held_tight := subject.Flags.Values[FLAG_TIGHT]
+	subject.Flags.Values[FLAG_TIGHT] = true
 	open := Boolean(true)
 	for bool(open) {
 		print_field(subject, tree)
 		open = advance(subject, tree)
 	}
-	subject.Flags[FLAG_TIGHT] = held_tight
+	subject.Flags.Values[FLAG_TIGHT] = held_tight
 	ascend(subject)
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] - 1
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] - 1
 	emit_indent(subject)
 	emit_byte(subject, '}')
 }
@@ -5012,26 +5935,26 @@ func print_structure(subject *Printer, tree *ast.Parse_State) {
 // Writes one member of a struct: a field, a comment, or an empty line. A comment and an empty
 // line each close the run of fields that stood before them, thus the run behind one aligns on a
 // width of its own.
-func print_field(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_field.subject")
-	ast.Parse_State_Invariants(tree, "print_field.tree")
+func print_field(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_field.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_field.tree")
 	kind := node_kind(subject, tree)
 	if kind == ast.NODE_BLANK {
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 		if bool(stands_against(subject, tree)) {
 			return
 		}
 		// An empty line the scanner counted behind the brace stands behind the struct, thus
 		// the print owes it to the line the declaration closes and not to this one.
 		if bool(closes_block(subject, tree)) {
-			subject.Flags[FLAG_BLANK] = true
+			subject.Flags.Values[FLAG_BLANK] = true
 			return
 		}
 		close_line(subject, tree)
 		return
 	}
 	if kind == ast.NODE_COMMENT {
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 		emit_indent(subject)
 		emit_token(subject, tree)
 		close_line(subject, tree)
@@ -5040,7 +5963,7 @@ func print_field(subject *Printer, tree *ast.Parse_State) {
 	if kind != ast.NODE_FIELD {
 		return
 	}
-	if subject.Counts[COUNT_WIDTH] == 0 {
+	if subject.Counts.Values[COUNT_WIDTH] == 0 {
 		take_run_width(subject, tree)
 	}
 	print_field_parts(subject, tree)
@@ -5048,10 +5971,10 @@ func print_field(subject *Printer, tree *ast.Parse_State) {
 
 // Puts the widest name of the run of fields the walk opens in the width slot. A field that states
 // no name of its own closes the run, thus it aligns nothing and nothing aligns on it.
-func take_run_width(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_run_width.subject")
-	ast.Parse_State_Invariants(tree, "take_run_width.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+func take_run_width(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_run_width.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_run_width.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	widest := Width(0)
 	types := Width(0)
 	tagged := false
@@ -5061,7 +5984,7 @@ func take_run_width(subject *Printer, tree *ast.Parse_State) {
 			break
 		}
 		named := field_width(subject, tree)
-		width := subject.Spans[SPAN_FOUND]
+		width := Width(subject.Spans.Found)
 		if !bool(named) {
 			break
 		}
@@ -5071,7 +5994,7 @@ func take_run_width(subject *Printer, tree *ast.Parse_State) {
 		// A tag stands in a column of its own behind the types, thus the run answers for
 		// the widest type as well as for the widest run of names.
 		states := type_width(subject, tree)
-		one := subject.Spans[SPAN_FOUND]
+		one := Width(subject.Spans.Found)
 		if one > types {
 			types = one
 		}
@@ -5083,20 +6006,20 @@ func take_run_width(subject *Printer, tree *ast.Parse_State) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
-	subject.Counts[COUNT_WIDTH] = Count(widest)
-	subject.Counts[COUNT_TYPE] = 0
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
+	subject.Counts.Values[COUNT_WIDTH] = Count(widest)
+	subject.Counts.Values[COUNT_TYPE] = 0
 	if tagged {
-		subject.Counts[COUNT_TYPE] = Count(types)
+		subject.Counts.Values[COUNT_TYPE] = Count(types)
 	}
 }
 
 // Reads how wide the type of one field writes and whether the field carries a tag behind it.
-func type_width(subject *Printer, tree *ast.Parse_State) (tagged Boolean) {
+func type_width(subject Printer_Handle, tree ast.Parse_State_Handle) (tagged Boolean) {
 	defer func() { Boolean_Invariants(tagged, "type_width.tagged") }()
-	Printer_Invariants(subject, "type_width.subject")
-	ast.Parse_State_Invariants(tree, "type_width.tree")
-	subject.Spans[SPAN_FOUND] = 0
+	Printer_Handle_Invariants(subject, "type_width.subject")
+	ast.Parse_State_Handle_Invariants(tree, "type_width.tree")
+	subject.Spans.Found = 0
 	if !bool(descend_quiet(subject, tree)) {
 		return false
 	}
@@ -5112,18 +6035,18 @@ func type_width(subject *Printer, tree *ast.Parse_State) (tagged Boolean) {
 		return false
 	}
 	measure_expression(subject, tree)
-	held := subject.Spans[SPAN_FOUND]
+	held := subject.Spans.Found
 	tagged = advance_quiet(subject, tree)
 	ascend(subject)
-	subject.Spans[SPAN_FOUND] = held
+	subject.Spans.Found = held
 	return tagged
 }
 
 // Reports whether the field the walk stands on carries a comment or an empty line behind it.
-func field_breaks(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func field_breaks(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "field_breaks.yes") }()
-	Printer_Invariants(subject, "field_breaks.subject")
-	ast.Parse_State_Invariants(tree, "field_breaks.tree")
+	Printer_Handle_Invariants(subject, "field_breaks.subject")
+	ast.Parse_State_Handle_Invariants(tree, "field_breaks.tree")
 	if !bool(descend(subject, tree)) {
 		return false
 	}
@@ -5144,13 +6067,13 @@ func field_breaks(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Reads the width of the name one field states, and reports whether it states one at all.
-func field_width(subject *Printer, tree *ast.Parse_State) (named Boolean) {
+func field_width(subject Printer_Handle, tree ast.Parse_State_Handle) (named Boolean) {
 	defer func() {
 		Boolean_Invariants(named, "field_width.named")
 	}()
-	Printer_Invariants(subject, "field_width.subject")
-	ast.Parse_State_Invariants(tree, "field_width.tree")
-	subject.Spans[SPAN_FOUND] = 0
+	Printer_Handle_Invariants(subject, "field_width.subject")
+	ast.Parse_State_Handle_Invariants(tree, "field_width.tree")
+	subject.Spans.Found = 0
 	if !bool(descend(subject, tree)) {
 		return false
 	}
@@ -5158,7 +6081,7 @@ func field_width(subject *Printer, tree *ast.Parse_State) (named Boolean) {
 	names_width(subject, tree)
 	ascend(subject)
 	if !bool(held) {
-		subject.Spans[SPAN_FOUND] = 0
+		subject.Spans.Found = 0
 		return false
 	}
 	return true
@@ -5167,10 +6090,10 @@ func field_width(subject *Printer, tree *ast.Parse_State) (named Boolean) {
 // Reads how wide the names one field binds write, the commas between them counted. Every name of
 // one field stands ahead of the same type, thus the column the type opens at answers for the run
 // of names and not for one name of it.
-func names_width(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "names_width.subject")
-	ast.Parse_State_Invariants(tree, "names_width.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+func names_width(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "names_width.subject")
+	ast.Parse_State_Handle_Invariants(tree, "names_width.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	width := Width(0)
 	names := 0
 	open := Boolean(true)
@@ -5182,18 +6105,18 @@ func names_width(subject *Printer, tree *ast.Parse_State) {
 			width = width + 2
 		}
 		node_width(subject, tree)
-		width = width + subject.Spans[SPAN_FOUND]
+		width = width + Width(subject.Spans.Found)
 		names = names + 1
 		open = advance(subject, tree)
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
-	subject.Spans[SPAN_FOUND] = width
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
+	subject.Spans.Found = Measured_Width(width)
 }
 
 // Writes the name of one field, the spaces that align the type behind it, and that type.
-func print_field_parts(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_field_parts.subject")
-	ast.Parse_State_Invariants(tree, "print_field_parts.tree")
+func print_field_parts(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_field_parts.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_field_parts.tree")
 	emit_indent(subject)
 	if !bool(descend_part(subject, tree)) {
 		close_line(subject, tree)
@@ -5208,11 +6131,11 @@ func print_field_parts(subject *Printer, tree *ast.Parse_State) {
 		close_line(subject, tree)
 		drain_trivia(subject, tree, stand)
 		ascend(subject)
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 		return
 	}
 	names_width(subject, tree)
-	width := subject.Spans[SPAN_FOUND]
+	width := subject.Spans.Found
 	names := 0
 	open := Boolean(true)
 	for bool(open) {
@@ -5227,19 +6150,20 @@ func print_field_parts(subject *Printer, tree *ast.Parse_State) {
 		names = names + 1
 		open = advance(subject, tree)
 	}
-	subject.Spans[SPAN_FOUND] = width
+	subject.Spans.Found = width
 	emit_padding(subject)
 	if bool(open) {
 		measure_expression(subject, tree)
-		span := subject.Spans[SPAN_FOUND]
+		span := subject.Spans.Found
 		print_expression(subject, tree)
 		open = advance(subject, tree)
 		// A tag stands in the column the widest type of the run opens, thus every tag of
 		// one run reads as one column rather than as a ragged edge.
 		if bool(open) {
-			if subject.Counts[COUNT_TYPE] > 0 {
-				subject.Spans[SPAN_FOUND] = span
-				subject.Spans[SPAN_COLUMN] = Width(subject.Counts[COUNT_TYPE])
+			if subject.Counts.Values[COUNT_TYPE] > 0 {
+				subject.Spans.Found = span
+				column := subject.Counts.Values[COUNT_TYPE]
+				subject.Spans.Column = Column_Width(column)
 				emit_column(subject)
 				emit_token(subject, tree)
 				open = advance(subject, tree)
@@ -5251,22 +6175,22 @@ func print_field_parts(subject *Printer, tree *ast.Parse_State) {
 	drain_trivia(subject, tree, open)
 	ascend(subject)
 	if bool(broken) {
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 	}
 }
 
 // Writes the spaces that stand between one field name and the type behind it, which is one space
 // past the widest name the run holds.
-func emit_padding(subject *Printer) {
-	Printer_Invariants(subject, "emit_padding.subject")
-	subject.Spans[SPAN_COLUMN] = Width(subject.Counts[COUNT_WIDTH])
+func emit_padding(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_padding.subject")
+	subject.Spans.Column = Column_Width(subject.Counts.Values[COUNT_WIDTH])
 	emit_column(subject)
 }
 
 // Writes one constraint: the word, the terms one tab deeper, and the brace that closes it.
-func print_constraint(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_constraint.subject")
-	ast.Parse_State_Invariants(tree, "print_constraint.tree")
+func print_constraint(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_constraint.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_constraint.tree")
 	emit_word(subject, WORD_INTERFACE)
 	if bool(holds_no_part(subject, tree)) {
 		emit_byte(subject, '{')
@@ -5278,29 +6202,29 @@ func print_constraint(subject *Printer, tree *ast.Parse_State) {
 	emit_space(subject)
 	emit_byte(subject, '{')
 	close_line(subject, tree)
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
-	held_tight := subject.Flags[FLAG_TIGHT]
-	subject.Flags[FLAG_TIGHT] = true
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
+	held_tight := subject.Flags.Values[FLAG_TIGHT]
+	subject.Flags.Values[FLAG_TIGHT] = true
 	open := Boolean(true)
 	for bool(open) {
 		print_element(subject, tree)
 		open = advance(subject, tree)
 	}
-	subject.Flags[FLAG_TIGHT] = held_tight
+	subject.Flags.Values[FLAG_TIGHT] = held_tight
 	ascend(subject)
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] - 1
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] - 1
 	emit_indent(subject)
 	emit_byte(subject, '}')
 }
 
 // Writes one element of a constraint on a line of its own.
-func print_element(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_element.subject")
-	ast.Parse_State_Invariants(tree, "print_element.tree")
+func print_element(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_element.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_element.tree")
 	kind := node_kind(subject, tree)
 	if kind == ast.NODE_BLANK {
 		if bool(closes_block(subject, tree)) {
-			subject.Flags[FLAG_BLANK] = true
+			subject.Flags.Values[FLAG_BLANK] = true
 			return
 		}
 		close_line(subject, tree)
@@ -5319,33 +6243,33 @@ func print_element(subject *Printer, tree *ast.Parse_State) {
 // Reports whether the source states a line feed ahead of the node the walk stands on. The
 // canonical form keeps the line the author broke, thus a print reads the break out of the source
 // rather than inventing one of its own.
-func breaks_before(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func breaks_before(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "breaks_before.yes") }()
-	Printer_Invariants(subject, "breaks_before.subject")
-	ast.Parse_State_Invariants(tree, "breaks_before.tree")
+	Printer_Handle_Invariants(subject, "breaks_before.subject")
+	ast.Parse_State_Handle_Invariants(tree, "breaks_before.tree")
 	// A measure asks how wide the form reads on one line, thus it reads no break at all.
-	if bool(subject.Flags[FLAG_FLAT]) {
+	if bool(subject.Flags.Values[FLAG_FLAT]) {
 		return false
 	}
 	leftmost_position(subject, tree)
-	position := subject.Positions[POSITION_FOUND]
+	position := subject.Positions.Found
 	if position == 0 {
 		return false
 	}
 	behind := ast.Token_At(tree, ast.Token_Index(position-1))
 	ahead := ast.Token_At(tree, ast.Token_Index(position))
-	subject.Offsets[OFFSET_FROM] = token.Offset(int(behind.Offset) + int(behind.Size))
-	subject.Offsets[OFFSET_TO] = ahead.Offset
+	subject.Offsets.From = From_Offset(int(behind.Offset) + int(behind.Size))
+	subject.Offsets.To = To_Offset(ahead.Offset)
 	return feeds(subject)
 }
 
 // Reports whether the source holds a line feed between two byte offsets.
-func feeds(subject *Printer) (yes Boolean) {
+func feeds(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "feeds.yes") }()
-	Printer_Invariants(subject, "feeds.subject")
-	from := subject.Offsets[OFFSET_FROM]
-	to := subject.Offsets[OFFSET_TO]
-	source := subject.Sources[SOURCE_SLOT]
+	Printer_Handle_Invariants(subject, "feeds.subject")
+	from := subject.Offsets.From
+	to := subject.Offsets.To
+	source := subject.Sources.Source
 	if int(to) > len(source) {
 		return false
 	}
@@ -5358,15 +6282,16 @@ func feeds(subject *Printer) (yes Boolean) {
 }
 
 // Names the run position of the final token the node the walk stands on spans.
-func rightmost_position(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "rightmost_position.subject")
-	ast.Parse_State_Invariants(tree, "rightmost_position.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+func rightmost_position(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "rightmost_position.subject")
+	ast.Parse_State_Handle_Invariants(tree, "rightmost_position.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	largest := Position(ast.Node_At(tree, held).Token)
 	open := descend(subject, tree)
 	for bool(open) {
-		one := Position(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+		index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+		one := Position(ast.Node_At(tree, index).Token)
 		if one > largest {
 			largest = one
 		}
@@ -5375,7 +6300,7 @@ func rightmost_position(subject *Printer, tree *ast.Parse_State) {
 		}
 		open = advance(subject, tree)
 		for !bool(open) {
-			if subject.Counts[COUNT_DEPTH] <= depth+1 {
+			if subject.Counts.Values[COUNT_DEPTH] <= depth+1 {
 				open = false
 				break
 			}
@@ -5383,41 +6308,41 @@ func rightmost_position(subject *Printer, tree *ast.Parse_State) {
 			open = advance(subject, tree)
 		}
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
-	subject.Positions[POSITION_FOUND] = largest
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
+	subject.Positions.Found = Found_Position(largest)
 }
 
 // Reports whether the bracket that closes the form the walk stands on stands on a line of its
 // own. A bracket the author left behind the final part stays there, thus the print states the
 // break the author stated and never one of its own.
-func closes_line(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func closes_line(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_line.yes") }()
-	Printer_Invariants(subject, "closes_line.subject")
-	ast.Parse_State_Invariants(tree, "closes_line.tree")
-	if bool(subject.Flags[FLAG_FLAT]) {
+	Printer_Handle_Invariants(subject, "closes_line.subject")
+	ast.Parse_State_Handle_Invariants(tree, "closes_line.tree")
+	if bool(subject.Flags.Values[FLAG_FLAT]) {
 		return false
 	}
 	closer_position(subject, tree)
-	position := subject.Positions[POSITION_FOUND]
+	position := subject.Positions.Found
 	if position == 0 {
 		return false
 	}
 	behind := ast.Token_At(tree, ast.Token_Index(position-1))
 	ahead := ast.Token_At(tree, ast.Token_Index(position))
-	subject.Offsets[OFFSET_FROM] = token.Offset(int(behind.Offset) + int(behind.Size))
-	subject.Offsets[OFFSET_TO] = ahead.Offset
+	subject.Offsets.From = From_Offset(int(behind.Offset) + int(behind.Size))
+	subject.Offsets.To = To_Offset(ahead.Offset)
 	return feeds(subject)
 }
 
 // Names the run position of the bracket that closes the form the walk stands on. The node names
 // the bracket its form opens with, thus a count over the brackets behind that one finds the
 // bracket that closes it. Zero names a form the run holds no last bracket for.
-func closer_position(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "closer_position.subject")
-	ast.Parse_State_Invariants(tree, "closer_position.tree")
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
-	subject.Positions[POSITION_FOUND] = 0
+func closer_position(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "closer_position.subject")
+	ast.Parse_State_Handle_Invariants(tree, "closer_position.tree")
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
+	subject.Positions.Found = 0
 	depth := 0
 	run := ast.Parse_State_Token_Run(tree)
 	for offset := int(node.Token); offset < len(run); offset++ {
@@ -5425,15 +6350,15 @@ func closer_position(subject *Printer, tree *ast.Parse_State) {
 		if kind == token.KIND_END_OF_FILE {
 			return
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = kind
+		subject.Signs.Held = Held_Sign(kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 			if depth <= 0 {
-				subject.Positions[POSITION_FOUND] = Position(offset)
+				subject.Positions.Found = Found_Position(offset)
 				return
 			}
 		}
@@ -5442,18 +6367,18 @@ func closer_position(subject *Printer, tree *ast.Parse_State) {
 
 // Opens the line one part of a broken form stands on: the comma that closes the part before it,
 // the line feed, and the tabs one level deeper than the form.
-func emit_break(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_break.subject")
-	ast.Parse_State_Invariants(tree, "emit_break.tree")
+func emit_break(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_break.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_break.tree")
 	emit_byte(subject, ',')
 	close_line(subject, tree)
 	emit_indent(subject)
 }
 
 // Writes one block whose statements stand on the line its brace opens.
-func print_inline_block(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_inline_block.subject")
-	ast.Parse_State_Invariants(tree, "print_inline_block.tree")
+func print_inline_block(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_inline_block.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_inline_block.tree")
 	emit_byte(subject, '{')
 	open := descend(subject, tree)
 	entered := open
@@ -5483,8 +6408,8 @@ func print_inline_block(subject *Printer, tree *ast.Parse_State) {
 
 // Indents the parts of a form that the author broke behind its first part. A form broken at its
 // head takes its indent when it opens, thus only a form broken later owes one here.
-func open_break(subject *Printer, here Boolean, broken Boolean) {
-	Printer_Invariants(subject, "open_break.subject")
+func open_break(subject Printer_Handle, here Boolean, broken Boolean) {
+	Printer_Handle_Invariants(subject, "open_break.subject")
 	Boolean_Invariants(here, "open_break.here")
 	Boolean_Invariants(broken, "open_break.broken")
 	if !bool(here) {
@@ -5493,63 +6418,63 @@ func open_break(subject *Printer, here Boolean, broken Boolean) {
 	if bool(broken) {
 		return
 	}
-	subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] + 1
+	subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] + 1
 }
 
 // Names the nest the parts inside the brackets of one form stand at. A call of one argument
 // states that argument as plainly as a statement does, thus only a call of two or more closes up
 // the signs its arguments hold.
-func inner_nest(subject *Printer, tree *ast.Parse_State, wrap Wrap) {
-	Printer_Invariants(subject, "inner_nest.subject")
-	ast.Parse_State_Invariants(tree, "inner_nest.tree")
+func inner_nest(subject Printer_Handle, tree ast.Parse_State_Handle, wrap Wrap) {
+	Printer_Handle_Invariants(subject, "inner_nest.subject")
+	ast.Parse_State_Handle_Invariants(tree, "inner_nest.tree")
 	Wrap_Invariants(wrap, "inner_nest.wrap")
-	held := subject.Counts[COUNT_NEST]
-	subject.Counts[COUNT_INNER] = held
+	held := subject.Counts.Values[COUNT_NEST]
+	subject.Counts.Values[COUNT_INNER] = held
 	if wrap == WRAP_INDEX {
-		subject.Counts[COUNT_INNER] = held + 1
+		subject.Counts.Values[COUNT_INNER] = held + 1
 		return
 	}
 	part_count(subject, tree)
-	if subject.Counts[COUNT_PART] > 2 {
-		subject.Counts[COUNT_INNER] = held + 1
+	if subject.Counts.Values[COUNT_PART] > 2 {
+		subject.Counts.Values[COUNT_INNER] = held + 1
 	}
 }
 
 // Names the nest the head of one form stands at, which is the value the brackets stand behind.
-func head_nest(subject *Printer, wrap Wrap) {
-	Printer_Invariants(subject, "head_nest.subject")
+func head_nest(subject Printer_Handle, wrap Wrap) {
+	Printer_Handle_Invariants(subject, "head_nest.subject")
 	Wrap_Invariants(wrap, "head_nest.wrap")
-	subject.Counts[COUNT_HEAD] = subject.Counts[COUNT_INNER]
+	subject.Counts.Values[COUNT_HEAD] = subject.Counts.Values[COUNT_INNER]
 	if wrap == WRAP_INDEX {
-		subject.Counts[COUNT_HEAD] = 1
+		subject.Counts.Values[COUNT_HEAD] = 1
 	}
 }
 
 // Reads how many parts the node the walk stands on holds, over the trivia between them.
-func part_count(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "part_count.subject")
-	ast.Parse_State_Invariants(tree, "part_count.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+func part_count(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "part_count.subject")
+	ast.Parse_State_Handle_Invariants(tree, "part_count.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	count := Count(0)
 	open := descend_quiet(subject, tree)
 	for bool(open) {
 		count = count + 1
 		open = advance_quiet(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
-	subject.Counts[COUNT_PART] = count
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
+	subject.Counts.Values[COUNT_PART] = count
 }
 
 // Reports whether one child of a clause opens the branch its condition fails into. Only an if
 // statement holds a second branch, and only a block or a further if statement states one.
-func opens_branch(subject *Printer, tree *ast.Parse_State, held Boolean) (yes Boolean) {
+func opens_branch(subject Printer_Handle, tree ast.Parse_State_Handle, held Boolean) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_branch.yes") }()
-	Printer_Invariants(subject, "opens_branch.subject")
-	ast.Parse_State_Invariants(tree, "opens_branch.tree")
+	Printer_Handle_Invariants(subject, "opens_branch.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_branch.tree")
 	Boolean_Invariants(held, "opens_branch.held")
-	if subject.Kinds[KIND_CLAUSE] != ast.NODE_IF {
+	if ast.Node_Kind(subject.Kinds.Clause) != ast.NODE_IF {
 		return false
 	}
 	if !bool(held) {
@@ -5560,22 +6485,22 @@ func opens_branch(subject *Printer, tree *ast.Parse_State, held Boolean) (yes Bo
 }
 
 // Reports whether the node the walk stands on states one case of a switch or a select.
-func opens_case(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func opens_case(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_case.yes") }()
-	Printer_Invariants(subject, "opens_case.subject")
-	ast.Parse_State_Invariants(tree, "opens_case.tree")
+	Printer_Handle_Invariants(subject, "opens_case.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_case.tree")
 	kind := node_kind(subject, tree)
 	return Boolean(kind == ast.NODE_CASE || kind == ast.NODE_DEFAULT)
 }
 
 // Reports whether the clause the walk stands on holds one case alone, which is the body that
 // closes up against the braces that hold it.
-func holds_one_case(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func holds_one_case(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_one_case.yes") }()
-	Printer_Invariants(subject, "holds_one_case.subject")
-	ast.Parse_State_Invariants(tree, "holds_one_case.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	Printer_Handle_Invariants(subject, "holds_one_case.subject")
+	ast.Parse_State_Handle_Invariants(tree, "holds_one_case.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	cases := 0
 	open := descend_quiet(subject, tree)
 	for bool(open) {
@@ -5584,8 +6509,8 @@ func holds_one_case(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance_quiet(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	return Boolean(cases == 1)
 }
 
@@ -5593,19 +6518,20 @@ func holds_one_case(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // behind it, and the colon that closes them, inside the width a short line states. A note the
 // author left inside that head names the line it stands on, thus a head that holds one keeps the
 // lines the author wrote.
-func fits_case(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func fits_case(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "fits_case.yes") }()
-	Printer_Invariants(subject, "fits_case.subject")
-	ast.Parse_State_Invariants(tree, "fits_case.tree")
-	colon := int(subject.Positions[POSITION_FROM])
-	opening := int(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	Printer_Handle_Invariants(subject, "fits_case.subject")
+	ast.Parse_State_Handle_Invariants(tree, "fits_case.tree")
+	colon := int(subject.Positions.From)
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	opening := int(ast.Node_At(tree, index).Token)
 	for place := opening; place < colon; place = place + 1 {
 		if ast.Token_At(tree, ast.Token_Index(place)).Kind == token.KIND_COMMENT {
 			return false
 		}
 	}
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	// The word one case opens with and the space behind it stand ahead of every value, and
 	// the colon closes them, thus the head writes four bytes no value states.
 	width := 6
@@ -5616,14 +6542,14 @@ func fits_case(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 			open = descend_quiet(subject, tree)
 			for bool(open) {
 				measure_expression(subject, tree)
-				width = width + int(subject.Spans[SPAN_FOUND]) + 2
+				width = width + int(subject.Spans.Found) + 2
 				values = values + 1
 				open = advance_quiet(subject, tree)
 			}
 		}
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	if values == 0 {
 		return false
 	}
@@ -5632,9 +6558,9 @@ func fits_case(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Writes the values one case stands for. The tree hangs the whole run off one node, thus the
 // print walks that node rather than the case itself.
-func print_case_values(subject *Printer, tree *ast.Parse_State, flat Boolean) {
-	Printer_Invariants(subject, "print_case_values.subject")
-	ast.Parse_State_Invariants(tree, "print_case_values.tree")
+func print_case_values(subject Printer_Handle, tree ast.Parse_State_Handle, flat Boolean) {
+	Printer_Handle_Invariants(subject, "print_case_values.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_case_values.tree")
 	Boolean_Invariants(flat, "print_case_values.flat")
 	// A select states a whole statement where a switch states a value, thus the print writes
 	// the form of the child rather than an expression the child may not be.
@@ -5672,7 +6598,7 @@ func print_case_values(subject *Printer, tree *ast.Parse_State, flat Boolean) {
 		open = advance_part(subject, tree)
 	}
 	if bool(broken) {
-		subject.Counts[COUNT_INDENT] = subject.Counts[COUNT_INDENT] - 1
+		subject.Counts.Values[COUNT_INDENT] = subject.Counts.Values[COUNT_INDENT] - 1
 	}
 	if bool(entered) {
 		finish_parts(subject, tree)
@@ -5683,27 +6609,27 @@ func print_case_values(subject *Printer, tree *ast.Parse_State, flat Boolean) {
 // Reports whether the form the walk stands on writes every part of itself on the line it opens
 // on. A struct the author wrote on one line stands on one line, thus a table of cases reads as a
 // table rather than as a page of fields.
-func spans_one_line(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func spans_one_line(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "spans_one_line.yes") }()
-	Printer_Invariants(subject, "spans_one_line.subject")
-	ast.Parse_State_Invariants(tree, "spans_one_line.tree")
+	Printer_Handle_Invariants(subject, "spans_one_line.subject")
+	ast.Parse_State_Handle_Invariants(tree, "spans_one_line.tree")
 	closer_position(subject, tree)
-	closer := subject.Positions[POSITION_FOUND]
+	closer := subject.Positions.Found
 	if closer == 0 {
 		return false
 	}
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
 	opening := ast.Token_At(tree, node.Token)
 	ahead := ast.Token_At(tree, ast.Token_Index(closer))
-	subject.Offsets[OFFSET_FROM] = token.Offset(int(opening.Offset) + int(opening.Size))
-	subject.Offsets[OFFSET_TO] = ahead.Offset
+	subject.Offsets.From = From_Offset(int(opening.Offset) + int(opening.Size))
+	subject.Offsets.To = To_Offset(ahead.Offset)
 	return !feeds(subject)
 }
 
 // Writes one struct type the author stated on one line, the fields between semicolons.
-func print_inline_structure(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_inline_structure.subject")
-	ast.Parse_State_Invariants(tree, "print_inline_structure.tree")
+func print_inline_structure(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_inline_structure.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_inline_structure.tree")
 	emit_byte(subject, '{')
 	open := descend(subject, tree)
 	entered := open
@@ -5735,9 +6661,9 @@ func print_inline_structure(subject *Printer, tree *ast.Parse_State) {
 
 // Writes one field of a struct the author stated on one line: the names it binds and the type
 // behind them.
-func print_inline_field(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_inline_field.subject")
-	ast.Parse_State_Invariants(tree, "print_inline_field.tree")
+func print_inline_field(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_inline_field.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_inline_field.tree")
 	open := descend_quiet(subject, tree)
 	entered := open
 	names := 0
@@ -5767,10 +6693,10 @@ func print_inline_field(subject *Printer, tree *ast.Parse_State) {
 // Writes one grouping: the parentheses the author wrote and the value between them. Parentheses
 // state the binding the signs inside them would otherwise state, thus the value inside stands one
 // level shallower than the form around it.
-func print_group(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "print_group.subject")
-	ast.Parse_State_Invariants(tree, "print_group.tree")
-	held := subject.Counts[COUNT_NEST]
+func print_group(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "print_group.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_group.tree")
+	held := subject.Counts.Values[COUNT_NEST]
 	inner := Count(1)
 	if held > 1 {
 		inner = held - 1
@@ -5779,9 +6705,9 @@ func print_group(subject *Printer, tree *ast.Parse_State) {
 	open := descend_part(subject, tree)
 	entered := open
 	if bool(open) {
-		subject.Counts[COUNT_NEST] = inner
+		subject.Counts.Values[COUNT_NEST] = inner
 		print_expression(subject, tree)
-		subject.Counts[COUNT_NEST] = held
+		subject.Counts.Values[COUNT_NEST] = held
 	}
 	if bool(entered) {
 		finish_parts(subject, tree)
@@ -5792,26 +6718,26 @@ func print_group(subject *Printer, tree *ast.Parse_State) {
 
 // Writes the semicolons the source states between two run positions. A semicolon a line feed
 // stands for spans no byte, thus only a semicolon the author wrote counts.
-func emit_marks(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_marks.subject")
-	ast.Parse_State_Invariants(tree, "emit_marks.tree")
-	from := subject.Positions[POSITION_FROM]
-	to := subject.Positions[POSITION_TO]
+func emit_marks(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_marks.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_marks.tree")
+	from := subject.Positions.From
+	to := subject.Positions.To
 	depth := 0
 	for position := int(from); position < int(to); position++ {
 		one := ast.Token_At(tree, ast.Token_Index(position))
-		subject.Signs[SIGN_HELD] = one.Kind
+		subject.Signs.Held = Held_Sign(one.Kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = one.Kind
+		subject.Signs.Held = Held_Sign(one.Kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 		}
 		if depth != 0 {
 			continue
 		}
-		subject.Positions[POSITION_FOUND] = Position(position)
+		subject.Positions.Found = Found_Position(position)
 		if !bool(states_mark(subject, tree)) {
 			continue
 		}
@@ -5821,43 +6747,43 @@ func emit_marks(subject *Printer, tree *ast.Parse_State) {
 }
 
 // Reads how many semicolons the source states between two run positions.
-func count_marks(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "count_marks.subject")
-	ast.Parse_State_Invariants(tree, "count_marks.tree")
-	from := subject.Positions[POSITION_FROM]
-	to := subject.Positions[POSITION_TO]
+func count_marks(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "count_marks.subject")
+	ast.Parse_State_Handle_Invariants(tree, "count_marks.tree")
+	from := subject.Positions.From
+	to := subject.Positions.To
 	count := Count(0)
 	depth := 0
 	for position := int(from); position < int(to); position++ {
 		one := ast.Token_At(tree, ast.Token_Index(position))
-		subject.Signs[SIGN_HELD] = one.Kind
+		subject.Signs.Held = Held_Sign(one.Kind)
 		if bool(opens_bracket(subject)) {
 			depth = depth + 1
 		}
-		subject.Signs[SIGN_HELD] = one.Kind
+		subject.Signs.Held = Held_Sign(one.Kind)
 		if bool(closes_bracket(subject)) {
 			depth = depth - 1
 		}
 		if depth != 0 {
 			continue
 		}
-		subject.Positions[POSITION_FOUND] = Position(position)
+		subject.Positions.Found = Found_Position(position)
 		if !bool(states_mark(subject, tree)) {
 			continue
 		}
 		count = count + 1
 	}
-	subject.Counts[COUNT_MARK] = count
+	subject.Counts.Values[COUNT_MARK] = count
 }
 
 // Reports whether one assignment states more than one name and more than one value. The values of
 // such an assignment stand as parts of a run rather than as statements of their own.
-func assigns_runs(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func assigns_runs(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "assigns_runs.yes") }()
-	Printer_Invariants(subject, "assigns_runs.subject")
-	ast.Parse_State_Invariants(tree, "assigns_runs.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	Printer_Handle_Invariants(subject, "assigns_runs.subject")
+	ast.Parse_State_Handle_Invariants(tree, "assigns_runs.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	names := 0
 	values := 0
 	crossed := false
@@ -5874,8 +6800,8 @@ func assigns_runs(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance_quiet(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	return Boolean(names > 1 && values > 1)
 }
 
@@ -5885,25 +6811,27 @@ func assigns_runs(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Reads how many columns the form the walk stands on writes when it stands on one line, which is
 // what says whether the line it opens runs past the widest one. The measure writes the form past
 // the bytes the print already wrote and reads them back, thus it costs no storage of its own.
-func measure_flat(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "measure_flat.subject")
-	ast.Parse_State_Invariants(tree, "measure_flat.tree")
-	counts := subject.Counts
-	flags := subject.Flags
+func measure_flat(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "measure_flat.subject")
+	ast.Parse_State_Handle_Invariants(tree, "measure_flat.tree")
+	var counts [COUNT_SLOT_COUNT]Count
+	copy(counts[:], subject.Counts.Values)
+	var flags [FLAG_COUNT]Boolean
+	copy(flags[:], subject.Flags.Values)
 	spans := subject.Spans
-	node := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	start := subject.Counts[COUNT_WRITTEN]
-	subject.Flags[FLAG_FLAT] = true
+	node := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	start := subject.Counts.Values[COUNT_WRITTEN]
+	subject.Flags.Values[FLAG_FLAT] = true
 	print_expression(subject, tree)
-	subject.Offsets[OFFSET_FROM] = token.Offset(start)
-	subject.Offsets[OFFSET_TO] = token.Offset(subject.Counts[COUNT_WRITTEN])
+	subject.Offsets.From = From_Offset(start)
+	subject.Offsets.To = To_Offset(subject.Counts.Values[COUNT_WRITTEN])
 	take_columns(subject)
-	columns := subject.Counts[COUNT_COLUMNS]
-	subject.Counts = counts
-	subject.Flags = flags
+	columns := subject.Counts.Values[COUNT_COLUMNS]
+	copy(subject.Counts.Values, counts[:])
+	copy(subject.Flags.Values, flags[:])
 	subject.Spans = spans
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = node
-	subject.Counts[COUNT_SPAN] = columns
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = node
+	subject.Counts.Values[COUNT_SPAN] = columns
 	take_span(subject)
 }
 
@@ -5911,33 +6839,35 @@ func measure_flat(subject *Printer, tree *ast.Parse_State) {
 // line. The signature holds no node of its own, thus the measure writes the parameters and the
 // results the walk stands ahead of and reads the columns they wrote.
 func runs_over_signature(
-	subject *Printer, tree *ast.Parse_State, open Boolean,
+	subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "runs_over_signature.yes") }()
-	Printer_Invariants(subject, "runs_over_signature.subject")
-	ast.Parse_State_Invariants(tree, "runs_over_signature.tree")
+	Printer_Handle_Invariants(subject, "runs_over_signature.subject")
+	ast.Parse_State_Handle_Invariants(tree, "runs_over_signature.tree")
 	Boolean_Invariants(open, "runs_over_signature.open")
-	if bool(subject.Flags[FLAG_FLAT]) {
+	if bool(subject.Flags.Values[FLAG_FLAT]) {
 		return false
 	}
 	take_line_width(subject)
-	line := subject.Spans[SPAN_LINE]
-	counts := subject.Counts
-	flags := subject.Flags
+	line := subject.Spans.Line
+	var counts [COUNT_SLOT_COUNT]Count
+	copy(counts[:], subject.Counts.Values)
+	var flags [FLAG_COUNT]Boolean
+	copy(flags[:], subject.Flags.Values)
 	spans := subject.Spans
-	node := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	start := subject.Counts[COUNT_WRITTEN]
-	subject.Flags[FLAG_FLAT] = true
+	node := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	start := subject.Counts.Values[COUNT_WRITTEN]
+	subject.Flags.Values[FLAG_FLAT] = true
 	stand := print_signature_parameters(subject, tree, open, false)
 	print_signature_results(subject, tree, stand)
-	subject.Offsets[OFFSET_FROM] = token.Offset(start)
-	subject.Offsets[OFFSET_TO] = token.Offset(subject.Counts[COUNT_WRITTEN])
+	subject.Offsets.From = From_Offset(start)
+	subject.Offsets.To = To_Offset(subject.Counts.Values[COUNT_WRITTEN])
 	take_columns(subject)
-	columns := int(subject.Counts[COUNT_COLUMNS])
-	subject.Counts = counts
-	subject.Flags = flags
+	columns := int(subject.Counts.Values[COUNT_COLUMNS])
+	copy(subject.Counts.Values, counts[:])
+	copy(subject.Flags.Values, flags[:])
 	subject.Spans = spans
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = node
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = node
 	// The brace of the body stands on the line the signature closes, thus it counts against
 	// the widest line the same way every other byte of that line does.
 	return Boolean(int(line)+columns+len(BODY_HEAD) > COLUMN_WIDTH_MAXIMUM)
@@ -5947,32 +6877,34 @@ func runs_over_signature(
 // The measure writes the results flat and reads the columns they wrote, and a measure inside a
 // measure answers false, thus the writing it runs states no measure of its own.
 func runs_over_results(
-	subject *Printer, tree *ast.Parse_State, open Boolean,
+	subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "runs_over_results.yes") }()
-	Printer_Invariants(subject, "runs_over_results.subject")
-	ast.Parse_State_Invariants(tree, "runs_over_results.tree")
+	Printer_Handle_Invariants(subject, "runs_over_results.subject")
+	ast.Parse_State_Handle_Invariants(tree, "runs_over_results.tree")
 	Boolean_Invariants(open, "runs_over_results.open")
-	if bool(subject.Flags[FLAG_FLAT]) {
+	if bool(subject.Flags.Values[FLAG_FLAT]) {
 		return false
 	}
 	take_line_width(subject)
-	line := subject.Spans[SPAN_LINE]
-	counts := subject.Counts
-	flags := subject.Flags
+	line := subject.Spans.Line
+	var counts [COUNT_SLOT_COUNT]Count
+	copy(counts[:], subject.Counts.Values)
+	var flags [FLAG_COUNT]Boolean
+	copy(flags[:], subject.Flags.Values)
 	spans := subject.Spans
-	node := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	start := subject.Counts[COUNT_WRITTEN]
-	subject.Flags[FLAG_FLAT] = true
+	node := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	start := subject.Counts.Values[COUNT_WRITTEN]
+	subject.Flags.Values[FLAG_FLAT] = true
 	print_signature_results(subject, tree, open)
-	subject.Offsets[OFFSET_FROM] = token.Offset(start)
-	subject.Offsets[OFFSET_TO] = token.Offset(subject.Counts[COUNT_WRITTEN])
+	subject.Offsets.From = From_Offset(start)
+	subject.Offsets.To = To_Offset(subject.Counts.Values[COUNT_WRITTEN])
 	take_columns(subject)
-	columns := int(subject.Counts[COUNT_COLUMNS])
-	subject.Counts = counts
-	subject.Flags = flags
+	columns := int(subject.Counts.Values[COUNT_COLUMNS])
+	copy(subject.Counts.Values, counts[:])
+	copy(subject.Flags.Values, flags[:])
 	subject.Spans = spans
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = node
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = node
 	return Boolean(int(line)+columns+len(BODY_HEAD) > COLUMN_WIDTH_MAXIMUM)
 }
 
@@ -5981,44 +6913,46 @@ const BODY_HEAD = " {"
 
 // Reports whether the form the walk stands on runs the line it opens past the widest line, which
 // is what states one part of that form to a line.
-func runs_over(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func runs_over(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "runs_over.yes") }()
-	Printer_Invariants(subject, "runs_over.subject")
-	ast.Parse_State_Invariants(tree, "runs_over.tree")
+	Printer_Handle_Invariants(subject, "runs_over.subject")
+	ast.Parse_State_Handle_Invariants(tree, "runs_over.tree")
 	// A measure inside a measure answers nothing the outer one asks, because the outer print
 	// already stands flat and holds every break it would take.
-	if bool(subject.Flags[FLAG_FLAT]) {
+	if bool(subject.Flags.Values[FLAG_FLAT]) {
 		return false
 	}
 	take_line_width(subject)
-	line := subject.Spans[SPAN_LINE]
+	line := subject.Spans.Line
 	measure_flat(subject, tree)
-	return Boolean(int(line)+int(subject.Spans[SPAN_FOUND]) > COLUMN_WIDTH_MAXIMUM)
+	return Boolean(int(line)+int(subject.Spans.Found) > COLUMN_WIDTH_MAXIMUM)
 }
 
-func measure_expression(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "measure_expression.subject")
-	ast.Parse_State_Invariants(tree, "measure_expression.tree")
-	counts := subject.Counts
-	flags := subject.Flags
-	node := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	start := subject.Counts[COUNT_WRITTEN]
+func measure_expression(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "measure_expression.subject")
+	ast.Parse_State_Handle_Invariants(tree, "measure_expression.tree")
+	var counts [COUNT_SLOT_COUNT]Count
+	copy(counts[:], subject.Counts.Values)
+	var flags [FLAG_COUNT]Boolean
+	copy(flags[:], subject.Flags.Values)
+	node := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	start := subject.Counts.Values[COUNT_WRITTEN]
 	print_expression(subject, tree)
-	written := subject.Counts[COUNT_WRITTEN] - start
-	subject.Counts = counts
-	subject.Flags = flags
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = node
-	subject.Counts[COUNT_SPAN] = written
+	written := subject.Counts.Values[COUNT_WRITTEN] - start
+	copy(subject.Counts.Values, counts[:])
+	copy(subject.Flags.Values, flags[:])
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = node
+	subject.Counts.Values[COUNT_SPAN] = written
 	take_span(subject)
 }
 
 // Reads the columns the line the print stands on already holds. One character stands in one
 // column however many bytes it spans, and a tab stands in the columns a reader sees, thus the read
 // counts the bytes that open a character and counts no byte that continues one.
-func take_line_width(subject *Printer) {
-	Printer_Invariants(subject, "take_line_width.subject")
-	form := subject.Forms[FORM_SLOT]
-	written := int(subject.Counts[COUNT_WRITTEN])
+func take_line_width(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "take_line_width.subject")
+	form := subject.Forms.Value
+	written := int(subject.Counts.Values[COUNT_WRITTEN])
 	if written > len(form) {
 		written = len(form)
 	}
@@ -6029,20 +6963,20 @@ func take_line_width(subject *Printer) {
 		}
 		place = place - 1
 	}
-	subject.Offsets[OFFSET_FROM] = token.Offset(place)
-	subject.Offsets[OFFSET_TO] = token.Offset(written)
+	subject.Offsets.From = From_Offset(place)
+	subject.Offsets.To = To_Offset(written)
 	take_columns(subject)
-	subject.Spans[SPAN_LINE] = Width(subject.Counts[COUNT_COLUMNS])
+	subject.Spans.Line = Line_Width(subject.Counts.Values[COUNT_COLUMNS])
 }
 
 // Counts the columns the form holds between two bytes of it, which is what a reader of the line
 // sees rather than what the storage spends.
-func take_columns(subject *Printer) {
-	Printer_Invariants(subject, "take_columns.subject")
-	form := subject.Forms[FORM_SLOT]
+func take_columns(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "take_columns.subject")
+	form := subject.Forms.Value
 	columns := 0
-	to := int(subject.Offsets[OFFSET_TO])
-	for place := int(subject.Offsets[OFFSET_FROM]); place < to; place++ {
+	to := int(subject.Offsets.To)
+	for place := int(subject.Offsets.From); place < to; place++ {
 		if form[place] == '\t' {
 			columns = columns + TAB_WIDTH
 			continue
@@ -6052,25 +6986,25 @@ func take_columns(subject *Printer) {
 		}
 		columns = columns + 1
 	}
-	subject.Counts[COUNT_COLUMNS] = Count(columns)
+	subject.Counts.Values[COUNT_COLUMNS] = Count(columns)
 }
 
 // Writes the width one count of written bytes states into the slot a measure answers through. A
 // count that runs past the widest width a run answers for states that width instead.
-func take_span(subject *Printer) {
-	Printer_Invariants(subject, "take_span.subject")
-	written := subject.Counts[COUNT_SPAN]
-	subject.Spans[SPAN_FOUND] = Width(written)
+func take_span(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "take_span.subject")
+	written := subject.Counts.Values[COUNT_SPAN]
+	subject.Spans.Found = Measured_Width(written)
 	if written > WIDTH_MAXIMUM {
-		subject.Spans[SPAN_FOUND] = WIDTH_MAXIMUM
+		subject.Spans.Found = WIDTH_MAXIMUM
 	}
 }
 
 // Writes the spaces that carry the print to one column.
-func emit_column(subject *Printer) {
-	Printer_Invariants(subject, "emit_column.subject")
-	width := subject.Spans[SPAN_FOUND]
-	held := subject.Spans[SPAN_COLUMN]
+func emit_column(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_column.subject")
+	width := Width(subject.Spans.Found)
+	held := Width(subject.Spans.Column)
 	if held < width {
 		held = width
 	}
@@ -6080,20 +7014,20 @@ func emit_column(subject *Printer) {
 }
 
 // Reads how many bytes stand written on the line the print stands on.
-func line_width(subject *Printer) {
-	Printer_Invariants(subject, "line_width.subject")
-	subject.Counts[COUNT_SPAN] = subject.Counts[COUNT_WRITTEN] -
-		subject.Counts[COUNT_OPENING]
+func line_width(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "line_width.subject")
+	subject.Counts.Values[COUNT_SPAN] = subject.Counts.Values[COUNT_WRITTEN] -
+		subject.Counts.Values[COUNT_OPENING]
 	take_span(subject)
 }
 
 // Reads the column the notes of the run that opens at the statement the walk stands on write at.
 // A statement that carries no note closes the run, thus a run holds the lines a reader reads as
 // one table.
-func take_statement_column(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_statement_column.subject")
-	ast.Parse_State_Invariants(tree, "take_statement_column.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+func take_statement_column(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_statement_column.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_statement_column.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	widest := Width(0)
 	open := Boolean(true)
 	for bool(open) {
@@ -6109,41 +7043,41 @@ func take_statement_column(subject *Printer, tree *ast.Parse_State) {
 			break
 		}
 		measure_statement(subject, tree)
-		if subject.Spans[SPAN_FOUND] > widest {
-			widest = subject.Spans[SPAN_FOUND]
+		if Width(subject.Spans.Found) > widest {
+			widest = Width(subject.Spans.Found)
 		}
 		open = advance(subject, tree)
 		if bool(open) {
 			open = advance(subject, tree)
 		}
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
-	subject.Counts[COUNT_COLUMN] = Count(widest)
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
+	subject.Counts.Values[COUNT_COLUMN] = Count(widest)
 }
 
 // Reports whether a note stands behind the node the walk stands on, on the line that node closes.
-func trails_comment(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func trails_comment(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "trails_comment.yes") }()
-	Printer_Invariants(subject, "trails_comment.subject")
-	ast.Parse_State_Invariants(tree, "trails_comment.tree")
+	Printer_Handle_Invariants(subject, "trails_comment.subject")
+	ast.Parse_State_Handle_Invariants(tree, "trails_comment.tree")
 	// The tree hangs a note wherever the walk reached it, thus the run of tokens states which
 	// line the note stands on rather than the child chain that holds it.
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	leftmost_position(subject, tree)
-	start := subject.Positions[POSITION_FOUND]
+	start := Position(subject.Positions.Found)
 	limit := Position(ast.TOKEN_INDEX_MAXIMUM)
 	noted := Boolean(false)
 	last := !bool(advance(subject, tree))
 	if !last {
 		leftmost_position(subject, tree)
-		limit = subject.Positions[POSITION_FOUND]
+		limit = Position(subject.Positions.Found)
 		// A list hangs a note beside the element it follows, thus the note stands as
 		// the sibling of that element rather than inside it.
 		noted = Boolean(node_kind(subject, tree) == ast.NODE_COMMENT)
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
 	if bool(noted) {
-		subject.Positions[POSITION_FOUND] = limit
+		subject.Positions.Found = Found_Position(limit)
 		return !stands_alone(subject, tree)
 	}
 	for position := int(start) + 1; position < int(limit); position++ {
@@ -6151,7 +7085,7 @@ func trails_comment(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		if one.Kind == token.KIND_END_OF_FILE {
 			return false
 		}
-		subject.Positions[POSITION_FOUND] = Position(position)
+		subject.Positions.Found = Found_Position(position)
 		if bool(stands_alone(subject, tree)) {
 			return false
 		}
@@ -6166,29 +7100,31 @@ func trails_comment(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Reads how wide one statement writes and leaves the print stand where it stood.
-func measure_statement(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "measure_statement.subject")
-	ast.Parse_State_Invariants(tree, "measure_statement.tree")
-	counts := subject.Counts
-	flags := subject.Flags
-	node := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	start := subject.Counts[COUNT_WRITTEN]
+func measure_statement(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "measure_statement.subject")
+	ast.Parse_State_Handle_Invariants(tree, "measure_statement.tree")
+	var counts [COUNT_SLOT_COUNT]Count
+	copy(counts[:], subject.Counts.Values)
+	var flags [FLAG_COUNT]Boolean
+	copy(flags[:], subject.Flags.Values)
+	node := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	start := subject.Counts.Values[COUNT_WRITTEN]
 	emit_indent(subject)
 	print_statement_form(subject, tree)
-	written := subject.Counts[COUNT_WRITTEN] - start
-	subject.Counts = counts
-	subject.Flags = flags
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = node
-	subject.Counts[COUNT_SPAN] = written
+	written := subject.Counts.Values[COUNT_WRITTEN] - start
+	copy(subject.Counts.Values, counts[:])
+	copy(subject.Flags.Values, flags[:])
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = node
+	subject.Counts.Values[COUNT_SPAN] = written
 	take_span(subject)
 }
 
 // Reports whether an empty line stands ahead of the comment at one run position.
-func opens_run(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func opens_run(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_run.yes") }()
-	Printer_Invariants(subject, "opens_run.subject")
-	ast.Parse_State_Invariants(tree, "opens_run.tree")
-	position := subject.Positions[POSITION_FOUND]
+	Printer_Handle_Invariants(subject, "opens_run.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_run.tree")
+	position := subject.Positions.Found
 	if position == 0 {
 		return false
 	}
@@ -6196,21 +7132,21 @@ func opens_run(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 }
 
 // Reports whether the node the walk stands on names a token behind the bracket at one position.
-func stands_behind(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func stands_behind(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "stands_behind.yes") }()
-	Printer_Invariants(subject, "stands_behind.subject")
-	ast.Parse_State_Invariants(tree, "stands_behind.tree")
-	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
-	return Boolean(Position(node.Token) > subject.Positions[POSITION_FROM])
+	Printer_Handle_Invariants(subject, "stands_behind.subject")
+	ast.Parse_State_Handle_Invariants(tree, "stands_behind.tree")
+	node := ast.Node_At(tree, subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]])
+	return Boolean(Position(node.Token) > Position(subject.Positions.From))
 }
 
 // Reads the column the notes of the run of elements that opens where the walk stands write at.
 // An element that carries no note closes the run, thus the notes of one broken list read as one
 // column rather than as a ragged edge.
-func take_element_column(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "take_element_column.subject")
-	ast.Parse_State_Invariants(tree, "take_element_column.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+func take_element_column(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "take_element_column.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_element_column.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
 	widest := Width(0)
 	open := Boolean(true)
 	for bool(open) {
@@ -6226,7 +7162,7 @@ func take_element_column(subject *Printer, tree *ast.Parse_State) {
 		// The line one element writes holds the tabs the list opens at, the element,
 		// and the comma that closes it.
 		measure_expression(subject, tree)
-		width := Width(subject.Counts[COUNT_INDENT]) + subject.Spans[SPAN_FOUND] + 1
+		width := Width(subject.Counts.Values[COUNT_INDENT]) + Width(subject.Spans.Found) + 1
 		if width > widest {
 			widest = width
 		}
@@ -6237,29 +7173,29 @@ func take_element_column(subject *Printer, tree *ast.Parse_State) {
 			}
 		}
 	}
-	subject.Nodes[subject.Counts[COUNT_DEPTH]] = held
-	subject.Counts[COUNT_COLUMN] = Count(widest)
+	subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]] = held
+	subject.Counts.Values[COUNT_COLUMN] = Count(widest)
 }
 
 // Reports whether the node the walk stands on states a note on the line the brace of the block
 // opens.
-func trails_brace(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func trails_brace(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "trails_brace.yes") }()
-	Printer_Invariants(subject, "trails_brace.subject")
-	ast.Parse_State_Invariants(tree, "trails_brace.tree")
+	Printer_Handle_Invariants(subject, "trails_brace.subject")
+	ast.Parse_State_Handle_Invariants(tree, "trails_brace.tree")
 	if node_kind(subject, tree) != ast.NODE_COMMENT {
 		return false
 	}
-	subject.Positions[POSITION_FOUND] = Position(ast.Node_At(tree,
-		subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	subject.Positions.Found = Found_Position(ast.Node_At(tree,
+		subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]).Token)
 	return !stands_alone(subject, tree)
 }
 
 // Reports whether one token opens a bracketed form.
-func opens_bracket(subject *Printer) (yes Boolean) {
+func opens_bracket(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_bracket.yes") }()
-	Printer_Invariants(subject, "opens_bracket.subject")
-	kind := subject.Signs[SIGN_HELD]
+	Printer_Handle_Invariants(subject, "opens_bracket.subject")
+	kind := token.Kind(subject.Signs.Held)
 	if kind == token.KIND_PARENTHESIS_LEFT {
 		return true
 	}
@@ -6270,10 +7206,10 @@ func opens_bracket(subject *Printer) (yes Boolean) {
 }
 
 // Reports whether one token closes a bracketed form.
-func closes_bracket(subject *Printer) (yes Boolean) {
+func closes_bracket(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_bracket.yes") }()
-	Printer_Invariants(subject, "closes_bracket.subject")
-	kind := subject.Signs[SIGN_HELD]
+	Printer_Handle_Invariants(subject, "closes_bracket.subject")
+	kind := token.Kind(subject.Signs.Held)
 	if kind == token.KIND_PARENTHESIS_RIGHT {
 		return true
 	}
@@ -6285,11 +7221,11 @@ func closes_bracket(subject *Printer) (yes Boolean) {
 
 // Reports whether one token states a semicolon the author wrote at the depth one scan opened at.
 // A semicolon a line feed stands for spans no byte, thus it is no mark of the form.
-func states_mark(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func states_mark(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "states_mark.yes") }()
-	Printer_Invariants(subject, "states_mark.subject")
-	ast.Parse_State_Invariants(tree, "states_mark.tree")
-	one := ast.Token_At(tree, ast.Token_Index(subject.Positions[POSITION_FOUND]))
+	Printer_Handle_Invariants(subject, "states_mark.subject")
+	ast.Parse_State_Handle_Invariants(tree, "states_mark.tree")
+	one := ast.Token_At(tree, ast.Token_Index(subject.Positions.Found))
 	if one.Kind != token.KIND_SEMICOLON {
 		return false
 	}
@@ -6298,10 +7234,12 @@ func states_mark(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Reports whether the child the walk stands on states the further clause an else branch opens
 // with, which closes its own line and leaves the clause around it none to close.
-func opens_else_clause(subject *Printer, tree *ast.Parse_State, held Boolean) (yes Boolean) {
+func opens_else_clause(
+	subject Printer_Handle, tree ast.Parse_State_Handle, held Boolean,
+) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_else_clause.yes") }()
-	Printer_Invariants(subject, "opens_else_clause.subject")
-	ast.Parse_State_Invariants(tree, "opens_else_clause.tree")
+	Printer_Handle_Invariants(subject, "opens_else_clause.subject")
+	ast.Parse_State_Handle_Invariants(tree, "opens_else_clause.tree")
 	Boolean_Invariants(held, "opens_else_clause.held")
 	if !bool(held) {
 		return false
@@ -6322,22 +7260,22 @@ func open_column(here Boolean, opened Boolean) (yes Boolean) {
 }
 
 // Reads the column the notes of a broken form open at, which only a broken form holds.
-func take_notes(subject *Printer, tree *ast.Parse_State, opened Boolean) {
-	Printer_Invariants(subject, "take_notes.subject")
-	ast.Parse_State_Invariants(tree, "take_notes.tree")
+func take_notes(subject Printer_Handle, tree ast.Parse_State_Handle, opened Boolean) {
+	Printer_Handle_Invariants(subject, "take_notes.subject")
+	ast.Parse_State_Handle_Invariants(tree, "take_notes.tree")
 	Boolean_Invariants(opened, "take_notes.opened")
 	if !bool(opened) {
 		return
 	}
-	if subject.Counts[COUNT_COLUMN] != 0 {
+	if subject.Counts.Values[COUNT_COLUMN] != 0 {
 		return
 	}
 	take_element_column(subject, tree)
 }
 
 // Closes the column of notes wherever the part the print wrote carries none behind it.
-func close_notes(subject *Printer, opened Boolean, trails Boolean) {
-	Printer_Invariants(subject, "close_notes.subject")
+func close_notes(subject Printer_Handle, opened Boolean, trails Boolean) {
+	Printer_Handle_Invariants(subject, "close_notes.subject")
 	Boolean_Invariants(opened, "close_notes.opened")
 	Boolean_Invariants(trails, "close_notes.trails")
 	if !bool(opened) {
@@ -6346,24 +7284,24 @@ func close_notes(subject *Printer, opened Boolean, trails Boolean) {
 	if bool(trails) {
 		return
 	}
-	subject.Counts[COUNT_COLUMN] = 0
+	subject.Counts.Values[COUNT_COLUMN] = 0
 }
 
 // Writes the type parameters of one signature and reports where the walk stopped. A signature
 // that binds no type parameter writes no brackets at all.
 func print_type_parameters(
-	subject *Printer, tree *ast.Parse_State, open Boolean,
+	subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean,
 ) (stand Boolean) {
 	defer func() { Boolean_Invariants(stand, "print_type_parameters.stand") }()
-	Printer_Invariants(subject, "print_type_parameters.subject")
-	ast.Parse_State_Invariants(tree, "print_type_parameters.tree")
+	Printer_Handle_Invariants(subject, "print_type_parameters.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_type_parameters.tree")
 	Boolean_Invariants(open, "print_type_parameters.open")
 	stand = open
 	parameters := 0
 	broken := Boolean(false)
 	opened := Boolean(false)
 	tail := Boolean(false)
-	column := subject.Counts[COUNT_INDENT]
+	column := subject.Counts.Values[COUNT_INDENT]
 	for bool(stand) {
 		if node_kind(subject, tree) != ast.NODE_TYPE_PARAMETER {
 			break
@@ -6371,7 +7309,7 @@ func print_type_parameters(
 		here := breaks_before(subject, tree)
 		if parameters == 0 {
 			emit_byte(subject, '[')
-			column = subject.Counts[COUNT_INDENT]
+			column = subject.Counts.Values[COUNT_INDENT]
 			tail = closes_list(subject, tree)
 			print_first_break(subject, tree, here)
 			opened = here
@@ -6388,7 +7326,7 @@ func print_type_parameters(
 		stand = advance_part(subject, tree)
 	}
 	if bool(broken) {
-		subject.Counts[COUNT_COLUMN_INDENT] = column
+		subject.Counts.Values[COUNT_COLUMN_INDENT] = column
 		close_broken(subject, tree, tail)
 	}
 	if parameters > 0 {
@@ -6399,21 +7337,21 @@ func print_type_parameters(
 
 // Writes the semicolons and the space that stand between the headers of one clause and the body
 // it opens, and returns the tabs and the break state the body stands at.
-func open_body(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "open_body.subject")
-	ast.Parse_State_Invariants(tree, "open_body.tree")
-	cursor := subject.Positions[POSITION_FROM]
-	indent := subject.Counts[COUNT_COLUMN_INDENT]
+func open_body(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "open_body.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_body.tree")
+	cursor := subject.Positions.From
+	indent := subject.Counts.Values[COUNT_COLUMN_INDENT]
 	leftmost_position(subject, tree)
-	subject.Positions[POSITION_FROM] = cursor
-	subject.Positions[POSITION_TO] = subject.Positions[POSITION_FOUND]
+	subject.Positions.From = cursor
+	subject.Positions.To = To_Position(subject.Positions.Found)
 	count_marks(subject, tree)
-	marks := subject.Counts[COUNT_MARK]
+	marks := subject.Counts.Values[COUNT_MARK]
 	emit_marks(subject, tree)
-	subject.Counts[COUNT_INDENT] = indent
+	subject.Counts.Values[COUNT_INDENT] = indent
 	// The body of a clause opens a line of its own, thus no continuation of the header stands
 	// open where it opens.
-	subject.Flags[FLAG_BROKEN] = false
+	subject.Flags.Values[FLAG_BROKEN] = false
 	if marks == 0 {
 		emit_space(subject)
 	}
@@ -6421,19 +7359,19 @@ func open_body(subject *Printer, tree *ast.Parse_State) {
 
 // Writes one header of a clause and the semicolons that stand ahead of it, and returns the run
 // position the header opened at, which the header behind it counts semicolons from.
-func print_header(subject *Printer, tree *ast.Parse_State, first Boolean) {
-	Printer_Invariants(subject, "print_header.subject")
-	ast.Parse_State_Invariants(tree, "print_header.tree")
+func print_header(subject Printer_Handle, tree ast.Parse_State_Handle, first Boolean) {
+	Printer_Handle_Invariants(subject, "print_header.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_header.tree")
 	Boolean_Invariants(first, "print_header.first")
-	cursor := subject.Positions[POSITION_FROM]
+	cursor := subject.Positions.From
 	leftmost_position(subject, tree)
-	start := subject.Positions[POSITION_FOUND]
+	start := subject.Positions.Found
 	// A loop that leaves a header out still states the semicolon that header stands between,
 	// thus a space stands on each side of that semicolon.
-	subject.Positions[POSITION_FROM] = cursor
-	subject.Positions[POSITION_TO] = start
+	subject.Positions.From = cursor
+	subject.Positions.To = To_Position(start)
 	count_marks(subject, tree)
-	marks := subject.Counts[COUNT_MARK]
+	marks := subject.Counts.Values[COUNT_MARK]
 	if bool(first) {
 		if marks > 0 {
 			emit_space(subject)
@@ -6446,22 +7384,24 @@ func print_header(subject *Printer, tree *ast.Parse_State, first Boolean) {
 	print_statement_form(subject, tree)
 	// The header behind this one counts the semicolons that stand from here, thus the slot
 	// states where this header opened rather than where the clause did.
-	subject.Positions[POSITION_FROM] = start
+	subject.Positions.From = From_Position(start)
 }
 
 // Writes the three points one call states behind the value it spreads. The tree holds a node
 // behind that value rather than on the points, thus the print writes them of its own.
-func emit_spread(subject *Printer) {
-	Printer_Invariants(subject, "emit_spread.subject")
+func emit_spread(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_spread.subject")
 	emit_byte(subject, '.')
 	emit_byte(subject, '.')
 	emit_byte(subject, '.')
 }
 
 // Writes one part of a broken form and holds the column its note stands in.
-func print_part(subject *Printer, tree *ast.Parse_State, opened Boolean, behind Boolean) {
-	Printer_Invariants(subject, "print_part.subject")
-	ast.Parse_State_Invariants(tree, "print_part.tree")
+func print_part(
+	subject Printer_Handle, tree ast.Parse_State_Handle, opened Boolean, behind Boolean,
+) {
+	Printer_Handle_Invariants(subject, "print_part.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_part.tree")
 	Boolean_Invariants(opened, "print_part.opened")
 	Boolean_Invariants(behind, "print_part.behind")
 	if bool(behind) {
@@ -6475,17 +7415,17 @@ func print_part(subject *Printer, tree *ast.Parse_State, opened Boolean, behind 
 // Opens the column the values of a run of pairs stand in. A run holds the pairs that each open a
 // line of their own, thus the pairs behind a closed run answer for a width of their own, and a
 // pair that runs over lines of its own opens a run rather than joining one.
-func open_key_run(subject *Printer, tree *ast.Parse_State, here Boolean) {
-	Printer_Invariants(subject, "open_key_run.subject")
-	ast.Parse_State_Invariants(tree, "open_key_run.tree")
+func open_key_run(subject Printer_Handle, tree ast.Parse_State_Handle, here Boolean) {
+	Printer_Handle_Invariants(subject, "open_key_run.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_key_run.tree")
 	Boolean_Invariants(here, "open_key_run.here")
 	if !bool(here) {
 		return
 	}
 	if bool(spans_form(subject, tree)) {
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 	}
-	if subject.Counts[COUNT_WIDTH] != 0 {
+	if subject.Counts.Values[COUNT_WIDTH] != 0 {
 		return
 	}
 	take_key_width(subject, tree)
@@ -6493,38 +7433,38 @@ func open_key_run(subject *Printer, tree *ast.Parse_State, here Boolean) {
 
 // Closes the column of a run of pairs wherever the element the print wrote closed the run: an
 // element that carries trivia behind it, and one that ran over lines of its own.
-func close_key_run(subject *Printer, tree *ast.Parse_State, spans Boolean) {
-	Printer_Invariants(subject, "close_key_run.subject")
-	ast.Parse_State_Invariants(tree, "close_key_run.tree")
+func close_key_run(subject Printer_Handle, tree ast.Parse_State_Handle, spans Boolean) {
+	Printer_Handle_Invariants(subject, "close_key_run.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_key_run.tree")
 	Boolean_Invariants(spans, "close_key_run.spans")
 	if bool(breaks_run(subject, tree)) {
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 	}
 	if bool(spans) {
-		subject.Counts[COUNT_WIDTH] = 0
+		subject.Counts.Values[COUNT_WIDTH] = 0
 	}
 }
 
 // Reports whether one literal states a type ahead of its brace. A literal that stands as an
 // element of another one states none.
-func typed_head(subject *Printer, tree *ast.Parse_State, open Boolean) (yes Boolean) {
+func typed_head(subject Printer_Handle, tree ast.Parse_State_Handle, open Boolean) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "typed_head.yes") }()
-	Printer_Invariants(subject, "typed_head.subject")
-	ast.Parse_State_Invariants(tree, "typed_head.tree")
+	Printer_Handle_Invariants(subject, "typed_head.subject")
+	ast.Parse_State_Handle_Invariants(tree, "typed_head.tree")
 	Boolean_Invariants(open, "typed_head.open")
-	brace := subject.Positions[POSITION_FROM]
+	brace := subject.Positions.From
 	if !bool(open) {
 		return false
 	}
 	leftmost_position(subject, tree)
-	return Boolean(subject.Positions[POSITION_FOUND] < brace)
+	return Boolean(subject.Positions.Found < Found_Position(brace))
 }
 
 // Writes one case of a switch, and the brace its run of cases opens at. The tree hangs the cases
 // of a switch off the switch itself, thus the print writes the braces they stand between.
-func print_switch_case(subject *Printer, tree *ast.Parse_State, first Boolean) {
-	Printer_Invariants(subject, "print_switch_case.subject")
-	ast.Parse_State_Invariants(tree, "print_switch_case.tree")
+func print_switch_case(subject Printer_Handle, tree ast.Parse_State_Handle, first Boolean) {
+	Printer_Handle_Invariants(subject, "print_switch_case.subject")
+	ast.Parse_State_Handle_Invariants(tree, "print_switch_case.tree")
 	Boolean_Invariants(first, "print_switch_case.first")
 	if bool(first) {
 		open_body(subject, tree)
@@ -6537,11 +7477,11 @@ func print_switch_case(subject *Printer, tree *ast.Parse_State, first Boolean) {
 // Writes one number literal in the form the canonical source states: a base prefix and an
 // exponent mark in lower case, and no leading zeros on an imaginary whole number. The digits
 // themselves stand as the author wrote them, because case carries meaning in no base.
-func emit_number(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "emit_number.subject")
-	ast.Parse_State_Invariants(tree, "emit_number.tree")
-	text := subject.Sources[SOURCE_TEXT]
-	subject.Counts[COUNT_DIGIT] = 0
+func emit_number(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "emit_number.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_number.tree")
+	text := subject.Sources.Text
+	subject.Counts.Values[COUNT_DIGIT] = 0
 	// A literal of one byte states neither a base prefix nor an exponent.
 	if len(text) < 2 {
 		emit_digits(subject, tree, EXPONENT_NONE)
@@ -6551,7 +7491,7 @@ func emit_number(subject *Printer, tree *ast.Parse_State) {
 	if base != BASE_NONE {
 		emit_byte(subject, '0')
 		emit_byte(subject, Symbol(base))
-		subject.Counts[COUNT_DIGIT] = 2
+		subject.Counts.Values[COUNT_DIGIT] = 2
 		// Only a hexadecimal literal states a power, and no other base states an
 		// exponent at all.
 		exponent := EXPONENT_NONE
@@ -6573,7 +7513,7 @@ func emit_number(subject *Printer, tree *ast.Parse_State) {
 		if bool(states_octal(subject, tree)) {
 			emit_byte(subject, '0')
 			emit_byte(subject, Symbol(BASE_OCTAL))
-			subject.Counts[COUNT_DIGIT] = 1
+			subject.Counts.Values[COUNT_DIGIT] = 1
 		}
 		emit_digits(subject, tree, EXPONENT_NONE)
 		return
@@ -6584,11 +7524,11 @@ func emit_number(subject *Printer, tree *ast.Parse_State) {
 
 // Names the base one number literal states, in the case the canonical form writes it. Zero names
 // a literal that states no base prefix at all.
-func number_base(subject *Printer, tree *ast.Parse_State) (base Base) {
+func number_base(subject Printer_Handle, tree ast.Parse_State_Handle) (base Base) {
 	defer func() { Base_Invariants(base, "number_base.base") }()
-	Printer_Invariants(subject, "number_base.subject")
-	ast.Parse_State_Invariants(tree, "number_base.tree")
-	text := subject.Sources[SOURCE_TEXT]
+	Printer_Handle_Invariants(subject, "number_base.subject")
+	ast.Parse_State_Handle_Invariants(tree, "number_base.tree")
+	text := subject.Sources.Text
 	if text[0] != '0' {
 		return BASE_NONE
 	}
@@ -6615,11 +7555,11 @@ func number_base(subject *Printer, tree *ast.Parse_State) (base Base) {
 
 // Reports whether one number literal states an exponent or a fraction, which a whole number
 // states neither of.
-func holds_exponent(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func holds_exponent(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_exponent.yes") }()
-	Printer_Invariants(subject, "holds_exponent.subject")
-	ast.Parse_State_Invariants(tree, "holds_exponent.tree")
-	text := subject.Sources[SOURCE_TEXT]
+	Printer_Handle_Invariants(subject, "holds_exponent.subject")
+	ast.Parse_State_Handle_Invariants(tree, "holds_exponent.tree")
+	text := subject.Sources.Text
 	for index := range len(text) {
 		if text[index] == 'E' {
 			return true
@@ -6630,11 +7570,11 @@ func holds_exponent(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Reports whether one number literal states an imaginary whole number, which is the one literal
 // the canonical form strips leading zeros from.
-func whole_imaginary(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func whole_imaginary(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "whole_imaginary.yes") }()
-	Printer_Invariants(subject, "whole_imaginary.subject")
-	ast.Parse_State_Invariants(tree, "whole_imaginary.tree")
-	text := subject.Sources[SOURCE_TEXT]
+	Printer_Handle_Invariants(subject, "whole_imaginary.subject")
+	ast.Parse_State_Handle_Invariants(tree, "whole_imaginary.tree")
+	text := subject.Sources.Text
 	if text[len(text)-1] != 'i' {
 		return false
 	}
@@ -6651,10 +7591,10 @@ func whole_imaginary(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 
 // Names the byte one imaginary whole number opens its digits at, which stands behind every zero
 // and every underscore the author wrote ahead of them.
-func number_head(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "number_head.subject")
-	ast.Parse_State_Invariants(tree, "number_head.tree")
-	text := subject.Sources[SOURCE_TEXT]
+func number_head(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "number_head.subject")
+	ast.Parse_State_Handle_Invariants(tree, "number_head.tree")
+	text := subject.Sources.Text
 	head := 0
 	for head < len(text)-1 {
 		if text[head] != '0' {
@@ -6668,17 +7608,17 @@ func number_head(subject *Printer, tree *ast.Parse_State) {
 	if head == len(text)-1 {
 		emit_byte(subject, '0')
 	}
-	subject.Counts[COUNT_DIGIT] = Count(head)
+	subject.Counts.Values[COUNT_DIGIT] = Count(head)
 }
 
 // Writes the digits of one number literal from the byte the caller names, with each mark it holds
 // written in the case the canonical form states. A mark of zero names a literal that holds none.
-func emit_digits(subject *Printer, tree *ast.Parse_State, exponent Exponent) {
-	Printer_Invariants(subject, "emit_digits.subject")
-	ast.Parse_State_Invariants(tree, "emit_digits.tree")
+func emit_digits(subject Printer_Handle, tree ast.Parse_State_Handle, exponent Exponent) {
+	Printer_Handle_Invariants(subject, "emit_digits.subject")
+	ast.Parse_State_Handle_Invariants(tree, "emit_digits.tree")
 	Exponent_Invariants(exponent, "emit_digits.exponent")
-	text := subject.Sources[SOURCE_TEXT]
-	for index := int(subject.Counts[COUNT_DIGIT]); index < len(text); index++ {
+	text := subject.Sources.Text
+	for index := int(subject.Counts.Values[COUNT_DIGIT]); index < len(text); index++ {
 		value := Symbol(text[index])
 		if exponent != EXPONENT_NONE {
 			if value == Symbol(exponent) {
@@ -6694,9 +7634,9 @@ func emit_digits(subject *Printer, tree *ast.Parse_State, exponent Exponent) {
 // Writes the empty line one declaration owes the declarations ahead of it. A declaration of
 // another kind, and every note that opens one, stand behind an empty line, thus a reader sees
 // where one run of declarations closes and the next one opens.
-func open_declaration(subject *Printer, tree *ast.Parse_State, commented Boolean) {
-	Printer_Invariants(subject, "open_declaration.subject")
-	ast.Parse_State_Invariants(tree, "open_declaration.tree")
+func open_declaration(subject Printer_Handle, tree ast.Parse_State_Handle, commented Boolean) {
+	Printer_Handle_Invariants(subject, "open_declaration.subject")
+	ast.Parse_State_Handle_Invariants(tree, "open_declaration.tree")
 	Boolean_Invariants(commented, "open_declaration.commented")
 	kind := node_kind(subject, tree)
 	if kind == ast.NODE_BLANK {
@@ -6708,7 +7648,7 @@ func open_declaration(subject *Printer, tree *ast.Parse_State, commented Boolean
 		return
 	}
 	if kind != ast.NODE_COMMENT {
-		if kind == subject.Kinds[KIND_DECLARATION] {
+		if kind == ast.Node_Kind(subject.Kinds.Declaration) {
 			return
 		}
 	}
@@ -6722,13 +7662,13 @@ func open_declaration(subject *Printer, tree *ast.Parse_State, commented Boolean
 // the empty line that stands between it and the run behind it where both do. A declaration states
 // the lines it spans only once the print wrote it, thus the line stands where the run opened
 // rather than where the print now stands.
-func open_spread(subject *Printer, held Boolean) (spread Boolean) {
+func open_spread(subject Printer_Handle, held Boolean) (spread Boolean) {
 	defer func() { Boolean_Invariants(spread, "open_spread.spread") }()
-	Printer_Invariants(subject, "open_spread.subject")
+	Printer_Handle_Invariants(subject, "open_spread.subject")
 	Boolean_Invariants(held, "open_spread.held")
-	place := int(subject.Counts[COUNT_DECLARED])
-	written := int(subject.Counts[COUNT_WRITTEN])
-	form := subject.Forms[FORM_SLOT]
+	place := int(subject.Counts.Values[COUNT_DECLARED])
+	written := int(subject.Counts.Values[COUNT_WRITTEN])
+	form := subject.Forms.Value
 	if written > len(form) {
 		written = len(form)
 	}
@@ -6758,30 +7698,30 @@ func open_spread(subject *Printer, held Boolean) (spread Boolean) {
 
 // Opens one empty line at the byte the run of declarations the print wrote stands at, moving
 // everything behind it one byte on.
-func open_line_at(subject *Printer) {
-	Printer_Invariants(subject, "open_line_at.subject")
-	place := int(subject.Counts[COUNT_DECLARED])
-	written := int(subject.Counts[COUNT_WRITTEN])
-	form := subject.Forms[FORM_SLOT]
+func open_line_at(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "open_line_at.subject")
+	place := int(subject.Counts.Values[COUNT_DECLARED])
+	written := int(subject.Counts.Values[COUNT_WRITTEN])
+	form := subject.Forms.Value
 	if written >= len(form) {
-		subject.Flags[FLAG_FULL] = true
+		subject.Flags.Values[FLAG_FULL] = true
 		return
 	}
 	copy(form[place+1:written+1], form[place:written])
 	form[place] = '\n'
-	subject.Counts[COUNT_WRITTEN] = Count(written + 1)
+	subject.Counts.Values[COUNT_WRITTEN] = Count(written + 1)
 }
 
 // Reports whether the print stands behind an empty line, which is the line a run of declarations
 // opens at.
-func stands_after_blank(subject *Printer) (yes Boolean) {
+func stands_after_blank(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "stands_after_blank.yes") }()
-	Printer_Invariants(subject, "stands_after_blank.subject")
-	written := int(subject.Counts[COUNT_WRITTEN])
+	Printer_Handle_Invariants(subject, "stands_after_blank.subject")
+	written := int(subject.Counts.Values[COUNT_WRITTEN])
 	if written < 2 {
 		return false
 	}
-	form := subject.Forms[FORM_SLOT]
+	form := subject.Forms.Value
 	if form[written-1] != '\n' {
 		return false
 	}
@@ -6791,11 +7731,11 @@ func stands_after_blank(subject *Printer) (yes Boolean) {
 // Reports whether one number literal states the eight base by the zero it opens with, which the
 // canonical form writes as a base of its own. The number zero states no base, thus a literal of
 // one byte states none either.
-func states_octal(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func states_octal(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "states_octal.yes") }()
-	Printer_Invariants(subject, "states_octal.subject")
-	ast.Parse_State_Invariants(tree, "states_octal.tree")
-	text := subject.Sources[SOURCE_TEXT]
+	Printer_Handle_Invariants(subject, "states_octal.subject")
+	ast.Parse_State_Handle_Invariants(tree, "states_octal.tree")
+	text := subject.Sources.Text
 	if len(text) < 2 {
 		return false
 	}
@@ -6816,8 +7756,8 @@ func states_octal(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Writes one note in the canonical form, which opens a space behind the slashes so the words read
 // as words. A directive states a name a tool reads and no space stands inside it, thus a
 // directive stands as the author wrote it.
-func emit_note(subject *Printer) {
-	Printer_Invariants(subject, "emit_note.subject")
+func emit_note(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_note.subject")
 	if bool(wraps_note(subject)) {
 		emit_wrapped_note(subject)
 		return
@@ -6825,7 +7765,7 @@ func emit_note(subject *Printer) {
 	// A note the print writes as it stands states a form of its own: a directive names a
 	// tool, a block comment holds text between its own marks, and a note that opens on spaces
 	// lays out lines the author counted.
-	text := subject.Sources[SOURCE_TEXT]
+	text := subject.Sources.Text
 	for index := range len(text) {
 		emit_byte(subject, Symbol(text[index]))
 	}
@@ -6835,10 +7775,10 @@ func emit_note(subject *Printer) {
 // line of its own wraps, because the words it holds read the same on any line. A directive, a note
 // standing behind code, a block comment, and a note whose text opens on spaces of its own each
 // state a form the author laid out, thus the print writes them as they stand.
-func wraps_note(subject *Printer) (yes Boolean) {
+func wraps_note(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "wraps_note.yes") }()
-	Printer_Invariants(subject, "wraps_note.subject")
-	text := subject.Sources[SOURCE_TEXT]
+	Printer_Handle_Invariants(subject, "wraps_note.subject")
+	text := subject.Sources.Text
 	if len(text) < 3 {
 		return false
 	}
@@ -6861,17 +7801,17 @@ func wraps_note(subject *Printer) (yes Boolean) {
 		}
 	}
 	take_line_width(subject)
-	held := int(subject.Counts[COUNT_INDENT]) * TAB_WIDTH
-	return Boolean(int(subject.Spans[SPAN_LINE]) == held)
+	held := int(subject.Counts.Values[COUNT_INDENT]) * TAB_WIDTH
+	return Boolean(int(subject.Spans.Line) == held)
 }
 
 // Writes one note, opening a line of its own wherever the words it holds would run past the widest
 // line. The print opens every line with the tabs the note opened at and the slashes a note states,
 // thus a note of any length reads as one note.
-func emit_wrapped_note(subject *Printer) {
-	Printer_Invariants(subject, "emit_wrapped_note.subject")
-	text := subject.Sources[SOURCE_TEXT]
-	head := int(subject.Spans[SPAN_LINE]) + len(NOTE_HEAD)
+func emit_wrapped_note(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_wrapped_note.subject")
+	text := subject.Sources.Text
+	head := int(subject.Spans.Line) + len(NOTE_HEAD)
 	emit_note_head(subject)
 	column := head
 	place := 2
@@ -6915,8 +7855,8 @@ func emit_wrapped_note(subject *Printer) {
 const NOTE_HEAD = "// "
 
 // Writes the slashes one note opens with and the space behind them.
-func emit_note_head(subject *Printer) {
-	Printer_Invariants(subject, "emit_note_head.subject")
+func emit_note_head(subject Printer_Handle) {
+	Printer_Handle_Invariants(subject, "emit_note_head.subject")
 	for index := range len(NOTE_HEAD) {
 		emit_byte(subject, Symbol(NOTE_HEAD[index]))
 	}
@@ -6925,9 +7865,9 @@ func emit_note_head(subject *Printer) {
 // Reports whether one note states a directive a tool reads rather than a sentence a reader reads.
 // A directive names a tool and a word behind a colon, or one of the names the toolchain reserved
 // long before that shape settled.
-func states_directive(subject *Printer) (yes Boolean) {
+func states_directive(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "states_directive.yes") }()
-	Printer_Invariants(subject, "states_directive.subject")
+	Printer_Handle_Invariants(subject, "states_directive.subject")
 	if bool(names_tool(subject)) {
 		return true
 	}
@@ -6935,10 +7875,10 @@ func states_directive(subject *Printer) (yes Boolean) {
 }
 
 // Reports whether one note names a tool and a word behind a colon, as go:generate does.
-func names_tool(subject *Printer) (yes Boolean) {
+func names_tool(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "names_tool.yes") }()
-	Printer_Invariants(subject, "names_tool.subject")
-	text := subject.Sources[SOURCE_TEXT]
+	Printer_Handle_Invariants(subject, "names_tool.subject")
+	text := subject.Sources.Text
 	place := 2
 	for place < len(text) {
 		// A tool names itself in lower case and holds a hyphen between its words, thus
@@ -6974,39 +7914,39 @@ func names_tool(subject *Printer) (yes Boolean) {
 }
 
 // Reports whether one note opens with a name the toolchain reserved for a directive of its own.
-func reserves_name(subject *Printer) (yes Boolean) {
+func reserves_name(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "reserves_name.yes") }()
-	Printer_Invariants(subject, "reserves_name.subject")
-	subject.Directives[WORD_DIRECTIVE] = "line "
+	Printer_Handle_Invariants(subject, "reserves_name.subject")
+	subject.Directives.Value = "line "
 	if bool(opens_word(subject)) {
 		return true
 	}
-	subject.Directives[WORD_DIRECTIVE] = "export "
+	subject.Directives.Value = "export "
 	if bool(opens_word(subject)) {
 		return true
 	}
-	subject.Directives[WORD_DIRECTIVE] = "extern "
+	subject.Directives.Value = "extern "
 	if bool(opens_word(subject)) {
 		return true
 	}
-	subject.Directives[WORD_DIRECTIVE] = "sysnb "
+	subject.Directives.Value = "sysnb "
 	if bool(opens_word(subject)) {
 		return true
 	}
-	subject.Directives[WORD_DIRECTIVE] = "sys "
+	subject.Directives.Value = "sys "
 	if bool(opens_word(subject)) {
 		return true
 	}
-	subject.Directives[WORD_DIRECTIVE] = "nolint"
+	subject.Directives.Value = "nolint"
 	return opens_word(subject)
 }
 
 // Reports whether one note opens with the word the slot names, behind the slashes.
-func opens_word(subject *Printer) (yes Boolean) {
+func opens_word(subject Printer_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_word.yes") }()
-	Printer_Invariants(subject, "opens_word.subject")
-	text := subject.Sources[SOURCE_TEXT]
-	word := subject.Directives[WORD_DIRECTIVE]
+	Printer_Handle_Invariants(subject, "opens_word.subject")
+	text := subject.Sources.Text
+	word := subject.Directives.Value
 	if len(text)-2 < len(word) {
 		return false
 	}
@@ -7022,125 +7962,126 @@ func opens_word(subject *Printer) (yes Boolean) {
 // caller hands to a restore of its own. A body that closes up against its brackets drops the
 // empty lines the author left there; a literal does the same, and a call does not, thus each
 // form states its own answer rather than reading the one its parent stood under.
-func hold_tight(subject *Printer, tight Boolean) (held Boolean) {
+func hold_tight(subject Printer_Handle, tight Boolean) (held Boolean) {
 	defer func() { Boolean_Invariants(held, "hold_tight.held") }()
-	Printer_Invariants(subject, "hold_tight.subject")
+	Printer_Handle_Invariants(subject, "hold_tight.subject")
 	Boolean_Invariants(tight, "hold_tight.tight")
-	held = subject.Flags[FLAG_TIGHT]
-	subject.Flags[FLAG_TIGHT] = tight
+	held = subject.Flags.Values[FLAG_TIGHT]
+	subject.Flags.Values[FLAG_TIGHT] = tight
 	return held
 }
 
 // Marks the run of one operation the print breaks at every sign, and hands back the mark that
 // stood before it, which the caller stands back.
-func hold_split(subject *Printer, split Boolean) (held Boolean) {
+func hold_split(subject Printer_Handle, split Boolean) (held Boolean) {
 	defer func() { Boolean_Invariants(held, "hold_split.held") }()
-	Printer_Invariants(subject, "hold_split.subject")
+	Printer_Handle_Invariants(subject, "hold_split.subject")
 	Boolean_Invariants(split, "hold_split.split")
-	held = subject.Flags[FLAG_SPLIT]
-	subject.Flags[FLAG_SPLIT] = split
+	held = subject.Flags.Values[FLAG_SPLIT]
+	subject.Flags.Values[FLAG_SPLIT] = split
 	return held
 }
 
 // Stands the split mark back where a form found it.
-func restore_split(subject *Printer, held Boolean) {
-	Printer_Invariants(subject, "restore_split.subject")
+func restore_split(subject Printer_Handle, held Boolean) {
+	Printer_Handle_Invariants(subject, "restore_split.subject")
 	Boolean_Invariants(held, "restore_split.held")
-	subject.Flags[FLAG_SPLIT] = held
+	subject.Flags.Values[FLAG_SPLIT] = held
 }
 
 // Stands the tight flag back where a form found it.
-func restore_tight(subject *Printer, held Boolean) {
-	Printer_Invariants(subject, "restore_tight.subject")
+func restore_tight(subject Printer_Handle, held Boolean) {
+	Printer_Handle_Invariants(subject, "restore_tight.subject")
 	Boolean_Invariants(held, "restore_tight.held")
-	subject.Flags[FLAG_TIGHT] = held
+	subject.Flags.Values[FLAG_TIGHT] = held
 }
 
 // Reports whether the node the walk stands on states an empty line standing against a brace,
 // which is a line the canonical form drops: the body opens at its first statement and closes at
 // its last one.
-func stands_against(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func stands_against(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "stands_against.yes") }()
-	Printer_Invariants(subject, "stands_against.subject")
-	ast.Parse_State_Invariants(tree, "stands_against.tree")
+	Printer_Handle_Invariants(subject, "stands_against.subject")
+	ast.Parse_State_Handle_Invariants(tree, "stands_against.tree")
 	if node_kind(subject, tree) != ast.NODE_BLANK {
 		return false
 	}
 	// Only a body that closes up against its brackets drops the line: every other body keeps
 	// the empty lines the author wrote wherever the author wrote them.
-	if !bool(subject.Flags[FLAG_TIGHT]) {
+	if !bool(subject.Flags.Values[FLAG_TIGHT]) {
 		return false
 	}
-	position := Position(ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token)
+	index := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	position := Position(ast.Node_At(tree, index).Token)
 	// The empty line names the token behind it, thus a closing bracket there states a line
 	// against the close and an opening bracket ahead of it states a line against the open. A
 	// semicolon the line feed itself stands for spans no byte and states no bracket either
 	// way, thus the read steps over it.
-	subject.Positions[POSITION_FOUND] = position
+	subject.Positions.Found = Found_Position(position)
 	ahead_token(subject, tree)
-	found := ast.Token_Index(subject.Positions[POSITION_FOUND])
-	subject.Signs[SIGN_HELD] = ast.Token_At(tree, found).Kind
+	found := ast.Token_Index(subject.Positions.Found)
+	subject.Signs.Held = Held_Sign(ast.Token_At(tree, found).Kind)
 	if bool(closes_bracket(subject)) {
 		return true
 	}
 	if position == POSITION_MINIMUM {
 		return false
 	}
-	subject.Positions[POSITION_FOUND] = position
+	subject.Positions.Found = Found_Position(position)
 	behind_token(subject, tree)
-	found = ast.Token_Index(subject.Positions[POSITION_FOUND])
-	subject.Signs[SIGN_HELD] = ast.Token_At(tree, found).Kind
+	found = ast.Token_Index(subject.Positions.Found)
+	subject.Signs.Held = Held_Sign(ast.Token_At(tree, found).Kind)
 	return opens_bracket(subject)
 }
 
 // Names the first token at or behind one position that the source itself wrote, stepping over
 // every semicolon a line feed stands for.
-func ahead_token(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "ahead_token.subject")
-	ast.Parse_State_Invariants(tree, "ahead_token.tree")
-	for subject.Positions[POSITION_FOUND] < POSITION_MAXIMUM {
-		one := ast.Token_At(tree, ast.Token_Index(subject.Positions[POSITION_FOUND]))
+func ahead_token(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "ahead_token.subject")
+	ast.Parse_State_Handle_Invariants(tree, "ahead_token.tree")
+	for subject.Positions.Found < POSITION_MAXIMUM {
+		one := ast.Token_At(tree, ast.Token_Index(subject.Positions.Found))
 		if one.Size != 0 {
 			return
 		}
 		if one.Kind != token.KIND_SEMICOLON {
 			return
 		}
-		subject.Positions[POSITION_FOUND] = subject.Positions[POSITION_FOUND] + 1
+		subject.Positions.Found = subject.Positions.Found + 1
 	}
 }
 
 // Names the first token ahead of one position that the source itself wrote, stepping back over
 // every semicolon a line feed stands for.
-func behind_token(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "behind_token.subject")
-	ast.Parse_State_Invariants(tree, "behind_token.tree")
-	subject.Positions[POSITION_FOUND] = subject.Positions[POSITION_FOUND] - 1
-	for subject.Positions[POSITION_FOUND] > POSITION_MINIMUM {
-		one := ast.Token_At(tree, ast.Token_Index(subject.Positions[POSITION_FOUND]))
+func behind_token(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "behind_token.subject")
+	ast.Parse_State_Handle_Invariants(tree, "behind_token.tree")
+	subject.Positions.Found = subject.Positions.Found - 1
+	for subject.Positions.Found > POSITION_MINIMUM {
+		one := ast.Token_At(tree, ast.Token_Index(subject.Positions.Found))
 		if one.Size != 0 {
 			return
 		}
 		if one.Kind != token.KIND_SEMICOLON {
 			return
 		}
-		subject.Positions[POSITION_FOUND] = subject.Positions[POSITION_FOUND] - 1
+		subject.Positions.Found = subject.Positions.Found - 1
 	}
 }
 
 // Marks the empty line a field list of no fields closes on. The line the author left ahead of the
 // next declaration stands inside the list the parser read, thus a list that writes no body of its
 // own hands that line to the print that follows it.
-func close_empty_list(subject *Printer, tree *ast.Parse_State) {
-	Printer_Invariants(subject, "close_empty_list.subject")
-	ast.Parse_State_Invariants(tree, "close_empty_list.tree")
+func close_empty_list(subject Printer_Handle, tree ast.Parse_State_Handle) {
+	Printer_Handle_Invariants(subject, "close_empty_list.subject")
+	ast.Parse_State_Handle_Invariants(tree, "close_empty_list.tree")
 	if !bool(descend(subject, tree)) {
 		return
 	}
 	open := Boolean(true)
 	for bool(open) {
 		if bool(closes_block(subject, tree)) {
-			subject.Flags[FLAG_BLANK] = true
+			subject.Flags.Values[FLAG_BLANK] = true
 		}
 		open = advance(subject, tree)
 	}
@@ -7150,12 +8091,12 @@ func close_empty_list(subject *Printer, tree *ast.Parse_State) {
 // Reports whether the body the walk stands on holds no part at all, counting the empty lines the
 // author left inside it as no part. A field list of no fields states one form the canonical form
 // closes on the line it opened on.
-func holds_no_part(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func holds_no_part(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_no_part.yes") }()
-	Printer_Invariants(subject, "holds_no_part.subject")
-	ast.Parse_State_Invariants(tree, "holds_no_part.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	Printer_Handle_Invariants(subject, "holds_no_part.subject")
+	ast.Parse_State_Handle_Invariants(tree, "holds_no_part.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	empty := Boolean(true)
 	open := descend(subject, tree)
 	for bool(open) {
@@ -7164,19 +8105,19 @@ func holds_no_part(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	return empty
 }
 
 // Reports whether the body the walk stands on holds one part alone, counting neither the empty
 // lines nor the notes standing between the parts.
-func holds_one_part(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+func holds_one_part(subject Printer_Handle, tree ast.Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_one_part.yes") }()
-	Printer_Invariants(subject, "holds_one_part.subject")
-	ast.Parse_State_Invariants(tree, "holds_one_part.tree")
-	held := subject.Nodes[subject.Counts[COUNT_DEPTH]]
-	depth := subject.Counts[COUNT_DEPTH]
+	Printer_Handle_Invariants(subject, "holds_one_part.subject")
+	ast.Parse_State_Handle_Invariants(tree, "holds_one_part.tree")
+	held := subject.Nodes.Values[subject.Counts.Values[COUNT_DEPTH]]
+	depth := subject.Counts.Values[COUNT_DEPTH]
 	parts := 0
 	open := descend(subject, tree)
 	for bool(open) {
@@ -7185,7 +8126,7 @@ func holds_one_part(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		}
 		open = advance(subject, tree)
 	}
-	subject.Counts[COUNT_DEPTH] = depth
-	subject.Nodes[depth] = held
+	subject.Counts.Values[COUNT_DEPTH] = depth
+	subject.Nodes.Values[depth] = held
 	return Boolean(parts == 1)
 }

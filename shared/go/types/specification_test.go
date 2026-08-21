@@ -2,11 +2,6 @@ package types_test
 
 import (
 	"fmt"
-	standard_ast "go/ast"
-	"go/parser"
-	"go/scanner"
-	standard_token "go/token"
-	standard_types "go/types"
 	"testing"
 
 	"local/james-orcales/shared/go/ast"
@@ -252,10 +247,26 @@ func Fold(entries []Held, lookup map[Count]Held) (sum Count) {
 `
 
 type allocation_fixture struct {
-	File   types.File_Index
-	Symbol types.Symbol_Index
-	Type   types.Type_Index
-	Ok     types.Boolean
+	File          types.File_Index
+	Symbol        types.Symbol_Index
+	Type          types.Type_Index
+	Ok            types.Boolean
+	Failure       types.Failure_Code
+	Message       types.Message
+	Path          types.Path
+	Package       types.Package_Index
+	Source        token.Source
+	Symbol_Kind   types.Symbol_Kind
+	Name          types.Name
+	Type_Kind     types.Type_Kind
+	Type_Element  types.Type_Element
+	Type_Key      types.Type_Key
+	Element_Count types.Element_Count
+	Type_Symbol   types.Type_Symbol
+	Member_Head   types.Member_Head
+	Member_Type   types.Member_Type
+	Member_Symbol types.Member_Symbol
+	Member_Next   types.Member_Successor
 }
 
 type fixture_file struct {
@@ -263,11 +274,59 @@ type fixture_file struct {
 	Source string
 }
 
+// Caller allocation makes every module bound explicit in fixtures.
+func module_state() (subject *types.Module) {
+	return &types.Module{Module_Fields: types.Module_Fields{
+		Files:      make(types.File_Storage, types.FILE_COUNT_MAXIMUM),
+		Packages:   make(types.Package_Storage, types.PACKAGE_COUNT_MAXIMUM),
+		Symbols:    make(types.Symbol_Storage, types.SYMBOL_COUNT_MAXIMUM),
+		Types:      make(types.Type_Storage, types.TYPE_COUNT_MAXIMUM),
+		Members:    make(types.Member_Storage, types.MEMBER_COUNT_MAXIMUM),
+		Buckets:    make(types.Bucket_Storage, types.BUCKET_COUNT),
+		Nodes:      make(types.Node_Storage, types.DEPTH_MAXIMUM),
+		Parameters: make(types.Parameter_Storage, types.TYPE_PARAMETER_MAXIMUM),
+		Owners:     make(types.Owner_Storage, types.DEPTH_MAXIMUM),
+		Words:      make(types.Word_Storage, types.UNIVERSE_WORD_SIZE),
+		Counts:     make(types.Count_Storage, types.COUNT_SLOT_COUNT),
+	}}
+}
+
+// Caller allocation makes every body bound explicit in fixtures.
+func body_state() (body *types.Body) {
+	return &types.Body{Body_Fields: types.Body_Fields{
+		Types:  make(types.Body_Type_Storage, ast.NODE_COUNT_MAXIMUM),
+		Locals: make(types.Local_Storage, types.LOCAL_COUNT_MAXIMUM),
+		Scopes: make(types.Scope_Storage, types.SCOPE_DEPTH_MAXIMUM),
+		Staged: make(types.Staged_Storage, types.STAGED_NAME_MAXIMUM),
+	}}
+}
+
+// Caller allocation makes every parser bound explicit in fixtures.
+func parse_state() (state *ast.Parse_State) {
+	return &ast.Parse_State{Parse_State_Fields: ast.Parse_State_Fields{
+		Tokens: ast.Token_Storage{
+			Values: make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM),
+		},
+		Nodes: ast.Node_Storage{
+			Values: make(ast.Nodes, ast.NODE_COUNT_MAXIMUM),
+		},
+		Parents: ast.Parent_Storage{
+			Values: make(ast.Parents, ast.DEPTH_MAXIMUM),
+		},
+		Last_Children: ast.Last_Child_Storage{
+			Values: make(ast.Last_Children, ast.DEPTH_MAXIMUM),
+		},
+		Earlier_Children: ast.Earlier_Child_Storage{
+			Values: make(ast.Earlier_Children, ast.DEPTH_MAXIMUM),
+		},
+	}}
+}
+
 // Builds one module and one tree the caller owns, which is how every case here starts.
 func module_of() (subject *types.Module, tree *ast.Parse_State) {
-	subject = new(types.Module)
+	subject = module_state()
 	types.Reset(subject)
-	return subject, new(ast.Parse_State)
+	return subject, parse_state()
 }
 
 // Runs both passes over every file, which is the order the specification states.
@@ -276,10 +335,9 @@ func analyse(
 ) (indexes []types.File_Index) {
 	t.Helper()
 	for _, one := range files {
-		file, added := types.Add_File(subject, types.Path(one.Path),
-			token.Source(one.Source))
-		testify.True(t, bool(added), "the file binds to its package")
-		indexes = append(indexes, file)
+		result := types.Add_File(subject, types.Path(one.Path), token.Source(one.Source))
+		testify.True(t, bool(result.OK), "the file binds to its package")
+		indexes = append(indexes, result.File)
 	}
 	for slot, one := range files {
 		ast.Parse(tree, token.Source(one.Source))
@@ -311,24 +369,9 @@ func member_of(
 	t *testing.T, subject *types.Module, file types.File_Index, name string,
 ) (symbol types.Symbol_Index) {
 	t.Helper()
-	found, ok := types.Lookup(subject, types.Package_Of(subject, file), types.Name(name))
-	testify.True(t, bool(ok), "the package states %q", name)
-	return found
-}
-
-// Reads one link a reader answers as the type slot it names.
-func slot_of[Link ~int32](link Link) (index types.Type_Index) {
-	return types.Type_Index(link)
-}
-
-// Reads one link a reader answers as the member slot it names.
-func member_slot_of[Link ~int32](link Link) (index types.Member_Index) {
-	return types.Member_Index(link)
-}
-
-// Reads one link a reader answers as the symbol slot it names.
-func symbol_slot_of[Link ~int32](link Link) (index types.Symbol_Index) {
-	return types.Symbol_Index(link)
+	result := types.Lookup(subject, types.Package_Of(subject, file), types.Name(name))
+	testify.True(t, bool(result.Found), "the package states %q", name)
+	return result.Symbol
 }
 
 // Names one package member and reads the kind of the type it wears.
@@ -349,10 +392,10 @@ func test_module(t *testing.T) {
 	types.Reset(subject)
 	testify.Equal(t, types.FAILURE_NONE, types.Failure(subject),
 		"a reset module holds no fault")
-	_, found := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name("int"))
-	testify.True(t, bool(found), "a reset module still holds the universe")
-	_, gone := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name("Count"))
-	testify.False(t, bool(gone), "a reset module holds no name a file stated")
+	found := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name("int"))
+	testify.True(t, bool(found.Found), "a reset module still holds the universe")
+	gone := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name("Count"))
+	testify.False(t, bool(gone.Found), "a reset module holds no name a file stated")
 }
 
 func test_files(t *testing.T) {
@@ -381,18 +424,18 @@ func test_universe(t *testing.T) {
 		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "float32", "float64",
 		"complex64", "complex128", "error", "any", "comparable",
 	} {
-		symbol, found := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name(name))
-		testify.True(t, bool(found), "the universe states the type %q", name)
-		testify.Equal(t, types.SYMBOL_TYPE, types.Symbol_Kind_Of(subject, symbol),
+		result := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name(name))
+		testify.True(t, bool(result.Found), "the universe states the type %q", name)
+		testify.Equal(t, types.SYMBOL_TYPE, types.Symbol_Kind_Of(subject, result.Symbol),
 			"a predeclared type names a type")
 	}
 	for _, name := range []string{
 		"len", "cap", "make", "new", "append", "copy", "delete", "panic", "recover",
 		"close", "min", "max", "clear", "complex", "real", "imag", "print", "println",
 	} {
-		symbol, found := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name(name))
-		testify.True(t, bool(found), "the universe states the function %q", name)
-		testify.Equal(t, types.SYMBOL_BUILTIN, types.Symbol_Kind_Of(subject, symbol),
+		result := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name(name))
+		testify.True(t, bool(result.Found), "the universe states the function %q", name)
+		testify.Equal(t, types.SYMBOL_BUILTIN, types.Symbol_Kind_Of(subject, result.Symbol),
 			"a predeclared function names a builtin")
 	}
 	for _, one := range []struct {
@@ -404,14 +447,14 @@ func test_universe(t *testing.T) {
 		{"iota", types.TYPE_UNTYPED_INTEGER},
 		{"nil", types.TYPE_UNTYPED_NIL},
 	} {
-		symbol, found := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name(one.Name))
-		testify.True(t, bool(found), "the universe states the value %q", one.Name)
+		result := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name(one.Name))
+		testify.True(t, bool(result.Found), "the universe states the value %q", one.Name)
 		testify.Equal(t, one.Kind,
-			types.Type_Kind_Of(subject, types.Symbol_Type_Of(subject, symbol)),
+			types.Type_Kind_Of(subject, types.Symbol_Type_Of(subject, result.Symbol)),
 			"%q wears the type it folds to", one.Name)
 	}
-	_, absent := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name("Total"))
-	testify.False(t, bool(absent), "the universe states no name a file declares")
+	absent := types.Lookup(subject, types.PACKAGE_UNIVERSE, types.Name("Total"))
+	testify.False(t, bool(absent.Found), "the universe states no name a file declares")
 }
 
 func test_declarations(t *testing.T) {
@@ -441,10 +484,10 @@ func test_declarations(t *testing.T) {
 		testify.Equal(t, file, types.Symbol_File_Of(subject, symbol),
 			"%q names the file that states it", one.Name)
 	}
-	_, absent := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Read"))
-	testify.False(t, bool(absent), "a method binds no package name")
-	_, unstated := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Missing"))
-	testify.False(t, bool(unstated), "a package states no name no file declares")
+	absent := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Read"))
+	testify.False(t, bool(absent.Found), "a method binds no package name")
+	unstated := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Missing"))
+	testify.False(t, bool(unstated.Found), "a package states no name no file declares")
 }
 
 func test_type_expressions(t *testing.T) {
@@ -478,8 +521,9 @@ func test_type_expressions(t *testing.T) {
 	testify.Equal(t, types.ELEMENT_COUNT_UNKNOWN, types.Type_Element_Count_Of(subject, table),
 		"an array whose element_count no literal states names none")
 	lookup := types.Symbol_Type_Of(subject, member_of(t, subject, file, "lookup"))
-	testify.Equal(t, types.TYPE_NAMED, types.Type_Kind_Of(subject,
-		slot_of(types.Type_Key_Of(subject, lookup))), "a map names the type of its key")
+	testify.Equal(t, types.TYPE_NAMED,
+		types.Type_Kind_Of(subject, types.Type_Index(types.Type_Key_Of(subject, lookup))),
+		"a map names the type of its key")
 	testify.Equal(t, types.TYPE_INVALID, type_kind_of(t, subject, file, "third"),
 		"a declaration that states no type wears the invalid type")
 }
@@ -490,7 +534,7 @@ func test_named_types(t *testing.T) {
 	testify.Equal(t, types.TYPE_NAMED, types.Type_Kind_Of(subject, count),
 		"a type declaration builds a named type")
 	testify.Equal(t, types.Name("Count"), types.Symbol_Name_Of(subject,
-		symbol_slot_of(types.Type_Symbol_Of(subject, count))),
+		types.Symbol_Index(types.Type_Symbol_Of(subject, count))),
 		"a named type carries its declaration")
 	testify.Equal(t, types.TYPE_INT,
 		types.Type_Kind_Of(subject, types.Underlying_Of(subject, count)),
@@ -499,16 +543,20 @@ func test_named_types(t *testing.T) {
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Entry")))
 	testify.Equal(t, types.TYPE_STRUCTURE, types.Type_Kind_Of(subject, entry),
 		"a struct names a struct")
-	member := member_slot_of(types.Type_Members_Of(subject, entry))
-	testify.Equal(t, types.Name("Name"), types.Symbol_Name_Of(subject,
-		symbol_slot_of(types.Member_Symbol_Of(subject, member))), "a field names itself")
+	member := types.Member_Index(types.Type_Members_Of(subject, entry))
+	testify.Equal(t, types.Name("Name"),
+		types.Symbol_Name_Of(subject,
+			types.Symbol_Index(types.Member_Symbol_Of(subject, member))),
+		"a field names itself")
 	testify.Equal(t, types.TYPE_NAMED,
-		types.Type_Kind_Of(subject, slot_of(types.Member_Type_Of(subject, member))),
+		types.Type_Kind_Of(subject,
+			types.Type_Index(types.Member_Type_Of(subject, member))),
 		"a field wears the type its declaration states")
-	embedded := member_slot_of(types.Member_Next_Of(subject,
-		member_slot_of(types.Member_Next_Of(subject, member))))
+	embedded := types.Member_Index(types.Member_Next_Of(subject,
+		types.Member_Index(types.Member_Next_Of(subject, member))))
+
 	testify.Equal(t, types.SYMBOL_ABSENT,
-		symbol_slot_of(types.Member_Symbol_Of(subject, embedded)),
+		types.Symbol_Index(types.Member_Symbol_Of(subject, embedded)),
 		"an embedded field wears no name of its own")
 }
 
@@ -520,26 +568,28 @@ func test_answers(t *testing.T) {
 	signature := types.Symbol_Type_Of(subject, symbol)
 	testify.Equal(t, types.TYPE_FUNCTION, types.Type_Kind_Of(subject, signature),
 		"a function names a signature")
-	parameters := slot_of(types.Type_Key_Of(subject, signature))
+	parameters := types.Type_Index(types.Type_Key_Of(subject, signature))
 	testify.Equal(t, types.TYPE_TUPLE, types.Type_Kind_Of(subject, parameters),
 		"a signature holds its parameters in a tuple")
-	first := member_slot_of(types.Type_Members_Of(subject, parameters))
-	testify.Equal(t, types.Name("entries"), types.Symbol_Name_Of(subject,
-		symbol_slot_of(types.Member_Symbol_Of(subject, first))), "a parameter names itself")
-	second := member_slot_of(types.Member_Next_Of(subject, first))
+	first := types.Member_Index(types.Type_Members_Of(subject, parameters))
+	testify.Equal(t, types.Name("entries"),
+		types.Symbol_Name_Of(subject,
+			types.Symbol_Index(types.Member_Symbol_Of(subject, first))),
+		"a parameter names itself")
+	second := types.Member_Index(types.Member_Next_Of(subject, first))
 	testify.Equal(t, types.TYPE_SLICE, types.Type_Kind_Of(subject,
-		slot_of(types.Member_Type_Of(subject, second))),
+		types.Type_Index(types.Member_Type_Of(subject, second))),
 		"a run of arguments reads as a slice")
-	results := slot_of(types.Type_Element_Of(subject, signature))
-	sum := member_slot_of(types.Type_Members_Of(subject, results))
+	results := types.Type_Index(types.Type_Element_Of(subject, signature))
+	sum := types.Member_Index(types.Type_Members_Of(subject, results))
 	testify.Equal(t, types.Name("sum"), types.Symbol_Name_Of(subject,
-		symbol_slot_of(types.Member_Symbol_Of(subject, sum))), "a result names itself")
+		types.Symbol_Index(types.Member_Symbol_Of(subject, sum))), "a result names itself")
 	constraint := types.Underlying_Of(subject,
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Numeric")))
 	testify.Equal(t, types.TYPE_CONSTRAINT, types.Type_Kind_Of(subject, constraint),
 		"a constraint names a constraint")
 	testify.Not_Equal(t, types.MEMBER_ABSENT,
-		member_slot_of(types.Type_Members_Of(subject, constraint)),
+		types.Member_Index(types.Type_Members_Of(subject, constraint)),
 		"a constraint states the terms it admits")
 	answers_imports(t, subject, file)
 	answers_links(t, subject, file)
@@ -560,7 +610,7 @@ func answers_links(t *testing.T, subject *types.Module, file types.File_Index) {
 	} {
 		index := types.Symbol_Type_Of(subject, member_of(t, subject, file, one.Name))
 		testify.Equal(t, one.Kind, types.Type_Kind_Of(subject,
-			slot_of(types.Type_Element_Of(subject, index))),
+			types.Type_Index(types.Type_Element_Of(subject, index))),
 			"the pointer %q names the type it stands over", one.Name)
 	}
 	for _, one := range []struct {
@@ -572,7 +622,7 @@ func answers_links(t *testing.T, subject *types.Module, file types.File_Index) {
 	} {
 		index := types.Symbol_Type_Of(subject, member_of(t, subject, file, one.Name))
 		testify.Equal(t, one.Kind, types.Type_Kind_Of(subject,
-			slot_of(types.Type_Key_Of(subject, index))),
+			types.Type_Index(types.Type_Key_Of(subject, index))),
 			"the map %q names the type of its key", one.Name)
 	}
 	solo := member_of(t, subject, file, "Solo")
@@ -606,17 +656,18 @@ func answers_heads(t *testing.T) {
 		}
 		index := types.Underlying_Of(subject,
 			types.Symbol_Type_Of(subject, member_of(t, subject, file, name)))
-		testify.Equal(t, one.Head, member_slot_of(types.Type_Members_Of(subject, index)),
+		testify.Equal(t, one.Head,
+			types.Member_Index(types.Type_Members_Of(subject, index)),
 			"a struct names the first member of its chain")
 		if one.Head == 1 {
 			testify.Equal(t, types.Member_Index(2),
-				member_slot_of(types.Member_Next_Of(subject, one.Head)),
+				types.Member_Index(types.Member_Next_Of(subject, one.Head)),
 				"a member names the member the arena took after it")
 		}
-		testify.Equal(t, types.TYPE_BOOLEAN, types.Type_Kind_Of(subject, slot_of(
+		testify.Equal(t, types.TYPE_BOOLEAN, types.Type_Kind_Of(subject, types.Type_Index(
 			types.Member_Type_Of(subject,
 				1))), "the first member wears the type it states")
-		testify.Equal(t, types.TYPE_STRING, types.Type_Kind_Of(subject, slot_of(
+		testify.Equal(t, types.TYPE_STRING, types.Type_Kind_Of(subject, types.Type_Index(
 			types.Member_Type_Of(subject, 2))), "the second member wears its own type")
 	}
 }
@@ -645,16 +696,16 @@ func answers_imports(t *testing.T, subject *types.Module, file types.File_Index)
 func answers_sweep(t *testing.T, subject *types.Module) {
 	t.Helper()
 	for _, index := range []types.Type_Index{0, 1, 2, types.TYPE_INDEX_MAXIMUM} {
-		testify.True(t,
-			slot_of(types.Type_Element_Of(subject, index)) <= types.TYPE_INDEX_MAXIMUM,
+		testify.True(t, types.Type_Index(types.Type_Element_Of(subject, index)) <=
+			types.TYPE_INDEX_MAXIMUM,
 			"a type slot names an element inside the arena")
-		testify.True(t,
-			slot_of(types.Type_Key_Of(subject, index)) <= types.TYPE_INDEX_MAXIMUM,
+		testify.True(t, types.Type_Index(types.Type_Key_Of(subject, index)) <=
+			types.TYPE_INDEX_MAXIMUM,
 			"a type slot names a key inside the arena")
-		symbol := symbol_slot_of(types.Type_Symbol_Of(subject, index))
+		symbol := types.Symbol_Index(types.Type_Symbol_Of(subject, index))
 		testify.True(t, symbol <= types.SYMBOL_INDEX_MAXIMUM,
 			"a type slot names a symbol inside the arena")
-		member := member_slot_of(types.Type_Members_Of(subject, index))
+		member := types.Member_Index(types.Type_Members_Of(subject, index))
 		testify.True(t, member <= types.MEMBER_INDEX_MAXIMUM,
 			"a type slot names a member inside the arena")
 		testify.True(t, types.Underlying_Of(subject, index) <= types.TYPE_INDEX_MAXIMUM,
@@ -681,13 +732,13 @@ func answers_sweep(t *testing.T, subject *types.Module) {
 			uint8(types.SYMBOL_TYPE_PARAMETER), "a symbol slot names a kind")
 	}
 	for _, index := range []types.Member_Index{0, 1, 2, types.MEMBER_INDEX_MAXIMUM} {
-		testify.True(t,
-			slot_of(types.Member_Type_Of(subject, index)) <= types.TYPE_INDEX_MAXIMUM,
+		testify.True(t, types.Type_Index(types.Member_Type_Of(subject, index)) <=
+			types.TYPE_INDEX_MAXIMUM,
 			"a member slot names a type inside the arena")
-		symbol := symbol_slot_of(types.Member_Symbol_Of(subject, index))
+		symbol := types.Symbol_Index(types.Member_Symbol_Of(subject, index))
 		testify.True(t, symbol <= types.SYMBOL_INDEX_MAXIMUM,
 			"a member slot names a symbol inside the arena")
-		next := member_slot_of(types.Member_Next_Of(subject, index))
+		next := types.Member_Index(types.Member_Next_Of(subject, index))
 		testify.True(t, next <= types.MEMBER_INDEX_MAXIMUM,
 			"a member slot names a member inside the arena")
 	}
@@ -700,8 +751,9 @@ func answers_sweep(t *testing.T, subject *types.Module) {
 	for _, index := range []types.Package_Index{0, 1, 2, types.PACKAGE_INDEX_MAXIMUM} {
 		testify.True(t, len(types.Path_Of(subject, index)) <= types.PATH_SIZE_MAXIMUM,
 			"a package slot answers to a path inside the width")
-		_, found := types.Lookup(subject, index, types.Name("Count"))
-		testify.True(t, bool(found) || !bool(found), "a package slot answers a search")
+		result := types.Lookup(subject, index, types.Name("Count"))
+		testify.True(t, bool(result.Found) || !bool(result.Found),
+			"a package slot answers a search")
 	}
 }
 
@@ -739,7 +791,7 @@ func test_refusals(t *testing.T) {
 		{"package one\n\nvar value other.Marker\n", types.FAILURE_UNKNOWN_NAME},
 	} {
 		subject, tree := module_of()
-		file, _ := types.Add_File(subject, TEST_PATH, token.Source(one.Source))
+		file := types.Add_File(subject, TEST_PATH, token.Source(one.Source)).File
 		ast.Parse(tree, token.Source(one.Source))
 		declared := types.Declare(subject, file, tree)
 		ast.Parse(tree, token.Source(one.Source))
@@ -752,7 +804,7 @@ func test_refusals(t *testing.T) {
 	}
 	subject, tree := module_of()
 	broken := token.Source("package one\n\nvar value int\n\nfunc (\n")
-	file, _ := types.Add_File(subject, TEST_PATH, broken)
+	file := types.Add_File(subject, TEST_PATH, broken).File
 	ast.Parse(tree, broken)
 	testify.True(t, bool(types.Declare(subject, file, tree)),
 		"a refused parse still declares the names its tree holds")
@@ -815,25 +867,26 @@ func bounds_files(t *testing.T) {
 	subject, tree := module_of()
 	filled := 0
 	for filled < types.FILE_COUNT_MAXIMUM-1 {
-		_, ok := types.Add_File(subject, TEST_PATH, token.Source("package one\n"))
-		testify.True(t, bool(ok), "a file inside the bound binds")
+		result := types.Add_File(subject, TEST_PATH, token.Source("package one\n"))
+		testify.True(t, bool(result.OK), "a file inside the bound binds")
 		filled++
 	}
-	last, ok := types.Add_File(subject, TEST_PATH, token.Source(TEST_OTHER_SOURCE))
-	testify.True(t, bool(ok), "the final file binds")
+	last_result := types.Add_File(subject, TEST_PATH, token.Source(TEST_OTHER_SOURCE))
+	last := last_result.File
+	testify.True(t, bool(last_result.OK), "the final file binds")
 	testify.Equal(t, types.File_Index(types.FILE_COUNT_MAXIMUM-1), last,
 		"the final file takes the final slot")
 	ast.Parse(tree, token.Source(TEST_OTHER_SOURCE))
 	testify.True(t, bool(types.Declare(subject, last, tree)), "the final file declares")
 	ast.Parse(tree, token.Source(TEST_OTHER_SOURCE))
 	testify.True(t, bool(types.Resolve(subject, last, tree)), "the final file resolves")
-	marker, found := types.Lookup(
+	marker_result := types.Lookup(
 		subject, types.Package_Of(subject, last), types.Name("Marker"))
-	testify.True(t, bool(found), "the final file states its names")
-	testify.Equal(t, last, types.Symbol_File_Of(subject, marker),
+	testify.True(t, bool(marker_result.Found), "the final file states its names")
+	testify.Equal(t, last, types.Symbol_File_Of(subject, marker_result.Symbol),
 		"a symbol names the file that states it")
-	_, over := types.Add_File(subject, TEST_PATH, token.Source("package one\n"))
-	testify.False(t, bool(over), "a file past the bound is refused")
+	over := types.Add_File(subject, TEST_PATH, token.Source("package one\n"))
+	testify.False(t, bool(over.OK), "a file past the bound is refused")
 	testify.Equal(t, types.FAILURE_FILE_COUNT, types.Failure(subject),
 		"a file past the bound names its code")
 }
@@ -842,19 +895,20 @@ func bounds_packages(t *testing.T) {
 	subject, _ := module_of()
 	for index := range types.PACKAGE_COUNT_MAXIMUM - 1 {
 		path := types.Path(fmt.Sprintf("local/example/%d", index))
-		file, ok := types.Add_File(subject, path, token.Source("package one\n"))
-		testify.True(t, bool(ok), "a package inside the bound binds")
-		testify.Equal(t, types.Package_Index(index+1), types.Package_Of(subject, file),
+		result := types.Add_File(subject, path, token.Source("package one\n"))
+		testify.True(t, bool(result.OK), "a package inside the bound binds")
+		testify.Equal(t, types.Package_Index(index+1),
+			types.Package_Of(subject, result.File),
 			"a path takes the package slot after the last one")
 	}
 	last := types.Package_Index(types.PACKAGE_COUNT_MAXIMUM - 1)
 	testify.Equal(t, types.Path("local/example/254"), types.Path_Of(subject, last),
 		"a package reads back the path it answers to")
-	_, absent := types.Lookup(subject, last, types.Name("Marker"))
-	testify.False(t, bool(absent), "a package with no file states no name")
+	absent := types.Lookup(subject, last, types.Name("Marker"))
+	testify.False(t, bool(absent.Found), "a package with no file states no name")
 	bounds_final_package(t, subject)
-	_, over := types.Add_File(subject, "local/example/over", token.Source("package one\n"))
-	testify.False(t, bool(over), "a package past the bound is refused")
+	over := types.Add_File(subject, "local/example/over", token.Source("package one\n"))
+	testify.False(t, bool(over.OK), "a package past the bound is refused")
 	testify.Equal(t, types.FAILURE_PACKAGE_COUNT, types.Failure(subject),
 		"a package past the bound names its code")
 }
@@ -863,21 +917,23 @@ func bounds_packages(t *testing.T) {
 // a module holds.
 func bounds_final_package(t *testing.T, subject *types.Module) {
 	t.Helper()
-	tree := new(ast.Parse_State)
+	tree := parse_state()
 	source := "package last\n\nimport near \"local/example/1\"\n\n" +
 		"import far \"local/example/254\"\n\ntype Held int\n"
-	file, ok := types.Add_File(subject, "local/example/254", token.Source(source))
-	testify.True(t, bool(ok), "the file of the final package binds")
+	file_result := types.Add_File(subject, "local/example/254", token.Source(source))
+	file := file_result.File
+	testify.True(t, bool(file_result.OK), "the file of the final package binds")
 	testify.Equal(t, types.Package_Index(types.PACKAGE_INDEX_MAXIMUM),
 		types.Package_Of(subject, file), "the final path names the final package")
 	ast.Parse(tree, token.Source(source))
 	testify.True(t, bool(types.Declare(subject, file, tree)), "the final package declares")
 	ast.Parse(tree, token.Source(source))
 	testify.True(t, bool(types.Resolve(subject, file, tree)), "the final package resolves")
-	near, found := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Held"))
-	testify.True(t, bool(found), "the final package states its names")
+	near_result := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Held"))
+	testify.True(t, bool(near_result.Found), "the final package states its names")
 	testify.Equal(t, types.File_Index(types.PACKAGE_COUNT_MAXIMUM-1),
-		types.Symbol_File_Of(subject, near), "a symbol names the file that states it")
+		types.Symbol_File_Of(subject, near_result.Symbol),
+		"a symbol names the file that states it")
 	for _, one := range []struct {
 		Name   string
 		Target types.Package_Index
@@ -924,32 +980,34 @@ func bounds_widths(t *testing.T) {
 		source[index] = '\n'
 	}
 	for _, path := range []types.Path{"", "a", "ab", types.Path(wide)} {
-		file, ok := types.Add_File(subject, path, token.Source(source))
-		testify.True(t, bool(ok), "a path of %d bytes binds", len(path))
-		testify.Equal(t, path, types.Path_Of(subject, types.Package_Of(subject, file)),
+		result := types.Add_File(subject, path, token.Source(source))
+		testify.True(t, bool(result.OK), "a path of %d bytes binds", len(path))
+		testify.Equal(t, path,
+			types.Path_Of(subject, types.Package_Of(subject, result.File)),
 			"a path of %d bytes reads back", len(path))
 	}
 	for _, one := range []string{"", "a", "ab"} {
-		file, ok := types.Add_File(subject, "local/example/short", token.Source(one))
-		testify.True(t, bool(ok), "a source of %d bytes binds", len(one))
-		testify.Equal(t, token.Source(one), types.Source_Of(subject, file),
+		result := types.Add_File(subject, "local/example/short", token.Source(one))
+		testify.True(t, bool(result.OK), "a source of %d bytes binds", len(one))
+		testify.Equal(t, token.Source(one), types.Source_Of(subject, result.File),
 			"a source of %d bytes reads back", len(one))
 	}
 	testify.Equal(t, token.Source(source), types.Source_Of(subject, 0),
 		"the widest source reads back")
 	for _, name := range []types.Name{types.Name(""), types.Name("a"), types.Name("ab"),
 		types.Name(wide[:types.NAME_SIZE_MAXIMUM])} {
-		_, absent := types.Lookup(subject, types.PACKAGE_UNIVERSE, name)
-		testify.False(t, bool(absent), "the universe states no name of %d bytes", len(name))
+		result := types.Lookup(subject, types.PACKAGE_UNIVERSE, name)
+		testify.False(t, bool(result.Found),
+			"the universe states no name of %d bytes", len(name))
 	}
 	long := fmt.Sprintf("package fill\n\nvar %s int\n", string(wide[:types.NAME_SIZE_MAXIMUM]))
-	file, _ := types.Add_File(subject, "local/example/long", token.Source(long))
+	file := types.Add_File(subject, "local/example/long", token.Source(long)).File
 	ast.Parse(tree, token.Source(long))
 	testify.True(t, bool(types.Declare(subject, file, tree)), "a name at the bound declares")
-	symbol, found := types.Lookup(subject, types.Package_Of(subject, file),
+	result := types.Lookup(subject, types.Package_Of(subject, file),
 		types.Name(wide[:types.NAME_SIZE_MAXIMUM]))
-	testify.True(t, bool(found), "a name at the bound binds")
-	testify.Equal(t, types.NAME_SIZE_MAXIMUM, len(types.Symbol_Name_Of(subject, symbol)),
+	testify.True(t, bool(result.Found), "a name at the bound binds")
+	testify.Equal(t, types.NAME_SIZE_MAXIMUM, len(types.Symbol_Name_Of(subject, result.Symbol)),
 		"a name at the bound reads back whole")
 	bounds_name_size(t)
 }
@@ -961,7 +1019,7 @@ func bounds_name_size(t *testing.T) {
 		wide[index] = 'n'
 	}
 	source := fmt.Sprintf("package fill\n\nvar %s int\n", string(wide))
-	file, _ := types.Add_File(subject, TEST_PATH, token.Source(source))
+	file := types.Add_File(subject, TEST_PATH, token.Source(source)).File
 	ast.Parse(tree, token.Source(source))
 	testify.False(t, bool(types.Declare(subject, file, tree)),
 		"a name past the bound is refused")
@@ -976,7 +1034,7 @@ func bounds_depth(t *testing.T) {
 		stars[index] = '*'
 	}
 	source := fmt.Sprintf("package fill\n\nvar deep %sint\n", string(stars))
-	file, _ := types.Add_File(subject, TEST_PATH, token.Source(source))
+	file := types.Add_File(subject, TEST_PATH, token.Source(source)).File
 	ast.Parse(tree, token.Source(source))
 	types.Declare(subject, file, tree)
 	ast.Parse(tree, token.Source(source))
@@ -998,7 +1056,7 @@ func fill_arena(
 		heads = append(heads, fixture_file{Path: TEST_PATH, Source: one})
 	}
 	analyse(t, subject, tree, heads)
-	file, _ = types.Add_File(subject, TEST_PATH, token.Source(tail))
+	file = types.Add_File(subject, TEST_PATH, token.Source(tail)).File
 	ast.Parse(tree, token.Source(tail))
 	types.Declare(subject, file, tree)
 	ast.Parse(tree, token.Source(tail))
@@ -1066,8 +1124,9 @@ func bounds_symbols(t *testing.T) {
 		"the final symbol slot holds the last name a file stated")
 	solo := types.Underlying_Of(subject,
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Solo")))
-	testify.Equal(t, last, symbol_slot_of(types.Member_Symbol_Of(subject,
-		member_slot_of(types.Type_Members_Of(subject, solo)))),
+	testify.Equal(t, last, types.Symbol_Index(types.Member_Symbol_Of(subject,
+		types.Member_Index(types.Type_Members_Of(subject, solo)))),
+
 		"the final field wears the final symbol slot")
 	bounds_past_symbol(t)
 	bounds_final_symbol(t)
@@ -1077,18 +1136,19 @@ func bounds_past_symbol(t *testing.T) {
 	subject, file := fill_arena(t, symbol_head(t, 0), "package fill\n\nvar past int\n")
 	testify.Equal(t, types.FAILURE_SYMBOL_COUNT, types.Failure(subject),
 		"a name past the bound names its code")
-	_, absent := types.Lookup(subject, types.Package_Of(subject, file), types.Name("past"))
-	testify.False(t, bool(absent), "a name past the bound binds nothing")
+	absent := types.Lookup(subject, types.Package_Of(subject, file), types.Name("past"))
+	testify.False(t, bool(absent.Found), "a name past the bound binds nothing")
 }
 
 func bounds_final_symbol(t *testing.T) {
 	subject, file := fill_arena(t, symbol_head(t, 1), "package fill\n\ntype Last int\n")
-	found, ok := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Last"))
-	testify.True(t, bool(ok), "the final name binds")
-	testify.Equal(t, types.Symbol_Index(types.SYMBOL_INDEX_MAXIMUM), found,
+	result := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Last"))
+	testify.True(t, bool(result.Found), "the final name binds")
+	testify.Equal(t, types.Symbol_Index(types.SYMBOL_INDEX_MAXIMUM), result.Symbol,
 		"the final name takes the final symbol slot")
-	testify.Equal(t, found, symbol_slot_of(types.Type_Symbol_Of(subject,
-		types.Symbol_Type_Of(subject, found))),
+	testify.Equal(t, result.Symbol, types.Symbol_Index(types.Type_Symbol_Of(subject,
+		types.Symbol_Type_Of(subject, result.Symbol))),
+
 		"the final named type carries the final symbol slot")
 	testify.Equal(t, types.FAILURE_NONE, types.Failure(subject),
 		"a module that fills its symbols exactly refuses nothing")
@@ -1100,13 +1160,13 @@ func bounds_types(t *testing.T) {
 		"package fill\n\nvar pair **int\n\nvar over *int\n")
 	testify.Equal(t, types.TYPE_POINTER, types.Type_Kind_Of(subject, last),
 		"the final type slot holds the last type a file stated")
-	testify.Equal(t, last, slot_of(types.Type_Element_Of(subject, last-1)),
+	testify.Equal(t, last, types.Type_Index(types.Type_Element_Of(subject, last-1)),
 		"a pointer over a pointer names the slot behind it")
 	testify.Equal(t, types.FAILURE_TYPE_COUNT, types.Failure(subject),
 		"a type past the bound names its code")
-	pair, found := types.Lookup(subject, types.Package_Of(subject, file), types.Name("pair"))
-	testify.True(t, bool(found), "the final declaration binds its name")
-	testify.Equal(t, last-1, types.Symbol_Type_Of(subject, pair),
+	pair := types.Lookup(subject, types.Package_Of(subject, file), types.Name("pair"))
+	testify.True(t, bool(pair.Found), "the final declaration binds its name")
+	testify.Equal(t, last-1, types.Symbol_Type_Of(subject, pair.Symbol),
 		"the final declaration wears the type it stated")
 	bounds_final_type(t)
 	bounds_final_field(t)
@@ -1126,8 +1186,9 @@ func bounds_final_field(t *testing.T) {
 	holder := types.Underlying_Of(subject,
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Holder")))
 	testify.Equal(t, types.Type_Index(types.TYPE_INDEX_MAXIMUM),
-		slot_of(types.Member_Type_Of(subject,
-			member_slot_of(types.Type_Members_Of(subject, holder)))),
+		types.Type_Index(types.Member_Type_Of(subject,
+			types.Member_Index(types.Type_Members_Of(subject, holder)))),
+
 		"the final field wears the final type slot")
 }
 
@@ -1136,7 +1197,7 @@ func bounds_final_tuple(t *testing.T) {
 		"package fill\n\nfunc Only(one int) {\n}\n")
 	signature := types.Symbol_Type_Of(subject, member_of(t, subject, file, "Only"))
 	testify.Equal(t, types.Type_Index(types.TYPE_INDEX_MAXIMUM),
-		slot_of(types.Type_Key_Of(subject, signature)),
+		types.Type_Index(types.Type_Key_Of(subject, signature)),
 		"the final signature holds its parameters in the final type slot")
 }
 
@@ -1145,7 +1206,7 @@ func bounds_members(t *testing.T) {
 	head := filled_structure(types.MEMBER_COUNT_MAXIMUM - 3)
 	analyse(t, subject, tree, []fixture_file{{Path: TEST_PATH, Source: head}})
 	tail := "package fill\n\ntype Tail struct {\n\tOne int\n\tTwo int\n\tThree int\n}\n"
-	file, _ := types.Add_File(subject, TEST_PATH, token.Source(tail))
+	file := types.Add_File(subject, TEST_PATH, token.Source(tail)).File
 	ast.Parse(tree, token.Source(tail))
 	types.Declare(subject, file, tree)
 	ast.Parse(tree, token.Source(tail))
@@ -1153,20 +1214,21 @@ func bounds_members(t *testing.T) {
 	last := types.Member_Index(types.MEMBER_INDEX_MAXIMUM)
 	testify.Equal(t, types.FAILURE_MEMBER_COUNT, types.Failure(subject),
 		"a member past the bound names its code")
-	testify.Equal(t, last, member_slot_of(types.Member_Next_Of(subject, last-1)),
+	testify.Equal(t, last, types.Member_Index(types.Member_Next_Of(subject, last-1)),
 		"a member chain reaches the final slot")
-	testify.Equal(t, types.MEMBER_ABSENT, member_slot_of(types.Member_Next_Of(subject, last)),
+	testify.Equal(t, types.MEMBER_ABSENT,
+		types.Member_Index(types.Member_Next_Of(subject, last)),
 		"the final member closes its chain")
 	testify.Not_Equal(t, types.SYMBOL_ABSENT,
-		symbol_slot_of(types.Member_Symbol_Of(subject, last)),
+		types.Symbol_Index(types.Member_Symbol_Of(subject, last)),
 		"the final member wears the name its field states")
 	tail_type := types.Underlying_Of(subject, types.Symbol_Type_Of(subject,
 		member_of(t, subject, file, "Tail")))
-	testify.Equal(t, last-1, member_slot_of(types.Type_Members_Of(subject, tail_type)),
+	testify.Equal(t, last-1, types.Member_Index(types.Type_Members_Of(subject, tail_type)),
 		"a struct names the first member of its chain")
 	bounds_final_head(t)
 	testify.Equal(t, types.TYPE_INT, types.Type_Kind_Of(subject,
-		slot_of(types.Member_Type_Of(subject, last))),
+		types.Type_Index(types.Member_Type_Of(subject, last))),
 		"the final member wears the type it states")
 	bounds_lengths(t)
 }
@@ -1176,7 +1238,7 @@ func bounds_final_head(t *testing.T) {
 	head := filled_structure(types.MEMBER_COUNT_MAXIMUM - 2)
 	analyse(t, subject, tree, []fixture_file{{Path: TEST_PATH, Source: head}})
 	tail := "package fill\n\ntype Tail struct {\n\tOnly int\n}\n"
-	file, _ := types.Add_File(subject, TEST_PATH, token.Source(tail))
+	file := types.Add_File(subject, TEST_PATH, token.Source(tail)).File
 	ast.Parse(tree, token.Source(tail))
 	types.Declare(subject, file, tree)
 	ast.Parse(tree, token.Source(tail))
@@ -1184,7 +1246,7 @@ func bounds_final_head(t *testing.T) {
 	index := types.Underlying_Of(subject,
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Tail")))
 	testify.Equal(t, types.Member_Index(types.MEMBER_INDEX_MAXIMUM),
-		member_slot_of(types.Type_Members_Of(subject, index)),
+		types.Member_Index(types.Type_Members_Of(subject, index)),
 		"the final struct names the final member slot")
 }
 
@@ -1209,52 +1271,198 @@ func bounds_lengths(t *testing.T) {
 	}
 }
 
+type allocation_check struct {
+	Name string
+	Call func()
+}
+
+type allocation_state struct {
+	Held        allocation_fixture
+	Subject     *types.Module
+	File        types.File_Index
+	Symbol      types.Symbol_Index
+	Type        types.Type_Index
+	Member      types.Member_Index
+	Owner       types.Package_Index
+	Passes      *types.Module
+	Parse_State *ast.Parse_State
+	Body        *types.Body
+	Fresh       types.File_Index
+	Pass_Source token.Source
+}
+
 func test_allocation(t *testing.T) {
-	held := allocation_fixture{}
-	subject, file := fixture_module(t)
-	symbol := member_of(t, subject, file, "Count")
-	path := types.Path(TEST_OTHER_PATH)
-	source := token.Source("package two\n")
-	sought := types.Name("Count")
-	passes, tree := module_of()
-	body := new(types.Body)
-	fresh, bound := types.Add_File(passes, TEST_PATH, token.Source(TEST_SOURCE))
-	testify.True(t, bool(bound), "the file the passes read binds")
-	ast.Parse(tree, token.Source(TEST_SOURCE))
-	checks := []struct {
-		Name string
-		Call func()
-	}{
-		{Name: "Add_File", Call: func() {
-			held.File, held.Ok = types.Add_File(subject, path, source)
-		}},
-		{Name: "Lookup", Call: func() {
-			held.Symbol, held.Ok = types.Lookup(
-				subject, types.Package_Of(subject, file), sought)
-		}},
-		{Name: "Underlying_Of", Call: func() {
-			held.Type = types.Underlying_Of(
-				subject, types.Symbol_Type_Of(subject, symbol))
-		}},
-		{Name: "Type_Members_Of", Call: func() {
-			held.Type = types.Type_Index(
-				member_slot_of(types.Type_Members_Of(subject, held.Type)))
-		}},
-		{Name: "Declare", Call: func() {
-			held.Ok = types.Declare(passes, fresh, tree)
-		}},
-		{Name: "Resolve", Call: func() {
-			held.Ok = types.Resolve(passes, fresh, tree)
-		}},
-		{Name: "Check", Call: func() {
-			held.Ok = types.Check(passes, body, fresh, tree)
-		}},
-	}
+	state := allocation_state_of(t)
+	allocation_module_checks(t, state)
+	allocation_symbol_checks(t, state)
+	allocation_type_checks(t, state)
+	allocation_pass_checks(t, state)
+}
+
+// Builds shared allocation fixtures outside every measured callback.
+func allocation_state_of(t *testing.T) (state allocation_state) {
+	state.Subject, state.File = fixture_module(t)
+	state.Symbol = member_of(t, state.Subject, state.File, "Count")
+	state.Type = types.Symbol_Type_Of(state.Subject, state.Symbol)
+	state.Member = types.Member_Index(types.Type_Members_Of(state.Subject, state.Type))
+	state.Owner = types.Package_Of(state.Subject, state.File)
+	state.Pass_Source = token.Source(
+		"package one\n\ntype Count int\n\nfunc Fold() (sum Count) { return sum }\n",
+	)
+	state.Passes, state.Parse_State = module_of()
+	state.Body = body_state()
+	result := types.Add_File(state.Passes, TEST_PATH, state.Pass_Source)
+	state.Fresh, state.Held.Ok = result.File, result.OK
+	testify.True(t, bool(state.Held.Ok), "the file the passes read binds")
+	ast.Parse(state.Parse_State, state.Pass_Source)
+	return state
+}
+
+// Runs one concrete list so closure setup stays outside measured calls.
+func allocation_checks(t *testing.T, checks []allocation_check) {
 	for _, check := range checks {
 		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
 	}
-	testify.Equal(t, types.FAILURE_DUPLICATE_NAME, types.Failure(passes),
-		"a file the declare pass reads twice states its names twice")
+}
+
+// Measures module lifecycle, file answers, and lookup.
+func allocation_module_checks(t *testing.T, state allocation_state) {
+	reset_subject := module_state()
+	path := types.Path(TEST_OTHER_PATH)
+	source := token.Source("package two\n")
+	sought := types.Name("Count")
+	allocation_checks(t, []allocation_check{
+		{Name: "Reset", Call: func() { types.Reset(reset_subject) }},
+		{Name: "Failure", Call: func() {
+			state.Held.Failure = types.Failure(state.Subject)
+		}},
+		{Name: "Failure_Message", Call: func() {
+			state.Held.Message = types.Failure_Message(types.FAILURE_UNKNOWN_NAME)
+		}},
+		{Name: "Add_File", Call: func() {
+			result := types.Add_File(state.Subject, path, source)
+			state.Held.File, state.Held.Ok = result.File, result.OK
+		}},
+		{Name: "Path_Of", Call: func() {
+			state.Held.Path = types.Path_Of(state.Subject, state.Owner)
+		}},
+		{Name: "Package_Of", Call: func() {
+			state.Held.Package = types.Package_Of(state.Subject, state.File)
+		}},
+		{Name: "Source_Of", Call: func() {
+			state.Held.Source = types.Source_Of(state.Subject, state.File)
+		}},
+		{Name: "Lookup", Call: func() {
+			result := types.Lookup(
+				state.Subject, state.Owner, sought,
+			)
+			state.Held.Symbol, state.Held.Ok = result.Symbol, result.Found
+		}},
+	})
+}
+
+// Measures every symbol answer.
+func allocation_symbol_checks(t *testing.T, state allocation_state) {
+	allocation_checks(t, []allocation_check{
+		{Name: "Symbol_Kind_Of", Call: func() {
+			state.Held.Symbol_Kind = types.Symbol_Kind_Of(state.Subject, state.Symbol)
+		}},
+		{Name: "Symbol_Name_Of", Call: func() {
+			state.Held.Name = types.Symbol_Name_Of(state.Subject, state.Symbol)
+		}},
+		{Name: "Symbol_File_Of", Call: func() {
+			state.Held.File = types.Symbol_File_Of(state.Subject, state.Symbol)
+		}},
+		{Name: "Symbol_Type_Of", Call: func() {
+			state.Held.Type = types.Symbol_Type_Of(state.Subject, state.Symbol)
+		}},
+		{Name: "Symbol_Target_Of", Call: func() {
+			state.Held.Package = types.Symbol_Target_Of(state.Subject, state.Symbol)
+		}},
+	})
+}
+
+// Measures every type and member answer.
+func allocation_type_checks(t *testing.T, state allocation_state) {
+	allocation_checks(t, []allocation_check{
+		{Name: "Type_Kind_Of", Call: func() {
+			state.Held.Type_Kind = types.Type_Kind_Of(state.Subject, state.Type)
+		}},
+		{Name: "Type_Element_Of", Call: func() {
+			state.Held.Type_Element = types.Type_Element_Of(state.Subject, state.Type)
+		}},
+		{Name: "Type_Key_Of", Call: func() {
+			state.Held.Type_Key = types.Type_Key_Of(state.Subject, state.Type)
+		}},
+		{Name: "Type_Element_Count_Of", Call: func() {
+			state.Held.Element_Count = types.Type_Element_Count_Of(
+				state.Subject, state.Type,
+			)
+		}},
+		{Name: "Type_Symbol_Of", Call: func() {
+			state.Held.Type_Symbol = types.Type_Symbol_Of(state.Subject, state.Type)
+		}},
+		{Name: "Underlying_Of", Call: func() {
+			state.Held.Type = types.Underlying_Of(state.Subject, state.Type)
+		}},
+		{Name: "Type_Members_Of", Call: func() {
+			state.Held.Member_Head = types.Type_Members_Of(state.Subject, state.Type)
+		}},
+		{Name: "Member_Type_Of", Call: func() {
+			state.Held.Member_Type = types.Member_Type_Of(state.Subject, state.Member)
+		}},
+		{Name: "Member_Symbol_Of", Call: func() {
+			state.Held.Member_Symbol = types.Member_Symbol_Of(
+				state.Subject, state.Member,
+			)
+		}},
+		{Name: "Member_Next_Of", Call: func() {
+			state.Held.Member_Next = types.Member_Next_Of(state.Subject, state.Member)
+		}},
+	})
+}
+
+// Measures each pass after rebuilding its required state inside measured call.
+func allocation_pass_checks(t *testing.T, state allocation_state) {
+	allocation_checks(t, []allocation_check{
+		{Name: "Declare", Call: func() {
+			types.Reset(state.Passes)
+			result := types.Add_File(state.Passes, TEST_PATH, state.Pass_Source)
+			state.Fresh = result.File
+			ast.Parse(state.Parse_State, state.Pass_Source)
+			state.Held.Ok = types.Declare(
+				state.Passes, state.Fresh, state.Parse_State,
+			)
+		}},
+		{Name: "Resolve", Call: func() {
+			types.Reset(state.Passes)
+			result := types.Add_File(state.Passes, TEST_PATH, state.Pass_Source)
+			state.Fresh = result.File
+			ast.Parse(state.Parse_State, state.Pass_Source)
+			types.Declare(state.Passes, state.Fresh, state.Parse_State)
+			ast.Parse(state.Parse_State, state.Pass_Source)
+			state.Held.Ok = types.Resolve(
+				state.Passes, state.Fresh, state.Parse_State,
+			)
+		}},
+		{Name: "Check", Call: func() {
+			types.Reset(state.Passes)
+			result := types.Add_File(state.Passes, TEST_PATH, state.Pass_Source)
+			state.Fresh = result.File
+			ast.Parse(state.Parse_State, state.Pass_Source)
+			types.Declare(state.Passes, state.Fresh, state.Parse_State)
+			ast.Parse(state.Parse_State, state.Pass_Source)
+			types.Resolve(state.Passes, state.Fresh, state.Parse_State)
+			ast.Parse(state.Parse_State, state.Pass_Source)
+			state.Held.Ok = types.Check(
+				state.Passes, state.Body, state.Fresh, state.Parse_State,
+			)
+		}},
+		{Name: "Type_At", Call: func() {
+			state.Held.Type = types.Type_At(state.Body, 0)
+		}},
+	})
+	testify.True(t, bool(state.Held.Ok), "the allocation fixture completes each pass")
 }
 
 // Builds the fixture module without shadowing the value one case holds.
@@ -1267,7 +1475,7 @@ func fixture_module(t *testing.T) (subject *types.Module, file types.File_Index)
 func body_fixture(t *testing.T) (subject *types.Module, body *types.Body, tree *ast.Parse_State) {
 	t.Helper()
 	subject, tree = module_of()
-	body = new(types.Body)
+	body = body_state()
 	files := []fixture_file{
 		{Path: TEST_OTHER_PATH, Source: TEST_OTHER_SOURCE},
 		{Path: TEST_PATH, Source: TEST_BODY_SOURCE},
@@ -1362,13 +1570,14 @@ func test_bodies(t *testing.T) {
 func bodies_files(t *testing.T) {
 	t.Helper()
 	subject, tree := module_of()
-	body := new(types.Body)
+	body := body_state()
 	held := types.File_Index(0)
 	for index := range types.FILE_COUNT_MAXIMUM {
 		source := token.Source(fmt.Sprintf(
 			"package one\n\nfunc Only%d() (one int) {\n\treturn 1\n}\n", index))
-		file, ok := types.Add_File(subject, TEST_PATH, source)
-		testify.True(t, bool(ok), "a file of the fill binds")
+		result := types.Add_File(subject, TEST_PATH, source)
+		file := result.File
+		testify.True(t, bool(result.OK), "a file of the fill binds")
 		if index != 2 {
 			if index != types.FILE_COUNT_MAXIMUM-1 {
 				continue
@@ -1381,8 +1590,8 @@ func bodies_files(t *testing.T) {
 		testify.True(t, bool(types.Check(subject, body, file, tree)),
 			"the file at slot %d checks", file)
 	}
-	_, over := types.Add_File(subject, TEST_PATH, token.Source("package one\n"))
-	testify.False(t, bool(over), "a file past the bound is refused")
+	over := types.Add_File(subject, TEST_PATH, token.Source("package one\n"))
+	testify.False(t, bool(over.OK), "a file past the bound is refused")
 	ast.Parse(tree, token.Source("package one\n"))
 	testify.False(t, bool(types.Check(subject, body, held, tree)),
 		"a module that already refused something reports its bodies refused")
@@ -1394,8 +1603,8 @@ func bodies_final_type(t *testing.T) {
 	tail := "package fill\n\nfunc Only(one int) (two int) {\n\tpointer := &one\n\t" +
 		"return *pointer\n}\n"
 	subject, file := fill_arena(t, []string{type_head(t, 4)}, tail)
-	body := new(types.Body)
-	tree := new(ast.Parse_State)
+	body := body_state()
+	tree := parse_state()
 	ast.Parse(tree, token.Source(tail))
 	types.Check(subject, body, file, tree)
 	found := types.Type_Index(0)
@@ -1587,18 +1796,18 @@ func benchmark_parity(
 ) {
 	b.Helper()
 	types.Reset(subject)
-	if _, ok := ast.Parse(tree, source); !bool(ok) {
+	if result := ast.Parse(tree, source); !bool(result.OK) {
 		b.Fatal("the benchmark source parses")
 	}
-	file, _ := types.Add_File(subject, TEST_PATH, source)
+	file := types.Add_File(subject, TEST_PATH, source).File
 	types.Declare(subject, file, tree)
 	types.Resolve(subject, file, tree)
 	types.Check(subject, body, file, tree)
 	if types.Failure(subject) != types.FAILURE_NONE {
 		b.Fatal(string(types.Failure_Message(types.Failure(subject))))
 	}
-	if _, found := types.Lookup(subject, types.Package_Of(subject, file),
-		types.Name("Fold0")); !bool(found) {
+	if result := types.Lookup(subject, types.Package_Of(subject, file),
+		types.Name("Fold0")); !bool(result.Found) {
 		b.Fatal("the benchmark source states its names")
 	}
 }
@@ -1606,67 +1815,32 @@ func benchmark_parity(
 func Benchmark_Analyse_House(b *testing.B) {
 	text := benchmark_source()
 	source := token.Source(text)
-	subject := new(types.Module)
-	tree := new(ast.Parse_State)
-	body := new(types.Body)
+	subject := module_state()
+	tree := parse_state()
+	body := body_state()
 	benchmark_parity(b, subject, tree, body, source)
 	b.SetBytes(int64(len(source)))
 	b.ReportAllocs()
 	for b.Loop() {
 		types.Reset(subject)
 		ast.Parse(tree, source)
-		file, _ := types.Add_File(subject, TEST_PATH, source)
+		file := types.Add_File(subject, TEST_PATH, source).File
 		types.Declare(subject, file, tree)
 		types.Resolve(subject, file, tree)
 		types.Check(subject, body, file, tree)
 	}
 }
 
-func Benchmark_Analyse_Standard(b *testing.B) {
-	text := benchmark_source()
-	b.SetBytes(int64(len(text)))
-	b.ReportAllocs()
-	for b.Loop() {
-		set := standard_token.NewFileSet()
-		parsed, err := parser.ParseFile(set, "bench.go", text, 0)
-		if err != nil {
-			b.Fatal(err)
-		}
-		info := &standard_types.Info{
-			Types: map[standard_ast.Expr]standard_types.TypeAndValue{},
-			Defs:  map[*standard_ast.Ident]standard_types.Object{},
-		}
-		configuration := standard_types.Config{}
-		_, err = configuration.Check("bench", set, []*standard_ast.File{parsed}, info)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func Benchmark_Parse_House(b *testing.B) {
 	source := token.Source(benchmark_source())
-	tree := new(ast.Parse_State)
-	if _, ok := ast.Parse(tree, source); !bool(ok) {
+	tree := parse_state()
+	if result := ast.Parse(tree, source); !bool(result.OK) {
 		b.Fatal(string(ast.Failure_Message(ast.Failure(tree))))
 	}
 	b.SetBytes(int64(len(source)))
 	b.ReportAllocs()
 	for b.Loop() {
 		ast.Parse(tree, source)
-	}
-}
-
-func Benchmark_Parse_Standard(b *testing.B) {
-	text := benchmark_source()
-	b.SetBytes(int64(len(text)))
-	b.ReportAllocs()
-	for b.Loop() {
-		set := standard_token.NewFileSet()
-		_, err := parser.ParseFile(set, "bench.go", text, 0)
-		if err != nil {
-			b.Fatal(err)
-		}
 	}
 }
 
@@ -1688,34 +1862,6 @@ func Benchmark_Scan_House(b *testing.B) {
 		one := token.Scan(&scanner)
 		for one.Kind != token.KIND_END_OF_FILE {
 			one = token.Scan(&scanner)
-		}
-	}
-}
-
-func Benchmark_Scan_Standard(b *testing.B) {
-	text := benchmark_source()
-	standard_set := standard_token.NewFileSet()
-	standard_file := standard_set.AddFile("bench.go", standard_set.Base(), len(text))
-	standard_scan := scanner.Scanner{}
-	standard_scan.Init(standard_file, []byte(text), nil, 0)
-	standard_count := 0
-	for _, one, _ := standard_scan.Scan(); one != standard_token.EOF; {
-		_, one, _ = standard_scan.Scan()
-		standard_count = standard_count + 1
-	}
-	if standard_count < len(text)/BENCHMARK_TOKEN_DENSITY {
-		b.Fatal("the standard scan reads the whole source")
-	}
-	b.SetBytes(int64(len(text)))
-	b.ReportAllocs()
-	for b.Loop() {
-		set := standard_token.NewFileSet()
-		file := set.AddFile("bench.go", set.Base(), len(text))
-		scanner := scanner.Scanner{}
-		scanner.Init(file, []byte(text), nil, 0)
-		_, one, _ := scanner.Scan()
-		for one != standard_token.EOF {
-			_, one, _ = scanner.Scan()
 		}
 	}
 }

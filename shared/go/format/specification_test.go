@@ -43,36 +43,100 @@ func Test_Allocation(t *testing.T) {
 type allocation_fixture struct {
 	Count printer.Form_Count
 	Clean printer.Boolean
-	Ok    printer.Boolean
+	Ok    bool
+}
+
+// Caller allocation keeps sort cursors bounded across both format operations.
+func format_state() (state *format.Formatter) {
+	return &format.Formatter{
+		Places: format.Place_Storage{
+			Values: make(format.Places, format.PLACE_SLOT_COUNT),
+		},
+	}
+}
+
+// Caller allocation keeps the printer free of hidden storage growth.
+func printer_state() (state *printer.Printer) {
+	return &printer.Printer{
+		Printer_Fields: printer.Printer_Fields{
+			Nodes: printer.Node_Stack_Storage{
+				Values: make(printer.Node_Stack, printer.DEPTH_MAXIMUM),
+			},
+			Widths: printer.Field_Width_Storage{
+				Values: make(printer.Field_Widths, printer.FIELD_COUNT_MAXIMUM),
+			},
+			Results: printer.Result_Token_Storage{
+				Values: make(printer.Result_Tokens, printer.RESULT_COUNT_MAXIMUM),
+			},
+			Aliases: printer.Import_Alias_Storage{
+				Values: make(printer.Import_Aliases, printer.IMPORT_COUNT_MAXIMUM),
+			},
+			Paths: printer.Import_Path_Storage{
+				Values: make(printer.Import_Paths, printer.IMPORT_COUNT_MAXIMUM),
+			},
+			Comments: printer.Comment_Position_Storage{
+				Values: make(
+					printer.Comment_Positions, printer.COMMENT_COUNT_MAXIMUM,
+				),
+			},
+			Counts: printer.Count_Storage{
+				Values: make(printer.Counts, printer.COUNT_SLOT_COUNT),
+			},
+			Flags: printer.Flag_Storage{
+				Values: make(printer.Flags, printer.FLAG_COUNT),
+			},
+		},
+	}
+}
+
+// Caller allocation makes parser bounds part of every format fixture.
+func parse_state() (state *ast.Parse_State) {
+	return &ast.Parse_State{Parse_State_Fields: ast.Parse_State_Fields{
+		Tokens: ast.Token_Storage{
+			Values: make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM),
+		},
+		Nodes: ast.Node_Storage{
+			Values: make(ast.Nodes, ast.NODE_COUNT_MAXIMUM),
+		},
+		Parents: ast.Parent_Storage{
+			Values: make(ast.Parents, ast.DEPTH_MAXIMUM),
+		},
+		Last_Children: ast.Last_Child_Storage{
+			Values: make(ast.Last_Children, ast.DEPTH_MAXIMUM),
+		},
+		Earlier_Children: ast.Earlier_Child_Storage{
+			Values: make(ast.Earlier_Children, ast.DEPTH_MAXIMUM),
+		},
+	}}
 }
 
 // Formats one source and hands back the form it wrote, which is how each case states the form it
 // expects.
 func formatted(t *testing.T, source string) (form string) {
 	t.Helper()
-	state := new(format.Formatter)
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	state := format_state()
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	held := token.Source(source)
 	ast.Parse(tree, held)
-	count, ok := format.Format(state, subject, storage, tree, held)
-	testify.True(t, bool(ok), "the format holds the whole form")
-	return string(storage[:count])
+	result := format.Format(state, subject, storage, tree, held)
+	testify.True(t, bool(result.OK), "the format holds the whole form")
+	return string(storage[:result.Count])
 }
 
 // Reports whether one source stands in the canonical form.
 func cleanliness(t *testing.T, source string) (clean printer.Boolean) {
 	t.Helper()
-	state := new(format.Formatter)
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	state := format_state()
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	held := token.Source(source)
 	ast.Parse(tree, held)
-	clean, ok := format.Clean(state, subject, storage, tree, held)
-	testify.True(t, bool(ok), "the clean report holds the whole form")
-	return clean
+	result := format.Clean(state, subject, storage, tree, held)
+	testify.True(t, bool(result.OK), "the clean report holds the whole form")
+	return result.Clean
 }
 
 func test_format(t *testing.T) {
@@ -98,40 +162,42 @@ func test_clean(t *testing.T) {
 }
 
 func test_refusals(t *testing.T) {
-	state := new(format.Formatter)
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	state := format_state()
+	subject := printer_state()
+	tree := parse_state()
 	source := token.Source("package one\n\ntype Count int\n")
 	ast.Parse(tree, source)
 	for _, width_size := range []int{0, 1, 2, 4} {
 		narrow := make([]byte, width_size)
-		count, ok := format.Format(state, subject, narrow, tree, source)
-		testify.False(t, bool(ok), "a form past the storage is refused")
-		testify.Equal(t, printer.Form_Count(width_size), count,
+		result := format.Format(state, subject, narrow, tree, source)
+		testify.False(t, bool(result.OK), "a form past the storage is refused")
+		testify.Equal(t, printer.Form_Count(width_size), result.Count,
 			"a refused format states the storage it filled")
-		clean, held := format.Clean(state, subject, narrow, tree, source)
-		testify.False(t, bool(held), "a clean report past the storage is refused")
-		testify.False(t, bool(clean), "a source the format refused is no clean source")
+		clean := format.Clean(state, subject, narrow, tree, source)
+		testify.False(t, bool(clean.OK), "a clean report past the storage is refused")
+		testify.False(t, bool(clean.Clean),
+			"a source the format refused is no clean source")
 	}
 	// A tree the parser refused states the declarations it holds, thus the caller reads a
 	// partial form rather than nothing at all.
 	broken := token.Source("package one\n\nfunc (\n")
 	ast.Parse(tree, broken)
 	wide := make([]byte, printer.FORM_SIZE_MAXIMUM)
-	_, ok := format.Format(state, subject, wide, tree, broken)
-	testify.True(t, bool(ok), "a refused parse formats the tree it holds")
+	result := format.Format(state, subject, wide, tree, broken)
+	testify.True(t, bool(result.OK), "a refused parse formats the tree it holds")
 	// A source of a few bytes states no file at all, thus the format writes the clause those
 	// bytes name and states that no such source is clean.
 	for _, text := range []string{"", "p", "pa"} {
 		narrow := token.Source(text)
 		ast.Parse(tree, narrow)
-		count, held := format.Format(state, subject, wide, tree, narrow)
-		testify.True(t, bool(held), "a format of a source of a few bytes holds its form")
-		testify.True(t, count <= printer.Form_Count(len(text)+9),
+		narrow_result := format.Format(state, subject, wide, tree, narrow)
+		testify.True(t, bool(narrow_result.OK),
+			"a format of a source of a few bytes holds its form")
+		testify.True(t, narrow_result.Count <= printer.Form_Count(len(text)+9),
 			"a source of a few bytes writes the clause those bytes name and no more")
-		clean, stand := format.Clean(state, subject, wide, tree, narrow)
-		testify.True(t, bool(stand), "a clean report of a few bytes holds its form")
-		testify.False(t, bool(clean), "a source stating no file is no clean source")
+		clean := format.Clean(state, subject, wide, tree, narrow)
+		testify.True(t, bool(clean.OK), "a clean report of a few bytes holds its form")
+		testify.False(t, bool(clean.Clean), "a source stating no file is no clean source")
 	}
 }
 
@@ -159,31 +225,32 @@ func wide_source() (source string) {
 }
 
 func test_bounds(t *testing.T) {
-	state := new(format.Formatter)
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	state := format_state()
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	source := token.Source(wide_source())
 	testify.Equal(t, token.SOURCE_SIZE_MAXIMUM, len(source),
 		"the source states the widest size")
 	ast.Parse(tree, source)
-	count, ok := format.Format(state, subject, storage, tree, source)
-	testify.False(t, bool(ok), "a form past the widest form is refused")
-	testify.Equal(t, printer.Form_Count(printer.FORM_SIZE_MAXIMUM), count,
+	result := format.Format(state, subject, storage, tree, source)
+	testify.False(t, bool(result.OK), "a form past the widest form is refused")
+	testify.Equal(t, printer.Form_Count(printer.FORM_SIZE_MAXIMUM), result.Count,
 		"one format writes at most the widest form")
 	// The storage the clean report reads is narrow on purpose: a report the storage refuses
 	// answers at the first bytes it writes, thus the widest source costs one form and not two.
 	narrow := make([]byte, 4)
-	clean, held := format.Clean(state, subject, narrow, tree, source)
-	testify.False(t, bool(held), "a clean report of a form past the storage is refused")
-	testify.False(t, bool(clean), "a source whose form was never written is no clean source")
+	clean := format.Clean(state, subject, narrow, tree, source)
+	testify.False(t, bool(clean.OK), "a clean report of a form past the storage is refused")
+	testify.False(t, bool(clean.Clean),
+		"a source whose form was never written is no clean source")
 }
 
 func test_allocation(t *testing.T) {
 	held := allocation_fixture{}
-	state := new(format.Formatter)
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	state := format_state()
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	source := token.Source("package one\n\ntype Count int\n\nfunc Fold() (sum Count) {\n" +
 		"\treturn sum\n}\n")
@@ -193,10 +260,12 @@ func test_allocation(t *testing.T) {
 		Call func()
 	}{
 		{Name: "Format", Call: func() {
-			held.Count, held.Ok = format.Format(state, subject, storage, tree, source)
+			result := format.Format(state, subject, storage, tree, source)
+			held.Count, held.Ok = result.Count, bool(result.OK)
 		}},
 		{Name: "Clean", Call: func() {
-			held.Clean, held.Ok = format.Clean(state, subject, storage, tree, source)
+			result := format.Clean(state, subject, storage, tree, source)
+			held.Clean, held.Ok = result.Clean, bool(result.OK)
 		}},
 	}
 	for _, check := range checks {

@@ -94,17 +94,72 @@ type allocation_fixture struct {
 	Ok    printer.Boolean
 }
 
+// Caller allocation keeps both runtime paths free of hidden storage growth.
+func printer_state() (state *printer.Printer) {
+	return &printer.Printer{
+		Printer_Fields: printer.Printer_Fields{
+			Nodes: printer.Node_Stack_Storage{
+				Values: make(printer.Node_Stack, printer.DEPTH_MAXIMUM),
+			},
+			Widths: printer.Field_Width_Storage{
+				Values: make(printer.Field_Widths, printer.FIELD_COUNT_MAXIMUM),
+			},
+			Results: printer.Result_Token_Storage{
+				Values: make(printer.Result_Tokens, printer.RESULT_COUNT_MAXIMUM),
+			},
+			Aliases: printer.Import_Alias_Storage{
+				Values: make(printer.Import_Aliases, printer.IMPORT_COUNT_MAXIMUM),
+			},
+			Paths: printer.Import_Path_Storage{
+				Values: make(printer.Import_Paths, printer.IMPORT_COUNT_MAXIMUM),
+			},
+			Comments: printer.Comment_Position_Storage{
+				Values: make(
+					printer.Comment_Positions, printer.COMMENT_COUNT_MAXIMUM,
+				),
+			},
+			Counts: printer.Count_Storage{
+				Values: make(printer.Counts, printer.COUNT_SLOT_COUNT),
+			},
+			Flags: printer.Flag_Storage{
+				Values: make(printer.Flags, printer.FLAG_COUNT),
+			},
+		},
+	}
+}
+
+// Caller allocation makes parser bounds part of every printer fixture.
+func parse_state() (state *ast.Parse_State) {
+	return &ast.Parse_State{Parse_State_Fields: ast.Parse_State_Fields{
+		Tokens: ast.Token_Storage{
+			Values: make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM),
+		},
+		Nodes: ast.Node_Storage{
+			Values: make(ast.Nodes, ast.NODE_COUNT_MAXIMUM),
+		},
+		Parents: ast.Parent_Storage{
+			Values: make(ast.Parents, ast.DEPTH_MAXIMUM),
+		},
+		Last_Children: ast.Last_Child_Storage{
+			Values: make(ast.Last_Children, ast.DEPTH_MAXIMUM),
+		},
+		Earlier_Children: ast.Earlier_Child_Storage{
+			Values: make(ast.Earlier_Children, ast.DEPTH_MAXIMUM),
+		},
+	}}
+}
+
 // Prints one source and hands back what the print wrote, which is how every case states the form
 // it expects.
 func printed(t *testing.T, source string) (form string) {
 	t.Helper()
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	ast.Parse(tree, token.Source(source))
-	count, ok := printer.Print(subject, storage[:], tree, token.Source(source))
-	testify.True(t, bool(ok), "the print holds the whole form")
-	return string(storage[:count])
+	result := printer.Print(subject, storage[:], tree, token.Source(source))
+	testify.True(t, bool(result.OK), "the print holds the whole form")
+	return string(storage[:result.Count])
 }
 
 // Reports that one canonical source prints as itself, which is what a caller asks when it wants
@@ -120,17 +175,19 @@ func test_printer(t *testing.T) {
 	// A name another package of the file already binds stands, thus the import that states it
 	// keeps the name the author wrote.
 	round_trip(t, "package one\n\nimport \"local/example/two\"\nimport two \"other/two\"\n")
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	source := token.Source("package one\n")
 	ast.Parse(tree, source)
-	count, ok := printer.Print(subject, storage, tree, source)
-	testify.True(t, bool(ok), "a fresh printer prints")
-	testify.Equal(t, printer.Form_Count(len(source)), count, "the print states what it wrote")
-	second, again := printer.Print(subject, storage, tree, source)
-	testify.True(t, bool(again), "one printer prints one file after another")
-	testify.Equal(t, count, second, "the second print writes what the first one did")
+	result := printer.Print(subject, storage, tree, source)
+	testify.True(t, bool(result.OK), "a fresh printer prints")
+	testify.Equal(t, printer.Form_Count(len(source)), result.Count,
+		"the print states what it wrote")
+	second := printer.Print(subject, storage, tree, source)
+	testify.True(t, bool(second.OK), "one printer prints one file after another")
+	testify.Equal(t, result.Count, second.Count,
+		"the second print writes what the first one did")
 }
 
 func test_layout(t *testing.T) {
@@ -629,22 +686,22 @@ func test_lines(t *testing.T) {
 
 func test_refusals(t *testing.T) {
 	test_arena(t)
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	subject := printer_state()
+	tree := parse_state()
 	source := token.Source("package one\n\ntype Count int\n")
 	ast.Parse(tree, source)
 	storage := make([]byte, 4)
-	count, ok := printer.Print(subject, storage, tree, source)
-	testify.False(t, bool(ok), "a print past the storage is refused")
-	testify.Equal(t, printer.Form_Count(len(storage)), count,
+	result := printer.Print(subject, storage, tree, source)
+	testify.False(t, bool(result.OK), "a print past the storage is refused")
+	testify.Equal(t, printer.Form_Count(len(storage)), result.Count,
 		"a refused print states the storage it filled")
 	// A caller that hands over storage of a few bytes reads the few bytes the print wrote,
 	// which is what a caller that only asks whether a file is clean hands over.
 	for _, width_size := range []int{0, 1, 2} {
 		narrow := make([]byte, width_size)
-		written, held := printer.Print(subject, narrow, tree, source)
-		testify.False(t, bool(held), "a print past narrow storage is refused")
-		testify.Equal(t, printer.Form_Count(width_size), written,
+		narrow_result := printer.Print(subject, narrow, tree, source)
+		testify.False(t, bool(narrow_result.OK), "a print past narrow storage is refused")
+		testify.Equal(t, printer.Form_Count(width_size), narrow_result.Count,
 			"a refused print states the narrow storage it filled")
 	}
 	// A source of a few bytes states no file at all, thus the print writes nothing and says
@@ -653,16 +710,17 @@ func test_refusals(t *testing.T) {
 		narrow := token.Source(text)
 		ast.Parse(tree, narrow)
 		wide_storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
-		written, held := printer.Print(subject, wide_storage, tree, narrow)
-		testify.True(t, bool(held), "a print of a source of a few bytes holds its form")
-		testify.True(t, written <= printer.Form_Count(len(text)+9),
+		narrow_result := printer.Print(subject, wide_storage, tree, narrow)
+		testify.True(t, bool(narrow_result.OK),
+			"a print of a source of a few bytes holds its form")
+		testify.True(t, narrow_result.Count <= printer.Form_Count(len(text)+9),
 			"a source of a few bytes writes the clause those bytes name and no more")
 	}
 	broken := token.Source("package one\n\nfunc (\n")
 	ast.Parse(tree, broken)
 	wide := make([]byte, printer.FORM_SIZE_MAXIMUM)
-	_, held := printer.Print(subject, wide, tree, broken)
-	testify.True(t, bool(held), "a refused parse prints the tree it holds")
+	result = printer.Print(subject, wide, tree, broken)
+	testify.True(t, bool(result.OK), "a refused parse prints the tree it holds")
 }
 
 // Builds one source of the widest admitted size whose form runs past the widest admitted form,
@@ -692,8 +750,8 @@ func wide_source() (source string) {
 
 func test_bounds(t *testing.T) {
 	testify.Equal(t, 2097152, printer.FORM_SIZE_MAXIMUM, "one print holds two source widths")
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	// A source of the widest admitted size whose form runs past the storage fills the storage
 	// and stops there, which is the widest count one print states.
@@ -701,9 +759,9 @@ func test_bounds(t *testing.T) {
 	testify.Equal(t, token.SOURCE_SIZE_MAXIMUM, len(source),
 		"the source states the widest size")
 	ast.Parse(tree, source)
-	count, ok := printer.Print(subject, storage, tree, source)
-	testify.False(t, bool(ok), "a form past the storage is refused")
-	testify.Equal(t, printer.Form_Count(printer.FORM_SIZE_MAXIMUM), count,
+	result := printer.Print(subject, storage, tree, source)
+	testify.False(t, bool(result.OK), "a form past the storage is refused")
+	testify.Equal(t, printer.Form_Count(printer.FORM_SIZE_MAXIMUM), result.Count,
 		"a refused print states the storage it filled")
 	testify.Equal(t, ast.NODE_COUNT_MAXIMUM, printer.DEPTH_MAXIMUM,
 		"one print walks every node one parse holds")
@@ -720,15 +778,15 @@ func test_bounds(t *testing.T) {
 
 func test_allocation(t *testing.T) {
 	held := allocation_fixture{}
-	subject := new(printer.Printer)
-	tree := new(ast.Parse_State)
+	subject := printer_state()
+	tree := parse_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
 	source := token.Source("package one\n\ntype Count int\n\nfunc Fold() (sum Count) {\n" +
 		"\treturn sum\n}\n")
 	ast.Parse(tree, source)
 	// A file that states every form the printer writes proves the whole of the print
 	// allocates nothing, rather than proving it of the few forms one small file holds.
-	wide := new(ast.Parse_State)
+	wide := parse_state()
 	wide_form := token.Source(wide_head() + wide_tail())
 	ast.Parse(wide, wide_form)
 	checks := []struct {
@@ -736,7 +794,8 @@ func test_allocation(t *testing.T) {
 		Call func()
 	}{
 		{Name: "Print", Call: func() {
-			held.Count, held.Ok = printer.Print(subject, storage, tree, source)
+			result := printer.Print(subject, storage, tree, source)
+			held.Count, held.Ok = result.Count, result.OK
 		}},
 		{Name: "Print_Wide", Call: func() {
 			printer.Print(subject, storage, wide, wide_form)
@@ -864,36 +923,36 @@ func test_wide_tail(t *testing.T) {
 // operation, a form holding nothing at all, and a form holding a note alone. A print answers for
 // every tree the arena can hold and not only for the trees one parse writes.
 func test_arena(t *testing.T) {
-	tree := new(ast.Parse_State)
+	tree := parse_state()
 	source := token.Source("package one\n\nx y\n")
-	tree.Tokens[0] = token.Token{Kind: token.KIND_PACKAGE, Offset: 0, Size: 7}
-	tree.Tokens[1] = token.Token{Kind: token.KIND_IDENTIFIER, Offset: 8, Size: 3}
-	tree.Tokens[2] = token.Token{Kind: token.KIND_IDENTIFIER, Offset: 13, Size: 1}
-	tree.Tokens[3] = token.Token{Kind: token.KIND_IDENTIFIER, Offset: 15, Size: 1}
-	tree.Tokens[4] = token.Token{Kind: token.KIND_END_OF_FILE, Offset: 16, Size: 0}
-	tree.Token_Cursors[ast.CURSOR_TOKEN_COUNT] = 5
-	tree.Nodes[0] = ast.Node{Kind: ast.NODE_ERROR}
-	tree.Nodes[1] = ast.Node{Kind: ast.NODE_FILE, Token: 0, First_Child: 2}
-	tree.Nodes[2] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 1, Parent: 1, Next: 3}
+	tree.Tokens.Values[0] = token.Token{Kind: token.KIND_PACKAGE, Offset: 0, Size: 7}
+	tree.Tokens.Values[1] = token.Token{Kind: token.KIND_IDENTIFIER, Offset: 8, Size: 3}
+	tree.Tokens.Values[2] = token.Token{Kind: token.KIND_IDENTIFIER, Offset: 13, Size: 1}
+	tree.Tokens.Values[3] = token.Token{Kind: token.KIND_IDENTIFIER, Offset: 15, Size: 1}
+	tree.Tokens.Values[4] = token.Token{Kind: token.KIND_END_OF_FILE, Offset: 16, Size: 0}
+	tree.Token_Cursors.Count = 5
+	tree.Nodes.Values[0] = ast.Node{Kind: ast.NODE_ERROR}
+	tree.Nodes.Values[1] = ast.Node{Kind: ast.NODE_FILE, Token: 0, First_Child: 2}
+	tree.Nodes.Values[2] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 1, Parent: 1, Next: 3}
 	// The sign of the operation is a name, which no parse writes and every print answers for.
-	tree.Nodes[3] = ast.Node{
+	tree.Nodes.Values[3] = ast.Node{
 		Kind: ast.NODE_BINARY, Token: 3, Parent: 1, First_Child: 4, Next: 6,
 	}
-	tree.Nodes[4] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 2, Parent: 3, Next: 5}
-	tree.Nodes[5] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 3, Parent: 3}
-	tree.Nodes[6] = ast.Node{Kind: ast.NODE_CALL, Token: 2, Parent: 1, Next: 7}
-	tree.Nodes[7] = ast.Node{Kind: ast.NODE_CALL, Token: 2, Parent: 1, First_Child: 8}
-	tree.Nodes[8] = ast.Node{Kind: ast.NODE_COMMENT, Token: 2, Parent: 7}
+	tree.Nodes.Values[4] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 2, Parent: 3, Next: 5}
+	tree.Nodes.Values[5] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 3, Parent: 3}
+	tree.Nodes.Values[6] = ast.Node{Kind: ast.NODE_CALL, Token: 2, Parent: 1, Next: 7}
+	tree.Nodes.Values[7] = ast.Node{Kind: ast.NODE_CALL, Token: 2, Parent: 1, First_Child: 8}
+	tree.Nodes.Values[8] = ast.Node{Kind: ast.NODE_COMMENT, Token: 2, Parent: 7}
 	// The term states no tilde ahead of it, which no parse writes and every print answers for.
-	tree.Nodes[7].Next = 9
-	tree.Nodes[9] = ast.Node{Kind: ast.NODE_TERM, Token: 2, Parent: 1, First_Child: 10}
-	tree.Nodes[10] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 2, Parent: 9}
-	tree.Node_Cursors[ast.CURSOR_NODE_COUNT] = 11
-	subject := new(printer.Printer)
+	tree.Nodes.Values[7].Next = 9
+	tree.Nodes.Values[9] = ast.Node{Kind: ast.NODE_TERM, Token: 2, Parent: 1, First_Child: 10}
+	tree.Nodes.Values[10] = ast.Node{Kind: ast.NODE_IDENTIFIER, Token: 2, Parent: 9}
+	tree.Node_Cursors.Count = 11
+	subject := printer_state()
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
-	count, ok := printer.Print(subject, storage, tree, source)
-	testify.True(t, bool(ok), "a print of a hand written tree holds its form")
-	testify.True(t, count > 0, "a print of a hand written tree writes the form it holds")
+	result := printer.Print(subject, storage, tree, source)
+	testify.True(t, bool(result.OK), "a print of a hand written tree holds its form")
+	testify.True(t, result.Count > 0, "a print of a hand written tree writes the form it holds")
 }
 
 // Prints one constant of the stated literal, which is how each case states the form one literal

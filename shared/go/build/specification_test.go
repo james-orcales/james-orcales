@@ -3,7 +3,6 @@ package build_test
 import (
 	"errors"
 	"testing"
-	"unsafe"
 
 	"local/james-orcales/shared/go/build"
 	"local/james-orcales/shared/go/token"
@@ -64,18 +63,24 @@ func Test_Allocation(t *testing.T) {
 }
 
 type allocation_fixture struct {
-	Held build.Boolean
-	Ok   build.Boolean
+	Held    build.Boolean
+	Ok      build.Read
+	Rearm   build.Boolean
+	Queued  build.Boolean
+	Stopped build.Boolean
+	Names   build.Name_Storage
+	Error   error
 }
 
 // Builds one target of the system, the architecture, and the tags a case names.
 func target(system string, architecture string, tags []string) (held build.Target) {
-	held.Words[build.WORD_SYSTEM] = token.Source(system)
-	held.Words[build.WORD_ARCHITECTURE] = token.Source(architecture)
+	held.Words.System = build.System(system)
+	held.Words.Architecture = build.Architecture(architecture)
+	held.Tags.Values = make(build.Target_Tags, build.TAG_COUNT_MAXIMUM)
 	for index := range len(tags) {
-		held.Tags[index] = token.Source(tags[index])
+		held.Tags.Values[index] = token.Source(tags[index])
 	}
-	held.Counts[build.COUNT_TAG] = build.Count(len(tags))
+	held.Counts.Tag = build.Tag_Count(len(tags))
 	return held
 }
 
@@ -90,7 +95,8 @@ func named(name string, system string, architecture string) (held build.Boolean)
 func holds(t *testing.T, text string, one build.Target) (held build.Boolean) {
 	t.Helper()
 	subject := new(build.Build)
-	held, ok := build.Holds_Constraint(subject, &one, token.Source(text))
+	result := build.Holds_Constraint(subject, &one, token.Source(text))
+	held, ok := result.Held, result.OK
 	testify.True(t, bool(ok), "the reader reads the constraint %q", text)
 	return held
 }
@@ -98,10 +104,12 @@ func holds(t *testing.T, text string, one build.Target) (held build.Boolean) {
 func test_build(t *testing.T) {
 	subject := new(build.Build)
 	one := target("linux", "amd64", []string{"race"})
-	held, ok := build.Holds_Constraint(subject, &one, token.Source("linux"))
+	result := build.Holds_Constraint(subject, &one, token.Source("linux"))
+	held, ok := result.Held, result.OK
 	testify.True(t, bool(ok), "the reader reads one constraint")
 	testify.True(t, bool(held), "the file stands in the build its system names")
-	held, ok = build.Holds_Constraint(subject, &one, token.Source("windows"))
+	result = build.Holds_Constraint(subject, &one, token.Source("windows"))
+	held, ok = result.Held, result.OK
 	testify.True(t, bool(ok), "one state reads one constraint after another")
 	testify.False(t, bool(held), "the file stands outside the build of another system")
 }
@@ -184,6 +192,8 @@ func test_imports(t *testing.T) {
 		Held bool
 		Ok   bool
 	}{
+		{"x", true, true},
+		{"xy", true, true},
 		{"package one\n", true, true},
 		{"package one\n\nimport \"unsafe\"\n", true, true},
 		{"package one\n\nimport \"local/james-orcales/shared/go/token\"\n", true, true},
@@ -198,7 +208,8 @@ func test_imports(t *testing.T) {
 		{"package one\n\nimport (\n\t\"unsafe\"\n", false, false},
 		{"package one\n\nimport \"unsafe\n", false, false},
 	} {
-		held, ok := build.Holds_Imports(&subject, token.Source(item.Text))
+		result := build.Holds_Imports(&subject, token.Source(item.Text))
+		held, ok := result.Held, result.OK
 		testify.Equal(t, item.Held, bool(held), "the imports of %q hold", item.Text)
 		testify.Equal(t, item.Ok, bool(ok), "the imports of %q read", item.Text)
 	}
@@ -208,7 +219,8 @@ func test_imports(t *testing.T) {
 	for index := range widest {
 		widest[index] = 'a'
 	}
-	held, ok := build.Holds_Imports(&subject, token.Source(widest))
+	result := build.Holds_Imports(&subject, token.Source(widest))
+	held, ok := result.Held, result.OK
 	testify.True(t, bool(held), "the widest text names no third party")
 	testify.True(t, bool(ok), "the widest text reads")
 	// A file the read of a directory meets states its imports the same way, thus a file
@@ -269,10 +281,10 @@ type directory_fixture struct {
 // Opens the directory the runner names, or one child of it. The descriptor of a child names the
 // slot of that child, thus a read of it finds the bytes the fixture states.
 func directory_open(
-	state unsafe.Pointer, completion *nbio.Completion, directory nbio.File, file_path string,
+	state nbio.State, completion *nbio.Completion, directory nbio.File, file_path string,
 	options nbio.Open_At_Options, callback nbio.Callback,
 ) {
-	fixture := (*directory_fixture)(state)
+	fixture := state.(*directory_fixture)
 	completion.Error = nil
 	completion.Data = 1
 	if directory != nbio.DIRECTORY_CURRENT {
@@ -296,10 +308,10 @@ func directory_open(
 // Hands the runner one pass over the children of the directory, and no child on the pass behind
 // it.
 func directory_entries(
-	state unsafe.Pointer, completion *nbio.Completion, directory nbio.File, buffer []byte,
+	state nbio.State, completion *nbio.Completion, directory nbio.File, buffer []byte,
 	entries []nbio.Directory_Entry, callback nbio.Callback,
 ) {
-	fixture := (*directory_fixture)(state)
+	fixture := state.(*directory_fixture)
 	completion.Error = nil
 	completion.Data = 0
 	if fixture.Passes == 0 {
@@ -319,10 +331,10 @@ func directory_entries(
 
 // Reads the bytes the child of the fixture opens with into the buffer the runner owns.
 func directory_read(
-	state unsafe.Pointer, completion *nbio.Completion, file nbio.File, buffer []byte,
+	state nbio.State, completion *nbio.Completion, file nbio.File, buffer []byte,
 	offset int64, timeout time.Duration, callback nbio.Callback,
 ) {
-	fixture := (*directory_fixture)(state)
+	fixture := state.(*directory_fixture)
 	completion.Error = nil
 	completion.Data = 0
 	slot := int(file) - 2
@@ -336,7 +348,7 @@ func directory_read(
 
 // Closes one descriptor the read held.
 func directory_close(
-	state unsafe.Pointer, completion *nbio.Completion, file nbio.File, callback nbio.Callback,
+	state nbio.State, completion *nbio.Completion, file nbio.File, callback nbio.Callback,
 ) {
 	completion.Error = nil
 	completion.Data = 0
@@ -344,7 +356,7 @@ func directory_close(
 }
 
 // Drives one directory read to its terminal state, which a composition root does with its loop.
-func directory_drive(runner *build.Directory_Runner) {
+func directory_drive(runner build.Directory_Runner_Handle) {
 	for range 4096 {
 		if bool(build.Directory_Runner_Stopped(runner)) {
 			return
@@ -377,11 +389,11 @@ func read_sized(
 	one := target("linux", "amd64", nil)
 	// Both halves carry one backend, which is what one loop states.
 	loop := nbio.IO{Storage: nbio.Storage{
-		State:                           unsafe.Pointer(fixture),
+		State:                           fixture,
 		Open_At_Procedure:               directory_open,
 		Get_Directory_Entries_Procedure: directory_entries,
 		Read_Procedure:                  directory_read,
-	}, Network: nbio.Network{State: unsafe.Pointer(fixture)},
+	}, Network: nbio.Network{State: fixture},
 		Close_Procedure: directory_close}
 	runner := build.Directory_Runner{}
 	build.Directory_Runner_Init(&runner, loop, &one, path, build.Directory_Memory{
@@ -483,7 +495,8 @@ func test_refusals(t *testing.T) {
 		"", "   ", "&&", "linux &&", "(linux", "linux)", "!", "linux amd64",
 		"(", ")", "||linux",
 	} {
-		held, ok := build.Holds_Constraint(subject, &one, token.Source(text))
+		result := build.Holds_Constraint(subject, &one, token.Source(text))
+		held, ok := result.Held, result.OK
 		testify.False(t, bool(ok), "the reader refuses %q", text)
 		testify.False(t, bool(held), "a constraint the reader refused holds nothing")
 	}
@@ -496,7 +509,8 @@ func test_bounds(t *testing.T) {
 	for range build.TEXT_SIZE_MAXIMUM {
 		wide = wide + "x"
 	}
-	held, ok := build.Holds_Constraint(subject, &one, token.Source(wide+"x"))
+	result := build.Holds_Constraint(subject, &one, token.Source(wide+"x"))
+	held, ok := result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint past the widest text is refused")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
 	deep := ""
@@ -507,7 +521,8 @@ func test_bounds(t *testing.T) {
 	for range build.DEPTH_MAXIMUM + 1 {
 		deep = deep + ")"
 	}
-	held, ok = build.Holds_Constraint(subject, &one, token.Source(deep))
+	result = build.Holds_Constraint(subject, &one, token.Source(deep))
+	held, ok = result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint past the deepest nest is refused")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
 	// A text of the widest size one source admits stands past the widest constraint, thus the
@@ -516,18 +531,21 @@ func test_bounds(t *testing.T) {
 	for index := range widest {
 		widest[index] = 'x'
 	}
-	held, ok = build.Holds_Constraint(subject, &one, token.Source(widest))
+	result = build.Holds_Constraint(subject, &one, token.Source(widest))
+	held, ok = result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint of the widest source is refused")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
 	testify.True(t, bool(build.Names_System(subject, &one, token.Source(widest))),
 		"a name of the widest source names no system")
 	testify.True(t, bool(build.Names_System(subject, &one, token.Source(""))),
 		"a name of no bytes names no system")
-	held, ok = build.Holds_Constraint(subject, &one, token.Source(""))
+	result = build.Holds_Constraint(subject, &one, token.Source(""))
+	held, ok = result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint of no bytes states none")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
 	for _, text := range []string{"x", "xy"} {
-		held, ok = build.Holds_Constraint(subject, &one, token.Source(text))
+		result = build.Holds_Constraint(subject, &one, token.Source(text))
+		held, ok = result.Held, result.OK
 		testify.True(t, bool(ok), "a constraint of a few bytes states one tag")
 		testify.False(t, bool(held), "a tag the target never names holds nothing")
 		testify.True(t, bool(build.Names_System(subject, &one, token.Source(text))),
@@ -536,24 +554,101 @@ func test_bounds(t *testing.T) {
 }
 
 func test_allocation(t *testing.T) {
+	allocation_read_checks(t)
+	allocation_directory_checks(t)
+}
+
+// Measures every text reader apart from stateful directory steps.
+func allocation_read_checks(t *testing.T) {
 	fixture := allocation_fixture{}
 	subject := new(build.Build)
 	one := target("linux", "amd64", []string{"race"})
 	text := token.Source("(linux || darwin) && amd64 && !race")
 	name := token.Source("file_linux_amd64_test.go")
+	imports := token.Source("package one\n\nimport \"local/one\"\n")
 	checks := []struct {
 		Name string
 		Call func()
 	}{
 		{Name: "Holds_Constraint", Call: func() {
-			fixture.Held, fixture.Ok = build.Holds_Constraint(subject, &one, text)
+			result := build.Holds_Constraint(subject, &one, text)
+			fixture.Held, fixture.Ok = result.Held, result.OK
 		}},
 		{Name: "Names_System", Call: func() {
 			fixture.Held = build.Names_System(subject, &one, name)
+		}},
+		{Name: "Holds_Imports", Call: func() {
+			result := build.Holds_Imports(subject, imports)
+			fixture.Held, fixture.Ok = result.Held, result.OK
 		}},
 	}
 	for _, check := range checks {
 		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
 	}
 	testify.True(t, bool(fixture.Held), "the allocation fixture names its build")
+}
+
+// Measures every directory operation and one complete nonempty read.
+func allocation_directory_checks(t *testing.T) {
+	fixture := allocation_fixture{}
+	one := target("linux", "amd64", nil)
+	directory := directory_fixture{
+		Names:   []string{"file.go"},
+		Folders: []bool{false},
+		Headers: []string{"package one\n"},
+	}
+	loop := nbio.IO{Storage: nbio.Storage{
+		State:                           &directory,
+		Open_At_Procedure:               directory_open,
+		Get_Directory_Entries_Procedure: directory_entries,
+		Read_Procedure:                  directory_read,
+	}, Network: nbio.Network{State: &directory},
+		Close_Procedure: directory_close}
+	memory := build.Directory_Memory{
+		Entries: make(build.Entry_Storage, TEST_ENTRY_COUNT),
+		Records: make(build.Record_Storage, TEST_RECORD_COUNT),
+		Names:   make(build.Name_Storage, TEST_ENTRY_COUNT),
+		Bytes:   make(build.Name_Bytes, TEST_BYTE_COUNT),
+		Header:  make(build.Header_Storage, TEST_HEADER_COUNT),
+		Reader:  new(build.Build),
+	}
+	runner := build.Directory_Runner{}
+	stopped := build.Directory_Runner{}
+	build.Directory_Runner_Init(&stopped, loop, &one, "one", memory)
+	stopped.Flags.Stopped = true
+	checks := []struct {
+		Name string
+		Call func()
+	}{
+		{Name: "Directory_Runner_Init", Call: func() {
+			runner = build.Directory_Runner{}
+			build.Directory_Runner_Init(&runner, loop, &one, "one", memory)
+		}},
+		{Name: "Directory_Runner_Rearm", Call: func() {
+			fixture.Rearm = build.Directory_Runner_Rearm(&runner)
+		}},
+		{Name: "Directory_Runner_Work_Queued", Call: func() {
+			fixture.Queued = build.Directory_Runner_Work_Queued(&runner)
+		}},
+		{Name: "Directory_Runner_Stopped", Call: func() {
+			fixture.Stopped = build.Directory_Runner_Stopped(&stopped)
+		}},
+		{Name: "Directory_Runner_Status", Call: func() {
+			fixture.Error = build.Directory_Runner_Status(&stopped)
+		}},
+		{Name: "Directory_Runner_Names", Call: func() {
+			fixture.Names = build.Directory_Runner_Names(&stopped)
+		}},
+		{Name: "Directory_Runner_Drive", Call: func() {
+			directory.Passes = 0
+			directory.Opened = 0
+			runner = build.Directory_Runner{}
+			build.Directory_Runner_Init(&runner, loop, &one, "one", memory)
+			directory_drive(&runner)
+			fixture.Names = build.Directory_Runner_Names(&runner)
+		}},
+	}
+	for _, check := range checks {
+		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
+	}
 }

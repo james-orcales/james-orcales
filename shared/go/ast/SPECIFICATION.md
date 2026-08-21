@@ -227,11 +227,11 @@ where Go reports it unterminated.
 
 # Bounds
 
-A parse holds at most 131,072 tokens and 131,064 nodes, and one Parse_State spans 4,197,248
-bytes: twenty for each node and twelve for each token. The empty line count rides in a byte the
-token already padded out, thus the spacing of a file costs a parse nothing.
+A parse holds at most 131,072 tokens and 131,064 nodes. One Parse_State descriptor spans 152
+bytes. Caller supplies exact token and node stores plus three stacks of 256 indexes. Empty line
+count rides in a byte token already padded out, thus file spacing costs a parse nothing.
 
 # Allocation
 
-Parse and every accessor perform zero heap allocation. The caller makes one Parse_State and the
-parse writes only inside it.
+Parse and every accessor perform zero heap allocation. Caller supplies Parse_State plus every
+backing store; parse writes only inside them.

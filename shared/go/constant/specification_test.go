@@ -62,7 +62,7 @@ const TEST_STORAGE_SIZE = constant.FORM_SIZE_MAXIMUM
 
 type allocation_fixture struct {
 	Value  constant.Value
-	Ok     constant.Boolean
+	Ok     constant.Read
 	Order  integer.Order
 	Count  constant.Form_Count
 	Kind   constant.Kind
@@ -128,20 +128,23 @@ func test_construction(t *testing.T) {
 }
 
 func test_reading(t *testing.T) {
-	truth, ok := constant.Boolean_Value(constant.Make_Boolean(true))
+	result := constant.Boolean_Value(constant.Make_Boolean(true))
+	truth, ok := result.Value, result.OK
 	testify.True(t, bool(ok), "a truth reads back")
 	testify.True(t, bool(truth), "a truth reads its own value")
-	_, wrong := constant.Boolean_Value(constant.Make_Int_64(1))
+	wrong := constant.Boolean_Value(constant.Make_Int_64(1)).OK
 	testify.False(t, bool(wrong), "a whole number reads as no truth")
-	text, ok := constant.Text_Value(constant.Make_Text("abc"))
+	text_result := constant.Text_Value(constant.Make_Text("abc"))
+	text, ok := text_result.Value, text_result.OK
 	testify.True(t, bool(ok), "a view reads back")
 	testify.Equal(t, constant.Text("abc"), text, "a view reads its own bytes")
-	_, absent := constant.Text_Value(constant.Make_Boolean(true))
+	absent := constant.Text_Value(constant.Make_Boolean(true)).OK
 	testify.False(t, bool(absent), "a truth reads as no view")
-	number, ok := constant.Int_64_Value(constant.Make_Int_64(-7))
+	number_result := constant.Int_64_Value(constant.Make_Int_64(-7))
+	number, ok := number_result.Value, number_result.OK
 	testify.True(t, bool(ok), "a whole number reads back")
 	testify.Equal(t, constant.Int_64(-7), number, "a whole number reads its own value")
-	_, fractional := constant.Int_64_Value(constant.Make_Ratio(1, 2))
+	fractional := constant.Int_64_Value(constant.Make_Ratio(1, 2)).OK
 	testify.False(t, bool(fractional), "a number that is no whole one reads as none")
 }
 
@@ -296,7 +299,8 @@ func test_comparison(t *testing.T) {
 		{constant.Make_Text("ab"), constant.Make_Text("abc"), integer.ORDER_BEFORE},
 		{constant.Make_Text("abc"), constant.Make_Text("ab"), integer.ORDER_AFTER},
 	} {
-		order, ok := constant.Compare(one.Left, one.Right)
+		result := constant.Compare(one.Left, one.Right)
+		order, ok := result.Order, result.OK
 		testify.True(t, bool(ok), "a pair of one kind compares")
 		testify.Equal(t, one.Order, order, "the order reads as the values state")
 	}
@@ -307,15 +311,17 @@ func compare_pair_cases(t *testing.T) {
 	pair := constant.Make_Complex(constant.Make_Int_64(3), constant.Make_Int_64(4))
 	same := constant.Make_Complex(constant.Make_Int_64(3), constant.Make_Int_64(4))
 	wider := constant.Make_Complex(constant.Make_Int_64(3), constant.Make_Int_64(5))
-	order, ok := constant.Compare(pair, same)
+	result := constant.Compare(pair, same)
+	order, ok := result.Order, result.OK
 	testify.True(t, bool(ok), "two pairs compare")
 	testify.Equal(t, integer.ORDER_SAME, order, "two equal pairs read the same order")
-	order, ok = constant.Compare(pair, wider)
+	result = constant.Compare(pair, wider)
+	order, ok = result.Order, result.OK
 	testify.True(t, bool(ok), "two pairs of one real part compare")
 	testify.Equal(t, integer.ORDER_BEFORE, order, "a smaller imaginary part orders first")
-	_, mixed := constant.Compare(constant.Make_Int_64(1), constant.Make_Text("a"))
+	mixed := constant.Compare(constant.Make_Int_64(1), constant.Make_Text("a")).OK
 	testify.False(t, bool(mixed), "two kinds compare as no order")
-	_, unknown := constant.Compare(constant.Make_Unknown(), constant.Make_Unknown())
+	unknown := constant.Compare(constant.Make_Unknown(), constant.Make_Unknown()).OK
 	testify.False(t, bool(unknown), "two unknowns compare as no order")
 }
 
@@ -354,16 +360,18 @@ func test_bounds(t *testing.T) {
 	for _, one := range []constant.Int_64{
 		integer.INT_64_MINIMUM, integer.INT_64_MAXIMUM, -1, 0, 1, 2,
 	} {
-		read, ok := constant.Int_64_Value(constant.Make_Int_64(one))
+		result := constant.Int_64_Value(constant.Make_Int_64(one))
+		read, ok := result.Value, result.OK
 		testify.True(t, bool(ok), "a machine integer reads back")
 		testify.Equal(t, one, read, "a machine integer reads its own value")
 	}
 	testify.Equal(t, constant.KIND_UNKNOWN, constant.Kind_Of(
 		constant.Make_From_Literal(constant.Text(widest_literal()))),
 		"a literal past the width folds unknown")
-	over, held := constant.Int_64_Value(constant.Binary_Operation(
+	result := constant.Int_64_Value(constant.Binary_Operation(
 		constant.Make_Int_64(integer.INT_64_MAXIMUM), constant.BINARY_ADD,
 		constant.Make_Int_64(1)))
+	over, held := result.Value, result.OK
 	testify.False(t, bool(held), "a whole number past a machine integer reads as none")
 	testify.Equal(t, constant.Int_64(0), over, "a value that does not fit reads as zero")
 	bounds_ratio_cases(t)
@@ -374,7 +382,8 @@ func test_bounds(t *testing.T) {
 func bounds_text_cases(t *testing.T) {
 	widest := constant.Text(widest_text())
 	for _, one := range []constant.Text{"", "a", "ab", widest} {
-		read, ok := constant.Text_Value(constant.Make_Text(one))
+		result := constant.Text_Value(constant.Make_Text(one))
+		read, ok := result.Value, result.OK
 		testify.True(t, bool(ok), "a view of %d bytes reads back", len(one))
 		testify.Equal(t, one, read, "a view reads its own bytes")
 	}
@@ -388,8 +397,9 @@ func bounds_text_cases(t *testing.T) {
 		{"", "a", integer.ORDER_BEFORE},
 		{widest, widest, integer.ORDER_SAME},
 	} {
-		order, ok := constant.Compare(
+		result := constant.Compare(
 			constant.Make_Text(one.Left), constant.Make_Text(one.Right))
+		order, ok := result.Order, result.OK
 		testify.True(t, bool(ok), "two views compare")
 		testify.Equal(t, one.Order, order, "the order reads as the views state")
 	}
@@ -425,7 +435,7 @@ func bounds_ratio_cases(t *testing.T) {
 		constant.Make_Ratio(1, 3))
 	right := constant.Binary_Operation(constant.Make_Ratio(1, 2),
 		constant.BINARY_QUOTIENT, wide)
-	_, ok := constant.Compare(left, right)
+	ok := constant.Compare(left, right).OK
 	testify.False(t, bool(ok), "two ratios that cross past the width compare as no order")
 }
 
@@ -509,15 +519,16 @@ func allocation_read_checks(t *testing.T) {
 			fixture.Kind = constant.Kind_Of(pair)
 		}},
 		{Name: "Boolean_Value", Call: func() {
-			fixture.Truth, fixture.Ok = constant.Boolean_Value(
-				constant.Make_Boolean(true))
+			result := constant.Boolean_Value(constant.Make_Boolean(true))
+			fixture.Truth, fixture.Ok = result.Value, result.OK
 		}},
 		{Name: "Text_Value", Call: func() {
-			fixture.Text, fixture.Ok = constant.Text_Value(view)
+			result := constant.Text_Value(view)
+			fixture.Text, fixture.Ok = result.Value, result.OK
 		}},
 		{Name: "Int_64_Value", Call: func() {
-			fixture.Number, fixture.Ok = constant.Int_64_Value(
-				constant.Make_Int_64(42))
+			result := constant.Int_64_Value(constant.Make_Int_64(42))
+			fixture.Number, fixture.Ok = result.Value, result.OK
 		}},
 		{Name: "Into_Text_Truth", Call: func() {
 			fixture.Count = constant.Into_Text(
@@ -563,7 +574,8 @@ func allocation_fold_checks(t *testing.T) {
 				pair, constant.BINARY_MULTIPLY, pair)
 		}},
 		{Name: "Compare", Call: func() {
-			fixture.Order, fixture.Ok = constant.Compare(left, right)
+			result := constant.Compare(left, right)
+			fixture.Order, fixture.Ok = result.Order, result.OK
 		}},
 		{Name: "Shift", Call: func() {
 			fixture.Value = constant.Shift(

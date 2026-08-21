@@ -1,5 +1,5 @@
 // Package ast parses Go source into a node arena. The caller owns one Parse_State and every
-// node is a slot in its arrays, thus a parse allocates nothing. The grammar it accepts is the
+// node is a slot in caller storage, thus a parse allocates nothing. The grammar it accepts is the
 // subset this repository's linter permits, and it descends by recursion under a depth bound so
 // a hostile nesting depth ends the parse instead of the goroutine stack.
 package ast
@@ -759,59 +759,372 @@ func Node_Invariants(value Node, namespace aver.Namespace) {
 	Successor_Invariants(value.Next, namespace)
 }
 
-// Parse_State is the whole parse. Every field is an array, and each cursor lives in an array
-// slot rather than in a field of its own, because a cursor field would owe its whole domain at
-// every parse step that receives the state and a step deep in the grammar can never see a
-// cursor at zero. The cursors keep their domain proof at the steps that read them.
-type Parse_State struct {
+// Tokens keeps complete lexical storage caller-owned and unable to grow.
+type Tokens []token.Token
+
+// Tokens_Invariants fixes lexical storage to parser bound.
+func Tokens_Invariants(value Tokens, _ aver.Namespace) {
+	aver.Always(len(value) == TOKEN_COUNT_MAXIMUM, "Token storage has complete length.")
+	aver.Always(cap(value) == TOKEN_COUNT_MAXIMUM, "Token storage cannot grow.")
+}
+
+// Token_Storage keeps token slice representation composable under parse state.
+type Token_Storage struct {
+	// Values stays wrapped because validated state inherits this field.
+	Values Tokens
+}
+
+// Token_Storage_Invariants fixes caller token memory.
+func Token_Storage_Invariants(value Token_Storage, namespace aver.Namespace) {
+	Tokens_Invariants(value.Values, namespace)
+}
+
+// Nodes keeps complete syntax arena caller-owned and unable to grow.
+type Nodes []Node
+
+// Nodes_Invariants fixes syntax storage to parser bound.
+func Nodes_Invariants(value Nodes, _ aver.Namespace) {
+	aver.Always(len(value) == NODE_COUNT_MAXIMUM, "Node storage has complete length.")
+	aver.Always(cap(value) == NODE_COUNT_MAXIMUM, "Node storage cannot grow.")
+}
+
+// Node_Storage keeps arena slice representation composable under parse state.
+type Node_Storage struct {
+	// Values stays wrapped because validated state inherits this field.
+	Values Nodes
+}
+
+// Node_Storage_Invariants fixes caller arena memory.
+func Node_Storage_Invariants(value Node_Storage, namespace aver.Namespace) {
+	Nodes_Invariants(value.Values, namespace)
+}
+
+// Parents keeps open-node ancestry caller-owned and unable to grow.
+type Parents []Index
+
+// Parents_Invariants fixes ancestry storage to nesting bound.
+func Parents_Invariants(value Parents, _ aver.Namespace) {
+	aver.Always(len(value) == DEPTH_MAXIMUM, "Parent storage has complete length.")
+	aver.Always(cap(value) == DEPTH_MAXIMUM, "Parent storage cannot grow.")
+}
+
+// Parent_Storage keeps ancestry slice representation composable under parse state.
+type Parent_Storage struct {
+	// Values stays wrapped because validated state inherits this field.
+	Values Parents
+}
+
+// Parent_Storage_Invariants fixes caller ancestry memory.
+func Parent_Storage_Invariants(value Parent_Storage, namespace aver.Namespace) {
+	Parents_Invariants(value.Values, namespace)
+}
+
+// Last_Children keeps active sibling tails caller-owned and unable to grow.
+type Last_Children []Index
+
+// Last_Children_Invariants fixes sibling-tail storage to nesting bound.
+func Last_Children_Invariants(value Last_Children, _ aver.Namespace) {
+	aver.Always(len(value) == DEPTH_MAXIMUM, "Last-child storage has complete length.")
+	aver.Always(cap(value) == DEPTH_MAXIMUM, "Last-child storage cannot grow.")
+}
+
+// Last_Child_Storage keeps sibling-tail slice representation composable under parse state.
+type Last_Child_Storage struct {
+	// Values stays wrapped because validated state inherits this field.
+	Values Last_Children
+}
+
+// Last_Child_Storage_Invariants fixes caller sibling-tail memory.
+func Last_Child_Storage_Invariants(value Last_Child_Storage, namespace aver.Namespace) {
+	Last_Children_Invariants(value.Values, namespace)
+}
+
+// Earlier_Children keeps prior sibling tails caller-owned and unable to grow.
+type Earlier_Children []Index
+
+// Earlier_Children_Invariants fixes prior-tail storage to nesting bound.
+func Earlier_Children_Invariants(value Earlier_Children, _ aver.Namespace) {
+	aver.Always(len(value) == DEPTH_MAXIMUM, "Earlier-child storage has complete length.")
+	aver.Always(cap(value) == DEPTH_MAXIMUM, "Earlier-child storage cannot grow.")
+}
+
+// Earlier_Child_Storage keeps prior-tail slice representation composable under parse state.
+type Earlier_Child_Storage struct {
+	// Values stays wrapped because validated state inherits this field.
+	Values Earlier_Children
+}
+
+// Earlier_Child_Storage_Invariants fixes caller prior-tail memory.
+func Earlier_Child_Storage_Invariants(
+	value Earlier_Child_Storage, namespace aver.Namespace,
+) {
+	Earlier_Children_Invariants(value.Values, namespace)
+}
+
+// Token_Count is populated token extent, independent from every token position.
+type Token_Count Token_Index
+
+// Token_Count_Invariants follows complete token storage.
+func Token_Count_Invariants(value Token_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Token_Position is next grammar input, independent from populated extent.
+type Token_Position Token_Index
+
+// Token_Position_Invariants follows token arena indexes.
+func Token_Position_Invariants(value Token_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Refusal_Token is first rejected token, independent from current input.
+type Refusal_Token Token_Index
+
+// Refusal_Token_Invariants follows token arena indexes.
+func Refusal_Token_Invariants(value Refusal_Token, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Blank_Token is trivia progress, independent from current input.
+type Blank_Token Token_Index
+
+// Blank_Token_Invariants follows one position past token storage.
+func Blank_Token_Invariants(value Blank_Token, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Token_Cursors names each lexical position so no index hides its role.
+type Token_Cursors struct {
+	// Count stands alone because it bounds written token storage.
+	Count Token_Count
+	// Position stands alone because it names next grammar input.
+	Position Token_Position
+	// Failure stands alone because first refusal survives later parser steps.
+	Failure Refusal_Token
+	// Blank stands alone because trivia consumption advances independently.
+	Blank Blank_Token
+}
+
+// Token_Cursors_Invariants composes each independent lexical position.
+func Token_Cursors_Invariants(value Token_Cursors, namespace aver.Namespace) {
+	Token_Count_Invariants(value.Count, namespace)
+	Token_Position_Invariants(value.Position, namespace)
+	Refusal_Token_Invariants(value.Failure, namespace)
+	Blank_Token_Invariants(value.Blank, namespace)
+}
+
+// Node_Count is populated arena extent, independent from nesting depth.
+type Node_Count Index
+
+// Node_Count_Invariants follows one position past node storage.
+func Node_Count_Invariants(value Node_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), INDEX_MINIMUM, NODE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Parse_Depth is open-parent count, independent from arena extent.
+type Parse_Depth Index
+
+// Parse_Depth_Invariants follows parent storage extent.
+func Parse_Depth_Invariants(value Parse_Depth, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), INDEX_MINIMUM, DEPTH_MAXIMUM).
+		Ensure()
+}
+
+// Node_Cursors names arena extent and nesting depth without indexed roles.
+type Node_Cursors struct {
+	// Count stands alone because it bounds written node storage.
+	Count Node_Count
+	// Depth stands alone because it bounds open-parent storage.
+	Depth Parse_Depth
+}
+
+// Node_Cursors_Invariants composes arena extent and nesting depth.
+func Node_Cursors_Invariants(value Node_Cursors, namespace aver.Namespace) {
+	Node_Count_Invariants(value.Count, namespace)
+	Parse_Depth_Invariants(value.Depth, namespace)
+}
+
+// Causes leaves no indexed collection around one first-failure value.
+type Causes struct {
+	// Cause stands alone because parser records only first refusal.
+	Cause Failure_Code
+}
+
+// Causes_Invariants gives first refusal normal failure obligations.
+func Causes_Invariants(value Causes, namespace aver.Namespace) {
+	Failure_Code_Invariants(value.Cause, namespace)
+}
+
+// Failed is refusal state, independent from grammar ambiguity flags.
+type Failed Boolean
+
+// Failed_Invariants states both refusal states.
+func Failed_Invariants(value Failed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Parser has failed.").
+		Ensure()
+}
+
+// Plain_Brace marks control-clause brace ownership.
+type Plain_Brace Boolean
+
+// Plain_Brace_Invariants states both brace readings.
+func Plain_Brace_Invariants(value Plain_Brace, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Brace opens plain block.").
+		Ensure()
+}
+
+// Type_Assertion marks type-switch ambiguity.
+type Type_Assertion Boolean
+
+// Type_Assertion_Invariants states both assertion readings.
+func Type_Assertion_Invariants(value Type_Assertion, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Clause holds type assertion.").
+		Ensure()
+}
+
+// Flags names each parser control bit so no index hides its role.
+type Flags struct {
+	// Failed stands alone because refusal state survives later parser steps.
+	Failed Failed
+	// Plain_Brace stands alone because control clauses own this ambiguity.
+	Plain_Brace Plain_Brace
+	// Type_Assertion stands alone because switch classification owns this ambiguity.
+	Type_Assertion Type_Assertion
+}
+
+// Flags_Invariants composes each independent parser control bit.
+func Flags_Invariants(value Flags, namespace aver.Namespace) {
+	Failed_Invariants(value.Failed, namespace)
+	Plain_Brace_Invariants(value.Plain_Brace, namespace)
+	Type_Assertion_Invariants(value.Type_Assertion, namespace)
+}
+
+// Parse_State_Fields keeps raw mutable parser state separate from validated transport.
+type Parse_State_Fields struct {
 	// Tokens is the token run of the source, ending in one end-of-file token.
-	Tokens [TOKEN_COUNT_MAXIMUM]token.Token
+	Tokens Token_Storage
 	// Nodes is the node arena. Slot zero holds no node.
-	Nodes [NODE_COUNT_MAXIMUM]Node
+	Nodes Node_Storage
 	// Parents holds the node left open at each nesting depth.
-	Parents [DEPTH_MAXIMUM]Index
+	Parents Parent_Storage
 	// Last_Children holds the final child of the open node at each nesting depth. It stands
 	// here rather than in every node, because only an open node ever gains a child and a
 	// field of its own would cost four bytes for every slot of the arena.
-	Last_Children [DEPTH_MAXIMUM]Index
+	Last_Children Last_Child_Storage
 	// Earlier_Children holds the child before the final one at each nesting depth, which is
 	// what an operator needs to unlink the operand it takes back.
-	Earlier_Children [DEPTH_MAXIMUM]Index
+	Earlier_Children Earlier_Child_Storage
 	// Token_Cursors holds the token count and the read position.
-	Token_Cursors [TOKEN_CURSOR_COUNT]Token_Index
+	Token_Cursors Token_Cursors
 	// Node_Cursors holds the node count and the nesting depth.
-	Node_Cursors [NODE_CURSOR_COUNT]Index
+	Node_Cursors Node_Cursors
 	// Causes holds why the parse failed, or FAILURE_NONE while it still stands.
-	Causes [CAUSE_SLOT_COUNT]Failure_Code
+	Causes Causes
 	// Flags holds whether the parse failed.
-	Flags [FLAG_COUNT]Boolean
+	Flags Flags
 }
 
-// Parse_State_Invariants states the storage the caller supplies. The cursors are array slots,
-// so this bundle states the storage width and each cursor proves its own domain where it is
-// read, which keeps one parse step from owing a cursor value it can never see.
-func Parse_State_Invariants(subject *Parse_State, namespace aver.Namespace) {
-	aver.Always(
-		len(subject.Nodes) == NODE_COUNT_MAXIMUM,
-		"A parse state holds one arena slot for every admitted node.",
+// Parse_State_Fields_Invariants composes raw caller storage before parser lifecycle validation.
+func Parse_State_Fields_Invariants(value Parse_State_Fields, namespace aver.Namespace) {
+	Token_Storage_Invariants(value.Tokens, namespace)
+	Node_Storage_Invariants(value.Nodes, namespace)
+	Parent_Storage_Invariants(value.Parents, namespace)
+	Last_Child_Storage_Invariants(value.Last_Children, namespace)
+	Earlier_Child_Storage_Invariants(value.Earlier_Children, namespace)
+	Token_Cursors_Invariants(value.Token_Cursors, namespace)
+	Node_Cursors_Invariants(value.Node_Cursors, namespace)
+	Causes_Invariants(value.Causes, namespace)
+	Flags_Invariants(value.Flags, namespace)
+}
+
+// Parse_State_Fields_Stored prevents recursive parser steps from revalidating every store.
+type Parse_State_Fields_Stored interface{}
+
+// Parse_State_Fields_Stored_Invariants fixes parse-state representation.
+func Parse_State_Fields_Stored_Invariants(value Parse_State_Fields_Stored, _ aver.Namespace) {
+	_, valid := value.(Parse_State_Fields)
+	aver.Always(valid == (value != nil), "Parse state has expected storage type.")
+}
+
+// Parse_State_Envelope keeps caller storage behind one representation boundary.
+type Parse_State_Envelope struct {
+	// Parse_State_Fields stays embedded so callers retain concrete field access.
+	Parse_State_Fields
+}
+
+// Parse_State_Envelope_Invariants composes concrete caller storage.
+func Parse_State_Envelope_Invariants(value Parse_State_Envelope, namespace aver.Namespace) {
+	Parse_State_Fields_Invariants(value.Parse_State_Fields, namespace)
+}
+
+// Parse_State is one validated view over caller-owned parser storage.
+type Parse_State Parse_State_Envelope
+
+// Parse_State_Invariants fixes representation without revalidating stores in recursive steps.
+func Parse_State_Invariants(value Parse_State, namespace aver.Namespace) {
+	Parse_State_Fields_Stored_Invariants(
+		Parse_State_Fields_Stored(value.Parse_State_Fields), namespace,
 	)
+}
+
+// Parse_State_Handle gives caller-owned parse storage one identity.
+type Parse_State_Handle *Parse_State
+
+// Parse_State_Handle_Invariants composes present parse storage.
+func Parse_State_Handle_Invariants(value Parse_State_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Parse_State_Invariants(*value, namespace)
+}
+
+// Parse_Result keeps syntax root and refusal state at one output boundary.
+type Parse_Result struct {
+	// Root remains available after refused parses because partial trees still carry evidence.
+	Root Root
+	// OK distinguishes accepted syntax from useful partial trees.
+	OK Boolean
+}
+
+// Parse_Result_Invariants composes one parse outcome.
+func Parse_Result_Invariants(value Parse_Result, namespace aver.Namespace) {
+	Root_Invariants(value.Root, namespace)
+	Boolean_Invariants(value.OK, namespace)
 }
 
 // Parse scans a source into the token run and descends it into the arena. A source the grammar
 // rejects still returns the tree that was built, with an error node at the token that failed,
 // because a linter reads more from a partial tree than from nothing.
-func Parse(subject *Parse_State, source token.Source) (root Root, ok Boolean) {
-	defer func() {
-		Root_Invariants(root, "parse.root")
-		Boolean_Invariants(ok, "parse.ok")
-	}()
-	Parse_State_Invariants(subject, "parse.subject")
+func Parse(subject Parse_State_Handle, source token.Source) (result Parse_Result) {
+	defer func() { Parse_Result_Invariants(result, "parse.result") }()
+	Parse_State_Handle_Invariants(subject, "parse.subject")
+	Token_Storage_Invariants(subject.Tokens, "parse.tokens")
+	Node_Storage_Invariants(subject.Nodes, "parse.nodes")
+	Parent_Storage_Invariants(subject.Parents, "parse.parents")
+	Last_Child_Storage_Invariants(subject.Last_Children, "parse.last_children")
+	Earlier_Child_Storage_Invariants(subject.Earlier_Children, "parse.earlier_children")
 	token.Source_Invariants(source, "parse.source")
 	reset(subject)
 	if !bool(scan_source(subject, source)) {
-		return Root(INDEX_ABSENT), false
+		result.Root = Root(INDEX_ABSENT)
+		result.OK = false
+		return result
 	}
-	root = Root(open_node(subject, NODE_FILE))
+	result.Root = Root(open_node(subject, NODE_FILE))
 	parse_file(subject)
 	close_node(subject)
 	name_wide_identifier(subject, source)
@@ -822,57 +1135,58 @@ func Parse(subject *Parse_State, source token.Source) (root Root, ok Boolean) {
 	name_bare_loop(subject, source)
 	name_unnamed_result(subject)
 	name_banned_identifier(subject, source)
-	return root, !subject.Flags[FLAG_FAILED]
+	result.OK = Boolean(!bool(subject.Flags.Failed))
+	return result
 }
 
 // Node_At returns one slot of the arena. The parse writes every slot it counts, thus a slot the
 // count does not reach is no node and reading it is a caller defect.
-func Node_At(subject *Parse_State, index Index) (node Node) {
+func Node_At(subject Parse_State_Handle, index Index) (node Node) {
 	defer func() { Node_Invariants(node, "node_at.node") }()
-	Parse_State_Invariants(subject, "node_at.subject")
+	Parse_State_Handle_Invariants(subject, "node_at.subject")
 	Index_Invariants(index, "node_at.index")
 	aver.Always(
-		index < subject.Node_Cursors[CURSOR_NODE_COUNT],
+		index < Index(subject.Node_Cursors.Count),
 		"A read node lies inside the count the parse wrote.",
 	)
-	return subject.Nodes[index]
+	return subject.Nodes.Values[index]
 }
 
 // Token_At returns one token of the run, the token that names a node.
-func Token_At(subject *Parse_State, index Token_Index) (one token.Token) {
+func Token_At(subject Parse_State_Handle, index Token_Index) (one token.Token) {
 	defer func() { token.Token_Invariants(one, "token_at.one") }()
-	Parse_State_Invariants(subject, "token_at.subject")
+	Parse_State_Handle_Invariants(subject, "token_at.subject")
 	Token_Index_Invariants(index, "token_at.index")
 	aver.Always(
-		index < subject.Token_Cursors[CURSOR_TOKEN_COUNT],
+		index < Token_Index(subject.Token_Cursors.Count),
 		"A read token lies inside the count the scan wrote.",
 	)
-	return subject.Tokens[index]
+	return subject.Tokens.Values[index]
 }
 
 // Parse_State_Token_Run borrows only the token prefix the last scan wrote.
-func Parse_State_Token_Run(subject *Parse_State) (run Token_Run) {
+func Parse_State_Token_Run(subject Parse_State_Handle) (run Token_Run) {
 	defer func() { Token_Run_Invariants(run, "parse_state_token_run.run") }()
-	Parse_State_Invariants(subject, "parse_state_token_run.subject")
-	return subject.Tokens[:subject.Token_Cursors[CURSOR_TOKEN_COUNT]]
+	Parse_State_Handle_Invariants(subject, "parse_state_token_run.subject")
+	return Token_Run(subject.Tokens.Values[:subject.Token_Cursors.Count])
 }
 
 // Clears the cursors and marks slot zero, which holds no node. Slot zero carries the error kind
 // so a stray read of the absent slot is loud rather than a plausible node.
-func reset(subject *Parse_State) {
-	Parse_State_Invariants(subject, "reset.subject")
-	subject.Token_Cursors[CURSOR_TOKEN_COUNT] = 0
-	subject.Token_Cursors[CURSOR_POSITION] = 0
-	subject.Token_Cursors[CURSOR_FAILURE] = 0
-	subject.Token_Cursors[CURSOR_BLANK] = 0
-	subject.Causes[CAUSE_SLOT] = Failure_Code(FAILURE_NONE)
-	subject.Node_Cursors[CURSOR_NODE_COUNT] = INDEX_FIRST
-	subject.Node_Cursors[CURSOR_DEPTH] = 0
-	subject.Last_Children[0] = INDEX_ABSENT
-	subject.Earlier_Children[0] = INDEX_ABSENT
-	subject.Flags[FLAG_FAILED] = false
-	subject.Flags[FLAG_PLAIN_BRACE] = false
-	subject.Nodes[INDEX_ABSENT] = Node{
+func reset(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "reset.subject")
+	subject.Token_Cursors.Count = 0
+	subject.Token_Cursors.Position = 0
+	subject.Token_Cursors.Failure = 0
+	subject.Token_Cursors.Blank = 0
+	subject.Causes.Cause = Failure_Code(FAILURE_NONE)
+	subject.Node_Cursors.Count = Node_Count(INDEX_FIRST)
+	subject.Node_Cursors.Depth = 0
+	subject.Last_Children.Values[0] = INDEX_ABSENT
+	subject.Earlier_Children.Values[0] = INDEX_ABSENT
+	subject.Flags.Failed = false
+	subject.Flags.Plain_Brace = false
+	subject.Nodes.Values[INDEX_ABSENT] = Node{
 		Kind:        NODE_ERROR,
 		Token:       0,
 		Parent:      Ancestor(INDEX_ABSENT),
@@ -883,9 +1197,9 @@ func reset(subject *Parse_State) {
 
 // Fills the token run from the source. A run past the bound fails the parse rather than writing
 // outside the array.
-func scan_source(subject *Parse_State, source token.Source) (ok Boolean) {
+func scan_source(subject Parse_State_Handle, source token.Source) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "scan_source.ok") }()
-	Parse_State_Invariants(subject, "scan_source.subject")
+	Parse_State_Handle_Invariants(subject, "scan_source.subject")
 	token.Source_Invariants(source, "scan_source.source")
 	scanner := token.Scanner{
 		Source: source, Offset: 0, Previous: token.KIND_END_OF_FILE, Newline: false,
@@ -893,44 +1207,44 @@ func scan_source(subject *Parse_State, source token.Source) (ok Boolean) {
 	count := 0
 	for count < TOKEN_COUNT_MAXIMUM {
 		one := token.Scan(&scanner)
-		subject.Tokens[count] = one
+		subject.Tokens.Values[count] = one
 		count++
 		if one.Kind == token.KIND_END_OF_FILE {
-			subject.Token_Cursors[CURSOR_TOKEN_COUNT] = Token_Index(count)
+			subject.Token_Cursors.Count = Token_Count(count)
 			return true
 		}
 	}
 	// The run that was written stays readable, so a caller that reads the failure token finds a
 	// token there rather than a slot the scan never reached.
-	subject.Token_Cursors[CURSOR_TOKEN_COUNT] = Token_Index(count)
+	subject.Token_Cursors.Count = Token_Count(count)
 	fail(subject, Cause(FAILURE_TOKEN_COUNT))
 	return false
 }
 
 // Marks the parse failed and records why. The first cause stands, because a later step reads a
 // source the first failure already knocked off the rails and its complaint would mislead.
-func fail(subject *Parse_State, cause Cause) {
-	Parse_State_Invariants(subject, "fail.subject")
+func fail(subject Parse_State_Handle, cause Cause) {
+	Parse_State_Handle_Invariants(subject, "fail.subject")
 	Cause_Invariants(cause, "fail.cause")
-	if bool(subject.Flags[FLAG_FAILED]) {
+	if bool(subject.Flags.Failed) {
 		return
 	}
-	subject.Flags[FLAG_FAILED] = true
-	subject.Causes[CAUSE_SLOT] = Failure_Code(cause)
-	subject.Token_Cursors[CURSOR_FAILURE] = subject.Token_Cursors[CURSOR_POSITION]
+	subject.Flags.Failed = true
+	subject.Causes.Cause = Failure_Code(cause)
+	subject.Token_Cursors.Failure = Refusal_Token(subject.Token_Cursors.Position)
 }
 
 // Reports whether the parse has already failed. Each step asks before it descends, which is what
 // keeps the recursion bounded once the arena or the depth runs out.
-func failed(subject *Parse_State) (yes Boolean) {
+func failed(subject Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "failed.yes") }()
-	Parse_State_Invariants(subject, "failed.subject")
-	return subject.Flags[FLAG_FAILED]
+	Parse_State_Handle_Invariants(subject, "failed.subject")
+	return Boolean(subject.Flags.Failed)
 }
 
 // Marks the current token as the point the grammar rejected and says why.
-func reject(subject *Parse_State, cause Reject_Cause) {
-	Parse_State_Invariants(subject, "reject.subject")
+func reject(subject Parse_State_Handle, cause Reject_Cause) {
+	Parse_State_Handle_Invariants(subject, "reject.subject")
 	Reject_Cause_Invariants(cause, "reject.cause")
 	fail(subject, Cause(cause))
 	// An illegal byte is taken so a scan error cannot stall one token forever.
@@ -940,53 +1254,53 @@ func reject(subject *Parse_State, cause Reject_Cause) {
 }
 
 // Reports the kind of the token the cursor stands on.
-func at(subject *Parse_State) (kind token.Kind) {
+func at(subject Parse_State_Handle) (kind token.Kind) {
 	defer func() { token.Kind_Invariants(kind, "at.kind") }()
-	Parse_State_Invariants(subject, "at.subject")
-	return subject.Tokens[subject.Token_Cursors[CURSOR_POSITION]].Kind
+	Parse_State_Handle_Invariants(subject, "at.subject")
+	return subject.Tokens.Values[subject.Token_Cursors.Position].Kind
 }
 
 // Reports the kind of the token after the cursor, which the grammar needs where one token cannot
 // tell a label from an expression or a receiver from a parameter.
-func after(subject *Parse_State) (kind token.Kind) {
+func after(subject Parse_State_Handle) (kind token.Kind) {
 	defer func() { token.Kind_Invariants(kind, "after.kind") }()
-	Parse_State_Invariants(subject, "after.subject")
-	position := subject.Token_Cursors[CURSOR_POSITION]
-	if int(position)+1 >= int(subject.Token_Cursors[CURSOR_TOKEN_COUNT]) {
+	Parse_State_Handle_Invariants(subject, "after.subject")
+	position := subject.Token_Cursors.Position
+	if int(position)+1 >= int(subject.Token_Cursors.Count) {
 		return token.KIND_END_OF_FILE
 	}
-	return subject.Tokens[position+1].Kind
+	return subject.Tokens.Values[position+1].Kind
 }
 
 // Steps the cursor past the current token. The run ends in one end-of-file token that the cursor
 // never passes, thus a step that misreads the grammar stalls there instead of running off.
-func advance(subject *Parse_State) {
-	Parse_State_Invariants(subject, "advance.subject")
+func advance(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "advance.subject")
 	step(subject)
 	skip_comments(subject)
 }
 
 // Steps the cursor past one token and takes no trivia. The run ends in one end-of-file token
 // that the cursor never passes, thus a step that misreads the grammar stalls there.
-func step(subject *Parse_State) {
-	Parse_State_Invariants(subject, "step.subject")
-	position := subject.Token_Cursors[CURSOR_POSITION]
-	if int(position)+1 < int(subject.Token_Cursors[CURSOR_TOKEN_COUNT]) {
-		subject.Token_Cursors[CURSOR_POSITION] = position + 1
+func step(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "step.subject")
+	position := subject.Token_Cursors.Position
+	if int(position)+1 < int(subject.Token_Cursors.Count) {
+		subject.Token_Cursors.Position = position + 1
 	}
 }
 
 // Takes the run of empty lines that stands before the token at the cursor. The cursor only
 // ever moves forward, thus one slot recording how far the tree already holds is enough to keep a
 // run out of the tree twice.
-func take_blank(subject *Parse_State) {
-	Parse_State_Invariants(subject, "take_blank.subject")
-	position := subject.Token_Cursors[CURSOR_POSITION]
-	if subject.Token_Cursors[CURSOR_BLANK] > position {
+func take_blank(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "take_blank.subject")
+	position := subject.Token_Cursors.Position
+	if Token_Index(subject.Token_Cursors.Blank) > Token_Index(position) {
 		return
 	}
-	subject.Token_Cursors[CURSOR_BLANK] = position + 1
-	if subject.Tokens[position].Blanks == 0 {
+	subject.Token_Cursors.Blank = Blank_Token(position + 1)
+	if subject.Tokens.Values[position].Blanks == 0 {
 		return
 	}
 	open_node(subject, NODE_BLANK)
@@ -994,9 +1308,9 @@ func take_blank(subject *Parse_State) {
 }
 
 // Steps past the current token when it is of this kind.
-func accept(subject *Parse_State, kind token.Kind) (yes Boolean) {
+func accept(subject Parse_State_Handle, kind token.Kind) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "accept.yes") }()
-	Parse_State_Invariants(subject, "accept.subject")
+	Parse_State_Handle_Invariants(subject, "accept.subject")
 	token.Kind_Invariants(kind, "accept.kind")
 	if at(subject) != kind {
 		return false
@@ -1007,29 +1321,29 @@ func accept(subject *Parse_State, kind token.Kind) (yes Boolean) {
 
 // Takes one slot for a node of this kind at the current token. The arena is bounded, thus an
 // exhausted arena fails the parse rather than writing past the array.
-func allocate(subject *Parse_State, kind Node_Kind) (index Index) {
+func allocate(subject Parse_State_Handle, kind Node_Kind) (index Index) {
 	defer func() { Index_Invariants(index, "allocate.index") }()
-	Parse_State_Invariants(subject, "allocate.subject")
+	Parse_State_Handle_Invariants(subject, "allocate.subject")
 	Node_Kind_Invariants(kind, "allocate.kind")
-	count := subject.Node_Cursors[CURSOR_NODE_COUNT]
+	count := subject.Node_Cursors.Count
 	if int(count) > INDEX_MAXIMUM {
 		fail(subject, Cause(FAILURE_NODE_COUNT))
 		return INDEX_ABSENT
 	}
-	subject.Node_Cursors[CURSOR_NODE_COUNT] = count + 1
-	subject.Nodes[count] = Node{
+	subject.Node_Cursors.Count = count + 1
+	subject.Nodes.Values[count] = Node{
 		Kind:        kind,
-		Token:       subject.Token_Cursors[CURSOR_POSITION],
+		Token:       Token_Index(subject.Token_Cursors.Position),
 		Parent:      Ancestor(INDEX_ABSENT),
 		First_Child: Head(INDEX_ABSENT),
 		Next:        Successor(INDEX_ABSENT),
 	}
-	return count
+	return Index(count)
 }
 
 // Links one node under the open parent as its final child.
-func attach(subject *Parse_State, child Index) {
-	Parse_State_Invariants(subject, "attach.subject")
+func attach(subject Parse_State_Handle, child Index) {
+	Parse_State_Handle_Invariants(subject, "attach.subject")
 	Index_Invariants(child, "attach.child")
 	if child == INDEX_ABSENT {
 		return
@@ -1037,55 +1351,55 @@ func attach(subject *Parse_State, child Index) {
 	// The open parent is read inline rather than through a step of its own, because a step
 	// that returned it would owe every slot number at one call site and the parent of the
 	// first attachment is always the root.
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
+	depth := subject.Node_Cursors.Depth
 	if depth == 0 {
 		return
 	}
 	if int(depth) > DEPTH_MAXIMUM {
 		return
 	}
-	parent := subject.Parents[depth-1]
+	parent := subject.Parents.Values[depth-1]
 	if parent == INDEX_ABSENT {
 		return
 	}
-	previous := subject.Last_Children[depth-1]
-	subject.Nodes[child].Parent = Ancestor(parent)
+	previous := subject.Last_Children.Values[depth-1]
+	subject.Nodes.Values[child].Parent = Ancestor(parent)
 	if previous == INDEX_ABSENT {
-		subject.Nodes[parent].First_Child = Head(child)
+		subject.Nodes.Values[parent].First_Child = Head(child)
 	} else {
-		subject.Nodes[previous].Next = Successor(child)
+		subject.Nodes.Values[previous].Next = Successor(child)
 	}
-	subject.Earlier_Children[depth-1] = previous
-	subject.Last_Children[depth-1] = child
+	subject.Earlier_Children.Values[depth-1] = previous
+	subject.Last_Children.Values[depth-1] = child
 }
 
 // Takes one slot, links it under the open parent, and opens it so later nodes attach to it. The
 // nesting depth is bounded, thus a hostile depth ends the parse instead of the goroutine stack.
-func open_node(subject *Parse_State, kind Node_Kind) (index Index) {
+func open_node(subject Parse_State_Handle, kind Node_Kind) (index Index) {
 	defer func() { Index_Invariants(index, "open_node.index") }()
-	Parse_State_Invariants(subject, "open_node.subject")
+	Parse_State_Handle_Invariants(subject, "open_node.subject")
 	Node_Kind_Invariants(kind, "open_node.kind")
 	index = allocate(subject, kind)
 	attach(subject, index)
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
+	depth := subject.Node_Cursors.Depth
 	if int(depth) < DEPTH_MAXIMUM {
-		subject.Parents[depth] = index
-		subject.Last_Children[depth] = INDEX_ABSENT
-		subject.Earlier_Children[depth] = INDEX_ABSENT
+		subject.Parents.Values[depth] = index
+		subject.Last_Children.Values[depth] = INDEX_ABSENT
+		subject.Earlier_Children.Values[depth] = INDEX_ABSENT
 	} else {
 		fail(subject, Cause(FAILURE_NESTING_DEPTH))
 	}
-	subject.Node_Cursors[CURSOR_DEPTH] = depth + 1
+	subject.Node_Cursors.Depth = depth + 1
 	return index
 }
 
 // Closes the open parent. The count is stepped even past the depth bound, so an overflowed open
 // and its close stay paired and the parent stack never drifts.
-func close_node(subject *Parse_State) {
-	Parse_State_Invariants(subject, "close_node.subject")
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
+func close_node(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "close_node.subject")
+	depth := subject.Node_Cursors.Depth
 	if depth > 0 {
-		subject.Node_Cursors[CURSOR_DEPTH] = depth - 1
+		subject.Node_Cursors.Depth = depth - 1
 	}
 }
 
@@ -1093,24 +1407,24 @@ func close_node(subject *Parse_State) {
 // binary operator adopts the operand parsed before the operator was seen, and this is the one
 // place the tree runs backward. The adopted slot never leaves this step, because a step that
 // handed it back would owe every slot number at one call site.
-func wrap_last(subject *Parse_State, kind Wrap_Kind) {
-	Parse_State_Invariants(subject, "wrap_last.subject")
+func wrap_last(subject Parse_State_Handle, kind Wrap_Kind) {
+	Parse_State_Handle_Invariants(subject, "wrap_last.subject")
 	Wrap_Kind_Invariants(kind, "wrap_last.kind")
 	last := INDEX_ABSENT
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
+	depth := subject.Node_Cursors.Depth
 	if depth > 0 {
 		if int(depth) <= DEPTH_MAXIMUM {
-			parent := subject.Parents[depth-1]
-			last = subject.Last_Children[depth-1]
-			previous := subject.Earlier_Children[depth-1]
-			subject.Last_Children[depth-1] = previous
+			parent := subject.Parents.Values[depth-1]
+			last = subject.Last_Children.Values[depth-1]
+			previous := subject.Earlier_Children.Values[depth-1]
+			subject.Last_Children.Values[depth-1] = previous
 			if previous == INDEX_ABSENT {
-				subject.Nodes[parent].First_Child = Head(INDEX_ABSENT)
+				subject.Nodes.Values[parent].First_Child = Head(INDEX_ABSENT)
 			} else {
-				subject.Nodes[previous].Next = Successor(INDEX_ABSENT)
+				subject.Nodes.Values[previous].Next = Successor(INDEX_ABSENT)
 			}
-			subject.Nodes[last].Parent = Ancestor(INDEX_ABSENT)
-			subject.Nodes[last].Next = Successor(INDEX_ABSENT)
+			subject.Nodes.Values[last].Parent = Ancestor(INDEX_ABSENT)
+			subject.Nodes.Values[last].Next = Successor(INDEX_ABSENT)
 		}
 	}
 	open_node(subject, Node_Kind(kind))
@@ -1118,8 +1432,8 @@ func wrap_last(subject *Parse_State, kind Wrap_Kind) {
 }
 
 // Parses the package clause and every declaration of a file.
-func parse_file(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_file.subject")
+func parse_file(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_file.subject")
 	skip_comments(subject)
 	if at(subject) != token.KIND_PACKAGE {
 		reject(subject, Reject_Cause(FAILURE_PACKAGE_CLAUSE))
@@ -1142,8 +1456,8 @@ func parse_file(subject *Parse_State) {
 
 // Takes every comment at the cursor into the open parent, so a doc comment keeps the place it
 // holds above the declaration that follows it.
-func skip_comments(subject *Parse_State) {
-	Parse_State_Invariants(subject, "skip_comments.subject")
+func skip_comments(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "skip_comments.subject")
 	// The walk is a loop and never a descent, because a file may hold a run of comments as long
 	// as it likes and a descent would spend one stack frame on each.
 	for range TOKEN_COUNT_MAXIMUM {
@@ -1159,9 +1473,9 @@ func skip_comments(subject *Parse_State) {
 
 // Closes one declaration or statement: any trailing comment, then the semicolon the scanner
 // wrote or inserted. A closing bracket stands for the semicolon Go lets a source leave out.
-func end_line(subject *Parse_State) (ok Boolean) {
+func end_line(subject Parse_State_Handle) (ok Boolean) {
 	defer func() { Boolean_Invariants(ok, "end_line.ok") }()
-	Parse_State_Invariants(subject, "end_line.subject")
+	Parse_State_Handle_Invariants(subject, "end_line.subject")
 	skip_comments(subject)
 	if bool(accept(subject, token.KIND_SEMICOLON)) {
 		return true
@@ -1177,8 +1491,8 @@ func end_line(subject *Parse_State) (ok Boolean) {
 }
 
 // Takes one identifier as a node of its own.
-func parse_name(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_name.subject")
+func parse_name(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_name.subject")
 	if at(subject) != token.KIND_IDENTIFIER {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
 		return
@@ -1190,8 +1504,8 @@ func parse_name(subject *Parse_State) {
 }
 
 // Parses one top-level declaration.
-func parse_declaration(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_declaration.subject")
+func parse_declaration(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_declaration.subject")
 	skip_comments(subject)
 	switch at(subject) {
 	case token.KIND_IMPORT:
@@ -1222,29 +1536,29 @@ func parse_declaration(subject *Parse_State) {
 // Reports whether the bracket at the cursor opens a type parameter list rather than an array
 // capacity. A name followed by the opener of a constraint is a type parameter; anything else is
 // the capacity of an array.
-func starts_type_parameters(subject *Parse_State) (yes Boolean) {
+func starts_type_parameters(subject Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "starts_type_parameters.yes") }()
-	Parse_State_Invariants(subject, "starts_type_parameters.subject")
+	Parse_State_Handle_Invariants(subject, "starts_type_parameters.subject")
 	if after(subject) != token.KIND_IDENTIFIER {
 		return false
 	}
-	position := subject.Token_Cursors[CURSOR_POSITION]
-	if int(position)+2 >= int(subject.Token_Cursors[CURSOR_TOKEN_COUNT]) {
+	position := subject.Token_Cursors.Position
+	if int(position)+2 >= int(subject.Token_Cursors.Count) {
 		return false
 	}
 	// A comma behind the first name says a type parameter list, because an array capacity
 	// holds one expression and never a list.
-	switch subject.Tokens[position+2].Kind {
+	switch subject.Tokens.Values[position+2].Kind {
 	case token.KIND_COMMA:
 		return true
 	}
-	return opens_type(subject.Tokens[position+2].Kind)
+	return opens_type(subject.Tokens.Values[position+2].Kind)
 }
 
 // Parses one import declaration. A parenthesized group is refused like any other, because one
 // declaration for each path is what the reader greps for.
-func parse_import(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_import.subject")
+func parse_import(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_import.subject")
 	advance(subject)
 	if at(subject) == token.KIND_PARENTHESIS_LEFT {
 		reject(subject, Reject_Cause(FAILURE_DECLARATION_GROUP))
@@ -1256,8 +1570,8 @@ func parse_import(subject *Parse_State) {
 
 // Parses one import path and its optional name. A dot import and a blank import parse, because
 // the linter must see the form it rejects.
-func parse_import_path(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_import_path.subject")
+func parse_import_path(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_import_path.subject")
 	open_node(subject, NODE_IMPORT)
 	if at(subject) == token.KIND_IDENTIFIER {
 		open_node(subject, NODE_IMPORT_NAME)
@@ -1282,8 +1596,8 @@ func parse_import_path(subject *Parse_State) {
 
 // Parses one const or var declaration. Each stands alone, because the linter bans the
 // parenthesized group.
-func parse_value_declaration(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_value_declaration.subject")
+func parse_value_declaration(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_value_declaration.subject")
 	kind := NODE_CONSTANT
 	if at(subject) == token.KIND_VARIABLE {
 		kind = NODE_VARIABLE
@@ -1313,8 +1627,8 @@ func parse_value_declaration(subject *Parse_State) {
 }
 
 // Parses one type or alias declaration.
-func parse_type_declaration(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_type_declaration.subject")
+func parse_type_declaration(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_type_declaration.subject")
 	open_node(subject, NODE_TYPE)
 	advance(subject)
 	if at(subject) == token.KIND_PARENTHESIS_LEFT {
@@ -1340,8 +1654,8 @@ func parse_type_declaration(subject *Parse_State) {
 }
 
 // Parses one function or method declaration.
-func parse_function_declaration(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_function_declaration.subject")
+func parse_function_declaration(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_function_declaration.subject")
 	open_node(subject, NODE_FUNCTION)
 	advance(subject)
 	if at(subject) == token.KIND_PARENTHESIS_LEFT {
@@ -1363,8 +1677,8 @@ func parse_function_declaration(subject *Parse_State) {
 }
 
 // Parses one type parameter list.
-func parse_type_parameters(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_type_parameters.subject")
+func parse_type_parameters(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_type_parameters.subject")
 	advance(subject)
 	for range TOKEN_COUNT_MAXIMUM {
 		if bool(failed(subject)) {
@@ -1391,8 +1705,8 @@ func parse_type_parameters(subject *Parse_State) {
 }
 
 // Parses one type constraint: a type, a union of terms, or an approximation under the tilde.
-func parse_constraint(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_constraint.subject")
+func parse_constraint(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_constraint.subject")
 	parse_term(subject)
 	if at(subject) != token.KIND_OR {
 		return
@@ -1406,8 +1720,8 @@ func parse_constraint(subject *Parse_State) {
 }
 
 // Parses one constraint term. The term node names the type, because the tilde was already taken.
-func parse_term(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_term.subject")
+func parse_term(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_term.subject")
 	if bool(accept(subject, token.KIND_TILDE)) {
 		open_node(subject, NODE_TERM)
 		parse_type(subject)
@@ -1419,8 +1733,8 @@ func parse_term(subject *Parse_State) {
 }
 
 // Parses one signature: its parameter group and its results.
-func parse_signature(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_signature.subject")
+func parse_signature(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_signature.subject")
 	parse_parameter_group(subject, Group_Kind(NODE_PARAMETER))
 	switch at(subject) {
 	case token.KIND_PARENTHESIS_LEFT:
@@ -1438,8 +1752,8 @@ func parse_signature(subject *Parse_State) {
 }
 
 // Parses one parenthesized parameter or result group.
-func parse_parameter_group(subject *Parse_State, kind Group_Kind) {
-	Parse_State_Invariants(subject, "parse_parameter_group.subject")
+func parse_parameter_group(subject Parse_State_Handle, kind Group_Kind) {
+	Parse_State_Handle_Invariants(subject, "parse_parameter_group.subject")
 	Group_Kind_Invariants(kind, "parse_parameter_group.kind")
 	if !bool(accept(subject, token.KIND_PARENTHESIS_LEFT)) {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
@@ -1462,8 +1776,8 @@ func parse_parameter_group(subject *Parse_State, kind Group_Kind) {
 // Parses one parameter. A name is optional and only its follower tells the two forms apart, so
 // an identifier ahead of a type opener is a name and an identifier ahead of anything else is
 // the type itself.
-func parse_parameter(subject *Parse_State, kind Group_Kind) {
-	Parse_State_Invariants(subject, "parse_parameter.subject")
+func parse_parameter(subject Parse_State_Handle, kind Group_Kind) {
+	Parse_State_Handle_Invariants(subject, "parse_parameter.subject")
 	Group_Kind_Invariants(kind, "parse_parameter.kind")
 	open_node(subject, Node_Kind(kind))
 	if at(subject) == token.KIND_IDENTIFIER {
@@ -1516,8 +1830,8 @@ func opens_type(kind token.Kind) (yes Boolean) {
 
 // Parses one type. Every Go type form reaches here, and the composite forms hand off to a step
 // of their own so each stays inside the size a reader can hold.
-func parse_type(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_type.subject")
+func parse_type(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_type.subject")
 	if bool(failed(subject)) {
 		return
 	}
@@ -1569,8 +1883,8 @@ func parse_type(subject *Parse_State) {
 }
 
 // Parses one type whose first token names the whole form and whose body is one further type.
-func parse_prefix_type(subject *Parse_State, kind Prefix_Kind) {
-	Parse_State_Invariants(subject, "parse_prefix_type.subject")
+func parse_prefix_type(subject Parse_State_Handle, kind Prefix_Kind) {
+	Parse_State_Handle_Invariants(subject, "parse_prefix_type.subject")
 	Prefix_Kind_Invariants(kind, "parse_prefix_type.kind")
 	open_node(subject, Node_Kind(kind))
 	advance(subject)
@@ -1581,8 +1895,8 @@ func parse_prefix_type(subject *Parse_State, kind Prefix_Kind) {
 }
 
 // Parses one named type, its package qualifier, and its type arguments.
-func parse_type_name(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_type_name.subject")
+func parse_type_name(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_type_name.subject")
 	parse_name(subject)
 	if at(subject) == token.KIND_PERIOD {
 		wrap_last(subject, Wrap_Kind(NODE_SELECTOR))
@@ -1611,13 +1925,13 @@ func parse_type_name(subject *Parse_State) {
 
 // Parses one array or slice type. The bracket pair alone says slice, and anything inside it says
 // array, thus the kind is settled only after the capacity is read.
-func parse_array_type(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_array_type.subject")
+func parse_array_type(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_array_type.subject")
 	index := open_node(subject, NODE_SLICE_TYPE)
 	advance(subject)
 	if !bool(accept(subject, token.KIND_BRACKET_RIGHT)) {
 		if index != INDEX_ABSENT {
-			subject.Nodes[index].Kind = NODE_ARRAY_TYPE
+			subject.Nodes.Values[index].Kind = NODE_ARRAY_TYPE
 		}
 		if at(subject) == token.KIND_ELLIPSIS {
 			open_node(subject, NODE_ELLIPSIS)
@@ -1636,8 +1950,8 @@ func parse_array_type(subject *Parse_State) {
 }
 
 // Parses one map type, its key, and its value.
-func parse_map_type(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_map_type.subject")
+func parse_map_type(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_map_type.subject")
 	open_node(subject, NODE_MAP_TYPE)
 	advance(subject)
 	if !bool(accept(subject, token.KIND_BRACKET_LEFT)) {
@@ -1653,13 +1967,13 @@ func parse_map_type(subject *Parse_State) {
 }
 
 // Parses one channel type. An arrow after the keyword makes it send-only.
-func parse_channel_type(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_channel_type.subject")
+func parse_channel_type(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_channel_type.subject")
 	index := open_node(subject, NODE_CHANNEL_TYPE)
 	advance(subject)
 	if bool(accept(subject, token.KIND_ARROW)) {
 		if index != INDEX_ABSENT {
-			subject.Nodes[index].Kind = NODE_CHANNEL_SEND
+			subject.Nodes.Values[index].Kind = NODE_CHANNEL_SEND
 		}
 	}
 	parse_type(subject)
@@ -1668,8 +1982,8 @@ func parse_channel_type(subject *Parse_State) {
 }
 
 // Parses one function type and its signature.
-func parse_function_type(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_function_type.subject")
+func parse_function_type(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_function_type.subject")
 	open_node(subject, NODE_FUNCTION_TYPE)
 	advance(subject)
 	parse_signature(subject)
@@ -1678,8 +1992,8 @@ func parse_function_type(subject *Parse_State) {
 }
 
 // Parses one struct type and its fields.
-func parse_structure_type(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_structure_type.subject")
+func parse_structure_type(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_structure_type.subject")
 	open_node(subject, NODE_STRUCTURE_TYPE)
 	advance(subject)
 	if !bool(accept(subject, token.KIND_BRACE_LEFT)) {
@@ -1704,8 +2018,8 @@ func parse_structure_type(subject *Parse_State) {
 
 // Parses one struct field, its type, and its optional tag. An identifier ahead of a type opener
 // is a field name, and an identifier ahead of anything else is an embedded type.
-func parse_field(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_field.subject")
+func parse_field(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_field.subject")
 	open_node(subject, NODE_FIELD)
 	if bool(field_has_name(subject)) {
 		parse_field_name(subject)
@@ -1725,8 +2039,8 @@ func parse_field(subject *Parse_State) {
 }
 
 // Parses one interface type. The linter bans a method set, thus every element is a constraint.
-func parse_interface_type(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_interface_type.subject")
+func parse_interface_type(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_interface_type.subject")
 	open_node(subject, NODE_INTERFACE_TYPE)
 	advance(subject)
 	if !bool(accept(subject, token.KIND_BRACE_LEFT)) {
@@ -1758,14 +2072,14 @@ func parse_interface_type(subject *Parse_State) {
 
 // Parses one brace-delimited statement list. A bare semicolon writes no node, because an empty
 // statement carries nothing a reader of the tree could want.
-func parse_block(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_block.subject")
+func parse_block(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_block.subject")
 	open_node(subject, NODE_BLOCK)
 	if !bool(accept(subject, token.KIND_BRACE_LEFT)) {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
 	}
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = false
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = false
 	for range TOKEN_COUNT_MAXIMUM {
 		if bool(failed(subject)) {
 			break
@@ -1779,14 +2093,14 @@ func parse_block(subject *Parse_State) {
 		}
 		parse_statement(subject)
 	}
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	close_node(subject)
 	return
 }
 
 // Parses one statement.
-func parse_statement(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_statement.subject")
+func parse_statement(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_statement.subject")
 	if bool(failed(subject)) {
 		return
 	}
@@ -1837,8 +2151,8 @@ func parse_statement(subject *Parse_State) {
 }
 
 // Parses one const, var, or type declaration standing inside a body.
-func parse_declaration_statement(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_declaration_statement.subject")
+func parse_declaration_statement(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_declaration_statement.subject")
 	open_node(subject, NODE_DECLARATION_STATEMENT)
 	if at(subject) == token.KIND_TYPE {
 		parse_type_declaration(subject)
@@ -1850,8 +2164,8 @@ func parse_declaration_statement(subject *Parse_State) {
 }
 
 // Parses one labelled statement.
-func parse_label(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_label.subject")
+func parse_label(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_label.subject")
 	open_node(subject, NODE_LABEL)
 	parse_name(subject)
 	accept(subject, token.KIND_COLON)
@@ -1869,8 +2183,8 @@ func parse_label(subject *Parse_State) {
 }
 
 // Parses one return statement and its results.
-func parse_return(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_return.subject")
+func parse_return(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_return.subject")
 	// A return that names no value parses and holds no child, because the canonical form
 	// writes the values the signature names and a parse that refused one writes nothing.
 	open_node(subject, NODE_RETURN)
@@ -1887,8 +2201,8 @@ func parse_return(subject *Parse_State) {
 }
 
 // Parses one go or defer statement and the call it carries.
-func parse_launch(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_launch.subject")
+func parse_launch(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_launch.subject")
 	kind := NODE_GO
 	if at(subject) == token.KIND_DEFER {
 		kind = NODE_DEFER
@@ -1902,8 +2216,8 @@ func parse_launch(subject *Parse_State) {
 }
 
 // Parses one break, continue, or goto statement and its optional label.
-func parse_jump(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_jump.subject")
+func parse_jump(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_jump.subject")
 	kind := NODE_BREAK
 	switch at(subject) {
 	case token.KIND_CONTINUE:
@@ -1922,17 +2236,17 @@ func parse_jump(subject *Parse_State) {
 }
 
 // Parses one if statement, its optional initializer, its condition, and its branches.
-func parse_if(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_if.subject")
+func parse_if(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_if.subject")
 	open_node(subject, NODE_IF)
 	advance(subject)
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = true
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = true
 	parse_clause(subject)
 	if bool(accept(subject, token.KIND_SEMICOLON)) {
 		parse_clause(subject)
 	}
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	parse_block(subject)
 	if bool(accept(subject, token.KIND_ELSE)) {
 		if at(subject) == token.KIND_IF {
@@ -1948,16 +2262,16 @@ func parse_if(subject *Parse_State) {
 }
 
 // Parses one for statement: a bare loop, a condition, a three-clause head, or a range clause.
-func parse_for(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_for.subject")
+func parse_for(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_for.subject")
 	open_node(subject, NODE_FOR)
 	advance(subject)
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = true
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = true
 	if at(subject) != token.KIND_BRACE_LEFT {
 		parse_for_head(subject)
 	}
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	parse_block(subject)
 	close_node(subject)
 	end_line(subject)
@@ -1965,8 +2279,8 @@ func parse_for(subject *Parse_State) {
 }
 
 // Parses the head of a for statement.
-func parse_for_head(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_for_head.subject")
+func parse_for_head(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_for_head.subject")
 	if at(subject) == token.KIND_RANGE {
 		open_node(subject, NODE_RANGE)
 		advance(subject)
@@ -1994,13 +2308,13 @@ func parse_for_head(subject *Parse_State) {
 
 // Parses one expression or type switch. A type assertion over the type keyword in the head is
 // the one mark that tells the two apart, so the kind is settled after the head is read.
-func parse_switch(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_switch.subject")
+func parse_switch(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_switch.subject")
 	index := open_node(subject, NODE_SWITCH)
 	advance(subject)
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = true
-	subject.Flags[FLAG_TYPE_ASSERTION] = false
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = true
+	subject.Flags.Type_Assertion = false
 	if at(subject) != token.KIND_BRACE_LEFT {
 		parse_clause(subject)
 		if bool(accept(subject, token.KIND_SEMICOLON)) {
@@ -2009,12 +2323,12 @@ func parse_switch(subject *Parse_State) {
 			}
 		}
 	}
-	if bool(subject.Flags[FLAG_TYPE_ASSERTION]) {
+	if bool(subject.Flags.Type_Assertion) {
 		if index != INDEX_ABSENT {
-			subject.Nodes[index].Kind = NODE_TYPE_SWITCH
+			subject.Nodes.Values[index].Kind = NODE_TYPE_SWITCH
 		}
 	}
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	parse_case_block(subject)
 	close_node(subject)
 	end_line(subject)
@@ -2022,8 +2336,8 @@ func parse_switch(subject *Parse_State) {
 }
 
 // Parses one select statement.
-func parse_select(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_select.subject")
+func parse_select(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_select.subject")
 	open_node(subject, NODE_SELECT)
 	advance(subject)
 	parse_case_block(subject)
@@ -2033,8 +2347,8 @@ func parse_select(subject *Parse_State) {
 }
 
 // Parses the brace-delimited clause list of a switch or a select statement.
-func parse_case_block(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_case_block.subject")
+func parse_case_block(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_case_block.subject")
 	if !bool(accept(subject, token.KIND_BRACE_LEFT)) {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
 		return
@@ -2053,8 +2367,8 @@ func parse_case_block(subject *Parse_State) {
 }
 
 // Parses one case or default clause and the statements it holds.
-func parse_case(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_case.subject")
+func parse_case(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_case.subject")
 	if bool(accept(subject, token.KIND_DEFAULT)) {
 		open_node(subject, NODE_DEFAULT)
 	} else {
@@ -2075,8 +2389,8 @@ func parse_case(subject *Parse_State) {
 }
 
 // Parses the statements of one case clause, which run to the next clause or the closing brace.
-func parse_case_body(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_case_body.subject")
+func parse_case_body(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_case_body.subject")
 	for range TOKEN_COUNT_MAXIMUM {
 		if bool(failed(subject)) {
 			return
@@ -2098,8 +2412,8 @@ func parse_case_body(subject *Parse_State) {
 // Parses one simple statement without its closing semicolon: an expression, an assignment, a
 // short declaration, an increment, a decrement, or a channel send. The operator that follows the
 // left side names the form, thus the kind is settled after that side is read.
-func parse_clause(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_clause.subject")
+func parse_clause(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_clause.subject")
 	if bool(failed(subject)) {
 		return
 	}
@@ -2108,7 +2422,7 @@ func parse_clause(subject *Parse_State) {
 	kind := clause_kind(at(subject))
 	if int(kind) != CLAUSE_KIND_MINIMUM {
 		if index != INDEX_ABSENT {
-			subject.Nodes[index].Kind = Node_Kind(kind)
+			subject.Nodes.Values[index].Kind = Node_Kind(kind)
 		}
 	}
 	parse_clause_tail(subject, kind)
@@ -2144,8 +2458,8 @@ func clause_kind(kind token.Kind) (result Clause_Kind) {
 }
 
 // Parses the right side of a statement whose operator has already named its form.
-func parse_clause_tail(subject *Parse_State, kind Clause_Kind) {
-	Parse_State_Invariants(subject, "parse_clause_tail.subject")
+func parse_clause_tail(subject Parse_State_Handle, kind Clause_Kind) {
+	Parse_State_Handle_Invariants(subject, "parse_clause_tail.subject")
 	Clause_Kind_Invariants(kind, "parse_clause_tail.kind")
 	if int(kind) == CLAUSE_KIND_MINIMUM {
 		return
@@ -2170,8 +2484,8 @@ func parse_clause_tail(subject *Parse_State, kind Clause_Kind) {
 }
 
 // Parses one comma-separated expression list.
-func parse_expression_list(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_expression_list.subject")
+func parse_expression_list(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_expression_list.subject")
 	parse_expression(subject)
 	for bool(accept(subject, token.KIND_COMMA)) {
 		if bool(failed(subject)) {
@@ -2183,16 +2497,16 @@ func parse_expression_list(subject *Parse_State) {
 }
 
 // Parses one expression with Go's own precedence.
-func parse_expression(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_expression.subject")
+func parse_expression(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_expression.subject")
 	parse_binary(subject, PRECEDENCE_NONE)
 	return
 }
 
 // Parses a binary expression whose operators bind tighter than one level. The operand parsed
 // before an operator is seen is detached and adopted, which is the one place the tree runs back.
-func parse_binary(subject *Parse_State, level Precedence) {
-	Parse_State_Invariants(subject, "parse_binary.subject")
+func parse_binary(subject Parse_State_Handle, level Precedence) {
+	Parse_State_Handle_Invariants(subject, "parse_binary.subject")
 	Precedence_Invariants(level, "parse_binary.level")
 	if bool(failed(subject)) {
 		return
@@ -2223,9 +2537,9 @@ func parse_binary(subject *Parse_State, level Precedence) {
 // Reports whether the token the cursor stands on states a sign this dialect refuses: the two signs
 // that join conditions, which are nested ifs written flat, and the two order signs that hold
 // equality, which a strict comparison states.
-func refuses_sign(subject *Parse_State) (yes Boolean) {
+func refuses_sign(subject Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "refuses_sign.yes") }()
-	Parse_State_Invariants(subject, "refuses_sign.subject")
+	Parse_State_Handle_Invariants(subject, "refuses_sign.subject")
 	switch at(subject) {
 	case token.KIND_LOGICAL_AND, token.KIND_LOGICAL_OR, token.KIND_LESS_EQUAL,
 		token.KIND_GREATER_EQUAL:
@@ -2251,8 +2565,8 @@ func binary_precedence(kind token.Kind) (level Precedence) {
 }
 
 // Parses one unary expression and its operand.
-func parse_unary(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_unary.subject")
+func parse_unary(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_unary.subject")
 	if bool(failed(subject)) {
 		return
 	}
@@ -2270,8 +2584,8 @@ func parse_unary(subject *Parse_State) {
 }
 
 // Parses one operand and every suffix that binds to it.
-func parse_primary(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_primary.subject")
+func parse_primary(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_primary.subject")
 	parse_operand(subject)
 	for range TOKEN_COUNT_MAXIMUM {
 		if bool(failed(subject)) {
@@ -2285,7 +2599,7 @@ func parse_primary(subject *Parse_State) {
 		case token.KIND_PARENTHESIS_LEFT:
 			parse_call_suffix(subject)
 		case token.KIND_BRACE_LEFT:
-			if bool(subject.Flags[FLAG_PLAIN_BRACE]) {
+			if bool(subject.Flags.Plain_Brace) {
 				if !bool(last_opens_literal(subject)) {
 					return
 				}
@@ -2300,8 +2614,8 @@ func parse_primary(subject *Parse_State) {
 
 // Parses one operand: a name, a literal, a grouping, a function literal, or a type that stands
 // where an expression can, such as the first argument of a conversion or of make.
-func parse_operand(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_operand.subject")
+func parse_operand(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_operand.subject")
 	if bool(failed(subject)) {
 		return
 	}
@@ -2341,14 +2655,14 @@ func parse_operand(subject *Parse_State) {
 
 // Parses one parenthesised expression. The brace rule of the enclosing control clause stops at
 // the parenthesis, because a literal inside a grouping is unambiguous again.
-func parse_grouping(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_grouping.subject")
+func parse_grouping(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_grouping.subject")
 	open_node(subject, NODE_PARENTHESIS)
 	advance(subject)
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = false
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = false
 	parse_expression(subject)
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	if !bool(accept(subject, token.KIND_PARENTHESIS_RIGHT)) {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
 	}
@@ -2357,24 +2671,24 @@ func parse_grouping(subject *Parse_State) {
 }
 
 // Parses one function literal and its body.
-func parse_function_literal(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_function_literal.subject")
+func parse_function_literal(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_function_literal.subject")
 	open_node(subject, NODE_FUNCTION_LITERAL)
 	advance(subject)
 	parse_signature(subject)
 	if at(subject) == token.KIND_BRACE_LEFT {
-		plain := subject.Flags[FLAG_PLAIN_BRACE]
-		subject.Flags[FLAG_PLAIN_BRACE] = false
+		plain := subject.Flags.Plain_Brace
+		subject.Flags.Plain_Brace = false
 		parse_block(subject)
-		subject.Flags[FLAG_PLAIN_BRACE] = plain
+		subject.Flags.Plain_Brace = plain
 	}
 	close_node(subject)
 	return
 }
 
 // Parses one selector or type assertion over the expression already read.
-func parse_selector_suffix(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_selector_suffix.subject")
+func parse_selector_suffix(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_selector_suffix.subject")
 	if after(subject) != token.KIND_PARENTHESIS_LEFT {
 		wrap_last(subject, Wrap_Kind(NODE_SELECTOR))
 		advance(subject)
@@ -2386,7 +2700,7 @@ func parse_selector_suffix(subject *Parse_State) {
 	advance(subject)
 	advance(subject)
 	if bool(accept(subject, token.KIND_TYPE)) {
-		subject.Flags[FLAG_TYPE_ASSERTION] = true
+		subject.Flags.Type_Assertion = true
 	} else {
 		parse_type(subject)
 	}
@@ -2400,12 +2714,12 @@ func parse_selector_suffix(subject *Parse_State) {
 // Parses one index, slice, or generic instantiation over the expression already read. A colon
 // inside the brackets makes it a slice and a comma makes it an instantiation, thus the kind is
 // settled only after the brackets close.
-func parse_index_suffix(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_index_suffix.subject")
+func parse_index_suffix(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_index_suffix.subject")
 	wrap_last(subject, Wrap_Kind(index_suffix_kind(subject)))
 	advance(subject)
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = false
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = false
 	for range TOKEN_COUNT_MAXIMUM {
 		if bool(failed(subject)) {
 			break
@@ -2421,7 +2735,7 @@ func parse_index_suffix(subject *Parse_State) {
 		}
 		parse_expression(subject)
 	}
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	close_node(subject)
 	return
 }
@@ -2429,15 +2743,15 @@ func parse_index_suffix(subject *Parse_State) {
 // Reads ahead to the bracket that closes the suffix at the cursor and names what it opens. A
 // colon inside makes a slice and a comma makes an instantiation, so the class is known before
 // the node is taken rather than written over it afterwards.
-func index_suffix_kind(subject *Parse_State) (kind Suffix_Kind) {
+func index_suffix_kind(subject Parse_State_Handle) (kind Suffix_Kind) {
 	defer func() { Suffix_Kind_Invariants(kind, "index_suffix_kind.kind") }()
-	Parse_State_Invariants(subject, "index_suffix_kind.subject")
+	Parse_State_Handle_Invariants(subject, "index_suffix_kind.subject")
 	depth := 0
 	kind = Suffix_Kind(NODE_INDEX)
-	position := int(subject.Token_Cursors[CURSOR_POSITION])
-	count := int(subject.Token_Cursors[CURSOR_TOKEN_COUNT])
+	position := int(subject.Token_Cursors.Position)
+	count := int(subject.Token_Cursors.Count)
 	for position < count {
-		switch subject.Tokens[position].Kind {
+		switch subject.Tokens.Values[position].Kind {
 		case token.KIND_BRACKET_LEFT, token.KIND_PARENTHESIS_LEFT, token.KIND_BRACE_LEFT:
 			depth++
 		case token.KIND_PARENTHESIS_RIGHT, token.KIND_BRACE_RIGHT:
@@ -2462,12 +2776,12 @@ func index_suffix_kind(subject *Parse_State) (kind Suffix_Kind) {
 }
 
 // Parses one call and its arguments over the expression already read.
-func parse_call_suffix(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_call_suffix.subject")
+func parse_call_suffix(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_call_suffix.subject")
 	wrap_last(subject, Wrap_Kind(NODE_CALL))
 	advance(subject)
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = false
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = false
 	for range TOKEN_COUNT_MAXIMUM {
 		if bool(failed(subject)) {
 			break
@@ -2484,14 +2798,14 @@ func parse_call_suffix(subject *Parse_State) {
 		accept(subject, token.KIND_COMMA)
 		accept(subject, token.KIND_SEMICOLON)
 	}
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	close_node(subject)
 	return
 }
 
 // Parses one composite literal over the type already read.
-func parse_composite_suffix(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_composite_suffix.subject")
+func parse_composite_suffix(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_composite_suffix.subject")
 	wrap_last(subject, Wrap_Kind(NODE_COMPOSITE))
 	parse_composite_body(subject)
 	close_node(subject)
@@ -2499,14 +2813,14 @@ func parse_composite_suffix(subject *Parse_State) {
 }
 
 // Parses the brace-delimited element list of a composite literal.
-func parse_composite_body(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_composite_body.subject")
+func parse_composite_body(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_composite_body.subject")
 	if !bool(accept(subject, token.KIND_BRACE_LEFT)) {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
 		return
 	}
-	plain := subject.Flags[FLAG_PLAIN_BRACE]
-	subject.Flags[FLAG_PLAIN_BRACE] = false
+	plain := subject.Flags.Plain_Brace
+	subject.Flags.Plain_Brace = false
 	for range TOKEN_COUNT_MAXIMUM {
 		if bool(failed(subject)) {
 			break
@@ -2519,14 +2833,14 @@ func parse_composite_body(subject *Parse_State) {
 		accept(subject, token.KIND_COMMA)
 		accept(subject, token.KIND_SEMICOLON)
 	}
-	subject.Flags[FLAG_PLAIN_BRACE] = plain
+	subject.Flags.Plain_Brace = plain
 	return
 }
 
 // Parses one element of a composite literal. An element may leave its type out, which is why a
 // brace can open an element of its own.
-func parse_element(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_element.subject")
+func parse_element(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_element.subject")
 	parse_element_value(subject)
 	if at(subject) != token.KIND_COLON {
 		return
@@ -2539,8 +2853,8 @@ func parse_element(subject *Parse_State) {
 }
 
 // Parses one element value, which is either a nested literal body or an expression.
-func parse_element_value(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_element_value.subject")
+func parse_element_value(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_element_value.subject")
 	if at(subject) != token.KIND_BRACE_LEFT {
 		parse_expression(subject)
 		return
@@ -2552,8 +2866,8 @@ func parse_element_value(subject *Parse_State) {
 }
 
 // Takes one literal token as a node of its own.
-func parse_literal(subject *Parse_State, kind Literal_Kind) {
-	Parse_State_Invariants(subject, "parse_literal.subject")
+func parse_literal(subject Parse_State_Handle, kind Literal_Kind) {
+	Parse_State_Handle_Invariants(subject, "parse_literal.subject")
 	Literal_Kind_Invariants(kind, "parse_literal.kind")
 	open_node(subject, Node_Kind(kind))
 	close_node(subject)
@@ -2563,18 +2877,18 @@ func parse_literal(subject *Parse_State, kind Literal_Kind) {
 // Reports whether the node just parsed is a type that opens a composite literal beyond doubt. A
 // control clause bars a literal whose type is a bare name, because `for x {` opens a body and
 // never a literal of type x, but `for range []T{...} {` reads only one way and Go admits it.
-func last_opens_literal(subject *Parse_State) (yes Boolean) {
+func last_opens_literal(subject Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "last_opens_literal.yes") }()
-	Parse_State_Invariants(subject, "last_opens_literal.subject")
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
+	Parse_State_Handle_Invariants(subject, "last_opens_literal.subject")
+	depth := subject.Node_Cursors.Depth
 	if depth == 0 {
 		return false
 	}
 	if int(depth) > DEPTH_MAXIMUM {
 		return false
 	}
-	last := subject.Last_Children[depth-1]
-	switch subject.Nodes[last].Kind {
+	last := subject.Last_Children.Values[depth-1]
+	switch subject.Nodes.Values[last].Kind {
 	case NODE_SLICE_TYPE, NODE_ARRAY_TYPE, NODE_MAP_TYPE, NODE_STRUCTURE_TYPE:
 		return true
 	}
@@ -2582,18 +2896,18 @@ func last_opens_literal(subject *Parse_State) (yes Boolean) {
 }
 
 // Failure reports why the parse stopped, or FAILURE_NONE when it ran clean.
-func Failure(subject *Parse_State) (code Failure_Code) {
+func Failure(subject Parse_State_Handle) (code Failure_Code) {
 	defer func() { Failure_Code_Invariants(code, "failure.code") }()
-	Parse_State_Invariants(subject, "failure.subject")
-	return subject.Causes[CAUSE_SLOT]
+	Parse_State_Handle_Invariants(subject, "failure.subject")
+	return subject.Causes.Cause
 }
 
 // Failure_Token reports the run position of the token the parse refused. It carries no meaning
 // while Failure reads FAILURE_NONE.
-func Failure_Token(subject *Parse_State) (index Token_Index) {
+func Failure_Token(subject Parse_State_Handle) (index Token_Index) {
 	defer func() { Token_Index_Invariants(index, "failure_token.index") }()
-	Parse_State_Invariants(subject, "failure_token.subject")
-	return subject.Token_Cursors[CURSOR_FAILURE]
+	Parse_State_Handle_Invariants(subject, "failure_token.subject")
+	return Token_Index(subject.Token_Cursors.Failure)
 }
 
 // Failure_Message reads one failure code as a sentence that says what to do about it. Each
@@ -2643,13 +2957,13 @@ func Failure_Message(code Failure_Code) (text Message) {
 // Names a refused byte at or above 128 for what it is. The scanner calls such a byte illegal,
 // and only the source tells a stray byte apart from a name Go would have taken, thus the reading
 // happens here where the source is still in reach.
-func name_wide_identifier(subject *Parse_State, source token.Source) {
-	Parse_State_Invariants(subject, "name_wide_identifier.subject")
+func name_wide_identifier(subject Parse_State_Handle, source token.Source) {
+	Parse_State_Handle_Invariants(subject, "name_wide_identifier.subject")
 	token.Source_Invariants(source, "name_wide_identifier.source")
-	if subject.Causes[CAUSE_SLOT] != FAILURE_SYNTAX {
+	if subject.Causes.Cause != FAILURE_SYNTAX {
 		return
 	}
-	one := subject.Tokens[subject.Token_Cursors[CURSOR_FAILURE]]
+	one := subject.Tokens.Values[subject.Token_Cursors.Failure]
 	if one.Kind != token.KIND_ILLEGAL {
 		return
 	}
@@ -2659,20 +2973,20 @@ func name_wide_identifier(subject *Parse_State, source token.Source) {
 	if source[one.Offset] < WIDE_BYTE_MINIMUM {
 		return
 	}
-	subject.Causes[CAUSE_SLOT] = FAILURE_WIDE_IDENTIFIER
+	subject.Causes.Cause = FAILURE_WIDE_IDENTIFIER
 }
 
 // Reports whether the name after the comma opens a qualified or generic type rather than one
 // more parameter name. A run such as "string, transform.Transformer" is a run of types, and only
 // the token past the second name tells it from a run of names sharing one type.
-func qualifies_after(subject *Parse_State) (yes Boolean) {
+func qualifies_after(subject Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "qualifies_after.yes") }()
-	Parse_State_Invariants(subject, "qualifies_after.subject")
-	position := subject.Token_Cursors[CURSOR_POSITION]
-	if int(position)+2 >= int(subject.Token_Cursors[CURSOR_TOKEN_COUNT]) {
+	Parse_State_Handle_Invariants(subject, "qualifies_after.subject")
+	position := subject.Token_Cursors.Position
+	if int(position)+2 >= int(subject.Token_Cursors.Count) {
 		return false
 	}
-	switch subject.Tokens[position+2].Kind {
+	switch subject.Tokens.Values[position+2].Kind {
 	case token.KIND_PERIOD, token.KIND_BRACKET_LEFT:
 		return true
 	}
@@ -2681,8 +2995,8 @@ func qualifies_after(subject *Parse_State) (yes Boolean) {
 
 // Takes one struct field name. It stands apart from a plain identifier so a later pass tells a
 // field name from the type behind it without guessing which child of the field is which.
-func parse_field_name(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_field_name.subject")
+func parse_field_name(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_field_name.subject")
 	if at(subject) != token.KIND_IDENTIFIER {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
 		return
@@ -2696,41 +3010,41 @@ func parse_field_name(subject *Parse_State) {
 // step carries, thus the pass runs here where the source is still in reach. The walk to the name
 // a field embeds stays inline, because a step that took a slot number would owe every slot at
 // one call site and a field never occupies the first of them.
-func name_banned_identifier(subject *Parse_State, source token.Source) {
-	Parse_State_Invariants(subject, "name_banned_identifier.subject")
+func name_banned_identifier(subject Parse_State_Handle, source token.Source) {
+	Parse_State_Handle_Invariants(subject, "name_banned_identifier.subject")
 	token.Source_Invariants(source, "name_banned_identifier.source")
-	if subject.Causes[CAUSE_SLOT] != FAILURE_NONE {
+	if subject.Causes.Cause != FAILURE_NONE {
 		return
 	}
-	count := subject.Node_Cursors[CURSOR_NODE_COUNT]
-	for slot := INDEX_FIRST; slot < count; slot++ {
+	count := subject.Node_Cursors.Count
+	for slot := INDEX_FIRST; slot < Index(count); slot++ {
 		target := INDEX_ABSENT
-		if subject.Nodes[slot].Kind == NODE_FIELD_NAME {
+		if subject.Nodes.Values[slot].Kind == NODE_FIELD_NAME {
 			target = slot
 		}
-		if subject.Nodes[slot].Kind == NODE_FIELD {
-			walk := Index(subject.Nodes[slot].First_Child)
+		if subject.Nodes.Values[slot].Kind == NODE_FIELD {
+			walk := Index(subject.Nodes.Values[slot].First_Child)
 			for range EMBEDDED_WALK_MAXIMUM {
 				if walk == INDEX_ABSENT {
 					break
 				}
-				if subject.Nodes[walk].Kind == NODE_FIELD_NAME {
+				if subject.Nodes.Values[walk].Kind == NODE_FIELD_NAME {
 					break
 				}
-				if subject.Nodes[walk].Kind == NODE_IDENTIFIER {
+				if subject.Nodes.Values[walk].Kind == NODE_IDENTIFIER {
 					target = walk
 					break
 				}
-				if subject.Nodes[walk].Kind == NODE_SELECTOR {
-					head := subject.Nodes[walk].First_Child
-					walk = Index(subject.Nodes[head].Next)
+				if subject.Nodes.Values[walk].Kind == NODE_SELECTOR {
+					head := subject.Nodes.Values[walk].First_Child
+					walk = Index(subject.Nodes.Values[head].Next)
 					continue
 				}
-				walk = Index(subject.Nodes[walk].First_Child)
+				walk = Index(subject.Nodes.Values[walk].First_Child)
 			}
 		}
 		if target != INDEX_ABSENT {
-			one := subject.Tokens[subject.Nodes[target].Token]
+			one := subject.Tokens.Values[subject.Nodes.Values[target].Token]
 			name := source[one.Offset : int(one.Offset)+int(one.Size)]
 			// The test stays inline, because a step that took the name would owe every
 			// source length at one call site and a field name is never a whole file.
@@ -2742,18 +3056,20 @@ func name_banned_identifier(subject *Parse_State, source token.Source) {
 				// Cause first: fail names the token the cursor stands on,
 				// and the name that broke the rule sits far behind it.
 				fail(subject, Cause(FAILURE_PRIVATE_FIELD))
-				subject.Token_Cursors[CURSOR_FAILURE] = subject.Nodes[target].Token
+				subject.Token_Cursors.Failure = Refusal_Token(
+					subject.Nodes.Values[target].Token)
 				return
 			}
 		}
-		if subject.Nodes[slot].Kind != NODE_IDENTIFIER {
+		if subject.Nodes.Values[slot].Kind != NODE_IDENTIFIER {
 			continue
 		}
-		one := subject.Tokens[subject.Nodes[slot].Token]
+		one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
 		constant := source[one.Offset : int(one.Offset)+int(one.Size)]
 		if string(constant) == IOTA_NAME {
 			fail(subject, Cause(FAILURE_IOTA))
-			subject.Token_Cursors[CURSOR_FAILURE] = subject.Nodes[slot].Token
+			subject.Token_Cursors.Failure = Refusal_Token(
+				subject.Nodes.Values[slot].Token)
 			return
 		}
 	}
@@ -2763,9 +3079,9 @@ func name_banned_identifier(subject *Parse_State, source token.Source) {
 // reads two ways: a name before an array or slice type, or a generic type the field embeds. The
 // token behind the closing bracket tells them apart, because a field that ends there embedded a
 // type and one that reads on named it.
-func field_has_name(subject *Parse_State) (yes Boolean) {
+func field_has_name(subject Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "field_has_name.yes") }()
-	Parse_State_Invariants(subject, "field_has_name.subject")
+	Parse_State_Handle_Invariants(subject, "field_has_name.subject")
 	if at(subject) != token.KIND_IDENTIFIER {
 		return false
 	}
@@ -2779,14 +3095,14 @@ func field_has_name(subject *Parse_State) (yes Boolean) {
 }
 
 // Reports whether the bracket run after the name at the cursor ends the field.
-func closes_field(subject *Parse_State) (yes Boolean) {
+func closes_field(subject Parse_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "closes_field.yes") }()
-	Parse_State_Invariants(subject, "closes_field.subject")
+	Parse_State_Handle_Invariants(subject, "closes_field.subject")
 	depth := 0
-	position := int(subject.Token_Cursors[CURSOR_POSITION]) + 1
-	count := int(subject.Token_Cursors[CURSOR_TOKEN_COUNT])
+	position := int(subject.Token_Cursors.Position) + 1
+	count := int(subject.Token_Cursors.Count)
 	for position < count {
-		switch subject.Tokens[position].Kind {
+		switch subject.Tokens.Values[position].Kind {
 		case token.KIND_BRACKET_LEFT:
 			depth++
 		case token.KIND_BRACKET_RIGHT:
@@ -2795,7 +3111,7 @@ func closes_field(subject *Parse_State) (yes Boolean) {
 				// Inline, because a step taking the kind would owe the end
 				// of file at one call site and a closing bracket always draws
 				// an inserted semicolon ahead of it.
-				switch subject.Tokens[position+1].Kind {
+				switch subject.Tokens.Values[position+1].Kind {
 				case token.KIND_SEMICOLON, token.KIND_BRACE_RIGHT,
 					token.KIND_STRING, token.KIND_COMMENT:
 					return true
@@ -2810,32 +3126,32 @@ func closes_field(subject *Parse_State) (yes Boolean) {
 
 // Names an import bound to the blank name. The name reads from the source, which no parse step
 // carries, thus the pass runs here where the source is still in reach.
-func name_blank_import(subject *Parse_State, source token.Source) {
-	Parse_State_Invariants(subject, "name_blank_import.subject")
+func name_blank_import(subject Parse_State_Handle, source token.Source) {
+	Parse_State_Handle_Invariants(subject, "name_blank_import.subject")
 	token.Source_Invariants(source, "name_blank_import.source")
-	if subject.Causes[CAUSE_SLOT] != FAILURE_NONE {
+	if subject.Causes.Cause != FAILURE_NONE {
 		return
 	}
-	count := subject.Node_Cursors[CURSOR_NODE_COUNT]
-	for slot := INDEX_FIRST; slot < count; slot++ {
-		if subject.Nodes[slot].Kind != NODE_IMPORT_NAME {
+	count := subject.Node_Cursors.Count
+	for slot := INDEX_FIRST; slot < Index(count); slot++ {
+		if subject.Nodes.Values[slot].Kind != NODE_IMPORT_NAME {
 			continue
 		}
-		one := subject.Tokens[subject.Nodes[slot].Token]
+		one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
 		name := source[one.Offset : int(one.Offset)+int(one.Size)]
 		if string(name) != BLANK_NAME {
 			continue
 		}
 		fail(subject, Cause(FAILURE_BLANK_IMPORT))
-		subject.Token_Cursors[CURSOR_FAILURE] = subject.Nodes[slot].Token
+		subject.Token_Cursors.Failure = Refusal_Token(subject.Nodes.Values[slot].Token)
 		return
 	}
 }
 
 // Takes one name a const or var declaration binds. A constant name stands apart, because it
 // answers to a case rule of its own and no bare identifier run states which it is.
-func parse_value_name(subject *Parse_State, kind Value_Kind) {
-	Parse_State_Invariants(subject, "parse_value_name.subject")
+func parse_value_name(subject Parse_State_Handle, kind Value_Kind) {
+	Parse_State_Handle_Invariants(subject, "parse_value_name.subject")
 	Value_Kind_Invariants(kind, "parse_value_name.kind")
 	if at(subject) != token.KIND_IDENTIFIER {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
@@ -2852,18 +3168,18 @@ func parse_value_name(subject *Parse_State, kind Value_Kind) {
 
 // Names a constant that is no run of uppercase words joined by single underscores. The name
 // reads from the source, which no parse step carries, thus the pass runs here.
-func name_constant_case(subject *Parse_State, source token.Source) {
-	Parse_State_Invariants(subject, "name_constant_case.subject")
+func name_constant_case(subject Parse_State_Handle, source token.Source) {
+	Parse_State_Handle_Invariants(subject, "name_constant_case.subject")
 	token.Source_Invariants(source, "name_constant_case.source")
-	if subject.Causes[CAUSE_SLOT] != FAILURE_NONE {
+	if subject.Causes.Cause != FAILURE_NONE {
 		return
 	}
-	count := subject.Node_Cursors[CURSOR_NODE_COUNT]
-	for slot := INDEX_FIRST; slot < count; slot++ {
-		if subject.Nodes[slot].Kind != NODE_CONSTANT_NAME {
+	count := subject.Node_Cursors.Count
+	for slot := INDEX_FIRST; slot < Index(count); slot++ {
+		if subject.Nodes.Values[slot].Kind != NODE_CONSTANT_NAME {
 			continue
 		}
-		one := subject.Tokens[subject.Nodes[slot].Token]
+		one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
 		name := source[one.Offset : int(one.Offset)+int(one.Size)]
 		screams := true
 		if name[0] < 'A' {
@@ -2901,7 +3217,7 @@ func name_constant_case(subject *Parse_State, source token.Source) {
 			continue
 		}
 		fail(subject, Cause(FAILURE_CONSTANT_CASE))
-		subject.Token_Cursors[CURSOR_FAILURE] = subject.Nodes[slot].Token
+		subject.Token_Cursors.Failure = Refusal_Token(subject.Nodes.Values[slot].Token)
 		return
 	}
 }
@@ -2911,27 +3227,28 @@ func name_constant_case(subject *Parse_State, source token.Source) {
 // Names a loop that no clause constrains: a bare for, a three-clause for with every clause
 // empty, and a for whose only condition is the true literal. A source that means to run forever
 // says so with a range, which is a form of its own and reads as the assertion it is.
-func name_bare_loop(subject *Parse_State, source token.Source) {
-	Parse_State_Invariants(subject, "name_bare_loop.subject")
+func name_bare_loop(subject Parse_State_Handle, source token.Source) {
+	Parse_State_Handle_Invariants(subject, "name_bare_loop.subject")
 	token.Source_Invariants(source, "name_bare_loop.source")
-	if subject.Causes[CAUSE_SLOT] != FAILURE_NONE {
+	if subject.Causes.Cause != FAILURE_NONE {
 		return
 	}
-	count := subject.Node_Cursors[CURSOR_NODE_COUNT]
-	for slot := INDEX_FIRST; slot < count; slot++ {
-		if subject.Nodes[slot].Kind != NODE_FOR {
+	count := subject.Node_Cursors.Count
+	for slot := INDEX_FIRST; slot < Index(count); slot++ {
+		if subject.Nodes.Values[slot].Kind != NODE_FOR {
 			continue
 		}
-		head := Index(subject.Nodes[slot].First_Child)
+		head := Index(subject.Nodes.Values[slot].First_Child)
 		if head == INDEX_ABSENT {
 			continue
 		}
-		bare := subject.Nodes[head].Kind == NODE_BLOCK
-		if subject.Nodes[head].Kind == NODE_EXPRESSION_STATEMENT {
-			inner := Index(subject.Nodes[head].First_Child)
+		bare := subject.Nodes.Values[head].Kind == NODE_BLOCK
+		if subject.Nodes.Values[head].Kind == NODE_EXPRESSION_STATEMENT {
+			inner := Index(subject.Nodes.Values[head].First_Child)
 			if inner != INDEX_ABSENT {
-				if subject.Nodes[inner].Kind == NODE_IDENTIFIER {
-					one := subject.Tokens[subject.Nodes[inner].Token]
+				if subject.Nodes.Values[inner].Kind == NODE_IDENTIFIER {
+					name_token := subject.Nodes.Values[inner].Token
+					one := subject.Tokens.Values[name_token]
 					name := source[one.Offset : int(one.Offset)+int(one.Size)]
 					bare = string(name) == TRUE_NAME
 				}
@@ -2941,47 +3258,47 @@ func name_bare_loop(subject *Parse_State, source token.Source) {
 			continue
 		}
 		fail(subject, Cause(FAILURE_BARE_LOOP))
-		subject.Token_Cursors[CURSOR_FAILURE] = subject.Nodes[slot].Token
+		subject.Token_Cursors.Failure = Refusal_Token(subject.Nodes.Values[slot].Token)
 		return
 	}
 }
 
 // Names a signature result that carries no name. A result that names itself holds its name and
 // its type, thus a result holding one child alone is a type standing on its own.
-func name_unnamed_result(subject *Parse_State) {
-	Parse_State_Invariants(subject, "name_unnamed_result.subject")
-	if subject.Causes[CAUSE_SLOT] != FAILURE_NONE {
+func name_unnamed_result(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "name_unnamed_result.subject")
+	if subject.Causes.Cause != FAILURE_NONE {
 		return
 	}
-	count := subject.Node_Cursors[CURSOR_NODE_COUNT]
-	for slot := INDEX_FIRST; slot < count; slot++ {
-		if subject.Nodes[slot].Kind != NODE_RESULT {
+	count := subject.Node_Cursors.Count
+	for slot := INDEX_FIRST; slot < Index(count); slot++ {
+		if subject.Nodes.Values[slot].Kind != NODE_RESULT {
 			continue
 		}
-		child := Index(subject.Nodes[slot].First_Child)
+		child := Index(subject.Nodes.Values[slot].First_Child)
 		named := false
 		for range TOKEN_COUNT_MAXIMUM {
 			if child == INDEX_ABSENT {
 				break
 			}
-			if subject.Nodes[child].Kind == NODE_PARAMETER_NAME {
+			if subject.Nodes.Values[child].Kind == NODE_PARAMETER_NAME {
 				named = true
 				break
 			}
-			child = Index(subject.Nodes[child].Next)
+			child = Index(subject.Nodes.Values[child].Next)
 		}
 		if named {
 			continue
 		}
 		fail(subject, Cause(FAILURE_UNNAMED_RESULT))
-		subject.Token_Cursors[CURSOR_FAILURE] = subject.Nodes[slot].Token
+		subject.Token_Cursors.Failure = Refusal_Token(subject.Nodes.Values[slot].Token)
 		return
 	}
 }
 
 // Takes one name a signature binds.
-func parse_parameter_name(subject *Parse_State) {
-	Parse_State_Invariants(subject, "parse_parameter_name.subject")
+func parse_parameter_name(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "parse_parameter_name.subject")
 	if at(subject) != token.KIND_IDENTIFIER {
 		reject(subject, Reject_Cause(FAILURE_SYNTAX))
 		return
@@ -2992,23 +3309,23 @@ func parse_parameter_name(subject *Parse_State) {
 }
 
 // Reads every name of the open node back to an identifier, which is what they were.
-func unname_children(subject *Parse_State) {
-	Parse_State_Invariants(subject, "unname_children.subject")
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
+func unname_children(subject Parse_State_Handle) {
+	Parse_State_Handle_Invariants(subject, "unname_children.subject")
+	depth := subject.Node_Cursors.Depth
 	if depth == 0 {
 		return
 	}
 	if int(depth) > DEPTH_MAXIMUM {
 		return
 	}
-	child := Index(subject.Nodes[subject.Parents[depth-1]].First_Child)
+	child := Index(subject.Nodes.Values[subject.Parents.Values[depth-1]].First_Child)
 	for range TOKEN_COUNT_MAXIMUM {
 		if child == INDEX_ABSENT {
 			return
 		}
-		if subject.Nodes[child].Kind == NODE_PARAMETER_NAME {
-			subject.Nodes[child].Kind = NODE_IDENTIFIER
+		if subject.Nodes.Values[child].Kind == NODE_PARAMETER_NAME {
+			subject.Nodes.Values[child].Kind = NODE_IDENTIFIER
 		}
-		child = Index(subject.Nodes[child].Next)
+		child = Index(subject.Nodes.Values[child].Next)
 	}
 }

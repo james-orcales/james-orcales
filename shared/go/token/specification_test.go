@@ -100,6 +100,12 @@ type allocation_fixture struct {
 	Column  token.Column
 }
 
+func line_index() (index token.Line_Index) {
+	return token.Line_Index{
+		Starts: make(token.Line_Starts, token.LINE_COUNT_MAXIMUM),
+	}
+}
+
 func scan_kinds(text string) (kinds []token.Kind) {
 	scanner := token.Scanner{Source: token.Source(text)}
 	for range TEST_TOKEN_COUNT_MAXIMUM {
@@ -474,6 +480,7 @@ func oversized_source_bounds(t *testing.T) {
 
 func test_allocation(t *testing.T) {
 	fixture := allocation_fixture{}
+	fixture.Index = line_index()
 	source := token.Source("a + 1")
 	checks := []struct {
 		Name string
@@ -490,7 +497,8 @@ func test_allocation(t *testing.T) {
 			fixture.Indexed = token.Index_Lines(&fixture.Index, source)
 		}},
 		{Name: "Position_Of", Call: func() {
-			fixture.Line, fixture.Column = token.Position_Of(&fixture.Index, 2)
+			result := token.Position_Of(&fixture.Index, 2)
+			fixture.Line, fixture.Column = result.Line, result.Column
 		}},
 	}
 	for _, check := range checks {
@@ -502,9 +510,13 @@ func test_allocation(t *testing.T) {
 }
 
 func test_positions(t *testing.T) {
-	index := new(token.Line_Index)
+	index := line_index()
+	result := token.Position_Of(&index, 0)
+	line, column := result.Line, result.Column
+	testify.Equal(t, token.Line(1), line, "empty index opens on its first line")
+	testify.Equal(t, token.Column(1), column, "empty index opens at its first column")
 	source := token.Source("package one\n\nfunc Fold() {\n\treturn\n}\n")
-	testify.True(t, bool(token.Index_Lines(index, source)), "a source of few lines indexes")
+	testify.True(t, bool(token.Index_Lines(&index, source)), "a source of few lines indexes")
 	for _, one := range []struct {
 		Offset token.Offset
 		Line   token.Line
@@ -519,14 +531,15 @@ func test_positions(t *testing.T) {
 		{28, 4, 2},
 		{token.Offset(len(source)), 6, 1},
 	} {
-		line, column := token.Position_Of(index, one.Offset)
+		result = token.Position_Of(&index, one.Offset)
+		line, column = result.Line, result.Column
 		testify.Equal(t, one.Line, line, "the offset %d stands on its line", one.Offset)
 		testify.Equal(t, one.Column, column, "the offset %d names its column",
 			one.Offset)
 	}
-	positions_empty(t, index)
-	positions_widest(t, index)
-	positions_past_bound(t, index)
+	positions_empty(t, &index)
+	positions_widest(t, &index)
+	positions_past_bound(t, &index)
 }
 
 func positions_empty(t *testing.T, index *token.Line_Index) {
@@ -536,12 +549,14 @@ func positions_empty(t *testing.T, index *token.Line_Index) {
 	} {
 		testify.True(t, bool(token.Index_Lines(index, one)),
 			"a source of %d bytes indexes", len(one))
-		line, column := token.Position_Of(index, 0)
+		result := token.Position_Of(index, 0)
+		line, column := result.Line, result.Column
 		testify.Equal(t, token.Line(1), line, "a short source opens on its first line")
 		testify.Equal(t, token.Column(1), column,
 			"a short source opens at its first column")
 	}
-	line, column := token.Position_Of(index, 2)
+	result := token.Position_Of(index, 2)
+	line, column := result.Line, result.Column
 	testify.Equal(t, token.Line(2), line, "the byte after a line feed opens the next line")
 	testify.Equal(t, token.Column(1), column, "the next line opens at the first column")
 }
@@ -554,11 +569,13 @@ func positions_widest(t *testing.T, index *token.Line_Index) {
 	}
 	testify.True(t, bool(token.Index_Lines(index, token.Source(wide))),
 		"a source of one widest line indexes")
-	line, column := token.Position_Of(index, token.Offset(len(wide)-1))
+	result := token.Position_Of(index, token.Offset(len(wide)-1))
+	line, column := result.Line, result.Column
 	testify.Equal(t, token.Line(1), line, "one line holds the widest source")
 	testify.Equal(t, token.Column(token.COLUMN_MAXIMUM-1), column,
 		"the final byte of the widest line names its column")
-	line, column = token.Position_Of(index, token.OFFSET_MAXIMUM)
+	result = token.Position_Of(index, token.OFFSET_MAXIMUM)
+	line, column = result.Line, result.Column
 	testify.Equal(t, token.Line(1), line,
 		"the offset past the widest source stands on its line")
 	testify.Equal(t, token.Column(token.COLUMN_MAXIMUM), column,
@@ -573,10 +590,11 @@ func positions_past_bound(t *testing.T, index *token.Line_Index) {
 	}
 	testify.True(t, bool(token.Index_Lines(index, token.Source(filled))),
 		"a source of every line the index holds indexes")
-	line, column := token.Position_Of(index, token.Offset(len(filled)))
+	result := token.Position_Of(index, token.Offset(len(filled)))
+	line, column := result.Line, result.Column
 	testify.Equal(t, token.Line(token.LINE_MAXIMUM), line, "the final line reads back")
 	testify.Equal(t, token.Column(1), column, "the final line opens at the first column")
-	line, _ = token.Position_Of(index, 1)
+	line = token.Position_Of(index, 1).Line
 	testify.Equal(t, token.Line(2), line, "the second line reads back")
 	past := make([]byte, token.LINE_COUNT_MAXIMUM)
 	for slot := range past {

@@ -16,6 +16,11 @@ func storage_loop(state unsafe.Pointer) (loop nbio.IO) {
 	}
 }
 
+// Provides every invariant entry point the complete caller-owned tag storage it needs.
+func target_state() (held Target) {
+	return Target{Tags: Target_Tag_Storage{Values: make(Target_Tags, TAG_COUNT_MAXIMUM)}}
+}
+
 // Test_Storage_Widths drives every step of a directory read through storage of the widths the
 // package admits. A step reaching one width states nothing about the step beside it, thus every
 // entry point stands in the sweep and the widths are the ones the domains name: none, one, two,
@@ -34,25 +39,25 @@ func Test_Storage_Widths(t *testing.T) {
 		STORAGE_SIZE_MINIMUM, STORAGE_SIZE_MINIMUM + 1, STORAGE_SIZE_MINIMUM + 2,
 		STORAGE_SIZE_MAXIMUM,
 	}
-	phases := []Count{
+	phases := []Phase{
 		PHASE_IDLE, PHASE_OPEN_DIRECTORY, PHASE_READ_ENTRIES, PHASE_CLOSE_DIRECTORY,
 	}
 	for index := range slots {
 		memory := storage_widths(slots[index], records[index], bytes[index])
-		one := Target{}
-		runner := Directory_Runner{
+		one := target_state()
+		runner := Directory_Runner{Directory_Runner_Fields: Directory_Runner_Fields{
 			Loop:   Loop(storage_loop(unsafe.Pointer(&one))),
 			Target: &one, Reader: memory.Reader, Entries: memory.Entries,
 			Records: memory.Records, Names: memory.Names, Bytes: memory.Bytes,
 			Header: memory.Header,
-		}
-		runner.Counts[DIRECTORY_COUNT_PHASE] = phases[index]
+		}}
+		runner.Counts.Phase = phases[index]
 		storage_step_widths(runner)
 		storage_init_widths(runner, memory)
 	}
 	// An open meets the storage it writes into, thus one standing nowhere at all stands read
 	// as well as one the caller owns.
-	none := Target{}
+	none := target_state()
 	storage_boundary(func() {
 		Directory_Runner_Init(
 			nil, storage_loop(unsafe.Pointer(&none)), &none, "",
@@ -61,14 +66,14 @@ func Test_Storage_Widths(t *testing.T) {
 	})
 	// A read hands its names back after it stops, thus the widest run of names stands on a
 	// runner that stopped and never on one mid-read.
-	one := Target{}
-	filled := Directory_Runner{
+	one := target_state()
+	filled := Directory_Runner{Directory_Runner_Fields: Directory_Runner_Fields{
 		Loop:   Loop(storage_loop(unsafe.Pointer(&one))),
 		Target: &one, Reader: new(Build),
 		Names: make(Name_Storage, ENTRY_COUNT_MAXIMUM),
-	}
-	filled.Counts[DIRECTORY_COUNT_NAME] = ENTRY_COUNT_MAXIMUM
-	filled.Flags[DIRECTORY_FLAG_STOPPED] = true
+	}}
+	filled.Counts.Name = ENTRY_COUNT_MAXIMUM
+	filled.Flags.Stopped = true
 	storage_boundary(func() { Directory_Runner_Names(&filled) })
 	testify.True(t, true, "every step of a read stands on every width")
 }
@@ -107,7 +112,7 @@ func storage_step_widths(runner Directory_Runner) {
 // Opens one read on the widths named, which is the width the caller states rather than the width
 // the runner already holds.
 func storage_init_widths(runner Directory_Runner, memory Directory_Memory) {
-	one := Target{}
+	one := target_state()
 	storage_boundary(func() {
 		value := runner
 		Directory_Runner_Init(

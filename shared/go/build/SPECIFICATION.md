@@ -54,5 +54,5 @@ target holds at most 32 tags of its own.
 
 # Allocation
 
-Every read performs zero heap allocation. The caller owns the target, the state, and the text each
-read stands on.
+Every read and directory-runner operation performs zero heap allocation. Caller owns target,
+reader state, entry records, name slots, name bytes, header bytes, and text each read stands on.
