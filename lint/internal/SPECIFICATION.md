@@ -243,7 +243,7 @@ A function body holds at least one statement; an empty body is banned.
 
 ### Closure Bodies
 
-Outside test files, a closure body is empty or holds exactly one direct function call, optionally
+Outside test files, a closure body is empty or holds only direct function calls; the last may be
 returned. This keeps callback logic in named functions while permitting bounded no-op callbacks.
 
 ### Methods

@@ -4061,7 +4061,7 @@ func F() { return }
 	run_diag_table(t, tests)
 }
 
-// Test_Closure_Bodies pins closures to delegation only, while test fixtures
+// Test_Closure_Bodies pins closures to call sequences only, while test fixtures
 // keep freedom to build compact callbacks with local setup and checks.
 func Test_Closure_Bodies(t *testing.T) {
 	t.Parallel()
@@ -4095,7 +4095,7 @@ func f() {
 			Want_Diag: "",
 		},
 		{
-			Name: "two call closure flagged",
+			Name: "two call closure allowed",
 			Files: map[string]string{"rule.go": `package main
 
 func called() { return }
@@ -4108,7 +4108,7 @@ func f() {
 	callback()
 }
 `},
-			Want_Diag: "closure body must be empty or contain one function call",
+			Want_Diag: "",
 		},
 		{
 			Name: "non-call closure flagged",
@@ -4119,13 +4119,14 @@ func f() {
 	callback()
 }
 `},
-			Want_Diag: "closure body must be empty or contain one function call",
+			Want_Diag: "closure body must be empty or contain only function calls",
 		},
 	})
 }
 
-// Test_Closure_Bodies_Part2 covers returned delegation, assignments, ordinary
-// functions, and test-file exemption without breaching function size limit.
+// Test_Closure_Bodies_Part2 covers returned delegation, assignments, return
+// position, ordinary functions, and test-file exemption without breaching
+// function size limit.
 func Test_Closure_Bodies_Part2(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
@@ -4157,7 +4158,39 @@ func f() {
 	callback()
 }
 `},
-			Want_Diag: "closure body must be empty or contain one function call",
+			Want_Diag: "closure body must be empty or contain only function calls",
+		},
+		{
+			Name: "calls then return call closure allowed",
+			Files: map[string]string{"rule.go": `package main
+
+func called() (result int) { return 0 }
+
+func f() {
+	callback := func() (result int) {
+		called()
+		return called()
+	}
+	callback()
+}
+`},
+			Want_Diag: "",
+		},
+		{
+			Name: "return before last call flagged",
+			Files: map[string]string{"rule.go": `package main
+
+func called() (result int) { return 0 }
+
+func f() {
+	callback := func() (result int) {
+		return called()
+		called()
+	}
+	callback()
+}
+`},
+			Want_Diag: "closure body must be empty or contain only function calls",
 		},
 		{
 			Name: "function declaration unaffected",

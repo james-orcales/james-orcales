@@ -6246,31 +6246,41 @@ func check_closure_body_node(
 	if len(literal.Body.List) == 0 {
 		return true
 	}
-	if closure_body_is_call(literal.Body.List) {
+	if closure_body_is_calls(literal.Body.List) {
 		return true
 	}
 	*diags = append(*diags, Diagnostic{
 		Position: file_set.Position(literal.Pos()),
-		Message: "The closure body must be empty or contain one function call. " +
+		Message: "The closure body must be empty or contain only function calls. " +
 			"Move logic into a named function.",
 	})
 	return true
 }
 
-func closure_body_is_call(statements []ast.Stmt) (is_call bool) {
-	if len(statements) != 1 {
-		return false
-	}
-	switch statement := statements[0].(type) {
-	case *ast.ExprStmt:
-		return closure_expression_is_call(statement.X)
-	case *ast.ReturnStmt:
-		if len(statement.Results) != 1 {
+// Every statement is a direct call; only the last may return one. A return
+// earlier than last leaves dead calls behind it.
+func closure_body_is_calls(statements []ast.Stmt) (is_calls bool) {
+	for index, statement := range statements {
+		switch statement := statement.(type) {
+		case *ast.ExprStmt:
+			if !closure_expression_is_call(statement.X) {
+				return false
+			}
+		case *ast.ReturnStmt:
+			if index != len(statements)-1 {
+				return false
+			}
+			if len(statement.Results) != 1 {
+				return false
+			}
+			if !closure_expression_is_call(statement.Results[0]) {
+				return false
+			}
+		default:
 			return false
 		}
-		return closure_expression_is_call(statement.Results[0])
 	}
-	return false
+	return true
 }
 
 func closure_expression_is_call(expression ast.Expr) (is_call bool) {
