@@ -86,7 +86,7 @@ func Test_Stream_IO(t *testing.T) {
 	write_called := false
 	binary.Write(
 		&writer, &writer.Completion, value, binary.BIG_ENDIAN,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			write_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -100,7 +100,7 @@ func Test_Stream_IO(t *testing.T) {
 	read_called := false
 	binary.Read(
 		&reader, &reader.Completion, &decoded, binary.BIG_ENDIAN,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			read_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -238,9 +238,9 @@ func inline_reader_stream_procedure(
 	})
 }
 
-func stream_probe_completion(completion *nbio.Completion) {
+func stream_probe_completion(completion nbio.Completion_Handle) {
 	if completion == nil {
-		panic("binary probe completion is absent")
+		return
 	}
 }
 
@@ -256,7 +256,7 @@ func verify_deferred_stream(t *testing.T, value uint64) {
 	read_called := false
 	binary.Read(
 		&reader, &reader.Completion, &decoded, binary.BIG_ENDIAN,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			read_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -283,7 +283,7 @@ func verify_deferred_stream(t *testing.T, value uint64) {
 	write_called := false
 	binary.Write(
 		&writer, &writer.Completion, value, binary.BIG_ENDIAN,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			write_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -315,7 +315,7 @@ func verify_inline_reader_state(t *testing.T) {
 	called := false
 	binary.Read(
 		&reader, &reader.Completion, &destination, binary.BIG_ENDIAN,
-		func(completed *nbio.Completion) {
+		func(completed nbio.Completion_Handle) {
 			called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -327,7 +327,8 @@ func verify_inline_reader_state(t *testing.T) {
 }
 
 // Caller owns cursor, so varint reader needs no hidden storage.
-func read_byte(reader *byte_reader) (value byte, err error) {
+func read_byte(state binary.Read_Byte_State) (value byte, err error) {
+	reader := (*byte_reader)(state)
 	if reader.Position == len(reader.Source) {
 		return 0, nbio.Stream_EOF
 	}
@@ -625,7 +626,7 @@ func verify_stream_boundaries(t *testing.T) {
 	if !panics(func() {
 		binary.Read(
 			&reader, &reader.Completion, &empty, binary.LITTLE_ENDIAN,
-			func(completed *nbio.Completion) { testify.Not_Nil(t, completed) },
+			func(completed nbio.Completion_Handle) { testify.Not_Nil(t, completed) },
 		)
 	}) {
 		t.Fatal("Read accepted uninitialized Reader")
@@ -634,7 +635,7 @@ func verify_stream_boundaries(t *testing.T) {
 	if !panics(func() {
 		binary.Write(
 			&writer, &writer.Completion, empty, binary.LITTLE_ENDIAN,
-			func(completed *nbio.Completion) { testify.Not_Nil(t, completed) },
+			func(completed nbio.Completion_Handle) { testify.Not_Nil(t, completed) },
 		)
 	}) {
 		t.Fatal("Write accepted uninitialized Writer")
@@ -649,12 +650,12 @@ func verify_read_boundary(
 	binary.Reader_Init(&reader, nbio.Memory_To_Stream(&memory), scratch)
 	binary.Read(
 		&reader, &reader.Completion, destination, order,
-		func(completed *nbio.Completion) { testify.No_Error(t, completed.Error) },
+		func(completed nbio.Completion_Handle) { testify.No_Error(t, completed.Error) },
 	)
 	memory.Cursor = 0
 	binary.Read(
 		&reader, &reader.Completion, destination, order,
-		func(completed *nbio.Completion) { testify.No_Error(t, completed.Error) },
+		func(completed nbio.Completion_Handle) { testify.No_Error(t, completed.Error) },
 	)
 	binary.Reader_Init(&reader, nbio.Memory_To_Stream(&memory), scratch)
 }
@@ -666,13 +667,15 @@ func verify_write_boundary(
 	memory := nbio.Stream_Memory{Memory: destination[:len(scratch)]}
 	var writer binary.Writer
 	binary.Writer_Init(&writer, nbio.Memory_To_Stream(&memory), scratch)
-	binary.Write(&writer, &writer.Completion, source, order, func(completed *nbio.Completion) {
-		testify.No_Error(t, completed.Error)
-	})
+	binary.Write(
+		&writer, &writer.Completion, source, order,
+		func(completed nbio.Completion_Handle) { testify.No_Error(t, completed.Error) },
+	)
 	memory.Cursor = 0
-	binary.Write(&writer, &writer.Completion, source, order, func(completed *nbio.Completion) {
-		testify.No_Error(t, completed.Error)
-	})
+	binary.Write(
+		&writer, &writer.Completion, source, order,
+		func(completed nbio.Completion_Handle) { testify.No_Error(t, completed.Error) },
+	)
 	binary.Writer_Init(&writer, nbio.Memory_To_Stream(&memory), scratch)
 }
 
@@ -861,7 +864,9 @@ func verify_signed_varint(t *testing.T, value binary.Integer_64) {
 		destination_index++
 	}
 	reader := byte_reader{Source: storage[:count]}
-	read, err := binary.Read_Varint(&reader, read_byte)
+	read, err := binary.Read_Varint(
+		binary.Read_Byte_State(unsafe.Pointer(&reader)), read_byte,
+	)
 	if err != nil {
 		t.Fatal("Read_Varint returned error")
 	}
@@ -895,7 +900,9 @@ func verify_unsigned_varint(t *testing.T, value binary.Word_64) {
 		destination_index++
 	}
 	reader := byte_reader{Source: storage[:count]}
-	read, err := binary.Read_Unsigned_Varint(&reader, read_byte)
+	read, err := binary.Read_Unsigned_Varint(
+		binary.Read_Byte_State(unsafe.Pointer(&reader)), read_byte,
+	)
 	if err != nil {
 		t.Fatal("Read_Unsigned_Varint returned error")
 	}
@@ -916,7 +923,9 @@ func verify_varint_incomplete_and_overflow(t *testing.T) {
 			t.Fatal("Unsigned_Varint accepted incomplete value")
 		}
 		reader := byte_reader{Source: incomplete[:size_index]}
-		read, err := binary.Read_Unsigned_Varint(&reader, read_byte)
+		read, err := binary.Read_Unsigned_Varint(
+			binary.Read_Byte_State(unsafe.Pointer(&reader)), read_byte,
+		)
 		want := nbio.Stream_EOF
 		if size_index > 0 {
 			want = nbio.Stream_Unexpected_EOF
@@ -939,7 +948,9 @@ func verify_varint_incomplete_and_overflow(t *testing.T) {
 		t.Fatal("Unsigned_Varint missed tenth-byte overflow")
 	}
 	reader := byte_reader{Source: overflow_tenth[:]}
-	_, err := binary.Read_Unsigned_Varint(&reader, read_byte)
+	_, err := binary.Read_Unsigned_Varint(
+		binary.Read_Byte_State(unsafe.Pointer(&reader)), read_byte,
+	)
 	if err != binary.Error_Varint_Overflow {
 		t.Fatal("Read_Unsigned_Varint returned wrong overflow error")
 	}
@@ -957,7 +968,9 @@ func verify_varint_incomplete_and_overflow(t *testing.T) {
 		t.Fatal("Unsigned_Varint missed eleventh-byte overflow")
 	}
 	reader = byte_reader{Source: overflow_eleventh[:]}
-	_, err = binary.Read_Unsigned_Varint(&reader, read_byte)
+	_, err = binary.Read_Unsigned_Varint(
+		binary.Read_Byte_State(unsafe.Pointer(&reader)), read_byte,
+	)
 	if err != binary.Error_Varint_Overflow {
 		t.Fatal("Read_Unsigned_Varint returned wrong overflow error")
 	}

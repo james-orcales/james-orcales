@@ -202,6 +202,29 @@ func Output_Invariants(value Output, namespace aver.Namespace) {
 		Ensure()
 }
 
+// ELEMENT_OUTPUT_SIZE_MINIMUM holds identifier plus size field.
+const ELEMENT_OUTPUT_SIZE_MINIMUM = COUNT_HOLE + 1
+
+// Element_Output contains one complete DER element after refusal checks pass.
+type Element_Output []byte
+
+// Element_Output_Invariants excludes impossible empty and identifier-only output.
+func Element_Output_Invariants(value Element_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), ELEMENT_OUTPUT_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Nonempty_Encoded narrows input after Decode rejects empty source.
+type Nonempty_Encoded []byte
+
+// Nonempty_Encoded_Invariants excludes already-rejected empty input.
+func Nonempty_Encoded_Invariants(value Nonempty_Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), IDENTIFIER_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
 // Element_Input is one caller-supplied element before class and tag validation.
 type Element_Input struct {
 	// Class remains raw so invalid bit fields return status before output mutation.
@@ -325,6 +348,27 @@ func Identifier_Size_Count_Invariants(
 	aver.Tree(value, namespace).
 		Range_Int(int(value), IDENTIFIER_SIZE_MINIMUM, IDENTIFIER_SIZE_MAXIMUM).
 		Ensure()
+}
+
+// Identifier_Index starts after identifier lead and never leaves bounded header.
+type Identifier_Index int
+
+// Identifier_Index_Invariants includes low-tag boundary and each high-tag boundary.
+func Identifier_Index_Invariants(value Identifier_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), IDENTIFIER_SIZE_MINIMUM, IDENTIFIER_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// High_Tag_Start_Index follows identifier lead byte.
+type High_Tag_Start_Index int
+
+// High_Tag_Start_Index_Invariants fixes high-tag payload start.
+func High_Tag_Start_Index_Invariants(value High_Tag_Start_Index, _ aver.Namespace) {
+	aver.Always(
+		int(value) == IDENTIFIER_SIZE_MINIMUM,
+		"High-tag payload starts after identifier lead.",
+	)
 }
 
 // Content_Size_Field_Count is one short form or a bounded long form.
@@ -486,7 +530,7 @@ func Encoded_Size(element Element_Input) (count Count, status Size_Status) {
 	if !bool(element_valid(element)) {
 		return 0, STATUS_ELEMENT_INVALID
 	}
-	identifier_count := identifier_size(element.Tag)
+	identifier_count := identifier_size(Tag(element.Tag))
 	content_size_count := content_size_field_count(element.Content)
 	required := int(identifier_count) + int(content_size_count) + len(element.Content)
 	if required > ENCODED_SIZE_MAXIMUM {
@@ -519,7 +563,8 @@ func Encode_Into(destination Output, element Element_Input) (
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
 	encode_unchecked(
-		destination, element.Class, element.Tag, element.Constructed, element.Content,
+		Element_Output(destination[:required]), Class(element.Class), Tag(element.Tag),
+		element.Constructed, element.Content,
 	)
 	return required, STATUS_OK
 }
@@ -544,7 +589,9 @@ func Decode(source Encoded) (
 	index := IDENTIFIER_SIZE_MINIMUM
 	tag := Tag(first & HIGH_TAG_MARKER)
 	if tag == HIGH_TAG_MARKER {
-		high_tag := decode_high_tag(source, index)
+		high_tag := decode_high_tag(
+			Nonempty_Encoded(source), High_Tag_Start_Index(index),
+		)
 		if !bool(high_tag.Valid) {
 			return Element{}, 0, Position(high_tag.Position), STATUS_INPUT_INVALID
 		}
@@ -552,7 +599,9 @@ func Decode(source Encoded) (
 		index = int(high_tag.Next)
 	}
 	element.Tag = tag
-	size_result := decode_content_size(source, index)
+	size_result := decode_content_size(
+		Nonempty_Encoded(source), Identifier_Index(index),
+	)
 	if !bool(size_result.Valid) {
 		return Element{}, 0, Position(size_result.Position), STATUS_INPUT_INVALID
 	}
@@ -573,10 +622,11 @@ func element_valid(element Element_Input) (valid Element_Valid) {
 	return Element_Valid(uint32(element.Tag) <= TAG_MAXIMUM)
 }
 
-func identifier_size[Tag_Value ~uint32](tag Tag_Value) (size Identifier_Size_Count) {
+func identifier_size(tag Tag) (size Identifier_Size_Count) {
 	defer func() {
 		Identifier_Size_Count_Invariants(size, "identifier_size.size")
 	}()
+	Tag_Invariants(tag, "identifier_size.tag")
 	if uint32(tag) < HIGH_TAG_MARKER {
 		return IDENTIFIER_SIZE_MINIMUM
 	}
@@ -589,12 +639,11 @@ func identifier_size[Tag_Value ~uint32](tag Tag_Value) (size Identifier_Size_Cou
 	return size
 }
 
-func content_size_field_count[Content_Value ~[]byte](
-	content Content_Value,
-) (size Content_Size_Field_Count) {
+func content_size_field_count(content Content) (size Content_Size_Field_Count) {
 	defer func() {
 		Content_Size_Field_Count_Invariants(size, "content_size_field_count.size")
 	}()
+	Content_Invariants(content, "content_size_field_count.content")
 	if len(content) <= CONTENT_SIZE_SHORT_MAXIMUM {
 		return CONTENT_SIZE_FIELD_SIZE_MINIMUM
 	}
@@ -607,31 +656,34 @@ func content_size_field_count[Content_Value ~[]byte](
 	return size
 }
 
-func encode_unchecked[
-	Destination ~[]byte, Class_Value ~uint8, Tag_Value ~uint32,
-	Constructed_Value ~bool, Content_Value ~[]byte,
-](
-	destination Destination, class Class_Value, tag Tag_Value,
-	constructed Constructed_Value, content Content_Value,
+func encode_unchecked(
+	destination Element_Output, class Class, tag Tag,
+	constructed Constructed, content Content,
 ) {
+	Element_Output_Invariants(destination, "encode_unchecked.destination")
+	Class_Invariants(class, "encode_unchecked.class")
+	Tag_Invariants(tag, "encode_unchecked.tag")
+	Constructed_Invariants(constructed, "encode_unchecked.constructed")
+	Content_Invariants(content, "encode_unchecked.content")
 	identifier_count := identifier_size(tag)
-	encode_identifier(destination[:identifier_count], class, tag, constructed)
+	encode_identifier(destination, identifier_count, class, tag, constructed)
 	content_size_count := content_size_field_count(content)
 	content_size_start := int(identifier_count)
 	encode_content_size(
-		destination[content_size_start:content_size_start+int(content_size_count)],
-		content,
+		destination, identifier_count, content_size_count, content,
 	)
 	copy(destination[content_size_start+int(content_size_count):], content)
 }
 
-func encode_identifier[
-	Destination ~[]byte, Class_Value ~uint8, Tag_Value ~uint32,
-	Constructed_Value ~bool,
-](
-	destination Destination, class Class_Value, tag Tag_Value,
-	constructed Constructed_Value,
+func encode_identifier(
+	destination Element_Output, count Identifier_Size_Count, class Class, tag Tag,
+	constructed Constructed,
 ) {
+	Element_Output_Invariants(destination, "encode_identifier.destination")
+	Identifier_Size_Count_Invariants(count, "encode_identifier.count")
+	Class_Invariants(class, "encode_identifier.class")
+	Tag_Invariants(tag, "encode_identifier.tag")
+	Constructed_Invariants(constructed, "encode_identifier.constructed")
 	first := byte(class) << CLASS_SHIFT
 	if constructed {
 		first |= CONSTRUCTED_MASK
@@ -642,35 +694,43 @@ func encode_identifier[
 	}
 	destination[0] = first | HIGH_TAG_MARKER
 	value := uint32(tag)
-	for index := len(destination) - 1; index > 0; index-- {
+	for index := int(count) - 1; index > 0; index-- {
 		destination[index] = byte(value & HIGH_TAG_VALUE_MASK)
-		if index < len(destination)-1 {
+		if index < int(count)-1 {
 			destination[index] |= CONTINUATION_MASK
 		}
 		value >>= HIGH_TAG_GROUP_BIT_COUNT
 	}
 }
 
-func encode_content_size[Destination ~[]byte, Content_Value ~[]byte](
-	destination Destination, content Content_Value,
+func encode_content_size(
+	destination Element_Output, start Identifier_Size_Count,
+	count Content_Size_Field_Count, content Content,
 ) {
+	Element_Output_Invariants(destination, "encode_content_size.destination")
+	Identifier_Size_Count_Invariants(start, "encode_content_size.start")
+	Content_Size_Field_Count_Invariants(count, "encode_content_size.count")
+	Content_Invariants(content, "encode_content_size.content")
 	if len(content) <= CONTENT_SIZE_SHORT_MAXIMUM {
-		destination[0] = byte(len(content))
+		destination[start] = byte(len(content))
 		return
 	}
-	destination[0] = CONTINUATION_MASK |
-		byte(len(destination)-CONTENT_SIZE_FIELD_SIZE_MINIMUM)
+	destination[start] = CONTINUATION_MASK |
+		byte(int(count)-CONTENT_SIZE_FIELD_SIZE_MINIMUM)
 	value_count := len(content)
-	for index := len(destination) - 1; index > 0; index-- {
+	end := int(start) + int(count)
+	for index := end - 1; index > int(start); index-- {
 		destination[index] = byte(value_count)
 		value_count >>= bits.BIT_COUNT_8_MAXIMUM
 	}
 }
 
-func decode_high_tag[Source ~[]byte, Index ~int](
-	source Source, start Index,
+func decode_high_tag(
+	source Nonempty_Encoded, start High_Tag_Start_Index,
 ) (result High_Tag_Result) {
 	defer func() { High_Tag_Result_Invariants(result, "decode_high_tag.result") }()
+	Nonempty_Encoded_Invariants(source, "decode_high_tag.source")
+	High_Tag_Start_Index_Invariants(start, "decode_high_tag.start")
 	index := int(start)
 	if index == len(source) {
 		result.Position = Identifier_Position(len(source) + 1)
@@ -707,12 +767,14 @@ func decode_high_tag[Source ~[]byte, Index ~int](
 	return result
 }
 
-func decode_content_size[Source ~[]byte, Index ~int](
-	source Source, start Index,
+func decode_content_size(
+	source Nonempty_Encoded, start Identifier_Index,
 ) (result Content_Size_Result) {
 	defer func() {
 		Content_Size_Result_Invariants(result, "decode_content_size.result")
 	}()
+	Nonempty_Encoded_Invariants(source, "decode_content_size.source")
+	Identifier_Index_Invariants(start, "decode_content_size.start")
 	index := int(start)
 	if index == len(source) {
 		result.Position = Content_Size_Position(len(source) + 1)

@@ -189,6 +189,7 @@ func test_invalid(t *testing.T) {
 	}{
 		{nil, 1},
 		{asn1.Encoded{0x1f}, 2},
+		{asn1.Encoded{0x1f, 0x80}, 2},
 		{asn1.Encoded{0x1f, 1, 0}, 2},
 		{asn1.Encoded{0x1f, 2, 0}, 2},
 		{asn1.Encoded{0x1f, 0x80, 0}, 2},

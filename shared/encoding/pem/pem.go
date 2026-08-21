@@ -40,6 +40,9 @@ const BASE64_PADDING byte = '='
 // LINE_FEED_SIZE derives every line contribution from the wire token.
 const LINE_FEED_SIZE = len("\n")
 
+// BEGIN_PREFIX_SIZE derives the searchable boundary prefix width.
+const BEGIN_PREFIX_SIZE = len(BEGIN_PREFIX)
+
 // BOUNDARY_SUFFIX_SIZE derives both boundary widths from their shared token.
 const BOUNDARY_SUFFIX_SIZE = len(BOUNDARY_SUFFIX)
 
@@ -51,6 +54,12 @@ const END_LINE_FIXED_SIZE = len(END_PREFIX) + BOUNDARY_SUFFIX_SIZE + LINE_FEED_S
 
 // BLOCK_SIZE_MINIMUM is an empty block with an empty type.
 const BLOCK_SIZE_MINIMUM = BEGIN_LINE_FIXED_SIZE + END_LINE_FIXED_SIZE
+
+// BEGIN_SOURCE_SIZE_MINIMUM can contain one complete empty BEGIN line.
+const BEGIN_SOURCE_SIZE_MINIMUM = BEGIN_LINE_FIXED_SIZE
+
+// SECTION_SOURCE_SIZE_MINIMUM leaves one byte after a complete BEGIN line.
+const SECTION_SOURCE_SIZE_MINIMUM = BEGIN_SOURCE_SIZE_MINIMUM + 1
 
 // ENCODED_SIZE_MAXIMUM follows the repository byte-slice boundary.
 const ENCODED_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
@@ -139,6 +148,27 @@ const STATUS_BLOCK_INVALID = STATUS_STORAGE_INVALID + 1
 
 // STATUS_BLOCK_TOO_LARGE means bounded fields combine into oversized encoded output.
 const STATUS_BLOCK_TOO_LARGE = STATUS_BLOCK_INVALID + 1
+
+// BYTE_MINIMUM is the first PEM octet.
+const BYTE_MINIMUM = 0
+
+// BYTE_MAXIMUM is the final PEM octet.
+const BYTE_MAXIMUM = 255
+
+// PATTERN_SIZE_MINIMUM is the shared boundary suffix size.
+const PATTERN_SIZE_MINIMUM = len(BOUNDARY_SUFFIX)
+
+// PATTERN_SIZE_MIDDLE is the END prefix size.
+const PATTERN_SIZE_MIDDLE = len(END_PREFIX)
+
+// PATTERN_SIZE_MAXIMUM is the BEGIN prefix size.
+const PATTERN_SIZE_MAXIMUM = len(BEGIN_PREFIX)
+
+// LINE_NEXT_MINIMUM is first position after one line-feed byte.
+const LINE_NEXT_MINIMUM = bytes.SLICE_SIZE_MINIMUM + LINE_FEED_SIZE
+
+// COLON_POSITION_MAXIMUM is final addressable encoded byte.
+const COLON_POSITION_MAXIMUM = ENCODED_SIZE_MAXIMUM - 1
 
 // Type is a borrowed PEM boundary label.
 type Type []byte
@@ -231,6 +261,66 @@ func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Begin_Source contains enough bytes to match one BEGIN prefix.
+type Begin_Source []byte
+
+// Begin_Source_Invariants excludes input too short to enter boundary parsing.
+func Begin_Source_Invariants(value Begin_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), BEGIN_PREFIX_SIZE, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Section_Source contains a complete BEGIN line and one following byte.
+type Section_Source []byte
+
+// Section_Source_Invariants excludes input that cannot enter section parsing.
+func Section_Source_Invariants(value Section_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), SECTION_SOURCE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Block_Source contains enough bytes for complete minimum PEM framing.
+type Block_Source []byte
+
+// Block_Source_Invariants excludes input shorter than one complete block.
+func Block_Source_Invariants(value Block_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), BLOCK_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Block_Output contains storage proven sufficient for minimum PEM framing.
+type Block_Output []byte
+
+// Block_Output_Invariants excludes output too short for a complete block.
+func Block_Output_Invariants(value Block_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), BLOCK_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Encode_Data is payload proven representable by bounded wrapped output.
+type Encode_Data []byte
+
+// Encode_Data_Invariants follows the encoder-specific payload maximum.
+func Encode_Data_Invariants(value Encode_Data, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODE_SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Block_Count is exact successful output size.
+type Block_Count int
+
+// Block_Count_Invariants excludes refusal and partial framing counts.
+func Block_Count_Invariants(value Block_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), BLOCK_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
 // Decoded is caller-owned payload destination.
 type Decoded []byte
 
@@ -288,6 +378,81 @@ type Boolean bool
 func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A PEM parser decision is positive.").
+		Ensure()
+}
+
+// Internal_Position is one zero-based encoded-storage boundary.
+type Internal_Position int
+
+// Internal_Position_Invariants keeps parser and writer positions bounded.
+func Internal_Position_Invariants(value Internal_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Line_Next is first byte after line ending or encoded source end.
+type Line_Next int
+
+// Line_Next_Invariants excludes impossible zero continuation.
+func Line_Next_Invariants(value Line_Next, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), LINE_NEXT_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Colon_Position is absent zero or addressable header separator byte.
+type Colon_Position int
+
+// Colon_Position_Invariants excludes position after encoded storage.
+func Colon_Position_Invariants(value Colon_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			int(value), bytes.SLICE_SIZE_MINIMUM, COLON_POSITION_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Header_Count is parsed metadata slot count.
+type Header_Count int
+
+// Header_Count_Invariants keeps parsed metadata inside caller slot boundary.
+func Header_Count_Invariants(value Header_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, HEADER_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Decoded_Count is exact decoded body bytes.
+type Decoded_Count int
+
+// Decoded_Count_Invariants keeps body size inside decoded storage boundary.
+func Decoded_Count_Invariants(value Decoded_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// PEM_Byte is one untrusted encoded octet.
+type PEM_Byte byte
+
+// PEM_Byte_Invariants covers the complete octet domain.
+func PEM_Byte_Invariants(value PEM_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), BYTE_MINIMUM, BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Pattern is one fixed PEM framing token.
+type Pattern string
+
+// Pattern_Invariants lists every token size accepted by text matching.
+func Pattern_Invariants(value Pattern, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_3_Int(
+			len(value), PATTERN_SIZE_MINIMUM, PATTERN_SIZE_MIDDLE,
+			PATTERN_SIZE_MAXIMUM,
+		).
 		Ensure()
 }
 
@@ -396,7 +561,10 @@ func Encode_Into(
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	encode_unchecked(destination, block.Type, block.Headers, block.Data, required)
+	encode_unchecked(
+		Block_Output(destination), block.Type, block.Headers,
+		Encode_Data(block.Data), Block_Count(required),
+	)
 	return required, STATUS_OK
 }
 
@@ -415,9 +583,9 @@ func Decode_Into(
 	if bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)) {
 		return Block{}, 0, STATUS_STORAGE_INVALID
 	}
-	search_start := bytes.SLICE_SIZE_MINIMUM
+	search_start := Internal_Position(bytes.SLICE_SIZE_MINIMUM)
 	malformed_seen := false
-	for search_start <= len(source) {
+	for int(search_start) <= len(source) {
 		type_start, type_end, content_start, found, begin_valid := find_begin(
 			source, search_start,
 		)
@@ -429,36 +597,39 @@ func Decode_Into(
 		}
 		if !bool(begin_valid) {
 			malformed_seen = true
-			search_start = int(content_start)
+			search_start = content_start
 			continue
 		}
 		body_start, body_end, end_next, header_count, sections_valid := parse_sections(
-			source, content_start, type_start, type_end,
+			Section_Source(source), content_start, type_start, type_end,
 		)
 		if !bool(sections_valid) {
 			malformed_seen = true
-			search_start = int(content_start)
+			search_start = content_start
 			continue
 		}
-		decoded_size, body_shape_valid := body_decoded_size(source, body_start, body_end)
+		block_source := Block_Source(source)
+		decoded_size, body_shape_valid := body_decoded_size(
+			block_source, body_start, body_end,
+		)
 		if !bool(body_shape_valid) {
 			malformed_seen = true
-			search_start = int(content_start)
+			search_start = content_start
 			continue
 		}
-		if !bool(body_encoding_valid(source, body_start, body_end)) {
+		if !bool(body_encoding_valid(block_source, body_start, body_end)) {
 			malformed_seen = true
-			search_start = int(content_start)
+			search_start = content_start
 			continue
 		}
-		if header_count > len(headers) {
+		if int(header_count) > len(headers) {
 			return Block{}, 0, STATUS_HEADERS_TOO_SMALL
 		}
-		if decoded_size > len(destination) {
+		if int(decoded_size) > len(destination) {
 			return Block{}, 0, STATUS_OUTPUT_TOO_SMALL
 		}
-		fill_headers(headers, source, content_start, header_count)
-		decode_body(destination, source, body_start, body_end, decoded_size)
+		fill_headers(headers, block_source, content_start, header_count)
+		decode_body(destination, block_source, body_start, body_end, decoded_size)
 		block.Type = Type(source[type_start:type_end])
 		block.Headers = headers[:header_count]
 		block.Data = Data(destination[:decoded_size])
@@ -473,31 +644,30 @@ func Decode_Into(
 func block_valid(block Block) (valid Block_Valid) {
 	defer func() { Block_Valid_Invariants(valid, "block_valid.valid") }()
 	Block_Invariants(block, "block_valid.block")
-	if !metadata_valid(block.Type, true) {
+	if !metadata_valid(Encoded(block.Type), true) {
 		return false
 	}
 	for _, header := range block.Headers {
 		Header_Invariants(header, "block_valid.header")
-		if !metadata_valid(header.Key, true) {
+		if !metadata_valid(Encoded(header.Key), true) {
 			return false
 		}
-		if !metadata_valid(header.Value, false) {
+		if !metadata_valid(Encoded(header.Value), false) {
 			return false
 		}
 	}
 	return true
 }
 
-func metadata_valid[Text ~[]byte](
-	value Text, colon_invalid Boolean,
-) (valid Boolean) {
+func metadata_valid(value Encoded, colon_invalid Boolean) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "metadata_valid.valid") }()
+	Encoded_Invariants(value, "metadata_valid.value")
 	Boolean_Invariants(colon_invalid, "metadata_valid.colon_invalid")
 	if len(value) > bytes.SLICE_SIZE_MINIMUM {
-		if horizontal_space(byte(value[0])) {
+		if horizontal_space(PEM_Byte(value[0])) {
 			return false
 		}
-		if horizontal_space(byte(value[len(value)-1])) {
+		if horizontal_space(PEM_Byte(value[len(value)-1])) {
 			return false
 		}
 	}
@@ -517,21 +687,24 @@ func metadata_valid[Text ~[]byte](
 	return true
 }
 
-func horizontal_space[Value ~byte](value Value) (space Boolean) {
+func horizontal_space(value PEM_Byte) (space Boolean) {
 	defer func() { Boolean_Invariants(space, "horizontal_space.space") }()
-	if byte(value) == SPACE {
+	PEM_Byte_Invariants(value, "horizontal_space.value")
+	if value == PEM_Byte(SPACE) {
 		return true
 	}
-	return byte(value) == HORIZONTAL_TAB
+	return value == PEM_Byte(HORIZONTAL_TAB)
 }
 
-func encode_unchecked[
-	Destination ~[]byte, Type_Bytes ~[]byte, Header_Values ~[]Header,
-	Data_Bytes ~[]byte, Required ~int,
-](
-	destination Destination, block_type Type_Bytes, headers Header_Values,
-	data Data_Bytes, required Required,
+func encode_unchecked(
+	destination Block_Output, block_type Type, headers Headers,
+	data Encode_Data, required Block_Count,
 ) {
+	Block_Output_Invariants(destination, "encode_unchecked.destination")
+	Type_Invariants(block_type, "encode_unchecked.block_type")
+	Headers_Invariants(headers, "encode_unchecked.headers")
+	Encode_Data_Invariants(data, "encode_unchecked.data")
+	Block_Count_Invariants(required, "encode_unchecked.required")
 	position := copy(destination, BEGIN_PREFIX)
 	position += copy(destination[position:], block_type)
 	position += copy(destination[position:], BOUNDARY_SUFFIX)
@@ -548,7 +721,7 @@ func encode_unchecked[
 		destination[position] = LINE_FEED
 		position++
 	}
-	position = encode_body(destination, position, data)
+	position = int(encode_body(destination, Internal_Position(position), data))
 	position += copy(destination[position:], END_PREFIX)
 	position += copy(destination[position:], block_type)
 	position += copy(destination[position:], BOUNDARY_SUFFIX)
@@ -557,12 +730,16 @@ func encode_unchecked[
 	aver.Always(position == int(required), "PEM encoding writes its exact reported size.")
 }
 
-func encode_body[
-	Destination ~[]byte, Position ~int, Data_Bytes ~[]byte,
-](
-	destination Destination, destination_position Position, data Data_Bytes,
-) (next_position Position) {
-	next := int(destination_position)
+func encode_body(
+	destination Block_Output, destination_position Internal_Position, data Encode_Data,
+) (next_position Internal_Position) {
+	defer func() {
+		Internal_Position_Invariants(next_position, "encode_body.next_position")
+	}()
+	Block_Output_Invariants(destination, "encode_body.destination")
+	Internal_Position_Invariants(destination_position, "encode_body.destination_position")
+	Encode_Data_Invariants(data, "encode_body.data")
+	next := destination_position
 	encoding := base64.Standard_Encoding()
 	for source_position := bytes.SLICE_SIZE_MINIMUM; source_position < len(data); {
 		source_size := len(data) - source_position
@@ -576,7 +753,7 @@ func encode_body[
 			size_status == base64.STATUS_OK,
 			"Standard base64 sizing succeeds.",
 		)
-		line_end := next + int(encoded_count)
+		line_end := next + Internal_Position(encoded_count)
 		count, encode_status := base64.Encode_Into(
 			base64.Encoded(destination[next:line_end]),
 			base64.Source(data[source_position:source_position+source_size]),
@@ -595,124 +772,172 @@ func encode_body[
 		next++
 		source_position += source_size
 	}
-	return Position(next)
+	return next
 }
 
-func find_begin[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, start Position,
+func find_begin(
+	source Encoded, start Internal_Position,
 ) (
-	type_start Position, type_end Position, content_start Position,
+	type_start Internal_Position, type_end Internal_Position,
+	content_start Internal_Position,
 	found Boolean, valid Boolean,
 ) {
 	defer func() {
+		Internal_Position_Invariants(type_start, "find_begin.type_start")
+		Internal_Position_Invariants(type_end, "find_begin.type_end")
+		Internal_Position_Invariants(content_start, "find_begin.content_start")
 		Boolean_Invariants(found, "find_begin.found")
 		Boolean_Invariants(valid, "find_begin.valid")
 	}()
-	for position := int(start); position+len(BEGIN_PREFIX) <= len(source); position++ {
+	Encoded_Invariants(source, "find_begin.source")
+	Internal_Position_Invariants(start, "find_begin.start")
+	for position := start; int(position)+len(BEGIN_PREFIX) <= len(source); position++ {
 		if position > bytes.SLICE_SIZE_MINIMUM {
 			if byte(source[position-1]) != LINE_FEED {
 				continue
 			}
 		}
-		if !text_at(source, position, BEGIN_PREFIX) {
+		begin_source := Begin_Source(source)
+		if !text_at(begin_source, position, BEGIN_PREFIX) {
 			continue
 		}
-		resume := Position(position + len(BEGIN_PREFIX))
-		line_end, next := line_bounds(source, position)
-		trimmed_end := trim_right(source, line_end)
-		label_start := position + len(BEGIN_PREFIX)
-		if trimmed_end-label_start < BOUNDARY_SUFFIX_SIZE {
+		resume := position + Internal_Position(len(BEGIN_PREFIX))
+		line_end, next := line_bounds(begin_source, position)
+		trimmed_end := trim_right(begin_source, line_end)
+		label_start := position + Internal_Position(len(BEGIN_PREFIX))
+		if int(trimmed_end-label_start) < BOUNDARY_SUFFIX_SIZE {
 			return 0, 0, resume, true, false
 		}
-		label_end := trimmed_end - BOUNDARY_SUFFIX_SIZE
-		if !text_at(source, label_end, BOUNDARY_SUFFIX) {
+		label_end := trimmed_end - Internal_Position(BOUNDARY_SUFFIX_SIZE)
+		if !text_at(begin_source, label_end, BOUNDARY_SUFFIX) {
 			return 0, 0, resume, true, false
 		}
-		if label_end-label_start > TYPE_SIZE_MAXIMUM {
+		if int(label_end-label_start) > TYPE_SIZE_MAXIMUM {
 			return 0, 0, resume, true, false
 		}
-		if !metadata_valid(source[label_start:label_end], true) {
+		if !metadata_valid(Encoded(source[label_start:label_end]), true) {
 			return 0, 0, resume, true, false
 		}
 		if int(next) == len(source) {
 			return 0, 0, resume, true, false
 		}
-		return Position(label_start), Position(label_end), Position(next), true, true
+		return label_start, label_end, Internal_Position(next), true, true
 	}
-	return 0, 0, 0, false, false
+	return start, start, start, false, false
 }
 
-func parse_sections[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, content_start Position, type_start Position, type_end Position,
+func parse_sections(
+	source Section_Source, content_start Internal_Position,
+	type_start Internal_Position, type_end Internal_Position,
 ) (
-	body_start Position, body_end Position, end_next Position,
-	header_count Position, valid Boolean,
+	body_start Internal_Position, body_end Internal_Position,
+	end_next Internal_Position, header_count Header_Count, valid Boolean,
 ) {
-	defer func() { Boolean_Invariants(valid, "parse_sections.valid") }()
-	position := int(content_start)
+	defer func() {
+		Internal_Position_Invariants(body_start, "parse_sections.body_start")
+		Internal_Position_Invariants(body_end, "parse_sections.body_end")
+		Internal_Position_Invariants(end_next, "parse_sections.end_next")
+		Header_Count_Invariants(header_count, "parse_sections.header_count")
+		Boolean_Invariants(valid, "parse_sections.valid")
+	}()
+	Section_Source_Invariants(source, "parse_sections.source")
+	Internal_Position_Invariants(content_start, "parse_sections.content_start")
+	Internal_Position_Invariants(type_start, "parse_sections.type_start")
+	Internal_Position_Invariants(type_end, "parse_sections.type_end")
+	position := content_start
 	body_position := position
 	headers_active := true
-	count := bytes.SLICE_SIZE_MINIMUM
-	for position < len(source) {
-		line_end, next := line_bounds(source, position)
-		if end_line_valid(source, position, int(line_end), int(type_start), int(type_end)) {
-			return Position(body_position), Position(position),
-				Position(next), Position(count), true
+	count := Header_Count(bytes.SLICE_SIZE_MINIMUM)
+	for int(position) < len(source) {
+		begin_source := Begin_Source(source)
+		line_end, next := line_bounds(begin_source, position)
+		if end_line_valid(source, position, line_end, type_start, type_end) {
+			return body_position, position, Internal_Position(next), count, true
 		}
 		if headers_active {
-			_, colon_found := line_colon(source, position, int(line_end))
+			_, colon_found := line_colon(source, position, line_end)
 			if colon_found {
 				count++
-				body_position = int(next)
-				position = int(next)
+				body_position = Internal_Position(next)
+				position = Internal_Position(next)
 				continue
 			}
 			headers_active = false
-			if trim_right(source, line_end) == position {
-				body_position = int(next)
-				position = int(next)
+			if trim_right(begin_source, line_end) == position {
+				body_position = Internal_Position(next)
+				position = Internal_Position(next)
 				continue
 			}
 			body_position = position
 		}
-		if int(next) == position {
+		if Internal_Position(next) == position {
 			break
 		}
-		position = int(next)
+		position = Internal_Position(next)
 	}
-	return 0, 0, 0, 0, false
+	return content_start, content_start, content_start, 0, false
 }
 
-func fill_headers[
-	Header_Storage ~[]Header, Source_Bytes ~[]byte, Position ~int,
-](
-	headers Header_Storage, source Source_Bytes, content_start Position,
-	header_count Position,
+func fill_headers(
+	headers Headers, source Block_Source, content_start Internal_Position,
+	header_count Header_Count,
 ) {
-	position := int(content_start)
+	Headers_Invariants(headers, "fill_headers.headers")
+	Block_Source_Invariants(source, "fill_headers.source")
+	Internal_Position_Invariants(content_start, "fill_headers.content_start")
+	Header_Count_Invariants(header_count, "fill_headers.header_count")
+	position := content_start
 	for index := bytes.SLICE_SIZE_MINIMUM; index < int(header_count); index++ {
-		line_end, next := line_bounds(source, position)
-		colon, found := line_colon(source, position, int(line_end))
+		line_end, next := line_bounds(Begin_Source(source), position)
+		colon, found := line_colon(Section_Source(source), position, line_end)
 		aver.Always(found, "A counted PEM header retains its separator.")
-		key := bytes.Trim_Space(bytes.Slice(source[position:int(colon)]))
-		value := bytes.Trim_Space(bytes.Slice(source[int(colon)+1 : int(line_end)]))
-		headers[index] = Header{
-			Key: Header_Key(key), Value: Header_Value(value),
+		key_start := position
+		key_end := Internal_Position(colon)
+		for key_start < key_end && header_space(PEM_Byte(source[key_start])) {
+			key_start++
 		}
-		position = int(next)
+		for key_end > key_start && header_space(PEM_Byte(source[key_end-1])) {
+			key_end--
+		}
+		value_start := Internal_Position(colon) + 1
+		value_end := line_end
+		for value_start < value_end && header_space(PEM_Byte(source[value_start])) {
+			value_start++
+		}
+		for value_end > value_start && header_space(PEM_Byte(source[value_end-1])) {
+			value_end--
+		}
+		headers[index] = Header{
+			Key:   Header_Key(source[key_start:key_end]),
+			Value: Header_Value(source[value_start:value_end]),
+		}
+		position = Internal_Position(next)
 	}
 }
 
-func body_decoded_size[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, body_start Position, body_end Position,
-) (decoded_size Position, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "body_decoded_size.valid") }()
+func header_space(value PEM_Byte) (space Boolean) {
+	defer func() { Boolean_Invariants(space, "header_space.space") }()
+	PEM_Byte_Invariants(value, "header_space.value")
+	return value == PEM_Byte(SPACE) ||
+		value >= PEM_Byte(HORIZONTAL_TAB) && value <= PEM_Byte(CARRIAGE_RETURN)
+}
+
+func body_decoded_size(
+	source Block_Source, body_start Internal_Position, body_end Internal_Position,
+) (decoded_size Decoded_Count, valid Boolean) {
+	defer func() {
+		Decoded_Count_Invariants(decoded_size, "body_decoded_size.decoded_size")
+		Boolean_Invariants(valid, "body_decoded_size.valid")
+	}()
+	Block_Source_Invariants(source, "body_decoded_size.source")
+	Internal_Position_Invariants(body_start, "body_decoded_size.body_start")
+	Internal_Position_Invariants(body_end, "body_decoded_size.body_end")
 	encoded_count := bytes.SLICE_SIZE_MINIMUM
 	var previous byte
 	var final byte
-	for position := int(body_start); position < int(body_end); position++ {
-		value := byte(source[position])
-		if body_space(value) {
+	for position := body_start; position < body_end; position++ {
+		value := source[position]
+		if body_space(PEM_Byte(value)) {
 			continue
 		}
 		previous = final
@@ -736,21 +961,24 @@ func body_decoded_size[Source_Bytes ~[]byte, Position ~int](
 	if decoded > DECODED_SIZE_MAXIMUM {
 		return 0, false
 	}
-	return Position(decoded), true
+	return Decoded_Count(decoded), true
 }
 
-func body_encoding_valid[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, body_start Position, body_end Position,
+func body_encoding_valid(
+	source Block_Source, body_start Internal_Position, body_end Internal_Position,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "body_encoding_valid.valid") }()
+	Block_Source_Invariants(source, "body_encoding_valid.source")
+	Internal_Position_Invariants(body_start, "body_encoding_valid.body_start")
+	Internal_Position_Invariants(body_end, "body_encoding_valid.body_end")
 	encoding := base64.Standard_Encoding()
 	var quantum [base64.ENCODED_GROUP_SIZE]byte
 	var decoded [base64.DECODED_GROUP_SIZE]byte
 	quantum_count := bytes.SLICE_SIZE_MINIMUM
 	padding_seen := false
-	for position := int(body_start); position < int(body_end); position++ {
-		value := byte(source[position])
-		if bool(body_space(value)) {
+	for position := body_start; position < body_end; position++ {
+		value := source[position]
+		if bool(body_space(PEM_Byte(value))) {
 			continue
 		}
 		if padding_seen {
@@ -777,19 +1005,23 @@ func body_encoding_valid[Source_Bytes ~[]byte, Position ~int](
 	return true
 }
 
-func decode_body[
-	Destination ~[]byte, Source_Bytes ~[]byte, Position ~int,
-](
-	destination Destination, source Source_Bytes,
-	body_start Position, body_end Position, decoded_size Position,
+func decode_body(
+	destination Decoded, source Block_Source,
+	body_start Internal_Position, body_end Internal_Position,
+	decoded_size Decoded_Count,
 ) {
+	Decoded_Invariants(destination, "decode_body.destination")
+	Block_Source_Invariants(source, "decode_body.source")
+	Internal_Position_Invariants(body_start, "decode_body.body_start")
+	Internal_Position_Invariants(body_end, "decode_body.body_end")
+	Decoded_Count_Invariants(decoded_size, "decode_body.decoded_size")
 	encoding := base64.Standard_Encoding()
 	var quantum [base64.ENCODED_GROUP_SIZE]byte
 	quantum_count := bytes.SLICE_SIZE_MINIMUM
 	destination_position := bytes.SLICE_SIZE_MINIMUM
-	for position := int(body_start); position < int(body_end); position++ {
-		value := byte(source[position])
-		if body_space(value) {
+	for position := body_start; position < body_end; position++ {
+		value := source[position]
+		if body_space(PEM_Byte(value)) {
 			continue
 		}
 		quantum[quantum_count] = value
@@ -818,95 +1050,119 @@ func decode_body[
 	)
 }
 
-func line_bounds[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, start Position,
-) (line_end Position, next Position) {
-	for position := int(start); position < len(source); position++ {
-		if byte(source[position]) == LINE_FEED {
-			return Position(position), Position(position + LINE_FEED_SIZE)
+func line_bounds(
+	source Begin_Source, start Internal_Position,
+) (line_end Internal_Position, next Line_Next) {
+	defer func() {
+		Internal_Position_Invariants(line_end, "line_bounds.line_end")
+		Line_Next_Invariants(next, "line_bounds.next")
+	}()
+	Begin_Source_Invariants(source, "line_bounds.source")
+	Internal_Position_Invariants(start, "line_bounds.start")
+	for position := start; int(position) < len(source); position++ {
+		if source[position] == LINE_FEED {
+			return position, Line_Next(position + Internal_Position(LINE_FEED_SIZE))
 		}
 	}
-	return Position(len(source)), Position(len(source))
+	return Internal_Position(len(source)), Line_Next(len(source))
 }
 
-func trim_right[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, end Position,
-) (trimmed Position) {
-	position := int(end)
+func trim_right(source Begin_Source, end Internal_Position) (trimmed Internal_Position) {
+	defer func() { Internal_Position_Invariants(trimmed, "trim_right.trimmed") }()
+	Begin_Source_Invariants(source, "trim_right.source")
+	Internal_Position_Invariants(end, "trim_right.end")
+	position := end
 	for position > bytes.SLICE_SIZE_MINIMUM {
 		value := byte(source[position-1])
 		if value == CARRIAGE_RETURN {
 			position--
 			continue
 		}
-		if horizontal_space(value) {
+		if horizontal_space(PEM_Byte(value)) {
 			position--
 			continue
 		}
 		break
 	}
-	return Position(position)
+	return position
 }
 
-func line_colon[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, start Position, end Position,
-) (colon Position, found Boolean) {
-	defer func() { Boolean_Invariants(found, "line_colon.found") }()
-	for position := int(start); position < int(end); position++ {
-		if byte(source[position]) == HEADER_KEY_SEPARATOR {
-			return Position(position), true
+func line_colon(
+	source Section_Source, start Internal_Position, end Internal_Position,
+) (colon Colon_Position, found Boolean) {
+	defer func() {
+		Colon_Position_Invariants(colon, "line_colon.colon")
+		Boolean_Invariants(found, "line_colon.found")
+	}()
+	Section_Source_Invariants(source, "line_colon.source")
+	Internal_Position_Invariants(start, "line_colon.start")
+	Internal_Position_Invariants(end, "line_colon.end")
+	for position := start; position < end; position++ {
+		if source[position] == HEADER_KEY_SEPARATOR {
+			return Colon_Position(position), true
 		}
 	}
 	return 0, false
 }
 
-func end_line_valid[Source_Bytes ~[]byte, Position ~int](
-	source Source_Bytes, line_start Position, line_end Position,
-	type_start Position, type_end Position,
+func end_line_valid(
+	source Section_Source, line_start Internal_Position, line_end Internal_Position,
+	type_start Internal_Position, type_end Internal_Position,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "end_line_valid.valid") }()
-	trimmed_end := int(trim_right(source, line_end))
-	type_size := int(type_end) - int(type_start)
+	Section_Source_Invariants(source, "end_line_valid.source")
+	Internal_Position_Invariants(line_start, "end_line_valid.line_start")
+	Internal_Position_Invariants(line_end, "end_line_valid.line_end")
+	Internal_Position_Invariants(type_start, "end_line_valid.type_start")
+	Internal_Position_Invariants(type_end, "end_line_valid.type_end")
+	begin_source := Begin_Source(source)
+	trimmed_end := trim_right(begin_source, line_end)
+	type_size := int(type_end - type_start)
 	expected_size := len(END_PREFIX) + type_size + BOUNDARY_SUFFIX_SIZE
-	if trimmed_end-int(line_start) != expected_size {
+	if int(trimmed_end-line_start) != expected_size {
 		return false
 	}
-	if !text_at(source, line_start, END_PREFIX) {
+	if !text_at(begin_source, line_start, END_PREFIX) {
 		return false
 	}
-	line_type_start := int(line_start) + len(END_PREFIX)
+	line_type_start := line_start + Internal_Position(len(END_PREFIX))
 	for index := bytes.SLICE_SIZE_MINIMUM; index < type_size; index++ {
-		if byte(source[line_type_start+index]) != byte(source[int(type_start)+index]) {
+		if source[line_type_start+Internal_Position(index)] !=
+			source[type_start+Internal_Position(index)] {
 			return false
 		}
 	}
-	return text_at(source, line_type_start+type_size, BOUNDARY_SUFFIX)
+	return text_at(
+		begin_source, line_type_start+Internal_Position(type_size), BOUNDARY_SUFFIX,
+	)
 }
 
-func text_at[Source_Bytes ~[]byte, Position ~int, Text ~string](
-	source Source_Bytes, start Position, text Text,
-) (present Boolean) {
+func text_at(source Begin_Source, start Internal_Position, text Pattern) (present Boolean) {
 	defer func() { Boolean_Invariants(present, "text_at.present") }()
-	if int(start) < bytes.SLICE_SIZE_MINIMUM {
+	Begin_Source_Invariants(source, "text_at.source")
+	Internal_Position_Invariants(start, "text_at.start")
+	Pattern_Invariants(text, "text_at.text")
+	if start < bytes.SLICE_SIZE_MINIMUM {
 		return false
 	}
 	if len(source)-int(start) < len(text) {
 		return false
 	}
 	for index := range len(text) {
-		if byte(source[int(start)+index]) != text[index] {
+		if source[start+Internal_Position(index)] != text[index] {
 			return false
 		}
 	}
 	return true
 }
 
-func body_space[Value ~byte](value Value) (space Boolean) {
+func body_space(value PEM_Byte) (space Boolean) {
 	defer func() { Boolean_Invariants(space, "body_space.space") }()
-	if byte(value) == LINE_FEED {
+	PEM_Byte_Invariants(value, "body_space.value")
+	if value == PEM_Byte(LINE_FEED) {
 		return true
 	}
-	if byte(value) == CARRIAGE_RETURN {
+	if value == PEM_Byte(CARRIAGE_RETURN) {
 		return true
 	}
 	return horizontal_space(value)

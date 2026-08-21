@@ -315,11 +315,13 @@ func test_domains(t *testing.T) {
 	testify.Equal(t, gob.Bytes_Consumed_Count(count), consumed)
 }
 
-func test_boolean_domains(destination gob.Boolean_Output) {
+func test_boolean_domains(destination gob.Integer_Output) {
 	gob.Boolean_Size(false)
 	gob.Boolean_Size(true)
 	gob.Encode_Boolean_Into(destination[:0], false)
 	gob.Encode_Boolean_Into(destination[:gob.PREFIX_SIZE], true)
+	gob.Encode_Boolean_Into(destination[:2], false)
+	gob.Encode_Boolean_Into(destination[:], true)
 	for _, source := range [...]gob.Integer_Encoded{
 		nil,
 		{0},

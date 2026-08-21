@@ -106,6 +106,7 @@ func Test_Decode(t *testing.T) {
 func Test_Bounds(t *testing.T) {
 	test_short_decode_storage(t)
 	test_overlap(t)
+	test_internal_domains(t)
 	test_maximum_type(t)
 	test_maximum_data(t)
 	test_maximum_decoded_data(t)
@@ -146,6 +147,48 @@ A: B
 YQ==
 -----END X-----
 `
+
+const ENCODED_MINIMUM = `-----BEGIN -----
+-----END -----
+`
+
+func test_internal_domains(t *testing.T) {
+	var destination [pem.ENCODED_SIZE_MAXIMUM]byte
+	required, size_status := pem.Encoded_Size(pem.Block{})
+	testify.Equal(t, pem.Encoded_Count(len(ENCODED_MINIMUM)), required)
+	testify.Equal_Values(t, pem.STATUS_OK, size_status)
+	count, encode_status := pem.Encode_Into(destination[:required], pem.Block{})
+	testify.Equal(t, required, count)
+	testify.Equal_Values(t, pem.STATUS_OK, encode_status)
+
+	one := pem.Block{Type: pem.Type("X"), Data: pem.Data("a")}
+	required, size_status = pem.Encoded_Size(one)
+	testify.Equal_Values(t, pem.STATUS_OK, size_status)
+	_, encode_status = pem.Encode_Into(destination[:required], one)
+	testify.Equal_Values(t, pem.STATUS_OK, encode_status)
+
+	block, consumed, decode_status := pem.Decode_Into(nil, nil, []byte(ENCODED_MINIMUM))
+	testify.Equal(t, pem.Block{Type: pem.Type{}}, block)
+	testify.Equal(t, pem.Consumed_Count(len(ENCODED_MINIMUM)), consumed)
+	testify.Equal_Values(t, pem.STATUS_OK, decode_status)
+
+	_, _, decode_status = pem.Decode_Into(nil, nil, []byte(pem.BEGIN_PREFIX))
+	testify.Equal_Values(t, pem.STATUS_INPUT_INVALID, decode_status)
+	section := []byte(pem.BEGIN_PREFIX + pem.BOUNDARY_SUFFIX + "\nx")
+	_, _, decode_status = pem.Decode_Into(nil, nil, section)
+	testify.Equal_Values(t, pem.STATUS_INPUT_INVALID, decode_status)
+
+	var maximum [pem.ENCODED_SIZE_MAXIMUM]byte
+	position := copy(maximum[:], pem.BEGIN_PREFIX)
+	position += copy(maximum[position:], pem.BOUNDARY_SUFFIX)
+	maximum[position] = pem.LINE_FEED
+	position++
+	for index := position; index < len(maximum); index++ {
+		maximum[index] = 'A'
+	}
+	_, _, decode_status = pem.Decode_Into(nil, nil, maximum[:])
+	testify.Equal_Values(t, pem.STATUS_INPUT_INVALID, decode_status)
+}
 
 func test_decoded_headers(t *testing.T, decoded []byte, headers []pem.Header) {
 	spaced := []byte("-----BEGIN X-----\nA:\rB\n\nYQ==\n-----END X-----\n")

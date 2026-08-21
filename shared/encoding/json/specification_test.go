@@ -25,7 +25,7 @@ func Test_Validate(t *testing.T) {
 	for _, source := range valid {
 		position, status := json.Validate(json.Encoded(source))
 		testify.Equal(t, json.Position(0), position)
-		testify.Equal_Values(t, json.STATUS_OK, status)
+		testify.True(t, bool(status))
 	}
 	invalid := [...]struct {
 		Source   string
@@ -46,7 +46,7 @@ func Test_Validate(t *testing.T) {
 	for _, one := range invalid {
 		position, status := json.Validate(json.Encoded(one.Source))
 		testify.Equal(t, one.Position, position)
-		testify.Equal_Values(t, json.STATUS_INPUT_INVALID, status)
+		testify.False(t, bool(status))
 	}
 }
 
@@ -58,7 +58,7 @@ func Test_Compact(t *testing.T) {
 	required, position, size_status := json.Compact_Size(source)
 	testify.Equal(t, json.Count(len(expected)), required)
 	testify.Equal(t, json.Position(0), position)
-	testify.Equal_Values(t, json.STATUS_OK, size_status)
+	testify.True(t, bool(size_status))
 	count, position, status := json.Compact_Into(destination[:required], source)
 	testify.Equal(t, required, count)
 	testify.Equal(t, json.Position(0), position)
@@ -115,6 +115,8 @@ func Test_Bounds(t *testing.T) {
 	test_refusals(t)
 	test_domains(t)
 	test_indent_domains(t)
+	test_parser_domains(t)
+	test_formatter_domains(t)
 }
 
 // Test_Allocation protects the normal assertion path from hidden heap ownership.
@@ -137,16 +139,16 @@ func test_validate_allocation(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		position, status = json.Validate(valid)
 	})
-	testify.Equal_Values(t, json.STATUS_OK, status)
+	testify.True(t, bool(status))
 	testify.Zero_Allocation(t, func() {
 		position, status = json.Validate(invalid)
 	})
-	testify.Equal_Values(t, json.STATUS_INPUT_INVALID, status)
+	testify.False(t, bool(status))
 	testify.True(t, position > 0)
 	testify.Zero_Allocation(t, func() {
 		position, status = json.Validate(maximum[:])
 	})
-	testify.Equal_Values(t, json.STATUS_OK, status)
+	testify.True(t, bool(status))
 	testify.Equal(t, json.Position(0), position)
 }
 
@@ -168,11 +170,11 @@ func test_compact_allocation(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		count, position, size_status = json.Compact_Size(valid)
 	})
-	testify.Equal_Values(t, json.STATUS_OK, size_status)
+	testify.True(t, bool(size_status))
 	testify.Zero_Allocation(t, func() {
 		count, position, size_status = json.Compact_Size(invalid)
 	})
-	testify.Equal_Values(t, json.STATUS_INPUT_INVALID, size_status)
+	testify.False(t, bool(size_status))
 	testify.Zero_Allocation(t, func() {
 		count, position, status = json.Compact_Into(destination[:], valid)
 	})
@@ -283,7 +285,7 @@ func test_maximum_depth(t *testing.T) {
 	}
 	position, status := json.Validate(source[:])
 	testify.Equal(t, json.Position(0), position)
-	testify.Equal_Values(t, json.STATUS_OK, status)
+	testify.True(t, bool(status))
 }
 
 func test_refusals(t *testing.T) {
@@ -326,10 +328,10 @@ func test_domains(t *testing.T) {
 	}
 	position, validate_status := json.Validate(invalid_maximum[:])
 	testify.Equal(t, json.Position(json.POSITION_MAXIMUM), position)
-	testify.Equal_Values(t, json.STATUS_INPUT_INVALID, validate_status)
+	testify.False(t, bool(validate_status))
 	_, position, size_status := json.Compact_Size(invalid_maximum[:])
 	testify.Equal(t, json.Position(json.POSITION_MAXIMUM), position)
-	testify.Equal_Values(t, json.STATUS_INPUT_INVALID, size_status)
+	testify.False(t, bool(size_status))
 	_, position, status = json.Compact_Into(destination[:], invalid_maximum[:])
 	testify.Equal(t, json.Position(json.POSITION_MAXIMUM), position)
 	testify.Equal_Values(t, json.STATUS_INPUT_INVALID, status)
@@ -403,4 +405,92 @@ func test_indent_domains(t *testing.T) {
 	count, _, status = json.Indent_Into(destination[:], source_maximum[:], nil, nil)
 	testify.Equal(t, json.Count(json.OUTPUT_SIZE_MAXIMUM), count)
 	testify.Equal_Values(t, json.STATUS_OK, status)
+}
+
+func test_parser_domains(t *testing.T) {
+	for _, source := range [...]json.Encoded{
+		{'"'},
+		{'"', '"'},
+		{'t'},
+		{'t', 'r'},
+		{'"', '\\'},
+		{'{', '}'},
+		{'{', '"'},
+		{'1'},
+	} {
+		json.Validate(source)
+	}
+
+	var number [json.ENCODED_SIZE_MAXIMUM]byte
+	for index := range number {
+		number[index] = '1'
+	}
+	_, status := json.Validate(number[:])
+	testify.True(t, bool(status))
+
+	var literal [json.ENCODED_SIZE_MAXIMUM]byte
+	copy(literal[:], "true")
+	for count := len("true"); count < len(literal); count++ {
+		literal[count] = ' '
+	}
+	_, status = json.Validate(literal[:])
+	testify.True(t, bool(status))
+
+	var escaped [json.ENCODED_SIZE_MAXIMUM]byte
+	escaped[0] = '"'
+	escaped[1] = '\\'
+	escaped[2] = 'n'
+	for index := 3; index < len(escaped)-1; index++ {
+		escaped[index] = 'a'
+	}
+	escaped[len(escaped)-1] = '"'
+	_, status = json.Validate(escaped[:])
+	testify.True(t, bool(status))
+
+	var object [json.ENCODED_SIZE_MAXIMUM]byte
+	copy(object[:], `{"":0}`)
+	for count := len(`{"":0}`); count < len(object); count++ {
+		object[count] = ' '
+	}
+	_, status = json.Validate(object[:])
+	testify.True(t, bool(status))
+
+	var destination [json.OUTPUT_SIZE_MAXIMUM]byte
+	count, _, compact_status := json.Compact_Into(destination[:2], json.Encoded("[]"))
+	testify.Equal(t, json.Count(2), count)
+	testify.Equal_Values(t, json.STATUS_OK, compact_status)
+}
+
+func test_formatter_domains(t *testing.T) {
+	var destination [json.OUTPUT_SIZE_MAXIMUM]byte
+	var affix [json.FORMATTING_AFFIX_SIZE_MAXIMUM]byte
+	for index := range affix {
+		affix[index] = 'x'
+	}
+	for _, size := range [...]int{0, 1, 2, len(affix)} {
+		prefix := json.Prefix(affix[:size])
+		required, _, size_status := json.Indent_Size(json.Encoded("[0]"), prefix, nil)
+		testify.Equal_Values(t, json.STATUS_OK, size_status)
+		output := destination[:required]
+		if size == len(affix) {
+			output = destination[:]
+		}
+		_, _, status := json.Indent_Into(output, json.Encoded("[0]"), prefix, nil)
+		testify.Equal_Values(t, json.STATUS_OK, status)
+	}
+	for _, size := range [...]int{0, 1, 2, len(affix)} {
+		indent := json.Indent(affix[:size])
+		required, _, size_status := json.Indent_Size(json.Encoded("[0]"), nil, indent)
+		testify.Equal_Values(t, json.STATUS_OK, size_status)
+		_, _, status := json.Indent_Into(
+			destination[:required], json.Encoded("[0]"), nil, indent,
+		)
+		testify.Equal_Values(t, json.STATUS_OK, status)
+	}
+
+	var maximum [json.PREFIX_SIZE_MAXIMUM]byte
+	_, _, status := json.Indent_Size(json.Encoded("[0]"), maximum[:], nil)
+	testify.Equal_Values(t, json.STATUS_OUTPUT_TOO_LARGE, status)
+	_, _, status = json.Indent_Size(json.Encoded("[0]"), nil, maximum[:])
+	testify.Equal_Values(t, json.STATUS_OUTPUT_TOO_LARGE, status)
 }

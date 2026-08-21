@@ -10,6 +10,7 @@ import (
 
 // Test_Configuration protects custom alphabets without hidden pointer ownership.
 func Test_Configuration(t *testing.T) {
+	test_alphabet_size_validation(t)
 	standard := base32.Standard_Encoding()
 	hexadecimal := base32.Hexadecimal_Encoding()
 	assert_encode(t, standard, "foobar", "MZXW6YTBOI======")
@@ -25,12 +26,12 @@ func Test_Configuration(t *testing.T) {
 	testify.Equal_Values(t, base32.STATUS_OK, padding_status)
 	assert_encode(t, padded, "f", "MY======")
 
-	duplicate := alphabet
-	duplicate[base32.ALPHABET_SIZE-1] = duplicate[0]
+	duplicate := duplicate_alphabet(alphabet)
 	_, configuration_status = base32.New_Encoding(duplicate, base32.STANDARD_PADDING)
 	testify.Equal_Values(t, base32.STATUS_ALPHABET_INVALID, configuration_status)
-	newline := alphabet
-	newline[base32.ALPHABET_SIZE-1] = '\n'
+	newline := base32.Alphabet(
+		alphabet[:base32.ALPHABET_FINAL_INDEX] + "\n",
+	)
 	_, configuration_status = base32.New_Encoding(newline, base32.STANDARD_PADDING)
 	testify.Equal_Values(t, base32.STATUS_ALPHABET_INVALID, configuration_status)
 	_, configuration_status = base32.New_Encoding(
@@ -155,6 +156,7 @@ func Test_Decode(t *testing.T) {
 	)
 	testify.Equal(t, base32.Decoded_Count(0), count)
 	testify.Equal_Values(t, base32.STATUS_OUTPUT_TOO_SMALL, decode_status)
+	test_decode_domain(t, encoding, destination[:])
 }
 
 // Test_Bounds reaches every public collection boundary and scalar result.
@@ -286,14 +288,61 @@ type test_case struct {
 }
 
 func test_alphabet(text string) (alphabet base32.Alphabet) {
-	copy(alphabet[:], text)
-	return alphabet
+	return base32.Alphabet(text)
+}
+
+func duplicate_alphabet(alphabet base32.Alphabet) (duplicate base32.Alphabet) {
+	return base32.Alphabet(
+		alphabet[:base32.ALPHABET_FINAL_INDEX] + alphabet[:1],
+	)
+}
+
+func test_alphabet_size_validation(t *testing.T) {
+	maximum := make(base32.Encoded, base32.ENCODED_SIZE_MAXIMUM)
+	for _, alphabet := range [...]base32.Alphabet{
+		"",
+		"A",
+		"AB",
+		base32.Alphabet(string(maximum)),
+	} {
+		_, status := base32.New_Encoding(alphabet, base32.STANDARD_PADDING)
+		testify.Equal_Values(t, base32.STATUS_ALPHABET_INVALID, status)
+	}
+}
+
+func test_decode_domain(
+	t *testing.T, encoding base32.Encoding, destination base32.Decoded,
+) {
+	for _, source_byte := range [...]byte{0, 1, 2, 255} {
+		_, status := base32.Decode_Into(
+			destination, base32.Encoded{source_byte}, encoding,
+		)
+		testify.Equal_Values(t, base32.STATUS_INPUT_INVALID, status)
+	}
+	for _, source := range [...]base32.Encoded{
+		base32.Encoded("\nAAAAAAAA"),
+		base32.Encoded("\nAAAAAAAB"),
+		base32.Encoded("\nAAAAAAAC"),
+		base32.Encoded("\n77777777"),
+	} {
+		count, status := base32.Decode_Into(destination, source, encoding)
+		testify.Equal(t, base32.Decoded_Count(5), count)
+		testify.Equal_Values(t, base32.STATUS_OK, status)
+	}
+	for _, source := range [...]base32.Encoded{
+		base32.Encoded("\nAAAAAAABA"),
+		base32.Encoded("\nAAAAAAACA"),
+		base32.Encoded("\n77777777A"),
+	} {
+		count, status := base32.Decode_Into(destination, source, encoding)
+		testify.Equal(t, base32.Decoded_Count(5), count)
+		testify.Equal_Values(t, base32.STATUS_INPUT_INVALID, status)
+	}
 }
 
 func test_new_encoding_allocation(t *testing.T) {
 	alphabet := test_alphabet(TEST_STANDARD_ALPHABET)
-	duplicate := alphabet
-	duplicate[base32.ALPHABET_FINAL_INDEX] = duplicate[0]
+	duplicate := duplicate_alphabet(alphabet)
 	var configured base32.Encoding
 	var status base32.Configuration_Status
 	testify.Zero_Allocation(t, func() {

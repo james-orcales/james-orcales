@@ -396,6 +396,10 @@ func test_encode_domains(t *testing.T) {
 	count, encode_status := csv.Encode_Into(encoded[:1], nil, configuration)
 	testify.Equal(t, csv.Encoded_Count(1), count)
 	testify.Equal_Values(t, csv.STATUS_OK, encode_status)
+	empty_field := [...]csv.Field{{}}
+	count, encode_status = csv.Encode_Into(encoded[:1], empty_field[:], configuration)
+	testify.Equal(t, csv.Encoded_Count(1), count)
+	testify.Equal_Values(t, csv.STATUS_OK, encode_status)
 	one_field := [...]csv.Field{{Value: csv.Field_Value("a")}}
 	count, encode_status = csv.Encode_Into(encoded[:2], one_field[:], configuration)
 	testify.Equal(t, csv.Encoded_Count(2), count)
@@ -413,17 +417,28 @@ func test_encode_domains(t *testing.T) {
 	var maximum_fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
 	_, encode_status = csv.Encode_Into(encoded[:], maximum_fields[:], configuration)
 	testify.Equal_Values(t, csv.STATUS_RECORD_TOO_LARGE, encode_status)
-	invalid_delimiter_tail := configuration
-	invalid_delimiter_tail.Delimiter[utf8.CHARACTER_SIZE_MINIMUM] = TEST_SENTINEL
-	_, size_status = csv.Encoded_Size(nil, invalid_delimiter_tail)
+	count, encode_status = csv.Encode_Into(
+		encoded[:], maximum_fields[:len(maximum_fields)-1], configuration,
+	)
+	testify.Equal(t, csv.Encoded_Count(csv.ENCODED_SIZE_MAXIMUM), count)
+	testify.Equal_Values(t, csv.STATUS_OK, encode_status)
+	invalid_delimiter := configuration
+	invalid_delimiter.Delimiter = csv.Delimiter('\n')
+	_, size_status = csv.Encoded_Size(nil, invalid_delimiter)
 	testify.Equal_Values(t, csv.STATUS_CONFIGURATION_INVALID, size_status)
-	invalid_comment_tail := custom_configuration(t)
-	invalid_comment_tail.Comment[utf8.CHARACTER_SIZE_MAXIMUM-1] = TEST_SENTINEL
-	_, size_status = csv.Encoded_Size(nil, invalid_comment_tail)
+	invalid_comment := custom_configuration(t)
+	invalid_comment.Comment = csv.Comment('\n')
+	_, size_status = csv.Encoded_Size(nil, invalid_comment)
 	testify.Equal_Values(t, csv.STATUS_CONFIGURATION_INVALID, size_status)
 }
 
 func test_decode_domains(t *testing.T) {
+	t.Helper()
+	test_decode_slice_domains(t)
+	test_decode_position_domains(t)
+}
+
+func test_decode_slice_domains(t *testing.T) {
 	t.Helper()
 	configuration := csv.Standard_Configuration()
 	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
@@ -445,13 +460,53 @@ func test_decode_domains(t *testing.T) {
 	testify.Equal_Values(t, csv.STATUS_OK, decode_status)
 
 	decoder = test_decoder(t, configuration)
+	field_count, consumed, _, decode_status = csv.Decode_Record_Into(
+		decoded[:1], fields[:1], csv.Encoded("a"), &decoder,
+	)
+	testify.Equal(t, csv.Field_Count(1), field_count)
+	testify.Equal(t, csv.Consumed_Count(1), consumed)
+	testify.Equal_Values(t, csv.STATUS_OK, decode_status)
+
+	for _, size := range [...]int{0, 1, 2} {
+		decoder = test_decoder(t, configuration)
+		field_count, consumed, _, decode_status = csv.Decode_Record_Into(
+			decoded[:size], fields[:1], csv.Encoded(`""`), &decoder,
+		)
+		testify.Equal(t, csv.Field_Count(1), field_count)
+		testify.Equal(t, csv.Consumed_Count(2), consumed)
+		testify.Equal_Values(t, csv.STATUS_OK, decode_status)
+	}
+
+	for _, size := range [...]int{1, 2} {
+		decoder = test_decoder(t, configuration)
+		_, _, _, decode_status = csv.Decode_Record_Into(
+			decoded[:size], fields[:1], csv.Encoded("\"\n"), &decoder,
+		)
+		testify.Equal_Values(t, csv.STATUS_INPUT_INVALID, decode_status)
+	}
+
+	decoder = test_decoder(t, configuration)
+	field_count, consumed, _, decode_status = csv.Decode_Record_Into(
+		decoded[:0], fields[:1], csv.Encoded("\"\"\n"), &decoder,
+	)
+	testify.Equal(t, csv.Field_Count(1), field_count)
+	testify.Equal(t, csv.Consumed_Count(3), consumed)
+	testify.Equal_Values(t, csv.STATUS_OK, decode_status)
+
+	decoder = test_decoder(t, configuration)
 	field_count, _, _, decode_status = csv.Decode_Record_Into(
 		decoded[:2], fields[:2], csv.Encoded("a,b\n"), &decoder,
 	)
 	testify.Equal(t, csv.Field_Count(2), field_count)
 	testify.Equal_Values(t, csv.STATUS_OK, decode_status)
+}
 
-	decoder = test_decoder(t, configuration)
+func test_decode_position_domains(t *testing.T) {
+	t.Helper()
+	configuration := csv.Standard_Configuration()
+	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
+	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
+	decoder := test_decoder(t, configuration)
 	_, _, position, decode_status := csv.Decode_Record_Into(
 		decoded[:], fields[:], csv.Encoded("\""), &decoder,
 	)
@@ -481,6 +536,22 @@ func test_decode_domains(t *testing.T) {
 	)
 	testify.Equal_Values(t, csv.STATUS_INPUT_INVALID, decode_status)
 	testify.Equal(t, csv.Line(csv.LINE_MAXIMUM), position.Line)
+
+	var maximum_quoted_source [csv.ENCODED_SIZE_MAXIMUM]byte
+	for index := range maximum_quoted_source {
+		maximum_quoted_source[index] = 'a'
+	}
+	maximum_quoted_source[0] = '"'
+	maximum_quoted_source[1] = '\n'
+	maximum_quoted_source[2] = '"'
+	maximum_quoted_source[3] = '\n'
+	decoder = test_decoder(t, configuration)
+	field_count, consumed, _, decode_status := csv.Decode_Record_Into(
+		decoded[:], fields[:1], maximum_quoted_source[:], &decoder,
+	)
+	testify.Equal(t, csv.Field_Count(1), field_count)
+	testify.Equal(t, csv.Consumed_Count(4), consumed)
+	testify.Equal_Values(t, csv.STATUS_OK, decode_status)
 }
 
 func test_configuration_allocation(t *testing.T) {

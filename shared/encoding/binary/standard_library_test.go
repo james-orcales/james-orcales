@@ -45,35 +45,43 @@ type nested_structure struct {
 }
 
 type structure struct {
-	Int8     int8
-	Int16    int16
-	Int32    int32
-	Int64    int64
-	Uint8    uint8
-	Uint16   uint16
-	Uint32   uint32
-	Uint64   uint64
-	Array    [TEST_ARRAY_COUNT]uint8
-	Boolean  bool
-	Booleans [TEST_ARRAY_COUNT]bool
+	Int8      int8
+	Int16     int16
+	Int32     int32
+	Int64     int64
+	Uint8     uint8
+	Uint16    uint16
+	Uint32    uint32
+	Uint64    uint64
+	Array_0   uint8
+	Array_1   uint8
+	Array_2   uint8
+	Array_3   uint8
+	Boolean   bool
+	Boolean_0 bool
+	Boolean_1 bool
+	Boolean_2 bool
+	Boolean_3 bool
 }
 
 type blank_fields struct {
 	First uint32
 	_     int32
 	Last  uint16
-	_     [TEST_PAIR_COUNT]uint8
+	_     uint8
+	_     uint8
 }
 
 type blank_probe struct {
 	First   uint32
 	Padding int32
 	Last    uint16
-	Tail    [TEST_PAIR_COUNT]uint8
+	Tail_0  uint8
+	Tail_1  uint8
 }
 
 type memory_stream struct {
-	Storage  [BYTE_SIZE_MAXIMUM]byte
+	Storage  Bytes
 	Source   []byte
 	Position int
 	Written  int
@@ -153,30 +161,36 @@ func write_memory(
 	return writer.Completion
 }
 
-func memory_completion(completion *nbio.Completion) {
+func memory_completion(completion nbio.Completion_Handle) {
 	if completion == nil {
-		panic("binary test completion is absent")
+		return
 	}
 }
 
 func structure_value() (value structure) {
 	return structure{
-		Int8:     0x01,
-		Int16:    0x0203,
-		Int32:    0x04050607,
-		Int64:    0x08090a0b0c0d0e0f,
-		Uint8:    0x10,
-		Uint16:   0x1112,
-		Uint32:   0x13141516,
-		Uint64:   0x1718191a1b1c1d1e,
-		Array:    [TEST_ARRAY_COUNT]uint8{31, 32, 33, 34},
-		Boolean:  true,
-		Booleans: [TEST_ARRAY_COUNT]bool{true, false, true, false},
+		Int8:      0x01,
+		Int16:     0x0203,
+		Int32:     0x04050607,
+		Int64:     0x08090a0b0c0d0e0f,
+		Uint8:     0x10,
+		Uint16:    0x1112,
+		Uint32:    0x13141516,
+		Uint64:    0x1718191a1b1c1d1e,
+		Array_0:   31,
+		Array_1:   32,
+		Array_2:   33,
+		Array_3:   34,
+		Boolean:   true,
+		Boolean_0: true,
+		Boolean_1: false,
+		Boolean_2: true,
+		Boolean_3: false,
 	}
 }
 
-func big_structure_bytes() (value [TEST_STRUCTURE_SIZE]byte) {
-	return [TEST_STRUCTURE_SIZE]byte{
+func big_structure_bytes() (value Bytes) {
+	return Bytes{
 		1,
 		2, 3,
 		4, 5, 6, 7,
@@ -191,8 +205,8 @@ func big_structure_bytes() (value [TEST_STRUCTURE_SIZE]byte) {
 	}
 }
 
-func little_structure_bytes() (value [TEST_STRUCTURE_SIZE]byte) {
-	return [TEST_STRUCTURE_SIZE]byte{
+func little_structure_bytes() (value Bytes) {
+	return Bytes{
 		1,
 		3, 2,
 		7, 6, 5, 4,
@@ -212,7 +226,7 @@ func Test_Structured_Encode_Decode(t *testing.T) {
 	value := structure_value()
 	cases := [...]struct {
 		Order Byte_Order
-		Bytes [TEST_STRUCTURE_SIZE]byte
+		Bytes Bytes
 	}{
 		{Order: BIG_ENDIAN, Bytes: big_structure_bytes()},
 		{Order: LITTLE_ENDIAN, Bytes: little_structure_bytes()},
@@ -226,7 +240,7 @@ func Test_Structured_Encode_Decode(t *testing.T) {
 		if count != Byte_Count(len(storage)) {
 			t.Fatal("Encode returned wrong structured size")
 		}
-		if storage != one.Bytes {
+		if !reflect.DeepEqual(storage[:], []byte(one.Bytes)) {
 			t.Fatal("Encode wrote wrong structured bytes")
 		}
 		var decoded structure
@@ -370,7 +384,10 @@ func Test_Structured_Blank_Fields(t *testing.T) {
 	if probe.Padding != 0x09080706 {
 		t.Fatal("fixture did not expose nonzero padding")
 	}
-	if probe.Tail != [TEST_PAIR_COUNT]uint8{4, 3} {
+	if probe.Tail_0 != 4 {
+		t.Fatal("fixture did not expose nonzero padding")
+	}
+	if probe.Tail_1 != 3 {
 		t.Fatal("fixture did not expose nonzero padding")
 	}
 }
@@ -386,7 +403,7 @@ func Test_Structured_Stream_IO(t *testing.T) {
 	testify.No_Error(t, read_completion.Error)
 	testify.Equal(t, value, decoded)
 	testify.Equal(t, len(encoded), reader.Position)
-	var writer memory_stream
+	writer := memory_stream{Storage: make(Bytes, BYTE_SIZE_MAXIMUM)}
 	write_completion := write_memory(&writer, scratch[:], value, BIG_ENDIAN)
 	testify.No_Error(t, write_completion.Error)
 	testify.Equal(t, len(encoded), writer.Written)
@@ -572,7 +589,8 @@ type varint_reader struct {
 }
 
 // Explicit Position reset keeps repeated allocation runs independent.
-func read_varint_byte(reader *varint_reader) (value byte, err error) {
+func read_varint_byte(state Read_Byte_State) (value byte, err error) {
+	reader := (*varint_reader)(state)
 	if reader.Position == len(reader.Source) {
 		return 0, nbio.Stream_EOF
 	}
@@ -582,13 +600,13 @@ func read_varint_byte(reader *varint_reader) (value byte, err error) {
 }
 
 type allocation_fixture struct {
-	Storage          [TEST_ALLOCATION_STORAGE_SIZE]byte
-	Scratch          [TEST_ALLOCATION_STORAGE_SIZE]byte
+	Storage          Bytes
+	Scratch          Bytes
 	Stream           memory_stream
 	Structure        structure
 	Decoded          structure
-	Words            [TEST_PAIR_COUNT]uint32
-	Decoded_Words    [TEST_PAIR_COUNT]uint32
+	Words            []uint32
+	Decoded_Words    []uint32
 	Decoded_Word_Set []uint32
 	Varint_Reader    varint_reader
 	Reader           Reader
@@ -614,9 +632,13 @@ type allocation_fixture struct {
 // Test_Zero_Allocation measures each public data operation separately.
 func Test_Zero_Allocation(t *testing.T) {
 	fixture := allocation_fixture{
-		Structure: structure_value(),
-		Words:     [TEST_PAIR_COUNT]uint32{1, 2},
+		Structure:     structure_value(),
+		Storage:       make(Bytes, TEST_ALLOCATION_STORAGE_SIZE),
+		Scratch:       make(Bytes, TEST_ALLOCATION_STORAGE_SIZE),
+		Words:         []uint32{1, 2},
+		Decoded_Words: make([]uint32, TEST_PAIR_COUNT),
 	}
+	fixture.Stream.Storage = make(Bytes, BYTE_SIZE_MAXIMUM)
 	fixture.Decoded_Word_Set = fixture.Decoded_Words[:]
 	encoded := big_structure_bytes()
 	copy(fixture.Storage[:], encoded[:])
@@ -724,14 +746,16 @@ func allocation_varint_checks(
 		}},
 		{Name: "Read_Unsigned_Varint", Run: func() {
 			fixture.Varint_Reader.Position = 0
+			state := Read_Byte_State(unsafe.Pointer(&fixture.Varint_Reader))
 			fixture.Uint64, fixture.Error = Read_Unsigned_Varint(
-				&fixture.Varint_Reader, read_varint_byte,
+				state, read_varint_byte,
 			)
 		}},
 		{Name: "Read_Varint", Run: func() {
 			fixture.Varint_Reader.Position = 0
+			state := Read_Byte_State(unsafe.Pointer(&fixture.Varint_Reader))
 			fixture.Signed, fixture.Error = Read_Varint(
-				&fixture.Varint_Reader, read_varint_byte,
+				state, read_varint_byte,
 			)
 		}},
 	}

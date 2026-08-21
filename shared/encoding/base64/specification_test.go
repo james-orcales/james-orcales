@@ -10,6 +10,7 @@ import (
 
 // Test_Configuration protects standard, URL, raw, custom, and rejected configurations.
 func Test_Configuration(t *testing.T) {
+	test_alphabet_size_validation(t)
 	standard := base64.Standard_Encoding()
 	url := base64.URL_Encoding()
 	raw_standard := base64.Raw_Standard_Encoding()
@@ -27,12 +28,10 @@ func Test_Configuration(t *testing.T) {
 	testify.Equal_Values(t, base64.STATUS_OK, padding_status)
 	assert_encode(t, padded, "f", "Zg@@")
 
-	duplicate := alphabet
-	duplicate[base64.ALPHABET_FINAL_INDEX] = duplicate[0]
+	duplicate := duplicate_alphabet(alphabet)
 	_, configuration_status = base64.New_Encoding(duplicate, base64.STANDARD_PADDING)
 	testify.Equal_Values(t, base64.STATUS_ALPHABET_INVALID, configuration_status)
-	newline := alphabet
-	newline[base64.ALPHABET_FINAL_INDEX] = '\n'
+	newline := base64.Alphabet(alphabet[:base64.ALPHABET_FINAL_INDEX] + "\n")
 	_, configuration_status = base64.New_Encoding(newline, base64.STANDARD_PADDING)
 	testify.Equal_Values(t, base64.STATUS_ALPHABET_INVALID, configuration_status)
 	_, configuration_status = base64.New_Encoding(
@@ -73,6 +72,9 @@ func Test_Encode(t *testing.T) {
 		{Decoded: "f", Encoded: "Zg=="},
 		{Decoded: "fo", Encoded: "Zm8="},
 		{Decoded: "foo", Encoded: "Zm9v"},
+		{Decoded: "\x00\x00\x01", Encoded: "AAAB"},
+		{Decoded: "\x00\x00\x02", Encoded: "AAAC"},
+		{Decoded: "\xff\xff\xff", Encoded: "////"},
 		{Decoded: "foob", Encoded: "Zm9vYg=="},
 		{Decoded: "fooba", Encoded: "Zm9vYmE="},
 		{Decoded: "foobar", Encoded: "Zm9vYmFy"},
@@ -108,6 +110,9 @@ func Test_Decode(t *testing.T) {
 		{Decoded: "f", Encoded: "Zg=="},
 		{Decoded: "fo", Encoded: "Zm8="},
 		{Decoded: "foo", Encoded: "Zm9v"},
+		{Decoded: "\x00\x00\x01", Encoded: "AAAB"},
+		{Decoded: "\x00\x00\x02", Encoded: "AAAC"},
+		{Decoded: "\xff\xff\xff", Encoded: "////"},
 		{Decoded: "foobar", Encoded: "Zm9vYmFy"},
 		{Decoded: "foobarfoobar", Encoded: "Zm9vYmFyZm9vYmFy"},
 		{
@@ -122,6 +127,9 @@ func Test_Decode(t *testing.T) {
 	raw := base64.Raw_Standard_Encoding()
 	assert_decode(t, raw, "Zg", "f")
 	assert_decode(t, raw, "Zm8", "fo")
+	assert_decode(t, raw, "AAB", "\x00\x00")
+	assert_decode(t, raw, "AAC", "\x00\x00")
+	assert_decode(t, raw, "///", "\xff\xff")
 
 	invalid := [...]string{
 		"A", "!!!!", "====", "x===", "=AAA", "A=AA", "AA=A", "AA==A",
@@ -145,6 +153,7 @@ func Test_Decode(t *testing.T) {
 	count, status = base64.Decode_Into(destination[:0], []byte("Zg=="), encoding)
 	testify.Equal(t, base64.Decoded_Count(0), count)
 	testify.Equal_Values(t, base64.STATUS_OUTPUT_TOO_SMALL, status)
+	test_decode_symbol_domain(t, encoding, destination[:])
 
 	var exact [base64.ENCODED_GROUP_SIZE + base64.ENCODED_GROUP_SIZE]byte
 	for index := range exact {
@@ -208,14 +217,42 @@ type test_case struct {
 }
 
 func test_alphabet(text string) (alphabet base64.Alphabet) {
-	copy(alphabet[:], text)
-	return alphabet
+	return base64.Alphabet(text)
+}
+
+func duplicate_alphabet(alphabet base64.Alphabet) (duplicate base64.Alphabet) {
+	return base64.Alphabet(
+		alphabet[:base64.ALPHABET_FINAL_INDEX] + alphabet[:1],
+	)
+}
+
+func test_alphabet_size_validation(t *testing.T) {
+	maximum := make(base64.Encoded, base64.ENCODED_SIZE_MAXIMUM)
+	for _, alphabet := range [...]base64.Alphabet{
+		"",
+		"A",
+		"AB",
+		base64.Alphabet(string(maximum)),
+	} {
+		_, status := base64.New_Encoding(alphabet, base64.STANDARD_PADDING)
+		testify.Equal_Values(t, base64.STATUS_ALPHABET_INVALID, status)
+	}
+}
+
+func test_decode_symbol_domain(
+	t *testing.T, encoding base64.Encoding, destination base64.Decoded,
+) {
+	for _, source_byte := range [...]byte{0, 1, 2, 255} {
+		_, status := base64.Decode_Into(
+			destination, base64.Encoded{source_byte}, encoding,
+		)
+		testify.Equal_Values(t, base64.STATUS_INPUT_INVALID, status)
+	}
 }
 
 func test_new_encoding_allocation(t *testing.T) {
 	alphabet := test_alphabet(TEST_STANDARD_ALPHABET)
-	duplicate := alphabet
-	duplicate[base64.ALPHABET_FINAL_INDEX] = duplicate[0]
+	duplicate := duplicate_alphabet(alphabet)
 	var configured base64.Encoding
 	var status base64.Configuration_Status
 	testify.Zero_Allocation(t, func() {

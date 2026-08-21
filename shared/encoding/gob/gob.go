@@ -99,16 +99,6 @@ func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Boolean_Output excludes unreachable scalar widths from its contract.
-type Boolean_Output []byte
-
-// Boolean_Output_Invariants permits refusal storage or its sole encoded byte.
-func Boolean_Output_Invariants(value Boolean_Output, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_Int(len(value), bytes.SLICE_SIZE_MINIMUM, PREFIX_SIZE).
-		Ensure()
-}
-
 // Float_64_Bits preserves every IEEE binary64 encoding without float arithmetic.
 type Float_64_Bits uint64
 
@@ -174,6 +164,18 @@ func Integer_Output_Invariants(value Integer_Output, namespace aver.Namespace) {
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, INTEGER_ENCODED_SIZE_MAXIMUM,
 		).
+		Ensure()
+}
+
+// Nonempty_Integer_Output is exact storage selected after integer sizing.
+type Nonempty_Integer_Output []byte
+
+// Nonempty_Integer_Output_Invariants excludes the caller refusal shape.
+func Nonempty_Integer_Output_Invariants(
+	value Nonempty_Integer_Output, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), PREFIX_SIZE, INTEGER_ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
 
@@ -442,7 +444,7 @@ func Encode_Unsigned_Into(destination Integer_Output, value Unsigned) (
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	encode_unsigned_unchecked(destination[:required], value)
+	encode_unsigned_unchecked(Nonempty_Integer_Output(destination[:required]), value)
 	return Integer_Encoded_Count(required), STATUS_OK
 }
 
@@ -461,7 +463,7 @@ func Encode_Integer_Into(destination Integer_Output, value Integer) (
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	encode_unsigned_unchecked(destination[:required], unsigned)
+	encode_unsigned_unchecked(Nonempty_Integer_Output(destination[:required]), unsigned)
 	return Integer_Encoded_Count(required), STATUS_OK
 }
 
@@ -527,14 +529,14 @@ func Boolean_Size(value Boolean) (size Boolean_Size_Count) {
 }
 
 // Encode_Boolean_Into writes one unsigned truth value into caller storage.
-func Encode_Boolean_Into(destination Boolean_Output, value Boolean) (
+func Encode_Boolean_Into(destination Integer_Output, value Boolean) (
 	count Boolean_Encoded_Count, status Integer_Encode_Status,
 ) {
 	defer func() {
 		Boolean_Encoded_Count_Invariants(count, "Encode_Boolean_Into.count")
 		Integer_Encode_Status_Invariants(status, "Encode_Boolean_Into.status")
 	}()
-	Boolean_Output_Invariants(destination, "Encode_Boolean_Into.destination")
+	Integer_Output_Invariants(destination, "Encode_Boolean_Into.destination")
 	Boolean_Invariants(value, "Encode_Boolean_Into.value")
 	if len(destination) < PREFIX_SIZE {
 		return 0, STATUS_OUTPUT_TOO_SMALL
@@ -636,8 +638,10 @@ func Encode_Complex_Into(
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	encode_unsigned_unchecked(destination[:real_size], real_unsigned)
-	encode_unsigned_unchecked(destination[real_size:required], imaginary_unsigned)
+	encode_unsigned_unchecked(Nonempty_Integer_Output(destination[:real_size]), real_unsigned)
+	encode_unsigned_unchecked(
+		Nonempty_Integer_Output(destination[real_size:required]), imaginary_unsigned,
+	)
 	return Complex_Encoded_Count(required), STATUS_OK
 }
 
@@ -706,7 +710,9 @@ func Encode_Bytes_Into(destination Bytes_Output, source Bytes) (
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
 	prefix_size := Unsigned_Size(Unsigned(len(source)))
-	encode_unsigned_unchecked(destination[:prefix_size], Unsigned(len(source)))
+	encode_unsigned_unchecked(
+		Nonempty_Integer_Output(destination[:prefix_size]), Unsigned(len(source)),
+	)
 	copy(destination[prefix_size:], source)
 	return Bytes_Encoded_Count(required), STATUS_OK
 }
@@ -760,9 +766,8 @@ func float_unsigned(value Float_64_Bits) (unsigned Unsigned) {
 	return Unsigned(bits.Reverse_Bytes_64(bits.Word_64(value)))
 }
 
-func encode_unsigned_unchecked[Destination ~[]byte](
-	destination Destination, value Unsigned,
-) {
+func encode_unsigned_unchecked(destination Nonempty_Integer_Output, value Unsigned) {
+	Nonempty_Integer_Output_Invariants(destination, "encode_unsigned_unchecked.destination")
 	Unsigned_Invariants(value, "encode_unsigned_unchecked.value")
 	if value <= UNSIGNED_DIRECT_MAXIMUM {
 		destination[bytes.SLICE_SIZE_MINIMUM] = byte(value)

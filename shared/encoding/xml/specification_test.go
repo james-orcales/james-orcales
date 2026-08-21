@@ -171,6 +171,9 @@ func test_refusals(t *testing.T) {
 }
 
 func test_domains(t *testing.T) {
+	test_transform_domains(t)
+	test_parser_minimum_domains(t)
+	test_parser_maximum_domains(t)
 	var destination [xml.OUTPUT_SIZE_MAXIMUM]byte
 	for _, source := range [...]xml.Text{nil, {'a'}, {'a', 'b'}, xml.Text("¢")} {
 		xml.Escape_Into(destination[:], source)
@@ -227,6 +230,86 @@ func test_domains(t *testing.T) {
 	validate_position, validate_status = xml.Validate(nested[:])
 	testify.Equal(t, xml.Position(0), validate_position)
 	testify.Equal_Values(t, xml.STATUS_OK, validate_status)
+
+	var overnested [(xml.DEPTH_MAXIMUM + 1) * len("<a>")]byte
+	position = 0
+	for range xml.DEPTH_MAXIMUM + 1 {
+		position += copy(overnested[position:], "<a>")
+	}
+	validate_position, validate_status = xml.Validate(overnested[:])
+	testify.True(t, validate_position > 0)
+	testify.Equal_Values(t, xml.STATUS_INPUT_INVALID, validate_status)
+}
+
+func test_transform_domains(t *testing.T) {
+	t.Helper()
+	var destination [xml.OUTPUT_SIZE_MAXIMUM]byte
+	_, _, status := xml.Unescape_Into(destination[:1], xml.Escaped("a"))
+	testify.Equal_Values(t, xml.STATUS_OK, status)
+	for _, size := range [...]int{1, 2} {
+		count, _, named_status := xml.Unescape_Into(
+			destination[:size], xml.Escaped("&lt;"),
+		)
+		testify.Equal(t, xml.Count(1), count)
+		testify.Equal_Values(t, xml.STATUS_OK, named_status)
+		count, _, numeric_status := xml.Unescape_Into(
+			destination[:size], xml.Escaped("&#65;"),
+		)
+		testify.Equal(t, xml.Count(1), count)
+		testify.Equal_Values(t, xml.STATUS_OK, numeric_status)
+	}
+}
+
+func test_parser_minimum_domains(t *testing.T) {
+	t.Helper()
+	for _, source := range [...]xml.Document{
+		xml.Document("a"),
+		xml.Document("ab"),
+		xml.Document("&"),
+		xml.Document("&;"),
+		xml.Document("</"),
+		xml.Document("<?"),
+		xml.Document("<!"),
+		xml.Document("&#;"),
+		xml.Document("<a "),
+		xml.Document("<a b"),
+		xml.Document("<!--"),
+		xml.Document("<?a?>"),
+		xml.Document("<a></"),
+		xml.Document("<?xml?>"),
+		xml.Document("<!a<!--"),
+		xml.Document("<a><![CDATA["),
+	} {
+		position, status := xml.Validate(source)
+		testify.True(t, position > 0)
+		testify.Equal_Values(t, xml.STATUS_INPUT_INVALID, status)
+	}
+}
+
+func test_parser_maximum_domains(t *testing.T) {
+	t.Helper()
+	var maximum [xml.DOCUMENT_SIZE_MAXIMUM]byte
+	source := "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+		"<!DOCTYPE a [<!--x-->]>" +
+		"<a x=\"&amp;\">x&amp;&#65;<!--c--><![CDATA[x]]></a>"
+	count := copy(maximum[:], source)
+	for count < len(maximum) {
+		maximum[count] = ' '
+		count++
+	}
+	position, status := xml.Validate(maximum[:])
+	testify.Equal(t, xml.Position(0), position)
+	testify.Equal_Values(t, xml.STATUS_OK, status)
+
+	var entity [xml.DOCUMENT_SIZE_MAXIMUM]byte
+	entity[0] = '&'
+	for index := 1; index < len(entity)-1; index++ {
+		entity[index] = 'a'
+	}
+	entity[len(entity)-1] = ';'
+	_, position, size_status := xml.Unescape_Size(entity[:])
+	testify.True(t, position > 0)
+	testify.Equal_Values(t, xml.STATUS_INPUT_INVALID, size_status)
 }
 
 func test_validate_allocation(t *testing.T) {

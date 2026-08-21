@@ -3,6 +3,7 @@ package xml
 
 import (
 	"local/james-orcales/shared/bytes"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -16,8 +17,68 @@ const TEXT_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
 // OUTPUT_SIZE_MAXIMUM follows the repository byte-slice boundary.
 const OUTPUT_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
 
+// NONEMPTY_SIZE_MINIMUM is one addressable byte.
+const NONEMPTY_SIZE_MINIMUM = 1
+
+// SPECIAL_DOCUMENT_SIZE_MINIMUM holds markup opener and discriminator.
+const SPECIAL_DOCUMENT_SIZE_MINIMUM = len("<!")
+
+// NUMERIC_ENTITY_DOCUMENT_SIZE_MINIMUM holds the shortest numeric entity shape.
+const NUMERIC_ENTITY_DOCUMENT_SIZE_MINIMUM = len("&#;")
+
+// SPACE_DOCUMENT_SIZE_MINIMUM holds a start, name, and following space.
+const SPACE_DOCUMENT_SIZE_MINIMUM = len("<a ")
+
+// ATTRIBUTE_DOCUMENT_SIZE_MINIMUM holds a start tag and one attribute-name byte.
+const ATTRIBUTE_DOCUMENT_SIZE_MINIMUM = len("<a b")
+
+// COMMENT_DOCUMENT_SIZE_MINIMUM holds the complete comment opener.
+const COMMENT_DOCUMENT_SIZE_MINIMUM = len("<!--")
+
+// TERMINATED_INSTRUCTION_DOCUMENT_SIZE_MINIMUM holds one target and its terminator.
+const TERMINATED_INSTRUCTION_DOCUMENT_SIZE_MINIMUM = len("<?a?>")
+
+// END_TAG_DOCUMENT_SIZE_MINIMUM holds one open element and an incomplete end tag.
+const END_TAG_DOCUMENT_SIZE_MINIMUM = len("<a></")
+
+// XML_INSTRUCTION_DOCUMENT_SIZE_MINIMUM holds the XML target and its terminator.
+const XML_INSTRUCTION_DOCUMENT_SIZE_MINIMUM = len("<?xml?>")
+
+// DIRECTIVE_COMMENT_DOCUMENT_SIZE_MINIMUM reaches a nested comment opener.
+const DIRECTIVE_COMMENT_DOCUMENT_SIZE_MINIMUM = len("<!a<!--")
+
+// CDATA_DOCUMENT_SIZE_MINIMUM reaches a CDATA opener inside one root element.
+const CDATA_DOCUMENT_SIZE_MINIMUM = len("<a><![CDATA[")
+
+// ENTITY_NAME_SIZE_MAXIMUM leaves ampersand and semicolon framing.
+const ENTITY_NAME_SIZE_MAXIMUM = DOCUMENT_SIZE_MAXIMUM - len("&;")
+
 // POSITION_MAXIMUM includes unexpected end immediately after maximum input.
 const POSITION_MAXIMUM = DOCUMENT_SIZE_MAXIMUM + 1
+
+// DOCUMENT_INDEX_MAXIMUM is the last addressable document byte.
+const DOCUMENT_INDEX_MAXIMUM = DOCUMENT_SIZE_MAXIMUM - 1
+
+// START_TAG_POSITION_MINIMUM follows the opening less-than byte.
+const START_TAG_POSITION_MINIMUM = 1
+
+// END_TAG_POSITION_MINIMUM follows the end-tag opener.
+const END_TAG_POSITION_MINIMUM = 2
+
+// INSTRUCTION_POSITION_MINIMUM follows the instruction opener.
+const INSTRUCTION_POSITION_MINIMUM = 2
+
+// DIRECTIVE_POSITION_MINIMUM follows the directive opener.
+const DIRECTIVE_POSITION_MINIMUM = 2
+
+// COMMENT_POSITION_MINIMUM follows the comment opener.
+const COMMENT_POSITION_MINIMUM = 4
+
+// CDATA_POSITION_MINIMUM follows the CDATA opener.
+const CDATA_POSITION_MINIMUM = 9
+
+// DIRECTIVE_COMMENT_POSITION_MINIMUM follows a nested comment opener.
+const DIRECTIVE_COMMENT_POSITION_MINIMUM = 7
 
 // OPEN_ELEMENT_SIZE_MINIMUM is the shortest nonempty opening tag.
 const OPEN_ELEMENT_SIZE_MINIMUM = len("<a>")
@@ -64,6 +125,12 @@ const REPLACEMENT_CHARACTER = "\uFFFD"
 
 // ESCAPED_CHARACTER_SIZE_MAXIMUM is the widest standard replacement.
 const ESCAPED_CHARACTER_SIZE_MAXIMUM = len(ESCAPE_CARRIAGE_RETURN)
+
+// PATTERN_SIZE_MINIMUM is the shortest fixed XML token.
+const PATTERN_SIZE_MINIMUM = len("<?")
+
+// PATTERN_SIZE_MAXIMUM is the longest fixed XML token.
+const PATTERN_SIZE_MAXIMUM = len("<![CDATA[")
 
 // STATUS_OK means the operation completed.
 const STATUS_OK = 0
@@ -120,6 +187,171 @@ func Output_Invariants(value Output, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Nonempty_Document is parser input after one byte has been selected.
+type Nonempty_Document []byte
+
+// Nonempty_Document_Invariants rejects absent parser work.
+func Nonempty_Document_Invariants(value Nonempty_Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Special_Document contains markup opener and discriminator.
+type Special_Document []byte
+
+// Special_Document_Invariants states the shared special-markup prefix.
+func Special_Document_Invariants(value Special_Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), SPECIAL_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Numeric_Entity_Document contains the shortest numeric reference shape.
+type Numeric_Entity_Document []byte
+
+// Numeric_Entity_Document_Invariants rejects input that cannot reach numeric parsing.
+func Numeric_Entity_Document_Invariants(
+	value Numeric_Entity_Document, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), NUMERIC_ENTITY_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Space_Document contains a start-tag name followed by space.
+type Space_Document []byte
+
+// Space_Document_Invariants rejects input that cannot reach space scanning.
+func Space_Document_Invariants(value Space_Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), SPACE_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Attribute_Document contains one reachable attribute-name byte.
+type Attribute_Document []byte
+
+// Attribute_Document_Invariants rejects input that cannot reach attribute parsing.
+func Attribute_Document_Invariants(value Attribute_Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), ATTRIBUTE_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Comment_Document contains the complete XML comment opener.
+type Comment_Document []byte
+
+// Comment_Document_Invariants rejects input that cannot reach comment scanning.
+func Comment_Document_Invariants(value Comment_Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), COMMENT_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Terminated_Instruction_Document contains one target and its terminator.
+type Terminated_Instruction_Document []byte
+
+// Terminated_Instruction_Document_Invariants rejects incomplete instruction framing.
+func Terminated_Instruction_Document_Invariants(
+	value Terminated_Instruction_Document, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value), TERMINATED_INSTRUCTION_DOCUMENT_SIZE_MINIMUM,
+			DOCUMENT_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// End_Tag_Document contains one open element before an end-tag scan.
+type End_Tag_Document []byte
+
+// End_Tag_Document_Invariants rejects input that cannot reach end-tag scanning.
+func End_Tag_Document_Invariants(value End_Tag_Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), END_TAG_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// XML_Instruction_Document contains the XML target and its terminator.
+type XML_Instruction_Document []byte
+
+// XML_Instruction_Document_Invariants rejects input without a complete XML target.
+func XML_Instruction_Document_Invariants(
+	value XML_Instruction_Document, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value), XML_INSTRUCTION_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Directive_Comment_Document reaches a nested directive comment opener.
+type Directive_Comment_Document []byte
+
+// Directive_Comment_Document_Invariants rejects input before nested comment dispatch.
+func Directive_Comment_Document_Invariants(
+	value Directive_Comment_Document, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value), DIRECTIVE_COMMENT_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// CDATA_Document reaches a CDATA opener inside one root element.
+type CDATA_Document []byte
+
+// CDATA_Document_Invariants rejects input before legal CDATA dispatch.
+func CDATA_Document_Invariants(value CDATA_Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), CDATA_DOCUMENT_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Entity_Name is reference content without ampersand or semicolon framing.
+type Entity_Name []byte
+
+// Entity_Name_Invariants leaves room for mandatory reference framing.
+func Entity_Name_Invariants(value Entity_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENTITY_NAME_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Nonempty_Text is escape input after one character has been selected.
+type Nonempty_Text []byte
+
+// Nonempty_Text_Invariants rejects absent escape work.
+func Nonempty_Text_Invariants(value Nonempty_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Nonempty_Escaped is entity input after one character has been selected.
+type Nonempty_Escaped []byte
+
+// Nonempty_Escaped_Invariants rejects absent unescape work.
+func Nonempty_Escaped_Invariants(value Nonempty_Escaped, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Nonempty_Output has one byte available for proven transform work.
+type Nonempty_Output []byte
+
+// Nonempty_Output_Invariants rejects storage that cannot accept selected work.
+func Nonempty_Output_Invariants(value Nonempty_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
+		Ensure()
+}
+
 // Count is exact output bytes or zero on refusal.
 type Count int
 
@@ -140,6 +372,156 @@ func Position_Invariants(value Position, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Document_Position is one zero-based document boundary.
+type Document_Position int
+
+// Document_Position_Invariants bounds parser progress and absent zero.
+func Document_Position_Invariants(value Document_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Document_Index is one addressable document byte.
+type Document_Index int
+
+// Document_Index_Invariants excludes the boundary after input storage.
+func Document_Index_Invariants(value Document_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, DOCUMENT_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Next_Position follows at least one consumed or written byte.
+type Next_Position int
+
+// Next_Position_Invariants bounds nonzero progress.
+func Next_Position_Invariants(value Next_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), NONEMPTY_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Start_Tag_Position follows the opening less-than byte.
+type Start_Tag_Position int
+
+// Start_Tag_Position_Invariants bounds start-tag progress.
+func Start_Tag_Position_Invariants(value Start_Tag_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), START_TAG_POSITION_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// End_Tag_Position follows the end-tag opener.
+type End_Tag_Position int
+
+// End_Tag_Position_Invariants bounds end-tag progress.
+func End_Tag_Position_Invariants(value End_Tag_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), END_TAG_POSITION_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Instruction_Position follows the instruction opener.
+type Instruction_Position int
+
+// Instruction_Position_Invariants bounds instruction progress.
+func Instruction_Position_Invariants(
+	value Instruction_Position, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), INSTRUCTION_POSITION_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Directive_Position follows the directive opener.
+type Directive_Position int
+
+// Directive_Position_Invariants bounds directive progress.
+func Directive_Position_Invariants(value Directive_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), DIRECTIVE_POSITION_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Comment_Position follows the comment opener.
+type Comment_Position int
+
+// Comment_Position_Invariants bounds comment progress.
+func Comment_Position_Invariants(value Comment_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), COMMENT_POSITION_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// CDATA_Position follows the CDATA opener.
+type CDATA_Position int
+
+// CDATA_Position_Invariants bounds CDATA progress.
+func CDATA_Position_Invariants(value CDATA_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), CDATA_POSITION_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Directive_Comment_Position follows a nested comment opener.
+type Directive_Comment_Position int
+
+// Directive_Comment_Position_Invariants bounds nested comment progress.
+func Directive_Comment_Position_Invariants(
+	value Directive_Comment_Position, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			int(value), DIRECTIVE_COMMENT_POSITION_MINIMUM,
+			DOCUMENT_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// XML_Character is one decoded scalar considered by XML grammar.
+type XML_Character int32
+
+// XML_Character_Invariants covers the decoded scalar domain across parser stages.
+func XML_Character_Invariants(value XML_Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), int32(bytes.SLICE_SIZE_MINIMUM), int32(utf8.RUNE_MAX)).
+		Ensure()
+}
+
+// Character_Size is one decoded UTF-8 width.
+type Character_Size int
+
+// Character_Size_Invariants covers all decoded widths across transform stages.
+func Character_Size_Invariants(value Character_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_4_Int(
+			int(value), utf8.CHARACTER_SIZE_MINIMUM, utf8.CHARACTER_SIZE_TWO,
+			utf8.CHARACTER_SIZE_THREE, utf8.CHARACTER_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Pattern is one fixed XML token searched inside a document.
+type Pattern string
+
+// Pattern_Invariants covers every fixed token width used by the parser.
+func Pattern_Invariants(value Pattern, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), PATTERN_SIZE_MINIMUM, PATTERN_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// XML_Byte is one source byte considered for XML space.
+type XML_Byte uint8
+
+// XML_Byte_Invariants covers the complete wire-byte domain.
+func XML_Byte_Invariants(value XML_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), uint8(bits.WORD_8_MINIMUM), uint8(bits.WORD_8_MAXIMUM)).
+		Ensure()
+}
+
 // Boolean gives parser decisions independent coverage identity.
 type Boolean bool
 
@@ -148,6 +530,43 @@ func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Sometimes(bool(value), "An XML parser decision is positive.").
 		Ensure()
+}
+
+// Name_Starts retains one opening-name start per possible document depth.
+type Name_Starts []int
+
+// Name_Starts_Invariants fixes parser storage independently of input shape.
+func Name_Starts_Invariants(value Name_Starts, _ aver.Namespace) {
+	aver.Always(len(value) == DEPTH_MAXIMUM, "Every element depth has a name start slot.")
+}
+
+// Name_Ends retains one opening-name end per possible document depth.
+type Name_Ends []int
+
+// Name_Ends_Invariants fixes parser storage independently of input shape.
+func Name_Ends_Invariants(value Name_Ends, _ aver.Namespace) {
+	aver.Always(len(value) == DEPTH_MAXIMUM, "Every element depth has a name end slot.")
+}
+
+// Depth retains nesting inside fixed element-name storage.
+type Depth int
+
+// Depth_Invariants keeps nesting inside fixed element-name storage.
+func Depth_Invariants(value Depth, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, DEPTH_MAXIMUM).
+		Ensure()
+}
+
+// Depth_Handle retains nesting depth across element transitions.
+type Depth_Handle *Depth
+
+// Depth_Handle_Invariants composes present parser state.
+func Depth_Handle_Invariants(value Depth_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Depth_Invariants(*value, namespace)
 }
 
 // Entity_Size_Count is zero on refusal or one UTF-8 character.
@@ -280,7 +699,9 @@ func Escape_Size(source Text) (count Count, status Escape_Size_Status) {
 	calculated := bytes.SLICE_SIZE_MINIMUM
 	for position := 0; position < len(source); {
 		character, size := utf8.Decode_Character(utf8.Bytes(source[position:]))
-		calculated += int(escaped_character_size(character, size))
+		calculated += int(escaped_character_size(
+			XML_Character(character), Character_Size(size),
+		))
 		if calculated > OUTPUT_SIZE_MAXIMUM {
 			return 0, STATUS_OUTPUT_TOO_LARGE
 		}
@@ -309,7 +730,9 @@ func Escape_Into(destination Output, source Text) (
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	escape_unchecked(destination, source)
+	if required > 0 {
+		escape_unchecked(Nonempty_Output(destination), Nonempty_Text(source))
+	}
 	return required, STATUS_OK
 }
 
@@ -325,10 +748,14 @@ func Unescape_Size(source Escaped) (
 	Escaped_Invariants(source, "Unescape_Size.source")
 	calculated := bytes.SLICE_SIZE_MINIMUM
 	var entity_storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
+	entity_output := Output(entity_storage[:])
+	document := Document(source)
 	for source_position := 0; source_position < len(source); {
 		if source[source_position] == '&' {
 			next, error_index, entity_size, valid := parse_entity(
-				source, entity_storage[:], source_position,
+				Nonempty_Document(document),
+				Nonempty_Output(entity_output),
+				Document_Position(source_position),
 			)
 			if !bool(valid) {
 				return 0, Position(int(error_index) + 1), STATUS_INPUT_INVALID
@@ -338,7 +765,7 @@ func Unescape_Size(source Escaped) (
 			continue
 		}
 		character, size := utf8.Decode_Character(utf8.Bytes(source[source_position:]))
-		if !bool(decoded_xml_character(character, size)) {
+		if !bool(decoded_xml_character(XML_Character(character), Character_Size(size))) {
 			return 0, Position(source_position + 1), STATUS_INPUT_INVALID
 		}
 		calculated += int(size)
@@ -368,16 +795,20 @@ func Unescape_Into(destination Output, source Escaped) (
 	if len(destination) < int(required) {
 		return 0, 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	unescape_unchecked(destination, source)
+	if required > 0 {
+		unescape_unchecked(Nonempty_Output(destination), Nonempty_Escaped(source))
+	}
 	return required, 0, STATUS_OK
 }
 
-func escaped_character_size[Character ~int32, Decoded_Size ~int](
-	character Character, decoded_size Decoded_Size,
+func escaped_character_size(
+	character XML_Character, decoded_size Character_Size,
 ) (size Escaped_Character_Size_Count) {
 	defer func() {
 		Escaped_Character_Size_Count_Invariants(size, "escaped_character_size.size")
 	}()
+	XML_Character_Invariants(character, "escaped_character_size.character")
+	Character_Size_Invariants(decoded_size, "escaped_character_size.decoded_size")
 	if int(decoded_size) == utf8.CHARACTER_SIZE_MINIMUM {
 		if int32(character) == int32(utf8.REPLACEMENT_CHARACTER) {
 			return Escaped_Character_Size_Count(utf8.CHARACTER_SIZE_THREE)
@@ -408,26 +839,32 @@ func escaped_character_size[Character ~int32, Decoded_Size ~int](
 	}
 }
 
-func escape_unchecked[Destination ~[]byte, Source ~[]byte](
-	destination Destination, source Source,
-) {
-	output_position := bytes.SLICE_SIZE_MINIMUM
-	for source_position := 0; source_position < len(source); {
+func escape_unchecked(destination Nonempty_Output, source Nonempty_Text) {
+	Nonempty_Output_Invariants(destination, "escape_unchecked.destination")
+	Nonempty_Text_Invariants(source, "escape_unchecked.source")
+	output_position := Document_Index(bytes.SLICE_SIZE_MINIMUM)
+	for source_position := Document_Index(0); source_position < Document_Index(len(source)); {
 		character, size := utf8.Decode_Character(utf8.Bytes(source[source_position:]))
-		output_position = int(write_escaped_character(
-			destination, source, source_position, output_position, character, size,
+		output_position = Document_Index(write_escaped_character(
+			destination, source, source_position, output_position,
+			XML_Character(character), Character_Size(size),
 		))
-		source_position += int(size)
+		source_position += Document_Index(size)
 	}
 }
 
-func write_escaped_character[
-	Destination ~[]byte, Source ~[]byte, Index ~int,
-	Character ~int32, Decoded_Size ~int,
-](
-	destination Destination, source Source, source_position Index, output_position Index,
-	character Character, decoded_size Decoded_Size,
-) (next Index) {
+func write_escaped_character(
+	destination Nonempty_Output, source Nonempty_Text,
+	source_position Document_Index, output_position Document_Index,
+	character XML_Character, decoded_size Character_Size,
+) (next Next_Position) {
+	defer func() { Next_Position_Invariants(next, "write_escaped_character.next") }()
+	Nonempty_Output_Invariants(destination, "write_escaped_character.destination")
+	Nonempty_Text_Invariants(source, "write_escaped_character.source")
+	Document_Index_Invariants(source_position, "write_escaped_character.source_position")
+	Document_Index_Invariants(output_position, "write_escaped_character.output_position")
+	XML_Character_Invariants(character, "write_escaped_character.character")
+	Character_Size_Invariants(decoded_size, "write_escaped_character.decoded_size")
 	replacement := ""
 	if int(decoded_size) == utf8.CHARACTER_SIZE_MINIMUM {
 		if int32(character) == int32(utf8.REPLACEMENT_CHARACTER) {
@@ -460,16 +897,17 @@ func write_escaped_character[
 	}
 	if len(replacement) > 0 {
 		written_count := copy(destination[output_position:], replacement)
-		return Index(int(output_position) + written_count)
+		return Next_Position(output_position + Document_Index(written_count))
 	}
-	return Index(int(output_position) + copy(
+	return Next_Position(output_position + Document_Index(copy(
 		destination[output_position:],
-		source[source_position:int(source_position)+int(decoded_size)],
-	))
+		source[source_position:Document_Index(int(source_position)+int(decoded_size))],
+	)))
 }
 
-func xml_character[Character ~int32](character Character) (valid Boolean) {
+func xml_character(character XML_Character) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "xml_character.valid") }()
+	XML_Character_Invariants(character, "xml_character.character")
 	if character == '\t' {
 		return true
 	}
@@ -497,10 +935,12 @@ func xml_character[Character ~int32](character Character) (valid Boolean) {
 	return Boolean(int32(character) <= int32(utf8.RUNE_MAX))
 }
 
-func decoded_xml_character[Character ~int32, Decoded_Size ~int](
-	character Character, decoded_size Decoded_Size,
+func decoded_xml_character(
+	character XML_Character, decoded_size Character_Size,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "decoded_xml_character.valid") }()
+	XML_Character_Invariants(character, "decoded_xml_character.character")
+	Character_Size_Invariants(decoded_size, "decoded_xml_character.decoded_size")
 	if int(decoded_size) == utf8.CHARACTER_SIZE_MINIMUM {
 		if int32(character) == int32(utf8.REPLACEMENT_CHARACTER) {
 			return false
@@ -509,15 +949,21 @@ func decoded_xml_character[Character ~int32, Decoded_Size ~int](
 	return xml_character(character)
 }
 
-func parse_entity[Source ~[]byte, Destination ~[]byte, Index ~int](
-	source Source, destination Destination, start Index,
+func parse_entity(
+	source Nonempty_Document, destination Nonempty_Output, start Document_Position,
 ) (
-	next Index, error_index Index, size Entity_Size_Count, valid Boolean,
+	next Document_Position, error_index Document_Position,
+	size Entity_Size_Count, valid Boolean,
 ) {
 	defer func() {
+		Document_Position_Invariants(next, "parse_entity.next")
+		Document_Position_Invariants(error_index, "parse_entity.error_index")
 		Entity_Size_Count_Invariants(size, "parse_entity.size")
 		Boolean_Invariants(valid, "parse_entity.valid")
 	}()
+	Nonempty_Document_Invariants(source, "parse_entity.source")
+	Nonempty_Output_Invariants(destination, "parse_entity.destination")
+	Document_Position_Invariants(start, "parse_entity.start")
 	semicolon := int(start) + len("&")
 	for semicolon < len(source) {
 		if source[semicolon] == ';' {
@@ -525,60 +971,73 @@ func parse_entity[Source ~[]byte, Destination ~[]byte, Index ~int](
 		}
 		semicolon++
 	}
-	if semicolon == len(source) {
-		return 0, Index(len(source)), 0, false
+	if semicolon >= len(source) {
+		end := Document_Position(len(source))
+		return end, end, 0, false
 	}
 	name_start := int(start) + len("&")
-	if bool(text_equal(source[name_start:semicolon], "lt")) {
-		written_next, written_error, written_size := write_entity(
-			destination, uint32('<'), Index(semicolon),
+	name := Entity_Name(source[name_start:semicolon])
+	if bool(text_equal(name, "lt")) {
+		written_next, written_size := write_entity(
+			destination, XML_Character('<'), Document_Index(semicolon),
 		)
-		return written_next, written_error, Entity_Size_Count(written_size), true
+		next_position := Document_Position(written_next)
+		return next_position, next_position, Entity_Size_Count(written_size), true
 	}
-	if bool(text_equal(source[name_start:semicolon], "gt")) {
-		written_next, written_error, written_size := write_entity(
-			destination, uint32('>'), Index(semicolon),
+	if bool(text_equal(name, "gt")) {
+		written_next, written_size := write_entity(
+			destination, XML_Character('>'), Document_Index(semicolon),
 		)
-		return written_next, written_error, Entity_Size_Count(written_size), true
+		next_position := Document_Position(written_next)
+		return next_position, next_position, Entity_Size_Count(written_size), true
 	}
-	if bool(text_equal(source[name_start:semicolon], "amp")) {
-		written_next, written_error, written_size := write_entity(
-			destination, uint32('&'), Index(semicolon),
+	if bool(text_equal(name, "amp")) {
+		written_next, written_size := write_entity(
+			destination, XML_Character('&'), Document_Index(semicolon),
 		)
-		return written_next, written_error, Entity_Size_Count(written_size), true
+		next_position := Document_Position(written_next)
+		return next_position, next_position, Entity_Size_Count(written_size), true
 	}
-	if bool(text_equal(source[name_start:semicolon], "apos")) {
-		written_next, written_error, written_size := write_entity(
-			destination, uint32('\''), Index(semicolon),
+	if bool(text_equal(name, "apos")) {
+		written_next, written_size := write_entity(
+			destination, XML_Character('\''), Document_Index(semicolon),
 		)
-		return written_next, written_error, Entity_Size_Count(written_size), true
+		next_position := Document_Position(written_next)
+		return next_position, next_position, Entity_Size_Count(written_size), true
 	}
-	if bool(text_equal(source[name_start:semicolon], "quot")) {
-		written_next, written_error, written_size := write_entity(
-			destination, uint32('"'), Index(semicolon),
+	if bool(text_equal(name, "quot")) {
+		written_next, written_size := write_entity(
+			destination, XML_Character('"'), Document_Index(semicolon),
 		)
-		return written_next, written_error, Entity_Size_Count(written_size), true
+		next_position := Document_Position(written_next)
+		return next_position, next_position, Entity_Size_Count(written_size), true
 	}
 	if name_start == semicolon {
-		return 0, start, 0, false
+		return start, start, 0, false
 	}
 	if source[name_start] != '#' {
-		return 0, start, 0, false
+		return start, start, 0, false
 	}
-	return parse_numeric_entity(source, destination, Index(name_start+1), Index(semicolon))
+	return parse_numeric_entity(
+		Numeric_Entity_Document(source), destination,
+		Document_Position(name_start+1), Document_Position(semicolon),
+	)
 }
 
-func parse_numeric_entity[
-	Source ~[]byte, Destination ~[]byte, Index ~int,
-](
-	source Source, destination Destination, start Index, semicolon Index,
-) (
-	next Index, error_index Index, size Entity_Size_Count, valid Boolean,
-) {
+func parse_numeric_entity(
+	source Numeric_Entity_Document, destination Nonempty_Output,
+	start Document_Position, semicolon Document_Position,
+) (next Document_Position, error_index Document_Position, size Entity_Size_Count, valid Boolean) {
 	defer func() {
+		Document_Position_Invariants(next, "parse_numeric_entity.next")
+		Document_Position_Invariants(error_index, "parse_numeric_entity.error_index")
 		Entity_Size_Count_Invariants(size, "parse_numeric_entity.size")
 		Boolean_Invariants(valid, "parse_numeric_entity.valid")
 	}()
+	Numeric_Entity_Document_Invariants(source, "parse_numeric_entity.source")
+	Nonempty_Output_Invariants(destination, "parse_numeric_entity.destination")
+	Document_Position_Invariants(start, "parse_numeric_entity.start")
+	Document_Position_Invariants(semicolon, "parse_numeric_entity.semicolon")
 	base := uint32(10)
 	position := int(start)
 	if position < int(semicolon) {
@@ -588,11 +1047,11 @@ func parse_numeric_entity[
 		}
 	}
 	if position == int(semicolon) {
-		return 0, start, 0, false
+		return start, start, 0, false
 	}
 	var character uint32
 	for position < int(semicolon) {
-		value := source[position]
+		value, failure_position := source[position], Document_Position(position)
 		var digit uint32
 		if value >= '0' {
 			if value <= '9' {
@@ -602,44 +1061,49 @@ func parse_numeric_entity[
 					if value <= 'f' {
 						digit = uint32(value-'a') + 10
 					} else {
-						return 0, Index(position), 0, false
+						return failure_position, failure_position, 0, false
 					}
 				} else if value >= 'A' {
 					if value <= 'F' {
 						digit = uint32(value-'A') + 10
 					} else {
-						return 0, Index(position), 0, false
+						return failure_position, failure_position, 0, false
 					}
 				} else {
-					return 0, Index(position), 0, false
+					return failure_position, failure_position, 0, false
 				}
 			} else {
-				return 0, Index(position), 0, false
+				return failure_position, failure_position, 0, false
 			}
 		} else {
-			return 0, Index(position), 0, false
+			return failure_position, failure_position, 0, false
 		}
 		if character > (uint32(utf8.RUNE_MAX)-digit)/base {
-			return 0, Index(position), 0, false
+			return failure_position, failure_position, 0, false
 		}
 		character = character*base + digit
 		position++
 	}
-	if !bool(xml_character(int32(character))) {
-		return 0, start, 0, false
+	if !bool(xml_character(XML_Character(character))) {
+		return start, start, 0, false
 	}
-	written_next, written_error, written_size := write_entity(
-		destination, character, semicolon,
+	written_next, written_size := write_entity(
+		destination, XML_Character(character), Document_Index(semicolon),
 	)
-	return written_next, written_error, Entity_Size_Count(written_size), true
+	next = Document_Position(written_next)
+	return next, next, Entity_Size_Count(written_size), true
 }
 
-func write_entity[Destination ~[]byte, Character ~uint32, Index ~int](
-	destination Destination, character Character, semicolon Index,
-) (next Index, error_index Index, size Encoded_Entity_Size_Count) {
+func write_entity(
+	destination Nonempty_Output, character XML_Character, semicolon Document_Index,
+) (next Next_Position, size Encoded_Entity_Size_Count) {
 	defer func() {
+		Next_Position_Invariants(next, "write_entity.next")
 		Encoded_Entity_Size_Count_Invariants(size, "write_entity.size")
 	}()
+	Nonempty_Output_Invariants(destination, "write_entity.destination")
+	XML_Character_Invariants(character, "write_entity.character")
+	Document_Index_Invariants(semicolon, "write_entity.semicolon")
 	character_size := utf8.Character_Size(utf8.Character(character))
 	size = Encoded_Entity_Size_Count(character_size)
 	if len(destination) >= int(size) {
@@ -647,13 +1111,13 @@ func write_entity[Destination ~[]byte, Character ~uint32, Index ~int](
 			utf8.Bytes(destination[:size]), utf8.Character(character),
 		)
 	}
-	return Index(int(semicolon) + len(";")), 0, size
+	return Next_Position(semicolon + Document_Index(len(";"))), size
 }
 
-func text_equal[Source ~[]byte, Expected ~string](
-	source Source, expected Expected,
-) (equal Boolean) {
+func text_equal(source Entity_Name, expected Pattern) (equal Boolean) {
 	defer func() { Boolean_Invariants(equal, "text_equal.equal") }()
+	Entity_Name_Invariants(source, "text_equal.source")
+	Pattern_Invariants(expected, "text_equal.expected")
 	if len(source) != len(expected) {
 		return false
 	}
@@ -665,14 +1129,17 @@ func text_equal[Source ~[]byte, Expected ~string](
 	return true
 }
 
-func unescape_unchecked[Destination ~[]byte, Source ~[]byte](
-	destination Destination, source Source,
-) {
+func unescape_unchecked(destination Nonempty_Output, source Nonempty_Escaped) {
+	Nonempty_Output_Invariants(destination, "unescape_unchecked.destination")
+	Nonempty_Escaped_Invariants(source, "unescape_unchecked.source")
+	document := Document(source)
 	output_position := bytes.SLICE_SIZE_MINIMUM
 	for source_position := 0; source_position < len(source); {
 		if source[source_position] == '&' {
+			entity_destination := Nonempty_Output(destination[output_position:])
 			next, _, entity_size, _ := parse_entity(
-				source, destination[output_position:], source_position,
+				Nonempty_Document(document), entity_destination,
+				Document_Position(source_position),
 			)
 			output_position += int(entity_size)
 			source_position = int(next)
@@ -687,24 +1154,31 @@ func unescape_unchecked[Destination ~[]byte, Source ~[]byte](
 	}
 }
 
-func validate_unchecked[Source ~[]byte](source Source) (position Position) {
+func validate_unchecked(source Document) (position Position) {
 	defer func() { Position_Invariants(position, "validate_unchecked.position") }()
-	var name_starts [DEPTH_MAXIMUM]int
-	var name_ends [DEPTH_MAXIMUM]int
+	Document_Invariants(source, "validate_unchecked.source")
+	var name_start_storage, name_end_storage [DEPTH_MAXIMUM]int
+	name_starts := Name_Starts(name_start_storage[:])
+	name_ends := Name_Ends(name_end_storage[:])
 	index := bytes.SLICE_SIZE_MINIMUM
-	depth := bytes.SLICE_SIZE_MINIMUM
+	depth := Depth(bytes.SLICE_SIZE_MINIMUM)
 	root_seen := false
 	root_closed := false
 	for index < len(source) {
+		nonempty_source := Nonempty_Document(source)
 		if source[index] != '<' {
-			next, error_index, valid := scan_document_text(source, index, depth)
+			next, error_index, valid := scan_document_text(
+				nonempty_source, Document_Position(index), depth,
+			)
 			if !bool(valid) {
 				return Position(int(error_index) + 1)
 			}
 			index = int(next)
 			continue
 		}
-		next, error_index, matched, valid := scan_document_special(source, index, depth)
+		next, error_index, matched, valid := scan_document_special(
+			nonempty_source, Document_Position(index), depth,
+		)
 		if matched {
 			if !bool(valid) {
 				return Position(int(error_index) + 1)
@@ -712,9 +1186,10 @@ func validate_unchecked[Source ~[]byte](source Source) (position Position) {
 			index = int(next)
 			continue
 		}
-		if bool(prefix_at(source, index, "</")) {
+		if bool(prefix_at(nonempty_source, Document_Position(index), "</")) {
 			close_next, close_error, closed, close_valid := close_document_element(
-				source, index, &name_starts, &name_ends, &depth,
+				Special_Document(source), Document_Position(index),
+				name_starts, name_ends, Depth_Handle(&depth),
 			)
 			if !bool(close_valid) {
 				return Position(int(close_error) + 1)
@@ -728,14 +1203,15 @@ func validate_unchecked[Source ~[]byte](source Source) (position Position) {
 		if root_closed {
 			return Position(index + 1)
 		}
-		next, error_index, closed, valid := open_document_element(
-			source, index, &name_starts, &name_ends, &depth,
+		open_next, open_error, closed, valid := open_document_element(
+			nonempty_source, Document_Position(index), name_starts, name_ends,
+			Depth_Handle(&depth),
 		)
 		if !bool(valid) {
-			return Position(int(error_index) + 1)
+			return Position(int(open_error) + 1)
 		}
 		root_seen = true
-		index = int(next)
+		index = int(open_next)
 		if closed {
 			root_closed = true
 		}
@@ -749,490 +1225,696 @@ func validate_unchecked[Source ~[]byte](source Source) (position Position) {
 	return 0
 }
 
-func scan_document_text[Source ~[]byte, Index ~int, Depth ~int](
-	source Source, start Index, depth Depth,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_document_text.valid") }()
+func scan_document_text(
+	source Nonempty_Document, start Document_Position, depth Depth,
+) (next Document_Position, error_index Document_Position, valid Boolean) {
+	defer func() {
+		Document_Position_Invariants(next, "scan_document_text.next")
+		Document_Position_Invariants(error_index, "scan_document_text.error_index")
+		Boolean_Invariants(valid, "scan_document_text.valid")
+	}()
+	Nonempty_Document_Invariants(source, "scan_document_text.source")
+	Document_Position_Invariants(start, "scan_document_text.start")
+	Depth_Invariants(depth, "scan_document_text.depth")
 	next, error_index, valid = scan_text(source, start)
 	if !valid {
-		return 0, error_index, false
+		return error_index, error_index, false
 	}
-	if int(depth) != bytes.SLICE_SIZE_MINIMUM {
-		return next, 0, true
+	if depth != bytes.SLICE_SIZE_MINIMUM {
+		return next, next, true
 	}
-	for outside := int(start); outside < int(next); outside++ {
-		if !bool(xml_space(source[outside])) {
-			return 0, Index(outside), false
+	for outside := start; outside < next; outside++ {
+		if !bool(xml_space(XML_Byte(source[outside]))) {
+			return outside, outside, false
 		}
 	}
-	return next, 0, true
+	return next, next, true
 }
 
-func scan_document_special[Source ~[]byte, Index ~int, Depth ~int](
-	source Source, start Index, depth Depth,
+func scan_document_special(
+	source Nonempty_Document, start Document_Position, depth Depth,
 ) (
-	next Index, error_index Index, matched Boolean, valid Boolean,
+	next Document_Position, error_index Document_Position,
+	matched Boolean, valid Boolean,
 ) {
 	defer func() {
+		Document_Position_Invariants(next, "scan_document_special.next")
+		Document_Position_Invariants(error_index, "scan_document_special.error_index")
 		Boolean_Invariants(matched, "scan_document_special.matched")
 		Boolean_Invariants(valid, "scan_document_special.valid")
 	}()
+	Nonempty_Document_Invariants(source, "scan_document_special.source")
+	Document_Position_Invariants(start, "scan_document_special.start")
+	Depth_Invariants(depth, "scan_document_special.depth")
 	if bool(prefix_at(source, start, "<!--")) {
-		next, error_index, valid = scan_comment(source, start)
-		return next, error_index, true, valid
+		comment_next, comment_error, comment_valid := scan_comment(
+			Comment_Document(source), start,
+		)
+		return Document_Position(comment_next), Document_Position(comment_error),
+			true, Boolean(comment_valid)
 	}
 	if bool(prefix_at(source, start, "<?")) {
-		next, error_index, valid = scan_instruction(source, start)
-		return next, error_index, true, valid
+		instruction_next, instruction_error, instruction_valid := scan_instruction(
+			Special_Document(source), start,
+		)
+		return Document_Position(instruction_next),
+			Document_Position(instruction_error), true, Boolean(instruction_valid)
 	}
 	if bool(prefix_at(source, start, "<![CDATA[")) {
-		if int(depth) == bytes.SLICE_SIZE_MINIMUM {
-			return 0, start, true, false
+		if depth == bytes.SLICE_SIZE_MINIMUM {
+			return start, start, true, false
 		}
-		next, error_index, valid = scan_cdata(source, start)
-		return next, error_index, true, valid
+		cdata_next, cdata_error, cdata_valid := scan_cdata(CDATA_Document(source), start)
+		return Document_Position(cdata_next), Document_Position(cdata_error),
+			true, Boolean(cdata_valid)
 	}
 	if bool(prefix_at(source, start, "<![")) {
-		return 0, start, true, false
+		return start, start, true, false
 	}
 	if bool(prefix_at(source, start, "<!-")) {
-		return 0, start, true, false
+		return start, start, true, false
 	}
 	if bool(prefix_at(source, start, "<!")) {
-		next, error_index, valid = scan_directive(source, start)
-		return next, error_index, true, valid
+		directive_next, directive_error, directive_valid := scan_directive(
+			Special_Document(source), start,
+		)
+		return Document_Position(directive_next), Document_Position(directive_error),
+			true, Boolean(directive_valid)
 	}
-	return 0, 0, false, true
+	return start, start, false, true
 }
 
-func close_document_element[Source ~[]byte, Index ~int, Depth ~int](
-	source Source, start Index, name_starts *[DEPTH_MAXIMUM]int,
-	name_ends *[DEPTH_MAXIMUM]int, depth *Depth,
-) (next Index, error_index Index, closed Boolean, valid Boolean) {
+func close_document_element(
+	source Special_Document, start Document_Position, name_starts Name_Starts,
+	name_ends Name_Ends, depth Depth_Handle,
+) (
+	next Document_Position, error_index Document_Position,
+	closed Boolean, valid Boolean,
+) {
 	defer func() {
+		Document_Position_Invariants(next, "close_document_element.next")
+		Document_Position_Invariants(error_index, "close_document_element.error_index")
 		Boolean_Invariants(closed, "close_document_element.closed")
 		Boolean_Invariants(valid, "close_document_element.valid")
 	}()
-	if int(*depth) == bytes.SLICE_SIZE_MINIMUM {
-		return 0, start, false, false
+	Special_Document_Invariants(source, "close_document_element.source")
+	Document_Position_Invariants(start, "close_document_element.start")
+	Name_Starts_Invariants(name_starts, "close_document_element.name_starts")
+	Name_Ends_Invariants(name_ends, "close_document_element.name_ends")
+	Depth_Handle_Invariants(depth, "close_document_element.depth")
+	if *depth == bytes.SLICE_SIZE_MINIMUM {
+		return start, start, false, false
 	}
-	next, name_start, name_end, error_index, valid := scan_end_tag(source, start)
+	end_next, name_start, name_end, end_error, valid := scan_end_tag(
+		End_Tag_Document(source), start,
+	)
 	if !valid {
-		return 0, error_index, false, false
+		failure_position := Document_Position(end_error)
+		return failure_position, failure_position, false, false
 	}
 	*depth--
 	if !bytes.Equal(
 		bytes.Slice(source[name_start:name_end]),
 		bytes.Slice(source[name_starts[*depth]:name_ends[*depth]]),
 	) {
-		return 0, name_start, false, false
+		position := Document_Position(name_start)
+		return position, position, false, false
 	}
-	return next, 0, Boolean(int(*depth) == bytes.SLICE_SIZE_MINIMUM), true
+	next = Document_Position(end_next)
+	return next, next, Boolean(*depth == bytes.SLICE_SIZE_MINIMUM), true
 }
 
-func open_document_element[Source ~[]byte, Index ~int, Depth ~int](
-	source Source, start Index, name_starts *[DEPTH_MAXIMUM]int,
-	name_ends *[DEPTH_MAXIMUM]int, depth *Depth,
-) (next Index, error_index Index, closed Boolean, valid Boolean) {
+func open_document_element(
+	source Nonempty_Document, start Document_Position, name_starts Name_Starts,
+	name_ends Name_Ends, depth Depth_Handle,
+) (
+	next Start_Tag_Position, error_index Start_Tag_Position,
+	closed Boolean, valid Boolean,
+) {
 	defer func() {
+		Start_Tag_Position_Invariants(next, "open_document_element.next")
+		Start_Tag_Position_Invariants(error_index, "open_document_element.error_index")
 		Boolean_Invariants(closed, "open_document_element.closed")
 		Boolean_Invariants(valid, "open_document_element.valid")
 	}()
+	Nonempty_Document_Invariants(source, "open_document_element.source")
+	Document_Position_Invariants(start, "open_document_element.start")
+	Name_Starts_Invariants(name_starts, "open_document_element.name_starts")
+	Name_Ends_Invariants(name_ends, "open_document_element.name_ends")
+	Depth_Handle_Invariants(depth, "open_document_element.depth")
 	next, name_start, name_end, error_index, empty, valid := scan_start_tag(
 		source, start,
 	)
 	if !valid {
-		return 0, error_index, false, false
+		return error_index, error_index, false, false
 	}
 	if empty {
-		return next, 0, Boolean(int(*depth) == bytes.SLICE_SIZE_MINIMUM), true
+		return next, next, Boolean(*depth == bytes.SLICE_SIZE_MINIMUM), true
 	}
 	if int(*depth) == DEPTH_MAXIMUM {
-		return 0, start, false, false
+		position := Start_Tag_Position(start)
+		return position, position, false, false
 	}
 	name_starts[*depth] = int(name_start)
 	name_ends[*depth] = int(name_end)
 	*depth++
-	return next, 0, false, true
+	return next, next, false, true
 }
 
-func scan_text[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_text.valid") }()
-	index := int(start)
+func scan_text(
+	source Nonempty_Document, start Document_Position,
+) (next Document_Position, error_index Document_Position, valid Boolean) {
+	defer func() {
+		Document_Position_Invariants(next, "scan_text.next")
+		Document_Position_Invariants(error_index, "scan_text.error_index")
+		Boolean_Invariants(valid, "scan_text.valid")
+	}()
+	Nonempty_Document_Invariants(source, "scan_text.source")
+	Document_Position_Invariants(start, "scan_text.start")
+	index := start
 	var entity_storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
-	for index < len(source) {
+	entity_output := Output(entity_storage[:])
+	for index < Document_Position(len(source)) {
 		if source[index] == '<' {
-			return Index(index), 0, true
+			return index, index, true
 		}
 		if bool(prefix_at(source, index, "]]>")) {
-			return 0, Index(index), false
+			return index, index, false
 		}
 		if source[index] == '&' {
 			entity_next, entity_error, _, entity_valid := parse_entity(
-				source, entity_storage[:], index,
+				source, Nonempty_Output(entity_output), index,
 			)
 			if !bool(entity_valid) {
-				return 0, Index(entity_error), false
+				return entity_error, entity_error, false
 			}
-			index = int(entity_next)
+			index = entity_next
 			continue
 		}
 		character, size := utf8.Decode_Character(utf8.Bytes(source[index:]))
-		if !bool(decoded_xml_character(character, size)) {
-			return 0, Index(index), false
+		if !bool(decoded_xml_character(XML_Character(character), Character_Size(size))) {
+			return index, index, false
 		}
-		index += int(size)
+		index += Document_Position(size)
 	}
-	return Index(index), 0, true
+	return index, index, true
 }
 
-func scan_start_tag[Source ~[]byte, Index ~int](
-	source Source, start Index,
+func scan_start_tag(
+	source Nonempty_Document, start Document_Position,
 ) (
-	next Index, name_start Index, name_end Index, error_index Index,
+	next Start_Tag_Position, name_start Start_Tag_Position,
+	name_end Start_Tag_Position, error_index Start_Tag_Position,
 	empty Boolean, valid Boolean,
 ) {
 	defer func() {
+		Start_Tag_Position_Invariants(next, "scan_start_tag.next")
+		Start_Tag_Position_Invariants(name_start, "scan_start_tag.name_start")
+		Start_Tag_Position_Invariants(name_end, "scan_start_tag.name_end")
+		Start_Tag_Position_Invariants(error_index, "scan_start_tag.error_index")
 		Boolean_Invariants(empty, "scan_start_tag.empty")
 		Boolean_Invariants(valid, "scan_start_tag.valid")
 	}()
-	name_start = start + Index(len("<"))
-	name_end, error_index, valid = scan_qualified_name(source, name_start)
+	Nonempty_Document_Invariants(source, "scan_start_tag.source")
+	Document_Position_Invariants(start, "scan_start_tag.start")
+	if start >= Document_Position(len(source)) {
+		end := Start_Tag_Position(len(source))
+		return end, end, end, end, false, false
+	}
+	name_start = Start_Tag_Position(start + Document_Position(len("<")))
+	qualified_end, qualified_error, qualified_valid := scan_qualified_name(
+		source, Document_Position(name_start),
+	)
+	name_end = Start_Tag_Position(qualified_end)
+	error_index = Start_Tag_Position(qualified_error)
+	valid = qualified_valid
 	if !valid {
-		return 0, 0, 0, error_index, false, false
+		return error_index, error_index, error_index, error_index, false, false
 	}
-	index := int(name_end)
-	var attribute_starts [ATTRIBUTE_COUNT_MAXIMUM]int
-	var attribute_ends [ATTRIBUTE_COUNT_MAXIMUM]int
-	attribute_count := bytes.SLICE_SIZE_MINIMUM
-	for index < len(source) {
-		if source[index] == '>' {
-			return Index(index + 1), name_start, name_end, 0, false, true
-		}
-		if source[index] == '/' {
-			if index+1 < len(source) {
-				if source[index+1] == '>' {
-					return Index(index + 2), name_start, name_end, 0, true, true
-				}
-			}
-			return 0, 0, 0, Index(index), false, false
-		}
-		if !bool(xml_space(source[index])) {
-			return 0, 0, 0, Index(index), false, false
-		}
-		index = int(skip_xml_space(source, index))
-		if index == len(source) {
-			return 0, 0, 0, Index(len(source)), false, false
-		}
-		if source[index] == '>' {
-			return Index(index + 1), name_start, name_end, 0, false, true
-		}
-		if source[index] == '/' {
-			continue
-		}
-		attribute_next, attribute_start, attribute_end,
-			attribute_error, attribute_valid := scan_attribute(
-			source, Index(index),
-		)
-		if !attribute_valid {
-			return 0, 0, 0, attribute_error, false, false
-		}
-		for previous_index := 0; previous_index < attribute_count; previous_index++ {
-			previous_start := attribute_starts[previous_index]
-			previous_end := attribute_ends[previous_index]
-			if bytes.Equal(
-				bytes.Slice(source[attribute_start:attribute_end]),
-				bytes.Slice(source[previous_start:previous_end]),
-			) {
-				return 0, 0, 0, attribute_start, false, false
-			}
-		}
-		attribute_starts[attribute_count] = int(attribute_start)
-		attribute_ends[attribute_count] = int(attribute_end)
-		attribute_count++
-		index = int(attribute_next)
+	next, error_index, empty, valid = scan_start_tag_attributes(source, name_end)
+	if !valid {
+		return error_index, error_index, error_index, error_index, false, false
 	}
-	return 0, 0, 0, Index(len(source)), false, false
+	return next, name_start, name_end, error_index, empty, true
 }
 
-func scan_attribute[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (
-	next Index, name_start Index, name_end Index,
-	error_index Index, valid Boolean,
-) {
-	defer func() { Boolean_Invariants(valid, "scan_attribute.valid") }()
-	name_start = start
-	name_end, error_index, valid = scan_qualified_name(source, start)
-	if !valid {
-		return 0, 0, 0, error_index, false
+func scan_start_tag_attributes(
+	source Nonempty_Document, index Start_Tag_Position,
+) (next Start_Tag_Position, error_index Start_Tag_Position, empty Boolean, valid Boolean) {
+	defer func() {
+		Start_Tag_Position_Invariants(next, "scan_start_tag_attributes.next")
+		Start_Tag_Position_Invariants(error_index, "scan_start_tag_attributes.error_index")
+		Boolean_Invariants(empty, "scan_start_tag_attributes.empty")
+		Boolean_Invariants(valid, "scan_start_tag_attributes.valid")
+	}()
+	Nonempty_Document_Invariants(source, "scan_start_tag_attributes.source")
+	Start_Tag_Position_Invariants(index, "scan_start_tag_attributes.index")
+	var attribute_starts, attribute_ends [ATTRIBUTE_COUNT_MAXIMUM]int
+	attribute_count := bytes.SLICE_SIZE_MINIMUM
+	position := Document_Position(index)
+	for position < Document_Position(len(source)) {
+		if source[position] == '>' {
+			next_position := Start_Tag_Position(position + 1)
+			return next_position, next_position, false, true
+		}
+		if source[position] == '/' {
+			if position+1 < Document_Position(len(source)) {
+				if source[position+1] == '>' {
+					next_position := Start_Tag_Position(position + 2)
+					return next_position, next_position, true, true
+				}
+			}
+			failure_position := Start_Tag_Position(position)
+			return failure_position, failure_position, false, false
+		}
+		if !bool(xml_space(XML_Byte(source[position]))) {
+			failure_position := Start_Tag_Position(position)
+			return failure_position, failure_position, false, false
+		}
+		position = skip_xml_space(Space_Document(source), position)
+		if position == Document_Position(len(source)) {
+			failure_position := Start_Tag_Position(position)
+			return failure_position, failure_position, false, false
+		}
+		if source[position] == '>' {
+			next_position := Start_Tag_Position(position + 1)
+			return next_position, next_position, false, true
+		}
+		if source[position] == '/' {
+			continue
+		}
+		a_next, a_start, a_end, a_error, a_valid := scan_attribute(
+			Attribute_Document(source), position,
+		)
+		if !a_valid {
+			failure_position := Start_Tag_Position(a_error)
+			return failure_position, failure_position, false, false
+		}
+		for previous_index := 0; previous_index < attribute_count; previous_index++ {
+			previous_start, previous_end :=
+				attribute_starts[previous_index], attribute_ends[previous_index]
+			attribute := bytes.Slice(source[a_start:a_end])
+			previous := bytes.Slice(source[previous_start:previous_end])
+			if bytes.Equal(attribute, previous) {
+				failure_position := Start_Tag_Position(a_start)
+				return failure_position, failure_position, false, false
+			}
+		}
+		attribute_starts[attribute_count], attribute_ends[attribute_count] =
+			int(a_start), int(a_end)
+		attribute_count++
+		position = a_next
 	}
-	index := int(skip_xml_space(source, name_end))
-	if index == len(source) {
-		return 0, 0, 0, Index(len(source)), false
+	end := Start_Tag_Position(len(source))
+	return end, end, false, false
+}
+
+func scan_attribute(
+	source Attribute_Document, start Document_Position,
+) (
+	next Document_Position, name_start Document_Position,
+	name_end Document_Position, error_index Document_Position, valid Boolean,
+) {
+	defer func() {
+		Document_Position_Invariants(next, "scan_attribute.next")
+		Document_Position_Invariants(name_start, "scan_attribute.name_start")
+		Document_Position_Invariants(name_end, "scan_attribute.name_end")
+		Document_Position_Invariants(error_index, "scan_attribute.error_index")
+		Boolean_Invariants(valid, "scan_attribute.valid")
+	}()
+	Attribute_Document_Invariants(source, "scan_attribute.source")
+	Document_Position_Invariants(start, "scan_attribute.start")
+	name_start = start
+	name_end, error_index, valid = scan_qualified_name(Nonempty_Document(source), start)
+	if !valid {
+		return error_index, error_index, error_index, error_index, false
+	}
+	index := skip_xml_space(Space_Document(source), name_end)
+	if index >= Document_Position(len(source)) {
+		end := Document_Position(len(source))
+		return end, end, end, end, false
 	}
 	if source[index] != '=' {
-		return 0, 0, 0, Index(index), false
+		return index, index, index, index, false
 	}
-	index = int(skip_xml_space(source, index+1))
-	if index == len(source) {
-		return 0, 0, 0, Index(len(source)), false
+	index = skip_xml_space(Space_Document(source), index+1)
+	if index == Document_Position(len(source)) {
+		return index, index, index, index, false
 	}
 	quote := source[index]
 	if quote != '\'' {
 		if quote != '"' {
-			return 0, 0, 0, Index(index), false
+			return index, index, index, index, false
 		}
 	}
 	index++
 	var entity_storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
-	for index < len(source) {
+	entity_output := Output(entity_storage[:])
+	for index < Document_Position(len(source)) {
 		if source[index] == quote {
-			return Index(index + 1), name_start, name_end, 0, true
+			next_position := index + 1
+			return next_position, name_start, name_end, next_position, true
 		}
 		if source[index] == '<' {
-			return 0, 0, 0, Index(index), false
+			return index, index, index, index, false
 		}
 		if source[index] == '&' {
 			entity_next, entity_error, _, entity_valid := parse_entity(
-				source, entity_storage[:], index,
+				Nonempty_Document(source), Nonempty_Output(entity_output), index,
 			)
 			if !bool(entity_valid) {
-				return 0, 0, 0, Index(entity_error), false
+				return entity_error, entity_error, entity_error, entity_error, false
 			}
-			index = int(entity_next)
+			index = entity_next
 			continue
 		}
 		character, size := utf8.Decode_Character(utf8.Bytes(source[index:]))
-		if !bool(decoded_xml_character(character, size)) {
-			return 0, 0, 0, Index(index), false
+		if !bool(decoded_xml_character(XML_Character(character), Character_Size(size))) {
+			return index, index, index, index, false
 		}
-		index += int(size)
+		index += Document_Position(size)
 	}
-	return 0, 0, 0, Index(len(source)), false
+	end := Document_Position(len(source))
+	return end, end, end, end, false
 }
 
-func scan_end_tag[Source ~[]byte, Index ~int](
-	source Source, start Index,
+func scan_end_tag(
+	source End_Tag_Document, start Document_Position,
 ) (
-	next Index, name_start Index, name_end Index,
-	error_index Index, valid Boolean,
+	next End_Tag_Position, name_start End_Tag_Position,
+	name_end End_Tag_Position, error_index End_Tag_Position, valid Boolean,
 ) {
-	defer func() { Boolean_Invariants(valid, "scan_end_tag.valid") }()
-	name_start = start + Index(len("</"))
-	name_end, error_index, valid = scan_qualified_name(source, name_start)
-	if !valid {
-		return 0, 0, 0, error_index, false
+	defer func() {
+		End_Tag_Position_Invariants(next, "scan_end_tag.next")
+		End_Tag_Position_Invariants(name_start, "scan_end_tag.name_start")
+		End_Tag_Position_Invariants(name_end, "scan_end_tag.name_end")
+		End_Tag_Position_Invariants(error_index, "scan_end_tag.error_index")
+		Boolean_Invariants(valid, "scan_end_tag.valid")
+	}()
+	End_Tag_Document_Invariants(source, "scan_end_tag.source")
+	Document_Position_Invariants(start, "scan_end_tag.start")
+	if start >= Document_Position(len(source)) {
+		end := End_Tag_Position(len(source))
+		return end, end, end, end, false
 	}
-	index := int(skip_xml_space(source, name_end))
-	if index == len(source) {
-		return 0, 0, 0, Index(len(source)), false
+	name_start = End_Tag_Position(start + Document_Position(len("</")))
+	qualified_end, qualified_error, qualified_valid := scan_qualified_name(
+		Nonempty_Document(source), Document_Position(name_start),
+	)
+	name_end = End_Tag_Position(qualified_end)
+	error_index = End_Tag_Position(qualified_error)
+	valid = qualified_valid
+	if !valid {
+		return error_index, error_index, error_index, error_index, false
+	}
+	index := skip_xml_space(Space_Document(source), Document_Position(name_end))
+	if index == Document_Position(len(source)) {
+		position := End_Tag_Position(index)
+		return position, position, position, position, false
 	}
 	if source[index] != '>' {
-		return 0, 0, 0, Index(index), false
+		position := End_Tag_Position(index)
+		return position, position, position, position, false
 	}
-	return Index(index + 1), name_start, name_end, 0, true
+	next = End_Tag_Position(index + 1)
+	return next, name_start, name_end, next, true
 }
 
-func scan_name[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_name.valid") }()
-	index := int(start)
-	if index == len(source) {
-		return 0, Index(len(source)), false
+func scan_name(
+	source Nonempty_Document, start Document_Position,
+) (next Document_Position, error_index Document_Position, valid Boolean) {
+	defer func() {
+		Document_Position_Invariants(next, "scan_name.next")
+		Document_Position_Invariants(error_index, "scan_name.error_index")
+		Boolean_Invariants(valid, "scan_name.valid")
+	}()
+	Nonempty_Document_Invariants(source, "scan_name.source")
+	Document_Position_Invariants(start, "scan_name.start")
+	index := start
+	if index >= Document_Position(len(source)) {
+		end := Document_Position(len(source))
+		return end, end, false
 	}
 	character, size := utf8.Decode_Character(utf8.Bytes(source[index:]))
-	if !bool(decoded_xml_character(character, size)) {
-		return 0, Index(index), false
+	if !bool(decoded_xml_character(XML_Character(character), Character_Size(size))) {
+		return index, index, false
 	}
-	if !bool(name_start_character(character)) {
-		return 0, Index(index), false
+	if !bool(name_start_character(XML_Character(character))) {
+		return index, index, false
 	}
-	index += int(size)
-	for index < len(source) {
+	index += Document_Position(size)
+	for index < Document_Position(len(source)) {
 		if source[index] < byte(utf8.CHARACTER_SELF) {
-			if !bool(name_character(int32(source[index]))) {
+			if !bool(name_character(XML_Character(source[index]))) {
 				break
 			}
 			index++
 			continue
 		}
 		character, size = utf8.Decode_Character(utf8.Bytes(source[index:]))
-		if !bool(decoded_xml_character(character, size)) {
-			return 0, Index(index), false
+		if !bool(decoded_xml_character(XML_Character(character), Character_Size(size))) {
+			return index, index, false
 		}
-		if !bool(name_character(character)) {
+		if !bool(name_character(XML_Character(character))) {
 			break
 		}
-		index += int(size)
+		index += Document_Position(size)
 	}
-	return Index(index), 0, true
+	return index, index, true
 }
 
-func scan_qualified_name[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_qualified_name.valid") }()
+func scan_qualified_name(
+	source Nonempty_Document, start Document_Position,
+) (next Document_Position, error_index Document_Position, valid Boolean) {
+	defer func() {
+		Document_Position_Invariants(next, "scan_qualified_name.next")
+		Document_Position_Invariants(error_index, "scan_qualified_name.error_index")
+		Boolean_Invariants(valid, "scan_qualified_name.valid")
+	}()
+	Nonempty_Document_Invariants(source, "scan_qualified_name.source")
+	Document_Position_Invariants(start, "scan_qualified_name.start")
 	next, error_index, valid = scan_name(source, start)
 	if !bool(valid) {
-		return 0, error_index, false
+		return error_index, error_index, false
 	}
 	colon_seen := false
-	for index := int(start); index < int(next); index++ {
+	for index := start; index < next; index++ {
 		if source[index] != ':' {
 			continue
 		}
 		if colon_seen {
-			return 0, Index(index), false
+			return index, index, false
 		}
 		colon_seen = true
 	}
-	return next, 0, true
+	return next, next, true
 }
 
-func scan_comment[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_comment.valid") }()
-	index := int(start) + len("<!--")
-	for index < len(source) {
-		if bool(prefix_at(source, index, "-->")) {
-			return Index(index + len("-->")), 0, true
+func scan_comment(
+	source Comment_Document, start Document_Position,
+) (next Comment_Position, error_index Comment_Position, valid Boolean) {
+	defer func() {
+		Comment_Position_Invariants(next, "scan_comment.next")
+		Comment_Position_Invariants(error_index, "scan_comment.error_index")
+		Boolean_Invariants(valid, "scan_comment.valid")
+	}()
+	Comment_Document_Invariants(source, "scan_comment.source")
+	Document_Position_Invariants(start, "scan_comment.start")
+	index := start + Document_Position(len("<!--"))
+	for index < Document_Position(len(source)) {
+		if bool(prefix_at(Nonempty_Document(source), index, "-->")) {
+			next_position := Comment_Position(index + Document_Position(len("-->")))
+			return next_position, next_position, true
 		}
-		if bool(prefix_at(source, index, "--")) {
-			return 0, Index(index), false
+		if bool(prefix_at(Nonempty_Document(source), index, "--")) {
+			position := Comment_Position(index)
+			return position, position, false
 		}
 		index++
 	}
-	return 0, Index(len(source)), false
+	end := Comment_Position(len(source))
+	return end, end, false
 }
 
-func scan_instruction[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_instruction.valid") }()
-	name_start := start + Index(len("<?"))
-	name_end, error_index, valid := scan_name(source, name_start)
-	if !valid {
-		return 0, error_index, false
+func scan_instruction(
+	source Special_Document, start Document_Position,
+) (next Instruction_Position, error_index Instruction_Position, valid Boolean) {
+	defer func() {
+		Instruction_Position_Invariants(next, "scan_instruction.next")
+		Instruction_Position_Invariants(error_index, "scan_instruction.error_index")
+		Boolean_Invariants(valid, "scan_instruction.valid")
+	}()
+	Special_Document_Invariants(source, "scan_instruction.source")
+	Document_Position_Invariants(start, "scan_instruction.start")
+	if start >= Document_Position(len(source)) {
+		end := Instruction_Position(len(source))
+		return end, end, false
 	}
-	index := int(name_end)
-	for index < len(source) {
-		if bool(prefix_at(source, index, "?>")) {
+	name_start := start + Document_Position(len("<?"))
+	name_end, name_error, valid := scan_name(Nonempty_Document(source), name_start)
+	if !valid {
+		position := Instruction_Position(name_error)
+		return position, position, false
+	}
+	index := name_end
+	for index < Document_Position(len(source)) {
+		if bool(prefix_at(Nonempty_Document(source), index, "?>")) {
 			instruction_error, instruction_valid := xml_instruction_valid(
-				source, name_start, name_end, Index(index),
+				Terminated_Instruction_Document(source),
+				name_start,
+				name_end,
+				index,
 			)
 			if !bool(instruction_valid) {
-				return 0, instruction_error, false
+				position := Instruction_Position(instruction_error)
+				return position, position, false
 			}
-			return Index(index + len("?>")), 0, true
+			next_position := Instruction_Position(index + Document_Position(len("?>")))
+			return next_position, next_position, true
 		}
 		index++
 	}
-	return 0, Index(len(source)), false
+	end := Instruction_Position(len(source))
+	return end, end, false
 }
 
-func xml_instruction_valid[Source ~[]byte, Index ~int](
-	source Source, name_start Index, name_end Index, data_end Index,
-) (error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "xml_instruction_valid.valid") }()
-	if int(name_end)-int(name_start) != len("xml") {
-		return 0, true
+func xml_instruction_valid(
+	source Terminated_Instruction_Document, name_start Document_Position,
+	name_end Document_Position, data_end Document_Position,
+) (error_index Document_Position, valid Boolean) {
+	defer func() {
+		Document_Position_Invariants(error_index, "xml_instruction_valid.error_index")
+		Boolean_Invariants(valid, "xml_instruction_valid.valid")
+	}()
+	Terminated_Instruction_Document_Invariants(source, "xml_instruction_valid.source")
+	Document_Position_Invariants(name_start, "xml_instruction_valid.name_start")
+	Document_Position_Invariants(name_end, "xml_instruction_valid.name_end")
+	Document_Position_Invariants(data_end, "xml_instruction_valid.data_end")
+	if name_end-name_start != Document_Position(len("xml")) {
+		return name_start, true
 	}
-	if !bool(prefix_at(source, name_start, "xml")) {
-		return 0, true
+	if !bool(prefix_at(Nonempty_Document(source), name_start, "xml")) {
+		return name_start, true
 	}
 	value_start, value_end, found := instruction_parameter(
-		source, name_end, data_end, "version=",
+		XML_Instruction_Document(source), name_end, data_end, "version=",
 	)
 	if bool(found) {
 		if value_start != value_end {
-			if int(value_end)-int(value_start) != len("1.0") {
+			if value_end-value_start != Document_Position(len("1.0")) {
 				return value_start, false
 			}
-			if !bool(prefix_at(source, value_start, "1.0")) {
+			if !bool(prefix_at(Nonempty_Document(source), value_start, "1.0")) {
 				return value_start, false
 			}
 		}
 	}
 	value_start, value_end, found = instruction_parameter(
-		source, name_end, data_end, "encoding=",
+		XML_Instruction_Document(source), name_end, data_end, "encoding=",
 	)
 	if bool(found) {
 		if value_start != value_end {
-			var utf8_name = [...]byte{'u', 't', 'f', '-', '8'}
-			encoding_name := bytes.Slice(source[value_start:value_end])
-			if !bool(bytes.Equal_Fold(
-				encoding_name, bytes.Slice(utf8_name[:]),
-			)) {
+			var utf8_name = "utf-8"
+			if value_end-value_start != Document_Position(len(utf8_name)) {
 				return value_start, false
+			}
+			for index := range len(utf8_name) {
+				value := source[value_start+Document_Position(index)]
+				if value >= 'A' {
+					if value <= 'Z' {
+						value += 'a' - 'A'
+					}
+				}
+				if value != utf8_name[index] {
+					return value_start, false
+				}
 			}
 		}
 	}
-	return 0, true
+	return name_start, true
 }
 
-func instruction_parameter[
-	Source ~[]byte, Index ~int, Parameter ~string,
-](
-	source Source, start Index, end Index, parameter Parameter,
-) (value_start Index, value_end Index, found Boolean) {
-	defer func() { Boolean_Invariants(found, "instruction_parameter.found") }()
-	for index := int(start); index+len(parameter) < int(end); index++ {
-		if !bool(prefix_at(source, index, parameter)) {
+func instruction_parameter(
+	source XML_Instruction_Document, start Document_Position,
+	end Document_Position, parameter Pattern,
+) (value_start Document_Position, value_end Document_Position, found Boolean) {
+	defer func() {
+		Document_Position_Invariants(value_start, "instruction_parameter.value_start")
+		Document_Position_Invariants(value_end, "instruction_parameter.value_end")
+		Boolean_Invariants(found, "instruction_parameter.found")
+	}()
+	XML_Instruction_Document_Invariants(source, "instruction_parameter.source")
+	Document_Position_Invariants(start, "instruction_parameter.start")
+	Document_Position_Invariants(end, "instruction_parameter.end")
+	Pattern_Invariants(parameter, "instruction_parameter.parameter")
+	for index := start; index+Document_Position(len(parameter)) < end; index++ {
+		if !bool(prefix_at(Nonempty_Document(source), index, parameter)) {
 			continue
 		}
-		quote_index := index + len(parameter)
+		quote_index := index + Document_Position(len(parameter))
 		quote := source[quote_index]
 		if quote != '\'' {
 			if quote != '"' {
 				continue
 			}
 		}
-		value_start = Index(quote_index + 1)
-		for value_index := int(value_start); value_index < int(end); value_index++ {
+		value_start = quote_index + 1
+		for value_index := value_start; value_index < end; value_index++ {
 			if source[value_index] == quote {
-				return value_start, Index(value_index), true
+				return value_start, value_index, true
 			}
 		}
 	}
-	return 0, 0, false
+	return start, end, false
 }
 
-func scan_cdata[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_cdata.valid") }()
-	index := int(start) + len("<![CDATA[")
-	for index < len(source) {
-		if bool(prefix_at(source, index, "]]>")) {
-			return Index(index + len("]]>")), 0, true
+func scan_cdata(
+	source CDATA_Document, start Document_Position,
+) (next CDATA_Position, error_index CDATA_Position, valid Boolean) {
+	defer func() {
+		CDATA_Position_Invariants(next, "scan_cdata.next")
+		CDATA_Position_Invariants(error_index, "scan_cdata.error_index")
+		Boolean_Invariants(valid, "scan_cdata.valid")
+	}()
+	CDATA_Document_Invariants(source, "scan_cdata.source")
+	Document_Position_Invariants(start, "scan_cdata.start")
+	index := start + Document_Position(len("<![CDATA["))
+	for index < Document_Position(len(source)) {
+		if bool(prefix_at(Nonempty_Document(source), index, "]]>")) {
+			next_position := CDATA_Position(index + Document_Position(len("]]>")))
+			return next_position, next_position, true
 		}
 		character, size := utf8.Decode_Character(utf8.Bytes(source[index:]))
-		if !bool(decoded_xml_character(character, size)) {
-			return 0, Index(index), false
+		if !bool(decoded_xml_character(XML_Character(character), Character_Size(size))) {
+			position := CDATA_Position(index)
+			return position, position, false
 		}
-		index += int(size)
+		index += Document_Position(size)
 	}
-	return 0, Index(len(source)), false
+	end := CDATA_Position(len(source))
+	return end, end, false
 }
 
-func scan_directive[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_directive.valid") }()
-	index := int(start) + len("<!")
-	if index == len(source) {
-		return 0, Index(len(source)), false
+func scan_directive(
+	source Special_Document, start Document_Position,
+) (next Directive_Position, error_index Directive_Position, valid Boolean) {
+	defer func() {
+		Directive_Position_Invariants(next, "scan_directive.next")
+		Directive_Position_Invariants(error_index, "scan_directive.error_index")
+		Boolean_Invariants(valid, "scan_directive.valid")
+	}()
+	Special_Document_Invariants(source, "scan_directive.source")
+	Document_Position_Invariants(start, "scan_directive.start")
+	index := start + Document_Position(len("<!"))
+	if index == Document_Position(len(source)) {
+		position := Directive_Position(index)
+		return position, position, false
 	}
 	// Encoding/xml dispatch consumes first directive byte before nesting starts.
 	index++
 	quote := byte(0)
 	depth := bytes.SLICE_SIZE_MINIMUM
-	for index < len(source) {
+	for index < Document_Position(len(source)) {
 		if quote != 0 {
 			if source[index] == quote {
 				quote = 0
@@ -1242,14 +1924,15 @@ func scan_directive[Source ~[]byte, Index ~int](
 			index++
 			continue
 		}
-		if bool(prefix_at(source, index, "<!--")) {
+		if bool(prefix_at(Nonempty_Document(source), index, "<!--")) {
 			comment_next, comment_error, comment_valid := scan_directive_comment(
-				source, Index(index),
+				Directive_Comment_Document(source), index,
 			)
 			if !bool(comment_valid) {
-				return 0, comment_error, false
+				position := Directive_Position(comment_error)
+				return position, position, false
 			}
-			index = int(comment_next)
+			index = Document_Position(comment_next)
 			continue
 		}
 		value := source[index]
@@ -1270,7 +1953,8 @@ func scan_directive[Source ~[]byte, Index ~int](
 		}
 		if value == '>' {
 			if depth == bytes.SLICE_SIZE_MINIMUM {
-				return Index(index + 1), 0, true
+				next_position := Directive_Position(index + 1)
+				return next_position, next_position, true
 			}
 			depth--
 			index++
@@ -1278,51 +1962,75 @@ func scan_directive[Source ~[]byte, Index ~int](
 		}
 		index++
 	}
-	return 0, Index(len(source)), false
+	end := Directive_Position(len(source))
+	return end, end, false
 }
 
-func scan_directive_comment[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index, error_index Index, valid Boolean) {
-	defer func() { Boolean_Invariants(valid, "scan_directive_comment.valid") }()
-	for index := int(start) + len("<!--"); index < len(source); index++ {
-		if bool(prefix_at(source, index, "-->")) {
-			return Index(index + len("-->")), 0, true
+func scan_directive_comment(
+	source Directive_Comment_Document, start Document_Position,
+) (
+	next Directive_Comment_Position, error_index Directive_Comment_Position,
+	valid Boolean,
+) {
+	defer func() {
+		Directive_Comment_Position_Invariants(next, "scan_directive_comment.next")
+		Directive_Comment_Position_Invariants(
+			error_index, "scan_directive_comment.error_index",
+		)
+		Boolean_Invariants(valid, "scan_directive_comment.valid")
+	}()
+	Directive_Comment_Document_Invariants(source, "scan_directive_comment.source")
+	Document_Position_Invariants(start, "scan_directive_comment.start")
+	index := start + Document_Position(len("<!--"))
+	for ; index < Document_Position(len(source)); index++ {
+		if bool(prefix_at(Nonempty_Document(source), index, "-->")) {
+			next_position := Directive_Comment_Position(
+				index + Document_Position(len("-->")),
+			)
+			return next_position, next_position, true
 		}
 	}
-	return 0, Index(len(source)), false
+	end := Directive_Comment_Position(len(source))
+	return end, end, false
 }
 
-func prefix_at[Source ~[]byte, Index ~int, Prefix ~string](
-	source Source, start Index, prefix Prefix,
+func prefix_at(
+	source Nonempty_Document, start Document_Position, prefix Pattern,
 ) (matches Boolean) {
 	defer func() { Boolean_Invariants(matches, "prefix_at.matches") }()
-	if int(start)+len(prefix) > len(source) {
+	Nonempty_Document_Invariants(source, "prefix_at.source")
+	Document_Position_Invariants(start, "prefix_at.start")
+	Pattern_Invariants(prefix, "prefix_at.prefix")
+	if start+Document_Position(len(prefix)) > Document_Position(len(source)) {
 		return false
 	}
 	for index := range len(prefix) {
-		if source[int(start)+index] != prefix[index] {
+		if source[start+Document_Position(index)] != prefix[index] {
 			return false
 		}
 	}
 	return true
 }
 
-func skip_xml_space[Source ~[]byte, Index ~int](
-	source Source, start Index,
-) (next Index) {
-	index := int(start)
-	for index < len(source) {
-		if !bool(xml_space(source[index])) {
+func skip_xml_space(
+	source Space_Document, start Document_Position,
+) (next Document_Position) {
+	defer func() { Document_Position_Invariants(next, "skip_xml_space.next") }()
+	Space_Document_Invariants(source, "skip_xml_space.source")
+	Document_Position_Invariants(start, "skip_xml_space.start")
+	index := start
+	for index < Document_Position(len(source)) {
+		if !bool(xml_space(XML_Byte(source[index]))) {
 			break
 		}
 		index++
 	}
-	return Index(index)
+	return index
 }
 
-func xml_space[Value ~byte](value Value) (yes Boolean) {
+func xml_space(value XML_Byte) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "xml_space.yes") }()
+	XML_Byte_Invariants(value, "xml_space.value")
 	switch value {
 	case ' ', '\t', '\r', '\n':
 		return true
@@ -1331,16 +2039,18 @@ func xml_space[Value ~byte](value Value) (yes Boolean) {
 	}
 }
 
-func name_start_character[Character ~int32](character Character) (yes Boolean) {
+func name_start_character(character XML_Character) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "name_start_character.yes") }()
+	XML_Character_Invariants(character, "name_start_character.character")
 	if character < 0x200c {
 		return name_start_character_lower(character)
 	}
 	return name_start_character_upper(character)
 }
 
-func name_start_character_lower[Character ~int32](character Character) (yes Boolean) {
+func name_start_character_lower(character XML_Character) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "name_start_character_lower.yes") }()
+	XML_Character_Invariants(character, "name_start_character_lower.character")
 	if character == '_' {
 		return true
 	}
@@ -1383,8 +2093,9 @@ func name_start_character_lower[Character ~int32](character Character) (yes Bool
 	return Boolean(character <= 0x1fff)
 }
 
-func name_start_character_upper[Character ~int32](character Character) (yes Boolean) {
+func name_start_character_upper(character XML_Character) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "name_start_character_upper.yes") }()
+	XML_Character_Invariants(character, "name_start_character_upper.character")
 	if character <= 0x200d {
 		return true
 	}
@@ -1419,8 +2130,9 @@ func name_start_character_upper[Character ~int32](character Character) (yes Bool
 	return Boolean(character <= 0xeffff)
 }
 
-func name_character[Character ~int32](character Character) (yes Boolean) {
+func name_character(character XML_Character) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "name_character.yes") }()
+	XML_Character_Invariants(character, "name_character.character")
 	if bool(name_start_character(character)) {
 		return true
 	}

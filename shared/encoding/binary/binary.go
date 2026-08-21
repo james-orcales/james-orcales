@@ -263,6 +263,16 @@ func Active_Stack_Count_Invariants(
 		Ensure()
 }
 
+// Stack_Count includes empty traversal after final frame retires.
+type Stack_Count int
+
+// Stack_Count_Invariants keeps loop state inside fixed stack storage.
+func Stack_Count_Invariants(value Stack_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), BYTE_SIZE_MINIMUM, VALUE_STACK_SIZE).
+		Ensure()
+}
+
 // Element_Count is one bounded reflected collection size.
 type Element_Count int
 
@@ -455,6 +465,14 @@ func Stream_Size_Invariants(value Stream_Size, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Value carries arbitrary reflected binary input or destination.
+type Value interface{}
+
+// Error carries binary or injected stream failure.
+type Error interface {
+	error
+}
+
 // Reader retains caller scratch and one structured read continuation.
 type Reader struct {
 	// Completion stays first so static callback recovers Reader without allocating closure.
@@ -466,7 +484,7 @@ type Reader struct {
 	// Scratch remains caller-owned across every partial transfer.
 	Scratch Bytes
 	// Destination remains borrowed until decode or transport failure.
-	Destination any
+	Destination Value
 	// Order stays stable across deferred completion.
 	Order Byte_Order
 	// Size is complete encoded width required before decode.
@@ -486,10 +504,9 @@ type Reader struct {
 }
 
 // Reader_Invariants keeps transfer cursor inside caller scratch.
-func Reader_Invariants(value *Reader, namespace aver.Namespace) {
-	aver.Always(value != nil, "Binary Reader state exists.")
+func Reader_Invariants(value Reader, namespace aver.Namespace) {
 	aver.Always(
-		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
+		unsafe.Pointer(&value) == unsafe.Pointer(&value.Completion),
 		"Binary Reader completion stays first for static callback recovery.",
 	)
 	Bytes_Invariants(value.Scratch, namespace)
@@ -509,6 +526,17 @@ func Reader_Invariants(value *Reader, namespace aver.Namespace) {
 		int(value.Size) <= len(value.Scratch),
 		"Binary Reader operation stays inside caller scratch.",
 	)
+}
+
+// Reader_Handle keeps Reader identity across deferred Stream retirement.
+type Reader_Handle *Reader
+
+// Reader_Handle_Invariants keeps dereferenced state visible at the dependency boundary.
+func Reader_Handle_Invariants(value Reader_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Reader_Invariants(*value, namespace)
 }
 
 // Writer retains caller scratch and one structured write continuation.
@@ -532,10 +560,9 @@ type Writer struct {
 }
 
 // Writer_Invariants keeps encoded prefix inside caller scratch.
-func Writer_Invariants(value *Writer, namespace aver.Namespace) {
-	aver.Always(value != nil, "Binary Writer state exists.")
+func Writer_Invariants(value Writer, namespace aver.Namespace) {
 	aver.Always(
-		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
+		unsafe.Pointer(&value) == unsafe.Pointer(&value.Completion),
 		"Binary Writer completion stays first for static callback recovery.",
 	)
 	Bytes_Invariants(value.Scratch, namespace)
@@ -549,6 +576,17 @@ func Writer_Invariants(value *Writer, namespace aver.Namespace) {
 	)
 }
 
+// Writer_Handle keeps Writer identity across deferred Stream retirement.
+type Writer_Handle *Writer
+
+// Writer_Handle_Invariants keeps dereferenced state visible at the dependency boundary.
+func Writer_Handle_Invariants(value Writer_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Writer_Invariants(*value, namespace)
+}
+
 // Byte_Order_String gives standard display name without forbidden method API.
 func Byte_Order_String(order Byte_Order) (name Byte_Order_Name) {
 	defer func() { Byte_Order_Name_Invariants(name, "byte_order_string.name") }()
@@ -558,10 +596,8 @@ func Byte_Order_String(order Byte_Order) (name Byte_Order_Name) {
 		return "LittleEndian"
 	case BIG_ENDIAN:
 		return "BigEndian"
-	case NATIVE_ENDIAN:
-		return "NativeEndian"
 	}
-	panic("unreachable byte order")
+	return "NativeEndian"
 }
 
 // Byte_Order_Go_String gives standard Go-syntax name without forbidden method API.
@@ -573,10 +609,8 @@ func Byte_Order_Go_String(order Byte_Order) (name Byte_Order_Go_Name) {
 		return "binary.LittleEndian"
 	case BIG_ENDIAN:
 		return "binary.BigEndian"
-	case NATIVE_ENDIAN:
-		return "binary.NativeEndian"
 	}
-	panic("unreachable byte order")
+	return "binary.NativeEndian"
 }
 
 // Resolves native identity once per operation while keeping public enum stable.
@@ -612,9 +646,7 @@ func uint_16_raw(source Bytes, little Boolean) (value Word_16) {
 	defer func() { Word_16_Invariants(value, "uint_16_raw.value") }()
 	Bytes_Invariants(source, "uint_16_raw.source")
 	Boolean_Invariants(little, "uint_16_raw.little")
-	if len(source) < UINT_16_SIZE {
-		panic("binary: short uint16 source")
-	}
+	aver.Always(len(source) >= UINT_16_SIZE, "Uint16 source is large enough.")
 	source = source[:UINT_16_SIZE]
 	if little {
 		return Word_16(uint16(source[0]) | uint16(source[1])<<8)
@@ -627,9 +659,7 @@ func put_uint_16_raw(destination Bytes, value Word_16, little Boolean) {
 	Bytes_Invariants(destination, "put_uint_16_raw.destination")
 	Word_16_Invariants(value, "put_uint_16_raw.value")
 	Boolean_Invariants(little, "put_uint_16_raw.little")
-	if len(destination) < UINT_16_SIZE {
-		panic("binary: short uint16 destination")
-	}
+	aver.Always(len(destination) >= UINT_16_SIZE, "Uint16 destination is large enough.")
 	destination = destination[:UINT_16_SIZE]
 	if little {
 		destination[0] = byte(value)
@@ -667,9 +697,7 @@ func uint_32_raw(source Bytes, little Boolean) (value Word_32) {
 	defer func() { Word_32_Invariants(value, "uint_32_raw.value") }()
 	Bytes_Invariants(source, "uint_32_raw.source")
 	Boolean_Invariants(little, "uint_32_raw.little")
-	if len(source) < UINT_32_SIZE {
-		panic("binary: short uint32 source")
-	}
+	aver.Always(len(source) >= UINT_32_SIZE, "Uint32 source is large enough.")
 	source = source[:UINT_32_SIZE]
 	if little {
 		return Word_32(uint32(source[0]) | uint32(source[1])<<8 |
@@ -693,9 +721,7 @@ func put_uint_32_raw(destination Bytes, value Word_32, little Boolean) {
 	Bytes_Invariants(destination, "put_uint_32_raw.destination")
 	Word_32_Invariants(value, "put_uint_32_raw.value")
 	Boolean_Invariants(little, "put_uint_32_raw.little")
-	if len(destination) < UINT_32_SIZE {
-		panic("binary: short uint32 destination")
-	}
+	aver.Always(len(destination) >= UINT_32_SIZE, "Uint32 destination is large enough.")
 	destination = destination[:UINT_32_SIZE]
 	if little {
 		destination[0] = byte(value)
@@ -737,9 +763,7 @@ func uint_64_raw(source Bytes, little Boolean) (value Word_64) {
 	defer func() { Word_64_Invariants(value, "uint_64_raw.value") }()
 	Bytes_Invariants(source, "uint_64_raw.source")
 	Boolean_Invariants(little, "uint_64_raw.little")
-	if len(source) < UINT_64_SIZE {
-		panic("binary: short uint64 source")
-	}
+	aver.Always(len(source) >= UINT_64_SIZE, "Uint64 source is large enough.")
 	source = source[:UINT_64_SIZE]
 	if little {
 		return Word_64(uint64(source[0]) | uint64(source[1])<<8 |
@@ -767,9 +791,7 @@ func put_uint_64_raw(destination Bytes, value Word_64, little Boolean) {
 	Bytes_Invariants(destination, "put_uint_64_raw.destination")
 	Word_64_Invariants(value, "put_uint_64_raw.value")
 	Boolean_Invariants(little, "put_uint_64_raw.little")
-	if len(destination) < UINT_64_SIZE {
-		panic("binary: short uint64 destination")
-	}
+	aver.Always(len(destination) >= UINT_64_SIZE, "Uint64 destination is large enough.")
 	destination = destination[:UINT_64_SIZE]
 	if little {
 		destination[0] = byte(value)
@@ -840,9 +862,7 @@ func Put_Unsigned_Varint(destination Bytes, value Word_64) (size Varint_Size) {
 	Bytes_Invariants(destination, "put_unsigned_varint.destination")
 	Word_64_Invariants(value, "put_unsigned_varint.value")
 	encoded_size := unsigned_varint_size(value)
-	if len(destination) < int(encoded_size) {
-		panic("binary: short varint destination")
-	}
+	aver.Always(len(destination) >= int(encoded_size), "Varint destination is large enough.")
 	destination = destination[:encoded_size]
 	position := 0
 	for value >= 0x80 {
@@ -935,14 +955,23 @@ func Varint(source Bytes) (value Integer_64, count Varint_Count) {
 	return value, count
 }
 
+// Read_Byte_State keeps arbitrary caller state concrete without owning it.
+type Read_Byte_State unsafe.Pointer
+
+// Read_Byte_State_Invariants rejects missing injected state.
+func Read_Byte_State_Invariants(value Read_Byte_State, _ aver.Namespace) {
+	aver.Always(value != nil, "Varint reader state exists.")
+}
+
 // Read_Byte_Function injects one byte read without behavioral interface or closure capture.
-type Read_Byte_Function[State any] func(state State) (value byte, err error)
+type Read_Byte_Function func(state Read_Byte_State) (value byte, err error)
 
 // Read_Unsigned_Varint consumes no more than format maximum from reader.
-func Read_Unsigned_Varint[State any](
-	state State, read_byte Read_Byte_Function[State],
-) (value Word_64, err error) {
+func Read_Unsigned_Varint(
+	state Read_Byte_State, read_byte Read_Byte_Function,
+) (value Word_64, err Error) {
 	defer func() { Word_64_Invariants(value, "read_unsigned_varint.value") }()
+	Read_Byte_State_Invariants(state, "read_unsigned_varint.state")
 	var shift uint
 	for index := 0; index < VARINT_SIZE_64_MAXIMUM; index++ {
 		octet, read_error := read_byte(state)
@@ -969,10 +998,11 @@ func Read_Unsigned_Varint[State any](
 }
 
 // Read_Varint decodes one zig-zag mapped signed value from reader.
-func Read_Varint[State any](
-	state State, read_byte Read_Byte_Function[State],
-) (value Integer_64, err error) {
+func Read_Varint(
+	state Read_Byte_State, read_byte Read_Byte_Function,
+) (value Integer_64, err Error) {
 	defer func() { Integer_64_Invariants(value, "read_varint.value") }()
+	Read_Byte_State_Invariants(state, "read_varint.state")
 	unsigned, err := Read_Unsigned_Varint(state, read_byte)
 	value = Integer_64(unsigned >> 1)
 	if unsigned&1 != 0 {
@@ -982,7 +1012,7 @@ func Read_Varint[State any](
 }
 
 // Size rejects variable-width grammar before any encode or stream side effect.
-func Size(source any) (size Value_Size) {
+func Size(source Value) (size Value_Size) {
 	defer func() { Value_Size_Invariants(size, "size.size") }()
 	subject := reflect.ValueOf(source)
 	if !subject.IsValid() {
@@ -1040,7 +1070,7 @@ func type_size(value_type reflect.Type, depth Initial_Depth) (size Value_Size) {
 	types[0] = value_type
 	depths[0] = int(depth)
 	multipliers[0] = 1
-	stack_count := Active_Stack_Count(ACTIVE_STACK_COUNT_MINIMUM)
+	stack_count := Stack_Count(ACTIVE_STACK_COUNT_MINIMUM)
 	for stack_count > 0 {
 		stack_index := int(stack_count) - 1
 		current_type := types[stack_index]
@@ -1064,8 +1094,10 @@ func type_size(value_type reflect.Type, depth Initial_Depth) (size Value_Size) {
 			continue
 		}
 		if current_type.Kind() == reflect.Struct {
-			push_struct_field(
-				&types, &positions, &depths, &multipliers, &stack_count,
+			stack_count = push_struct_field(
+				Type_Stack(types[:]), Position_Stack(positions[:]),
+				Depth_Stack(depths[:]), Multiplier_Stack(multipliers[:]),
+				Active_Stack_Count(stack_count),
 			)
 			continue
 		}
@@ -1086,24 +1118,57 @@ func type_size(value_type reflect.Type, depth Initial_Depth) (size Value_Size) {
 	return size
 }
 
+// Type_Stack retains one bounded iterative type traversal.
+type Type_Stack []reflect.Type
+
+// Type_Stack_Invariants fixes storage to the nesting boundary plus root.
+func Type_Stack_Invariants(value Type_Stack, _ aver.Namespace) {
+	aver.Always(len(value) == VALUE_STACK_SIZE, "Type stack has one slot per level.")
+}
+
+// Position_Stack retains the next record field at each traversal level.
+type Position_Stack []int
+
+// Position_Stack_Invariants fixes storage to the nesting boundary plus root.
+func Position_Stack_Invariants(value Position_Stack, _ aver.Namespace) {
+	aver.Always(len(value) == VALUE_STACK_SIZE, "Position stack has one slot per level.")
+}
+
+// Depth_Stack retains the validated depth at each traversal level.
+type Depth_Stack []int
+
+// Depth_Stack_Invariants fixes storage to the nesting boundary plus root.
+func Depth_Stack_Invariants(value Depth_Stack, _ aver.Namespace) {
+	aver.Always(len(value) == VALUE_STACK_SIZE, "Depth stack has one slot per level.")
+}
+
+// Multiplier_Stack retains array cardinality at each traversal level.
+type Multiplier_Stack []int
+
+// Multiplier_Stack_Invariants fixes storage to the nesting boundary plus root.
+func Multiplier_Stack_Invariants(value Multiplier_Stack, _ aver.Namespace) {
+	aver.Always(len(value) == VALUE_STACK_SIZE, "Multiplier stack has one slot per level.")
+}
+
 // Separate frame transition keeps hostile record nesting on the fixed stack.
 func push_struct_field(
-	types *[VALUE_STACK_SIZE]reflect.Type,
-	positions *[VALUE_STACK_SIZE]int,
-	depths *[VALUE_STACK_SIZE]int,
-	multipliers *[VALUE_STACK_SIZE]int,
-	stack_count *Active_Stack_Count,
-) {
-	Active_Stack_Count_Invariants(*stack_count, "push_struct_field.stack_count")
-	stack_index := int(*stack_count) - 1
+	types Type_Stack, positions Position_Stack, depths Depth_Stack,
+	multipliers Multiplier_Stack, stack_count Active_Stack_Count,
+) (next Stack_Count) {
+	defer func() { Stack_Count_Invariants(next, "push_struct_field.next") }()
+	Type_Stack_Invariants(types, "push_struct_field.types")
+	Position_Stack_Invariants(positions, "push_struct_field.positions")
+	Depth_Stack_Invariants(depths, "push_struct_field.depths")
+	Multiplier_Stack_Invariants(multipliers, "push_struct_field.multipliers")
+	Active_Stack_Count_Invariants(stack_count, "push_struct_field.stack_count")
+	stack_index := int(stack_count) - 1
 	value_type := types[stack_index]
 	aver.Always(
 		value_type.NumField() <= VALUE_ELEMENT_COUNT_MAXIMUM,
 		"Structured record stays inside package field boundary.",
 	)
 	if positions[stack_index] == value_type.NumField() {
-		*stack_count--
-		return
+		return Stack_Count(stack_count - 1)
 	}
 	child_depth := depths[stack_index] + 1
 	aver.Always(
@@ -1112,11 +1177,11 @@ func push_struct_field(
 	)
 	field := value_type.Field(positions[stack_index])
 	positions[stack_index]++
-	types[int(*stack_count)] = field.Type
-	positions[int(*stack_count)] = 0
-	depths[int(*stack_count)] = child_depth
-	multipliers[int(*stack_count)] = multipliers[stack_index]
-	*stack_count++
+	types[int(stack_count)] = field.Type
+	positions[int(stack_count)] = 0
+	depths[int(stack_count)] = child_depth
+	multipliers[int(stack_count)] = multipliers[stack_index]
+	return Stack_Count(stack_count + 1)
 }
 
 // Primitive width lookup keeps collection traversal branch-free at leaves.
@@ -1171,8 +1236,8 @@ func multiplied_size(
 
 // Encode writes only after full type and destination validation.
 func Encode(
-	destination Bytes, source any, order Byte_Order,
-) (count Byte_Count, err error) {
+	destination Bytes, source Value, order Byte_Order,
+) (count Byte_Count, err Error) {
 	defer func() { Byte_Count_Invariants(count, "encode.count") }()
 	Bytes_Invariants(destination, "encode.destination")
 	Byte_Order_Invariants(order, "encode.order")
@@ -1193,8 +1258,8 @@ func Encode(
 
 // Append retains caller ownership by extending only existing capacity.
 func Append(
-	buffer Bytes, source any, order Byte_Order,
-) (result Bytes, err error) {
+	buffer Bytes, source Value, order Byte_Order,
+) (result Bytes, err Error) {
 	defer func() { Bytes_Invariants(result, "append.result") }()
 	Bytes_Invariants(buffer, "append.buffer")
 	Byte_Order_Invariants(order, "append.order")
@@ -1218,8 +1283,8 @@ func Append(
 
 // Decode validates complete source before mutating caller destination.
 func Decode(
-	source Bytes, destination any, order Byte_Order,
-) (count Byte_Count, err error) {
+	source Bytes, destination Value, order Byte_Order,
+) (count Byte_Count, err Error) {
 	defer func() { Byte_Count_Invariants(count, "decode.count") }()
 	Bytes_Invariants(source, "decode.source")
 	Byte_Order_Invariants(order, "decode.order")
@@ -1236,7 +1301,7 @@ func Decode(
 
 // Separates addressability validation from source mutation boundary.
 func decode_target(
-	destination any,
+	destination Value,
 ) (value reflect.Value, size Value_Size, valid Boolean) {
 	defer func() {
 		Value_Size_Invariants(size, "decode_target.size")
@@ -1266,8 +1331,8 @@ func decode_target(
 }
 
 // Reader_Init binds injected Stream and caller scratch without submitting work.
-func Reader_Init(reader *Reader, stream nbio.Stream, scratch Bytes) {
-	Reader_Invariants(reader, "Reader_Init.reader")
+func Reader_Init(reader Reader_Handle, stream nbio.Stream, scratch Bytes) {
+	Reader_Handle_Invariants(reader, "Reader_Init.reader")
 	Bytes_Invariants(scratch, "Reader_Init.scratch")
 	aver.Always(!reader.Active, "Reader_Init owns idle Reader state.")
 	aver.Always(stream.Procedure != nil, "Reader_Init has concrete Stream.")
@@ -1276,10 +1341,12 @@ func Reader_Init(reader *Reader, stream nbio.Stream, scratch Bytes) {
 
 // Read defers decode until Stream supplies complete fixed-width value.
 func Read(
-	reader *Reader, completion *nbio.Completion, destination any, order Byte_Order,
+	reader Reader_Handle, completion nbio.Completion_Handle,
+	destination Value, order Byte_Order,
 	callback nbio.Callback,
 ) {
-	Reader_Invariants(reader, "Read.reader")
+	Reader_Handle_Invariants(reader, "Read.reader")
+	Reader_Invariants(*reader, "Read.reader_value")
 	Byte_Order_Invariants(order, "Read.order")
 	aver.Always(reader.Initialized, "Read uses initialized Reader.")
 	aver.Always(completion != nil, "Read has completion storage.")
@@ -1325,7 +1392,7 @@ func Read(
 }
 
 // Reader progress uses trampoline because concrete Stream may retire inline.
-func reader_progress(completion *nbio.Completion) {
+func reader_progress(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	for bool(reader.Active) && !bool(reader.Wait_Active) {
 		if reader.Count == Byte_Count(reader.Size) {
@@ -1350,7 +1417,7 @@ func reader_progress(completion *nbio.Completion) {
 	}
 }
 
-func reader_stream_complete(completion *nbio.Completion) {
+func reader_stream_complete(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	aver.Always(reader.Active, "Reader callback belongs to active operation.")
 	aver.Always(reader.Wait_Active, "Reader callback retires submitted transfer.")
@@ -1393,7 +1460,7 @@ func reader_stream_complete(completion *nbio.Completion) {
 	reader_progress(completion)
 }
 
-func reader_decode_finish(completion *nbio.Completion) {
+func reader_decode_finish(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	_, completion.Error = Decode(
 		reader.Scratch[:reader.Size], reader.Destination, reader.Order,
@@ -1401,7 +1468,7 @@ func reader_decode_finish(completion *nbio.Completion) {
 	reader_finish(completion)
 }
 
-func reader_finish(completion *nbio.Completion) {
+func reader_finish(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	callback := reader.Callback
 	count := reader.Count
@@ -1416,8 +1483,8 @@ func reader_finish(completion *nbio.Completion) {
 }
 
 // Writer_Init binds injected Stream and caller scratch without submitting work.
-func Writer_Init(writer *Writer, stream nbio.Stream, scratch Bytes) {
-	Writer_Invariants(writer, "Writer_Init.writer")
+func Writer_Init(writer Writer_Handle, stream nbio.Stream, scratch Bytes) {
+	Writer_Handle_Invariants(writer, "Writer_Init.writer")
 	Bytes_Invariants(scratch, "Writer_Init.scratch")
 	aver.Always(!writer.Active, "Writer_Init owns idle Writer state.")
 	aver.Always(stream.Procedure != nil, "Writer_Init has concrete Stream.")
@@ -1426,10 +1493,11 @@ func Writer_Init(writer *Writer, stream nbio.Stream, scratch Bytes) {
 
 // Write encodes before submission so invalid grammar never mutates Stream.
 func Write(
-	writer *Writer, completion *nbio.Completion, source any, order Byte_Order,
+	writer Writer_Handle, completion nbio.Completion_Handle, source Value, order Byte_Order,
 	callback nbio.Callback,
 ) {
-	Writer_Invariants(writer, "Write.writer")
+	Writer_Handle_Invariants(writer, "Write.writer")
+	Writer_Invariants(*writer, "Write.writer_value")
 	Byte_Order_Invariants(order, "Write.order")
 	aver.Always(writer.Initialized, "Write uses initialized Writer.")
 	aver.Always(completion != nil, "Write has completion storage.")
@@ -1470,7 +1538,7 @@ func Write(
 	nbio.Write(writer.Stream, completion, writer.Scratch[:size], writer_stream_complete)
 }
 
-func writer_stream_complete(completion *nbio.Completion) {
+func writer_stream_complete(completion nbio.Completion_Handle) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	aver.Always(writer.Active, "Writer callback belongs to active operation.")
 	count := completion.Data
@@ -1491,7 +1559,7 @@ func writer_stream_complete(completion *nbio.Completion) {
 	writer_finish(completion)
 }
 
-func writer_finish(completion *nbio.Completion) {
+func writer_finish(completion nbio.Completion_Handle) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	callback := writer.Callback
 	count := completion.Data

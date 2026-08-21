@@ -1,4 +1,10 @@
 
+# Allocation
+
+Marshal_Into and Marshal_Write perform zero heap allocation with assertion tracking enabled.
+Callers provide both exact reflection state and complete bounded output storage. Values expose
+only primitive leaves because standard marshaler methods return allocation-owning byte slices.
+
 # Nested Struct Flattens To Prefixed Keys
 
 A nested struct field is flattened into the parent object, each leaf keyed by the field
@@ -6,7 +12,8 @@ path joined with an underscore, so addr.city becomes addr_city.
 
 # Scalar Fields Marshal To Their JSON Forms
 
-String, integer, boolean, and float fields marshal to their JSON scalar forms.
+String, integer, and boolean fields marshal to their JSON scalar forms. Float fields are rejected
+because the deterministic shared tier admits no floating-point representation.
 
 # Scalar Slices Pass Through
 
@@ -28,10 +35,10 @@ segment of their own, matching encoding/json.
 A nil pointer is never dropped: a scalar pointer emits null, and a nested-struct pointer
 emits null for each of its leaf keys, so the key set is the same whether or not it is nil.
 
-# Marshaler Leaf Is Delegated
+# Marshaler Leaf Is Rejected
 
-A type implementing json.Marshaler, such as time.Time, is treated as a leaf and encoded
-by encoding/json rather than recursed into.
+A method-bearing struct is not a primitive leaf. Marshal_Into rejects it instead of invoking an
+allocation-owning MarshalJSON or MarshalText method.
 
 # Top Level Array Marshals
 
