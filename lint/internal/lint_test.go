@@ -3801,8 +3801,9 @@ func f() (buffer *[4]int) {
 // BUFFER_SIZE_MAX is a fixture.
 const BUFFER_SIZE_MAX = 16
 
-func f() (buffer [BUFFER_SIZE_MAX]byte) {
-	return buffer
+func f() (first byte) {
+	var buffer [BUFFER_SIZE_MAX]byte
+	return buffer[0]
 }
 `},
 			Want_Diag: "",

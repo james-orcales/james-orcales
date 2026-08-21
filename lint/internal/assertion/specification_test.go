@@ -732,6 +732,115 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Small_Slices verifies a defined slice type whose helper bounds len to at most 8
+// is banned as a field, parameter, or result, whatever form the helper takes, and a larger or
+// unresolved bound is not.
+func Test_Invariants_Small_Slices(t *testing.T) {
+	t.Parallel()
+	ranged := "\taver.Tree(members, namespace).Range_Int(len(members), MEMBERS_MIN, MEMBERS_MAX).Ensure()"
+	if !diagnosed(check_fixture(t, small_slice_source(ranged, "8")), small_slice_message("8")) {
+		t.Fatal("a Range_Int upper bound of 8 must ban the slice field")
+	}
+	if diagnosed(check_fixture(t, small_slice_source(ranged, "9")), "Holder has a Members field") {
+		t.Fatal("a Range_Int upper bound of 9 must keep the slice field")
+	}
+	chained := "\taver.Tree(members, namespace).Range_Int(len(members), MEMBERS_MIN, MEMBERS_CAP).Ensure()"
+	chain := small_slice_source(chained, "4") + "\n// MEMBERS_CAP is a fixture.\nconst MEMBERS_CAP = MEMBERS_MAX\n"
+	if !diagnosed(check_fixture(t, chain), small_slice_message("4")) {
+		t.Fatal("a bound reached through a chain of constants must ban the slice field")
+	}
+	enum := "\taver.Tree(members, namespace).Enum_Int(len(members), MEMBERS_MIN, MEMBERS_MAX).Ensure()"
+	if !diagnosed(check_fixture(t, small_slice_source(enum, "3")), small_slice_message("3")) {
+		t.Fatal("an Enum_Int largest member of 3 must ban the slice field")
+	}
+	singleton := "\taver.Always(len(members) == MEMBERS_MAX, \"fixed\")"
+	if !diagnosed(check_fixture(t, small_slice_source(singleton, "2")), small_slice_message("2")) {
+		t.Fatal("an Always singleton of 2 must ban the slice field")
+	}
+	unresolved := small_slice_source(ranged, "int(len(\"abc\"))")
+	if diagnosed(check_fixture(t, unresolved), "Holder has a Members field") {
+		t.Fatal("a bound that resolves to no integer must leave the slice field unjudged")
+	}
+	diags := check_fixture(t, small_slice_source(ranged, "8"))
+	if !diagnosed(diags, "The declaration Take has a Members parameter (members) bounded to "+
+		"8 members. Declare a struct with one field per member instead.") {
+		t.Fatal("a small slice parameter must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Take has a Members result (out) bounded to "+
+		"8 members. Declare a struct with one field per member instead.") {
+		t.Fatal("a small slice result must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Members_Invariants has a Members parameter (members) "+
+		"bounded to 8 members.") {
+		t.Fatal("the ban is blanket, thus the helper's own parameter is flagged")
+	}
+	test_file := parse(t, &parse_input{Path: "pkg/rule_test.go", Source_Text: small_slice_source(ranged, "8")})
+	if !diagnosed(check_source(test_file), small_slice_message("8")) {
+		t.Fatal("the ban is blanket, thus a _test.go file is flagged")
+	}
+}
+
+// Test_Invariants_Fixed_Arrays verifies a fixed array, raw or through a defined type, is banned
+// as a field, parameter, or result whatever its length and owner, while a local variable is
+// untouched.
+func Test_Invariants_Fixed_Arrays(t *testing.T) {
+	t.Parallel()
+	code := "package fixture\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"// WIDTH is a fixture.\nconst WIDTH = 64\n\n" +
+		"// Cell is a fixture.\ntype Cell int\n\n" +
+		"// Cell_Invariants is a fixture.\n" +
+		"func Cell_Invariants(cell Cell, namespace aver.Namespace) {\n" +
+		"\taver.Always(int(cell) == WIDTH, \"fixed\")\n}\n\n" +
+		"// Row is a fixture.\ntype Row [WIDTH]Cell\n\n" +
+		"// Row_Invariants is a fixture.\n" +
+		"func Row_Invariants(row Row, namespace aver.Namespace) {\n" +
+		"\taver.Always(len(row) == WIDTH, \"fixed\")\n}\n\n" +
+		"// Grid is a fixture.\ntype Grid struct {\n" +
+		"\t// Raw is a fixture.\n\tRaw [WIDTH]Cell\n" +
+		"\t// Named is a fixture.\n\tNamed Row\n" +
+		"\t// Pointed is a fixture.\n\tPointed *Row\n}\n\n" +
+		"// Grid_Invariants is a fixture.\n" +
+		"func Grid_Invariants(grid Grid, namespace aver.Namespace) {\n" +
+		"\tRow_Invariants(grid.Named, namespace)\n" +
+		"\tRow_Invariants(*grid.Pointed, namespace)\n}\n\n" +
+		"// Fill is a fixture.\n" +
+		"func Fill(row Row) (out [WIDTH]Cell) {\n" +
+		"\tvar scratch [WIDTH]Cell\n\treturn scratch\n}\n"
+	diags := check_fixture(t, code)
+	remedy := " Declare a struct with one field per element instead."
+	if !diagnosed(diags, "The declaration Grid has a fixed array field (Raw)."+remedy) {
+		t.Fatal("a raw fixed array field must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Grid has a fixed array field (Named)."+remedy) {
+		t.Fatal("a defined type over a fixed array must be flagged as a field")
+	}
+	if !diagnosed(diags, "The declaration Grid has a fixed array field (Pointed)."+remedy) {
+		t.Fatal("a pointer to a fixed array type must be flagged as a field")
+	}
+	if !diagnosed(diags, "The declaration Fill has a fixed array parameter (row)."+remedy) {
+		t.Fatal("a defined array parameter must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Fill has a fixed array result (out)."+remedy) {
+		t.Fatal("a raw fixed array result must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Row_Invariants has a fixed array parameter (row)."+remedy) {
+		t.Fatal("the ban is blanket, thus the helper's own array parameter is flagged")
+	}
+	stringer := "package fixture\n\n" +
+		"// WIDTH is a fixture.\nconst WIDTH = 2\n\n" +
+		"// Pair is a fixture.\ntype Pair [WIDTH]byte\n\n" +
+		"// String is a fixture.\nfunc (pair Pair) String() (text string) {\n\treturn \"\"\n}\n\n" +
+		"// Read is a fixture.\nfunc Read(destination Pair) (count int, err error) {\n\treturn 0, nil\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{Path: "pkg/rule_test.go", Source_Text: stringer})),
+		"The declaration Read has a fixed array parameter (destination)."+remedy) {
+		t.Fatal("the ban is blanket, thus a _test.go file is flagged")
+	}
+	if diagnosed(diags, "scratch") {
+		t.Fatal("a local array variable is not a field, parameter, or result")
+	}
+}
+
 // Test_Simulation_Presence verifies a binary component with a non-exempt internal
 // package but no simulation_test package is flagged.
 func Test_Simulation_Presence(t *testing.T) {
@@ -1353,6 +1462,39 @@ func count_helper_source(body string) (code string) {
 		"// Value_Invariants is a fixture.\n" +
 		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
 		body + "\n}\n"
+}
+
+// The field diagnostic the slice fixture draws once its bound resolves at or under the cap.
+func small_slice_message(bound string) (message string) {
+	return "The declaration Holder has a Members field (Items) bounded to " + bound +
+		" members. Declare a struct with one field per member instead."
+}
+
+// A slice fixture whose len bound is the one free variable, so each leaf varies only the helper
+// form and the bound under judgment.
+func small_slice_source(body string, bound string) (code string) {
+	return "package fixture\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"// MEMBERS_MIN is a fixture.\nconst MEMBERS_MIN = 0\n\n" +
+		"// MEMBERS_MAX is a fixture.\nconst MEMBERS_MAX = " + bound + "\n\n" +
+		"// Member is a fixture.\ntype Member int\n\n" +
+		"// Member_Invariants is a fixture.\n" +
+		"func Member_Invariants(member Member, namespace aver.Namespace) {\n" +
+		"\taver.Always(int(member) == MEMBERS_MIN, \"fixed\")\n}\n\n" +
+		"// Members is a fixture.\ntype Members []Member\n\n" +
+		"// Members_Invariants is a fixture.\n" +
+		"func Members_Invariants(members Members, namespace aver.Namespace) {\n" +
+		body + "\n}\n\n" +
+		"// Holder is a fixture.\ntype Holder struct {\n" +
+		"\t// Items is a fixture.\n\tItems Members\n}\n\n" +
+		"// Holder_Invariants is a fixture.\n" +
+		"func Holder_Invariants(holder Holder, namespace aver.Namespace) {\n" +
+		"\tMembers_Invariants(holder.Items, namespace)\n}\n\n" +
+		"// Take is a fixture.\n" +
+		"func Take(members Members) (out Members) {\n" +
+		"\tdefer Members_Invariants(out, aver.Namespace(\"out\"))\n" +
+		"\tMembers_Invariants(members, aver.Namespace(\"members\"))\n" +
+		"\treturn members\n}\n"
 }
 
 // A same-shaped fluent builder owned by another package cannot impersonate aver.Assertions.

@@ -55,6 +55,7 @@ func Check(
 	diags = append(diags,
 		check_recorder_test_main(parsed_files, components, exempt)...)
 	diags = append(diags, check_primitive_types(parsed_files, exempt)...)
+	diags = append(diags, check_collection_types(parsed_files, components)...)
 	diags = append(diags, check_always_condition(parsed_files, components, exempt)...)
 	diags = append(diags,
 		check_simulation(parsed_files, components, exempt)...)
@@ -67,7 +68,7 @@ func check_value_invariants(
 	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	constants := invariant_package_constants(parsed_files)
-	base_kind := base_kind_declaration_index(parsed_files, components)
+	base_kind := base_kind_declaration_index(parsed_files, components, false)
 	for _, file := range parsed_files {
 		if strings.Has_Suffix(file.Path, "_test.go") {
 			continue
@@ -85,14 +86,17 @@ func check_value_invariants(
 // Maps each package-qualified type name to the type expression it stands over, after every chain of
 // defined types is followed to its end. A name of its own hides no kind, thus a helper over a named
 // integer still owes the scalar mandate and one over a named slice still owes the count mandate.
+// The mandate releases test files, so it leaves them out; the blanket collection ban reads them.
 func base_kind_declaration_index(
-	parsed_files []Parsed_File, components *Component_Index,
+	parsed_files []Parsed_File, components *Component_Index, with_tests bool,
 ) (base_kind map[string]ast.Expr) {
 	base_kind = map[string]ast.Expr{}
 	named := map[string]string{}
 	for _, pf := range parsed_files {
-		if strings.Has_Suffix(pf.Path, "_test.go") {
-			continue
+		if !with_tests {
+			if strings.Has_Suffix(pf.Path, "_test.go") {
+				continue
+			}
 		}
 		package_path := helper_package_path(pf, components)
 		// A qualified base names its package by the local name this file gave it, thus the
@@ -3376,6 +3380,591 @@ func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
 	default:
 		return ""
 	}
+}
+
+// SMALL_SLICE_COUNT_MAX is the largest len a slice may be bounded to and stay a slice. At or below
+// it, the members are few enough to name, and a struct with one field per member states the shape
+// a slice only implies through a loop.
+const SMALL_SLICE_COUNT_MAX = 8
+
+// CONSTANT_CHAIN_DEPTH_MAX bounds how many constant aliases a bound may be followed through. A
+// cycle between constants does not compile, so the cap trips only on a pathological chain, which
+// is then left unjudged rather than walked forever.
+const CONSTANT_CHAIN_DEPTH_MAX = 16
+
+// Constant_Value is one package-level constant's initializer beside the import table of its file,
+// because a bound may cross a package boundary more than once and each hop resolves qualifiers
+// through the imports of the file that spelled it.
+type Constant_Value struct {
+	// Expression is the constant's initializer.
+	Expression ast.Expr
+	// Package qualifies the bare names the initializer uses.
+	Package string
+	// Imports resolves the qualified names the initializer uses.
+	Imports map[string]string
+}
+
+// Collection_Index holds what the small-slice and fixed-array bans need of every type: whether its
+// chain of defined types ends at a fixed array, and the largest len its helper states for a slice.
+type Collection_Index struct {
+	// Array marks a package-qualified type whose base kind is a fixed [N]T.
+	Array map[string]bool
+	// Slice_Bound gives a package-qualified slice type the len upper bound its helper resolves to.
+	Slice_Bound map[string]int64
+}
+
+// Flags a fixed array or a small bounded slice used as a struct field, parameter, or result. A
+// slice bounded to SMALL_SLICE_COUNT_MAX or fewer is a struct wearing a loop, and a fixed array
+// is one at any length. The ban is blanket: no helper, stdlib method, test file, or opted-out
+// package is released. A bound no chain of constants resolves is left unjudged.
+func check_collection_types(
+	parsed_files []Parsed_File, components *Component_Index,
+) (diags []Diagnostic) {
+	index := collection_index(parsed_files, components)
+	for _, pf := range parsed_files {
+		scope := &Invariant_Scope{
+			Current_Package: helper_package_path(pf, components),
+			Imports:         helper_import_paths(pf.File),
+		}
+		for _, declaration := range pf.File.Decls {
+			switch typed := declaration.(type) {
+			case *ast.FuncDecl:
+				diags = append(diags,
+					collection_function_diagnostics(pf, typed, scope, index)...)
+			case *ast.GenDecl:
+				diags = append(diags,
+					collection_struct_diagnostics(pf, typed, scope, index)...)
+			}
+		}
+	}
+	return diags
+}
+
+// Builds the array set from the base-kind index and the slice bounds from every count helper.
+func collection_index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (index *Collection_Index) {
+	index = &Collection_Index{Array: map[string]bool{}, Slice_Bound: map[string]int64{}}
+	base_kind := base_kind_declaration_index(parsed_files, components, true)
+	for identity, base := range base_kind {
+		array, is_array := base.(*ast.ArrayType)
+		if !is_array {
+			continue
+		}
+		if array.Len == nil {
+			continue
+		}
+		index.Array[identity] = true
+	}
+	values := constant_value_index(parsed_files, components)
+	for _, pf := range parsed_files {
+		collection_file_bounds(pf, components, base_kind, values, index)
+	}
+	return index
+}
+
+// Records the len upper bound of every slice type in one file whose helper states one.
+func collection_file_bounds(
+	pf Parsed_File, components *Component_Index, base_kind map[string]ast.Expr,
+	values map[string]Constant_Value, index *Collection_Index,
+) {
+	package_path := helper_package_path(pf, components)
+	imports := helper_import_paths(pf.File)
+	scope := &Invariant_Scope{
+		Current_Package: package_path,
+		Imports:         imports,
+		Default_Package: helper_default_package(components, imports),
+		Base_Kind:       base_kind,
+	}
+	for declaration_index, declaration := range pf.File.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.TYPE {
+			continue
+		}
+		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if !collection_is_slice(type_specification, scope) {
+			continue
+		}
+		helper := type_invariants_following_function(pf.File, declaration_index)
+		if helper == nil {
+			continue
+		}
+		if helper.Name.Name != source.Invariant_Name(type_specification.Name.Name) {
+			continue
+		}
+		helper_scope := *scope
+		helper_scope.Shadowed = function_value_names(helper)
+		bound, resolved := collection_helper_bound(
+			helper, type_specification, &helper_scope, values)
+		if !resolved {
+			continue
+		}
+		index.Slice_Bound[package_path+"\x00"+type_specification.Name.Name] = bound
+	}
+}
+
+// Reports whether the type's chain of defined types ends at a slice, not a string or a map, which
+// share the count mandate but have no members to name.
+func collection_is_slice(
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (yes bool) {
+	if type_specification.Assign.IsValid() {
+		return false
+	}
+	resolved := type_specification.Type
+	if _, is_identifier := resolved.(*ast.Ident); is_identifier {
+		base, found := scope.Base_Kind[scope.Current_Package+"\x00"+type_specification.Name.Name]
+		if !found {
+			return false
+		}
+		resolved = base
+	}
+	array, is_array := resolved.(*ast.ArrayType)
+	if !is_array {
+		return false
+	}
+	return array.Len == nil
+}
+
+// Reads the largest len the helper allows: a Range upper bound, the largest Enum member, or the
+// Always singleton. The helper is a count helper by the Count Helper mandate, so each canonical
+// link states len(value) first and its bound operands after.
+func collection_helper_bound(
+	helper *ast.FuncDecl, type_specification *ast.TypeSpec, scope *Invariant_Scope,
+	values map[string]Constant_Value,
+) (bound int64, resolved bool) {
+	shadowed := function_shadow_copy(scope.Shadowed)
+	for _, statement := range helper.Body.List {
+		call := statement_call(statement)
+		if call != nil {
+			statement_scope := *scope
+			statement_scope.Shadowed = shadowed
+			operands := collection_singleton_operands(call, helper, type_specification, &statement_scope)
+			if len(operands) == 0 {
+				operands = collection_builder_operands(
+					call, helper, type_specification, &statement_scope)
+			}
+			if len(operands) > 0 {
+				return collection_operands_bound(operands, &statement_scope, values)
+			}
+		}
+		function_statement_shadows(statement, shadowed)
+	}
+	return 0, false
+}
+
+// Returns the singleton operand of an aver.Always(len(value) == CONSTANT, "...") over the subject.
+func collection_singleton_operands(
+	call *ast.CallExpr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
+	scope *Invariant_Scope,
+) (operands []ast.Expr) {
+	identity := helper_callee_identity(
+		call.Fun, scope.Current_Package, scope.Imports, scope.Shadowed)
+	if identity != scope.Default_Package+"\x00Always" {
+		return nil
+	}
+	if len(call.Args) != 2 {
+		return nil
+	}
+	equality, is_equality := invariant_unparen(call.Args[0]).(*ast.BinaryExpr)
+	if !is_equality {
+		return nil
+	}
+	if equality.Op != token.EQL {
+		return nil
+	}
+	if !collection_subject(equality.X, helper, type_specification, scope) {
+		return nil
+	}
+	return []ast.Expr{equality.Y}
+}
+
+// Returns the bound operands of the first Range_Int or Enum_Int link over the subject in an
+// ensured Tree builder: a Range yields its upper edge, an Enum every member.
+func collection_builder_operands(
+	ensure *ast.CallExpr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
+	scope *Invariant_Scope,
+) (operands []ast.Expr) {
+	current, ensured := invariant_ensure_receiver(ensure)
+	if !ensured {
+		return nil
+	}
+	for step_index := 0; step_index < ASSERTIONS_BUILDER_LINKS_MAX; step_index++ {
+		method, receiver, linked := invariant_builder_method(current)
+		if !linked {
+			return nil
+		}
+		operands = collection_link_operands(method, current, helper, type_specification, scope)
+		if len(operands) > 0 {
+			return operands
+		}
+		current = receiver
+	}
+	return nil
+}
+
+// Picks the bound operands out of one link when it is a count link over the subject.
+func collection_link_operands(
+	method string, call *ast.CallExpr, helper *ast.FuncDecl,
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (operands []ast.Expr) {
+	if len(call.Args) < 2 {
+		return nil
+	}
+	if !collection_subject(call.Args[0], helper, type_specification, scope) {
+		return nil
+	}
+	switch method {
+	case "Range_Int", "Range_Holed_Int":
+		// The upper edge is the second bound operand; a holed range's holes sit below it.
+		if len(call.Args) < 3 {
+			return nil
+		}
+		return []ast.Expr{call.Args[2]}
+	case "Enum_Int", "Enum_3_Int", "Enum_4_Int":
+		return call.Args[1:]
+	}
+	return nil
+}
+
+// Reports whether expression is len(value) over the helper's own subject, the one form a count
+// link's first operand takes.
+func collection_subject(
+	expression ast.Expr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
+	scope *Invariant_Scope,
+) (matched bool) {
+	value, pointer := invariant_value_parameter(helper, type_specification.Name.Name)
+	if value == "" {
+		return false
+	}
+	call, is_call := invariant_unparen(expression).(*ast.CallExpr)
+	if !is_call {
+		return false
+	}
+	if !invariant_identifier(call.Fun, "len") {
+		return false
+	}
+	if scope.Shadowed["len"] {
+		return false
+	}
+	if len(call.Args) != 1 {
+		return false
+	}
+	return invariant_value(call.Args[0], value, pointer)
+}
+
+// Resolves every operand and keeps the largest; one unresolved operand leaves the bound unjudged,
+// because a member that cannot be read may be the one that exceeds the cap.
+func collection_operands_bound(
+	operands []ast.Expr, scope *Invariant_Scope, values map[string]Constant_Value,
+) (bound int64, resolved bool) {
+	for operand_index, operand := range operands {
+		value, ok := constant_integer(operand, scope.Current_Package, scope.Imports, values, 0)
+		if !ok {
+			return 0, false
+		}
+		if operand_index == 0 {
+			bound = value
+		}
+		if value > bound {
+			bound = value
+		}
+	}
+	return bound, true
+}
+
+// Maps each package-qualified constant name to its initializer, so a bound spelled as another
+// constant, in this package or an imported one, can be followed to a literal.
+func constant_value_index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (values map[string]Constant_Value) {
+	values = map[string]Constant_Value{}
+	for _, pf := range parsed_files {
+		package_path := helper_package_path(pf, components)
+		imports := helper_import_paths(pf.File)
+		for _, declaration := range pf.File.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.CONST {
+				continue
+			}
+			constant_value_specs(general.Specs, package_path, imports, values)
+		}
+	}
+	return values
+}
+
+// Records each named constant with an initializer of its own. Grouped Declarations bans const
+// groups and Iota bans iota, so a spec without its own value has nothing to record.
+func constant_value_specs(
+	specifications []ast.Spec, package_path string, imports map[string]string,
+	values map[string]Constant_Value,
+) {
+	for _, specification := range specifications {
+		value, is_value := specification.(*ast.ValueSpec)
+		if !is_value {
+			continue
+		}
+		for name_index, name := range value.Names {
+			if name_index >= len(value.Values) {
+				continue
+			}
+			values[package_path+"\x00"+name.Name] = Constant_Value{
+				Expression: value.Values[name_index],
+				Package:    package_path,
+				Imports:    imports,
+			}
+		}
+	}
+}
+
+// Evaluates a constant expression to an integer: a literal, a bare or qualified constant name
+// followed to its initializer, a conversion, a negation, or a + - * / << over two such operands.
+// Anything else, an overflow, or a chain past CONSTANT_CHAIN_DEPTH_MAX resolves to nothing.
+func constant_integer(
+	expression ast.Expr, package_path string, imports map[string]string,
+	values map[string]Constant_Value, depth int,
+) (value int64, resolved bool) {
+	if depth > CONSTANT_CHAIN_DEPTH_MAX {
+		return 0, false
+	}
+	expression = invariant_unparen(expression)
+	switch typed := expression.(type) {
+	case *ast.BasicLit:
+		return constant_literal(typed)
+	case *ast.Ident:
+		return constant_named(package_path+"\x00"+typed.Name, values, depth)
+	case *ast.SelectorExpr:
+		qualifier, is_qualifier := typed.X.(*ast.Ident)
+		if !is_qualifier {
+			return 0, false
+		}
+		import_path := imports[qualifier.Name]
+		if import_path == "" {
+			return 0, false
+		}
+		return constant_named(import_path+"\x00"+typed.Sel.Name, values, depth)
+	case *ast.CallExpr:
+		// A one-argument call in a constant initializer is a conversion, which changes the
+		// type and never the value.
+		if len(typed.Args) != 1 {
+			return 0, false
+		}
+		return constant_integer(typed.Args[0], package_path, imports, values, depth+1)
+	case *ast.UnaryExpr:
+		if typed.Op != token.SUB {
+			return 0, false
+		}
+		value, resolved = constant_integer(typed.X, package_path, imports, values, depth+1)
+		if !resolved {
+			return 0, false
+		}
+		if value == strconv.INTEGER_64_MINIMUM {
+			return 0, false
+		}
+		return -value, true
+	case *ast.BinaryExpr:
+		return constant_binary(typed, package_path, imports, values, depth)
+	}
+	return 0, false
+}
+
+// Follows a constant name to its initializer, evaluated in the package and imports that spelled it.
+func constant_named(
+	identity string, values map[string]Constant_Value, depth int,
+) (value int64, resolved bool) {
+	constant, found := values[identity]
+	if !found {
+		return 0, false
+	}
+	return constant_integer(
+		constant.Expression, constant.Package, constant.Imports, values, depth+1)
+}
+
+// Reads an integer literal in any Go base with any digit separators; a string, rune, or float
+// literal is not a len bound.
+func constant_literal(literal *ast.BasicLit) (value int64, resolved bool) {
+	if literal.Kind != token.INT {
+		return 0, false
+	}
+	if len(literal.Value) > strconv.TEXT_SIZE_MAXIMUM {
+		return 0, false
+	}
+	parsed, parse_error := strconv.Parse_Integer(
+		strconv.Text(literal.Value), strconv.IMPLIED_BASE_MINIMUM, strconv.BIT_SIZE_MAXIMUM)
+	if parse_error != nil {
+		return 0, false
+	}
+	return int64(parsed), true
+}
+
+// Evaluates one arithmetic step with an overflow check on each, because a wrapped product or shift
+// could land below the cap and ban a slice whose real bound is huge.
+func constant_binary(
+	binary *ast.BinaryExpr, package_path string, imports map[string]string,
+	values map[string]Constant_Value, depth int,
+) (value int64, resolved bool) {
+	left, left_ok := constant_integer(binary.X, package_path, imports, values, depth+1)
+	if !left_ok {
+		return 0, false
+	}
+	right, right_ok := constant_integer(binary.Y, package_path, imports, values, depth+1)
+	if !right_ok {
+		return 0, false
+	}
+	switch binary.Op {
+	case token.ADD:
+		value = left + right
+		return value, (value > left) == (right > 0)
+	case token.SUB:
+		value = left - right
+		return value, (value < left) == (right > 0)
+	case token.MUL:
+		if left == 0 {
+			return 0, true
+		}
+		value = left * right
+		if value/left != right {
+			return 0, false
+		}
+		return value, value != strconv.INTEGER_64_MINIMUM
+	case token.QUO:
+		if right == 0 {
+			return 0, false
+		}
+		return left / right, true
+	case token.SHL:
+		if right < 0 {
+			return 0, false
+		}
+		if right > 62 {
+			return 0, false
+		}
+		if left < 0 {
+			return 0, false
+		}
+		value = left << right
+		return value, value>>right == left
+	}
+	return 0, false
+}
+
+// Flags every function's fixed-array and small-slice parameters and results, a helper and a
+// stdlib method included: the type itself is what the ban removes, so its helper goes with it.
+func collection_function_diagnostics(
+	file Parsed_File, function *ast.FuncDecl, scope *Invariant_Scope, index *Collection_Index,
+) (diags []Diagnostic) {
+	position := file.File_Set.Position(function.Name.Pos())
+	gaps := collection_field_gaps(function.Type.Params, "parameter", scope, index)
+	gaps = append(gaps, collection_field_gaps(function.Type.Results, "result", scope, index)...)
+	return primitive_owner_diagnostics(gaps, function.Name.Name, position)
+}
+
+// Flags each struct type's fixed-array and small-slice fields.
+func collection_struct_diagnostics(
+	file Parsed_File, general *ast.GenDecl, scope *Invariant_Scope, index *Collection_Index,
+) (diags []Diagnostic) {
+	if general.Tok != token.TYPE {
+		return nil
+	}
+	for _, specification := range general.Specs {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		struct_type, is_struct := type_specification.Type.(*ast.StructType)
+		if !is_struct {
+			continue
+		}
+		gaps := collection_field_gaps(struct_type.Fields, "field", scope, index)
+		position := file.File_Set.Position(type_specification.Name.Pos())
+		diags = append(diags,
+			primitive_owner_diagnostics(gaps, type_specification.Name.Name, position)...)
+	}
+	return diags
+}
+
+// Describes each field whose type is a fixed array or a small bounded slice, in the same shape
+// primitive_field_gaps uses so the two bans read alike.
+func collection_field_gaps(
+	fields *ast.FieldList, role string, scope *Invariant_Scope, index *Collection_Index,
+) (gaps []string) {
+	if fields == nil {
+		return nil
+	}
+	for _, field := range fields.List {
+		gap := collection_type_gap(field.Type, role, scope, index)
+		if gap == "" {
+			continue
+		}
+		for _, identifier := range primitive_field_names(field) {
+			named := ""
+			if identifier != "" {
+				named = " (" + identifier + ")"
+			}
+			gaps = append(gaps, strings.Replace(gap, "\x00", named, 1))
+		}
+	}
+	return gaps
+}
+
+// Judges one field type, a leading * unwrapped: a raw [N]T or a defined type over one is a fixed
+// array, a defined slice type whose bound resolves at or under the cap is a small slice. The
+// placeholder marks where the field's own name goes once it is known.
+func collection_type_gap(
+	expression ast.Expr, role string, scope *Invariant_Scope, index *Collection_Index,
+) (gap string) {
+	core := expression
+	if star, is_star := core.(*ast.StarExpr); is_star {
+		core = star.X
+	}
+	if array, is_array := core.(*ast.ArrayType); is_array {
+		if array.Len == nil {
+			return ""
+		}
+		return "has a fixed array " + role + "\x00. " +
+			"Declare a struct with one field per element instead."
+	}
+	identity := collection_type_identity(core, scope)
+	if identity == "" {
+		return ""
+	}
+	if index.Array[identity] {
+		return "has a fixed array " + role + "\x00. " +
+			"Declare a struct with one field per element instead."
+	}
+	bound, bounded := index.Slice_Bound[identity]
+	if !bounded {
+		return ""
+	}
+	if bound > SMALL_SLICE_COUNT_MAX {
+		return ""
+	}
+	return "has a " + helper_identity_name(identity) + " " + role + "\x00 bounded to " +
+		fmt.Sprintf("%d", bound) + " members. Declare a struct with one field per member instead."
+}
+
+// Names the package-qualified type a bare or qualified type expression refers to.
+func collection_type_identity(expression ast.Expr, scope *Invariant_Scope) (identity string) {
+	switch typed := expression.(type) {
+	case *ast.Ident:
+		return scope.Current_Package + "\x00" + typed.Name
+	case *ast.SelectorExpr:
+		foreign, qualified := base_kind_foreign_identity(typed, scope.Imports)
+		if !qualified {
+			return ""
+		}
+		return foreign
+	}
+	return ""
 }
 
 // Flags every in-scope type whose next declaration

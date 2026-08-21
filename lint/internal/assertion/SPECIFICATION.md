@@ -136,6 +136,18 @@ No builtin may be a function parameter, result, or struct field. A builtin has n
 and the framework supplies no preset, thus wrap it in a defined type. A stdlib-interface method, a
 _test.go file, and a package in opt_out_assertion_mandate_packages are exempt.
 
+### Small Slices
+
+A defined slice type whose helper bounds len to at most 8, by the Range upper bound, the largest
+Enum member, or the Always singleton, is banned as a struct field, parameter, or result, with no
+exemption. Declare a struct with one field per member. An unresolved bound is unjudged.
+
+### Fixed Arrays
+
+A fixed [N]T array, raw or through a chain of defined types, is banned as a struct field, parameter,
+or result, whatever N and with no exemption: helper, stdlib method, test file, and opted-out package
+alike. Declare a struct with one field per element instead.
+
 # Simulation
 
 A binary component's invariants are witnessed only by a simulation package under its internal
