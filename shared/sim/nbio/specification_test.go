@@ -139,6 +139,90 @@ func Test_Sim_Open_At(t *testing.T) {
 	})
 }
 
+// Create and truncate are independent kernel flags; reopening must preserve that distinction.
+func Test_Sim_Open_Options(t *testing.T) {
+	for _, create := range []bool{false, true} {
+		for _, truncate := range []bool{false, true} {
+			loop, driver, _ := sim_loop(0)
+			file, err := sim_create(t, loop, driver, "file")
+			if !testify.No_Error(t, err) {
+				return
+			}
+			sim_storage_write(t, loop, driver, file, []byte("secret"))
+			sim_close(t, loop, driver, file)
+			file, err = sim_open_options(t, loop, driver, "file", nbio.Open_At_Options{
+				Access: nbio.OPEN_READ_WRITE, Create: create, Truncate: truncate,
+			})
+			if !testify.No_Error(t, err) {
+				return
+			}
+			want := "secret"
+			if truncate {
+				want = ""
+			}
+			contents := sim_storage_read(t, loop, driver, file, 6)
+			testify.Equal(t, want, contents, create, truncate)
+			sim_close(t, loop, driver, file)
+			nbio.IO_Deinit(loop)
+		}
+	}
+}
+
+// Access belongs to each descriptor, even when several descriptors name the same node.
+func Test_Sim_Access(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	writer, err := sim_create(t, loop, driver, "file")
+	if !testify.No_Error(t, err) {
+		return
+	}
+	sim_storage_write(t, loop, driver, writer, []byte("base"))
+	reader, err := sim_open(t, loop, driver, "file")
+	if !testify.No_Error(t, err) {
+		return
+	}
+	data, write_err := sim_write_at(t, loop, driver, reader, []byte("next"), 0)
+	testify.Error(t, write_err)
+	testify.Zero(t, data)
+	sim_read_rejected(t, loop, driver, writer, []byte("keep"))
+	data, write_err = sim_write_at(t, loop, driver, reader, nil, 5)
+	testify.No_Error(t, write_err)
+	testify.Zero(t, data)
+	testify.Equal(t, "", sim_storage_read(t, loop, driver, writer, 0))
+	testify.Equal(t, "base", sim_storage_read(t, loop, driver, reader, 4))
+	sim_close(t, loop, driver, reader)
+	sim_close(t, loop, driver, writer)
+	nbio.IO_Deinit(loop)
+}
+
+// Truncated backing bytes must never reappear when a later write leaves a hole.
+func Test_Sim_Holes(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	file, err := sim_create(t, loop, driver, "file")
+	if !testify.No_Error(t, err) {
+		return
+	}
+	sim_storage_write(t, loop, driver, file, []byte("secret"))
+	sim_close(t, loop, driver, file)
+	file, err = sim_open_options(t, loop, driver, "file", nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Truncate: true, Create: true,
+	})
+	if !testify.No_Error(t, err) {
+		return
+	}
+	data, write_err := sim_write_at(t, loop, driver, file, nil, 5)
+	testify.No_Error(t, write_err)
+	testify.Zero(t, data)
+	status, status_err := nbio.Storage_Status(loop.Storage, "file")
+	testify.No_Error(t, status_err)
+	testify.Zero(t, status.Size)
+	data, write_err = sim_write_at(t, loop, driver, file, []byte("x"), 5)
+	testify.No_Error(t, write_err)
+	testify.Equal(t, 1, data)
+	testify.Equal(t, "\x00\x00\x00\x00\x00x", sim_storage_read(t, loop, driver, file, 6))
+	sim_close(t, loop, driver, file)
+	nbio.IO_Deinit(loop)
+}
+
 // Test_Sim_Socket verify each transport requires all limits and transfers descriptor ownership
 // only through its result.
 func Test_Sim_Socket(t *testing.T) {
@@ -2730,7 +2814,9 @@ func sim_storage_once(
 ) (data int, operation_err error, elapsed time.Monotonic_Moment) {
 	t.Helper()
 	loop, driver, host := sim_loop(seed)
-	file, create_err := sim_create(t, loop, driver, operation)
+	file, create_err := sim_open_options(t, loop, driver, operation, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Permissions: 0o644,
+	})
 	if !testify.No_Error(t, create_err) {
 		return 0, create_err, 0
 	}
@@ -3136,7 +3222,11 @@ func Test_Storage_Equal_Time_Order_Sim(t *testing.T) {
 func Test_Storage_Empty_Transfer_Completes_On_First_Grain_Sim(t *testing.T) {
 	for _, operation := range []string{"read", "write"} {
 		loop, driver, host := sim_loop(0)
-		file, create_err := sim_create(t, loop, driver, operation)
+		options := nbio.Open_At_Options{
+			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true,
+			Permissions: 0o644,
+		}
+		file, create_err := sim_open_options(t, loop, driver, operation, options)
 		if !testify.No_Error(t, create_err, operation) {
 			continue
 		}
@@ -3776,4 +3866,141 @@ func sim_loop_nodes(
 		&memory.Sim, seed, time.NANOSECOND, sim_memory_view(memory),
 	)
 	return loop, driver, memory.Nodes[:]
+}
+
+func sim_read_rejected(
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File, buffer []byte,
+) {
+	t.Helper()
+	before := string(buffer)
+	var completion nbio.Completion
+	done := false
+	nbio.Storage_Read(loop.Storage, &completion, file, buffer, 0, SIM_DEADLINE,
+		func(_ nbio.Completion_Handle) { done = true })
+	testify.False(t, done)
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
+	testify.True(t, done)
+	testify.Error(t, completion.Error)
+	testify.Zero(t, completion.Data)
+	testify.Equal(t, before, string(buffer))
+}
+
+func sim_write_at(
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File, buffer []byte, offset int64,
+) (data int, err error) {
+	t.Helper()
+	var completion nbio.Completion
+	done := false
+	nbio.Storage_Write(loop.Storage, &completion, file, buffer, offset, SIM_DEADLINE,
+		func(_ nbio.Completion_Handle) { done = true })
+	testify.False(t, done)
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
+	testify.True(t, done)
+	return completion.Data, completion.Error
+}
+
+// No-follow must reject before creation can damage a link, with either truncate setting.
+func Test_Sim_Create_No_Follow(t *testing.T) {
+	seen := false
+	for seed := uint64(0); seed < 64; seed++ {
+		for _, truncate := range []bool{false, true} {
+			loop, driver, nodes := sim_loop_nodes(seed)
+			path, found := sim_first_link_path(nodes)
+			if found {
+				seen = true
+				sim_create_no_follow(t, loop, driver, path, truncate)
+			}
+			nbio.IO_Deinit(loop)
+		}
+	}
+	testify.True(t, seen)
+}
+
+func sim_create_no_follow(
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string, truncate bool,
+) {
+	t.Helper()
+	before := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	count, err := nbio.Storage_Read_Link(loop.Storage, path, before[:])
+	testify.No_Error(t, err)
+	file, err := sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: truncate,
+		Flags: nbio.OPEN_AT_NO_FOLLOW,
+	})
+	testify.Error_Is(t, err, nbio.Symbolic_Link_Not_Followed)
+	if err == nil {
+		sim_close(t, loop, driver, file)
+	}
+	after := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	after_count, err := nbio.Storage_Read_Link(loop.Storage, path, after[:])
+	testify.No_Error(t, err)
+	testify.Equal(t, string(before[:count]), string(after[:after_count]))
+}
+
+// Create through a link must operate on its target while preserving link text.
+func Test_Sim_Create_Follows_Link(t *testing.T) {
+	seen := false
+	for seed := uint64(0); seed < 64; seed++ {
+		for _, truncate := range []bool{false, true} {
+			loop, driver, nodes := sim_loop_nodes(seed)
+			path, found := sim_first_link_path(nodes)
+			if found {
+				checked := sim_create_follows_link(
+					t, loop, driver, nodes, path, truncate,
+				)
+				seen = checked || seen
+			}
+			nbio.IO_Deinit(loop)
+		}
+	}
+	testify.True(t, seen)
+}
+
+func sim_create_follows_link(
+	t *testing.T, loop nbio.IO, driver nbio.Driver, nodes []nbio.Sim_Node,
+	path string, truncate bool,
+) (checked bool) {
+	t.Helper()
+	text := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	count, err := nbio.Storage_Read_Link(loop.Storage, path, text[:])
+	testify.No_Error(t, err)
+	target := sim_node_directory(nodes, path) + string(text[:count])
+	status, err := nbio.Storage_Status(loop.Storage, target)
+	testify.No_Error(t, err)
+	if !status.Exists {
+		return false
+	}
+	if !nbio.File_Mode_Is_Regular(status.Mode) {
+		return false
+	}
+	file, err := sim_create(t, loop, driver, target)
+	if !testify.No_Error(t, err) {
+		return false
+	}
+	sim_storage_write(t, loop, driver, file, []byte("base"))
+	sim_close(t, loop, driver, file)
+	file, err = sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: truncate,
+	})
+	if !testify.No_Error(t, err) {
+		return false
+	}
+	want := "base"
+	if truncate {
+		want = ""
+	}
+	testify.Equal(t, want, sim_storage_read(t, loop, driver, file, 4))
+	sim_storage_write(t, loop, driver, file, []byte("next"))
+	sim_close(t, loop, driver, file)
+	file, err = sim_open(t, loop, driver, target)
+	if !testify.No_Error(t, err) {
+		return false
+	}
+	testify.Equal(t, "next", sim_storage_read(t, loop, driver, file, 4))
+	sim_close(t, loop, driver, file)
+	after := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	after_count, err := nbio.Storage_Read_Link(loop.Storage, path, after[:])
+	testify.No_Error(t, err)
+	testify.Equal(t, string(text[:count]), string(after[:after_count]))
+	return true
 }

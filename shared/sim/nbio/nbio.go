@@ -1409,6 +1409,9 @@ var sim_not_a_directory = errors.New("io: not a directory")
 // Returned when file operation name directory.
 var sim_is_a_directory = errors.New("io: is a directory")
 
+// Descriptor access is independent of node permissions and simulated user identity.
+var sim_bad_file_descriptor = errors.New("io: bad file descriptor")
+
 // A directory cannot cross the shared slice boundary when it is read back.
 var sim_directory_full = errors.New("io: directory entry limit exceeded")
 
@@ -1495,6 +1498,8 @@ type Sim_Descriptor struct {
 	File File
 	// Node indexes caller-owned filesystem storage without a pointer escape.
 	Node int
+	// Access belongs to this open, so reopening cannot change another descriptor's rights.
+	Access Open_Access
 	// Socket selects inline socket state instead of node state.
 	Socket bool
 	// Directory_Drained preserves one-pass getdents behavior.
@@ -2854,51 +2859,58 @@ func sim_directory_pass(
 	return entry_count, nil
 }
 
-// Open existing node and bind one caller-owned descriptor slot.
-func sim_open(state *Sim, path string, flags Open_At_Flags) (file File, err error) {
-	if flags&OPEN_AT_NO_FOLLOW != 0 {
-		return sim_open_no_follow(state, path)
-	}
-	node, found := sim_resolve(state, path)
-	if !found {
-		return File(-1), sim_file_absent
-	}
-	descriptor, acquire_err := sim_descriptor_acquire(state, node, false, Sim_Socket{})
-	if acquire_err != nil {
-		return File(-1), acquire_err
-	}
-	return descriptor.File, nil
-}
-
-// Refuse final symbolic link the way a kernel refuses O_NOFOLLOW, rather than opening target.
-func sim_open_no_follow(state *Sim, path string) (file File, err error) {
-	node, found := sim_resolve_no_follow(state, path)
-	if !found {
-		return File(-1), sim_file_absent
-	}
-	if File_Mode_Is_Symbolic_Link(state.Nodes[node].Mode) {
-		return File(-1), Symbolic_Link_Not_Followed
-	}
-	descriptor, acquire_err := sim_descriptor_acquire(state, node, false, Sim_Socket{})
-	if acquire_err != nil {
-		return File(-1), acquire_err
-	}
-	return descriptor.File, nil
-}
-
-// Create or truncate file inside fixed node storage, then bind descriptor slot.
-func sim_create(
-	state *Sim, path string, permissions File_Permissions,
+// Resolve before mutation: create, truncate, and no-follow are independent open options.
+func sim_open(
+	state *Sim, path string, options Open_At_Options,
 ) (file File, err error) {
-	node, create_err := sim_create_file(state, path, permissions)
-	if create_err != nil {
-		return File(-1), create_err
+	node, open_err := sim_open_node(state, path, options)
+	if open_err != nil {
+		return File(-1), open_err
+	}
+	if File_Mode_Is_Directory(state.Nodes[node].Mode) {
+		if options.Create {
+			return File(-1), sim_is_a_directory
+		}
+		if options.Truncate {
+			return File(-1), sim_is_a_directory
+		}
+		if options.Access != OPEN_READ_ONLY {
+			return File(-1), sim_is_a_directory
+		}
 	}
 	descriptor, acquire_err := sim_descriptor_acquire(state, node, false, Sim_Socket{})
 	if acquire_err != nil {
 		return File(-1), acquire_err
 	}
+	descriptor.Access = options.Access
+	if options.Truncate {
+		// Later extension clears newly exposed backing bytes before publication.
+		state.Nodes[node].Contents_Count = 0
+	}
 	return descriptor.File, nil
+}
+
+func sim_open_node(
+	state *Sim, path string, options Open_At_Options,
+) (node_index int, err error) {
+	node, found := sim_resolve_no_follow(state, path)
+	if found {
+		if options.Flags&OPEN_AT_NO_FOLLOW != 0 {
+			if File_Mode_Is_Symbolic_Link(state.Nodes[node].Mode) {
+				return 0, Symbolic_Link_Not_Followed
+			}
+		}
+	}
+	node, found = sim_resolve(state, path)
+	if found {
+		aver.Always(!File_Mode_Is_Symbolic_Link(state.Nodes[node].Mode),
+			"An opened simulated node is never an unfollowed symbolic link.")
+		return node, nil
+	}
+	if !options.Create {
+		return 0, sim_file_absent
+	}
+	return sim_create_file(state, path, options.Permissions)
 }
 
 func sim_create_file(
@@ -2914,14 +2926,10 @@ func sim_create_file(
 	if !File_Mode_Is_Directory(state.Nodes[parent].Mode) {
 		return 0, sim_not_a_directory
 	}
-	if child, present := sim_node_find_child(state, parent, leaf); present {
-		if File_Mode_Is_Directory(state.Nodes[child].Mode) {
-			return 0, sim_is_a_directory
-		}
-		// Truncate keeps the mode an existing node already carries, because creation
-		// permissions describe a node being made, not one being reopened.
-		state.Nodes[child].Contents_Count = 0
-		return child, nil
+	if _, present := sim_node_find_child(state, parent, leaf); present {
+		// Existing nodes reach here only after resolution failed. Never overwrite a link
+		// whose target could not be resolved within the hop budget.
+		return 0, sim_file_absent
 	}
 	return sim_node_acquire(state, parent, leaf, File_Mode(permissions&^SIM_UMASK))
 }
@@ -2939,6 +2947,10 @@ func sim_node_write(node *Sim_Node, buffer []byte, offset int64) (err error) {
 	}
 	if end > int64(SIM_FILE_BYTES_MAXIMUM) {
 		return sim_file_capacity_exceeded
+	}
+	if int(offset) > node.Contents_Count {
+		// Truncation retains backing storage; holes must not expose its former contents.
+		clear(node.Contents[node.Contents_Count:int(offset)])
 	}
 	copy(node.Contents[int(offset):int(end)], buffer)
 	if int(end) > node.Contents_Count {
@@ -3340,22 +3352,18 @@ func sim_operation_open_at(operation *Sim_Operation) (data int, err error) {
 	if operation.Directory != DIRECTORY_CURRENT {
 		return int(File(-1)), sim_not_a_directory
 	}
-	file := File(-1)
-	if operation.Open_Options.Create {
-		file, err = sim_create(
-			operation.State, operation.File_Path, operation.Open_Options.Permissions,
-		)
-	} else {
-		file, err = sim_open(
-			operation.State, operation.File_Path, operation.Open_Options.Flags,
-		)
-	}
+	file, err := sim_open(operation.State, operation.File_Path, operation.Open_Options)
 	return int(file), err
 }
 
 func sim_operation_read(operation *Sim_Operation) (data int, err error) {
-	if operation.Operation_Err != nil {
-		return 0, operation.Operation_Err
+	// Real backend skips kernel submission for empty transfers, including access checks.
+	if len(operation.Buffer) == 0 {
+		return 0, nil
+	}
+	descriptor := sim_descriptor_find(operation.State, operation.File)
+	if descriptor.Access == OPEN_WRITE_ONLY {
+		return 0, sim_bad_file_descriptor
 	}
 	node := &operation.State.Nodes[operation.Node]
 	if File_Mode_Is_Directory(node.Mode) {
@@ -3373,6 +3381,14 @@ func sim_operation_read(operation *Sim_Operation) (data int, err error) {
 }
 
 func sim_operation_write(operation *Sim_Operation) (data int, err error) {
+	// Empty writes cannot extend storage or inspect descriptor access on real backend.
+	if len(operation.Buffer) == 0 {
+		return 0, nil
+	}
+	descriptor := sim_descriptor_find(operation.State, operation.File)
+	if descriptor.Access == OPEN_READ_ONLY {
+		return 0, sim_bad_file_descriptor
+	}
 	node := &operation.State.Nodes[operation.Node]
 	if File_Mode_Is_Directory(node.Mode) {
 		return 0, sim_is_a_directory

@@ -26,8 +26,24 @@ it because its current file path has no kernel timeout. Fsync does not transfer 
 ### Open At
 
 Open_At asynchronously open or make file relative to DIRECTORY_CURRENT, force close-on-exec
-ownership, and return new caller-owned descriptor through its callback. OPEN_AT_NO_FOLLOW reject
-symbolic link in final path part. Unknown flag panic.
+ownership, and return new caller-owned descriptor through its callback. Unknown flag panic.
+
+### Open Options
+
+Create makes absent file; Truncate alone controls clearing existing contents. OPEN_AT_NO_FOLLOW
+rejects final symbolic link even with Create. Without flag, creation through existing link opens
+its target and preserves link text.
+
+### Access
+
+Each descriptor retains its own Access. Nonempty read on write-only descriptor and nonempty write
+on read-only descriptor report error with zero bytes, leaving borrowed buffer and file unchanged.
+Empty transfers succeed without access checks, matching real backend's skipped kernel operation.
+
+### Holes
+
+Write beyond file end fills gap with zero bytes, including after truncation. Empty write leaves
+file size and contents unchanged.
 
 ### Socket
 
