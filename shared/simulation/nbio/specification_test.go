@@ -22,14 +22,14 @@ func Test_Sim_Read(t *testing.T) {
 		return
 	}
 	wrote := false
-	var write_completion time.Completion
+	var write_completion nbio.Completion
 	nbio.Storage_Write(
 		loop.Storage, &write_completion, writer, []byte("hello"), 0, SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			wrote = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return wrote })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return wrote })
 
 	reader, open_err := sim_open(t, loop, driver, "file")
 	if !testify.No_Error(t, open_err) {
@@ -37,12 +37,12 @@ func Test_Sim_Read(t *testing.T) {
 	}
 	buffer := make([]byte, 64)
 	count := -1
-	var read_completion time.Completion
+	var read_completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &read_completion, reader, buffer, 0, SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			count = completed.Data
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return count >= 0 })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return count >= 0 })
 
 	testify.Equal(t, 5, count)
 	testify.Equal(t, "hello", string(buffer[:count]))
@@ -56,12 +56,12 @@ func Test_Sim_Read(t *testing.T) {
 	if !testify.No_Error(t, socket_err) {
 		return
 	}
-	var socket_completion time.Completion
+	var socket_completion nbio.Completion
 	testify.Panics(t, func() {
 		nbio.Storage_Read(
 			socket_loop.Storage, &socket_completion, socket, make([]byte, 8), 0,
 			SIM_DEADLINE,
-			func(_ *time.Completion) {})
+			func(_ *nbio.Completion) {})
 	})
 }
 
@@ -73,13 +73,13 @@ func Test_Sim_Write(t *testing.T) {
 		return
 	}
 	count := -1
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Write(loop.Storage, &completion, file, []byte("hello"), 0, SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			count = completed.Data
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return count >= 0 })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return count >= 0 })
 	testify.Equal(t, len("hello"), count)
 	sim_close(t, loop, driver, file)
 	nbio.IO_Deinit(loop)
@@ -94,13 +94,13 @@ func Test_Sim_Fsync(t *testing.T) {
 		return
 	}
 	fired := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Fsync(loop.Storage, &completion, file, SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			fired = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return fired })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return fired })
 	testify.True(t, sim_descriptor_open(loop))
 	sim_close(t, loop, driver, file)
 	nbio.IO_Deinit(loop)
@@ -111,30 +111,30 @@ func Test_Sim_Fsync(t *testing.T) {
 func Test_Sim_Open_At(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	opened := nbio.File(-1)
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Open_At(loop.Storage, &completion, nbio.DIRECTORY_CURRENT, "file",
 		nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true,
 			Permissions: 0o600,
-		}, func(completed *time.Completion) {
+		}, func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			opened = nbio.File(completed.Data)
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return opened >= 0 })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return opened >= 0 })
 	testify.Positive(t, opened)
 	testify.True(t, sim_descriptor_open(loop))
 	sim_close(t, loop, driver, opened)
 	nbio.IO_Deinit(loop)
 
 	unknown_loop, _, _ := sim_loop(0)
-	var unknown_completion time.Completion
+	var unknown_completion nbio.Completion
 	testify.Panics(t, func() {
 		nbio.Storage_Open_At(
 			unknown_loop.Storage, &unknown_completion,
 			nbio.DIRECTORY_CURRENT,
 			"file",
 			nbio.Open_At_Options{Flags: nbio.Open_At_Flags(1 << 31)},
-			func(_ *time.Completion) {},
+			func(_ *nbio.Completion) {},
 		)
 	})
 }
@@ -192,7 +192,7 @@ func Test_Sim_Accept(t *testing.T) {
 	deadline_count := 0
 	for seed := uint64(0); seed < 64; seed++ {
 		accepted, outcome := sim_accept_once(t, seed, time.NANOSECOND)
-		if outcome == time.Deadline_Exceeded {
+		if outcome == nbio.Deadline_Exceeded {
 			deadline_count++
 			continue
 		}
@@ -242,13 +242,13 @@ func Test_Sim_Receive(t *testing.T) {
 	}
 
 	count := -1
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Receive(loop.Network, &completion, socket, make([]byte, 64), SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			count = completed.Data
 		})
 
-	time.Driver_Run_For(driver, 10*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 10*time.NANOSECOND)
 
 	testify.Equal(t, 64, count)
 	sim_close(t, loop, driver, socket)
@@ -266,13 +266,13 @@ func Test_Sim_Send(t *testing.T) {
 	}
 
 	count := -1
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Send(loop.Network, &completion, socket, make([]byte, 32), SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			count = completed.Data
 		})
 
-	time.Driver_Run_For(driver, 10*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 10*time.NANOSECOND)
 
 	testify.Equal(t, 32, count)
 	sim_close(t, loop, driver, socket)
@@ -290,30 +290,30 @@ func Test_Sim_Shutdown(t *testing.T) {
 		return
 	}
 	connected := false
-	var connect_completion time.Completion
+	var connect_completion nbio.Completion
 	nbio.Network_Connect(loop.Network, &connect_completion, socket,
 		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			connected = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
-	var receive_completion time.Completion
-	var send_completion time.Completion
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
+	var receive_completion nbio.Completion
+	var send_completion nbio.Completion
 	receive_count := -1
 	var send_err error
 	nbio.Network_Receive(
 		loop.Network, &receive_completion, socket, make([]byte, 8), SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			receive_count = completed.Data
 		})
 	nbio.Network_Send(loop.Network, &send_completion, socket, []byte("hello"), SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			send_err = completed.Error
 		})
 	testify.No_Error(t, nbio.Network_Shutdown(loop.Network, socket, nbio.SHUTDOWN_BOTH))
-	time.Driver_Run_For(driver, 10*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 10*time.NANOSECOND)
 	testify.Zero(t, receive_count)
 	testify.Error_Is(t, send_err, nbio.Broken_Pipe)
 	testify.True(t, sim_descriptor_open(loop))
@@ -333,28 +333,28 @@ func Test_Sim_Close(t *testing.T) {
 		return
 	}
 	connected := false
-	var connect_completion time.Completion
+	var connect_completion nbio.Completion
 	nbio.Network_Connect(loop.Network, &connect_completion, socket,
 		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 1), SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			connected = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
 	received := false
-	var receive_completion time.Completion
+	var receive_completion nbio.Completion
 	nbio.Network_Receive(
 		loop.Network, &receive_completion, socket, make([]byte, 8), SIM_DEADLINE,
-		func(_ *time.Completion) {
+		func(_ *nbio.Completion) {
 			received = true
 		})
 
-	var completion time.Completion
+	var completion nbio.Completion
 	testify.Panics(t, func() {
-		nbio.IO_Close(loop, &completion, socket, func(_ *time.Completion) {})
+		nbio.IO_Close(loop, &completion, socket, func(_ *nbio.Completion) {})
 	})
 	testify.No_Error(t, nbio.Network_Shutdown(loop.Network, socket, nbio.SHUTDOWN_BOTH))
-	time.Driver_Run_For(driver, 10*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 10*time.NANOSECOND)
 	testify.True(t, received)
 
 	sim_close(t, loop, driver, socket)
@@ -401,16 +401,16 @@ func Test_Sim_Peer_Address(t *testing.T) {
 	testify.No_Error(t, err)
 	testify.Equal(t, nbio.Address{}, unconnected)
 	connected := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Connect(
 		loop.Network, &completion, socket,
 		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123),
-		SIM_DEADLINE, func(completed *time.Completion) {
+		SIM_DEADLINE, func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			connected = true
 		},
 	)
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
 	address, err := nbio.Network_Peer_Address(loop.Network, socket)
 	testify.No_Error(t, err)
 	testify.Equal(t,
@@ -428,13 +428,13 @@ func Test_Sim_Peer_Address(t *testing.T) {
 func Test_Sim_Status(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	made := false
-	var mkdir time.Completion
+	var mkdir nbio.Completion
 	nbio.Storage_Mkdir_At(loop.Storage, &mkdir, nbio.DIRECTORY_CURRENT, "/dir", 0o755,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			made = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return made })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return made })
 	file, create_err := sim_create(t, loop, driver, "/dir/file")
 	if !testify.No_Error(t, create_err) {
 		return
@@ -442,12 +442,12 @@ func Test_Sim_Status(t *testing.T) {
 	// Write known bytes, thus file Size has known expected value.
 	content := []byte("hello world")
 	written := false
-	var write time.Completion
+	var write nbio.Completion
 	nbio.Storage_Write(loop.Storage, &write, file, content, 0, SIM_DEADLINE,
-		func(_ *time.Completion) {
+		func(_ *nbio.Completion) {
 			written = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return written })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return written })
 	directory, _ := nbio.Storage_Status(loop.Storage, "/dir")
 	testify.True(t, directory.Exists)
 	testify.True(t, nbio.File_Mode_Is_Directory(directory.Mode))
@@ -476,21 +476,21 @@ func Test_Sim_Watch_Signal(t *testing.T) {
 		got := nbio.SIGNAL_EXPIRED
 		callback_count := 0
 		var operation_err error
-		var completion time.Completion
+		var completion nbio.Completion
 		nbio.IO_Watch_Signal(
 			loop, &completion, nbio.SIGNAL_TERMINATE, time.NANOSECOND, func(
-				_ *time.Completion, signal nbio.Signal, err error,
+				_ *nbio.Completion, signal nbio.Signal, err error,
 			) {
 				callback_count++
 				got = signal
 				operation_err = err
 			})
-		completed, drive_err := time.Driver_Run_Until(driver,
+		completed, drive_err := nbio.Driver_Run_Until(driver,
 			16*time.NANOSECOND, func() (finished bool) { return callback_count > 0 })
 		testify.No_Error(t, drive_err, seed)
 		testify.True(t, completed, seed)
 		testify.Equal(t, 1, callback_count, seed)
-		if operation_err == time.Deadline_Exceeded {
+		if operation_err == nbio.Deadline_Exceeded {
 			deadline_count++
 			testify.Equal(t, nbio.SIGNAL_EXPIRED, got, seed)
 		} else {
@@ -498,7 +498,7 @@ func Test_Sim_Watch_Signal(t *testing.T) {
 			signal_count++
 			testify.Equal(t, nbio.SIGNAL_TERMINATE, got, seed)
 		}
-		time.Driver_Run_For(driver, 16*time.NANOSECOND)
+		nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
 		testify.Equal(t, 1, callback_count, seed)
 		testify.Nil(t, completion.Backend, seed)
 		nbio.IO_Deinit(loop)
@@ -512,13 +512,13 @@ func Test_Sim_Spawn(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	callback_count := 0
 	result := nbio.Process_Result{}
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "echo"}, SIM_DEADLINE,
-		func(_ *time.Completion, spawned nbio.Process_Result, _ error) {
+		func(_ *nbio.Completion, spawned nbio.Process_Result, _ error) {
 			callback_count++
 			result = spawned
 		})
-	time.Driver_Run_For(driver, 16*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count)
 	testify.Nil(t, completion.Backend)
 	testify.Nil(t, result.Output)
@@ -732,6 +732,221 @@ func Test_Stream_Tee(t *testing.T) { test_stream_tee(t) }
 // Test_Stream_Composition verifies dependent callbacks preserve composition order.
 func Test_Stream_Composition(t *testing.T) { test_stream_composition(t) }
 
+// Test_Timeline_Timeout check timeout fire exactly when virtual clock reach its deadline. No
+// real wait. Fully deterministic. Zero duration is a caller mistake and panic at the guard.
+func Test_Timeline_Timeout(t *testing.T) {
+	loop, driver, host := sim_timeline()
+
+	fired_at := time.Monotonic_Moment(-1)
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(
+		loop, &completion, 5*time.NANOSECOND, func(completed *nbio.Completion) {
+			testify.No_Error(t, completed.Error)
+			fired_at = time.Clock_Now_Monotonic(host)
+		},
+	)
+
+	nbio.Driver_Run_For(driver, 10*time.NANOSECOND)
+
+	testify.Equal(t, time.Monotonic_Moment(5), fired_at)
+	testify.Panics(t, func() {
+		nbio.Timeline_Timeout(loop, &completion, 0, allocation_callback)
+	})
+}
+
+// Long-lived completion must not keep callback closure, or closure keep operation buffer live.
+// Clear before call so callback can arm same completion again without new callback being erased.
+func Test_Timeline_Callback_Released(t *testing.T) {
+	loop, driver, _ := sim_timeline()
+
+	var once nbio.Completion
+	nbio.Timeline_Timeout(loop, &once, time.NANOSECOND, func(_ *nbio.Completion) {})
+	nbio.Driver_Run_For(driver, 2*time.NANOSECOND)
+	testify.Nil(t, once.Callback)
+
+	var repeated nbio.Completion
+	fired := 0
+	var arm func()
+	arm = func() {
+		nbio.Timeline_Timeout(loop, &repeated, time.NANOSECOND, func(
+			_ *nbio.Completion,
+		) {
+			fired++
+			if fired < 3 {
+				arm()
+			}
+		})
+	}
+	arm()
+	nbio.Driver_Run_For(driver, 4*time.NANOSECOND)
+	testify.Equal(t, 3, fired)
+	testify.Nil(t, repeated.Callback)
+}
+
+// Test_Timeline_Event check Event primitive retire its listener before callback run. Same
+// completion can then arm again for later trigger. Every misuse of a handle panic.
+func Test_Timeline_Event(t *testing.T) {
+	loop, driver, _ := sim_timeline()
+	event, open_err := nbio.Timeline_Open_Event(loop)
+	if !testify.No_Error(t, open_err) {
+		return
+	}
+	fired := 0
+	var completion nbio.Completion
+	callback := func(_ *nbio.Completion) { fired++ }
+	nbio.Timeline_Event_Listen(loop, event, &completion, callback)
+	nbio.Timeline_Event_Trigger(loop, event, &completion)
+	nbio.Driver_Run(driver)
+	testify.Equal(t, 1, fired)
+	nbio.Timeline_Event_Listen(loop, event, &completion, callback)
+	nbio.Timeline_Event_Trigger(loop, event, &completion)
+	nbio.Driver_Run(driver)
+	testify.Equal(t, 2, fired)
+	nbio.Timeline_Close_Event(loop, event)
+	verify_event_misuse_panics(t)
+}
+
+// Test_Timeline_Capacity checks a full caller store rejects new work before it changes
+// completion or event lifecycle state.
+func Test_Timeline_Capacity(t *testing.T) {
+	loop, driver, _ := sim_timeline()
+	slots := [SIM_TIMELINE_CAPACITY]nbio.Completion{}
+	sim_timeline_fill(loop, &slots)
+	var overflow nbio.Completion
+	testify.Panics(t, func() {
+		nbio.Timeline_Submit(loop, &overflow, 2*time.NANOSECOND, allocation_callback)
+	})
+	testify.False(t, overflow.Armed)
+
+	event, open_err := nbio.Timeline_Open_Event(loop)
+	if !testify.No_Error(t, open_err) {
+		return
+	}
+	_, capacity_err := nbio.Timeline_Open_Event(loop)
+	testify.Error_Is(t, capacity_err, nbio.Virtual_Event_Capacity_Exceeded)
+	fired := false
+	var listener nbio.Completion
+	nbio.Driver_Run_For(driver, 3*time.NANOSECOND)
+	sim_timeline_fill(loop, &slots)
+	nbio.Timeline_Event_Listen(loop, event, &listener, func(_ *nbio.Completion) {
+		fired = true
+	})
+	testify.Panics(t, func() {
+		nbio.Timeline_Event_Trigger(loop, event, &listener)
+	})
+	nbio.Driver_Run_For(driver, 3*time.NANOSECOND)
+	nbio.Timeline_Event_Trigger(loop, event, &listener)
+	nbio.Driver_Run(driver)
+	if !testify.True(t, fired) {
+		return
+	}
+	nbio.Timeline_Close_Event(loop, event)
+	verify_pending_trigger_capacity(t)
+}
+
+// Test_Timeline_Run_Until check driver pump loop until predicate report true, and report
+// completed. Also check predicate that never trip return false at deadline, and negative
+// timeout panic: unbounded pump have no cap, thus stalled operation spin as long as process
+// live.
+func Test_Timeline_Run_Until(t *testing.T) {
+	loop, driver, _ := sim_timeline()
+
+	done := false
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(loop, &completion, 3*time.NANOSECOND, func(_ *nbio.Completion) {
+		done = true
+	})
+
+	completed, drive_err := nbio.Driver_Run_Until(driver,
+		SIM_DEADLINE, func() (finished bool) { return done },
+	)
+	testify.No_Error(t, drive_err)
+	testify.True(t, completed)
+	testify.True(t, done)
+
+	completed, drive_err = nbio.Driver_Run_Until(driver,
+		SIM_DEADLINE, func() (finished bool) { return false },
+	)
+	testify.No_Error(t, drive_err)
+	testify.False(t, completed)
+	testify.Panics(t, func() {
+		nbio.Driver_Run_Until(driver, -1*time.NANOSECOND,
+			func() (finished bool) { return false })
+	})
+}
+
+// Test_Timeline_Reuse check submit of completion still in flight panic. Reused completion thus
+// fail loud, never corrupt queue.
+func Test_Timeline_Reuse(t *testing.T) {
+	loop, _, _ := sim_timeline()
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(loop, &completion, 5*time.NANOSECOND, func(_ *nbio.Completion) {})
+	testify.Panics(t, func() {
+		nbio.Timeline_Timeout(loop, &completion, 5*time.NANOSECOND,
+			func(_ *nbio.Completion) {})
+	})
+}
+
+// Test_Timeline_Copy check submit of by-value copy panic. Copied completion thus fail loud,
+// never split view of loop from view of caller. Fire original first, thus copy is unarmed.
+// That isolate copy guard from reuse guard.
+func Test_Timeline_Copy(t *testing.T) {
+	loop, driver, _ := sim_timeline()
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(loop, &completion, 5*time.NANOSECOND, func(_ *nbio.Completion) {})
+	nbio.Driver_Run_For(driver, 10*time.NANOSECOND)
+	duplicate := completion
+	testify.Panics(t, func() {
+		nbio.Timeline_Timeout(loop, &duplicate, 5*time.NANOSECOND,
+			func(_ *nbio.Completion) {})
+	})
+}
+
+// Test_Timeline_Reentrancy check drive of loop from inside completion callback panic.
+// Re-entrant Run* thus fail loud, never corrupt queue mid-drain.
+func Test_Timeline_Reentrancy(t *testing.T) {
+	loop, driver, _ := sim_timeline()
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(loop, &completion, 5*time.NANOSECOND, func(_ *nbio.Completion) {
+		nbio.Driver_Run(driver)
+	})
+	testify.Panics(t, func() {
+		nbio.Driver_Run_For(driver, 10*time.NANOSECOND)
+	})
+}
+
+// Test_Timeline_Clocks check every view read the one counter, differ in realtime by skew
+// alone, and that the epoch and each skew come from the seed and nothing else. Resolution
+// below one grain panic, and a one-year grain reach the uptime bound on the first tick.
+func Test_Timeline_Clocks(t *testing.T) {
+	memory := &sim_memory{}
+	_, driver := nbio.New_Simulated_IO(
+		&memory.Sim, 7, time.NANOSECOND, sim_memory_view(memory),
+	)
+	first := nbio.Sim_Clock_To_Clock(&memory.Sim.Clocks[0])
+	second := nbio.Sim_Clock_To_Clock(&memory.Sim.Clocks[1])
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
+	testify.Equal(t, time.Clock_Now_Monotonic(first), time.Clock_Now_Monotonic(second))
+	testify.Equal(t, time.Monotonic_Moment(16), time.Clock_Now_Monotonic(first))
+	epoch := memory.Sim.Timeline.Epoch
+	skew := time.Offset_Read(memory.Sim.Clocks[0].Skew, 16)
+	testify.Equal(t, epoch+16-time.Moment(skew), time.Clock_Now_Realtime(first))
+	testify.True(t, epoch >= 0)
+	testify.True(t, epoch < time.Moment(nbio.SIM_EPOCH_SECONDS)*time.Moment(time.SECOND))
+
+	replay := &sim_memory{}
+	nbio.New_Simulated_IO(&replay.Sim, 7, time.NANOSECOND, sim_memory_view(replay))
+	testify.Equal(t, memory.Sim.Timeline.Epoch, replay.Sim.Timeline.Epoch)
+	testify.Equal(t, memory.Sim.Clocks[0].Skew, replay.Sim.Clocks[0].Skew)
+	testify.Equal(t, memory.Sim.Clocks[1].Skew, replay.Sim.Clocks[1].Skew)
+
+	other := &sim_memory{}
+	nbio.New_Simulated_IO(&other.Sim, 8, time.NANOSECOND, sim_memory_view(other))
+	testify.True(t, memory.Sim.Timeline.Epoch != other.Sim.Timeline.Epoch)
+
+	verify_resolution_domains(t)
+}
+
 // Test_Allocation proves constructor, Stream, and simulated IO boundaries stay off heap.
 func Test_Allocation(t *testing.T) {
 	nbio_value_api_heap_allocation(t)
@@ -740,12 +955,211 @@ func Test_Allocation(t *testing.T) {
 	nbio_stream_error_heap_allocation(t)
 	sim_api_heap_allocation(t)
 	sim_operation_exhaustion_heap_allocation(t)
+	verify_timeline_submission_allocations(t)
+	verify_timeline_event_allocations(t)
+	verify_driver_allocations(t)
+}
+
+func verify_timeline_submission_allocations(t *testing.T) {
+	t.Run("Callback", func(t *testing.T) {
+		completion := nbio.Completion{}
+		callback := nbio.Callback(allocation_callback)
+		testify.Zero_Allocation(t, func() { callback(&completion) })
+		testify.Positive(t, completion.Data)
+	})
+	t.Run("Submit", func(t *testing.T) {
+		loop, driver, _ := sim_timeline()
+		completion := nbio.Completion{}
+		var run_err error
+		testify.Zero_Allocation(t, func() {
+			nbio.Timeline_Submit(loop, &completion, 0, allocation_callback)
+			run_err = nbio.Driver_Run(driver)
+		})
+		testify.No_Error(t, run_err)
+	})
+	t.Run("Timeout", func(t *testing.T) {
+		loop, driver, _ := sim_timeline()
+		completion := nbio.Completion{}
+		var run_err error
+		testify.Zero_Allocation(t, func() {
+			nbio.Timeline_Timeout(loop, &completion, 1, allocation_callback)
+			run_err = nbio.Driver_Run_For(driver, 2)
+		})
+		testify.No_Error(t, run_err)
+	})
+}
+
+func verify_timeline_event_allocations(t *testing.T) {
+	t.Run("Listen_Trigger", func(t *testing.T) {
+		loop, driver, _ := sim_timeline()
+		event, err := nbio.Timeline_Open_Event(loop)
+		testify.No_Error(t, err)
+		completion := nbio.Completion{}
+		var run_err error
+		testify.Zero_Allocation(t, func() {
+			nbio.Timeline_Event_Listen(loop, event, &completion, allocation_callback)
+			nbio.Timeline_Event_Trigger(loop, event, &completion)
+			run_err = nbio.Driver_Run(driver)
+		})
+		testify.No_Error(t, run_err)
+		nbio.Timeline_Close_Event(loop, event)
+	})
+	t.Run("Open_Close", func(t *testing.T) {
+		loop, _, _ := sim_timeline()
+		var opened nbio.Event
+		var open_err error
+		testify.Zero_Allocation(t, func() {
+			opened, open_err = nbio.Timeline_Open_Event(loop)
+			nbio.Timeline_Close_Event(loop, opened)
+		})
+		testify.No_Error(t, open_err)
+	})
+}
+
+func verify_driver_allocations(t *testing.T) {
+	t.Run("Run", func(t *testing.T) {
+		_, driver, _ := sim_timeline()
+		var run_err error
+		testify.Zero_Allocation(t, func() { run_err = nbio.Driver_Run(driver) })
+		testify.No_Error(t, run_err)
+	})
+	t.Run("Run_For", func(t *testing.T) {
+		_, driver, _ := sim_timeline()
+		var run_err error
+		testify.Zero_Allocation(t, func() { run_err = nbio.Driver_Run_For(driver, 1) })
+		testify.No_Error(t, run_err)
+	})
+	t.Run("Run_Until", func(t *testing.T) {
+		loop, driver, _ := sim_timeline()
+		completion := nbio.Completion{}
+		done := func() (finished bool) { return !completion.Armed }
+		var completed bool
+		var run_err error
+		testify.Zero_Allocation(t, func() {
+			nbio.Timeline_Timeout(loop, &completion, 1, allocation_callback)
+			completed, run_err = nbio.Driver_Run_Until(driver, 2, done)
+		})
+		testify.True(t, completed)
+		testify.No_Error(t, run_err)
+	})
+	t.Run("Deinit", func(t *testing.T) {
+		_, driver, _ := sim_timeline()
+		testify.Zero_Allocation(t, func() { nbio.Driver_Deinit(driver) })
+	})
+}
+
+func allocation_callback(completion *nbio.Completion) {
+	completion.Data++
+}
+
+// Each handle misuse fail at its own guard, before any listener or queue state change.
+func verify_event_misuse_panics(t *testing.T) {
+	t.Helper()
+	loop, _, _ := sim_timeline()
+	event, open_err := nbio.Timeline_Open_Event(loop)
+	if !testify.No_Error(t, open_err) {
+		return
+	}
+	var listener nbio.Completion
+	var stranger nbio.Completion
+	callback := func(_ *nbio.Completion) {}
+	testify.Panics(t, func() { nbio.Timeline_Event_Trigger(loop, 0, &listener) })
+	testify.Panics(t, func() {
+		nbio.Timeline_Event_Trigger(loop, nbio.Event(SIM_EVENT_CAPACITY+1), &listener)
+	})
+	nbio.Timeline_Event_Listen(loop, event, &listener, callback)
+	testify.Panics(t, func() { nbio.Timeline_Event_Listen(loop, event, &stranger, callback) })
+	testify.Panics(t, func() { nbio.Timeline_Event_Trigger(loop, event, &stranger) })
+	testify.Panics(t, func() { nbio.Timeline_Close_Event(loop, event) })
+	closed_loop, _, _ := sim_timeline()
+	closed, closed_err := nbio.Timeline_Open_Event(closed_loop)
+	if !testify.No_Error(t, closed_err) {
+		return
+	}
+	nbio.Timeline_Close_Event(closed_loop, closed)
+	testify.Panics(t, func() { nbio.Timeline_Event_Trigger(closed_loop, closed, &stranger) })
+}
+
+// Fill every queue slot with a two-grain timer, thus the next enqueue trip the capacity guard.
+func sim_timeline_fill(loop nbio.Timeline, slots *[SIM_TIMELINE_CAPACITY]nbio.Completion) {
+	for index := range slots {
+		nbio.Timeline_Submit(loop, &slots[index], 2*time.NANOSECOND, allocation_callback)
+	}
+}
+
+// A trigger can arrive before its listener, so that deferred enqueue needs the same bound.
+func verify_pending_trigger_capacity(t *testing.T) {
+	t.Helper()
+	loop, driver, _ := sim_timeline()
+	slots := [SIM_TIMELINE_CAPACITY]nbio.Completion{}
+	sim_timeline_fill(loop, &slots)
+	event, open_err := nbio.Timeline_Open_Event(loop)
+	if !testify.No_Error(t, open_err) {
+		return
+	}
+	var listener nbio.Completion
+	nbio.Timeline_Event_Trigger(loop, event, &listener)
+	fired := false
+	callback := func(_ *nbio.Completion) { fired = true }
+	testify.Panics(t, func() {
+		nbio.Timeline_Event_Listen(loop, event, &listener, callback)
+	})
+	testify.False(t, listener.Armed)
+	nbio.Driver_Run_For(driver, 3*time.NANOSECOND)
+	nbio.Timeline_Event_Listen(loop, event, &listener, callback)
+	nbio.Driver_Run(driver)
+	if !testify.True(t, fired) {
+		return
+	}
+	nbio.Timeline_Close_Event(loop, event)
+}
+
+// Hit the resolution domain at each sentinel the invariant framework expand. One-year grain
+// reach the uptime bound on the first tick, thus the sweep cost one tick, not a year of them.
+func verify_resolution_domains(t *testing.T) {
+	t.Helper()
+	for _, value := range [...]int64{
+		bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM, 0, 1, 2, -1,
+	} {
+		memory := &sim_memory{}
+		construct := func() {
+			nbio.New_Simulated_IO(
+				&memory.Sim, 0, time.Duration(value), sim_memory_view(memory),
+			)
+		}
+		if value > 0 {
+			testify.Not_Panics(t, construct)
+			continue
+		}
+		testify.Panics(t, construct)
+	}
+	bound := &sim_memory{}
+	one_year_grain := time.Duration(time.MONOTONIC_MOMENT_MAXIMUM)
+	_, driver := nbio.New_Simulated_IO(&bound.Sim, 0, one_year_grain, sim_memory_view(bound))
+	nbio.Driver_Run(driver)
+	one_year := nbio.Sim_Clock_To_Clock(&bound.Sim.Clocks[0])
+	testify.Equal(t, time.MONOTONIC_MOMENT_MAXIMUM, time.Clock_Now_Monotonic(one_year))
+}
+
+// Test_Callback_Result keeps operation meaning outside the shared completion: Data is opaque to
+// the timeline, while each operation interprets it as its descriptor, count, or status.
+func Test_Callback_Result(t *testing.T) {
+	called := false
+	completion := nbio.Completion{Data: 42, Error: nbio.Deadline_Exceeded}
+	callback := nbio.Callback(func(got *nbio.Completion) {
+		testify.True(t, got == &completion)
+		testify.Equal(t, 42, got.Data)
+		testify.Error_Is(t, got.Error, nbio.Deadline_Exceeded)
+		called = true
+	})
+	callback(&completion)
+	testify.True(t, called)
 }
 
 func nbio_value_api_heap_allocation(t *testing.T) {
 	var modes nbio.Stream_Mode_Set
 	var present bool
-	completion := time.Completion{}
+	completion := nbio.Completion{}
 	callback := nbio.Stream_Callback{
 		Callback:  stream_allocation_callback,
 		Procedure: stream_callback_allocation_procedure,
@@ -769,7 +1183,7 @@ func nbio_value_api_heap_allocation(t *testing.T) {
 }
 
 func stream_callback_allocation_procedure(
-	_ unsafe.Pointer, _ int, callback time.Callback, completion *time.Completion,
+	_ unsafe.Pointer, _ int, callback nbio.Callback, completion *nbio.Completion,
 ) {
 	callback(completion)
 }
@@ -779,23 +1193,20 @@ func stream_callback_allocation_procedure(
 func nbio_constructors_heap_allocation(t *testing.T) {
 	nbio_address_constructors_heap_allocation(t)
 
-	timeline, _, _ := sim_timeline()
 	var loop nbio.IO
-	var simulated nbio.Sim
-	nodes := [SIM_NODE_CAPACITY]nbio.Sim_Node{}
-	descriptors := [SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor{}
-	operations := [SIM_CONCURRENT_OPERATION_CAPACITY]nbio.Sim_Operation{}
+	memory := &sim_memory{}
 	t.Run("New_Simulated_IO", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
-			loop = nbio.New_Simulated_IO(
-				&simulated, 0, timeline, nbio.Sim_Memory{
-					Nodes:       nodes[:],
-					Descriptors: descriptors[:],
-					Operations:  operations[:],
-				},
+			loop, _ = nbio.New_Simulated_IO(
+				&memory.Sim, 0, time.NANOSECOND, sim_memory_view(memory),
 			)
 		})
 		nbio.IO_Deinit(loop)
+	})
+	t.Run("Sim_Clock_To_Clock", func(t *testing.T) {
+		testify.Zero_Allocation(t, func() {
+			nbio.Sim_Clock_To_Clock(&memory.Sim.Clocks[0])
+		})
 	})
 	nbio_stream_constructors_heap_allocation(t)
 }
@@ -875,7 +1286,7 @@ func nbio_stream_api_heap_allocation(t *testing.T) {
 	state := nbio.Stream_Memory{Memory: storage[:]}
 	stream := nbio.Memory_To_Stream(&state)
 	buffer := [STREAM_ALLOCATION_BUFFER_BYTES]byte{1, 2}
-	var completion time.Completion
+	var completion nbio.Completion
 	t.Run("Read", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			nbio.Read(stream, &completion, buffer[:], stream_allocation_callback)
@@ -932,7 +1343,7 @@ func nbio_stream_api_heap_allocation(t *testing.T) {
 
 func stream_composition_heap_allocation(t *testing.T) {
 	buffer := [STREAM_ALLOCATION_BUFFER_BYTES]byte{1, 2}
-	completion := time.Completion{}
+	completion := nbio.Completion{}
 	first_storage := [STREAM_ALLOCATION_STORAGE_BYTES]byte{}
 	second_storage := [STREAM_ALLOCATION_STORAGE_BYTES]byte{}
 	first_memory := nbio.Stream_Memory{Memory: first_storage[:]}
@@ -964,7 +1375,7 @@ func stream_composition_heap_allocation(t *testing.T) {
 
 func nbio_stream_error_heap_allocation(t *testing.T) {
 	buffer := [STREAM_ALLOCATION_BUFFER_BYTES]byte{}
-	completion := time.Completion{}
+	completion := nbio.Completion{}
 	t.Run("Empty", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			nbio.Read(
@@ -1002,7 +1413,7 @@ func nbio_stream_error_heap_allocation(t *testing.T) {
 }
 
 func stream_allocation_negative_read(
-	_ unsafe.Pointer, completion *time.Completion, _ nbio.Stream_Mode, _ []byte,
+	_ unsafe.Pointer, completion *nbio.Completion, _ nbio.Stream_Mode, _ []byte,
 	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	completion.Data = -1
@@ -1010,7 +1421,7 @@ func stream_allocation_negative_read(
 }
 
 func stream_allocation_invalid_write(
-	_ unsafe.Pointer, completion *time.Completion, _ nbio.Stream_Mode, buffer []byte,
+	_ unsafe.Pointer, completion *nbio.Completion, _ nbio.Stream_Mode, buffer []byte,
 	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	completion.Data = len(buffer) + 1
@@ -1020,7 +1431,7 @@ func stream_allocation_invalid_write(
 const STREAM_ALLOCATION_STORAGE_BYTES = 8
 const STREAM_ALLOCATION_BUFFER_BYTES = 2
 
-func stream_allocation_callback(completion *time.Completion) {
+func stream_allocation_callback(completion *nbio.Completion) {
 	if completion == nil {
 		panic("nbio: Stream delivered nil completion")
 	}
@@ -1094,8 +1505,8 @@ func sim_allocation_assert_retired(
 		testify.True(t, harness.Completion.Data > 0)
 		testify.Equal(t, "allocation", harness.Entries[0].Name)
 		name_pointer := uintptr(unsafe.Pointer(unsafe.StringData(harness.Entries[0].Name)))
-		nodes_start := uintptr(unsafe.Pointer(&harness.Nodes[0]))
-		nodes_end := nodes_start + unsafe.Sizeof(harness.Nodes)
+		nodes_start := uintptr(unsafe.Pointer(&harness.Memory.Nodes[0]))
+		nodes_end := nodes_start + unsafe.Sizeof(harness.Memory.Nodes)
 		testify.True(t, name_pointer >= nodes_start)
 		testify.True(t, name_pointer < nodes_end)
 	}
@@ -1157,19 +1568,13 @@ const SIM_ALLOCATION_WATCH_SIGNAL sim_allocation_operation = 20
 const SIM_ALLOCATION_SPAWN sim_allocation_operation = 21
 
 type sim_allocation_harness struct {
-	Timeline_State    time.Virtual_Timeline
-	Queue             [SIM_TIMELINE_CAPACITY]*time.Completion
-	Events            [SIM_EVENT_CAPACITY]time.Virtual_Event
-	Sim               nbio.Sim
-	Nodes             [SIM_NODE_CAPACITY]nbio.Sim_Node
-	Descriptors       [SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor
-	Operations        [SIM_CONCURRENT_OPERATION_CAPACITY]nbio.Sim_Operation
-	Completion        time.Completion
-	Second_Completion time.Completion
+	Memory            sim_memory
+	Completion        nbio.Completion
+	Second_Completion nbio.Completion
 	Buffer            [SIM_ALLOCATION_BUFFER_BYTES]byte
 	Entries           [SIM_NODE_CAPACITY]nbio.Directory_Entry
 	Loop              nbio.IO
-	Driver            time.Driver
+	Driver            nbio.Driver
 	File              nbio.File
 	Error             error
 	Address           nbio.Address
@@ -1178,19 +1583,10 @@ type sim_allocation_harness struct {
 }
 
 func sim_allocation_reset(harness *sim_allocation_harness) {
-	timeline, driver, _ := time.New_Virtual_Timeline(
-		&harness.Timeline_State,
-		time.Virtual_Clock{Resolution: time.NANOSECOND},
-		time.Virtual_Timeline_Memory{Queue: harness.Queue[:], Events: harness.Events[:]},
+	harness.Loop, harness.Driver = nbio.New_Simulated_IO(
+		&harness.Memory.Sim, 0, time.NANOSECOND, sim_memory_view(&harness.Memory),
 	)
-	harness.Loop = nbio.New_Simulated_IO(
-		&harness.Sim, 0, timeline, nbio.Sim_Memory{
-			Nodes: harness.Nodes[:], Descriptors: harness.Descriptors[:],
-			Operations: harness.Operations[:],
-		},
-	)
-	harness.Driver = driver
-	harness.Completion = time.Completion{}
+	harness.Completion = nbio.Completion{}
 	harness.File = 0
 	harness.Error = nil
 }
@@ -1407,7 +1803,7 @@ func sim_allocation_open_directory(harness *sim_allocation_harness) {
 }
 
 func sim_allocation_drive(harness *sim_allocation_harness) {
-	harness.Error = time.Driver_Run_For(harness.Driver, SIM_DEADLINE)
+	harness.Error = nbio.Driver_Run_For(harness.Driver, SIM_DEADLINE)
 }
 
 const SIM_ALLOCATION_BUFFER_BYTES = 8
@@ -1426,20 +1822,11 @@ func sim_operation_exhaustion_heap_allocation(t *testing.T) {
 func sim_operation_exhaustion_run(harness *sim_allocation_harness) {
 	harness.Panicked = false
 	defer sim_operation_exhaustion_recover(harness)
-	timeline, _, _ := time.New_Virtual_Timeline(
-		&harness.Timeline_State,
-		time.Virtual_Clock{Resolution: time.NANOSECOND},
-		time.Virtual_Timeline_Memory{Queue: harness.Queue[:], Events: harness.Events[:]},
-	)
-	harness.Completion = time.Completion{}
-	harness.Second_Completion = time.Completion{}
-	harness.Loop = nbio.New_Simulated_IO(
-		&harness.Sim, 0, timeline, nbio.Sim_Memory{
-			Nodes:       harness.Nodes[:],
-			Descriptors: harness.Descriptors[:],
-			Operations:  harness.Operations[:SIM_OPERATION_EXHAUSTION_CAPACITY],
-		},
-	)
+	harness.Completion = nbio.Completion{}
+	harness.Second_Completion = nbio.Completion{}
+	memory := sim_memory_view(&harness.Memory)
+	memory.Operations = memory.Operations[:SIM_OPERATION_EXHAUSTION_CAPACITY]
+	harness.Loop, _ = nbio.New_Simulated_IO(&harness.Memory.Sim, 0, time.NANOSECOND, memory)
 	harness.File, harness.Error = nbio.Network_Socket_TCP(
 		harness.Loop.Network, nbio.FAMILY_IPV4, sim_tcp_options(),
 	)
@@ -1457,21 +1844,21 @@ func sim_operation_exhaustion_recover(harness *sim_allocation_harness) {
 	harness.Panicked = recover() != nil
 }
 
-func sim_allocation_callback(completion *time.Completion) {
+func sim_allocation_callback(completion *nbio.Completion) {
 	if completion == nil {
 		panic("nbio: simulator delivered nil completion")
 	}
 }
 
 func sim_allocation_signal_callback(
-	completion *time.Completion, signal nbio.Signal, err error,
+	completion *nbio.Completion, signal nbio.Signal, err error,
 ) {
 	completion.Data = int(signal)
 	completion.Error = err
 }
 
 func sim_allocation_process_callback(
-	completion *time.Completion, result nbio.Process_Result, err error,
+	completion *nbio.Completion, result nbio.Process_Result, err error,
 ) {
 	completion.Data = result.Exit
 	completion.Error = err
@@ -1489,14 +1876,14 @@ func test_stream_callback(t *testing.T) {
 	stream := nbio.Stream{
 		State: unsafe.Pointer(&state), Procedure: stream_callback_procedure,
 	}
-	var completion time.Completion
-	nbio.Read(stream, &completion, buffer, func(completed *time.Completion) {
+	var completion nbio.Completion
+	nbio.Read(stream, &completion, buffer, func(completed *nbio.Completion) {
 		called = true
 		testify.Equal(t, len(buffer), completed.Data)
 		testify.No_Error(t, completed.Error)
 	})
 	testify.False(t, called)
-	completed, drive_err := time.Driver_Run_Until(driver,
+	completed, drive_err := nbio.Driver_Run_Until(driver,
 		10*time.NANOSECOND, func() (finished bool) { return called },
 	)
 	testify.No_Error(t, drive_err)
@@ -1504,21 +1891,21 @@ func test_stream_callback(t *testing.T) {
 	testify.True(t, called)
 	inline_called := false
 	state.Delayed = false
-	nbio.Read(stream, &completion, buffer, func(_ *time.Completion) {
+	nbio.Read(stream, &completion, buffer, func(_ *nbio.Completion) {
 		inline_called = true
 	})
 	testify.True(t, inline_called)
 }
 
 type stream_callback_state struct {
-	Timeline time.Timeline
+	Timeline nbio.Timeline
 	Count    int
 	Delayed  bool
 	Callback nbio.Stream_Callback
 }
 
 func stream_callback_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.Stream_Mode, _ []byte,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.Stream_Mode, _ []byte,
 	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	state := (*stream_callback_state)(state_pointer)
@@ -1526,7 +1913,7 @@ func stream_callback_procedure(
 	if state.Delayed {
 		state.Callback = callback
 		completion.Backend = state_pointer
-		time.Timeline_Submit(
+		nbio.Timeline_Submit(
 			state.Timeline, completion, time.NANOSECOND, stream_callback_complete,
 		)
 		return
@@ -1534,7 +1921,7 @@ func stream_callback_procedure(
 	nbio.Stream_Callback_Call(callback, completion)
 }
 
-func stream_callback_complete(completion *time.Completion) {
+func stream_callback_complete(completion *nbio.Completion) {
 	state := (*stream_callback_state)(completion.Backend)
 	callback := state.Callback
 	state.Callback = nbio.Stream_Callback{}
@@ -1947,7 +2334,7 @@ func socket_default_profile_assert(t *testing.T) {
 }
 
 // Test each limit separately because one rejected empty profile cannot prove all field checks.
-func sim_socket_limits_rejected(t *testing.T, loop nbio.IO, driver time.Driver) {
+func sim_socket_limits_rejected(t *testing.T, loop nbio.IO, driver nbio.Driver) {
 	t.Helper()
 	tcp := sim_tcp_options()
 	tcp.Receive_Buffer_Bytes = 0
@@ -1990,7 +2377,7 @@ func sim_socket_limits_rejected(t *testing.T, loop nbio.IO, driver time.Driver) 
 }
 
 func sim_tcp_limit_rejected(
-	t *testing.T, loop nbio.IO, driver time.Driver, name string, options nbio.TCP_Options,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, name string, options nbio.TCP_Options,
 ) {
 	t.Helper()
 	socket, err := nbio.Network_Socket_TCP(loop.Network, nbio.FAMILY_IPV4, options)
@@ -2001,7 +2388,7 @@ func sim_tcp_limit_rejected(
 }
 
 func sim_udp_limit_rejected(
-	t *testing.T, loop nbio.IO, driver time.Driver, name string, options nbio.UDP_Options,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, name string, options nbio.UDP_Options,
 ) {
 	t.Helper()
 	socket, err := nbio.Network_Socket_UDP(loop.Network, nbio.FAMILY_IPV4, options)
@@ -2075,18 +2462,18 @@ func sim_accept_once(
 	testify.No_Error(t, nbio.Network_Listen_Socket(loop.Network, listener, 128), seed)
 	callback_count := 0
 	accepted = nbio.File(-1)
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Accept(loop.Network, &completion, listener, timeout,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			callback_count++
 			accepted = nbio.File(completed.Data)
 			operation_err = completed.Error
 		})
-	completed, drive_err := time.Driver_Run_Until(driver,
+	completed, drive_err := nbio.Driver_Run_Until(driver,
 		16*time.NANOSECOND, func() (finished bool) { return callback_count > 0 })
 	testify.No_Error(t, drive_err, seed)
 	testify.True(t, completed, seed)
-	time.Driver_Run_For(driver, 16*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count, seed)
 	testify.Not_Equal(t, listener, accepted, seed)
 	if accepted > 0 {
@@ -2108,14 +2495,14 @@ func sim_connect_lifecycle(t *testing.T, seed uint64) (snapshot string) {
 	}
 	called := false
 	var connect_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Connect(loop.Network, &completion, socket,
 		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			called = true
 			connect_err = completed.Error
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return called })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return called })
 	testify.True(t, called)
 	open_before_close := sim_descriptor_open(loop)
 	sim_close(t, loop, driver, socket)
@@ -2139,16 +2526,16 @@ func sim_connect_with_timeout(
 		return open_err
 	}
 	callback_count := 0
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Connect(loop.Network, &completion, socket,
 		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), timeout,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			callback_count++
 			connect_err = completed.Error
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE,
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE,
 		func() (finished bool) { return callback_count > 0 })
-	time.Driver_Run_For(driver, 16*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count, seed)
 	testify.True(t, sim_descriptor_open(loop), seed)
 	sim_close(t, loop, driver, socket)
@@ -2169,7 +2556,7 @@ func sim_transfer_once(
 	t *testing.T, seed uint64, datagram bool, send bool, timeout time.Duration,
 ) (count int, operation_err error, completed_at time.Monotonic_Moment) {
 	t.Helper()
-	loop, driver, clock := sim_loop(seed)
+	loop, driver, host := sim_loop(seed)
 	var socket nbio.File
 	var open_err error
 	if datagram {
@@ -2185,12 +2572,12 @@ func sim_transfer_once(
 		return 0, open_err, 0
 	}
 	callback_count := 0
-	var completion time.Completion
-	callback := func(completed *time.Completion) {
+	var completion nbio.Completion
+	callback := func(completed *nbio.Completion) {
 		callback_count++
 		count = completed.Data
 		operation_err = completed.Error
-		completed_at = time.Clock_Now_Monotonic(clock)
+		completed_at = time.Clock_Now_Monotonic(host)
 	}
 	if send {
 		nbio.Network_Send(
@@ -2201,9 +2588,9 @@ func sim_transfer_once(
 			loop.Network, &completion, socket, make([]byte, 4), timeout, callback,
 		)
 	}
-	time.Driver_Run_Until(driver, SIM_DEADLINE,
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE,
 		func() (finished bool) { return callback_count > 0 })
-	time.Driver_Run_For(driver, 16*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count, seed)
 	testify.True(t, sim_descriptor_open(loop), seed)
 	sim_close(t, loop, driver, socket)
@@ -2217,25 +2604,25 @@ func sim_network_timeout_rejected(
 ) {
 	t.Helper()
 	testify.Panics(t, func() {
-		var completion time.Completion
+		var completion nbio.Completion
 		if operation == "accept" {
 			nbio.Network_Accept(network, &completion, nbio.File(-1), timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		if operation == "connect" {
 			nbio.Network_Connect(
 				network, &completion, nbio.File(-1), nbio.Address{}, timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		if operation == "receive" {
 			nbio.Network_Receive(network, &completion, nbio.File(-1), nil, timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		nbio.Network_Send(network, &completion, nbio.File(-1), nil, timeout,
-			func(_ *time.Completion) {})
+			func(_ *nbio.Completion) {})
 	}, operation, timeout)
 }
 
@@ -2244,20 +2631,20 @@ func sim_storage_once(
 	t *testing.T, seed uint64, operation string, timeout time.Duration,
 ) (data int, operation_err error, elapsed time.Monotonic_Moment) {
 	t.Helper()
-	loop, driver, clock := sim_loop(seed)
+	loop, driver, host := sim_loop(seed)
 	file, create_err := sim_create(t, loop, driver, operation)
 	if !testify.No_Error(t, create_err) {
 		return 0, create_err, 0
 	}
 	sim_storage_write(t, loop, driver, file, []byte("base"))
 	read_buffer := []byte("keep")
-	start := time.Clock_Now_Monotonic(clock)
+	start := time.Clock_Now_Monotonic(host)
 	called := false
-	var completion time.Completion
-	callback := func(completed *time.Completion) {
+	var completion nbio.Completion
+	callback := func(completed *nbio.Completion) {
 		data = completed.Data
 		operation_err = completed.Error
-		elapsed = time.Clock_Now_Monotonic(clock) - start
+		elapsed = time.Clock_Now_Monotonic(host) - start
 		called = true
 	}
 	if operation == "read" {
@@ -2271,10 +2658,10 @@ func sim_storage_once(
 	} else {
 		nbio.Storage_Fsync(loop.Storage, &completion, file, timeout, callback)
 	}
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return called })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return called })
 	testify.True(t, called, seed, operation)
-	time.Driver_Run_For(driver, 16*time.NANOSECOND)
-	if operation_err == time.Deadline_Exceeded {
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
+	if operation_err == nbio.Deadline_Exceeded {
 		if operation == "read" {
 			testify.Equal(t, "keep", string(read_buffer), seed)
 		}
@@ -2290,35 +2677,35 @@ func sim_storage_once(
 
 // Use a long bound for fixture writes, so setup cannot consume the operation under test.
 func sim_storage_write(
-	t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File, buffer []byte,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File, buffer []byte,
 ) {
 	t.Helper()
 	done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Write(loop.Storage, &completion, file, buffer, 0, SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			done = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
 	testify.True(t, done)
 }
 
 // Read fixture state through Storage, so the side-effect check uses the public surface.
 func sim_storage_read(
-	t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File, size int,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File, size int,
 ) (contents string) {
 	t.Helper()
 	buffer := make([]byte, size)
 	done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &completion, file, buffer, 0, SIM_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			buffer = buffer[:completed.Data]
 			done = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
 	testify.True(t, done)
 	return string(buffer)
 }
@@ -2334,19 +2721,19 @@ func sim_storage_timeout_rejected(
 		return
 	}
 	testify.Panics(t, func() {
-		var completion time.Completion
+		var completion nbio.Completion
 		if operation == "read" {
 			nbio.Storage_Read(loop.Storage, &completion, file, nil, 0, timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		if operation == "write" {
 			nbio.Storage_Write(loop.Storage, &completion, file, nil, 0, timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		nbio.Storage_Fsync(
-			loop.Storage, &completion, file, timeout, func(_ *time.Completion) {},
+			loop.Storage, &completion, file, timeout, func(_ *nbio.Completion) {},
 		)
 	}, operation, timeout)
 	sim_close(t, loop, driver, file)
@@ -2356,15 +2743,34 @@ func sim_storage_timeout_rejected(
 // Build simulated loop, its driver, and read-only clock, seeded by seed. Test hold only IO,
 // driver, and clock — never sim, which New_Simulated_IO keep to itself, thus run stay pure
 // function of seed.
-func sim_loop(seed uint64) (loop nbio.IO, driver time.Driver, clock time.Clock) {
-	pump, driver, clock := sim_timeline()
-	state := nbio.Sim{}
-	nodes := [SIM_NODE_CAPACITY]nbio.Sim_Node{}
-	descriptors := [SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor{}
-	operations := [SIM_CONCURRENT_OPERATION_CAPACITY]nbio.Sim_Operation{}
-	return nbio.New_Simulated_IO(&state, seed, pump, nbio.Sim_Memory{
-		Nodes: nodes[:], Descriptors: descriptors[:], Operations: operations[:],
-	}), driver, clock
+func sim_loop(seed uint64) (loop nbio.IO, driver nbio.Driver, host time.Clock) {
+	memory := &sim_memory{}
+	loop, driver = nbio.New_Simulated_IO(
+		&memory.Sim, seed, time.NANOSECOND, sim_memory_view(memory),
+	)
+	return loop, driver, nbio.Sim_Clock_To_Clock(&memory.Sim.Clocks[0])
+}
+
+// Caller-owned capacity one simulated loop in this suite need, in one allocation.
+type sim_memory struct {
+	Sim         nbio.Sim
+	Nodes       [SIM_NODE_CAPACITY]nbio.Sim_Node
+	Descriptors [SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor
+	Operations  [SIM_CONCURRENT_OPERATION_CAPACITY]nbio.Sim_Operation
+	Queue       [SIM_TIMELINE_CAPACITY]*nbio.Completion
+	Events      [SIM_EVENT_CAPACITY]nbio.Virtual_Event
+	Clocks      [SIM_CLOCK_CAPACITY]nbio.Sim_Clock
+}
+
+func sim_memory_view(memory *sim_memory) (view nbio.Sim_Memory) {
+	return nbio.Sim_Memory{
+		Nodes:       memory.Nodes[:],
+		Descriptors: memory.Descriptors[:],
+		Operations:  memory.Operations[:],
+		Queue:       memory.Queue[:],
+		Events:      memory.Events[:],
+		Clocks:      memory.Clocks[:],
+	}
 }
 
 // Two concurrent network operations each arm work and a competing timeout.
@@ -2381,19 +2787,18 @@ const SIM_DESCRIPTOR_CAPACITY = 8
 // Tests use no cross-thread event, but the timeline requires bounded event ownership.
 const SIM_EVENT_CAPACITY = 1
 
-func sim_timeline() (loop time.Timeline, driver time.Driver, clock time.Clock) {
-	state := time.Virtual_Timeline{}
-	queue := [SIM_TIMELINE_CAPACITY]*time.Completion{}
-	events := [SIM_EVENT_CAPACITY]time.Virtual_Event{}
-	return time.New_Virtual_Timeline(&state,
-		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
-			Queue: queue[:], Events: events[:],
-		})
+// Two clock views per simulated loop: enough to show views share ticks and differ by skew.
+const SIM_CLOCK_CAPACITY = 2
+
+// Timeline half alone, for tests that arm timers and never touch an endpoint.
+func sim_timeline() (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
+	surface, driver, host := sim_loop(0)
+	return surface.Timeline, driver, host
 }
 
 // Open path for read through Open_At. Drive loop until descriptor arrive.
 func sim_open(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) (file nbio.File, err error) {
 	t.Helper()
 	return sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
@@ -2403,7 +2808,7 @@ func sim_open(
 
 // Make or truncate path for write through Open_At.
 func sim_create(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) (file nbio.File, err error) {
 	t.Helper()
 	return sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
@@ -2413,33 +2818,33 @@ func sim_create(
 
 // Submit one Open_At with caller options and drive loop until it retire.
 func sim_open_options(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string, options nbio.Open_At_Options,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string, options nbio.Open_At_Options,
 ) (file nbio.File, err error) {
 	t.Helper()
 	done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Open_At(loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path, options,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			file = nbio.File(completed.Data)
 			err = completed.Error
 			done = true
 		})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
 	testify.True(t, done, path)
 	return file, err
 }
 
 // Release file through asynchronous Close and drive loop until close retire, thus caller reach
 // Deinit with nothing still open.
-func sim_close(t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File) {
+func sim_close(t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File) {
 	t.Helper()
 	closed := false
-	var completion time.Completion
-	nbio.IO_Close(loop, &completion, file, func(completed *time.Completion) {
+	var completion nbio.Completion
+	nbio.IO_Close(loop, &completion, file, func(completed *nbio.Completion) {
 		testify.No_Error(t, completed.Error)
 		closed = true
 	})
-	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return closed })
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return closed })
 	testify.True(t, closed, file)
 }
 
@@ -2454,11 +2859,11 @@ func Test_Connect_Timeout_Sim(t *testing.T) {
 	saw_timeout := false
 	for seed := uint64(0); seed < 64; seed++ {
 		short := sim_connect_with_timeout(t, seed, time.NANOSECOND)
-		if short == time.Deadline_Exceeded {
+		if short == nbio.Deadline_Exceeded {
 			saw_timeout = true
 		}
 		long := sim_connect_with_timeout(t, seed, SIM_DEADLINE)
-		if long != time.Deadline_Exceeded {
+		if long != nbio.Deadline_Exceeded {
 			saw_operation = true
 		}
 	}
@@ -2484,7 +2889,7 @@ func Test_Network_Transfer_Timeouts_Sim(t *testing.T) {
 		for seed := uint64(0); seed < 128; seed++ {
 			count, operation_err, _ := sim_transfer_once(
 				t, seed, test.Datagram, test.Send, time.NANOSECOND)
-			if operation_err == time.Deadline_Exceeded {
+			if operation_err == nbio.Deadline_Exceeded {
 				saw_timeout = true
 				testify.Zero(t, count, test.Name)
 				continue
@@ -2509,7 +2914,7 @@ func Test_Network_Transfer_Equal_Time_Order_Sim(t *testing.T) {
 		}
 		count, operation_err, _ := sim_transfer_once(
 			t, seed, false, false, time.Duration(latency))
-		if operation_err == time.Deadline_Exceeded {
+		if operation_err == nbio.Deadline_Exceeded {
 			saw_timeout = true
 			testify.Zero(t, count, seed)
 		} else {
@@ -2542,7 +2947,7 @@ func Test_Storage_Timeouts_Sim(t *testing.T) {
 			data, operation_err, _ := sim_storage_once(
 				t, seed, operation, time.NANOSECOND,
 			)
-			if operation_err == time.Deadline_Exceeded {
+			if operation_err == nbio.Deadline_Exceeded {
 				saw_timeout = true
 				testify.Zero(t, data, operation)
 				continue
@@ -2567,7 +2972,7 @@ func Test_Storage_Equal_Time_Order_Sim(t *testing.T) {
 		data, operation_err, _ := sim_storage_once(
 			t, seed, "read", time.Duration(latency),
 		)
-		if operation_err == time.Deadline_Exceeded {
+		if operation_err == nbio.Deadline_Exceeded {
 			saw_timeout = true
 			testify.Zero(t, data, seed)
 			continue
@@ -2582,15 +2987,15 @@ func Test_Storage_Equal_Time_Order_Sim(t *testing.T) {
 // An empty transfer has no storage effect that can consume a timeout or a latency draw.
 func Test_Storage_Empty_Transfer_Completes_On_First_Grain_Sim(t *testing.T) {
 	for _, operation := range []string{"read", "write"} {
-		loop, driver, clock := sim_loop(0)
+		loop, driver, host := sim_loop(0)
 		file, create_err := sim_create(t, loop, driver, operation)
 		if !testify.No_Error(t, create_err, operation) {
 			continue
 		}
-		start := time.Clock_Now_Monotonic(clock)
+		start := time.Clock_Now_Monotonic(host)
 		called := false
-		var completion time.Completion
-		callback := func(completed *time.Completion) {
+		var completion nbio.Completion
+		callback := func(completed *nbio.Completion) {
 			testify.Zero(t, completed.Data, operation)
 			testify.No_Error(t, completed.Error, operation)
 			called = true
@@ -2605,11 +3010,11 @@ func Test_Storage_Empty_Transfer_Completes_On_First_Grain_Sim(t *testing.T) {
 			)
 		}
 		testify.False(t, called, operation)
-		time.Driver_Run_Until(driver, time.NANOSECOND,
+		nbio.Driver_Run_Until(driver, time.NANOSECOND,
 			func() (finished bool) { return called })
 		testify.True(t, called, operation)
 		want := start + time.Monotonic_Moment(time.NANOSECOND)
-		testify.Equal(t, want, time.Clock_Now_Monotonic(clock), operation)
+		testify.Equal(t, want, time.Clock_Now_Monotonic(host), operation)
 		sim_close(t, loop, driver, file)
 		nbio.IO_Deinit(loop)
 	}
@@ -2629,27 +3034,16 @@ const SIM_EFFECTS_OPERATION_CAPACITY = 1
 
 // Test root keeps caller-owned state alive beside the vtable that points into it.
 type sim_effects_harness struct {
-	Timeline_State time.Virtual_Timeline
-	Queue          [SIM_TIMELINE_CAPACITY]*time.Completion
-	Events         [SIM_EVENT_CAPACITY]time.Virtual_Event
-	Sim            nbio.Sim
-	Nodes          [SIM_NODE_CAPACITY]nbio.Sim_Node
-	Descriptors    [SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor
-	Operations     [SIM_EFFECTS_OPERATION_CAPACITY]nbio.Sim_Operation
+	Memory     sim_memory
+	Operations [SIM_EFFECTS_OPERATION_CAPACITY]nbio.Sim_Operation
 }
 
 func sim_effects_loop(
 	harness *sim_effects_harness,
-) (loop nbio.IO, driver time.Driver) {
-	pump, driver, _ := time.New_Virtual_Timeline(&harness.Timeline_State,
-		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
-			Queue: harness.Queue[:], Events: harness.Events[:],
-		})
-	return nbio.New_Simulated_IO(&harness.Sim, 0, pump, nbio.Sim_Memory{
-		Nodes:       harness.Nodes[:],
-		Descriptors: harness.Descriptors[:],
-		Operations:  harness.Operations[:],
-	}), driver
+) (loop nbio.IO, driver nbio.Driver) {
+	memory := sim_memory_view(&harness.Memory)
+	memory.Operations = harness.Operations[:]
+	return nbio.New_Simulated_IO(&harness.Memory.Sim, 0, time.NANOSECOND, memory)
 }
 
 // Test_Sim_Effects_Operation_Capacity verifies the sole slot rejects a second owner before it
@@ -2657,16 +3051,16 @@ func sim_effects_loop(
 func Test_Sim_Effects_Operation_Capacity(t *testing.T) {
 	harness := sim_effects_harness{}
 	loop, driver := sim_effects_loop(&harness)
-	var first time.Completion
+	var first nbio.Completion
 	nbio.IO_Watch_Signal(loop, &first, nbio.SIGNAL_TERMINATE, SIM_DEADLINE,
 		sim_allocation_signal_callback)
-	var rejected time.Completion
+	var rejected nbio.Completion
 	testify.Panics(t, func() {
 		nbio.IO_Spawn(loop, &rejected, nbio.Process_Request{Path: "true"}, SIM_DEADLINE,
 			sim_allocation_process_callback)
 	})
 	testify.Nil(t, rejected.Backend)
-	time.Driver_Run_For(driver, SIM_DEADLINE)
+	nbio.Driver_Run_For(driver, SIM_DEADLINE)
 	testify.Nil(t, first.Backend)
 	nbio.IO_Deinit(loop)
 }
@@ -2677,24 +3071,24 @@ func Test_Sim_Effects_Callback_Can_Submit(t *testing.T) {
 	harness := sim_effects_harness{}
 	loop, driver := sim_effects_loop(&harness)
 	callback_count := 0
-	var signal_completion time.Completion
-	var spawn_completion time.Completion
+	var signal_completion nbio.Completion
+	var spawn_completion nbio.Completion
 	nbio.IO_Watch_Signal(
 		loop, &signal_completion, nbio.SIGNAL_TERMINATE, SIM_DEADLINE,
-		func(_ *time.Completion, _ nbio.Signal, signal_err error) {
+		func(_ *nbio.Completion, _ nbio.Signal, signal_err error) {
 			testify.No_Error(t, signal_err)
 			callback_count++
 			nbio.IO_Spawn(
 				loop, &spawn_completion, nbio.Process_Request{Path: "true"},
 				SIM_DEADLINE,
-				func(_ *time.Completion, _ nbio.Process_Result, spawn_err error) {
+				func(_ *nbio.Completion, _ nbio.Process_Result, spawn_err error) {
 					testify.No_Error(t, spawn_err)
 					callback_count++
 				},
 			)
 		},
 	)
-	time.Driver_Run_For(driver, SIM_DEADLINE)
+	nbio.Driver_Run_For(driver, SIM_DEADLINE)
 	testify.Equal(t, 2, callback_count)
 	testify.Nil(t, signal_completion.Backend)
 	testify.Nil(t, spawn_completion.Backend)
@@ -2708,16 +3102,16 @@ func sim_spawn_with_deadline(
 	t.Helper()
 	loop, driver, _ := sim_loop(seed)
 	callback_count := 0
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "true"}, deadline, func(
-		_ *time.Completion, _ nbio.Process_Result, err error,
+		_ *nbio.Completion, _ nbio.Process_Result, err error,
 	) {
 		callback_count++
 		spawn_err = err
 	})
-	time.Driver_Run_Until(driver, SIM_DEADLINE,
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE,
 		func() (finished bool) { return callback_count > 0 })
-	time.Driver_Run_For(driver, 16*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count, seed)
 	nbio.IO_Deinit(loop)
 	return spawn_err
@@ -2730,11 +3124,11 @@ func Test_Spawn_Deadline_Sim(t *testing.T) {
 	for seed := uint64(0); seed < 64; seed++ {
 		at_deadline := sim_spawn_with_deadline(t, seed, 4*time.NANOSECOND)
 		after_deadline := sim_spawn_with_deadline(t, seed, 5*time.NANOSECOND)
-		if at_deadline == time.Deadline_Exceeded {
+		if at_deadline == nbio.Deadline_Exceeded {
 			saw_deadline = true
 		}
-		if at_deadline == time.Deadline_Exceeded {
-			if after_deadline != time.Deadline_Exceeded {
+		if at_deadline == nbio.Deadline_Exceeded {
+			if after_deadline != nbio.Deadline_Exceeded {
 				saw_tie = true
 			}
 		}
@@ -2757,54 +3151,54 @@ func Fuzz_Sim_Effects(f *testing.F) {
 	})
 }
 
-func fuzz_signal(t *testing.T, loop nbio.IO, driver time.Driver) {
+func fuzz_signal(t *testing.T, loop nbio.IO, driver nbio.Driver) {
 	t.Helper()
 	callback_count := 0
 	delivered := nbio.SIGNAL_EXPIRED
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Watch_Signal(
 		loop, &completion, nbio.SIGNAL_INTERRUPT, SIM_FUZZ_OPERATION_DEADLINE,
-		func(_ *time.Completion, signal nbio.Signal, err error) {
+		func(_ *nbio.Completion, signal nbio.Signal, err error) {
 			callback_count++
 			delivered = signal
 			operation_err = err
 		},
 	)
-	time.Driver_Run_For(driver, SIM_DEADLINE)
+	nbio.Driver_Run_For(driver, SIM_DEADLINE)
 	testify.Equal(t, 1, callback_count, operation_err)
 	testify.Nil(t, completion.Backend)
 	if operation_err == nil {
 		testify.Equal(t, nbio.SIGNAL_INTERRUPT, delivered)
 		return
 	}
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
 	testify.Equal(t, nbio.SIGNAL_EXPIRED, delivered)
 }
 
-func fuzz_spawn(t *testing.T, loop nbio.IO, driver time.Driver) {
+func fuzz_spawn(t *testing.T, loop nbio.IO, driver nbio.Driver) {
 	t.Helper()
 	callback_count := 0
 	result := nbio.Process_Result{}
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(
 		loop, &completion, nbio.Process_Request{Path: "true"},
 		SIM_FUZZ_OPERATION_DEADLINE,
-		func(_ *time.Completion, spawned nbio.Process_Result, err error) {
+		func(_ *nbio.Completion, spawned nbio.Process_Result, err error) {
 			callback_count++
 			result = spawned
 			operation_err = err
 		},
 	)
-	time.Driver_Run_For(driver, SIM_DEADLINE)
+	nbio.Driver_Run_For(driver, SIM_DEADLINE)
 	testify.Equal(t, 1, callback_count, operation_err)
 	testify.Nil(t, completion.Backend)
 	if operation_err == nil {
 		testify.True(t, result.Exit == 0 || result.Exit == 1, result.Exit)
 		return
 	}
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
 	testify.Zero(t, result.Exit)
 }
 
@@ -2853,8 +3247,8 @@ func Fuzz_Sim_Storage_Timeouts(f *testing.F) {
 
 // The test owns the Driver for Stream functions that select the virtual Timeline.
 type stream_harness_state struct {
-	Timeline time.Timeline
-	Driver   time.Driver
+	Timeline nbio.Timeline
+	Driver   nbio.Driver
 }
 
 // One virtual Timeline tests delayed Stream functions without a production Driver.
@@ -2862,19 +3256,19 @@ func stream_harness(t *testing.T) (harness *stream_harness_state) {
 	t.Helper()
 	timeline, driver, _ := sim_timeline()
 	harness = &stream_harness_state{Timeline: timeline, Driver: driver}
-	t.Cleanup(func() { time.Driver_Deinit(harness.Driver) })
+	t.Cleanup(func() { nbio.Driver_Deinit(harness.Driver) })
 	return harness
 }
 
 // This join accepts the callback time that each concrete Stream selects.
 func stream_result(
 	t *testing.T, harness *stream_harness_state,
-	submit func(completion *time.Completion, callback time.Callback),
+	submit func(completion *nbio.Completion, callback nbio.Callback),
 ) (data int, err error) {
 	t.Helper()
 	called := false
-	var completion time.Completion
-	submit(&completion, func(completed *time.Completion) {
+	var completion nbio.Completion
+	submit(&completion, func(completed *nbio.Completion) {
 		data = completed.Data
 		err = completed.Error
 		called = true
@@ -2882,7 +3276,7 @@ func stream_result(
 	if called {
 		return data, err
 	}
-	completed, drive_err := time.Driver_Run_Until(harness.Driver,
+	completed, drive_err := nbio.Driver_Run_Until(harness.Driver,
 		10*time.NANOSECOND, func() (finished bool) { return called },
 	)
 	testify.No_Error(t, drive_err)
@@ -2895,7 +3289,7 @@ func stream_read(
 ) (count int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Read(stream, completion, buffer, callback)
 	})
@@ -2907,7 +3301,7 @@ func stream_read_at(
 ) (count int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Read_At(stream, completion, buffer, offset, callback)
 	})
@@ -2918,7 +3312,7 @@ func stream_write(
 ) (count int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Write(stream, completion, buffer, callback)
 	})
@@ -2930,7 +3324,7 @@ func stream_write_at(
 ) (count int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Write_At(stream, completion, buffer, offset, callback)
 	})
@@ -2942,7 +3336,7 @@ func stream_seek(
 ) (position int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Seek(stream, completion, offset, whence, callback)
 	})
@@ -2953,7 +3347,7 @@ func stream_size(
 ) (size int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Size(stream, completion, callback)
 	})
@@ -2964,7 +3358,7 @@ func stream_query(
 ) (modes nbio.Stream_Mode_Set, err error) {
 	t.Helper()
 	data, query_err := stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Query(stream, completion, callback)
 	})
@@ -2976,7 +3370,7 @@ func stream_flush(
 ) (data int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Flush(stream, completion, callback)
 	})
@@ -2987,7 +3381,7 @@ func stream_close(
 ) (data int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Close(stream, completion, callback)
 	})
@@ -2998,7 +3392,7 @@ func stream_destroy(
 ) (data int, err error) {
 	t.Helper()
 	return stream_result(t, harness, func(
-		completion *time.Completion, callback time.Callback,
+		completion *nbio.Completion, callback nbio.Callback,
 	) {
 		nbio.Destroy(stream, completion, callback)
 	})
@@ -3118,19 +3512,19 @@ func posix_file_mode_kinds() (kinds []uint16) {
 }
 
 // Directory half of the permission proof, thus each test function stay inside the length cap.
-func sim_mkdir_permissions(t *testing.T, loop nbio.IO, driver time.Driver) {
+func sim_mkdir_permissions(t *testing.T, loop nbio.IO, driver nbio.Driver) {
 	t.Helper()
 	for index, permissions := range file_permissions_domain() {
 		path := "/directory" + string(rune('0'+index))
 		made := false
-		var completion time.Completion
+		var completion nbio.Completion
 		nbio.Storage_Mkdir_At(
 			loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path, permissions,
-			func(completed *time.Completion) {
+			func(completed *nbio.Completion) {
 				testify.No_Error(t, completed.Error)
 				made = true
 			})
-		time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return made })
+		nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return made })
 		status, _ := nbio.Storage_Status(loop.Storage, path)
 		testify.True(t, nbio.File_Mode_Is_Directory(status.Mode))
 		testify.Equal(t, nbio.File_Mode(permissions&^nbio.SIM_UMASK),
@@ -3148,7 +3542,7 @@ func file_permissions_domain() (domain []nbio.File_Permissions) {
 
 // Assert every link-facing contract for one generated link path.
 func sim_assert_link(
-	t *testing.T, loop nbio.IO, driver time.Driver, nodes []nbio.Sim_Node, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, nodes []nbio.Sim_Node, path string,
 ) {
 	t.Helper()
 	status, status_err := nbio.Storage_Status(loop.Storage, path)
@@ -3216,13 +3610,10 @@ func sim_node_directory(nodes []nbio.Sim_Node, path string) (directory string) {
 // seeded generator actually made rather than guess at generated names.
 func sim_loop_nodes(
 	seed uint64,
-) (loop nbio.IO, driver time.Driver, nodes []nbio.Sim_Node) {
-	pump, driver, _ := sim_timeline()
-	state := &nbio.Sim{}
-	node_storage := make([]nbio.Sim_Node, SIM_NODE_CAPACITY)
-	descriptors := make([]nbio.Sim_Descriptor, SIM_DESCRIPTOR_CAPACITY)
-	operations := make([]nbio.Sim_Operation, SIM_CONCURRENT_OPERATION_CAPACITY)
-	return nbio.New_Simulated_IO(state, seed, pump, nbio.Sim_Memory{
-		Nodes: node_storage, Descriptors: descriptors, Operations: operations,
-	}), driver, node_storage
+) (loop nbio.IO, driver nbio.Driver, nodes []nbio.Sim_Node) {
+	memory := &sim_memory{}
+	loop, driver = nbio.New_Simulated_IO(
+		&memory.Sim, seed, time.NANOSECOND, sim_memory_view(memory),
+	)
+	return loop, driver, memory.Nodes[:]
 }

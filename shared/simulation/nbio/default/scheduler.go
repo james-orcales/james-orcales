@@ -136,7 +136,7 @@ type Operating_System_Operation struct {
 	// Identifier correlate operation without Go pointer in kernel.
 	Identifier uint64
 	// Completion keep caller identity until callback delivery.
-	Completion *time.Completion
+	Completion *nbio.Completion
 	// Kind select platform operation.
 	Kind Operating_System_Operation_Kind
 	// Descriptor keep caller ownership during asynchronous kernel use.
@@ -171,14 +171,14 @@ type Operating_System_Operation struct {
 	// Bounded_State keeps Linux linked retirement inside caller-owned operation storage.
 	Bounded_State Operating_System_Bounded_Operation
 	// Internal_Completion gives a linked deadline stable storage without heap ownership.
-	Internal_Completion time.Completion
+	Internal_Completion nbio.Completion
 	// Socket_Address hold sockaddr memory until kernel retire it.
 	Socket_Address [SOCKET_ADDRESS_BYTES]byte
 	// Socket_Address_Size tell kernel which sockaddr bytes are valid.
 	Socket_Address_Size uint32
 	// Deliver keeps callback delivery behind scheduler retirement, after Completion holds the
 	// kernel result.
-	Deliver time.Callback
+	Deliver nbio.Callback
 	// Pinner stop Go runtime from move of kernel-owned memory.
 	Pinner runtime.Pinner
 	// Pinned stop duplicate unpin operation.
@@ -212,7 +212,7 @@ func operating_system_operation_submit(
 	err := platform_submit(state, operation)
 	if err != nil {
 		result := 0
-		if err == time.Deadline_Exceeded {
+		if err == nbio.Deadline_Exceeded {
 			result = operating_system_timeout_result(operation)
 		}
 		operating_system_operation_complete(state, operation, result, err)
@@ -324,7 +324,7 @@ func operating_system_operation_submit_path(
 }
 
 func operating_system_completion_add(
-	state *Operating_System, completion *time.Completion,
+	state *Operating_System, completion *nbio.Completion,
 ) {
 	invariant.Always(len(state.Completed) < cap(state.Completed),
 		"The caller-owned completion queue has capacity before publication.")

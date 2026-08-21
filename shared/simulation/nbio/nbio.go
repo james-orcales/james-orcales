@@ -15,8 +15,8 @@ import (
 )
 
 // IO is injected async IO submit surface. Code submit operation with
-// time.Completion and callback, then react to completion. Code never drive loop — that is
-// time.Driver job — thus holder submit IO, but cannot advance time.
+// Completion and callback, then react to completion. Code never drive loop — that is
+// Driver job — thus holder submit IO, but cannot advance clock.
 //
 // This is I/O seam, not kitchen sink of syscalls. Members transfer through file or socket
 // endpoint, or own descriptor and path lifecycle. getrandom, getpid, mmap, and nanosleep do not
@@ -37,49 +37,63 @@ type IO struct {
 	Network Network
 	// Storage is every transfer whose endpoint is file or directory.
 	Storage Storage
+	// Timeline is timer and cross-thread wakeup: when a completion run, with no endpoint.
+	Timeline Timeline
 	// Close release descriptor of file. Callback fire once it is closed. It sit here, not on
 	// one half: close(2) name descriptor, and both half hand descriptors out. No state of own:
 	// halves carry the backend pointer because each is handed out alone, and IO_Invariants
 	// hold them equal, thus flat operations read Storage and a third copy buy nothing.
 	Close_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, file File,
-		callback time.Callback,
+		state unsafe.Pointer, completion *Completion, file File,
+		callback Callback,
 	)
 	// Deinit assert every descriptor run open is closed. Surface own leak check, thus leaked
 	// descriptor fail run. Caller need no census it must remember to read.
 	Deinit_Procedure func(state unsafe.Pointer)
 	// Watch_Signal fires callback when the process receives signal before the finite
-	// deadline, or with time.Deadline_Exceeded. The lifetime is finite deliberately: a
+	// deadline, or with Deadline_Exceeded. The lifetime is finite deliberately: a
 	// permanent waiter is a process that cannot state when it is done. It sit here because
 	// signal readiness is discovered by the poll pass, not by a timer: the OS backend caps its
 	// own idle gap while a waiter live, and counts that waiter as work in flight.
 	Watch_Signal func(
-		state unsafe.Pointer, completion *time.Completion, signal Signal,
+		state unsafe.Pointer, completion *Completion, signal Signal,
 		deadline time.Duration, callback Signal_Callback,
 	)
 	// Spawn runs request until it finishes or the deadline expires. Expiry kills the
-	// subprocess group and returns time.Deadline_Exceeded with any partial result. The
+	// subprocess group and returns Deadline_Exceeded with any partial result. The
 	// simulated backend draws the exit code from its seed and returns no output, since
 	// scripted output is disallowed. It sit here because a child's pipes and its exit are
 	// descriptor and kernel-event work this surface already owns.
 	Spawn func(
-		state unsafe.Pointer, completion *time.Completion, request Process_Request,
+		state unsafe.Pointer, completion *Completion, request Process_Request,
 		deadline time.Duration, callback Process_Callback,
 	)
 }
 
-// IO_Invariants hold both halves on one backend. Flat operations read Storage.State, so two
-// backends composed into one IO would close on one and leak on the other; fail here instead.
+// IO_Invariants admit an absent half: a holder's storage is zero before its Init binds a loop,
+// and a test double fills only the half its subject use. Two present transfer halves name one
+// backend, because flat operations read Storage.State and two backends composed into one IO
+// would close on one and leak on the other. A timeline is absent or complete, never partial.
+// Straight-line on purpose: a bundle carries no control flow, so every clause run every time.
 func IO_Invariants(loop IO, _ invariant.Namespace) {
-	invariant.Always(loop.Storage.State != nil, "An IO storage half has a backend.")
-	invariant.Always(loop.Network.State == loop.Storage.State,
-		"An IO carries one backend across both halves.")
+	half := loop.Network.State == nil || loop.Storage.State == nil
+	invariant.Always(half || loop.Network.State == loop.Storage.State,
+		"An IO carries one backend across both transfer halves.")
+	empty := loop.Timeline.Submit == nil
+	invariant.Always((loop.Timeline.Open_Event == nil) == empty,
+		"An IO timeline opens a cross-thread event, or is absent.")
+	invariant.Always((loop.Timeline.Event_Listen == nil) == empty,
+		"An IO timeline listens for that event, or is absent.")
+	invariant.Always((loop.Timeline.Event_Trigger == nil) == empty,
+		"An IO timeline triggers that event, or is absent.")
+	invariant.Always((loop.Timeline.Close_Event == nil) == empty,
+		"An IO timeline closes that event, or is absent.")
 }
 
 // IO_Close keeps backend state explicit because bound method state would allocate.
 func IO_Close(
 	loop IO,
-	completion *time.Completion, file File, callback time.Callback,
+	completion *Completion, file File, callback Callback,
 ) {
 	loop.Close_Procedure(loop.Storage.State, completion, file, callback)
 }
@@ -91,7 +105,7 @@ func IO_Deinit(loop IO) {
 
 // IO_Watch_Signal keeps backend state explicit so operation needs no captured environment.
 func IO_Watch_Signal(
-	loop IO, completion *time.Completion, signal Signal, deadline time.Duration,
+	loop IO, completion *Completion, signal Signal, deadline time.Duration,
 	callback Signal_Callback,
 ) {
 	loop.Watch_Signal(loop.Storage.State, completion, signal, deadline, callback)
@@ -99,7 +113,7 @@ func IO_Watch_Signal(
 
 // IO_Spawn keeps backend state explicit so operation needs no captured environment.
 func IO_Spawn(
-	loop IO, completion *time.Completion, request Process_Request, deadline time.Duration,
+	loop IO, completion *Completion, request Process_Request, deadline time.Duration,
 	callback Process_Callback,
 ) {
 	loop.Spawn(loop.Storage.State, completion, request, deadline, callback)
@@ -120,7 +134,7 @@ const SIGNAL_INTERRUPT Signal = 1
 
 // Signal_Callback receives a delivered signal on the loop thread, or Deadline_Exceeded when
 // finite watch retires before a signal arrives.
-type Signal_Callback func(completion *time.Completion, signal Signal, err error)
+type Signal_Callback func(completion *Completion, signal Signal, err error)
 
 // Process_Request describes a subprocess to run: the executable, its arguments and
 // environment, the working directory, and the bytes fed to its standard input.
@@ -176,7 +190,7 @@ type Process_Result struct {
 
 // Process_Callback receives a finished process's result, or an error when the process
 // could not be started at all.
-type Process_Callback func(completion *time.Completion, result Process_Result, err error)
+type Process_Callback func(completion *Completion, result Process_Result, err error)
 
 // Network is half of IO: every transfer whose endpoint is socket, plus socket lifecycle that
 // open one. Holder that only speak to socket take this and cannot reach file.
@@ -209,30 +223,30 @@ type Network struct {
 	// Deadline_Exceeded. Timeout is finite deliberately: it keep every repository
 	// submission bounded.
 	Accept_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, listener File,
+		state unsafe.Pointer, completion *Completion, listener File,
 		timeout time.Duration,
-		callback time.Callback,
+		callback Callback,
 	)
 	// Connect borrow caller-owned socket until one kernel result or timeout. Callback report
 	// outcome only. Backend never make, transfer, or close descriptor.
 	Connect_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, socket File, address Address,
+		state unsafe.Pointer, completion *Completion, socket File, address Address,
 		timeout time.Duration,
-		callback time.Callback,
+		callback Callback,
 	)
 	// Receive read up to len(buffer) bytes before timeout. Callback report byte count once data
 	// arrive, or zero with Deadline_Exceeded after the kernel request retire.
 	Receive_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, socket File, buffer []byte,
+		state unsafe.Pointer, completion *Completion, socket File, buffer []byte,
 		timeout time.Duration,
-		callback time.Callback,
+		callback Callback,
 	)
 	// Send write buffer before timeout. Callback report byte count once kernel accept it, or
 	// zero with Deadline_Exceeded after the kernel request retire.
 	Send_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, socket File, buffer []byte,
+		state unsafe.Pointer, completion *Completion, socket File, buffer []byte,
 		timeout time.Duration,
-		callback time.Callback,
+		callback Callback,
 	)
 	// Shutdown synchronously disable one or both connected-socket direction. It neither own nor
 	// close socket.
@@ -280,8 +294,8 @@ func Network_Get_Socket_Name(
 // Network_Accept preserves callback-last submit shape while state remains explicit.
 func Network_Accept(
 	network Network,
-	completion *time.Completion, listener File, timeout time.Duration,
-	callback time.Callback,
+	completion *Completion, listener File, timeout time.Duration,
+	callback Callback,
 ) {
 	network.Accept_Procedure(network.State, completion, listener, timeout, callback)
 }
@@ -289,8 +303,8 @@ func Network_Accept(
 // Network_Connect preserves callback-last submit shape while state remains explicit.
 func Network_Connect(
 	network Network,
-	completion *time.Completion, socket File, address Address, timeout time.Duration,
-	callback time.Callback,
+	completion *Completion, socket File, address Address, timeout time.Duration,
+	callback Callback,
 ) {
 	network.Connect_Procedure(network.State, completion, socket, address, timeout, callback)
 }
@@ -298,8 +312,8 @@ func Network_Connect(
 // Network_Receive preserves callback-last submit shape while state remains explicit.
 func Network_Receive(
 	network Network,
-	completion *time.Completion, socket File, buffer []byte, timeout time.Duration,
-	callback time.Callback,
+	completion *Completion, socket File, buffer []byte, timeout time.Duration,
+	callback Callback,
 ) {
 	network.Receive_Procedure(network.State, completion, socket, buffer, timeout, callback)
 }
@@ -307,8 +321,8 @@ func Network_Receive(
 // Network_Send preserves callback-last submit shape while state remains explicit.
 func Network_Send(
 	network Network,
-	completion *time.Completion, socket File, buffer []byte, timeout time.Duration,
-	callback time.Callback,
+	completion *Completion, socket File, buffer []byte, timeout time.Duration,
+	callback Callback,
 ) {
 	network.Send_Procedure(network.State, completion, socket, buffer, timeout, callback)
 }
@@ -333,46 +347,46 @@ type Storage struct {
 	// Darwin because its current file path has no kernel timeout. Darwin completes the
 	// operation.
 	Read_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, file File, buffer []byte,
+		state unsafe.Pointer, completion *Completion, file File, buffer []byte,
 		offset int64,
 		timeout time.Duration,
-		callback time.Callback,
+		callback Callback,
 	)
 	// Write write buffer to file at offset before timeout. Timeout does not work on Darwin
 	// because its current file path has no kernel timeout. Darwin completes the operation.
 	Write_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, file File, buffer []byte,
+		state unsafe.Pointer, completion *Completion, file File, buffer []byte,
 		offset int64,
 		timeout time.Duration,
-		callback time.Callback,
+		callback Callback,
 	)
 	// Fsync synchronize file before timeout. Timeout does not work on Darwin because its
 	// current file path has no kernel timeout. Darwin completes the operation.
 	Fsync_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, file File, timeout time.Duration,
-		callback time.Callback,
+		state unsafe.Pointer, completion *Completion, file File, timeout time.Duration,
+		callback Callback,
 	)
 	// Open_At asynchronously open file_path relative to directory and force close-on-exec.
 	Open_At_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, directory File, file_path string,
-		options Open_At_Options, callback time.Callback,
+		state unsafe.Pointer, completion *Completion, directory File, file_path string,
+		options Open_At_Options, callback Callback,
 	)
 	// Mkdir_At asynchronously make one directory named by file_path relative to directory. It
 	// is mkdirat primitive, not parent-creating mkdir: parent must exist, and existing path
 	// report operating system error rather than converge. Make_Directory compose this
 	// primitive above surface, thus both backend run same composition.
 	Mkdir_At_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, directory File, file_path string,
+		state unsafe.Pointer, completion *Completion, directory File, file_path string,
 		permissions File_Permissions,
-		callback time.Callback,
+		callback Callback,
 	)
 	// Get_Directory_Entries read one pass of directory raw entries into buffer and return
 	// children it name, each with whether it is itself directory. Zero count report end.
 	// Dirent layout is per-platform, thus parse and kind stay in backend, and only pass loop
 	// and descriptor lifetime compose above.
 	Get_Directory_Entries_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, directory File, buffer []byte,
-		entries []Directory_Entry, callback time.Callback,
+		state unsafe.Pointer, completion *Completion, directory File, buffer []byte,
+		entries []Directory_Entry, callback Callback,
 	)
 	// Status report whether path exist, its portable mode, and its byte size, synchronously.
 	// Absent path is Exists false with nil error, thus caller branch on status, not on error.
@@ -389,8 +403,8 @@ type Storage struct {
 // Storage_Read preserves callback-last submit shape while state remains explicit.
 func Storage_Read(
 	storage Storage,
-	completion *time.Completion, file File, buffer []byte, offset int64,
-	timeout time.Duration, callback time.Callback,
+	completion *Completion, file File, buffer []byte, offset int64,
+	timeout time.Duration, callback Callback,
 ) {
 	storage.Read_Procedure(
 		storage.State, completion, file, buffer, offset, timeout, callback,
@@ -400,8 +414,8 @@ func Storage_Read(
 // Storage_Write preserves callback-last submit shape while state remains explicit.
 func Storage_Write(
 	storage Storage,
-	completion *time.Completion, file File, buffer []byte, offset int64,
-	timeout time.Duration, callback time.Callback,
+	completion *Completion, file File, buffer []byte, offset int64,
+	timeout time.Duration, callback Callback,
 ) {
 	storage.Write_Procedure(
 		storage.State, completion, file, buffer, offset, timeout, callback,
@@ -411,8 +425,8 @@ func Storage_Write(
 // Storage_Fsync preserves callback-last submit shape while state remains explicit.
 func Storage_Fsync(
 	storage Storage,
-	completion *time.Completion, file File, timeout time.Duration,
-	callback time.Callback,
+	completion *Completion, file File, timeout time.Duration,
+	callback Callback,
 ) {
 	storage.Fsync_Procedure(storage.State, completion, file, timeout, callback)
 }
@@ -420,8 +434,8 @@ func Storage_Fsync(
 // Storage_Open_At preserves callback-last submit shape while state remains explicit.
 func Storage_Open_At(
 	storage Storage,
-	completion *time.Completion, directory File, file_path string,
-	options Open_At_Options, callback time.Callback,
+	completion *Completion, directory File, file_path string,
+	options Open_At_Options, callback Callback,
 ) {
 	File_Permissions_Invariants(options.Permissions, "Storage_Open_At.options.Permissions")
 	storage.Open_At_Procedure(
@@ -432,8 +446,8 @@ func Storage_Open_At(
 // Storage_Mkdir_At preserves callback-last submit shape while state remains explicit.
 func Storage_Mkdir_At(
 	storage Storage,
-	completion *time.Completion, directory File, file_path string,
-	permissions File_Permissions, callback time.Callback,
+	completion *Completion, directory File, file_path string,
+	permissions File_Permissions, callback Callback,
 ) {
 	File_Permissions_Invariants(permissions, "Storage_Mkdir_At.permissions")
 	storage.Mkdir_At_Procedure(
@@ -444,8 +458,8 @@ func Storage_Mkdir_At(
 // Storage_Get_Directory_Entries fills caller-owned entry storage before callback.
 func Storage_Get_Directory_Entries(
 	storage Storage,
-	completion *time.Completion, directory File, buffer []byte, entries []Directory_Entry,
-	callback time.Callback,
+	completion *Completion, directory File, buffer []byte, entries []Directory_Entry,
+	callback Callback,
 ) {
 	invariant.Always(len(buffer) >= DIRECTORY_BUFFER_SIZE_MINIMUM,
 		"Directory entry buffer holds at least one byte.")
@@ -1328,6 +1342,22 @@ const SIM_LATENCY_GRAINS = 8
 // and the failure path without a scripted outcome.
 const SIM_SPAWN_FAIL_GRAINS = 4
 
+// Span of wall-clock origins the seed draw a box's boot from, in seconds past the Unix epoch.
+// One century cover every civil date a run can produce, and keep the draw inside a Bound.
+const SIM_EPOCH_SECONDS = 100 * 365 * time.SECOND_COUNT_PER_DAY
+
+// Bound on skew coefficient A — drift per tick, wobble amplitude, or step size — in grains.
+// Same reach as latency, thus a skewed clock and a slow operation disagree by comparable spans.
+const SIM_SKEW_MAGNITUDE_GRAINS = SIM_LATENCY_GRAINS
+
+// Bound on skew coefficient B — wobble period, step onset, or initial offset — in ticks. Small
+// enough that a run of a few hundred ticks see the onset and several periods.
+const SIM_SKEW_PERIOD_GRAINS = 64
+
+// SIM_SKEW_KIND_COUNT is the draw bound over the three deviation models; the kinds are
+// consecutive from SKEW_KIND_LINEAR, which Skew_Kind_Invariants hold.
+const SIM_SKEW_KIND_COUNT = prng.Bound(time.SKEW_KIND_STEP) + 1
+
 // Returned when path resolve to nothing — simulator ENOENT.
 var sim_file_absent = errors.New("io: no such file or directory")
 
@@ -1440,7 +1470,7 @@ type Sim_Operation struct {
 	// Node preserves file target even while work waits on timeline.
 	Node int
 	// Callback remains explicit because bound callback state allocates.
-	Callback time.Callback
+	Callback Callback
 	// Entries borrows caller result slots until directory callback.
 	Entries []Directory_Entry
 	// Buffer borrows caller transfer bytes until callback.
@@ -1531,6 +1561,12 @@ type Sim_Memory struct {
 	Descriptors []Sim_Descriptor
 	// Operations bounds simultaneous submitted work.
 	Operations []Sim_Operation
+	// Queue bounds simultaneously armed completions on the timeline.
+	Queue []*Completion
+	// Events bounds simultaneously open cross-thread events.
+	Events []Virtual_Event
+	// Clocks bounds application views of the one counter; the constructor draw each skew.
+	Clocks []Sim_Clock
 }
 
 // Sim hold mutable state of deterministic, in-memory IO backend.
@@ -1561,9 +1597,11 @@ type Sim_Memory struct {
 // field that chooses an operation result, stop — that is scripting API trying to come back.
 // Keep it shut.
 type Sim struct {
-	// Timeline is control plane every simulated operation retire through. Queue, tick, and
-	// order live in shared/time, thus this backend arm work and can never advance it.
-	Timeline time.Timeline
+	// Timeline is the one queue every simulated operation retire through, and the one counter
+	// every Sim_Clock read. Sim own it; only the Driver the constructor return advance it.
+	Timeline Virtual_Timeline
+	// Clocks borrows caller capacity; each entry is one application's skewed view.
+	Clocks []Sim_Clock
 	// Generator excludes equal-time ordering so timeout races cannot perturb ordinary outcomes.
 	Generator prng.Xoshiro
 	// Timeout_Order_Generator isolates equal-time kernel ordering from operation outcomes.
@@ -1581,6 +1619,9 @@ type Sim struct {
 	Link_Generator prng.Xoshiro
 	// Permission_Generator isolates generated permission bits from every other axis.
 	Permission_Generator prng.Xoshiro
+	// Clock_Generator isolates epoch and per-view skew from every transfer stream, thus one
+	// more application clock cannot move any grain a banked seed already produce.
+	Clock_Generator prng.Xoshiro
 	// Next_File is synthetic descriptor counter. Listen, Accept, Open_Socket, Open, and Create
 	// hand out next value, thus every descriptor is distinct.
 	Next_File File
@@ -1592,19 +1633,21 @@ type Sim struct {
 	Operations []Sim_Operation
 }
 
-// New_Simulated_IO return deterministic submit surface seeded by seed. Caller memory selects
-// capacity only, thus seed is only outcome input and run reproduce exact. Sim read no clock:
-// seed draw every latency, and pump own now. Driver stay in harness: program under test hold
-// loop, NEVER pump (see time.Driver banner).
+// New_Simulated_IO return deterministic submit surface and the driver over it, seeded by seed.
+// Resolution is the grain one tick advance; caller memory selects capacity; nothing else is
+// input, thus seed is the only outcome input and a run reproduce exact. Epoch and every
+// application clock's skew are drawn, never supplied. Driver stay in harness: program under
+// test hold loop, NEVER pump (see Driver banner).
 func New_Simulated_IO(
-	state *Sim, seed uint64, pump time.Timeline, memory Sim_Memory,
-) (loop IO) {
+	state *Sim, seed uint64, resolution time.Duration, memory Sim_Memory,
+) (loop IO, driver Driver) {
 	invariant.Always(state != nil, "A simulated IO backend has caller-owned state.")
 	invariant.Always(len(memory.Nodes) > 0, "A simulated IO backend has node capacity.")
 	invariant.Always(len(memory.Descriptors) > 0,
 		"A simulated IO backend has descriptor capacity.")
 	invariant.Always(len(memory.Operations) > 0,
 		"A simulated IO backend has operation capacity.")
+	invariant.Always(len(memory.Clocks) > 0, "A simulated IO backend has clock capacity.")
 	for index := range memory.Nodes {
 		memory.Nodes[index] = Sim_Node{}
 	}
@@ -1615,16 +1658,25 @@ func New_Simulated_IO(
 		memory.Operations[index] = Sim_Operation{}
 	}
 	root_generator := prng.New(prng.Seed(seed))
-	state.Timeline = pump
 	state.Generator = prng.Xoshiro_Split(&root_generator)
 	state.Timeout_Order_Generator = prng.Xoshiro_Split(&root_generator)
 	state.Storage_Timeout_Order_Generator = prng.Xoshiro_Split(&root_generator)
-	// Split after every existing stream, thus adding these two axes leaves the grain each
-	// older stream draws for a given seed unchanged.
+	// Split after every existing stream, thus adding an axis leaves the grain each older
+	// stream draws for a given seed unchanged.
 	state.Signal_Generator = prng.Xoshiro_Split(&root_generator)
 	state.Process_Generator = prng.Xoshiro_Split(&root_generator)
 	state.Link_Generator = prng.Xoshiro_Split(&root_generator)
 	state.Permission_Generator = prng.Xoshiro_Split(&root_generator)
+	state.Clock_Generator = prng.Xoshiro_Split(&root_generator)
+	virtual_timeline_initialize(
+		&state.Timeline, resolution, sim_epoch_draw(state), memory.Queue, memory.Events,
+	)
+	state.Clocks = memory.Clocks
+	for index := range state.Clocks {
+		state.Clocks[index] = Sim_Clock{
+			Timeline: &state.Timeline, Skew: sim_skew_draw(state),
+		}
+	}
 	state.Next_File = 0
 	state.Nodes = memory.Nodes
 	state.Descriptors = memory.Descriptors
@@ -1637,16 +1689,34 @@ func New_Simulated_IO(
 	sim_wire_network(state, &loop.Network)
 	sim_wire_storage(state, &loop.Storage)
 	sim_wire_platform(state, &loop)
+	loop.Timeline = virtual_timeline_to_timeline(&state.Timeline)
 	loop.Close_Procedure = sim_close_procedure
 	loop.Deinit_Procedure = sim_deinit_procedure
 	loop.Watch_Signal = sim_watch_signal_procedure
 	loop.Spawn = sim_spawn_procedure
 	IO_Invariants(loop, "new_simulated_io.loop")
-	return loop
+	Timeline_Invariants(loop.Timeline, "new_simulated_io.timeline")
+	return loop, virtual_timeline_to_driver(&state.Timeline)
+}
+
+// Draw the wall-clock origin of this box. A box's boot time is an outcome, not an input.
+func sim_epoch_draw(state *Sim) (epoch time.Moment) {
+	seconds := prng.Xoshiro_Below(&state.Clock_Generator, prng.Bound(SIM_EPOCH_SECONDS))
+	return time.Moment(seconds) * time.Moment(time.SECOND)
+}
+
+// Draw one application clock's deviation model and both coefficients from the clock stream.
+func sim_skew_draw(state *Sim) (skew time.Offset) {
+	kind := time.Skew_Kind(prng.Xoshiro_Below(&state.Clock_Generator, SIM_SKEW_KIND_COUNT))
+	magnitude := prng.Xoshiro_Below(&state.Clock_Generator, SIM_SKEW_MAGNITUDE_GRAINS)
+	// Period and onset start at one: a zero period reads as no wobble, and a zero onset is a
+	// step that already happened, so neither would exercise its model.
+	period := 1 + prng.Xoshiro_Below(&state.Clock_Generator, SIM_SKEW_PERIOD_GRAINS)
+	return time.Skew(kind, time.Duration(magnitude), time.Tick_Count(period))
 }
 
 func sim_watch_signal_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, signal Signal,
+	state_pointer unsafe.Pointer, completion *Completion, signal Signal,
 	deadline time.Duration, callback Signal_Callback,
 ) {
 	invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
@@ -1654,7 +1724,7 @@ func sim_watch_signal_procedure(
 }
 
 func sim_spawn_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ Process_Request,
+	state_pointer unsafe.Pointer, completion *Completion, _ Process_Request,
 	deadline time.Duration, callback Process_Callback,
 ) {
 	invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
@@ -1664,25 +1734,25 @@ func sim_spawn_procedure(
 // Watches for a signal that, in the simulation, arrives at a seed-drawn grain — the operating
 // system event modeled as a seed outcome. It fires callback exactly once.
 func sim_watch_signal(
-	state *Sim, completion *time.Completion, signal Signal, deadline time.Duration,
+	state *Sim, completion *Completion, signal Signal, deadline time.Duration,
 	callback Signal_Callback,
 ) {
 	// Callback slot stay nil: signal retire through its own typed static callback, thus the
-	// shared time.Callback dispatcher never decodes this kind.
+	// shared Callback dispatcher never decodes this kind.
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_SIGNAL, nil)
 	operation.Signal_Callback = callback
 	latency := sim_latency_from(&state.Signal_Generator)
 	if latency >= deadline {
 		operation.Signal = SIGNAL_EXPIRED
-		operation.Operation_Err = time.Deadline_Exceeded
-		time.Timeline_Submit(state.Timeline, completion, deadline, sim_signal_complete)
+		operation.Operation_Err = Deadline_Exceeded
+		virtual_submit(&state.Timeline, completion, deadline, sim_signal_complete)
 		return
 	}
 	operation.Signal = signal
-	time.Timeline_Submit(state.Timeline, completion, latency, sim_signal_complete)
+	virtual_submit(&state.Timeline, completion, latency, sim_signal_complete)
 }
 
-func sim_signal_complete(completion *time.Completion) {
+func sim_signal_complete(completion *Completion) {
 	operation := (*Sim_Operation)(completion.Backend)
 	invariant.Always(operation != nil,
 		"A simulated signal completion owns specialized operation state.")
@@ -1700,7 +1770,7 @@ func sim_signal_complete(completion *time.Completion) {
 // occasionally non-zero for fault coverage) with no captured output — scripted output is
 // disallowed, so the seed decides success or failure, not a canned payload.
 func sim_spawn(
-	state *Sim, completion *time.Completion, deadline time.Duration,
+	state *Sim, completion *Completion, deadline time.Duration,
 	callback Process_Callback,
 ) {
 	// Callback slot stay nil for the same reason the signal watch leaves it nil.
@@ -1712,15 +1782,15 @@ func sim_spawn(
 	}
 	latency := sim_latency_from(&state.Process_Generator)
 	if latency >= deadline {
-		operation.Operation_Err = time.Deadline_Exceeded
-		time.Timeline_Submit(state.Timeline, completion, deadline, sim_process_complete)
+		operation.Operation_Err = Deadline_Exceeded
+		virtual_submit(&state.Timeline, completion, deadline, sim_process_complete)
 		return
 	}
 	operation.Process.Exit = exit
-	time.Timeline_Submit(state.Timeline, completion, latency, sim_process_complete)
+	virtual_submit(&state.Timeline, completion, latency, sim_process_complete)
 }
 
-func sim_process_complete(completion *time.Completion) {
+func sim_process_complete(completion *Completion) {
 	operation := (*Sim_Operation)(completion.Backend)
 	invariant.Always(operation != nil,
 		"A simulated process completion owns specialized operation state.")
@@ -1735,8 +1805,8 @@ func sim_process_complete(completion *time.Completion) {
 }
 
 func sim_close_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, file File,
-	callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, file File,
+	callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	sim_assert_file_drained(state, file)
@@ -1977,8 +2047,8 @@ var sim_file_capacity_exceeded = errors.New("io: file capacity exceeded")
 var sim_file_offset_invalid = errors.New("io: file offset invalid")
 
 func sim_accept_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, listener File,
-	timeout time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, listener File,
+	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(timeout > 0, "An accept timeout is positive and finite.")
@@ -1987,7 +2057,7 @@ func sim_accept_procedure(
 	operation.File = listener
 	sim_operation_borrow(operation)
 	if sim_timeout_first(state, latency, timeout) {
-		operation.Operation_Err = time.Deadline_Exceeded
+		operation.Operation_Err = Deadline_Exceeded
 		operation.Data = int(File(-1))
 		sim_operation_submit(operation, completion, timeout)
 		return
@@ -1996,8 +2066,8 @@ func sim_accept_procedure(
 }
 
 func sim_connect_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, socket File, address Address,
-	timeout time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, socket File, address Address,
+	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(timeout > 0, "A connect timeout is positive and finite.")
@@ -2010,7 +2080,7 @@ func sim_connect_procedure(
 	}
 	latency := sim_latency(state)
 	if sim_timeout_first(state, latency, timeout) {
-		operation.Operation_Err = time.Deadline_Exceeded
+		operation.Operation_Err = Deadline_Exceeded
 		sim_operation_submit(operation, completion, timeout)
 		return
 	}
@@ -2018,8 +2088,8 @@ func sim_connect_procedure(
 }
 
 func sim_receive_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, socket File, buffer []byte,
-	timeout time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, socket File, buffer []byte,
+	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(timeout > 0, "A receive timeout is positive and finite.")
@@ -2029,7 +2099,7 @@ func sim_receive_procedure(
 	sim_operation_borrow(operation)
 	latency := sim_latency(state)
 	if sim_timeout_first(state, latency, timeout) {
-		operation.Operation_Err = time.Deadline_Exceeded
+		operation.Operation_Err = Deadline_Exceeded
 		sim_operation_submit(operation, completion, timeout)
 		return
 	}
@@ -2037,8 +2107,8 @@ func sim_receive_procedure(
 }
 
 func sim_send_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, socket File, buffer []byte,
-	timeout time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, socket File, buffer []byte,
+	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(timeout > 0, "A send timeout is positive and finite.")
@@ -2048,7 +2118,7 @@ func sim_send_procedure(
 	sim_operation_borrow(operation)
 	latency := sim_latency(state)
 	if sim_timeout_first(state, latency, timeout) {
-		operation.Operation_Err = time.Deadline_Exceeded
+		operation.Operation_Err = Deadline_Exceeded
 		sim_operation_submit(operation, completion, timeout)
 		return
 	}
@@ -2108,8 +2178,8 @@ func sim_wire_path(storage *Storage) {
 }
 
 func sim_open_at_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, directory File,
-	file_path string, options Open_At_Options, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, directory File,
+	file_path string, options Open_At_Options, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(options.Flags&^OPEN_AT_NO_FOLLOW == 0,
@@ -2122,8 +2192,8 @@ func sim_open_at_procedure(
 }
 
 func sim_mkdir_at_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, directory File,
-	file_path string, permissions File_Permissions, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, directory File,
+	file_path string, permissions File_Permissions, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_MKDIR_AT, callback)
@@ -2143,8 +2213,8 @@ func sim_wire_file_bytes(storage *Storage) {
 }
 
 func sim_storage_read(
-	state_pointer unsafe.Pointer, completion *time.Completion, file File, buffer []byte,
-	offset int64, timeout time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, file File, buffer []byte,
+	offset int64, timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(timeout > 0, "A storage read timeout is positive and finite.")
@@ -2163,7 +2233,7 @@ func sim_storage_read(
 	}
 	latency := sim_latency(state)
 	if sim_storage_timeout_first(state, latency, timeout) {
-		operation.Operation_Err = time.Deadline_Exceeded
+		operation.Operation_Err = Deadline_Exceeded
 		sim_operation_submit(operation, completion, timeout)
 		return
 	}
@@ -2171,8 +2241,8 @@ func sim_storage_read(
 }
 
 func sim_storage_write(
-	state_pointer unsafe.Pointer, completion *time.Completion, file File, buffer []byte,
-	offset int64, timeout time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, file File, buffer []byte,
+	offset int64, timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(timeout > 0, "A storage write timeout is positive and finite.")
@@ -2191,7 +2261,7 @@ func sim_storage_write(
 	}
 	latency := sim_latency(state)
 	if sim_storage_timeout_first(state, latency, timeout) {
-		operation.Operation_Err = time.Deadline_Exceeded
+		operation.Operation_Err = Deadline_Exceeded
 		sim_operation_submit(operation, completion, timeout)
 		return
 	}
@@ -2199,8 +2269,8 @@ func sim_storage_write(
 }
 
 func sim_storage_fsync(
-	state_pointer unsafe.Pointer, completion *time.Completion, file File,
-	timeout time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, file File,
+	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	invariant.Always(timeout > 0, "A storage fsync timeout is positive and finite.")
@@ -2212,7 +2282,7 @@ func sim_storage_fsync(
 	sim_operation_borrow(operation)
 	latency := sim_latency(state)
 	if sim_storage_timeout_first(state, latency, timeout) {
-		operation.Operation_Err = time.Deadline_Exceeded
+		operation.Operation_Err = Deadline_Exceeded
 		sim_operation_submit(operation, completion, timeout)
 		return
 	}
@@ -2227,8 +2297,8 @@ func sim_wire_directory(storage *Storage) {
 }
 
 func sim_get_directory_entries(
-	state_pointer unsafe.Pointer, completion *time.Completion, directory File, _ []byte,
-	entries []Directory_Entry, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, directory File, _ []byte,
+	entries []Directory_Entry, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	operation := sim_operation_acquire(
@@ -2938,7 +3008,7 @@ func sim_peer_address(state *Sim, file File) (address Address) {
 
 // Acquire one caller-owned operation record; capacity is explicit simulator configuration.
 func sim_operation_acquire(
-	state *Sim, completion *time.Completion, kind Sim_Operation_Kind, callback time.Callback,
+	state *Sim, completion *Completion, kind Sim_Operation_Kind, callback Callback,
 ) (operation *Sim_Operation) {
 	invariant.Always(completion.Backend == nil,
 		"A simulated completion has no retained operation before submission.")
@@ -2962,15 +3032,13 @@ func sim_operation_borrow(operation *Sim_Operation) {
 }
 
 func sim_operation_submit(
-	operation *Sim_Operation, completion *time.Completion, latency time.Duration,
+	operation *Sim_Operation, completion *Completion, latency time.Duration,
 ) {
-	time.Timeline_Submit(
-		operation.State.Timeline, completion, latency, sim_operation_complete,
-	)
+	virtual_submit(&operation.State.Timeline, completion, latency, sim_operation_complete)
 }
 
 // One static retirement callback decodes caller-owned state and frees it before user reentry.
-func sim_operation_complete(completion *time.Completion) {
+func sim_operation_complete(completion *Completion) {
 	operation := (*Sim_Operation)(completion.Backend)
 	invariant.Always(operation != nil, "A simulated retirement has operation state.")
 	data := operation.Data
@@ -3130,7 +3198,7 @@ func sim_operation_write(operation *Sim_Operation) (data int, err error) {
 }
 
 func sim_operation_deliver(
-	operation *Sim_Operation, completion *time.Completion, data int, err error,
+	operation *Sim_Operation, completion *Completion, data int, err error,
 ) {
 	state := operation.State
 	file := operation.File
@@ -3163,7 +3231,7 @@ type Stream struct {
 // Stream_Procedure owns completion policy because only concrete stream knows whether work is
 // immediate, simulated, or kernel-backed.
 type Stream_Procedure func(
-	state unsafe.Pointer, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 )
 
@@ -3175,18 +3243,18 @@ type Stream_Callback struct {
 	// Data preserves adapter-specific integer state until inner retirement.
 	Data int
 	// Callback preserves final receiver while static adapter runs first.
-	Callback time.Callback
+	Callback Callback
 	// Procedure stays static so callback composition allocates nothing.
 	Procedure Stream_Callback_Procedure
 }
 
 // Stream_Callback_Procedure is static callback half of Stream_Callback.
 type Stream_Callback_Procedure func(
-	state unsafe.Pointer, data int, callback time.Callback, completion *time.Completion,
+	state unsafe.Pointer, data int, callback Callback, completion *Completion,
 )
 
 // Stream_Callback_Call lets custom Stream procedures retire explicit callback state.
-func Stream_Callback_Call(callback Stream_Callback, completion *time.Completion) {
+func Stream_Callback_Call(callback Stream_Callback, completion *Completion) {
 	invariant.Always(callback.Procedure != nil, "A Stream callback has a procedure.")
 	callback.Procedure(callback.State, callback.Data, callback.Callback, completion)
 }
@@ -3298,7 +3366,7 @@ var Stream_Empty = errors.New("io: stream empty")
 
 // Read validates the procedure result before the callback can trust its byte count.
 func Read(
-	stream Stream, completion *time.Completion, buffer []byte, callback time.Callback,
+	stream Stream, completion *Completion, buffer []byte, callback Callback,
 ) {
 	stream_submit(
 		stream, completion, STREAM_MODE_READ, buffer, 0, SEEK_FROM_START,
@@ -3310,8 +3378,8 @@ func Read(
 
 // Read_At keeps the cursor unchanged while it applies the same result validation as Read.
 func Read_At(
-	stream Stream, completion *time.Completion, buffer []byte, offset int64,
-	callback time.Callback,
+	stream Stream, completion *Completion, buffer []byte, offset int64,
+	callback Callback,
 ) {
 	stream_submit(
 		stream, completion, STREAM_MODE_READ_AT, buffer, offset, SEEK_FROM_START,
@@ -3323,7 +3391,7 @@ func Read_At(
 
 // Write converts a silent short write into an error before the callback observes it.
 func Write(
-	stream Stream, completion *time.Completion, buffer []byte, callback time.Callback,
+	stream Stream, completion *Completion, buffer []byte, callback Callback,
 ) {
 	stream_submit(
 		stream, completion, STREAM_MODE_WRITE, buffer, 0, SEEK_FROM_START,
@@ -3335,8 +3403,8 @@ func Write(
 
 // Write_At leaves the cursor unchanged while it rejects an invalid procedure count.
 func Write_At(
-	stream Stream, completion *time.Completion, buffer []byte, offset int64,
-	callback time.Callback,
+	stream Stream, completion *Completion, buffer []byte, offset int64,
+	callback Callback,
 ) {
 	stream_submit(
 		stream, completion, STREAM_MODE_WRITE_AT, buffer, offset, SEEK_FROM_START,
@@ -3349,8 +3417,8 @@ func Write_At(
 // Seek reports the new cursor through Completion.Data, so it follows the same lifecycle as a
 // byte transfer.
 func Seek(
-	stream Stream, completion *time.Completion, offset int64, whence Seek_From,
-	callback time.Callback,
+	stream Stream, completion *Completion, offset int64, whence Seek_From,
+	callback Callback,
 ) {
 	stream_submit(
 		stream, completion, STREAM_MODE_SEEK, nil, offset, whence,
@@ -3359,7 +3427,7 @@ func Seek(
 }
 
 // Size reports the bounded storage size through Completion.Data.
-func Size(stream Stream, completion *time.Completion, callback time.Callback) {
+func Size(stream Stream, completion *Completion, callback Callback) {
 	stream_submit(
 		stream, completion, STREAM_MODE_SIZE, nil, 0, SEEK_FROM_START,
 		stream_final_callback(callback),
@@ -3367,7 +3435,7 @@ func Size(stream Stream, completion *time.Completion, callback time.Callback) {
 }
 
 // Flush remains a submitted operation because composition can place buffering behind Stream.
-func Flush(stream Stream, completion *time.Completion, callback time.Callback) {
+func Flush(stream Stream, completion *Completion, callback Callback) {
 	stream_submit(
 		stream, completion, STREAM_MODE_FLUSH, nil, 0, SEEK_FROM_START,
 		stream_final_callback(callback),
@@ -3375,7 +3443,7 @@ func Flush(stream Stream, completion *time.Completion, callback time.Callback) {
 }
 
 // Close retires on the timeline, so teardown can join it before release of owner state.
-func Close(stream Stream, completion *time.Completion, callback time.Callback) {
+func Close(stream Stream, completion *Completion, callback Callback) {
 	stream_submit(
 		stream, completion, STREAM_MODE_CLOSE, nil, 0, SEEK_FROM_START,
 		stream_final_callback(callback),
@@ -3383,7 +3451,7 @@ func Close(stream Stream, completion *time.Completion, callback time.Callback) {
 }
 
 // Destroy remains distinct from Close because some stream implementations can own storage.
-func Destroy(stream Stream, completion *time.Completion, callback time.Callback) {
+func Destroy(stream Stream, completion *Completion, callback Callback) {
 	stream_submit(
 		stream, completion, STREAM_MODE_DESTROY, nil, 0, SEEK_FROM_START,
 		stream_final_callback(callback),
@@ -3391,26 +3459,26 @@ func Destroy(stream Stream, completion *time.Completion, callback time.Callback)
 }
 
 // Query reports capabilities through Completion.Data because the procedure owns that data.
-func Query(stream Stream, completion *time.Completion, callback time.Callback) {
+func Query(stream Stream, completion *Completion, callback Callback) {
 	stream_submit(
 		stream, completion, STREAM_MODE_QUERY, nil, 0, SEEK_FROM_START,
 		stream_final_callback(callback),
 	)
 }
 
-func stream_final_callback(callback time.Callback) (stream_callback Stream_Callback) {
+func stream_final_callback(callback Callback) (stream_callback Stream_Callback) {
 	return Stream_Callback{Callback: callback, Procedure: stream_callback_final}
 }
 
 func stream_callback_final(
-	_ unsafe.Pointer, _ int, callback time.Callback, completion *time.Completion,
+	_ unsafe.Pointer, _ int, callback Callback, completion *Completion,
 ) {
 	callback(completion)
 }
 
 func stream_read_complete(
-	_ unsafe.Pointer, buffer_count int, callback time.Callback,
-	completion *time.Completion,
+	_ unsafe.Pointer, buffer_count int, callback Callback,
+	completion *Completion,
 ) {
 	completion.Data, completion.Error = stream_read_checked(
 		completion.Data, completion.Error, buffer_count,
@@ -3419,8 +3487,8 @@ func stream_read_complete(
 }
 
 func stream_write_complete(
-	_ unsafe.Pointer, buffer_count int, callback time.Callback,
-	completion *time.Completion,
+	_ unsafe.Pointer, buffer_count int, callback Callback,
+	completion *Completion,
 ) {
 	completion.Data, completion.Error = stream_write_checked(
 		completion.Data, completion.Error, buffer_count,
@@ -3430,7 +3498,7 @@ func stream_write_complete(
 
 // All public modes enter here, so nil checks and unsupported-mode behavior cannot diverge.
 func stream_submit(
-	stream Stream, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	stream Stream, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 ) {
 	invariant.Always(completion != nil, "A Stream operation has a completion.")
@@ -3444,7 +3512,7 @@ func stream_submit(
 
 // Completion fields hold every scalar result, so Stream needs no second callback type.
 func stream_complete(
-	completion *time.Completion, data int, err error, callback Stream_Callback,
+	completion *Completion, data int, err error, callback Stream_Callback,
 ) {
 	completion.Data = data
 	completion.Error = err
@@ -3507,7 +3575,7 @@ func Memory_To_Stream(state *Stream_Memory) (stream Stream) {
 
 // Memory completes inline because its concrete operation cannot wait on an external endpoint.
 func stream_memory_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 ) {
 	state := (*Stream_Memory)(state_pointer)
@@ -3642,7 +3710,7 @@ func Discard_To_Stream(state *Stream_Discard) (stream Stream) {
 
 // Discard completes inline because it has no external endpoint or scheduled work.
 func stream_discard_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
 	_ int64, _ Seek_From, callback Stream_Callback,
 ) {
 	state := (*Stream_Discard)(state_pointer)
@@ -3708,7 +3776,7 @@ func Limit_To_Stream(state *Stream_Limit) (stream Stream) {
 
 // Limit forwards one submitted operation and adjusts its budget only after Inner retires.
 func stream_limit_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
 	_ int64, _ Seek_From, callback Stream_Callback,
 ) {
 	state := (*Stream_Limit)(state_pointer)
@@ -3752,7 +3820,7 @@ func stream_limit_procedure(
 
 // A spent read budget cannot reach Inner, thus Limit owns this immediate result.
 func stream_limit_read(
-	state *Stream_Limit, completion *time.Completion, buffer []byte,
+	state *Stream_Limit, completion *Completion, buffer []byte,
 	callback Stream_Callback,
 ) {
 	if state.Budget <= 0 {
@@ -3773,7 +3841,7 @@ func stream_limit_read(
 
 // A limit reports the part it withheld even when Inner stored every byte it received.
 func stream_limit_write(
-	state *Stream_Limit, completion *time.Completion, buffer []byte,
+	state *Stream_Limit, completion *Completion, buffer []byte,
 	callback Stream_Callback,
 ) {
 	if state.Budget <= 0 {
@@ -3802,7 +3870,7 @@ func stream_limit_begin(
 }
 
 func stream_limit_finish(
-	state *Stream_Limit, completion *time.Completion,
+	state *Stream_Limit, completion *Completion,
 ) {
 	callback := state.Callback
 	state.Callback = Stream_Callback{}
@@ -3812,7 +3880,7 @@ func stream_limit_finish(
 }
 
 func stream_limit_query_complete(
-	state_pointer unsafe.Pointer, _ int, _ time.Callback, completion *time.Completion,
+	state_pointer unsafe.Pointer, _ int, _ Callback, completion *Completion,
 ) {
 	state := (*Stream_Limit)(state_pointer)
 	completion.Data = int(Stream_Mode_Set(completion.Data) & STREAM_LIMIT_MODES)
@@ -3820,8 +3888,8 @@ func stream_limit_query_complete(
 }
 
 func stream_limit_read_complete(
-	state_pointer unsafe.Pointer, allowed_count int, _ time.Callback,
-	completion *time.Completion,
+	state_pointer unsafe.Pointer, allowed_count int, _ Callback,
+	completion *Completion,
 ) {
 	state := (*Stream_Limit)(state_pointer)
 	completion.Data, completion.Error = stream_read_checked(
@@ -3832,8 +3900,8 @@ func stream_limit_read_complete(
 }
 
 func stream_limit_write_complete(
-	state_pointer unsafe.Pointer, allowed_count int, _ time.Callback,
-	completion *time.Completion,
+	state_pointer unsafe.Pointer, allowed_count int, _ Callback,
+	completion *Completion,
 ) {
 	state := (*Stream_Limit)(state_pointer)
 	completion.Data, completion.Error = stream_write_checked(
@@ -3871,7 +3939,7 @@ func Count_To_Stream(state *Stream_Count) (stream Stream) {
 // Count updates its tally inside Inner's callback, so callers cannot observe a result before
 // its accounting.
 func stream_count_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 ) {
 	state := (*Stream_Count)(state_pointer)
@@ -3920,7 +3988,7 @@ func stream_count_procedure(
 
 // Count records a sequential read before it publishes Inner's completion.
 func stream_count_read(
-	state *Stream_Count, completion *time.Completion, buffer []byte,
+	state *Stream_Count, completion *Completion, buffer []byte,
 	callback Stream_Callback,
 ) {
 	stream_count_transfer(state, completion, STREAM_MODE_READ, buffer, 0, callback)
@@ -3928,7 +3996,7 @@ func stream_count_read(
 
 // Count records a positioned read before it publishes Inner's completion.
 func stream_count_read_at(
-	state *Stream_Count, completion *time.Completion, buffer []byte, offset int64,
+	state *Stream_Count, completion *Completion, buffer []byte, offset int64,
 	callback Stream_Callback,
 ) {
 	stream_count_transfer(state, completion, STREAM_MODE_READ_AT, buffer, offset, callback)
@@ -3936,7 +4004,7 @@ func stream_count_read_at(
 
 // Count records a sequential write before it publishes Inner's completion.
 func stream_count_write(
-	state *Stream_Count, completion *time.Completion, buffer []byte,
+	state *Stream_Count, completion *Completion, buffer []byte,
 	callback Stream_Callback,
 ) {
 	stream_count_transfer(state, completion, STREAM_MODE_WRITE, buffer, 0, callback)
@@ -3944,14 +4012,14 @@ func stream_count_write(
 
 // Count records a positioned write before it publishes Inner's completion.
 func stream_count_write_at(
-	state *Stream_Count, completion *time.Completion, buffer []byte, offset int64,
+	state *Stream_Count, completion *Completion, buffer []byte, offset int64,
 	callback Stream_Callback,
 ) {
 	stream_count_transfer(state, completion, STREAM_MODE_WRITE_AT, buffer, offset, callback)
 }
 
 func stream_count_transfer(
-	state *Stream_Count, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state *Stream_Count, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, callback Stream_Callback,
 ) {
 	invariant.Always(!state.Active, "A count Stream has at most one operation in flight.")
@@ -3966,8 +4034,8 @@ func stream_count_transfer(
 }
 
 func stream_count_transfer_complete(
-	state_pointer unsafe.Pointer, buffer_count int, _ time.Callback,
-	completion *time.Completion,
+	state_pointer unsafe.Pointer, buffer_count int, _ Callback,
+	completion *Completion,
 ) {
 	state := (*Stream_Count)(state_pointer)
 	if state.Mode == STREAM_MODE_READ {
@@ -4025,7 +4093,7 @@ func Tee_To_Stream(state *Stream_Tee) (stream Stream) {
 
 // Tee submits Second only after First retires, so one caller-owned completion remains valid.
 func stream_tee_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state_pointer unsafe.Pointer, completion *Completion, mode Stream_Mode, buffer []byte,
 	_ int64, _ Seek_From, callback Stream_Callback,
 ) {
 	state := (*Stream_Tee)(state_pointer)
@@ -4054,7 +4122,7 @@ func stream_tee_procedure(
 
 // A lifecycle operation reaches both destinations even when First reports an error.
 func stream_tee_pair(
-	state *Stream_Tee, completion *time.Completion, mode Stream_Mode,
+	state *Stream_Tee, completion *Completion, mode Stream_Mode,
 	callback Stream_Callback,
 ) {
 	stream_tee_begin(state, completion, mode, nil, callback)
@@ -4063,14 +4131,14 @@ func stream_tee_pair(
 // Tee reports the smaller count because that count exposes the destination that lost more
 // bytes.
 func stream_tee_write(
-	state *Stream_Tee, completion *time.Completion, buffer []byte,
+	state *Stream_Tee, completion *Completion, buffer []byte,
 	callback Stream_Callback,
 ) {
 	stream_tee_begin(state, completion, STREAM_MODE_WRITE, buffer, callback)
 }
 
 func stream_tee_begin(
-	state *Stream_Tee, completion *time.Completion, mode Stream_Mode, buffer []byte,
+	state *Stream_Tee, completion *Completion, mode Stream_Mode, buffer []byte,
 	callback Stream_Callback,
 ) {
 	invariant.Always(!state.Active, "A tee Stream has at most one operation in flight.")
@@ -4085,7 +4153,7 @@ func stream_tee_begin(
 }
 
 func stream_tee_first_complete(
-	state_pointer unsafe.Pointer, _ int, _ time.Callback, completion *time.Completion,
+	state_pointer unsafe.Pointer, _ int, _ Callback, completion *Completion,
 ) {
 	state := (*Stream_Tee)(state_pointer)
 	if state.Mode == STREAM_MODE_WRITE {
@@ -4102,7 +4170,7 @@ func stream_tee_first_complete(
 }
 
 func stream_tee_second_complete(
-	state_pointer unsafe.Pointer, _ int, _ time.Callback, completion *time.Completion,
+	state_pointer unsafe.Pointer, _ int, _ Callback, completion *Completion,
 ) {
 	state := (*Stream_Tee)(state_pointer)
 	if state.Mode == STREAM_MODE_WRITE {
@@ -4124,4 +4192,573 @@ func stream_tee_second_complete(
 	state.First_Err = nil
 	state.Active = false
 	Stream_Callback_Call(callback, completion)
+}
+
+// Callback receives the caller-owned completion after the backend retires its operation.
+type Callback func(completion *Completion)
+
+// Retired_Twice report backend retire one completion more than one time. Derived function
+// deliver it, never hide it. Caller own completion. Caller must learn lifecycle broke.
+var Retired_Twice = errors.New("io: the completion retired more than once")
+
+// Deadline_Exceeded come back when finite operation retire without its external event.
+var Deadline_Exceeded = errors.New("io: deadline exceeded")
+
+// Virtual_Event_Capacity_Exceeded reports no free entry in caller-owned event storage.
+var Virtual_Event_Capacity_Exceeded = errors.New("io: virtual event capacity exceeded")
+
+// Completion: caller-owned storage for one in-flight operation. Caller allocate it, thus loop
+// never allocate. Caller keep it alive until callback fire.
+type Completion struct {
+	// Data is an opaque int whose submitting operation defines. A transfer stores its byte
+	// count, while an open or accept stores its descriptor.
+	Data int
+	// Error is nil on success and otherwise stores the operation failure.
+	Error error
+	// Callback stays specialized so retirement needs no captured adapter closure.
+	Callback Callback
+	// Ready_At: uptime this operation complete at. Sit on monotonic timeline. Realtime jump
+	// must not retire operation early, or hold it late.
+	Ready_At time.Monotonic_Moment
+	// Armed: completion is in flight. False mean never submitted, or delivered and free
+	// again. Backend own it: it flip true on submit, false before delivery. Application never
+	// read it, never write it. Show own state, not state of completion.
+	Armed bool
+	// Self: address of completion. First submit stamp it. Nothing clear it. Timeline track
+	// in-flight operation by pointer, thus by-value copy carry this original address. Submit
+	// of copy trip backend assertion. Without it, view of timeline and view of caller split
+	// in silence. Only backend touch it.
+	Self *Completion
+	// Kernel_Identifier: generation token in kqueue udata or io_uring user_data. Backend own
+	// it. Event_Trigger read it only after Event_Listen arm completion.
+	Kernel_Identifier uint64
+	// Event lets simulated retirement clear listener state without a captured callback.
+	Event Event
+	// Backend lets an outer backend correlate specialized result state without a captured
+	// adapter. Backend clears it before delivering callback.
+	Backend unsafe.Pointer
+}
+
+// Event: cross-thread wakeup handle of backend. kqueue EVFILT_USER ident, or eventfd
+// descriptor. Primitive of loop. Carry no bytes. Name no endpoint. One purpose: make armed
+// completion ready from other thread.
+type Event uintptr
+
+// Timeline: third half of IO, beside Network and Storage. Timer and cross-thread wakeup live
+// here, not on a transfer surface: neither one move bytes with an endpoint. Each one decide
+// WHEN a completion run.
+//
+// Backend fill this vtable and return Driver beside it: deterministic simulator, kqueue, or
+// io_uring. Code that hold Timeline arm work, never advance it. A holder that only need a
+// timer take this half alone and cannot reach a socket or a file.
+type Timeline struct {
+	// State stays caller-owned because every backend operation shares one loop.
+	State unsafe.Pointer
+	// Submit arm completion to retire one delay from now, in Ready_At order. Sim IO schedule
+	// every operation through it, so one queue hold the whole simulated order. OS backend
+	// keep IO order in its kernel queue and fill this slot as a timer.
+	Submit func(
+		state unsafe.Pointer, completion *Completion, delay time.Duration,
+		callback Callback,
+	)
+	// Open_Event make platform Event primitive.
+	Open_Event func(state unsafe.Pointer) (event Event, err error)
+	// Event_Listen arm completion for one Event notification.
+	Event_Listen func(
+		state unsafe.Pointer, event Event, completion *Completion, callback Callback,
+	)
+	// Event_Trigger make armed Event completion ready. Only operation safe to call from other
+	// thread.
+	Event_Trigger func(state unsafe.Pointer, event Event, completion *Completion)
+	// Close_Event release Event after listener drain.
+	Close_Event func(state unsafe.Pointer, event Event)
+}
+
+// Timeline_Invariants state every slot full. Timeline is vtable. Zero Timeline read as
+// Timeline, then panic on first use. Backend that fill four slots and forget fifth fail one
+// call later.
+func Timeline_Invariants(loop Timeline, namespace invariant.Namespace) {
+	invariant.Always(loop.Submit != nil, "A Timeline arms a completion.")
+	invariant.Always(loop.Open_Event != nil, "A Timeline opens a cross-thread event.")
+	invariant.Always(loop.Event_Listen != nil, "A Timeline listens for that event.")
+	invariant.Always(loop.Event_Trigger != nil, "A Timeline triggers that event.")
+	invariant.Always(loop.Close_Event != nil, "A Timeline closes that event.")
+}
+
+// Timeline_Submit passes loop state explicitly because a bound submitter would allocate.
+func Timeline_Submit(
+	loop Timeline, completion *Completion, delay time.Duration, callback Callback,
+) {
+	loop.Submit(loop.State, completion, delay, callback)
+}
+
+// Timeline_Timeout is Submit with one guard. Same queue, same order, same backend body, thus
+// no vtable slot of its own. Simulated IO submit delay 0 to retire in submit tick; timer with
+// duration 0 is caller mistake, never modeled outcome, so guard sit here, once, above every
+// backend.
+func Timeline_Timeout(
+	loop Timeline, completion *Completion, duration time.Duration, callback Callback,
+) {
+	invariant.Always(duration > 0, "A timeout duration is positive.")
+	loop.Submit(loop.State, completion, duration, callback)
+}
+
+// Timeline_Open_Event keeps event ownership with the backend state that opened it.
+func Timeline_Open_Event(loop Timeline) (event Event, err error) {
+	return loop.Open_Event(loop.State)
+}
+
+// Timeline_Event_Listen keeps listener state on its owning backend.
+func Timeline_Event_Listen(
+	loop Timeline, event Event, completion *Completion, callback Callback,
+) {
+	loop.Event_Listen(loop.State, event, completion, callback)
+}
+
+// Timeline_Event_Trigger keeps trigger state on its owning backend.
+func Timeline_Event_Trigger(loop Timeline, event Event, completion *Completion) {
+	loop.Event_Trigger(loop.State, event, completion)
+}
+
+// Timeline_Close_Event keeps release on the backend that opened the event.
+func Timeline_Close_Event(loop Timeline, event Event) {
+	loop.Close_Event(loop.State, event)
+}
+
+// Driver advance loop. Only capability that move time and deliver completions.
+//
+// ===========================================================================
+// ONLY PACKAGE MAIN OR A TEST MAY DRIVE, RUN, OR TICK THE EVENT LOOP.
+// NOT A LIBRARY. NOT A HELPER. NOT AN INJECTED FUNC VALUE. NOT ONCE.
+// A VIOLATION IS AN ARCHITECTURAL BUG EVEN IF EVERY TEST PASSES.
+// ===========================================================================
+//
+// Only code that build Driver hold it or call it: package main in production, or test harness
+// in simulation. Library that pump work while its binary own full process. Library fail where
+// it compose. Put together with others, it deliver completions of every other application
+// from inside own call stack. That destroy absolute order assembly exist to hold.
+type Driver struct {
+	// State stays caller-owned because binding it into each drive operation would allocate.
+	State unsafe.Pointer
+	// Run drain every ready completion without block, then advance clock one tick. ROOT ONLY:
+	// never hand to library, never call from library.
+	Run func(state unsafe.Pointer) (err error)
+	// Run_For drive loop until duration elapse on clock. Deliver each completion as it come
+	// due. Time is GOAL here. Advance exactly duration, drain as it go, whatever complete.
+	// Use to let span of time pass, not to wait for one operation.
+	// ROOT ONLY: never hand to library, never call from library.
+	Run_For func(state unsafe.Pointer, duration time.Duration) (err error)
+	// Run_Until drive loop until done report true. Run-until-complete pump. Straight-line
+	// code wait for own operation inline with it. Completion is GOAL here. Time is GUARD.
+	// Stop instant done hold. Timeout only cap wait, thus stalled operation cannot hang
+	// caller. Run_For put time first, thus two stay separate operations.
+	//
+	// timeout < 0 panic: unbounded pump put no cap on stalled operation.
+	// timeout == 0 check done one time, return without drive. Poll.
+	// timeout > 0 pump until done, or until clock pass now+timeout. completed report which
+	// win: done (true), or timeout (false).
+	//
+	// Top-level and single-loop only: never call from inside completion callback.
+	// ROOT ONLY: never inject it into library, and never inject func value of its shape.
+	// Library that write done predicate and timeout is driving loop.
+	Run_Until func(
+		state unsafe.Pointer, timeout time.Duration, done func() (finished bool),
+	) (completed bool, err error)
+	// Deinit release kernel resources of backend, after every submitted operation join.
+	Deinit func(state unsafe.Pointer)
+}
+
+// Driver_Run passes loop state explicitly because a bound driver would allocate.
+func Driver_Run(driver Driver) (err error) {
+	return driver.Run(driver.State)
+}
+
+// Driver_Run_For passes loop state explicitly because a bound driver would allocate.
+func Driver_Run_For(driver Driver, duration time.Duration) (err error) {
+	return driver.Run_For(driver.State, duration)
+}
+
+// Driver_Run_Until passes loop state explicitly because a bound driver would allocate.
+func Driver_Run_Until(
+	driver Driver, timeout time.Duration, done func() (finished bool),
+) (completed bool, err error) {
+	return driver.Run_Until(driver.State, timeout, done)
+}
+
+// Driver_Deinit releases resources through their owning backend state.
+func Driver_Deinit(driver Driver) {
+	driver.Deinit(driver.State)
+}
+
+// Virtual_Timeline: deterministic loop backend. One ready-time queue, one tick counter, no
+// kernel. Sim own it and never hand it out. Run thus reproduce from the counter alone.
+// Nothing can script order.
+type Virtual_Timeline struct {
+	// Resolution: how far the counter advance on each tick. Grain of simulated oscillator.
+	Resolution time.Duration
+	// Epoch: wall-clock origin at tick zero, before any view's skew.
+	Epoch time.Moment
+	// Ticks is the one counter every Sim_Clock view read, thus views never drift apart.
+	Ticks time.Tick_Count
+	// Queue hold armed completions in Ready_At order, earliest first.
+	Queue []*Completion
+	// Queue_Count separates occupied entries from caller-owned capacity.
+	Queue_Count int
+	// Events hold cross-thread event entries indexed by handle minus one.
+	Events []Virtual_Event
+	// Drive_Active true while Run drive. Run called from inside completion callback thus
+	// panic, never re-enter driver.
+	Drive_Active bool
+}
+
+// Virtual_Event: one simulated cross-thread event.
+type Virtual_Event struct {
+	// Open prevents a closed slot from accepting listener or trigger operations.
+	Open bool
+	// Armed report listener attached and wait for next trigger.
+	Armed bool
+	// Triggered coalesces pending wakeups because one listener retirement is one notification.
+	Triggered bool
+	// Ready prevents repeated trigger from enqueueing one completion more than once.
+	Ready bool
+	// Listener keeps ownership direct so no listener map or captured callback is needed.
+	Listener *Completion
+}
+
+// Sim_Clock is one application's view of the shared counter: own skew, same ticks. Root hand
+// one to each application because real boxes have separate, skewed clocks, and one loop
+// decide what actually happen in what order.
+type Sim_Clock struct {
+	// Timeline is the counter every view share; the constructor set it.
+	Timeline *Virtual_Timeline
+	// Skew bend this view's Now_Realtime away from true elapsed time. Seed-drawn, never
+	// caller-supplied: a supplied skew is a scripted outcome.
+	Skew time.Offset
+}
+
+// Sim_Clock_To_Clock build a read-only Clock over one view. Three words, free to build, thus
+// nothing store it. Root call it once per application on `&state.Clocks[index]`.
+func Sim_Clock_To_Clock(view *Sim_Clock) (host time.Clock) {
+	invariant.Always(view != nil, "A simulated clock view has caller-owned state.")
+	invariant.Always(view.Timeline != nil, "A simulated clock view names its timeline.")
+	host = time.Clock{
+		State:         unsafe.Pointer(view),
+		Now_Monotonic: sim_clock_now_monotonic,
+		Now_Realtime:  sim_clock_now_realtime,
+	}
+	time.Clock_Invariants(host, "sim_clock_to_clock.host")
+	return host
+}
+
+func sim_clock_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_Moment) {
+	return virtual_now((*Sim_Clock)(state).Timeline)
+}
+
+func sim_clock_now_realtime(state unsafe.Pointer) (moment time.Moment) {
+	view := (*Sim_Clock)(state)
+	now := view.Timeline.Epoch + time.Moment(virtual_now(view.Timeline))
+	return now - time.Moment(time.Offset_Read(view.Skew, view.Timeline.Ticks))
+}
+
+// Bind caller-owned capacity so construction cannot allocate.
+func virtual_timeline_initialize(
+	state *Virtual_Timeline, resolution time.Duration, epoch time.Moment,
+	queue []*Completion, events []Virtual_Event,
+) {
+	invariant.Always(len(queue) > 0, "A virtual timeline has queue capacity.")
+	invariant.Always(len(events) > 0, "A virtual timeline has event capacity.")
+	time.Duration_Invariants(resolution, "virtual_timeline_initialize.resolution")
+	invariant.Always(resolution > 0, "A virtual timeline advances on every tick.")
+	// Epoch carry no assertion: the seed draw it below SIM_EPOCH_SECONDS, so no caller can
+	// reach an edge of its domain, and an unreachable assertion is a permanent coverage gap.
+	for index := range queue {
+		queue[index] = nil
+	}
+	for index := range events {
+		events[index] = Virtual_Event{}
+	}
+	*state = Virtual_Timeline{
+		Resolution: resolution,
+		Epoch:      epoch,
+		Queue:      queue,
+		Events:     events,
+	}
+}
+
+// Wire control plane onto vtable every backend and every caller hold.
+func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
+	return Timeline{
+		State:         unsafe.Pointer(state),
+		Submit:        virtual_timeline_submit,
+		Open_Event:    virtual_timeline_open_event,
+		Event_Listen:  virtual_timeline_event_listen,
+		Event_Trigger: virtual_timeline_event_trigger,
+		Close_Event:   virtual_timeline_close_event,
+	}
+}
+
+func virtual_timeline_submit(
+	state unsafe.Pointer, completion *Completion, delay time.Duration,
+	callback Callback,
+) {
+	virtual_submit((*Virtual_Timeline)(state), completion, delay, callback)
+}
+
+func virtual_timeline_open_event(state unsafe.Pointer) (event Event, err error) {
+	timeline := (*Virtual_Timeline)(state)
+	for index := range timeline.Events {
+		if !timeline.Events[index].Open {
+			timeline.Events[index] = Virtual_Event{Open: true}
+			return Event(index + 1), nil
+		}
+	}
+	return 0, Virtual_Event_Capacity_Exceeded
+}
+
+func virtual_timeline_event_listen(
+	state unsafe.Pointer, event Event, completion *Completion, callback Callback,
+) {
+	virtual_event_listen((*Virtual_Timeline)(state), event, completion, callback)
+}
+
+func virtual_timeline_event_trigger(
+	state unsafe.Pointer, event Event, completion *Completion,
+) {
+	virtual_event_trigger((*Virtual_Timeline)(state), event, completion)
+}
+
+func virtual_timeline_close_event(state unsafe.Pointer, event Event) {
+	timeline := (*Virtual_Timeline)(state)
+	entry := virtual_event_entry(timeline, event)
+	invariant.Always(!entry.Armed, "An event listener is drained before close.")
+	*entry = Virtual_Event{}
+}
+
+// Arm event listener. Deliver at once when trigger already arrive.
+func virtual_event_listen(
+	state *Virtual_Timeline, event Event, completion *Completion,
+	callback Callback,
+) {
+	entry := virtual_event_entry(state, event)
+	invariant.Always(!entry.Armed, "An event has at most one armed listener.")
+	if entry.Triggered {
+		virtual_queue_has_capacity(state)
+	}
+	virtual_arm(completion, callback)
+	completion.Event = event
+	entry.Armed = true
+	entry.Listener = completion
+	if entry.Triggered {
+		entry.Triggered = false
+		entry.Ready = true
+		virtual_enqueue_now(state, completion)
+	}
+}
+
+// Make armed event listener ready, or record trigger for later listener.
+func virtual_event_trigger(state *Virtual_Timeline, event Event, completion *Completion) {
+	entry := virtual_event_entry(state, event)
+	if !entry.Armed {
+		entry.Triggered = true
+		return
+	}
+	invariant.Always(entry.Listener == completion,
+		"A trigger names the completion its event armed.")
+	if entry.Ready {
+		entry.Triggered = true
+		return
+	}
+	virtual_queue_has_capacity(state)
+	entry.Ready = true
+	virtual_enqueue_now(state, completion)
+}
+
+func virtual_event_entry(state *Virtual_Timeline, event Event) (entry *Virtual_Event) {
+	invariant.Always(event > 0, "A virtual event handle is never zero.")
+	invariant.Always(event <= Event(len(state.Events)),
+		"A virtual event handle names caller-owned storage.")
+	entry = &state.Events[int(event)-1]
+	invariant.Always(entry.Open, "A virtual event operation names an open event.")
+	return entry
+}
+
+// Read simulated moment every Ready_At measure against.
+func virtual_now(state *Virtual_Timeline) (now time.Monotonic_Moment) {
+	now = time.Monotonic_Moment(int64(state.Ticks) * int64(state.Resolution))
+	time.Monotonic_Moment_Invariants(now, "virtual_now.now")
+	return now
+}
+
+// Schedule completion to fire at now plus delay. Insert it in Ready_At order.
+func virtual_submit(
+	state *Virtual_Timeline, completion *Completion, delay time.Duration, callback Callback,
+) {
+	virtual_queue_has_capacity(state)
+	virtual_arm(completion, callback)
+	completion.Ready_At = virtual_now(state) + time.Monotonic_Moment(delay)
+	virtual_enqueue(state, completion)
+}
+
+// Arm completion, but never put it on ready-time queue. Event listener use this. Assert
+// completion is own original, not by-value copy. Then move it along lifecycle machine.
+// Completion armed while armed panic on armed-to-armed edge.
+func virtual_arm(completion *Completion, callback Callback) {
+	original := completion.Self == nil || completion.Self == completion
+	invariant.Always(original,
+		"A submitted completion is its own original, never a by-value copy.")
+	completion.Self = completion
+	invariant.Always(!completion.Armed, "An armed completion is never armed a second time.")
+	completion.Data = 0
+	completion.Error = nil
+	completion.Armed = true
+	completion.Callback = callback
+	completion.Event = 0
+}
+
+// Put already armed completion on queue as due now.
+func virtual_enqueue_now(state *Virtual_Timeline, completion *Completion) {
+	completion.Ready_At = virtual_now(state)
+	virtual_enqueue(state, completion)
+}
+
+// Insert completion into queue in Ready_At order, earliest first.
+func virtual_enqueue(state *Virtual_Timeline, completion *Completion) {
+	index := 0
+	for index < state.Queue_Count && state.Queue[index].Ready_At <= completion.Ready_At {
+		index++
+	}
+	copy(state.Queue[index+1:state.Queue_Count+1], state.Queue[index:state.Queue_Count])
+	state.Queue[index] = completion
+	state.Queue_Count++
+}
+
+// Capacity rejects new ownership before any caller or event state changes.
+func virtual_queue_has_capacity(state *Virtual_Timeline) {
+	invariant.Always(state.Queue_Count < len(state.Queue),
+		"A virtual timeline never exceed caller-owned queue capacity.")
+}
+
+// Fire earliest completion when due as of now. Report whether it fire.
+func virtual_step(state *Virtual_Timeline) (advanced bool) {
+	if state.Queue_Count == 0 {
+		return false
+	}
+	if state.Queue[0].Ready_At > virtual_now(state) {
+		return false
+	}
+	completion := state.Queue[0]
+	last := state.Queue_Count - 1
+	copy(state.Queue[:last], state.Queue[1:state.Queue_Count])
+	state.Queue[last] = nil
+	state.Queue_Count--
+	// Go back to idle before callback run. Callback can then submit own completion again.
+	// Repeating-timer pattern.
+	invariant.Always(completion.Armed, "A delivered completion was armed.")
+	completion.Armed = false
+	callback := completion.Callback
+	completion.Callback = nil
+	event := completion.Event
+	completion.Event = 0
+	if event != 0 {
+		entry := virtual_event_entry(state, event)
+		entry.Armed = false
+		entry.Ready = false
+		entry.Listener = nil
+	}
+	callback(completion)
+	return true
+}
+
+// Drain every completion due as of now, in Ready_At order. Never advance time. That is job of
+// driver, thus queue stay passive.
+func virtual_drain(state *Virtual_Timeline) {
+	for virtual_step(state) {
+	}
+}
+
+// Step of driver: drain what is due, then advance clock one grain.
+//
+// Driver advance one grain per tick. Never jump ahead to next Ready_At, even when queue idle
+// until then. Jump would skip grains where time-triggered fault adversary act. Those faults
+// crash or partition quiet node. They matter most: they strike while nothing scheduled.
+func virtual_run(state *Virtual_Timeline) {
+	virtual_drain(state)
+	state.Ticks++
+}
+
+// Drive until duration elapse. Deliver completions as they come due.
+func virtual_run_for(state *Virtual_Timeline, duration time.Duration) {
+	deadline := virtual_now(state) + time.Monotonic_Moment(duration)
+	for virtual_now(state) < deadline {
+		virtual_run(state)
+	}
+}
+
+// Drive until done report true, or until timeout of virtual time elapse. Run-until-complete
+// pump. Cap stop stalled operation from spin without end. Negative timeout is that uncapped
+// pump, thus it panic. Never hand caller drive with no bound.
+func virtual_run_until(
+	state *Virtual_Timeline, timeout time.Duration, done func() (finished bool),
+) (completed bool) {
+	invariant.Always(timeout >= 0, "A Run_Until timeout is never negative.")
+	deadline := virtual_now(state) + time.Monotonic_Moment(timeout)
+	for !done() {
+		if virtual_now(state) >= deadline {
+			return false
+		}
+		virtual_run(state)
+	}
+	return true
+}
+
+// Drive begin rejects reentrancy before any queue state can change.
+func virtual_drive_begin(state *Virtual_Timeline) {
+	invariant.Always(!state.Drive_Active,
+		"A drive begins at top level, never from within a completion callback.")
+	state.Drive_Active = true
+}
+
+// Drive end remains deferred so callback panic cannot leave the driver permanently active.
+func virtual_drive_end(state *Virtual_Timeline) {
+	state.Drive_Active = false
+}
+
+// Build driver over state. Capability that advance time. Only main or test hold it.
+func virtual_timeline_to_driver(state *Virtual_Timeline) (driver Driver) {
+	return Driver{
+		State:     unsafe.Pointer(state),
+		Run:       virtual_driver_run,
+		Run_For:   virtual_driver_run_for,
+		Run_Until: virtual_driver_run_until,
+		Deinit:    virtual_driver_deinit,
+	}
+}
+
+func virtual_driver_run(state unsafe.Pointer) (err error) {
+	timeline := (*Virtual_Timeline)(state)
+	virtual_drive_begin(timeline)
+	defer virtual_drive_end(timeline)
+	virtual_run(timeline)
+	return nil
+}
+
+func virtual_driver_run_for(state unsafe.Pointer, duration time.Duration) (err error) {
+	timeline := (*Virtual_Timeline)(state)
+	virtual_drive_begin(timeline)
+	defer virtual_drive_end(timeline)
+	virtual_run_for(timeline, duration)
+	return nil
+}
+
+func virtual_driver_run_until(
+	state unsafe.Pointer, timeout time.Duration, done func() (finished bool),
+) (completed bool, err error) {
+	timeline := (*Virtual_Timeline)(state)
+	virtual_drive_begin(timeline)
+	defer virtual_drive_end(timeline)
+	return virtual_run_until(timeline, timeout, done), nil
+}
+
+func virtual_driver_deinit(state unsafe.Pointer) {
+	invariant.Always(state != nil, "A virtual driver deinitializes caller-owned state.")
 }

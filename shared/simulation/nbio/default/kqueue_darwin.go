@@ -651,9 +651,9 @@ func platform_expire_operation(
 }
 
 // Open persistent EVFILT_USER Event.
-func platform_event_open(state *Operating_System) (event time.Event, err error) {
+func platform_event_open(state *Operating_System) (event nbio.Event, err error) {
 	state.Platform.Next_Event++
-	event = time.Event(state.Platform.Next_Event)
+	event = nbio.Event(state.Platform.Next_Event)
 	change := Kernel_Event{
 		Ident: uint64(event), Filter: syscall.EVFILT_USER,
 		Flags: syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_CLEAR,
@@ -680,7 +680,7 @@ func platform_event_listen(
 
 // Trigger EVFILT_USER with stable integer token of listener in udata.
 func platform_event_trigger(
-	state *Operating_System, event time.Event, identifier uint64,
+	state *Operating_System, event nbio.Event, identifier uint64,
 ) {
 	change := Kernel_Event{
 		Ident: uint64(event), Filter: syscall.EVFILT_USER,
@@ -699,7 +699,7 @@ func platform_event_trigger(
 }
 
 // Delete one persistent EVFILT_USER Event after its listener drained.
-func platform_event_close(state *Operating_System, event time.Event) {
+func platform_event_close(state *Operating_System, event nbio.Event) {
 	change := Kernel_Event{
 		Ident: uint64(event), Filter: syscall.EVFILT_USER, Flags: syscall.EV_DELETE,
 	}

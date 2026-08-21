@@ -238,6 +238,61 @@ Tee writes to both destinations in order and reports the smaller count.
 
 Composed streams preserve each inner procedure callback policy and sequence dependent callbacks.
 
+# Timeline
+
+Timeline is third half of IO: timer and cross-thread wakeup, no endpoint. Sim own one virtual
+timeline, one queue every simulated completion retire on in Ready_At order, and return Driver
+beside IO, thus one order hold every event. Nothing hand out the queue.
+
+### Timeout
+
+Timeout fire exactly when virtual clock reach its deadline. Off same Ready_At queue IO
+completions use, thus every wait ride one timeline. Duration must be positive.
+
+### Callback Released
+
+Completion releases its callback before call, so finished operation and borrowed buffer become
+collectable. Clear-before-call lets callback arm same completion again without erasing new work.
+
+### Event
+
+Open_Event make cross-thread event primitive. Event_Listen arm one completion. Event_Trigger
+make that completion ready. Close_Event release event only after its listener drain. Handle
+zero, handle past capacity, closed event, second listener, foreign trigger, early close panic.
+
+### Capacity
+
+New_Simulated_IO receives caller-owned completion storage and event storage beside its other
+memory. This keeps construction allocation-free and gives one hard bound to every run. A full
+store rejects new work before it changes completion or event lifecycle state.
+
+### Run Until
+
+Run_Until drive loop until its predicate report true. Deliver completions each step, thus
+straight-line caller wait for own operation inline. Negative timeout panic.
+
+### Reuse
+
+Submit of completion still armed panic as illegal lifecycle transition. Only idle completion
+can be armed. Delivery return it to idle before callback run, thus reuse after callback, or
+from inside callback, is legal.
+
+### Copy
+
+Submit of by-value copy panic. Loop track completion by own address, thus copy carry identity
+of original. Fail loud, never split view of loop from view of caller.
+
+### Reentrancy
+
+Drive of loop from inside completion callback panic. Run, Run_For, Run_Until are top-level
+only. Re-entrant drive thus fail loud, never corrupt queue mid-drain.
+
+### Clocks
+
+New_Simulated_IO draw the epoch and one skew per caller-owned Sim_Clock slot from its own
+stream. Every view read the one counter the Driver advance, thus views agree in monotonic time
+and differ in realtime by skew alone. Resolution is the grain one tick advance, positive.
+
 # Allocation
 
 IO, Network, Storage, Address, and Stream allocate no heap memory. Caller supplies retained state

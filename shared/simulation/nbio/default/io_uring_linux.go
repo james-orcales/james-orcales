@@ -80,9 +80,9 @@ func operating_system_wire_platform(_ *Operating_System, loop *nbio.IO) {
 }
 
 func operating_system_statx(
-	state_pointer unsafe.Pointer, completion *time.Completion, directory nbio.File,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, directory nbio.File,
 	file_path string, flags uint32, mask uint32, result *nbio.Statx,
-	callback time.Callback,
+	callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
 	operating_system_submit(completion)
@@ -613,7 +613,7 @@ func platform_submit_bounded_operation(
 ) (err error) {
 	budget := operation.Deadline - time.Clock_Now_Monotonic(state.Host)
 	if budget <= 0 {
-		return time.Deadline_Exceeded
+		return nbio.Deadline_Exceeded
 	}
 	bounded := &operation.Bounded_State
 	*bounded = Operating_System_Bounded_Operation{Operation: operation}
@@ -650,7 +650,7 @@ func platform_submit_bounded_operation(
 		deadline.Pinned = false
 		operating_system_operation_release(deadline)
 		operation.Bounded = nil
-		return time.Deadline_Exceeded
+		return nbio.Deadline_Exceeded
 	}
 	operation.Deadline_Span = operating_system_timeout_span(time.Duration(budget))
 	deadline.Timespec = operation.Deadline_Span
@@ -954,12 +954,12 @@ func platform_open_flags(options nbio.Open_At_Options) (flags int) {
 }
 
 // Open Linux eventfd with CLOEXEC.
-func platform_event_open(state *Operating_System) (event time.Event, err error) {
+func platform_event_open(state *Operating_System) (event nbio.Event, err error) {
 	result, _, errno := syscall.Syscall(syscall.SYS_EVENTFD2, 0, syscall.O_CLOEXEC, 0)
 	if errno != 0 {
 		return 0, errno
 	}
-	return time.Event(result), nil
+	return nbio.Event(result), nil
 }
 
 // Arm Linux Event through ordinary io_uring read path.
@@ -972,7 +972,7 @@ func platform_event_listen(
 // Write one eventfd notification. Darwin use identifier, and it is deliberately irrelevant on
 // Linux.
 func platform_event_trigger(
-	state *Operating_System, event time.Event, _ uint64,
+	state *Operating_System, event nbio.Event, _ uint64,
 ) {
 	buffer := [EVENTFD_VALUE_BYTES]byte{}
 	binary.Put_Uint_64(binary.Bytes(buffer[:]), 1, binary.LITTLE_ENDIAN)
@@ -985,7 +985,7 @@ func platform_event_trigger(
 }
 
 // Close Linux eventfd after its io_uring read listener drained.
-func platform_event_close(state *Operating_System, event time.Event) {
+func platform_event_close(state *Operating_System, event nbio.Event) {
 	close_err := syscall.Close(int(event))
 	invariant.Always(close_err == nil, "Closing an eventfd Event succeeds.")
 }
@@ -1253,7 +1253,7 @@ func platform_complete_bounded_entry(
 	) {
 		operating_system_operation_complete(
 			state, primary, operating_system_timeout_result(primary),
-			time.Deadline_Exceeded,
+			nbio.Deadline_Exceeded,
 		)
 		return nil
 	}
@@ -1289,7 +1289,7 @@ func platform_retry_operations(state *Operating_System) (err error) {
 				platform_retry_pop(state)
 				timeout_result := operating_system_timeout_result(operation)
 				operating_system_operation_complete(
-					state, operation, timeout_result, time.Deadline_Exceeded,
+					state, operation, timeout_result, nbio.Deadline_Exceeded,
 				)
 				continue
 			}

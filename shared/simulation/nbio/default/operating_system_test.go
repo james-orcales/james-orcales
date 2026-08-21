@@ -64,8 +64,8 @@ const OPERATING_SYSTEM_ALLOCATION_NETWORK_BUFFER_BYTES = PIPE_ENDS * nbio.IPV4_A
 
 type operating_system_test_memory struct {
 	State               Operating_System
-	Timeouts            [OPERATING_SYSTEM_TEST_TIMEOUT_CAPACITY]*time.Completion
-	Completed           [OPERATING_SYSTEM_TEST_COMPLETION_CAPACITY]*time.Completion
+	Timeouts            [OPERATING_SYSTEM_TEST_TIMEOUT_CAPACITY]*nbio.Completion
+	Completed           [OPERATING_SYSTEM_TEST_COMPLETION_CAPACITY]*nbio.Completion
 	Operations          [OPERATING_SYSTEM_TEST_OPERATION_CAPACITY]Operating_System_Operation
 	Operation_Registry  [OPERATING_SYSTEM_TEST_OPERATION_CAPACITY]*Operating_System_Operation
 	Descriptors         [OPERATING_SYSTEM_TEST_DESCRIPTOR_CAPACITY]Operating_System_Descriptor
@@ -104,7 +104,7 @@ type clock_value struct {
 }
 
 // A local host clock keeps these backend tests independent of another backend package.
-func new_operating_system_clock() (clock time.Clock) {
+func new_operating_system_clock() (host time.Clock) {
 	state := &operating_system_clock_state{Origin: operating_system_clock_read()}
 	return time.Clock{
 		State:         unsafe.Pointer(state),
@@ -123,9 +123,9 @@ func operating_system_clock_read() (nanoseconds int64) {
 }
 
 func operating_system_clock_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_Moment) {
-	clock := (*operating_system_clock_state)(state)
-	maximum := &clock.Maximum
-	current := operating_system_clock_read() - clock.Origin
+	host := (*operating_system_clock_state)(state)
+	maximum := &host.Maximum
+	current := operating_system_clock_read() - host.Origin
 	previous := maximum.Load()
 	if current <= previous {
 		return time.Monotonic_Moment(previous)
@@ -140,7 +140,7 @@ func operating_system_clock_now_realtime(_ unsafe.Pointer) (moment time.Moment) 
 	return time.Moment(operating_system_clock_read())
 }
 
-func clock_value_to_clock(value *clock_value) (clock time.Clock) {
+func clock_value_to_clock(value *clock_value) (host time.Clock) {
 	return time.Clock{
 		State:         unsafe.Pointer(value),
 		Now_Monotonic: clock_value_now_monotonic,
@@ -240,26 +240,26 @@ func Test_Operating_System_Storage_Rejects_Disabled_Timeouts(t *testing.T) {
 				t, new_operating_system_clock(),
 			)
 			testify.Panics(t, func() {
-				var completion time.Completion
+				var completion nbio.Completion
 				if operation == "read" {
 					nbio.Storage_Read(
 						loop.Storage, &completion, nbio.File(-1), nil, 0,
 						timeout,
-						func(_ *time.Completion) {})
+						func(_ *nbio.Completion) {})
 					return
 				}
 				if operation == "write" {
 					nbio.Storage_Write(
 						loop.Storage, &completion, nbio.File(-1), nil, 0,
 						timeout,
-						func(_ *time.Completion) {})
+						func(_ *nbio.Completion) {})
 					return
 				}
 				nbio.Storage_Fsync(
 					loop.Storage, &completion, nbio.File(-1), timeout,
-					func(_ *time.Completion) {})
+					func(_ *nbio.Completion) {})
 			}, operation, timeout)
-			time.Driver_Deinit(driver)
+			nbio.Driver_Deinit(driver)
 		}
 	}
 }
@@ -267,7 +267,7 @@ func Test_Operating_System_Storage_Rejects_Disabled_Timeouts(t *testing.T) {
 // Write content to path through loop. Fixture setup in this package go through io.IO same as
 // everything else: this is own suite of io gateway, thus test that reach around loop to prepare
 // its input exercise path no application may take.
-func write_file(t *testing.T, loop nbio.IO, driver time.Driver, path string, content []byte) {
+func write_file(t *testing.T, loop nbio.IO, driver nbio.Driver, path string, content []byte) {
 	t.Helper()
 	file, create_err := create_file(t, loop, driver, path)
 	if !testify.No_Error(t, create_err, path) {
@@ -275,9 +275,9 @@ func write_file(t *testing.T, loop nbio.IO, driver time.Driver, path string, con
 	}
 	written := 0
 	write_done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Write(loop.Storage, &completion, file, content, 0, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error, path)
 		written = completed.Data
@@ -292,17 +292,17 @@ func write_file(t *testing.T, loop nbio.IO, driver time.Driver, path string, con
 
 // Make path and every missing parent through derived Make_Directory, which compose Mkdir_At
 // primitive above surface.
-func make_directory(t *testing.T, loop nbio.IO, driver time.Driver, path string) (err error) {
+func make_directory(t *testing.T, loop nbio.IO, driver nbio.Driver, path string) (err error) {
 	t.Helper()
 	// Walk is caller business now: Mkdir_At is mkdirat primitive, thus each component is its
 	// own submission, and existing one converge, not fail.
 	for index, bound := range directory_bounds(path) {
 		done := false
-		var completion time.Completion
+		var completion nbio.Completion
 		component := path[:bound]
 		nbio.Storage_Mkdir_At(
 			loop.Storage, &completion, nbio.DIRECTORY_CURRENT, component, 0o755, func(
-				completed *time.Completion,
+				completed *nbio.Completion,
 			) {
 				// Existing component converge because a parent walk must accept the
 				// Path_Exists that mkdirat reports for a directory already there.
@@ -345,7 +345,7 @@ func directory_bounds(path string) (bounds []int) {
 
 // Open path for read through Open_At. Drive loop until descriptor arrive.
 func open_file(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) (file nbio.File, err error) {
 	t.Helper()
 	return open_file_options(t, loop, driver, path, nbio.Open_At_Options{
@@ -355,7 +355,7 @@ func open_file(
 
 // Make or truncate path for write through Open_At.
 func create_file(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) (file nbio.File, err error) {
 	t.Helper()
 	return open_file_options(t, loop, driver, path, nbio.Open_At_Options{
@@ -365,13 +365,13 @@ func create_file(
 
 // Submit one Open_At with caller options and drive loop until it retire.
 func open_file_options(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string, options nbio.Open_At_Options,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string, options nbio.Open_At_Options,
 ) (file nbio.File, err error) {
 	t.Helper()
 	done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Open_At(loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path, options, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		file = nbio.File(completed.Data)
 		err = completed.Error
@@ -392,7 +392,7 @@ const DIRECTORY_PASSES_MAX = 1 << 12
 // List path children by composition of primitives caller now hold: Open_At, repeated
 // Get_Directory_Entries passes until one report none, and Close.
 func read_directory(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) (entries []nbio.Directory_Entry, err error) {
 	t.Helper()
 	directory, open_err := open_file(t, loop, driver, path)
@@ -405,10 +405,10 @@ func read_directory(
 		done := false
 		var pass []nbio.Directory_Entry
 		var pass_err error
-		var completion time.Completion
+		var completion nbio.Completion
 		nbio.Storage_Get_Directory_Entries(
 			loop.Storage, &completion, directory, buffer, pass_storage,
-			func(completed *time.Completion) {
+			func(completed *nbio.Completion) {
 				pass = pass_storage[:completed.Data]
 				pass_err = completed.Error
 				done = true
@@ -428,8 +428,8 @@ func read_directory(
 		entries = append(entries, pass...)
 	}
 	closed := false
-	var close_completion time.Completion
-	nbio.IO_Close(loop, &close_completion, directory, func(_ *time.Completion) {
+	var close_completion nbio.Completion
+	nbio.IO_Close(loop, &close_completion, directory, func(_ *nbio.Completion) {
 		closed = true
 	})
 	testify.True(t,
@@ -441,7 +441,7 @@ func read_directory(
 
 // Read up to len(buffer) bytes from path through loop. Return count.
 func read_file(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string, buffer []byte,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string, buffer []byte,
 ) (count int) {
 	t.Helper()
 	file, open_err := open_file(t, loop, driver, path)
@@ -449,9 +449,9 @@ func read_file(
 		return 0
 	}
 	read_done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &completion, file, buffer, 0, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error, path)
 		count = completed.Data
@@ -465,11 +465,11 @@ func read_file(
 }
 
 // Release descriptor through asynchronous Close of loop.
-func close_file(t *testing.T, loop nbio.IO, driver time.Driver, path string, file nbio.File) {
+func close_file(t *testing.T, loop nbio.IO, driver nbio.Driver, path string, file nbio.File) {
 	t.Helper()
 	close_done := false
-	var completion time.Completion
-	nbio.IO_Close(loop, &completion, file, func(completed *time.Completion) {
+	var completion nbio.Completion
+	nbio.IO_Close(loop, &completion, file, func(completed *nbio.Completion) {
 		testify.No_Error(t, completed.Error, path)
 		close_done = true
 	})
@@ -480,38 +480,38 @@ func close_file(t *testing.T, loop nbio.IO, driver time.Driver, path string, fil
 
 // Make 32-entry test scheduler. Fail at composition root when initialization fail.
 func operating_system_loop(
-	t *testing.T, clock time.Clock,
-) (loop nbio.IO, pump time.Timeline, driver time.Driver) {
+	t *testing.T, host time.Clock,
+) (loop nbio.IO, pump nbio.Timeline, driver nbio.Driver) {
 	t.Helper()
 	memory := &operating_system_test_memory{}
-	loop, pump, driver, err := New_Operating_System_IO(
-		&memory.State, operating_system_memory_view(memory), clock, 32, 0)
+	loop, driver, err := New_Operating_System_IO(
+		&memory.State, operating_system_memory_view(memory), host, 32, 0)
 	if !testify.No_Error(t, err) {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}
+		return nbio.IO{}, nbio.Timeline{}, nbio.Driver{}
 	}
-	return loop, pump, driver
+	return loop, loop.Timeline, driver
 }
 
 // Test_Operating_System_Constructor_Heap_Allocation guards backend ownership before submission.
 func Test_Operating_System_Constructor_Heap_Allocation(t *testing.T) {
 	clock_state := operating_system_clock_state{}
-	clock := time.Clock{
+	host := time.Clock{
 		State:         unsafe.Pointer(&clock_state),
 		Now_Monotonic: operating_system_clock_now_monotonic,
 		Now_Realtime:  operating_system_clock_now_realtime,
 	}
 	memory := operating_system_test_memory{}
 	var loop nbio.IO
-	var driver time.Driver
+	var driver nbio.Driver
 	var construct_err error
 	testify.Zero_Allocation(t, func() {
-		loop, _, driver, construct_err = New_Operating_System_IO(
+		loop, driver, construct_err = New_Operating_System_IO(
 			&memory.State, operating_system_memory_view(&memory),
-			clock, 32, 0,
+			host, 32, 0,
 		)
 		if construct_err == nil {
 			nbio.IO_Deinit(loop)
-			time.Driver_Deinit(driver)
+			nbio.Driver_Deinit(driver)
 		}
 	})
 	testify.No_Error(t, construct_err)
@@ -519,13 +519,13 @@ func Test_Operating_System_Constructor_Heap_Allocation(t *testing.T) {
 
 // Invalid input belongs in allocation contract because validation runs before any kernel state.
 func Test_Operating_System_Constructor_Error_Heap_Allocation(t *testing.T) {
-	clock := new_operating_system_clock()
+	host := new_operating_system_clock()
 	memory := operating_system_test_memory{}
 	var construct_err error
 	testify.Zero_Allocation(t, func() {
-		_, _, _, construct_err = New_Operating_System_IO(
+		_, _, construct_err = New_Operating_System_IO(
 			&memory.State, operating_system_memory_view(&memory),
-			clock, 0, 0,
+			host, 0, 0,
 		)
 	})
 	testify.Error(t, construct_err)
@@ -542,8 +542,8 @@ func Test_Socket_Option_Error_Heap_Allocation(t *testing.T) {
 
 // Public constructors must retire rejected descriptors without allocation.
 func Test_Operating_System_Socket_Error_Heap_Allocation(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	var socket nbio.File
 	var socket_err error
 	t.Run("TCP", func(t *testing.T) {
@@ -565,13 +565,13 @@ func Test_Operating_System_Socket_Error_Heap_Allocation(t *testing.T) {
 		testify.Equal(t, nbio.File(-1), socket)
 	})
 	nbio.IO_Deinit(loop)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_Read_Heap_Allocation guards submission and retirement together.
 func Test_Operating_System_Read_Heap_Allocation(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	path := filepath.Join(t.TempDir(), "allocation-read")
 	write_file(t, loop, driver, path, []byte("data"))
 	file, open_err := open_file(t, loop, driver, path)
@@ -586,7 +586,7 @@ func Test_Operating_System_Read_Heap_Allocation(t *testing.T) {
 			loop.Storage, &harness.Completion, file, harness.Buffer[:], 0,
 			REAL_DEADLINE, operating_system_allocation_callback,
 		)
-		harness.Driver_Error = time.Driver_Run(driver)
+		harness.Driver_Error = nbio.Driver_Run(driver)
 	})
 	testify.No_Error(t, harness.Driver_Error)
 	testify.True(t, harness.Called)
@@ -594,14 +594,14 @@ func Test_Operating_System_Read_Heap_Allocation(t *testing.T) {
 }
 
 type operating_system_allocation_harness struct {
-	Driver       time.Driver
-	Completion   time.Completion
+	Driver       nbio.Driver
+	Completion   nbio.Completion
 	Buffer       [nbio.IPV4_ADDRESS_BYTES]byte
 	Called       bool
 	Driver_Error error
 }
 
-func operating_system_allocation_callback(completion *time.Completion) {
+func operating_system_allocation_callback(completion *nbio.Completion) {
 	harness := (*operating_system_allocation_harness)(completion.Backend)
 	harness.Called = true
 }
@@ -636,8 +636,8 @@ func operating_system_read_link_allocation_case(t *testing.T) {
 	root := t.TempDir()
 	link := filepath.Join(root, "link")
 	testify.No_Error(t, syscall.Symlink("target", link))
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	var target [nbio.SIM_PATH_TEXT_BYTES_MAXIMUM]byte
 	count := 0
 	var read_err error
@@ -647,7 +647,7 @@ func operating_system_read_link_allocation_case(t *testing.T) {
 	testify.No_Error(t, read_err)
 	testify.Equal(t, "target", string(target[:count]))
 	nbio.IO_Deinit(loop)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Rejected paths retire through same completion queue without error construction.
@@ -680,9 +680,9 @@ const PATH_ERROR_ALLOCATION_STATUS path_error_allocation_operation = 2
 
 type path_error_allocation_harness struct {
 	Loop         nbio.IO
-	Driver       time.Driver
+	Driver       nbio.Driver
 	Operation    path_error_allocation_operation
-	Completion   time.Completion
+	Completion   nbio.Completion
 	Error        error
 	Driver_Error error
 	Called       bool
@@ -690,8 +690,8 @@ type path_error_allocation_harness struct {
 
 func path_error_allocation_case(t *testing.T, operation path_error_allocation_operation) {
 	t.Helper()
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	harness := path_error_allocation_harness{
 		Loop: loop, Driver: driver, Operation: operation,
 	}
@@ -705,7 +705,7 @@ func path_error_allocation_case(t *testing.T, operation path_error_allocation_op
 		testify.True(t, harness.Called)
 	}
 	nbio.IO_Deinit(loop)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 func path_error_allocation_run(harness *path_error_allocation_harness) {
@@ -719,7 +719,7 @@ func path_error_allocation_run(harness *path_error_allocation_harness) {
 			nbio.Open_At_Options{Access: nbio.OPEN_READ_ONLY},
 			path_error_allocation_callback,
 		)
-		harness.Driver_Error = time.Driver_Run(harness.Driver)
+		harness.Driver_Error = nbio.Driver_Run(harness.Driver)
 		return
 	}
 	if harness.Operation == PATH_ERROR_ALLOCATION_MKDIR_AT {
@@ -731,13 +731,13 @@ func path_error_allocation_run(harness *path_error_allocation_harness) {
 			0o700,
 			path_error_allocation_callback,
 		)
-		harness.Driver_Error = time.Driver_Run(harness.Driver)
+		harness.Driver_Error = nbio.Driver_Run(harness.Driver)
 		return
 	}
 	_, harness.Error = nbio.Storage_Status(harness.Loop.Storage, "\x00")
 }
 
-func path_error_allocation_callback(completion *time.Completion) {
+func path_error_allocation_callback(completion *nbio.Completion) {
 	harness := (*path_error_allocation_harness)(completion.Backend)
 	harness.Error = completion.Error
 	harness.Called = true
@@ -777,9 +777,9 @@ const OPERATING_SYSTEM_STORAGE_ALLOCATION_WRITE_EMPTY storage_allocation_operati
 
 type operating_system_storage_allocation_harness struct {
 	Loop         nbio.IO
-	Driver       time.Driver
+	Driver       nbio.Driver
 	Operation    storage_allocation_operation
-	Completion   time.Completion
+	Completion   nbio.Completion
 	File         nbio.File
 	Files        [OPERATING_SYSTEM_ALLOCATION_FILE_COUNT]nbio.File
 	Paths        [OPERATING_SYSTEM_ALLOCATION_FILE_COUNT]string
@@ -795,8 +795,8 @@ func operating_system_storage_allocation_case(
 	t *testing.T, operation storage_allocation_operation,
 ) {
 	t.Helper()
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	root := t.TempDir()
 	path := filepath.Join(root, "file")
 	write_file(t, loop, driver, path, []byte("data"))
@@ -934,12 +934,12 @@ func operating_system_storage_allocation_run(
 		)
 	}
 	if harness.Operation != OPERATING_SYSTEM_STORAGE_ALLOCATION_STATUS {
-		harness.Driver_Error = time.Driver_Run(harness.Driver)
+		harness.Driver_Error = nbio.Driver_Run(harness.Driver)
 	}
 	harness.Run++
 }
 
-func operating_system_storage_allocation_callback(completion *time.Completion) {
+func operating_system_storage_allocation_callback(completion *nbio.Completion) {
 	harness := (*operating_system_storage_allocation_harness)(completion.Backend)
 	harness.Result_Error = completion.Error
 	harness.Data = completion.Data
@@ -964,7 +964,7 @@ func operating_system_storage_allocation_finish(
 		close_file(t, harness.Loop, harness.Driver, path, harness.File)
 	}
 	nbio.IO_Deinit(harness.Loop)
-	time.Driver_Deinit(harness.Driver)
+	nbio.Driver_Deinit(harness.Driver)
 }
 
 // Test_Operating_System_Network_Synchronous_API_Heap_Allocation guards socket control paths.
@@ -1057,7 +1057,7 @@ const OPERATING_SYSTEM_NETWORK_ALLOCATION_RECEIVE_TIMEOUT network_allocation_ope
 
 type operating_system_network_allocation_harness struct {
 	Loop         nbio.IO
-	Driver       time.Driver
+	Driver       nbio.Driver
 	Operation    network_allocation_operation
 	Files        [OPERATING_SYSTEM_ALLOCATION_NETWORK_FILES]nbio.File
 	Count        int
@@ -1066,7 +1066,7 @@ type operating_system_network_allocation_harness struct {
 	Error        error
 	Result_Error error
 	Data         int
-	Completion   time.Completion
+	Completion   nbio.Completion
 	Buffer       [OPERATING_SYSTEM_ALLOCATION_NETWORK_BUFFER_BYTES]byte
 	Called       bool
 	Done         func() (finished bool)
@@ -1076,8 +1076,8 @@ func operating_system_network_allocation_case(
 	t *testing.T, operation network_allocation_operation,
 ) {
 	t.Helper()
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	address := nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0)
 	harness := operating_system_network_allocation_harness{
 		Loop: loop, Driver: driver, Operation: operation, Address: address,
@@ -1097,7 +1097,7 @@ func operating_system_network_allocation_case(
 		self_exec_close(loop, driver, harness.Files[index])
 	}
 	nbio.IO_Deinit(loop)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 func operating_system_network_allocation_assert(
@@ -1111,7 +1111,7 @@ func operating_system_network_allocation_assert(
 	switch harness.Operation {
 	case OPERATING_SYSTEM_NETWORK_ALLOCATION_ACCEPT_TIMEOUT,
 		OPERATING_SYSTEM_NETWORK_ALLOCATION_RECEIVE_TIMEOUT:
-		testify.Error_Is(t, harness.Result_Error, time.Deadline_Exceeded)
+		testify.Error_Is(t, harness.Result_Error, nbio.Deadline_Exceeded)
 	default:
 		testify.No_Error(t, harness.Result_Error)
 	}
@@ -1211,10 +1211,10 @@ func operating_system_network_allocation_queue_connections(
 		harness.Files[harness.Count] = client
 		harness.Count++
 		connected := false
-		var completion time.Completion
+		var completion nbio.Completion
 		nbio.Network_Connect(
 			harness.Loop.Network, &completion, client, harness.Address, REAL_DEADLINE,
-			func(completed *time.Completion) {
+			func(completed *nbio.Completion) {
 				testify.No_Error(t, completed.Error)
 				connected = true
 			},
@@ -1230,10 +1230,10 @@ func operating_system_network_allocation_seed_receive(
 ) {
 	t.Helper()
 	sent := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Send(
 		harness.Loop.Network, &completion, connected, []byte("12345678"), REAL_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			sent = true
 		},
@@ -1342,7 +1342,7 @@ func operating_system_network_allocation_asynchronous_run(
 			harness.Loop.Network, &harness.Completion, harness.Files[0], REAL_DEADLINE,
 			operating_system_network_allocation_callback,
 		)
-		harness.Called, harness.Error = time.Driver_Run_Until(
+		harness.Called, harness.Error = nbio.Driver_Run_Until(
 			harness.Driver, REAL_DEADLINE, harness.Done,
 		)
 	case OPERATING_SYSTEM_NETWORK_ALLOCATION_CONNECT:
@@ -1352,7 +1352,7 @@ func operating_system_network_allocation_asynchronous_run(
 			harness.Address, REAL_DEADLINE,
 			operating_system_network_allocation_callback,
 		)
-		harness.Called, harness.Error = time.Driver_Run_Until(
+		harness.Called, harness.Error = nbio.Driver_Run_Until(
 			harness.Driver, REAL_DEADLINE, harness.Done,
 		)
 	case OPERATING_SYSTEM_NETWORK_ALLOCATION_RECEIVE:
@@ -1362,7 +1362,7 @@ func operating_system_network_allocation_asynchronous_run(
 			harness.Buffer[:nbio.IPV4_ADDRESS_BYTES],
 			REAL_DEADLINE, operating_system_network_allocation_callback,
 		)
-		harness.Called, harness.Error = time.Driver_Run_Until(
+		harness.Called, harness.Error = nbio.Driver_Run_Until(
 			harness.Driver, REAL_DEADLINE, harness.Done,
 		)
 	case OPERATING_SYSTEM_NETWORK_ALLOCATION_SEND:
@@ -1372,7 +1372,7 @@ func operating_system_network_allocation_asynchronous_run(
 			harness.Buffer[:nbio.IPV4_ADDRESS_BYTES],
 			REAL_DEADLINE, operating_system_network_allocation_callback,
 		)
-		harness.Called, harness.Error = time.Driver_Run_Until(
+		harness.Called, harness.Error = nbio.Driver_Run_Until(
 			harness.Driver, REAL_DEADLINE, harness.Done,
 		)
 	case OPERATING_SYSTEM_NETWORK_ALLOCATION_ACCEPT_TIMEOUT:
@@ -1381,7 +1381,7 @@ func operating_system_network_allocation_asynchronous_run(
 			harness.Loop.Network, &harness.Completion, harness.Files[0],
 			REAL_OPERATION_DEADLINE, operating_system_network_allocation_callback,
 		)
-		harness.Called, harness.Error = time.Driver_Run_Until(
+		harness.Called, harness.Error = nbio.Driver_Run_Until(
 			harness.Driver, REAL_DEADLINE, harness.Done,
 		)
 	case OPERATING_SYSTEM_NETWORK_ALLOCATION_RECEIVE_TIMEOUT:
@@ -1391,13 +1391,13 @@ func operating_system_network_allocation_asynchronous_run(
 			harness.Buffer[:nbio.IPV4_ADDRESS_BYTES], REAL_OPERATION_DEADLINE,
 			operating_system_network_allocation_callback,
 		)
-		harness.Called, harness.Error = time.Driver_Run_Until(
+		harness.Called, harness.Error = nbio.Driver_Run_Until(
 			harness.Driver, REAL_DEADLINE, harness.Done,
 		)
 	}
 }
 
-func operating_system_network_allocation_callback(completion *time.Completion) {
+func operating_system_network_allocation_callback(completion *nbio.Completion) {
 	harness := (*operating_system_network_allocation_harness)(completion.Backend)
 	harness.Result_Error = completion.Error
 	harness.Data = completion.Data
@@ -1410,10 +1410,10 @@ func operating_system_network_allocation_callback(completion *time.Completion) {
 
 // Drive real test predicate. Fail at once on backend scheduler error.
 func operating_system_run_until(
-	t *testing.T, driver time.Driver, done func() (finished bool),
+	t *testing.T, driver nbio.Driver, done func() (finished bool),
 ) (completed bool) {
 	t.Helper()
-	completed, err := time.Driver_Run_Until(driver, REAL_DEADLINE, done)
+	completed, err := nbio.Driver_Run_Until(driver, REAL_DEADLINE, done)
 	if !testify.No_Error(t, err) {
 		return false
 	}
@@ -1422,15 +1422,15 @@ func operating_system_run_until(
 
 // Every entry rejects an absent bound before it can reach a platform scheduler.
 func Test_Operating_System_IO_Network_Rejects_Disabled_Timeouts(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	for _, operation := range []string{"accept", "connect", "receive", "send"} {
 		for _, timeout := range []time.Duration{0, -time.NANOSECOND} {
 			operating_system_network_timeout_rejected(
 				t, loop.Network, operation, timeout)
 		}
 	}
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Panic is synchronous because an invalid bound must not leave a kernel request to drain.
@@ -1439,25 +1439,25 @@ func operating_system_network_timeout_rejected(
 ) {
 	t.Helper()
 	testify.Panics(t, func() {
-		var completion time.Completion
+		var completion nbio.Completion
 		if operation == "accept" {
 			nbio.Network_Accept(network, &completion, nbio.File(-1), timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		if operation == "connect" {
 			nbio.Network_Connect(
 				network, &completion, nbio.File(-1), nbio.Address{}, timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		if operation == "receive" {
 			nbio.Network_Receive(network, &completion, nbio.File(-1), nil, timeout,
-				func(_ *time.Completion) {})
+				func(_ *nbio.Completion) {})
 			return
 		}
 		nbio.Network_Send(network, &completion, nbio.File(-1), nil, timeout,
-			func(_ *time.Completion) {})
+			func(_ *nbio.Completion) {})
 	}, operation, timeout)
 }
 
@@ -1502,7 +1502,7 @@ func test_open_socket(loop nbio.IO) (socket nbio.File, err error) {
 
 // Open and bind one caller-owned IPv4 TCP listener.
 func test_listen(
-	loop nbio.IO, driver time.Driver, host string, port int,
+	loop nbio.IO, driver nbio.Driver, host string, port int,
 ) (listener nbio.File, err error) {
 	address, address_err := nbio.Address_Parse(host, port)
 	if address_err != nil {
@@ -1527,8 +1527,8 @@ func test_listen(
 
 // Convert IP literal for explicit-address Connect surface.
 func test_connect(
-	t *testing.T, loop nbio.IO, completion *time.Completion, socket nbio.File, host string,
-	port int, callback time.Callback,
+	t *testing.T, loop nbio.IO, completion *nbio.Completion, socket nbio.File, host string,
+	port int, callback nbio.Callback,
 ) (submitted bool) {
 	t.Helper()
 	address, err := nbio.Address_Parse(host, port)
@@ -1542,8 +1542,8 @@ func test_connect(
 // Test_Operating_System_IO_Read write temp file and read it back through real backend. It
 // confirm read run in loop and report bytes.
 func Test_Operating_System_IO_Read(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	path := filepath.Join(t.TempDir(), "read")
 	write_file(t, loop, driver, path, []byte("hello"))
 
@@ -1554,9 +1554,9 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 	buffer := make([]byte, 5)
 	count := -1
 	read_done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &completion, file, buffer, 0, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error)
 		count = completed.Data
@@ -1574,37 +1574,37 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 // pending fail loud, not block forever: predicate no event can flip is deadlock, thus pump panic
 // instead of hang of caller.
 func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
-	clock := new_operating_system_clock()
-	_, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	_, _, driver := operating_system_loop(t, host)
 	testify.Panics(t, func() {
-		time.Driver_Run_Until(driver, -1*time.NANOSECOND,
+		nbio.Driver_Run_Until(driver, -1*time.NANOSECOND,
 			func() (finished bool) { return false })
 	})
 }
 
 // Test_Operating_System_IO_Timeout verify timeout fire once real time pass its deadline.
 func Test_Operating_System_IO_Timeout(t *testing.T) {
-	clock := new_operating_system_clock()
-	_, pump, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	_, pump, driver := operating_system_loop(t, host)
 	fired := false
-	var completion time.Completion
-	time.Timeline_Timeout(pump, &completion, time.MILLISECOND, func(_ *time.Completion) {
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(pump, &completion, time.MILLISECOND, func(_ *nbio.Completion) {
 		fired = true
 	})
-	time.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return fired })
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return fired })
 	testify.True(t, fired)
 }
 
 // Long-lived completion must release callback closure after real backend retire operation.
 func Test_Operating_System_IO_Callback_Released(t *testing.T) {
-	clock := new_operating_system_clock()
-	_, pump, driver := operating_system_loop(t, clock)
-	var completion time.Completion
+	host := new_operating_system_clock()
+	_, pump, driver := operating_system_loop(t, host)
+	var completion nbio.Completion
 	fired := false
-	time.Timeline_Timeout(pump, &completion, time.MILLISECOND, func(_ *time.Completion) {
+	nbio.Timeline_Timeout(pump, &completion, time.MILLISECOND, func(_ *nbio.Completion) {
 		fired = true
 	})
-	completed, drive_err := time.Driver_Run_Until(driver,
+	completed, drive_err := nbio.Driver_Run_Until(driver,
 		REAL_DEADLINE, func() (finished bool) { return fired },
 	)
 	testify.No_Error(t, drive_err)
@@ -1615,8 +1615,8 @@ func Test_Operating_System_IO_Callback_Released(t *testing.T) {
 // Test_Operating_System_IO_Open_Socket_Profile verify outbound socket is non-blocking,
 // close-on-exec, buffered for client workload, keepalive-enabled, and caller-owned in Raw_Open.
 func Test_Operating_System_IO_Open_Socket_Profile(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	socket, open_err := test_open_socket(loop)
 	if !testify.No_Error(t, open_err) {
 		return
@@ -1645,8 +1645,8 @@ func Test_Operating_System_IO_Open_Socket_Profile(t *testing.T) {
 // A public UDP constructor check prevents the typed transport split from existing only below the
 // composition root.
 func Test_Operating_System_IO_Open_UDP_Profile(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	socket, open_err := nbio.Network_Socket_UDP(
 		loop.Network, nbio.FAMILY_IPV4, test_udp_options(),
 	)
@@ -1665,8 +1665,8 @@ func Test_Operating_System_IO_Open_UDP_Profile(t *testing.T) {
 // Test_Operating_System_IO_Bind_Reuse_Address verify Bind enables address reuse before it gives
 // the socket its local address.
 func Test_Operating_System_IO_Bind_Reuse_Address(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	socket, open_err := nbio.Network_Socket_TCP(
 		loop.Network, nbio.FAMILY_IPV4, test_tcp_options(),
 	)
@@ -1689,26 +1689,26 @@ func Test_Operating_System_IO_Bind_Reuse_Address(t *testing.T) {
 // Completion back one operation at a time, and real backend must fail as loud as sim, not
 // silently double-arm it.
 func Test_Operating_System_IO_Reuse(t *testing.T) {
-	clock := new_operating_system_clock()
-	_, pump, _ := operating_system_loop(t, clock)
-	var completion time.Completion
-	time.Timeline_Timeout(pump, &completion, time.SECOND, func(_ *time.Completion) {})
+	host := new_operating_system_clock()
+	_, pump, _ := operating_system_loop(t, host)
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(pump, &completion, time.SECOND, func(_ *nbio.Completion) {})
 	testify.Panics(t, func() {
-		time.Timeline_Timeout(pump, &completion, time.SECOND, func(_ *time.Completion) {})
+		nbio.Timeline_Timeout(pump, &completion, time.SECOND, func(_ *nbio.Completion) {})
 	})
 }
 
 // Test_Operating_System_IO_Reentrancy verify drive of real loop from inside completion callback
 // panic, thus re-entrant Run* fail loud, not corrupt it.
 func Test_Operating_System_IO_Reentrancy(t *testing.T) {
-	clock := new_operating_system_clock()
-	_, pump, driver := operating_system_loop(t, clock)
-	var completion time.Completion
-	time.Timeline_Timeout(pump, &completion, time.MILLISECOND, func(_ *time.Completion) {
-		time.Driver_Run(driver)
+	host := new_operating_system_clock()
+	_, pump, driver := operating_system_loop(t, host)
+	var completion nbio.Completion
+	nbio.Timeline_Timeout(pump, &completion, time.MILLISECOND, func(_ *nbio.Completion) {
+		nbio.Driver_Run(driver)
 	})
 	testify.Panics(t, func() {
-		time.Driver_Run_For(driver, 50*time.MILLISECOND)
+		nbio.Driver_Run_For(driver, 50*time.MILLISECOND)
 	})
 }
 
@@ -1717,8 +1717,8 @@ func Test_Operating_System_IO_Reentrancy(t *testing.T) {
 // single event loop.
 func Test_Operating_System_IO_Socket(t *testing.T) {
 	port := free_port(t)
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
@@ -1726,9 +1726,9 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 	}
 
 	accepted := nbio.File(-1)
-	var accept_completion time.Completion
+	var accept_completion nbio.Completion
 	nbio.Network_Accept(loop.Network, &accept_completion, listener, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error)
 		accepted = nbio.File(completed.Data)
@@ -1739,9 +1739,9 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		return
 	}
 	connect_done := false
-	var connect_completion time.Completion
+	var connect_completion nbio.Completion
 	if !test_connect(t, loop, &connect_completion, connected, "127.0.0.1", port,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			connect_done = true
 		},
@@ -1749,9 +1749,9 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		return
 	}
 
-	time.Driver_Run_Until(driver, REAL_DEADLINE,
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE,
 		func() (finished bool) { return accepted > 0 })
-	time.Driver_Run_Until(driver, REAL_DEADLINE,
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE,
 		func() (finished bool) { return connect_done })
 	testify.Positive(t, accepted)
 	testify.Positive(t, connected)
@@ -1768,8 +1768,8 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 // Test_Operating_System_IO_Accept_Deadline prove listener with no inbound connection retire its
 // accept exactly once, after which listener and backend release safe.
 func Test_Operating_System_IO_Accept_Deadline(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", 0)
 	if !testify.No_Error(t, listen_err) {
 		return
@@ -1777,10 +1777,10 @@ func Test_Operating_System_IO_Accept_Deadline(t *testing.T) {
 	callback_count := 0
 	accepted := nbio.File(-1)
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Accept(
 		loop.Network, &completion, listener, REAL_OPERATION_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			callback_count++
 			accepted = nbio.File(completed.Data)
@@ -1790,17 +1790,17 @@ func Test_Operating_System_IO_Accept_Deadline(t *testing.T) {
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	))
 	testify.Equal(t, 1, callback_count)
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
 	testify.Equal(t, nbio.File(-1), accepted)
 	self_exec_close(loop, driver, listener)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // A receive timeout must retire the kernel registration without taking socket ownership.
 func Test_Operating_System_IO_Receive_Timeout_Preserves_Socket(t *testing.T) {
 	port := free_port(t)
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
 		return
@@ -1809,10 +1809,10 @@ func Test_Operating_System_IO_Receive_Timeout_Preserves_Socket(t *testing.T) {
 	callback_count := 0
 	count := -1
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Network_Receive(
 		loop.Network, &completion, accepted, make([]byte, 8), REAL_OPERATION_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			callback_count++
 			count = completed.Data
@@ -1823,20 +1823,20 @@ func Test_Operating_System_IO_Receive_Timeout_Preserves_Socket(t *testing.T) {
 	))
 	testify.Equal(t, 1, callback_count)
 	testify.Zero(t, count)
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
 	socket_fcntl(t, accepted, syscall.F_GETFD)
 	self_exec_close(loop, driver, accepted)
 	self_exec_close(loop, driver, connected)
 	self_exec_close(loop, driver, listener)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Connect_Error_Preserves_Socket verify refusal leave caller-owned
 // descriptor open until caller explicitly close it.
 func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 	port := free_port(t)
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 
 	socket, open_err := test_open_socket(loop)
 	if !testify.No_Error(t, open_err) {
@@ -1844,9 +1844,9 @@ func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 	}
 	called := false
 	var connect_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	if !test_connect(t, loop, &completion, socket, "127.0.0.1", port, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		called = true
 		connect_err = completed.Error
@@ -1854,7 +1854,7 @@ func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 		return
 	}
 
-	time.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return called })
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return called })
 	testify.Error_Is(t, connect_err, nbio.Connection_Refused)
 	testify.True(t, descriptor_open(loop))
 	self_exec_close(loop, driver, socket)
@@ -1867,31 +1867,31 @@ func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 // and never fire (ClickHouse-daemon bug).
 func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 	port := free_port(t)
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
 		return
 	}
 	accepted := nbio.File(-1)
-	var accept_completion time.Completion
+	var accept_completion nbio.Completion
 	nbio.Network_Accept(loop.Network, &accept_completion, listener, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error)
 		accepted = nbio.File(completed.Data)
 	})
 
 	sent := -1
-	var send_completion time.Completion
-	var connect_completion time.Completion
+	var send_completion nbio.Completion
+	var connect_completion nbio.Completion
 	socket, open_err := test_open_socket(loop)
 	if !testify.No_Error(t, open_err) {
 		return
 	}
 	if !test_connect(t, loop, &connect_completion, socket, "127.0.0.1", port, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		if !testify.No_Error(t, completed.Error) {
 			return
@@ -1899,7 +1899,7 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 		// Arm send inside connect completion: same descriptor, same write slot.
 		nbio.Network_Send(
 			loop.Network, &send_completion, socket, []byte("ping"), REAL_DEADLINE, func(
-				completed *time.Completion,
+				completed *nbio.Completion,
 			) {
 				testify.No_Error(t, completed.Error)
 				sent = completed.Data
@@ -1908,22 +1908,22 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 		return
 	}
 
-	time.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return sent >= 0 })
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return sent >= 0 })
 	testify.Equal(t, 4, sent)
 
-	time.Driver_Run_Until(driver, REAL_DEADLINE,
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE,
 		func() (finished bool) { return accepted > 0 })
 	buffer := make([]byte, 16)
 	received := -1
-	var receive_completion time.Completion
+	var receive_completion nbio.Completion
 	nbio.Network_Receive(
 		loop.Network, &receive_completion, accepted, buffer, REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(t, completed.Error)
 			received = completed.Data
 		})
-	time.Driver_Run_Until(driver, REAL_DEADLINE,
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE,
 		func() (finished bool) { return received >= 0 })
 	testify.Equal(t, 4, received)
 	testify.Equal(t, "ping", string(buffer[:4]))
@@ -1933,8 +1933,8 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 // after which later connection still receive readiness normally.
 func Test_Operating_System_IO_Drain_Then_Recycle(t *testing.T) {
 	port := free_port(t)
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
 		return
@@ -1942,34 +1942,34 @@ func Test_Operating_System_IO_Drain_Then_Recycle(t *testing.T) {
 
 	first, first_connected := loopback_pair(t, loop, driver, listener, port)
 	buffer := make([]byte, 16)
-	var receive_completion time.Completion
+	var receive_completion nbio.Completion
 	fired := 0
 	nbio.Network_Receive(loop.Network, &receive_completion, first, buffer, REAL_DEADLINE,
-		func(_ *time.Completion) { fired++ })
+		func(_ *nbio.Completion) { fired++ })
 	testify.No_Error(t, nbio.Network_Shutdown(loop.Network, first, nbio.SHUTDOWN_RECEIVE))
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return fired > 0 }))
 	closed := false
-	var close_completion time.Completion
-	nbio.IO_Close(loop, &close_completion, first, func(_ *time.Completion) { closed = true })
+	var close_completion nbio.Completion
+	nbio.IO_Close(loop, &close_completion, first, func(_ *nbio.Completion) { closed = true })
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return closed }))
 	self_exec_close(loop, driver, first_connected)
 
 	// Later socket may reuse descriptor, and must still deliver readiness.
 	recycled, second := loopback_pair(t, loop, driver, listener, port)
-	var send_completion time.Completion
+	var send_completion nbio.Completion
 	nbio.Network_Send(
 		loop.Network, &send_completion, second, []byte("pong"), REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(t, completed.Error)
 		})
 	received := -1
-	var second_receive time.Completion
+	var second_receive nbio.Completion
 	nbio.Network_Receive(
 		loop.Network, &second_receive, recycled, buffer, REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(t, completed.Error)
 			received = completed.Data
@@ -1985,7 +1985,7 @@ func Test_Operating_System_IO_Drain_Then_Recycle(t *testing.T) {
 // Build one accepted/connected loopback socket pair through loop, for tests that need live
 // server-side socket with client on other end.
 func loopback_pair(
-	t *testing.T, loop nbio.IO, driver time.Driver, listener nbio.File, port int,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, listener nbio.File, port int,
 ) (accepted nbio.File, connected nbio.File) {
 	accepted = nbio.File(-1)
 	connected, open_err := test_open_socket(loop)
@@ -1993,23 +1993,23 @@ func loopback_pair(
 		return nbio.File(-1), nbio.File(-1)
 	}
 	connect_done := false
-	var accept_completion time.Completion
+	var accept_completion nbio.Completion
 	nbio.Network_Accept(loop.Network, &accept_completion, listener, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error)
 		accepted = nbio.File(completed.Data)
 	})
-	var connect_completion time.Completion
+	var connect_completion nbio.Completion
 	if !test_connect(t, loop, &connect_completion, connected, "127.0.0.1", port,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			connect_done = true
 		},
 	) {
 		return nbio.File(-1), nbio.File(-1)
 	}
-	time.Driver_Run_Until(driver, REAL_DEADLINE,
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE,
 		func() (finished bool) { return accepted > 0 && connect_done })
 	testify.Positive(t, accepted)
 	return accepted, connected
@@ -2019,8 +2019,8 @@ func loopback_pair(
 // by submitted receive. Owner must shutdown, drain receive callback, and only then close.
 func Test_Operating_System_IO_Close_With_Armed_Receive(t *testing.T) {
 	port := free_port(t)
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
 		return
@@ -2028,17 +2028,17 @@ func Test_Operating_System_IO_Close_With_Armed_Receive(t *testing.T) {
 	accepted, connected := loopback_pair(t, loop, driver, listener, port)
 
 	received := false
-	var receive_completion time.Completion
+	var receive_completion nbio.Completion
 	nbio.Network_Receive(
 		loop.Network, &receive_completion, accepted, make([]byte, 8), REAL_DEADLINE, func(
-			_ *time.Completion,
+			_ *nbio.Completion,
 		) {
 			received = true
 		})
 
-	var close_completion time.Completion
+	var close_completion nbio.Completion
 	testify.Panics(t, func() {
-		nbio.IO_Close(loop, &close_completion, accepted, func(_ *time.Completion) {})
+		nbio.IO_Close(loop, &close_completion, accepted, func(_ *nbio.Completion) {})
 	})
 	testify.No_Error(t,
 		nbio.Network_Shutdown(loop.Network, accepted, nbio.SHUTDOWN_BOTH))
@@ -2052,8 +2052,8 @@ func Test_Operating_System_IO_Close_With_Armed_Receive(t *testing.T) {
 
 // Test_Operating_System_IO_Open open file through loop and read it back.
 func Test_Operating_System_IO_Open(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	path := filepath.Join(t.TempDir(), "open")
 	write_file(t, loop, driver, path, []byte("hello"))
 
@@ -2064,9 +2064,9 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 	buffer := make([]byte, 5)
 	count := -1
 	read_done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &completion, file, buffer, 0, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error)
 		count = completed.Data
@@ -2082,8 +2082,8 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 
 // Test_Operating_System_IO_Create make file through loop and write to it.
 func Test_Operating_System_IO_Create(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	path := filepath.Join(t.TempDir(), "create")
 	file, create_err := create_file(t, loop, driver, path)
 	if !testify.No_Error(t, create_err) {
@@ -2091,10 +2091,10 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 	}
 	count := -1
 	write_done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Write(
 		loop.Storage, &completion, file, []byte("world"), 0, REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(t, completed.Error)
 			count = completed.Data
@@ -2115,15 +2115,15 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 // and close all reuse caller-owned completions, and keep written bytes.
 func Test_Operating_System_IO_File_Chain(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file-chain")
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	opened := nbio.File(-1)
-	var open_completion time.Completion
+	var open_completion nbio.Completion
 	nbio.Storage_Open_At(
 		loop.Storage, &open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true,
 			Permissions: 0o600,
-		}, func(completed *time.Completion) {
+		}, func(completed *nbio.Completion) {
 			if !testify.No_Error(t, completed.Error) {
 				return
 			}
@@ -2135,10 +2135,10 @@ func Test_Operating_System_IO_File_Chain(t *testing.T) {
 		))
 
 	written := false
-	var write_completion time.Completion
+	var write_completion nbio.Completion
 	nbio.Storage_Write(
 		loop.Storage, &write_completion, opened, []byte("hello"), 10, REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(t, completed.Error)
 			written = completed.Data == 5
@@ -2147,10 +2147,10 @@ func Test_Operating_System_IO_File_Chain(t *testing.T) {
 		operating_system_run_until(t, driver, func() (finished bool) { return written }))
 
 	synced := false
-	var fsync_completion time.Completion
+	var fsync_completion nbio.Completion
 	nbio.Storage_Fsync(
 		loop.Storage, &fsync_completion, opened, REAL_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error)
 			synced = true
 		})
@@ -2159,9 +2159,9 @@ func Test_Operating_System_IO_File_Chain(t *testing.T) {
 
 	buffer := make([]byte, 5)
 	read := false
-	var read_completion time.Completion
+	var read_completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &read_completion, opened, buffer, 10, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		testify.No_Error(t, completed.Error)
 		read = completed.Data == len(buffer)
@@ -2181,15 +2181,15 @@ func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
 	target := filepath.Join(root, "target")
 	link := filepath.Join(root, "link")
 	write_file(t, loop_setup, driver_setup, target, []byte("secret"))
-	time.Driver_Deinit(driver_setup)
+	nbio.Driver_Deinit(driver_setup)
 	// Symbolic link is one filesystem shape io.IO cannot make, thus link itself stay raw call.
 	// That absence is what this test exist to guard against follow of.
 	if !testify.No_Error(t, syscall.Symlink(target, link)) {
 		return
 	}
 
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	link_status, status_err := nbio.Storage_Status(loop.Storage, link)
 	testify.No_Error(t, status_err)
 	testify.True(t, nbio.File_Mode_Is_Symbolic_Link(link_status.Mode))
@@ -2211,7 +2211,7 @@ func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
 func assert_open_at_result(
 	t *testing.T,
 	loop nbio.IO,
-	driver time.Driver,
+	driver nbio.Driver,
 	path string,
 	expected_error error,
 ) {
@@ -2219,12 +2219,12 @@ func assert_open_at_result(
 	opened := nbio.File(-1)
 	completed := false
 	var open_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Open_At(
 		loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_ONLY,
 			Flags:  nbio.OPEN_AT_NO_FOLLOW,
-		}, func(result *time.Completion) {
+		}, func(result *nbio.Completion) {
 			opened = nbio.File(result.Data)
 			open_err = result.Error
 			completed = true
@@ -2246,31 +2246,31 @@ func assert_open_at_result(
 // Test_Operating_System_IO_Event verify Event reattachment contract: one trigger retire one
 // listener on loop thread, after which same completion may arm again.
 func Test_Operating_System_IO_Event(t *testing.T) {
-	clock := new_operating_system_clock()
-	_, pump, driver := operating_system_loop(t, clock)
-	event, open_err := time.Timeline_Open_Event(pump)
+	host := new_operating_system_clock()
+	_, pump, driver := operating_system_loop(t, host)
+	event, open_err := nbio.Timeline_Open_Event(pump)
 	if !testify.No_Error(t, open_err) {
 		return
 	}
 	fired := 0
-	var completion time.Completion
-	callback := func(_ *time.Completion) { fired++ }
-	time.Timeline_Event_Listen(pump, event, &completion, callback)
-	time.Timeline_Event_Trigger(pump, event, &completion)
+	var completion nbio.Completion
+	callback := func(_ *nbio.Completion) { fired++ }
+	nbio.Timeline_Event_Listen(pump, event, &completion, callback)
+	nbio.Timeline_Event_Trigger(pump, event, &completion)
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return fired == 1 }))
-	time.Timeline_Event_Listen(pump, event, &completion, callback)
-	time.Timeline_Event_Trigger(pump, event, &completion)
+	nbio.Timeline_Event_Listen(pump, event, &completion, callback)
+	nbio.Timeline_Event_Trigger(pump, event, &completion)
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return fired == 2 }))
-	time.Timeline_Close_Event(pump, event)
+	nbio.Timeline_Close_Event(pump, event)
 }
 
 // Trigger thread must never read completion metadata while loop rearm writes same storage.
 func Test_Operating_System_IO_Event_Concurrent_Rearm(t *testing.T) {
-	clock := new_operating_system_clock()
-	_, pump, driver := operating_system_loop(t, clock)
-	event, open_err := time.Timeline_Open_Event(pump)
+	host := new_operating_system_clock()
+	_, pump, driver := operating_system_loop(t, host)
+	event, open_err := nbio.Timeline_Open_Event(pump)
 	if !testify.No_Error(t, open_err) {
 		return
 	}
@@ -2278,59 +2278,59 @@ func Test_Operating_System_IO_Event_Concurrent_Rearm(t *testing.T) {
 	fired := &atomic.Int64{}
 	stopped := &atomic.Bool{}
 	workers := &sync.WaitGroup{}
-	var completion time.Completion
-	var callback time.Callback
-	callback = func(_ *time.Completion) {
+	var completion nbio.Completion
+	var callback nbio.Callback
+	callback = func(_ *nbio.Completion) {
 		if fired.Add(1) < FIRES {
-			time.Timeline_Event_Listen(pump, event, &completion, callback)
+			nbio.Timeline_Event_Listen(pump, event, &completion, callback)
 		}
 	}
-	time.Timeline_Event_Listen(pump, event, &completion, callback)
+	nbio.Timeline_Event_Listen(pump, event, &completion, callback)
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
 		for !stopped.Load() {
-			time.Timeline_Event_Trigger(pump, event, &completion)
+			nbio.Timeline_Event_Trigger(pump, event, &completion)
 		}
 	}()
-	completed, drive_err := time.Driver_Run_Until(driver,
+	completed, drive_err := nbio.Driver_Run_Until(driver,
 		REAL_DEADLINE, func() (finished bool) { return fired.Load() == FIRES },
 	)
 	stopped.Store(true)
 	workers.Wait()
 	testify.No_Error(t, drive_err)
 	testify.True(t, completed)
-	time.Timeline_Close_Event(pump, event)
+	nbio.Timeline_Close_Event(pump, event)
 }
 
 // Test_Operating_System_IO_Peer_Address report remote address of accepted loopback connection.
 func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 	port := free_port(t)
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
 		return
 	}
 
 	accepted := nbio.File(-1)
-	var accept_completion time.Completion
+	var accept_completion nbio.Completion
 	nbio.Network_Accept(loop.Network, &accept_completion, listener, REAL_DEADLINE, func(
-		completed *time.Completion,
+		completed *nbio.Completion,
 	) {
 		accepted = nbio.File(completed.Data)
 	})
-	var connect_completion time.Completion
+	var connect_completion nbio.Completion
 	connected, open_err := test_open_socket(loop)
 	if !testify.No_Error(t, open_err) {
 		return
 	}
 	if !test_connect(t, loop, &connect_completion, connected, "127.0.0.1", port,
-		func(_ *time.Completion) {},
+		func(_ *nbio.Completion) {},
 	) {
 		return
 	}
-	time.Driver_Run_Until(driver, REAL_DEADLINE,
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE,
 		func() (finished bool) { return accepted > 0 })
 
 	testify.Positive(t, accepted)
@@ -2344,39 +2344,39 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 // Event/backend while Spawn still own repository-extension completion. Spawn is vehicle because
 // it retire through same off-loop post path Event bridge.
 func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	drained := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "true"}, REAL_DEADLINE, func(
-		_ *time.Completion, _ nbio.Process_Result, _ error,
+		_ *nbio.Completion, _ nbio.Process_Result, _ error,
 	) {
 		drained = true
 	})
 	testify.Panics(t, func() {
-		time.Driver_Deinit(driver)
+		nbio.Driver_Deinit(driver)
 	})
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return drained }))
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Watch_Signal deliver real SIGTERM onto loop.
 func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	got := nbio.SIGNAL_EXPIRED
 	fired := 0
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Watch_Signal(loop, &completion, nbio.SIGNAL_TERMINATE, REAL_DEADLINE, func(
-		_ *time.Completion, signal nbio.Signal, err error,
+		_ *nbio.Completion, signal nbio.Signal, err error,
 	) {
 		testify.No_Error(t, err)
 		fired++
 		got = signal
 	})
 	testify.No_Error(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
-	time.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return fired > 0 })
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return fired > 0 })
 
 	testify.Equal(t, 1, fired)
 	testify.Equal(t, nbio.SIGNAL_TERMINATE, got)
@@ -2385,16 +2385,16 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 // Test_Operating_System_IO_Watch_Signal_Deadline prove signal that never arrive retire extension
 // completion exactly once, and permit backend deinitialization.
 func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	callback_count := 0
 	got := nbio.SIGNAL_EXPIRED
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Watch_Signal(
 		loop,
 		&completion, nbio.SIGNAL_TERMINATE, REAL_OPERATION_DEADLINE, func(
-			_ *time.Completion, signal nbio.Signal, err error,
+			_ *nbio.Completion, signal nbio.Signal, err error,
 		) {
 			callback_count++
 			got = signal
@@ -2404,27 +2404,27 @@ func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	))
 	testify.Equal(t, 1, callback_count)
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
 	testify.Equal(t, nbio.SIGNAL_EXPIRED, got)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn run real commands through loop: success with captured output,
 // and non-zero exit reported without start error.
 func Test_Operating_System_IO_Spawn(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 
 	echo := nbio.Process_Result{}
 	echoed := false
-	var echo_completion time.Completion
+	var echo_completion nbio.Completion
 	nbio.IO_Spawn(
 		loop,
 		&echo_completion,
 		nbio.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}},
 		REAL_DEADLINE,
 		func(
-			_ *time.Completion, result nbio.Process_Result, err error,
+			_ *nbio.Completion, result nbio.Process_Result, err error,
 		) {
 			testify.No_Error(t, err)
 			echo = result
@@ -2438,11 +2438,11 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 
 	fail := nbio.Process_Result{}
 	failed := false
-	var fail_completion time.Completion
+	var fail_completion nbio.Completion
 	nbio.IO_Spawn(loop, &fail_completion, nbio.Process_Request{
 		Path: "/bin/sh", Arguments: []string{"-c", "exit 1"},
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, result nbio.Process_Result, err error,
+		_ *nbio.Completion, result nbio.Process_Result, err error,
 	) {
 		testify.No_Error(t, err)
 		fail = result
@@ -2458,18 +2458,18 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 // backend stream child output to writer as it run, instead of capture of it — affordance long
 // build need — and leave Output empty.
 func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 
 	streamed := nbio.Stream_Memory{Memory: make([]byte, 64)}
 	result := nbio.Process_Result{}
 	done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/echo", Arguments: []string{"hi"},
 		Stdout: nbio.Memory_To_Stream(&streamed),
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned nbio.Process_Result, err error,
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
 		testify.No_Error(t, err)
 		result = spawned
@@ -2486,7 +2486,7 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 // gateway, thus its own tests are where loop file operations belong. Fixture write one short
 // decimal, thus regular file return it whole in single read.
 func spawn_recorded_identifier(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) (identifier int) {
 	t.Helper()
 	file, open_err := open_file(t, loop, driver, path)
@@ -2496,10 +2496,10 @@ func spawn_recorded_identifier(
 	process_buffer := make([]byte, PROCESS_IDENTIFIER_BYTES)
 	process_count := 0
 	read_done := false
-	var read_completion time.Completion
+	var read_completion nbio.Completion
 	nbio.Storage_Read(
 		loop.Storage, &read_completion, file, process_buffer, 0, REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(t, completed.Error)
 			process_count = completed.Data
@@ -2508,8 +2508,8 @@ func spawn_recorded_identifier(
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return read_done }))
 	close_done := false
-	var close_completion time.Completion
-	nbio.IO_Close(loop, &close_completion, file, func(completed *time.Completion) {
+	var close_completion nbio.Completion
+	nbio.IO_Close(loop, &close_completion, file, func(completed *nbio.Completion) {
 		testify.No_Error(t, completed.Error)
 		close_done = true
 	})
@@ -2523,8 +2523,8 @@ func spawn_recorded_identifier(
 // Test_Operating_System_IO_Spawn_Deadline prove timeout kill whole subprocess group, keep output
 // captured before expiry, and deliver one terminal callback.
 func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	process_path := filepath.Join(t.TempDir(), "process")
 	request := nbio.Process_Request{
 		Path: "/bin/sh",
@@ -2536,9 +2536,9 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 	callback_count := 0
 	result := nbio.Process_Result{}
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, request, 100*time.MILLISECOND, func(
-		_ *time.Completion, spawned nbio.Process_Result, err error,
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2548,30 +2548,30 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	))
 	testify.Equal(t, 1, callback_count)
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
 	testify.Equal(t, "partial", string(result.Output))
 	process_identifier := spawn_recorded_identifier(t, loop, driver, process_path)
 	group_exited, group_err := process_group_wait_for_exit(driver, process_identifier)
 	testify.No_Error(t, group_err, process_identifier)
 	testify.True(t, group_exited, process_identifier)
-	time.Driver_Run_For(driver, 2*REAL_OPERATION_DEADLINE)
+	nbio.Driver_Run_For(driver, 2*REAL_OPERATION_DEADLINE)
 	testify.Equal(t, 1, callback_count)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn_Reaps_After_Deadline verify deadline path still reap.
 // Completion retire early on Deadline_Exceeded, thus exit event arrive for child nobody wait on,
 // and only own tracking of backend keep reap on that path.
 func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	callback_count := 0
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/sleep", Arguments: []string{"30"},
 	}, 50*time.MILLISECOND, func(
-		_ *time.Completion, _ nbio.Process_Result, err error,
+		_ *nbio.Completion, _ nbio.Process_Result, err error,
 	) {
 		callback_count++
 		operation_err = err
@@ -2579,10 +2579,10 @@ func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
 	testify.True(t, operating_system_run_until(
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	))
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
 	// Deinit assert spawn table is empty, thus missed reap panic here, not leak one
 	// process-table slot for every timed-out child.
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain verify pipe-cleanup bound start when
@@ -2590,19 +2590,19 @@ func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
 // holding standard output must retire about one second later, not wait out whole deadline. This
 // is bound exec.Cmd.WaitDelay supplied before.
 func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	const SPAWN_DEADLINE = 4 * time.SECOND
-	started := time.Clock_Now_Monotonic(clock)
+	started := time.Clock_Now_Monotonic(host)
 	callback_count := 0
 	result := nbio.Process_Result{}
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path:      "/bin/sh",
 		Arguments: []string{"-c", "printf quick; sleep 30 & exit 0"},
 	}, SPAWN_DEADLINE, func(
-		_ *time.Completion, spawned nbio.Process_Result, err error,
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2611,34 +2611,34 @@ func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
 	testify.True(t, operating_system_run_until(
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	))
-	elapsed := time.Duration(int64(time.Clock_Now_Monotonic(clock)) - int64(started))
+	elapsed := time.Duration(int64(time.Clock_Now_Monotonic(host)) - int64(started))
 	testify.True(t, elapsed < SPAWN_DEADLINE, elapsed)
 	// Child exited clean, thus its code survive. Output is incomplete because drain was cut
 	// short, and Deadline_Exceeded is how caller learn that.
 	testify.Zero(t, result.Exit)
 	testify.Equal(t, "quick", string(result.Output))
-	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
-	time.Driver_Deinit(driver)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn_Concurrent verify two children in flight at once keep their
 // pipes separate. Pipe end that leak into fork of other child would hold standard input of that
 // child open, thus this fail by deadlock, not by wrong result.
 func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	const SPAWNS_COUNT = 4
 	finished := 0
 	outputs := make([]string, SPAWNS_COUNT)
-	completions := make([]*time.Completion, SPAWNS_COUNT)
+	completions := make([]*nbio.Completion, SPAWNS_COUNT)
 	for index := 0; index < SPAWNS_COUNT; index++ {
 		position := index
-		completions[position] = &time.Completion{}
+		completions[position] = &nbio.Completion{}
 		nbio.IO_Spawn(loop, completions[position], nbio.Process_Request{
 			Path:  "/bin/cat",
 			Input: []byte(test_decimal_text(position)),
 		}, REAL_DEADLINE, func(
-			_ *time.Completion, spawned nbio.Process_Result, err error,
+			_ *nbio.Completion, spawned nbio.Process_Result, err error,
 		) {
 			testify.No_Error(t, err, position)
 			outputs[position] = string(spawned.Output)
@@ -2652,22 +2652,22 @@ func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 		want := test_decimal_text(index)
 		testify.Equal(t, want, outputs[index], index)
 	}
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn_Feeds_Input verify Process_Request.Input reach child standard
 // input, and write end close, thus child observe end-of-file, not wait for more.
 func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	callback_count := 0
 	result := nbio.Process_Result{}
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/cat", Input: []byte("fed through stdin"),
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned nbio.Process_Result, err error,
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2678,27 +2678,27 @@ func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
 	))
 	testify.No_Error(t, operation_err)
 	testify.Equal(t, "fed through stdin", string(result.Output))
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn_Drains_Full_Pipe verify output larger than one pipe buffer
 // still complete. Child that fill pipe block until loop read it, thus this fail by deadlock when
 // reads are not armed for whole life of child.
 func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	const LINES = 20000
 	callback_count := 0
 	result := nbio.Process_Result{}
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/sh",
 		Arguments: []string{
 			"-c", "i=0; while [ $i -lt 20000 ]; do echo line; i=$((i+1)); done",
 		},
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned nbio.Process_Result, err error,
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -2709,25 +2709,25 @@ func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
 	))
 	testify.No_Error(t, operation_err)
 	testify.Count(t, result.Output, LINES*len("line\n"))
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn_Resolves_Path verify bare command name still resolve through
 // PATH. exec.Command supplied this before, and syscall.StartProcess does not.
 func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	callback_count := 0
 	result := nbio.Process_Result{}
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(
 		loop,
 		&completion,
 		nbio.Process_Request{Path: "echo", Arguments: []string{"resolved"}},
 		REAL_DEADLINE,
 		func(
-			_ *time.Completion, spawned nbio.Process_Result, err error,
+			_ *nbio.Completion, spawned nbio.Process_Result, err error,
 		) {
 			callback_count++
 			result = spawned
@@ -2738,20 +2738,20 @@ func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
 	))
 	testify.No_Error(t, operation_err)
 	testify.Equal(t, "resolved", test_trimmed_text(result.Output))
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Spawn_Reports_Missing_Command verify unresolvable command name fail
 // spawn, not start anything.
 func Test_Operating_System_IO_Spawn_Reports_Missing_Command(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	callback_count := 0
 	var operation_err error
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "no-such-command-anywhere"},
 		REAL_DEADLINE, func(
-			_ *time.Completion, _ nbio.Process_Result, err error,
+			_ *nbio.Completion, _ nbio.Process_Result, err error,
 		) {
 			callback_count++
 			operation_err = err
@@ -2760,12 +2760,12 @@ func Test_Operating_System_IO_Spawn_Reports_Missing_Command(t *testing.T) {
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	))
 	testify.Error(t, operation_err)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Wait for host init to reap killed grandchildren, without accept of live bounded process.
 func process_group_wait_for_exit(
-	driver time.Driver, process_identifier int,
+	driver nbio.Driver, process_identifier int,
 ) (exited bool, err error) {
 	for attempt_index := 0; attempt_index < 80; attempt_index++ {
 		kill_err := syscall.Kill(-process_identifier, 0)
@@ -2775,7 +2775,7 @@ func process_group_wait_for_exit(
 		if kill_err != nil {
 			return false, kill_err
 		}
-		drive_err := time.Driver_Run_For(driver, REAL_OPERATION_DEADLINE)
+		drive_err := nbio.Driver_Run_For(driver, REAL_OPERATION_DEADLINE)
 		if drive_err != nil {
 			return false, drive_err
 		}
@@ -2786,8 +2786,8 @@ func process_group_wait_for_exit(
 // Test_Operating_System_IO_Make_Directory cover what converging mkdir can hide: repeat call,
 // relative path, trailing slash, and final component that already exist as file.
 func Test_Operating_System_IO_Make_Directory(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 	root := t.TempDir()
 
 	nested := filepath.Join(root, "one", "two", "three")
@@ -2818,15 +2818,15 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 	testify.No_Error(t, make_directory(t, loop, driver, occupied))
 	status, _ := nbio.Storage_Status(loop.Storage, occupied)
 	testify.False(t, nbio.File_Mode_Is_Directory(status.Mode))
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 // Test_Operating_System_IO_Directory exercise filesystem-traversal operations on real temp tree:
 // Make_Directory build nested path, into which fixture file is seeded, and Status and
 // Read_Directory then report tree shape, absent path included.
 func Test_Operating_System_IO_Directory(t *testing.T) {
-	clock := new_operating_system_clock()
-	loop, _, driver := operating_system_loop(t, clock)
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
 
 	root := t.TempDir()
 	nested := filepath.Join(root, "a", "b")
@@ -2865,33 +2865,33 @@ func Test_Operating_System_IO_Directory(t *testing.T) {
 type loopback_roundtrip_input struct {
 	Test      *testing.T
 	Timeline  nbio.IO
-	Driver    time.Driver
+	Driver    nbio.Driver
 	Connected nbio.File
 	Accepted  nbio.File
 }
 
 func loopback_assert_roundtrip(input *loopback_roundtrip_input) {
 	input.Test.Helper()
-	var send_completion time.Completion
+	var send_completion nbio.Completion
 	nbio.Network_Send(
 		input.Timeline.Network, &send_completion, input.Connected, []byte("ping"),
 		REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(input.Test, completed.Error)
 		})
 	buffer := make([]byte, 16)
 	received := -1
-	var receive_completion time.Completion
+	var receive_completion nbio.Completion
 	nbio.Network_Receive(
 		input.Timeline.Network, &receive_completion, input.Accepted, buffer,
 		REAL_DEADLINE, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(input.Test, completed.Error)
 			received = completed.Data
 		})
-	time.Driver_Run_Until(input.Driver, REAL_DEADLINE,
+	nbio.Driver_Run_Until(input.Driver, REAL_DEADLINE,
 		func() (finished bool) { return received >= 0 })
 	testify.Equal(input.Test, 4, received)
 	testify.Equal(input.Test, "ping", string(buffer[:4]))
@@ -2918,9 +2918,9 @@ func free_port(t *testing.T) (port int) {
 }
 
 // Close socket asynchronously and drive its completion.
-func self_exec_close(loop nbio.IO, driver time.Driver, socket nbio.File) {
+func self_exec_close(loop nbio.IO, driver nbio.Driver, socket nbio.File) {
 	closed := false
-	var completion time.Completion
-	nbio.IO_Close(loop, &completion, socket, func(_ *time.Completion) { closed = true })
-	time.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return closed })
+	var completion nbio.Completion
+	nbio.IO_Close(loop, &completion, socket, func(_ *nbio.Completion) { closed = true })
+	nbio.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return closed })
 }

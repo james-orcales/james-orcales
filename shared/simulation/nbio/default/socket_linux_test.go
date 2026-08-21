@@ -106,47 +106,47 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	t.Helper()
 	clock := new_operating_system_clock()
 	memory := &operating_system_test_memory{}
-	loop, _, driver, _, loop_err := New_Operating_System_IO(
+	loop, driver, loop_err := New_Operating_System_IO(
 		&memory.State, operating_system_memory_view(memory),
-		clock, 32, 0, operating_system_ambient())
+		clock, 32, 0)
 	if !testify.No_Error(t, loop_err) {
 		return 0
 	}
 	file := nbio.File(-1)
 	open_done := false
-	var open_completion time.Completion
+	var open_completion nbio.Completion
 	nbio.Storage_Open_At(
 		loop.Storage, &open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_ONLY,
 		}, func(
-			completed *time.Completion,
+			completed *nbio.Completion,
 		) {
 			testify.No_Error(t, completed.Error, path)
 			file = nbio.File(completed.Data)
 			open_done = true
 		})
-	time.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
+	nbio.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
 		func() (finished bool) { return open_done })
 	read_done := false
-	var read_completion time.Completion
+	var read_completion nbio.Completion
 	nbio.Storage_Read(loop.Storage, &read_completion, file, content, 0, SYSCTL_READ_DEADLINE,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error, path)
 			count = completed.Data
 			read_done = true
 		})
-	time.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
+	nbio.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
 		func() (finished bool) { return read_done })
 	testify.True(t, read_done, path)
 	close_done := false
-	var close_completion time.Completion
-	nbio.IO_Close(loop, &close_completion, file, func(completed *time.Completion) {
+	var close_completion nbio.Completion
+	nbio.IO_Close(loop, &close_completion, file, func(completed *nbio.Completion) {
 		testify.No_Error(t, completed.Error, path)
 		close_done = true
 	})
-	time.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
+	nbio.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
 		func() (finished bool) { return close_done })
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 	return count
 }
 

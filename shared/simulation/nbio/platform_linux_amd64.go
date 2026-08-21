@@ -4,8 +4,6 @@ package nbio
 
 import (
 	"unsafe"
-
-	"local/james-orcales/shared/simulation/time"
 )
 
 // STATX_BASIC_STATS request basic Linux statx fields.
@@ -81,16 +79,16 @@ type Statx struct {
 type Platform_IO struct {
 	// Statx asynchronously fill result from Linux IORING_OP_STATX.
 	Statx_Procedure func(
-		state unsafe.Pointer, completion *time.Completion, directory File, file_path string,
-		flags uint32, mask uint32, result *Statx, callback time.Callback,
+		state unsafe.Pointer, completion *Completion, directory File, file_path string,
+		flags uint32, mask uint32, result *Statx, callback Callback,
 	)
 }
 
 // Platform_Statx preserves callback-last submit shape while state remains explicit.
 func Platform_Statx(
 	loop IO,
-	completion *time.Completion, directory File, file_path string,
-	flags uint32, mask uint32, result *Statx, callback time.Callback,
+	completion *Completion, directory File, file_path string,
+	flags uint32, mask uint32, result *Statx, callback Callback,
 ) {
 	loop.Statx_Procedure(
 		loop.Storage.State, completion, directory, file_path, flags, mask, result, callback,
@@ -103,8 +101,8 @@ func sim_wire_platform(_ *Sim, loop *IO) {
 }
 
 func sim_statx(
-	state_pointer unsafe.Pointer, completion *time.Completion, directory File,
-	file_path string, _ uint32, mask uint32, result *Statx, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *Completion, directory File,
+	file_path string, _ uint32, mask uint32, result *Statx, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_STATX, callback)
