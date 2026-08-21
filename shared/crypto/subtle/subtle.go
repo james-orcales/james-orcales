@@ -159,12 +159,6 @@ func Constant_Time_Compare(left Source, right Source) (decision Decision) {
 	defer func() { Decision_Invariants(decision, "constant_time_compare.decision") }()
 	Source_Invariants(left, "constant_time_compare.left")
 	Source_Invariants(right, "constant_time_compare.right")
-	if len(left) > SOURCE_SIZE_MAXIMUM {
-		panic("subtle: source exceeds size bound")
-	}
-	if len(right) > SOURCE_SIZE_MAXIMUM {
-		panic("subtle: source exceeds size bound")
-	}
 	if len(left) != len(right) {
 		return DECISION_FALSE
 	}
@@ -224,19 +218,10 @@ func Constant_Time_Copy(selector Decision, destination Destination, source Sourc
 	Decision_Invariants(selector, "constant_time_copy.selector")
 	Destination_Invariants(destination, "constant_time_copy.destination")
 	Source_Invariants(source, "constant_time_copy.source")
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("subtle: destination exceeds size bound")
-	}
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("subtle: source exceeds size bound")
-	}
 	aver.Always(
 		len(destination) == len(source),
 		"Constant-time copy source and destination have equal sizes.",
 	)
-	if len(destination) != len(source) {
-		panic("subtle: slices have different lengths")
-	}
 	preserve_mask := byte(selector - DECISION_TRUE)
 	copy_mask := ^preserve_mask
 	for index := range destination {
@@ -264,25 +249,19 @@ func XOR_Bytes(destination Destination, left Source, right Source) (count Count)
 	Destination_Invariants(destination, "xor_bytes.destination")
 	Source_Invariants(left, "xor_bytes.left")
 	Source_Invariants(right, "xor_bytes.right")
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("subtle: destination exceeds size bound")
-	}
-	if len(left) > SOURCE_SIZE_MAXIMUM {
-		panic("subtle: source exceeds size bound")
-	}
-	if len(right) > SOURCE_SIZE_MAXIMUM {
-		panic("subtle: source exceeds size bound")
-	}
 	count = Count(min(len(left), len(right)))
-	if int(count) > len(destination) {
-		panic("subtle: destination is too short")
-	}
-	if bool(inexact_overlap(destination[:count], left[:count])) {
-		panic("subtle: destination has partial overlap")
-	}
-	if bool(inexact_overlap(destination[:count], right[:count])) {
-		panic("subtle: destination has partial overlap")
-	}
+	aver.Always(
+		int(count) <= len(destination),
+		"XOR destination holds the selected source width.",
+	)
+	aver.Always(
+		!bool(inexact_overlap(destination[:count], left[:count])),
+		"XOR destination does not partially overlap left source.",
+	)
+	aver.Always(
+		!bool(inexact_overlap(destination[:count], right[:count])),
+		"XOR destination does not partially overlap right source.",
+	)
 	for index := range int(count) {
 		destination[index] = left[index] ^ right[index]
 	}

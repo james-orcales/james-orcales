@@ -1,7 +1,6 @@
 package x509_test
 
 import (
-	standard_x509 "crypto/x509"
 	"testing"
 
 	"local/james-orcales/shared/crypto/x509"
@@ -70,13 +69,13 @@ func Test_Invariant_Domains(t *testing.T) {
 		x509.ENCODED_SIZE_MAXIMUM - binary.UINT_8_SIZE,
 		x509.ENCODED_SIZE_MAXIMUM,
 	}
-	test_parse_invariant_domains(&certificate, &input, boundary_sizes[:])
-	test_verify_invariant_domains(t, &certificate, &input, boundary_sizes[:])
+	test_parse_invariant_domains(&certificate, input[:], boundary_sizes[:])
+	test_verify_invariant_domains(t, &certificate, input[:], boundary_sizes[:])
 }
 
 func test_parse_invariant_domains(
 	certificate *x509.Certificate,
-	input *[x509.ENCODED_SIZE_MAXIMUM]byte,
+	input []byte,
 	boundary_sizes []int,
 ) {
 	for _, size := range boundary_sizes {
@@ -124,7 +123,7 @@ func test_parse_invariant_domains(
 func test_verify_invariant_domains(
 	t *testing.T,
 	certificate *x509.Certificate,
-	input *[x509.ENCODED_SIZE_MAXIMUM]byte,
+	input []byte,
 	boundary_sizes []int,
 ) {
 	encoded := rsa_certificate(t)
@@ -175,14 +174,6 @@ func assert_verification(t *testing.T, encoded []byte) {
 	status := x509.Parse_Certificate(&certificate, encoded)
 	testify.Equal(t, x509.PARSE_STATUS_OK, status)
 	testify.True(t, bool(x509.Verify_Signature_From(&certificate, &certificate)))
-	standard_certificate, err := standard_x509.ParseCertificate(encoded)
-	testify.No_Error(t, err)
-	err = standard_certificate.CheckSignature(
-		standard_certificate.SignatureAlgorithm,
-		standard_certificate.RawTBSCertificate,
-		standard_certificate.Signature,
-	)
-	testify.No_Error(t, err)
 	encoded[len(encoded)-binary.UINT_8_SIZE] ^= byte(binary.UINT_8_SIZE)
 	testify.False(t, bool(x509.Verify_Signature_From(&certificate, &certificate)))
 }

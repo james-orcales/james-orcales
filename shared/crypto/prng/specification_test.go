@@ -11,36 +11,37 @@ import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/hex"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/sim/aver/default"
 )
 
-// Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
+// Test_Seed_Expands_To_State checks Chacha_Init is deterministic and seed-sensitive.
 func Test_Seed_Expands_To_State(t *testing.T) {
-	first := New([KEY_BYTES]byte{1}, CURSOR_MIN)
+	first := test_chacha(test_seed(1), CURSOR_MIN)
 	if first.Position != CURSOR_MIN {
 		t.Fatalf("new generator cursor was %d, want %d", first.Position, CURSOR_MIN)
 	}
-	again := New([KEY_BYTES]byte{1}, CURSOR_MIN)
+	again := test_chacha(test_seed(1), CURSOR_MIN)
 	var first_draw, again_draw [WORD_BYTE_COUNT]byte
-	first.Read(first_draw[:])
-	again.Read(again_draw[:])
+	Chacha_Read(&first, Sink(first_draw[:]))
+	Chacha_Read(&again, Sink(again_draw[:]))
 	if first_draw != again_draw {
 		t.Fatalf("same seed produced different streams")
 	}
-	other := New([KEY_BYTES]byte{2}, CURSOR_MIN)
-	repeat := New([KEY_BYTES]byte{1}, CURSOR_MIN)
+	other := test_chacha(test_seed(2), CURSOR_MIN)
+	repeat := test_chacha(test_seed(1), CURSOR_MIN)
 	var other_draw, repeat_draw [WORD_BYTE_COUNT]byte
-	other.Read(other_draw[:])
-	repeat.Read(repeat_draw[:])
+	Chacha_Read(&other, Sink(other_draw[:]))
+	Chacha_Read(&repeat, Sink(repeat_draw[:]))
 	if other_draw == repeat_draw {
 		t.Fatalf("distinct seeds produced the same first draw")
 	}
-	positioned := New([KEY_BYTES]byte{3}, 2)
+	positioned := test_chacha(test_seed(3), 2)
 	if positioned.Position != 2 {
 		t.Fatalf("injected cursor was %d, want 2", positioned.Position)
 	}
+	var positioned_buffer [BUFFER_BYTES]byte
+	buffer_copy(positioned.Buffer, Buffer_Destination(positioned_buffer[:]))
 	for index := 0; index < int(positioned.Position); index++ {
-		if positioned.Buffer[index] != 0 {
+		if positioned_buffer[index] != 0 {
 			t.Fatalf("consumed buffer byte %d was not erased", index)
 		}
 	}
@@ -92,7 +93,7 @@ func Test_Block_Matches_Reference_Vectors(t *testing.T) {
 		nonce := decode_nonce(t, test_case.Nonce)
 		want := decode_bytes(t, test_case.Want)
 		var output [CHACHA_BLOCK_BYTE_COUNT]byte
-		chacha20_block(key, test_case.Counter, nonce, &output)
+		chacha20_block(key, test_case.Counter, nonce, output[:])
 		if !bytes.Equal(bytes.Slice(output[:]), bytes.Slice(want)) {
 			t.Fatalf("%s: block was %x, want %x", test_case.Name, output[:], want)
 		}
@@ -101,7 +102,7 @@ func Test_Block_Matches_Reference_Vectors(t *testing.T) {
 
 // Test_Known_Sequence locks the output stream for a fixed seed.
 func Test_Known_Sequence(t *testing.T) {
-	generator := New([KEY_BYTES]byte{}, CURSOR_MIN)
+	generator := test_chacha(test_seed(0), CURSOR_MIN)
 	// Frozen from this implementation: ChaCha20 under fast-key-erasure from an all-zero seed,
 	// read eight bytes at a time and assembled little-endian. It is not the raw RFC keystream,
 	// since the first 32 bytes of each block reseed the key; the block is checked against the
@@ -118,27 +119,24 @@ func Test_Known_Sequence(t *testing.T) {
 	}
 	for index := 0; index < len(want); index++ {
 		var octet [WORD_BYTE_COUNT]byte
-		generator.Read(octet[:])
-		value := uint64(word_from_bytes(octet))
+		Chacha_Read(&generator, Sink(octet[:]))
+		value := uint64(test_word_from_bytes(octet[:]))
 		if value != want[index] {
 			t.Fatalf("draw %d was %d, want %d", index, value, want[index])
 		}
 	}
 }
 
-// Test_Read_Fills_Fully checks Read fills all of p, reports the full count, and never errors. The
+// Test_Chacha_Read_Fills_Fully checks Read fills all of p and reports the full count. The
 // byte-granular reads also walk the cursor and sink lengths through 0, 1, 2 so those invariant
 // boundaries are witnessed; the larger reads cross a refill and prove real keystream.
-func Test_Read_Fills_Fully(t *testing.T) {
-	generator := New([KEY_BYTES]byte{9}, CURSOR_MIN)
+func Test_Chacha_Read_Fills_Fully(t *testing.T) {
+	generator := test_chacha(test_seed(9), CURSOR_MIN)
 	sizes := []int{0, 1, 1, 1, 2, 7, 224, 225, 1000}
 	for _, size := range sizes {
 		destination := make([]byte, size)
-		count, read_error := generator.Read(destination)
-		if read_error != nil {
-			t.Fatalf("Read(%d) errored: %v", size, read_error)
-		}
-		if count != size {
+		count := Chacha_Read(&generator, Sink(destination))
+		if int(count) != size {
 			t.Fatalf("Read(%d) filled %d bytes, want %d", size, count, size)
 		}
 		all_zero := true
@@ -157,9 +155,9 @@ func Test_Read_Fills_Fully(t *testing.T) {
 
 // Test_Bytes_Are_Uniform checks a filled buffer sets close to half of all its bits.
 func Test_Bytes_Are_Uniform(t *testing.T) {
-	generator := New([KEY_BYTES]byte{3}, CURSOR_MIN)
+	generator := test_chacha(test_seed(3), CURSOR_MIN)
 	buffer := make([]byte, SINK_MAX)
-	generator.Read(buffer)
+	Chacha_Read(&generator, Sink(buffer))
 	set_bits := 0
 	for _, octet := range buffer {
 		set_bits += int(bits.Ones_Count_8(bits.Word_8(octet)))
@@ -175,7 +173,7 @@ func Test_Bytes_Are_Uniform(t *testing.T) {
 
 // Test_Below_Is_Bounded checks Below stays within zero and bound and rejects a zero bound.
 func Test_Below_Is_Bounded(t *testing.T) {
-	generator := New([KEY_BYTES]byte{4}, CURSOR_MIN)
+	generator := test_chacha(test_seed(4), CURSOR_MIN)
 	bounds := []int{1, 2, 7, 1000, 1 << 40}
 	for _, bound := range bounds {
 		for draw_index := 0; draw_index < 10000; draw_index++ {
@@ -186,8 +184,8 @@ func Test_Below_Is_Bounded(t *testing.T) {
 		}
 	}
 	for _, byte_size := range []int{1, 2} {
-		positioned := New(
-			[KEY_BYTES]byte{byte(byte_size)},
+		positioned := test_chacha(
+			test_seed(byte(byte_size)),
 			Cursor(byte_size),
 		)
 		Chacha_Below(&positioned, BOUND_MAX)
@@ -195,9 +193,7 @@ func Test_Below_Is_Bounded(t *testing.T) {
 	// An all-ones draw reaches the half-open domain's last value deterministically; waiting for
 	// a random stream to hit one point in 2^62 would make the boundary contract untestable.
 	maximum_generator := Chacha{}
-	for index := 0; index < 8; index++ {
-		maximum_generator.Buffer[index] = 0xff
-	}
+	maximum_generator.Buffer.Lane_0 = Buffer_Lane_0(bits.WORD_64_MAXIMUM)
 	maximum := Chacha_Below(&maximum_generator, BOUND_MAX)
 	if maximum != INDEX_MAX {
 		t.Fatalf("Below(%d) returned %d from an all-ones draw, want %d",
@@ -211,15 +207,17 @@ func Test_Below_Is_Bounded(t *testing.T) {
 	}
 }
 
-// Test_Seed_Is_Erased_After_Construction checks New performs the first refill, so the seed no
-// longer lives in the Chacha's key and a later disclosure cannot reproduce it or its output.
+// Test_Seed_Is_Erased_After_Construction checks initialization performs the first refill, so the
+// seed no longer lives in state and a later disclosure cannot reproduce it or prior output.
 func Test_Seed_Is_Erased_After_Construction(t *testing.T) {
-	seed := [KEY_BYTES]byte{}
+	seed := make(Seed, KEY_BYTES)
 	for index := 0; index < 32; index++ {
 		seed[index] = byte(index)
 	}
-	generator := New(seed, CURSOR_MIN)
-	if generator.Key == seed {
+	generator := test_chacha(seed, CURSOR_MIN)
+	var live_seed [KEY_BYTES]byte
+	key_copy(generator.Key, Key_Destination(live_seed[:]))
+	if bytes.Equal(bytes.Slice(live_seed[:]), bytes.Slice(seed)) {
 		t.Fatalf("New left the seed in the generator key; fast-key-erasure did not run")
 	}
 }
@@ -229,7 +227,7 @@ func Test_Seed_Is_Erased_After_Construction(t *testing.T) {
 func Test_Refill_Resets_Cursor(t *testing.T) {
 	positions := []Cursor{CURSOR_MIN, 1, 2, CURSOR_MAX}
 	for _, position := range positions {
-		generator := New([KEY_BYTES]byte{byte(position)}, position)
+		generator := test_chacha(test_seed(byte(position)), position)
 		chacha_refill(&generator)
 		if generator.Position != CURSOR_MIN {
 			t.Fatalf("refill cursor was %d, want %d", generator.Position, CURSOR_MIN)
@@ -240,14 +238,14 @@ func Test_Refill_Resets_Cursor(t *testing.T) {
 // Test_Source_Is_Transparent checks the vtable path equals the direct Read path from equal state,
 // across a refill boundary, and that a nil Chacha dies before binding.
 func Test_Source_Is_Transparent(t *testing.T) {
-	subject := New([KEY_BYTES]byte{6}, CURSOR_MIN)
-	reference := New([KEY_BYTES]byte{6}, CURSOR_MIN)
+	subject := test_chacha(test_seed(6), CURSOR_MIN)
+	reference := test_chacha(test_seed(6), CURSOR_MIN)
 	source := Chacha_To_Source(&subject)
 	got := make([]byte, BUFFER_BYTES+1)
 	want := make([]byte, BUFFER_BYTES+1)
 	Source_Read(source, Sink(got[:WORD_BYTE_COUNT]))
 	Source_Read(source, Sink(got[WORD_BYTE_COUNT:]))
-	reference.Read(want)
+	Chacha_Read(&reference, Sink(want))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("vtable bytes differ from direct Read bytes")
 	}
@@ -256,7 +254,7 @@ func Test_Source_Is_Transparent(t *testing.T) {
 	}
 	// Binding at each cursor boundary witnesses the Chacha invariant that the bind asserts.
 	for _, position := range []Cursor{CURSOR_MIN, CURSOR_MIN + 1, CURSOR_MIN + 2, CURSOR_MAX} {
-		positioned := New([KEY_BYTES]byte{6}, position)
+		positioned := test_chacha(test_seed(6), position)
 		Source_Read(Chacha_To_Source(&positioned), Sink(got[:WORD_BYTE_COUNT]))
 	}
 	// A constructed buffer reaches each word edge of the slot deterministically; a keystream
@@ -264,11 +262,10 @@ func Test_Source_Is_Transparent(t *testing.T) {
 	edges := []Word{WORD_MINIMUM, WORD_MINIMUM + 1, WORD_MINIMUM + 2, WORD_MAXIMUM}
 	for _, word := range edges {
 		edge := Chacha{}
-		packed := word_to_bytes(word)
-		copy(edge.Buffer[:], packed[:])
+		edge.Buffer.Lane_0 = Buffer_Lane_0(word)
 		var octet [WORD_BYTE_COUNT]byte
 		Source_Read(Chacha_To_Source(&edge), Sink(octet[:]))
-		if word_from_bytes(octet) != word {
+		if test_word_from_bytes(octet[:]) != word {
 			t.Fatalf("constructed word %d did not pass through the slot", word)
 		}
 	}
@@ -282,7 +279,7 @@ func Test_Source_Marks_A_Cryptographic_Parameter(t *testing.T) {
 	source := Source{State: unsafe.Pointer(&counter), Next: counter_next}
 	var got [WORD_BYTE_COUNT + 1]byte
 	Source_Read(source, Sink(got[:]))
-	first := word_to_bytes(1)
+	first := [WORD_BYTE_COUNT]byte{1}
 	if [WORD_BYTE_COUNT]byte(got[:WORD_BYTE_COUNT]) != first {
 		t.Fatalf("first word was not packed little-endian")
 	}
@@ -311,17 +308,124 @@ func Test_Source_Marks_A_Cryptographic_Parameter(t *testing.T) {
 	}
 }
 
-// Test_Hot_Path_Is_Zero_Allocation checks a steady-state Read does not allocate, even with the
-// invariant assertions on the draw path — measured under recording, not just in benchmark mode.
-func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
-	generator := New([KEY_BYTES]byte{8}, CURSOR_MIN)
-	buffer := make([]byte, 8)
-	allocations := testing.AllocsPerRun(1000, func() {
-		generator.Read(buffer)
+// Test_Allocation keeps every exported entropy path allocation-free with assertions active.
+func Test_Allocation(t *testing.T) {
+	seed := test_seed(8)
+	var initialized Chacha
+	require_zero_allocation(t, "Chacha_Init", func() {
+		Chacha_Init(&initialized, seed, CURSOR_MIN)
 	})
-	if allocations != 0 {
-		t.Fatalf("Read allocated %.1f times per call, want zero", allocations)
+	read := test_chacha(seed, CURSOR_MIN)
+	var sink [WORD_BYTE_COUNT]byte
+	var count Count
+	require_zero_allocation(t, "Chacha_Read", func() {
+		count = Chacha_Read(&read, Sink(sink[:]))
+	})
+	source_generator := test_chacha(seed, CURSOR_MIN)
+	var source Source
+	require_zero_allocation(t, "Chacha_To_Source", func() {
+		source = Chacha_To_Source(&source_generator)
+	})
+	require_zero_allocation(t, "Source_Read", func() { Source_Read(source, Sink(sink[:])) })
+	below := test_chacha(seed, CURSOR_MIN)
+	var index Index
+	require_zero_allocation(t, "Chacha_Below", func() {
+		index = Chacha_Below(&below, BOUND_MIN)
+	})
+	if count == Count(len(sink)) {
+		if index < Index(BOUND_MIN) {
+			test_state_invariant_domains()
+			return
+		}
 	}
+	t.Fatal("allocation probes did not complete")
+}
+
+type allocation_operation func()
+
+func require_zero_allocation(t *testing.T, name string, operation allocation_operation) {
+	t.Helper()
+	allocations := testing.AllocsPerRun(1, operation)
+	if allocations != 0 {
+		t.Fatalf("%s allocated %.1f times per call; want zero", name, allocations)
+	}
+}
+
+func test_state_invariant_domains() {
+	for _, value := range [...]uint64{
+		bits.WORD_64_MINIMUM,
+		1,
+		2,
+		bits.WORD_64_MAXIMUM,
+	} {
+		generator := domain_chacha(value)
+
+		initialized := generator
+		Chacha_Init(&initialized, test_seed(1), CURSOR_MIN)
+
+		read := generator
+		Chacha_Read(&read, nil)
+
+		bounded := generator
+		Chacha_Below(&bounded, BOUND_MIN)
+
+		bound := generator
+		Chacha_To_Source(&bound)
+
+		refilled := generator
+		chacha_refill(&refilled)
+
+		var serialized [BUFFER_BYTES]byte
+		buffer_copy(generator.Buffer, Buffer_Destination(serialized[:]))
+		replaced := generator.Buffer
+		buffer_replace(Buffer_Handle(&replaced), Buffer_Source(serialized[:]))
+	}
+	for _, position := range [...]Cursor{CURSOR_MIN, 1, 2, CURSOR_MAX} {
+		generator := domain_chacha(bits.WORD_64_MINIMUM)
+		generator.Position = position
+		Chacha_Read(&generator, nil)
+		Chacha_Init(&generator, test_seed(1), CURSOR_MIN)
+	}
+}
+
+func domain_chacha(value uint64) (generator Chacha) {
+	generator.Key = Key{
+		Lane_0: Key_Lane_0(value),
+		Lane_1: Key_Lane_1(value),
+		Lane_2: Key_Lane_2(value),
+		Lane_3: Key_Lane_3(value),
+	}
+	generator.Buffer = Buffer{
+		Lane_0:  Buffer_Lane_0(value),
+		Lane_1:  Buffer_Lane_1(value),
+		Lane_2:  Buffer_Lane_2(value),
+		Lane_3:  Buffer_Lane_3(value),
+		Lane_4:  Buffer_Lane_4(value),
+		Lane_5:  Buffer_Lane_5(value),
+		Lane_6:  Buffer_Lane_6(value),
+		Lane_7:  Buffer_Lane_7(value),
+		Lane_8:  Buffer_Lane_8(value),
+		Lane_9:  Buffer_Lane_9(value),
+		Lane_10: Buffer_Lane_10(value),
+		Lane_11: Buffer_Lane_11(value),
+		Lane_12: Buffer_Lane_12(value),
+		Lane_13: Buffer_Lane_13(value),
+		Lane_14: Buffer_Lane_14(value),
+		Lane_15: Buffer_Lane_15(value),
+		Lane_16: Buffer_Lane_16(value),
+		Lane_17: Buffer_Lane_17(value),
+		Lane_18: Buffer_Lane_18(value),
+		Lane_19: Buffer_Lane_19(value),
+		Lane_20: Buffer_Lane_20(value),
+		Lane_21: Buffer_Lane_21(value),
+		Lane_22: Buffer_Lane_22(value),
+		Lane_23: Buffer_Lane_23(value),
+		Lane_24: Buffer_Lane_24(value),
+		Lane_25: Buffer_Lane_25(value),
+		Lane_26: Buffer_Lane_26(value),
+		Lane_27: Buffer_Lane_27(value),
+	}
+	return generator
 }
 
 // A slot that counts its draws, so a test can see how many words a read spent.
@@ -331,53 +435,47 @@ func counter_next(state unsafe.Pointer) (value Word) {
 	return *counter
 }
 
-// Runs action and reports whether it tripped a fatal invariant, used to assert preconditions. A
-// violation exits through the Default recorder, which os.Exit cannot recover, so the helper swaps
-// Exit for a panic — and silences the recorder's stderr — then recovers it, so the exit is
-// observable in-process. Exit and Output are restored before returning. Copied from prng's suite.
+// Runs action and reports whether it tripped a fatal invariant.
 func did_die(action func()) (died bool) {
-	exit, output := aver.Default.Exit, aver.Default.Output
-	aver.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	aver.Default.Output = discard_writer{}
-	defer func() {
-		aver.Default.Exit, aver.Default.Output = exit, output
-		if recover() != nil {
-			died = true
-		}
-	}()
+	defer func() { died = recover() != nil }()
 	action()
 	return died
 }
 
-// Marks the swapped-in Exit's panic, so did_die's recover tells a deliberately tripped guard from
-// an unrelated panic in the action.
-type tripped_invariant struct{}
-
-type discard_writer struct{}
-
-// Write keeps invariant diagnostics silent while preserving complete writes.
-func (discard_writer) Write(data []byte) (count int, err error) {
-	return len(data), nil
-}
-
 // Decodes a 32-byte hex key, failing the test on a wrong length.
-func decode_key(t *testing.T, encoded string) (key [KEY_BYTES]byte) {
+func decode_key(t *testing.T, encoded string) (key Key_Source) {
 	decoded := decode_bytes(t, encoded)
 	if len(decoded) != 32 {
 		t.Fatalf("key is %d bytes, want 32", len(decoded))
 	}
-	copy(key[:], decoded)
-	return key
+	return Key_Source(decoded)
 }
 
 // Decodes a 12-byte hex nonce, failing the test on a wrong length.
-func decode_nonce(t *testing.T, encoded string) (nonce [NONCE_BYTE_COUNT]byte) {
+func decode_nonce(t *testing.T, encoded string) (nonce Nonce) {
 	decoded := decode_bytes(t, encoded)
 	if len(decoded) != 12 {
 		t.Fatalf("nonce is %d bytes, want 12", len(decoded))
 	}
-	copy(nonce[:], decoded)
-	return nonce
+	return Nonce(decoded)
+}
+
+func test_seed(octet byte) (seed Seed) {
+	seed = make(Seed, KEY_BYTES)
+	seed[0] = octet
+	return seed
+}
+
+func test_chacha(seed Seed, position Cursor) (generator Chacha) {
+	Chacha_Init(&generator, seed, position)
+	return generator
+}
+
+func test_word_from_bytes(octet []byte) (word Word) {
+	for index := WORD_BYTE_COUNT - 1; index >= 0; index-- {
+		word = word<<bits.BIT_COUNT_8_MAXIMUM | Word(octet[index])
+	}
+	return word
 }
 
 // Decodes a hex string into bytes, failing the test on malformed input.

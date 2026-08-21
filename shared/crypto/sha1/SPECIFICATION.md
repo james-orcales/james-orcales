@@ -10,7 +10,7 @@ FIPS structure.
 
 # Reference Values
 
-Checksum and Digest reproduce FIPS 180-4 SHA-1 values.
+Checksum_Into and Digest_Sum_Into reproduce FIPS 180-4 SHA-1 values.
 
 # Stream
 
@@ -18,8 +18,7 @@ Writes preserve SHA-1 state across every block and call boundary.
 
 # Caller Owned Output
 
-Digest output uses fixed values or caller storage. Short storage stays untouched and reports
-required width.
+Digest output uses caller storage. Short storage stays untouched and reports required width.
 
 # Bounds
 

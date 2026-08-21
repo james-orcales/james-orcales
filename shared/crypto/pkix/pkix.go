@@ -69,17 +69,11 @@ const PARSE_STATUS_OK Parse_Status = Parse_Status(bits.WORD_8_MINIMUM)
 // PARSE_STATUS_INPUT_INVALID leaves destination storage unchanged.
 const PARSE_STATUS_INPUT_INVALID Parse_Status = PARSE_STATUS_OK + binary.UINT_8_SIZE
 
-// READY_INDEX stores parsed-state identity.
-const READY_INDEX = bits.BIT_COUNT_MINIMUM
-
-// READY_WORD_COUNT holds one parsed-state octet.
-const READY_WORD_COUNT = READY_INDEX + binary.UINT_8_SIZE
-
 // READY_EMPTY marks caller storage without a parsed structure.
-const READY_EMPTY byte = bits.WORD_8_MINIMUM
+const READY_EMPTY Ready = Ready(bits.WORD_8_MINIMUM)
 
 // READY_COMPLETE marks a parsed structure.
-const READY_COMPLETE byte = READY_EMPTY + binary.UINT_8_SIZE
+const READY_COMPLETE Ready = READY_EMPTY + binary.UINT_8_SIZE
 
 // OBJECT_IDENTIFIER_SIZE_MAXIMUM bounds every OID supported or inspected here.
 const OBJECT_IDENTIFIER_SIZE_MAXIMUM = bits.BIT_COUNT_16_MAXIMUM
@@ -100,11 +94,8 @@ const COMMON_NAME_SIZE_MAXIMUM = ENCODED_SIZE_MAXIMUM -
 	COMMON_NAME_CONTAINER_COUNT*(asn1.IDENTIFIER_SIZE_MINIMUM+
 		asn1.CONTENT_SIZE_FIELD_SIZE_MAXIMUM) - COMMON_NAME_OID_ENCODED_SIZE
 
-// DECISION_INDEX selects one fixed OID recognition word.
-const DECISION_INDEX = bits.BIT_COUNT_MINIMUM
-
-// DECISION_TRUE is recognized OID state.
-const DECISION_TRUE uint64 = uint64(binary.UINT_8_SIZE)
+// RECOGNITION_TRUE marks supported OID content.
+const RECOGNITION_TRUE Recognition = true
 
 // Algorithm identifies one supported public-key or signature OID.
 type Algorithm uint8
@@ -116,12 +107,24 @@ func Algorithm_Invariants(value Algorithm, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Ready stores parsed-state identity.
-type Ready [READY_WORD_COUNT]byte
+// Ready stores parsed-state identity without array indirection.
+type Ready uint8
 
-// Ready_Invariants fixes parsed-state storage width.
-func Ready_Invariants(value Ready, _ aver.Namespace) {
-	aver.Always(len(value) == READY_WORD_COUNT, "PKIX parsed state has fixed width.")
+// Ready_Invariants admits only empty and complete parser states.
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
+		Ensure()
+}
+
+// Recognition reports whether OID content names supported algorithm.
+type Recognition bool
+
+// Recognition_Invariants covers supported and unsupported OID content.
+func Recognition_Invariants(value Recognition, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "OID content names supported algorithm.").
+		Ensure()
 }
 
 // Borrowed is one bounded field that aliases encoded input.
@@ -198,10 +201,6 @@ func Algorithm_Identifier_Invariants(
 	Algorithm_Parameters_Invariants(value.Parameters, namespace)
 	Raw_Invariants(value.Raw, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	aver.Always(
-		value.Ready[READY_INDEX] <= READY_COMPLETE,
-		"A PKIX algorithm identifier has empty or complete state.",
-	)
 }
 
 // Algorithm_Identifier_Destination is nonnil caller-owned parsed storage.
@@ -211,21 +210,10 @@ type Algorithm_Identifier_Destination *Algorithm_Identifier
 func Algorithm_Identifier_Destination_Invariants(
 	value Algorithm_Identifier_Destination, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "A PKIX algorithm identifier destination exists.")
-	aver.Tree(value, namespace).
-		Range_Uint8(
-			uint8(value.Algorithm), uint8(ALGORITHM_MINIMUM),
-			uint8(ALGORITHM_MAXIMUM),
-		).
-		Range_Int(
-			len(value.Parameters), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
-		).
-		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
-		Ensure()
-	aver.Always(
-		len(value.Ready) == READY_WORD_COUNT,
-		"A PKIX algorithm destination has parsed-state storage.",
-	)
+	if value == nil {
+		return
+	}
+	Algorithm_Identifier_Invariants(*value, namespace)
 }
 
 // Name borrows selected fields from one validated RDN sequence.
@@ -243,10 +231,6 @@ func Name_Invariants(value Name, namespace aver.Namespace) {
 	Raw_Invariants(value.Raw, namespace)
 	Common_Name_Invariants(value.Common_Name, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	aver.Always(
-		value.Ready[READY_INDEX] <= READY_COMPLETE,
-		"A PKIX name has empty or complete state.",
-	)
 }
 
 // Name_Destination is nonnil caller-owned parsed storage.
@@ -256,18 +240,10 @@ type Name_Destination *Name
 func Name_Destination_Invariants(
 	value Name_Destination, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "A PKIX name destination exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
-		Range_Int(
-			len(value.Common_Name), ENCODED_SIZE_MINIMUM,
-			COMMON_NAME_SIZE_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		len(value.Ready) == READY_WORD_COUNT,
-		"A PKIX name destination has parsed-state storage.",
-	)
+	if value == nil {
+		return
+	}
+	Name_Invariants(*value, namespace)
 }
 
 // Parse_Status reports complete or refused DER input.
@@ -296,9 +272,6 @@ func Parse_Algorithm_Identifier(
 		destination, "Parse_Algorithm_Identifier.destination",
 	)
 	Encoded_Invariants(source, "Parse_Algorithm_Identifier.source")
-	if len(source) > ENCODED_SIZE_MAXIMUM {
-		panic("pkix: algorithm identifier exceeds bound")
-	}
 	sequence, consumed, _, decode_status := asn1.Decode(asn1.Encoded(source))
 	if decode_status != asn1.STATUS_OK {
 		return PARSE_STATUS_INPUT_INVALID
@@ -328,8 +301,8 @@ func Parse_Algorithm_Identifier(
 	if bool(oid.Constructed) {
 		return PARSE_STATUS_INPUT_INVALID
 	}
-	algorithm, recognized := algorithm_from_oid(Borrowed(oid.Content))
-	if recognized[DECISION_INDEX] != DECISION_TRUE {
+	algorithm, recognition := algorithm_from_oid(Borrowed(oid.Content))
+	if !bool(recognition) {
 		return PARSE_STATUS_INPUT_INVALID
 	}
 	parameters := sequence.Content[int(oid_consumed):]
@@ -345,7 +318,7 @@ func Parse_Algorithm_Identifier(
 	*destination = Algorithm_Identifier{
 		Algorithm: algorithm, Parameters: Algorithm_Parameters(parameters),
 		Raw:   Raw(source),
-		Ready: Ready{READY_COMPLETE},
+		Ready: READY_COMPLETE,
 	}
 	return PARSE_STATUS_OK
 }
@@ -358,9 +331,6 @@ func Parse_Name(destination Name_Destination, source Encoded) (status Parse_Stat
 	}()
 	Name_Destination_Invariants(destination, "Parse_Name.destination")
 	Encoded_Invariants(source, "Parse_Name.source")
-	if len(source) > ENCODED_SIZE_MAXIMUM {
-		panic("pkix: name exceeds bound")
-	}
 	sequence, consumed, _, decode_status := asn1.Decode(asn1.Encoded(source))
 	if decode_status != asn1.STATUS_OK {
 		return PARSE_STATUS_INPUT_INVALID
@@ -382,7 +352,7 @@ func Parse_Name(destination Name_Destination, source Encoded) (status Parse_Stat
 		return PARSE_STATUS_INPUT_INVALID
 	}
 	*destination = Name{
-		Raw: Raw(source), Common_Name: common_name, Ready: Ready{READY_COMPLETE},
+		Raw: Raw(source), Common_Name: common_name, Ready: READY_COMPLETE,
 	}
 	return PARSE_STATUS_OK
 }
@@ -450,8 +420,11 @@ func parse_name_content(
 
 func algorithm_from_oid(
 	oid Borrowed,
-) (algorithm Algorithm, recognized [binary.UINT_8_SIZE]uint64) {
-	defer func() { Algorithm_Invariants(algorithm, "algorithm_from_oid.algorithm") }()
+) (algorithm Algorithm, recognition Recognition) {
+	defer func() {
+		Algorithm_Invariants(algorithm, "algorithm_from_oid.algorithm")
+		Recognition_Invariants(recognition, "algorithm_from_oid.recognition")
+	}()
 	Borrowed_Invariants(oid, "algorithm_from_oid.oid")
 	for _, fixture := range [...]struct {
 		OID       string
@@ -465,9 +438,8 @@ func algorithm_from_oid(
 	} {
 		if string(oid) == fixture.OID {
 			algorithm = fixture.Algorithm
-			recognized[DECISION_INDEX] = DECISION_TRUE
-			return algorithm, recognized
+			return algorithm, RECOGNITION_TRUE
 		}
 	}
-	return algorithm, recognized
+	return algorithm, recognition
 }

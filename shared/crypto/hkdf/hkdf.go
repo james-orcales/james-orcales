@@ -315,7 +315,7 @@ func expand(
 	Pseudorandom_Key_Invariants(pseudorandom_key, "expand.pseudorandom_key")
 	Info_Invariants(info, "expand.info")
 	digest_size := int(Pseudorandom_Key_Size(kind))
-	var previous hmac.Value
+	var previous [hmac.DIGEST_SIZE_MAXIMUM]byte
 	previous_count := OUTPUT_SIZE_MINIMUM
 	written := OUTPUT_SIZE_MINIMUM
 	counter := byte(COUNTER_SIZE)
@@ -328,7 +328,7 @@ func expand(
 		hmac.Digest_Write(&digest, hmac.Source(info))
 		counter_source := [COUNTER_SIZE]byte{counter}
 		hmac.Digest_Write(&digest, counter_source[:])
-		previous, _ = hmac.Digest_Sum(&digest)
+		hmac.Digest_Sum_Into(&digest, hmac.Destination(previous[:digest_size]))
 		previous_count = digest_size
 		copy_count := min(digest_size, len(destination)-written)
 		copy(destination[written:written+copy_count], previous[:copy_count])
@@ -339,49 +339,28 @@ func expand(
 
 func require_kind(kind hmac.Kind) {
 	hmac.Kind_Invariants(kind, "require_kind.kind")
-	if kind > hmac.KIND_SHA_512 {
-		panic("hkdf: kind is invalid")
-	}
 }
 
 func require_extract_destination(destination Extract_Destination) {
 	Extract_Destination_Invariants(destination, "require_extract_destination.destination")
-	if len(destination) > EXTRACT_DESTINATION_SIZE_MAXIMUM {
-		panic("hkdf: extract destination exceeds bound")
-	}
 }
 
 func require_destination(destination Destination) {
 	Destination_Invariants(destination, "require_destination.destination")
-	if len(destination) > OUTPUT_SIZE_MAXIMUM {
-		panic("hkdf: destination exceeds bound")
-	}
 }
 
 func require_secret(secret Secret) {
 	Secret_Invariants(secret, "require_secret.secret")
-	if len(secret) > INPUT_SIZE_MAXIMUM {
-		panic("hkdf: secret exceeds bound")
-	}
 }
 
 func require_salt(salt Salt) {
 	Salt_Invariants(salt, "require_salt.salt")
-	if len(salt) > INPUT_SIZE_MAXIMUM {
-		panic("hkdf: salt exceeds bound")
-	}
 }
 
 func require_pseudorandom_key(pseudorandom_key Pseudorandom_Key) {
 	Pseudorandom_Key_Invariants(pseudorandom_key, "require_pseudorandom_key.key")
-	if len(pseudorandom_key) > INPUT_SIZE_MAXIMUM {
-		panic("hkdf: pseudorandom key exceeds bound")
-	}
 }
 
 func require_info(info Info) {
 	Info_Invariants(info, "require_info.info")
-	if len(info) > INPUT_SIZE_MAXIMUM {
-		panic("hkdf: info exceeds bound")
-	}
 }

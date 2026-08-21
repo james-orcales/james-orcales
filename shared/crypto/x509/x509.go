@@ -2,6 +2,8 @@
 package x509
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/ecdsa"
 	"local/james-orcales/shared/crypto/ed25519"
@@ -141,47 +143,270 @@ const PARSE_STATUS_OK Parse_Status = Parse_Status(bits.WORD_8_MINIMUM)
 // PARSE_STATUS_INPUT_INVALID leaves caller certificate storage unchanged.
 const PARSE_STATUS_INPUT_INVALID Parse_Status = PARSE_STATUS_OK + binary.UINT_8_SIZE
 
-// READY_INDEX stores parsed-state identity.
-const READY_INDEX = bits.BIT_COUNT_MINIMUM
-
-// READY_WORD_COUNT holds one parsed-state octet.
-const READY_WORD_COUNT = READY_INDEX + binary.UINT_8_SIZE
-
 // READY_EMPTY marks caller storage without a parsed certificate.
-const READY_EMPTY byte = bits.WORD_8_MINIMUM
+const READY_EMPTY Ready = Ready(bits.WORD_8_MINIMUM)
 
 // READY_COMPLETE marks a fully validated certificate.
-const READY_COMPLETE byte = READY_EMPTY + binary.UINT_8_SIZE
-
-// SPAN_START_INDEX stores an inclusive byte position.
-const SPAN_START_INDEX = bits.BIT_COUNT_MINIMUM
-
-// SPAN_END_INDEX stores an exclusive byte position.
-const SPAN_END_INDEX = SPAN_START_INDEX + binary.UINT_8_SIZE
-
-// SPAN_FIELD_COUNT stores both boundaries without a variable-size helper value.
-const SPAN_FIELD_COUNT = SPAN_END_INDEX + binary.UINT_8_SIZE
-
-// IDENTIFIER_CLASS_INDEX stores the DER class field.
-const IDENTIFIER_CLASS_INDEX = bits.BIT_COUNT_MINIMUM
-
-// IDENTIFIER_TAG_INDEX stores the DER tag field.
-const IDENTIFIER_TAG_INDEX = IDENTIFIER_CLASS_INDEX + binary.UINT_8_SIZE
-
-// IDENTIFIER_CONSTRUCTED_INDEX stores the DER construction bit.
-const IDENTIFIER_CONSTRUCTED_INDEX = IDENTIFIER_TAG_INDEX + binary.UINT_8_SIZE
-
-// IDENTIFIER_FIELD_COUNT stores the three scalar DER identifier fields.
-const IDENTIFIER_FIELD_COUNT = IDENTIFIER_CONSTRUCTED_INDEX + binary.UINT_8_SIZE
-
-// DECISION_INDEX selects one fixed parser decision word.
-const DECISION_INDEX = bits.BIT_COUNT_MINIMUM
+const READY_COMPLETE Ready = READY_EMPTY + binary.UINT_8_SIZE
 
 // DECISION_FALSE is zero parser acceptance.
-const DECISION_FALSE uint64 = uint64(bits.WORD_64_MINIMUM)
+const DECISION_FALSE Decision = Decision(bits.WORD_64_MINIMUM)
 
 // DECISION_TRUE follows false by one binary state.
-const DECISION_TRUE uint64 = DECISION_FALSE + binary.UINT_8_SIZE
+const DECISION_TRUE Decision = DECISION_FALSE + binary.UINT_8_SIZE
+
+// Storage is exact parser scratch detached from hostile input ownership.
+type Storage []byte
+
+// Storage_Invariants fixes every internal position to one complete scratch region.
+func Storage_Invariants(value Storage, _ aver.Namespace) {
+	aver.Always(len(value) == ENCODED_SIZE_MAXIMUM, "X.509 scratch has maximum DER width.")
+}
+
+// Span_Start stores one inclusive parser position.
+type Span_Start int
+
+// Span_Start_Invariants covers every scratch position.
+func Span_Start_Invariants(value Span_Start, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Span_End stores one exclusive parser position.
+type Span_End int
+
+// Span_End_Invariants covers every scratch position.
+func Span_End_Invariants(value Span_End, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Span keeps parser positions inline without a fixed-array boundary.
+type Span struct {
+	// Start is inclusive because every borrowed field slices directly from it.
+	Start Span_Start
+	// End is exclusive because Go slices and DER consumption share that convention.
+	End Span_End
+}
+
+// Span_Invariants composes both positions and their ordering.
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	Span_Start_Invariants(value.Start, namespace)
+	Span_End_Invariants(value.End, namespace)
+	aver.Always(
+		int(value.Start) >= ENCODED_SIZE_MINIMUM,
+		"A parser span starts at a nonnegative scratch position.",
+	)
+	aver.Always(
+		int(value.Start) <= ENCODED_SIZE_MAXIMUM,
+		"A parser span starts inside exact scratch.",
+	)
+	aver.Always(
+		int(value.End) >= ENCODED_SIZE_MINIMUM,
+		"A parser span ends at a nonnegative scratch position.",
+	)
+	aver.Always(
+		int(value.End) <= ENCODED_SIZE_MAXIMUM,
+		"A parser span ends inside exact scratch.",
+	)
+	aver.Always(int(value.Start) <= int(value.End), "A parser span cannot run backward.")
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(Span_Start(0))+unsafe.Sizeof(Span_End(0)),
+		"A parser span retains exactly two machine positions.",
+	)
+}
+
+// Span_Handle names mutable parser-position storage.
+type Span_Handle *Span
+
+// Span_Handle_Invariants composes present parser positions.
+func Span_Handle_Invariants(value Span_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Span_Invariants(*value, namespace)
+}
+
+// TBS_Span gives authenticated certificate bytes independent field identity.
+type TBS_Span Span
+
+// TBS_Span_Invariants guards its opaque two-position layout.
+func TBS_Span_Invariants(value TBS_Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+	aver.Always(unsafe.Sizeof(value) == unsafe.Sizeof(Span{}), "TBS span preserves layout.")
+}
+
+// Signature_Span gives signature bytes independent field identity.
+type Signature_Span Span
+
+// Signature_Span_Invariants guards its opaque two-position layout.
+func Signature_Span_Invariants(value Signature_Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
+		"Signature span preserves layout.",
+	)
+}
+
+// Issuer_Raw_Span gives issuer identity independent field identity.
+type Issuer_Raw_Span Span
+
+// Issuer_Raw_Span_Invariants guards its opaque two-position layout.
+func Issuer_Raw_Span_Invariants(value Issuer_Raw_Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
+		"Issuer span preserves layout.",
+	)
+}
+
+// Issuer_Common_Name_Span gives issuer presentation text independent field identity.
+type Issuer_Common_Name_Span Span
+
+// Issuer_Common_Name_Span_Invariants guards its opaque two-position layout.
+func Issuer_Common_Name_Span_Invariants(
+	value Issuer_Common_Name_Span, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
+		"Issuer common-name span preserves layout.",
+	)
+}
+
+// Subject_Raw_Span gives subject identity independent field identity.
+type Subject_Raw_Span Span
+
+// Subject_Raw_Span_Invariants guards its opaque two-position layout.
+func Subject_Raw_Span_Invariants(value Subject_Raw_Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
+		"Subject span preserves layout.",
+	)
+}
+
+// Subject_Common_Name_Span gives subject presentation text independent field identity.
+type Subject_Common_Name_Span Span
+
+// Subject_Common_Name_Span_Invariants guards its opaque two-position layout.
+func Subject_Common_Name_Span_Invariants(
+	value Subject_Common_Name_Span, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
+		"Subject common-name span preserves layout.",
+	)
+}
+
+// Identifier_Class stores one decoder-owned DER class field.
+type Identifier_Class uint32
+
+// Identifier_Class_Invariants covers the complete two-bit class field.
+func Identifier_Class_Invariants(value Identifier_Class, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_4_Uint32(
+			uint32(value), asn1.CLASS_UNIVERSAL, asn1.CLASS_APPLICATION,
+			asn1.CLASS_CONTEXT_SPECIFIC, asn1.CLASS_PRIVATE,
+		).
+		Ensure()
+}
+
+// Identifier_Tag stores one decoder-owned DER tag field.
+type Identifier_Tag uint32
+
+// Identifier_Tag_Invariants covers the decoder's signed tag domain.
+func Identifier_Tag_Invariants(value Identifier_Tag, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, asn1.TAG_MAXIMUM).
+		Ensure()
+}
+
+// Constructed stores the DER primitive or constructed bit.
+type Constructed uint32
+
+// Constructed_Invariants covers primitive and constructed encodings.
+func Constructed_Invariants(value Constructed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint32(uint32(value), CONSTRUCTED_FALSE, CONSTRUCTED_TRUE).
+		Ensure()
+}
+
+// Identifier keeps one decoded DER identity inline.
+type Identifier struct {
+	// Class separates universal tags from context-specific certificate fields.
+	Class Identifier_Class
+	// Tag identifies the element meaning within Class.
+	Tag Identifier_Tag
+	// Constructed prevents primitive encodings from impersonating containers.
+	Constructed Constructed
+}
+
+// Identifier_Invariants composes each decoded field and decoder promise once.
+func Identifier_Invariants(value Identifier, namespace aver.Namespace) {
+	Identifier_Class_Invariants(value.Class, namespace)
+	Identifier_Tag_Invariants(value.Tag, namespace)
+	Constructed_Invariants(value.Constructed, namespace)
+	aver.Always(
+		uint32(value.Class) <= uint32(asn1.CLASS_MAXIMUM),
+		"A DER class retains its two-bit domain.",
+	)
+	aver.Always(
+		uint32(value.Tag) <= asn1.TAG_MAXIMUM,
+		"A DER tag remains decoder-bounded.",
+	)
+	aver.Always(
+		uint32(value.Constructed) <= CONSTRUCTED_TRUE,
+		"A DER construction field is binary.",
+	)
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(Identifier_Class(0))+
+			unsafe.Sizeof(Identifier_Tag(0))+unsafe.Sizeof(Constructed(0)),
+		"A DER identifier retains exactly three fields.",
+	)
+}
+
+// Identifier_Handle names mutable DER identity storage.
+type Identifier_Handle *Identifier
+
+// Identifier_Handle_Invariants composes one present DER identity.
+func Identifier_Handle_Invariants(value Identifier_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Identifier_Invariants(*value, namespace)
+}
+
+// Decision is one parser acceptance bit.
+type Decision uint64
+
+// Decision_Invariants admits only refused and accepted parser states.
+func Decision_Invariants(value Decision, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint64(uint64(value), uint64(DECISION_FALSE), uint64(DECISION_TRUE)).
+		Ensure()
+}
 
 // Raw borrows one complete certificate.
 type Raw []byte
@@ -321,11 +546,51 @@ func Signature_Algorithm_Invariants(
 }
 
 // Ready stores parsed-state identity.
-type Ready [READY_WORD_COUNT]byte
+type Ready uint8
 
-// Ready_Invariants fixes certificate-state storage width.
-func Ready_Invariants(value Ready, _ aver.Namespace) {
-	aver.Always(len(value) == READY_WORD_COUNT, "X.509 state has fixed width.")
+// Ready_Invariants admits empty and complete certificate storage.
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
+		Ensure()
+}
+
+// Ed25519_Public_Key_Storage keeps the inactive union member copy-safe and allocation-free.
+type Ed25519_Public_Key_Storage ed25519.Limb_Storage
+
+// Ed25519_Public_Key_Storage_Invariants guards its exact unsafe byte-view width.
+func Ed25519_Public_Key_Storage_Invariants(
+	value Ed25519_Public_Key_Storage, _ aver.Namespace,
+) {
+	aver.Always(
+		unsafe.Sizeof(value) == ed25519.PUBLIC_KEY_SIZE,
+		"Stored Ed25519 public key has compressed-point width.",
+	)
+}
+
+// Ed25519_Public_Key_Destination names mutable inline public-key storage.
+type Ed25519_Public_Key_Destination *Ed25519_Public_Key_Storage
+
+// Ed25519_Public_Key_Destination_Invariants composes present inline key storage.
+func Ed25519_Public_Key_Destination_Invariants(
+	value Ed25519_Public_Key_Destination, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Ed25519_Public_Key_Storage_Invariants(*value, namespace)
+}
+
+func ed25519_public_key_bytes(
+	value Ed25519_Public_Key_Destination,
+) (public_key ed25519.Public_Key) {
+	defer func() {
+		ed25519.Public_Key_Invariants(public_key, "ed25519_public_key_bytes.public_key")
+	}()
+	Ed25519_Public_Key_Destination_Invariants(value, "ed25519_public_key_bytes.value")
+	return ed25519.Public_Key(unsafe.Slice(
+		(*byte)(unsafe.Pointer(value)), ed25519.PUBLIC_KEY_SIZE,
+	))
 }
 
 // Certificate holds fixed keys and borrowed authenticated fields.
@@ -349,7 +614,7 @@ type Certificate struct {
 	// ECDSA_Public_Key stores the supported P-256 union member without an interface.
 	ECDSA_Public_Key ecdsa.Public_Key
 	// Ed25519_Public_Key stores the supported Edwards union member without an interface.
-	Ed25519_Public_Key ed25519.Public_Key
+	Ed25519_Public_Key Ed25519_Public_Key_Storage
 	// Ready prevents partially parsed candidates from becoming verification authority.
 	Ready Ready
 }
@@ -365,28 +630,24 @@ func Certificate_Invariants(value Certificate, namespace aver.Namespace) {
 	Subject_Invariants(value.Subject, namespace)
 	rsa.Public_Key_Invariants(value.RSA_Public_Key, namespace)
 	ecdsa.Public_Key_Invariants(value.ECDSA_Public_Key, namespace)
-	ed25519.Public_Key_Invariants(value.Ed25519_Public_Key, namespace)
+	Ed25519_Public_Key_Storage_Invariants(value.Ed25519_Public_Key, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	aver.Always(
-		value.Ready[READY_INDEX] <= READY_COMPLETE,
-		"An X.509 certificate has empty or complete state.",
-	)
 }
 
 // Parsed_Certificate keeps byte positions internal until one full parse commits.
 type Parsed_Certificate struct {
 	// TBS maps authenticated bytes back to caller input.
-	TBS [SPAN_FIELD_COUNT]int
+	TBS TBS_Span
 	// Signature maps BIT STRING content back to caller input.
-	Signature [SPAN_FIELD_COUNT]int
+	Signature Signature_Span
 	// Issuer_Raw maps the validated issuer Name back to caller input.
-	Issuer_Raw [SPAN_FIELD_COUNT]int
+	Issuer_Raw Issuer_Raw_Span
 	// Issuer_Common_Name maps selected issuer text back to caller input.
-	Issuer_Common_Name [SPAN_FIELD_COUNT]int
+	Issuer_Common_Name Issuer_Common_Name_Span
 	// Subject_Raw maps the validated subject Name back to caller input.
-	Subject_Raw [SPAN_FIELD_COUNT]int
+	Subject_Raw Subject_Raw_Span
 	// Subject_Common_Name maps selected subject text back to caller input.
-	Subject_Common_Name [SPAN_FIELD_COUNT]int
+	Subject_Common_Name Subject_Common_Name_Span
 	// Public_Key_Algorithm selects one fixed key member.
 	Public_Key_Algorithm Public_Key_Algorithm
 	// RSA_Public_Key stores the RSA union member.
@@ -394,41 +655,69 @@ type Parsed_Certificate struct {
 	// ECDSA_Public_Key stores the P-256 union member.
 	ECDSA_Public_Key ecdsa.Public_Key
 	// Ed25519_Public_Key stores the Edwards union member.
-	Ed25519_Public_Key ed25519.Public_Key
+	Ed25519_Public_Key Ed25519_Public_Key_Storage
 }
 
 // Parsed_Certificate_Invariants composes fixed spans and fixed key storage.
 func Parsed_Certificate_Invariants(
 	value Parsed_Certificate, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value.TBS) == SPAN_FIELD_COUNT,
-		"Parsed TBS span has both boundaries.",
-	)
-	aver.Always(
-		len(value.Signature) == SPAN_FIELD_COUNT,
-		"Parsed signature span has both boundaries.",
-	)
-	aver.Always(
-		len(value.Issuer_Raw) == SPAN_FIELD_COUNT,
-		"Parsed issuer span has both boundaries.",
-	)
-	aver.Always(
-		len(value.Issuer_Common_Name) == SPAN_FIELD_COUNT,
-		"Parsed issuer common-name span has both boundaries.",
-	)
-	aver.Always(
-		len(value.Subject_Raw) == SPAN_FIELD_COUNT,
-		"Parsed subject span has both boundaries.",
-	)
-	aver.Always(
-		len(value.Subject_Common_Name) == SPAN_FIELD_COUNT,
-		"Parsed subject common-name span has both boundaries.",
-	)
+	TBS_Span_Invariants(value.TBS, namespace)
+	Signature_Span_Invariants(value.Signature, namespace)
+	Issuer_Raw_Span_Invariants(value.Issuer_Raw, namespace)
+	Issuer_Common_Name_Span_Invariants(value.Issuer_Common_Name, namespace)
+	Subject_Raw_Span_Invariants(value.Subject_Raw, namespace)
+	Subject_Common_Name_Span_Invariants(value.Subject_Common_Name, namespace)
 	Public_Key_Algorithm_Invariants(value.Public_Key_Algorithm, namespace)
 	rsa.Public_Key_Invariants(value.RSA_Public_Key, namespace)
 	ecdsa.Public_Key_Invariants(value.ECDSA_Public_Key, namespace)
-	ed25519.Public_Key_Invariants(value.Ed25519_Public_Key, namespace)
+	Ed25519_Public_Key_Storage_Invariants(value.Ed25519_Public_Key, namespace)
+}
+
+// Parsed_Certificate_Destination names transactional parser output.
+type Parsed_Certificate_Destination *Parsed_Certificate
+
+// Parsed_Certificate_Destination_Invariants composes present parser output.
+func Parsed_Certificate_Destination_Invariants(
+	value Parsed_Certificate_Destination, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Parsed_Certificate_Invariants(*value, namespace)
+}
+
+// Parsed_Public_Key keeps the selected key and its concrete union storage together.
+type Parsed_Public_Key struct {
+	// Algorithm selects the committed key member.
+	Algorithm Public_Key_Algorithm
+	// RSA_Key stores the supported RSA member.
+	RSA_Key rsa.Public_Key
+	// ECDSA_Key stores the supported P-256 member.
+	ECDSA_Key ecdsa.Public_Key
+	// Ed25519_Key stores the supported Edwards member.
+	Ed25519_Key Ed25519_Public_Key_Storage
+}
+
+// Parsed_Public_Key_Invariants composes every concrete union member.
+func Parsed_Public_Key_Invariants(value Parsed_Public_Key, namespace aver.Namespace) {
+	Public_Key_Algorithm_Invariants(value.Algorithm, namespace)
+	rsa.Public_Key_Invariants(value.RSA_Key, namespace)
+	ecdsa.Public_Key_Invariants(value.ECDSA_Key, namespace)
+	Ed25519_Public_Key_Storage_Invariants(value.Ed25519_Key, namespace)
+}
+
+// Parsed_Public_Key_Destination names transactional public-key output.
+type Parsed_Public_Key_Destination *Parsed_Public_Key
+
+// Parsed_Public_Key_Destination_Invariants composes present public-key output.
+func Parsed_Public_Key_Destination_Invariants(
+	value Parsed_Public_Key_Destination, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Parsed_Public_Key_Invariants(*value, namespace)
 }
 
 // Certificate_Destination is nonnil caller-owned parsed storage.
@@ -438,33 +727,10 @@ type Certificate_Destination *Certificate
 func Certificate_Destination_Invariants(
 	value Certificate_Destination, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "An X.509 certificate destination exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
-		Range_Int(len(value.TBS), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
-		Range_Int(
-			len(value.Signature), bytes.SLICE_SIZE_MINIMUM, SIGNATURE_SIZE_MAXIMUM,
-		).
-		Enum_3_Uint8(
-			uint8(value.Signature_Algorithm),
-			uint8(SIGNATURE_ALGORITHM_RSA_SHA_256),
-			uint8(SIGNATURE_ALGORITHM_ECDSA_SHA_256),
-			uint8(SIGNATURE_ALGORITHM_ED25519),
-		).
-		Enum_3_Uint8(
-			uint8(value.Public_Key_Algorithm), uint8(PUBLIC_KEY_ALGORITHM_RSA),
-			uint8(PUBLIC_KEY_ALGORITHM_ECDSA), uint8(PUBLIC_KEY_ALGORITHM_ED25519),
-		).
-		Ensure()
-	Issuer_Invariants(value.Issuer, namespace)
-	Subject_Invariants(value.Subject, namespace)
-	rsa.Public_Key_Invariants(value.RSA_Public_Key, namespace)
-	ecdsa.Public_Key_Invariants(value.ECDSA_Public_Key, namespace)
-	ed25519.Public_Key_Invariants(value.Ed25519_Public_Key, namespace)
-	aver.Always(
-		len(value.Ready) == READY_WORD_COUNT,
-		"An X.509 certificate destination has state storage.",
-	)
+	if value == nil {
+		return
+	}
+	Certificate_Invariants(*value, namespace)
 }
 
 // Certificate_Handle is one nonnil parsed certificate authority.
@@ -474,37 +740,10 @@ type Certificate_Handle *Certificate
 func Certificate_Handle_Invariants(
 	value Certificate_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "An X.509 certificate handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
-		Range_Int(len(value.TBS), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
-		Range_Int(
-			len(value.Signature), bytes.SLICE_SIZE_MINIMUM, SIGNATURE_SIZE_MAXIMUM,
-		).
-		Enum_3_Uint8(
-			uint8(value.Signature_Algorithm),
-			uint8(SIGNATURE_ALGORITHM_RSA_SHA_256),
-			uint8(SIGNATURE_ALGORITHM_ECDSA_SHA_256),
-			uint8(SIGNATURE_ALGORITHM_ED25519),
-		).
-		Enum_3_Uint8(
-			uint8(value.Public_Key_Algorithm), uint8(PUBLIC_KEY_ALGORITHM_RSA),
-			uint8(PUBLIC_KEY_ALGORITHM_ECDSA), uint8(PUBLIC_KEY_ALGORITHM_ED25519),
-		).
-		Ensure()
-	Issuer_Invariants(value.Issuer, namespace)
-	Subject_Invariants(value.Subject, namespace)
-	rsa.Public_Key_Invariants(value.RSA_Public_Key, namespace)
-	ecdsa.Public_Key_Invariants(value.ECDSA_Public_Key, namespace)
-	ed25519.Public_Key_Invariants(value.Ed25519_Public_Key, namespace)
-	aver.Always(
-		len(value.Ready) == READY_WORD_COUNT,
-		"An X.509 certificate handle has state storage.",
-	)
-	aver.Always(
-		value.Ready[READY_INDEX] == READY_COMPLETE,
-		"An X.509 verification handle is completely parsed.",
-	)
+	if value == nil {
+		return
+	}
+	Certificate_Invariants(*value, namespace)
 }
 
 // Encoded is bounded hostile DER input.
@@ -549,48 +788,27 @@ func Parse_Certificate(
 	}()
 	Certificate_Destination_Invariants(destination, "Parse_Certificate.destination")
 	Encoded_Invariants(source, "Parse_Certificate.source")
-	if len(source) > ENCODED_SIZE_MAXIMUM {
-		panic("x509: certificate exceeds bound")
-	}
-	var storage [ENCODED_SIZE_MAXIMUM]byte
-	copy(storage[:], source)
-	source_span := [SPAN_FIELD_COUNT]int{SPAN_START_INDEX: ENCODED_SIZE_MINIMUM}
-	source_span[SPAN_END_INDEX] = len(source)
-	outer_identifier, outer_content, outer_encoded, tail, accepted :=
-		take_element(&storage, source_span)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
+	var storage_bytes [ENCODED_SIZE_MAXIMUM]byte
+	storage := Storage(storage_bytes[:])
+	copy(storage, source)
+	source_span := Span{Start: Span_Start(ENCODED_SIZE_MINIMUM), End: Span_End(len(source))}
+	var parsed Parsed_Certificate
+	signature_algorithm, accepted := parse(&parsed, storage, source_span)
+	if accepted != DECISION_TRUE {
 		return PARSE_STATUS_INPUT_INVALID
 	}
-	if outer_encoded != source_span {
-		return PARSE_STATUS_INPUT_INVALID
-	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
-		return PARSE_STATUS_INPUT_INVALID
-	}
-	sequence := sequence_identifier()
-	if identifier_matches(outer_identifier, sequence)[DECISION_INDEX] != DECISION_TRUE {
-		return PARSE_STATUS_INPUT_INVALID
-	}
-	parsed, signature_algorithm, accepted := parse_certificate_content(
-		&storage, outer_content,
-	)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return PARSE_STATUS_INPUT_INVALID
-	}
-	start, end := parsed.TBS[SPAN_START_INDEX], parsed.TBS[SPAN_END_INDEX]
-	tbs := source[start:end]
-	start, end = parsed.Signature[SPAN_START_INDEX], parsed.Signature[SPAN_END_INDEX]
-	signature := source[start:end]
-	start, end = parsed.Issuer_Raw[SPAN_START_INDEX], parsed.Issuer_Raw[SPAN_END_INDEX]
-	issuer_raw := source[start:end]
-	start = parsed.Issuer_Common_Name[SPAN_START_INDEX]
-	end = parsed.Issuer_Common_Name[SPAN_END_INDEX]
-	issuer_common_name := source[start:end]
-	start, end = parsed.Subject_Raw[SPAN_START_INDEX], parsed.Subject_Raw[SPAN_END_INDEX]
-	subject_raw := source[start:end]
-	start = parsed.Subject_Common_Name[SPAN_START_INDEX]
-	end = parsed.Subject_Common_Name[SPAN_END_INDEX]
-	subject_common_name := source[start:end]
+	tbs_span := Span(parsed.TBS)
+	tbs := source[tbs_span.Start:tbs_span.End]
+	signature_span := Span(parsed.Signature)
+	signature := source[signature_span.Start:signature_span.End]
+	issuer_raw_span := Span(parsed.Issuer_Raw)
+	issuer_raw := source[issuer_raw_span.Start:issuer_raw_span.End]
+	issuer_common_name_span := Span(parsed.Issuer_Common_Name)
+	issuer_common_name := source[issuer_common_name_span.Start:issuer_common_name_span.End]
+	subject_raw_span := Span(parsed.Subject_Raw)
+	subject_raw := source[subject_raw_span.Start:subject_raw_span.End]
+	subject_common_name_span := Span(parsed.Subject_Common_Name)
+	subject_common_name := source[subject_common_name_span.Start:subject_common_name_span.End]
 	*destination = Certificate{
 		Raw:                  Raw(source),
 		TBS:                  TBS(tbs),
@@ -608,768 +826,997 @@ func Parse_Certificate(
 		RSA_Public_Key:     parsed.RSA_Public_Key,
 		ECDSA_Public_Key:   parsed.ECDSA_Public_Key,
 		Ed25519_Public_Key: parsed.Ed25519_Public_Key,
-		Ready:              Ready{READY_COMPLETE},
+		Ready:              READY_COMPLETE,
 	}
 	return PARSE_STATUS_OK
 }
 
-func parse_certificate_content(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, content [SPAN_FIELD_COUNT]int,
+func parse(
+	destination Parsed_Certificate_Destination, storage Storage, source Span,
 ) (
-	parsed Parsed_Certificate,
 	signature_algorithm Signature_Algorithm,
-	accepted [binary.UINT_8_SIZE]uint64,
+	accepted Decision,
 ) {
 	defer func() {
-		Parsed_Certificate_Invariants(parsed, "parse_certificate_content.parsed")
+		Signature_Algorithm_Invariants(signature_algorithm, "parse.signature_algorithm")
+		Decision_Invariants(accepted, "parse.accepted")
+	}()
+	Parsed_Certificate_Destination_Invariants(destination, "parse.destination")
+	Storage_Invariants(storage, "parse.storage")
+	Span_Invariants(source, "parse.source")
+	var outer_identifier Identifier
+	var outer_content, outer_encoded, tail Span
+	accepted = take_element(
+		&outer_identifier, &outer_content, &outer_encoded, &tail, storage, source,
+	)
+	if accepted != DECISION_TRUE {
+		return signature_algorithm, accepted
+	}
+	if outer_encoded != source {
+		accepted = DECISION_FALSE
+		return signature_algorithm, accepted
+	}
+	if int(tail.Start) != int(tail.End) {
+		accepted = DECISION_FALSE
+		return signature_algorithm, accepted
+	}
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(outer_identifier, expected) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return signature_algorithm, accepted
+	}
+	return parse_certificate_content(destination, storage, outer_content)
+}
+
+func parse_certificate_content(
+	destination Parsed_Certificate_Destination, storage Storage, content Span,
+) (
+	signature_algorithm Signature_Algorithm,
+	accepted Decision,
+) {
+	defer func() {
 		Signature_Algorithm_Invariants(
 			signature_algorithm, "parse_certificate_content.signature_algorithm",
 		)
+		Decision_Invariants(accepted, "parse_certificate_content.accepted")
 	}()
-	tbs_identifier, _, tbs_span, tail, accepted := take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, signature_algorithm, accepted
-	}
-	_, _, algorithm_span, tail, accepted := take_element(storage, tail)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, signature_algorithm, accepted
-	}
-	signature_identifier, signature_content, _, tail, accepted :=
-		take_element(storage, tail)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, signature_algorithm, accepted
-	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, signature_algorithm, accepted
-	}
-	if identifier_matches(
-		tbs_identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, signature_algorithm, accepted
-	}
-	signature_algorithm, accepted = signature_algorithm_parse(
-		storage, algorithm_span,
+	Parsed_Certificate_Destination_Invariants(
+		destination, "parse_certificate_content.destination",
 	)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, signature_algorithm, accepted
-	}
-	parsed.Signature, accepted = bit_string_content(
-		storage, signature_identifier, signature_content,
+	Storage_Invariants(storage, "parse_certificate_content.storage")
+	Span_Invariants(content, "parse_certificate_content.content")
+	var parsed, tbs_parsed Parsed_Certificate
+	var tbs_identifier, signature_identifier, ignored_identifier Identifier
+	var ignored, tbs_span, tail, algorithm_span, signature_content, signature_span Span
+	accepted = take_element(
+		&tbs_identifier, &ignored, &tbs_span, &tail, storage, content,
 	)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, signature_algorithm, accepted
+	if accepted != DECISION_TRUE {
+		return signature_algorithm, accepted
 	}
-	if parsed.Signature[SPAN_END_INDEX]-parsed.Signature[SPAN_START_INDEX] >
+	accepted = take_element(
+		&ignored_identifier, &ignored, &algorithm_span, &tail, storage, tail,
+	)
+	if accepted != DECISION_TRUE {
+		return signature_algorithm, accepted
+	}
+	accepted = take_element(
+		&signature_identifier, &signature_content, &ignored, &tail, storage, tail,
+	)
+	if accepted != DECISION_TRUE {
+		return signature_algorithm, accepted
+	}
+	if int(tail.Start) != int(tail.End) {
+		accepted = DECISION_FALSE
+		return signature_algorithm, accepted
+	}
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(tbs_identifier, expected) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return signature_algorithm, accepted
+	}
+	signature_algorithm, accepted = signature_algorithm_parse(storage, algorithm_span)
+	if accepted != DECISION_TRUE {
+		return signature_algorithm, accepted
+	}
+	accepted = bit_string_content(
+		&signature_span, storage, signature_identifier, signature_content,
+	)
+	if accepted != DECISION_TRUE {
+		return signature_algorithm, accepted
+	}
+	if int(signature_span.End)-int(signature_span.Start) >
 		SIGNATURE_SIZE_MAXIMUM {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, signature_algorithm, accepted
+		accepted = DECISION_FALSE
+		return signature_algorithm, accepted
 	}
-	tbs_parsed, accepted := parse_tbs(storage, tbs_span, algorithm_span)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, signature_algorithm, accepted
+	accepted = parse_tbs(&tbs_parsed, storage, tbs_span, algorithm_span)
+	if accepted != DECISION_TRUE {
+		return signature_algorithm, accepted
 	}
-	parsed.TBS = tbs_span
-	parsed.Issuer_Raw = tbs_parsed.Issuer_Raw
-	parsed.Issuer_Common_Name = tbs_parsed.Issuer_Common_Name
-	parsed.Subject_Raw = tbs_parsed.Subject_Raw
-	parsed.Subject_Common_Name = tbs_parsed.Subject_Common_Name
-	parsed.Public_Key_Algorithm = tbs_parsed.Public_Key_Algorithm
-	parsed.RSA_Public_Key = tbs_parsed.RSA_Public_Key
-	parsed.ECDSA_Public_Key = tbs_parsed.ECDSA_Public_Key
-	parsed.Ed25519_Public_Key = tbs_parsed.Ed25519_Public_Key
-	return parsed, signature_algorithm, accepted
+	parsed = tbs_parsed
+	parsed.TBS = TBS_Span(tbs_span)
+	parsed.Signature = Signature_Span(signature_span)
+	*destination = parsed
+	return signature_algorithm, accepted
 }
 
 func parse_tbs(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	source [SPAN_FIELD_COUNT]int,
-	outer_algorithm [SPAN_FIELD_COUNT]int,
-) (parsed Parsed_Certificate, accepted [binary.UINT_8_SIZE]uint64) {
-	defer func() { Parsed_Certificate_Invariants(parsed, "parse_tbs.parsed") }()
-	identifier, content, encoded, tail, accepted := take_element(storage, source)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	destination Parsed_Certificate_Destination,
+	storage Storage,
+	source Span,
+	outer_algorithm Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "parse_tbs.accepted") }()
+	Parsed_Certificate_Destination_Invariants(destination, "parse_tbs.destination")
+	Storage_Invariants(storage, "parse_tbs.storage")
+	Span_Invariants(source, "parse_tbs.source")
+	Span_Invariants(outer_algorithm, "parse_tbs.outer_algorithm")
+	var identifier, serial_identifier Identifier
+	var content, encoded, tail, serial_content, ignored Span
+	accepted = take_element(&identifier, &content, &encoded, &tail, storage, source)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
 	if encoded != source {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, accepted
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, accepted
+	if int(tail.Start) != int(tail.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if identifier_matches(
-		identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, accepted
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	serial_identifier, serial_content, _, content, accepted :=
-		take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	accepted = take_element(
+		&serial_identifier, &serial_content, &ignored, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	if serial_identifier[IDENTIFIER_CLASS_INDEX] == asn1.CLASS_CONTEXT_SPECIFIC {
+	if serial_identifier.Class == Identifier_Class(asn1.CLASS_CONTEXT_SPECIFIC) {
 		if version_valid(
 			storage, serial_identifier, serial_content,
-		)[DECISION_INDEX] != DECISION_TRUE {
-			return parsed, accepted
+		) != DECISION_TRUE {
+			return accepted
 		}
-		serial_identifier, serial_content, _, content, accepted =
-			take_element(storage, content)
-		if accepted[DECISION_INDEX] != DECISION_TRUE {
-			return parsed, accepted
+		accepted = take_element(
+			&serial_identifier, &serial_content, &ignored, &content, storage, content,
+		)
+		if accepted != DECISION_TRUE {
+			return accepted
 		}
 	}
 	if serial_valid(
 		storage, serial_identifier, serial_content,
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, accepted
+	) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	return parse_tbs_fields(storage, content, outer_algorithm)
+	return parse_tbs_fields(destination, storage, content, outer_algorithm)
 }
 
 func parse_tbs_fields(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	content [SPAN_FIELD_COUNT]int,
-	outer_algorithm [SPAN_FIELD_COUNT]int,
-) (parsed Parsed_Certificate, accepted [binary.UINT_8_SIZE]uint64) {
-	defer func() { Parsed_Certificate_Invariants(parsed, "parse_tbs_fields.parsed") }()
-	_, _, algorithm, content, accepted := take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	destination Parsed_Certificate_Destination,
+	storage Storage,
+	content Span,
+	outer_algorithm Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "parse_tbs_fields.accepted") }()
+	Parsed_Certificate_Destination_Invariants(destination, "parse_tbs_fields.destination")
+	Storage_Invariants(storage, "parse_tbs_fields.storage")
+	Span_Invariants(content, "parse_tbs_fields.content")
+	Span_Invariants(outer_algorithm, "parse_tbs_fields.outer_algorithm")
+	var parsed Parsed_Certificate
+	var ignored_identifier, validity_identifier Identifier
+	var ignored_span, algorithm Span
+	accepted = take_element(
+		&ignored_identifier, &ignored_span, &algorithm, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	algorithm_bytes := storage[algorithm[SPAN_START_INDEX]:algorithm[SPAN_END_INDEX]]
-	outer_bytes := storage[outer_algorithm[SPAN_START_INDEX]:outer_algorithm[SPAN_END_INDEX]]
+	algorithm_bytes := storage[int(algorithm.Start):int(algorithm.End)]
+	outer_bytes := storage[int(outer_algorithm.Start):int(outer_algorithm.End)]
 	if !bool(bytes.Equal(bytes.Slice(algorithm_bytes), bytes.Slice(outer_bytes))) {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, accepted
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	_, _, parsed.Issuer_Raw, content, accepted = take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	var issuer_raw Span
+	accepted = take_element(
+		&ignored_identifier, &ignored_span, &issuer_raw, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	parsed.Issuer_Common_Name, accepted = parse_name(storage, parsed.Issuer_Raw)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	parsed.Issuer_Raw = Issuer_Raw_Span(issuer_raw)
+	var issuer_common_name Span
+	accepted = parse_name(&issuer_common_name, storage, issuer_raw)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	validity_identifier, validity_content, _, content, accepted :=
-		take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	parsed.Issuer_Common_Name = Issuer_Common_Name_Span(issuer_common_name)
+	var validity_content Span
+	accepted = take_element(
+		&validity_identifier, &validity_content, &ignored_span, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
 	if validity_valid(
 		storage, validity_identifier, validity_content,
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return parsed, accepted
+	) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	_, _, parsed.Subject_Raw, content, accepted = take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	accepted = parse_tbs_subject(&parsed, storage, content)
+	if accepted == DECISION_TRUE {
+		*destination = parsed
 	}
-	parsed.Subject_Common_Name, accepted = parse_name(storage, parsed.Subject_Raw)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	return accepted
+}
+
+func parse_tbs_subject(
+	destination Parsed_Certificate_Destination, storage Storage, content Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "parse_tbs_subject.accepted") }()
+	Parsed_Certificate_Destination_Invariants(destination, "parse_tbs_subject.destination")
+	Storage_Invariants(storage, "parse_tbs_subject.storage")
+	Span_Invariants(content, "parse_tbs_subject.content")
+	parsed := *destination
+	var ignored_identifier Identifier
+	var ignored_span Span
+	var subject_raw Span
+	accepted = take_element(
+		&ignored_identifier, &ignored_span, &subject_raw, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	_, _, public_key, content, accepted := take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	parsed.Subject_Raw = Subject_Raw_Span(subject_raw)
+	var subject_common_name Span
+	accepted = parse_name(&subject_common_name, storage, subject_raw)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	parsed.Public_Key_Algorithm, parsed.RSA_Public_Key,
-		parsed.ECDSA_Public_Key, parsed.Ed25519_Public_Key,
-		accepted = parse_public_key(storage, public_key)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return parsed, accepted
+	parsed.Subject_Common_Name = Subject_Common_Name_Span(subject_common_name)
+	var public_key Span
+	accepted = take_element(
+		&ignored_identifier, &ignored_span, &public_key, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
+	var parsed_public_key Parsed_Public_Key
+	accepted = parse_public_key(&parsed_public_key, storage, public_key)
+	if accepted != DECISION_TRUE {
+		return accepted
+	}
+	parsed.Public_Key_Algorithm = parsed_public_key.Algorithm
+	parsed.RSA_Public_Key = parsed_public_key.RSA_Key
+	parsed.ECDSA_Public_Key = parsed_public_key.ECDSA_Key
+	parsed.Ed25519_Public_Key = parsed_public_key.Ed25519_Key
 	accepted = optional_fields_valid(storage, content)
-	return parsed, accepted
+	if accepted == DECISION_TRUE {
+		*destination = parsed
+	}
+	return accepted
 }
 
 func parse_public_key(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, source [SPAN_FIELD_COUNT]int,
-) (
-	algorithm Public_Key_Algorithm,
-	rsa_key rsa.Public_Key,
-	ecdsa_key ecdsa.Public_Key,
-	ed25519_key ed25519.Public_Key,
-	accepted [binary.UINT_8_SIZE]uint64,
-) {
-	defer func() {
-		Public_Key_Algorithm_Invariants(algorithm, "parse_public_key.algorithm")
-		rsa.Public_Key_Invariants(rsa_key, "parse_public_key.rsa_key")
-		ecdsa.Public_Key_Invariants(ecdsa_key, "parse_public_key.ecdsa_key")
-		ed25519.Public_Key_Invariants(ed25519_key, "parse_public_key.ed25519_key")
-	}()
-	identifier, content, encoded, tail, accepted := take_element(storage, source)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+	destination Parsed_Public_Key_Destination, storage Storage, source Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "parse_public_key.accepted") }()
+	Parsed_Public_Key_Destination_Invariants(destination, "parse_public_key.destination")
+	Storage_Invariants(storage, "parse_public_key.storage")
+	Span_Invariants(source, "parse_public_key.source")
+	var identifier, ignored_identifier, key_identifier Identifier
+	var content, encoded, tail, ignored, algorithm_span, key_content Span
+	accepted = take_element(&identifier, &content, &encoded, &tail, storage, source)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
 	if encoded != source {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+	if int(tail.Start) != int(tail.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if identifier_matches(
-		identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	_, _, algorithm_span, content, accepted := take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+	accepted = take_element(
+		&ignored_identifier, &ignored, &algorithm_span, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	key_identifier, key_content, _, content, accepted := take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+	accepted = take_element(
+		&key_identifier, &key_content, &ignored, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	if content[SPAN_START_INDEX] != content[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+	if int(content.Start) != int(content.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	key, accepted := bit_string_content(storage, key_identifier, key_content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return algorithm, rsa_key, ecdsa_key, ed25519_key, accepted
+	var key Span
+	accepted = bit_string_content(&key, storage, key_identifier, key_content)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	return public_key_parse(storage, algorithm_span, key)
+	return public_key_parse(destination, storage, algorithm_span, key)
 }
 
 func public_key_parse(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	algorithm [SPAN_FIELD_COUNT]int,
-	key [SPAN_FIELD_COUNT]int,
-) (
-	result Public_Key_Algorithm,
-	rsa_key rsa.Public_Key,
-	ecdsa_key ecdsa.Public_Key,
-	ed25519_key ed25519.Public_Key,
-	accepted [binary.UINT_8_SIZE]uint64,
-) {
-	defer func() {
-		Public_Key_Algorithm_Invariants(result, "public_key_parse.result")
-		rsa.Public_Key_Invariants(rsa_key, "public_key_parse.rsa_key")
-		ecdsa.Public_Key_Invariants(ecdsa_key, "public_key_parse.ecdsa_key")
-		ed25519.Public_Key_Invariants(ed25519_key, "public_key_parse.ed25519_key")
-	}()
-	algorithm_bytes := storage[algorithm[SPAN_START_INDEX]:algorithm[SPAN_END_INDEX]]
-	key_bytes := storage[key[SPAN_START_INDEX]:key[SPAN_END_INDEX]]
+	destination Parsed_Public_Key_Destination,
+	storage Storage,
+	algorithm Span,
+	key Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "public_key_parse.accepted") }()
+	Parsed_Public_Key_Destination_Invariants(destination, "public_key_parse.destination")
+	Storage_Invariants(storage, "public_key_parse.storage")
+	Span_Invariants(algorithm, "public_key_parse.algorithm")
+	Span_Invariants(key, "public_key_parse.key")
+	algorithm_bytes := storage[int(algorithm.Start):int(algorithm.End)]
+	key_bytes := storage[int(key.Start):int(key.End)]
+	var parsed Parsed_Public_Key
 	if string(algorithm_bytes) == RSA_PUBLIC_IDENTIFIER_ENCODING {
-		rsa_key, accepted = rsa_public_key_parse(storage, key)
-		if accepted[DECISION_INDEX] != DECISION_TRUE {
-			return result, rsa_key, ecdsa_key, ed25519_key, accepted
+		accepted = rsa_public_key_parse(&parsed.RSA_Key, storage, key)
+		if accepted != DECISION_TRUE {
+			return accepted
 		}
-		result = PUBLIC_KEY_ALGORITHM_RSA
-		return result, rsa_key, ecdsa_key, ed25519_key, accepted
+		parsed.Algorithm = PUBLIC_KEY_ALGORITHM_RSA
+		*destination = parsed
+		return accepted
 	}
 	if string(algorithm_bytes) == EC_PUBLIC_IDENTIFIER_ENCODING {
 		if ecdsa.Public_Key_Set_Bytes(
-			&ecdsa_key, ecdsa.Public_Key_Unvalidated(key_bytes),
+			&parsed.ECDSA_Key, ecdsa.Public_Key_Unvalidated(key_bytes),
 		) !=
 			ecdsa.KEY_STATUS_OK {
-			return result, rsa_key, ecdsa_key, ed25519_key, accepted
+			return accepted
 		}
-		result = PUBLIC_KEY_ALGORITHM_ECDSA
-		accepted[DECISION_INDEX] = DECISION_TRUE
-		return result, rsa_key, ecdsa_key, ed25519_key, accepted
+		parsed.Algorithm = PUBLIC_KEY_ALGORITHM_ECDSA
+		accepted = DECISION_TRUE
+		*destination = parsed
+		return accepted
 	}
 	if string(algorithm_bytes) == ED25519_IDENTIFIER_ENCODING {
 		if len(key_bytes) != ed25519.PUBLIC_KEY_SIZE {
-			return result, rsa_key, ecdsa_key, ed25519_key, accepted
+			return accepted
 		}
-		copy(ed25519_key[:], key_bytes)
-		result = PUBLIC_KEY_ALGORITHM_ED25519
-		accepted[DECISION_INDEX] = DECISION_TRUE
+		copy(ed25519_public_key_bytes(&parsed.Ed25519_Key), key_bytes)
+		parsed.Algorithm = PUBLIC_KEY_ALGORITHM_ED25519
+		accepted = DECISION_TRUE
+		*destination = parsed
 	}
-	return result, rsa_key, ecdsa_key, ed25519_key, accepted
+	return accepted
 }
 
 func rsa_public_key_parse(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, source [SPAN_FIELD_COUNT]int,
-) (
-	public_key rsa.Public_Key, accepted [binary.UINT_8_SIZE]uint64,
-) {
-	defer func() {
-		rsa.Public_Key_Invariants(public_key, "rsa_public_key_parse.public_key")
-	}()
-	identifier, content, encoded, tail, accepted := take_element(storage, source)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return public_key, accepted
+	destination rsa.Public_Key_Destination, storage Storage, source Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "rsa_public_key_parse.accepted") }()
+	rsa.Public_Key_Destination_Invariants(destination, "rsa_public_key_parse.destination")
+	Storage_Invariants(storage, "rsa_public_key_parse.storage")
+	Span_Invariants(source, "rsa_public_key_parse.source")
+	var identifier, modulus_identifier, exponent_identifier Identifier
+	var content, encoded, tail, modulus_content, exponent_content, ignored Span
+	accepted = take_element(&identifier, &content, &encoded, &tail, storage, source)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
 	if encoded != source {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+	if int(tail.Start) != int(tail.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if identifier_matches(
-		identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	modulus_identifier, modulus_content, _, content, accepted :=
-		take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return public_key, accepted
+	accepted = take_element(
+		&modulus_identifier, &modulus_content, &ignored, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	exponent_identifier, exponent_content, _, content, accepted :=
-		take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return public_key, accepted
+	accepted = take_element(
+		&exponent_identifier, &exponent_content, &ignored, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	if content[SPAN_START_INDEX] != content[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+	if int(content.Start) != int(content.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if positive_integer_valid(
-		storage, modulus_identifier, modulus_content,
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+	if positive_integer_valid(storage, modulus_identifier, modulus_content) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if positive_integer_valid(
-		storage, exponent_identifier, exponent_content,
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+	if positive_integer_valid(storage, exponent_identifier, exponent_content) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	exponent_start := exponent_content[SPAN_START_INDEX]
-	exponent_end := exponent_content[SPAN_END_INDEX]
-	exponent_bytes := storage[exponent_start:exponent_end]
-	if string(exponent_bytes) != RSA_EXPONENT_ENCODING {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+	if rsa_exponent_valid(storage, exponent_content) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if modulus_content[SPAN_END_INDEX]-modulus_content[SPAN_START_INDEX] ==
+	if int(modulus_content.End)-int(modulus_content.Start) ==
 		rsa.MODULUS_SIZE+binary.UINT_8_SIZE {
-		modulus_content[SPAN_START_INDEX] += binary.UINT_8_SIZE
+		modulus_content.Start += Span_Start(binary.UINT_8_SIZE)
 	}
-	modulus_bytes := storage[modulus_content[SPAN_START_INDEX]:modulus_content[SPAN_END_INDEX]]
+	modulus_bytes := storage[int(modulus_content.Start):int(modulus_content.End)]
 	if rsa.Public_Key_Set_Bytes(
-		&public_key, rsa.Modulus_Unvalidated(modulus_bytes),
+		destination, rsa.Modulus_Unvalidated(modulus_bytes),
 	) != rsa.KEY_STATUS_OK {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return public_key, accepted
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	accepted[DECISION_INDEX] = DECISION_TRUE
-	return public_key, accepted
+	accepted = DECISION_TRUE
+	return accepted
+}
+
+func rsa_exponent_valid(storage Storage, content Span) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "rsa_exponent_valid.valid") }()
+	Storage_Invariants(storage, "rsa_exponent_valid.storage")
+	Span_Invariants(content, "rsa_exponent_valid.content")
+	exponent := storage[int(content.Start):int(content.End)]
+	if string(exponent) == RSA_EXPONENT_ENCODING {
+		valid = DECISION_TRUE
+	}
+	return valid
 }
 
 func parse_name(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, source [SPAN_FIELD_COUNT]int,
-) (common_name [SPAN_FIELD_COUNT]int, accepted [binary.UINT_8_SIZE]uint64) {
-	identifier, content, encoded, tail, accepted := take_element(storage, source)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return common_name, accepted
+	destination Span_Handle, storage Storage, source Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "parse_name.accepted") }()
+	Span_Handle_Invariants(destination, "parse_name.destination")
+	Storage_Invariants(storage, "parse_name.storage")
+	Span_Invariants(source, "parse_name.source")
+	var common_name Span
+	var identifier Identifier
+	var content, encoded, tail Span
+	accepted = take_element(&identifier, &content, &encoded, &tail, storage, source)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
 	if encoded != source {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return common_name, accepted
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return common_name, accepted
+	if int(tail.Start) != int(tail.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if identifier_matches(
-		identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return common_name, accepted
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	for content[SPAN_START_INDEX] != content[SPAN_END_INDEX] {
-		set_identifier, set_content, _, next_content, valid := take_element(
-			storage, content,
+	for int(content.Start) != int(content.End) {
+		var set_identifier Identifier
+		var set_content, ignored, next_content Span
+		valid := take_element(
+			&set_identifier, &set_content, &ignored, &next_content, storage, content,
 		)
-		if valid[DECISION_INDEX] != DECISION_TRUE {
-			return common_name, accepted
+		if valid != DECISION_TRUE {
+			return accepted
 		}
 		if name_set_valid(
 			storage, set_identifier, set_content,
-		)[DECISION_INDEX] != DECISION_TRUE {
-			return common_name, accepted
+		) != DECISION_TRUE {
+			return accepted
 		}
-		_, attribute_content, _, _, _ := take_element(storage, set_content)
-		_, _, _, value_source, _ := take_element(storage, attribute_content)
-		_, value_content, _, _, _ := take_element(storage, value_source)
-		_, oid_content, _, _, _ :=
-			take_element(storage, attribute_content)
-		oid_bytes := storage[oid_content[SPAN_START_INDEX]:oid_content[SPAN_END_INDEX]]
-		if string(oid_bytes) == COMMON_NAME_OID_ENCODING {
-			if common_name[SPAN_END_INDEX] == ENCODED_SIZE_MINIMUM {
-				common_name = value_content
-			}
-		}
+		name_common_name(&common_name, storage, set_content)
 		content = next_content
 	}
-	accepted[DECISION_INDEX] = DECISION_TRUE
-	return common_name, accepted
+	*destination = common_name
+	accepted = DECISION_TRUE
+	return accepted
+}
+
+func name_common_name(destination Span_Handle, storage Storage, set_content Span) {
+	Span_Handle_Invariants(destination, "name_common_name.destination")
+	Storage_Invariants(storage, "name_common_name.storage")
+	Span_Invariants(set_content, "name_common_name.set_content")
+	var ignored_identifier Identifier
+	var attribute_content, attribute_encoded, attribute_tail Span
+	take_element(
+		&ignored_identifier,
+		&attribute_content,
+		&attribute_encoded,
+		&attribute_tail,
+		storage,
+		set_content,
+	)
+	var oid_content, oid_encoded, value_source Span
+	take_element(
+		&ignored_identifier,
+		&oid_content,
+		&oid_encoded,
+		&value_source,
+		storage,
+		attribute_content,
+	)
+	var value_content, value_encoded, value_tail Span
+	take_element(
+		&ignored_identifier,
+		&value_content,
+		&value_encoded,
+		&value_tail,
+		storage,
+		value_source,
+	)
+	oid_bytes := storage[int(oid_content.Start):int(oid_content.End)]
+	if string(oid_bytes) == COMMON_NAME_OID_ENCODING {
+		if destination.End == Span_End(ENCODED_SIZE_MINIMUM) {
+			*destination = value_content
+		}
+	}
 }
 
 func name_set_valid(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	set_identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	set_content [SPAN_FIELD_COUNT]int,
-) (accepted [binary.UINT_8_SIZE]uint64) {
-	if identifier_matches(
-		set_identifier, set_identifier_expected(),
-	)[DECISION_INDEX] != DECISION_TRUE {
+	storage Storage, set_identifier Identifier, set_content Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "name_set_valid.accepted") }()
+	Storage_Invariants(storage, "name_set_valid.storage")
+	Identifier_Invariants(set_identifier, "name_set_valid.set_identifier")
+	Span_Invariants(set_content, "name_set_valid.set_content")
+	var expected Identifier
+	set_identifier_expected(&expected)
+	if identifier_matches(set_identifier, expected) != DECISION_TRUE {
 		return accepted
 	}
-	attribute_identifier, attribute_content, _, tail, accepted :=
-		take_element(storage, set_content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
+	var attribute_identifier Identifier
+	var attribute_content, ignored, tail Span
+	accepted = take_element(
+		&attribute_identifier, &attribute_content, &ignored, &tail, storage, set_content,
+	)
+	if accepted != DECISION_TRUE {
 		return accepted
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
+	if int(tail.Start) != int(tail.End) {
 		return accepted
 	}
-	if identifier_matches(
-		attribute_identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
+	sequence_identifier(&expected)
+	if identifier_matches(attribute_identifier, expected) != DECISION_TRUE {
 		return accepted
 	}
-	oid_identifier, _, _, value_source, accepted :=
-		take_element(storage, attribute_content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
+	var oid_identifier Identifier
+	var oid_content, oid_encoded, value_source Span
+	accepted = take_element(
+		&oid_identifier,
+		&oid_content,
+		&oid_encoded,
+		&value_source,
+		storage,
+		attribute_content,
+	)
+	if accepted != DECISION_TRUE {
 		return accepted
 	}
-	if identifier_matches(
-		oid_identifier, oid_identifier_expected(),
-	)[DECISION_INDEX] != DECISION_TRUE {
+	oid_identifier_expected(&expected)
+	if identifier_matches(oid_identifier, expected) != DECISION_TRUE {
 		return accepted
 	}
-	_, _, _, value_tail, accepted := take_element(storage, value_source)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
+	var value_identifier Identifier
+	var value_content, value_encoded, value_tail Span
+	accepted = take_element(
+		&value_identifier,
+		&value_content,
+		&value_encoded,
+		&value_tail,
+		storage,
+		value_source,
+	)
+	if accepted != DECISION_TRUE {
 		return accepted
 	}
-	if value_tail[SPAN_START_INDEX] != value_tail[SPAN_END_INDEX] {
+	if int(value_tail.Start) != int(value_tail.End) {
 		return accepted
 	}
-	accepted[DECISION_INDEX] = DECISION_TRUE
+	accepted = DECISION_TRUE
 	return accepted
 }
 
 func signature_algorithm_parse(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, algorithm [SPAN_FIELD_COUNT]int,
-) (result Signature_Algorithm, recognized [binary.UINT_8_SIZE]uint64) {
+	storage Storage, algorithm Span,
+) (result Signature_Algorithm, recognized Decision) {
 	defer func() {
 		Signature_Algorithm_Invariants(result, "signature_algorithm_parse.result")
+		Decision_Invariants(recognized, "signature_algorithm_parse.recognized")
 	}()
-	algorithm_bytes := storage[algorithm[SPAN_START_INDEX]:algorithm[SPAN_END_INDEX]]
+	Storage_Invariants(storage, "signature_algorithm_parse.storage")
+	Span_Invariants(algorithm, "signature_algorithm_parse.algorithm")
+	algorithm_bytes := storage[int(algorithm.Start):int(algorithm.End)]
 	if string(algorithm_bytes) == RSA_SIGNATURE_IDENTIFIER_ENCODING {
 		result = SIGNATURE_ALGORITHM_RSA_SHA_256
-		recognized[DECISION_INDEX] = DECISION_TRUE
+		recognized = DECISION_TRUE
 		return result, recognized
 	}
 	if string(algorithm_bytes) == ECDSA_SIGNATURE_IDENTIFIER_ENCODING {
 		result = SIGNATURE_ALGORITHM_ECDSA_SHA_256
-		recognized[DECISION_INDEX] = DECISION_TRUE
+		recognized = DECISION_TRUE
 		return result, recognized
 	}
 	if string(algorithm_bytes) == ED25519_IDENTIFIER_ENCODING {
 		result = SIGNATURE_ALGORITHM_ED25519
-		recognized[DECISION_INDEX] = DECISION_TRUE
+		recognized = DECISION_TRUE
 	}
 	return result, recognized
 }
 
 func take_element(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, source [SPAN_FIELD_COUNT]int,
-) (
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-	encoded [SPAN_FIELD_COUNT]int,
-	tail [SPAN_FIELD_COUNT]int,
-	accepted [binary.UINT_8_SIZE]uint64,
-) {
-	source_bytes := storage[source[SPAN_START_INDEX]:source[SPAN_END_INDEX]]
+	identifier Identifier_Handle,
+	content Span_Handle,
+	encoded Span_Handle,
+	tail Span_Handle,
+	storage Storage,
+	source Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "take_element.accepted") }()
+	Identifier_Handle_Invariants(identifier, "take_element.identifier")
+	Span_Handle_Invariants(content, "take_element.content")
+	Span_Handle_Invariants(encoded, "take_element.encoded")
+	Span_Handle_Invariants(tail, "take_element.tail")
+	Storage_Invariants(storage, "take_element.storage")
+	Span_Invariants(source, "take_element.source")
+	source_bytes := storage[int(source.Start):int(source.End)]
 	element, consumed, _, status := asn1.Decode(asn1.Encoded(source_bytes))
 	if status != asn1.STATUS_OK {
-		return identifier, content, encoded, source, accepted
+		*tail = source
+		return accepted
 	}
-	identifier[IDENTIFIER_CLASS_INDEX] = uint32(element.Class)
-	identifier[IDENTIFIER_TAG_INDEX] = uint32(element.Tag)
+	*identifier = Identifier{
+		Class: Identifier_Class(element.Class),
+		Tag:   Identifier_Tag(element.Tag),
+	}
 	if bool(element.Constructed) {
-		identifier[IDENTIFIER_CONSTRUCTED_INDEX] = CONSTRUCTED_TRUE
+		identifier.Constructed = Constructed(CONSTRUCTED_TRUE)
 	}
-	encoded[SPAN_START_INDEX] = source[SPAN_START_INDEX]
-	encoded[SPAN_END_INDEX] = source[SPAN_START_INDEX] + int(consumed)
-	content[SPAN_END_INDEX] = encoded[SPAN_END_INDEX]
-	content[SPAN_START_INDEX] = content[SPAN_END_INDEX] - len(element.Content)
-	tail[SPAN_START_INDEX] = encoded[SPAN_END_INDEX]
-	tail[SPAN_END_INDEX] = source[SPAN_END_INDEX]
-	accepted[DECISION_INDEX] = DECISION_TRUE
-	return identifier, content, encoded, tail, accepted
+	encoded.Start = source.Start
+	encoded.End = Span_End(int(source.Start) + int(consumed))
+	content.End = encoded.End
+	content.Start = Span_Start(int(content.End) - len(element.Content))
+	tail.Start = Span_Start(encoded.End)
+	tail.End = source.End
+	accepted = DECISION_TRUE
+	return accepted
 }
 
 func identifier_matches(
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	expected [IDENTIFIER_FIELD_COUNT]uint32,
-) (matches [binary.UINT_8_SIZE]uint64) {
+	identifier Identifier, expected Identifier,
+) (matches Decision) {
+	defer func() { Decision_Invariants(matches, "identifier_matches.matches") }()
+	Identifier_Invariants(identifier, "identifier_matches.identifier")
+	Identifier_Invariants(expected, "identifier_matches.expected")
 	if identifier != expected {
 		return matches
 	}
-	matches[DECISION_INDEX] = DECISION_TRUE
+	matches = DECISION_TRUE
 	return matches
 }
 
-func sequence_identifier() (identifier [IDENTIFIER_FIELD_COUNT]uint32) {
-	return [IDENTIFIER_FIELD_COUNT]uint32{
-		IDENTIFIER_CLASS_INDEX:       asn1.CLASS_UNIVERSAL,
-		IDENTIFIER_TAG_INDEX:         uint32(TAG_SEQUENCE),
-		IDENTIFIER_CONSTRUCTED_INDEX: CONSTRUCTED_TRUE,
+func sequence_identifier(destination Identifier_Handle) {
+	Identifier_Handle_Invariants(destination, "sequence_identifier.destination")
+	*destination = Identifier{
+		Class:       Identifier_Class(asn1.CLASS_UNIVERSAL),
+		Tag:         Identifier_Tag(TAG_SEQUENCE),
+		Constructed: Constructed(CONSTRUCTED_TRUE),
 	}
 }
 
-func set_identifier_expected() (identifier [IDENTIFIER_FIELD_COUNT]uint32) {
-	return [IDENTIFIER_FIELD_COUNT]uint32{
-		IDENTIFIER_CLASS_INDEX:       asn1.CLASS_UNIVERSAL,
-		IDENTIFIER_TAG_INDEX:         uint32(TAG_SEQUENCE + binary.UINT_8_SIZE),
-		IDENTIFIER_CONSTRUCTED_INDEX: CONSTRUCTED_TRUE,
+func set_identifier_expected(destination Identifier_Handle) {
+	Identifier_Handle_Invariants(destination, "set_identifier_expected.destination")
+	*destination = Identifier{
+		Class:       Identifier_Class(asn1.CLASS_UNIVERSAL),
+		Tag:         Identifier_Tag(TAG_SEQUENCE + binary.UINT_8_SIZE),
+		Constructed: Constructed(CONSTRUCTED_TRUE),
 	}
 }
 
-func oid_identifier_expected() (identifier [IDENTIFIER_FIELD_COUNT]uint32) {
-	return [IDENTIFIER_FIELD_COUNT]uint32{
-		IDENTIFIER_CLASS_INDEX:       asn1.CLASS_UNIVERSAL,
-		IDENTIFIER_TAG_INDEX:         uint32(TAG_OBJECT_IDENTIFIER),
-		IDENTIFIER_CONSTRUCTED_INDEX: CONSTRUCTED_FALSE,
+func oid_identifier_expected(destination Identifier_Handle) {
+	Identifier_Handle_Invariants(destination, "oid_identifier_expected.destination")
+	*destination = Identifier{
+		Class:       Identifier_Class(asn1.CLASS_UNIVERSAL),
+		Tag:         Identifier_Tag(TAG_OBJECT_IDENTIFIER),
+		Constructed: Constructed(CONSTRUCTED_FALSE),
 	}
 }
 
-func bit_string_identifier() (identifier [IDENTIFIER_FIELD_COUNT]uint32) {
-	return [IDENTIFIER_FIELD_COUNT]uint32{
-		IDENTIFIER_CLASS_INDEX:       asn1.CLASS_UNIVERSAL,
-		IDENTIFIER_TAG_INDEX:         uint32(TAG_BIT_STRING),
-		IDENTIFIER_CONSTRUCTED_INDEX: CONSTRUCTED_FALSE,
+func bit_string_identifier(destination Identifier_Handle) {
+	Identifier_Handle_Invariants(destination, "bit_string_identifier.destination")
+	*destination = Identifier{
+		Class:       Identifier_Class(asn1.CLASS_UNIVERSAL),
+		Tag:         Identifier_Tag(TAG_BIT_STRING),
+		Constructed: Constructed(CONSTRUCTED_FALSE),
 	}
 }
 
-func integer_identifier() (identifier [IDENTIFIER_FIELD_COUNT]uint32) {
-	return [IDENTIFIER_FIELD_COUNT]uint32{
-		IDENTIFIER_CLASS_INDEX:       asn1.CLASS_UNIVERSAL,
-		IDENTIFIER_TAG_INDEX:         uint32(TAG_INTEGER),
-		IDENTIFIER_CONSTRUCTED_INDEX: CONSTRUCTED_FALSE,
+func integer_identifier(destination Identifier_Handle) {
+	Identifier_Handle_Invariants(destination, "integer_identifier.destination")
+	*destination = Identifier{
+		Class:       Identifier_Class(asn1.CLASS_UNIVERSAL),
+		Tag:         Identifier_Tag(TAG_INTEGER),
+		Constructed: Constructed(CONSTRUCTED_FALSE),
 	}
 }
 
 func bit_string_content(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-) (value [SPAN_FIELD_COUNT]int, valid [binary.UINT_8_SIZE]uint64) {
-	if identifier_matches(
-		identifier, bit_string_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
-		return value, valid
+	destination Span_Handle, storage Storage, identifier Identifier, content Span,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "bit_string_content.valid") }()
+	Span_Handle_Invariants(destination, "bit_string_content.destination")
+	Storage_Invariants(storage, "bit_string_content.storage")
+	Identifier_Invariants(identifier, "bit_string_content.identifier")
+	Span_Invariants(content, "bit_string_content.content")
+	var expected Identifier
+	bit_string_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
+		return valid
 	}
-	if content[SPAN_END_INDEX]-content[SPAN_START_INDEX] <
+	if int(content.End)-int(content.Start) <
 		BIT_STRING_UNUSED_SIZE {
-		return value, valid
+		return valid
 	}
-	if storage[content[SPAN_START_INDEX]] != BIT_STRING_UNUSED_EMPTY {
-		return value, valid
+	if storage[int(content.Start)] != BIT_STRING_UNUSED_EMPTY {
+		return valid
 	}
-	value[SPAN_START_INDEX] = content[SPAN_START_INDEX] + BIT_STRING_UNUSED_SIZE
-	value[SPAN_END_INDEX] = content[SPAN_END_INDEX]
-	valid[DECISION_INDEX] = DECISION_TRUE
-	return value, valid
+	var value Span
+	value.Start = content.Start + BIT_STRING_UNUSED_SIZE
+	value.End = content.End
+	*destination = value
+	valid = DECISION_TRUE
+	return valid
 }
 
 func version_valid(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-) (valid [binary.UINT_8_SIZE]uint64) {
-	expected := [IDENTIFIER_FIELD_COUNT]uint32{
-		IDENTIFIER_CLASS_INDEX:       asn1.CLASS_CONTEXT_SPECIFIC,
-		IDENTIFIER_TAG_INDEX:         uint32(VERSION_TAG),
-		IDENTIFIER_CONSTRUCTED_INDEX: CONSTRUCTED_TRUE,
+	storage Storage, identifier Identifier, content Span,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "version_valid.valid") }()
+	Storage_Invariants(storage, "version_valid.storage")
+	Identifier_Invariants(identifier, "version_valid.identifier")
+	Span_Invariants(content, "version_valid.content")
+	expected := Identifier{
+		Class:       Identifier_Class(asn1.CLASS_CONTEXT_SPECIFIC),
+		Tag:         Identifier_Tag(VERSION_TAG),
+		Constructed: Constructed(CONSTRUCTED_TRUE),
 	}
-	if identifier_matches(identifier, expected)[DECISION_INDEX] != DECISION_TRUE {
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
 		return valid
 	}
-	version_identifier, version_content, encoded, tail, accepted :=
-		take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
+	var version_identifier Identifier
+	var version_content, encoded, tail Span
+	accepted := take_element(
+		&version_identifier, &version_content, &encoded, &tail, storage, content,
+	)
+	if accepted != DECISION_TRUE {
 		return valid
 	}
 	if encoded != content {
 		return valid
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
+	if int(tail.Start) != int(tail.End) {
 		return valid
 	}
-	if identifier_matches(
-		version_identifier, integer_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
+	var integer Identifier
+	integer_identifier(&integer)
+	if identifier_matches(version_identifier, integer) != DECISION_TRUE {
 		return valid
 	}
-	if version_content[SPAN_END_INDEX]-version_content[SPAN_START_INDEX] !=
+	if int(version_content.End)-int(version_content.Start) !=
 		binary.UINT_8_SIZE {
 		return valid
 	}
-	if storage[version_content[SPAN_START_INDEX]] == VERSION_V3 {
-		valid[DECISION_INDEX] = DECISION_TRUE
+	if storage[int(version_content.Start)] == VERSION_V3 {
+		valid = DECISION_TRUE
 	}
 	return valid
 }
 
 func serial_valid(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-) (valid [binary.UINT_8_SIZE]uint64) {
+	storage Storage, identifier Identifier, content Span,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "serial_valid.valid") }()
+	Storage_Invariants(storage, "serial_valid.storage")
+	Identifier_Invariants(identifier, "serial_valid.identifier")
+	Span_Invariants(content, "serial_valid.content")
 	if positive_integer_valid(
 		storage, identifier, content,
-	)[DECISION_INDEX] != DECISION_TRUE {
+	) != DECISION_TRUE {
 		return valid
 	}
-	if content[SPAN_END_INDEX]-content[SPAN_START_INDEX] >
+	if int(content.End)-int(content.Start) >
 		SERIAL_NUMBER_SIZE_MAXIMUM {
 		return valid
 	}
 	var nonzero byte
-	serial_bytes := storage[content[SPAN_START_INDEX]:content[SPAN_END_INDEX]]
+	serial_bytes := storage[int(content.Start):int(content.End)]
 	for _, value := range serial_bytes {
 		nonzero |= value
 	}
 	if nonzero != bits.WORD_8_MINIMUM {
-		valid[DECISION_INDEX] = DECISION_TRUE
+		valid = DECISION_TRUE
 	}
 	return valid
 }
 
 func positive_integer_valid(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-) (valid [binary.UINT_8_SIZE]uint64) {
-	if identifier_matches(
-		identifier, integer_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
+	storage Storage, identifier Identifier, content Span,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "positive_integer_valid.valid") }()
+	Storage_Invariants(storage, "positive_integer_valid.storage")
+	Identifier_Invariants(identifier, "positive_integer_valid.identifier")
+	Span_Invariants(content, "positive_integer_valid.content")
+	var expected Identifier
+	integer_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
 		return valid
 	}
-	size := content[SPAN_END_INDEX] - content[SPAN_START_INDEX]
+	size := int(content.End) - int(content.Start)
 	if size == ENCODED_SIZE_MINIMUM {
 		return valid
 	}
-	bytes := storage[content[SPAN_START_INDEX]:content[SPAN_END_INDEX]]
+	bytes := storage[int(content.Start):int(content.End)]
 	if bytes[bits.BIT_COUNT_MINIMUM]&
 		byte(binary.UINT_8_SIZE<<(bits.BIT_COUNT_8_MAXIMUM-binary.UINT_8_SIZE)) !=
 		bits.WORD_8_MINIMUM {
 		return valid
 	}
 	if size == binary.UINT_8_SIZE {
-		valid[DECISION_INDEX] = DECISION_TRUE
+		valid = DECISION_TRUE
 		return valid
 	}
 	if bytes[bits.BIT_COUNT_MINIMUM] != bits.WORD_8_MINIMUM {
-		valid[DECISION_INDEX] = DECISION_TRUE
+		valid = DECISION_TRUE
 		return valid
 	}
 	if bytes[binary.UINT_8_SIZE]&
 		byte(binary.UINT_8_SIZE<<(bits.BIT_COUNT_8_MAXIMUM-binary.UINT_8_SIZE)) !=
 		bits.WORD_8_MINIMUM {
-		valid[DECISION_INDEX] = DECISION_TRUE
+		valid = DECISION_TRUE
 	}
 	return valid
 }
 
 func validity_valid(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-) (valid [binary.UINT_8_SIZE]uint64) {
-	if identifier_matches(
-		identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
+	storage Storage, identifier Identifier, content Span,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "validity_valid.valid") }()
+	Storage_Invariants(storage, "validity_valid.storage")
+	Identifier_Invariants(identifier, "validity_valid.identifier")
+	Span_Invariants(content, "validity_valid.content")
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
 		return valid
 	}
-	not_before_identifier, not_before_content, _, tail, accepted :=
-		take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
+	var not_before_identifier, not_after_identifier Identifier
+	var not_before_content, not_after_content, ignored, tail Span
+	accepted := take_element(
+		&not_before_identifier,
+		&not_before_content,
+		&ignored,
+		&tail,
+		storage,
+		content,
+	)
+	if accepted != DECISION_TRUE {
 		return valid
 	}
-	not_after_identifier, not_after_content, _, tail, accepted :=
-		take_element(storage, tail)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
+	accepted = take_element(
+		&not_after_identifier,
+		&not_after_content,
+		&ignored,
+		&tail,
+		storage,
+		tail,
+	)
+	if accepted != DECISION_TRUE {
 		return valid
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
+	if int(tail.Start) != int(tail.End) {
 		return valid
 	}
 	if time_element_valid(
 		not_before_identifier, not_before_content,
-	)[DECISION_INDEX]&time_element_valid(
+	)&time_element_valid(
 		not_after_identifier, not_after_content,
-	)[DECISION_INDEX] == DECISION_TRUE {
-		valid[DECISION_INDEX] = DECISION_TRUE
+	) == DECISION_TRUE {
+		valid = DECISION_TRUE
 	}
 	return valid
 }
 
 func time_element_valid(
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-) (valid [binary.UINT_8_SIZE]uint64) {
-	if identifier[IDENTIFIER_CLASS_INDEX] != asn1.CLASS_UNIVERSAL {
+	identifier Identifier, content Span,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "time_element_valid.valid") }()
+	Identifier_Invariants(identifier, "time_element_valid.identifier")
+	Span_Invariants(content, "time_element_valid.content")
+	if identifier.Class != Identifier_Class(asn1.CLASS_UNIVERSAL) {
 		return valid
 	}
-	if identifier[IDENTIFIER_CONSTRUCTED_INDEX] != CONSTRUCTED_FALSE {
+	if identifier.Constructed != Constructed(CONSTRUCTED_FALSE) {
 		return valid
 	}
-	if identifier[IDENTIFIER_TAG_INDEX] != uint32(TAG_TIME_UTC) {
-		if identifier[IDENTIFIER_TAG_INDEX] != uint32(TAG_TIME_GENERALIZED) {
+	if identifier.Tag != Identifier_Tag(TAG_TIME_UTC) {
+		if identifier.Tag != Identifier_Tag(TAG_TIME_GENERALIZED) {
 			return valid
 		}
 	}
-	if content[SPAN_START_INDEX] != content[SPAN_END_INDEX] {
-		valid[DECISION_INDEX] = DECISION_TRUE
+	if int(content.Start) != int(content.End) {
+		valid = DECISION_TRUE
 	}
 	return valid
 }
 
 func optional_fields_valid(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, content [SPAN_FIELD_COUNT]int,
-) (valid [binary.UINT_8_SIZE]uint64) {
-	previous_tag := uint32(OPTIONAL_TAG_MINIMUM - binary.UINT_8_SIZE)
-	for content[SPAN_START_INDEX] != content[SPAN_END_INDEX] {
-		identifier, _, _, tail, accepted := take_element(storage, content)
-		if accepted[DECISION_INDEX] != DECISION_TRUE {
+	storage Storage, content Span,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "optional_fields_valid.valid") }()
+	Storage_Invariants(storage, "optional_fields_valid.storage")
+	Span_Invariants(content, "optional_fields_valid.content")
+	previous_tag := Identifier_Tag(OPTIONAL_TAG_MINIMUM - binary.UINT_8_SIZE)
+	for int(content.Start) != int(content.End) {
+		var identifier Identifier
+		var ignored_content, ignored_encoded, tail Span
+		accepted := take_element(
+			&identifier,
+			&ignored_content,
+			&ignored_encoded,
+			&tail,
+			storage,
+			content,
+		)
+		if accepted != DECISION_TRUE {
 			return valid
 		}
-		if identifier[IDENTIFIER_CLASS_INDEX] != asn1.CLASS_CONTEXT_SPECIFIC {
+		if identifier.Class != Identifier_Class(asn1.CLASS_CONTEXT_SPECIFIC) {
 			return valid
 		}
-		tag := identifier[IDENTIFIER_TAG_INDEX]
-		if tag < uint32(OPTIONAL_TAG_MINIMUM) {
+		tag := identifier.Tag
+		if tag < Identifier_Tag(OPTIONAL_TAG_MINIMUM) {
 			return valid
 		}
-		if tag > uint32(OPTIONAL_TAG_MAXIMUM) {
+		if tag > Identifier_Tag(OPTIONAL_TAG_MAXIMUM) {
 			return valid
 		}
 		if tag <= previous_tag {
 			return valid
 		}
-		if tag == uint32(OPTIONAL_TAG_MAXIMUM) {
-			if identifier[IDENTIFIER_CONSTRUCTED_INDEX] != CONSTRUCTED_TRUE {
+		if tag == Identifier_Tag(OPTIONAL_TAG_MAXIMUM) {
+			if identifier.Constructed != Constructed(CONSTRUCTED_TRUE) {
 				return valid
 			}
 		}
 		previous_tag = tag
 		content = tail
 	}
-	valid[DECISION_INDEX] = DECISION_TRUE
+	valid = DECISION_TRUE
 	return valid
 }
 
@@ -1382,13 +1829,23 @@ func Verify_Signature_From(
 	}()
 	Certificate_Handle_Invariants(certificate, "Verify_Signature_From.certificate")
 	Certificate_Handle_Invariants(issuer, "Verify_Signature_From.issuer")
+	aver.Always(
+		certificate.Ready == READY_COMPLETE,
+		"X.509 verification requires a parsed certificate.",
+	)
+	aver.Always(
+		issuer.Ready == READY_COMPLETE,
+		"X.509 verification requires a parsed issuer.",
+	)
 	if certificate.Signature_Algorithm == SIGNATURE_ALGORITHM_RSA_SHA_256 {
 		if issuer.Public_Key_Algorithm != PUBLIC_KEY_ALGORITHM_RSA {
 			return false
 		}
-		digest := digest_sha_256(sha256.Source(certificate.TBS))
+		var digest_bytes [rsa.HASH_SIZE]byte
+		digest := rsa.Digest(digest_bytes[:])
+		digest_sha_256(Digest_Destination(digest), sha256.Source(certificate.TBS))
 		return Verification(rsa.Verify_PKCS1_V1_5_SHA_256(
-			issuer.RSA_Public_Key, rsa.Digest(digest),
+			issuer.RSA_Public_Key, digest,
 			rsa.Signature_Unvalidated(certificate.Signature),
 		))
 	}
@@ -1398,19 +1855,24 @@ func Verify_Signature_From(
 		}
 		var signature_storage [ENCODED_SIZE_MAXIMUM]byte
 		copy(signature_storage[:], certificate.Signature)
-		signature_span := [SPAN_FIELD_COUNT]int{
-			SPAN_START_INDEX: ENCODED_SIZE_MINIMUM,
-			SPAN_END_INDEX:   len(certificate.Signature),
+		storage := Storage(signature_storage[:])
+		signature_span := Span{
+			Start: Span_Start(ENCODED_SIZE_MINIMUM),
+			End:   Span_End(len(certificate.Signature)),
 		}
-		signature, accepted := ecdsa_signature_parse(
-			&signature_storage, signature_span,
+		var signature_bytes [ecdsa.SIGNATURE_SIZE]byte
+		signature := ecdsa.Signature(signature_bytes[:])
+		accepted := ecdsa_signature_parse(
+			signature, storage, signature_span,
 		)
-		if accepted[DECISION_INDEX] != DECISION_TRUE {
+		if accepted != DECISION_TRUE {
 			return false
 		}
-		digest := digest_sha_256(sha256.Source(certificate.TBS))
+		var digest_bytes [ecdsa.SCALAR_SIZE]byte
+		digest := ecdsa.Digest(digest_bytes[:])
+		digest_sha_256(Digest_Destination(digest), sha256.Source(certificate.TBS))
 		return Verification(ecdsa.Verify(
-			issuer.ECDSA_Public_Key, ecdsa.Digest(digest), signature[:],
+			issuer.ECDSA_Public_Key, digest, ecdsa.Signature_Unvalidated(signature),
 		))
 	}
 	if certificate.Signature_Algorithm == SIGNATURE_ALGORITHM_ED25519 {
@@ -1418,96 +1880,128 @@ func Verify_Signature_From(
 			return false
 		}
 		return Verification(ed25519.Verify(
-			issuer.Ed25519_Public_Key, ed25519.Message(certificate.TBS),
+			ed25519_public_key_bytes(&issuer.Ed25519_Public_Key),
+			ed25519.Message(certificate.TBS),
 			ed25519.Signature_Unvalidated(certificate.Signature),
 		))
 	}
 	return false
 }
 
-func digest_sha_256(source sha256.Source) (digest sha256.Value_256) {
-	defer func() {
-		sha256.Value_256_Invariants(digest, "digest_sha_256.digest")
-	}()
+// Digest_Destination fixes certificate signature input to SHA-256 width.
+type Digest_Destination []byte
+
+// Digest_Destination_Invariants rejects partial signature digests.
+func Digest_Destination_Invariants(value Digest_Destination, _ aver.Namespace) {
+	aver.Always(
+		len(value) == sha256.DIGEST_256_SIZE,
+		"X.509 signature digest has SHA-256 width.",
+	)
+}
+
+func digest_sha_256(destination Digest_Destination, source sha256.Source) {
+	Digest_Destination_Invariants(destination, "digest_sha_256.destination")
 	sha256.Source_Invariants(source, "digest_sha_256.source")
-	var state sha256.Digest
-	sha256.Digest_Init(&state, sha256.KIND_SHA_256)
-	sha256.Digest_Write(&state, sha256.Source(source))
-	return sha256.Digest_Sum_256(&state)
+	count, status := sha256.Checksum_Into(
+		sha256.Destination(destination), sha256.KIND_SHA_256, source,
+	)
+	aver.Always(
+		count == sha256.OUTPUT_COUNT_256_REQUIRED,
+		"X.509 SHA-256 receives exact digest storage.",
+	)
+	aver.Always(
+		status == sha256.OUTPUT_STATUS_OK,
+		"X.509 SHA-256 writes the complete digest.",
+	)
 }
 
 func ecdsa_signature_parse(
-	storage *[ENCODED_SIZE_MAXIMUM]byte, source [SPAN_FIELD_COUNT]int,
-) (signature ecdsa.Signature, accepted [binary.UINT_8_SIZE]uint64) {
-	defer func() {
-		ecdsa.Signature_Invariants(signature, "ecdsa_signature_parse.signature")
-	}()
-	identifier, content, encoded, tail, accepted := take_element(storage, source)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return signature, accepted
+	destination ecdsa.Signature, storage Storage, source Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "ecdsa_signature_parse.accepted") }()
+	ecdsa.Signature_Invariants(destination, "ecdsa_signature_parse.destination")
+	Storage_Invariants(storage, "ecdsa_signature_parse.storage")
+	Span_Invariants(source, "ecdsa_signature_parse.source")
+	var identifier, r_identifier, s_identifier Identifier
+	var content, encoded, tail, r_content, s_content, ignored Span
+	accepted = take_element(&identifier, &content, &encoded, &tail, storage, source)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
 	if encoded != source {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return signature, accepted
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if tail[SPAN_START_INDEX] != tail[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return signature, accepted
+	if int(tail.Start) != int(tail.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	if identifier_matches(
-		identifier, sequence_identifier(),
-	)[DECISION_INDEX] != DECISION_TRUE {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return signature, accepted
+	var expected Identifier
+	sequence_identifier(&expected)
+	if identifier_matches(identifier, expected) != DECISION_TRUE {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	r_identifier, r_content, _, content, accepted := take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return signature, accepted
+	accepted = take_element(
+		&r_identifier, &r_content, &ignored, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	s_identifier, s_content, _, content, accepted := take_element(storage, content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return signature, accepted
+	accepted = take_element(
+		&s_identifier, &s_content, &ignored, &content, storage, content,
+	)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	if content[SPAN_START_INDEX] != content[SPAN_END_INDEX] {
-		accepted[DECISION_INDEX] = DECISION_FALSE
-		return signature, accepted
+	if int(content.Start) != int(content.End) {
+		accepted = DECISION_FALSE
+		return accepted
 	}
-	r_scalar, accepted := integer_scalar(storage, r_identifier, r_content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return signature, accepted
+	var r_bytes [ecdsa.SCALAR_SIZE]byte
+	r_scalar := ecdsa.Scalar_Encoding(r_bytes[:])
+	accepted = integer_scalar(r_scalar, storage, r_identifier, r_content)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	s_scalar, accepted := integer_scalar(storage, s_identifier, s_content)
-	if accepted[DECISION_INDEX] != DECISION_TRUE {
-		return signature, accepted
+	var s_bytes [ecdsa.SCALAR_SIZE]byte
+	s_scalar := ecdsa.Scalar_Encoding(s_bytes[:])
+	accepted = integer_scalar(s_scalar, storage, s_identifier, s_content)
+	if accepted != DECISION_TRUE {
+		return accepted
 	}
-	copy(signature[:ecdsa.SCALAR_SIZE], r_scalar[:])
-	copy(signature[ecdsa.SCALAR_SIZE:], s_scalar[:])
-	accepted[DECISION_INDEX] = DECISION_TRUE
-	return signature, accepted
+	copy(destination[:ecdsa.SCALAR_SIZE], r_scalar)
+	copy(destination[ecdsa.SCALAR_SIZE:], s_scalar)
+	accepted = DECISION_TRUE
+	return accepted
 }
 
 func integer_scalar(
-	storage *[ENCODED_SIZE_MAXIMUM]byte,
-	identifier [IDENTIFIER_FIELD_COUNT]uint32,
-	content [SPAN_FIELD_COUNT]int,
-) (
-	scalar [ecdsa.SCALAR_SIZE]byte, accepted [binary.UINT_8_SIZE]uint64,
-) {
+	destination ecdsa.Scalar_Encoding,
+	storage Storage,
+	identifier Identifier,
+	content Span,
+) (accepted Decision) {
+	defer func() { Decision_Invariants(accepted, "integer_scalar.accepted") }()
+	ecdsa.Scalar_Encoding_Invariants(destination, "integer_scalar.destination")
+	Storage_Invariants(storage, "integer_scalar.storage")
+	Identifier_Invariants(identifier, "integer_scalar.identifier")
+	Span_Invariants(content, "integer_scalar.content")
 	if positive_integer_valid(
 		storage, identifier, content,
-	)[DECISION_INDEX] != DECISION_TRUE {
-		return scalar, accepted
+	) != DECISION_TRUE {
+		return accepted
 	}
-	if content[SPAN_END_INDEX]-content[SPAN_START_INDEX] ==
-		len(scalar)+binary.UINT_8_SIZE {
-		content[SPAN_START_INDEX] += binary.UINT_8_SIZE
+	if int(content.End)-int(content.Start) ==
+		len(destination)+binary.UINT_8_SIZE {
+		content.Start += Span_Start(binary.UINT_8_SIZE)
 	}
-	content_size := content[SPAN_END_INDEX] - content[SPAN_START_INDEX]
-	if content_size > len(scalar) {
-		return scalar, accepted
+	content_size := int(content.End) - int(content.Start)
+	if content_size > len(destination) {
+		return accepted
 	}
-	offset := len(scalar) - content_size
-	copy(scalar[offset:], storage[content[SPAN_START_INDEX]:content[SPAN_END_INDEX]])
-	accepted[DECISION_INDEX] = DECISION_TRUE
-	return scalar, accepted
+	offset := len(destination) - content_size
+	copy(destination[offset:], storage[int(content.Start):int(content.End)])
+	accepted = DECISION_TRUE
+	return accepted
 }

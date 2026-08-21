@@ -1,7 +1,6 @@
 package md5_test
 
 import (
-	standard_md5 "crypto/md5"
 	"testing"
 
 	"local/james-orcales/shared/bytes"
@@ -20,7 +19,11 @@ func Test_Package_Owned_State(t *testing.T) {
 	md5.Digest_Write(&source, md5.Source("abc"))
 	var destination md5.Digest
 	md5.Digest_Clone_Into(&destination, &source)
-	testify.Equal(t, md5.Digest_Sum(&source), md5.Digest_Sum(&destination))
+	var source_output [md5.DIGEST_SIZE]byte
+	var destination_output [md5.DIGEST_SIZE]byte
+	md5.Digest_Sum_Into(&source, source_output[:])
+	md5.Digest_Sum_Into(&destination, destination_output[:])
+	testify.Equal(t, source_output, destination_output)
 }
 
 // Test_Formula binds every derived width to shared primitive geometry.
@@ -41,21 +44,40 @@ func Test_Formula(t *testing.T) {
 
 // Test_Reference_Values binds output to RFC 1321 vectors.
 func Test_Reference_Values(t *testing.T) {
-	sources := [...]md5.Source{md5.Source(""), md5.Source("abc")}
-	for _, source := range sources {
-		value := md5.Value(standard_md5.Sum(source))
-		testify.Equal(t, value, md5.Checksum(source))
+	tests := [...]struct {
+		Source md5.Source
+		Want   [md5.DIGEST_SIZE]byte
+	}{
+		{
+			Source: md5.Source(""),
+			Want: [md5.DIGEST_SIZE]byte{
+				0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04,
+				0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e,
+			},
+		},
+		{
+			Source: md5.Source("abc"),
+			Want: [md5.DIGEST_SIZE]byte{
+				0x90, 0x01, 0x50, 0x98, 0x3c, 0xd2, 0x4f, 0xb0,
+				0xd6, 0x96, 0x3f, 0x7d, 0x28, 0xe1, 0x7f, 0x72,
+			},
+		},
+	}
+	for _, test := range tests {
+		testify.Equal(t, test.Want[:], checksum(test.Source))
 		var digest md5.Digest
 		md5.Digest_Init(&digest)
-		midpoint := len(source) / TEST_COUNT_TWO
+		midpoint := len(test.Source) / TEST_COUNT_TWO
 		testify.Equal(
-			t, md5.Count(midpoint), md5.Digest_Write(&digest, source[:midpoint]),
+			t, md5.Count(midpoint), md5.Digest_Write(&digest, test.Source[:midpoint]),
 		)
 		testify.Equal(
-			t, md5.Count(len(source)-midpoint),
-			md5.Digest_Write(&digest, source[midpoint:]),
+			t, md5.Count(len(test.Source)-midpoint),
+			md5.Digest_Write(&digest, test.Source[midpoint:]),
 		)
-		testify.Equal(t, value, md5.Digest_Sum(&digest))
+		var output [md5.DIGEST_SIZE]byte
+		md5.Digest_Sum_Into(&digest, output[:])
+		testify.Equal(t, test.Want, output)
 	}
 }
 
@@ -70,28 +92,41 @@ func Test_Stream(t *testing.T) {
 		md5.BLOCK_SIZE - TEST_COUNT_ONE, md5.BLOCK_SIZE,
 		md5.BLOCK_SIZE + TEST_COUNT_ONE,
 	} {
-		testify.Equal(
-			t, md5.Value(standard_md5.Sum(source[:size])), md5.Checksum(source[:size]),
-		)
+		want := checksum(source[:size])
+		var digest md5.Digest
+		md5.Digest_Init(&digest)
+		md5.Digest_Write(&digest, source[:size])
+		var output [md5.DIGEST_SIZE]byte
+		md5.Digest_Sum_Into(&digest, output[:])
+		testify.Equal(t, want, output[:])
 	}
-	want := md5.Value(standard_md5.Sum(source[:]))
+	var reference md5.Digest
+	md5.Digest_Init(&reference)
+	write_chunks(&reference, source[:], md5.BLOCK_SIZE+TEST_COUNT_ONE)
+	var want [md5.DIGEST_SIZE]byte
+	md5.Digest_Sum_Into(&reference, want[:])
 	var digest md5.Digest
 	md5.Digest_Init(&digest)
 	md5.Digest_Write(&digest, source[:md5.SOURCE_SIZE_MAXIMUM])
 	md5.Digest_Write(&digest, source[md5.SOURCE_SIZE_MAXIMUM:])
-	testify.Equal(t, want, md5.Digest_Sum(&digest))
+	var output [md5.DIGEST_SIZE]byte
+	md5.Digest_Sum_Into(&digest, output[:])
+	testify.Equal(t, want, output)
 	md5.Digest_Write(&digest, md5.Source("x"))
-	testify.Equal(
-		t, md5.Value(standard_md5.Sum(append(source[:], 'x'))), md5.Digest_Sum(&digest),
-	)
-	want_chunks := md5.Value(standard_md5.Sum(source[:md5.SOURCE_SIZE_MAXIMUM]))
+	md5.Digest_Write(&reference, md5.Source("x"))
+	var want_extended [md5.DIGEST_SIZE]byte
+	md5.Digest_Sum_Into(&reference, want_extended[:])
+	md5.Digest_Sum_Into(&digest, output[:])
+	testify.Equal(t, want_extended, output)
+	want_chunks := checksum(source[:md5.SOURCE_SIZE_MAXIMUM])
 	for _, chunk_size := range [...]int{
 		TEST_COUNT_ONE, md5.BLOCK_SIZE - TEST_COUNT_ONE, md5.BLOCK_SIZE,
 		md5.BLOCK_SIZE + TEST_COUNT_ONE, TEST_MULTI_BLOCK_CHUNK_SIZE,
 	} {
 		md5.Digest_Init(&digest)
 		write_chunks(&digest, source[:md5.SOURCE_SIZE_MAXIMUM], chunk_size)
-		testify.Equal(t, want_chunks, md5.Digest_Sum(&digest), chunk_size)
+		md5.Digest_Sum_Into(&digest, output[:])
+		testify.Equal(t, want_chunks, output[:], chunk_size)
 	}
 }
 
@@ -110,10 +145,15 @@ func Test_Caller_Owned_Output(t *testing.T) {
 	count, status = md5.Digest_Sum_Into(&digest, output[:])
 	testify.Equal(t, md5.OUTPUT_COUNT_REQUIRED, count)
 	testify.Equal(t, md5.OUTPUT_STATUS_OK, status)
-	testify.Equal(t, md5.Value(output), md5.Digest_Sum(&digest))
+	var repeated [md5.DIGEST_SIZE]byte
+	md5.Digest_Sum_Into(&digest, repeated[:])
+	testify.Equal(t, output, repeated)
 	testify.Equal(t, before, digest)
 	md5.Digest_Reset(&digest)
-	testify.Equal(t, md5.Checksum(nil), md5.Digest_Sum(&digest))
+	var empty_output [md5.DIGEST_SIZE]byte
+	md5.Checksum_Into(empty_output[:], nil)
+	md5.Digest_Sum_Into(&digest, repeated[:])
+	testify.Equal(t, empty_output, repeated)
 }
 
 // Test_Bounds rejects oversized calls and uninitialized caller state.
@@ -123,7 +163,8 @@ func Test_Bounds(t *testing.T) {
 	md5.Digest_Init(&digest)
 	var source [md5.SOURCE_SIZE_MAXIMUM + TEST_COUNT_ONE]byte
 	testify.Panics(t, func() { md5.Digest_Write(&digest, source[:]) })
-	testify.Panics(t, func() { md5.Checksum(source[:]) })
+	var output [md5.DIGEST_SIZE]byte
+	testify.Panics(t, func() { md5.Checksum_Into(output[:], source[:]) })
 	var destination [md5.DESTINATION_SIZE_MAXIMUM + TEST_COUNT_ONE]byte
 	testify.Panics(t, func() { md5.Digest_Sum_Into(&digest, destination[:]) })
 	digest.Message_Size = md5.Message_Size(md5.MESSAGE_SIZE_MAXIMUM)
@@ -134,19 +175,19 @@ func Test_Bounds(t *testing.T) {
 // Test_Invariant_Domains drives each valid state and caller-storage boundary through runtime APIs.
 func Test_Invariant_Domains(t *testing.T) {
 	var source [md5.SOURCE_SIZE_MAXIMUM]byte
+	var destination [md5.DESTINATION_SIZE_MAXIMUM]byte
 	for _, size := range [...]int{
 		md5.SOURCE_SIZE_MINIMUM,
 		md5.SOURCE_SIZE_MINIMUM + TEST_COUNT_ONE,
 		md5.SOURCE_SIZE_MINIMUM + TEST_COUNT_TWO,
 		md5.SOURCE_SIZE_MAXIMUM,
 	} {
-		md5.Checksum(source[:size])
+		md5.Checksum_Into(destination[:], source[:size])
 		var digest md5.Digest
 		md5.Digest_Init(&digest)
 		md5.Digest_Write(&digest, source[:size])
 	}
 
-	var destination [md5.DESTINATION_SIZE_MAXIMUM]byte
 	for _, size := range [...]int{
 		md5.DESTINATION_SIZE_MINIMUM,
 		md5.DESTINATION_SIZE_MINIMUM + TEST_COUNT_ONE,
@@ -156,6 +197,7 @@ func Test_Invariant_Domains(t *testing.T) {
 		var digest md5.Digest
 		md5.Digest_Init(&digest)
 		md5.Digest_Sum_Into(&digest, destination[:size])
+		md5.Checksum_Into(destination[:size], nil)
 	}
 
 	message_sizes := [...]md5.Message_Size{
@@ -172,7 +214,6 @@ func Test_Invariant_Domains(t *testing.T) {
 
 		md5.Digest_Size(&source_digest)
 		md5.Digest_Block_Size(&source_digest)
-		md5.Digest_Sum(&source_digest)
 		md5.Digest_Sum_Into(&source_digest, destination[:])
 		md5.Digest_Write(&source_digest, nil)
 
@@ -187,25 +228,45 @@ func Test_Invariant_Domains(t *testing.T) {
 		init_digest := source_digest
 		md5.Digest_Init(&init_digest)
 	}
+	test_state_invariant_domains(t)
 }
 
-// Test_Allocation proves caller state and result storage remain on stack.
+// Test_Allocation proves every exported runtime operation remains stack-owned.
 func Test_Allocation(t *testing.T) {
-	fixture := allocation_fixture{Source: md5.Source("abc")}
+	fixture := allocation_fixture{
+		Source: md5.Source("abc"), Output: make(md5.Destination, md5.DIGEST_SIZE),
+	}
 	md5.Digest_Init(&fixture.Digest)
 	testify.Zero_Allocation(t, func() { md5.Digest_Init(&fixture.Digest) })
 	testify.Zero_Allocation(t, func() {
 		fixture.Count = md5.Digest_Write(&fixture.Digest, fixture.Source)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Value = md5.Digest_Sum(&fixture.Digest)
-	})
-	testify.Zero_Allocation(t, func() {
 		fixture.Output_Count, fixture.Output_Status = md5.Digest_Sum_Into(
-			&fixture.Digest, fixture.Output[:],
+			&fixture.Digest, fixture.Output,
 		)
 	})
-	testify.Zero_Allocation(t, func() { fixture.Value = md5.Checksum(fixture.Source) })
+	testify.Zero_Allocation(t, func() { md5.Digest_Reset(&fixture.Digest) })
+	testify.Zero_Allocation(t, func() {
+		md5.Digest_Clone_Into(&fixture.Clone, &fixture.Digest)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Size = md5.Digest_Size(&fixture.Digest)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Block_Size = md5.Digest_Block_Size(&fixture.Digest)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Output_Count, fixture.Output_Status = md5.Checksum_Into(
+			fixture.Output, fixture.Source,
+		)
+	})
+}
+
+func checksum(source md5.Source) (output []byte) {
+	output = make([]byte, md5.DIGEST_SIZE)
+	md5.Checksum_Into(output, source)
+	return output
 }
 
 func write_chunks(digest *md5.Digest, source md5.Source, chunk_size int) {
@@ -225,10 +286,79 @@ const TEST_MULTI_BLOCK_CHUNK_SIZE = md5.BLOCK_SIZE*binary.UINT_16_SIZE + TEST_CO
 
 type allocation_fixture struct {
 	Digest        md5.Digest
+	Clone         md5.Digest
 	Source        md5.Source
-	Output        [md5.DIGEST_SIZE]byte
-	Value         md5.Value
+	Output        md5.Destination
 	Count         md5.Count
 	Output_Count  md5.Output_Count
 	Output_Status md5.Output_Status
+	Size          md5.Size
+	Block_Size    md5.Block_Size
+}
+
+func test_state_invariant_domains(t *testing.T) {
+	for _, value := range [...]uint64{
+		bits.WORD_64_MINIMUM,
+		uint64(binary.UINT_8_SIZE),
+		uint64(binary.UINT_16_SIZE),
+		bits.WORD_64_MAXIMUM,
+	} {
+		digest := domain_digest(value)
+		drive_digest_operations(&digest)
+		for _, buffer_count := range [...]md5.Buffer_Count{
+			md5.Buffer_Count(binary.UINT_8_SIZE),
+			md5.Buffer_Count(binary.UINT_64_SIZE),
+		} {
+			buffered := digest
+			buffered.Buffer_Count = buffer_count
+			buffered.Message_Size = md5.Message_Size(buffer_count)
+			md5.Digest_Write(&buffered, md5.Source{byte(value)})
+		}
+	}
+
+	var uninitialized md5.Digest
+	testify.Panics(t, func() { md5.Digest_Reset(&uninitialized) })
+	testify.Panics(t, func() { md5.Digest_Sum_Into(&uninitialized, nil) })
+	testify.Panics(t, func() { md5.Digest_Size(&uninitialized) })
+	testify.Panics(t, func() { md5.Digest_Block_Size(&uninitialized) })
+	initialized := domain_digest(bits.WORD_64_MINIMUM)
+	md5.Digest_Clone_Into(&uninitialized, &initialized)
+	var invalid_source md5.Digest
+	testify.Panics(t, func() { md5.Digest_Clone_Into(&initialized, &invalid_source) })
+}
+
+func domain_digest(value uint64) (digest md5.Digest) {
+	digest.State = md5.State{
+		Lane_0: md5.State_Lane_0(value),
+		Lane_1: md5.State_Lane_1(value),
+		Lane_2: md5.State_Lane_2(value),
+		Lane_3: md5.State_Lane_3(value),
+	}
+	digest.Buffer = md5.Buffer{
+		Lane_1: md5.Buffer_Lane_1(value),
+		Lane_2: md5.Buffer_Lane_2(value),
+		Lane_3: md5.Buffer_Lane_3(value),
+		Lane_4: md5.Buffer_Lane_4(value),
+		Lane_5: md5.Buffer_Lane_5(value),
+		Lane_6: md5.Buffer_Lane_6(value),
+		Lane_7: md5.Buffer_Lane_7(value),
+		Lane_8: md5.Buffer_Lane_8(value),
+	}
+	digest.Ready = true
+	return digest
+}
+
+func drive_digest_operations(digest *md5.Digest) {
+	var destination [md5.DIGEST_SIZE]byte
+	md5.Digest_Write(digest, nil)
+	md5.Digest_Sum_Into(digest, destination[:])
+	md5.Digest_Size(digest)
+	md5.Digest_Block_Size(digest)
+	clone_source := *digest
+	clone_destination := *digest
+	md5.Digest_Clone_Into(&clone_destination, &clone_source)
+	reset := *digest
+	md5.Digest_Reset(&reset)
+	initialized := *digest
+	md5.Digest_Init(&initialized)
 }

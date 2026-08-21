@@ -234,11 +234,13 @@ func Block_Size_Invariants(value Block_Size, namespace aver.Namespace) {
 }
 
 // Ready stores caller-state identity without adding an enum branch to every keyed operation.
-type Ready [READY_WORD_COUNT]byte
+type Ready bool
 
-// Ready_Invariants fixes caller-state identity storage width.
-func Ready_Invariants(value Ready, _ aver.Namespace) {
-	aver.Always(len(value) == READY_WORD_COUNT, "HMAC identity has fixed width.")
+// Ready_Invariants covers uninitialized and keyed caller state.
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "HMAC state is initialized.").
+		Ensure()
 }
 
 // Equality exposes constant-time comparison result.
@@ -251,55 +253,137 @@ func Equality_Invariants(value Equality, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Value holds longest tag so one fixed result covers every kind.
-type Value [DIGEST_SIZE_MAXIMUM]byte
-
-// Value_Invariants fixes caller-independent return width.
-func Value_Invariants(value Value, _ aver.Namespace) {
-	aver.Always(len(value) == DIGEST_SIZE_MAXIMUM, "HMAC value has fixed width.")
-}
-
-// Pad holds widest RFC 2104 compression pad.
-type Pad [BLOCK_SIZE_MAXIMUM]byte
+// Pad names exact scratch supplied by Digest_Init.
+type Pad []byte
 
 // Pad_Invariants fixes stack-owned pad capacity.
 func Pad_Invariants(value Pad, _ aver.Namespace) {
 	aver.Always(len(value) == BLOCK_SIZE_MAXIMUM, "HMAC pad has fixed width.")
 }
 
-// Initial_State stores selected keyed inner baseline in aligned caller storage.
-type Initial_State [HASH_STATE_WORD_COUNT]uint64
+// Initial_State stores selected keyed inner baseline in widest aligned storage.
+type Initial_State sha512.Digest
 
 // Initial_State_Invariants proves widest digest fits without heap storage.
 func Initial_State_Invariants(value Initial_State, _ aver.Namespace) {
 	aver.Always(
-		len(value) == HASH_STATE_WORD_COUNT,
+		unsafe.Sizeof(value) == unsafe.Sizeof(sha512.Digest{}),
 		"HMAC initial state has fixed width.",
 	)
 }
 
 // Inner_State stores selected live inner digest in aligned caller storage.
-type Inner_State [HASH_STATE_WORD_COUNT]uint64
+type Inner_State sha512.Digest
 
 // Inner_State_Invariants proves widest digest fits without heap storage.
 func Inner_State_Invariants(value Inner_State, _ aver.Namespace) {
-	aver.Always(len(value) == HASH_STATE_WORD_COUNT, "HMAC inner state has fixed width.")
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(sha512.Digest{}),
+		"HMAC inner state has fixed width.",
+	)
 }
 
 // Outer_State stores selected keyed outer digest in aligned caller storage.
-type Outer_State [HASH_STATE_WORD_COUNT]uint64
+type Outer_State sha512.Digest
 
 // Outer_State_Invariants proves widest digest fits without heap storage.
 func Outer_State_Invariants(value Outer_State, _ aver.Namespace) {
-	aver.Always(len(value) == HASH_STATE_WORD_COUNT, "HMAC outer state has fixed width.")
+	aver.Always(
+		unsafe.Sizeof(value) == unsafe.Sizeof(sha512.Digest{}),
+		"HMAC outer state has fixed width.",
+	)
 }
 
-// Digest keeps selected inner, initial, and outer states in caller storage.
-type Digest struct {
+// Digest_Handle names mutable keyed state.
+type Digest_Handle *Digest
+
+// Digest_Handle_Invariants composes state when storage exists.
+func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Digest_Invariants(*value, namespace)
+}
+
+// Initial_State_Destination names mutable keyed-inner baseline.
+type Initial_State_Destination *Initial_State
+
+// Initial_State_Destination_Invariants composes storage when present.
+func Initial_State_Destination_Invariants(
+	value Initial_State_Destination, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Initial_State_Invariants(*value, namespace)
+}
+
+// Inner_State_Destination names mutable live inner state.
+type Inner_State_Destination *Inner_State
+
+// Inner_State_Destination_Invariants composes storage when present.
+func Inner_State_Destination_Invariants(
+	value Inner_State_Destination, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Inner_State_Invariants(*value, namespace)
+}
+
+// Outer_State_Destination names mutable keyed outer state.
+type Outer_State_Destination *Outer_State
+
+// Outer_State_Destination_Invariants composes storage when present.
+func Outer_State_Destination_Invariants(
+	value Outer_State_Destination, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Outer_State_Invariants(*value, namespace)
+}
+
+// MD5_Destination names exact MD5 tag storage.
+type MD5_Destination []byte
+
+// MD5_Destination_Invariants prevents partial MD5 tags.
+func MD5_Destination_Invariants(value MD5_Destination, _ aver.Namespace) {
+	aver.Always(len(value) == md5.DIGEST_SIZE, "HMAC MD5 destination has exact width.")
+}
+
+// SHA_1_Destination names exact SHA-1 tag storage.
+type SHA_1_Destination []byte
+
+// SHA_1_Destination_Invariants prevents partial SHA-1 tags.
+func SHA_1_Destination_Invariants(value SHA_1_Destination, _ aver.Namespace) {
+	aver.Always(len(value) == sha1.DIGEST_SIZE, "HMAC SHA-1 destination has exact width.")
+}
+
+// SHA_256_Destination names SHA-224 or SHA-256 tag storage.
+type SHA_256_Destination []byte
+
+// SHA_256_Destination_Invariants permits both family widths.
+func SHA_256_Destination_Invariants(value SHA_256_Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), sha256.DIGEST_224_SIZE, sha256.DIGEST_256_SIZE).
+		Ensure()
+}
+
+// SHA_512_Destination names a SHA-512 family tag storage.
+type SHA_512_Destination []byte
+
+// SHA_512_Destination_Invariants spans truncated and complete family widths.
+func SHA_512_Destination_Invariants(value SHA_512_Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), sha512.DIGEST_224_SIZE, sha512.DIGEST_512_SIZE).
+		Ensure()
+}
+
+// Storage keeps selected inner, initial, and outer states in caller storage.
+type Storage struct {
 	// Kind preserves selected hash across reset and sum.
 	Kind Kind
-	// Ready rejects zero caller storage before keyed operations.
-	Ready Ready
 	// Initial restores keyed inner state.
 	Initial Initial_State
 	// Inner accepts message chunks.
@@ -308,122 +392,131 @@ type Digest struct {
 	Outer Outer_State
 }
 
-// Digest_Invariants composes selector, identity, and aligned fixed-capacity hash states.
-func Digest_Invariants(value Digest, namespace aver.Namespace) {
+// Storage_Invariants composes selector and aligned fixed-capacity hash states.
+func Storage_Invariants(value Storage, namespace aver.Namespace) {
 	Kind_Invariants(value.Kind, namespace)
-	Ready_Invariants(value.Ready, namespace)
 	Initial_State_Invariants(value.Initial, namespace)
 	Inner_State_Invariants(value.Inner, namespace)
 	Outer_State_Invariants(value.Outer, namespace)
 }
 
+// Digest keeps lifecycle identity beside its mutable keyed state.
+type Digest struct {
+	// Storage remains embedded so existing field access stays direct.
+	Storage
+	// Ready rejects zero caller storage before keyed operations.
+	Ready Ready
+}
+
+// Digest_Invariants composes keyed state and lifecycle identity.
+func Digest_Invariants(value Digest, namespace aver.Namespace) {
+	Storage_Invariants(value.Storage, namespace)
+	Ready_Invariants(value.Ready, namespace)
+}
+
+// Storage_Destination names mutable keyed state after lifecycle validation.
+type Storage_Destination *Storage
+
+// Storage_Destination_Invariants composes storage when present.
+func Storage_Destination_Invariants(value Storage_Destination, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Storage_Invariants(*value, namespace)
+}
+
 // Digest_Init clears prior key material before constructing selected pads.
-func Digest_Init(digest *Digest, kind Kind, key Key) {
-	Digest_Invariants(*digest, "Digest_Init.digest.input")
+func Digest_Init(digest Digest_Handle, kind Kind, key Key) {
+	Digest_Handle_Invariants(digest, "Digest_Init.digest.input")
 	Kind_Invariants(kind, "Digest_Init.kind")
 	Key_Invariants(key, "Digest_Init.key")
-	if kind > KIND_SHA_512 {
-		panic("hmac: kind is invalid")
-	}
-	if len(key) > KEY_SIZE_MAXIMUM {
-		panic("hmac: key exceeds bound")
-	}
-	*digest = Digest{Kind: kind}
-	inner := inner_pad(kind, key)
-	outer := outer_pad(kind, inner)
-	digest_state_init(digest, kind, &inner, &outer)
-	digest.Ready[READY_INDEX] = READY_COMPLETE_MARKER
-	Digest_Invariants(*digest, "Digest_Init.digest.output")
+	*digest = Digest{Storage: Storage{Kind: kind}}
+	var inner [BLOCK_SIZE_MAXIMUM]byte
+	var outer [BLOCK_SIZE_MAXIMUM]byte
+	inner_pad(Pad(inner[:]), kind, key)
+	outer_pad(Pad(outer[:]), Pad(inner[:]), kind)
+	digest_state_init(&digest.Storage, kind, Pad(inner[:]), Pad(outer[:]))
+	digest.Ready = true
+	Storage_Invariants(digest.Storage, "Digest_Init.digest.output")
 }
 
 // Digest_Reset restores keyed inner state without retaining message state.
-func Digest_Reset(digest *Digest) {
-	Digest_Invariants(*digest, "Digest_Reset.digest.input")
+func Digest_Reset(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "Digest_Reset.digest.input")
 	digest_require(digest)
 	digest.Inner = Inner_State(digest.Initial)
-	Digest_Invariants(*digest, "Digest_Reset.digest.output")
+	Storage_Invariants(digest.Storage, "Digest_Reset.digest.output")
 }
 
 // Digest_Write consumes one complete bounded source chunk.
-func Digest_Write(digest *Digest, source Source) (count Count) {
+func Digest_Write(digest Digest_Handle, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_Write.count") }()
-	Digest_Invariants(*digest, "Digest_Write.digest.input")
+	Digest_Handle_Invariants(digest, "Digest_Write.digest.input")
 	Source_Invariants(source, "Digest_Write.source")
 	digest_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("hmac: source exceeds bound")
-	}
-	digest_write(digest, source)
-	Digest_Invariants(*digest, "Digest_Write.digest.output")
+	digest_write(&digest.Storage, source)
+	Storage_Invariants(digest.Storage, "Digest_Write.digest.output")
 	return Count(len(source))
-}
-
-// Digest_Sum returns fixed storage and selected live prefix width.
-func Digest_Sum(digest *Digest) (value Value, count Output_Count) {
-	defer func() {
-		Value_Invariants(value, "Digest_Sum.value")
-		Output_Count_Invariants(count, "Digest_Sum.count")
-	}()
-	Digest_Invariants(*digest, "Digest_Sum.digest")
-	digest_require(digest)
-	count = Output_Count(kind_size(digest.Kind))
-	switch digest.Kind {
-	case KIND_MD5:
-		return digest_sum_md5(digest.Inner, digest.Outer), count
-	case KIND_SHA_1:
-		return digest_sum_sha_1(digest.Inner, digest.Outer), count
-	case KIND_SHA_224, KIND_SHA_256:
-		return digest_sum_sha_256(digest.Inner, digest.Outer), count
-	default:
-		return digest_sum_sha_512(digest.Inner, digest.Outer), count
-	}
 }
 
 // Digest_Sum_Into leaves short destination untouched.
 func Digest_Sum_Into(
-	digest *Digest,
+	digest Digest_Handle,
 	destination Destination,
 ) (count Output_Count, status Output_Status) {
 	defer func() {
 		Output_Count_Invariants(count, "Digest_Sum_Into.count")
 		Output_Status_Invariants(status, "Digest_Sum_Into.status")
 	}()
-	Digest_Invariants(*digest, "Digest_Sum_Into.digest")
+	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
 	digest_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("hmac: destination exceeds bound")
-	}
 	count = Output_Count(Digest_Size(digest))
 	if len(destination) < int(count) {
 		return count, OUTPUT_STATUS_TOO_SMALL
 	}
-	value, _ := Digest_Sum(digest)
-	copy(destination[:count], value[:count])
+	switch digest.Kind {
+	case KIND_MD5:
+		digest_sum_md5(
+			MD5_Destination(destination[:count]), digest.Inner, digest.Outer,
+		)
+	case KIND_SHA_1:
+		digest_sum_sha_1(
+			SHA_1_Destination(destination[:count]), digest.Inner, digest.Outer,
+		)
+	case KIND_SHA_224, KIND_SHA_256:
+		digest_sum_sha_256(
+			SHA_256_Destination(destination[:count]), digest.Inner, digest.Outer,
+		)
+	default:
+		digest_sum_sha_512(
+			SHA_512_Destination(destination[:count]), digest.Inner, digest.Outer,
+		)
+	}
 	return count, OUTPUT_STATUS_OK
 }
 
 // Digest_Clone_Into copies live keyed state without aliasing caller storage.
-func Digest_Clone_Into(destination *Digest, source *Digest) {
-	Digest_Invariants(*destination, "Digest_Clone_Into.destination.input")
-	Digest_Invariants(*source, "Digest_Clone_Into.source")
+func Digest_Clone_Into(destination Digest_Handle, source Digest_Handle) {
+	Digest_Handle_Invariants(destination, "Digest_Clone_Into.destination.input")
+	Digest_Handle_Invariants(source, "Digest_Clone_Into.source")
 	digest_require(source)
 	*destination = *source
-	Digest_Invariants(*destination, "Digest_Clone_Into.destination.output")
+	Storage_Invariants(destination.Storage, "Digest_Clone_Into.destination.output")
 }
 
 // Digest_Size reports selected tag width.
-func Digest_Size(digest *Digest) (size Size) {
+func Digest_Size(digest Digest_Handle) (size Size) {
 	defer func() { Size_Invariants(size, "Digest_Size.size") }()
-	Digest_Invariants(*digest, "Digest_Size.digest")
+	Digest_Handle_Invariants(digest, "Digest_Size.digest")
 	digest_require(digest)
 	return kind_size(digest.Kind)
 }
 
 // Digest_Block_Size reports selected compression-block width.
-func Digest_Block_Size(digest *Digest) (size Block_Size) {
+func Digest_Block_Size(digest Digest_Handle) (size Block_Size) {
 	defer func() { Block_Size_Invariants(size, "Digest_Block_Size.size") }()
-	Digest_Invariants(*digest, "Digest_Block_Size.digest")
+	Digest_Handle_Invariants(digest, "Digest_Block_Size.digest")
 	digest_require(digest)
 	return kind_block_size(digest.Kind)
 }
@@ -433,82 +526,86 @@ func Equal(left Tag, right Tag) (equal Equality) {
 	defer func() { Equality_Invariants(equal, "Equal.equal") }()
 	Tag_Invariants(left, "Equal.left")
 	Tag_Invariants(right, "Equal.right")
-	if len(left) > TAG_SIZE_MAXIMUM {
-		panic("hmac: tag exceeds bound")
-	}
-	if len(right) > TAG_SIZE_MAXIMUM {
-		panic("hmac: tag exceeds bound")
-	}
 	decision := subtle.Constant_Time_Compare(subtle.Source(left), subtle.Source(right))
 	return Equality(decision == subtle.DECISION_TRUE)
 }
 
-func inner_pad(kind Kind, key Key) (pad Pad) {
-	defer func() { Pad_Invariants(pad, "inner_pad.pad") }()
+func inner_pad(pad Pad, kind Kind, key Key) {
+	Pad_Invariants(pad, "inner_pad.pad")
 	Kind_Invariants(kind, "inner_pad.kind")
 	Key_Invariants(key, "inner_pad.key")
 	block_size := int(kind_block_size(kind))
 	if len(key) > block_size {
-		hash_key(kind, Reduced_Key(key), &pad)
+		hash_key(kind, Reduced_Key(key), pad)
 	} else {
 		copy(pad[:block_size], key)
 	}
 	for index := range block_size {
 		pad[index] ^= INNER_PAD_BYTE
 	}
-	return pad
 }
 
-func outer_pad(kind Kind, inner Pad) (outer Pad) {
-	defer func() { Pad_Invariants(outer, "outer_pad.outer") }()
+func outer_pad(outer Pad, inner Pad, kind Kind) {
+	Pad_Invariants(outer, "outer_pad.outer")
 	Kind_Invariants(kind, "outer_pad.kind")
 	Pad_Invariants(inner, "outer_pad.inner")
-	outer = inner
+	copy(outer, inner)
 	block_size := int(kind_block_size(kind))
 	for index := range block_size {
 		outer[index] ^= INNER_PAD_BYTE ^ OUTER_PAD_BYTE
 	}
-	return outer
 }
 
-func hash_key(kind Kind, key Reduced_Key, destination *Pad) {
+func hash_key(kind Kind, key Reduced_Key, destination Pad) {
 	Kind_Invariants(kind, "hash_key.kind")
 	Reduced_Key_Invariants(key, "hash_key.key")
-	Pad_Invariants(*destination, "hash_key.destination.input")
+	Pad_Invariants(destination, "hash_key.destination.input")
 	switch kind {
 	case KIND_MD5:
-		value := md5.Checksum(md5.Source(key))
-		copy(destination[:], value[:])
+		md5.Checksum_Into(md5.Destination(destination[:md5.DIGEST_SIZE]), md5.Source(key))
 	case KIND_SHA_1:
-		value := sha1.Checksum(sha1.Source(key))
-		copy(destination[:], value[:])
+		sha1.Checksum_Into(
+			sha1.Destination(destination[:sha1.DIGEST_SIZE]), sha1.Source(key),
+		)
 	case KIND_SHA_224:
-		value := sha256.Checksum_224(sha256.Source(key))
-		copy(destination[:], value[:])
+		sha256.Checksum_Into(
+			sha256.Destination(destination[:sha256.DIGEST_224_SIZE]),
+			sha256.KIND_SHA_224, sha256.Source(key),
+		)
 	case KIND_SHA_256:
-		value := sha256.Checksum_256(sha256.Source(key))
-		copy(destination[:], value[:])
+		sha256.Checksum_Into(
+			sha256.Destination(destination[:sha256.DIGEST_256_SIZE]),
+			sha256.KIND_SHA_256, sha256.Source(key),
+		)
 	case KIND_SHA_384:
-		value := sha512.Checksum_384(sha512.Source(key))
-		copy(destination[:], value[:])
+		sha512.Checksum_Into(
+			sha512.Destination(destination[:sha512.DIGEST_384_SIZE]),
+			sha512.KIND_SHA_384, sha512.Source(key),
+		)
 	case KIND_SHA_512_224:
-		value := sha512.Checksum_512_224(sha512.Source(key))
-		copy(destination[:], value[:])
+		sha512.Checksum_Into(
+			sha512.Destination(destination[:sha512.DIGEST_224_SIZE]),
+			sha512.KIND_SHA_512_224, sha512.Source(key),
+		)
 	case KIND_SHA_512_256:
-		value := sha512.Checksum_512_256(sha512.Source(key))
-		copy(destination[:], value[:])
+		sha512.Checksum_Into(
+			sha512.Destination(destination[:sha512.DIGEST_256_SIZE]),
+			sha512.KIND_SHA_512_256, sha512.Source(key),
+		)
 	default:
-		value := sha512.Checksum_512(sha512.Source(key))
-		copy(destination[:], value[:])
+		sha512.Checksum_Into(
+			sha512.Destination(destination[:sha512.DIGEST_512_SIZE]),
+			sha512.KIND_SHA_512, sha512.Source(key),
+		)
 	}
-	Pad_Invariants(*destination, "hash_key.destination.output")
+	Pad_Invariants(destination, "hash_key.destination.output")
 }
 
-func digest_state_init(digest *Digest, kind Kind, inner *Pad, outer *Pad) {
-	Digest_Invariants(*digest, "digest_state_init.digest.input")
+func digest_state_init(digest Storage_Destination, kind Kind, inner Pad, outer Pad) {
+	Storage_Destination_Invariants(digest, "digest_state_init.digest.input")
 	Kind_Invariants(kind, "digest_state_init.kind")
-	Pad_Invariants(*inner, "digest_state_init.inner")
-	Pad_Invariants(*outer, "digest_state_init.outer")
+	Pad_Invariants(inner, "digest_state_init.inner")
+	Pad_Invariants(outer, "digest_state_init.outer")
 	switch kind {
 	case KIND_MD5:
 		digest_state_init_md5(&digest.Initial, &digest.Inner, &digest.Outer, inner, outer)
@@ -545,183 +642,187 @@ func digest_state_init(digest *Digest, kind Kind, inner *Pad, outer *Pad) {
 			inner, outer, sha512.KIND_SHA_512,
 		)
 	}
-	Digest_Invariants(*digest, "digest_state_init.digest.output")
+	Storage_Invariants(*digest, "digest_state_init.digest.output")
 }
 
 func digest_state_init_md5(
-	initial *Initial_State,
-	live *Inner_State,
-	keyed_outer *Outer_State,
-	inner *Pad,
-	outer *Pad,
+	initial Initial_State_Destination,
+	live Inner_State_Destination,
+	keyed_outer Outer_State_Destination,
+	inner Pad,
+	outer Pad,
 ) {
-	Initial_State_Invariants(*initial, "digest_state_init_md5.initial.input")
-	Inner_State_Invariants(*live, "digest_state_init_md5.live.input")
-	Outer_State_Invariants(*keyed_outer, "digest_state_init_md5.keyed_outer.input")
-	Pad_Invariants(*inner, "digest_state_init_md5.inner")
-	Pad_Invariants(*outer, "digest_state_init_md5.outer")
-	initial_digest := (*md5.Digest)(unsafe.Pointer(&initial[bits.BIT_COUNT_MINIMUM]))
-	live_digest := (*md5.Digest)(unsafe.Pointer(&live[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*md5.Digest)(unsafe.Pointer(&keyed_outer[bits.BIT_COUNT_MINIMUM]))
+	Initial_State_Destination_Invariants(initial, "digest_state_init_md5.initial.input")
+	Inner_State_Destination_Invariants(live, "digest_state_init_md5.live.input")
+	Outer_State_Destination_Invariants(keyed_outer, "digest_state_init_md5.keyed_outer.input")
+	Pad_Invariants(inner, "digest_state_init_md5.inner")
+	Pad_Invariants(outer, "digest_state_init_md5.outer")
+	initial_digest := (*md5.Digest)(unsafe.Pointer(initial))
+	live_digest := (*md5.Digest)(unsafe.Pointer(live))
+	outer_digest := (*md5.Digest)(unsafe.Pointer(keyed_outer))
 	md5.Digest_Init(initial_digest)
-	md5.Digest_Write(initial_digest, inner[:md5.BLOCK_SIZE])
+	md5.Digest_Write(initial_digest, md5.Source(inner[:md5.BLOCK_SIZE]))
 	*live_digest = *initial_digest
 	md5.Digest_Init(outer_digest)
-	md5.Digest_Write(outer_digest, outer[:md5.BLOCK_SIZE])
+	md5.Digest_Write(outer_digest, md5.Source(outer[:md5.BLOCK_SIZE]))
 	Initial_State_Invariants(*initial, "digest_state_init_md5.initial.output")
 	Inner_State_Invariants(*live, "digest_state_init_md5.live.output")
 	Outer_State_Invariants(*keyed_outer, "digest_state_init_md5.keyed_outer.output")
 }
 
 func digest_state_init_sha_1(
-	initial *Initial_State,
-	live *Inner_State,
-	keyed_outer *Outer_State,
-	inner *Pad,
-	outer *Pad,
+	initial Initial_State_Destination,
+	live Inner_State_Destination,
+	keyed_outer Outer_State_Destination,
+	inner Pad,
+	outer Pad,
 ) {
-	Initial_State_Invariants(*initial, "digest_state_init_sha_1.initial.input")
-	Inner_State_Invariants(*live, "digest_state_init_sha_1.live.input")
-	Outer_State_Invariants(*keyed_outer, "digest_state_init_sha_1.keyed_outer.input")
-	Pad_Invariants(*inner, "digest_state_init_sha_1.inner")
-	Pad_Invariants(*outer, "digest_state_init_sha_1.outer")
-	initial_digest := (*sha1.Digest)(unsafe.Pointer(&initial[bits.BIT_COUNT_MINIMUM]))
-	live_digest := (*sha1.Digest)(unsafe.Pointer(&live[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*sha1.Digest)(unsafe.Pointer(&keyed_outer[bits.BIT_COUNT_MINIMUM]))
+	Initial_State_Destination_Invariants(initial, "digest_state_init_sha_1.initial.input")
+	Inner_State_Destination_Invariants(live, "digest_state_init_sha_1.live.input")
+	Outer_State_Destination_Invariants(keyed_outer, "digest_state_init_sha_1.keyed_outer.input")
+	Pad_Invariants(inner, "digest_state_init_sha_1.inner")
+	Pad_Invariants(outer, "digest_state_init_sha_1.outer")
+	initial_digest := (*sha1.Digest)(unsafe.Pointer(initial))
+	live_digest := (*sha1.Digest)(unsafe.Pointer(live))
+	outer_digest := (*sha1.Digest)(unsafe.Pointer(keyed_outer))
 	sha1.Digest_Init(initial_digest)
-	sha1.Digest_Write(initial_digest, inner[:sha1.BLOCK_SIZE])
+	sha1.Digest_Write(initial_digest, sha1.Source(inner[:sha1.BLOCK_SIZE]))
 	*live_digest = *initial_digest
 	sha1.Digest_Init(outer_digest)
-	sha1.Digest_Write(outer_digest, outer[:sha1.BLOCK_SIZE])
+	sha1.Digest_Write(outer_digest, sha1.Source(outer[:sha1.BLOCK_SIZE]))
 	Initial_State_Invariants(*initial, "digest_state_init_sha_1.initial.output")
 	Inner_State_Invariants(*live, "digest_state_init_sha_1.live.output")
 	Outer_State_Invariants(*keyed_outer, "digest_state_init_sha_1.keyed_outer.output")
 }
 
 func digest_state_init_sha_256(
-	initial *Initial_State,
-	live *Inner_State,
-	keyed_outer *Outer_State,
-	inner *Pad,
-	outer *Pad,
+	initial Initial_State_Destination,
+	live Inner_State_Destination,
+	keyed_outer Outer_State_Destination,
+	inner Pad,
+	outer Pad,
 	kind sha256.Kind,
 ) {
-	Initial_State_Invariants(*initial, "digest_state_init_sha_256.initial.input")
-	Inner_State_Invariants(*live, "digest_state_init_sha_256.live.input")
-	Outer_State_Invariants(*keyed_outer, "digest_state_init_sha_256.keyed_outer.input")
-	Pad_Invariants(*inner, "digest_state_init_sha_256.inner")
-	Pad_Invariants(*outer, "digest_state_init_sha_256.outer")
+	Initial_State_Destination_Invariants(initial, "digest_state_init_sha_256.initial.input")
+	Inner_State_Destination_Invariants(live, "digest_state_init_sha_256.live.input")
+	Outer_State_Destination_Invariants(
+		keyed_outer, "digest_state_init_sha_256.keyed_outer.input",
+	)
+	Pad_Invariants(inner, "digest_state_init_sha_256.inner")
+	Pad_Invariants(outer, "digest_state_init_sha_256.outer")
 	sha256.Kind_Invariants(kind, "digest_state_init_sha_256.kind")
-	initial_digest := (*sha256.Digest)(unsafe.Pointer(&initial[bits.BIT_COUNT_MINIMUM]))
-	live_digest := (*sha256.Digest)(unsafe.Pointer(&live[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*sha256.Digest)(unsafe.Pointer(&keyed_outer[bits.BIT_COUNT_MINIMUM]))
+	initial_digest := (*sha256.Digest)(unsafe.Pointer(initial))
+	live_digest := (*sha256.Digest)(unsafe.Pointer(live))
+	outer_digest := (*sha256.Digest)(unsafe.Pointer(keyed_outer))
 	sha256.Digest_Init(initial_digest, kind)
-	sha256.Digest_Write(initial_digest, inner[:sha256.BLOCK_SIZE])
+	sha256.Digest_Write(initial_digest, sha256.Source(inner[:sha256.BLOCK_SIZE]))
 	*live_digest = *initial_digest
 	sha256.Digest_Init(outer_digest, kind)
-	sha256.Digest_Write(outer_digest, outer[:sha256.BLOCK_SIZE])
+	sha256.Digest_Write(outer_digest, sha256.Source(outer[:sha256.BLOCK_SIZE]))
 	Initial_State_Invariants(*initial, "digest_state_init_sha_256.initial.output")
 	Inner_State_Invariants(*live, "digest_state_init_sha_256.live.output")
 	Outer_State_Invariants(*keyed_outer, "digest_state_init_sha_256.keyed_outer.output")
 }
 
 func digest_state_init_sha_512(
-	initial *Initial_State,
-	live *Inner_State,
-	keyed_outer *Outer_State,
-	inner *Pad,
-	outer *Pad,
+	initial Initial_State_Destination,
+	live Inner_State_Destination,
+	keyed_outer Outer_State_Destination,
+	inner Pad,
+	outer Pad,
 	kind sha512.Kind,
 ) {
-	Initial_State_Invariants(*initial, "digest_state_init_sha_512.initial.input")
-	Inner_State_Invariants(*live, "digest_state_init_sha_512.live.input")
-	Outer_State_Invariants(*keyed_outer, "digest_state_init_sha_512.keyed_outer.input")
-	Pad_Invariants(*inner, "digest_state_init_sha_512.inner")
-	Pad_Invariants(*outer, "digest_state_init_sha_512.outer")
+	Initial_State_Destination_Invariants(initial, "digest_state_init_sha_512.initial.input")
+	Inner_State_Destination_Invariants(live, "digest_state_init_sha_512.live.input")
+	Outer_State_Destination_Invariants(
+		keyed_outer, "digest_state_init_sha_512.keyed_outer.input",
+	)
+	Pad_Invariants(inner, "digest_state_init_sha_512.inner")
+	Pad_Invariants(outer, "digest_state_init_sha_512.outer")
 	sha512.Kind_Invariants(kind, "digest_state_init_sha_512.kind")
-	initial_digest := (*sha512.Digest)(unsafe.Pointer(&initial[bits.BIT_COUNT_MINIMUM]))
-	live_digest := (*sha512.Digest)(unsafe.Pointer(&live[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*sha512.Digest)(unsafe.Pointer(&keyed_outer[bits.BIT_COUNT_MINIMUM]))
+	initial_digest := (*sha512.Digest)(unsafe.Pointer(initial))
+	live_digest := (*sha512.Digest)(unsafe.Pointer(live))
+	outer_digest := (*sha512.Digest)(unsafe.Pointer(keyed_outer))
 	sha512.Digest_Init(initial_digest, kind)
-	sha512.Digest_Write(initial_digest, inner[:sha512.BLOCK_SIZE])
+	sha512.Digest_Write(initial_digest, sha512.Source(inner[:sha512.BLOCK_SIZE]))
 	*live_digest = *initial_digest
 	sha512.Digest_Init(outer_digest, kind)
-	sha512.Digest_Write(outer_digest, outer[:sha512.BLOCK_SIZE])
+	sha512.Digest_Write(outer_digest, sha512.Source(outer[:sha512.BLOCK_SIZE]))
 	Initial_State_Invariants(*initial, "digest_state_init_sha_512.initial.output")
 	Inner_State_Invariants(*live, "digest_state_init_sha_512.live.output")
 	Outer_State_Invariants(*keyed_outer, "digest_state_init_sha_512.keyed_outer.output")
 }
 
-func digest_write(digest *Digest, source Source) {
-	Digest_Invariants(*digest, "digest_write.digest.input")
+func digest_write(digest Storage_Destination, source Source) {
+	Storage_Destination_Invariants(digest, "digest_write.digest.input")
 	Source_Invariants(source, "digest_write.source")
 	switch digest.Kind {
 	case KIND_MD5:
-		inner := (*md5.Digest)(unsafe.Pointer(&digest.Inner[bits.BIT_COUNT_MINIMUM]))
+		inner := (*md5.Digest)(unsafe.Pointer(&digest.Inner))
 		md5.Digest_Write(inner, md5.Source(source))
 	case KIND_SHA_1:
-		inner := (*sha1.Digest)(unsafe.Pointer(&digest.Inner[bits.BIT_COUNT_MINIMUM]))
+		inner := (*sha1.Digest)(unsafe.Pointer(&digest.Inner))
 		sha1.Digest_Write(inner, sha1.Source(source))
 	case KIND_SHA_224, KIND_SHA_256:
-		inner := (*sha256.Digest)(unsafe.Pointer(&digest.Inner[bits.BIT_COUNT_MINIMUM]))
+		inner := (*sha256.Digest)(unsafe.Pointer(&digest.Inner))
 		sha256.Digest_Write(inner, sha256.Source(source))
 	default:
-		inner := (*sha512.Digest)(unsafe.Pointer(&digest.Inner[bits.BIT_COUNT_MINIMUM]))
+		inner := (*sha512.Digest)(unsafe.Pointer(&digest.Inner))
 		sha512.Digest_Write(inner, sha512.Source(source))
 	}
-	Digest_Invariants(*digest, "digest_write.digest.output")
+	Storage_Invariants(*digest, "digest_write.digest.output")
 }
 
-func digest_sum_md5(inner Inner_State, outer Outer_State) (value Value) {
-	defer func() { Value_Invariants(value, "digest_sum_md5.value") }()
+func digest_sum_md5(destination MD5_Destination, inner Inner_State, outer Outer_State) {
+	MD5_Destination_Invariants(destination, "digest_sum_md5.destination")
 	Inner_State_Invariants(inner, "digest_sum_md5.inner")
 	Outer_State_Invariants(outer, "digest_sum_md5.outer")
-	inner_digest := (*md5.Digest)(unsafe.Pointer(&inner[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*md5.Digest)(unsafe.Pointer(&outer[bits.BIT_COUNT_MINIMUM]))
-	inner_value := md5.Digest_Sum(inner_digest)
+	inner_digest := (*md5.Digest)(unsafe.Pointer(&inner))
+	outer_digest := (*md5.Digest)(unsafe.Pointer(&outer))
+	var inner_value [md5.DIGEST_SIZE]byte
+	md5.Digest_Sum_Into(inner_digest, md5.Destination(inner_value[:]))
 	md5.Digest_Write(outer_digest, inner_value[:])
-	tag := md5.Digest_Sum(outer_digest)
-	copy(value[:], tag[:])
-	return value
+	md5.Digest_Sum_Into(outer_digest, md5.Destination(destination))
 }
 
-func digest_sum_sha_1(inner Inner_State, outer Outer_State) (value Value) {
-	defer func() { Value_Invariants(value, "digest_sum_sha_1.value") }()
+func digest_sum_sha_1(destination SHA_1_Destination, inner Inner_State, outer Outer_State) {
+	SHA_1_Destination_Invariants(destination, "digest_sum_sha_1.destination")
 	Inner_State_Invariants(inner, "digest_sum_sha_1.inner")
 	Outer_State_Invariants(outer, "digest_sum_sha_1.outer")
-	inner_digest := (*sha1.Digest)(unsafe.Pointer(&inner[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*sha1.Digest)(unsafe.Pointer(&outer[bits.BIT_COUNT_MINIMUM]))
-	inner_value := sha1.Digest_Sum(inner_digest)
-	sha1.Digest_Write(outer_digest, inner_value[:])
-	tag := sha1.Digest_Sum(outer_digest)
-	copy(value[:], tag[:])
-	return value
+	inner_digest := (*sha1.Digest)(unsafe.Pointer(&inner))
+	outer_digest := (*sha1.Digest)(unsafe.Pointer(&outer))
+	var inner_value [sha1.DIGEST_SIZE]byte
+	sha1.Digest_Sum_Into(inner_digest, sha1.Destination(inner_value[:]))
+	sha1.Digest_Write(outer_digest, sha1.Source(inner_value[:]))
+	sha1.Digest_Sum_Into(outer_digest, sha1.Destination(destination))
 }
 
-func digest_sum_sha_256(inner Inner_State, outer Outer_State) (value Value) {
-	defer func() { Value_Invariants(value, "digest_sum_sha_256.value") }()
+func digest_sum_sha_256(
+	destination SHA_256_Destination, inner Inner_State, outer Outer_State,
+) {
+	SHA_256_Destination_Invariants(destination, "digest_sum_sha_256.destination")
 	Inner_State_Invariants(inner, "digest_sum_sha_256.inner")
 	Outer_State_Invariants(outer, "digest_sum_sha_256.outer")
-	inner_digest := (*sha256.Digest)(unsafe.Pointer(&inner[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*sha256.Digest)(unsafe.Pointer(&outer[bits.BIT_COUNT_MINIMUM]))
+	inner_digest := (*sha256.Digest)(unsafe.Pointer(&inner))
+	outer_digest := (*sha256.Digest)(unsafe.Pointer(&outer))
 	var inner_value [sha256.DIGEST_256_SIZE]byte
 	inner_count, _ := sha256.Digest_Sum_Into(inner_digest, inner_value[:])
 	sha256.Digest_Write(outer_digest, inner_value[:inner_count])
-	sha256.Digest_Sum_Into(outer_digest, value[:])
-	return value
+	sha256.Digest_Sum_Into(outer_digest, sha256.Destination(destination))
 }
 
-func digest_sum_sha_512(inner Inner_State, outer Outer_State) (value Value) {
-	defer func() { Value_Invariants(value, "digest_sum_sha_512.value") }()
+func digest_sum_sha_512(
+	destination SHA_512_Destination, inner Inner_State, outer Outer_State,
+) {
+	SHA_512_Destination_Invariants(destination, "digest_sum_sha_512.destination")
 	Inner_State_Invariants(inner, "digest_sum_sha_512.inner")
 	Outer_State_Invariants(outer, "digest_sum_sha_512.outer")
-	inner_digest := (*sha512.Digest)(unsafe.Pointer(&inner[bits.BIT_COUNT_MINIMUM]))
-	outer_digest := (*sha512.Digest)(unsafe.Pointer(&outer[bits.BIT_COUNT_MINIMUM]))
+	inner_digest := (*sha512.Digest)(unsafe.Pointer(&inner))
+	outer_digest := (*sha512.Digest)(unsafe.Pointer(&outer))
 	var inner_value [sha512.DIGEST_512_SIZE]byte
 	inner_count, _ := sha512.Digest_Sum_Into(inner_digest, inner_value[:])
 	sha512.Digest_Write(outer_digest, inner_value[:inner_count])
-	sha512.Digest_Sum_Into(outer_digest, value[:])
-	return value
+	sha512.Digest_Sum_Into(outer_digest, sha512.Destination(destination))
 }
 
 func kind_size(kind Kind) (size Size) {
@@ -752,17 +853,11 @@ func kind_block_size(kind Kind) (size Block_Size) {
 	return sha512.BLOCK_SIZE
 }
 
-func digest_require(digest *Digest) {
-	Digest_Invariants(*digest, "digest_require.digest")
+func digest_require(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "digest_require.digest")
 	Kind_Invariants(digest.Kind, "digest_require.kind")
-	if digest.Kind > KIND_SHA_512 {
-		panic("hmac: kind is invalid")
-	}
 	aver.Always(
-		digest.Ready[READY_INDEX] == READY_COMPLETE_MARKER,
+		bool(digest.Ready),
 		"HMAC operations require Digest_Init.",
 	)
-	if digest.Ready[READY_INDEX] != READY_COMPLETE_MARKER {
-		panic("hmac: digest is not initialized")
-	}
 }

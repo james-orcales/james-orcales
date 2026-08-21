@@ -10,7 +10,7 @@ FIPS structure.
 
 # Reference Values
 
-Checksum and Digest reproduce SHA-384, SHA-512, SHA-512/224, and SHA-512/256 values.
+Checksum_Into and Digest_Sum_Into reproduce SHA-384, SHA-512, SHA-512/224, and SHA-512/256 values.
 
 # Stream
 
@@ -18,8 +18,7 @@ Writes preserve selected SHA-2 state across every block and call boundary.
 
 # Caller Owned Output
 
-Digest output uses fixed values or caller storage. Short storage stays untouched and reports
-selected width.
+Digest output uses caller storage. Short storage stays untouched and reports selected width.
 
 # Bounds
 

@@ -1,15 +1,15 @@
 package hmac_test
 
 import (
-	standard_hmac "crypto/hmac"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"testing"
 
-	shared_hmac "local/james-orcales/shared/crypto/hmac"
+	"local/james-orcales/shared/crypto/hmac"
+	"local/james-orcales/shared/crypto/md5"
+	"local/james-orcales/shared/crypto/sha1"
+	"local/james-orcales/shared/crypto/sha256"
+	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/encoding/hex"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
 )
@@ -17,114 +17,138 @@ import (
 // Test_Package_Owned_State checks kind-selected state without shared hash dispatch.
 func Test_Package_Owned_State(t *testing.T) {
 	for _, kind := range test_kinds() {
-		var digest shared_hmac.Digest
-		shared_hmac.Digest_Init(&digest, kind, shared_hmac.Key("key"))
-		testify.Equal(t, shared_hmac.Size(test_digest_size(kind)),
-			shared_hmac.Digest_Size(&digest))
-		testify.Equal(t, shared_hmac.Block_Size(test_block_size(kind)),
-			shared_hmac.Digest_Block_Size(&digest))
+		var digest hmac.Digest
+		hmac.Digest_Init(&digest, kind, hmac.Key("key"))
+		testify.Equal(t, hmac.Size(test_digest_size(kind)),
+			hmac.Digest_Size(&digest))
+		testify.Equal(t, hmac.Block_Size(test_block_size(kind)),
+			hmac.Digest_Block_Size(&digest))
 	}
 }
 
-// Test_Reference_Values binds every supported kind to crypto/hmac.
+// Test_Reference_Values binds every supported kind to fixed known answers.
 func Test_Reference_Values(t *testing.T) {
-	key := shared_hmac.Key("Jefe")
-	source := shared_hmac.Source("what do ya want for nothing?")
-	for _, kind := range test_kinds() {
-		verify_reference(t, kind, key, source)
+	key := hmac.Key("Jefe")
+	source := hmac.Source("what do ya want for nothing?")
+	tests := [...]struct {
+		Kind hmac.Kind
+		Want string
+	}{
+		{Kind: hmac.KIND_MD5, Want: REFERENCE_MD5},
+		{Kind: hmac.KIND_SHA_1, Want: REFERENCE_SHA_1},
+		{Kind: hmac.KIND_SHA_224, Want: REFERENCE_SHA_224},
+		{Kind: hmac.KIND_SHA_256, Want: REFERENCE_SHA_256},
+		{Kind: hmac.KIND_SHA_384, Want: REFERENCE_SHA_384},
+		{Kind: hmac.KIND_SHA_512_224, Want: REFERENCE_SHA_512_224},
+		{Kind: hmac.KIND_SHA_512_256, Want: REFERENCE_SHA_512_256},
+		{Kind: hmac.KIND_SHA_512, Want: REFERENCE_SHA_512},
+	}
+	for _, test := range tests {
+		testify.Equal(t, test.Want, encoded(t, sum(test.Kind, key, source)))
 	}
 }
 
 // Test_Stream checks call boundaries do not change tag.
 func Test_Stream(t *testing.T) {
-	key := shared_hmac.Key("stream key")
-	source := shared_hmac.Source("bounded messages retain HMAC state across calls")
+	key := hmac.Key("stream key")
+	source := hmac.Source("bounded messages retain HMAC state across calls")
 	for _, kind := range test_kinds() {
-		var digest shared_hmac.Digest
-		shared_hmac.Digest_Init(&digest, kind, key)
+		var digest hmac.Digest
+		hmac.Digest_Init(&digest, kind, key)
 		midpoint := len(source) >> binary.UINT_8_SIZE
-		shared_hmac.Digest_Write(&digest, source[:midpoint])
-		shared_hmac.Digest_Write(&digest, source[midpoint:])
+		hmac.Digest_Write(&digest, source[:midpoint])
+		hmac.Digest_Write(&digest, source[midpoint:])
 		verify_digest(t, &digest, kind, key, source)
 	}
 }
 
 // Test_Key_Reduction checks keys beyond both supported block widths.
 func Test_Key_Reduction(t *testing.T) {
-	var key [shared_hmac.BLOCK_SIZE_MAXIMUM + binary.UINT_8_SIZE]byte
+	var key [hmac.BLOCK_SIZE_MAXIMUM + binary.UINT_8_SIZE]byte
 	for index := range key {
 		key[index] = byte(index)
 	}
 	for _, kind := range test_kinds() {
-		verify_reference(t, kind, key[:], shared_hmac.Source("key reduction"))
+		source := hmac.Source("key reduction")
+		testify.Equal(
+			t, sum(kind, reduced_key(kind, key[:]), source), sum(kind, key[:], source),
+		)
 	}
 }
 
 // Test_Caller_Owned_Output keeps short storage untouched and reports selected width.
 func Test_Caller_Owned_Output(t *testing.T) {
 	for _, kind := range test_kinds() {
-		var digest shared_hmac.Digest
-		shared_hmac.Digest_Init(&digest, kind, shared_hmac.Key("key"))
-		shared_hmac.Digest_Write(&digest, shared_hmac.Source("message"))
-		size := int(shared_hmac.Digest_Size(&digest))
-		var short [shared_hmac.DIGEST_SIZE_MAXIMUM]byte
+		var digest hmac.Digest
+		hmac.Digest_Init(&digest, kind, hmac.Key("key"))
+		hmac.Digest_Write(&digest, hmac.Source("message"))
+		size := int(hmac.Digest_Size(&digest))
+		var short [hmac.DIGEST_SIZE_MAXIMUM]byte
 		short[size-binary.UINT_8_SIZE] = TEST_SENTINEL
-		count, status := shared_hmac.Digest_Sum_Into(
+		count, status := hmac.Digest_Sum_Into(
 			&digest, short[:size-binary.UINT_8_SIZE],
 		)
-		testify.Equal(t, shared_hmac.Output_Count(size), count)
-		testify.Equal(t, shared_hmac.OUTPUT_STATUS_TOO_SMALL, status)
+		testify.Equal(t, hmac.Output_Count(size), count)
+		testify.Equal(t, hmac.OUTPUT_STATUS_TOO_SMALL, status)
 		testify.Equal(t, TEST_SENTINEL, short[size-binary.UINT_8_SIZE])
-		var output [shared_hmac.DIGEST_SIZE_MAXIMUM]byte
-		count, status = shared_hmac.Digest_Sum_Into(&digest, output[:size])
-		testify.Equal(t, shared_hmac.Output_Count(size), count)
-		testify.Equal(t, shared_hmac.OUTPUT_STATUS_OK, status)
+		var output [hmac.DIGEST_SIZE_MAXIMUM]byte
+		count, status = hmac.Digest_Sum_Into(&digest, output[:size])
+		testify.Equal(t, hmac.Output_Count(size), count)
+		testify.Equal(t, hmac.OUTPUT_STATUS_OK, status)
 	}
 }
 
 // Test_Reset_And_Clone checks key retention and independent live state.
 func Test_Reset_And_Clone(t *testing.T) {
 	for _, kind := range test_kinds() {
-		var source shared_hmac.Digest
-		shared_hmac.Digest_Init(&source, kind, shared_hmac.Key("key"))
-		shared_hmac.Digest_Write(&source, shared_hmac.Source("prefix"))
-		var clone shared_hmac.Digest
-		shared_hmac.Digest_Clone_Into(&clone, &source)
-		shared_hmac.Digest_Write(&source, shared_hmac.Source(" source"))
-		shared_hmac.Digest_Write(&clone, shared_hmac.Source(" clone"))
-		verify_digest(t, &source, kind, shared_hmac.Key("key"),
-			shared_hmac.Source("prefix source"))
-		verify_digest(t, &clone, kind, shared_hmac.Key("key"),
-			shared_hmac.Source("prefix clone"))
-		shared_hmac.Digest_Reset(&source)
-		verify_digest(t, &source, kind, shared_hmac.Key("key"), nil)
+		var source hmac.Digest
+		hmac.Digest_Init(&source, kind, hmac.Key("key"))
+		hmac.Digest_Write(&source, hmac.Source("prefix"))
+		var clone hmac.Digest
+		hmac.Digest_Clone_Into(&clone, &source)
+		hmac.Digest_Write(&source, hmac.Source(" source"))
+		hmac.Digest_Write(&clone, hmac.Source(" clone"))
+		verify_digest(t, &source, kind, hmac.Key("key"),
+			hmac.Source("prefix source"))
+		verify_digest(t, &clone, kind, hmac.Key("key"),
+			hmac.Source("prefix clone"))
+		hmac.Digest_Reset(&source)
+		verify_digest(t, &source, kind, hmac.Key("key"), nil)
 	}
 }
 
 // Test_Constant_Time_Equality checks equal, unequal, and different-width tags.
 func Test_Constant_Time_Equality(t *testing.T) {
-	left := shared_hmac.Tag("same tag")
-	testify.True(t, bool(shared_hmac.Equal(left, shared_hmac.Tag("same tag"))))
-	testify.False(t, bool(shared_hmac.Equal(left, shared_hmac.Tag("same tam"))))
-	testify.False(t, bool(shared_hmac.Equal(left, shared_hmac.Tag("short"))))
+	left := hmac.Tag("same tag")
+	testify.True(t, bool(hmac.Equal(left, hmac.Tag("same tag"))))
+	testify.False(t, bool(hmac.Equal(left, hmac.Tag("same tam"))))
+	testify.False(t, bool(hmac.Equal(left, hmac.Tag("short"))))
 }
 
 // Test_Bounds rejects hostile collections and uninitialized state.
 func Test_Bounds(t *testing.T) {
-	var digest shared_hmac.Digest
-	testify.Panics(t, func() { shared_hmac.Digest_Write(&digest, nil) })
-	testify.Panics(t, func() { shared_hmac.Digest_Sum(&digest) })
-	var oversized [shared_hmac.SOURCE_SIZE_MAXIMUM + binary.UINT_8_SIZE]byte
+	var digest hmac.Digest
+	testify.Panics(t, func() { hmac.Digest_Write(&digest, nil) })
+	testify.Panics(t, func() { hmac.Digest_Sum_Into(&digest, nil) })
+	testify.Panics(t, func() { hmac.Digest_Reset(&digest) })
+	testify.Panics(t, func() { hmac.Digest_Size(&digest) })
+	testify.Panics(t, func() { hmac.Digest_Block_Size(&digest) })
+	var initialized hmac.Digest
+	hmac.Digest_Init(&initialized, hmac.KIND_SHA_256, nil)
 	testify.Panics(t, func() {
-		shared_hmac.Digest_Init(&digest, shared_hmac.KIND_SHA_256, oversized[:])
+		hmac.Digest_Clone_Into(&initialized, &digest)
 	})
-	shared_hmac.Digest_Init(&digest, shared_hmac.KIND_SHA_256, nil)
-	testify.Panics(t, func() { shared_hmac.Digest_Write(&digest, oversized[:]) })
-	testify.Panics(t, func() { shared_hmac.Digest_Sum_Into(&digest, oversized[:]) })
-	testify.Panics(t, func() { shared_hmac.Equal(oversized[:], nil) })
-	testify.Panics(t, func() { shared_hmac.Equal(nil, oversized[:]) })
+	var oversized [hmac.SOURCE_SIZE_MAXIMUM + binary.UINT_8_SIZE]byte
 	testify.Panics(t, func() {
-		shared_hmac.Digest_Init(&digest, shared_hmac.Kind(shared_hmac.KIND_COUNT), nil)
+		hmac.Digest_Init(&digest, hmac.KIND_SHA_256, oversized[:])
+	})
+	hmac.Digest_Init(&digest, hmac.KIND_SHA_256, nil)
+	testify.Panics(t, func() { hmac.Digest_Write(&digest, oversized[:]) })
+	testify.Panics(t, func() { hmac.Digest_Sum_Into(&digest, oversized[:]) })
+	testify.Panics(t, func() { hmac.Equal(oversized[:], nil) })
+	testify.Panics(t, func() { hmac.Equal(nil, oversized[:]) })
+	testify.Panics(t, func() {
+		hmac.Digest_Init(&digest, hmac.Kind(hmac.KIND_COUNT), nil)
 	})
 }
 
@@ -140,197 +164,243 @@ func Test_Invariant_Domains(t *testing.T) {
 func Test_Allocation(t *testing.T) {
 	for _, kind := range test_kinds() {
 		fixture := allocation_fixture{
+			Destination: make(
+				hmac.Destination, hmac.DESTINATION_SIZE_MAXIMUM,
+			),
 			Kind: kind,
-			Key:  shared_hmac.Key("allocation key"),
-			Left: shared_hmac.Tag("same"),
+			Key:  hmac.Key("allocation key"),
+			Left: hmac.Tag("same"),
 		}
-		fixture.Source = shared_hmac.Source("allocation source")
-		shared_hmac.Digest_Init(&fixture.Digest, kind, fixture.Key)
+		fixture.Source = hmac.Source("allocation source")
+		hmac.Digest_Init(&fixture.Digest, kind, fixture.Key)
 		test_kind_allocation(t, &fixture)
 	}
 }
 
 const TEST_SENTINEL byte = bits.WORD_8_MAXIMUM
 
-func test_kinds() (kinds [shared_hmac.KIND_COUNT]shared_hmac.Kind) {
-	return [shared_hmac.KIND_COUNT]shared_hmac.Kind{
-		shared_hmac.KIND_MD5,
-		shared_hmac.KIND_SHA_1,
-		shared_hmac.KIND_SHA_224,
-		shared_hmac.KIND_SHA_256,
-		shared_hmac.KIND_SHA_384,
-		shared_hmac.KIND_SHA_512_224,
-		shared_hmac.KIND_SHA_512_256,
-		shared_hmac.KIND_SHA_512,
-	}
-}
+const REFERENCE_MD5 = "750c783e6ab0b503eaa86e310a5db738"
 
-func verify_reference(
-	t *testing.T,
-	kind shared_hmac.Kind,
-	key shared_hmac.Key,
-	source shared_hmac.Source,
-) {
-	var digest shared_hmac.Digest
-	shared_hmac.Digest_Init(&digest, kind, key)
-	shared_hmac.Digest_Write(&digest, source)
-	verify_digest(t, &digest, kind, key, source)
+const REFERENCE_SHA_1 = "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"
+
+const REFERENCE_SHA_224 = "a30e01098bc6dbbf45690f3a7e9e6d0f" +
+	"8bbea2a39e6148008fd05e44"
+
+const REFERENCE_SHA_256 = "5bdcc146bf60754e6a042426089575c75" +
+	"a003f089d2739839dec58b964ec3843"
+
+const REFERENCE_SHA_384 = "af45d2e376484031617f78d2b58a6b1b" +
+	"9c7ef464f5a01b47e42ec3736322445e" +
+	"8e2240ca5e69e2c78b3239ecfab21649"
+
+const REFERENCE_SHA_512_224 = "4a530b31a79ebcce36916546317c45f2" +
+	"47d83241dfb818fd37254bde"
+
+const REFERENCE_SHA_512_256 = "6df7b24630d5ccb2ee335407081a8718" +
+	"8c221489768fa2020513b2d593359456"
+
+const REFERENCE_SHA_512 = "164b7a7bfcf819e2e395fbe73b56e0a3" +
+	"87bd64222e831fd610270cd7ea250554" +
+	"9758bf75c05a994a6d034f65f8f0e6fd" +
+	"caeab1a34d4a6b4b636e070a38bce737"
+
+type kind_list []hmac.Kind
+
+func test_kinds() (kinds kind_list) {
+	return kind_list{
+		hmac.KIND_MD5,
+		hmac.KIND_SHA_1,
+		hmac.KIND_SHA_224,
+		hmac.KIND_SHA_256,
+		hmac.KIND_SHA_384,
+		hmac.KIND_SHA_512_224,
+		hmac.KIND_SHA_512_256,
+		hmac.KIND_SHA_512,
+	}
 }
 
 func verify_digest(
 	t *testing.T,
-	digest *shared_hmac.Digest,
-	kind shared_hmac.Kind,
-	key shared_hmac.Key,
-	source shared_hmac.Source,
+	digest *hmac.Digest,
+	kind hmac.Kind,
+	key hmac.Key,
+	source hmac.Source,
 ) {
-	value, count := shared_hmac.Digest_Sum(digest)
-	want, want_count := standard_sum(kind, key, source)
-	testify.Equal(t, want_count, count)
-	testify.Equal(t, want[:want_count], value[:count])
+	size := hmac.Output_Count(hmac.Digest_Size(digest))
+	value := make([]byte, size)
+	hmac.Digest_Sum_Into(digest, value)
+	want := sum(kind, key, source)
+	testify.Equal(t, size, hmac.Output_Count(len(want)))
+	testify.Equal(t, want, test_value(value))
 }
 
-func standard_sum(
-	kind shared_hmac.Kind,
-	key shared_hmac.Key,
-	source shared_hmac.Source,
-) (value shared_hmac.Value, count shared_hmac.Output_Count) {
-	standard := standard_hmac.New(sha512.New, key)
+type test_value []byte
+
+func sum(
+	kind hmac.Kind,
+	key hmac.Key,
+	source hmac.Source,
+) (value test_value) {
+	var digest hmac.Digest
+	hmac.Digest_Init(&digest, kind, key)
+	hmac.Digest_Write(&digest, source)
+	value = make(test_value, hmac.Digest_Size(&digest))
+	hmac.Digest_Sum_Into(&digest, hmac.Destination(value))
+	return value
+}
+
+func reduced_key(kind hmac.Kind, key hmac.Key) (value hmac.Key) {
+	value = make(hmac.Key, test_digest_size(kind))
 	switch kind {
-	case shared_hmac.KIND_MD5:
-		standard = standard_hmac.New(md5.New, key)
-	case shared_hmac.KIND_SHA_1:
-		standard = standard_hmac.New(sha1.New, key)
-	case shared_hmac.KIND_SHA_224:
-		standard = standard_hmac.New(sha256.New224, key)
-	case shared_hmac.KIND_SHA_256:
-		standard = standard_hmac.New(sha256.New, key)
-	case shared_hmac.KIND_SHA_384:
-		standard = standard_hmac.New(sha512.New384, key)
-	case shared_hmac.KIND_SHA_512_224:
-		standard = standard_hmac.New(sha512.New512_224, key)
-	case shared_hmac.KIND_SHA_512_256:
-		standard = standard_hmac.New(sha512.New512_256, key)
+	case hmac.KIND_MD5:
+		md5.Checksum_Into(md5.Destination(value), md5.Source(key))
+	case hmac.KIND_SHA_1:
+		sha1.Checksum_Into(sha1.Destination(value), sha1.Source(key))
+	case hmac.KIND_SHA_224:
+		sha256.Checksum_Into(
+			sha256.Destination(value), sha256.KIND_SHA_224, sha256.Source(key),
+		)
+	case hmac.KIND_SHA_256:
+		sha256.Checksum_Into(
+			sha256.Destination(value), sha256.KIND_SHA_256, sha256.Source(key),
+		)
+	case hmac.KIND_SHA_384:
+		sha512.Checksum_Into(
+			sha512.Destination(value), sha512.KIND_SHA_384, sha512.Source(key),
+		)
+	case hmac.KIND_SHA_512_224:
+		sha512.Checksum_Into(
+			sha512.Destination(value), sha512.KIND_SHA_512_224, sha512.Source(key),
+		)
+	case hmac.KIND_SHA_512_256:
+		sha512.Checksum_Into(
+			sha512.Destination(value), sha512.KIND_SHA_512_256, sha512.Source(key),
+		)
+	case hmac.KIND_SHA_512:
+		sha512.Checksum_Into(
+			sha512.Destination(value), sha512.KIND_SHA_512, sha512.Source(key),
+		)
 	}
-	standard.Write(source)
-	tag := standard.Sum(nil)
-	copy(value[:], tag)
-	return value, shared_hmac.Output_Count(len(tag))
+	return value
 }
 
-func test_digest_size(kind shared_hmac.Kind) (size int) {
-	_, count := standard_sum(kind, nil, nil)
-	return int(count)
+func encoded(t *testing.T, source test_value) (value string) {
+	t.Helper()
+	var output [hmac.DIGEST_SIZE_MAXIMUM * hex.ENCODED_BYTE_SIZE]byte
+	count, status := hex.Encode_Into(output[:], hex.Source(source))
+	testify.Equal(t, hex.Encode_Status(hex.STATUS_OK), status)
+	return string(output[:count])
 }
 
-func test_block_size(kind shared_hmac.Kind) (size int) {
-	if kind <= shared_hmac.KIND_SHA_256 {
-		return md5.BlockSize
+func test_digest_size(kind hmac.Kind) (size int) {
+	return len(sum(kind, nil, nil))
+}
+
+func test_block_size(kind hmac.Kind) (size int) {
+	if kind <= hmac.KIND_SHA_256 {
+		return hmac.BLOCK_SIZE_MINIMUM
 	}
-	return sha512.BlockSize
+	return hmac.BLOCK_SIZE_MAXIMUM
 }
 
 func test_key_and_kind_domains() {
-	var key [shared_hmac.KEY_SIZE_MAXIMUM]byte
+	var key [hmac.KEY_SIZE_MAXIMUM]byte
 	for _, size := range [...]int{
-		shared_hmac.KEY_SIZE_MINIMUM,
-		shared_hmac.KEY_SIZE_MINIMUM + binary.UINT_8_SIZE,
-		shared_hmac.KEY_SIZE_MINIMUM + binary.UINT_16_SIZE,
-		shared_hmac.BLOCK_SIZE_MINIMUM + binary.UINT_8_SIZE,
-		shared_hmac.KEY_SIZE_MAXIMUM,
+		hmac.KEY_SIZE_MINIMUM,
+		hmac.KEY_SIZE_MINIMUM + binary.UINT_8_SIZE,
+		hmac.KEY_SIZE_MINIMUM + binary.UINT_16_SIZE,
+		hmac.BLOCK_SIZE_MINIMUM + binary.UINT_8_SIZE,
+		hmac.KEY_SIZE_MAXIMUM,
 	} {
 		for _, kind := range test_kinds() {
-			var digest shared_hmac.Digest
-			shared_hmac.Digest_Init(&digest, kind, key[:size])
+			var digest hmac.Digest
+			hmac.Digest_Init(&digest, kind, key[:size])
 		}
 	}
 }
 
 func test_source_domains() {
-	var source [shared_hmac.SOURCE_SIZE_MAXIMUM]byte
+	var source [hmac.SOURCE_SIZE_MAXIMUM]byte
 	for _, size := range [...]int{
-		shared_hmac.SOURCE_SIZE_MINIMUM,
-		shared_hmac.SOURCE_SIZE_MINIMUM + binary.UINT_8_SIZE,
-		shared_hmac.SOURCE_SIZE_MINIMUM + binary.UINT_16_SIZE,
-		shared_hmac.SOURCE_SIZE_MAXIMUM,
+		hmac.SOURCE_SIZE_MINIMUM,
+		hmac.SOURCE_SIZE_MINIMUM + binary.UINT_8_SIZE,
+		hmac.SOURCE_SIZE_MINIMUM + binary.UINT_16_SIZE,
+		hmac.SOURCE_SIZE_MAXIMUM,
 	} {
-		var digest shared_hmac.Digest
-		shared_hmac.Digest_Init(&digest, shared_hmac.KIND_SHA_256, nil)
-		shared_hmac.Digest_Write(&digest, source[:size])
+		var digest hmac.Digest
+		hmac.Digest_Init(&digest, hmac.KIND_SHA_256, nil)
+		hmac.Digest_Write(&digest, source[:size])
 	}
 }
 
 func test_destination_and_tag_domains() {
-	var destination [shared_hmac.DESTINATION_SIZE_MAXIMUM]byte
+	var destination [hmac.DESTINATION_SIZE_MAXIMUM]byte
 	for _, size := range [...]int{
-		shared_hmac.DESTINATION_SIZE_MINIMUM,
-		shared_hmac.DESTINATION_SIZE_MINIMUM + binary.UINT_8_SIZE,
-		shared_hmac.DESTINATION_SIZE_MINIMUM + binary.UINT_16_SIZE,
-		shared_hmac.DESTINATION_SIZE_MAXIMUM,
+		hmac.DESTINATION_SIZE_MINIMUM,
+		hmac.DESTINATION_SIZE_MINIMUM + binary.UINT_8_SIZE,
+		hmac.DESTINATION_SIZE_MINIMUM + binary.UINT_16_SIZE,
+		hmac.DESTINATION_SIZE_MAXIMUM,
 	} {
-		var digest shared_hmac.Digest
-		shared_hmac.Digest_Init(&digest, shared_hmac.KIND_SHA_256, nil)
-		shared_hmac.Digest_Sum_Into(&digest, destination[:size])
-		shared_hmac.Equal(destination[:size], destination[:size])
+		var digest hmac.Digest
+		hmac.Digest_Init(&digest, hmac.KIND_SHA_256, nil)
+		hmac.Digest_Sum_Into(&digest, destination[:size])
+		hmac.Equal(destination[:size], destination[:size])
 	}
-	shared_hmac.Equal(shared_hmac.Tag("same"), shared_hmac.Tag("different"))
+	hmac.Equal(hmac.Tag("same"), hmac.Tag("different"))
 }
 
 func test_state_domains() {
 	for _, kind := range test_kinds() {
-		var digest shared_hmac.Digest
-		shared_hmac.Digest_Init(&digest, kind, nil)
-		shared_hmac.Digest_Init(&digest, kind, nil)
-		shared_hmac.Digest_Reset(&digest)
-		shared_hmac.Digest_Size(&digest)
-		shared_hmac.Digest_Block_Size(&digest)
-		shared_hmac.Digest_Sum(&digest)
-		var clone shared_hmac.Digest
-		shared_hmac.Digest_Clone_Into(&clone, &digest)
+		var digest hmac.Digest
+		hmac.Digest_Init(&digest, kind, nil)
+		hmac.Digest_Init(&digest, kind, nil)
+		hmac.Digest_Reset(&digest)
+		hmac.Digest_Size(&digest)
+		hmac.Digest_Block_Size(&digest)
+		var output [hmac.DIGEST_SIZE_MAXIMUM]byte
+		hmac.Digest_Sum_Into(&digest, output[:hmac.Digest_Size(&digest)])
+		var clone hmac.Digest
+		hmac.Digest_Clone_Into(&clone, &digest)
 	}
 }
 
 func test_kind_allocation(t *testing.T, fixture *allocation_fixture) {
 	testify.Zero_Allocation(t, func() {
-		shared_hmac.Digest_Init(&fixture.Digest, fixture.Kind, fixture.Key)
+		hmac.Digest_Init(&fixture.Digest, fixture.Kind, fixture.Key)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Count = shared_hmac.Digest_Write(&fixture.Digest, fixture.Source)
+		fixture.Count = hmac.Digest_Write(&fixture.Digest, fixture.Source)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Value, fixture.Output_Count = shared_hmac.Digest_Sum(&fixture.Digest)
-	})
-	testify.Zero_Allocation(t, func() {
-		fixture.Output_Count, fixture.Output_Status = shared_hmac.Digest_Sum_Into(
-			&fixture.Digest, fixture.Destination[:],
+		fixture.Output_Count, fixture.Output_Status = hmac.Digest_Sum_Into(
+			&fixture.Digest, fixture.Destination,
 		)
 	})
-	testify.Zero_Allocation(t, func() { shared_hmac.Digest_Reset(&fixture.Digest) })
+	testify.Zero_Allocation(t, func() { hmac.Digest_Reset(&fixture.Digest) })
 	testify.Zero_Allocation(t, func() {
-		shared_hmac.Digest_Clone_Into(&fixture.Clone, &fixture.Digest)
+		hmac.Digest_Clone_Into(&fixture.Clone, &fixture.Digest)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Size = shared_hmac.Digest_Size(&fixture.Digest)
-		fixture.Block_Size = shared_hmac.Digest_Block_Size(&fixture.Digest)
+		fixture.Size = hmac.Digest_Size(&fixture.Digest)
+		fixture.Block_Size = hmac.Digest_Block_Size(&fixture.Digest)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Equal = shared_hmac.Equal(fixture.Left, fixture.Left)
+		fixture.Equal = hmac.Equal(fixture.Left, fixture.Left)
 	})
 }
 
 type allocation_fixture struct {
-	Digest        shared_hmac.Digest
-	Clone         shared_hmac.Digest
-	Destination   [shared_hmac.DESTINATION_SIZE_MAXIMUM]byte
-	Key           shared_hmac.Key
-	Source        shared_hmac.Source
-	Left          shared_hmac.Tag
-	Kind          shared_hmac.Kind
-	Value         shared_hmac.Value
-	Count         shared_hmac.Count
-	Output_Count  shared_hmac.Output_Count
-	Output_Status shared_hmac.Output_Status
-	Size          shared_hmac.Size
-	Block_Size    shared_hmac.Block_Size
-	Equal         shared_hmac.Equality
+	Digest        hmac.Digest
+	Clone         hmac.Digest
+	Destination   hmac.Destination
+	Key           hmac.Key
+	Source        hmac.Source
+	Left          hmac.Tag
+	Kind          hmac.Kind
+	Count         hmac.Count
+	Output_Count  hmac.Output_Count
+	Output_Status hmac.Output_Status
+	Size          hmac.Size
+	Block_Size    hmac.Block_Size
+	Equal         hmac.Equality
 }

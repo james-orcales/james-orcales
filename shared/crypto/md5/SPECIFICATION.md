@@ -10,7 +10,7 @@ structure.
 
 # Reference Values
 
-Checksum and Digest reproduce RFC 1321 values.
+Checksum_Into and Digest_Sum_Into reproduce RFC 1321 values.
 
 # Stream
 
@@ -18,8 +18,7 @@ Writes preserve MD5 state across every block and call boundary.
 
 # Caller Owned Output
 
-Digest output uses fixed values or caller storage. Short storage stays untouched and reports
-required width.
+Digest output uses caller storage. Short storage stays untouched and reports required width.
 
 # Bounds
 

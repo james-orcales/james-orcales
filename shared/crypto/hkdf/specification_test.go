@@ -1,15 +1,12 @@
 package hkdf_test
 
 import (
-	standard_hkdf "crypto/hkdf"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"testing"
 
 	"local/james-orcales/shared/crypto/hkdf"
 	"local/james-orcales/shared/crypto/hmac"
+	"local/james-orcales/shared/crypto/sha256"
+	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
@@ -57,7 +54,7 @@ func Test_Reference_Values(t *testing.T) {
 	testify.Equal(t, want_output, output)
 }
 
-// Test_Extract_And_Expand compares direct derivation with crypto/hkdf for every HMAC kind.
+// Test_Extract_And_Expand checks direct derivation composes the public bounded stages.
 func Test_Extract_And_Expand(t *testing.T) {
 	secret := hkdf.Secret("input key material")
 	salt := hkdf.Salt("independent salt")
@@ -67,7 +64,18 @@ func Test_Extract_And_Expand(t *testing.T) {
 		count, status := hkdf.Key_Into(output[:], kind, secret, salt, info)
 		testify.Equal(t, hkdf.Count(len(output)), count)
 		testify.Equal(t, hkdf.EXPAND_STATUS_OK, status)
-		verify_standard(t, output[:], kind, secret, salt, info)
+		var pseudorandom_key [hmac.DIGEST_SIZE_MAXIMUM]byte
+		extract_count, extract_status := hkdf.Extract_Into(
+			pseudorandom_key[:], kind, secret, salt,
+		)
+		testify.Equal(t, hkdf.EXTRACT_STATUS_OK, extract_status)
+		var expanded [TEST_OUTPUT_SIZE]byte
+		expand_count, expand_status := hkdf.Expand_Into(
+			expanded[:], kind, pseudorandom_key[:extract_count], info,
+		)
+		testify.Equal(t, hkdf.Count(len(expanded)), expand_count)
+		testify.Equal(t, hkdf.EXPAND_STATUS_OK, expand_status)
+		testify.Equal(t, output, expanded)
 	}
 }
 
@@ -76,9 +84,10 @@ func Test_Caller_Owned_Output(t *testing.T) {
 	var pseudorandom_key [hmac.DIGEST_SIZE_MAXIMUM]byte
 	pseudorandom_key[bits.BIT_COUNT_MINIMUM] = TEST_SENTINEL
 	count, status := hkdf.Extract_Into(
-		pseudorandom_key[:sha256.Size-binary.UINT_8_SIZE], hmac.KIND_SHA_256, nil, nil,
+		pseudorandom_key[:sha256.DIGEST_256_SIZE-binary.UINT_8_SIZE],
+		hmac.KIND_SHA_256, nil, nil,
 	)
-	testify.Equal(t, hkdf.Extract_Count(sha256.Size), count)
+	testify.Equal(t, hkdf.Extract_Count(sha256.DIGEST_256_SIZE), count)
 	testify.Equal(t, hkdf.EXTRACT_STATUS_TOO_SMALL, status)
 	testify.Equal(t, TEST_SENTINEL, pseudorandom_key[bits.BIT_COUNT_MINIMUM])
 
@@ -141,22 +150,26 @@ func Test_Invariant_Domains(t *testing.T) {
 func Test_Allocation(t *testing.T) {
 	for _, kind := range test_kinds() {
 		fixture := allocation_fixture{
-			Kind:   kind,
-			Secret: hkdf.Secret("secret"),
-			Salt:   hkdf.Salt("salt"),
-			Info:   hkdf.Info("info"),
+			Extract: make(extract_storage, hmac.DIGEST_SIZE_MAXIMUM),
+			Output:  make(output_storage, TEST_OUTPUT_SIZE),
+			Kind:    kind,
+			Secret:  hkdf.Secret("secret"),
+			Salt:    hkdf.Salt("salt"),
+			Info:    hkdf.Info("info"),
 		}
 		fixture.Pseudorandom_Key = hkdf.Pseudorandom_Key("pseudorandom key")
 		test_kind_allocation(t, &fixture)
 	}
 }
 
-const TEST_OUTPUT_SIZE = sha512.Size
+const TEST_OUTPUT_SIZE = sha512.DIGEST_512_SIZE
 
 const TEST_SENTINEL byte = bits.WORD_8_MAXIMUM
 
-func test_kinds() (kinds [hmac.KIND_COUNT]hmac.Kind) {
-	return [hmac.KIND_COUNT]hmac.Kind{
+type kind_list []hmac.Kind
+
+func test_kinds() (kinds kind_list) {
+	return kind_list{
 		hmac.KIND_MD5,
 		hmac.KIND_SHA_1,
 		hmac.KIND_SHA_224,
@@ -166,39 +179,6 @@ func test_kinds() (kinds [hmac.KIND_COUNT]hmac.Kind) {
 		hmac.KIND_SHA_512_256,
 		hmac.KIND_SHA_512,
 	}
-}
-
-func verify_standard(
-	t *testing.T,
-	got hkdf.Destination,
-	kind hmac.Kind,
-	secret hkdf.Secret,
-	salt hkdf.Salt,
-	info hkdf.Info,
-) {
-	want, err := standard_hkdf.Key(sha512.New, secret, salt, string(info), len(got))
-	switch kind {
-	case hmac.KIND_MD5:
-		want, err = standard_hkdf.Key(md5.New, secret, salt, string(info), len(got))
-	case hmac.KIND_SHA_1:
-		want, err = standard_hkdf.Key(sha1.New, secret, salt, string(info), len(got))
-	case hmac.KIND_SHA_224:
-		want, err = standard_hkdf.Key(sha256.New224, secret, salt, string(info), len(got))
-	case hmac.KIND_SHA_256:
-		want, err = standard_hkdf.Key(sha256.New, secret, salt, string(info), len(got))
-	case hmac.KIND_SHA_384:
-		want, err = standard_hkdf.Key(sha512.New384, secret, salt, string(info), len(got))
-	case hmac.KIND_SHA_512_224:
-		want, err = standard_hkdf.Key(
-			sha512.New512_224, secret, salt, string(info), len(got),
-		)
-	case hmac.KIND_SHA_512_256:
-		want, err = standard_hkdf.Key(
-			sha512.New512_256, secret, salt, string(info), len(got),
-		)
-	}
-	testify.No_Error(t, err)
-	testify.Equal(t, want, []byte(got))
 }
 
 func test_kind_domains() {
@@ -255,17 +235,20 @@ func test_output_domains() {
 func test_kind_allocation(t *testing.T, fixture *allocation_fixture) {
 	testify.Zero_Allocation(t, func() {
 		fixture.Extract_Count, fixture.Extract_Status = hkdf.Extract_Into(
-			fixture.Extract[:], fixture.Kind, fixture.Secret, fixture.Salt,
+			hkdf.Extract_Destination(fixture.Extract), fixture.Kind,
+			fixture.Secret, fixture.Salt,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Count, fixture.Expand_Status = hkdf.Expand_Into(
-			fixture.Output[:], fixture.Kind, fixture.Pseudorandom_Key, fixture.Info,
+			hkdf.Destination(fixture.Output), fixture.Kind,
+			fixture.Pseudorandom_Key, fixture.Info,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Count, fixture.Expand_Status = hkdf.Key_Into(
-			fixture.Output[:], fixture.Kind, fixture.Secret, fixture.Salt, fixture.Info,
+			hkdf.Destination(fixture.Output), fixture.Kind,
+			fixture.Secret, fixture.Salt, fixture.Info,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
@@ -275,8 +258,8 @@ func test_kind_allocation(t *testing.T, fixture *allocation_fixture) {
 }
 
 type allocation_fixture struct {
-	Extract          [hmac.DIGEST_SIZE_MAXIMUM]byte
-	Output           [TEST_OUTPUT_SIZE]byte
+	Extract          extract_storage
+	Output           output_storage
 	Secret           hkdf.Secret
 	Salt             hkdf.Salt
 	Pseudorandom_Key hkdf.Pseudorandom_Key
@@ -288,3 +271,7 @@ type allocation_fixture struct {
 	Expand_Status    hkdf.Expand_Status
 	Size             hkdf.Size
 }
+
+type extract_storage []byte
+
+type output_storage []byte

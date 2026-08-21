@@ -1,16 +1,12 @@
 package pbkdf2_test
 
 import (
-	"crypto/md5"
-	standard_pbkdf2 "crypto/pbkdf2"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
-	"hash"
 	"testing"
 
 	"local/james-orcales/shared/crypto/hmac"
 	"local/james-orcales/shared/crypto/pbkdf2"
+	"local/james-orcales/shared/crypto/sha1"
+	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
@@ -36,16 +32,27 @@ func Test_Reference_Value(t *testing.T) {
 	password := pbkdf2.Password("password")
 	salt := pbkdf2.Salt("salt")
 	for _, kind := range test_kinds() {
-		var standard_output [TEST_OUTPUT_SIZE]byte
-		standard_count, standard_status := pbkdf2.Key_Into(
-			standard_output[:], kind, password, salt, TEST_ITERATION_COUNT,
+		digest_size := test_digest_size(kind)
+		var output [TEST_OUTPUT_SIZE]byte
+		count, status := pbkdf2.Key_Into(
+			output[:digest_size], kind, password, salt,
+			pbkdf2.ITERATION_COUNT_MINIMUM,
 		)
-		testify.Equal(t, pbkdf2.Count(len(standard_output)), standard_count)
-		testify.Equal(t, pbkdf2.STATUS_OK, standard_status)
-		standard_want := standard_key(
-			kind, password, salt, TEST_ITERATION_COUNT, len(standard_output),
+		testify.Equal(t, pbkdf2.Count(digest_size), count)
+		testify.Equal(t, pbkdf2.STATUS_OK, status)
+		var block [len("salt") + binary.UINT_32_SIZE]byte
+		copy(block[:], salt)
+		block[len(block)-binary.UINT_8_SIZE] = byte(binary.UINT_8_SIZE)
+		var digest hmac.Digest
+		hmac.Digest_Init(&digest, kind, hmac.Key(password))
+		hmac.Digest_Write(&digest, block[:])
+		var want [TEST_OUTPUT_SIZE]byte
+		want_count, want_status := hmac.Digest_Sum_Into(
+			&digest, want[:digest_size],
 		)
-		testify.Equal(t, standard_want, standard_output[:])
+		testify.Equal(t, hmac.Output_Count(digest_size), want_count)
+		testify.Equal(t, hmac.OUTPUT_STATUS_OK, want_status)
+		testify.Equal(t, want[:digest_size], output[:digest_size])
 	}
 }
 
@@ -66,7 +73,7 @@ func Test_Work_Bound(t *testing.T) {
 			pbkdf2.PRF_EVALUATION_COUNT_MAXIMUM, bits.MEBIBYTE_BYTES,
 		)
 	}
-	var output [sha1.Size + binary.UINT_8_SIZE]byte
+	var output [sha1.DIGEST_SIZE + binary.UINT_8_SIZE]byte
 	output[bits.BIT_COUNT_MINIMUM] = TEST_SENTINEL
 	count, status := pbkdf2.Key_Into(
 		output[:], hmac.KIND_SHA_1, nil, nil, pbkdf2.ITERATION_COUNT_MAXIMUM,
@@ -129,6 +136,7 @@ func Test_Invariant_Domains(t *testing.T) {
 func Test_Allocation(t *testing.T) {
 	for _, kind := range test_kinds() {
 		fixture := allocation_fixture{
+			Output:     make(output_storage, TEST_OUTPUT_SIZE),
 			Kind:       kind,
 			Password:   pbkdf2.Password("password"),
 			Salt:       pbkdf2.Salt("salt"),
@@ -136,14 +144,14 @@ func Test_Allocation(t *testing.T) {
 		}
 		testify.Zero_Allocation(t, func() {
 			fixture.Count, fixture.Status = pbkdf2.Key_Into(
-				fixture.Output[:], fixture.Kind, fixture.Password,
+				pbkdf2.Destination(fixture.Output), fixture.Kind, fixture.Password,
 				fixture.Salt, fixture.Iterations,
 			)
 		})
 	}
 }
 
-const TEST_OUTPUT_SIZE = sha512.Size
+const TEST_OUTPUT_SIZE = sha512.DIGEST_512_SIZE
 
 const REFERENCE_ITERATION_COUNT pbkdf2.Iteration_Count = 1 << 12
 
@@ -151,8 +159,10 @@ const TEST_ITERATION_COUNT = pbkdf2.ITERATION_COUNT_MINIMUM + binary.UINT_16_SIZ
 
 const TEST_SENTINEL byte = bits.WORD_8_MAXIMUM
 
-func test_kinds() (kinds [hmac.KIND_COUNT]hmac.Kind) {
-	return [hmac.KIND_COUNT]hmac.Kind{
+type kind_list []hmac.Kind
+
+func test_kinds() (kinds kind_list) {
+	return kind_list{
 		hmac.KIND_MD5,
 		hmac.KIND_SHA_1,
 		hmac.KIND_SHA_224,
@@ -164,39 +174,10 @@ func test_kinds() (kinds [hmac.KIND_COUNT]hmac.Kind) {
 	}
 }
 
-func standard_key(
-	kind hmac.Kind,
-	password pbkdf2.Password,
-	salt pbkdf2.Salt,
-	iterations pbkdf2.Iteration_Count,
-	output_size int,
-) (output []byte) {
-	var hash_new func() (digest hash.Hash)
-	switch kind {
-	case hmac.KIND_MD5:
-		hash_new = md5.New
-	case hmac.KIND_SHA_1:
-		hash_new = sha1.New
-	case hmac.KIND_SHA_224:
-		hash_new = sha256.New224
-	case hmac.KIND_SHA_256:
-		hash_new = sha256.New
-	case hmac.KIND_SHA_384:
-		hash_new = sha512.New384
-	case hmac.KIND_SHA_512_224:
-		hash_new = sha512.New512_224
-	case hmac.KIND_SHA_512_256:
-		hash_new = sha512.New512_256
-	case hmac.KIND_SHA_512:
-		hash_new = sha512.New
-	}
-	output, err := standard_pbkdf2.Key(
-		hash_new, string(password), salt, int(iterations), output_size,
-	)
-	if err != nil {
-		panic(err)
-	}
-	return output
+func test_digest_size(kind hmac.Kind) (size int) {
+	var digest hmac.Digest
+	hmac.Digest_Init(&digest, kind, nil)
+	return int(hmac.Digest_Size(&digest))
 }
 
 func test_input_domains() {
@@ -244,7 +225,7 @@ func test_iteration_domains() {
 }
 
 type allocation_fixture struct {
-	Output     [TEST_OUTPUT_SIZE]byte
+	Output     output_storage
 	Kind       hmac.Kind
 	Password   pbkdf2.Password
 	Salt       pbkdf2.Salt
@@ -252,3 +233,5 @@ type allocation_fixture struct {
 	Count      pbkdf2.Count
 	Status     pbkdf2.Status
 }
+
+type output_storage []byte

@@ -1,7 +1,6 @@
 package subtle_test
 
 import (
-	standard_subtle "crypto/subtle"
 	"testing"
 
 	"local/james-orcales/shared/crypto/subtle"
@@ -28,7 +27,7 @@ func Test_Constant_Time(t *testing.T) {
 		subtle.Constant_Time_Compare(left[:], right[:]))
 }
 
-// Test_Reference_Behavior binds each defined scalar result to crypto/subtle.
+// Test_Reference_Behavior binds each defined scalar result to its truth table.
 func Test_Reference_Behavior(t *testing.T) {
 	test_reference_compare(t)
 	test_reference_select(t)
@@ -40,21 +39,27 @@ func Test_Reference_Behavior(t *testing.T) {
 // Test_Caller_Owned_Storage protects copy selection and XOR output ownership.
 func Test_Caller_Owned_Storage(t *testing.T) {
 	destination := storage_pattern(bits.WORD_8_MINIMUM)
-	source := storage_pattern(byte(TEST_STORAGE_SIZE))
-	preserved := destination
-	subtle.Constant_Time_Copy(subtle.DECISION_FALSE, destination[:], source[:])
+	input := storage_pattern(byte(TEST_STORAGE_SIZE))
+	preserved := storage_pattern(bits.WORD_8_MINIMUM)
+	subtle.Constant_Time_Copy(
+		subtle.DECISION_FALSE, subtle.Destination(destination), subtle.Source(input),
+	)
 	testify.Equal(t, preserved, destination)
-	subtle.Constant_Time_Copy(subtle.DECISION_TRUE, destination[:], source[:])
-	testify.Equal(t, source, destination)
+	subtle.Constant_Time_Copy(
+		subtle.DECISION_TRUE, subtle.Destination(destination), subtle.Source(input),
+	)
+	testify.Equal(t, input, destination)
 
 	destination = storage_pattern(bits.WORD_8_MINIMUM)
-	want := destination
+	want := storage_pattern(bits.WORD_8_MINIMUM)
 	left := storage_pattern(byte(TEST_STORAGE_SIZE))
 	right := source_pattern(byte(TEST_STORAGE_SIZE + TEST_STORAGE_SIZE))
 	for index := range right {
 		want[index] = left[index] ^ right[index]
 	}
-	count := subtle.XOR_Bytes(destination[:], left[:], right[:])
+	count := subtle.XOR_Bytes(
+		subtle.Destination(destination), subtle.Source(left), subtle.Source(right),
+	)
 	testify.Equal(t, subtle.Count(len(right)), count)
 	testify.Equal(t, want, destination)
 }
@@ -62,19 +67,26 @@ func Test_Caller_Owned_Storage(t *testing.T) {
 // Test_Bounds rejects hostile collections before destination mutation.
 func Test_Bounds(t *testing.T) {
 	destination := source_pattern(bits.WORD_8_MINIMUM)
-	source := short_pattern(byte(TEST_SOURCE_SIZE))
-	destination_before := destination
+	input := short_pattern(byte(TEST_SOURCE_SIZE))
+	destination_before := source_pattern(bits.WORD_8_MINIMUM)
 	testify.Panics(t, func() {
-		subtle.Constant_Time_Copy(subtle.DECISION_TRUE, destination[:], source[:])
+		subtle.Constant_Time_Copy(
+			subtle.DECISION_TRUE, subtle.Destination(destination), subtle.Source(input),
+		)
 	})
 	testify.Equal(t, destination_before, destination)
 
-	short := short_pattern(bits.WORD_8_MINIMUM)
+	short_destination := short_pattern(bits.WORD_8_MINIMUM)
 	left := source_pattern(byte(TEST_SHORT_SIZE))
 	right := source_pattern(byte(TEST_SHORT_SIZE + TEST_SOURCE_SIZE))
-	short_before := short
-	testify.Panics(t, func() { subtle.XOR_Bytes(short[:], left[:], right[:]) })
-	testify.Equal(t, short_before, short)
+	short_before := short_pattern(bits.WORD_8_MINIMUM)
+	testify.Panics(t, func() {
+		subtle.XOR_Bytes(
+			subtle.Destination(short_destination),
+			subtle.Source(left), subtle.Source(right),
+		)
+	})
+	testify.Equal(t, short_before, short_destination)
 
 	var oversized [subtle.SOURCE_SIZE_MAXIMUM + binary.UINT_8_SIZE]byte
 	testify.Panics(t, func() { subtle.Constant_Time_Compare(oversized[:], nil) })
@@ -91,30 +103,37 @@ func Test_Bounds(t *testing.T) {
 func Test_Overlap(t *testing.T) {
 	right := source_pattern(byte(TEST_SOURCE_SIZE))
 	overlap := storage_pattern(bits.WORD_8_MINIMUM)
-	overlap_before := overlap
+	overlap_before := storage_pattern(bits.WORD_8_MINIMUM)
 	testify.Panics(t, func() {
 		subtle.XOR_Bytes(
-			overlap[binary.UINT_8_SIZE:], overlap[:TEST_SOURCE_SIZE], right[:],
+			subtle.Destination(overlap[binary.UINT_8_SIZE:]),
+			subtle.Source(overlap[:TEST_SOURCE_SIZE]), subtle.Source(right),
 		)
 	})
 	testify.Equal(t, overlap_before, overlap)
 
 	left_destination := source_pattern(bits.WORD_8_MINIMUM)
-	left_want := left_destination
+	left_want := source_pattern(bits.WORD_8_MINIMUM)
 	for index := range left_want {
 		left_want[index] ^= right[index]
 	}
-	count := subtle.XOR_Bytes(left_destination[:], left_destination[:], right[:])
+	count := subtle.XOR_Bytes(
+		subtle.Destination(left_destination), subtle.Source(left_destination),
+		subtle.Source(right),
+	)
 	testify.Equal(t, subtle.Count(len(left_destination)), count)
 	testify.Equal(t, left_want, left_destination)
 
 	right_destination := source_pattern(bits.WORD_8_MINIMUM)
 	left := source_pattern(byte(TEST_SOURCE_SIZE))
-	right_want := right_destination
+	right_want := source_pattern(bits.WORD_8_MINIMUM)
 	for index := range right_want {
 		right_want[index] ^= left[index]
 	}
-	count = subtle.XOR_Bytes(right_destination[:], left[:], right_destination[:])
+	count = subtle.XOR_Bytes(
+		subtle.Destination(right_destination), subtle.Source(left),
+		subtle.Source(right_destination),
+	)
 	testify.Equal(t, subtle.Count(len(right_destination)), count)
 	testify.Equal(t, right_want, right_destination)
 }
@@ -128,8 +147,9 @@ func Test_Invariant_Domains(t *testing.T) {
 // Test_Allocation measures every exported runtime operation with assertions enabled.
 func Test_Allocation(t *testing.T) {
 	fixture := allocation_fixture{
-		Left:  subtle.Source("left"),
-		Right: subtle.Source("lest"),
+		Destination: make(destination_storage, subtle.DESTINATION_SIZE_MAXIMUM),
+		Left:        subtle.Source("left"),
+		Right:       subtle.Source("lest"),
 	}
 	testify.Zero_Allocation(t, func() {
 		fixture.Decision = subtle.Constant_Time_Compare(fixture.Left, fixture.Right)
@@ -152,7 +172,8 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() {
 		subtle.Constant_Time_Copy(
-			subtle.DECISION_TRUE, fixture.Destination[:len(fixture.Left)], fixture.Left,
+			subtle.DECISION_TRUE,
+			subtle.Destination(fixture.Destination[:len(fixture.Left)]), fixture.Left,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
@@ -164,7 +185,7 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Count = subtle.XOR_Bytes(
-			fixture.Destination[:], fixture.Left, fixture.Right,
+			subtle.Destination(fixture.Destination), fixture.Left, fixture.Right,
 		)
 	})
 	testify.True(t, fixture.Integer <= subtle.INTEGER_MAXIMUM)
@@ -176,21 +197,30 @@ const TEST_SOURCE_SIZE = TEST_STORAGE_SIZE - binary.UINT_8_SIZE
 
 const TEST_SHORT_SIZE = TEST_SOURCE_SIZE - binary.UINT_8_SIZE
 
-func storage_pattern(offset byte) (value [TEST_STORAGE_SIZE]byte) {
+type storage []byte
+
+func storage_pattern(offset byte) (value storage) {
+	value = make(storage, TEST_STORAGE_SIZE)
 	for index := range value {
 		value[index] = offset + byte(index) + byte(binary.UINT_8_SIZE)
 	}
 	return value
 }
 
-func source_pattern(offset byte) (value [TEST_SOURCE_SIZE]byte) {
+type source []byte
+
+func source_pattern(offset byte) (value source) {
+	value = make(source, TEST_SOURCE_SIZE)
 	for index := range value {
 		value[index] = offset + byte(index) + byte(binary.UINT_8_SIZE)
 	}
 	return value
 }
 
-func short_pattern(offset byte) (value [TEST_SHORT_SIZE]byte) {
+type short []byte
+
+func short_pattern(offset byte) (value short) {
+	value = make(short, TEST_SHORT_SIZE)
 	for index := range value {
 		value[index] = offset + byte(index) + byte(binary.UINT_8_SIZE)
 	}
@@ -201,14 +231,16 @@ func test_reference_compare(t *testing.T) {
 	for _, test := range [...]struct {
 		Left  []byte
 		Right []byte
+		Want  subtle.Decision
 	}{
-		{Left: nil, Right: nil},
-		{Left: []byte("same"), Right: []byte("same")},
-		{Left: []byte("left"), Right: []byte("lest")},
-		{Left: []byte("short"), Right: []byte("longer")},
+		{Left: nil, Right: nil, Want: subtle.DECISION_TRUE},
+		{Left: []byte("same"), Right: []byte("same"), Want: subtle.DECISION_TRUE},
+		{Left: []byte("left"), Right: []byte("lest"), Want: subtle.DECISION_FALSE},
+		{Left: []byte("short"), Right: []byte("longer"), Want: subtle.DECISION_FALSE},
 	} {
-		want := subtle.Decision(standard_subtle.ConstantTimeCompare(test.Left, test.Right))
-		testify.Equal(t, want, subtle.Constant_Time_Compare(test.Left, test.Right))
+		testify.Equal(
+			t, test.Want, subtle.Constant_Time_Compare(test.Left, test.Right),
+		)
 	}
 }
 
@@ -217,22 +249,22 @@ func test_reference_select(t *testing.T) {
 		Selector subtle.Decision
 		Left     subtle.Integer
 		Right    subtle.Integer
+		Want     subtle.Integer
 	}{
 		{
 			Selector: subtle.DECISION_FALSE,
 			Left:     subtle.INTEGER_MINIMUM,
 			Right:    subtle.INTEGER_MAXIMUM,
+			Want:     subtle.INTEGER_MAXIMUM,
 		},
 		{
 			Selector: subtle.DECISION_TRUE,
 			Left:     subtle.INTEGER_MINIMUM,
 			Right:    subtle.INTEGER_MAXIMUM,
+			Want:     subtle.INTEGER_MINIMUM,
 		},
 	} {
-		want := subtle.Integer(standard_subtle.ConstantTimeSelect(
-			int(test.Selector), int(test.Left), int(test.Right),
-		))
-		testify.Equal(t, want,
+		testify.Equal(t, test.Want,
 			subtle.Constant_Time_Select(test.Selector, test.Left, test.Right))
 	}
 }
@@ -241,15 +273,24 @@ func test_reference_byte_equal(t *testing.T) {
 	for _, test := range [...]struct {
 		Left  subtle.Byte
 		Right subtle.Byte
+		Want  subtle.Decision
 	}{
-		{Left: subtle.BYTE_MINIMUM, Right: subtle.BYTE_MINIMUM},
-		{Left: subtle.BYTE_MINIMUM, Right: subtle.BYTE_MAXIMUM},
-		{Left: subtle.BYTE_MAXIMUM, Right: subtle.BYTE_MAXIMUM},
+		{
+			Left: subtle.BYTE_MINIMUM, Right: subtle.BYTE_MINIMUM,
+			Want: subtle.DECISION_TRUE,
+		},
+		{
+			Left: subtle.BYTE_MINIMUM, Right: subtle.BYTE_MAXIMUM,
+			Want: subtle.DECISION_FALSE,
+		},
+		{
+			Left: subtle.BYTE_MAXIMUM, Right: subtle.BYTE_MAXIMUM,
+			Want: subtle.DECISION_TRUE,
+		},
 	} {
-		want := subtle.Decision(standard_subtle.ConstantTimeByteEq(
-			byte(test.Left), byte(test.Right),
-		))
-		testify.Equal(t, want, subtle.Constant_Time_Byte_Equal(test.Left, test.Right))
+		testify.Equal(
+			t, test.Want, subtle.Constant_Time_Byte_Equal(test.Left, test.Right),
+		)
 	}
 }
 
@@ -257,15 +298,22 @@ func test_reference_integer_32_equal(t *testing.T) {
 	for _, test := range [...]struct {
 		Left  subtle.Integer_32
 		Right subtle.Integer_32
+		Want  subtle.Decision
 	}{
-		{Left: subtle.INTEGER_32_MINIMUM, Right: subtle.INTEGER_32_MINIMUM},
-		{Left: subtle.INTEGER_32_MINIMUM, Right: subtle.INTEGER_32_MAXIMUM},
-		{Left: subtle.INTEGER_32_MAXIMUM, Right: subtle.INTEGER_32_MAXIMUM},
+		{
+			Left: subtle.INTEGER_32_MINIMUM, Right: subtle.INTEGER_32_MINIMUM,
+			Want: subtle.DECISION_TRUE,
+		},
+		{
+			Left: subtle.INTEGER_32_MINIMUM, Right: subtle.INTEGER_32_MAXIMUM,
+			Want: subtle.DECISION_FALSE,
+		},
+		{
+			Left: subtle.INTEGER_32_MAXIMUM, Right: subtle.INTEGER_32_MAXIMUM,
+			Want: subtle.DECISION_TRUE,
+		},
 	} {
-		want := subtle.Decision(standard_subtle.ConstantTimeEq(
-			int32(test.Left), int32(test.Right),
-		))
-		testify.Equal(t, want,
+		testify.Equal(t, test.Want,
 			subtle.Constant_Time_Integer_32_Equal(test.Left, test.Right))
 	}
 }
@@ -274,28 +322,30 @@ func test_reference_less_or_equal(t *testing.T) {
 	for _, test := range [...]struct {
 		Left  subtle.Nonnegative_Integer
 		Right subtle.Nonnegative_Integer
+		Want  subtle.Decision
 	}{
 		{
 			Left:  subtle.NONNEGATIVE_INTEGER_MINIMUM,
 			Right: subtle.NONNEGATIVE_INTEGER_MINIMUM,
+			Want:  subtle.DECISION_TRUE,
 		},
 		{
 			Left:  subtle.NONNEGATIVE_INTEGER_MINIMUM,
 			Right: subtle.NONNEGATIVE_INTEGER_MAXIMUM,
+			Want:  subtle.DECISION_TRUE,
 		},
 		{
 			Left:  subtle.NONNEGATIVE_INTEGER_MAXIMUM,
 			Right: subtle.NONNEGATIVE_INTEGER_MINIMUM,
+			Want:  subtle.DECISION_FALSE,
 		},
 		{
 			Left:  subtle.NONNEGATIVE_INTEGER_MAXIMUM,
 			Right: subtle.NONNEGATIVE_INTEGER_MAXIMUM,
+			Want:  subtle.DECISION_TRUE,
 		},
 	} {
-		want := subtle.Decision(standard_subtle.ConstantTimeLessOrEq(
-			int(test.Left), int(test.Right),
-		))
-		testify.Equal(t, want,
+		testify.Equal(t, test.Want,
 			subtle.Constant_Time_Less_Or_Equal(test.Left, test.Right))
 	}
 }
@@ -379,10 +429,12 @@ func test_scalar_invariant_domains() {
 }
 
 type allocation_fixture struct {
-	Destination [subtle.DESTINATION_SIZE_MAXIMUM]byte
+	Destination destination_storage
 	Left        subtle.Source
 	Right       subtle.Source
 	Decision    subtle.Decision
 	Count       subtle.Count
 	Integer     subtle.Integer
 }
+
+type destination_storage []byte

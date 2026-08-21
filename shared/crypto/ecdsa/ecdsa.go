@@ -2,6 +2,8 @@
 package ecdsa
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/elliptic"
 	"local/james-orcales/shared/crypto/prng"
@@ -58,52 +60,141 @@ const SIGN_STATUS_OK Sign_Status = Sign_Status(bits.WORD_8_MINIMUM)
 // SIGN_STATUS_ENTROPY_EXHAUSTED leaves signature storage unchanged.
 const SIGN_STATUS_ENTROPY_EXHAUSTED Sign_Status = SIGN_STATUS_OK + binary.UINT_8_SIZE
 
-// READY_INDEX stores caller key-state identity.
-const READY_INDEX int = int(bits.WORD_8_MINIMUM)
-
-// READY_WORD_COUNT holds one caller key-state octet.
-const READY_WORD_COUNT = READY_INDEX + binary.UINT_8_SIZE
-
 // READY_EMPTY marks caller storage that does not yet hold a key.
-const READY_EMPTY byte = bits.WORD_8_MINIMUM
+const READY_EMPTY Ready = Ready(bits.WORD_8_MINIMUM)
 
 // READY_COMPLETE marks one validated key.
-const READY_COMPLETE byte = READY_EMPTY + binary.UINT_8_SIZE
+const READY_COMPLETE Ready = READY_EMPTY + binary.UINT_8_SIZE
 
-// CONDITION_LIMB_COUNT gives branchless scalar decisions fixed array identity.
-const CONDITION_LIMB_COUNT = binary.UINT_8_SIZE
+// DECISION_FALSE rejects one constant-time scalar condition.
+const DECISION_FALSE Decision = Decision(bits.WORD_64_MINIMUM)
+
+// DECISION_TRUE accepts one constant-time scalar condition.
+const DECISION_TRUE Decision = DECISION_FALSE + binary.UINT_8_SIZE
+
+// Scalar_Limb_0 gives the first word one layout identity.
+type Scalar_Limb_0 uint64
+
+// Scalar_Limb_0_Invariants spans every stored word.
+func Scalar_Limb_0_Invariants(value Scalar_Limb_0, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Scalar_Limb_1 gives the second word one layout identity.
+type Scalar_Limb_1 uint64
+
+// Scalar_Limb_1_Invariants spans every stored word.
+func Scalar_Limb_1_Invariants(value Scalar_Limb_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Scalar_Limb_2 gives the third word one layout identity.
+type Scalar_Limb_2 uint64
+
+// Scalar_Limb_2_Invariants spans every stored word.
+func Scalar_Limb_2_Invariants(value Scalar_Limb_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Scalar_Limb_3 gives the fourth word one layout identity.
+type Scalar_Limb_3 uint64
+
+// Scalar_Limb_3_Invariants spans every stored word.
+func Scalar_Limb_3_Invariants(value Scalar_Limb_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Scalar stores one P-256 group-order integer in little-endian words.
+type Scalar struct {
+	// Limb_0 keeps the least-significant word stable under unsafe arithmetic views.
+	Limb_0 Scalar_Limb_0
+	// Limb_1 prevents layout changes from shifting the second arithmetic word.
+	Limb_1 Scalar_Limb_1
+	// Limb_2 prevents layout changes from shifting the third arithmetic word.
+	Limb_2 Scalar_Limb_2
+	// Limb_3 keeps the most-significant word stable under unsafe arithmetic views.
+	Limb_3 Scalar_Limb_3
+}
+
+// Scalar_Invariants composes every fixed position once.
+func Scalar_Invariants(value Scalar, namespace aver.Namespace) {
+	Scalar_Limb_0_Invariants(value.Limb_0, namespace)
+	Scalar_Limb_1_Invariants(value.Limb_1, namespace)
+	Scalar_Limb_2_Invariants(value.Limb_2, namespace)
+	Scalar_Limb_3_Invariants(value.Limb_3, namespace)
+	aver.Always(
+		unsafe.Sizeof(value) == SCALAR_SIZE,
+		"Scalar has aligned P-256 width.",
+	)
+}
+
+// Scalar_Handle names mutable scalar storage.
+type Scalar_Handle *Scalar
+
+// Scalar_Handle_Invariants composes present scalar storage.
+func Scalar_Handle_Invariants(value Scalar_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Scalar_Invariants(*value, namespace)
+}
+
+// Scalar_Encoding is one exact-width big-endian scalar.
+type Scalar_Encoding []byte
+
+// Scalar_Encoding_Invariants fixes the external scalar width.
+func Scalar_Encoding_Invariants(value Scalar_Encoding, _ aver.Namespace) {
+	aver.Always(len(value) == SCALAR_SIZE, "Scalar encoding has P-256 width.")
+}
+
+// Decision is one constant-time scalar Boolean.
+type Decision uint64
+
+// Decision_Invariants admits only rejected and accepted decisions.
+func Decision_Invariants(value Decision, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint64(uint64(value), uint64(DECISION_FALSE), uint64(DECISION_TRUE)).
+		Ensure()
+}
 
 // Ready stores caller key-state identity.
-type Ready [READY_WORD_COUNT]byte
+type Ready uint8
 
-// Ready_Invariants fixes key-state storage width.
-func Ready_Invariants(value Ready, _ aver.Namespace) {
-	aver.Always(len(value) == READY_WORD_COUNT, "ECDSA key state has fixed width.")
+// Ready_Invariants admits empty and validated key storage.
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
+		Ensure()
 }
 
 // Private_Key stores one canonical scalar and its validation state.
 type Private_Key struct {
-	// Scalar is the exact-width big-endian secret.
-	Scalar [PRIVATE_KEY_SIZE]byte
+	// Scalar is the validated secret integer.
+	Scalar Scalar
 	// Ready proves Scalar passed canonical nonzero validation.
 	Ready Ready
 }
 
 // Private_Key_Invariants relates completed storage to canonical nonzero scalar form.
 func Private_Key_Invariants(value Private_Key, namespace aver.Namespace) {
-	aver.Always(
-		len(value.Scalar) == PRIVATE_KEY_SIZE,
-		"An ECDSA private scalar has P-256 width.",
-	)
+	Scalar_Invariants(value.Scalar, namespace)
 	Ready_Invariants(value.Ready, namespace)
+	var order Scalar
+	scalar_order(&order)
+	var difference Scalar
+	canonical := scalar_limbs_subtract(&difference, &value.Scalar, &order)
+	nonzero := scalar_is_zero(&value.Scalar)
+	valid := canonical & (nonzero ^ DECISION_TRUE)
 	aver.Always(
-		value.Ready[READY_INDEX] <= READY_COMPLETE,
-		"An ECDSA private key has empty or complete state.",
-	)
-	valid := scalar_encoding_valid(&value.Scalar)
-	aver.Always(
-		uint64(value.Ready[READY_INDEX])&valid[bits.BIT_COUNT_MINIMUM] ==
-			uint64(value.Ready[READY_INDEX]),
+		uint64(value.Ready)&uint64(valid) == uint64(value.Ready),
 		"A completed ECDSA private key is canonical and nonzero.",
 	)
 }
@@ -113,13 +204,12 @@ type Private_Key_Destination *Private_Key
 
 // Private_Key_Destination_Invariants proves caller storage exists.
 func Private_Key_Destination_Invariants(
-	value Private_Key_Destination, _ aver.Namespace,
+	value Private_Key_Destination, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "An ECDSA private key destination exists.")
-	aver.Always(
-		len(value.Ready) == READY_WORD_COUNT,
-		"An ECDSA private key destination has state storage.",
-	)
+	if value == nil {
+		return
+	}
+	Private_Key_Invariants(*value, namespace)
 }
 
 // Public_Key stores one finite P-256 point and its validation state.
@@ -134,19 +224,14 @@ type Public_Key struct {
 func Public_Key_Invariants(value Public_Key, namespace aver.Namespace) {
 	elliptic.Point_Invariants(value.Point, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	aver.Always(
-		value.Ready[READY_INDEX] <= READY_COMPLETE,
-		"An ECDSA public key has empty or complete state.",
-	)
-	finite_word := value.Point.Z[bits.BIT_COUNT_MINIMUM] |
-		value.Point.Z[binary.UINT_8_SIZE] |
-		value.Point.Z[binary.UINT_16_SIZE] |
-		value.Point.Z[binary.UINT_16_SIZE+binary.UINT_8_SIZE]
+	finite_word := uint64(value.Point.Z.Limb_0) |
+		uint64(value.Point.Z.Limb_1) |
+		uint64(value.Point.Z.Limb_2) |
+		uint64(value.Point.Z.Limb_3)
 	finite := (finite_word | -finite_word) >>
 		(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 	aver.Always(
-		uint64(value.Ready[READY_INDEX])&finite ==
-			uint64(value.Ready[READY_INDEX]),
+		uint64(value.Ready)&finite == uint64(value.Ready),
 		"A completed ECDSA public key is finite.",
 	)
 }
@@ -158,16 +243,14 @@ type Public_Key_Destination *Public_Key
 func Public_Key_Destination_Invariants(
 	value Public_Key_Destination, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "An ECDSA public key destination exists.")
-	elliptic.Point_Invariants(value.Point, namespace)
-	aver.Always(
-		len(value.Ready) == READY_WORD_COUNT,
-		"An ECDSA public key destination has state storage.",
-	)
+	if value == nil {
+		return
+	}
+	Public_Key_Invariants(*value, namespace)
 }
 
 // Public_Key_Encoding is one complete uncompressed SEC 1 point.
-type Public_Key_Encoding [PUBLIC_KEY_SIZE]byte
+type Public_Key_Encoding []byte
 
 // Public_Key_Encoding_Invariants fixes public output width.
 func Public_Key_Encoding_Invariants(value Public_Key_Encoding, _ aver.Namespace) {
@@ -177,32 +260,12 @@ func Public_Key_Encoding_Invariants(value Public_Key_Encoding, _ aver.Namespace)
 	)
 }
 
-// Public_Key_Encoding_Destination is nonnil caller-owned encoding storage.
-type Public_Key_Encoding_Destination *Public_Key_Encoding
-
-// Public_Key_Encoding_Destination_Invariants proves caller storage exists.
-func Public_Key_Encoding_Destination_Invariants(
-	value Public_Key_Encoding_Destination, _ aver.Namespace,
-) {
-	aver.Always(value != nil, "An ECDSA public key encoding destination exists.")
-}
-
 // Signature stores fixed-width IEEE P1363 r and s scalars.
-type Signature [SIGNATURE_SIZE]byte
+type Signature []byte
 
 // Signature_Invariants fixes caller-owned output width.
 func Signature_Invariants(value Signature, _ aver.Namespace) {
 	aver.Always(len(value) == SIGNATURE_SIZE, "An ECDSA signature has fixed width.")
-}
-
-// Signature_Destination is nonnil caller-owned signature storage.
-type Signature_Destination *Signature
-
-// Signature_Destination_Invariants proves caller storage exists.
-func Signature_Destination_Invariants(
-	value Signature_Destination, _ aver.Namespace,
-) {
-	aver.Always(value != nil, "An ECDSA signature destination exists.")
 }
 
 // Private_Key_Unvalidated is one bounded hostile private-key encoding.
@@ -251,7 +314,7 @@ func Signature_Unvalidated_Invariants(
 }
 
 // Digest is one SHA-256 result.
-type Digest [SCALAR_SIZE]byte
+type Digest []byte
 
 // Digest_Invariants fixes the P-256 digest width.
 func Digest_Invariants(value Digest, _ aver.Namespace) {
@@ -300,39 +363,46 @@ func Private_Key_Set_Bytes(
 	}()
 	Private_Key_Destination_Invariants(destination, "Private_Key_Set_Bytes.destination")
 	Private_Key_Unvalidated_Invariants(source, "Private_Key_Set_Bytes.source")
-	if len(source) > PRIVATE_KEY_UNVALIDATED_SIZE_MAXIMUM {
-		panic("ecdsa: private key exceeds bound")
-	}
 	if len(source) != PRIVATE_KEY_SIZE {
 		return KEY_STATUS_INPUT_INVALID
 	}
-	var encoding [PRIVATE_KEY_SIZE]byte
-	copy(encoding[:], source)
-	valid := scalar_encoding_valid(&encoding)
-	if valid[bits.BIT_COUNT_MINIMUM] != binary.UINT_8_SIZE {
+	encoding := Scalar_Encoding(source)
+	valid := scalar_encoding_valid(encoding)
+	if valid != DECISION_TRUE {
 		return KEY_STATUS_INPUT_INVALID
 	}
+	var scalar Scalar
+	scalar_decode(&scalar, encoding)
 	*destination = Private_Key{
-		Scalar: encoding, Ready: Ready{READY_COMPLETE},
+		Scalar: scalar, Ready: READY_COMPLETE,
 	}
 	return KEY_STATUS_OK
 }
 
 // Public_Key_From_Private derives the only public point for a validated private scalar.
-func Public_Key_From_Private(private_key Private_Key) (public_key Public_Key) {
-	defer func() { Public_Key_Invariants(public_key, "Public_Key_From_Private.public_key") }()
+func Public_Key_From_Private(
+	destination Public_Key_Destination, private_key Private_Key,
+) {
+	defer func() {
+		Public_Key_Invariants(*destination, "Public_Key_From_Private.destination.output")
+	}()
+	Public_Key_Destination_Invariants(
+		destination, "Public_Key_From_Private.destination.input",
+	)
 	Private_Key_Invariants(private_key, "Public_Key_From_Private.private_key")
 	aver.Always(
-		private_key.Ready[READY_INDEX] == READY_COMPLETE,
+		private_key.Ready == READY_COMPLETE,
 		"Public derivation receives a ready ECDSA private key.",
 	)
-	if private_key.Ready[READY_INDEX] != READY_COMPLETE {
-		panic("ecdsa: private key is not ready")
-	}
+	var scalar_storage [SCALAR_SIZE]byte
+	scalar := Scalar_Encoding(scalar_storage[:])
+	scalar_encode(scalar, &private_key.Scalar)
 	var point elliptic.Point
-	status := elliptic.Point_Scalar_Base_Multiply(&point, private_key.Scalar[:])
+	status := elliptic.Point_Scalar_Base_Multiply(
+		&point, elliptic.Scalar_Unvalidated(scalar),
+	)
 	aver.Always(status == elliptic.SCALAR_STATUS_OK, "A private scalar has exact width.")
-	return Public_Key{Point: point, Ready: Ready{READY_COMPLETE}}
+	*destination = Public_Key{Point: point, Ready: READY_COMPLETE}
 }
 
 // Public_Key_Set_Bytes validates a finite SEC 1 point before replacement.
@@ -345,9 +415,6 @@ func Public_Key_Set_Bytes(
 	}()
 	Public_Key_Destination_Invariants(destination, "Public_Key_Set_Bytes.destination")
 	Public_Key_Unvalidated_Invariants(source, "Public_Key_Set_Bytes.source")
-	if len(source) > PUBLIC_KEY_UNVALIDATED_SIZE_MAXIMUM {
-		panic("ecdsa: public key exceeds bound")
-	}
 	if len(source) != PUBLIC_KEY_SIZE {
 		return KEY_STATUS_INPUT_INVALID
 	}
@@ -356,38 +423,35 @@ func Public_Key_Set_Bytes(
 	if parse_status != elliptic.PARSE_STATUS_OK {
 		return KEY_STATUS_INPUT_INVALID
 	}
-	identity := elliptic.Point_Identity()
+	var identity elliptic.Point
+	elliptic.Point_Identity(&identity)
 	if bool(elliptic.Point_Equal(&point, &identity)) {
 		return KEY_STATUS_INPUT_INVALID
 	}
 	*destination = Public_Key{
-		Point: point, Ready: Ready{READY_COMPLETE},
+		Point: point, Ready: READY_COMPLETE,
 	}
 	return KEY_STATUS_OK
 }
 
 // Public_Key_Bytes_Into writes the complete uncompressed key into fixed caller storage.
 func Public_Key_Bytes_Into(
-	destination Public_Key_Encoding_Destination, public_key Public_Key,
+	destination Public_Key_Encoding, public_key Public_Key,
 ) {
 	defer func() {
 		Public_Key_Encoding_Invariants(
-			*destination, "Public_Key_Bytes_Into.destination.output",
+			destination, "Public_Key_Bytes_Into.destination.output",
 		)
 	}()
-	Public_Key_Encoding_Destination_Invariants(
-		destination, "Public_Key_Bytes_Into.destination",
-	)
+	Public_Key_Encoding_Invariants(destination, "Public_Key_Bytes_Into.destination")
 	Public_Key_Invariants(public_key, "Public_Key_Bytes_Into.public_key")
 	aver.Always(
-		public_key.Ready[READY_INDEX] == READY_COMPLETE,
+		public_key.Ready == READY_COMPLETE,
 		"Public encoding receives a ready ECDSA public key.",
 	)
-	if public_key.Ready[READY_INDEX] != READY_COMPLETE {
-		panic("ecdsa: public key is not ready for encoding")
-	}
 	count, status := elliptic.Point_Bytes_Into(
-		destination[:], &public_key.Point, elliptic.ENCODING_UNCOMPRESSED,
+		elliptic.Destination(destination), &public_key.Point,
+		elliptic.ENCODING_UNCOMPRESSED,
 	)
 	aver.Always(
 		status == elliptic.OUTPUT_STATUS_OK,
@@ -401,42 +465,39 @@ func Public_Key_Bytes_Into(
 
 // Sign samples at most one bounded entropy window before committing a low-S signature.
 func Sign(
-	destination Signature_Destination,
+	destination Signature,
 	generator prng.Source,
 	private_key Private_Key,
 	digest Digest,
 ) (status Sign_Status) {
 	defer func() {
 		Sign_Status_Invariants(status, "Sign.status")
-		Signature_Invariants(*destination, "Sign.destination.output")
+		Signature_Invariants(destination, "Sign.destination.output")
 	}()
-	Signature_Destination_Invariants(destination, "Sign.destination")
+	Signature_Invariants(destination, "Sign.destination")
 	Private_Key_Invariants(private_key, "Sign.private_key")
 	Digest_Invariants(digest, "Sign.digest")
 	prng.Source_Invariants(generator, "Sign.generator")
-	if generator.State == nil {
-		panic("ecdsa: generator is nil")
-	}
 	aver.Always(
-		private_key.Ready[READY_INDEX] == READY_COMPLETE,
+		private_key.Ready == READY_COMPLETE,
 		"Signing receives a ready ECDSA private key.",
 	)
-	if private_key.Ready[READY_INDEX] != READY_COMPLETE {
-		panic("ecdsa: private key is not ready for signing")
-	}
-	var private_scalar, digest_scalar [SCALAR_LIMB_COUNT]uint64
-	scalar_decode(&private_scalar, &private_key.Scalar)
-	scalar_decode_reduce(&digest_scalar, (*[SCALAR_SIZE]byte)(&digest))
+	private_scalar := private_key.Scalar
+	var digest_scalar Scalar
+	scalar_decode_reduce(&digest_scalar, Scalar_Encoding(digest))
 	for range SIGN_ATTEMPT_MAXIMUM {
-		var nonce_encoding [SCALAR_SIZE]byte
-		prng.Source_Read(generator, nonce_encoding[:])
-		signature, accepted := sign_candidate(
-			&private_scalar, &digest_scalar, &nonce_encoding,
+		var nonce_storage [SCALAR_SIZE]byte
+		nonce_encoding := Scalar_Encoding(nonce_storage[:])
+		prng.Source_Read(generator, prng.Sink(nonce_encoding))
+		var candidate_storage [SIGNATURE_SIZE]byte
+		candidate := Signature(candidate_storage[:])
+		accepted := sign_candidate(
+			candidate, &private_scalar, &digest_scalar, nonce_encoding,
 		)
-		if accepted[bits.BIT_COUNT_MINIMUM] != binary.UINT_8_SIZE {
+		if accepted != DECISION_TRUE {
 			continue
 		}
-		*destination = signature
+		copy(destination, candidate)
 		return SIGN_STATUS_OK
 	}
 	return SIGN_STATUS_ENTROPY_EXHAUSTED
@@ -444,20 +505,26 @@ func Sign(
 
 // One candidate stays transactional because rare zero scalars require another entropy draw.
 func sign_candidate(
-	private_scalar *[SCALAR_LIMB_COUNT]uint64,
-	digest_scalar *[SCALAR_LIMB_COUNT]uint64,
-	nonce_encoding *[SCALAR_SIZE]byte,
-) (signature Signature, accepted [CONDITION_LIMB_COUNT]uint64) {
-	defer func() { Signature_Invariants(signature, "sign_candidate.signature") }()
-	if scalar_encoding_valid(nonce_encoding)[bits.BIT_COUNT_MINIMUM] !=
-		binary.UINT_8_SIZE {
-		return signature, accepted
+	destination Signature,
+	private_scalar Scalar_Handle,
+	digest_scalar Scalar_Handle,
+	nonce_encoding Scalar_Encoding,
+) (accepted Decision) {
+	defer func() {
+		Decision_Invariants(accepted, "sign_candidate.accepted")
+	}()
+	Signature_Invariants(destination, "sign_candidate.destination")
+	Scalar_Handle_Invariants(private_scalar, "sign_candidate.private_scalar")
+	Scalar_Handle_Invariants(digest_scalar, "sign_candidate.digest_scalar")
+	Scalar_Encoding_Invariants(nonce_encoding, "sign_candidate.nonce_encoding")
+	if scalar_encoding_valid(nonce_encoding) != DECISION_TRUE {
+		return accepted
 	}
-	var nonce [SCALAR_LIMB_COUNT]uint64
+	var nonce Scalar
 	scalar_decode(&nonce, nonce_encoding)
 	var nonce_point elliptic.Point
 	elliptic_status := elliptic.Point_Scalar_Base_Multiply(
-		&nonce_point, nonce_encoding[:],
+		&nonce_point, elliptic.Scalar_Unvalidated(nonce_encoding),
 	)
 	aver.Always(
 		elliptic_status == elliptic.SCALAR_STATUS_OK,
@@ -471,31 +538,33 @@ func sign_candidate(
 		point_status == elliptic.OUTPUT_STATUS_OK,
 		"A nonzero nonce produces a finite point.",
 	)
-	var x_encoding [SCALAR_SIZE]byte
+	var x_storage [SCALAR_SIZE]byte
+	x_encoding := Scalar_Encoding(x_storage[:])
 	x_bytes := point_encoding[elliptic.ENCODING_INFINITY_SIZE:elliptic.ENCODING_COMPRESSED_SIZE]
-	copy(x_encoding[:], x_bytes)
-	var r [SCALAR_LIMB_COUNT]uint64
-	scalar_decode_reduce(&r, &x_encoding)
-	if scalar_is_zero(&r)[bits.BIT_COUNT_MINIMUM] == binary.UINT_8_SIZE {
-		return signature, accepted
+	copy(x_encoding, x_bytes)
+	var r Scalar
+	scalar_decode_reduce(&r, x_encoding)
+	if scalar_is_zero(&r) == DECISION_TRUE {
+		return accepted
 	}
-	var product, sum, inverse, s [SCALAR_LIMB_COUNT]uint64
+	var product, sum, inverse, s Scalar
 	scalar_multiply(&product, &r, private_scalar)
 	scalar_add(&sum, digest_scalar, &product)
 	scalar_inverse(&inverse, &nonce)
 	scalar_multiply(&s, &inverse, &sum)
-	if scalar_is_zero(&s)[bits.BIT_COUNT_MINIMUM] == binary.UINT_8_SIZE {
-		return signature, accepted
+	if scalar_is_zero(&s) == DECISION_TRUE {
+		return accepted
 	}
-	half := scalar_half_order()
+	var half Scalar
+	scalar_half_order(&half)
 	greater := scalar_greater(&s, &half)
-	var negative [SCALAR_LIMB_COUNT]uint64
+	var negative Scalar
 	scalar_negate(&negative, &s)
 	scalar_select(&s, &negative, &s, greater)
-	scalar_encode((*[SCALAR_SIZE]byte)(signature[:SCALAR_SIZE]), &r)
-	scalar_encode((*[SCALAR_SIZE]byte)(signature[SCALAR_SIZE:]), &s)
-	accepted[bits.BIT_COUNT_MINIMUM] = binary.UINT_8_SIZE
-	return signature, accepted
+	scalar_encode(Scalar_Encoding(destination[:SCALAR_SIZE]), &r)
+	scalar_encode(Scalar_Encoding(destination[SCALAR_SIZE:]), &s)
+	accepted = DECISION_TRUE
+	return accepted
 }
 
 // Verify rejects malformed scalar encodings before public group work.
@@ -507,42 +576,41 @@ func Verify(
 	Digest_Invariants(digest, "Verify.digest")
 	Signature_Unvalidated_Invariants(signature, "Verify.signature")
 	aver.Always(
-		public_key.Ready[READY_INDEX] == READY_COMPLETE,
+		public_key.Ready == READY_COMPLETE,
 		"Verification receives a ready ECDSA public key.",
 	)
-	if public_key.Ready[READY_INDEX] != READY_COMPLETE {
-		panic("ecdsa: public key is not ready for verification")
-	}
-	if len(signature) > SIGNATURE_UNVALIDATED_SIZE_MAXIMUM {
-		panic("ecdsa: signature exceeds bound")
-	}
 	if len(signature) != SIGNATURE_SIZE {
 		return false
 	}
-	var r_encoding, s_encoding [SCALAR_SIZE]byte
-	copy(r_encoding[:], signature[:SCALAR_SIZE])
-	copy(s_encoding[:], signature[SCALAR_SIZE:])
-	if scalar_encoding_valid(&r_encoding)[bits.BIT_COUNT_MINIMUM]&
-		scalar_encoding_valid(&s_encoding)[bits.BIT_COUNT_MINIMUM] !=
-		binary.UINT_8_SIZE {
+	r_encoding := Scalar_Encoding(signature[:SCALAR_SIZE])
+	s_encoding := Scalar_Encoding(signature[SCALAR_SIZE:])
+	if scalar_encoding_valid(r_encoding)&scalar_encoding_valid(s_encoding) !=
+		DECISION_TRUE {
 		return false
 	}
-	var r, s, digest_scalar [SCALAR_LIMB_COUNT]uint64
-	scalar_decode(&r, &r_encoding)
-	scalar_decode(&s, &s_encoding)
-	scalar_decode_reduce(&digest_scalar, (*[SCALAR_SIZE]byte)(&digest))
-	var inverse, first_scalar, second_scalar [SCALAR_LIMB_COUNT]uint64
+	var r, s, digest_scalar Scalar
+	scalar_decode(&r, r_encoding)
+	scalar_decode(&s, s_encoding)
+	scalar_decode_reduce(&digest_scalar, Scalar_Encoding(digest))
+	var inverse, first_scalar, second_scalar Scalar
 	scalar_inverse(&inverse, &s)
 	scalar_multiply(&first_scalar, &digest_scalar, &inverse)
 	scalar_multiply(&second_scalar, &r, &inverse)
-	var first_encoding, second_encoding [SCALAR_SIZE]byte
-	scalar_encode(&first_encoding, &first_scalar)
-	scalar_encode(&second_encoding, &second_scalar)
+	var first_storage, second_storage [SCALAR_SIZE]byte
+	first_encoding := Scalar_Encoding(first_storage[:])
+	second_encoding := Scalar_Encoding(second_storage[:])
+	scalar_encode(first_encoding, &first_scalar)
+	scalar_encode(second_encoding, &second_scalar)
 	var first, second, sum elliptic.Point
-	elliptic.Point_Scalar_Base_Multiply(&first, first_encoding[:])
-	elliptic.Point_Scalar_Multiply(&second, &public_key.Point, second_encoding[:])
+	elliptic.Point_Scalar_Base_Multiply(
+		&first, elliptic.Scalar_Unvalidated(first_encoding),
+	)
+	elliptic.Point_Scalar_Multiply(
+		&second, &public_key.Point, elliptic.Scalar_Unvalidated(second_encoding),
+	)
 	elliptic.Point_Add(&sum, &first, &second)
-	identity := elliptic.Point_Identity()
+	var identity elliptic.Point
+	elliptic.Point_Identity(&identity)
 	if bool(elliptic.Point_Equal(&sum, &identity)) {
 		return false
 	}
@@ -550,274 +618,378 @@ func Verify(
 	elliptic.Point_Bytes_Into(
 		point_encoding[:], &sum, elliptic.ENCODING_UNCOMPRESSED,
 	)
-	var x_encoding [SCALAR_SIZE]byte
+	var x_storage [SCALAR_SIZE]byte
+	x_encoding := Scalar_Encoding(x_storage[:])
 	copy(
-		x_encoding[:],
+		x_encoding,
 		point_encoding[elliptic.ENCODING_INFINITY_SIZE:elliptic.ENCODING_COMPRESSED_SIZE],
 	)
-	var x [SCALAR_LIMB_COUNT]uint64
-	scalar_decode_reduce(&x, &x_encoding)
+	var x Scalar
+	scalar_decode_reduce(&x, x_encoding)
 	equal := scalar_equal(&x, &r)
-	return Verification(equal[bits.BIT_COUNT_MINIMUM] == binary.UINT_8_SIZE)
+	return Verification(equal == DECISION_TRUE)
 }
 
 func scalar_encoding_valid(
-	encoding *[SCALAR_SIZE]byte,
-) (valid [CONDITION_LIMB_COUNT]uint64) {
-	var raw [SCALAR_LIMB_COUNT]uint64
+	encoding Scalar_Encoding,
+) (valid Decision) {
+	defer func() { Decision_Invariants(valid, "scalar_encoding_valid.valid") }()
+	Scalar_Encoding_Invariants(encoding, "scalar_encoding_valid.encoding")
+	var raw Scalar
 	scalar_decode_raw(&raw, encoding)
-	order := scalar_order()
-	var difference [SCALAR_LIMB_COUNT]uint64
+	var order Scalar
+	scalar_order(&order)
+	var difference Scalar
 	canonical := scalar_limbs_subtract(&difference, &raw, &order)
 	nonzero := scalar_is_zero(&raw)
-	valid[bits.BIT_COUNT_MINIMUM] = canonical[bits.BIT_COUNT_MINIMUM] &
-		(nonzero[bits.BIT_COUNT_MINIMUM] ^ binary.UINT_8_SIZE)
+	valid = canonical & (nonzero ^ DECISION_TRUE)
 	return valid
 }
 
 func scalar_decode(
-	destination *[SCALAR_LIMB_COUNT]uint64, source *[SCALAR_SIZE]byte,
+	destination Scalar_Handle, source Scalar_Encoding,
 ) {
+	Scalar_Handle_Invariants(destination, "scalar_decode.destination")
+	Scalar_Encoding_Invariants(source, "scalar_decode.source")
 	scalar_decode_raw(destination, source)
 }
 
 func scalar_decode_reduce(
-	destination *[SCALAR_LIMB_COUNT]uint64, source *[SCALAR_SIZE]byte,
+	destination Scalar_Handle, source Scalar_Encoding,
 ) {
+	Scalar_Handle_Invariants(destination, "scalar_decode_reduce.destination")
+	Scalar_Encoding_Invariants(source, "scalar_decode_reduce.source")
 	scalar_decode_raw(destination, source)
-	order := scalar_order()
-	var reduced [SCALAR_LIMB_COUNT]uint64
+	var order Scalar
+	scalar_order(&order)
+	var reduced Scalar
 	borrow := scalar_limbs_subtract(&reduced, destination, &order)
-	scalar_select(
-		destination, &reduced, destination,
-		[CONDITION_LIMB_COUNT]uint64{
-			borrow[bits.BIT_COUNT_MINIMUM] ^ binary.UINT_8_SIZE,
-		},
-	)
+	scalar_select(destination, &reduced, destination, borrow^DECISION_TRUE)
 }
 
 func scalar_decode_raw(
-	destination *[SCALAR_LIMB_COUNT]uint64, source *[SCALAR_SIZE]byte,
+	destination Scalar_Handle, source Scalar_Encoding,
 ) {
+	Scalar_Handle_Invariants(destination, "scalar_decode_raw.destination")
+	Scalar_Encoding_Invariants(source, "scalar_decode_raw.source")
+	destination_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
 		source_index := SCALAR_SIZE -
 			(index+binary.UINT_8_SIZE)*binary.UINT_64_SIZE
-		destination[index] = uint64(binary.Uint_64(
-			source[source_index:source_index+binary.UINT_64_SIZE], binary.BIG_ENDIAN,
+		destination_words[index] = uint64(binary.Uint_64(
+			binary.Bytes(source[source_index:source_index+binary.UINT_64_SIZE]),
+			binary.BIG_ENDIAN,
 		))
 	}
 }
 
 func scalar_encode(
-	destination *[SCALAR_SIZE]byte, source *[SCALAR_LIMB_COUNT]uint64,
+	destination Scalar_Encoding, source Scalar_Handle,
 ) {
+	Scalar_Encoding_Invariants(destination, "scalar_encode.destination")
+	Scalar_Handle_Invariants(source, "scalar_encode.source")
+	source_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(source))
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
 		destination_index := SCALAR_SIZE -
 			(index+binary.UINT_8_SIZE)*binary.UINT_64_SIZE
+		destination_end := destination_index + binary.UINT_64_SIZE
 		binary.Put_Uint_64(
-			destination[destination_index:destination_index+binary.UINT_64_SIZE],
-			binary.Word_64(source[index]), binary.BIG_ENDIAN,
+			binary.Bytes(destination[destination_index:destination_end]),
+			binary.Word_64(source_words[index]), binary.BIG_ENDIAN,
 		)
 	}
 }
 
 func scalar_add(
-	destination *[SCALAR_LIMB_COUNT]uint64,
-	left *[SCALAR_LIMB_COUNT]uint64,
-	right *[SCALAR_LIMB_COUNT]uint64,
+	destination Scalar_Handle,
+	left Scalar_Handle,
+	right Scalar_Handle,
 ) {
-	var sum, reduced [SCALAR_LIMB_COUNT]uint64
+	Scalar_Handle_Invariants(destination, "scalar_add.destination")
+	Scalar_Handle_Invariants(left, "scalar_add.left")
+	Scalar_Handle_Invariants(right, "scalar_add.right")
+	var sum, reduced Scalar
 	carry := scalar_limbs_add(&sum, left, right)
-	order := scalar_order()
+	var order Scalar
+	scalar_order(&order)
 	borrow := scalar_limbs_subtract(&reduced, &sum, &order)
 	scalar_select(
 		destination, &reduced, &sum,
-		[CONDITION_LIMB_COUNT]uint64{
-			carry[bits.BIT_COUNT_MINIMUM] |
-				(borrow[bits.BIT_COUNT_MINIMUM] ^ binary.UINT_8_SIZE),
-		},
+		carry|(borrow^DECISION_TRUE),
 	)
 }
 
 func scalar_multiply(
-	destination *[SCALAR_LIMB_COUNT]uint64,
-	left *[SCALAR_LIMB_COUNT]uint64,
-	right *[SCALAR_LIMB_COUNT]uint64,
+	destination Scalar_Handle,
+	left Scalar_Handle,
+	right Scalar_Handle,
 ) {
-	var result [SCALAR_LIMB_COUNT]uint64
+	Scalar_Handle_Invariants(destination, "scalar_multiply.destination")
+	Scalar_Handle_Invariants(left, "scalar_multiply.left")
+	Scalar_Handle_Invariants(right, "scalar_multiply.right")
+	var result Scalar
 	addend := *left
+	result_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&result))
+	addend_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&addend))
+	right_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(right))
+	var order Scalar
+	scalar_order(&order)
+	order_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&order))
+	// These words already crossed the typed boundary. Rechecking every bit would make
+	// invariant recording dominate multiplication without checking another property.
+	modular_add := func(
+		destination_words *[SCALAR_LIMB_COUNT]uint64,
+		left_words *[SCALAR_LIMB_COUNT]uint64,
+		right_words *[SCALAR_LIMB_COUNT]uint64,
+	) {
+		carry_value := uint64(bits.WORD_64_MINIMUM)
+		var sum [SCALAR_LIMB_COUNT]uint64
+		for index := range sum {
+			partial := left_words[index] + right_words[index]
+			partial_carry := ((left_words[index] & right_words[index]) |
+				((left_words[index] | right_words[index]) & ^partial)) >>
+				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+			value := partial + carry_value
+			carry_carry := ((partial & carry_value) |
+				((partial | carry_value) & ^value)) >>
+				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+			sum[index] = value
+			carry_value = partial_carry | carry_carry
+		}
+		borrow_value := uint64(bits.WORD_64_MINIMUM)
+		var reduced [SCALAR_LIMB_COUNT]uint64
+		for index := range reduced {
+			partial := sum[index] - order_words[index]
+			partial_borrow := ((^sum[index] & order_words[index]) |
+				(^(sum[index] ^ order_words[index]) & partial)) >>
+				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+			value := partial - borrow_value
+			borrow_borrow := ((^partial & borrow_value) |
+				(^(partial ^ borrow_value) & value)) >>
+				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+			reduced[index] = value
+			borrow_value = partial_borrow | borrow_borrow
+		}
+		reduce := carry_value | (borrow_value ^ uint64(DECISION_TRUE))
+		mask := uint64(bits.WORD_64_MINIMUM) - reduce
+		for index := range destination_words {
+			destination_words[index] = sum[index] ^
+				mask&(reduced[index]^sum[index])
+		}
+	}
 	for bit_index := range SCALAR_SIZE * bits.BIT_COUNT_8_MAXIMUM {
 		var candidate [SCALAR_LIMB_COUNT]uint64
-		scalar_add(&candidate, &result, &addend)
+		modular_add(&candidate, result_words, addend_words)
 		word_index := bit_index / bits.BIT_COUNT_64_MAXIMUM
 		word_shift := uint(bit_index % bits.BIT_COUNT_64_MAXIMUM)
-		bit := right[word_index] >> word_shift & binary.UINT_8_SIZE
-		scalar_select(
-			&result, &candidate, &result,
-			[CONDITION_LIMB_COUNT]uint64{bit},
-		)
-		scalar_add(&addend, &addend, &addend)
+		bit := right_words[word_index] >> word_shift & binary.UINT_8_SIZE
+		mask := uint64(bits.WORD_64_MINIMUM) - bit
+		for index := range result_words {
+			result_words[index] ^= mask & (candidate[index] ^ result_words[index])
+		}
+		var doubled [SCALAR_LIMB_COUNT]uint64
+		modular_add(&doubled, addend_words, addend_words)
+		*addend_words = doubled
 	}
 	*destination = result
 }
 
 func scalar_inverse(
-	destination *[SCALAR_LIMB_COUNT]uint64,
-	source *[SCALAR_LIMB_COUNT]uint64,
+	destination Scalar_Handle,
+	source Scalar_Handle,
 ) {
-	exponent := scalar_order_minus_two()
-	result := scalar_one()
+	Scalar_Handle_Invariants(destination, "scalar_inverse.destination")
+	Scalar_Handle_Invariants(source, "scalar_inverse.source")
+	var exponent Scalar
+	scalar_order_minus_two(&exponent)
+	exponent_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&exponent))
+	var result Scalar
+	scalar_one(&result)
 	scalar_bit_count := SCALAR_SIZE * bits.BIT_COUNT_8_MAXIMUM
 	for processed_bit_count := range scalar_bit_count {
 		bit_index := scalar_bit_count - processed_bit_count - binary.UINT_8_SIZE
-		var square, product [SCALAR_LIMB_COUNT]uint64
+		var square, product Scalar
 		scalar_multiply(&square, &result, &result)
 		scalar_multiply(&product, &square, source)
 		word_index := bit_index / bits.BIT_COUNT_64_MAXIMUM
 		word_shift := uint(bit_index % bits.BIT_COUNT_64_MAXIMUM)
-		bit := exponent[word_index] >> word_shift & binary.UINT_8_SIZE
-		scalar_select(
-			&result, &product, &square,
-			[CONDITION_LIMB_COUNT]uint64{bit},
-		)
+		bit := exponent_words[word_index] >> word_shift & binary.UINT_8_SIZE
+		scalar_select(&result, &product, &square, Decision(bit))
 	}
 	*destination = result
 }
 
 func scalar_negate(
-	destination *[SCALAR_LIMB_COUNT]uint64,
-	source *[SCALAR_LIMB_COUNT]uint64,
+	destination Scalar_Handle,
+	source Scalar_Handle,
 ) {
-	order := scalar_order()
+	Scalar_Handle_Invariants(destination, "scalar_negate.destination")
+	Scalar_Handle_Invariants(source, "scalar_negate.source")
+	var order Scalar
+	scalar_order(&order)
 	scalar_limbs_subtract(destination, &order, source)
 }
 
 func scalar_equal(
-	left *[SCALAR_LIMB_COUNT]uint64,
-	right *[SCALAR_LIMB_COUNT]uint64,
-) (equal [CONDITION_LIMB_COUNT]uint64) {
+	left Scalar_Handle,
+	right Scalar_Handle,
+) (equal Decision) {
+	defer func() { Decision_Invariants(equal, "scalar_equal.equal") }()
+	Scalar_Handle_Invariants(left, "scalar_equal.left")
+	Scalar_Handle_Invariants(right, "scalar_equal.right")
+	left_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(left))
+	right_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(right))
 	difference := uint64(bits.WORD_64_MINIMUM)
-	for index := range left {
-		difference |= left[index] ^ right[index]
+	for index := range left_words {
+		difference |= left_words[index] ^ right_words[index]
 	}
-	equal[bits.BIT_COUNT_MINIMUM] = (difference|-difference)>>
-		(bits.BIT_COUNT_64_MAXIMUM-binary.UINT_8_SIZE) ^ binary.UINT_8_SIZE
+	equal = Decision((difference|-difference)>>
+		(bits.BIT_COUNT_64_MAXIMUM-binary.UINT_8_SIZE) ^ binary.UINT_8_SIZE)
 	return equal
 }
 
 func scalar_is_zero(
-	value *[SCALAR_LIMB_COUNT]uint64,
-) (zero [CONDITION_LIMB_COUNT]uint64) {
-	var empty [SCALAR_LIMB_COUNT]uint64
+	value Scalar_Handle,
+) (zero Decision) {
+	defer func() { Decision_Invariants(zero, "scalar_is_zero.zero") }()
+	Scalar_Handle_Invariants(value, "scalar_is_zero.value")
+	var empty Scalar
 	return scalar_equal(value, &empty)
 }
 
 func scalar_greater(
-	left *[SCALAR_LIMB_COUNT]uint64,
-	right *[SCALAR_LIMB_COUNT]uint64,
-) (greater [CONDITION_LIMB_COUNT]uint64) {
-	var difference [SCALAR_LIMB_COUNT]uint64
+	left Scalar_Handle,
+	right Scalar_Handle,
+) (greater Decision) {
+	defer func() { Decision_Invariants(greater, "scalar_greater.greater") }()
+	Scalar_Handle_Invariants(left, "scalar_greater.left")
+	Scalar_Handle_Invariants(right, "scalar_greater.right")
+	var difference Scalar
 	borrow := scalar_limbs_subtract(&difference, left, right)
 	equal := scalar_equal(left, right)
-	greater[bits.BIT_COUNT_MINIMUM] =
-		(borrow[bits.BIT_COUNT_MINIMUM] ^ binary.UINT_8_SIZE) &
-			(equal[bits.BIT_COUNT_MINIMUM] ^ binary.UINT_8_SIZE)
+	greater = (borrow ^ DECISION_TRUE) & (equal ^ DECISION_TRUE)
 	return greater
 }
 
 func scalar_select(
-	destination *[SCALAR_LIMB_COUNT]uint64,
-	first *[SCALAR_LIMB_COUNT]uint64,
-	second *[SCALAR_LIMB_COUNT]uint64,
-	choice [CONDITION_LIMB_COUNT]uint64,
+	destination Scalar_Handle,
+	first Scalar_Handle,
+	second Scalar_Handle,
+	choice Decision,
 ) {
-	mask := uint64(bits.WORD_64_MINIMUM) - choice[bits.BIT_COUNT_MINIMUM]
-	var selected [SCALAR_LIMB_COUNT]uint64
-	for index := range selected {
-		selected[index] = second[index] ^ mask&(first[index]^second[index])
+	Scalar_Handle_Invariants(destination, "scalar_select.destination")
+	Scalar_Handle_Invariants(first, "scalar_select.first")
+	Scalar_Handle_Invariants(second, "scalar_select.second")
+	Decision_Invariants(choice, "scalar_select.choice")
+	mask := uint64(bits.WORD_64_MINIMUM) - uint64(choice)
+	var selected Scalar
+	selected_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&selected))
+	first_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(first))
+	second_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(second))
+	for index := range selected_words {
+		selected_words[index] = second_words[index] ^
+			mask&(first_words[index]^second_words[index])
 	}
 	*destination = selected
 }
 
 func scalar_limbs_add(
-	destination *[SCALAR_LIMB_COUNT]uint64,
-	left *[SCALAR_LIMB_COUNT]uint64,
-	right *[SCALAR_LIMB_COUNT]uint64,
-) (carry [CONDITION_LIMB_COUNT]uint64) {
+	destination Scalar_Handle,
+	left Scalar_Handle,
+	right Scalar_Handle,
+) (carry Decision) {
+	defer func() { Decision_Invariants(carry, "scalar_limbs_add.carry") }()
+	Scalar_Handle_Invariants(destination, "scalar_limbs_add.destination")
+	Scalar_Handle_Invariants(left, "scalar_limbs_add.left")
+	Scalar_Handle_Invariants(right, "scalar_limbs_add.right")
+	left_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(left))
+	right_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(right))
 	carry_value := uint64(bits.WORD_64_MINIMUM)
-	var sum [SCALAR_LIMB_COUNT]uint64
-	for index := range sum {
-		partial := left[index] + right[index]
-		partial_carry := ((left[index] & right[index]) |
-			((left[index] | right[index]) & ^partial)) >>
+	var sum Scalar
+	sum_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&sum))
+	for index := range sum_words {
+		partial := left_words[index] + right_words[index]
+		partial_carry := ((left_words[index] & right_words[index]) |
+			((left_words[index] | right_words[index]) & ^partial)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 		value := partial + carry_value
 		carry_carry := ((partial & carry_value) |
 			((partial | carry_value) & ^value)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-		sum[index] = value
+		sum_words[index] = value
 		carry_value = partial_carry | carry_carry
 	}
 	*destination = sum
-	carry[bits.BIT_COUNT_MINIMUM] = carry_value
+	carry = Decision(carry_value)
 	return carry
 }
 
 func scalar_limbs_subtract(
-	destination *[SCALAR_LIMB_COUNT]uint64,
-	left *[SCALAR_LIMB_COUNT]uint64,
-	right *[SCALAR_LIMB_COUNT]uint64,
-) (borrow [CONDITION_LIMB_COUNT]uint64) {
+	destination Scalar_Handle,
+	left Scalar_Handle,
+	right Scalar_Handle,
+) (borrow Decision) {
+	defer func() { Decision_Invariants(borrow, "scalar_limbs_subtract.borrow") }()
+	Scalar_Handle_Invariants(destination, "scalar_limbs_subtract.destination")
+	Scalar_Handle_Invariants(left, "scalar_limbs_subtract.left")
+	Scalar_Handle_Invariants(right, "scalar_limbs_subtract.right")
+	left_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(left))
+	right_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(right))
 	borrow_value := uint64(bits.WORD_64_MINIMUM)
-	var difference [SCALAR_LIMB_COUNT]uint64
-	for index := range difference {
-		partial := left[index] - right[index]
-		partial_borrow := ((^left[index] & right[index]) |
-			(^(left[index] ^ right[index]) & partial)) >>
+	var difference Scalar
+	difference_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&difference))
+	for index := range difference_words {
+		partial := left_words[index] - right_words[index]
+		partial_borrow := ((^left_words[index] & right_words[index]) |
+			(^(left_words[index] ^ right_words[index]) & partial)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 		value := partial - borrow_value
 		borrow_borrow := ((^partial & borrow_value) |
 			(^(partial ^ borrow_value) & value)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-		difference[index] = value
+		difference_words[index] = value
 		borrow_value = partial_borrow | borrow_borrow
 	}
 	*destination = difference
-	borrow[bits.BIT_COUNT_MINIMUM] = borrow_value
+	borrow = Decision(borrow_value)
 	return borrow
 }
 
 // These limbs are the SEC 2 P-256 order in little-endian machine order.
-func scalar_order() (value [SCALAR_LIMB_COUNT]uint64) {
-	return [SCALAR_LIMB_COUNT]uint64{
-		0xf3b9cac2fc632551,
-		0xbce6faada7179e84,
-		0xffffffffffffffff,
-		0xffffffff00000000,
+func scalar_order(destination Scalar_Handle) {
+	Scalar_Handle_Invariants(destination, "scalar_order.destination")
+	*destination = Scalar{
+		Limb_0: 0xf3b9cac2fc632551,
+		Limb_1: 0xbce6faada7179e84,
+		Limb_2: 0xffffffffffffffff,
+		Limb_3: 0xffffffff00000000,
 	}
 }
 
 // Fermat inversion uses the group order minus two.
-func scalar_order_minus_two() (value [SCALAR_LIMB_COUNT]uint64) {
-	value = scalar_order()
-	value[bits.BIT_COUNT_MINIMUM] -= binary.UINT_16_SIZE
-	return value
+func scalar_order_minus_two(destination Scalar_Handle) {
+	Scalar_Handle_Invariants(destination, "scalar_order_minus_two.destination")
+	scalar_order(destination)
+	destination.Limb_0 -= binary.UINT_16_SIZE
 }
 
-func scalar_one() (value [SCALAR_LIMB_COUNT]uint64) {
-	value[bits.BIT_COUNT_MINIMUM] = binary.UINT_8_SIZE
-	return value
+func scalar_one(destination Scalar_Handle) {
+	Scalar_Handle_Invariants(destination, "scalar_one.destination")
+	*destination = Scalar{Limb_0: binary.UINT_8_SIZE}
 }
 
 // Low-S normalization derives the inclusive boundary by shifting the odd order.
-func scalar_half_order() (value [SCALAR_LIMB_COUNT]uint64) {
-	order := scalar_order()
+func scalar_half_order(destination Scalar_Handle) {
+	Scalar_Handle_Invariants(destination, "scalar_half_order.destination")
+	var order Scalar
+	scalar_order(&order)
+	value_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
+	order_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(&order))
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		value[index] = order[index] >> binary.UINT_8_SIZE
+		value_words[index] = order_words[index] >> binary.UINT_8_SIZE
 		if index+binary.UINT_8_SIZE < SCALAR_LIMB_COUNT {
-			value[index] |= order[index+binary.UINT_8_SIZE] <<
+			value_words[index] |= order_words[index+binary.UINT_8_SIZE] <<
 				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 		}
 	}
-	return value
 }

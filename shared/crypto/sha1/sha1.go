@@ -19,14 +19,8 @@ const DIGEST_BIT_COUNT = STATE_LANE_COUNT * bits.BIT_COUNT_32_MAXIMUM
 // DIGEST_SIZE converts result width to bytes.
 const DIGEST_SIZE = DIGEST_BIT_COUNT / binary.BITS_PER_BYTE
 
-// STATE_READY_INDEX follows compression lanes inside caller storage.
-const STATE_READY_INDEX = STATE_LANE_COUNT
-
-// STATE_WORD_COUNT holds compression lanes and initialization marker.
-const STATE_WORD_COUNT = STATE_READY_INDEX + binary.UINT_8_SIZE
-
 // STATE_READY_MARKER separates initialized state from zero caller storage.
-const STATE_READY_MARKER = bits.WORD_32_MAXIMUM
+const STATE_READY_MARKER = true
 
 // MESSAGE_WORD_COUNT is 32-bit words in one compression block.
 const MESSAGE_WORD_COUNT = bits.BIT_COUNT_16_MAXIMUM
@@ -75,6 +69,12 @@ const BUFFER_COUNT_MINIMUM = SOURCE_SIZE_MINIMUM
 
 // BUFFER_COUNT_MAXIMUM leaves complete blocks compressed immediately.
 const BUFFER_COUNT_MAXIMUM = BLOCK_SIZE - binary.UINT_8_SIZE
+
+// BUFFER_SOURCE_SIZE_MINIMUM excludes empty writes handled before packing.
+const BUFFER_SOURCE_SIZE_MINIMUM = binary.UINT_8_SIZE
+
+// BUFFER_SOURCE_SIZE_MAXIMUM prevents packing one complete block as partial state.
+const BUFFER_SOURCE_SIZE_MAXIMUM = BUFFER_COUNT_MAXIMUM
 
 // MESSAGE_SIZE_MINIMUM is empty message.
 const MESSAGE_SIZE_MINIMUM uint64 = bits.WORD_64_MINIMUM
@@ -227,12 +227,305 @@ func Message_Size_Invariants(value Message_Size, namespace aver.Namespace) {
 		Ensure()
 }
 
-// State holds SHA-1 compression lanes and caller-storage identity.
-type State [STATE_WORD_COUNT]uint32
+// State_Lane_0 exposes first compression word without sharing one invariant axis.
+type State_Lane_0 uint32
 
-// State_Invariants fixes compression state and identity storage width.
-func State_Invariants(value State, _ aver.Namespace) {
-	aver.Always(len(value) == STATE_WORD_COUNT, "SHA-1 state storage has fixed width.")
+// State_Lane_0_Invariants preserves complete word domain.
+func State_Lane_0_Invariants(value State_Lane_0, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
+		Ensure()
+}
+
+// State_Lane_1 exposes second compression word without sharing one invariant axis.
+type State_Lane_1 uint32
+
+// State_Lane_1_Invariants preserves complete word domain.
+func State_Lane_1_Invariants(value State_Lane_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
+		Ensure()
+}
+
+// State_Lane_2 exposes third compression word without sharing one invariant axis.
+type State_Lane_2 uint32
+
+// State_Lane_2_Invariants preserves complete word domain.
+func State_Lane_2_Invariants(value State_Lane_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
+		Ensure()
+}
+
+// State_Lane_3 exposes fourth compression word without sharing one invariant axis.
+type State_Lane_3 uint32
+
+// State_Lane_3_Invariants preserves complete word domain.
+func State_Lane_3_Invariants(value State_Lane_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
+		Ensure()
+}
+
+// State_Lane_4 exposes fifth compression word without sharing one invariant axis.
+type State_Lane_4 uint32
+
+// State_Lane_4_Invariants preserves complete word domain.
+func State_Lane_4_Invariants(value State_Lane_4, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
+		Ensure()
+}
+
+// Ready separates initialized state from zero caller storage.
+type Ready bool
+
+// Ready_Invariants requires tests to witness both lifecycle states.
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "SHA-1 state is initialized.").
+		Ensure()
+}
+
+// State keeps compression words independently visible to invariants.
+type State struct {
+	// Lane_0 avoids array-hidden state.
+	Lane_0 State_Lane_0
+	// Lane_1 avoids array-hidden state.
+	Lane_1 State_Lane_1
+	// Lane_2 avoids array-hidden state.
+	Lane_2 State_Lane_2
+	// Lane_3 avoids array-hidden state.
+	Lane_3 State_Lane_3
+	// Lane_4 avoids array-hidden state.
+	Lane_4 State_Lane_4
+}
+
+// State_Invariants exposes every word and lifecycle bit.
+func State_Invariants(value State, namespace aver.Namespace) {
+	State_Lane_0_Invariants(value.Lane_0, namespace)
+	State_Lane_1_Invariants(value.Lane_1, namespace)
+	State_Lane_2_Invariants(value.Lane_2, namespace)
+	State_Lane_3_Invariants(value.Lane_3, namespace)
+	State_Lane_4_Invariants(value.Lane_4, namespace)
+}
+
+// State_Destination names mutable compression state.
+type State_Destination *State
+
+// State_Destination_Invariants composes state when storage exists.
+func State_Destination_Invariants(value State_Destination, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	State_Invariants(*value, namespace)
+}
+
+// Buffer_Source excludes complete blocks handled by compression loop.
+type Buffer_Source []byte
+
+// Buffer_Source_Invariants keeps partial input inside one block.
+func Buffer_Source_Invariants(value Buffer_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), BUFFER_SOURCE_SIZE_MINIMUM, BUFFER_SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Block_Destination names exact scratch used during scalar unpacking.
+type Block_Destination []byte
+
+// Block_Destination_Invariants prevents partial serialization.
+func Block_Destination_Invariants(value Block_Destination, _ aver.Namespace) {
+	aver.Always(len(value) == BLOCK_SIZE, "SHA-1 scratch has one complete block.")
+}
+
+// Buffer_Lane_1 exposes first packed word without sharing one invariant axis.
+type Buffer_Lane_1 uint64
+
+// Buffer_Lane_1_Invariants preserves complete word domain.
+func Buffer_Lane_1_Invariants(value Buffer_Lane_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_2 exposes second packed word without sharing one invariant axis.
+type Buffer_Lane_2 uint64
+
+// Buffer_Lane_2_Invariants preserves complete word domain.
+func Buffer_Lane_2_Invariants(value Buffer_Lane_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_3 exposes third packed word without sharing one invariant axis.
+type Buffer_Lane_3 uint64
+
+// Buffer_Lane_3_Invariants preserves complete word domain.
+func Buffer_Lane_3_Invariants(value Buffer_Lane_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_4 exposes fourth packed word without sharing one invariant axis.
+type Buffer_Lane_4 uint64
+
+// Buffer_Lane_4_Invariants preserves complete word domain.
+func Buffer_Lane_4_Invariants(value Buffer_Lane_4, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_5 exposes fifth packed word without sharing one invariant axis.
+type Buffer_Lane_5 uint64
+
+// Buffer_Lane_5_Invariants preserves complete word domain.
+func Buffer_Lane_5_Invariants(value Buffer_Lane_5, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_6 exposes sixth packed word without sharing one invariant axis.
+type Buffer_Lane_6 uint64
+
+// Buffer_Lane_6_Invariants preserves complete word domain.
+func Buffer_Lane_6_Invariants(value Buffer_Lane_6, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_7 exposes seventh packed word without sharing one invariant axis.
+type Buffer_Lane_7 uint64
+
+// Buffer_Lane_7_Invariants preserves complete word domain.
+func Buffer_Lane_7_Invariants(value Buffer_Lane_7, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_8 exposes eighth packed word without sharing one invariant axis.
+type Buffer_Lane_8 uint64
+
+// Buffer_Lane_8_Invariants preserves complete word domain.
+func Buffer_Lane_8_Invariants(value Buffer_Lane_8, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer keeps Digest copy-safe without heap-backed slice aliases.
+type Buffer struct {
+	// Lane_1 avoids array-hidden state.
+	Lane_1 Buffer_Lane_1
+	// Lane_2 avoids array-hidden state.
+	Lane_2 Buffer_Lane_2
+	// Lane_3 avoids array-hidden state.
+	Lane_3 Buffer_Lane_3
+	// Lane_4 avoids array-hidden state.
+	Lane_4 Buffer_Lane_4
+	// Lane_5 avoids array-hidden state.
+	Lane_5 Buffer_Lane_5
+	// Lane_6 avoids array-hidden state.
+	Lane_6 Buffer_Lane_6
+	// Lane_7 avoids array-hidden state.
+	Lane_7 Buffer_Lane_7
+	// Lane_8 avoids array-hidden state.
+	Lane_8 Buffer_Lane_8
+}
+
+// Buffer_Invariants exposes each packed lane separately.
+func Buffer_Invariants(value Buffer, namespace aver.Namespace) {
+	Buffer_Lane_1_Invariants(value.Lane_1, namespace)
+	Buffer_Lane_2_Invariants(value.Lane_2, namespace)
+	Buffer_Lane_3_Invariants(value.Lane_3, namespace)
+	Buffer_Lane_4_Invariants(value.Lane_4, namespace)
+	Buffer_Lane_5_Invariants(value.Lane_5, namespace)
+	Buffer_Lane_6_Invariants(value.Lane_6, namespace)
+	Buffer_Lane_7_Invariants(value.Lane_7, namespace)
+	Buffer_Lane_8_Invariants(value.Lane_8, namespace)
+}
+
+// Buffer_Destination names mutable packed storage without copying eight words.
+type Buffer_Destination *Buffer
+
+// Buffer_Destination_Invariants composes packed storage when present.
+func Buffer_Destination_Invariants(value Buffer_Destination, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Buffer_Invariants(*value, namespace)
+}
+
+// Scalar packing preserves copy-safe, stack-owned digest state.
+func buffer_write(
+	buffer Buffer_Destination, position Buffer_Count, source Buffer_Source,
+) {
+	Buffer_Destination_Invariants(buffer, "buffer_write.buffer")
+	Buffer_Count_Invariants(position, "buffer_write.position")
+	Buffer_Source_Invariants(source, "buffer_write.source")
+	aver.Always(
+		int(position)+len(source) <= BLOCK_SIZE,
+		"SHA-1 partial bytes fit one compression block.",
+	)
+	for _, item := range source {
+		shift := uint(position%binary.UINT_64_SIZE) * binary.BITS_PER_BYTE
+		mask := uint64(bits.WORD_8_MAXIMUM) << shift
+		word := uint64(item) << shift
+		switch position / binary.UINT_64_SIZE {
+		case 0:
+			buffer.Lane_1 = buffer.Lane_1&^Buffer_Lane_1(mask) | Buffer_Lane_1(word)
+		case 1:
+			buffer.Lane_2 = buffer.Lane_2&^Buffer_Lane_2(mask) | Buffer_Lane_2(word)
+		case 2:
+			buffer.Lane_3 = buffer.Lane_3&^Buffer_Lane_3(mask) | Buffer_Lane_3(word)
+		case 3:
+			buffer.Lane_4 = buffer.Lane_4&^Buffer_Lane_4(mask) | Buffer_Lane_4(word)
+		case 4:
+			buffer.Lane_5 = buffer.Lane_5&^Buffer_Lane_5(mask) | Buffer_Lane_5(word)
+		case 5:
+			buffer.Lane_6 = buffer.Lane_6&^Buffer_Lane_6(mask) | Buffer_Lane_6(word)
+		case 6:
+			buffer.Lane_7 = buffer.Lane_7&^Buffer_Lane_7(mask) | Buffer_Lane_7(word)
+		case 7:
+			buffer.Lane_8 = buffer.Lane_8&^Buffer_Lane_8(mask) | Buffer_Lane_8(word)
+		}
+		position++
+	}
+}
+
+// Unpacking only into bounded scratch preserves zero-allocation ownership.
+func buffer_copy(buffer Buffer, destination Block_Destination) {
+	Buffer_Invariants(buffer, "buffer_copy.buffer")
+	Block_Destination_Invariants(destination, "buffer_copy.destination")
+	for position := range BLOCK_SIZE {
+		var lane uint64
+		switch position / binary.UINT_64_SIZE {
+		case 0:
+			lane = uint64(buffer.Lane_1)
+		case 1:
+			lane = uint64(buffer.Lane_2)
+		case 2:
+			lane = uint64(buffer.Lane_3)
+		case 3:
+			lane = uint64(buffer.Lane_4)
+		case 4:
+			lane = uint64(buffer.Lane_5)
+		case 5:
+			lane = uint64(buffer.Lane_6)
+		case 6:
+			lane = uint64(buffer.Lane_7)
+		case 7:
+			lane = uint64(buffer.Lane_8)
+		}
+		shift := uint(position%binary.UINT_64_SIZE) * binary.BITS_PER_BYTE
+		destination[position] = byte(lane >> shift)
+	}
 }
 
 // Round_Index identifies one SHA-1 compression step.
@@ -261,29 +554,22 @@ func Block_Size_Invariants(value Block_Size, _ aver.Namespace) {
 	aver.Always(int(value) == BLOCK_SIZE, "SHA-1 block size equals compression width.")
 }
 
-// Value is one SHA-1 digest in wire byte order.
-type Value [DIGEST_SIZE]byte
-
-// Value_Invariants fixes digest storage width.
-func Value_Invariants(value Value, _ aver.Namespace) {
-	aver.Always(len(value) == DIGEST_SIZE, "SHA-1 digest has derived width.")
-}
-
-// Digest is caller-owned streaming SHA-1 state.
-type Digest struct {
+// Storage separates mutable hash data from lifecycle marker.
+type Storage struct {
 	// State holds five compression lanes.
 	State State
-	// Buffer holds one incomplete block.
-	Buffer [BLOCK_SIZE]byte
+	// Buffer remains value-owned so cloning cannot alias mutable state.
+	Buffer Buffer
 	// Buffer_Count identifies live Buffer prefix.
 	Buffer_Count Buffer_Count
 	// Message_Size counts accepted bytes for final bit-count encoding.
 	Message_Size Message_Size
 }
 
-// Digest_Invariants composes all scalar state and partial-block relation.
-func Digest_Invariants(value Digest, namespace aver.Namespace) {
+// Storage_Invariants composes mutable hash data without lifecycle policy.
+func Storage_Invariants(value Storage, namespace aver.Namespace) {
 	State_Invariants(value.State, namespace)
+	Buffer_Invariants(value.Buffer, namespace)
 	Buffer_Count_Invariants(value.Buffer_Count, namespace)
 	Message_Size_Invariants(value.Message_Size, namespace)
 	aver.Always(
@@ -292,17 +578,56 @@ func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	)
 }
 
-// Digest_Init establishes FIPS 180-4 initial state in caller storage.
-func Digest_Init(digest *Digest) {
-	Digest_Invariants(*digest, "Digest_Init.digest.input")
-	digest.State = State{
-		INITIAL_STATE_0, INITIAL_STATE_1, INITIAL_STATE_2, INITIAL_STATE_3, INITIAL_STATE_4,
-		STATE_READY_MARKER,
+// Storage_Destination names mutable hash data after lifecycle validation.
+type Storage_Destination *Storage
+
+// Storage_Destination_Invariants composes hash data when storage exists.
+func Storage_Destination_Invariants(value Storage_Destination, namespace aver.Namespace) {
+	if value == nil {
+		return
 	}
-	digest.Buffer = [BLOCK_SIZE]byte{}
+	Storage_Invariants(*value, namespace)
+}
+
+// Digest is caller-owned streaming SHA-1 state.
+type Digest struct {
+	// Storage stays embedded so existing field access remains direct.
+	Storage
+	// Ready rejects zero caller storage before compression state is trusted.
+	Ready Ready
+}
+
+// Digest_Invariants composes all scalar state and partial-block relation.
+func Digest_Invariants(value Digest, namespace aver.Namespace) {
+	Storage_Invariants(value.Storage, namespace)
+	Ready_Invariants(value.Ready, namespace)
+}
+
+// Digest_Handle names mutable streaming state.
+type Digest_Handle *Digest
+
+// Digest_Handle_Invariants composes state when storage exists.
+func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Digest_Invariants(*value, namespace)
+}
+
+// Digest_Init establishes FIPS 180-4 initial state in caller storage.
+func Digest_Init(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "Digest_Init.digest.input")
+	digest.State = State{
+		Lane_0: State_Lane_0(INITIAL_STATE_0),
+		Lane_1: State_Lane_1(INITIAL_STATE_1),
+		Lane_2: State_Lane_2(INITIAL_STATE_2),
+		Lane_3: State_Lane_3(INITIAL_STATE_3),
+		Lane_4: State_Lane_4(INITIAL_STATE_4),
+	}
+	digest.Buffer = Buffer{}
 	digest.Buffer_Count = BUFFER_COUNT_MINIMUM
 	digest.Message_Size = Message_Size(MESSAGE_SIZE_MINIMUM)
-	State_Invariants(digest.State, "Digest_Init.digest.state.output")
+	digest.Ready = STATE_READY_MARKER
 	aver.Always(
 		digest.Buffer_Count == BUFFER_COUNT_MINIMUM,
 		"Fresh SHA-1 state has no buffered bytes.",
@@ -314,38 +639,47 @@ func Digest_Init(digest *Digest) {
 }
 
 // Digest_Reset discards message while retaining caller storage.
-func Digest_Reset(digest *Digest) {
-	Digest_Invariants(*digest, "Digest_Reset.digest.input")
+func Digest_Reset(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "Digest_Reset.digest.input")
 	digest_require(digest)
 	Digest_Init(digest)
 }
 
 // Digest_Write consumes one bounded source completely.
-func Digest_Write(digest *Digest, source Source) (count Count) {
+func Digest_Write(digest Digest_Handle, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_Write.count") }()
-	Digest_Invariants(*digest, "Digest_Write.digest.input")
+	Digest_Handle_Invariants(digest, "Digest_Write.digest.input")
 	Source_Invariants(source, "Digest_Write.source")
 	digest_require(digest)
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("sha1: source exceeds bound")
-	}
-	if uint64(digest.Message_Size) > MESSAGE_SIZE_MAXIMUM-uint64(len(source)) {
-		panic("sha1: message exceeds bound")
-	}
-	digest_write(digest, source)
-	Digest_Invariants(*digest, "Digest_Write.digest.output")
+	aver.Always(
+		uint64(digest.Message_Size) <= MESSAGE_SIZE_MAXIMUM-uint64(len(source)),
+		"SHA-1 message preserves final bit-count width.",
+	)
+	digest_write(Storage_Destination(&digest.Storage), source)
+	Storage_Invariants(digest.Storage, "Digest_Write.digest.output")
 	return Count(len(source))
 }
 
-// Digest_Sum observes current state without consuming it.
-func Digest_Sum(digest *Digest) (value Value) {
-	defer func() { Value_Invariants(value, "Digest_Sum.value") }()
-	Digest_Invariants(*digest, "Digest_Sum.digest")
+// Digest_Sum_Into writes complete digest or leaves short storage untouched.
+func Digest_Sum_Into(
+	digest Digest_Handle, destination Destination,
+) (count Output_Count, status Output_Status) {
+	defer func() {
+		Output_Count_Invariants(count, "Digest_Sum_Into.count")
+		Output_Status_Invariants(status, "Digest_Sum_Into.status")
+	}()
+	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
+	Destination_Invariants(destination, "Digest_Sum_Into.destination")
 	digest_require(digest)
+	if len(destination) < DIGEST_SIZE {
+		return OUTPUT_COUNT_REQUIRED, OUTPUT_STATUS_TOO_SMALL
+	}
 	copy_digest := *digest
 	var final_blocks [FINAL_BLOCK_CAPACITY]byte
 	buffer_count := int(digest.Buffer_Count)
-	copy(final_blocks[:buffer_count], digest.Buffer[:buffer_count])
+	var buffered [BLOCK_SIZE]byte
+	buffer_copy(digest.Buffer, Block_Destination(buffered[:]))
+	copy(final_blocks[:buffer_count], buffered[:buffer_count])
 	final_blocks[buffer_count] = PADDING_MARKER
 	final_size := BLOCK_SIZE
 	if buffer_count+binary.UINT_8_SIZE > PADDING_BOUNDARY {
@@ -356,110 +690,102 @@ func Digest_Sum(digest *Digest) (value Value) {
 		binary.Bytes(final_blocks[final_size-MESSAGE_BIT_COUNT_SIZE:final_size]),
 		binary.Word_64(message_bits), binary.BIG_ENDIAN,
 	)
-	block(&copy_digest.State, Blocks(final_blocks[:final_size]))
+	block(State_Destination(&copy_digest.State), Blocks(final_blocks[:final_size]))
+	lanes := [...]uint32{
+		uint32(copy_digest.State.Lane_0), uint32(copy_digest.State.Lane_1),
+		uint32(copy_digest.State.Lane_2), uint32(copy_digest.State.Lane_3),
+		uint32(copy_digest.State.Lane_4),
+	}
 	for index := range STATE_LANE_COUNT {
 		start := index * binary.UINT_32_SIZE
 		binary.Put_Uint_32(
-			binary.Bytes(value[start:start+binary.UINT_32_SIZE]),
-			binary.Word_32(copy_digest.State[index]), binary.BIG_ENDIAN,
+			binary.Bytes(destination[start:start+binary.UINT_32_SIZE]),
+			binary.Word_32(lanes[index]), binary.BIG_ENDIAN,
 		)
 	}
-	return value
-}
-
-// Digest_Sum_Into writes complete digest or leaves short storage untouched.
-func Digest_Sum_Into(
-	digest *Digest, destination Destination,
-) (count Output_Count, status Output_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Digest_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_Sum_Into.status")
-	}()
-	Digest_Invariants(*digest, "Digest_Sum_Into.digest")
-	Destination_Invariants(destination, "Digest_Sum_Into.destination")
-	digest_require(digest)
-	if len(destination) > DESTINATION_SIZE_MAXIMUM {
-		panic("sha1: destination exceeds bound")
-	}
-	if len(destination) < DIGEST_SIZE {
-		return OUTPUT_COUNT_REQUIRED, OUTPUT_STATUS_TOO_SMALL
-	}
-	value := Digest_Sum(digest)
-	copy(destination[:DIGEST_SIZE], value[:])
 	return OUTPUT_COUNT_REQUIRED, OUTPUT_STATUS_OK
 }
 
 // Digest_Clone_Into copies live state without aliasing caller storage.
-func Digest_Clone_Into(destination *Digest, source *Digest) {
-	Digest_Invariants(*destination, "Digest_Clone_Into.destination.input")
-	Digest_Invariants(*source, "Digest_Clone_Into.source")
+func Digest_Clone_Into(destination Digest_Handle, source Digest_Handle) {
+	Digest_Handle_Invariants(destination, "Digest_Clone_Into.destination.input")
+	Digest_Handle_Invariants(source, "Digest_Clone_Into.source")
 	digest_require(source)
 	*destination = *source
-	Digest_Invariants(*destination, "Digest_Clone_Into.destination.output")
+	Storage_Invariants(destination.Storage, "Digest_Clone_Into.destination.output")
 }
 
 // Digest_Size reports SHA-1 output width.
-func Digest_Size(digest *Digest) (size Size) {
+func Digest_Size(digest Digest_Handle) (size Size) {
 	defer func() { Size_Invariants(size, "Digest_Size.size") }()
-	Digest_Invariants(*digest, "Digest_Size.digest")
+	Digest_Handle_Invariants(digest, "Digest_Size.digest")
 	digest_require(digest)
 	return DIGEST_SIZE
 }
 
 // Digest_Block_Size reports SHA-1 compression block width.
-func Digest_Block_Size(digest *Digest) (size Block_Size) {
+func Digest_Block_Size(digest Digest_Handle) (size Block_Size) {
 	defer func() { Block_Size_Invariants(size, "Digest_Block_Size.size") }()
-	Digest_Invariants(*digest, "Digest_Block_Size.digest")
+	Digest_Handle_Invariants(digest, "Digest_Block_Size.digest")
 	digest_require(digest)
 	return BLOCK_SIZE
 }
 
-// Checksum computes one bounded source without retained state.
-func Checksum(source Source) (value Value) {
-	defer func() { Value_Invariants(value, "Checksum.value") }()
-	Source_Invariants(source, "Checksum.source")
-	if len(source) > SOURCE_SIZE_MAXIMUM {
-		panic("sha1: source exceeds bound")
-	}
+// Checksum_Into computes one bounded source directly into caller storage.
+func Checksum_Into(
+	destination Destination, source Source,
+) (count Output_Count, status Output_Status) {
+	defer func() {
+		Output_Count_Invariants(count, "Checksum_Into.count")
+		Output_Status_Invariants(status, "Checksum_Into.status")
+	}()
+	Destination_Invariants(destination, "Checksum_Into.destination")
+	Source_Invariants(source, "Checksum_Into.source")
 	var digest Digest
 	Digest_Init(&digest)
 	Digest_Write(&digest, source)
-	return Digest_Sum(&digest)
+	return Digest_Sum_Into(&digest, destination)
 }
 
-func digest_write(digest *Digest, source Source) {
-	Digest_Invariants(*digest, "digest_write.digest.input")
+func digest_write(digest Storage_Destination, source Source) {
+	Storage_Destination_Invariants(digest, "digest_write.digest.input")
 	Source_Invariants(source, "digest_write.source")
 	digest.Message_Size += Message_Size(len(source))
 	if digest.Buffer_Count > BUFFER_COUNT_MINIMUM {
-		copied := copy(digest.Buffer[digest.Buffer_Count:], source)
-		digest.Buffer_Count += Buffer_Count(copied)
-		source = source[copied:]
+		copied := min(BLOCK_SIZE-int(digest.Buffer_Count), len(source))
+		if copied > SOURCE_SIZE_MINIMUM {
+			buffer_write(
+				Buffer_Destination(&digest.Buffer), digest.Buffer_Count,
+				Buffer_Source(source[:copied]),
+			)
+			digest.Buffer_Count += Buffer_Count(copied)
+			source = source[copied:]
+		}
 		if int(digest.Buffer_Count) == BLOCK_SIZE {
-			block(&digest.State, Blocks(digest.Buffer[:]))
+			var buffered [BLOCK_SIZE]byte
+			buffer_copy(digest.Buffer, Block_Destination(buffered[:]))
+			block(State_Destination(&digest.State), Blocks(buffered[:]))
+			digest.Buffer = Buffer{}
 			digest.Buffer_Count = BUFFER_COUNT_MINIMUM
 		}
 	}
 	if len(source) >= BLOCK_SIZE {
 		complete_size := len(source) / BLOCK_SIZE * BLOCK_SIZE
-		block(&digest.State, Blocks(source[:complete_size]))
+		block(State_Destination(&digest.State), Blocks(source[:complete_size]))
 		source = source[complete_size:]
 	}
 	if len(source) > SOURCE_SIZE_MINIMUM {
-		digest.Buffer_Count = Buffer_Count(copy(digest.Buffer[:], source))
+		digest.Buffer = Buffer{}
+		buffer_write(Buffer_Destination(&digest.Buffer), 0, Buffer_Source(source))
+		digest.Buffer_Count = Buffer_Count(len(source))
 	}
-	Digest_Invariants(*digest, "digest_write.digest.output")
+	Storage_Destination_Invariants(digest, "digest_write.digest.output")
 }
 
-func block(state *State, source Blocks) {
-	State_Invariants(*state, "block.state.input")
+func block(state State_Destination, source Blocks) {
+	State_Destination_Invariants(state, "block.state.input")
 	Blocks_Invariants(source, "block.source")
-	const STATE_A_INDEX = bytes.SLICE_SIZE_MINIMUM
-	const STATE_B_INDEX = STATE_A_INDEX + binary.UINT_8_SIZE
-	const STATE_C_INDEX = STATE_B_INDEX + binary.UINT_8_SIZE
-	const STATE_D_INDEX = STATE_C_INDEX + binary.UINT_8_SIZE
-	const STATE_E_INDEX = STATE_D_INDEX + binary.UINT_8_SIZE
-	const WORD_FIRST_INDEX Round_Index = STATE_D_INDEX
+	const WORD_FIRST_INDEX Round_Index = STATE_LANE_COUNT - binary.UINT_16_SIZE
 	const WORD_SECOND_INDEX Round_Index = bits.BIT_COUNT_8_MAXIMUM
 	const WORD_THIRD_INDEX Round_Index = MESSAGE_WORD_COUNT - binary.UINT_16_SIZE
 	const SCHEDULE_ROTATION bits.Rotation = bits.Rotation(binary.UINT_8_SIZE)
@@ -476,11 +802,11 @@ func block(state *State, source Blocks) {
 				binary.Bytes(word_source), binary.BIG_ENDIAN,
 			))
 		}
-		a := state[STATE_A_INDEX]
-		b := state[STATE_B_INDEX]
-		c := state[STATE_C_INDEX]
-		d := state[STATE_D_INDEX]
-		e := state[STATE_E_INDEX]
+		a := uint32(state.Lane_0)
+		b := uint32(state.Lane_1)
+		c := uint32(state.Lane_2)
+		d := uint32(state.Lane_3)
+		e := uint32(state.Lane_4)
 		for index := Round_Index(ROUND_INDEX_MINIMUM); index < ROUND_COUNT; index++ {
 			if index >= MESSAGE_WORD_COUNT {
 				word := schedule[(index-WORD_FIRST_INDEX)&MESSAGE_WORD_MASK]
@@ -511,23 +837,19 @@ func block(state *State, source Blocks) {
 			a, b, c, d, e = temporary, a,
 				uint32(bits.Rotate_Left_32(bits.Word_32(b), STATE_B_ROTATION)), c, d
 		}
-		state[STATE_A_INDEX] += a
-		state[STATE_B_INDEX] += b
-		state[STATE_C_INDEX] += c
-		state[STATE_D_INDEX] += d
-		state[STATE_E_INDEX] += e
+		state.Lane_0 += State_Lane_0(a)
+		state.Lane_1 += State_Lane_1(b)
+		state.Lane_2 += State_Lane_2(c)
+		state.Lane_3 += State_Lane_3(d)
+		state.Lane_4 += State_Lane_4(e)
 		source = source[BLOCK_SIZE:]
 	}
-	State_Invariants(*state, "block.state.output")
 }
 
-func digest_require(digest *Digest) {
-	Digest_Invariants(*digest, "digest_require.digest")
+func digest_require(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "digest_require.digest")
 	aver.Always(
-		digest.State[STATE_READY_INDEX] == STATE_READY_MARKER,
+		digest.Ready == STATE_READY_MARKER,
 		"SHA-1 operations require Digest_Init.",
 	)
-	if digest.State[STATE_READY_INDEX] != STATE_READY_MARKER {
-		panic("sha1: digest is not initialized")
-	}
 }

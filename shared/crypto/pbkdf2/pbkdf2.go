@@ -2,6 +2,8 @@
 package pbkdf2
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/hmac"
 	"local/james-orcales/shared/crypto/subtle"
@@ -121,6 +123,17 @@ func Status_Invariants(value Status, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Digest_Handle names the leading HMAC storage after public lifecycle validation.
+type Digest_Handle *hmac.Storage
+
+// Digest_Handle_Invariants composes present HMAC state.
+func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	hmac.Storage_Invariants(*value, namespace)
+}
+
 // Key_Into derives output only after proving output-block work fits one bounded call.
 func Key_Into(
 	destination Destination,
@@ -150,22 +163,23 @@ func Key_Into(
 	if block_count > PRF_EVALUATION_COUNT_MAXIMUM/int(iterations) {
 		return COUNT_EMPTY, STATUS_WORK_TOO_LARGE
 	}
-	derive(destination, &digest, salt, iterations)
+	derive(destination, Digest_Handle(&digest.Storage), salt, iterations)
 	return Count(len(destination)), STATUS_OK
 }
 
 // PBKDF2 chains U values from the same keyed HMAC baseline; resetting avoids rebuilding key pads.
 func derive(
 	destination Destination,
-	digest *hmac.Digest,
+	digest Digest_Handle,
 	salt Salt,
 	iterations Iteration_Count,
 ) {
 	Destination_Invariants(destination, "derive.destination")
-	hmac.Digest_Invariants(*digest, "derive.digest")
+	Digest_Handle_Invariants(digest, "derive.digest")
 	Salt_Invariants(salt, "derive.salt")
 	Iteration_Count_Invariants(iterations, "derive.iterations")
-	digest_size := int(hmac.Digest_Size(digest))
+	live_digest := (*hmac.Digest)(unsafe.Pointer(digest))
+	digest_size := int(hmac.Digest_Size(live_digest))
 	written := OUTPUT_SIZE_MINIMUM
 	block_index := BLOCK_INDEX_MINIMUM
 	for written < len(destination) {
@@ -173,16 +187,21 @@ func derive(
 		binary.Put_Uint_32(
 			binary.Bytes(counter[:]), binary.Word_32(block_index), binary.BIG_ENDIAN,
 		)
-		hmac.Digest_Reset(digest)
-		hmac.Digest_Write(digest, hmac.Source(salt))
-		hmac.Digest_Write(digest, hmac.Source(counter[:]))
-		value, _ := hmac.Digest_Sum(digest)
+		hmac.Digest_Reset(live_digest)
+		hmac.Digest_Write(live_digest, hmac.Source(salt))
+		hmac.Digest_Write(live_digest, hmac.Source(counter[:]))
+		var value [hmac.DIGEST_SIZE_MAXIMUM]byte
+		hmac.Digest_Sum_Into(
+			live_digest, hmac.Destination(value[:digest_size]),
+		)
 		combined := value
 		iteration_index := ITERATION_COUNT_MINIMUM
 		for iteration_index < iterations {
-			hmac.Digest_Reset(digest)
-			hmac.Digest_Write(digest, hmac.Source(value[:digest_size]))
-			value, _ = hmac.Digest_Sum(digest)
+			hmac.Digest_Reset(live_digest)
+			hmac.Digest_Write(live_digest, hmac.Source(value[:digest_size]))
+			hmac.Digest_Sum_Into(
+				live_digest, hmac.Destination(value[:digest_size]),
+			)
 			subtle.XOR_Bytes(
 				combined[:digest_size], combined[:digest_size], value[:digest_size],
 			)
@@ -197,31 +216,16 @@ func derive(
 
 func require_destination(destination Destination) {
 	Destination_Invariants(destination, "require_destination.destination")
-	if len(destination) > OUTPUT_SIZE_MAXIMUM {
-		panic("pbkdf2: destination exceeds bound")
-	}
 }
 
 func require_password(password Password) {
 	Password_Invariants(password, "require_password.password")
-	if len(password) > INPUT_SIZE_MAXIMUM {
-		panic("pbkdf2: password exceeds bound")
-	}
 }
 
 func require_salt(salt Salt) {
 	Salt_Invariants(salt, "require_salt.salt")
-	if len(salt) > INPUT_SIZE_MAXIMUM {
-		panic("pbkdf2: salt exceeds bound")
-	}
 }
 
 func require_iterations(iterations Iteration_Count) {
 	Iteration_Count_Invariants(iterations, "require_iterations.iterations")
-	if iterations < ITERATION_COUNT_MINIMUM {
-		panic("pbkdf2: iteration count exceeds bound")
-	}
-	if iterations > ITERATION_COUNT_MAXIMUM {
-		panic("pbkdf2: iteration count exceeds bound")
-	}
 }

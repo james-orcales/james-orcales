@@ -1,9 +1,9 @@
 
 # Seed Expands To State
 
-New is deterministic: one seed and one initial cursor always yield the same Chacha stream.
-Two distinct seeds yield Chachas whose first draws differ. New erases each buffer byte before
-the injected cursor, because those bytes are already consumed.
+Chacha_Init is deterministic: one seed and one initial cursor always yield the same Chacha stream.
+Two distinct seeds yield Chachas whose first draws differ. Initialization erases each buffer byte
+before the injected cursor, because those bytes are already consumed.
 
 # Block Matches Reference Vectors
 
@@ -17,11 +17,11 @@ A fixed seed produces a frozen sequence of Uint64 values, locking the fast-key-e
 ChaCha20 stream against accidental change. It is not the raw RFC keystream, since the first
 32 bytes of every block reseed the key; the contract is per-version reproducibility.
 
-# Read Fills Fully
+# Chacha Read Fills Fully
 
-Read fills the whole of its buffer, reports the full byte count, and never errors, across
+Chacha_Read fills the whole of its buffer and reports the full byte count, across
 sizes that stay within one refill, exactly fill it, and cross into the next; the bytes it
-delivers are real keystream, never a silent run of zeros. It satisfies io.Reader.
+delivers are real keystream, never a silent run of zeros.
 
 # Bytes Are Uniform
 
@@ -36,9 +36,9 @@ violation that exits.
 
 # Seed Is Erased After Construction
 
-New performs the first fast-key-erasure refill, so the caller's seed no longer lives in the
-Chacha's key when New returns; a later disclosure of the key cannot reconstruct the seed
-or the output that refill already produced.
+Chacha_Init performs the first fast-key-erasure refill, so the caller's seed no longer lives in the
+Chacha's key when initialization returns; a later disclosure of the key cannot reconstruct the
+seed or the output that refill already produced.
 
 # Refill Resets Cursor
 
@@ -46,7 +46,7 @@ A refill accepts each valid cursor, replaces the prior buffer, and resets the cu
 
 # Source Is Transparent
 
-Chacha_To_Source binds a Chacha into Source. Bytes read through it are the bytes Read would
+Chacha_To_Source binds a Chacha into Source. Bytes read through it are the bytes Chacha_Read would
 deliver from the same state, in order, across a refill boundary; a partial tail word spends eight
 stream bytes. A nil Chacha dies before binding.
 
@@ -56,7 +56,8 @@ Source is the vtable a signature takes to say a parameter must carry real entrop
 a pointer and one draw procedure. Source_Read packs each word little-endian and spends a whole
 word on a partial tail; an unbound Source or an oversized sink dies before any draw.
 
-# Hot Path Is Zero Allocation
+# Allocation
 
-A steady-state Read performs no heap allocation, even with the draw path's invariant assertions
-active under coverage recording.
+Every exported core and composition-root runtime operation performs zero heap allocation, even with
+invariant assertions active. Composition-root Chacha_Init uses caller-owned seed storage because
+passing stack scratch through an injected reader forces that scratch onto the heap.

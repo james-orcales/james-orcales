@@ -1,7 +1,6 @@
 package elliptic_test
 
 import (
-	standard_elliptic "crypto/elliptic"
 	"testing"
 
 	"local/james-orcales/shared/crypto/elliptic"
@@ -10,17 +9,15 @@ import (
 	"local/james-orcales/shared/testify"
 )
 
-// Test_Reference_Points binds the opaque generator to standard P-256.
+// Test_Reference_Points binds the opaque generator to the SEC 2 P-256 point.
 func Test_Reference_Points(t *testing.T) {
-	point := elliptic.Point_Generator()
+	var point elliptic.Point
+	elliptic.Point_Generator(&point)
 	var encoding [elliptic.ENCODING_UNCOMPRESSED_SIZE]byte
 	count, status := elliptic.Point_Bytes_Into(
 		encoding[:], &point, elliptic.ENCODING_UNCOMPRESSED,
 	)
-	parameters := standard_elliptic.P256().Params()
-	want := standard_elliptic.Marshal(
-		standard_elliptic.P256(), parameters.Gx, parameters.Gy,
-	)
+	want := generator_uncompressed()
 	testify.Equal(t, elliptic.Count(len(encoding)), count)
 	testify.Equal(t, elliptic.OUTPUT_STATUS_OK, status)
 	testify.Equal(t, want, encoding[:])
@@ -28,10 +25,8 @@ func Test_Reference_Points(t *testing.T) {
 
 // Test_Encoding covers SEC 1 infinity, compressed, and uncompressed forms.
 func Test_Encoding(t *testing.T) {
-	standard := standard_elliptic.P256()
-	parameters := standard.Params()
-	uncompressed := standard_elliptic.Marshal(standard, parameters.Gx, parameters.Gy)
-	compressed := standard_elliptic.MarshalCompressed(standard, parameters.Gx, parameters.Gy)
+	uncompressed := generator_uncompressed()
+	compressed := generator_compressed()
 
 	var point elliptic.Point
 	status := elliptic.Point_Set_Bytes(&point, uncompressed)
@@ -43,7 +38,8 @@ func Test_Encoding(t *testing.T) {
 	testify.Equal(t, elliptic.PARSE_STATUS_OK, status)
 	verify_encoding(t, &point, elliptic.ENCODING_UNCOMPRESSED, uncompressed)
 
-	identity := elliptic.Point_Identity()
+	var identity elliptic.Point
+	elliptic.Point_Identity(&identity)
 	var infinity [elliptic.ENCODING_INFINITY_SIZE]byte
 	count, encode_status := elliptic.Point_Bytes_Into(
 		infinity[:], &identity, elliptic.ENCODING_COMPRESSED,
@@ -59,7 +55,7 @@ func Test_Encoding(t *testing.T) {
 	testify.True(t, bool(elliptic.Point_Equal(&point, &identity)))
 }
 
-// Test_Group_Operations compares complete addition and doubling with standard P-256.
+// Test_Group_Operations checks complete addition and doubling against scalar multiplication.
 func Test_Group_Operations(t *testing.T) {
 	point_2 := scalar_base_point(t, scalar_with_last_byte(byte(binary.UINT_16_SIZE)))
 	point_3 := scalar_base_point(
@@ -67,32 +63,33 @@ func Test_Group_Operations(t *testing.T) {
 	)
 	var sum elliptic.Point
 	elliptic.Point_Add(&sum, &point_2, &point_3)
-	verify_standard_scalar(
+	verify_scalar(
 		t, &sum, scalar_with_last_byte(byte(binary.UINT_32_SIZE+binary.UINT_8_SIZE)),
 	)
 
 	var doubled elliptic.Point
 	elliptic.Point_Double(&doubled, &point_2)
-	verify_standard_scalar(t, &doubled, scalar_with_last_byte(byte(binary.UINT_32_SIZE)))
+	verify_scalar(t, &doubled, scalar_with_last_byte(byte(binary.UINT_32_SIZE)))
 
-	identity := elliptic.Point_Identity()
+	var identity elliptic.Point
+	elliptic.Point_Identity(&identity)
 	elliptic.Point_Add(&sum, &point_2, &identity)
 	testify.True(t, bool(elliptic.Point_Equal(&sum, &point_2)))
 }
 
 // Test_Scalar_Multiplication compares base and arbitrary point multiplication.
 func Test_Scalar_Multiplication(t *testing.T) {
-	for _, scalar := range [...][elliptic.SCALAR_SIZE]byte{
+	for _, scalar := range [][]byte{
 		scalar_with_last_byte(byte(binary.UINT_8_SIZE)),
 		scalar_with_last_byte(byte(binary.UINT_16_SIZE)),
 		scalar_index_pattern(),
 	} {
 		point := scalar_base_point(t, scalar)
-		verify_standard_scalar(t, &point, scalar)
 
-		generator := elliptic.Point_Generator()
+		var generator elliptic.Point
+		elliptic.Point_Generator(&generator)
 		var multiplied elliptic.Point
-		status := elliptic.Point_Scalar_Multiply(&multiplied, &generator, scalar[:])
+		status := elliptic.Point_Scalar_Multiply(&multiplied, &generator, scalar)
 		testify.Equal(t, elliptic.SCALAR_STATUS_OK, status)
 		testify.True(t, bool(elliptic.Point_Equal(&point, &multiplied)))
 	}
@@ -118,7 +115,7 @@ func Test_Bounds(t *testing.T) {
 		elliptic.Point_Scalar_Base_Multiply(&point, oversized_scalar[:])
 	})
 
-	point = elliptic.Point_Generator()
+	elliptic.Point_Generator(&point)
 	before := point
 	status := elliptic.Point_Set_Bytes(
 		&point,
@@ -148,17 +145,19 @@ func Test_Invariant_Domains(t *testing.T) {
 	test_encoding_domains()
 	test_destination_domains()
 	test_scalar_domains()
-	testify.False(t, bool(elliptic.Point_Equal(
-		point_pointer(elliptic.Point_Identity()),
-		point_pointer(elliptic.Point_Generator()),
-	)))
+	test_decision_domains(t)
+	var identity, generator elliptic.Point
+	elliptic.Point_Identity(&identity)
+	elliptic.Point_Generator(&generator)
+	testify.False(t, bool(elliptic.Point_Equal(&identity, &generator)))
 }
 
 // Test_Allocation measures every exported runtime operation.
 func Test_Allocation(t *testing.T) {
 	scalar := scalar_with_last_byte(byte(binary.UINT_16_SIZE))
-	generator := elliptic.Point_Generator()
-	identity := elliptic.Point_Identity()
+	var generator, identity elliptic.Point
+	elliptic.Point_Generator(&generator)
+	elliptic.Point_Identity(&identity)
 	generator_encoding := generator_uncompressed()
 	var point, result elliptic.Point
 	var output [elliptic.ENCODING_UNCOMPRESSED_SIZE]byte
@@ -167,8 +166,8 @@ func Test_Allocation(t *testing.T) {
 	var output_status elliptic.Output_Status
 	var scalar_status elliptic.Scalar_Status
 	var equal elliptic.Equality
-	testify.Zero_Allocation(t, func() { generator = elliptic.Point_Generator() })
-	testify.Zero_Allocation(t, func() { identity = elliptic.Point_Identity() })
+	testify.Zero_Allocation(t, func() { elliptic.Point_Generator(&generator) })
+	testify.Zero_Allocation(t, func() { elliptic.Point_Identity(&identity) })
 	testify.Zero_Allocation(t, func() {
 		parse_status = elliptic.Point_Set_Bytes(&point, generator_encoding[:])
 	})
@@ -182,10 +181,10 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() { elliptic.Point_Double(&result, &generator) })
 	testify.Zero_Allocation(t, func() {
-		scalar_status = elliptic.Point_Scalar_Multiply(&result, &generator, scalar[:])
+		scalar_status = elliptic.Point_Scalar_Multiply(&result, &generator, scalar)
 	})
 	testify.Zero_Allocation(t, func() {
-		scalar_status = elliptic.Point_Scalar_Base_Multiply(&result, scalar[:])
+		scalar_status = elliptic.Point_Scalar_Base_Multiply(&result, scalar)
 	})
 	testify.Zero_Allocation(t, func() {
 		equal = elliptic.Point_Equal(&result, &generator)
@@ -195,10 +194,34 @@ func Test_Allocation(t *testing.T) {
 	testify.Equal(t, elliptic.OUTPUT_STATUS_OK, output_status)
 	testify.Equal(t, elliptic.SCALAR_STATUS_OK, scalar_status)
 	testify.False(t, bool(equal))
+	compressed := generator_compressed()
+	var compressed_point elliptic.Point
+	testify.Zero_Allocation(t, func() {
+		parse_status = elliptic.Point_Set_Bytes(&compressed_point, compressed)
+	})
+	testify.Zero_Allocation(t, func() {
+		count, output_status = elliptic.Point_Bytes_Into(
+			output[:], &compressed_point, elliptic.ENCODING_COMPRESSED,
+		)
+	})
+	testify.Equal(t, elliptic.PARSE_STATUS_OK, parse_status)
+	testify.Equal(t, elliptic.OUTPUT_STATUS_OK, output_status)
+	var infinity [elliptic.ENCODING_INFINITY_SIZE]byte
+	infinity[bits.BIT_COUNT_MINIMUM] = byte(elliptic.POINT_INFINITY_PREFIX)
+	testify.Zero_Allocation(t, func() {
+		parse_status = elliptic.Point_Set_Bytes(&identity, infinity[:])
+	})
+	testify.Zero_Allocation(t, func() {
+		count, output_status = elliptic.Point_Bytes_Into(
+			output[:], &identity, elliptic.ENCODING_COMPRESSED,
+		)
+	})
+	testify.Equal(t, elliptic.PARSE_STATUS_OK, parse_status)
+	testify.Equal(t, elliptic.OUTPUT_STATUS_OK, output_status)
 }
 
-func generator_uncompressed() (encoding [elliptic.ENCODING_UNCOMPRESSED_SIZE]byte) {
-	return [elliptic.ENCODING_UNCOMPRESSED_SIZE]byte{
+func generator_uncompressed() (encoding []byte) {
+	return []byte{
 		0x04,
 		0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47,
 		0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2,
@@ -208,6 +231,16 @@ func generator_uncompressed() (encoding [elliptic.ENCODING_UNCOMPRESSED_SIZE]byt
 		0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e, 0x16,
 		0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce,
 		0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5,
+	}
+}
+
+func generator_compressed() (encoding []byte) {
+	return []byte{
+		0x03,
+		0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47,
+		0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2,
+		0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0,
+		0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96,
 	}
 }
 
@@ -226,31 +259,32 @@ func verify_encoding(
 }
 
 func scalar_base_point(
-	t *testing.T, scalar [elliptic.SCALAR_SIZE]byte,
+	t *testing.T, scalar []byte,
 ) (point elliptic.Point) {
 	t.Helper()
-	status := elliptic.Point_Scalar_Base_Multiply(&point, scalar[:])
+	status := elliptic.Point_Scalar_Base_Multiply(&point, scalar)
 	testify.Equal(t, elliptic.SCALAR_STATUS_OK, status)
 	return point
 }
 
-func verify_standard_scalar(
+func verify_scalar(
 	t *testing.T,
 	point *elliptic.Point,
-	scalar [elliptic.SCALAR_SIZE]byte,
+	scalar []byte,
 ) {
 	t.Helper()
-	x, y := standard_elliptic.P256().ScalarBaseMult(scalar[:])
-	want := standard_elliptic.Marshal(standard_elliptic.P256(), x, y)
-	verify_encoding(t, point, elliptic.ENCODING_UNCOMPRESSED, want)
+	want := scalar_base_point(t, scalar)
+	testify.True(t, bool(elliptic.Point_Equal(point, &want)))
 }
 
-func scalar_with_last_byte(value byte) (scalar [elliptic.SCALAR_SIZE]byte) {
+func scalar_with_last_byte(value byte) (scalar []byte) {
+	scalar = make([]byte, elliptic.SCALAR_SIZE)
 	scalar[len(scalar)-binary.UINT_8_SIZE] = value
 	return scalar
 }
 
-func scalar_index_pattern() (scalar [elliptic.SCALAR_SIZE]byte) {
+func scalar_index_pattern() (scalar []byte) {
+	scalar = make([]byte, elliptic.SCALAR_SIZE)
 	for index := range scalar {
 		scalar[index] = byte(index)
 	}
@@ -272,8 +306,9 @@ func test_encoding_domains() {
 }
 
 func test_destination_domains() {
-	generator := elliptic.Point_Generator()
-	identity := elliptic.Point_Identity()
+	var generator, identity elliptic.Point
+	elliptic.Point_Generator(&generator)
+	elliptic.Point_Identity(&identity)
 	var output [elliptic.DESTINATION_SIZE_MAXIMUM]byte
 	for _, size := range [...]int{
 		elliptic.DESTINATION_SIZE_MINIMUM,
@@ -301,11 +336,48 @@ func test_scalar_domains() {
 		elliptic.SCALAR_UNVALIDATED_SIZE_MAXIMUM,
 	} {
 		elliptic.Point_Scalar_Base_Multiply(&point, scalar[:size])
-		generator := elliptic.Point_Generator()
+		var generator elliptic.Point
+		elliptic.Point_Generator(&generator)
 		elliptic.Point_Scalar_Multiply(&point, &generator, scalar[:size])
 	}
 }
 
-func point_pointer(point elliptic.Point) (pointer *elliptic.Point) {
-	return &point
+func test_decision_domains(t *testing.T) {
+	var destination elliptic.Point
+	var affine [elliptic.ENCODING_UNCOMPRESSED_SIZE]byte
+	affine[bits.BIT_COUNT_MINIMUM] = byte(elliptic.POINT_UNCOMPRESSED_PREFIX)
+	status := elliptic.Point_Set_Bytes(&destination, affine[:])
+	testify.Equal(t, elliptic.PARSE_STATUS_INPUT_INVALID, status)
+
+	var compressed [elliptic.ENCODING_COMPRESSED_SIZE]byte
+	compressed[bits.BIT_COUNT_MINIMUM] = byte(elliptic.POINT_COMPRESSED_EVEN_PREFIX)
+	compressed[len(compressed)-binary.UINT_8_SIZE] = binary.UINT_8_SIZE
+	status = elliptic.Point_Set_Bytes(&destination, compressed[:])
+	testify.Equal(t, elliptic.PARSE_STATUS_INPUT_INVALID, status)
+
+	for index := elliptic.ENCODING_INFINITY_SIZE; index < len(compressed); index++ {
+		compressed[index] = bits.WORD_8_MAXIMUM
+	}
+	status = elliptic.Point_Set_Bytes(&destination, compressed[:])
+	testify.Equal(t, elliptic.PARSE_STATUS_INPUT_INVALID, status)
+
+	var noncanonical elliptic.Point
+	noncanonical.X.Limb_0 = elliptic.X_Limb_0(bits.WORD_64_MAXIMUM)
+	noncanonical.X.Limb_1 = elliptic.X_Limb_1(bits.WORD_64_MAXIMUM)
+	noncanonical.X.Limb_2 = elliptic.X_Limb_2(bits.WORD_64_MAXIMUM)
+	noncanonical.X.Limb_3 = elliptic.X_Limb_3(bits.WORD_64_MAXIMUM)
+	var output [elliptic.ENCODING_UNCOMPRESSED_SIZE]byte
+	testify.Panics(t, func() {
+		elliptic.Point_Bytes_Into(
+			output[:], &noncanonical, elliptic.ENCODING_UNCOMPRESSED,
+		)
+	})
+
+	var off_curve elliptic.Point
+	off_curve.Z.Limb_0 = binary.UINT_8_SIZE
+	testify.Panics(t, func() {
+		elliptic.Point_Bytes_Into(
+			output[:], &off_curve, elliptic.ENCODING_UNCOMPRESSED,
+		)
+	})
 }
