@@ -153,7 +153,6 @@
     "gen":       ["generation", "generator", "general", "generic", "generate"],
     "geom":      ["geometry", "geometric"],
     "hdr":       ["header"],
-    "hex":       ["hexadecimal"],
     "id":        ["identifier"],
     "idx":       ["index"],
     "iface":     ["interface"],
