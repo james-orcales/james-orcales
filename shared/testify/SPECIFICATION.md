@@ -40,7 +40,7 @@ Positive and Negative compare a value against its type's zero.
 # Panics
 
 Panics and Not_Panics report whether a function panics; Panics_With_Value and
-Panics_With_Error additionally match the recovered value or error message.
+Panic_With_Message additionally match recovered value or formatted panic message.
 
 # Approximation And Time
 

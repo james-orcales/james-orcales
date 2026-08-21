@@ -3,11 +3,13 @@ package testify_test
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"testing"
 	"unsafe"
 
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/testify"
@@ -112,7 +114,7 @@ func Test_Collections(t *testing.T) {
 // Test_Errors checks the error assertions on a wrapped chain.
 func Test_Errors(t *testing.T) {
 	t.Parallel()
-	root := &sentinel_error{Label: "root cause"}
+	root := errors.New(Error(&sentinel_error{Label: "root cause"}))
 	wrapped := fmt.Errorf("context: %w", root)
 	if !testify.No_Error(t, nil) {
 		t.Errorf("No_Error should pass on nil")
@@ -132,9 +134,13 @@ func Test_Errors(t *testing.T) {
 	if !testify.Not_Error_Is(t, root, errors.New("other")) {
 		t.Errorf("Not_Error_Is should pass on an unrelated target")
 	}
-	var target *sentinel_error
-	if !testify.Error_As(t, wrapped, &target) {
+	// Concrete type is unexported; reflection gives Error_As its exact target.
+	target := reflect.New(reflect.TypeOf(root))
+	if !testify.Error_As(t, wrapped, target.Interface()) {
 		t.Errorf("Error_As should bind the concrete error")
+	}
+	if target.Elem().Interface() != root {
+		t.Errorf("Error_As should bind the wrapped cause")
 	}
 }
 
@@ -181,17 +187,23 @@ func Test_Ordering(t *testing.T) {
 // Test_Panics checks the panic assertions.
 func Test_Panics(t *testing.T) {
 	t.Parallel()
-	if !testify.Panics(t, func() { panic("boom") }) {
+	if !testify.Panics(t, func() { aver.Always(false, "boom") }) {
 		t.Errorf("Panics should observe a panic")
 	}
 	if !testify.Not_Panics(t, func() {}) {
 		t.Errorf("Not_Panics should pass on a calm func")
 	}
-	if !testify.Panics_With_Value(t, "boom", func() { panic("boom") }) {
+	if !testify.Panics_With_Value(t,
+		"🚨 Assertion Failure 🚨: boom  Always — condition was false: false",
+		func() { aver.Always(false, "boom") },
+	) {
 		t.Errorf("Panics_With_Value should match the value")
 	}
-	if !testify.Panics_With_Error(t, "boom", func() { panic(errors.New("boom")) }) {
-		t.Errorf("Panics_With_Error should match the message")
+	if !testify.Panic_With_Message(t,
+		"🚨 Assertion Failure 🚨: boom  Always — condition was false: false",
+		func() { aver.Always(false, "boom") },
+	) {
+		t.Errorf("Panic_With_Message should match the message")
 	}
 }
 
@@ -356,17 +368,31 @@ const POLLING_SLOT_CAPACITY = 1
 // Smallest simulated loop that still hand out a timeline.
 type polling_memory struct {
 	Sim         nbio.Sim
-	Nodes       [POLLING_SLOT_CAPACITY]nbio.Sim_Node
-	Descriptors [POLLING_SLOT_CAPACITY]nbio.Sim_Descriptor
-	Operations  [POLLING_SLOT_CAPACITY]nbio.Sim_Operation
-	Queue       [POLLING_TIMELINE_CAPACITY]*nbio.Completion
-	Events      [POLLING_SLOT_CAPACITY]nbio.Virtual_Event
-	Clocks      [POLLING_SLOT_CAPACITY]nbio.Sim_Clock
+	Nodes       []nbio.Sim_Node
+	Descriptors []nbio.Sim_Descriptor
+	Operations  []nbio.Sim_Operation
+	Queue       []*nbio.Completion
+	Events      []nbio.Virtual_Event
+	Clocks      []nbio.Sim_Clock
 }
 
 func polling_loop(
 	memory *polling_memory,
 ) (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
+	memory.Nodes = []nbio.Sim_Node{{
+		Name:     make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM),
+		Contents: make([]byte, nbio.SIM_FILE_BYTES_MAXIMUM),
+	}}
+	memory.Descriptors = []nbio.Sim_Descriptor{{
+		Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
+		Peer_IP:    make([]byte, nbio.IPV6_ADDRESS_BYTES),
+	}}
+	memory.Operations = []nbio.Sim_Operation{{
+		Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
+	}}
+	memory.Queue = make([]*nbio.Completion, POLLING_TIMELINE_CAPACITY)
+	memory.Events = make([]nbio.Virtual_Event, POLLING_SLOT_CAPACITY)
+	memory.Clocks = make([]nbio.Sim_Clock, POLLING_SLOT_CAPACITY)
 	surface, driver := nbio.New_Simulated_IO(&memory.Sim, 0, time.NANOSECOND, nbio.Sim_Memory{
 		Nodes:       memory.Nodes[:],
 		Descriptors: memory.Descriptors[:],
@@ -414,7 +440,7 @@ func predicates_lists(t *testing.T) {
 	}
 }
 
-// Concrete error type for exercising Equal_Error and Error_As.
+// Fixture keeps message data separate from standard-library error construction.
 type sentinel_error struct {
 	// Label is the error message.
 	Label string
@@ -432,7 +458,6 @@ func file_stat(
 	return kind, nil
 }
 
-// Error renders the sentinel's label, satisfying the error interface.
-func (sentinel *sentinel_error) Error() (message string) {
+func Error(sentinel *sentinel_error) (message string) {
 	return sentinel.Label
 }

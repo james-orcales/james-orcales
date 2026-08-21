@@ -42,6 +42,7 @@ import (
 	"local/james-orcales/shared/diff/myers"
 	"local/james-orcales/shared/encoding/json"
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 )
@@ -80,9 +81,7 @@ type Stat func(state unsafe.Pointer, path string) (kind File_Kind, err error)
 // Panics with message when condition is false. It is the local stand-in for a
 // precondition the caller can only get wrong in code, never at runtime.
 func assert(condition bool, message string) {
-	if !condition {
-		panic(message)
-	}
+	aver.Always(condition, message)
 }
 
 // Fail reports failure_message, plus any trailing caller message, and terminates the test.
@@ -300,12 +299,7 @@ func Contains_Element[L, E any](list L, element E) (searchable bool, found bool)
 	if list_type == nil {
 		return false, false
 	}
-	defer func() {
-		if recover() != nil {
-			searchable = false
-			found = false
-		}
-	}()
+	defer contains_element_recover(&searchable, &found)
 	if list_type.Kind() == reflect.String {
 		fragment := reflect.ValueOf(any(element)).String()
 		return true, string_contains(list_value.String(), fragment)
@@ -683,10 +677,20 @@ func Count(t *testing.T, object any, count int, message_and_args ...any) (correc
 // Returns the element count of x when x is a countable kind, else zero and false.
 func count_of(x any) (count int, countable bool) {
 	value := reflect.ValueOf(x)
-	defer func() {
-		countable = recover() == nil
-	}()
+	defer count_recover(&countable)
 	return value.Len(), true
+}
+
+// Recover must run directly in deferred function to intercept reflection panics.
+func contains_element_recover(searchable *bool, found *bool) {
+	if recover() != nil {
+		*searchable = false
+		*found = false
+	}
+}
+
+func count_recover(countable *bool) {
+	*countable = recover() == nil
 }
 
 // Contains asserts that haystack holds element.
@@ -1231,10 +1235,9 @@ func Panics_With_Value[E any](
 	return true
 }
 
-// Panics_With_Error asserts that callback panics with an error whose message equals
-// err_string.
-func Panics_With_Error(
-	t *testing.T, err_string string, callback func(), message_and_args ...any,
+// Formatting accepts assertion strings and error values through one message contract.
+func Panic_With_Message(
+	t *testing.T, expected string, callback func(), message_and_args ...any,
 ) (panicked bool) {
 	t.Helper()
 	raised, value := did_panic(callback)
@@ -1242,14 +1245,10 @@ func Panics_With_Error(
 		message := fmt.Sprintf("func should panic\n\tPanic value:\t%#v", value)
 		return Fail(t, message, message_and_args...)
 	}
-	panic_error, is_error := value.(error)
-	if !is_error {
-		message := fmt.Sprintf("func should panic with an error, but got %#v", value)
-		return Fail(t, message, message_and_args...)
-	}
-	if panic_error.Error() != err_string {
-		message := fmt.Sprintf("func should panic with error message %q, but got %q",
-			err_string, panic_error.Error())
+	actual := fmt.Sprint(value)
+	if actual != expected {
+		message := fmt.Sprintf("func should panic with message %q, but got %q",
+			expected, actual)
 		return Fail(t, message, message_and_args...)
 	}
 	return true
@@ -1258,12 +1257,14 @@ func Panics_With_Error(
 // Runs callback and reports whether it panicked and the recovered value.
 func did_panic(callback func()) (raised bool, recovered any) {
 	raised = true
-	defer func() {
-		recovered = recover()
-	}()
+	defer panic_recover(&recovered)
 	callback()
 	raised = false
 	return raised, recovered
+}
+
+func panic_recover(recovered *any) {
+	*recovered = recover()
 }
 
 // In_Delta_Input pairs the operands of In_Delta, whose two values repeat a type.
@@ -1550,7 +1551,7 @@ func JSON_Eq[E, A ~string](
 	expected_text := string(expected)
 	actual_text := string(actual)
 	expected_position, expected_status := json.Validate(json.Encoded(expected_text))
-	if expected_status != json.STATUS_OK {
+	if !bool(expected_status) {
 		message := fmt.Sprintf("Expected value (%q) is not valid json at %d",
 			expected_text, expected_position)
 		return Fail(t, message, message_and_args...)
@@ -1559,7 +1560,7 @@ func JSON_Eq[E, A ~string](
 		return true
 	}
 	actual_position, actual_status := json.Validate(json.Encoded(actual_text))
-	if actual_status != json.STATUS_OK {
+	if !bool(actual_status) {
 		message := fmt.Sprintf("Input (%q) needs to be valid json at %d",
 			actual_text, actual_position)
 		return Fail(t, message, message_and_args...)
@@ -1929,19 +1930,26 @@ func Asserter_Eventually(
 	assert(a.IO != nil, "testify: Asserter io is required for Eventually")
 	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
 	var poll nbio.Callback
-	poll = func(completion *nbio.Completion) {
-		if condition() {
-			return
-		}
-		if time.Clock_Now_Monotonic(a.Clock) >= deadline {
-			message := fmt.Sprintf(
-				"Condition never satisfied within %d ns", int64(input.Wait))
-			Fail(t, message)
-			return
-		}
-		nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
+	poll = func(completion nbio.Completion_Handle) {
+		eventually_poll(a, t, condition, input, deadline, poll, completion)
 	}
 	nbio.Timeline_Timeout(*a.IO, &nbio.Completion{}, input.Tick, poll)
+}
+
+func eventually_poll(
+	a *Asserter, t *testing.T, condition func() (satisfied bool),
+	input *Asserter_Eventually_Input, deadline time.Monotonic_Moment,
+	poll nbio.Callback, completion nbio.Completion_Handle,
+) {
+	if condition() {
+		return
+	}
+	if time.Clock_Now_Monotonic(a.Clock) >= deadline {
+		message := fmt.Sprintf("Condition never satisfied within %d ns", int64(input.Wait))
+		Fail(t, message)
+		return
+	}
+	nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
 }
 
 // Asserter_Never_Input pairs the two durations of Asserter_Never, which repeat a type.
@@ -1963,15 +1971,23 @@ func Asserter_Never(
 	assert(a.IO != nil, "testify: Asserter io is required for Never")
 	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
 	var poll nbio.Callback
-	poll = func(completion *nbio.Completion) {
-		if condition() {
-			Fail(t, "Condition satisfied, but should never be")
-			return
-		}
-		if time.Clock_Now_Monotonic(a.Clock) >= deadline {
-			return
-		}
-		nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
+	poll = func(completion nbio.Completion_Handle) {
+		never_poll(a, t, condition, input, deadline, poll, completion)
 	}
 	nbio.Timeline_Timeout(*a.IO, &nbio.Completion{}, input.Tick, poll)
+}
+
+func never_poll(
+	a *Asserter, t *testing.T, condition func() (satisfied bool),
+	input *Asserter_Never_Input, deadline time.Monotonic_Moment,
+	poll nbio.Callback, completion nbio.Completion_Handle,
+) {
+	if condition() {
+		Fail(t, "Condition satisfied, but should never be")
+		return
+	}
+	if time.Clock_Now_Monotonic(a.Clock) >= deadline {
+		return
+	}
+	nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
 }
