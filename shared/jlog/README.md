@@ -4,9 +4,11 @@ A zero-allocation, dependency-injected, flat JSON logger written in the house
 free-function style (no methods, no fluent builder). One call per line:
 
 ```go
-logger := jlog.New(jlog.New_Input{Write: sink_write, Floor: jlog.LEVEL_INFO})
+configuration := jlog.Logger_Configuration{Stream: sink, Clock: clock}
+var storage [4096]byte
+logger := jlog.New(&configuration, storage[:], jlog.LEVEL_INFO)
 
-jlog.Logger_Info(logger, "request done",
+jlog.Logger_Info(&logger, "request done",
     jlog.String("method", method),
     jlog.Integer("status", status),
     jlog.Duration("latency", elapsed),
@@ -31,26 +33,27 @@ narrow buys:
 
 - **Barebones.** Roughly 6× less code — ≈1.1k lines of Go source against zerolog's
   ≈6.5k — and zero third-party dependencies, only the standard library and
-  `shared/sim/time`. No hooks, sampling, or CBOR, and the zero-allocation core is just the
-  encoder and the diode. A pretty console writer does exist — `Console` in the
-  composition tier — but it is opt-in and reads *finished* JSON lines back through the
-  explicit `Write` procedure, so the hot path never carries console work.
+  `shared/sim/time`, and `shared/sim/nbio`. No hooks, sampling, or CBOR, and the
+  zero-allocation core is just the encoder. A pretty console writer does exist —
+  `Console` — but it is opt-in and reads *finished* JSON lines back as an `nbio.Stream`,
+  so the hot path never carries console work.
 
-- **Faster, and faster under stress.** jlog wins most of the formatting benchmarks
-  above, and its diode is ~2× quicker than zerolog's *and* allocation-free even while
-  dropping. zerolog's diode allocates 3×/op and allocates *more* as the drop rate
-  climbs — worsening exactly when you are already degraded. jlog's memory is bounded by
-  a fixed ring (TigerStyle: no unbounded growth) and its drop path allocates nothing,
-  so shedding load never adds GC pressure.
+- **Allocates nothing, ever.** The caller owns every byte: the `Logger_Configuration`,
+  the line storage `New` takes, and the line and prefix storage `Logger_With` takes. A line
+  that outgrows its storage is dropped whole and counted in `Logger.Dropped`. The price is
+  ownership: a `Logger` belongs to one goroutine. Goroutines share a
+  `Logger_Configuration` and each keep their own `Logger` (`Logger_With` makes one).
 
-- **Async by default, on purpose.** This repo's linter treats instrumentation as
+- **Never waits, on purpose.** This repo's linter treats instrumentation as
   fire-and-forget — a logger may be ambient precisely because it must never block the
-  program. Synchronous logging is real harm here: a production sink is usually a disk
-  or another server, so a synchronous write drops a syscall and its stalls onto the
-  caller's hot path. The default logger is non-blocking; the syscall lives on the
-  diode's drain.
+  program. Each line is submitted with `nbio.Write` from the `Logger`'s own storage, which
+  stays borrowed until the Stream retires it; an emit while it is borrowed drops and counts.
+  jlog neither waits for nor drives that retirement — the root does, per `inject_io`.
+  Buffering, ordering across goroutines, and dropping under a slow sink belong to the Stream
+  below: put a `shared/sync/diode` in front of any sink that can fall behind, and have the
+  root loop `diode.Writer_Rearm`. No drain goroutine and no sleep.
 
-- **Pure, separable core.** The library tier (`shared/jlog`, `shared/sync/diode`) is pure —
+- **Pure, separable core.** The library tier (`shared/jlog`) is pure —
   the clock, caller lookup, and sink all arrive as fields, so it is directly testable
   and holds no globals. The one ambient binding — the `os.Stderr` default logger — lives
   in the composition tier (`shared/jlog/default`); a console logger takes whatever sink it
@@ -98,41 +101,9 @@ go test ./shared/jlog/ -run='^$' -bench=Benchmark_ -benchmem
 into a throwaway module that imports the real `rs/zerolog`; it does not build
 inside this repo.)
 
-## Non-blocking default
+## Default stream
 
-`shared/jlog/default`'s `Default` logger writes through a `shared/sync/diode` — a lock-free
-ring that hands finished lines to a background drain, so a producer never waits on the
-sink. The table above writes to `io.Discard` (zero sink cost); the one below writes to
-`/dev/null`, a *real* sink whose `write` syscall the caller would otherwise pay on its
-own goroutine.
-
-| Caller cost, one line to `/dev/null` | jlog                | zerolog v1.35.1  |
-| ------------------------------------ | ------------------- | ---------------- |
-| Synchronous (`New` → the sink)       | 485 ns, 0 allocs    | 498 ns, 0 allocs |
-| Non-blocking diode                   | **84 ns, 0 allocs** | 171 ns, 3 allocs |
-
-Both diodes use the same shape: a poller with a 100 ms interval over a 1000-slot ring.
-
-The diode moves the `write` syscall off the caller, so logging a line costs ~5.8× less
-and never blocks — and jlog's diode allocates nothing. `/dev/null` is the *conservative*
-case: its syscall is fast and never stalls. A terminal, file, pipe, or network sink is
-slower (microseconds to milliseconds) and can block, where the synchronous caller waits
-the full time while the diode caller stays flat at ~84 ns.
-
-Synchronously the two loggers cost about the same. Through a diode jlog is ~2× faster
-and allocation-free, while zerolog's allocates 3 per write — a fresh ring bucket on every
-store, an escaping slice header, and a pool miss for each dropped line's buffer (see
-`../diode/SPECIFICATION.md`). zerolog's diode also writes `consider using a larger diode`
-to stderr on every collision under sustained load (silenced for this measurement); jlog
-drops silently.
-
-The trade is that the diode drops the oldest lines under sustained overload (reported
-via its alerter) and loses anything still buffered at an unflushed exit; see
-`../diode/SPECIFICATION.md`.
-
-Reproduce (the zerolog column comes from a throwaway module importing the real
-`rs/zerolog`, same as the table above):
-
-```
-go test ./shared/jlog/default/ -run='^$' -bench=Benchmark_Caller -benchmem
-```
+`shared/jlog/default`'s `Default` is one `jlog.Logger` the package-level functions (`Info`,
+`Error`, ...) write through, with one owner like any other. It is the zero Logger until the
+root assigns `jlog.Default = jlog.New_Default_Logger(loop.Storage, stderr)`; from then on
+each line goes to that descriptor with `nbio.Storage_Write`, and the root's loop retires it.

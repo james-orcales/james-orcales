@@ -36,10 +36,6 @@ A logger built with Auto_Timestamp stamps every line without an explicit field.
 A Moment renders as an RFC 3339 UTC timestamp string; a Duration renders as an
 integer in the configured unit.
 
-# Network Fields
-
-IP_Address and MAC_Address render via their stdlib string forms.
-
 # Scalar Arrays
 
 Strings and Integers render as flat JSON arrays referencing the caller's slice.
@@ -66,17 +62,29 @@ fields.
 
 A line below the logger's floor produces no output.
 
-# From Context Round Trips
+# Nil Logger Is Disabled
 
-A logger carried by Logger_With_Context is recovered by From_Context.
-
-# From Context Missing Is Disabled
-
-From_Context on a context with no logger returns a disabled no-op logger.
+A nil Logger emits nothing.
 
 # Hot Path Is Zero Allocation
 
-A steady-state scalar log to a ready writer performs zero heap allocations.
+A steady-state scalar log to a ready stream performs zero heap allocations.
+
+# Construction Is Zero Allocation
+
+New fills caller-owned configuration storage and Logger_With fills the child's own storage;
+neither allocates.
+
+# Borrowed Line Drops
+
+A line is submitted from the Logger's own storage, which stays borrowed until the Stream
+retires the Write. An emit while it is borrowed is dropped and counted in Logger.Dropped;
+the retirement frees the storage. jlog neither waits for nor drives the retirement.
+
+# Oversized Line Drops
+
+A line that outgrows its storage is dropped whole and counted in Logger.Dropped, so the Stream
+never sees a torn line; the next line encodes as usual.
 
 # Header Renders Time Level Message
 

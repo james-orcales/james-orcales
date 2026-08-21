@@ -5,7 +5,8 @@
 // builder: a log line is one Logger_-prefixed call taking the logger, a message,
 // and a variadic list of Field values built by the  constructors.
 //
-//	logger := jlog.New(jlog.New_Input{Write: sink_write, Floor: jlog.LEVEL_INFO})
+//	configuration := jlog.Logger_Configuration{Stream: sink, Clock: clock}
+//	logger := jlog.New(&configuration, storage[:], jlog.LEVEL_INFO)
 //	jlog.Logger_Info(logger, "request done",
 //	    jlog.String("method", method),
 //	    jlog.Integer("status", status),
@@ -21,29 +22,29 @@
 // ("Flatten the Structure"). Embed a pre-encoded blob with Raw_JSON when
 // structure is truly unavoidable.
 //
-// The hot path (scalar fields to a ready writer) is allocation-free: the line is
-// assembled in a pooled buffer and the variadic Field slice stays on the caller's
-// stack.
+// jlog allocates nothing, ever: the configuration, the line storage, and every prefix are
+// caller-owned, and the variadic Field slice stays on the caller's stack. The price is
+// ownership: a Logger belongs to one goroutine. Goroutines share a Logger_Configuration and each
+// keep their own Logger; ordering and concurrency toward the sink belong to the Stream below
+// (shared/sync/diode).
 package jlog
 
 import (
-	"context"
-	"net"
-	"sync"
 	"unsafe"
 
+	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
-// A fresh line buffer holds a typical event without growing, so steady-state
-// logging never reallocates.
-const DEFAULT_BUFFER_CAPACITY = 500
+// LINE_BYTES_MAXIMUM bounds the line storage a caller may hand a Logger; a line that outgrows
+// its storage is dropped and counted.
+const LINE_BYTES_MAXIMUM = 1 << 16
 
-// Buffers grown past this are dropped from the pool rather than pinning 64KiB per
-// slot forever.
-const POOLED_BUFFER_CAPACITY_MAX = 1 << 16
+// PREFIX_BYTES_MAXIMUM bounds the prefix storage a caller may hand a child Logger.
+const PREFIX_BYTES_MAXIMUM = 1 << 12
 
 // DEFAULT_CALLER_SKIP passes zero frames because the injected Caller owns its own skip offset.
 const DEFAULT_CALLER_SKIP = 0
@@ -135,12 +136,6 @@ type Buffer []byte
 // Data is one complete encoded line passed to an injected sink.
 type Data []byte
 
-// Data_Size is one bounded sink result.
-type Data_Size int
-
-// Write is a caller-owned sink procedure. State keeps mutable ownership outside jlog.
-type Write func(state unsafe.Pointer, data Data) (written Data_Size, err error)
-
 // Key is a JSON object key. It is a distinct type so the two-argument field
 // constructors never repeat a parameter type and cannot be called with the key and
 // value transposed; string literals convert implicitly, a dynamic string key
@@ -185,12 +180,6 @@ const KIND_TIME Field_Kind = 9
 
 // KIND_DURATION tags a Duration in Number, divided by the config unit before rendering.
 const KIND_DURATION Field_Kind = 10
-
-// KIND_IP tags a net.IP behind Data, emitted as its dotted or colon string form.
-const KIND_IP Field_Kind = 11
-
-// KIND_MAC tags a net.HardwareAddr behind Data, emitted as its colon-separated string.
-const KIND_MAC Field_Kind = 12
 
 // KIND_STRINGS tags a []string behind Data, emitted as a JSON array of strings.
 const KIND_STRINGS Field_Kind = 13
@@ -241,10 +230,8 @@ type Field struct {
 // Logger_Configuration is the immutable dependency set shared by a logger and all
 // its sub-loggers through one pointer, so Logger_With never copies it.
 type Logger_Configuration struct {
-	// Writer_State belongs to Write and stays opaque to jlog.
-	Writer_State unsafe.Pointer
-	// Write receives each finished line once.
-	Write Write
+	// Stream receives each finished line once through nbio.Write.
+	Stream nbio.Stream
 	// Clock supplies wall-clock readings; injected so tests are deterministic and
 	// the library tier never imports stdlib time.
 	Clock time.Clock
@@ -266,57 +253,39 @@ type Logger_Configuration struct {
 	Stack_Field_Name string
 	// Duration_Unit divides Duration values before rendering; defaults to NANOSECOND.
 	Duration_Unit time.Duration
-	// Buffer_Pool recycles line buffers so emitting stays allocation-free.
-	Buffer_Pool *sync.Pool
 }
 
-// Logger bundles a shared configuration with this logger's level floor and fixed
-// prefix fields. It is passed by value; the zero value is a disabled no-op.
+// Line is one logger's encode storage. Completion sits first so the retire callback, which
+// receives only the Completion, recovers its Line without a lookup or a captured closure.
+type Line struct {
+	// Completion is the nbio storage for this line's Write.
+	Completion nbio.Completion
+	// Storage is the caller-owned byte budget; a line that outgrows it is dropped, never kept.
+	Storage []byte
+	// Borrowed marks Storage as held by the Stream until it retires the Write. A plain bool,
+	// because one goroutine owns the Logger and the root delivers the retirement.
+	Borrowed bool
+}
+
+// Logger bundles a shared configuration with this logger's own line storage, level floor, and
+// fixed prefix fields. One goroutine owns a Logger: it encodes into Line with no
+// synchronization, so goroutines share the Configuration, never the Logger. It is used by
+// pointer; the zero value is a disabled no-op.
 type Logger struct {
-	// Configuration is the shared dependency set; nil marks a disabled logger.
+	// Configuration is the shared read-only dependency set; nil marks a disabled logger.
 	Configuration *Logger_Configuration
+	// Line is this logger's encode storage.
+	Line Line
 	// Floor is the lowest level emitted; lower levels are dropped.
 	Floor Level
-	// Prefix is the pre-encoded fixed fields ({...} fragment) added to every line.
+	// Prefix is the pre-encoded fixed fields ({... fragment) added to every line, in
+	// caller-owned storage.
 	Prefix Buffer
+	// Dropped counts lines that outgrew Line.Storage or arrived while it was still borrowed.
+	Dropped int
 	// Auto_Timestamp stamps every line with the realtime clock when set.
 	Auto_Timestamp bool
 	// Auto_Caller adds the caller location to every line when set.
-	Auto_Caller bool
-}
-
-// New_Input configures New. Write and Clock are the meaningful dependencies; the
-// rest take sensible defaults when left zero.
-type New_Input struct {
-	// Writer_State belongs to Write and stays opaque to jlog.
-	Writer_State unsafe.Pointer
-	// Write receives finished lines; nil discards them.
-	Write Write
-	// Clock supplies Timestamp and Auto_Timestamp readings.
-	Clock time.Clock
-	// Floor is the lowest emitted level.
-	Floor Level
-	// Caller maps a frame-skip count to a location string; nil disables Caller.
-	Caller func(skip int) (location string)
-	// Stack_Marshaler renders an error's stack; nil disables Err stacks.
-	Stack_Marshaler func(value error) (stack string)
-	// Timestamp_Field_Name overrides the timestamp key; empty uses the default.
-	Timestamp_Field_Name string
-	// Level_Field_Name overrides the level key; empty uses the default.
-	Level_Field_Name string
-	// Message_Field_Name overrides the message key; empty uses the default.
-	Message_Field_Name string
-	// Error_Field_Name overrides the error key; empty uses the default.
-	Error_Field_Name string
-	// Caller_Field_Name overrides the caller key; empty uses the default.
-	Caller_Field_Name string
-	// Stack_Field_Name overrides the stack key; empty uses the default.
-	Stack_Field_Name string
-	// Duration_Unit divides Duration values; zero uses NANOSECOND.
-	Duration_Unit time.Duration
-	// Auto_Timestamp stamps every line automatically.
-	Auto_Timestamp bool
-	// Auto_Caller adds the caller location to every line automatically.
 	Auto_Caller bool
 }
 
@@ -344,8 +313,8 @@ const LEVEL_NONE Level = 6
 // LEVEL_DISABLED marks a logger that emits nothing.
 const LEVEL_DISABLED Level = 7
 
-// String returns the wire name of the level, empty for LEVEL_NONE.
-func (level Level) String() (name string) {
+// Level_String returns the wire name of the level, empty for LEVEL_NONE.
+func Level_String(level Level) (name string) {
 	switch level {
 	case LEVEL_TRACE:
 		return "trace"
@@ -362,46 +331,37 @@ func (level Level) String() (name string) {
 	case LEVEL_NONE:
 		return ""
 	}
-	panic("jlog: invalid level")
+	aver.Always(false, "jlog: invalid level")
+	return ""
 }
 
-// New builds a logger from input, allocating its shared configuration and pool.
-func New(input New_Input) (logger Logger) {
-	write := input.Write
-	if write == nil {
-		write = discard
+// New returns a logger over configuration, which the caller filled, and the caller's line
+// storage. It fills in defaults for empty field names and a zero Duration_Unit in place and
+// allocates nothing. Set Auto_Timestamp and Auto_Caller on the result.
+func New(configuration *Logger_Configuration, storage []byte, floor Level) (logger Logger) {
+	aver.Always(configuration != nil, "jlog: configuration storage is required")
+	aver.Always(cap(storage) > 0, "jlog: line storage is required")
+	aver.Always(cap(storage) <= LINE_BYTES_MAXIMUM, "jlog: line storage exceeds bound")
+	if configuration.Duration_Unit == 0 {
+		configuration.Duration_Unit = time.NANOSECOND
 	}
-	unit := input.Duration_Unit
-	if unit == 0 {
-		unit = time.NANOSECOND
-	}
-	assert(write != nil, "jlog: writer must not be nil")
-	assert(unit > 0, "jlog: duration unit must be positive")
-	logger.Configuration = &Logger_Configuration{
-		Writer_State:    input.Writer_State,
-		Write:           write,
-		Clock:           input.Clock,
-		Caller:          input.Caller,
-		Stack_Marshaler: input.Stack_Marshaler,
-		Timestamp_Field_Name: string_or(
-			input.Timestamp_Field_Name, DEFAULT_TIMESTAMP_FIELD_NAME),
-		Level_Field_Name: string_or(input.Level_Field_Name, DEFAULT_LEVEL_FIELD_NAME),
-		Message_Field_Name: string_or(
-			input.Message_Field_Name, DEFAULT_MESSAGE_FIELD_NAME),
-		Error_Field_Name:  string_or(input.Error_Field_Name, DEFAULT_ERROR_FIELD_NAME),
-		Caller_Field_Name: string_or(input.Caller_Field_Name, DEFAULT_CALLER_FIELD_NAME),
-		Stack_Field_Name:  string_or(input.Stack_Field_Name, DEFAULT_STACK_FIELD_NAME),
-		Duration_Unit:     unit,
-		Buffer_Pool:       &sync.Pool{New: new_buffer},
-	}
-	logger.Floor = input.Floor
-	logger.Auto_Timestamp = input.Auto_Timestamp
-	logger.Auto_Caller = input.Auto_Caller
+	aver.Always(configuration.Duration_Unit > 0, "jlog: duration unit must be positive")
+	configuration.Timestamp_Field_Name = string_or(
+		configuration.Timestamp_Field_Name, DEFAULT_TIMESTAMP_FIELD_NAME)
+	configuration.Level_Field_Name = string_or(
+		configuration.Level_Field_Name, DEFAULT_LEVEL_FIELD_NAME)
+	configuration.Message_Field_Name = string_or(
+		configuration.Message_Field_Name, DEFAULT_MESSAGE_FIELD_NAME)
+	configuration.Error_Field_Name = string_or(
+		configuration.Error_Field_Name, DEFAULT_ERROR_FIELD_NAME)
+	configuration.Caller_Field_Name = string_or(
+		configuration.Caller_Field_Name, DEFAULT_CALLER_FIELD_NAME)
+	configuration.Stack_Field_Name = string_or(
+		configuration.Stack_Field_Name, DEFAULT_STACK_FIELD_NAME)
+	logger.Configuration = configuration
+	logger.Line.Storage = storage[:0]
+	logger.Floor = floor
 	return logger
-}
-
-func discard(_ unsafe.Pointer, data Data) (written Data_Size, err error) {
-	return Data_Size(len(data)), nil
 }
 
 func string_or(value string, fallback Default_String) (chosen string) {
@@ -411,48 +371,42 @@ func string_or(value string, fallback Default_String) (chosen string) {
 	return value
 }
 
-// A *Buffer is pooled rather than a Buffer so Put boxes a pointer, not a header.
-func new_buffer() (buffer any) {
-	created := make(Buffer, 0, DEFAULT_BUFFER_CAPACITY)
-	return &created
-}
-
 // Logger_Trace emits a trace-level line.
-func Logger_Trace(logger Logger, message string, fields ...Field) {
+func Logger_Trace(logger *Logger, message string, fields ...Field) {
 	logger_emit(logger, LEVEL_TRACE, message, fields)
 }
 
 // Logger_Debug emits a debug-level line.
-func Logger_Debug(logger Logger, message string, fields ...Field) {
+func Logger_Debug(logger *Logger, message string, fields ...Field) {
 	logger_emit(logger, LEVEL_DEBUG, message, fields)
 }
 
 // Logger_Info emits an info-level line.
-func Logger_Info(logger Logger, message string, fields ...Field) {
+func Logger_Info(logger *Logger, message string, fields ...Field) {
 	logger_emit(logger, LEVEL_INFO, message, fields)
 }
 
 // Logger_Warn emits a warn-level line.
-func Logger_Warn(logger Logger, message string, fields ...Field) {
+func Logger_Warn(logger *Logger, message string, fields ...Field) {
 	logger_emit(logger, LEVEL_WARN, message, fields)
 }
 
 // Logger_Error emits an error-level line.
-func Logger_Error(logger Logger, message string, fields ...Field) {
+func Logger_Error(logger *Logger, message string, fields ...Field) {
 	logger_emit(logger, LEVEL_ERROR, message, fields)
 }
 
 // Logger_Log emits a line with no severity field.
-func Logger_Log(logger Logger, message string, fields ...Field) {
+func Logger_Log(logger *Logger, message string, fields ...Field) {
 	logger_emit(logger, LEVEL_NONE, message, fields)
 }
 
 // Logger_At_Level emits a line at the given level.
-func Logger_At_Level(logger Logger, level Level, message string, fields ...Field) {
+func Logger_At_Level(logger *Logger, level Level, message string, fields ...Field) {
 	logger_emit(logger, level, message, fields)
 }
 
-func logger_emit(logger Logger, level Level, message string, fields []Field) {
+func logger_emit(logger *Logger, level Level, message string, fields []Field) {
 	if logger_is_disabled(logger) {
 		return
 	}
@@ -460,9 +414,13 @@ func logger_emit(logger Logger, level Level, message string, fields []Field) {
 		return
 	}
 	configuration := logger.Configuration
-	holder := configuration.Buffer_Pool.Get().(*Buffer)
-	buffer := *holder
-	buffer = buffer[:0]
+	line := &logger.Line
+	// The Stream still holds Storage; encoding over it would tear the line in flight.
+	if line.Borrowed {
+		logger.Dropped++
+		return
+	}
+	buffer := Buffer(line.Storage[:0])
 	buffer = buffer_append_begin_marker(buffer)
 	buffer = buffer_append_level(buffer, level, configuration)
 	if logger.Auto_Timestamp {
@@ -484,14 +442,30 @@ func logger_emit(logger Logger, level Level, message string, fields []Field) {
 	}
 	buffer = buffer_append_end_marker(buffer)
 	buffer = append(buffer, '\n')
-	assert(buffer[0] == '{', "jlog: line must open with a brace")
-	assert(buffer[len(buffer)-2] == '}', "jlog: line must close with a brace")
-	assert(buffer[len(buffer)-1] == '\n', "jlog: line must end with a newline")
-	configuration.Write(configuration.Writer_State, Data(buffer))
-	buffer_recycle(holder, configuration.Buffer_Pool, buffer)
+	aver.Always(buffer[0] == '{', "jlog: line must open with a brace")
+	aver.Always(buffer[len(buffer)-2] == '}', "jlog: line must close with a brace")
+	aver.Always(buffer[len(buffer)-1] == '\n', "jlog: line must end with a newline")
+	// The append grew past Storage: the line is complete but lives in a fresh allocation, so
+	// it is dropped rather than retained.
+	if cap(buffer) != cap(line.Storage) {
+		logger.Dropped++
+		return
+	}
+	line.Borrowed = true
+	nbio.Write(configuration.Stream, &line.Completion, buffer, line_retire)
 }
 
-func logger_is_disabled(logger Logger) (disabled bool) {
+// Stream failures have no reporting channel above a logger, so retirement only returns the
+// storage. It records state and continues nothing: the root drives.
+func line_retire(completion nbio.Completion_Handle) {
+	line := (*Line)(unsafe.Pointer(completion))
+	line.Borrowed = false
+}
+
+func logger_is_disabled(logger *Logger) (disabled bool) {
+	if logger == nil {
+		return true
+	}
 	if logger.Configuration == nil {
 		return true
 	}
@@ -501,39 +475,35 @@ func logger_is_disabled(logger Logger) (disabled bool) {
 	return false
 }
 
-// Logger_With returns a child logger carrying fields as a fixed prefix on every line.
-func Logger_With(logger Logger, fields ...Field) (child Logger) {
-	child = logger
-	prefix := make(Buffer, 0, DEFAULT_BUFFER_CAPACITY)
-	if len(logger.Prefix) > 0 {
-		prefix = append(prefix, logger.Prefix...)
+// Logger_With returns a child logger carrying fields as a fixed prefix on every line. storage
+// is the child's line buffer and prefix its prefix buffer, which must hold the parent's prefix
+// plus the new fields; both are caller-owned. A child of a disabled parent is disabled; a
+// prefix that outgrows its storage is a configuration error and panics.
+func Logger_With(parent *Logger, storage []byte, prefix Buffer, fields ...Field) (child Logger) {
+	if logger_is_disabled(parent) {
+		return Logger{}
+	}
+	aver.Always(cap(storage) > 0, "jlog: line storage is required")
+	aver.Always(cap(storage) <= LINE_BYTES_MAXIMUM, "jlog: line storage exceeds bound")
+	aver.Always(cap(prefix) <= PREFIX_BYTES_MAXIMUM, "jlog: prefix storage exceeds bound")
+	child.Configuration = parent.Configuration
+	child.Line.Storage = storage[:0]
+	child.Floor = parent.Floor
+	child.Auto_Timestamp = parent.Auto_Timestamp
+	child.Auto_Caller = parent.Auto_Caller
+	budget_size := cap(prefix)
+	prefix = prefix[:0]
+	if len(parent.Prefix) > 0 {
+		prefix = append(prefix, parent.Prefix...)
 	} else {
 		prefix = buffer_append_begin_marker(prefix)
 	}
 	for index := 0; index < len(fields); index++ {
-		prefix = buffer_encode_field(prefix, &fields[index], logger.Configuration)
+		prefix = buffer_encode_field(prefix, &fields[index], parent.Configuration)
 	}
+	aver.Always(cap(prefix) == budget_size, "jlog: prefix exceeds its storage")
 	child.Prefix = prefix
 	return child
-}
-
-// Context_Key is the distinct key type a Logger is stored under in a context.Context,
-// so the value cannot collide with keys of any other package.
-type Context_Key struct{}
-
-// Logger_With_Context returns a copy of parent carrying logger.
-func Logger_With_Context(logger Logger, parent context.Context) (child context.Context) {
-	return context.WithValue(parent, Context_Key{}, logger)
-}
-
-// From_Context returns the logger carried by ctx, or a disabled no-op logger when
-// none is present.
-func From_Context(ctx context.Context) (logger Logger) {
-	stored, ok := ctx.Value(Context_Key{}).(Logger)
-	if !ok {
-		return Logger{}
-	}
-	return stored
 }
 
 // String builds a string field.
@@ -657,26 +627,6 @@ func Duration(key Key, value time.Duration) (field Field) {
 	return Field{Key: key, Kind: KIND_DURATION, Number: int64(value)}
 }
 
-// IP_Address builds a field rendering a net.IP as its string form.
-func IP_Address(key Key, value net.IP) (field Field) {
-	return Field{
-		Key:    key,
-		Kind:   KIND_IP,
-		Data:   unsafe.Pointer(unsafe.SliceData(value)),
-		Number: int64(len(value)),
-	}
-}
-
-// MAC_Address builds a field rendering a net.HardwareAddr as its string form.
-func MAC_Address(key Key, value net.HardwareAddr) (field Field) {
-	return Field{
-		Key:    key,
-		Kind:   KIND_MAC,
-		Data:   unsafe.Pointer(unsafe.SliceData(value)),
-		Number: int64(len(value)),
-	}
-}
-
 // Err builds the error field; its key, and an optional stack, come from the config.
 func Err(value error) (field Field) {
 	return Field{Kind: KIND_ERROR, Boxed: value}
@@ -780,8 +730,8 @@ type Float_Information struct {
 
 // Decimal stores an exact finite binary float as decimal digits and a decimal point.
 type Decimal struct {
-	// Digits hold the exact expansion without heap fallback.
-	Digits [FLOAT_DECIMAL_DIGIT_CAPACITY]byte
+	// Digits hold the exact expansion over the caller's array, so nothing heap-falls-back.
+	Digits []byte
 	// Count excludes meaningless trailing zeroes.
 	Count int
 	// Point stays independent from Count so trimmed integers keep magnitude.
@@ -950,8 +900,9 @@ func decimal_round_shortest(
 			return
 		}
 	}
-	var upper Decimal
-	var lower Decimal
+	var upper_digits, lower_digits [FLOAT_DECIMAL_DIGIT_CAPACITY]byte
+	upper := Decimal{Digits: upper_digits[:]}
+	lower := Decimal{Digits: lower_digits[:]}
 	decimal_shortest_bounds(
 		&upper, &lower, mantissa, exponent, minimum_exponent, information,
 	)
@@ -1093,12 +1044,6 @@ func buffer_encode_field(
 	case KIND_DURATION:
 		divided := field.Number / int64(configuration.Duration_Unit)
 		return buffer_append_int64(destination, divided)
-	case KIND_IP:
-		address := net.IP(unsafe.Slice((*byte)(field.Data), count))
-		return buffer_append_string(destination, address.String())
-	case KIND_MAC:
-		address := net.HardwareAddr(unsafe.Slice((*byte)(field.Data), count))
-		return buffer_append_string(destination, address.String())
 	case KIND_STRINGS:
 		values := unsafe.Slice((*string)(field.Data), count)
 		return buffer_append_strings(destination, values)
@@ -1303,10 +1248,10 @@ func buffer_append_rfc3339(destination Buffer, nanos int64) (output Buffer) {
 		day_seconds += SECONDS_PER_DAY
 		days--
 	}
-	assert(day_seconds >= 0 && day_seconds < SECONDS_PER_DAY, "jlog: bad day seconds")
+	aver.Always(day_seconds >= 0 && day_seconds < SECONDS_PER_DAY, "jlog: bad day seconds")
 	year, month, day := civil_from_days(days)
-	assert(month >= 1 && month <= 12, "jlog: civil month out of range")
-	assert(day >= 1 && day <= 31, "jlog: civil day out of range")
+	aver.Always(month >= 1 && month <= 12, "jlog: civil month out of range")
+	aver.Always(day >= 1 && day <= 31, "jlog: civil day out of range")
 	within_hour := day_seconds % SECONDS_PER_HOUR
 	destination = append(destination, '"')
 	destination = buffer_append_four_digits(destination, year)
@@ -1380,14 +1325,6 @@ func civil_from_days(days int64) (year int64, month int, day int) {
 	return computed_year, int(computed_month), int(computed_day)
 }
 
-func buffer_recycle(holder *Buffer, pool *sync.Pool, final Buffer) {
-	if cap(final) > POOLED_BUFFER_CAPACITY_MAX {
-		return
-	}
-	*holder = final[:0]
-	pool.Put(holder)
-}
-
 func buffer_append_level(
 	destination Buffer, level Level, configuration *Logger_Configuration,
 ) (output Buffer) {
@@ -1398,7 +1335,7 @@ func buffer_append_level(
 		return destination
 	}
 	destination = buffer_append_key(destination, Key(configuration.Level_Field_Name))
-	return buffer_append_string(destination, level.String())
+	return buffer_append_string(destination, Level_String(level))
 }
 
 // JSON has no NaN/Inf, so those render as strings; a leading exponent zero is
@@ -1452,7 +1389,8 @@ func buffer_append_finite_float(
 		mantissa |= uint64(1) << information.Mantissa_Bit_Count
 	}
 	exponent += information.Exponent_Bias
-	var decimal Decimal
+	var digits [FLOAT_DECIMAL_DIGIT_CAPACITY]byte
+	decimal := Decimal{Digits: digits[:]}
 	decimal_assign(&decimal, mantissa)
 	decimal_shift(&decimal, exponent-int(information.Mantissa_Bit_Count))
 	decimal_round_shortest(&decimal, mantissa, exponent, information)
@@ -1741,16 +1679,6 @@ func hexadecimal_digit(nibble byte) (digit byte) {
 	return HEXADECIMAL_DIGITS[nibble]
 }
 
-// Panics with message when condition is false. A cheap always-on invariant check: it
-// inlines to a single predictable branch over a constant string and captures no caller
-// site, so it stays off the allocation budget the hot path depends on. The panic's stack
-// trace carries the location; message names the invariant.
-func assert(condition bool, message string) {
-	if !condition {
-		panic(message)
-	}
-}
-
 // The rest of this file is the pretty printer: the human-facing inverse of the encoder above. jlog
 // emits flat JSON for machines; a Console reads those lines back and renders them for a human at a
 // terminal. It plugs into the encoder only through the Write procedure: each emit sends one whole
@@ -1788,19 +1716,117 @@ const ANSI_CYAN Ansi_Code = "\x1b[36m"
 // field names is not matched, which no caller needs. It is passed by value and never mutated, so a
 // copy is a faithful, independent Console. Build one directly with a struct literal.
 type Console struct {
-	// Writer_State belongs to Write and stays opaque to the renderer.
-	Writer_State unsafe.Pointer
-	// Write receives the rendered text; nil discards it.
-	Write Write
+	// Stream receives the rendered text.
+	Stream nbio.Stream
 	// Color enables ANSI color in the rendered output.
 	Color bool
 }
 
-// Console_Write renders newline-terminated JSON lines and sends the human-readable form once. It
-// reports len(payload) consumed on success because a transforming sink emits a different byte
-// count than it takes.
-func Console_Write(console Console, payload Data) (written Data_Size, err error) {
-	rendered := make(Buffer, 0, len(payload)*2)
+// TRANSFORM_MODES excludes reads and cursor modes because a transformed byte count names no
+// position in the inner Stream.
+const TRANSFORM_MODES nbio.Stream_Mode_Set = 1<<nbio.STREAM_MODE_CLOSE |
+	1<<nbio.STREAM_MODE_FLUSH | 1<<nbio.STREAM_MODE_WRITE |
+	1<<nbio.STREAM_MODE_DESTROY | 1<<nbio.STREAM_MODE_QUERY
+
+// Console_To_Stream renders each written batch of newline-terminated JSON lines and submits the
+// human-readable form to the inner Stream once.
+func Console_To_Stream(console *Console) (stream nbio.Stream) {
+	aver.Always(console != nil, "jlog: console must not be nil")
+	return nbio.Stream{State: console, Procedure: console_procedure}
+}
+
+func console_procedure(
+	state nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode, payload []byte,
+	offset int64, whence nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	console := state.(*Console)
+	if mode == nbio.STREAM_MODE_WRITE {
+		rendered := console_render(*console, payload)
+		transform_write(console.Stream, completion, payload, rendered, callback)
+		return
+	}
+	transform_submit(console.Stream, completion, mode, offset, whence, callback)
+}
+
+// Forward keeps the outer retirement and the transformed buffer alive until the inner Stream
+// retires, since a kernel-backed Stream may retain only the Completion.
+type Forward struct {
+	// Callback is the outer retirement.
+	Callback nbio.Stream_Callback
+	// Buffer is the transformed bytes the inner Stream borrows.
+	Buffer Buffer
+	// Count is the outer payload length reported on success.
+	Count int
+}
+
+// A transforming Stream reports len(payload) consumed on success because it emits a different
+// byte count than it takes. Forward allocates per write; transforms are off the hot path.
+func transform_write(
+	inner nbio.Stream, completion *nbio.Completion, payload []byte, transformed Buffer,
+	callback nbio.Stream_Callback,
+) {
+	if len(transformed) == 0 {
+		completion.Data = len(payload)
+		completion.Error = nil
+		nbio.Stream_Callback_Call(callback, completion)
+		return
+	}
+	if inner.Procedure == nil {
+		completion.Data = 0
+		completion.Error = nbio.Stream_Empty
+		nbio.Stream_Callback_Call(callback, completion)
+		return
+	}
+	forward := &Forward{Callback: callback, Buffer: transformed, Count: len(payload)}
+	inner.Procedure(inner.State, completion, nbio.STREAM_MODE_WRITE, transformed, 0,
+		nbio.SEEK_FROM_START, nbio.Stream_Callback{
+			State: forward, Data: len(transformed), Procedure: transform_retire,
+		})
+}
+
+func transform_retire(
+	state nbio.State, transformed_count nbio.Stream_Callback_Data, _ nbio.Callback,
+	completion nbio.Completion_Handle,
+) {
+	forward := state.(*Forward)
+	if completion.Error == nil {
+		if completion.Data != int(transformed_count) {
+			completion.Error = nbio.Stream_Short_Write
+		}
+	}
+	completion.Data = 0
+	if completion.Error == nil {
+		completion.Data = forward.Count
+	}
+	nbio.Stream_Callback_Call(forward.Callback, completion)
+}
+
+// Lifecycle modes pass through untouched so teardown reaches the inner Stream.
+func transform_submit(
+	inner nbio.Stream, completion *nbio.Completion, mode nbio.Stream_Mode, offset int64,
+	whence nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	completion.Data = 0
+	completion.Error = nil
+	switch mode {
+	case nbio.STREAM_MODE_QUERY:
+		completion.Data = int(TRANSFORM_MODES)
+	case nbio.STREAM_MODE_FLUSH, nbio.STREAM_MODE_CLOSE, nbio.STREAM_MODE_DESTROY:
+		if inner.Procedure != nil {
+			inner.Procedure(
+				inner.State, completion, mode, nil, offset, whence, callback,
+			)
+			return
+		}
+		completion.Error = nbio.Stream_Empty
+	default:
+		completion.Error = nbio.Stream_Empty
+	}
+	nbio.Stream_Callback_Call(callback, completion)
+}
+
+func console_render(console Console, payload []byte) (rendered Buffer) {
+	rendered = make(Buffer, 0, len(payload)*2)
 	line_start := 0
 	for index := 0; index < len(payload); index++ {
 		if payload[index] != '\n' {
@@ -1815,19 +1841,7 @@ func Console_Write(console Console, payload Data) (written Data_Size, err error)
 	if line_start < len(payload) {
 		rendered = buffer_append_pretty_line(rendered, payload[line_start:], console)
 	}
-	write := console.Write
-	if write == nil {
-		write = discard
-	}
-	_, write_err := write(console.Writer_State, Data(rendered))
-	if write_err != nil {
-		return 0, write_err
-	}
-	return Data_Size(len(payload)), nil
-}
-
-func console_write(state unsafe.Pointer, payload Data) (written Data_Size, err error) {
-	return Console_Write(*(*Console)(state), payload)
+	return rendered
 }
 
 // How a JSON value is displayed: a string is unquoted (and logfmt-requoted only if needed), a
@@ -2376,51 +2390,48 @@ func string_byte_index(value string, sought byte) (index int) {
 // trace and debug off the console. It is passed by value; New_Level_Filter sets its fields and
 // nothing mutates them, so a copy is a faithful, independent filter.
 type Level_Filter struct {
-	// Writer_State belongs to Write and stays opaque to the filter.
-	Writer_State unsafe.Pointer
-	// Write receives the lines that clear the floor.
-	Write Write
+	// Stream receives the lines that clear the floor.
+	Stream nbio.Stream
 	// Floor is the lowest level forwarded; a line below it is dropped.
 	Floor Level
 	// Level_Field is the key whose value names each line's level.
 	Level_Field string
 }
 
-// New_Level_Filter_Input configures New_Level_Filter.
-type New_Level_Filter_Input struct {
-	// Writer_State belongs to Write and stays opaque to the filter.
-	Writer_State unsafe.Pointer
-	// Write receives the lines that clear the floor; nil discards them.
-	Write Write
-	// Floor is the lowest level forwarded; a line below it is dropped.
-	Floor Level
-	// Level_Field_Name overrides the level key; empty uses the default.
-	Level_Field_Name string
-}
-
-// New_Level_Filter builds a Level_Filter from input, resolving an empty level field name to jlog's
-// default so it matches a default logger.
-func New_Level_Filter(input New_Level_Filter_Input) (filter Level_Filter) {
-	write := input.Write
-	if write == nil {
-		write = discard
-	}
-	filter.Writer_State = input.Writer_State
-	filter.Write = write
-	filter.Floor = input.Floor
-	filter.Level_Field = string_or(input.Level_Field_Name, DEFAULT_LEVEL_FIELD_NAME)
-	assert(filter.Level_Field != "", "jlog: level field name is non-empty")
+// New_Level_Filter builds a Level_Filter over stream, resolving an empty level field name to
+// jlog's default so it matches a default logger.
+func New_Level_Filter(
+	stream nbio.Stream, floor Level, level_field_name string,
+) (filter Level_Filter) {
+	filter.Stream = stream
+	filter.Floor = floor
+	filter.Level_Field = string_or(level_field_name, DEFAULT_LEVEL_FIELD_NAME)
+	aver.Always(filter.Level_Field != "", "jlog: level field name is non-empty")
 	return filter
 }
 
-// Write forwards each newline-terminated line in payload whose level clears the Floor and drops the
-// rest, writing the survivors to the destination in one Write. It reports len(payload) consumed on
-// success — like Console, a filtering writer emits a different byte count than it takes — so both
-// jlog's own length check and io.MultiWriter's short-write check are satisfied.
-func Level_Filter_Write(
-	filter Level_Filter, payload Data,
-) (written Data_Size, err error) {
-	kept := make(Buffer, 0, len(payload))
+// Level_Filter_To_Stream forwards each written line whose level clears the Floor and drops the
+// rest, submitting the survivors to the inner Stream once.
+func Level_Filter_To_Stream(filter *Level_Filter) (stream nbio.Stream) {
+	aver.Always(filter != nil, "jlog: level filter must not be nil")
+	return nbio.Stream{State: filter, Procedure: level_filter_procedure}
+}
+
+func level_filter_procedure(
+	state nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode, payload []byte,
+	offset int64, whence nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	filter := state.(*Level_Filter)
+	if mode == nbio.STREAM_MODE_WRITE {
+		kept := level_filter_keep(*filter, payload)
+		transform_write(filter.Stream, completion, payload, kept, callback)
+		return
+	}
+	transform_submit(filter.Stream, completion, mode, offset, whence, callback)
+}
+
+func level_filter_keep(filter Level_Filter, payload []byte) (kept Buffer) {
+	kept = make(Buffer, 0, len(payload))
 	line_start := 0
 	for index := 0; index < len(payload); index++ {
 		if payload[index] != '\n' {
@@ -2438,16 +2449,7 @@ func Level_Filter_Write(
 			kept = append(kept, payload[line_start:]...)
 		}
 	}
-	if len(kept) > 0 {
-		if _, write_err := filter.Write(filter.Writer_State, Data(kept)); write_err != nil {
-			return 0, write_err
-		}
-	}
-	return Data_Size(len(payload)), nil
-}
-
-func level_filter_write(state unsafe.Pointer, payload Data) (written Data_Size, err error) {
-	return Level_Filter_Write(*(*Level_Filter)(state), payload)
+	return kept
 }
 
 // Reports whether line clears the filter's floor. A line that is not a JSON object, or one with
@@ -2480,91 +2482,42 @@ func level_from_wire(wire string) (level Level) {
 	return LEVEL_NONE
 }
 
-// New_Console_Logger_Input configures New_Console_Logger.
-type New_Console_Logger_Input struct {
-	// Console_State belongs to Console_Write and stays opaque to jlog.
-	Console_State unsafe.Pointer
-	// Console_Write receives rendered lines at Floor and above; nil discards them.
-	Console_Write Write
-	// Capture_State belongs to Capture_Write and stays opaque to jlog.
-	Capture_State unsafe.Pointer
-	// Capture_Write receives every raw JSON level; nil disables capture.
-	Capture_Write Write
-	// Color enables ANSI color on the console.
-	Color bool
-	// Floor is the console's lowest shown level; Capture keeps every level regardless.
-	Floor Level
-	// Clock stamps each line.
-	Clock time.Clock
-	// Caller resolves the Caller() field's location.
-	Caller func(skip int) (location string)
+// New_Console_Logger builds a console logger over state, which the caller filled: Console
+// (its Stream and Color), Capture, and Configuration (Clock, Caller). It renders human-readable
+// lines to the Console at floor and above and, when Capture is set, tees every level as raw
+// JSON to Capture, so one logger drives a quiet console and a full capture at once. It is pure:
+// every sink, the clock, and the caller lookup are injected, so the composition root decides
+// what they bind to. The logger's own floor is Trace: the one gate runs before any writer, so
+// only a Trace floor lets every level reach Capture; floor gates the console branch alone.
+func New_Console_Logger(state *Console_Logger, storage []byte, floor Level) (logger Logger) {
+	aver.Always(state != nil, "jlog: console logger storage is required")
+	state.Filter = Level_Filter{
+		Stream:      Console_To_Stream(&state.Console),
+		Floor:       floor,
+		Level_Field: string(DEFAULT_LEVEL_FIELD_NAME),
+	}
+	stream := Level_Filter_To_Stream(&state.Filter)
+	if state.Capture.Procedure != nil {
+		state.Tee = nbio.Stream_Tee{First: state.Capture, Second: stream}
+		stream = nbio.Tee_To_Stream(&state.Tee)
+	}
+	state.Configuration.Stream = stream
+	logger = New(&state.Configuration, storage, LEVEL_TRACE)
+	logger.Auto_Timestamp = true
+	return logger
 }
 
-// New_Console_Logger builds a console logger. It renders human-readable lines to the Console sink
-// at Floor and above and, when Capture is set, tees every level as raw JSON to Capture, so one
-// logger drives a quiet console and a full capture at once. It is pure: the console sink, the
-// capture sink, the clock, and the caller lookup are all injected, so the composition root decides
-// what they bind to. The logger's own floor is Trace: the one gate runs before any writer, so only
-// a Trace floor lets every level reach Capture; the console Floor gates its branch alone.
-func New_Console_Logger(input New_Console_Logger_Input) (logger Logger) {
-	console_output := input.Console_Write
-	if console_output == nil {
-		console_output = discard
-	}
-	console := &Console{
-		Writer_State: input.Console_State,
-		Write:        console_output,
-		Color:        input.Color,
-	}
-	filter := &Level_Filter{
-		Writer_State: unsafe.Pointer(console),
-		Write:        console_write,
-		Floor:        input.Floor,
-		Level_Field:  string(DEFAULT_LEVEL_FIELD_NAME),
-	}
-	write := Write(level_filter_write)
-	state := unsafe.Pointer(filter)
-	if input.Capture_Write != nil {
-		tee := &Tee{
-			First_State: input.Capture_State,
-			First_Write: input.Capture_Write,
-			Last_State:  state,
-			Last_Write:  write,
-		}
-		write = tee_write
-		state = unsafe.Pointer(tee)
-	}
-	return New(New_Input{
-		Writer_State:   state,
-		Write:          write,
-		Clock:          input.Clock,
-		Floor:          LEVEL_TRACE,
-		Auto_Timestamp: true,
-		Caller:         input.Caller,
-	})
-}
-
-// Tee owns one fixed two-sink fanout.
-type Tee struct {
-	// First_State belongs to First_Write.
-	First_State unsafe.Pointer
-	// First_Write receives data before Last_Write.
-	First_Write Write
-	// Last_State belongs to Last_Write.
-	Last_State unsafe.Pointer
-	// Last_Write receives data after First_Write.
-	Last_Write Write
-}
-
-func tee_write(state unsafe.Pointer, data Data) (written Data_Size, err error) {
-	tee := (*Tee)(state)
-	_, first_error := tee.First_Write(tee.First_State, data)
-	if first_error != nil {
-		return 0, first_error
-	}
-	_, last_error := tee.Last_Write(tee.Last_State, data)
-	if last_error != nil {
-		return 0, last_error
-	}
-	return Data_Size(len(data)), nil
+// Console_Logger is the caller-owned state behind one console logger, so New_Console_Logger
+// allocates nothing.
+type Console_Logger struct {
+	// Configuration is the logger's shared dependency set; the caller sets Clock and Caller.
+	Configuration Logger_Configuration
+	// Console renders lines for a human; the caller sets its Stream and Color.
+	Console Console
+	// Capture receives every raw JSON level; the caller leaves it zero to disable capture.
+	Capture nbio.Stream
+	// Filter gates the console branch by level.
+	Filter Level_Filter
+	// Tee fans out to Capture when one is set.
+	Tee nbio.Stream_Tee
 }

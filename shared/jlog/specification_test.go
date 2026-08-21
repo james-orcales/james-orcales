@@ -2,12 +2,12 @@ package jlog_test
 
 import (
 	"errors"
-	"net"
 	"testing"
 	"unsafe"
 
 	"local/james-orcales/shared/encoding/json"
 	"local/james-orcales/shared/jlog"
+	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/testify"
 )
@@ -63,23 +63,18 @@ func Test_Bytes_Hexadecimal_Raw_JSON(t *testing.T) {
 }
 
 // Test_Timestamp_Uses_Injected_Clock covers the Timestamp field reading the
-// injected clock and rendering it as integer nanoseconds since the epoch.
+// injected clock and rendering it as an RFC 3339 string.
 func Test_Timestamp_Uses_Injected_Clock(t *testing.T) {
 	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Timestamp())
 	assert_output(t, buffer, "{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\"}\n")
 }
 
-// Test_Auto_Timestamp covers New_Input.Auto_Timestamp stamping every line.
+// Test_Auto_Timestamp covers Logger.Auto_Timestamp stamping every line.
 func Test_Auto_Timestamp(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State:   unsafe.Pointer(buffer),
-		Write:          buffer_write,
-		Clock:          frozen_clock(),
-		Floor:          jlog.LEVEL_TRACE,
-		Auto_Timestamp: true,
-	})
+	logger := new_logger(buffer)
+	logger.Auto_Timestamp = true
 	jlog.Logger_Info(logger, "")
 	assert_output(t, buffer, "{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\"}\n")
 }
@@ -93,17 +88,6 @@ func Test_Time_And_Duration(t *testing.T) {
 	)
 	assert_output(t, buffer,
 		"{\"level\":\"info\",\"t\":\"1970-01-01T00:00:00.000000005Z\",\"d\":1000000000}\n")
-}
-
-// Test_Network_Fields covers the net.IP and net.HardwareAddr encoders.
-func Test_Network_Fields(t *testing.T) {
-	buffer := &recording_buffer{}
-	jlog.Logger_Info(new_logger(buffer), "",
-		jlog.IP_Address("ip", net.IPv4(127, 0, 0, 1)),
-		jlog.MAC_Address("mac", net.HardwareAddr{0xde, 0xad, 0xbe, 0xef, 0x00, 0x01}),
-	)
-	assert_output(t, buffer,
-		"{\"level\":\"info\",\"ip\":\"127.0.0.1\",\"mac\":\"de:ad:be:ef:00:01\"}\n")
 }
 
 // Test_Scalar_Arrays covers typed slice fields rendering as flat JSON arrays.
@@ -121,13 +105,11 @@ func Test_Scalar_Arrays(t *testing.T) {
 // error string when a stack marshaler is configured.
 func Test_Err_With_Stack(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State:    unsafe.Pointer(buffer),
-		Write:           buffer_write,
+	logger := build(jlog.Logger_Configuration{
+		Stream:          recording_stream(buffer),
 		Clock:           frozen_clock(),
-		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "TRACE" },
-	})
+	}, jlog.LEVEL_TRACE)
 	jlog.Logger_Error(logger, "", jlog.Err(errors.New("boom")))
 	assert_output(t, buffer,
 		"{\"level\":\"error\",\"stack\":\"TRACE\",\"error\":\"boom\"}\n")
@@ -144,13 +126,11 @@ func Test_Err_Without_Stack(t *testing.T) {
 // location.
 func Test_Caller_Uses_Injected_Function(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State: unsafe.Pointer(buffer),
-		Write:        buffer_write,
-		Clock:        frozen_clock(),
-		Floor:        jlog.LEVEL_TRACE,
-		Caller:       func(skip int) (location string) { return "file.go:10" },
-	})
+	logger := build(jlog.Logger_Configuration{
+		Stream: recording_stream(buffer),
+		Clock:  frozen_clock(),
+		Caller: func(skip int) (location string) { return "file.go:10" },
+	}, jlog.LEVEL_TRACE)
 	jlog.Logger_Info(logger, "", jlog.Caller())
 	assert_output(t, buffer, "{\"level\":\"info\",\"caller\":\"file.go:10\"}\n")
 }
@@ -159,8 +139,8 @@ func Test_Caller_Uses_Injected_Function(t *testing.T) {
 // fields precede each line's own fields.
 func Test_Child_Logger_Carries_Context(t *testing.T) {
 	buffer := &recording_buffer{}
-	child := jlog.Logger_With(new_logger(buffer), jlog.String("component", "auth"))
-	jlog.Logger_Info(child, "in", jlog.String("user", "bob"))
+	child := with(new_logger(buffer), jlog.String("component", "auth"))
+	jlog.Logger_Info(&child, "in", jlog.String("user", "bob"))
 	assert_output(t, buffer,
 		"{\"level\":\"info\",\"component\":\"auth\",\"user\":\"bob\",\"message\":\"in\"}\n")
 }
@@ -168,41 +148,22 @@ func Test_Child_Logger_Carries_Context(t *testing.T) {
 // Test_Level_Floor_Filters covers a line below the floor producing no output.
 func Test_Level_Floor_Filters(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State: unsafe.Pointer(buffer),
-		Write:        buffer_write,
-		Clock:        frozen_clock(),
-		Floor:        jlog.LEVEL_INFO,
-	})
+	logger := build(jlog.Logger_Configuration{
+		Stream: recording_stream(buffer), Clock: frozen_clock(),
+	}, jlog.LEVEL_INFO)
 	jlog.Logger_Debug(logger, "dropped", jlog.String("k", "v"))
 	assert_output(t, buffer, "")
 }
 
-// Test_From_Context_Round_Trips covers carrying a logger through a context.Context
-// and recovering it.
-func Test_From_Context_Round_Trips(t *testing.T) {
-	buffer := &recording_buffer{}
-	carrier := jlog.Logger_With_Context(new_logger(buffer), t.Context())
-	jlog.Logger_Info(jlog.From_Context(carrier), "via ctx")
-	assert_output(t, buffer, "{\"level\":\"info\",\"message\":\"via ctx\"}\n")
-}
-
-// Test_From_Context_Missing_Is_Disabled covers the empty-context path returning a
-// no-op logger rather than panicking.
-func Test_From_Context_Missing_Is_Disabled(t *testing.T) {
-	buffer := &recording_buffer{}
-	jlog.Logger_Info(jlog.From_Context(t.Context()), "nope", jlog.String("k", "v"))
-	assert_output(t, buffer, "")
+// Test_Nil_Logger_Is_Disabled covers a nil Logger emitting nothing rather than panicking.
+func Test_Nil_Logger_Is_Disabled(t *testing.T) {
+	jlog.Logger_Info(nil, "nope", jlog.String("k", "v"))
 }
 
 // Test_Hot_Path_Is_Zero_Allocation is the load-bearing guarantee: a steady-state
-// log call to a discarding writer must not allocate.
+// log call to a discarding stream must not allocate.
 func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
-	logger := jlog.New(jlog.New_Input{
-		Write: discard_write,
-		Clock: frozen_clock(),
-		Floor: jlog.LEVEL_TRACE,
-	})
+	logger := discard_logger()
 	testify.Zero_Allocation(t, func() {
 		jlog.Logger_Info(logger, "done",
 			jlog.String("user", "bob"),
@@ -211,6 +172,60 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 			jlog.Float64("ratio", 1.5),
 		)
 	})
+}
+
+// Test_Construction_Is_Zero_Allocation covers New and Logger_With filling caller-owned
+// storage without allocating.
+func Test_Construction_Is_Zero_Allocation(t *testing.T) {
+	configuration := jlog.Logger_Configuration{Stream: discard_stream(), Clock: frozen_clock()}
+	var logger, child jlog.Logger
+	storage := make([]byte, TEST_LINE_BYTES)
+	child_storage := make([]byte, TEST_LINE_BYTES)
+	prefix := make(jlog.Buffer, TEST_PREFIX_BYTES)
+	testify.Zero_Allocation(t, func() {
+		logger = jlog.New(&configuration, storage, jlog.LEVEL_TRACE)
+		child = jlog.Logger_With(&logger, child_storage, prefix, jlog.String("a", "1"))
+	})
+	jlog.Logger_Info(&child, "")
+}
+
+// Test_Borrowed_Line_Drops covers a Stream holding the line past the emit: the next emit drops
+// rather than overwrite storage in flight, and the retirement frees it for the one after.
+func Test_Borrowed_Line_Drops(t *testing.T) {
+	deferred := &deferred_state{}
+	logger := build(jlog.Logger_Configuration{
+		Stream: nbio.Stream{State: deferred, Procedure: deferred_procedure},
+		Clock:  frozen_clock(),
+	}, jlog.LEVEL_TRACE)
+	jlog.Logger_Info(logger, "a")
+	jlog.Logger_Info(logger, "b")
+	if logger.Dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", logger.Dropped)
+	}
+	assert_output(t, &deferred.Buffer, "{\"level\":\"info\",\"message\":\"a\"}\n")
+	deferred_retire(deferred)
+	jlog.Logger_Info(logger, "c")
+	deferred_retire(deferred)
+	assert_output(t, &deferred.Buffer,
+		"{\"level\":\"info\",\"message\":\"a\"}\n{\"level\":\"info\",\"message\":\"c\"}\n")
+}
+
+// Test_Oversized_Line_Drops covers a line that outgrows its storage being dropped whole and
+// counted, so the Stream never sees a torn line.
+func Test_Oversized_Line_Drops(t *testing.T) {
+	buffer := &recording_buffer{}
+	logger := new_logger(buffer)
+	big := make([]byte, TEST_LINE_BYTES)
+	for index := range big {
+		big[index] = 'a'
+	}
+	jlog.Logger_Info(logger, "", jlog.String("x", string(big)))
+	assert_output(t, buffer, "")
+	if logger.Dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", logger.Dropped)
+	}
+	jlog.Logger_Info(logger, "after")
+	assert_output(t, buffer, "{\"level\":\"info\",\"message\":\"after\"}\n")
 }
 
 // Test_Header_Renders_Time_Level_Message covers the header order — timestamp, level, message —
@@ -309,8 +324,8 @@ func Test_Message_Is_Bold_When_Colored(t *testing.T) {
 // Test_No_Color_When_Disabled covers a color-off Console emitting no ANSI escape byte.
 func Test_No_Color_When_Disabled(t *testing.T) {
 	got := render(t, false, "{\"level\":\"error\",\"error\":\"boom\",\"message\":\"m\"}\n")
-	if contains([]byte(got.String()), []byte("\x1b[")) {
-		t.Fatalf("plain output must carry no ANSI escape: %q", got.String())
+	if contains([]byte(buffer_text(got)), []byte("\x1b[")) {
+		t.Fatalf("plain output must carry no ANSI escape: %q", buffer_text(got))
 	}
 }
 
@@ -354,64 +369,116 @@ func Test_Level_Filter_Passes_Level_Less_And_Non_JSON(t *testing.T) {
 
 // Test_Console_Logger_Tees_To_Capture covers New_Console_Logger rendering info and up to the
 // console sink while teeing every level as raw JSON to the capture sink — the print-to-file,
-// pure and driven by injected writers, with no OS in sight.
+// pure and driven by injected streams, with no OS in sight.
 func Test_Console_Logger_Tees_To_Capture(t *testing.T) {
 	var console, capture recording_buffer
-	logger := jlog.New_Console_Logger(jlog.New_Console_Logger_Input{
-		Console_State: unsafe.Pointer(&console),
-		Console_Write: buffer_write,
-		Capture_State: unsafe.Pointer(&capture),
-		Capture_Write: buffer_write,
-		Floor:         jlog.LEVEL_INFO,
-		Clock:         frozen_clock(),
-	})
-	jlog.Logger_Trace(logger, "quiet")
-	jlog.Logger_Info(logger, "loud")
-	// The console shows info and up, never the trace line.
-	if contains([]byte(console.String()), []byte("quiet")) {
-		t.Fatalf("console must drop the trace line: %q", console.String())
+	state := jlog.Console_Logger{
+		Configuration: jlog.Logger_Configuration{Clock: frozen_clock()},
+		Console:       jlog.Console{Stream: recording_stream(&console)},
+		Capture:       recording_stream(&capture),
 	}
-	if !contains([]byte(console.String()), []byte("INF loud")) {
-		t.Fatalf("console must show the info line: %q", console.String())
+	logger := jlog.New_Console_Logger(
+		&state, make([]byte, TEST_LINE_BYTES), jlog.LEVEL_INFO,
+	)
+	jlog.Logger_Trace(&logger, "quiet")
+	jlog.Logger_Info(&logger, "loud")
+	// The console shows info and up, never the trace line.
+	if contains([]byte(buffer_text(&console)), []byte("quiet")) {
+		t.Fatalf("console must drop the trace line: %q", buffer_text(&console))
+	}
+	if !contains([]byte(buffer_text(&console)), []byte("INF loud")) {
+		t.Fatalf("console must show the info line: %q", buffer_text(&console))
 	}
 	// The capture keeps every level as raw JSON, including the trace line the console dropped.
-	if !contains([]byte(capture.String()), []byte("\"message\":\"quiet\"")) {
-		t.Fatalf("capture must keep the trace line: %q", capture.String())
+	if !contains([]byte(buffer_text(&capture)), []byte("\"message\":\"quiet\"")) {
+		t.Fatalf("capture must keep the trace line: %q", buffer_text(&capture))
 	}
-	if !contains([]byte(capture.String()), []byte("\"message\":\"loud\"")) {
-		t.Fatalf("capture must keep the info line: %q", capture.String())
+	if !contains([]byte(buffer_text(&capture)), []byte("\"message\":\"loud\"")) {
+		t.Fatalf("capture must keep the info line: %q", buffer_text(&capture))
 	}
 }
 
 type recording_buffer []byte
 
-func (buffer recording_buffer) String() (text string) { return string(buffer) }
+func buffer_text(buffer *recording_buffer) (text string) { return string(*buffer) }
 
 // A clock whose realtime reading is always FIXED_MOMENT.
 func frozen_clock() (host time.Clock) {
-	return time.Clock{Now_Realtime: frozen_realtime}
+	return time.Clock{Now_Monotonic: zero_monotonic, Now_Realtime: frozen_realtime}
 }
 
-func frozen_realtime(_ unsafe.Pointer) (moment time.Moment) { return FIXED_MOMENT }
+func zero_monotonic(_ time.State) (moment time.Monotonic_Moment) { return 0 }
 
-func pointer_realtime(state unsafe.Pointer) (moment time.Moment) {
-	return time.Moment(*(*int64)(state))
+func frozen_realtime(_ time.State) (moment time.Moment) { return FIXED_MOMENT }
+
+func pointer_realtime(state time.State) (moment time.Moment) {
+	return time.Moment(*state.(*int64))
 }
 
-func buffer_write(
-	state unsafe.Pointer, data jlog.Data,
-) (written jlog.Data_Size, err error) {
-	buffer := (*recording_buffer)(state)
-	*buffer = append(*buffer, data...)
-	count := len(data)
-	var write_error error
-	return jlog.Data_Size(count), write_error
+func recording_stream(buffer *recording_buffer) (stream nbio.Stream) {
+	return nbio.Stream{State: buffer, Procedure: recording_procedure}
 }
 
-func discard_write(
-	_ unsafe.Pointer, data jlog.Data,
-) (written jlog.Data_Size, err error) {
-	return jlog.Data_Size(len(data)), nil
+// Retires inline so a test reads the line right after the emit returns.
+func recording_procedure(
+	state nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode, data []byte,
+	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	completion.Data = 0
+	completion.Error = nbio.Stream_Empty
+	if mode == nbio.STREAM_MODE_WRITE {
+		buffer := state.(*recording_buffer)
+		*buffer = append(*buffer, data...)
+		completion.Data = len(data)
+		completion.Error = nil
+	}
+	nbio.Stream_Callback_Call(callback, completion)
+}
+
+func discard_stream() (stream nbio.Stream) {
+	return nbio.Discard_To_Stream(&nbio.Stream_Discard{})
+}
+
+// Holds each write in flight until the test retires it, standing in for a kernel-backed Stream
+// whose retirement the root delivers later.
+type deferred_state struct {
+	Buffer     recording_buffer
+	Completion *nbio.Completion
+	Callback   nbio.Stream_Callback
+}
+
+func deferred_procedure(
+	state nbio.State, completion *nbio.Completion, _ nbio.Stream_Mode, data []byte,
+	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	deferred := state.(*deferred_state)
+	deferred.Buffer = append(deferred.Buffer, data...)
+	completion.Data = len(data)
+	completion.Error = nil
+	deferred.Completion = completion
+	deferred.Callback = callback
+}
+
+func deferred_retire(deferred *deferred_state) {
+	completion := deferred.Completion
+	deferred.Completion = nil
+	nbio.Stream_Callback_Call(deferred.Callback, completion)
+}
+
+// Submits line to stream and fails the test on a retired error.
+func write_stream(t *testing.T, stream nbio.Stream, line string) {
+	t.Helper()
+	var completion nbio.Completion
+	retired := false
+	nbio.Write(stream, &completion, []byte(line), func(_ nbio.Completion_Handle) {
+		retired = true
+	})
+	if !retired {
+		t.Fatal("stream must retire the write inline")
+	}
+	if completion.Error != nil {
+		t.Fatalf("stream write: %v", completion.Error)
+	}
 }
 
 func contains(source []byte, sought []byte) (present bool) {
@@ -447,21 +514,39 @@ func float64_from_bits(bits uint64) (value float64) {
 	return *(*float64)(unsafe.Pointer(&bits))
 }
 
+// TEST_LINE_BYTES is the line storage a test logger gets.
+const TEST_LINE_BYTES = 4096
+
+// TEST_PREFIX_BYTES is the prefix storage a test child gets.
+const TEST_PREFIX_BYTES = 256
+
+// Builds a logger over fresh configuration and line storage. A test allocates here so it needs
+// no caller-owned variables; production roots keep both in a struct.
+func build(configuration jlog.Logger_Configuration, floor jlog.Level) (logger *jlog.Logger) {
+	stored := configuration
+	built := jlog.New(&stored, make([]byte, TEST_LINE_BYTES), floor)
+	return &built
+}
+
+// Builds a child of parent over fresh line and prefix storage.
+func with(parent *jlog.Logger, fields ...jlog.Field) (child jlog.Logger) {
+	storage := make([]byte, TEST_LINE_BYTES)
+	prefix := make(jlog.Buffer, TEST_PREFIX_BYTES)
+	return jlog.Logger_With(parent, storage, prefix, fields...)
+}
+
 // A logger writing JSON lines to buffer with the frozen clock and the lowest level
 // floor, so every test line is emitted and timestamps are fixed.
-func new_logger(buffer *recording_buffer) (logger jlog.Logger) {
-	return jlog.New(jlog.New_Input{
-		Writer_State: unsafe.Pointer(buffer),
-		Write:        buffer_write,
-		Clock:        frozen_clock(),
-		Floor:        jlog.LEVEL_TRACE,
-	})
+func new_logger(buffer *recording_buffer) (logger *jlog.Logger) {
+	return build(jlog.Logger_Configuration{
+		Stream: recording_stream(buffer), Clock: frozen_clock(),
+	}, jlog.LEVEL_TRACE)
 }
 
 // Fails the test unless buffer holds exactly want.
 func assert_output(t *testing.T, buffer *recording_buffer, want string) {
 	t.Helper()
-	got := buffer.String()
+	got := buffer_text(buffer)
 	if got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
@@ -472,12 +557,8 @@ func assert_output(t *testing.T, buffer *recording_buffer, want string) {
 func render(t *testing.T, color bool, line string) (rendered *recording_buffer) {
 	t.Helper()
 	rendered = &recording_buffer{}
-	console := jlog.Console{
-		Writer_State: unsafe.Pointer(rendered), Write: buffer_write, Color: color,
-	}
-	if _, err := jlog.Console_Write(console, jlog.Data(line)); err != nil {
-		t.Fatalf("console write: %v", err)
-	}
+	console := &jlog.Console{Stream: recording_stream(rendered), Color: color}
+	write_stream(t, jlog.Console_To_Stream(console), line)
 	return rendered
 }
 
@@ -487,12 +568,8 @@ func render(t *testing.T, color bool, line string) (rendered *recording_buffer) 
 func filter(t *testing.T, floor jlog.Level, line string) (passed *recording_buffer) {
 	t.Helper()
 	passed = &recording_buffer{}
-	writer := jlog.New_Level_Filter(jlog.New_Level_Filter_Input{
-		Writer_State: unsafe.Pointer(passed), Write: buffer_write, Floor: floor,
-	})
-	if _, err := jlog.Level_Filter_Write(writer, jlog.Data(line)); err != nil {
-		t.Fatalf("level filter write: %v", err)
-	}
+	level_filter := jlog.New_Level_Filter(recording_stream(passed), floor, "")
+	write_stream(t, jlog.Level_Filter_To_Stream(&level_filter), line)
 	return passed
 }
 
@@ -505,86 +582,71 @@ const FIXED_MOMENT time.Moment = 1700000000000000000
 const FAKE_MESSAGE = "Test logging, but use a somewhat realistic message length."
 
 // A logger discarding output with the frozen clock, for benchmarks.
-func discard_logger() (logger jlog.Logger) {
-	return jlog.New(jlog.New_Input{
-		Write: discard_write,
-		Clock: frozen_clock(),
-		Floor: jlog.LEVEL_TRACE,
+func discard_logger() (logger *jlog.Logger) {
+	return build(jlog.Logger_Configuration{
+		Stream: discard_stream(), Clock: frozen_clock(),
+	}, jlog.LEVEL_TRACE)
+}
+
+// Each parallel benchmark goroutine takes its own Logger, since a Logger has one owner.
+func run_parallel(b *testing.B, shared *jlog.Logger, body func(logger *jlog.Logger)) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		own := with(shared)
+		for pb.Next() {
+			body(&own)
+		}
 	})
 }
 
 // Benchmark_Log_Empty mirrors zerolog's BenchmarkLogEmpty.
 func Benchmark_Log_Empty(b *testing.B) {
-	logger := discard_logger()
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			jlog.Logger_Log(logger, "")
-		}
+	run_parallel(b, discard_logger(), func(logger *jlog.Logger) {
+		jlog.Logger_Log(logger, "")
 	})
 }
 
 // Benchmark_Info mirrors zerolog's BenchmarkInfo.
 func Benchmark_Info(b *testing.B) {
-	logger := discard_logger()
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			jlog.Logger_Info(logger, FAKE_MESSAGE)
-		}
+	run_parallel(b, discard_logger(), func(logger *jlog.Logger) {
+		jlog.Logger_Info(logger, FAKE_MESSAGE)
 	})
 }
 
 // Benchmark_Disabled mirrors zerolog's BenchmarkDisabled.
 func Benchmark_Disabled(b *testing.B) {
-	logger := jlog.New(jlog.New_Input{
-		Write: discard_write,
-		Clock: frozen_clock(),
-		Floor: jlog.LEVEL_DISABLED,
-	})
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			jlog.Logger_Info(logger, FAKE_MESSAGE)
-		}
+	logger := build(jlog.Logger_Configuration{
+		Stream: discard_stream(), Clock: frozen_clock(),
+	}, jlog.LEVEL_DISABLED)
+	run_parallel(b, logger, func(logger *jlog.Logger) {
+		jlog.Logger_Info(logger, FAKE_MESSAGE)
 	})
 }
 
 // Benchmark_Log_Fields mirrors zerolog's BenchmarkLogFields: a string, a time, an
 // integer, and a float, plus the message.
 func Benchmark_Log_Fields(b *testing.B) {
-	logger := discard_logger()
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			jlog.Logger_Info(logger, FAKE_MESSAGE,
-				jlog.String("string", "four!"),
-				jlog.Time("time", FIXED_MOMENT),
-				jlog.Integer("int", 123),
-				jlog.Float32("float", float32(-2.203230293249593)),
-			)
-		}
+	run_parallel(b, discard_logger(), func(logger *jlog.Logger) {
+		jlog.Logger_Info(logger, FAKE_MESSAGE,
+			jlog.String("string", "four!"),
+			jlog.Time("time", FIXED_MOMENT),
+			jlog.Integer("int", 123),
+			jlog.Float32("float", float32(-2.203230293249593)),
+		)
 	})
 }
 
 // Benchmark_Context_Fields mirrors zerolog's BenchmarkContextFields.
 func Benchmark_Context_Fields(b *testing.B) {
-	logger := jlog.Logger_With(discard_logger(),
+	logger := with(discard_logger(),
 		jlog.String("string", "four!"),
 		jlog.Time("time", FIXED_MOMENT),
 		jlog.Integer("int", 123),
 		jlog.Float32("float", float32(-2.203230293249593)),
 	)
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			jlog.Logger_Info(logger, FAKE_MESSAGE)
-		}
+	run_parallel(b, &logger, func(logger *jlog.Logger) {
+		jlog.Logger_Info(logger, FAKE_MESSAGE)
 	})
 }
 
@@ -606,10 +668,13 @@ func Test_Cover_Levels(t *testing.T) {
 
 // Test_Cover_Level_String covers the cases not reached through emit.
 func Test_Cover_Level_String(t *testing.T) {
-	if jlog.LEVEL_NONE.String() != "" {
-		t.Fatalf("none = %q, want empty", jlog.LEVEL_NONE.String())
+	if jlog.Level_String(jlog.LEVEL_NONE) != "" {
+		t.Fatalf("none = %q, want empty", jlog.Level_String(jlog.LEVEL_NONE))
 	}
-	testify.Panics(t, func() { jlog.Level(50).String() })
+	testify.Panics(t, func() {
+		name := jlog.Level_String(jlog.Level(50))
+		t.Fatalf("invalid level rendered as %q", name)
+	})
 }
 
 // Test_Cover_Numeric_And_Slice_Fields covers the remaining scalar and array kinds.
@@ -632,13 +697,11 @@ func Test_Cover_Numeric_And_Slice_Fields(t *testing.T) {
 // Test_Cover_Err_Nil covers Err with a nil error and the skipped stack.
 func Test_Cover_Err_Nil(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State:    unsafe.Pointer(buffer),
-		Write:           buffer_write,
+	logger := build(jlog.Logger_Configuration{
+		Stream:          recording_stream(buffer),
 		Clock:           frozen_clock(),
-		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "S" },
-	})
+	}, jlog.LEVEL_TRACE)
 	jlog.Logger_Error(logger, "", jlog.Err(nil))
 	assert_output(t, buffer, "{\"level\":\"error\",\"error\":null}\n")
 }
@@ -653,59 +716,60 @@ func Test_Cover_Caller_Without_Function(t *testing.T) {
 // Test_Cover_Auto_Caller covers the per-line automatic caller.
 func Test_Cover_Auto_Caller(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State: unsafe.Pointer(buffer),
-		Write:        buffer_write,
-		Clock:        frozen_clock(),
-		Floor:        jlog.LEVEL_TRACE,
-		Auto_Caller:  true,
-		Caller:       func(skip int) (location string) { return "x.go:1" },
-	})
+	logger := build(jlog.Logger_Configuration{
+		Stream: recording_stream(buffer),
+		Clock:  frozen_clock(),
+		Caller: func(skip int) (location string) { return "x.go:1" },
+	}, jlog.LEVEL_TRACE)
+	logger.Auto_Caller = true
 	jlog.Logger_Info(logger, "")
 	assert_output(t, buffer, "{\"level\":\"info\",\"caller\":\"x.go:1\"}\n")
 }
 
-// Test_Cover_Disabled_Floor covers a logger whose floor disables all output.
+// Test_Cover_Disabled_Floor covers a logger whose floor disables all output, and a child of it
+// staying disabled.
 func Test_Cover_Disabled_Floor(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State: unsafe.Pointer(buffer),
-		Write:        buffer_write,
-		Clock:        frozen_clock(),
-		Floor:        jlog.LEVEL_DISABLED,
-	})
+	logger := build(jlog.Logger_Configuration{
+		Stream: recording_stream(buffer), Clock: frozen_clock(),
+	}, jlog.LEVEL_DISABLED)
 	jlog.Logger_Info(logger, "x")
+	child := with(logger, jlog.String("a", "1"))
+	jlog.Logger_Info(&child, "y")
 	assert_output(t, buffer, "")
 }
 
 // Test_Cover_Nested_With covers Logger_With on a logger that already has a prefix.
 func Test_Cover_Nested_With(t *testing.T) {
 	buffer := &recording_buffer{}
-	parent := jlog.Logger_With(new_logger(buffer), jlog.String("a", "1"))
-	child := jlog.Logger_With(parent, jlog.String("b", "2"))
-	jlog.Logger_Info(child, "")
+	parent := with(new_logger(buffer), jlog.String("a", "1"))
+	child := with(&parent, jlog.String("b", "2"))
+	jlog.Logger_Info(&child, "")
 	assert_output(t, buffer, "{\"level\":\"info\",\"a\":\"1\",\"b\":\"2\"}\n")
 }
 
 // Test_Cover_Custom_Field_Names covers configured (non-default) key names.
 func Test_Cover_Custom_Field_Names(t *testing.T) {
 	buffer := &recording_buffer{}
-	logger := jlog.New(jlog.New_Input{
-		Writer_State:       unsafe.Pointer(buffer),
-		Write:              buffer_write,
+	logger := build(jlog.Logger_Configuration{
+		Stream:             recording_stream(buffer),
 		Clock:              frozen_clock(),
-		Floor:              jlog.LEVEL_TRACE,
 		Level_Field_Name:   "lvl",
 		Message_Field_Name: "msg",
-	})
+	}, jlog.LEVEL_TRACE)
 	jlog.Logger_Info(logger, "hi")
 	assert_output(t, buffer, "{\"lvl\":\"info\",\"msg\":\"hi\"}\n")
 }
 
-// Test_Cover_Nil_Writer covers New defaulting a nil writer to a discard sink.
-func Test_Cover_Nil_Writer(t *testing.T) {
-	logger := jlog.New(jlog.New_Input{Clock: frozen_clock(), Floor: jlog.LEVEL_TRACE})
+// Test_Cover_Zero_Stream covers New accepting the zero Stream, which retires every line as
+// Stream_Empty, and New refusing a missing configuration or missing storage.
+func Test_Cover_Zero_Stream(t *testing.T) {
+	logger := build(jlog.Logger_Configuration{Clock: frozen_clock()}, jlog.LEVEL_TRACE)
 	jlog.Logger_Info(logger, "to nowhere")
+	storage := make([]byte, TEST_LINE_BYTES)
+	testify.Panics(t, func() { jlog.New(nil, storage, jlog.LEVEL_TRACE) })
+	var configuration jlog.Logger_Configuration
+	testify.Panics(t, func() { jlog.New(&configuration, nil, jlog.LEVEL_TRACE) })
 }
 
 // Test_Cover_String_Escape covers the escape path by round-tripping a value with
@@ -738,10 +802,10 @@ func Test_Cover_Invalid_UTF8(t *testing.T) {
 	)
 	wire := []byte(*buffer)
 	if !contains(wire, []byte{'\\', 'u', 'f', 'f', 'f', 'd'}) {
-		t.Fatalf("invalid byte must escape, got %q", buffer.String())
+		t.Fatalf("invalid byte must escape, got %q", buffer_text(buffer))
 	}
 	if contains(wire, []byte("�")) {
-		t.Fatalf("output must not carry the raw replacement rune: %q", buffer.String())
+		t.Fatalf("output must not carry the raw replacement rune: %q", buffer_text(buffer))
 	}
 	assert_output(t, buffer,
 		"{\"level\":\"info\",\"s\":\"\\ufffd\",\"b\":\"ok\\ufffd\"}\n")
@@ -775,20 +839,6 @@ func Test_Cover_Pre_Epoch_Time(t *testing.T) {
 	assert_output(t, buffer, want)
 }
 
-// Test_Cover_Oversized_Line covers dropping a buffer that grew past the pool cap.
-func Test_Cover_Oversized_Line(t *testing.T) {
-	buffer := &recording_buffer{}
-	logger := new_logger(buffer)
-	big := make([]byte, 70000)
-	for index := range big {
-		big[index] = 'a'
-	}
-	jlog.Logger_Info(logger, "", jlog.String("x", string(big)))
-	if len(*buffer) < 70000 {
-		t.Fatalf("output was %d bytes; want a large line", len(*buffer))
-	}
-}
-
 // Test_Cover_Unknown_Kind covers the defensive path for an unrecognized field kind.
 func Test_Cover_Unknown_Kind(t *testing.T) {
 	buffer := &recording_buffer{}
@@ -800,9 +850,19 @@ func Test_Cover_Unknown_Kind(t *testing.T) {
 // that carries no level field, the no-separator branch of the object-data merge.
 func Test_Cover_Prefix_Without_Level(t *testing.T) {
 	buffer := &recording_buffer{}
-	child := jlog.Logger_With(new_logger(buffer), jlog.String("a", "1"))
-	jlog.Logger_Log(child, "")
+	child := with(new_logger(buffer), jlog.String("a", "1"))
+	jlog.Logger_Log(&child, "")
 	assert_output(t, buffer, "{\"a\":\"1\"}\n")
+}
+
+// Test_Cover_Prefix_Too_Large covers Logger_With refusing a prefix that outgrows its storage.
+func Test_Cover_Prefix_Too_Large(t *testing.T) {
+	big := make([]byte, TEST_PREFIX_BYTES)
+	for index := range big {
+		big[index] = 'a'
+	}
+	logger := discard_logger()
+	testify.Panics(t, func() { with(logger, jlog.String("x", string(big))) })
 }
 
 // Test_Cover_Float_Exponent_No_Trim covers an exponent whose second digit is not a
@@ -823,16 +883,14 @@ func Fuzz_Encode(f *testing.F) {
 	f.Fuzz(func(t *testing.T, raw []byte, moment int64, number int64, float_bits uint64) {
 		buffer := &recording_buffer{}
 		host := time.Clock{
-			State:        unsafe.Pointer(&moment),
-			Now_Realtime: pointer_realtime,
+			State:         &moment,
+			Now_Monotonic: zero_monotonic,
+			Now_Realtime:  pointer_realtime,
 		}
-		logger := jlog.New(jlog.New_Input{
-			Writer_State:   unsafe.Pointer(buffer),
-			Write:          buffer_write,
-			Clock:          host,
-			Floor:          jlog.LEVEL_TRACE,
-			Auto_Timestamp: true,
-		})
+		logger := build(jlog.Logger_Configuration{
+			Stream: recording_stream(buffer), Clock: host,
+		}, jlog.LEVEL_TRACE)
+		logger.Auto_Timestamp = true
 		jlog.Logger_Info(logger, string(raw),
 			jlog.String("s", string(raw)),
 			jlog.Bytes("b", raw),
@@ -841,9 +899,12 @@ func Fuzz_Encode(f *testing.F) {
 			jlog.Time("t", time.Moment(moment)),
 			jlog.Duration("d", time.Duration(number)),
 		)
+		if logger.Dropped == 1 {
+			return
+		}
 		line := []byte(*buffer)
 		position, status := json.Validate(json.Encoded(line[:len(line)-1]))
-		if status != json.STATUS_OK {
+		if !status {
 			t.Fatalf("invalid JSON %q at %d", line, position)
 		}
 	})

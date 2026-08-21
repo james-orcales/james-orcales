@@ -1,7 +1,8 @@
 // Package jlog is the composition-tier sibling of the jlog library. It binds the
-// library to the real world — os.Stderr, the operating-system clock, and
-// runtime.Caller — in the one Default logger, exposes package-level convenience
-// functions that log to it, and re-exports the library surface so callers can:
+// library to the real world — stderr through the root's nbio.Storage, the
+// operating-system clock, and runtime.Caller — in the one Default logger, exposes
+// package-level convenience functions that log to it, and re-exports the library
+// surface so callers can:
 //
 //	import jlog "local/james-orcales/shared/jlog/default"
 //
@@ -12,17 +13,15 @@
 package jlog
 
 import (
-	"context"
-	"net"
 	"runtime"
-	"syscall"
 	"unsafe"
 
 	"local/james-orcales/shared/jlog"
+	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 	system_time "local/james-orcales/shared/sim/time/default"
 	"local/james-orcales/shared/strconv"
-	"local/james-orcales/shared/sync/diode"
 )
 
 // Logger re-exports jlog.Logger.
@@ -30,9 +29,6 @@ type Logger = jlog.Logger
 
 // Logger_Configuration re-exports jlog.Logger_Configuration.
 type Logger_Configuration = jlog.Logger_Configuration
-
-// New_Input re-exports jlog.New_Input.
-type New_Input = jlog.New_Input
 
 // Field re-exports jlog.Field.
 type Field = jlog.Field
@@ -51,12 +47,6 @@ type Buffer = jlog.Buffer
 
 // Data re-exports jlog.Data.
 type Data = jlog.Data
-
-// Data_Size re-exports jlog.Data_Size.
-type Data_Size = jlog.Data_Size
-
-// Write re-exports jlog.Write.
-type Write = jlog.Write
 
 // LEVEL_TRACE re-exports jlog.LEVEL_TRACE.
 const LEVEL_TRACE = jlog.LEVEL_TRACE
@@ -85,87 +75,119 @@ const LEVEL_DISABLED = jlog.LEVEL_DISABLED
 // their Caller location is off by one.
 const CALLER_BASE_FRAMES = 6
 
-// The default diode ring capacity: how many finished lines can queue ahead of a slow
-// stderr before the oldest are dropped. Line buffers are pooled, so memory tracks
-// occupancy: an idle logger (or one whose sink keeps up) holds just the ~800 KB slot
-// array, and it tops out near 55 MB (~512 B per line plus its bucket) only if the ring
-// ever completely fills.
-const DEFAULT_DIODE_COUNT = diode.SLOT_COUNT_MAXIMUM
+// WRITE_TIMEOUT bounds one stderr write on the timeline; a stuck pipe retires with
+// Deadline_Exceeded instead of holding the line forever.
+const WRITE_TIMEOUT = 1 * time.SECOND
 
-// STDERR_DESCRIPTOR is the process standard error stream owned by this composition root.
-const STDERR_DESCRIPTOR = 2
+// FILE_MODES lists what a borrowed descriptor supports: it has no cursor, and Close must not
+// release a descriptor this package never opened.
+const FILE_MODES nbio.Stream_Mode_Set = 1<<nbio.STREAM_MODE_CLOSE |
+	1<<nbio.STREAM_MODE_FLUSH | 1<<nbio.STREAM_MODE_WRITE |
+	1<<nbio.STREAM_MODE_DESTROY | 1<<nbio.STREAM_MODE_QUERY
 
-// DROP_REPORT_SIZE_MAXIMUM holds static text plus the widest bounded missed count.
-const DROP_REPORT_SIZE_MAXIMUM = len("jlog: dropped  log lines (sink too slow)\n") +
-	strconv.DECIMAL_TEXT_SIZE_MAXIMUM
-
-// Default is the OS-bound logger the package-level convenience functions write to.
-// It writes JSON lines to stderr through a non-blocking diode, stamps every line from
-// the OS clock, and is reassignable: tests redirect it to a buffer, and programs may
-// replace it at startup. Build a private logger with New when you need an independent
-// one.
+// Default is the logger the package-level convenience functions write through. It is the zero
+// Logger, which emits nothing, until the root that owns the IO assigns it:
 //
-// Because the diode is non-blocking, a stderr that cannot keep up never stalls a
-// caller; instead the oldest queued lines are dropped (reported via report_dropped),
-// and lines still buffered at an unflushed exit are lost. A program that needs every
-// line guaranteed should build its own synchronous logger with New.
-var Default = New_Default_Logger()
+//	jlog.Default = jlog.New_Default_Logger(loop.Storage, stderr)
+//
+// Like every jlog.Logger it has one owner: a program whose goroutines all log builds one Logger
+// per goroutine with New or Logger_With instead of sharing Default.
+var Default Logger
 
-// New_Default_Logger builds the OS-bound logger: a non-blocking diode over stderr, the
-// operating system clock (shared by the logger and the diode's drain), automatic
-// timestamps, and a runtime-backed caller lookup. This is the one place in the jlog
-// tree where ambient binding is permitted.
-func New_Default_Logger() (logger Logger) {
-	host := system_time.New_Operating_System_Clock()
-	writer := diode.New(diode.New_Input{
-		Write:         diode_stderr_write,
-		Clock:         host,
-		Sleep:         system_time.Sleep,
-		Count:         DEFAULT_DIODE_COUNT,
-		Poll_Interval: diode.Stored_Poll_Interval(100 * time.MILLISECOND),
-		Alerter:       report_dropped,
-	})
-	return jlog.New(jlog.New_Input{
-		Writer_State:   unsafe.Pointer(writer),
-		Write:          jlog_diode_write,
-		Clock:          host,
-		Floor:          jlog.LEVEL_INFO,
-		Auto_Timestamp: true,
-		Caller:         operating_system_caller,
-	})
-}
+// LINE_BYTES holds a typical stderr line with room for a few long strings.
+const LINE_BYTES = 4096
 
-// Surfaces diode drops on stderr so they never vanish silently, naming the cause so a slow
-// sink and a rate limit are told apart.
-func report_dropped(missed int, cause diode.Drop_Cause) {
-	reason := []byte("sink too slow")
-	if cause == diode.DROP_RATE_LIMIT {
-		reason = []byte("rate limited")
+// New_Default_Logger builds the OS-bound logger over the root's Storage and the descriptor it
+// names, typically stderr: lines go out through nbio.Storage_Write, stamped by the OS clock,
+// with a runtime-backed caller lookup. This is the one place in the jlog tree where ambient
+// binding is permitted, and the one place that allocates: the state behind Default lives on the
+// heap so Default is the package's only variable.
+func New_Default_Logger(storage nbio.Storage, file nbio.File) (logger Logger) {
+	configuration := &jlog.Logger_Configuration{
+		Stream: File_To_Stream(&Stream_File{Storage: storage, File: file}),
+		Clock:  system_time.New_Operating_System_Clock(),
+		Caller: operating_system_caller,
 	}
-	var storage [DROP_REPORT_SIZE_MAXIMUM]byte
-	report := storage[:0]
-	report = append(report, "jlog: dropped "...)
-	var digits [strconv.DECIMAL_TEXT_SIZE_MAXIMUM]byte
-	count := strconv.Format_Decimal_Into(digits[:], strconv.Machine_Integer(missed))
-	report = append(report, digits[:int(count)]...)
-	report = append(report, " log lines ("...)
-	report = append(report, reason...)
-	report = append(report, ')', '\n')
-	syscall.Write(STDERR_DESCRIPTOR, report)
+	logger = jlog.New(configuration, make([]byte, LINE_BYTES), jlog.LEVEL_INFO)
+	logger.Auto_Timestamp = true
+	return logger
 }
 
-func diode_stderr_write(
-	_ unsafe.Pointer, data diode.Data,
-) (written diode.Data_Size, err error) {
-	count, write_error := syscall.Write(STDERR_DESCRIPTOR, data)
-	return diode.Data_Size(count), write_error
+// Stream_File is an nbio.Stream over one descriptor the process already holds, written through
+// the injected Storage so the root's loop retires it. Completion sits first so the static
+// retire callback recovers this state from the handle alone.
+type Stream_File struct {
+	// Completion is this Stream's own submission storage; the caller's is filled on retire.
+	Completion nbio.Completion
+	// Storage is the injected file half of the IO surface.
+	Storage nbio.Storage
+	// File is the borrowed descriptor.
+	File nbio.File
+	// Caller_Completion is the outer completion awaiting the in-flight write.
+	Caller_Completion *nbio.Completion
+	// Callback is the outer retirement for the in-flight write.
+	Callback nbio.Stream_Callback
+	// Closed refuses writes after Close without releasing the descriptor.
+	Closed bool
 }
 
-func jlog_diode_write(
-	state unsafe.Pointer, data jlog.Data,
-) (written jlog.Data_Size, err error) {
-	count, write_error := (*diode.Writer)(state).Write(data)
-	return jlog.Data_Size(count), write_error
+// File_To_Stream keeps descriptor ownership in the caller state.
+func File_To_Stream(state *Stream_File) (stream nbio.Stream) {
+	aver.Always(state != nil, "A file Stream has state.")
+	return nbio.Stream{State: state, Procedure: stream_file_procedure}
+}
+
+// One write is in flight at a time, which holds because a Logger has one owner and a diode
+// submits one line at a time; a second submission while one is pending is a caller defect.
+func stream_file_procedure(
+	state_value nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode, data []byte,
+	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	state := state_value.(*Stream_File)
+	completion.Data = 0
+	completion.Error = nil
+	switch mode {
+	case nbio.STREAM_MODE_WRITE:
+		if state.Closed {
+			completion.Error = nbio.Stream_Empty
+			break
+		}
+		aver.Always(
+			state.Caller_Completion == nil, "A file Stream has one write in flight.",
+		)
+		state.Caller_Completion = completion
+		state.Callback = callback
+		nbio.Storage_Write(
+			state.Storage, &state.Completion, state.File, data,
+			nbio.FILE_POSITION_CURRENT, WRITE_TIMEOUT,
+			stream_file_retire,
+		)
+		return
+	case nbio.STREAM_MODE_QUERY:
+		completion.Data = int(FILE_MODES)
+	case nbio.STREAM_MODE_CLOSE, nbio.STREAM_MODE_DESTROY:
+		state.Closed = true
+	case nbio.STREAM_MODE_FLUSH:
+		if state.Closed {
+			completion.Error = nbio.Stream_Empty
+		}
+	default:
+		completion.Error = nbio.Stream_Empty
+	}
+	nbio.Stream_Callback_Call(callback, completion)
+}
+
+// Copies the result out and clears the in-flight slot before calling back, so a retirement
+// that submits again finds the Stream free.
+func stream_file_retire(completion nbio.Completion_Handle) {
+	state := (*Stream_File)(unsafe.Pointer(completion))
+	caller := state.Caller_Completion
+	callback := state.Callback
+	state.Caller_Completion = nil
+	state.Callback = nbio.Stream_Callback{}
+	caller.Data = completion.Data
+	caller.Error = completion.Error
+	nbio.Stream_Callback_Call(callback, caller)
 }
 
 // Resolves a frame-skip count to a "file:line" location via runtime.Caller, the
@@ -180,94 +202,83 @@ func operating_system_caller(skip int) (location string) {
 	return file + ":" + string(storage[:int(count)])
 }
 
-// Trace logs a trace-level line to Default.
+// Trace logs a trace-level line through Default.
 func Trace(message string, fields ...Field) {
-	jlog.Logger_Trace(Default, message, fields...)
+	jlog.Logger_Trace(&Default, message, fields...)
 }
 
-// Debug logs a debug-level line to Default.
+// Debug logs a debug-level line through Default.
 func Debug(message string, fields ...Field) {
-	jlog.Logger_Debug(Default, message, fields...)
+	jlog.Logger_Debug(&Default, message, fields...)
 }
 
-// Info logs an info-level line to Default.
+// Info logs an info-level line through Default.
 func Info(message string, fields ...Field) {
-	jlog.Logger_Info(Default, message, fields...)
+	jlog.Logger_Info(&Default, message, fields...)
 }
 
-// Warn logs a warn-level line to Default.
+// Warn logs a warn-level line through Default.
 func Warn(message string, fields ...Field) {
-	jlog.Logger_Warn(Default, message, fields...)
+	jlog.Logger_Warn(&Default, message, fields...)
 }
 
-// Error logs an error-level line to Default.
+// Error logs an error-level line through Default.
 func Error(message string, fields ...Field) {
-	jlog.Logger_Error(Default, message, fields...)
+	jlog.Logger_Error(&Default, message, fields...)
 }
 
-// Log logs a line with no severity field to Default.
+// Log logs a line with no severity field through Default.
 func Log(message string, fields ...Field) {
-	jlog.Logger_Log(Default, message, fields...)
-}
-
-// With returns a child of Default carrying fields as a fixed prefix.
-func With(fields ...Field) (child Logger) {
-	return jlog.Logger_With(Default, fields...)
+	jlog.Logger_Log(&Default, message, fields...)
 }
 
 // New re-exports jlog.New for building an independent logger from this import.
-func New(input New_Input) (logger Logger) {
-	return jlog.New(input)
+func New(
+	configuration *Logger_Configuration, storage []byte, floor Level,
+) (logger Logger) {
+	return jlog.New(configuration, storage, floor)
 }
 
 // Logger_Trace re-exports jlog.Logger_Trace.
-func Logger_Trace(logger Logger, message string, fields ...Field) {
+func Logger_Trace(logger *Logger, message string, fields ...Field) {
 	jlog.Logger_Trace(logger, message, fields...)
 }
 
 // Logger_Debug re-exports jlog.Logger_Debug.
-func Logger_Debug(logger Logger, message string, fields ...Field) {
+func Logger_Debug(logger *Logger, message string, fields ...Field) {
 	jlog.Logger_Debug(logger, message, fields...)
 }
 
 // Logger_Info re-exports jlog.Logger_Info.
-func Logger_Info(logger Logger, message string, fields ...Field) {
+func Logger_Info(logger *Logger, message string, fields ...Field) {
 	jlog.Logger_Info(logger, message, fields...)
 }
 
 // Logger_Warn re-exports jlog.Logger_Warn.
-func Logger_Warn(logger Logger, message string, fields ...Field) {
+func Logger_Warn(logger *Logger, message string, fields ...Field) {
 	jlog.Logger_Warn(logger, message, fields...)
 }
 
 // Logger_Error re-exports jlog.Logger_Error.
-func Logger_Error(logger Logger, message string, fields ...Field) {
+func Logger_Error(logger *Logger, message string, fields ...Field) {
 	jlog.Logger_Error(logger, message, fields...)
 }
 
 // Logger_Log re-exports jlog.Logger_Log.
-func Logger_Log(logger Logger, message string, fields ...Field) {
+func Logger_Log(logger *Logger, message string, fields ...Field) {
 	jlog.Logger_Log(logger, message, fields...)
 }
 
 // Logger_At_Level re-exports jlog.Logger_At_Level.
-func Logger_At_Level(logger Logger, level Level, message string, fields ...Field) {
+func Logger_At_Level(logger *Logger, level Level, message string, fields ...Field) {
 	jlog.Logger_At_Level(logger, level, message, fields...)
 }
 
 // Logger_With re-exports jlog.Logger_With.
-func Logger_With(logger Logger, fields ...Field) (child Logger) {
-	return jlog.Logger_With(logger, fields...)
-}
-
-// Logger_With_Context re-exports jlog.Logger_With_Context.
-func Logger_With_Context(logger Logger, parent context.Context) (child context.Context) {
-	return jlog.Logger_With_Context(logger, parent)
-}
-
-// From_Context re-exports jlog.From_Context.
-func From_Context(ctx context.Context) (logger Logger) {
-	return jlog.From_Context(ctx)
+func Logger_With(
+	parent *Logger, storage []byte, prefix Buffer, fields ...Field,
+) (child Logger) {
+	return jlog.Logger_With(parent, storage, prefix, fields...)
 }
 
 // String re-exports jlog.String.
@@ -370,16 +381,6 @@ func Duration(key Key, value time.Duration) (field Field) {
 	return jlog.Duration(key, value)
 }
 
-// IP_Address re-exports jlog.IP_Address.
-func IP_Address(key Key, value net.IP) (field Field) {
-	return jlog.IP_Address(key, value)
-}
-
-// MAC_Address re-exports jlog.MAC_Address.
-func MAC_Address(key Key, value net.HardwareAddr) (field Field) {
-	return jlog.MAC_Address(key, value)
-}
-
 // Strings re-exports jlog.Strings.
 func Strings(key Key, value []string) (field Field) {
 	return jlog.Strings(key, value)
@@ -423,10 +424,9 @@ func Caller() (field Field) {
 // Level_Filter re-exports jlog.Level_Filter.
 type Level_Filter = jlog.Level_Filter
 
-// New_Level_Filter_Input re-exports jlog.New_Level_Filter_Input.
-type New_Level_Filter_Input = jlog.New_Level_Filter_Input
-
 // New_Level_Filter re-exports jlog.New_Level_Filter.
-func New_Level_Filter(input New_Level_Filter_Input) (filter Level_Filter) {
-	return jlog.New_Level_Filter(input)
+func New_Level_Filter(
+	stream nbio.Stream, floor Level, level_field_name string,
+) (filter Level_Filter) {
+	return jlog.New_Level_Filter(stream, floor, level_field_name)
 }
