@@ -23,6 +23,12 @@ A constraint states one truth of tags: a tag holds where the target names it, th
 reverses one, the two signs join and meet them, and parentheses group them. The word unix holds on
 every operating system Go calls one, and a tag the target never names holds nothing.
 
+# Imports
+
+Every import one file states names this module or the standard library; a path whose first element
+holds a period names a host, thus a third party, and a file stating one stands in no build. A head
+whose quotes or whose block never close states no truth, and one file states at most 256 imports.
+
 # Systems
 
 Nineteen operating systems and twenty-four architectures are known, which is the list the toolchain
@@ -32,8 +38,8 @@ says nothing about the system it stands in.
 # Directories
 
 A Directory_Runner reads one directory through the storage the caller injects and keeps the names
-of the Go files that stand in the build: the name states the systems, and the constraint the file
-opens with states the tags. The caller owns the loop, every buffer, and the step that drives it.
+of the Go files that stand in the build: the name states the systems, the constraint the file opens
+with states the tags, and the imports it states name no third party.
 
 # Refusals
 

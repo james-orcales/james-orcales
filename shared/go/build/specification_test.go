@@ -33,6 +33,11 @@ func Test_Constraints(t *testing.T) {
 	test_constraints(t)
 }
 
+// Test_Imports binds the Imports specification leaf before fixture declarations.
+func Test_Imports(t *testing.T) {
+	test_imports(t)
+}
+
 // Test_Systems binds the Systems specification leaf before fixture declarations.
 func Test_Systems(t *testing.T) {
 	test_systems(t)
@@ -168,6 +173,58 @@ func test_constraints(t *testing.T) {
 	windows := target("windows", "amd64", nil)
 	testify.False(t, bool(holds(t, "unix", windows)),
 		"the word unix holds on no system Go calls otherwise")
+}
+
+func test_imports(t *testing.T) {
+	subject := build.Build{}
+	// A path this module names and a path the standard library names stand in the build; a
+	// path whose first element holds a dot names a host, thus a third party.
+	for _, item := range []struct {
+		Text string
+		Held bool
+		Ok   bool
+	}{
+		{"package one\n", true, true},
+		{"package one\n\nimport \"unsafe\"\n", true, true},
+		{"package one\n\nimport \"local/james-orcales/shared/go/token\"\n", true, true},
+		{"package one\n\nimport \"github.com/x/y\"\n", false, true},
+		{"package one\n\nimport \"gopkg.in/yaml.v3\"\n", false, true},
+		{"package one\n\nimport one \"github.com/x/y\"\n", false, true},
+		{
+			"package one\n\nimport (\n\t\"unsafe\"\n\n\t\"local/james-orcales/x\"\n)\n",
+			true, true,
+		},
+		{"package one\n\nimport (\n\t\"unsafe\"\n\n\t\"github.com/x/y\"\n)\n", false, true},
+		{"package one\n\nimport (\n\t\"unsafe\"\n", false, false},
+		{"package one\n\nimport \"unsafe\n", false, false},
+	} {
+		held, ok := build.Holds_Imports(&subject, token.Source(item.Text))
+		testify.Equal(t, item.Held, bool(held), "the imports of %q hold", item.Text)
+		testify.Equal(t, item.Ok, bool(ok), "the imports of %q read", item.Text)
+	}
+	// The widest text one source states reads as well as one head, which is the width a
+	// caller may hand the read.
+	widest := make([]byte, token.SOURCE_SIZE_MAXIMUM)
+	for index := range widest {
+		widest[index] = 'a'
+	}
+	held, ok := build.Holds_Imports(&subject, token.Source(widest))
+	testify.True(t, bool(held), "the widest text names no third party")
+	testify.True(t, bool(ok), "the widest text reads")
+	// A file the read of a directory meets states its imports the same way, thus a file
+	// naming a third party stands outside the build the runner answers for.
+	fixture := directory_fixture{
+		Names:   []string{"first.go", "second.go"},
+		Folders: []bool{false, false},
+		Headers: []string{
+			"package one\n\nimport \"local/james-orcales/x\"\n",
+			"package one\n\nimport \"github.com/x/y\"\n",
+		},
+	}
+	names := read_directory(t, &fixture, "one", 1)
+	testify.Equal(t, 1, len(names), "a file naming a third party stands in no build")
+	testify.Equal(t, "first.go", string(names[0]),
+		"a file naming this module alone stands in the build")
 }
 
 func test_systems(t *testing.T) {
@@ -318,12 +375,14 @@ func read_sized(
 ) (held build.Name_Storage) {
 	t.Helper()
 	one := target("linux", "amd64", nil)
+	// Both halves carry one backend, which is what one loop states.
 	loop := nbio.IO{Storage: nbio.Storage{
 		State:                           unsafe.Pointer(fixture),
 		Open_At_Procedure:               directory_open,
 		Get_Directory_Entries_Procedure: directory_entries,
 		Read_Procedure:                  directory_read,
-	}, Close_Procedure: directory_close}
+	}, Network: nbio.Network{State: unsafe.Pointer(fixture)},
+		Close_Procedure: directory_close}
 	runner := build.Directory_Runner{}
 	build.Directory_Runner_Init(&runner, loop, &one, path, build.Directory_Memory{
 		Entries: make(build.Entry_Storage, slots),

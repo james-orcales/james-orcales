@@ -485,6 +485,163 @@ func Names_System(subject *Build, one *Target, name token.Source) (held Boolean)
 	return holds_word(subject, one)
 }
 
+// Holds_Imports reports whether every import one file states names this module or the standard
+// library, and whether the reader read them. A path outside both names a third party, which
+// stands in no build this package answers for.
+func Holds_Imports(subject *Build, text token.Source) (held Boolean, ok Boolean) {
+	defer func() {
+		Boolean_Invariants(held, "holds_imports.held")
+		Boolean_Invariants(ok, "holds_imports.ok")
+	}()
+	Build_Invariants(subject, "holds_imports.subject")
+	token.Source_Invariants(text, "holds_imports.text")
+	subject.Sources[SOURCE_TEXT] = text
+	subject.Flags[FLAG_FAILED] = false
+	place := 0
+	count := 0
+	opened := false
+	stated := false
+	for place < len(text) {
+		end := place
+		for end < len(text) {
+			if text[end] == '\n' {
+				break
+			}
+			end = end + 1
+		}
+		subject.Sources[SOURCE_TAG] = text[place:end]
+		place = end + 1
+		if !stated {
+			subject.Heads[HEAD_SLOT] = PACKAGE_HEAD
+			stated = bool(opens_line(subject))
+			continue
+		}
+		if bool(states_no_import(subject)) {
+			continue
+		}
+		if opened {
+			if string(subject.Sources[SOURCE_TAG]) == IMPORT_TAIL {
+				opened = false
+				continue
+			}
+		} else {
+			subject.Heads[HEAD_SLOT] = IMPORT_OPENING
+			if bool(opens_line(subject)) {
+				opened = true
+				continue
+			}
+			subject.Heads[HEAD_SLOT] = IMPORT_HEAD
+			if !bool(opens_line(subject)) {
+				// The imports of a file stand ahead of every other declaration,
+				// thus the first one that follows closes the run of them.
+				return true, true
+			}
+		}
+		count = count + 1
+		if count > IMPORT_COUNT_MAXIMUM {
+			return false, false
+		}
+		one, read := holds_import_line(subject)
+		if !bool(read) {
+			return false, false
+		}
+		if !bool(one) {
+			return false, true
+		}
+	}
+	// A block the text never closes states an import the read never saw, thus the read states
+	// no truth about the file at all.
+	if opened {
+		return false, false
+	}
+	return true, true
+}
+
+// Reads the path one line states and reports whether it stands in the build, and whether the line
+// stated a path at all.
+func holds_import_line(subject *Build) (held Boolean, ok Boolean) {
+	defer func() {
+		Boolean_Invariants(held, "holds_import_line.held")
+		Boolean_Invariants(ok, "holds_import_line.ok")
+	}()
+	Build_Invariants(subject, "holds_import_line.subject")
+	if !bool(take_import_path(subject)) {
+		return false, false
+	}
+	return Boolean(!bool(names_third_party(subject))), true
+}
+
+// Reports whether the line the tag slot holds states no import at all, which a blank line and a
+// comment both do. A block of imports holds either between the paths it states.
+func states_no_import(subject *Build) (skipped Boolean) {
+	defer func() { Boolean_Invariants(skipped, "states_no_import.skipped") }()
+	Build_Invariants(subject, "states_no_import.subject")
+	line := subject.Sources[SOURCE_TAG]
+	if len(line) == 0 {
+		return true
+	}
+	if line[0] == '/' {
+		return true
+	}
+	if line[0] != '\t' {
+		return false
+	}
+	if len(line) == 1 {
+		return true
+	}
+	return Boolean(line[1] == '/')
+}
+
+// Reads the path the line the tag slot holds states into the word slot, and reports whether it
+// states one. A line whose quotes never close states no path the read can stand on.
+func take_import_path(subject *Build) (found Boolean) {
+	defer func() { Boolean_Invariants(found, "take_import_path.found") }()
+	Build_Invariants(subject, "take_import_path.subject")
+	line := subject.Sources[SOURCE_TAG]
+	opening := 0
+	for opening < len(line) {
+		if line[opening] == '"' {
+			break
+		}
+		opening = opening + 1
+	}
+	if opening == len(line) {
+		return false
+	}
+	tail := opening + 1
+	for tail < len(line) {
+		if line[tail] == '"' {
+			break
+		}
+		tail = tail + 1
+	}
+	if tail == len(line) {
+		return false
+	}
+	subject.Sources[SOURCE_WORD] = line[opening+1 : tail]
+	return true
+}
+
+// Reports whether the path the word slot holds names a third party. The first element of a path
+// the standard library states holds no period, and neither does one this module states, thus a
+// period there names a host, which is how every module outside this one is named.
+func names_third_party(subject *Build) (yes Boolean) {
+	defer func() { Boolean_Invariants(yes, "names_third_party.yes") }()
+	Build_Invariants(subject, "names_third_party.subject")
+	path := subject.Sources[SOURCE_WORD]
+	place := 0
+	for place < len(path) {
+		if path[place] == '/' {
+			return false
+		}
+		if path[place] == '.' {
+			return true
+		}
+		place = place + 1
+	}
+	return false
+}
+
 // Reads the name of one file up to the period that closes it, which is the text the systems it
 // names stand in.
 func take_stem(name token.Source) (text token.Source) {
@@ -637,6 +794,19 @@ const BUILD_HEAD = "//go:build "
 // constraint stands in.
 const PACKAGE_HEAD = "package "
 
+// IMPORT_HEAD is the text one import declaration opens with.
+const IMPORT_HEAD = "import "
+
+// IMPORT_OPENING is the text the block of imports one file states opens with.
+const IMPORT_OPENING = "import ("
+
+// IMPORT_TAIL is the text that closes that block.
+const IMPORT_TAIL = ")"
+
+// IMPORT_COUNT_MAXIMUM caps the imports one head states, which is wider than any file the
+// toolchain itself writes.
+const IMPORT_COUNT_MAXIMUM = 256
+
 // SOURCE_TAIL is the text the name of one Go file closes with.
 const SOURCE_TAIL = ".go"
 
@@ -675,6 +845,21 @@ func Path_Invariants(value Path, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
+}
+
+// Loop names the IO one read of a directory submits through. A runner the caller has not opened
+// yet holds none, thus the domain holds the loop that states a backend beside the loop that
+// states none, which nbio.IO alone does not.
+type Loop nbio.IO
+
+// Loop_Invariants states what holds of one loop across the whole life of a runner. The backend
+// stands outside it: a runner the caller has not opened yet holds none, and the open states the
+// one it submits through.
+func Loop_Invariants(value Loop, namespace invariant.Namespace) {
+	invariant.Always(
+		value.Network.State == value.Storage.State,
+		"A directory read carries one backend across both halves.",
+	)
 }
 
 // Entry_Storage receives one pass over the children of a directory, which the caller owns.
@@ -766,7 +951,7 @@ type Directory_Runner struct {
 	// Completion stands first so the static callback recovers the runner with no closure.
 	Completion time.Completion
 	// Loop submits the storage work the caller drives.
-	Loop nbio.IO
+	Loop Loop
 	// Target names the build the files stand in or stand outside of.
 	Target *Target
 	// Reader holds the state one read of a constraint runs through, which the caller owns.
@@ -805,6 +990,9 @@ func Directory_Runner_Invariants(runner *Directory_Runner, namespace invariant.N
 	Header_Storage_Invariants(runner.Header, namespace)
 	Build_Invariants(runner.Reader, namespace)
 	Target_Invariants(runner.Target, namespace)
+	// The loop stands last because it states a backend: a runner the open has not reached
+	// yet holds none, and the storage ahead of this line states its widths either way.
+	Loop_Invariants(runner.Loop, namespace)
 }
 
 // Directory_Runner_Init opens one directory and states the read that follows. The caller owns the
@@ -812,16 +1000,18 @@ func Directory_Runner_Invariants(runner *Directory_Runner, namespace invariant.N
 func Directory_Runner_Init(
 	runner *Directory_Runner, loop nbio.IO, one *Target, path Path, memory Directory_Memory,
 ) {
-	Directory_Runner_Invariants(runner, "directory_runner_init.runner")
+	nbio.IO_Invariants(loop, "directory_runner_init.loop")
 	Target_Invariants(one, "directory_runner_init.one")
 	Path_Invariants(path, "directory_runner_init.path")
 	Directory_Memory_Invariants(memory, "directory_runner_init.memory")
+	// The open states the whole runner ahead of the assertion that reads it, because a runner
+	// the caller has not opened yet holds no loop, and no loop states no backend.
 	*runner = Directory_Runner{
-		Loop: loop, Target: one, Reader: memory.Reader, Entries: memory.Entries,
+		Loop: Loop(loop), Target: one, Reader: memory.Reader, Entries: memory.Entries,
 		Records: memory.Records, Names: memory.Names, Bytes: memory.Bytes,
 		Header: memory.Header,
 	}
-	Directory_Runner_Invariants(runner, "directory_runner_init.ready")
+	Directory_Runner_Invariants(runner, "directory_runner_init.opened")
 	runner.Counts[DIRECTORY_COUNT_PHASE] = PHASE_OPEN_DIRECTORY
 	nbio.Storage_Open_At(
 		runner.Loop.Storage, &runner.Completion, nbio.DIRECTORY_CURRENT, string(path),
@@ -947,7 +1137,8 @@ func read_entries_apply(runner *Directory_Runner) (rearm Boolean) {
 	if held == NAME_COUNT_MINIMUM {
 		runner.Counts[DIRECTORY_COUNT_PHASE] = PHASE_CLOSE_DIRECTORY
 		nbio.IO_Close(
-			runner.Loop, &runner.Completion, runner.Directory, directory_completion,
+			nbio.IO(runner.Loop), &runner.Completion, runner.Directory,
+			directory_completion,
 		)
 		return false
 	}
@@ -999,11 +1190,20 @@ func read_header_apply(runner *Directory_Runner) {
 			held = false
 		}
 	}
+	// A file naming a third party stands in no build, thus the read drops it the same way it
+	// drops one whose constraint fails.
+	if bool(held) {
+		one, ok := Holds_Imports(runner.Reader, token.Source(runner.Header[:count]))
+		held = one
+		if !bool(ok) {
+			held = false
+		}
+	}
 	if bool(held) {
 		hold_name(runner)
 	}
 	runner.Counts[DIRECTORY_COUNT_PHASE] = PHASE_CLOSE_FILE
-	nbio.IO_Close(runner.Loop, &runner.Completion, runner.File, directory_completion)
+	nbio.IO_Close(nbio.IO(runner.Loop), &runner.Completion, runner.File, directory_completion)
 }
 
 // Reads the constraint line one header states into the tag slot, and reports whether it states

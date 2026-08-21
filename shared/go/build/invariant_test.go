@@ -2,10 +2,19 @@ package build
 
 import (
 	"testing"
+	"unsafe"
 
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/testify"
 )
+
+// States one loop whose halves carry one backend, which is the loop a read stands on.
+func storage_loop(state unsafe.Pointer) (loop nbio.IO) {
+	return nbio.IO{
+		Storage: nbio.Storage{State: state},
+		Network: nbio.Network{State: state},
+	}
+}
 
 // Test_Storage_Widths drives every step of a directory read through storage of the widths the
 // package admits. A step reaching one width states nothing about the step beside it, thus every
@@ -32,6 +41,7 @@ func Test_Storage_Widths(t *testing.T) {
 		memory := storage_widths(slots[index], records[index], bytes[index])
 		one := Target{}
 		runner := Directory_Runner{
+			Loop:   Loop(storage_loop(unsafe.Pointer(&one))),
 			Target: &one, Reader: memory.Reader, Entries: memory.Entries,
 			Records: memory.Records, Names: memory.Names, Bytes: memory.Bytes,
 			Header: memory.Header,
@@ -40,10 +50,20 @@ func Test_Storage_Widths(t *testing.T) {
 		storage_step_widths(runner)
 		storage_init_widths(runner, memory)
 	}
+	// An open meets the storage it writes into, thus one standing nowhere at all stands read
+	// as well as one the caller owns.
+	none := Target{}
+	storage_boundary(func() {
+		Directory_Runner_Init(
+			nil, storage_loop(unsafe.Pointer(&none)), &none, "",
+			storage_widths(0, 0, 0),
+		)
+	})
 	// A read hands its names back after it stops, thus the widest run of names stands on a
 	// runner that stopped and never on one mid-read.
 	one := Target{}
 	filled := Directory_Runner{
+		Loop:   Loop(storage_loop(unsafe.Pointer(&one))),
 		Target: &one, Reader: new(Build),
 		Names: make(Name_Storage, ENTRY_COUNT_MAXIMUM),
 	}
@@ -90,7 +110,9 @@ func storage_init_widths(runner Directory_Runner, memory Directory_Memory) {
 	one := Target{}
 	storage_boundary(func() {
 		value := runner
-		Directory_Runner_Init(&value, nbio.IO{}, &one, "", memory)
+		Directory_Runner_Init(
+			&value, storage_loop(unsafe.Pointer(&one)), &one, "", memory,
+		)
 	})
 }
 
