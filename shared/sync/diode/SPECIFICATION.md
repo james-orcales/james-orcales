@@ -31,7 +31,7 @@ interval defaults to one hundred milliseconds.
 # Close Flushes And Stops
 
 Close drains the entries still buffered to the sink, stops the drain goroutine, and
-closes the wrapped sink when it implements io.Closer.
+closes the wrapped sink when the caller supplied a Close procedure.
 
 # Dropping Does Not Allocate
 
