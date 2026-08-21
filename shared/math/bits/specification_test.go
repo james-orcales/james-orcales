@@ -73,6 +73,43 @@ func Test_Integer_Limits(t *testing.T) {
 
 }
 
+// Test_Byte_Units verifies that decimal units use powers of 1000 and that IEC units use
+// powers of 1024. The two ladders must stay separate because the same prefix magnitude
+// names different byte counts.
+func Test_Byte_Units(t *testing.T) {
+	t.Parallel()
+	const DECIMAL_RADIX = 10
+	const SI_PREFIX_STEP = DECIMAL_RADIX * DECIMAL_RADIX * DECIMAL_RADIX
+	units := [...]struct {
+		Name     string
+		Actual   uint64
+		Expected uint64
+	}{
+		{"KILOBYTE_BYTES", bits.KILOBYTE_BYTES, SI_PREFIX_STEP},
+		{"MEGABYTE_BYTES", bits.MEGABYTE_BYTES, SI_PREFIX_STEP * SI_PREFIX_STEP},
+		{"GIGABYTE_BYTES", bits.GIGABYTE_BYTES,
+			SI_PREFIX_STEP * SI_PREFIX_STEP * SI_PREFIX_STEP},
+		{"TERABYTE_BYTES", bits.TERABYTE_BYTES,
+			SI_PREFIX_STEP * SI_PREFIX_STEP * SI_PREFIX_STEP * SI_PREFIX_STEP},
+		{"PETABYTE_BYTES", bits.PETABYTE_BYTES,
+			SI_PREFIX_STEP * SI_PREFIX_STEP * SI_PREFIX_STEP * SI_PREFIX_STEP *
+				SI_PREFIX_STEP},
+		{"EXABYTE_BYTES", bits.EXABYTE_BYTES,
+			SI_PREFIX_STEP * SI_PREFIX_STEP * SI_PREFIX_STEP * SI_PREFIX_STEP *
+				SI_PREFIX_STEP * SI_PREFIX_STEP},
+		{"KIBIBYTE_BYTES", bits.KIBIBYTE_BYTES, 1 << 10},
+		{"MEBIBYTE_BYTES", bits.MEBIBYTE_BYTES, 1 << 20},
+		{"GIBIBYTE_BYTES", bits.GIBIBYTE_BYTES, 1 << 30},
+		{"TEBIBYTE_BYTES", bits.TEBIBYTE_BYTES, 1 << 40},
+		{"PEBIBYTE_BYTES", bits.PEBIBYTE_BYTES, 1 << 50},
+		{"EXBIBYTE_BYTES", bits.EXBIBYTE_BYTES, 1 << 60},
+	}
+	for _, unit := range units {
+		testify.Equal_Values(t, unit.Expected, unit.Actual,
+			"%s = %d, want %d", unit.Name, unit.Actual, unit.Expected)
+	}
+}
+
 // Test_Leading_Zeros verifies the count of zero bits above the highest set bit at each
 // width, including the full-width result a zero operand gives.
 func Test_Leading_Zeros(t *testing.T) {

@@ -10,6 +10,12 @@ The signed limits INTEGER_8_MINIMUM through INTEGER_64_MAXIMUM and the unsigned 
 WORD_8_MINIMUM through WORD_64_MAXIMUM give the bounds of each machine width. Every
 package above names these rather than repeating them.
 
+# Byte Units
+
+KILOBYTE_BYTES through EXABYTE_BYTES give the SI decimal byte units as powers of 1000.
+KIBIBYTE_BYTES through EXBIBYTE_BYTES give the IEC binary byte units as powers of 1024.
+The constants are untyped, thus an integer type can use each value that fits its range.
+
 # Leading Zeros
 
 Leading_Zeros_8 through Leading_Zeros_64 count the zero bits above the highest set bit.

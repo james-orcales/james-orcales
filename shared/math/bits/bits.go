@@ -106,6 +106,42 @@ const INTEGER_MAXIMUM int = int(INTEGER_64_MAXIMUM)
 // INTEGER_MINIMUM is the smallest signed machine integer.
 const INTEGER_MINIMUM int = int(INTEGER_64_MINIMUM)
 
+// KILOBYTE_BYTES uses the SI base because the kilo prefix specifies 1000 bytes.
+const KILOBYTE_BYTES = 10 * 10 * 10
+
+// MEGABYTE_BYTES derives from KILOBYTE_BYTES so the decimal ladder has one base.
+const MEGABYTE_BYTES = KILOBYTE_BYTES * 10 * 10 * 10
+
+// GIGABYTE_BYTES derives from MEGABYTE_BYTES so the decimal ladder has one base.
+const GIGABYTE_BYTES = MEGABYTE_BYTES * 10 * 10 * 10
+
+// TERABYTE_BYTES derives from GIGABYTE_BYTES so the decimal ladder has one base.
+const TERABYTE_BYTES = GIGABYTE_BYTES * 10 * 10 * 10
+
+// PETABYTE_BYTES derives from TERABYTE_BYTES so the decimal ladder has one base.
+const PETABYTE_BYTES = TERABYTE_BYTES * 10 * 10 * 10
+
+// EXABYTE_BYTES derives from PETABYTE_BYTES so the decimal ladder has one base.
+const EXABYTE_BYTES = PETABYTE_BYTES * 10 * 10 * 10
+
+// KIBIBYTE_BYTES uses the IEC base to keep binary quantities distinct from SI quantities.
+const KIBIBYTE_BYTES = 1 << 10
+
+// MEBIBYTE_BYTES uses its IEC exponent so the source states the binary definition.
+const MEBIBYTE_BYTES = 1 << 20
+
+// GIBIBYTE_BYTES uses its IEC exponent so the source states the binary definition.
+const GIBIBYTE_BYTES = 1 << 30
+
+// TEBIBYTE_BYTES uses its IEC exponent so the source states the binary definition.
+const TEBIBYTE_BYTES = 1 << 40
+
+// PEBIBYTE_BYTES uses its IEC exponent so the source states the binary definition.
+const PEBIBYTE_BYTES = 1 << 50
+
+// EXBIBYTE_BYTES uses its IEC exponent so the source states the binary definition.
+const EXBIBYTE_BYTES = 1 << 60
+
 // DIVISOR_MINIMUM is the smallest divisor. A zero divisor has no quotient, thus the divisor
 // domain starts one above the word domain.
 const DIVISOR_MINIMUM = 1
