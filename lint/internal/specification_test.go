@@ -624,6 +624,25 @@ func Test_Source_And_Test_Bans_Iota(t *testing.T) {
 	}
 }
 
+// Test_Source_And_Test_Bans_Panic verifies only assertion package may call panic.
+func Test_Source_And_Test_Bans_Panic(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file(
+		"package fixture\n\n// F fails.\nfunc F() { panic(\"boom\") }\n")
+	if !specification_flags(t, files, "Replace it with aver.Always") {
+		t.Fatal("panic outside shared/sim/aver must be flagged")
+	}
+	aver_files := map[string][]byte{
+		"shared/sim/aver/rule.go": []byte(
+			"package aver\n\n// F fails.\nfunc F() { panic(\"boom\") }\n"),
+		"shared/sim/aver/default/rule.go": []byte(
+			"package aver\n\n// F fails.\nfunc F() { panic(\"boom\") }\n"),
+	}
+	if specification_flags(t, aver_files, "Replace it with aver.Always") {
+		t.Fatal("panic inside shared/sim/aver must stay allowed")
+	}
+}
+
 // Test_Source_And_Test_Bans_Generics verifies type parameters are flagged.
 func Test_Source_And_Test_Bans_Generics(t *testing.T) {
 	t.Parallel()

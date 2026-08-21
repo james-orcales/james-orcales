@@ -201,6 +201,11 @@ language surface area. It also helps grepping for constants with the regex `^con
 A constant spells out its value; iota is banned. Make the value explicit instead of relying on
 declaration order.
 
+### Panic
+
+Only `shared/sim/aver/**` calls `panic`; assertion enforcement owns that mechanism. Every other
+package uses `aver.Always` so assertion reachability stays observable.
+
 ### Generics
 
 Type and func declarations have no type parameters. Each declaration names one concrete program.

@@ -1597,6 +1597,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		make_check_exported_type_exposes_private(input.Declarations),
 		check_type_declaration_exported,
 		check_no_iota,
+		check_no_panic,
 		check_no_fallthrough,
 		check_no_blank_import,
 		check_no_banned_stdlib_import,
@@ -5089,6 +5090,41 @@ func check_no_blank_import(file_set *token.FileSet, file *ast.File, _ []byte) (d
 			Message:  "Do not use a blank import.",
 		})
 	}
+	return diags
+}
+
+// Only assertion engine owns raw panic. Other failures need observable invariant reachability.
+func check_no_panic(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+	token_file := file_set.File(file.Pos())
+	if token_file != nil {
+		directory := path.Dir(path.Clean(token_file.Name()))
+		if directory_within(directory, "shared/sim/aver") {
+			return nil
+		}
+	}
+	ast.Inspect(file, func(node ast.Node) (descend bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		callee, is_identifier := call.Fun.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if callee.Name != "panic" {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(callee.Pos()),
+			Name:     "panic",
+			Want:     "aver.Always",
+			Message: "Do not call panic outside shared/sim/aver. " +
+				"Replace it with aver.Always.",
+		})
+		return true
+	})
 	return diags
 }
 
