@@ -14,48 +14,50 @@ import (
 
 // Test_Values protects closed typed value union and hostile value bounds.
 func Test_Values(t *testing.T) {
-	null := driver.Value_Null()
-	testify.Equal(t, driver.VALUE_NULL, driver.Value_Kind_Of(null), "null kind")
+	null := value_null()
+	kind, kind_status := driver.Value_Kind_Of(null)
+	testify.Equal(t, driver.VALUE_NULL, kind, "null kind")
+	testify.Equal_Values(t, driver.STATUS_OK, kind_status, "null kind status")
 
-	boolean := driver.Value_Of_Boolean(true)
+	boolean := value_boolean(true)
 	boolean_value, status := driver.Value_As_Boolean(boolean)
 	testify.Equal_Values(t, driver.STATUS_OK, status, "Boolean status")
 	testify.True(t, bool(boolean_value), "Boolean value")
 
-	integer := driver.Value_Of_Integer(driver.Integer(bits.INTEGER_64_MINIMUM))
+	integer := value_integer(driver.Integer(bits.INTEGER_64_MINIMUM))
 	integer_value, status := driver.Value_As_Integer(integer)
 	testify.Equal_Values(t, driver.STATUS_OK, status, "integer status")
 	testify.Equal(t, bits.INTEGER_64_MINIMUM, int64(integer_value), "integer value")
-	driver.Value_Of_Integer(driver.Integer(bits.INTEGER_64_MAXIMUM))
+	value_integer(driver.Integer(bits.INTEGER_64_MAXIMUM))
 
-	float := driver.Value_Of_Float(driver.Float(bits.WORD_64_MAXIMUM))
+	float := value_float(driver.Float(bits.WORD_64_MAXIMUM))
 	float_value, status := driver.Value_As_Float(float)
 	testify.Equal_Values(t, driver.STATUS_OK, status, "float status")
 	testify.Equal(t, bits.WORD_64_MAXIMUM, uint64(float_value), "float bits")
-	driver.Value_Of_Float(driver.Float(bits.WORD_64_MINIMUM))
+	value_float(driver.Float(bits.WORD_64_MINIMUM))
 
-	bytes_value, status := driver.Value_Of_Bytes(driver.Bytes_Unvalidated("bytes"))
+	bytes_value, status := value_bytes(driver.Bytes_Unvalidated("bytes"))
 	testify.Equal_Values(t, driver.STATUS_OK, status, "bytes constructor")
 	bytes_result, status := driver.Value_As_Bytes(bytes_value)
 	testify.Equal_Values(t, driver.STATUS_OK, status, "bytes status")
 	testify.Equal(t, driver.Bytes("bytes"), bytes_result, "bytes value")
 
-	text_value, status := driver.Value_Of_Text(driver.Text_Unvalidated("text"))
+	text_value, status := value_text(driver.Text_Unvalidated("text"))
 	testify.Equal_Values(t, driver.STATUS_OK, status, "text constructor")
 	text_result, status := driver.Value_As_Text(text_value)
 	testify.Equal_Values(t, driver.STATUS_OK, status, "text status")
 	testify.Equal(t, driver.Text("text"), text_result, "text value")
 
-	moment := driver.Value_Of_Time(time.Moment(bits.INTEGER_64_MAXIMUM))
+	moment := value_time(time.Moment(bits.INTEGER_64_MAXIMUM))
 	moment_value, status := driver.Value_As_Time(moment)
 	testify.Equal_Values(t, driver.STATUS_OK, status, "time status")
 	testify.Equal(t, time.Moment(bits.INTEGER_64_MAXIMUM), moment_value, "time value")
-	driver.Value_Of_Time(time.Moment(bits.INTEGER_64_MINIMUM))
+	value_time(time.Moment(bits.INTEGER_64_MINIMUM))
 
 	too_large := make([]byte, strings.TEXT_SIZE_MAXIMUM+NUMBER_ONE)
-	_, status = driver.Value_Of_Bytes(driver.Bytes_Unvalidated(too_large))
+	_, status = value_bytes(driver.Bytes_Unvalidated(too_large))
 	testify.Equal_Values(t, driver.STATUS_INPUT_INVALID, status, "bytes bound")
-	_, status = driver.Value_Of_Text(driver.Text_Unvalidated(string(too_large)))
+	_, status = value_text(driver.Text_Unvalidated(string(too_large)))
 	testify.Equal_Values(t, driver.STATUS_INPUT_INVALID, status, "text bound")
 	_, status = driver.Value_As_Integer(text_value)
 	testify.Equal_Values(t, driver.STATUS_INPUT_INVALID, status, "wrong kind")
@@ -63,17 +65,17 @@ func Test_Values(t *testing.T) {
 
 // Test_Named_Values protects standard name rule, ordinal bound, and request validation.
 func Test_Named_Values(t *testing.T) {
-	value := driver.Value_Of_Integer(NUMBER_ONE)
-	_, status := driver.Named_Value_Of("1bad", NUMBER_ONE, value)
+	value := value_integer(NUMBER_ONE)
+	_, status := named_value("1bad", NUMBER_ONE, value)
 	testify.Equal_Values(t, driver.STATUS_INPUT_INVALID, status, "name head")
-	_, status = driver.Named_Value_Of("good", NUMBER_ZERO, value)
+	_, status = named_value("good", NUMBER_ZERO, value)
 	testify.Equal_Values(t, driver.STATUS_INPUT_INVALID, status, "ordinal minimum")
-	_, status = driver.Named_Value_Of(
+	_, status = named_value(
 		"good", driver.ARGUMENT_COUNT_MAXIMUM+NUMBER_ONE, value,
 	)
 	testify.Equal_Values(t, driver.STATUS_INPUT_INVALID, status, "ordinal maximum")
 
-	named, status := driver.Named_Value_Of("good", NUMBER_ONE, value)
+	named, status := named_value("good", NUMBER_ONE, value)
 	testify.Equal_Values(t, driver.STATUS_OK, status, "named value")
 	testify.Equal(t, driver.Argument_Name("good"), driver.Named_Value_Name(named), "name")
 	testify.Equal(
@@ -86,8 +88,7 @@ func Test_Named_Values(t *testing.T) {
 	request, status := driver.Request_Of(query, driver.Arguments{named})
 	testify.Equal_Values(t, driver.STATUS_OK, status, "request construction")
 	testify.Equal_Values(t, driver.STATUS_OK, driver.Request_Validate(request), "request")
-	request.Argument_Sets[driver.REQUEST_SLOT][NUMBER_ZERO].
-		Ordinals[driver.NAMED_VALUE_SLOT] = NUMBER_TWO
+	request.Arguments[NUMBER_ZERO].Ordinal = NUMBER_TWO
 	testify.Equal_Values(
 		t, driver.STATUS_INPUT_INVALID, driver.Request_Validate(request), "sequence",
 	)
@@ -248,6 +249,7 @@ func Test_Invariant_Domains(t *testing.T) {
 	test_statement_domains()
 	test_transaction_domains()
 	test_driver_status_domains()
+	test_operation_storage_domains()
 }
 
 func test_validation_domains() {
@@ -264,96 +266,215 @@ func test_validation_domains() {
 		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, driver.ARGUMENT_COUNT_MAXIMUM,
 		driver.ARGUMENT_COUNT_MAXIMUM + NUMBER_ONE,
 	} {
-		driver.Named_Value_Of("", driver.Argument_Ordinal_Unvalidated(ordinal),
-			driver.Value_Null())
+		named_value(
+			"", driver.Argument_Ordinal_Unvalidated(ordinal), value_null(),
+		)
 	}
 	for _, size := range []int{
 		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, strings.TEXT_SIZE_MAXIMUM,
 		strings.TEXT_SIZE_MAXIMUM + NUMBER_ONE,
 	} {
 		name := text_of(size, 'a')
-		driver.Named_Value_Of(driver.Argument_Name_Unvalidated(name), NUMBER_ONE,
-			driver.Value_Null())
+		named_value(
+			driver.Argument_Name_Unvalidated(name), NUMBER_ONE, value_null(),
+		)
 	}
 }
 
 func test_value_domains() {
+	test_value_storage_domains()
 	for _, value := range []driver.Boolean{false, true} {
-		encoded := driver.Value_Of_Boolean(value)
+		encoded := value_boolean(value)
 		driver.Value_As_Boolean(encoded)
 	}
-	driver.Value_As_Boolean(driver.Value_Null())
+	driver.Value_As_Boolean(value_null())
 	for _, value := range []driver.Integer{
 		driver.Integer(bits.INTEGER_64_MINIMUM), NUMBER_NEGATIVE_ONE,
 		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO,
 		driver.Integer(bits.INTEGER_64_MAXIMUM),
 	} {
-		encoded := driver.Value_Of_Integer(value)
+		encoded := value_integer(value)
 		driver.Value_As_Integer(encoded)
 	}
 	for _, value := range []driver.Float{
 		driver.Float(bits.WORD_64_MINIMUM), NUMBER_ONE, NUMBER_TWO,
 		driver.Float(bits.WORD_64_MAXIMUM),
 	} {
-		encoded := driver.Value_Of_Float(value)
+		encoded := value_float(value)
 		driver.Value_As_Float(encoded)
 	}
-	driver.Value_As_Float(driver.Value_Null())
+	driver.Value_As_Float(value_null())
 	for _, size := range []int{
 		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, strings.TEXT_SIZE_MAXIMUM,
 		strings.TEXT_SIZE_MAXIMUM + NUMBER_ONE,
 	} {
 		storage := make([]byte, size)
-		encoded, status := driver.Value_Of_Bytes(driver.Bytes_Unvalidated(storage))
+		encoded, status := value_bytes(driver.Bytes_Unvalidated(storage))
 		if status == driver.Validation_Status(driver.STATUS_OK) {
 			driver.Value_As_Bytes(encoded)
 		}
 		text := driver.Text_Unvalidated(text_of(size, 'a'))
-		encoded, status = driver.Value_Of_Text(text)
+		encoded, status = value_text(text)
 		if status == driver.Validation_Status(driver.STATUS_OK) {
 			driver.Value_As_Text(encoded)
 		}
 	}
-	driver.Value_As_Bytes(driver.Value_Null())
-	driver.Value_As_Text(driver.Value_Null())
+	driver.Value_As_Bytes(value_null())
+	driver.Value_As_Text(value_null())
 	for _, value := range []time.Moment{
 		time.Moment(bits.INTEGER_64_MINIMUM), NUMBER_NEGATIVE_ONE,
 		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO,
 		time.Moment(bits.INTEGER_64_MAXIMUM),
 	} {
-		encoded := driver.Value_Of_Time(value)
+		encoded := value_time(value)
 		driver.Value_As_Time(encoded)
 	}
-	driver.Value_As_Time(driver.Value_Null())
+	driver.Value_As_Time(value_null())
 
 	for _, value := range []driver.Value{
-		driver.Value_Null(),
-		driver.Value_Of_Boolean(false),
-		driver.Value_Of_Integer(NUMBER_ZERO),
-		driver.Value_Of_Time(NUMBER_ZERO),
+		value_null(),
+		value_boolean(false),
+		value_integer(NUMBER_ZERO),
+		value_time(NUMBER_ZERO),
 	} {
 		driver.Value_Kind_Of(value)
 	}
 }
 
+func test_value_storage_domains() {
+	for _, stored := range value_storage_domains() {
+		destination := stored
+		driver.Value_Null(&destination)
+		destination = stored
+		driver.Value_Of_Boolean(&destination, stored.Boolean)
+		destination = stored
+		driver.Value_Of_Integer(&destination, stored.Integer)
+		destination = stored
+		driver.Value_Of_Float(&destination, stored.Float)
+		destination = stored
+		driver.Value_Of_Bytes(
+			&destination, driver.Bytes_Unvalidated(stored.Bytes),
+		)
+		destination = stored
+		driver.Value_Of_Text(
+			&destination, driver.Text_Unvalidated(stored.Text),
+		)
+		destination = stored
+		driver.Value_Of_Time(&destination, stored.Moment)
+
+		driver.Value_Kind_Of(stored)
+		driver.Value_As_Boolean(stored)
+		driver.Value_As_Integer(stored)
+		driver.Value_As_Float(stored)
+		driver.Value_As_Bytes(stored)
+		driver.Value_As_Text(stored)
+		driver.Value_As_Time(stored)
+	}
+}
+
+func value_storage_domains() (values []driver.Value) {
+	type domain struct {
+		Kind    driver.Value_Kind_Unvalidated
+		Boolean driver.Boolean
+		Integer driver.Integer
+		Float   driver.Float
+		Size    int
+		Moment  time.Moment
+	}
+	domains := []domain{
+		{
+			Kind:    driver.Value_Kind_Unvalidated(driver.VALUE_NULL),
+			Integer: driver.Integer(bits.INTEGER_64_MINIMUM),
+			Float:   driver.Float(bits.WORD_64_MINIMUM),
+			Moment:  time.Moment(bits.INTEGER_64_MINIMUM),
+		},
+		{
+			Kind:    driver.Value_Kind_Unvalidated(driver.VALUE_BOOLEAN),
+			Boolean: true, Integer: NUMBER_NEGATIVE_ONE,
+			Float: NUMBER_ONE, Size: NUMBER_ONE, Moment: NUMBER_NEGATIVE_ONE,
+		},
+		{
+			Kind:    driver.Value_Kind_Unvalidated(driver.VALUE_INTEGER),
+			Integer: NUMBER_ZERO, Float: NUMBER_TWO,
+			Size: NUMBER_TWO, Moment: NUMBER_ZERO,
+		},
+		{
+			Kind:    driver.Value_Kind_Unvalidated(driver.VALUE_FLOAT),
+			Integer: NUMBER_ONE, Float: driver.Float(bits.WORD_64_MAXIMUM),
+			Size: strings.TEXT_SIZE_MAXIMUM, Moment: NUMBER_ONE,
+		},
+		{
+			Kind:    driver.Value_Kind_Unvalidated(driver.VALUE_BYTES),
+			Integer: NUMBER_TWO, Moment: NUMBER_TWO,
+		},
+		{
+			Kind:    driver.Value_Kind_Unvalidated(driver.VALUE_TEXT),
+			Integer: driver.Integer(bits.INTEGER_64_MAXIMUM),
+			Moment:  time.Moment(bits.INTEGER_64_MAXIMUM),
+		},
+		{Kind: driver.Value_Kind_Unvalidated(driver.VALUE_TIME)},
+		{Kind: driver.Value_Kind_Unvalidated(driver.VALUE_KIND_UNVALIDATED_MAXIMUM)},
+	}
+	values = make([]driver.Value, len(domains))
+	for index := range domains {
+		item := domains[index]
+		values[index] = driver.Value{
+			Kind: item.Kind, Boolean: item.Boolean, Integer: item.Integer,
+			Float: item.Float, Bytes: make(driver.Bytes, item.Size),
+			Text: driver.Text(text_of(item.Size, 'a')), Moment: item.Moment,
+		}
+	}
+	return values
+}
+
 func test_result_domains() {
-	for _, value := range []int64{
+	for _, result := range result_storage_domains() {
+		driver.Result_Last_Insert_Identifier(&result)
+		driver.Result_Rows_Affected(&result)
+	}
+	for index, value := range []int64{
 		bits.INTEGER_64_MINIMUM, NUMBER_NEGATIVE_ONE, NUMBER_ZERO,
 		NUMBER_ONE, NUMBER_TWO, bits.INTEGER_64_MAXIMUM,
 	} {
-		var result driver.Result
+		original := result_storage_domains()[index+NUMBER_ONE]
+		result := original
 		driver.Result_Set_Last_Insert_Identifier(
 			&result, driver.Last_Insert_Identifier(value),
 		)
 		driver.Result_Last_Insert_Identifier(&result)
+		result = original
 		driver.Result_Set_Rows_Affected(&result, driver.Rows_Affected(value))
 		driver.Result_Rows_Affected(&result)
 	}
 }
 
+func result_storage_domains() (results []driver.Result) {
+	results = append(results, driver.Result{})
+	for _, value := range []int64{
+		bits.INTEGER_64_MINIMUM, NUMBER_NEGATIVE_ONE, NUMBER_ZERO,
+		NUMBER_ONE, NUMBER_TWO, bits.INTEGER_64_MAXIMUM,
+	} {
+		results = append(results, driver.Result{
+			Last_Insert_Identifier:          driver.Last_Insert_Identifier(value),
+			Rows_Affected:                   driver.Rows_Affected(value),
+			Last_Insert_Identifier_Validity: true,
+			Rows_Affected_Validity:          true,
+		})
+	}
+	return results
+}
+
 func test_named_value_domains() {
-	driver.Named_Value_Name(driver.Named_Value{})
-	driver.Named_Value_Ordinal(driver.Named_Value{})
+	for _, subject := range named_value_storage_domains() {
+		destination := subject
+		driver.Named_Value_Of(
+			&destination, driver.Argument_Name_Unvalidated(subject.Name),
+			driver.Argument_Ordinal_Unvalidated(subject.Ordinal), subject.Value,
+		)
+		driver.Named_Value_Name(subject)
+		driver.Named_Value_Ordinal(subject)
+		driver.Named_Value_Value(subject)
+	}
 	for _, domain := range []struct {
 		Name_Size int
 		Ordinal   int
@@ -362,15 +483,36 @@ func test_named_value_domains() {
 		{Name_Size: NUMBER_TWO, Ordinal: NUMBER_TWO},
 		{Name_Size: strings.TEXT_SIZE_MAXIMUM, Ordinal: driver.ARGUMENT_COUNT_MAXIMUM},
 	} {
-		named, status := driver.Named_Value_Of(
+		named, status := named_value(
 			driver.Argument_Name_Unvalidated(text_of(domain.Name_Size, 'a')),
-			driver.Argument_Ordinal_Unvalidated(domain.Ordinal), driver.Value_Null(),
+			driver.Argument_Ordinal_Unvalidated(domain.Ordinal), value_null(),
 		)
 		if status == driver.Validation_Status(driver.STATUS_OK) {
 			driver.Named_Value_Name(named)
 			driver.Named_Value_Ordinal(named)
 		}
 	}
+}
+
+func named_value_storage_domains() (values []driver.Named_Value) {
+	storage := value_storage_domains()
+	name_sizes := []int{
+		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, strings.TEXT_SIZE_MAXIMUM,
+		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, strings.TEXT_SIZE_MAXIMUM,
+	}
+	ordinals := []driver.Argument_Ordinal{
+		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, driver.ARGUMENT_COUNT_MAXIMUM,
+		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, driver.ARGUMENT_COUNT_MAXIMUM,
+	}
+	values = make([]driver.Named_Value, len(storage))
+	for index := range storage {
+		values[index] = driver.Named_Value{
+			Name:    driver.Argument_Name(text_of(name_sizes[index], 'a')),
+			Ordinal: ordinals[index], Value: storage[index],
+			Validity: driver.Named_Value_Validity(index != NUMBER_ZERO),
+		}
+	}
+	return values
 }
 
 func test_request_domains() {
@@ -384,8 +526,8 @@ func test_request_domains() {
 	arguments := make(driver.Arguments, driver.ARGUMENT_COUNT_MAXIMUM)
 	for index := range arguments {
 		ordinal := driver.Argument_Ordinal_Unvalidated(index + NUMBER_ONE)
-		arguments[index], _ = driver.Named_Value_Of(
-			"", ordinal, driver.Value_Null(),
+		arguments[index], _ = named_value(
+			"", ordinal, value_null(),
 		)
 	}
 	query, _ := driver.Query_Validate("")
@@ -393,16 +535,12 @@ func test_request_domains() {
 	driver.Request_Of(query, arguments)
 
 	invalid_value := driver.Value{
-		Kinds: [driver.VALUE_SLOT_COUNT]driver.Value_Kind{
-			driver.VALUE_TIME + NUMBER_ONE,
-		},
+		Kind: driver.Value_Kind_Unvalidated(driver.VALUE_TIME + NUMBER_ONE),
 	}
 	invalid := driver.Named_Value{
-		Ordinals: [driver.NAMED_VALUE_SLOT_COUNT]driver.Argument_Ordinal{
-			NUMBER_ONE,
-		},
-		Values:     [driver.NAMED_VALUE_SLOT_COUNT]driver.Value{invalid_value},
-		Validities: [driver.NAMED_VALUE_SLOT_COUNT]driver.Named_Value_Validity{true},
+		Ordinal:  NUMBER_ONE,
+		Value:    invalid_value,
+		Validity: true,
 	}
 	driver.Request_Of(query, driver.Arguments{invalid})
 }
@@ -518,17 +656,151 @@ func test_driver_status_domains() {
 		rows := fake_rows(&state, driver.Column_Count(size))
 		driver.Rows_Next(&rows, make(driver.Values, size))
 	}
+	for _, value := range value_storage_domains() {
+		state.Row_Position = NUMBER_ZERO
+		state.Row_Value = value
+		rows := fake_rows(&state, ROW_COLUMN_COUNT)
+		driver.Rows_Next(&rows, make(driver.Values, ROW_COLUMN_COUNT))
+	}
+}
+
+func test_operation_storage_domains() {
+	state := fake_state{}
+	query, _ := driver.Query_Validate("")
+	request, _ := driver.Request_Of(query, nil)
+
+	for _, candidate := range request_storage_domains() {
+		connection := fake_connection(&state)
+		var result driver.Result
+		driver.Connection_Exec(&connection, candidate, &result)
+		connection = fake_connection(&state)
+		var rows driver.Rows
+		driver.Connection_Query(&connection, candidate, &rows)
+	}
+
+	for _, stored := range result_storage_domains() {
+		connection := fake_connection(&state)
+		result := stored
+		driver.Connection_Exec(&connection, request, &result)
+		statement := fake_statement(&state, driver.STATEMENT_ARGUMENT_COUNT_UNKNOWN)
+		result = stored
+		driver.Statement_Exec(&statement, nil, &result)
+	}
+
+	for _, count := range []int{
+		driver.STATEMENT_ARGUMENT_COUNT_UNKNOWN, NUMBER_ZERO, NUMBER_ONE,
+		NUMBER_TWO, driver.ARGUMENT_COUNT_MAXIMUM,
+	} {
+		connection := fake_connection(&state)
+		statement := fake_statement(&state, driver.Statement_Argument_Count(count))
+		driver.Connection_Prepare(&connection, query, &statement)
+
+		statement = fake_statement(&state, driver.Statement_Argument_Count(count))
+		driver.Statement_Close(&statement)
+
+		statement = fake_statement(&state, driver.Statement_Argument_Count(count))
+		argument_count := count
+		if count == driver.STATEMENT_ARGUMENT_COUNT_UNKNOWN {
+			argument_count = NUMBER_ZERO
+		}
+		arguments := test_arguments(argument_count)
+		var rows driver.Rows
+		driver.Statement_Query(&statement, arguments, &rows)
+	}
+
+	for _, count := range []int{
+		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, slices.SLICE_COUNT_MAXIMUM,
+	} {
+		rows := fake_rows(&state, driver.Column_Count(count))
+		driver.Rows_Close(&rows)
+
+		connection := fake_connection(&state)
+		rows = fake_rows(&state, driver.Column_Count(count))
+		driver.Connection_Query(&connection, request, &rows)
+
+		statement := fake_statement(&state, driver.STATEMENT_ARGUMENT_COUNT_UNKNOWN)
+		rows = fake_rows(&state, driver.Column_Count(count))
+		driver.Statement_Query(&statement, nil, &rows)
+	}
+}
+
+func request_storage_domains() (requests []driver.Request) {
+	arguments := test_arguments(driver.ARGUMENT_COUNT_MAXIMUM)
+	for _, size := range []int{
+		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, strings.TEXT_SIZE_MAXIMUM,
+	} {
+		query, _ := driver.Query_Validate(
+			driver.Query_Unvalidated(text_of(size, 'a')),
+		)
+		request, _ := driver.Request_Of(query, nil)
+		requests = append(requests, request)
+	}
+	query, _ := driver.Query_Validate("")
+	for _, size := range []int{
+		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, driver.ARGUMENT_COUNT_MAXIMUM,
+	} {
+		request, _ := driver.Request_Of(query, arguments[:size])
+		requests = append(requests, request)
+	}
+	return requests
 }
 
 func test_arguments(count int) (arguments driver.Arguments) {
 	arguments = make(driver.Arguments, count)
 	for index := range arguments {
 		ordinal := driver.Argument_Ordinal_Unvalidated(index + NUMBER_ONE)
-		arguments[index], _ = driver.Named_Value_Of(
-			"", ordinal, driver.Value_Null(),
+		arguments[index], _ = named_value(
+			"", ordinal, value_null(),
 		)
 	}
 	return arguments
+}
+
+func value_null() (value driver.Value) {
+	driver.Value_Null(&value)
+	return value
+}
+
+func named_value(
+	name driver.Argument_Name_Unvalidated,
+	ordinal driver.Argument_Ordinal_Unvalidated, value driver.Value,
+) (named driver.Named_Value, status driver.Validation_Status) {
+	status = driver.Named_Value_Of(&named, name, ordinal, value)
+	return named, status
+}
+
+func value_boolean(boolean driver.Boolean) (value driver.Value) {
+	driver.Value_Of_Boolean(&value, boolean)
+	return value
+}
+
+func value_integer(integer driver.Integer) (value driver.Value) {
+	driver.Value_Of_Integer(&value, integer)
+	return value
+}
+
+func value_float(float driver.Float) (value driver.Value) {
+	driver.Value_Of_Float(&value, float)
+	return value
+}
+
+func value_bytes(
+	bytes driver.Bytes_Unvalidated,
+) (value driver.Value, status driver.Validation_Status) {
+	status = driver.Value_Of_Bytes(&value, bytes)
+	return value, status
+}
+
+func value_text(
+	text driver.Text_Unvalidated,
+) (value driver.Value, status driver.Validation_Status) {
+	status = driver.Value_Of_Text(&value, text)
+	return value, status
+}
+
+func value_time(moment time.Moment) (value driver.Value) {
+	driver.Value_Of_Time(&value, moment)
+	return value
 }
 
 const NUMBER_ZERO = slices.COUNT_MINIMUM
@@ -539,6 +811,7 @@ const ROW_COLUMN_COUNT = NUMBER_ONE
 
 type fake_state struct {
 	Row_Position  int
+	Row_Value     driver.Value
 	Return_Status driver.Status
 }
 
@@ -552,15 +825,16 @@ func fake_connection(state *fake_state) (connection driver.Connection) {
 }
 
 func fake_connect(
-	state unsafe.Pointer, data_source driver.Data_Source, destination *driver.Connection,
+	state unsafe.Pointer, data_source driver.Data_Source,
+	destination driver.Connection_Pointer,
 ) (status driver.Status) {
-	destination.States[driver.CONNECTION_SLOT] = state
-	destination.Close_Procedures[driver.CONNECTION_SLOT] = fake_close
-	destination.Probe_Procedures[driver.CONNECTION_SLOT] = fake_probe
-	destination.Exec_Procedures[driver.CONNECTION_SLOT] = fake_exec
-	destination.Query_Procedures[driver.CONNECTION_SLOT] = fake_query
-	destination.Prepare_Procedures[driver.CONNECTION_SLOT] = fake_prepare
-	destination.Begin_Procedures[driver.CONNECTION_SLOT] = fake_begin
+	destination.State = state
+	destination.Close_Procedure = fake_close
+	destination.Probe_Procedure = fake_probe
+	destination.Exec_Procedure = fake_exec
+	destination.Query_Procedure = fake_query
+	destination.Prepare_Procedure = fake_prepare
+	destination.Begin_Procedure = fake_begin
 	return (*fake_state)(state).Return_Status
 }
 
@@ -573,39 +847,39 @@ func fake_probe(state unsafe.Pointer) (status driver.Status) {
 }
 
 func fake_exec(
-	state unsafe.Pointer, request driver.Request, result *driver.Result,
+	state unsafe.Pointer, request driver.Request, result driver.Result_Pointer,
 ) (status driver.Status) {
 	driver.Result_Set_Rows_Affected(result, ROW_COLUMN_COUNT)
 	return (*fake_state)(state).Return_Status
 }
 
 func fake_query(
-	state unsafe.Pointer, request driver.Request, rows *driver.Rows,
+	state unsafe.Pointer, request driver.Request, rows driver.Rows_Pointer,
 ) (status driver.Status) {
 	*rows = fake_rows((*fake_state)(state), ROW_COLUMN_COUNT)
 	return (*fake_state)(state).Return_Status
 }
 
 func fake_prepare(
-	state unsafe.Pointer, query driver.Query, statement *driver.Statement,
+	state unsafe.Pointer, query driver.Query, statement driver.Statement_Pointer,
 ) (status driver.Status) {
-	statement.States[driver.STATEMENT_SLOT] = state
-	statement.Argument_Counts[driver.STATEMENT_SLOT] = NUMBER_ZERO
-	statement.Exec_Procedures[driver.STATEMENT_SLOT] = fake_statement_exec
-	statement.Query_Procedures[driver.STATEMENT_SLOT] = fake_statement_query
-	statement.Close_Procedures[driver.STATEMENT_SLOT] = fake_statement_close
+	statement.State = state
+	statement.Argument_Count = NUMBER_ZERO
+	statement.Exec_Procedure = fake_statement_exec
+	statement.Query_Procedure = fake_statement_query
+	statement.Close_Procedure = fake_statement_close
 	return (*fake_state)(state).Return_Status
 }
 
 func fake_statement_exec(
-	state unsafe.Pointer, arguments driver.Arguments, result *driver.Result,
+	state unsafe.Pointer, arguments driver.Arguments, result driver.Result_Pointer,
 ) (status driver.Status) {
 	driver.Result_Set_Rows_Affected(result, ROW_COLUMN_COUNT)
 	return (*fake_state)(state).Return_Status
 }
 
 func fake_statement_query(
-	state unsafe.Pointer, arguments driver.Arguments, rows *driver.Rows,
+	state unsafe.Pointer, arguments driver.Arguments, rows driver.Rows_Pointer,
 ) (status driver.Status) {
 	*rows = fake_rows((*fake_state)(state), ROW_COLUMN_COUNT)
 	return (*fake_state)(state).Return_Status
@@ -618,21 +892,21 @@ func fake_statement_close(state unsafe.Pointer) (status driver.Status) {
 func fake_statement(
 	state *fake_state, count driver.Statement_Argument_Count,
 ) (statement driver.Statement) {
-	statement.States[driver.STATEMENT_SLOT] = unsafe.Pointer(state)
-	statement.Argument_Counts[driver.STATEMENT_SLOT] = count
-	statement.Exec_Procedures[driver.STATEMENT_SLOT] = fake_statement_exec
-	statement.Query_Procedures[driver.STATEMENT_SLOT] = fake_statement_query
-	statement.Close_Procedures[driver.STATEMENT_SLOT] = fake_statement_close
+	statement.State = unsafe.Pointer(state)
+	statement.Argument_Count = count
+	statement.Exec_Procedure = fake_statement_exec
+	statement.Query_Procedure = fake_statement_query
+	statement.Close_Procedure = fake_statement_close
 	return statement
 }
 
 func fake_begin(
 	state unsafe.Pointer, options driver.Transaction_Options,
-	transaction *driver.Transaction,
+	transaction driver.Transaction_Pointer,
 ) (status driver.Status) {
-	transaction.States[driver.TRANSACTION_SLOT] = state
-	transaction.Commit_Procedures[driver.TRANSACTION_SLOT] = fake_commit
-	transaction.Rollback_Procedures[driver.TRANSACTION_SLOT] = fake_rollback
+	transaction.State = state
+	transaction.Commit_Procedure = fake_commit
+	transaction.Rollback_Procedure = fake_rollback
 	return (*fake_state)(state).Return_Status
 }
 
@@ -645,9 +919,9 @@ func fake_rollback(state unsafe.Pointer) (status driver.Status) {
 }
 
 func fake_transaction(state *fake_state) (transaction driver.Transaction) {
-	transaction.States[driver.TRANSACTION_SLOT] = unsafe.Pointer(state)
-	transaction.Commit_Procedures[driver.TRANSACTION_SLOT] = fake_commit
-	transaction.Rollback_Procedures[driver.TRANSACTION_SLOT] = fake_rollback
+	transaction.State = unsafe.Pointer(state)
+	transaction.Commit_Procedure = fake_commit
+	transaction.Rollback_Procedure = fake_rollback
 	return transaction
 }
 
@@ -661,7 +935,7 @@ func fake_rows_next(state unsafe.Pointer, destination driver.Values) (status dri
 		return driver.STATUS_DONE
 	}
 	for index := range destination {
-		destination[index] = driver.Value_Of_Integer(NUMBER_TWO)
+		destination[index] = fake.Row_Value
 	}
 	*position++
 	return driver.STATUS_OK
@@ -672,10 +946,10 @@ func fake_rows_close(state unsafe.Pointer) (status driver.Status) {
 }
 
 func fake_rows(state *fake_state, count driver.Column_Count) (rows driver.Rows) {
-	rows.States[driver.ROWS_SLOT] = unsafe.Pointer(state)
-	rows.Column_Counts[driver.ROWS_SLOT] = count
-	rows.Next_Procedures[driver.ROWS_SLOT] = fake_rows_next
-	rows.Close_Procedures[driver.ROWS_SLOT] = fake_rows_close
+	rows.State = unsafe.Pointer(state)
+	rows.Column_Count = count
+	rows.Next_Procedure = fake_rows_next
+	rows.Close_Procedure = fake_rows_close
 	return rows
 }
 

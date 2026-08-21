@@ -122,20 +122,32 @@ const STATUS_BUSY Status = STATUS_HANDLE_INVALID + 1
 // STATUS_GENERATION_EXHAUSTED refuses lease identity wraparound.
 const STATUS_GENERATION_EXHAUSTED Status = STATUS_BUSY + 1
 
+// Synchronizer_Lock_Procedure enters pool critical section.
+type Synchronizer_Lock_Procedure func(state unsafe.Pointer)
+
+// Synchronizer_Unlock_Procedure leaves pool critical section.
+type Synchronizer_Unlock_Procedure func(state unsafe.Pointer)
+
 // Synchronizer injects exclusion without ambient synchronization state.
 type Synchronizer struct {
 	// State belongs to synchronization implementation.
 	State unsafe.Pointer
 	// Lock_Procedure enters pool critical section.
-	Lock_Procedure func(state unsafe.Pointer)
+	Lock_Procedure Synchronizer_Lock_Procedure
 	// Unlock_Procedure leaves pool critical section.
-	Unlock_Procedure func(state unsafe.Pointer)
+	Unlock_Procedure Synchronizer_Unlock_Procedure
 }
 
-// Synchronizer_Invariants requires balanced critical-section capabilities.
+// Synchronizer_Invariants admits zero storage before dependency injection.
 func Synchronizer_Invariants(value Synchronizer, namespace aver.Namespace) {
-	aver.Always(value.Lock_Procedure != nil, "A pool synchronizer can lock.")
-	aver.Always(value.Unlock_Procedure != nil, "A pool synchronizer can unlock.")
+	aver.Sometimes(
+		value.Lock_Procedure != nil,
+		"Pool synchronizer lock dependency is bound.",
+	)
+	aver.Sometimes(
+		value.Unlock_Procedure != nil,
+		"Pool synchronizer unlock dependency is bound.",
+	)
 }
 
 // CONNECTION_COUNT_MAXIMUM shares repository collection capacity.
@@ -146,6 +158,46 @@ type Connection_Count int
 
 // Connection_Count_Invariants bounds each pool quantity by fixed capacity.
 func Connection_Count_Invariants(value Connection_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Capacity_Count is fixed caller slot count.
+type Capacity_Count Connection_Count
+
+// Capacity_Count_Invariants bounds fixed caller capacity.
+func Capacity_Count_Invariants(value Capacity_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Open_Count counts slots holding driver connections.
+type Open_Count Connection_Count
+
+// Open_Count_Invariants bounds live driver connections.
+func Open_Count_Invariants(value Open_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Idle_Count counts reusable driver connections.
+type Idle_Count Connection_Count
+
+// Idle_Count_Invariants bounds reusable driver connections.
+func Idle_Count_Invariants(value Idle_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// In_Use_Count counts leased driver connections.
+type In_Use_Count Connection_Count
+
+// In_Use_Count_Invariants bounds leased driver connections.
+func In_Use_Count_Invariants(value In_Use_Count, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM).
 		Ensure()
@@ -272,35 +324,31 @@ func Discard_State_Invariants(value Discard_State, namespace aver.Namespace) {
 		Ensure()
 }
 
-// SLOT_FIELD is sole slot property position.
-const SLOT_FIELD = slices.COUNT_MINIMUM
-
-// SLOT_FIELD_COUNT keeps each pool slot aggregate fixed.
-const SLOT_FIELD_COUNT = SLOT_FIELD + 1
+// SLOT_SIZE keeps caller-owned slot representation equal to explicit fields.
+const SLOT_SIZE = unsafe.Sizeof(struct {
+	Connection driver.Connection
+	State      Slot_State
+	Generation Generation
+}{})
 
 // Slot is caller-owned storage for one driver connection and lease identity.
 type Slot struct {
-	// Connections holds one reusable driver connection.
-	Connections [SLOT_FIELD_COUNT]driver.Connection
-	// States holds one slot lifecycle state.
-	States [SLOT_FIELD_COUNT]Slot_State
-	// Generations holds current lease identity.
-	Generations [SLOT_FIELD_COUNT]Generation
+	// Connection keeps driver resource in caller-owned storage.
+	Connection driver.Connection
+	// State prevents overlapping resource owners.
+	State Slot_State
+	// Generation prevents stale handle reuse.
+	Generation Generation
 }
 
-// Slot_Invariants states fixed caller-owned slot storage.
+// Slot_Invariants preserves storage while pool operations validate live fields.
 func Slot_Invariants(value Slot, namespace aver.Namespace) {
+	driver.Connection_Invariants(value.Connection, namespace)
+	Slot_State_Invariants(value.State, namespace)
+	Generation_Invariants(value.Generation, namespace)
 	aver.Always(
-		len(value.Connections) == SLOT_FIELD_COUNT,
-		"A pool slot holds one driver connection.",
-	)
-	aver.Always(
-		len(value.States) == SLOT_FIELD_COUNT,
-		"A pool slot holds one lifecycle state.",
-	)
-	aver.Always(
-		len(value.Generations) == SLOT_FIELD_COUNT,
-		"A pool slot holds one lease generation.",
+		unsafe.Sizeof(value) == SLOT_SIZE,
+		"Explicit fields preserve pool slot storage size.",
 	)
 }
 
@@ -332,116 +380,223 @@ func Initialized_Slot_Storage_Invariants(
 		Ensure()
 }
 
-// Pool_State distinguishes zero, open, and closed pools.
-type Pool_State uint8
+// Pool_Closed keeps zero value open so dependencies alone mark initialization.
+type Pool_Closed uint8
 
-// Pool_State_Invariants closes pool lifecycle.
-func Pool_State_Invariants(value Pool_State, namespace aver.Namespace) {
+// Pool_Closed_Invariants requires open and closed lifecycle observations.
+func Pool_Closed_Invariants(value Pool_Closed, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Enum_3_Uint8(
-			uint8(value), uint8(POOL_UNINITIALIZED), uint8(POOL_OPEN),
-			uint8(POOL_CLOSED),
-		).
+		Enum_Uint8(uint8(value), uint8(POOL_OPEN), uint8(POOL_CLOSED)).
 		Ensure()
 }
 
-// POOL_UNINITIALIZED is zero pool before Pool_Init.
-const POOL_UNINITIALIZED Pool_State = Pool_State(bits.WORD_8_MINIMUM)
+// POOL_OPEN admits connection work.
+const POOL_OPEN Pool_Closed = Pool_Closed(bits.WORD_8_MINIMUM)
 
-// POOL_OPEN admits acquisition and operations.
-const POOL_OPEN Pool_State = POOL_UNINITIALIZED + 1
+// POOL_CLOSED refuses new connection work.
+const POOL_CLOSED Pool_Closed = POOL_OPEN + 1
 
-// POOL_CLOSED rejects future acquisition.
-const POOL_CLOSED Pool_State = POOL_OPEN + 1
-
-// Initialized_Pool_State excludes a zero pool without bound dependencies.
-type Initialized_Pool_State Pool_State
-
-// Initialized_Pool_State_Invariants closes bound pool lifecycle.
-func Initialized_Pool_State_Invariants(
-	value Initialized_Pool_State, namespace aver.Namespace,
-) {
-	aver.Tree(value, namespace).
-		Enum_Uint8(
-			uint8(value), uint8(POOL_OPEN), uint8(POOL_CLOSED),
-		).
-		Ensure()
-}
-
-// POOL_FIELD is sole pool property position.
-const POOL_FIELD = slices.COUNT_MINIMUM
-
-// POOL_FIELD_COUNT keeps pool aggregate fixed.
-const POOL_FIELD_COUNT = POOL_FIELD + 1
+// POOL_SIZE keeps pool representation equal to injected dependencies and caller storage.
+const POOL_SIZE = unsafe.Sizeof(struct {
+	Driver       driver.Driver
+	Data_Source  driver.Data_Source
+	Synchronizer Synchronizer
+	Slots        Slot_Storage
+	Closed       Pool_Closed
+}{})
 
 // Pool owns no dynamic storage; every connection slot belongs to caller.
 type Pool struct {
-	// Drivers holds injected driver root.
-	Drivers [POOL_FIELD_COUNT]driver.Driver
-	// Data_Sources holds validated driver connection text.
-	Data_Sources [POOL_FIELD_COUNT]driver.Data_Source
-	// Synchronizers holds injected exclusion.
-	Synchronizers [POOL_FIELD_COUNT]Synchronizer
-	// Slot_Sets borrows caller-owned fixed capacity.
-	Slot_Sets [POOL_FIELD_COUNT]Slot_Storage
-	// States holds pool lifecycle.
-	States [POOL_FIELD_COUNT]Pool_State
+	// Driver keeps resource creation injected.
+	Driver driver.Driver
+	// Data_Source remains validated before connection creation.
+	Data_Source driver.Data_Source
+	// Synchronizer keeps exclusion injected.
+	Synchronizer Synchronizer
+	// Slots keeps capacity caller-owned and bounded.
+	Slots Slot_Storage
+	// Closed prevents acquisition after terminal resource release.
+	Closed Pool_Closed
 }
 
-// Pool_Invariants states fixed pool aggregate storage.
-func Pool_Invariants(subject *Pool, namespace aver.Namespace) {
-	aver.Always(subject != nil, "Pool storage exists.")
+// Pool_Invariants preserves storage while pool_initialized validates dependencies.
+func Pool_Invariants(value Pool, namespace aver.Namespace) {
+	driver.Driver_Invariants(value.Driver, namespace)
+	driver.Data_Source_Invariants(value.Data_Source, namespace)
+	Synchronizer_Invariants(value.Synchronizer, namespace)
+	Slot_Storage_Invariants(value.Slots, namespace)
+	Pool_Closed_Invariants(value.Closed, namespace)
 	aver.Always(
-		len(subject.Drivers) == POOL_FIELD_COUNT,
-		"A pool holds one driver slot.",
-	)
-	aver.Always(
-		len(subject.Data_Sources) == POOL_FIELD_COUNT,
-		"A pool holds one data-source slot.",
-	)
-	aver.Always(
-		len(subject.Synchronizers) == POOL_FIELD_COUNT,
-		"A pool holds one synchronizer slot.",
-	)
-	aver.Always(
-		len(subject.Slot_Sets) == POOL_FIELD_COUNT,
-		"A pool holds one slot-storage view.",
-	)
-	aver.Always(
-		len(subject.States) == POOL_FIELD_COUNT,
-		"A pool holds one lifecycle slot.",
+		unsafe.Sizeof(value) == POOL_SIZE,
+		"Explicit fields preserve pool dependency storage size.",
 	)
 }
 
-// HANDLE_FIELD is sole handle property position.
-const HANDLE_FIELD = slices.COUNT_MINIMUM
+// Pool_Pointer names caller-owned Pool storage.
+type Pool_Pointer *Pool
 
-// HANDLE_FIELD_COUNT keeps every lease handle aggregate fixed.
-const HANDLE_FIELD_COUNT = HANDLE_FIELD + 1
+// Pool_Pointer_Invariants proves initialized storage presence and shape.
+func Pool_Pointer_Invariants(value Pool_Pointer, namespace aver.Namespace) {
+	aver.Always(value != nil, "SQL Pool storage exists.")
+	driver.Driver_Invariants(value.Driver, namespace)
+	driver.Data_Source_Invariants(value.Data_Source, namespace)
+	Synchronizer_Invariants(value.Synchronizer, namespace)
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value.Slots), INITIALIZED_CONNECTION_COUNT_MINIMUM,
+			CONNECTION_COUNT_MAXIMUM,
+		).
+		Enum_Uint8(
+			uint8(value.Closed), uint8(POOL_OPEN), uint8(POOL_CLOSED),
+		).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(*value) == POOL_SIZE,
+		"SQL Pool pointer preserves dependency storage size.",
+	)
+}
+
+// Pool_Destination names caller-owned storage before initialization.
+type Pool_Destination *Pool
+
+// Pool_Destination_Invariants admits zero and initialized prior storage.
+func Pool_Destination_Invariants(
+	value Pool_Destination, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "SQL Pool destination exists.")
+	driver.Driver_Invariants(value.Driver, namespace)
+	driver.Data_Source_Invariants(value.Data_Source, namespace)
+	Synchronizer_Invariants(value.Synchronizer, namespace)
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value.Slots), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM,
+		).
+		Enum_Uint8(
+			uint8(value.Closed), uint8(POOL_OPEN), uint8(POOL_CLOSED),
+		).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(*value) == POOL_SIZE,
+		"SQL Pool destination preserves dependency storage size.",
+	)
+}
+
+// Open_Pool_Pointer names initialized storage that still admits work.
+type Open_Pool_Pointer *Pool
+
+// Open_Pool_Pointer_Invariants excludes closed and empty storage.
+func Open_Pool_Pointer_Invariants(
+	value Open_Pool_Pointer, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Open SQL Pool storage exists.")
+	driver.Driver_Invariants(value.Driver, namespace)
+	driver.Data_Source_Invariants(value.Data_Source, namespace)
+	Synchronizer_Invariants(value.Synchronizer, namespace)
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value.Slots), INITIALIZED_CONNECTION_COUNT_MINIMUM,
+			CONNECTION_COUNT_MAXIMUM,
+		).
+		Ensure()
+	aver.Always(value.Closed == POOL_OPEN, "Open SQL Pool accepts work.")
+	aver.Always(
+		unsafe.Sizeof(*value) == POOL_SIZE,
+		"Open SQL Pool pointer preserves dependency storage size.",
+	)
+}
+
+// CONNECTION_SIZE keeps lease representation equal to owner, index, and generation.
+const CONNECTION_SIZE = unsafe.Sizeof(struct {
+	Pool       unsafe.Pointer
+	Slot_Index Slot_Index
+	Generation Generation
+}{})
 
 // Connection is one generation-checked pool lease.
 type Connection struct {
-	// Pools names owning pool; nil marks zero or closed handle.
-	Pools [HANDLE_FIELD_COUNT]*Pool
-	// Slot_Indices identifies one caller slot.
-	Slot_Indices [HANDLE_FIELD_COUNT]Slot_Index
-	// Generations identifies one acquisition of that slot.
-	Generations [HANDLE_FIELD_COUNT]Lease_Generation
+	// Pool stays opaque so zero handle remains valid storage.
+	Pool unsafe.Pointer
+	// Slot_Index identifies caller-owned connection storage.
+	Slot_Index Slot_Index
+	// Generation leaves zero available for empty handle.
+	Generation Generation
 }
 
-// Connection_Invariants states fixed lease handle storage.
-func Connection_Invariants(subject Connection, namespace aver.Namespace) {
+// Connection_Invariants preserves storage while reservation validates lease identity.
+func Connection_Invariants(value Connection, namespace aver.Namespace) {
+	Slot_Index_Invariants(value.Slot_Index, namespace)
+	Generation_Invariants(value.Generation, namespace)
 	aver.Always(
-		len(subject.Pools) == HANDLE_FIELD_COUNT,
-		"A connection handle holds one pool slot.",
+		unsafe.Sizeof(value) == CONNECTION_SIZE,
+		"Explicit fields preserve connection handle storage size.",
 	)
+}
+
+// Connection_Pointer names caller-owned Connection storage.
+type Connection_Pointer *Connection
+
+// Connection_Pointer_Invariants proves storage presence and shape.
+func Connection_Pointer_Invariants(
+	value Connection_Pointer, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "SQL Connection storage exists.")
+	aver.Tree(value, namespace).
+		Range_Int(
+			int(value.Slot_Index), slices.COUNT_MINIMUM, SLOT_INDEX_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Generation), bits.WORD_64_MINIMUM,
+			bits.WORD_64_MAXIMUM,
+		).
+		Ensure()
 	aver.Always(
-		len(subject.Slot_Indices) == HANDLE_FIELD_COUNT,
-		"A connection handle holds one index slot.",
+		unsafe.Sizeof(*value) == CONNECTION_SIZE,
+		"SQL Connection pointer preserves handle storage size.",
 	)
+}
+
+// Live_Connection is one validated nonzero lease identity.
+type Live_Connection Connection
+
+// Live_Connection_Invariants excludes empty generation sentinel.
+func Live_Connection_Invariants(
+	value Live_Connection, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			int(value.Slot_Index), slices.COUNT_MINIMUM, SLOT_INDEX_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Generation), uint64(LEASE_GENERATION_MINIMUM),
+			bits.WORD_64_MAXIMUM,
+		).
+		Ensure()
 	aver.Always(
-		len(subject.Generations) == HANDLE_FIELD_COUNT,
-		"A connection handle holds one generation slot.",
+		unsafe.Sizeof(value) == CONNECTION_SIZE,
+		"Live SQL Connection preserves handle storage size.",
+	)
+}
+
+// Live_Connection_Pointer names validated lease storage.
+type Live_Connection_Pointer *Connection
+
+// Live_Connection_Pointer_Invariants excludes empty generation sentinel.
+func Live_Connection_Pointer_Invariants(
+	value Live_Connection_Pointer, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Live SQL Connection storage exists.")
+	aver.Tree(value, namespace).
+		Range_Int(
+			int(value.Slot_Index), slices.COUNT_MINIMUM, SLOT_INDEX_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Generation), uint64(LEASE_GENERATION_MINIMUM),
+			bits.WORD_64_MAXIMUM,
+		).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(*value) == CONNECTION_SIZE,
+		"Live SQL Connection pointer preserves handle storage size.",
 	)
 }
 
@@ -490,81 +645,148 @@ const TRANSITION_RETURN Transition_Kind = Transition_Kind(bits.WORD_8_MINIMUM)
 // TRANSITION_ROWS transfers ownership to one rows cursor.
 const TRANSITION_ROWS Transition_Kind = TRANSITION_RETURN + 1
 
+// ROWS_SIZE keeps cursor handle representation equal to explicit fields.
+const ROWS_SIZE = unsafe.Sizeof(struct {
+	Connection   Connection
+	Driver_Rows  driver.Rows
+	Return_State Slot_State
+}{})
+
 // Rows carries one driver cursor and reserved pool lease.
 type Rows struct {
-	// Connections names reserved slot.
-	Connections [HANDLE_FIELD_COUNT]Connection
-	// Driver_Rows holds driver cursor state.
-	Driver_Rows [HANDLE_FIELD_COUNT]driver.Rows
-	// Return_States selects state restored by close or exhaustion.
-	Return_States [HANDLE_FIELD_COUNT]Return_State
+	// Connection preserves reserved slot identity.
+	Connection Connection
+	// Driver_Rows keeps cursor state caller-owned.
+	Driver_Rows driver.Rows
+	// Return_State leaves zero available for empty handle.
+	Return_State Slot_State
 }
 
-// Rows_Invariants states fixed rows handle storage.
-func Rows_Invariants(subject Rows, namespace aver.Namespace) {
+// Rows_Invariants preserves storage while rows operations validate live fields.
+func Rows_Invariants(value Rows, namespace aver.Namespace) {
+	Connection_Invariants(value.Connection, namespace)
+	driver.Rows_Invariants(value.Driver_Rows, namespace)
+	Slot_State_Invariants(value.Return_State, namespace)
 	aver.Always(
-		len(subject.Connections) == HANDLE_FIELD_COUNT,
-		"Rows holds one connection handle.",
-	)
-	aver.Always(
-		len(subject.Driver_Rows) == HANDLE_FIELD_COUNT,
-		"Rows holds one driver cursor.",
-	)
-	aver.Always(
-		len(subject.Return_States) == HANDLE_FIELD_COUNT,
-		"Rows holds one return state.",
+		unsafe.Sizeof(value) == ROWS_SIZE,
+		"Explicit fields preserve SQL rows storage size.",
 	)
 }
+
+// Rows_Pointer names caller-owned Rows storage.
+type Rows_Pointer *Rows
+
+// Rows_Pointer_Invariants proves storage presence and shape.
+func Rows_Pointer_Invariants(value Rows_Pointer, namespace aver.Namespace) {
+	aver.Always(value != nil, "SQL Rows storage exists.")
+	Connection_Invariants(value.Connection, namespace)
+	driver.Rows_Invariants(value.Driver_Rows, namespace)
+	aver.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value.Return_State), uint8(SLOT_EMPTY), uint8(SLOT_CLOSE),
+		).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(*value) == ROWS_SIZE,
+		"SQL Rows pointer preserves cursor storage size.",
+	)
+}
+
+// STATEMENT_SIZE keeps prepared handle representation equal to explicit fields.
+const STATEMENT_SIZE = unsafe.Sizeof(struct {
+	Connection       Connection
+	Driver_Statement driver.Statement
+	Return_State     Slot_State
+}{})
 
 // Statement carries one driver statement and reserved pool lease.
 type Statement struct {
-	// Connections names reserved slot.
-	Connections [HANDLE_FIELD_COUNT]Connection
-	// Driver_Statements holds driver prepared state.
-	Driver_Statements [HANDLE_FIELD_COUNT]driver.Statement
-	// Return_States selects state restored by close.
-	Return_States [HANDLE_FIELD_COUNT]Return_State
+	// Connection preserves reserved slot identity.
+	Connection Connection
+	// Driver_Statement keeps prepared state caller-owned.
+	Driver_Statement driver.Statement
+	// Return_State leaves zero available for empty handle.
+	Return_State Slot_State
 }
 
-// Statement_Invariants states fixed statement handle storage.
-func Statement_Invariants(subject Statement, namespace aver.Namespace) {
+// Statement_Invariants preserves storage while operations validate live fields.
+func Statement_Invariants(value Statement, namespace aver.Namespace) {
+	Connection_Invariants(value.Connection, namespace)
+	driver.Statement_Invariants(value.Driver_Statement, namespace)
+	Slot_State_Invariants(value.Return_State, namespace)
 	aver.Always(
-		len(subject.Connections) == HANDLE_FIELD_COUNT,
-		"Statement holds one connection handle.",
-	)
-	aver.Always(
-		len(subject.Driver_Statements) == HANDLE_FIELD_COUNT,
-		"Statement holds one driver statement.",
-	)
-	aver.Always(
-		len(subject.Return_States) == HANDLE_FIELD_COUNT,
-		"Statement holds one return state.",
+		unsafe.Sizeof(value) == STATEMENT_SIZE,
+		"Explicit fields preserve SQL statement storage size.",
 	)
 }
+
+// Statement_Pointer names caller-owned Statement storage.
+type Statement_Pointer *Statement
+
+// Statement_Pointer_Invariants proves storage presence and shape.
+func Statement_Pointer_Invariants(
+	value Statement_Pointer, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "SQL Statement storage exists.")
+	Connection_Invariants(value.Connection, namespace)
+	driver.Statement_Invariants(value.Driver_Statement, namespace)
+	aver.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value.Return_State), uint8(SLOT_EMPTY), uint8(SLOT_CLOSE),
+		).
+		Ensure()
+	aver.Always(
+		unsafe.Sizeof(*value) == STATEMENT_SIZE,
+		"SQL Statement pointer preserves prepared storage size.",
+	)
+}
+
+// TRANSACTION_SIZE keeps transaction handle representation equal to explicit fields.
+const TRANSACTION_SIZE = unsafe.Sizeof(struct {
+	Connection         Connection
+	Driver_Transaction driver.Transaction
+	Return_State       Slot_State
+}{})
 
 // Transaction carries one driver transaction and reserved pool lease.
 type Transaction struct {
-	// Connections names reserved slot.
-	Connections [HANDLE_FIELD_COUNT]Connection
-	// Driver_Transactions holds driver transaction state.
-	Driver_Transactions [HANDLE_FIELD_COUNT]driver.Transaction
-	// Return_States selects state restored by commit or rollback.
-	Return_States [HANDLE_FIELD_COUNT]Return_State
+	// Connection preserves reserved slot identity.
+	Connection Connection
+	// Driver_Transaction keeps terminal state caller-owned.
+	Driver_Transaction driver.Transaction
+	// Return_State leaves zero available for empty handle.
+	Return_State Slot_State
 }
 
-// Transaction_Invariants states fixed transaction handle storage.
-func Transaction_Invariants(subject Transaction, namespace aver.Namespace) {
+// Transaction_Invariants preserves storage while operations validate live fields.
+func Transaction_Invariants(value Transaction, namespace aver.Namespace) {
+	Connection_Invariants(value.Connection, namespace)
+	driver.Transaction_Invariants(value.Driver_Transaction, namespace)
+	Slot_State_Invariants(value.Return_State, namespace)
 	aver.Always(
-		len(subject.Connections) == HANDLE_FIELD_COUNT,
-		"Transaction holds one connection handle.",
+		unsafe.Sizeof(value) == TRANSACTION_SIZE,
+		"Explicit fields preserve SQL transaction storage size.",
 	)
+}
+
+// Transaction_Pointer names caller-owned Transaction storage.
+type Transaction_Pointer *Transaction
+
+// Transaction_Pointer_Invariants proves storage presence and shape.
+func Transaction_Pointer_Invariants(
+	value Transaction_Pointer, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "SQL Transaction storage exists.")
+	Connection_Invariants(value.Connection, namespace)
+	driver.Transaction_Invariants(value.Driver_Transaction, namespace)
+	aver.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value.Return_State), uint8(SLOT_EMPTY), uint8(SLOT_CLOSE),
+		).
+		Ensure()
 	aver.Always(
-		len(subject.Driver_Transactions) == HANDLE_FIELD_COUNT,
-		"Transaction holds one driver transaction.",
-	)
-	aver.Always(
-		len(subject.Return_States) == HANDLE_FIELD_COUNT,
-		"Transaction holds one return state.",
+		unsafe.Sizeof(*value) == TRANSACTION_SIZE,
+		"SQL Transaction pointer preserves transaction storage size.",
 	)
 }
 
@@ -588,67 +810,81 @@ const TRANSACTION_ROLLBACK Transaction_Terminal = Transaction_Terminal(bits.WORD
 // TRANSACTION_COMMIT makes transaction changes durable.
 const TRANSACTION_COMMIT Transaction_Terminal = TRANSACTION_ROLLBACK + 1
 
+// RESULT_SIZE keeps SQL result representation equal to driver result.
+const RESULT_SIZE = unsafe.Sizeof(struct {
+	Driver_Result driver.Result
+}{})
+
 // Result carries one driver result without interface allocation.
 type Result struct {
-	// Driver_Results holds one driver execution result.
-	Driver_Results [HANDLE_FIELD_COUNT]driver.Result
+	// Driver_Result avoids interface allocation.
+	Driver_Result driver.Result
 }
 
-// Result_Invariants states fixed result storage.
+// Result_Invariants preserves storage while accessors validate optional counters.
 func Result_Invariants(value Result, namespace aver.Namespace) {
+	driver.Result_Invariants(value.Driver_Result, namespace)
 	aver.Always(
-		len(value.Driver_Results) == HANDLE_FIELD_COUNT,
-		"SQL Result holds one driver result.",
+		unsafe.Sizeof(value) == RESULT_SIZE,
+		"Explicit field preserves SQL result storage size.",
 	)
 }
 
-// STATISTICS_FIELD is sole statistics property position.
-const STATISTICS_FIELD = slices.COUNT_MINIMUM
+// Result_Pointer names caller-owned Result storage.
+type Result_Pointer *Result
 
-// STATISTICS_FIELD_COUNT keeps statistics aggregate fixed.
-const STATISTICS_FIELD_COUNT = STATISTICS_FIELD + 1
+// Result_Pointer_Invariants proves storage presence and shape.
+func Result_Pointer_Invariants(value Result_Pointer, namespace aver.Namespace) {
+	aver.Always(value != nil, "SQL Result storage exists.")
+	driver.Result_Invariants(value.Driver_Result, namespace)
+	aver.Always(
+		unsafe.Sizeof(*value) == RESULT_SIZE,
+		"SQL Result pointer preserves driver result storage size.",
+	)
+}
+
+// STATISTICS_SIZE keeps snapshot representation equal to four explicit counts.
+const STATISTICS_SIZE = unsafe.Sizeof(struct {
+	Capacity     Capacity_Count
+	Open_Count   Open_Count
+	Idle_Count   Idle_Count
+	In_Use_Count In_Use_Count
+}{})
 
 // Statistics is one bounded snapshot of pool slot counts.
 type Statistics struct {
-	// Capacities holds fixed caller capacity.
-	Capacities [STATISTICS_FIELD_COUNT]Connection_Count
-	// Open_Counts holds slots with driver connections.
-	Open_Counts [STATISTICS_FIELD_COUNT]Connection_Count
-	// Idle_Counts holds reusable connections.
-	Idle_Counts [STATISTICS_FIELD_COUNT]Connection_Count
-	// In_Use_Counts holds reserved connections.
-	In_Use_Counts [STATISTICS_FIELD_COUNT]Connection_Count
+	// Capacity preserves fixed caller capacity.
+	Capacity Capacity_Count
+	// Open_Count excludes untouched storage.
+	Open_Count Open_Count
+	// Idle_Count identifies reusable connections.
+	Idle_Count Idle_Count
+	// In_Use_Count excludes empty, idle, and in-flight creation storage.
+	In_Use_Count In_Use_Count
 }
 
-// Statistics_Invariants states fixed statistics storage.
+// Statistics_Invariants preserves storage while accessors validate each count.
 func Statistics_Invariants(value Statistics, namespace aver.Namespace) {
+	Capacity_Count_Invariants(value.Capacity, namespace)
+	Open_Count_Invariants(value.Open_Count, namespace)
+	Idle_Count_Invariants(value.Idle_Count, namespace)
+	In_Use_Count_Invariants(value.In_Use_Count, namespace)
 	aver.Always(
-		len(value.Capacities) == STATISTICS_FIELD_COUNT,
-		"Statistics holds one capacity slot.",
-	)
-	aver.Always(
-		len(value.Open_Counts) == STATISTICS_FIELD_COUNT,
-		"Statistics holds one open-count slot.",
-	)
-	aver.Always(
-		len(value.Idle_Counts) == STATISTICS_FIELD_COUNT,
-		"Statistics holds one idle-count slot.",
-	)
-	aver.Always(
-		len(value.In_Use_Counts) == STATISTICS_FIELD_COUNT,
-		"Statistics holds one in-use-count slot.",
+		unsafe.Sizeof(value) == STATISTICS_SIZE,
+		"Explicit counts preserve pool statistics storage size.",
 	)
 }
 
 // Pool_Init binds injected dependencies to fixed caller-owned slots.
 func Pool_Init(
-	pool *Pool, injected driver.Driver, data_source driver.Data_Source,
+	pool Pool_Destination, injected driver.Driver, data_source driver.Data_Source,
 	synchronizer Synchronizer, slots Slot_Storage,
 ) (status Initialization_Status) {
 	defer func() {
 		Initialization_Status_Invariants(status, "pool_init.status")
 	}()
-	Pool_Invariants(pool, "pool_init.pool")
+	Pool_Destination_Invariants(pool, "pool_init.pool")
+	Pool_Invariants(*pool, "pool_init.pool_value")
 	driver.Driver_Invariants(injected, "pool_init.injected")
 	driver.Data_Source_Invariants(data_source, "pool_init.data_source")
 	Synchronizer_Invariants(synchronizer, "pool_init.synchronizer")
@@ -656,82 +892,84 @@ func Pool_Init(
 	if len(slots) == slices.COUNT_MINIMUM {
 		return Initialization_Status(STATUS_STORAGE_INVALID)
 	}
+	pool_driver_live(injected)
+	synchronizer_live(synchronizer)
 	for index := range slots {
 		Slot_Invariants(slots[index], "pool_init.slot")
 		slots[index] = Slot{}
 	}
 	*pool = Pool{
-		Drivers:       [POOL_FIELD_COUNT]driver.Driver{injected},
-		Data_Sources:  [POOL_FIELD_COUNT]driver.Data_Source{data_source},
-		Synchronizers: [POOL_FIELD_COUNT]Synchronizer{synchronizer},
-		Slot_Sets:     [POOL_FIELD_COUNT]Slot_Storage{slots},
-		States:        [POOL_FIELD_COUNT]Pool_State{POOL_OPEN},
+		Driver:       injected,
+		Data_Source:  data_source,
+		Synchronizer: synchronizer,
+		Slots:        slots,
+		Closed:       POOL_OPEN,
 	}
 	return Initialization_Status(STATUS_OK)
 }
 
 // Pool_Connection_Acquire reserves idle storage or opens one empty slot.
-func Pool_Connection_Acquire(pool *Pool) (connection Connection, status Status) {
+func Pool_Connection_Acquire(pool Pool_Pointer) (connection Connection, status Status) {
 	defer func() {
 		Connection_Invariants(connection, "pool_connection_acquire.connection")
 		Status_Invariants(status, "pool_connection_acquire.status")
 	}()
-	Pool_Invariants(pool, "pool_connection_acquire.pool")
+	Pool_Pointer_Invariants(pool, "pool_connection_acquire.pool")
 	pool_initialized(pool)
-	synchronizer := pool.Synchronizers[POOL_FIELD]
+	synchronizer := pool.Synchronizer
 	synchronizer.Lock_Procedure(synchronizer.State)
-	if pool.States[POOL_FIELD] == POOL_CLOSED {
+	if pool.Closed == POOL_CLOSED {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Connection{}, STATUS_CLOSED
 	}
-	slots := pool.Slot_Sets[POOL_FIELD]
+	slots := pool.Slots
 	generation_exhausted := false
 	for index := range slots {
 		slot := &slots[index]
-		if slot.States[SLOT_FIELD] != SLOT_IDLE {
+		if slot.State != SLOT_IDLE {
 			continue
 		}
-		if slot.Generations[SLOT_FIELD] == Generation(bits.WORD_64_MAXIMUM) {
+		if slot.Generation == Generation(bits.WORD_64_MAXIMUM) {
 			generation_exhausted = true
 			continue
 		}
-		slot.Generations[SLOT_FIELD]++
-		slot.States[SLOT_FIELD] = SLOT_CONNECTION
-		connection = connection_of(
-			pool, Slot_Index(index), Lease_Generation(slot.Generations[SLOT_FIELD]),
-		)
+		slot.Generation++
+		slot.State = SLOT_CONNECTION
+		connection = Connection(connection_of(
+			Open_Pool_Pointer(pool), Slot_Index(index),
+			Lease_Generation(slot.Generation),
+		))
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return connection, STATUS_OK
 	}
 	for index := range slots {
 		slot := &slots[index]
-		if slot.States[SLOT_FIELD] != SLOT_EMPTY {
+		if slot.State != SLOT_EMPTY {
 			continue
 		}
-		if slot.Generations[SLOT_FIELD] == Generation(bits.WORD_64_MAXIMUM) {
+		if slot.Generation == Generation(bits.WORD_64_MAXIMUM) {
 			generation_exhausted = true
 			continue
 		}
-		slot.Generations[SLOT_FIELD]++
-		generation := slot.Generations[SLOT_FIELD]
-		slot.States[SLOT_FIELD] = SLOT_CONNECTION_CREATION
-		slot.Connections[SLOT_FIELD] = driver.Connection{}
+		slot.Generation++
+		generation := slot.Generation
+		slot.State = SLOT_CONNECTION_CREATION
+		slot.Connection = driver.Connection{}
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		driver_status := driver.Connect(
-			pool.Drivers[POOL_FIELD], pool.Data_Sources[POOL_FIELD],
-			&slot.Connections[SLOT_FIELD],
+			pool.Driver, pool.Data_Source,
+			&slot.Connection,
 		)
 		synchronizer.Lock_Procedure(synchronizer.State)
 		if driver_status != driver.STATUS_OK {
-			slot.Connections[SLOT_FIELD] = driver.Connection{}
-			slot.States[SLOT_FIELD] = SLOT_EMPTY
+			slot.Connection = driver.Connection{}
+			slot.State = SLOT_EMPTY
 			synchronizer.Unlock_Procedure(synchronizer.State)
 			return Connection{}, Status(status_of_driver(driver_status))
 		}
-		slot.States[SLOT_FIELD] = SLOT_CONNECTION
-		connection = connection_of(
-			pool, Slot_Index(index), Lease_Generation(generation),
-		)
+		slot.State = SLOT_CONNECTION
+		connection = Connection(connection_of(Open_Pool_Pointer(pool), Slot_Index(index),
+			Lease_Generation(generation)))
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return connection, STATUS_OK
 	}
@@ -743,11 +981,11 @@ func Pool_Connection_Acquire(pool *Pool) (connection Connection, status Status) 
 }
 
 // Connection_Close returns one explicit lease to idle pool state.
-func Connection_Close(connection *Connection) (status Reservation_Status) {
+func Connection_Close(connection Connection_Pointer) (status Reservation_Status) {
 	defer func() {
 		Reservation_Status_Invariants(status, "connection_close.status")
 	}()
-	Connection_Invariants(*connection, "connection_close.connection")
+	Connection_Pointer_Invariants(connection, "connection_close.connection")
 	var table driver.Connection
 	status = connection_reserve(
 		connection, Reservation_State(SLOT_CONNECTION), Activity_State(SLOT_CLOSE), &table,
@@ -756,7 +994,7 @@ func Connection_Close(connection *Connection) (status Reservation_Status) {
 		return status
 	}
 	transition_status := connection_transition(
-		connection, Activity_State(SLOT_CLOSE), TRANSITION_RETURN,
+		Live_Connection_Pointer(connection), Activity_State(SLOT_CLOSE), TRANSITION_RETURN,
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status == Transition_Status(STATUS_OK) {
@@ -766,19 +1004,19 @@ func Connection_Close(connection *Connection) (status Reservation_Status) {
 }
 
 // Pool_Close closes every idle connection after refusing active leases.
-func Pool_Close(pool *Pool) (status Operation_Status) {
+func Pool_Close(pool Pool_Pointer) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "pool_close.status") }()
-	Pool_Invariants(pool, "pool_close.pool")
+	Pool_Pointer_Invariants(pool, "pool_close.pool")
 	pool_initialized(pool)
-	synchronizer := pool.Synchronizers[POOL_FIELD]
+	synchronizer := pool.Synchronizer
 	synchronizer.Lock_Procedure(synchronizer.State)
-	if pool.States[POOL_FIELD] == POOL_CLOSED {
+	if pool.Closed == POOL_CLOSED {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Operation_Status(STATUS_OK)
 	}
-	slots := pool.Slot_Sets[POOL_FIELD]
+	slots := pool.Slots
 	for index := range slots {
-		state := slots[index].States[SLOT_FIELD]
+		state := slots[index].State
 		if state != SLOT_EMPTY {
 			if state != SLOT_IDLE {
 				synchronizer.Unlock_Procedure(synchronizer.State)
@@ -786,52 +1024,52 @@ func Pool_Close(pool *Pool) (status Operation_Status) {
 			}
 		}
 	}
-	pool.States[POOL_FIELD] = POOL_CLOSED
+	pool.Closed = POOL_CLOSED
 	for index := range slots {
-		if slots[index].States[SLOT_FIELD] == SLOT_IDLE {
-			slots[index].States[SLOT_FIELD] = SLOT_CLOSE
+		if slots[index].State == SLOT_IDLE {
+			slots[index].State = SLOT_CLOSE
 		}
 	}
 	synchronizer.Unlock_Procedure(synchronizer.State)
 	status = Operation_Status(STATUS_OK)
 	for index := range slots {
 		slot := &slots[index]
-		if slot.States[SLOT_FIELD] != SLOT_CLOSE {
+		if slot.State != SLOT_CLOSE {
 			continue
 		}
-		driver_status := driver.Connection_Close(&slot.Connections[SLOT_FIELD])
+		driver_status := driver.Connection_Close(&slot.Connection)
 		if status == Operation_Status(STATUS_OK) {
 			if driver_status != driver.STATUS_OK {
 				status = Operation_Status(status_of_driver(driver_status))
 			}
 		}
-		slot.Connections[SLOT_FIELD] = driver.Connection{}
-		slot.States[SLOT_FIELD] = SLOT_EMPTY
+		slot.Connection = driver.Connection{}
+		slot.State = SLOT_EMPTY
 	}
 	return status
 }
 
 // Pool_Statistics returns one synchronized bounded count snapshot.
-func Pool_Statistics(pool *Pool) (statistics Statistics) {
+func Pool_Statistics(pool Pool_Pointer) (statistics Statistics) {
 	defer func() { Statistics_Invariants(statistics, "pool_statistics.statistics") }()
-	Pool_Invariants(pool, "pool_statistics.pool")
+	Pool_Pointer_Invariants(pool, "pool_statistics.pool")
 	pool_initialized(pool)
-	synchronizer := pool.Synchronizers[POOL_FIELD]
+	synchronizer := pool.Synchronizer
 	synchronizer.Lock_Procedure(synchronizer.State)
-	slots := pool.Slot_Sets[POOL_FIELD]
-	statistics.Capacities[STATISTICS_FIELD] = Connection_Count(len(slots))
+	slots := pool.Slots
+	statistics.Capacity = Capacity_Count(len(slots))
 	for index := range slots {
-		state := slots[index].States[SLOT_FIELD]
+		state := slots[index].State
 		if state != SLOT_EMPTY {
-			statistics.Open_Counts[STATISTICS_FIELD]++
+			statistics.Open_Count++
 		}
 		if state == SLOT_IDLE {
-			statistics.Idle_Counts[STATISTICS_FIELD]++
+			statistics.Idle_Count++
 		}
 		if state != SLOT_EMPTY {
 			if state != SLOT_IDLE {
 				if state != SLOT_CONNECTION_CREATION {
-					statistics.In_Use_Counts[STATISTICS_FIELD]++
+					statistics.In_Use_Count++
 				}
 			}
 		}
@@ -844,28 +1082,28 @@ func Pool_Statistics(pool *Pool) (statistics Statistics) {
 func Statistics_Capacity(value Statistics) (count Connection_Count) {
 	defer func() { Connection_Count_Invariants(count, "statistics_capacity.count") }()
 	Statistics_Invariants(value, "statistics_capacity.value")
-	return value.Capacities[STATISTICS_FIELD]
+	return Connection_Count(value.Capacity)
 }
 
 // Statistics_Open reports slots with driver connections.
 func Statistics_Open(value Statistics) (count Connection_Count) {
 	defer func() { Connection_Count_Invariants(count, "statistics_open.count") }()
 	Statistics_Invariants(value, "statistics_open.value")
-	return value.Open_Counts[STATISTICS_FIELD]
+	return Connection_Count(value.Open_Count)
 }
 
 // Statistics_Idle reports reusable driver connections.
 func Statistics_Idle(value Statistics) (count Connection_Count) {
 	defer func() { Connection_Count_Invariants(count, "statistics_idle.count") }()
 	Statistics_Invariants(value, "statistics_idle.value")
-	return value.Idle_Counts[STATISTICS_FIELD]
+	return Connection_Count(value.Idle_Count)
 }
 
 // Statistics_In_Use reports reserved driver connections.
 func Statistics_In_Use(value Statistics) (count Connection_Count) {
 	defer func() { Connection_Count_Invariants(count, "statistics_in_use.count") }()
 	Statistics_Invariants(value, "statistics_in_use.value")
-	return value.In_Use_Counts[STATISTICS_FIELD]
+	return Connection_Count(value.In_Use_Count)
 }
 
 // Result_Rows_Affected reports driver affected count when supported.
@@ -877,7 +1115,7 @@ func Result_Rows_Affected(
 		driver.Optional_Status_Invariants(status, "result_rows_affected.status")
 	}()
 	Result_Invariants(result, "result_rows_affected.result")
-	return driver.Result_Rows_Affected(&result.Driver_Results[HANDLE_FIELD])
+	return driver.Result_Rows_Affected(&result.Driver_Result)
 }
 
 // Result_Last_Insert_Identifier reports generated identity when supported.
@@ -891,13 +1129,13 @@ func Result_Last_Insert_Identifier(
 		driver.Optional_Status_Invariants(status, "result_last_insert_identifier.status")
 	}()
 	Result_Invariants(result, "result_last_insert_identifier.result")
-	return driver.Result_Last_Insert_Identifier(&result.Driver_Results[HANDLE_FIELD])
+	return driver.Result_Last_Insert_Identifier(&result.Driver_Result)
 }
 
 // Pool_Probe probes one bounded connection and returns it to pool.
-func Pool_Probe(pool *Pool) (status Status) {
+func Pool_Probe(pool Pool_Pointer) (status Status) {
 	defer func() { Status_Invariants(status, "pool_probe.status") }()
-	Pool_Invariants(pool, "pool_probe.pool")
+	Pool_Pointer_Invariants(pool, "pool_probe.pool")
 	connection, status := Pool_Connection_Acquire(pool)
 	if status != STATUS_OK {
 		return status
@@ -908,18 +1146,18 @@ func Pool_Probe(pool *Pool) (status Status) {
 }
 
 // Connection_Probe probes one explicit connection lease.
-func Connection_Probe(connection *Connection) (status Operation_Status) {
+func Connection_Probe(connection Connection_Pointer) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "connection_probe.status") }()
-	Connection_Invariants(*connection, "connection_probe.connection")
+	Connection_Pointer_Invariants(connection, "connection_probe.connection")
 	return connection_probe(connection, Connection_Return_State(SLOT_CONNECTION))
 }
 
 // Pool_Exec executes one request into caller-owned result storage.
-func Pool_Exec(pool *Pool, request driver.Request, result *Result) (status Status) {
+func Pool_Exec(pool Pool_Pointer, request driver.Request, result Result_Pointer) (status Status) {
 	defer func() { Status_Invariants(status, "pool_exec.status") }()
-	Pool_Invariants(pool, "pool_exec.pool")
+	Pool_Pointer_Invariants(pool, "pool_exec.pool")
 	driver.Request_Invariants(request, "pool_exec.request")
-	Result_Invariants(*result, "pool_exec.result")
+	Result_Pointer_Invariants(result, "pool_exec.result")
 	connection, status := Pool_Connection_Acquire(pool)
 	if status != STATUS_OK {
 		return status
@@ -931,23 +1169,23 @@ func Pool_Exec(pool *Pool, request driver.Request, result *Result) (status Statu
 
 // Connection_Exec executes one request through explicit lease.
 func Connection_Exec(
-	connection *Connection, request driver.Request, result *Result,
+	connection Connection_Pointer, request driver.Request, result Result_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "connection_exec.status") }()
-	Connection_Invariants(*connection, "connection_exec.connection")
+	Connection_Pointer_Invariants(connection, "connection_exec.connection")
 	driver.Request_Invariants(request, "connection_exec.request")
-	Result_Invariants(*result, "connection_exec.result")
+	Result_Pointer_Invariants(result, "connection_exec.result")
 	return connection_exec(
 		connection, request, Connection_Return_State(SLOT_CONNECTION), result,
 	)
 }
 
 // Pool_Query opens rows into caller-owned cursor storage.
-func Pool_Query(pool *Pool, request driver.Request, rows *Rows) (status Status) {
+func Pool_Query(pool Pool_Pointer, request driver.Request, rows Rows_Pointer) (status Status) {
 	defer func() { Status_Invariants(status, "pool_query.status") }()
-	Pool_Invariants(pool, "pool_query.pool")
+	Pool_Pointer_Invariants(pool, "pool_query.pool")
 	driver.Request_Invariants(request, "pool_query.request")
-	Rows_Invariants(*rows, "pool_query.rows")
+	Rows_Pointer_Invariants(rows, "pool_query.rows")
 	connection, status := Pool_Connection_Acquire(pool)
 	if status != STATUS_OK {
 		return status
@@ -959,23 +1197,24 @@ func Pool_Query(pool *Pool, request driver.Request, rows *Rows) (status Status) 
 
 // Connection_Query opens rows through explicit lease.
 func Connection_Query(
-	connection *Connection, request driver.Request, rows *Rows,
+	connection Connection_Pointer, request driver.Request, rows Rows_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "connection_query.status") }()
-	Connection_Invariants(*connection, "connection_query.connection")
+	Connection_Pointer_Invariants(connection, "connection_query.connection")
 	driver.Request_Invariants(request, "connection_query.request")
-	Rows_Invariants(*rows, "connection_query.rows")
+	Rows_Pointer_Invariants(rows, "connection_query.rows")
 	return connection_query(
 		connection, request, Connection_Return_State(SLOT_CONNECTION), rows,
 	)
 }
 
 // Rows_Next writes one exact-width row and closes automatically at exhaustion.
-func Rows_Next(rows *Rows, destination driver.Values) (status Operation_Status) {
+func Rows_Next(rows Rows_Pointer, destination driver.Values) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "rows_next.status") }()
-	Rows_Invariants(*rows, "rows_next.rows")
+	Rows_Pointer_Invariants(rows, "rows_next.rows")
+	Rows_Invariants(*rows, "rows_next.rows_value")
 	driver.Values_Invariants(destination, "rows_next.destination")
-	connection := &rows.Connections[HANDLE_FIELD]
+	connection := &rows.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_ROWS),
@@ -984,7 +1223,7 @@ func Rows_Next(rows *Rows, destination driver.Values) (status Operation_Status) 
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	driver_status := driver.Rows_Next(&rows.Driver_Rows[HANDLE_FIELD], destination)
+	driver_status := driver.Rows_Next(&rows.Driver_Rows, destination)
 	if driver_status == driver.STATUS_OK {
 		return Operation_Status(
 			connection_transition(
@@ -994,18 +1233,18 @@ func Rows_Next(rows *Rows, destination driver.Values) (status Operation_Status) 
 		)
 	}
 	if driver_status == driver.STATUS_DONE {
-		close_status := driver.Rows_Close(&rows.Driver_Rows[HANDLE_FIELD])
+		close_status := driver.Rows_Close(&rows.Driver_Rows)
 		if close_status != driver.STATUS_OK {
 			status = operation_complete(
 				connection, &table, Activity_State(SLOT_ROWS_READING),
-				rows.Return_States[HANDLE_FIELD], close_status,
+				Return_State(rows.Return_State), close_status,
 			)
 			*rows = Rows{}
 			return status
 		}
 		transition_status := connection_transition(
 			connection, Activity_State(SLOT_ROWS_READING), TRANSITION_RETURN,
-			rows.Return_States[HANDLE_FIELD],
+			Return_State(rows.Return_State),
 		)
 		*rows = Rows{}
 		if transition_status != Transition_Status(STATUS_OK) {
@@ -1035,10 +1274,10 @@ func Rows_Next(rows *Rows, destination driver.Values) (status Operation_Status) 
 }
 
 // Rows_Close releases cursor and restores its owning slot state.
-func Rows_Close(rows *Rows) (status Operation_Status) {
+func Rows_Close(rows Rows_Pointer) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "rows_close.status") }()
-	Rows_Invariants(*rows, "rows_close.rows")
-	connection := &rows.Connections[HANDLE_FIELD]
+	Rows_Pointer_Invariants(rows, "rows_close.rows")
+	connection := &rows.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_ROWS), Activity_State(SLOT_CLOSE), &table,
@@ -1046,10 +1285,10 @@ func Rows_Close(rows *Rows) (status Operation_Status) {
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	driver_status := driver.Rows_Close(&rows.Driver_Rows[HANDLE_FIELD])
+	driver_status := driver.Rows_Close(&rows.Driver_Rows)
 	status = operation_complete(
 		connection, &table, Activity_State(SLOT_CLOSE),
-		rows.Return_States[HANDLE_FIELD], driver_status,
+		Return_State(rows.Return_State), driver_status,
 	)
 	*rows = Rows{}
 	return status
@@ -1057,12 +1296,12 @@ func Rows_Close(rows *Rows) (status Operation_Status) {
 
 // Pool_Prepare pins one lease behind caller-owned prepared statement.
 func Pool_Prepare(
-	pool *Pool, query driver.Query, statement *Statement,
+	pool Pool_Pointer, query driver.Query, statement Statement_Pointer,
 ) (status Status) {
 	defer func() { Status_Invariants(status, "pool_prepare.status") }()
-	Pool_Invariants(pool, "pool_prepare.pool")
+	Pool_Pointer_Invariants(pool, "pool_prepare.pool")
 	driver.Query_Invariants(query, "pool_prepare.query")
-	Statement_Invariants(*statement, "pool_prepare.statement")
+	Statement_Pointer_Invariants(statement, "pool_prepare.statement")
 	connection, status := Pool_Connection_Acquire(pool)
 	if status != STATUS_OK {
 		return status
@@ -1074,12 +1313,12 @@ func Pool_Prepare(
 
 // Connection_Prepare pins explicit lease behind prepared statement.
 func Connection_Prepare(
-	connection *Connection, query driver.Query, statement *Statement,
+	connection Connection_Pointer, query driver.Query, statement Statement_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "connection_prepare.status") }()
-	Connection_Invariants(*connection, "connection_prepare.connection")
+	Connection_Pointer_Invariants(connection, "connection_prepare.connection")
 	driver.Query_Invariants(query, "connection_prepare.query")
-	Statement_Invariants(*statement, "connection_prepare.statement")
+	Statement_Pointer_Invariants(statement, "connection_prepare.statement")
 	return connection_prepare(
 		connection, query, Connection_Return_State(SLOT_CONNECTION), statement,
 	)
@@ -1087,13 +1326,14 @@ func Connection_Prepare(
 
 // Statement_Exec executes one prepared request.
 func Statement_Exec(
-	statement *Statement, arguments driver.Arguments, result *Result,
+	statement Statement_Pointer, arguments driver.Arguments, result Result_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "statement_exec.status") }()
-	Statement_Invariants(*statement, "statement_exec.statement")
+	Statement_Pointer_Invariants(statement, "statement_exec.statement")
+	Statement_Invariants(*statement, "statement_exec.statement_value")
 	driver.Arguments_Invariants(arguments, "statement_exec.arguments")
-	Result_Invariants(*result, "statement_exec.result")
-	connection := &statement.Connections[HANDLE_FIELD]
+	Result_Pointer_Invariants(result, "statement_exec.result")
+	connection := &statement.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_STATEMENT),
@@ -1104,8 +1344,8 @@ func Statement_Exec(
 	}
 	*result = Result{}
 	driver_status := driver.Statement_Exec(
-		&statement.Driver_Statements[HANDLE_FIELD], arguments,
-		&result.Driver_Results[HANDLE_FIELD],
+		&statement.Driver_Statement, arguments,
+		&result.Driver_Result,
 	)
 	status = operation_complete(
 		connection, &table, Activity_State(SLOT_EXECUTION),
@@ -1116,13 +1356,13 @@ func Statement_Exec(
 
 // Statement_Query opens rows through one prepared statement.
 func Statement_Query(
-	statement *Statement, arguments driver.Arguments, rows *Rows,
+	statement Statement_Pointer, arguments driver.Arguments, rows Rows_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "statement_query.status") }()
-	Statement_Invariants(*statement, "statement_query.statement")
+	Statement_Pointer_Invariants(statement, "statement_query.statement")
 	driver.Arguments_Invariants(arguments, "statement_query.arguments")
-	Rows_Invariants(*rows, "statement_query.rows")
-	connection := &statement.Connections[HANDLE_FIELD]
+	Rows_Pointer_Invariants(rows, "statement_query.rows")
+	connection := &statement.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_STATEMENT),
@@ -1131,10 +1371,10 @@ func Statement_Query(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	*rows = rows_of(connection, Return_State(SLOT_STATEMENT))
+	rows_initialize(rows, connection, Return_State(SLOT_STATEMENT))
 	driver_status := driver.Statement_Query(
-		&statement.Driver_Statements[HANDLE_FIELD], arguments,
-		&rows.Driver_Rows[HANDLE_FIELD],
+		&statement.Driver_Statement, arguments,
+		&rows.Driver_Rows,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
@@ -1149,7 +1389,7 @@ func Statement_Query(
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
-		driver.Rows_Close(&rows.Driver_Rows[HANDLE_FIELD])
+		driver.Rows_Close(&rows.Driver_Rows)
 		*rows = Rows{}
 		return Operation_Status(transition_status)
 	}
@@ -1157,10 +1397,10 @@ func Statement_Query(
 }
 
 // Statement_Close releases prepared state and restores owning lease.
-func Statement_Close(statement *Statement) (status Operation_Status) {
+func Statement_Close(statement Statement_Pointer) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "statement_close.status") }()
-	Statement_Invariants(*statement, "statement_close.statement")
-	connection := &statement.Connections[HANDLE_FIELD]
+	Statement_Pointer_Invariants(statement, "statement_close.statement")
+	connection := &statement.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_STATEMENT), Activity_State(SLOT_CLOSE), &table,
@@ -1168,10 +1408,10 @@ func Statement_Close(statement *Statement) (status Operation_Status) {
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	driver_status := driver.Statement_Close(&statement.Driver_Statements[HANDLE_FIELD])
+	driver_status := driver.Statement_Close(&statement.Driver_Statement)
 	status = operation_complete(
 		connection, &table, Activity_State(SLOT_CLOSE),
-		statement.Return_States[HANDLE_FIELD], driver_status,
+		Return_State(statement.Return_State), driver_status,
 	)
 	*statement = Statement{}
 	return status
@@ -1179,12 +1419,13 @@ func Statement_Close(statement *Statement) (status Operation_Status) {
 
 // Pool_Begin pins one lease behind a transaction.
 func Pool_Begin(
-	pool *Pool, options driver.Transaction_Options, transaction *Transaction,
+	pool Pool_Pointer, options driver.Transaction_Options,
+	transaction Transaction_Pointer,
 ) (status Status) {
 	defer func() { Status_Invariants(status, "pool_begin.status") }()
-	Pool_Invariants(pool, "pool_begin.pool")
+	Pool_Pointer_Invariants(pool, "pool_begin.pool")
 	driver.Transaction_Options_Invariants(options, "pool_begin.options")
-	Transaction_Invariants(*transaction, "pool_begin.transaction")
+	Transaction_Pointer_Invariants(transaction, "pool_begin.transaction")
 	connection, status := Pool_Connection_Acquire(pool)
 	if status != STATUS_OK {
 		return status
@@ -1196,13 +1437,13 @@ func Pool_Begin(
 
 // Connection_Begin pins explicit lease behind a transaction.
 func Connection_Begin(
-	connection *Connection, options driver.Transaction_Options,
-	transaction *Transaction,
+	connection Connection_Pointer, options driver.Transaction_Options,
+	transaction Transaction_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "connection_begin.status") }()
-	Connection_Invariants(*connection, "connection_begin.connection")
+	Connection_Pointer_Invariants(connection, "connection_begin.connection")
 	driver.Transaction_Options_Invariants(options, "connection_begin.options")
-	Transaction_Invariants(*transaction, "connection_begin.transaction")
+	Transaction_Pointer_Invariants(transaction, "connection_begin.transaction")
 	return connection_begin(
 		connection, options, Connection_Return_State(SLOT_CONNECTION), transaction,
 	)
@@ -1210,13 +1451,14 @@ func Connection_Begin(
 
 // Transaction_Exec executes one request inside transaction.
 func Transaction_Exec(
-	transaction *Transaction, request driver.Request, result *Result,
+	transaction Transaction_Pointer, request driver.Request, result Result_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "transaction_exec.status") }()
-	Transaction_Invariants(*transaction, "transaction_exec.transaction")
+	Transaction_Pointer_Invariants(transaction, "transaction_exec.transaction")
+	Transaction_Invariants(*transaction, "transaction_exec.transaction_value")
 	driver.Request_Invariants(request, "transaction_exec.request")
-	Result_Invariants(*result, "transaction_exec.result")
-	connection := &transaction.Connections[HANDLE_FIELD]
+	Result_Pointer_Invariants(result, "transaction_exec.result")
+	connection := &transaction.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_TRANSACTION),
@@ -1227,7 +1469,7 @@ func Transaction_Exec(
 	}
 	*result = Result{}
 	driver_status := driver.Connection_Exec(
-		&table, request, &result.Driver_Results[HANDLE_FIELD],
+		&table, request, &result.Driver_Result,
 	)
 	status = operation_complete(
 		connection, &table, Activity_State(SLOT_EXECUTION),
@@ -1238,13 +1480,13 @@ func Transaction_Exec(
 
 // Transaction_Query opens rows inside transaction.
 func Transaction_Query(
-	transaction *Transaction, request driver.Request, rows *Rows,
+	transaction Transaction_Pointer, request driver.Request, rows Rows_Pointer,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "transaction_query.status") }()
-	Transaction_Invariants(*transaction, "transaction_query.transaction")
+	Transaction_Pointer_Invariants(transaction, "transaction_query.transaction")
 	driver.Request_Invariants(request, "transaction_query.request")
-	Rows_Invariants(*rows, "transaction_query.rows")
-	connection := &transaction.Connections[HANDLE_FIELD]
+	Rows_Pointer_Invariants(rows, "transaction_query.rows")
+	connection := &transaction.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_TRANSACTION),
@@ -1253,9 +1495,9 @@ func Transaction_Query(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	*rows = rows_of(connection, Return_State(SLOT_TRANSACTION))
+	rows_initialize(rows, connection, Return_State(SLOT_TRANSACTION))
 	driver_status := driver.Connection_Query(
-		&table, request, &rows.Driver_Rows[HANDLE_FIELD],
+		&table, request, &rows.Driver_Rows,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
@@ -1270,7 +1512,7 @@ func Transaction_Query(
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
-		driver.Rows_Close(&rows.Driver_Rows[HANDLE_FIELD])
+		driver.Rows_Close(&rows.Driver_Rows)
 		*rows = Rows{}
 		return Operation_Status(transition_status)
 	}
@@ -1278,26 +1520,28 @@ func Transaction_Query(
 }
 
 // Transaction_Commit makes transaction durable and releases owning lease.
-func Transaction_Commit(transaction *Transaction) (status Operation_Status) {
+func Transaction_Commit(transaction Transaction_Pointer) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "transaction_commit.status") }()
-	Transaction_Invariants(*transaction, "transaction_commit.transaction")
+	Transaction_Pointer_Invariants(transaction, "transaction_commit.transaction")
 	return transaction_finish(transaction, TRANSACTION_COMMIT)
 }
 
 // Transaction_Rollback abandons transaction and releases owning lease.
-func Transaction_Rollback(transaction *Transaction) (status Operation_Status) {
+func Transaction_Rollback(transaction Transaction_Pointer) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "transaction_rollback.status") }()
-	Transaction_Invariants(*transaction, "transaction_rollback.transaction")
+	Transaction_Pointer_Invariants(transaction, "transaction_rollback.transaction")
 	return transaction_finish(transaction, TRANSACTION_ROLLBACK)
 }
 
 func connection_probe(
-	connection *Connection, return_state Connection_Return_State,
+	connection Connection_Pointer, return_state Connection_Return_State,
 ) (status Operation_Status) {
 	defer func() {
 		Operation_Status_Invariants(status, "connection_probe_internal.status")
 	}()
-	Connection_Invariants(*connection, "connection_probe_internal.connection")
+	Connection_Pointer_Invariants(
+		connection, "connection_probe_internal.connection",
+	)
 	Connection_Return_State_Invariants(
 		return_state, "connection_probe_internal.return_state",
 	)
@@ -1311,25 +1555,27 @@ func connection_probe(
 	}
 	driver_status := driver.Connection_Probe(&table)
 	return operation_complete(
-		connection, &table, Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer(connection), &table, Activity_State(SLOT_EXECUTION),
 		Return_State(return_state), driver_status,
 	)
 }
 
 func connection_exec(
-	connection *Connection, request driver.Request,
+	connection Connection_Pointer, request driver.Request,
 	return_state Connection_Return_State,
-	result *Result,
+	result Result_Pointer,
 ) (status Operation_Status) {
 	defer func() {
 		Operation_Status_Invariants(status, "connection_exec_internal.status")
 	}()
-	Connection_Invariants(*connection, "connection_exec_internal.connection")
+	Connection_Pointer_Invariants(
+		connection, "connection_exec_internal.connection",
+	)
 	driver.Request_Invariants(request, "connection_exec_internal.request")
 	Connection_Return_State_Invariants(
 		return_state, "connection_exec_internal.return_state",
 	)
-	Result_Invariants(*result, "connection_exec_internal.result")
+	Result_Pointer_Invariants(result, "connection_exec_internal.result")
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_CONNECTION),
@@ -1340,29 +1586,31 @@ func connection_exec(
 	}
 	*result = Result{}
 	driver_status := driver.Connection_Exec(
-		&table, request, &result.Driver_Results[HANDLE_FIELD],
+		&table, request, &result.Driver_Result,
 	)
 	status = operation_complete(
-		connection, &table, Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer(connection), &table, Activity_State(SLOT_EXECUTION),
 		Return_State(return_state), driver_status,
 	)
 	return status
 }
 
 func connection_query(
-	connection *Connection, request driver.Request,
+	connection Connection_Pointer, request driver.Request,
 	return_state Connection_Return_State,
-	rows *Rows,
+	rows Rows_Pointer,
 ) (status Operation_Status) {
 	defer func() {
 		Operation_Status_Invariants(status, "connection_query_internal.status")
 	}()
-	Connection_Invariants(*connection, "connection_query_internal.connection")
+	Connection_Pointer_Invariants(
+		connection, "connection_query_internal.connection",
+	)
 	driver.Request_Invariants(request, "connection_query_internal.request")
 	Connection_Return_State_Invariants(
 		return_state, "connection_query_internal.return_state",
 	)
-	Rows_Invariants(*rows, "connection_query_internal.rows")
+	Rows_Pointer_Invariants(rows, "connection_query_internal.rows")
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_CONNECTION),
@@ -1371,24 +1619,28 @@ func connection_query(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	*rows = rows_of(connection, Return_State(return_state))
+	rows_initialize(
+		rows, Live_Connection_Pointer(connection), Return_State(return_state),
+	)
 	driver_status := driver.Connection_Query(
-		&table, request, &rows.Driver_Rows[HANDLE_FIELD],
+		&table, request, &rows.Driver_Rows,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			connection, &table, Activity_State(SLOT_EXECUTION),
+			Live_Connection_Pointer(connection), &table,
+			Activity_State(SLOT_EXECUTION),
 			Return_State(return_state), driver_status,
 		)
 		*rows = Rows{}
 		return status
 	}
 	transition_status := connection_transition(
-		connection, Activity_State(SLOT_EXECUTION), TRANSITION_ROWS,
+		Live_Connection_Pointer(connection), Activity_State(SLOT_EXECUTION),
+		TRANSITION_ROWS,
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
-		driver.Rows_Close(&rows.Driver_Rows[HANDLE_FIELD])
+		driver.Rows_Close(&rows.Driver_Rows)
 		*rows = Rows{}
 		return Operation_Status(transition_status)
 	}
@@ -1396,19 +1648,23 @@ func connection_query(
 }
 
 func connection_prepare(
-	connection *Connection, query driver.Query,
+	connection Connection_Pointer, query driver.Query,
 	return_state Connection_Return_State,
-	statement *Statement,
+	statement Statement_Pointer,
 ) (status Operation_Status) {
 	defer func() {
 		Operation_Status_Invariants(status, "connection_prepare_internal.status")
 	}()
-	Connection_Invariants(*connection, "connection_prepare_internal.connection")
+	Connection_Pointer_Invariants(
+		connection, "connection_prepare_internal.connection",
+	)
 	driver.Query_Invariants(query, "connection_prepare_internal.query")
 	Connection_Return_State_Invariants(
 		return_state, "connection_prepare_internal.return_state",
 	)
-	Statement_Invariants(*statement, "connection_prepare_internal.statement")
+	Statement_Pointer_Invariants(
+		statement, "connection_prepare_internal.statement",
+	)
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_CONNECTION),
@@ -1417,24 +1673,26 @@ func connection_prepare(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	*statement = statement_of(connection, return_state)
+	statement_initialize(statement, Live_Connection_Pointer(connection), return_state)
 	driver_status := driver.Connection_Prepare(
-		&table, query, &statement.Driver_Statements[HANDLE_FIELD],
+		&table, query, &statement.Driver_Statement,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			connection, &table, Activity_State(SLOT_EXECUTION),
+			Live_Connection_Pointer(connection), &table,
+			Activity_State(SLOT_EXECUTION),
 			Return_State(return_state), driver_status,
 		)
 		*statement = Statement{}
 		return status
 	}
 	transition_status := connection_transition(
-		connection, Activity_State(SLOT_EXECUTION), TRANSITION_RETURN,
+		Live_Connection_Pointer(connection), Activity_State(SLOT_EXECUTION),
+		TRANSITION_RETURN,
 		Return_State(SLOT_STATEMENT),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
-		driver.Statement_Close(&statement.Driver_Statements[HANDLE_FIELD])
+		driver.Statement_Close(&statement.Driver_Statement)
 		*statement = Statement{}
 		return Operation_Status(transition_status)
 	}
@@ -1442,18 +1700,22 @@ func connection_prepare(
 }
 
 func connection_begin(
-	connection *Connection, options driver.Transaction_Options,
-	return_state Connection_Return_State, transaction *Transaction,
+	connection Connection_Pointer, options driver.Transaction_Options,
+	return_state Connection_Return_State, transaction Transaction_Pointer,
 ) (status Operation_Status) {
 	defer func() {
 		Operation_Status_Invariants(status, "connection_begin_internal.status")
 	}()
-	Connection_Invariants(*connection, "connection_begin_internal.connection")
+	Connection_Pointer_Invariants(
+		connection, "connection_begin_internal.connection",
+	)
 	driver.Transaction_Options_Invariants(options, "connection_begin_internal.options")
 	Connection_Return_State_Invariants(
 		return_state, "connection_begin_internal.return_state",
 	)
-	Transaction_Invariants(*transaction, "connection_begin_internal.transaction")
+	Transaction_Pointer_Invariants(
+		transaction, "connection_begin_internal.transaction",
+	)
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_CONNECTION),
@@ -1462,24 +1724,28 @@ func connection_begin(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	*transaction = transaction_of(connection, return_state)
+	transaction_initialize(
+		transaction, Live_Connection_Pointer(connection), return_state,
+	)
 	driver_status := driver.Connection_Begin(
-		&table, options, &transaction.Driver_Transactions[HANDLE_FIELD],
+		&table, options, &transaction.Driver_Transaction,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			connection, &table, Activity_State(SLOT_EXECUTION),
+			Live_Connection_Pointer(connection), &table,
+			Activity_State(SLOT_EXECUTION),
 			Return_State(return_state), driver_status,
 		)
 		*transaction = Transaction{}
 		return status
 	}
 	transition_status := connection_transition(
-		connection, Activity_State(SLOT_EXECUTION), TRANSITION_RETURN,
+		Live_Connection_Pointer(connection), Activity_State(SLOT_EXECUTION),
+		TRANSITION_RETURN,
 		Return_State(SLOT_TRANSACTION),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
-		driver.Transaction_Rollback(&transaction.Driver_Transactions[HANDLE_FIELD])
+		driver.Transaction_Rollback(&transaction.Driver_Transaction)
 		*transaction = Transaction{}
 		return Operation_Status(transition_status)
 	}
@@ -1487,12 +1753,12 @@ func connection_begin(
 }
 
 func transaction_finish(
-	transaction *Transaction, terminal Transaction_Terminal,
+	transaction Transaction_Pointer, terminal Transaction_Terminal,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "transaction_finish.status") }()
-	Transaction_Invariants(*transaction, "transaction_finish.transaction")
+	Transaction_Pointer_Invariants(transaction, "transaction_finish.transaction")
 	Transaction_Terminal_Invariants(terminal, "transaction_finish.terminal")
-	connection := &transaction.Connections[HANDLE_FIELD]
+	connection := &transaction.Connection
 	var table driver.Connection
 	reservation_status := connection_reserve(
 		connection, Reservation_State(SLOT_TRANSACTION), Activity_State(SLOT_CLOSE),
@@ -1504,60 +1770,60 @@ func transaction_finish(
 	driver_status := driver.STATUS_OK
 	if terminal == TRANSACTION_COMMIT {
 		driver_status = driver.Transaction_Commit(
-			&transaction.Driver_Transactions[HANDLE_FIELD],
+			&transaction.Driver_Transaction,
 		)
 	} else {
 		driver_status = driver.Transaction_Rollback(
-			&transaction.Driver_Transactions[HANDLE_FIELD],
+			&transaction.Driver_Transaction,
 		)
 	}
 	status = operation_complete(
 		connection, &table, Activity_State(SLOT_CLOSE),
-		transaction.Return_States[HANDLE_FIELD], driver_status,
+		Return_State(transaction.Return_State), driver_status,
 	)
 	*transaction = Transaction{}
 	return status
 }
 
 func connection_reserve(
-	connection *Connection, expected Reservation_State, next Activity_State,
-	destination *driver.Connection,
+	connection Connection_Pointer, expected Reservation_State, next Activity_State,
+	destination driver.Connection_Pointer,
 ) (status Reservation_Status) {
 	defer func() {
 		Reservation_Status_Invariants(status, "connection_reserve.status")
 	}()
-	Connection_Invariants(*connection, "connection_reserve.connection")
+	Connection_Pointer_Invariants(connection, "connection_reserve.connection")
 	Reservation_State_Invariants(expected, "connection_reserve.expected")
 	Activity_State_Invariants(next, "connection_reserve.next")
-	driver.Connection_Invariants(destination, "connection_reserve.destination")
-	pool := connection.Pools[HANDLE_FIELD]
+	driver.Connection_Pointer_Invariants(destination, "connection_reserve.destination")
+	pool := (*Pool)(connection.Pool)
 	if pool == nil {
 		return Reservation_Status(STATUS_HANDLE_INVALID)
 	}
-	Pool_Invariants(pool, "connection_reserve.pool")
+	Pool_Pointer_Invariants(Pool_Pointer(pool), "connection_reserve.pool")
 	pool_initialized(pool)
-	index := connection.Slot_Indices[HANDLE_FIELD]
-	generation := connection.Generations[HANDLE_FIELD]
+	index := connection.Slot_Index
+	generation := Lease_Generation(connection.Generation)
 	Slot_Index_Invariants(index, "connection_reserve.index")
 	Lease_Generation_Invariants(generation, "connection_reserve.generation")
-	synchronizer := pool.Synchronizers[POOL_FIELD]
+	synchronizer := pool.Synchronizer
 	synchronizer.Lock_Procedure(synchronizer.State)
-	if pool.States[POOL_FIELD] == POOL_CLOSED {
+	if pool.Closed == POOL_CLOSED {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Reservation_Status(STATUS_CLOSED)
 	}
-	slots := pool.Slot_Sets[POOL_FIELD]
+	slots := pool.Slots
 	if int(index) >= len(slots) {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Reservation_Status(STATUS_HANDLE_INVALID)
 	}
 	slot := &slots[index]
-	if Lease_Generation(slot.Generations[SLOT_FIELD]) != generation {
+	if Lease_Generation(slot.Generation) != generation {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Reservation_Status(STATUS_HANDLE_INVALID)
 	}
-	if Reservation_State(slot.States[SLOT_FIELD]) != expected {
-		state := slot.States[SLOT_FIELD]
+	if Reservation_State(slot.State) != expected {
+		state := slot.State
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		if state == SLOT_EMPTY {
 			return Reservation_Status(STATUS_HANDLE_INVALID)
@@ -1567,46 +1833,50 @@ func connection_reserve(
 		}
 		return Reservation_Status(STATUS_BUSY)
 	}
-	*destination = slot.Connections[SLOT_FIELD]
-	slot.States[SLOT_FIELD] = Slot_State(next)
+	*destination = slot.Connection
+	slot.State = Slot_State(next)
 	synchronizer.Unlock_Procedure(synchronizer.State)
 	return Reservation_Status(STATUS_OK)
 }
 
 func connection_transition(
-	connection *Connection, expected Activity_State, kind Transition_Kind,
+	connection Live_Connection_Pointer, expected Activity_State, kind Transition_Kind,
 	return_state Return_State,
 ) (status Transition_Status) {
 	defer func() {
 		Transition_Status_Invariants(status, "connection_transition.status")
 	}()
-	Connection_Invariants(*connection, "connection_transition.connection")
+	Live_Connection_Pointer_Invariants(
+		connection, "connection_transition.connection",
+	)
 	Activity_State_Invariants(expected, "connection_transition.expected")
 	Transition_Kind_Invariants(kind, "connection_transition.kind")
 	Return_State_Invariants(return_state, "connection_transition.return_state")
-	pool := connection.Pools[HANDLE_FIELD]
+	pool := (*Pool)(connection.Pool)
 	if pool == nil {
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
-	Pool_Invariants(pool, "connection_transition.pool")
+	Open_Pool_Pointer_Invariants(
+		Open_Pool_Pointer(pool), "connection_transition.pool",
+	)
 	pool_initialized(pool)
-	index := connection.Slot_Indices[HANDLE_FIELD]
-	generation := connection.Generations[HANDLE_FIELD]
+	index := connection.Slot_Index
+	generation := Lease_Generation(connection.Generation)
 	Slot_Index_Invariants(index, "connection_transition.index")
 	Lease_Generation_Invariants(generation, "connection_transition.generation")
-	synchronizer := pool.Synchronizers[POOL_FIELD]
+	synchronizer := pool.Synchronizer
 	synchronizer.Lock_Procedure(synchronizer.State)
-	slots := pool.Slot_Sets[POOL_FIELD]
+	slots := pool.Slots
 	if int(index) >= len(slots) {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	slot := &slots[index]
-	if Lease_Generation(slot.Generations[SLOT_FIELD]) != generation {
+	if Lease_Generation(slot.Generation) != generation {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
-	if Activity_State(slot.States[SLOT_FIELD]) != expected {
+	if Activity_State(slot.State) != expected {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_BUSY)
 	}
@@ -1614,7 +1884,7 @@ func connection_transition(
 	if kind == TRANSITION_ROWS {
 		next = SLOT_ROWS
 	}
-	slot.States[SLOT_FIELD] = next
+	slot.State = next
 	synchronizer.Unlock_Procedure(synchronizer.State)
 	if next == SLOT_IDLE {
 		*connection = Connection{}
@@ -1623,53 +1893,58 @@ func connection_transition(
 }
 
 func connection_discard(
-	connection *Connection, expected Discard_State,
+	connection Live_Connection_Pointer, expected Discard_State,
 ) (status Transition_Status) {
 	defer func() {
 		Transition_Status_Invariants(status, "connection_discard.status")
 	}()
-	Connection_Invariants(*connection, "connection_discard.connection")
+	Live_Connection_Pointer_Invariants(
+		connection, "connection_discard.connection",
+	)
 	Discard_State_Invariants(expected, "connection_discard.expected")
-	pool := connection.Pools[HANDLE_FIELD]
+	pool := (*Pool)(connection.Pool)
 	if pool == nil {
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
-	Pool_Invariants(pool, "connection_discard.pool")
+	Open_Pool_Pointer_Invariants(
+		Open_Pool_Pointer(pool), "connection_discard.pool",
+	)
 	pool_initialized(pool)
-	index := connection.Slot_Indices[HANDLE_FIELD]
-	generation := connection.Generations[HANDLE_FIELD]
+	index := connection.Slot_Index
+	generation := Lease_Generation(connection.Generation)
 	Slot_Index_Invariants(index, "connection_discard.index")
 	Lease_Generation_Invariants(generation, "connection_discard.generation")
-	synchronizer := pool.Synchronizers[POOL_FIELD]
+	synchronizer := pool.Synchronizer
 	synchronizer.Lock_Procedure(synchronizer.State)
-	slots := pool.Slot_Sets[POOL_FIELD]
+	slots := pool.Slots
 	if int(index) >= len(slots) {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	slot := &slots[index]
-	if Lease_Generation(slot.Generations[SLOT_FIELD]) != generation {
+	if Lease_Generation(slot.Generation) != generation {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
-	if Discard_State(slot.States[SLOT_FIELD]) != expected {
+	if Discard_State(slot.State) != expected {
 		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_BUSY)
 	}
-	slot.Connections[SLOT_FIELD] = driver.Connection{}
-	slot.States[SLOT_FIELD] = SLOT_EMPTY
+	slot.Connection = driver.Connection{}
+	slot.State = SLOT_EMPTY
 	synchronizer.Unlock_Procedure(synchronizer.State)
 	*connection = Connection{}
 	return Transition_Status(STATUS_OK)
 }
 
 func operation_complete(
-	connection *Connection, table *driver.Connection, expected Activity_State,
+	connection Live_Connection_Pointer, table driver.Connection_Pointer,
+	expected Activity_State,
 	return_state Return_State, driver_status driver.Status,
 ) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "operation_complete.status") }()
-	Connection_Invariants(*connection, "operation_complete.connection")
-	driver.Connection_Invariants(table, "operation_complete.table")
+	Live_Connection_Pointer_Invariants(connection, "operation_complete.connection")
+	driver.Connection_Pointer_Invariants(table, "operation_complete.table")
 	Activity_State_Invariants(expected, "operation_complete.expected")
 	Return_State_Invariants(return_state, "operation_complete.return_state")
 	driver.Status_Invariants(driver_status, "operation_complete.driver_status")
@@ -1691,52 +1966,62 @@ func operation_complete(
 }
 
 func connection_of(
-	pool *Pool, index Slot_Index, generation Lease_Generation,
-) (connection Connection) {
-	defer func() { Connection_Invariants(connection, "connection_of.connection") }()
-	Pool_Invariants(pool, "connection_of.pool")
+	pool Open_Pool_Pointer, index Slot_Index, generation Lease_Generation,
+) (connection Live_Connection) {
+	defer func() {
+		Live_Connection_Invariants(connection, "connection_of.connection")
+	}()
+	Open_Pool_Pointer_Invariants(pool, "connection_of.pool")
 	Slot_Index_Invariants(index, "connection_of.index")
 	Lease_Generation_Invariants(generation, "connection_of.generation")
-	return Connection{
-		Pools:        [HANDLE_FIELD_COUNT]*Pool{pool},
-		Slot_Indices: [HANDLE_FIELD_COUNT]Slot_Index{index},
-		Generations:  [HANDLE_FIELD_COUNT]Lease_Generation{generation},
+	return Live_Connection{
+		Pool:       unsafe.Pointer(pool),
+		Slot_Index: index,
+		Generation: Generation(generation),
 	}
 }
 
-func rows_of(
-	connection *Connection, return_state Return_State,
-) (rows Rows) {
-	defer func() { Rows_Invariants(rows, "rows_of.rows") }()
-	Connection_Invariants(*connection, "rows_of.connection")
-	Return_State_Invariants(return_state, "rows_of.return_state")
-	return Rows{
-		Connections:   [HANDLE_FIELD_COUNT]Connection{*connection},
-		Return_States: [HANDLE_FIELD_COUNT]Return_State{return_state},
+func rows_initialize(
+	rows Rows_Pointer, connection Live_Connection_Pointer, return_state Return_State,
+) {
+	Rows_Pointer_Invariants(rows, "rows_initialize.rows")
+	Live_Connection_Pointer_Invariants(connection, "rows_initialize.connection")
+	Return_State_Invariants(return_state, "rows_initialize.return_state")
+	*rows = Rows{
+		Connection:   *connection,
+		Return_State: Slot_State(return_state),
 	}
 }
 
-func statement_of(
-	connection *Connection, return_state Connection_Return_State,
-) (statement Statement) {
-	defer func() { Statement_Invariants(statement, "statement_of.statement") }()
-	Connection_Invariants(*connection, "statement_of.connection")
-	Connection_Return_State_Invariants(return_state, "statement_of.return_state")
-	return Statement{
-		Connections:   [HANDLE_FIELD_COUNT]Connection{*connection},
-		Return_States: [HANDLE_FIELD_COUNT]Return_State{Return_State(return_state)},
+func statement_initialize(
+	statement Statement_Pointer, connection Live_Connection_Pointer,
+	return_state Connection_Return_State,
+) {
+	Statement_Pointer_Invariants(statement, "statement_initialize.statement")
+	Live_Connection_Pointer_Invariants(
+		connection, "statement_initialize.connection",
+	)
+	Connection_Return_State_Invariants(return_state, "statement_initialize.return_state")
+	*statement = Statement{
+		Connection:   *connection,
+		Return_State: Slot_State(return_state),
 	}
 }
 
-func transaction_of(
-	connection *Connection, return_state Connection_Return_State,
-) (transaction Transaction) {
-	defer func() { Transaction_Invariants(transaction, "transaction_of.transaction") }()
-	Connection_Invariants(*connection, "transaction_of.connection")
-	Connection_Return_State_Invariants(return_state, "transaction_of.return_state")
-	return Transaction{
-		Connections:   [HANDLE_FIELD_COUNT]Connection{*connection},
-		Return_States: [HANDLE_FIELD_COUNT]Return_State{Return_State(return_state)},
+func transaction_initialize(
+	transaction Transaction_Pointer, connection Live_Connection_Pointer,
+	return_state Connection_Return_State,
+) {
+	Transaction_Pointer_Invariants(transaction, "transaction_initialize.transaction")
+	Live_Connection_Pointer_Invariants(
+		connection, "transaction_initialize.connection",
+	)
+	Connection_Return_State_Invariants(
+		return_state, "transaction_initialize.return_state",
+	)
+	*transaction = Transaction{
+		Connection:   *connection,
+		Return_State: Slot_State(return_state),
 	}
 }
 
@@ -1763,24 +2048,39 @@ func status_of_driver(driver_status driver.Status) (status Driver_Status) {
 	}
 }
 
-func pool_initialized(pool *Pool) {
-	Pool_Invariants(pool, "pool_initialized.pool")
-	driver.Driver_Invariants(pool.Drivers[POOL_FIELD], "pool_initialized.driver")
+func pool_initialized(pool Pool_Pointer) {
+	Pool_Pointer_Invariants(pool, "pool_initialized.pool")
+	driver.Driver_Invariants(pool.Driver, "pool_initialized.driver")
 	driver.Data_Source_Invariants(
-		pool.Data_Sources[POOL_FIELD], "pool_initialized.data_source",
+		pool.Data_Source, "pool_initialized.data_source",
 	)
 	Synchronizer_Invariants(
-		pool.Synchronizers[POOL_FIELD], "pool_initialized.synchronizer",
+		pool.Synchronizer, "pool_initialized.synchronizer",
 	)
 	Initialized_Slot_Storage_Invariants(
-		Initialized_Slot_Storage(pool.Slot_Sets[POOL_FIELD]),
+		Initialized_Slot_Storage(pool.Slots),
 		"pool_initialized.slots",
 	)
-	Initialized_Pool_State_Invariants(
-		Initialized_Pool_State(pool.States[POOL_FIELD]), "pool_initialized.state",
+	pool_driver_live(pool.Driver)
+	synchronizer_live(pool.Synchronizer)
+}
+
+func pool_driver_live(value driver.Driver) {
+	driver.Driver_Invariants(value, "pool_driver_live.value")
+	aver.Always(
+		value.Connect_Procedure != nil,
+		"Pool driver can open one connection.",
+	)
+}
+
+func synchronizer_live(value Synchronizer) {
+	Synchronizer_Invariants(value, "synchronizer_live.value")
+	aver.Always(
+		value.Lock_Procedure != nil,
+		"Live pool synchronizer can lock.",
 	)
 	aver.Always(
-		pool.States[POOL_FIELD] != POOL_UNINITIALIZED,
-		"An initialized pool has bound dependencies.",
+		value.Unlock_Procedure != nil,
+		"Live pool synchronizer can unlock.",
 	)
 }
