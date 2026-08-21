@@ -1,7 +1,10 @@
 // Package strings supplies bounded text operations used by lint implementation.
 package strings
 
-import "local/james-orcales/shared/unicode/ucd"
+import (
+	"local/james-orcales/shared/unicode/ucd"
+	"local/james-orcales/shared/unicode/utf8"
+)
 
 // TEXT_SIZE_MAXIMUM matches largest bounded lint input.
 const TEXT_SIZE_MAXIMUM = 1 << 20
@@ -127,7 +130,7 @@ func Equal_Fold(left string, right string) (equal bool) {
 func Fields(source string) (fields []string) {
 	start := -1
 	for index, character := range source {
-		if bool(ucd.Is_Space(ucd.Character(character))) {
+		if character_is_space(character) {
 			if start >= 0 {
 				fields = append(fields, source[start:index])
 				start = -1
@@ -164,6 +167,9 @@ func Has_Suffix(source string, suffix string) (present bool) {
 func Index(source string, separator string) (index int) {
 	if separator == "" {
 		return 0
+	}
+	if len(separator) == 1 {
+		return Index_Byte(source, separator[0])
 	}
 	for index = 0; index <= len(source)-len(separator); index++ {
 		if source[index:index+len(separator)] == separator {
@@ -212,6 +218,9 @@ func Join(parts []string, separator string) (joined string) {
 func Last_Index(source string, separator string) (index int) {
 	if separator == "" {
 		return len(source)
+	}
+	if len(separator) == 1 {
+		return Last_Index_Byte(source, separator[0])
 	}
 	for index = len(source) - len(separator); index >= 0; index-- {
 		if source[index:index+len(separator)] == separator {
@@ -316,22 +325,40 @@ func Split(source string, separator string) (parts []string) {
 
 // To_Lower maps each Unicode character to lower case.
 func To_Lower(source string) (lower string) {
-	var builder Builder
-	for _, character := range source {
-		mapped := rune(ucd.To_Lower(ucd.Character(character)))
+	for index, character := range source {
+		mapped := character_to_lower(character)
+		if mapped == character {
+			continue
+		}
+		var builder Builder
+		Builder_Write_Text(&builder, source[:index])
 		Builder_Write_Text(&builder, string(mapped))
+		next_offset := index + character_size(character)
+		for _, suffix_character := range source[next_offset:] {
+			Builder_Write_Text(&builder, string(character_to_lower(suffix_character)))
+		}
+		return builder.String()
 	}
-	return builder.String()
+	return source
 }
 
 // To_Upper maps each Unicode character to upper case.
 func To_Upper(source string) (upper string) {
-	var builder Builder
-	for _, character := range source {
-		mapped := rune(ucd.To_Upper(ucd.Character(character)))
+	for index, character := range source {
+		mapped := character_to_upper(character)
+		if mapped == character {
+			continue
+		}
+		var builder Builder
+		Builder_Write_Text(&builder, source[:index])
 		Builder_Write_Text(&builder, string(mapped))
+		next_offset := index + character_size(character)
+		for _, suffix_character := range source[next_offset:] {
+			Builder_Write_Text(&builder, string(character_to_upper(suffix_character)))
+		}
+		return builder.String()
 	}
-	return builder.String()
+	return source
 }
 
 // Trim removes cutset characters from both ends.
@@ -361,32 +388,39 @@ func Trim_Prefix(source string, prefix string) (trimmed string) {
 
 // Trim_Right removes trailing cutset characters.
 func Trim_Right(source string, cutset string) (trimmed string) {
-	end := 0
-	for index, character := range source {
+	end_count := len(source)
+	for end_count > 0 {
+		character, size := text_final_character(source[:end_count])
 		if !text_contains_character(cutset, character) {
-			end = index + character_size(character)
+			break
 		}
+		end_count -= size
 	}
-	return source[:end]
+	return source[:end_count]
 }
 
 // Trim_Space removes leading and trailing Unicode whitespace.
 func Trim_Space(source string) (trimmed string) {
-	start_count := len(source)
-	end := 0
-	for index, character := range source {
-		if bool(ucd.Is_Space(ucd.Character(character))) {
-			continue
+	start_offset := 0
+	for start_offset < len(source) {
+		character, size := text_first_character(source[start_offset:])
+		if !character_is_space(character) {
+			break
 		}
-		if start_count == len(source) {
-			start_count = index
-		}
-		end = index + character_size(character)
+		start_offset += size
 	}
-	if end == 0 {
+	if start_offset == len(source) {
 		return ""
 	}
-	return source[start_count:end]
+	end_count := len(source)
+	for end_count > start_offset {
+		character, size := text_final_character(source[start_offset:end_count])
+		if !character_is_space(character) {
+			break
+		}
+		end_count -= size
+	}
+	return source[start_offset:end_count]
 }
 
 // Trim_Suffix removes suffix when present.
@@ -409,6 +443,69 @@ func character_equal_fold(left rune, right rune) (equal bool) {
 		folded = rune(ucd.Simple_Fold(ucd.Character(folded)))
 	}
 	return false
+}
+
+func character_is_space(character rune) (space bool) {
+	if character <= 0x7f {
+		return ascii_byte_is_space(byte(character))
+	}
+	return bool(ucd.Is_Space(ucd.Character(character)))
+}
+
+func ascii_byte_is_space(value byte) (space bool) {
+	switch value {
+	case ' ', '\t', '\n', '\v', '\f', '\r':
+		return true
+	}
+	return false
+}
+
+func character_to_lower(character rune) (mapped rune) {
+	if 'A' <= character {
+		if character <= 'Z' {
+			return character + ('a' - 'A')
+		}
+	}
+	if character <= 0x7f {
+		return character
+	}
+	return rune(ucd.To_Lower(ucd.Character(character)))
+}
+
+func character_to_upper(character rune) (mapped rune) {
+	if 'a' <= character {
+		if character <= 'z' {
+			return character - ('a' - 'A')
+		}
+	}
+	if character <= 0x7f {
+		return character
+	}
+	return rune(ucd.To_Upper(ucd.Character(character)))
+}
+
+func text_first_character(source string) (character rune, size int) {
+	if source[0] < byte(utf8.CHARACTER_SELF) {
+		return rune(source[0]), 1
+	}
+	end_offset := utf8.UTF_MAXIMUM
+	if len(source) < end_offset {
+		end_offset = len(source)
+	}
+	decoded, decoded_size := utf8.Decode_Character_Text(utf8.Text(source[:end_offset]))
+	return rune(decoded), int(decoded_size)
+}
+
+func text_final_character(source string) (character rune, size int) {
+	if source[len(source)-1] < byte(utf8.CHARACTER_SELF) {
+		return rune(source[len(source)-1]), 1
+	}
+	start_offset := 0
+	if len(source) > utf8.UTF_MAXIMUM {
+		start_offset = len(source) - utf8.UTF_MAXIMUM
+	}
+	decoded, decoded_size := utf8.Decode_Final_Character_Text(utf8.Text(source[start_offset:]))
+	return rune(decoded), int(decoded_size)
 }
 
 func character_size(character rune) (size int) {

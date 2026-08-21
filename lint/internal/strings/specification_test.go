@@ -42,11 +42,24 @@ func Test_Split_And_Transform(t *testing.T) {
 	if strings.Trim_Space(" \tvalue\n") != "value" {
 		t.Fatal("Trim_Space must remove Unicode space")
 	}
+	if strings.Trim_Space("\u2003value\u2003") != "value" {
+		t.Fatal("Trim_Space must retain Unicode fallback")
+	}
+	unicode_fields := strings.Fields("left\u2003right")
+	if len(unicode_fields) != 2 {
+		t.Fatalf("Fields = %#v", unicode_fields)
+	}
 	if strings.To_Upper("a世") != "A世" {
 		t.Fatal("upper case mapping must retain Unicode text")
 	}
 	if strings.To_Lower("A世") != "a世" {
 		t.Fatal("case mapping must retain Unicode text")
+	}
+	if strings.To_Upper("ä") != "Ä" {
+		t.Fatal("upper case mapping must retain Unicode fallback")
+	}
+	if strings.To_Lower("Ä") != "ä" {
+		t.Fatal("lower case mapping must retain Unicode fallback")
 	}
 	if strings.Replace_All("a-b-a", "a", "x") != "x-b-x" {
 		t.Fatal("Replace_All must replace each match")
@@ -64,5 +77,28 @@ func Test_Builder(t *testing.T) {
 	strings.Builder_Write_Byte(&builder, 'c')
 	if builder.String() != "abc" {
 		t.Fatalf("String = %q", builder.String())
+	}
+}
+
+// Test_Unchanged_ASCII_Case_Conversion_Allocation prevents hot-path copies.
+func Test_Unchanged_ASCII_Case_Conversion_Allocation(t *testing.T) {
+	result := ""
+	lower_allocations := testing.AllocsPerRun(100, func() {
+		result = strings.To_Lower("already_lower")
+	})
+	if result != "already_lower" {
+		t.Fatalf("To_Lower = %q", result)
+	}
+	if lower_allocations != 0 {
+		t.Fatalf("To_Lower allocations = %f", lower_allocations)
+	}
+	upper_allocations := testing.AllocsPerRun(100, func() {
+		result = strings.To_Upper("ALREADY_UPPER")
+	})
+	if result != "ALREADY_UPPER" {
+		t.Fatalf("To_Upper = %q", result)
+	}
+	if upper_allocations != 0 {
+		t.Fatalf("To_Upper allocations = %f", upper_allocations)
 	}
 }

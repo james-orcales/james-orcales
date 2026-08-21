@@ -981,6 +981,69 @@ var ada_case_re = regexp.MustCompile(
 // every segment is already all-caps, so "IDS" needs no special-casing.
 var screaming_snake_case_re = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$`)
 
+// Source identifiers are almost wholly ASCII; table decoding belongs only on Unicode input.
+func character_is_upper(character rune) (upper bool) {
+	if character <= 0x7f {
+		if character < 'A' {
+			return false
+		}
+		return character <= 'Z'
+	}
+	return bool(ucd.Is_Upper(ucd.Character(character)))
+}
+
+func character_is_lower(character rune) (lower bool) {
+	if character <= 0x7f {
+		if character < 'a' {
+			return false
+		}
+		return character <= 'z'
+	}
+	return bool(ucd.Is_Lower(ucd.Character(character)))
+}
+
+func character_is_digit(character rune) (digit bool) {
+	if character <= 0x7f {
+		if character < '0' {
+			return false
+		}
+		return character <= '9'
+	}
+	return bool(ucd.Is_Digit(ucd.Character(character)))
+}
+
+func character_is_letter(character rune) (letter bool) {
+	if character <= 0x7f {
+		if character_is_upper(character) {
+			return true
+		}
+		return character_is_lower(character)
+	}
+	return bool(ucd.Is_Letter(ucd.Character(character)))
+}
+
+func character_is_mark(character rune) (mark bool) {
+	if character <= 0x7f {
+		return false
+	}
+	if ucd.Is_Category(ucd.Character(character), "Mn") {
+		return true
+	}
+	return bool(ucd.Is_Category(ucd.Character(character), "Me"))
+}
+
+func character_to_upper(character rune) (upper rune) {
+	if character_is_lower(character) {
+		if character <= 0x7f {
+			return character - ('a' - 'A')
+		}
+	}
+	if character <= 0x7f {
+		return character
+	}
+	return rune(ucd.To_Upper(ucd.Character(character)))
+}
+
 func suggest_split_words(name string) (words []string) {
 	var current []rune
 	runes := []rune(name)
@@ -996,15 +1059,15 @@ func suggest_split_words(name string) (words []string) {
 			continue
 		}
 		if i > 0 {
-			if ucd.Is_Upper(ucd.Character(r)) {
+			if character_is_upper(r) {
 				previous := runes[i-1]
-				if ucd.Is_Lower(ucd.Character(previous)) {
+				if character_is_lower(previous) {
 					flush()
-				} else if ucd.Is_Digit(ucd.Character(previous)) {
+				} else if character_is_digit(previous) {
 					flush()
-				} else if ucd.Is_Upper(ucd.Character(previous)) {
+				} else if character_is_upper(previous) {
 					if i+1 < len(runes) {
-						if ucd.Is_Lower(ucd.Character(runes[i+1])) {
+						if character_is_lower(runes[i+1]) {
 							flush()
 						}
 					}
@@ -1046,7 +1109,7 @@ func suggest(input *Suggest_Input) (output string) {
 			continue
 		}
 		rs := []rune(strings.To_Lower(w))
-		rs[0] = rune(ucd.To_Upper(ucd.Character(rs[0])))
+		rs[0] = character_to_upper(rs[0])
 		parts[i] = string(rs)
 	}
 	return strings.Join(parts, "_")
@@ -1059,9 +1122,9 @@ func suggest_is_all_upper(s string) (ok bool) {
 
 	has_letter := false
 	for _, r := range s {
-		if ucd.Is_Letter(ucd.Character(r)) {
+		if character_is_letter(r) {
 			has_letter = true
-			if !ucd.Is_Upper(ucd.Character(r)) {
+			if !character_is_upper(r) {
 				return false
 			}
 		}
@@ -1605,12 +1668,12 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 		return
 	}
 	first := rune(identifier.Name[0])
-	if !ucd.Is_Letter(ucd.Character(first)) {
+	if !character_is_letter(first) {
 		return
 	}
 	want := "snake_case"
 	ok := snake_case_re.MatchString(identifier.Name)
-	if ucd.Is_Upper(ucd.Character(first)) {
+	if character_is_upper(first) {
 		want = "Ada_Case"
 		ok = ada_case_re.MatchString(identifier.Name)
 	}
@@ -1886,6 +1949,11 @@ func check_line_character_count(
 }
 
 func decode_first_character(source []byte) (character rune, size int) {
+	if len(source) > 0 {
+		if source[0] < byte(utf8.CHARACTER_SELF) {
+			return rune(source[0]), 1
+		}
+	}
 	if len(source) > utf8.UTF_MAXIMUM {
 		source = source[:utf8.UTF_MAXIMUM]
 	}
@@ -1894,6 +1962,11 @@ func decode_first_character(source []byte) (character rune, size int) {
 }
 
 func decode_final_character(source string) (character rune, size int) {
+	if len(source) > 0 {
+		if source[len(source)-1] < byte(utf8.CHARACTER_SELF) {
+			return rune(source[len(source)-1]), 1
+		}
+	}
 	offset := 0
 	if len(source) > utf8.UTF_MAXIMUM {
 		offset = len(source) - utf8.UTF_MAXIMUM
@@ -3856,10 +3929,10 @@ func check_comments_group_capital(file_set *token.FileSet, c *ast.Comment) (diag
 		return nil
 	}
 	r, _ := decode_first_character([]byte(body))
-	if !ucd.Is_Letter(ucd.Character(r)) {
+	if !character_is_letter(r) {
 		return nil
 	}
-	if ucd.Is_Upper(ucd.Character(r)) {
+	if character_is_upper(r) {
 		return nil
 	}
 	return []Diagnostic{{
@@ -4452,7 +4525,7 @@ func check_public_struct_fields_named(
 		return
 	}
 	r := rune(identifier.Name[0])
-	if !ucd.Is_Lower(ucd.Character(r)) {
+	if !character_is_lower(r) {
 		return
 	}
 	suggested := check_public_struct_fields_named_capitalize(identifier.Name)
@@ -4497,7 +4570,7 @@ func check_public_struct_fields_embedded(
 func check_public_struct_fields_named_capitalize(name string) (output_string string) {
 
 	rs := []rune(name)
-	rs[0] = rune(ucd.To_Upper(ucd.Character(rs[0])))
+	rs[0] = character_to_upper(rs[0])
 	return string(rs)
 }
 
@@ -8036,7 +8109,7 @@ func path_casing_suggest(seg string) (output string) {
 			continue
 		}
 		style := "snake_case"
-		if ucd.Is_Upper(ucd.Character(c[0])) {
+		if character_is_upper(rune(c[0])) {
 			style = "Ada_Case"
 		}
 		components[i] = suggest(&Suggest_Input{
@@ -8192,8 +8265,7 @@ func display_width(text string) (width int) {
 		switch {
 		case glyph == '\t':
 			width += 8 - width%8
-		case bool(ucd.Is_Category(ucd.Character(glyph), "Mn")):
-		case bool(ucd.Is_Category(ucd.Character(glyph), "Me")):
+		case character_is_mark(glyph):
 		case display_glyph_wide(glyph):
 			width += 2
 		default:

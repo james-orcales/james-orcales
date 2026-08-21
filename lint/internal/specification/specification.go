@@ -344,6 +344,44 @@ func body_close(state *Body) (diags []diagnostic.Diagnostic) {
 	return []diagnostic.Diagnostic{section_body_diag(position, state.Open.Raw)}
 }
 
+// Headings use ASCII almost always; Unicode tables remain fallback, not common path.
+func character_is_letter(character rune) (letter bool) {
+	if character <= 0x7f {
+		if 'A' <= character {
+			if character <= 'Z' {
+				return true
+			}
+		}
+		if 'a' <= character {
+			return character <= 'z'
+		}
+		return false
+	}
+	return bool(ucd.Is_Letter(ucd.Character(character)))
+}
+
+func character_is_digit(character rune) (digit bool) {
+	if character <= 0x7f {
+		if character < '0' {
+			return false
+		}
+		return character <= '9'
+	}
+	return bool(ucd.Is_Digit(ucd.Character(character)))
+}
+
+func character_to_upper(character rune) (upper rune) {
+	if 'a' <= character {
+		if character <= 'z' {
+			return character - ('a' - 'A')
+		}
+	}
+	if character <= 0x7f {
+		return character
+	}
+	return rune(ucd.To_Upper(ucd.Character(character)))
+}
+
 // True when a heading carries a word with a rune that is neither a letter nor a
 // digit. Such a rune survives into the normalized Test_<Heading> name and makes
 // it an illegal Go identifier, so the test-correspondence rule could never be
@@ -351,10 +389,10 @@ func body_close(state *Body) (diags []diagnostic.Diagnostic) {
 func heading_words_invalid(raw string) (invalid bool) {
 	for _, word := range strings.Fields(raw) {
 		for _, letter := range word {
-			if ucd.Is_Letter(ucd.Character(letter)) {
+			if character_is_letter(letter) {
 				continue
 			}
-			if ucd.Is_Digit(ucd.Character(letter)) {
+			if character_is_digit(letter) {
 				continue
 			}
 			return true
@@ -586,7 +624,7 @@ func ada_case(raw string) (name string) {
 	words := strings.Fields(raw)
 	for i, word := range words {
 		runes := []rune(word)
-		runes[0] = rune(ucd.To_Upper(ucd.Character(runes[0])))
+		runes[0] = character_to_upper(runes[0])
 		words[i] = string(runes)
 	}
 	return strings.Join(words, "_")
