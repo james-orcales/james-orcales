@@ -1891,8 +1891,35 @@ func cli_sim_loop(seed uint64) (loop nbio.IO, driver nbio.Driver) {
 	events := [CLI_SIM_EVENT_CAPACITY]nbio.Virtual_Event{}
 	clocks := [CLI_SIM_CLOCK_CAPACITY]nbio.Sim_Clock{}
 	nodes := [CLI_SIM_NODE_CAPACITY]nbio.Sim_Node{}
+	node_names := [CLI_SIM_NODE_CAPACITY * nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM]byte{}
+	node_contents := [CLI_SIM_NODE_CAPACITY * nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
 	descriptors := [CLI_SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor{}
+	descriptor_addresses := [CLI_SIM_DESCRIPTOR_CAPACITY * 2 * nbio.IPV6_ADDRESS_BYTES]byte{}
 	operations := [CLI_SIM_OPERATION_CAPACITY]nbio.Sim_Operation{}
+	operation_addresses := [CLI_SIM_OPERATION_CAPACITY * nbio.IPV6_ADDRESS_BYTES]byte{}
+	for index := range nodes {
+		name_start := index * nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM
+		name_end := name_start + nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM
+		content_start := index * nbio.SIM_FILE_BYTES_MAXIMUM
+		content_end := content_start + nbio.SIM_FILE_BYTES_MAXIMUM
+		nodes[index].Name = node_names[name_start:name_end:name_end]
+		nodes[index].Contents = node_contents[content_start:content_end:content_end]
+	}
+	for index := range descriptors {
+		address_start := index * 2 * nbio.IPV6_ADDRESS_BYTES
+		address_end := address_start + nbio.IPV6_ADDRESS_BYTES
+		peer_end := address_end + nbio.IPV6_ADDRESS_BYTES
+		address := descriptor_addresses[address_start:address_end:address_end]
+		peer := descriptor_addresses[address_end:peer_end:peer_end]
+		descriptors[index].Address_IP = address
+		descriptors[index].Peer_IP = peer
+	}
+	for index := range operations {
+		address_start := index * nbio.IPV6_ADDRESS_BYTES
+		address_end := address_start + nbio.IPV6_ADDRESS_BYTES
+		address := operation_addresses[address_start:address_end:address_end]
+		operations[index].Address_IP = address
+	}
 	return nbio.New_Simulated_IO(&state, seed, time.NANOSECOND, nbio.Sim_Memory{
 		Nodes:       nodes[:],
 		Descriptors: descriptors[:],

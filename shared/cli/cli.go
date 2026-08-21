@@ -3706,14 +3706,18 @@ func is_named_token(token Value_Text) (named Boolean) {
 }
 
 // Splits a -label=value token into its parts, rejecting the double-dash form.
-func parse_named_token(token Named_Token, failure_storage Parse_Failure_Storage) (
+func parse_named_token_result(
 	label Option_Label, value Assigned_Value, value_was_set Boolean, err error,
+) (_ Option_Label, _ Assigned_Value, _ Boolean, _ error) {
+	Option_Label_Invariants(label, "parse_named_token.label")
+	Assigned_Value_Invariants(value, "parse_named_token.value")
+	Boolean_Invariants(value_was_set, "parse_named_token.value_was_set")
+	return label, value, value_was_set, err
+}
+
+func parse_named_token(token Named_Token, failure_storage Parse_Failure_Storage) (
+	_ Option_Label, _ Assigned_Value, _ Boolean, _ error,
 ) {
-	defer func() {
-		Option_Label_Invariants(label, "parse_named_token.label")
-		Assigned_Value_Invariants(value, "parse_named_token.value")
-		Boolean_Invariants(value_was_set, "parse_named_token.value_was_set")
-	}()
 	Named_Token_Invariants(token, "parse_named_token.token")
 	Parse_Failure_Storage_Invariants(
 		failure_storage, "parse_named_token.failure_storage",
@@ -3726,16 +3730,15 @@ func parse_named_token(token Named_Token, failure_storage Parse_Failure_Storage)
 			failure_write(failure, Failure_Fragment(string(token[2:])))
 			failure_write(failure, Failure_Fragment(", not --"))
 			failure_write(failure, Failure_Fragment(string(token[2:])))
-			return "", "", false, parse_failure
+			return parse_named_token_result("", "", false, parse_failure)
 		}
 	}
 	// A lone "-" was already excluded by is_named_token.
 	aver.Always(token != "-", "named token is not a lone dash")
 	label_text, value_text, found := strings.Cut(strings.Text(token[1:]), "=")
-	label = Option_Label(label_text)
-	value = Assigned_Value(value_text)
-	value_was_set = Boolean(found)
-	return label, value, value_was_set, nil
+	return parse_named_token_result(
+		Option_Label(label_text), Assigned_Value(value_text), Boolean(found), nil,
+	)
 }
 
 // Applies every -label=value token to its option and returns the bare positionals
@@ -3743,18 +3746,22 @@ func parse_named_token(token Named_Token, failure_storage Parse_Failure_Storage)
 // position so the slice preserves command-line order. filled records the scalar
 // options set by name: a scalar named twice is an error, and a named scalar argument
 // is skipped by the positional pass.
+func program_assign_named_result(
+	filled Filled_Options, positionals Parsed_Positionals,
+	slice_named Parsed_Variadic_Tokens, err error,
+) (_ Filled_Options, _ Parsed_Positionals, _ Parsed_Variadic_Tokens, _ error) {
+	Filled_Options_Invariants(filled, "program_assign_named.filled")
+	Parsed_Positionals_Invariants(positionals, "program_assign_named.positionals")
+	Parsed_Variadic_Tokens_Invariants(slice_named, "program_assign_named.slice_named")
+	return filled, positionals, slice_named, err
+}
+
 func program_assign_named(
 	global_flags Resolved_Global_Flags, help_labels Help_Labels,
 	arguments Resolved_Arguments, flags Resolved_Flags,
 	tokens Parsed_Tokens, workspace Workspace,
 	failure_storage Parse_Failure_Storage,
-) (filled Filled_Options, positionals Parsed_Positionals,
-	slice_named Parsed_Variadic_Tokens, err error) {
-	defer func() {
-		Filled_Options_Invariants(filled, "program_assign_named.filled")
-		Parsed_Positionals_Invariants(positionals, "program_assign_named.positionals")
-		Parsed_Variadic_Tokens_Invariants(slice_named, "program_assign_named.slice_named")
-	}()
+) (_ Filled_Options, _ Parsed_Positionals, _ Parsed_Variadic_Tokens, _ error) {
 	Resolved_Global_Flags_Invariants(global_flags, "program_assign_named.global_flags")
 	Help_Labels_Invariants(help_labels, "program_assign_named.help_labels")
 	Resolved_Arguments_Invariants(arguments, "program_assign_named.command_arguments")
@@ -3762,9 +3769,9 @@ func program_assign_named(
 	Workspace_Invariants(workspace, "program_assign_named.workspace")
 	Parse_Failure_Storage_Invariants(failure_storage, "program_assign_named.failure_storage")
 	Parsed_Tokens_Invariants(tokens, "program_assign_named.tokens")
-	filled = program_assignment_storage(arguments, flags, global_flags, workspace)
-	positionals = Parsed_Positionals(workspace.Positionals[:0])
-	slice_named = Parsed_Variadic_Tokens(workspace.Slice_Named[:0])
+	filled := program_assignment_storage(arguments, flags, global_flags, workspace)
+	positionals := Parsed_Positionals(workspace.Positionals[:0])
+	slice_named := Parsed_Variadic_Tokens(workspace.Slice_Named[:0])
 	for index, token := range tokens {
 		if !is_named_token(Value_Text(token)) {
 			aver.Always(len(positionals) < cap(workspace.Positionals),
@@ -3779,7 +3786,8 @@ func program_assign_named(
 		label, value, value_was_set, format_err := parse_named_token(
 			Named_Token(token), failure_storage)
 		if format_err != nil {
-			return filled, positionals, slice_named, format_err
+			return program_assign_named_result(
+				filled, positionals, slice_named, format_err)
 		}
 		location, option_index, filled_index, is_slice_argument, find_err :=
 			program_find_option(
@@ -3787,7 +3795,8 @@ func program_assign_named(
 				failure_storage,
 			)
 		if find_err != nil {
-			return filled, positionals, slice_named, find_err
+			return program_assign_named_result(
+				filled, positionals, slice_named, find_err)
 		}
 		if is_slice_argument {
 			aver.Always(len(slice_named) < cap(workspace.Slice_Named),
@@ -3805,7 +3814,8 @@ func program_assign_named(
 			failure_write(failure, Failure_Fragment("-"))
 			failure_write(failure, Failure_Fragment(string(label)))
 			failure_write(failure, Failure_Fragment(" may only be given once"))
-			return filled, positionals, slice_named, parse_failure
+			return program_assign_named_result(
+				filled, positionals, slice_named, parse_failure)
 		}
 		set_err := program_assign_named_option(
 			global_flags, arguments, flags, Resolved_Option_Location(location),
@@ -3813,11 +3823,12 @@ func program_assign_named(
 			Equals_Present(value_was_set), failure_storage,
 		)
 		if set_err != nil {
-			return filled, positionals, slice_named, set_err
+			return program_assign_named_result(
+				filled, positionals, slice_named, set_err)
 		}
 		filled[filled_index] = true
 	}
-	return filled, positionals, slice_named, nil
+	return program_assign_named_result(filled, positionals, slice_named, nil)
 }
 
 // Assignment storage resets only the cells used by the active command.
@@ -3891,20 +3902,25 @@ func program_assign_named_option(
 // flags, then the program's global flags, returning a pointer into the parse-time copy
 // so assignment lands in the right slot. is_slice_argument is true when the match is a
 // slice-valued argument, which appends rather than sets. Errors on an unknown label.
+func program_find_option_result(
+	location Option_Location, option_index slices.Found_Index,
+	filled_index slices.Found_Index, is_slice_argument Boolean, err error,
+) (_ Option_Location, _ slices.Found_Index, _ slices.Found_Index, _ Boolean, _ error) {
+	Option_Location_Invariants(location, "program_find_option.location")
+	slices.Found_Index_Invariants(option_index, "program_find_option.option_index")
+	slices.Found_Index_Invariants(filled_index, "program_find_option.filled_index")
+	Boolean_Invariants(is_slice_argument, "program_find_option.is_slice_argument")
+	return location, option_index, filled_index, is_slice_argument, err
+}
+
 func program_find_option(
 	global_flags Resolved_Global_Flags, help_labels Help_Labels,
 	arguments Resolved_Arguments, flags Resolved_Flags, label Option_Label,
 	failure_storage Parse_Failure_Storage,
 ) (
-	location Option_Location, option_index slices.Found_Index,
-	filled_index slices.Found_Index, is_slice_argument Boolean, err error,
+	_ Option_Location, _ slices.Found_Index,
+	_ slices.Found_Index, _ Boolean, _ error,
 ) {
-	defer func() {
-		Option_Location_Invariants(location, "program_find_option.location")
-		slices.Found_Index_Invariants(option_index, "program_find_option.option_index")
-		slices.Found_Index_Invariants(filled_index, "program_find_option.filled_index")
-		Boolean_Invariants(is_slice_argument, "program_find_option.is_slice_argument")
-	}()
 	Resolved_Global_Flags_Invariants(global_flags, "program_find_option.global_flags")
 	Help_Labels_Invariants(help_labels, "program_find_option.help_labels")
 	Resolved_Arguments_Invariants(arguments, "program_find_option.command_arguments")
@@ -3916,23 +3932,28 @@ func program_find_option(
 	for index := range arguments {
 		argument := &arguments[index]
 		if argument.Label == label {
-			return OPTION_LOCATION_ARGUMENT, slices.Found_Index(index),
+			return program_find_option_result(
+				OPTION_LOCATION_ARGUMENT, slices.Found_Index(index),
 				slices.Found_Index(index),
-				option_is_slice(Option_Type(argument.Type.Value)), nil
+				option_is_slice(Option_Type(argument.Type.Value)), nil,
+			)
 		}
 	}
 	for index := range flags {
 		if flags[index].Label == label {
-			return OPTION_LOCATION_COMMAND_FLAG, slices.Found_Index(index),
-				slices.Found_Index(len(arguments) + index), false, nil
+			return program_find_option_result(
+				OPTION_LOCATION_COMMAND_FLAG, slices.Found_Index(index),
+				slices.Found_Index(len(arguments)+index), false, nil,
+			)
 		}
 	}
 	for index := range global_flags {
 		if global_flags[index].Label == label {
 			global_filled_index := len(arguments) + len(flags) + index
-			return OPTION_LOCATION_GLOBAL_FLAG, slices.Found_Index(index),
-				slices.Found_Index(global_filled_index),
-				false, nil
+			return program_find_option_result(
+				OPTION_LOCATION_GLOBAL_FLAG, slices.Found_Index(index),
+				slices.Found_Index(global_filled_index), false, nil,
+			)
 		}
 	}
 	suggestion_match, suggestion_found := closest_option_label(
@@ -3946,13 +3967,13 @@ func program_find_option(
 		failure_write(failure, Failure_Fragment(", did you mean -"))
 		failure_write(failure, Failure_Fragment(string(suggestion_match)))
 		failure_write(failure, Failure_Fragment("?"))
-		return OPTION_LOCATION_ABSENT, -1, -1, false,
-			parse_failure
+		return program_find_option_result(
+			OPTION_LOCATION_ABSENT, -1, -1, false, parse_failure)
 	}
 	failure_write(failure, Failure_Fragment("unknown option -"))
 	failure_write(failure, Failure_Fragment(string(label)))
-	return OPTION_LOCATION_ABSENT, -1, -1, false,
-		parse_failure
+	return program_find_option_result(
+		OPTION_LOCATION_ABSENT, -1, -1, false, parse_failure)
 }
 
 // Reports whether an option appears in help and completion. A hidden or deprecated
@@ -4072,14 +4093,18 @@ func closest_label(
 }
 
 // Searches visible option labels directly so suggestion work stays caller-owned.
+func closest_option_label_result(
+	match Option_Label, found Boolean,
+) (_ Option_Label, _ Boolean) {
+	Option_Label_Invariants(match, "closest_option_label.match")
+	Boolean_Invariants(found, "closest_option_label.found")
+	return match, found
+}
+
 func closest_option_label(
 	global_flags Resolved_Global_Flags, help_labels Help_Labels,
 	arguments Resolved_Arguments, flags Resolved_Flags, target Option_Label,
-) (match Option_Label, found Boolean) {
-	defer func() {
-		Option_Label_Invariants(match, "closest_option_label.match")
-		Boolean_Invariants(found, "closest_option_label.found")
-	}()
+) (_ Option_Label, _ Boolean) {
 	Resolved_Global_Flags_Invariants(global_flags, "closest_option_label.global_flags")
 	Help_Labels_Invariants(help_labels, "closest_option_label.help_labels")
 	Resolved_Arguments_Invariants(arguments, "closest_option_label.arguments")
@@ -4107,28 +4132,32 @@ func closest_option_label(
 			closest_label(&workspace, Label(target), Label(option.Label), &state)
 		}
 	}
-	return Option_Label(state.Match), state.Found
+	return closest_option_label_result(Option_Label(state.Match), state.Found)
 }
 
 // Caller-owned option storage keeps parsing from mutating Program declarations.
+func program_resolve_command_result(
+	active_command Selected_Command, command_selected Boolean, err error,
+) (_ Selected_Command, _ Boolean, _ error) {
+	Selected_Command_Invariants(active_command, "program_resolve_command.active_command")
+	Boolean_Invariants(command_selected, "program_resolve_command.command_selected")
+	return active_command, command_selected, err
+}
+
 func program_resolve_command(
 	commands Command_Declarations, single Single_Commands, mode Program_Mode,
 	operating_system_args Parse_Arguments,
 	workspace Workspace, failure_storage Parse_Failure_Storage,
-) (active_command Selected_Command, command_selected Boolean, err error) {
-	defer func() {
-		Selected_Command_Invariants(
-			active_command, "program_resolve_command.active_command",
-		)
-		Boolean_Invariants(command_selected,
-			"program_resolve_command.command_selected")
-	}()
+) (_ Selected_Command, _ Boolean, _ error) {
 	Command_Declarations_Invariants(commands, "program_resolve_command.commands")
 	Single_Commands_Invariants(single, "program_resolve_command.single")
 	Program_Mode_Invariants(mode, "program_resolve_command.mode")
 	Workspace_Invariants(workspace, "program_resolve_command.workspace")
 	Parse_Failure_Storage_Invariants(failure_storage, "program_resolve_command.failure_storage")
 	Parse_Arguments_Invariants(operating_system_args, "program_resolve_command.arguments")
+	active_command := Selected_Command{}
+	command_selected := Boolean(false)
+	var err error
 	command_index, command_name := Option_Index(0), Label("")
 	suggestion_match := Suggested_Label("")
 	suggestion_found, found := Boolean(false), Boolean(true)
@@ -4159,16 +4188,16 @@ func program_resolve_command(
 			failure_storage, command_name, suggestion_match, suggestion_found)
 		if mode.Value == PROGRAM_MODE_SINGLE {
 			source := single.Command
-			return Selected_Command{
+			return program_resolve_command_result(Selected_Command{
 				Label: source.Label, Description: source.Description,
 				Hidden: source.Hidden, Deprecated: source.Deprecated,
-			}, command_selected, err
+			}, command_selected, err)
 		}
 		source := commands[0]
-		return Selected_Command{
+		return program_resolve_command_result(Selected_Command{
 			Label: source.Label, Description: source.Description,
 			Hidden: source.Hidden, Deprecated: source.Deprecated,
-		}, command_selected, err
+		}, command_selected, err)
 	}
 	var source Command
 	if mode.Value == PROGRAM_MODE_SINGLE {
@@ -4177,7 +4206,7 @@ func program_resolve_command(
 		source = commands[command_index]
 	}
 	active_command = copy_command(source, workspace)
-	return active_command, command_selected, nil
+	return program_resolve_command_result(active_command, command_selected, nil)
 }
 
 // Copying binds mutable option values to caller storage before token assignment.
@@ -4207,24 +4236,29 @@ func copy_command(source Command, workspace Workspace) (output Selected_Command)
 // Resolves a command name to its index, suggesting the closest command when the name
 // is an unrecognized near-miss. Shared by multicall selection (the argv[0] basename)
 // and multi-command selection (the slot-1 token).
+func program_select_command_result(
+	index Option_Index, match Suggested_Label,
+	suggestion_found Boolean, found Boolean,
+) (_ Option_Index, _ Suggested_Label, _ Boolean, _ Boolean) {
+	Option_Index_Invariants(index, "program_select_command.index")
+	Suggested_Label_Invariants(match, "program_select_command.match")
+	Boolean_Invariants(suggestion_found, "program_select_command.suggestion_found")
+	Boolean_Invariants(found, "program_select_command.found")
+	return index, match, suggestion_found, found
+}
+
 func program_select_command(
 	commands Commands, name Label,
 ) (
-	index Option_Index, match Suggested_Label,
-	suggestion_found Boolean, found Boolean,
+	_ Option_Index, _ Suggested_Label,
+	_ Boolean, _ Boolean,
 ) {
-	defer func() {
-		Option_Index_Invariants(index, "program_select_command.index")
-		Suggested_Label_Invariants(match, "program_select_command.match")
-		Boolean_Invariants(
-			suggestion_found, "program_select_command.suggestion_found")
-		Boolean_Invariants(found, "program_select_command.found")
-	}()
 	Commands_Invariants(commands, "program_select_command.commands")
 	Label_Invariants(name, "program_select_command.name")
 	for candidate_index, command := range commands {
 		if command.Label == name {
-			return Option_Index(candidate_index), "", false, true
+			return program_select_command_result(
+				Option_Index(candidate_index), "", false, true)
 		}
 	}
 	var workspace levenshtein.Workspace
@@ -4237,7 +4271,8 @@ func program_select_command(
 		}
 		closest_label(&workspace, name, commands[command_index].Label, &suggestion)
 	}
-	return 0, Suggested_Label(suggestion.Match), suggestion.Found, false
+	return program_select_command_result(
+		0, Suggested_Label(suggestion.Match), suggestion.Found, false)
 }
 
 func failure_unknown_command(
@@ -5838,23 +5873,28 @@ func complete_option_labels(
 }
 
 // Complete enum members writes borrowed string or scalar integer members.
+func complete_enum_members_result(
+	candidates Enum_Candidates, is_enum Boolean,
+) (_ Enum_Candidates, _ Boolean) {
+	Enum_Candidates_Invariants(candidates, "complete_enum_members.candidates")
+	Boolean_Invariants(is_enum, "complete_enum_members.is_enum")
+	return candidates, is_enum
+}
+
 func complete_enum_members(
 	enumeration Option_Enumeration, dash Enum_Candidate_Dash,
 	label Completion_Option_Label, equals Enum_Candidate_Equals,
 	current Value_Text, storage Candidates,
-) (candidates Enum_Candidates, is_enum Boolean) {
-	defer func() {
-		Enum_Candidates_Invariants(candidates, "complete_enum_members.candidates")
-		Boolean_Invariants(is_enum, "complete_enum_members.is_enum")
-	}()
+) (_ Enum_Candidates, _ Boolean) {
 	Option_Enumeration_Invariants(enumeration, "complete_enum_members.enumeration")
 	Enum_Candidate_Dash_Invariants(dash, "complete_enum_members.dash")
 	Completion_Option_Label_Invariants(label, "complete_enum_members.label")
 	Enum_Candidate_Equals_Invariants(equals, "complete_enum_members.equals")
 	Value_Text_Invariants(current, "complete_enum_members.current")
 	Candidates_Invariants(storage, "complete_enum_members.storage")
-	candidates = Enum_Candidates(storage[:0])
+	candidates := Enum_Candidates(storage[:0])
 	member_count := len(enumeration.String)
+	is_enum := Boolean(false)
 	if enumeration.String != nil {
 		is_enum = true
 	} else if enumeration.Integers != nil {
@@ -5893,7 +5933,7 @@ func complete_enum_members(
 		candidates = Enum_Candidates(storage[:count+1])
 		candidates[count] = candidate
 	}
-	return candidates, is_enum
+	return complete_enum_members_result(candidates, is_enum)
 }
 
 // Complete returns the shell-completion candidates for a partially typed command line.
@@ -6082,17 +6122,21 @@ func positional_index(
 }
 
 // Finds an enum-capable option collection and index without copying union state.
+func command_scope_option_result(
+	location Option_Location, index slices.Found_Index, found Boolean,
+) (_ Option_Location, _ slices.Found_Index, _ Boolean) {
+	Option_Location_Invariants(location, "command_scope_option.location")
+	slices.Found_Index_Invariants(index, "command_scope_option.index")
+	Boolean_Invariants(found, "command_scope_option.found")
+	return location, index, found
+}
+
 func command_scope_option(
 	global_flags Global_Flags,
 	arguments Arguments,
 	flags Flags,
 	label Completion_Option_Label,
-) (location Option_Location, index slices.Found_Index, found Boolean) {
-	defer func() {
-		Option_Location_Invariants(location, "command_scope_option.location")
-		slices.Found_Index_Invariants(index, "command_scope_option.index")
-		Boolean_Invariants(found, "command_scope_option.found")
-	}()
+) (_ Option_Location, _ slices.Found_Index, _ Boolean) {
 	Global_Flags_Invariants(global_flags, "command_scope_option.global_flags")
 	Arguments_Invariants(arguments, "command_scope_option.command_arguments")
 	Flags_Invariants(flags, "command_scope_option.command_flags")
@@ -6100,21 +6144,25 @@ func command_scope_option(
 	option_label := Option_Label(label)
 	for argument_index := range arguments {
 		if arguments[argument_index].Label == option_label {
-			return OPTION_LOCATION_ARGUMENT, slices.Found_Index(argument_index), true
+			return command_scope_option_result(
+				OPTION_LOCATION_ARGUMENT, slices.Found_Index(argument_index), true)
 		}
 	}
 	for flag_index := range flags {
 		if flags[flag_index].Label == option_label {
-			return OPTION_LOCATION_COMMAND_FLAG, slices.Found_Index(flag_index), true
+			return command_scope_option_result(
+				OPTION_LOCATION_COMMAND_FLAG, slices.Found_Index(flag_index), true)
 		}
 	}
 	for global_flag_index := range global_flags {
 		if global_flags[global_flag_index].Label == option_label {
-			return OPTION_LOCATION_GLOBAL_FLAG,
-				slices.Found_Index(global_flag_index), true
+			return command_scope_option_result(
+				OPTION_LOCATION_GLOBAL_FLAG,
+				slices.Found_Index(global_flag_index), true,
+			)
 		}
 	}
-	return OPTION_LOCATION_ABSENT, -1, false
+	return command_scope_option_result(OPTION_LOCATION_ABSENT, -1, false)
 }
 
 // Handle_Completion is the pre-parse gate a binary calls before Program_Parse: it serves
@@ -7105,11 +7153,16 @@ func Parser_Handle_Invariants(value Parser_Handle, namespace aver.Namespace) {
 }
 
 // Parser_Done reports pending work or returns the terminal caller-owned result.
-func Parser_Done(parser Parser_Handle) (result Parse_Result, complete Parser_Complete) {
-	defer func() {
-		Parse_Result_Invariants(result, "parser_done.result")
-		Parser_Complete_Invariants(complete, "parser_done.complete")
-	}()
+func parser_done_result(
+	result Parse_Result, complete Parser_Complete,
+) (_ Parse_Result, _ Parser_Complete) {
+	Parse_Result_Invariants(result, "parser_done.result")
+	Parser_Complete_Invariants(complete, "parser_done.complete")
+	return result, complete
+}
+
+// Parser_Done reports pending work or returns the terminal caller-owned result.
+func Parser_Done(parser Parser_Handle) (_ Parse_Result, _ Parser_Complete) {
 	Parser_Handle_Invariants(parser, "parser_done.parser")
 	if !parser.Completion.Value {
 		if len(parser.Secret_Parsers) == 0 {
@@ -7172,7 +7225,7 @@ func Parser_Done(parser Parser_Handle) (result Parse_Result, complete Parser_Com
 			parser.Completion.Value = true
 		}
 	}
-	return parser.Result, parser.Completion.Value
+	return parser_done_result(parser.Result, parser.Completion.Value)
 }
 
 // Get_Environment returns a declared environment variable and panics for an unknown key.
@@ -7941,22 +7994,27 @@ func environment_enum_failure_write(
 }
 
 // Secret conversion reads caller bytes directly so accepted content never becomes a string.
+func external_convert_secret_state_result(
+	state Secret_Value_State, failure Secret_Content_Failure_Kind_Value,
+) (_ Secret_Value_State, _ Secret_Content_Failure_Kind_Value) {
+	Secret_Value_State_Invariants(state, "external_convert_secret_state.state")
+	Secret_Content_Failure_Kind_Value_Invariants(
+		failure, "external_convert_secret_state.failure",
+	)
+	return state, failure
+}
+
 func external_convert_secret_state(
 	key Resolved_Secret_Key,
 	type_state External_Type_State,
 	enumeration External_Enumeration,
 	raw Secret_Value_Bytes,
-) (state Secret_Value_State, failure Secret_Content_Failure_Kind_Value) {
-	defer func() {
-		Secret_Value_State_Invariants(state, "external_convert_secret_state.state")
-		Secret_Content_Failure_Kind_Value_Invariants(
-			failure, "external_convert_secret_state.failure",
-		)
-	}()
+) (_ Secret_Value_State, _ Secret_Content_Failure_Kind_Value) {
 	Resolved_Secret_Key_Invariants(key, "external_convert_secret_state.key")
 	External_Type_State_Invariants(type_state, "external_convert_secret_state.type_state")
 	External_Enumeration_Invariants(enumeration, "external_convert_secret_state.enumeration")
 	Secret_Value_Bytes_Invariants(raw, "external_convert_secret_state.raw")
+	state := Secret_Value_State{}
 	converted := true
 	switch Option_Type(type_state.Value) {
 	case OPTION_TYPE_STRING:
@@ -7969,30 +8027,37 @@ func external_convert_secret_state(
 				}
 			}
 			if !permitted {
-				return state, Secret_Content_Failure_Kind_Value(
-					PATH_FAILURE_KIND_STRING_ENUM)
+				return external_convert_secret_state_result(
+					state, Secret_Content_Failure_Kind_Value(
+						PATH_FAILURE_KIND_STRING_ENUM),
+				)
 			}
 		}
 		state.Bytes = raw
 	case OPTION_TYPE_INTEGER:
 		if len(raw) > strings.TEXT_SIZE_MAXIMUM {
-			return state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_INTEGER)
+			return external_convert_secret_state_result(
+				state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_INTEGER))
 		}
 		number, parsed := secret_decimal(Secret_Number_Bytes(raw))
 		if !parsed {
-			return state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_INTEGER)
+			return external_convert_secret_state_result(
+				state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_INTEGER))
 		}
 		if enumeration.Integers != nil {
 			if !slices.Contains(enumeration.Integers, int(number)) {
-				return state, Secret_Content_Failure_Kind_Value(
-					PATH_FAILURE_KIND_INTEGER_ENUM)
+				return external_convert_secret_state_result(
+					state, Secret_Content_Failure_Kind_Value(
+						PATH_FAILURE_KIND_INTEGER_ENUM),
+				)
 			}
 		}
 		state.Integer = number
 	case OPTION_TYPE_BOOLEAN:
 		boolean, parsed := secret_parse_boolean(raw)
 		if !parsed {
-			return state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_BOOLEAN)
+			return external_convert_secret_state_result(
+				state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_BOOLEAN))
 		}
 		state.Boolean = Boolean(boolean)
 	default:
@@ -8000,7 +8065,8 @@ func external_convert_secret_state(
 	}
 	aver.Always(converted, "Secret conversion receives validated scalar type.")
 	state.Parsed = true
-	return state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_NONE)
+	return external_convert_secret_state_result(
+		state, Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_NONE))
 }
 
 func secret_bytes_equal_text(left Secret_Value_Bytes, right Value_Text) (equal Boolean) {
@@ -8018,14 +8084,18 @@ func secret_bytes_equal_text(left Secret_Value_Bytes, right Value_Text) (equal B
 	return true
 }
 
-func secret_decimal(raw Secret_Number_Bytes) (number Integer, parsed Boolean) {
-	defer func() {
-		Integer_Invariants(number, "secret_decimal.number")
-		Boolean_Invariants(parsed, "secret_decimal.parsed")
-	}()
+func secret_decimal_result(
+	number Integer, parsed Boolean,
+) (_ Integer, _ Boolean) {
+	Integer_Invariants(number, "secret_decimal.number")
+	Boolean_Invariants(parsed, "secret_decimal.parsed")
+	return number, parsed
+}
+
+func secret_decimal(raw Secret_Number_Bytes) (_ Integer, _ Boolean) {
 	Secret_Number_Bytes_Invariants(raw, "secret_decimal.raw")
 	if len(raw) == 0 {
-		return 0, false
+		return secret_decimal_result(0, false)
 	}
 	negative := raw[0] == '-'
 	start := 0
@@ -8036,7 +8106,7 @@ func secret_decimal(raw Secret_Number_Bytes) (number Integer, parsed Boolean) {
 		start = 1
 	}
 	if len(raw) == start {
-		return 0, false
+		return secret_decimal_result(0, false)
 	}
 	limit := uint64(bits.INTEGER_MAXIMUM)
 	if negative {
@@ -8045,45 +8115,49 @@ func secret_decimal(raw Secret_Number_Bytes) (number Integer, parsed Boolean) {
 	var magnitude uint64
 	for _, character := range raw[start:] {
 		if character < '0' {
-			return 0, false
+			return secret_decimal_result(0, false)
 		}
 		if character > '9' {
-			return 0, false
+			return secret_decimal_result(0, false)
 		}
 		digit := uint64(character - '0')
 		if magnitude > (limit-digit)/10 {
-			return 0, false
+			return secret_decimal_result(0, false)
 		}
 		magnitude = magnitude*10 + digit
 	}
 	if negative {
 		if magnitude == uint64(bits.INTEGER_MAXIMUM)+1 {
-			return Integer(bits.INTEGER_MINIMUM), true
+			return secret_decimal_result(Integer(bits.INTEGER_MINIMUM), true)
 		}
-		return Integer(-int(magnitude)), true
+		return secret_decimal_result(Integer(-int(magnitude)), true)
 	}
-	return Integer(magnitude), true
+	return secret_decimal_result(Integer(magnitude), true)
 }
 
-func secret_parse_boolean(raw Secret_Value_Bytes) (value Boolean, parsed Boolean) {
-	defer func() {
-		Boolean_Invariants(value, "secret_parse_boolean.value")
-		Boolean_Invariants(parsed, "secret_parse_boolean.parsed")
-	}()
+func secret_parse_boolean_result(
+	value Boolean, parsed Boolean,
+) (_ Boolean, _ Boolean) {
+	Boolean_Invariants(value, "secret_parse_boolean.value")
+	Boolean_Invariants(parsed, "secret_parse_boolean.parsed")
+	return value, parsed
+}
+
+func secret_parse_boolean(raw Secret_Value_Bytes) (_ Boolean, _ Boolean) {
 	Secret_Value_Bytes_Invariants(raw, "secret_parse_boolean.raw")
 	true_values := [...]string{"1", "t", "T", "TRUE", "true", "True"}
 	for _, candidate := range true_values {
 		if secret_bytes_equal_text(raw, Value_Text(candidate)) {
-			return true, true
+			return secret_parse_boolean_result(true, true)
 		}
 	}
 	false_values := [...]string{"0", "f", "F", "FALSE", "false", "False"}
 	for _, candidate := range false_values {
 		if secret_bytes_equal_text(raw, Value_Text(candidate)) {
-			return false, true
+			return secret_parse_boolean_result(false, true)
 		}
 	}
-	return false, false
+	return secret_parse_boolean_result(false, false)
 }
 
 // A default does not trigger a warning because no external source supplied it.
@@ -8550,20 +8624,29 @@ func secret_finish(
 }
 
 // Status rejection never opens a path that cannot become one accepted secret.
+func secret_open_path_result(
+	failure Secret_Status_Failure, absent Current_Absent,
+	size Secret_Size, opened Boolean,
+) (_ Secret_Status_Failure, _ Current_Absent, _ Secret_Size, _ Boolean) {
+	Secret_Status_Failure_Invariants(failure, "secret_open_path.failure")
+	Current_Absent_Invariants(absent, "secret_open_path.absent")
+	Secret_Size_Invariants(size, "secret_open_path.size")
+	Boolean_Invariants(opened, "secret_open_path.opened")
+	return failure, absent, size, opened
+}
+
 func secret_open_path(
 	loop Secret_IO, path Resolved_Secret_Path,
 ) (
-	failure Secret_Status_Failure, absent Current_Absent,
-	size Secret_Size, opened Boolean,
+	_ Secret_Status_Failure, _ Current_Absent,
+	_ Secret_Size, _ Boolean,
 ) {
-	defer func() {
-		Secret_Status_Failure_Invariants(failure, "secret_open_path.failure")
-		Current_Absent_Invariants(absent, "secret_open_path.absent")
-		Secret_Size_Invariants(size, "secret_open_path.size")
-		Boolean_Invariants(opened, "secret_open_path.opened")
-	}()
 	Secret_IO_Invariants(loop, "secret_open_path.loop")
 	Resolved_Secret_Path_Invariants(path, "secret_open_path.path")
+	failure := Secret_Status_Failure{}
+	absent := Current_Absent(false)
+	size := Secret_Size(0)
+	opened := Boolean(false)
 	status, status_err := loop.Status_Procedure(loop.Backend, path)
 	switch {
 	case status_err != nil:
@@ -8582,7 +8665,7 @@ func secret_open_path(
 		size = Secret_Size(status.Size)
 		opened = true
 	}
-	return failure, absent, size, opened
+	return secret_open_path_result(failure, absent, size, opened)
 }
 
 // Open submission follows stage publication so synchronous doubles see open state.
@@ -8595,24 +8678,30 @@ func secret_submit_open(
 }
 
 // Open result owns descriptor validation before any read submission.
+func secret_read_path_result(
+	failure Secret_Open_Failure, file nbio.File, read Boolean,
+) (_ Secret_Open_Failure, _ nbio.File, _ Boolean) {
+	Secret_Open_Failure_Invariants(failure, "secret_read_path.failure")
+	Boolean_Invariants(read, "secret_read_path.read")
+	return failure, file, read
+}
+
 func secret_read_path(
 	completion nbio.Completion,
-) (failure Secret_Open_Failure, file nbio.File, read Boolean) {
-	defer func() {
-		Secret_Open_Failure_Invariants(failure, "secret_read_path.failure")
-		Boolean_Invariants(read, "secret_read_path.read")
-	}()
+) (_ Secret_Open_Failure, _ nbio.File, _ Boolean) {
+	failure := Secret_Open_Failure{}
+	file := nbio.File(0)
 	if completion.Error != nil {
 		failure.Kind = Secret_Open_Failure_Kind_Value(PATH_FAILURE_KIND_OPEN)
 		failure.Cause = completion.Error
-		return failure, file, false
+		return secret_read_path_result(failure, file, false)
 	}
 	if completion.Data < 0 {
 		failure.Kind = Secret_Open_Failure_Kind_Value(PATH_FAILURE_KIND_OPEN_NO_FILE)
-		return failure, file, false
+		return secret_read_path_result(failure, file, false)
 	}
 	file = nbio.File(completion.Data)
-	return failure, file, true
+	return secret_read_path_result(failure, file, true)
 }
 
 // Read submission follows descriptor publication so synchronous doubles see read state.
@@ -8636,40 +8725,47 @@ func secret_submit_close(
 }
 
 // Read classification keeps hostile completion counts outside slice indexing.
+func secret_read_result(
+	failure Secret_Content_Failure, absent Current_Absent,
+	candidate Secret_Value_State,
+) (_ Secret_Content_Failure, _ Current_Absent, _ Secret_Value_State) {
+	Secret_Content_Failure_Invariants(failure, "secret_read.failure")
+	Current_Absent_Invariants(absent, "secret_read.absent")
+	Secret_Value_State_Invariants(candidate, "secret_read.candidate")
+	return failure, absent, candidate
+}
+
 func secret_read(
 	key Secret_Key, type_state External_Type_State,
 	enumeration External_Enumeration, allow_empty Allow_Empty,
 	status_size Secret_Size, buffer Secret_Buffer, completion nbio.Completion,
-) (failure Secret_Content_Failure, absent Current_Absent, candidate Secret_Value_State) {
-	defer func() {
-		Secret_Content_Failure_Invariants(failure, "secret_read.failure")
-		Current_Absent_Invariants(absent, "secret_read.absent")
-		Secret_Value_State_Invariants(candidate, "secret_read.candidate")
-	}()
+) (_ Secret_Content_Failure, _ Current_Absent, _ Secret_Value_State) {
 	Secret_Key_Invariants(key, "secret_read.key")
 	External_Type_State_Invariants(type_state, "secret_read.type_state")
 	External_Enumeration_Invariants(enumeration, "secret_read.enumeration")
 	Allow_Empty_Invariants(allow_empty, "secret_read.allow_empty")
 	Secret_Size_Invariants(status_size, "secret_read.status_size")
 	Secret_Buffer_Invariants(buffer, "secret_read.buffer")
+	failure := Secret_Content_Failure{}
+	candidate := Secret_Value_State{}
 	count := Secret_Read_Count(completion.Data)
 	Secret_Read_Count_Invariants(count, "secret_read.count")
 	if completion.Error != nil {
 		failure.Kind = Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_READ)
 		failure.Cause = completion.Error
-		return failure, false, candidate
+		return secret_read_result(failure, false, candidate)
 	}
 	if count < 0 {
 		failure.Kind = Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_NEGATIVE_READ)
-		return failure, false, candidate
+		return secret_read_result(failure, false, candidate)
 	}
 	if count > SECRET_BYTES_MAX {
 		failure.Kind = Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_FILE_TOO_LARGE)
-		return failure, false, candidate
+		return secret_read_result(failure, false, candidate)
 	}
 	if Secret_Size(count) != status_size {
 		failure.Kind = Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_SIZE_CHANGED)
-		return failure, false, candidate
+		return secret_read_result(failure, false, candidate)
 	}
 	content := Secret_Value_Bytes(buffer[:count])
 	if len(content) >= len("\r\n") {
@@ -8688,37 +8784,43 @@ func secret_read(
 	if len(content) == 0 {
 		if !allow_empty {
 			failure.Kind = Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_EMPTY)
-			return failure, true, candidate
+			return secret_read_result(failure, true, candidate)
 		}
 	}
 	candidate, failure.Kind = external_convert_secret_state(
 		Resolved_Secret_Key(key), type_state, enumeration, content,
 	)
-	return failure, false, candidate
+	return secret_read_result(failure, false, candidate)
 }
 
 // Close failure defeats a successful read because descriptor retirement is required.
+func secret_close_path_result(
+	stored Path_Failures, absence Only_Absent, complete Boolean,
+) (_ Path_Failures, _ Only_Absent, _ Boolean) {
+	Path_Failures_Invariants(stored, "secret_close_path.stored")
+	Only_Absent_Invariants(absence, "secret_close_path.absence")
+	Boolean_Invariants(complete, "secret_close_path.complete")
+	return stored, absence, complete
+}
+
 func secret_close_path(
 	path Resolved_Secret_Path, path_failures Writable_Path_Failures,
 	only_absent Only_Absent,
 	failure Secret_Content_Failure, absent Current_Absent, close_err error,
-) (stored Path_Failures, absence Only_Absent, complete Boolean) {
-	defer func() {
-		Path_Failures_Invariants(stored, "secret_close_path.stored")
-		Only_Absent_Invariants(absence, "secret_close_path.absence")
-		Boolean_Invariants(complete, "secret_close_path.complete")
-	}()
+) (_ Path_Failures, _ Only_Absent, _ Boolean) {
 	Resolved_Secret_Path_Invariants(path, "secret_close_path.path")
 	Writable_Path_Failures_Invariants(path_failures, "secret_close_path.path_failures")
 	Only_Absent_Invariants(only_absent, "secret_close_path.only_absent")
 	Secret_Content_Failure_Invariants(failure, "secret_close_path.failure")
 	Current_Absent_Invariants(absent, "secret_close_path.absent")
-	complete = failure.Kind == Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_NONE)
+	complete := Boolean(
+		failure.Kind == Secret_Content_Failure_Kind_Value(PATH_FAILURE_KIND_NONE))
 	if complete {
 		complete = close_err == nil
 	}
 	if complete {
-		return Path_Failures(path_failures), only_absent, true
+		return secret_close_path_result(
+			Path_Failures(path_failures), only_absent, true)
 	}
 	if close_err != nil {
 		absent = false
@@ -8730,7 +8832,7 @@ func secret_close_path(
 	current.Kind.Value = Path_Failure_Kind_Value(failure.Kind)
 	recorded, absence := secret_record_path(
 		path, path_failures, only_absent, current, absent)
-	return Path_Failures(recorded), absence, false
+	return secret_close_path_result(Path_Failures(recorded), absence, false)
 }
 
 // Accepted content publishes only after descriptor retirement succeeds.
@@ -8772,14 +8874,18 @@ func secret_operation_complete(completed nbio.Completion_Handle) {
 }
 
 // One non-absence failure prevents an optional declaration from hiding operational faults.
+func secret_record_path_result(
+	stored Failed_Paths, absence Only_Absent,
+) (_ Failed_Paths, _ Only_Absent) {
+	Failed_Paths_Invariants(stored, "secret_record_path.stored")
+	Only_Absent_Invariants(absence, "secret_record_path.absence")
+	return stored, absence
+}
+
 func secret_record_path(
 	path Resolved_Secret_Path, path_failures Writable_Path_Failures,
 	only_absent Only_Absent, failure Current_Failure, absent Current_Absent,
-) (stored Failed_Paths, absence Only_Absent) {
-	defer func() {
-		Failed_Paths_Invariants(stored, "secret_record_path.stored")
-		Only_Absent_Invariants(absence, "secret_record_path.absence")
-	}()
+) (_ Failed_Paths, _ Only_Absent) {
 	Resolved_Secret_Path_Invariants(path, "secret_record_path.path")
 	Writable_Path_Failures_Invariants(path_failures, "secret_record_path.path_failures")
 	Only_Absent_Invariants(only_absent, "secret_record_path.only_absent")
@@ -8790,17 +8896,17 @@ func secret_record_path(
 		"Program_Parse secret path failure storage has room.",
 	)
 	failure_count := len(path_failures)
-	stored = Failed_Paths(path_failures[:failure_count+1])
+	stored := Failed_Paths(path_failures[:failure_count+1])
 	path_failure := Path_Failure{
 		Path: Path_Failure_Path{Value: path},
 		Kind: failure.Kind, Cause: failure.Cause, Close_Cause: failure.Close_Cause,
 	}
 	stored[failure_count] = path_failure
-	absence = only_absent
+	absence := only_absent
 	if !absent {
 		absence = false
 	}
-	return stored, absence
+	return secret_record_path_result(stored, absence)
 }
 
 func failure_write_path(
