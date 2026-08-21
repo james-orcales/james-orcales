@@ -28,6 +28,24 @@ func Test_Token_Run(t *testing.T) {
 		"the borrowed run opens with the parsed package token")
 	testify.Equal(t, token.KIND_END_OF_FILE, run[len(run)-1].Kind,
 		"the borrowed run closes at the parsed end token")
+	// A refused parse still wrote the run its scan reached, thus the borrow reads it whatever
+	// the parse met.
+	for _, source := range []string{
+		filled_run_source(ast.TOKEN_COUNT_MAXIMUM), nested_source(),
+		TEST_HEAD + "const (\nA = 1\n)\n",
+		filled_arena_source(ast.NODE_COUNT_MAXIMUM - int(ast.INDEX_FIRST) - 1),
+		"package )\n", "package p )\n",
+	} {
+		refused := ast.Parse(state, token.Source(source))
+		reads_refusal(t, state, refused)
+		testify.True(t, len(ast.Parse_State_Token_Run(state)) >= 1,
+			"the run a refused parse wrote holds its end token or its final one")
+	}
+}
+
+// Test_Parsed_Cursors binds the Parsed Cursors leaf before fixture declarations.
+func Test_Parsed_Cursors(t *testing.T) {
+	test_parsed_cursors(t)
 }
 
 // Test_Package_Clause binds the Package Clause leaf before fixture declarations.
@@ -43,6 +61,7 @@ func Test_Imports(t *testing.T) {
 // Test_Constants_And_Variables binds the Constants And Variables leaf before fixtures.
 func Test_Constants_And_Variables(t *testing.T) {
 	test_constants_and_variables(t)
+	test_declaration_groups(t)
 }
 
 // Test_Types binds the Types specification leaf before fixture declarations.
@@ -90,12 +109,6 @@ func Test_Trivia_Blank_Lines(t *testing.T) {
 	test_blank_lines(t)
 }
 
-// Test_Refused_Syntax_Declaration_Groups binds the Declaration Groups leaf before
-// fixture declarations.
-func Test_Refused_Syntax_Declaration_Groups(t *testing.T) {
-	test_declaration_groups(t)
-}
-
 // Test_Refused_Syntax_Interface_Methods binds the Interface Methods leaf before
 // fixture declarations.
 func Test_Refused_Syntax_Interface_Methods(t *testing.T) {
@@ -111,12 +124,6 @@ func Test_Refused_Syntax_Wide_Identifiers(t *testing.T) {
 // Test_Refused_Syntax_Iota binds the Iota specification leaf before fixture declarations.
 func Test_Refused_Syntax_Iota(t *testing.T) {
 	test_iota(t)
-}
-
-// Test_Refused_Syntax_Private_Fields binds the Private Fields leaf before
-// fixture declarations.
-func Test_Refused_Syntax_Private_Fields(t *testing.T) {
-	test_private_fields(t)
 }
 
 // Test_Refused_Syntax_Refused_Signs binds the Refused Signs leaf before
@@ -182,6 +189,11 @@ func Test_Refused_Syntax_Nesting_Depth(t *testing.T) {
 	test_nesting_depth(t)
 }
 
+// Test_Refused_Syntax_Fallthrough binds the Fallthrough leaf before fixture declarations.
+func Test_Refused_Syntax_Fallthrough(t *testing.T) {
+	test_runs_on(t)
+}
+
 // Test_Refused_Syntax_Broken_Syntax binds the Broken Syntax leaf before fixture declarations.
 func Test_Refused_Syntax_Broken_Syntax(t *testing.T) {
 	test_broken_syntax(t)
@@ -202,7 +214,7 @@ func Test_Failure_Reports_Position(t *testing.T) {
 	test_failures_position(t)
 }
 
-// Test_Failure_Reports_Tree binds the Tree specification leaf before fixture declarations.
+// Test_Failure_Reports_Tree binds the Syntax_Tree specification leaf before fixture declarations.
 func Test_Failure_Reports_Tree(t *testing.T) {
 	test_errors(t)
 }
@@ -236,12 +248,25 @@ func Test_Bounds(t *testing.T) {
 	test_bounds(t)
 }
 
+// Test_Tail binds the Tail specification leaf before fixture declarations.
+func Test_Tail(t *testing.T) {
+	tail_bounds(t, parse_state())
+}
+
 // Test_Allocation binds the Allocation specification leaf before fixture declarations.
 func Test_Allocation(t *testing.T) {
 	test_allocation(t)
 }
 
 const TEST_HEAD = "package p\n"
+
+const TEST_WRAP_SLOTS = 7
+
+const TEST_NAME_SLOTS = 4
+
+const TEST_RUN_TAIL_TOKENS = 11
+
+const TEST_NEST_MARGIN = 8
 
 const TEST_COMMENT_SIZE = 3
 
@@ -263,10 +288,10 @@ const TEST_NODE_SIZE = 20
 
 const TEST_TOKEN_SIZE = 12
 
-const TEST_STATE_SIZE = 152
+const TEST_STATE_SIZE = 128
 
 func parse_state() (state *ast.Parse_State) {
-	return &ast.Parse_State{Parse_State_Fields: ast.Parse_State_Fields{
+	tree := ast.Syntax_Tree{
 		Tokens: ast.Token_Storage{
 			Values: make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM),
 		},
@@ -282,18 +307,16 @@ func parse_state() (state *ast.Parse_State) {
 		Earlier_Children: ast.Earlier_Child_Storage{
 			Values: make(ast.Earlier_Children, ast.DEPTH_MAXIMUM),
 		},
-	}}
+	}
+	return &ast.Parse_State{Syntax_Tree: tree}
 }
 
 type allocation_fixture struct {
-	Root          ast.Root
-	Ok            ast.Boolean
-	Node          ast.Node
-	Token         token.Token
-	Run           ast.Token_Run
-	Failure       ast.Failure_Code
-	Failure_Token ast.Token_Index
-	Message       ast.Message
+	Result  ast.Parse_Result
+	Node    ast.Node
+	Token   token.Token
+	Run     ast.Token_Run
+	Message ast.Message
 }
 
 // Walks the tree in pre-order and reports the kind of every node it meets.
@@ -315,8 +338,13 @@ func kinds_of(
 	t *testing.T, state *ast.Parse_State, text string,
 ) (kinds []ast.Node_Kind) {
 	result := ast.Parse(state, token.Source(text))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "the grammar accepts %q", text)
+	testify.True(t, bool(result.OK), "a parse that ran clean reports so for %q", text)
+	testify.Equal(t, ast.FAILURE_NONE, ast.Failure(state),
+		"the state keeps no refusal for %q", text)
+	testify.Equal(t, result.Failure_Token, ast.Failure_Token(state),
+		"the state keeps the report of the clean parse of %q", text)
 	if ast.Index(root) == ast.INDEX_ABSENT {
 		return nil
 	}
@@ -334,13 +362,13 @@ func accepts(t *testing.T, state *ast.Parse_State, text string, want []ast.Node_
 func test_parse(t *testing.T) {
 	state := parse_state()
 	result := ast.Parse(state, token.Source(TEST_HEAD))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "the shortest file parses")
 	testify.Equal(t, ast.Root(ast.INDEX_FIRST), root, "the file node takes the first slot")
 	testify.Equal(t, ast.NODE_FILE, ast.Node_At(state, ast.Index(root)).Kind,
 		"the root is a file")
 	result = ast.Parse(state, token.Source(TEST_HEAD+"var a = 1\n"))
-	second, again := result.Root, result.OK
+	second, again := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(again), "one state parses a second source")
 	testify.Equal(t, ast.Root(ast.INDEX_FIRST), second,
 		"the second parse starts the arena over")
@@ -349,7 +377,7 @@ func test_parse(t *testing.T) {
 func test_nodes(t *testing.T) {
 	state := parse_state()
 	result := ast.Parse(state, token.Source(TEST_HEAD))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "the shortest file parses")
 	file := ast.Node_At(state, ast.Index(root))
 	testify.Equal(t, ast.INDEX_ABSENT, ast.Index(file.Parent), "the root has no parent")
@@ -522,19 +550,60 @@ func test_expressions(t *testing.T) {
 func refuses(
 	t *testing.T, state *ast.Parse_State, text string, code ast.Failure_Code,
 ) {
-	ast.Parse(state, token.Source(text))
-	testify.Equal(t, code, ast.Failure(state), "the refusal of %.24q names its code", text)
+	tree := ast.Parse(state, token.Source(text))
+	testify.Equal(t, code, tree.Failure, "the refusal of %.24q names its code", text)
+	testify.False(t, bool(tree.OK), "a refused parse of %.24q reports so", text)
+	testify.Equal(t, code, ast.Failure(state), "the state keeps the refusal of %.24q", text)
+	reads_refusal(t, state, tree)
+}
+
+// States what a caller that holds the state alone reads back from a refused parse: the token it
+// refused at, the error the absent slot holds, and the run it wrote.
+func reads_refusal(t *testing.T, state *ast.Parse_State, tree ast.Parse_Result) {
+	t.Helper()
+	testify.Equal(t, tree.Failure, ast.Failure(state), "the state keeps the refusal")
+	testify.Equal(t, tree.Failure_Token, ast.Failure_Token(state),
+		"the state keeps the token the parse refused at")
+	testify.Equal(t, ast.NODE_ERROR, ast.Node_At(state, ast.INDEX_ABSENT).Kind,
+		"the absent slot of a refused tree reads as an error")
+	run := ast.Parse_State_Token_Run(state)
+	testify.Equal(t, run[tree.Failure_Token], ast.Token_At(state, tree.Failure_Token),
+		"the refused token reads back from the run")
 }
 
 func test_declaration_groups(t *testing.T) {
 	state := parse_state()
-	group := ast.FAILURE_DECLARATION_GROUP
-	refuses(t, state, TEST_HEAD+"const (\nA = 1\n)\n", group)
-	refuses(t, state, TEST_HEAD+"var (\na = 1\n)\n", group)
-	refuses(t, state, TEST_HEAD+"type (\nT U\n)\n", group)
-	refuses(t, state, TEST_HEAD+"func f() {\nconst (\nA = 1\n)\n}\n", group)
-	refuses(t, state, TEST_HEAD+"import (\n\"io\"\n)\n", group)
+	// A group states one declaration for each name it holds, thus the tree holds one node
+	// for each of them and the print writes them ungrouped.
+	accepts(t, state, TEST_HEAD+"const (\nA = 1\n)\n",
+		[]ast.Node_Kind{ast.NODE_CONSTANT, ast.NODE_CONSTANT_NAME})
+	accepts(t, state, TEST_HEAD+"var (\na = 1\n)\n",
+		[]ast.Node_Kind{ast.NODE_VARIABLE})
+	accepts(t, state, TEST_HEAD+"type (\nT U\n)\n", []ast.Node_Kind{ast.NODE_TYPE})
+	accepts(t, state, TEST_HEAD+"func f() {\nconst (\nA = 1\n)\n}\n",
+		[]ast.Node_Kind{ast.NODE_CONSTANT})
+	accepts(t, state, TEST_HEAD+"import (\n\"io\"\n)\n", []ast.Node_Kind{ast.NODE_IMPORT})
 	accepts(t, state, TEST_HEAD+"import \"io\"\n", []ast.Node_Kind{ast.NODE_IMPORT})
+	counts(t, state, TEST_HEAD+"const (\nA = 1\nB = 2\n)\n", ast.NODE_CONSTANT, 2)
+	counts(t, state, TEST_HEAD+"var (\na = 1\nb = 2\nc = 3\n)\n", ast.NODE_VARIABLE, 3)
+	counts(t, state, TEST_HEAD+"type (\nT U\nV W\n)\n", ast.NODE_TYPE, 2)
+	counts(t, state, TEST_HEAD+"import (\n\"io\"\n\"os\"\n)\n", ast.NODE_IMPORT, 2)
+	counts(t, state, TEST_HEAD+"const (\n)\n", ast.NODE_CONSTANT, 0)
+}
+
+// Counts the nodes of one kind a clean parse of the source wrote.
+func counts(t *testing.T, state *ast.Parse_State, source string, kind ast.Node_Kind, want int) {
+	t.Helper()
+	held := ast.Parse(state, token.Source(source))
+	testify.True(t, bool(held.OK), "the grammar accepts %q: %s", source,
+		ast.Failure_Message(held.Failure))
+	found := 0
+	for slot := range int(held.Node_Count) {
+		if ast.Node_At(state, ast.Index(slot)).Kind == kind {
+			found = found + 1
+		}
+	}
+	testify.Equal(t, want, found, "the tree holds one node for each name %q states", source)
 }
 
 func test_interface_methods(t *testing.T) {
@@ -584,12 +653,18 @@ func test_iota(t *testing.T) {
 
 func test_private_fields(t *testing.T) {
 	state := parse_state()
-	private := ast.FAILURE_PRIVATE_FIELD
-	refuses(t, state, TEST_HEAD+"type T struct{\nname string\n}\n", private)
-	refuses(t, state, TEST_HEAD+"type T struct{\nA, bad string\n}\n", private)
-	refuses(t, state, TEST_HEAD+"type T struct{\nembedded\n}\n", private)
-	refuses(t, state, TEST_HEAD+"type T struct{\n*embedded\n}\n", private)
-	refuses(t, state, TEST_HEAD+"type T struct{\npkg.embedded\n}\n", private)
+	// A field name that opens on a lowercase letter parses, because the format exports it
+	// and a name the parse refused would never reach the format.
+	accepts(t, state, TEST_HEAD+"type T struct{\nname string\n}\n",
+		[]ast.Node_Kind{ast.NODE_FIELD_NAME})
+	accepts(t, state, TEST_HEAD+"type T struct{\nA, bad string\n}\n",
+		[]ast.Node_Kind{ast.NODE_FIELD_NAME})
+	accepts(t, state, TEST_HEAD+"type T struct{\nembedded\n}\n",
+		[]ast.Node_Kind{ast.NODE_FIELD})
+	accepts(t, state, TEST_HEAD+"type T struct{\n*embedded\n}\n",
+		[]ast.Node_Kind{ast.NODE_POINTER_TYPE})
+	accepts(t, state, TEST_HEAD+"type T struct{\npkg.embedded\n}\n",
+		[]ast.Node_Kind{ast.NODE_SELECTOR})
 	accepts(t, state, TEST_HEAD+"type T struct{\nName string\n}\n",
 		[]ast.Node_Kind{ast.NODE_FIELD_NAME})
 	accepts(t, state, TEST_HEAD+"type T struct{\nEmbedded\n}\n",
@@ -779,11 +854,80 @@ func test_node_count(t *testing.T) {
 	refuses(t, state,
 		filled_arena_source(ast.NODE_COUNT_MAXIMUM-int(ast.INDEX_FIRST)-1),
 		ast.FAILURE_NODE_COUNT)
+	// A binary operator takes a slot of its own for the operand it adopts, thus the final slot
+	// and the slot past it each stand a wrap as well as a comment. The file, its name, the
+	// declaration, and the two operands ahead of the operator take the six slots behind the
+	// comments.
+	wrapped := ast.NODE_COUNT_MAXIMUM - TEST_WRAP_SLOTS
+	refuses(t, state, filled_arena_source(wrapped)+"var a = b + c\n", ast.FAILURE_NODE_COUNT)
+	refuses(t, state, filled_arena_source(wrapped+1)+"var a = b + c\n", ast.FAILURE_NODE_COUNT)
+	// A run of names and a run of stars each take one slot for each part, thus each stops
+	// where the arena does. The file, its name, the declaration, and the name ahead of the
+	// star take the slots behind the comments.
+	named := ast.NODE_COUNT_MAXIMUM - TEST_NAME_SLOTS
+	refuses(t, state, filled_arena_source(named)+"var a int\n", ast.FAILURE_NODE_COUNT)
+	refuses(t, state, filled_arena_source(named-1)+"var a *int\n", ast.FAILURE_NODE_COUNT)
 }
 
 func test_nesting_depth(t *testing.T) {
 	state := parse_state()
 	refuses(t, state, nested_source(), ast.FAILURE_NESTING_DEPTH)
+	// A grouped type opens no node, thus only the bound on the rules the program calls stops
+	// a hostile run of parentheses.
+	refuses(t, state, grouped_source(ast.FRAME_MAXIMUM+TEST_NEST_MARGIN),
+		ast.FAILURE_NESTING_DEPTH)
+	// The file and the declaration stand open beneath the groupings, thus two fewer groupings
+	// than the parent stack holds fill it, and the comment behind them finds no room.
+	refuses(t, state, commented_source(ast.DEPTH_MAXIMUM-2), ast.FAILURE_NESTING_DEPTH)
+	// A run of names and a run of stars each open where the parent stack already stands
+	// full, thus each refuses the part it cannot open. The file and the declaration stand
+	// beneath the slices, and a struct and its field stand between the slices and the names.
+	refuses(t, state, sliced_source(ast.DEPTH_MAXIMUM-4, "struct{\nx int\n}"),
+		ast.FAILURE_NESTING_DEPTH)
+	refuses(t, state, sliced_source(ast.DEPTH_MAXIMUM-2, "*int"), ast.FAILURE_NESTING_DEPTH)
+}
+
+// Builds a declaration whose type stands inside the slice count this test names.
+func sliced_source(count int, inner string) (text string) {
+	buffer := make([]byte, 0, count*2+len(TEST_HEAD)+len(inner)+16)
+	buffer = append(buffer, TEST_HEAD...)
+	buffer = append(buffer, "var a "...)
+	for range count {
+		buffer = append(buffer, "[]"...)
+	}
+	buffer = append(buffer, inner...)
+	return string(append(buffer, '\n'))
+}
+
+// Builds a declaration whose type stands inside the parenthesis count this test names.
+func grouped_source(count int) (text string) {
+	buffer := make([]byte, 0, count*2+len(TEST_HEAD)+16)
+	buffer = append(buffer, TEST_HEAD...)
+	buffer = append(buffer, "var a "...)
+	for range count {
+		buffer = append(buffer, '(')
+	}
+	buffer = append(buffer, 'b')
+	for range count {
+		buffer = append(buffer, ')')
+	}
+	return string(append(buffer, '\n'))
+}
+
+// Builds a value whose operand stands inside the grouping count this test names, with a comment
+// ahead of the operand.
+func commented_source(count int) (text string) {
+	buffer := make([]byte, 0, count*2+len(TEST_HEAD)+32)
+	buffer = append(buffer, TEST_HEAD...)
+	buffer = append(buffer, "var a = "...)
+	for range count {
+		buffer = append(buffer, '(')
+	}
+	buffer = append(buffer, "/* c */ b"...)
+	for range count {
+		buffer = append(buffer, ')')
+	}
+	return string(append(buffer, '\n'))
 }
 
 func test_broken_syntax(t *testing.T) {
@@ -917,7 +1061,7 @@ func test_blank_lines(t *testing.T) {
 	state := parse_state()
 	source := "\npackage p\n\n\n// Doc.\nconst A = 1\n\nfunc f() {\n\tb()\n\n}\n\n\n\n"
 	result := ast.Parse(state, token.Source(source))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "the blank line fixture parses")
 	testify.Equal(t, scanned_blank_runs(source), blank_runs(state, ast.Index(root), nil),
 		"every run of empty lines stands once in the tree with its count")
@@ -929,13 +1073,13 @@ func test_blank_lines(t *testing.T) {
 	}
 	copy(wide[TEST_BLANK_SATURATION:], TEST_HEAD)
 	result = ast.Parse(state, token.Source(wide))
-	saturated, ok_wide := result.Root, result.OK
+	saturated, ok_wide := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok_wide), "a file behind many empty lines parses")
 	testify.Equal(t, TEST_BLANK_MAXIMUM,
 		int(ast.Token_At(state, ast.Node_At(state, ast.Index(saturated)).Token).Blanks),
 		"a run past the count that fits saturates")
 	result = ast.Parse(state, token.Source(TEST_HEAD+"var a = 1\n"))
-	tight, ok_tight := result.Root, result.OK
+	tight, ok_tight := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok_tight), "a file with no empty line parses")
 	testify.Empty(t, blank_runs(state, ast.Index(tight), nil),
 		"a file with no empty line holds no blank node")
@@ -944,7 +1088,7 @@ func test_blank_lines(t *testing.T) {
 func test_comments_fidelity(t *testing.T) {
 	state := parse_state()
 	result := ast.Parse(state, token.Source(TEST_COMMENT_SOURCE))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "the comment fixture parses")
 	scanned := scanned_comment_offsets(TEST_COMMENT_SOURCE)
 	testify.Equal(t, TEST_COMMENT_COUNT, len(scanned),
@@ -956,7 +1100,7 @@ func test_comments_fidelity(t *testing.T) {
 func test_comments_order(t *testing.T) {
 	state := parse_state()
 	result := ast.Parse(state, token.Source(TEST_COMMENT_SOURCE))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "the comment fixture parses")
 	offsets := comment_offsets(state, ast.Index(root), nil)
 	for index := 1; index < len(offsets); index++ {
@@ -969,7 +1113,7 @@ func test_comments_attachment(t *testing.T) {
 	state := parse_state()
 	source := "// Doc.\nconst A = 1\n"
 	result := ast.Parse(state, token.Source(TEST_HEAD+source))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "the attachment fixture parses")
 	child := ast.Index(ast.Node_At(state, ast.Index(root)).First_Child)
 	kinds := []ast.Node_Kind{}
@@ -1011,7 +1155,7 @@ func test_errors(t *testing.T) {
 	}
 	for _, one := range broken {
 		result := ast.Parse(state, token.Source(one))
-		root, ok := result.Root, result.OK
+		root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 		testify.False(t, bool(ok), "the grammar rejects %q", one)
 		if ast.Index(root) == ast.INDEX_ABSENT {
 			continue
@@ -1048,8 +1192,6 @@ func statement_branches(t *testing.T, state *ast.Parse_State, body string) {
 	accepts(t, state, statement_source(body, "for a {\ncontinue\n}"),
 		[]ast.Node_Kind{ast.NODE_CONTINUE})
 	accepts(t, state, statement_source(body, "goto Done"), []ast.Node_Kind{ast.NODE_GOTO})
-	accepts(t, state, statement_source(body, "switch a {\ncase 1:\nfallthrough\ncase 2:\n}"),
-		[]ast.Node_Kind{ast.NODE_FALLTHROUGH})
 	accepts(t, state, statement_source(body, "{\na()\n}"), []ast.Node_Kind{ast.NODE_BLOCK})
 	accepts(t, state, statement_source(body, "var a int"),
 		[]ast.Node_Kind{ast.NODE_DECLARATION_STATEMENT})
@@ -1110,9 +1252,6 @@ func test_failures_codes(t *testing.T) {
 	}{
 		{ast.FAILURE_NONE, TEST_HEAD + "var a = 1\n"},
 		{ast.FAILURE_SYNTAX, TEST_HEAD + "var a = )\n"},
-		{ast.FAILURE_DECLARATION_GROUP, TEST_HEAD + "const (\nA = 1\n)\n"},
-		{ast.FAILURE_DECLARATION_GROUP, TEST_HEAD + "var (\na = 1\n)\n"},
-		{ast.FAILURE_DECLARATION_GROUP, TEST_HEAD + "type (\nT U\n)\n"},
 		{ast.FAILURE_INTERFACE_METHOD,
 			TEST_HEAD + "type R interface{\nRead(p []byte) int\n}\n"},
 		{ast.FAILURE_WIDE_IDENTIFIER, TEST_HEAD + "var é = 1\n"},
@@ -1123,8 +1262,8 @@ func test_failures_codes(t *testing.T) {
 		{ast.FAILURE_NESTING_DEPTH, nested_source()},
 	}
 	for _, one := range cases {
-		ast.Parse(state, token.Source(one.Source))
-		testify.Equal(t, one.Code, ast.Failure(state),
+		tree := ast.Parse(state, token.Source(one.Source))
+		testify.Equal(t, one.Code, tree.Failure,
 			"the parse of %.20q names its cause", one.Source)
 	}
 }
@@ -1137,9 +1276,6 @@ func test_failures_messages(t *testing.T) {
 		testify.False(t, seen[text], "code %d reads as a sentence of its own", code)
 		seen[text] = true
 	}
-	testify.Equal(t, "Write one declaration for each name and drop the parentheses.",
-		string(ast.Failure_Message(ast.FAILURE_DECLARATION_GROUP)),
-		"the group message says what to write")
 	testify.Equal(t, "Declare no interface; a generic constraint is the one exception.",
 		string(ast.Failure_Message(ast.FAILURE_INTERFACE_METHOD)),
 		"the interface message names the one exception")
@@ -1147,11 +1283,11 @@ func test_failures_messages(t *testing.T) {
 
 func test_failures_position(t *testing.T) {
 	state := parse_state()
-	source := TEST_HEAD + "const (\nA = 1\n)\n"
-	ast.Parse(state, token.Source(source))
-	testify.Equal(t, "(", string(token.Text(token.Source(source),
-		ast.Token_At(state, ast.Failure_Token(state)))),
-		"the failure names the parenthesis that opened the group")
+	source := TEST_HEAD + "type R interface{\nRead(p []byte) int\n}\n"
+	tree := ast.Parse(state, token.Source(source))
+	testify.Equal(t, "Read", string(token.Text(token.Source(source),
+		ast.Token_At(state, tree.Failure_Token))),
+		"the failure names the method the interface states")
 	// A refusal that a later pass names still points at the token that broke the rule, not at
 	// the token the cursor happened to rest on.
 	for _, one := range []struct {
@@ -1159,18 +1295,18 @@ func test_failures_position(t *testing.T) {
 		Names  string
 	}{
 		{Source: TEST_HEAD + "const A = iota\n", Names: "iota"},
-		{Source: TEST_HEAD + "type T struct{\nname string\n}\n", Names: "name"},
+		{Source: TEST_HEAD + "type T = int\n", Names: "="},
 		{Source: TEST_HEAD + "func f() {\nif a && b {\nc()\n}\n}\n", Names: "&&"},
 	} {
-		ast.Parse(state, token.Source(one.Source))
+		named := ast.Parse(state, token.Source(one.Source))
 		testify.Equal(t, one.Names, string(token.Text(token.Source(one.Source),
-			ast.Token_At(state, ast.Failure_Token(state)))),
+			ast.Token_At(state, named.Failure_Token))),
 			"the refusal of %.24q names the token that broke the rule", one.Source)
 	}
 	overrun := filled_run_source(ast.TOKEN_COUNT_MAXIMUM)
-	ast.Parse(state, token.Source(overrun))
+	overran := ast.Parse(state, token.Source(overrun))
 	testify.Not_Equal(t, token.KIND_ILLEGAL,
-		ast.Token_At(state, ast.Failure_Token(state)).Kind,
+		ast.Token_At(state, overran.Failure_Token).Kind,
 		"an overrun run still holds the token the failure names")
 }
 
@@ -1184,8 +1320,31 @@ func test_bounds(t *testing.T) {
 	footprint_bounds(t)
 }
 
+// States that a parse leaves nothing of a wider parse before it past the tree it writes.
+func tail_bounds(t *testing.T, state *ast.Parse_State) {
+	ast.Parse(state, token.Source("package one\n\nvar a, b, c = 1, 2, 3\n"))
+	short := ast.Parse(state, token.Source("package one\n"))
+	testify.True(t, bool(short.OK), "the short source parses")
+	for slot := int(short.Token_Count); slot < ast.TOKEN_COUNT_MAXIMUM; slot++ {
+		if state.Tokens.Values[slot] != (token.Token{}) {
+			testify.Fail(t, "a token past the run the parse wrote stands empty")
+			break
+		}
+	}
+	for slot := int(short.Node_Count); slot < ast.NODE_COUNT_MAXIMUM; slot++ {
+		if state.Nodes.Values[slot] != (ast.Node{}) {
+			testify.Fail(t, "a slot past the arena the parse wrote stands empty")
+			break
+		}
+	}
+}
+
 // States record widths so caller capacity calculations stay architecture-stable.
 func footprint_bounds(t *testing.T) {
+	testify.Equal(t, ast.STEP_COUNT, len(ast.PROGRAM)/ast.STEP_SIZE,
+		"the step count names every step the program holds")
+	testify.Equal(t, ast.ENTRY_MAXIMUM, ast.ENTRY_IMPORT_MEMBERS,
+		"the widest entry names the step the final rule opens at")
 	testify.Equal(t, uintptr(TEST_NODE_SIZE), unsafe.Sizeof(ast.Node{}),
 		"one node spans its declared width")
 	testify.Equal(t, uintptr(TEST_TOKEN_SIZE), unsafe.Sizeof(token.Token{}),
@@ -1197,22 +1356,31 @@ func footprint_bounds(t *testing.T) {
 func arena_bounds(t *testing.T, state *ast.Parse_State) {
 	exact := ast.NODE_COUNT_MAXIMUM - int(ast.INDEX_FIRST) - 2
 	result := ast.Parse(state, token.Source(filled_arena_source(exact)))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.True(t, bool(ok), "a file that exactly fills the arena parses")
 	testify.Equal(t, ast.Root(ast.INDEX_FIRST), root,
 		"the filled parse still roots at the first slot")
 	testify.Equal(t, ast.NODE_COMMENT,
 		ast.Node_At(state, ast.Index(ast.INDEX_MAXIMUM)).Kind,
 		"the final slot holds a node")
-	over := ast.Parse(state, token.Source(filled_arena_source(exact+1))).OK
+	over := ast.Parse(state, token.Source(filled_arena_source(exact+1))).Failure ==
+		ast.FAILURE_NONE
 	testify.False(t, bool(over), "a file past the arena bound is rejected")
 }
 
 func run_bounds(t *testing.T, state *ast.Parse_State) {
-	ok := ast.Parse(state, token.Source(filled_run_source(1024))).OK
+	ok := ast.Parse(state, token.Source(filled_run_source(1024))).Failure == ast.FAILURE_NONE
 	testify.True(t, bool(ok), "a body of empty statements writes no node")
+	// The clause, the signature, the braces, and the end take the tokens around the body,
+	// thus a body this wide fills the run to its final slot and still parses.
+	exact := ast.Parse(state,
+		token.Source(filled_run_source(ast.TOKEN_COUNT_MAXIMUM-TEST_RUN_TAIL_TOKENS)))
+	testify.Equal(t, ast.FAILURE_NONE, exact.Failure, "a run of the widest width parses")
+	testify.Equal(t, ast.Token_Count(ast.TOKEN_COUNT_MAXIMUM), exact.Token_Count,
+		"a run of the widest width fills every slot")
 	over := ast.Parse(state,
-		token.Source(filled_run_source(ast.TOKEN_COUNT_MAXIMUM))).OK
+		token.Source(filled_run_source(ast.TOKEN_COUNT_MAXIMUM))).Failure ==
+		ast.FAILURE_NONE
 	testify.False(t, bool(over), "a source past the token bound is rejected")
 }
 
@@ -1228,7 +1396,7 @@ func depth_bounds(t *testing.T, state *ast.Parse_State) {
 		buffer = append(buffer, ')')
 	}
 	buffer = append(buffer, '\n')
-	ok := ast.Parse(state, token.Source(buffer)).OK
+	ok := ast.Parse(state, token.Source(buffer)).Failure == ast.FAILURE_NONE
 	testify.False(t, bool(ok), "a source past the depth bound is rejected")
 }
 
@@ -1241,23 +1409,16 @@ func test_allocation(t *testing.T) {
 		Call func()
 	}{
 		{Name: "Parse", Call: func() {
-			result := ast.Parse(state, source)
-			fixture.Root, fixture.Ok = result.Root, result.OK
+			fixture.Result = ast.Parse(state, source)
 		}},
 		{Name: "Node_At", Call: func() {
-			fixture.Node = ast.Node_At(state, ast.Index(fixture.Root))
+			fixture.Node = ast.Node_At(state, ast.Index(fixture.Result.Root))
 		}},
 		{Name: "Token_At", Call: func() {
 			fixture.Token = ast.Token_At(state, fixture.Node.Token)
 		}},
 		{Name: "Token_Run", Call: func() {
 			fixture.Run = ast.Parse_State_Token_Run(state)
-		}},
-		{Name: "Failure", Call: func() {
-			fixture.Failure = ast.Failure(state)
-		}},
-		{Name: "Failure_Token", Call: func() {
-			fixture.Failure_Token = ast.Failure_Token(state)
 		}},
 		{Name: "Failure_Message", Call: func() {
 			fixture.Message = ast.Failure_Message(ast.FAILURE_SYNTAX)
@@ -1266,7 +1427,7 @@ func test_allocation(t *testing.T) {
 	for _, check := range checks {
 		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
 	}
-	testify.True(t, bool(fixture.Ok), "the allocation fixture parses")
+	testify.Equal(t, ast.FAILURE_NONE, fixture.Result.Failure, "the allocation fixture parses")
 }
 
 // Builds a source that spans the largest text the scanner admits.
@@ -1307,10 +1468,12 @@ func filled_token_run() (text string) {
 func token_bounds(t *testing.T, state *ast.Parse_State) {
 	ast.Parse(state, nil)
 	testify.Equal(t, ast.TOKEN_RUN_SIZE_MINIMUM,
-		len(ast.Parse_State_Token_Run(state)), "an empty source holds only its end token")
+		len(ast.Parse_State_Token_Run(state)),
+		"an empty source holds only its end token")
 	ast.Parse(state, token.Source("+"))
 	testify.Equal(t, ast.TOKEN_RUN_SIZE_MINIMUM+1,
-		len(ast.Parse_State_Token_Run(state)), "one sign and its end fill two token slots")
+		len(ast.Parse_State_Token_Run(state)),
+		"one sign and its end fill two token slots")
 	ast.Parse(state, token.Source("a"))
 	ast.Parse(state, token.Source("ab"))
 	sweep_tokens(t, state, TEST_HEAD+"var a = b ~ \xff\n")
@@ -1319,22 +1482,24 @@ func token_bounds(t *testing.T, state *ast.Parse_State) {
 	sweep_tokens(t, state, largest_source())
 	sweep_tokens(t, state, largest_comment())
 	result := ast.Parse(state, token.Source(filled_token_run()))
-	root, ok := result.Root, result.OK
+	root, ok := result.Root, (result.Failure == ast.FAILURE_NONE)
 	testify.False(t, bool(ok), "a body with no closing brace is rejected")
+	reads_refusal(t, state, result)
 	testify.Contains(t, walk_kinds(state, ast.Index(root), nil), ast.NODE_ERROR,
 		"the run that ends with no closing brace holds an error node")
 	last := ast.Token_Index(ast.TOKEN_COUNT_MAXIMUM - 1)
 	testify.Equal(t, ast.TOKEN_COUNT_MAXIMUM,
-		len(ast.Parse_State_Token_Run(state)), "the filled run reaches its declared bound")
+		len(ast.Parse_State_Token_Run(state)),
+		"the filled run reaches its declared bound")
 	testify.Equal(t, token.KIND_END_OF_FILE, ast.Token_At(state, last).Kind,
 		"the final run slot holds the end of file")
-	testify.Equal(t, last, ast.Failure_Token(state),
+	testify.Equal(t, last, result.Failure_Token,
 		"a run that ends with no closing brace fails at its final token")
-	ast.Parse(state, token.Source("package )\n"))
-	testify.Equal(t, ast.Token_Index(1), ast.Failure_Token(state),
+	unnamed := ast.Parse(state, token.Source("package )\n"))
+	testify.Equal(t, ast.Token_Index(1), unnamed.Failure_Token,
 		"a missing package name fails at the second token")
-	ast.Parse(state, token.Source("package p )\n"))
-	testify.Equal(t, ast.Token_Index(2), ast.Failure_Token(state),
+	stray := ast.Parse(state, token.Source("package p )\n"))
+	testify.Equal(t, ast.Token_Index(2), stray.Failure_Token,
 		"a stray bracket fails at the third token")
 }
 
@@ -1357,10 +1522,42 @@ func link_bounds(t *testing.T, state *ast.Parse_State) {
 	testify.Equal(t, ast.Successor(final), ast.Node_At(state, final-1).Next,
 		"the node before the final slot names it as its follower")
 	over := ast.Parse(state,
-		token.Source(filled_arena_source(exact-2)+"var a int\n")).OK
+		token.Source(filled_arena_source(exact-2)+"var a int\n")).Failure ==
+		ast.FAILURE_NONE
 	testify.False(t, bool(over), "a declaration past the arena bound is rejected")
 	testify.Equal(t, ast.Head(final), ast.Node_At(state, final-1).First_Child,
 		"the declaration before the final slot opens its chain there")
 	testify.Equal(t, ast.Ancestor(final-1), ast.Node_At(state, final).Parent,
 		"the final slot names the declaration before it as its parent")
+}
+
+// A parse writes the end token and the absent slot whatever it reads, thus the counts one tree
+// states stand at one at least. The bound each count states rests on this.
+func test_parsed_cursors(t *testing.T) {
+	for _, one := range []string{
+		"",
+		TEST_HEAD,
+		TEST_HEAD + "\nvar a = 1\n",
+		TEST_HEAD + "\nfunc f() {\n\treturn\n}\n",
+	} {
+		state := parse_state()
+		tree := ast.Parse(state, token.Source(one))
+		testify.True(t, tree.Token_Count >= 1, "a parse scans one token at least")
+		testify.True(t, tree.Node_Count >= 1, "a parse writes the absent slot at least")
+	}
+}
+
+// A case of one switch closes where its statements close, thus a source that runs on into the
+// case behind it states a flow no reader of the case alone can see. The dialect refuses the word
+// that states it, and the switch that states each case on its own stands.
+func test_runs_on(t *testing.T) {
+	state := parse_state()
+	held := ast.FAILURE_FALLTHROUGH
+	body := TEST_HEAD + "func f() {\n"
+	refuses(t, state, statement_source(body,
+		"switch a {\ncase 1:\nfallthrough\ndefault:\nb()\n}"), held)
+	refuses(t, state, statement_source(body,
+		"switch a {\ncase 1:\nb()\nfallthrough\ncase 2:\nc()\n}"), held)
+	accepts(t, state, statement_source(body, "switch a {\ncase 1:\nb()\ndefault:\nc()\n}"),
+		[]ast.Node_Kind{ast.NODE_SWITCH})
 }

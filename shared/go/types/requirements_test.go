@@ -50,6 +50,11 @@ func Test_Statements(t *testing.T) {
 	test_statements(t)
 }
 
+// Test_Hidden_Names binds the Hidden Names specification leaf before fixture declarations.
+func Test_Hidden_Names(t *testing.T) {
+	test_hidden_names(t)
+}
+
 // Test_Expressions binds the Expressions specification leaf before fixture declarations.
 func Test_Expressions(t *testing.T) {
 	test_expressions(t)
@@ -58,6 +63,11 @@ func Test_Expressions(t *testing.T) {
 // Test_Answers binds the Answers specification leaf before fixture declarations.
 func Test_Answers(t *testing.T) {
 	test_answers(t)
+}
+
+// Test_Invariants binds the Invariants specification leaf before fixture declarations.
+func Test_Invariants(t *testing.T) {
+	test_invariant_pairs(t)
 }
 
 // Test_Refusals binds the Refusals specification leaf before fixture declarations.
@@ -82,8 +92,13 @@ const TEST_PATH = "local/example/one"
 const TEST_NAME_RUN_MAXIMUM = 30000
 
 // TEST_POINTER_RUN is how many pointers one fill declaration stands over, thus one declaration
-// takes that many type slots and one symbol slot.
-const TEST_POINTER_RUN = 10
+// takes that many type slots and one symbol slot. A long run fills the type storage with few
+// declarations, and it stays inside the depth one check admits.
+const TEST_POINTER_RUN = 50
+
+// TEST_TYPE_FREE is how many type slots one type head leaves free, which is the most one case
+// spends on its tail.
+const TEST_TYPE_FREE = 4
 
 const TEST_OTHER_PATH = "local/example/two"
 
@@ -205,6 +220,8 @@ var flagged bool
 
 var written string
 
+var boxed any
+
 func Fold(entries []Held, lookup map[Count]Held) (sum Count) {
 	total := 0
 	kept := shared.Value
@@ -240,6 +257,13 @@ func Fold(entries []Held, lookup map[Count]Held) (sum Count) {
 	case 1:
 		total = total + 1
 	}
+	asserted := boxed.(Count)
+	switch kind := boxed.(type) {
+	case Count:
+		total = total + int(kind)
+	}
+	grouped := new((Count))
+	total = total + int(asserted) + int(*grouped)
 	return place_of(true) + sum + mark + read + outside + Count(letter) + Count(len(part)) +
 		Count(len(made)) + fresh.Value + Count(number) + folded + stated + LIMIT +
 		deep + pointer.Value + Count(total) + kept + Count(len(letters)) + Count(place_of(truth))
@@ -276,7 +300,7 @@ type fixture_file struct {
 
 // Caller allocation makes every module bound explicit in fixtures.
 func module_state() (subject *types.Module) {
-	return &types.Module{Module_Fields: types.Module_Fields{
+	return &types.Module{
 		Files:      make(types.File_Storage, types.FILE_COUNT_MAXIMUM),
 		Packages:   make(types.Package_Storage, types.PACKAGE_COUNT_MAXIMUM),
 		Symbols:    make(types.Symbol_Storage, types.SYMBOL_COUNT_MAXIMUM),
@@ -288,22 +312,21 @@ func module_state() (subject *types.Module) {
 		Owners:     make(types.Owner_Storage, types.DEPTH_MAXIMUM),
 		Words:      make(types.Word_Storage, types.UNIVERSE_WORD_SIZE),
 		Counts:     make(types.Count_Storage, types.COUNT_SLOT_COUNT),
-	}}
+	}
 }
 
 // Caller allocation makes every body bound explicit in fixtures.
 func body_state() (body *types.Body) {
-	return &types.Body{Body_Fields: types.Body_Fields{
+	return &types.Body{
 		Types:  make(types.Body_Type_Storage, ast.NODE_COUNT_MAXIMUM),
 		Locals: make(types.Local_Storage, types.LOCAL_COUNT_MAXIMUM),
-		Scopes: make(types.Scope_Storage, types.SCOPE_DEPTH_MAXIMUM),
 		Staged: make(types.Staged_Storage, types.STAGED_NAME_MAXIMUM),
-	}}
+	}
 }
 
 // Caller allocation makes every parser bound explicit in fixtures.
 func parse_state() (state *ast.Parse_State) {
-	return &ast.Parse_State{Parse_State_Fields: ast.Parse_State_Fields{
+	tree := ast.Syntax_Tree{
 		Tokens: ast.Token_Storage{
 			Values: make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM),
 		},
@@ -319,7 +342,8 @@ func parse_state() (state *ast.Parse_State) {
 		Earlier_Children: ast.Earlier_Child_Storage{
 			Values: make(ast.Earlier_Children, ast.DEPTH_MAXIMUM),
 		},
-	}}
+	}
+	return &ast.Parse_State{Syntax_Tree: tree}
 }
 
 // Builds one module and one tree the caller owns, which is how every case here starts.
@@ -339,14 +363,17 @@ func analyse(
 		testify.True(t, bool(result.OK), "the file binds to its package")
 		indexes = append(indexes, result.File)
 	}
+	trees := []*ast.Parse_State{tree}
 	for slot, one := range files {
-		ast.Parse(tree, token.Source(one.Source))
-		testify.True(t, bool(types.Declare(subject, indexes[slot], tree)),
+		if slot > 0 {
+			trees = append(trees, parse_state())
+		}
+		ast.Parse(trees[slot], token.Source(one.Source))
+		testify.True(t, bool(types.Declare(subject, indexes[slot], trees[slot])),
 			"the file declares: %s", types.Failure_Message(types.Failure(subject)))
 	}
-	for slot, one := range files {
-		ast.Parse(tree, token.Source(one.Source))
-		testify.True(t, bool(types.Resolve(subject, indexes[slot], tree)),
+	for slot := range files {
+		testify.True(t, bool(types.Resolve(subject, indexes[slot], trees[slot])),
 			"the file resolves: %s", types.Failure_Message(types.Failure(subject)))
 	}
 	return indexes
@@ -458,6 +485,7 @@ func test_universe(t *testing.T) {
 }
 
 func test_declarations(t *testing.T) {
+	declared_tail_import(t)
 	subject, file := fixture(t)
 	for _, one := range []struct {
 		Name string
@@ -558,6 +586,58 @@ func test_named_types(t *testing.T) {
 	testify.Equal(t, types.SYMBOL_ABSENT,
 		types.Symbol_Index(types.Member_Symbol_Of(subject, embedded)),
 		"an embedded field wears no name of its own")
+	named_grouped_fields(t)
+	named_grouped_parameters(t)
+}
+
+// Reads the signature one grouped parameter list states, which takes one member for each name it
+// spells and binds each name in the body.
+func named_grouped_parameters(t *testing.T) {
+	source := "package one\n\nfunc Pair(left, right *int) {\n\tread := right\n}\n"
+	subject, tree := module_of()
+	file := analyse(t, subject, tree, []fixture_file{{Path: TEST_PATH, Source: source}})[0]
+	signature := types.Symbol_Type_Of(subject, member_of(t, subject, file, "Pair"))
+	parameters := types.Type_Index(types.Type_Key_Of(subject, signature))
+	left := types.Member_Index(types.Type_Members_Of(subject, parameters))
+	right := types.Member_Index(types.Member_Next_Of(subject, left))
+	for _, one := range []struct {
+		Member types.Member_Index
+		Name   types.Name
+	}{{left, types.Name("left")}, {right, types.Name("right")}} {
+		testify.Equal(t, one.Name, types.Symbol_Name_Of(subject,
+			types.Symbol_Index(types.Member_Symbol_Of(subject, one.Member))),
+			"a grouped parameter takes a member for the name %q", one.Name)
+		testify.Equal(t, types.TYPE_POINTER, types.Type_Kind_Of(subject,
+			types.Type_Index(types.Member_Type_Of(subject, one.Member))),
+			"the parameter %q wears the type its group states", one.Name)
+	}
+	testify.Equal(t, types.TYPE_POINTER, checked_kind(t, source, "right", 0),
+		"the body binds every name of a grouped parameter")
+}
+
+// Reads the struct one grouped field states, which takes one member for each name it spells.
+func named_grouped_fields(t *testing.T) {
+	subject, tree := module_of()
+	source := "package fill\n\ntype Pair struct {\n\tLeft, Right *int\n}\n"
+	file := analyse(t, subject, tree, []fixture_file{{Path: TEST_PATH, Source: source}})[0]
+	pair := types.Underlying_Of(subject,
+		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Pair")))
+	left := types.Member_Index(types.Type_Members_Of(subject, pair))
+	right := types.Member_Index(types.Member_Next_Of(subject, left))
+	for _, one := range []struct {
+		Member types.Member_Index
+		Name   types.Name
+	}{{left, types.Name("Left")}, {right, types.Name("Right")}} {
+		testify.Equal(t, one.Name, types.Symbol_Name_Of(subject,
+			types.Symbol_Index(types.Member_Symbol_Of(subject, one.Member))),
+			"a grouped field takes a member for the name %q", one.Name)
+		testify.Equal(t, types.TYPE_POINTER, types.Type_Kind_Of(subject,
+			types.Type_Index(types.Member_Type_Of(subject, one.Member))),
+			"the name %q wears the type its group states", one.Name)
+	}
+	testify.Equal(t, types.MEMBER_ABSENT,
+		types.Member_Index(types.Member_Next_Of(subject, right)),
+		"the final name of a group closes the chain")
 }
 
 func test_answers(t *testing.T) {
@@ -754,6 +834,9 @@ func answers_sweep(t *testing.T, subject *types.Module) {
 		result := types.Lookup(subject, index, types.Name("Count"))
 		testify.True(t, bool(result.Found) || !bool(result.Found),
 			"a package slot answers a search")
+		report := types.Unpaired(subject, index)
+		testify.True(t, report.Symbol >= types.PACKAGE_SYMBOL_FIRST,
+			"a package slot answers for the functions it pairs")
 	}
 }
 
@@ -765,6 +848,7 @@ func answers_messages(t *testing.T) {
 		types.FAILURE_NAME_SIZE, types.FAILURE_PATH_SIZE, types.FAILURE_NESTING_DEPTH,
 		types.FAILURE_UNKNOWN_NAME, types.FAILURE_DUPLICATE_NAME,
 		types.FAILURE_UNKNOWN_IMPORT, types.FAILURE_TYPE_CYCLE,
+		types.FAILURE_SHADOWED_NAME,
 	} {
 		text := types.Failure_Message(code)
 		testify.True(t, len(text) <= types.MESSAGE_SIZE_MAXIMUM,
@@ -779,6 +863,7 @@ func answers_messages(t *testing.T) {
 }
 
 func test_refusals(t *testing.T) {
+	refused_module_passes(t)
 	for _, one := range []struct {
 		Source string
 		Code   types.Failure_Code
@@ -810,6 +895,17 @@ func test_refusals(t *testing.T) {
 		"a refused parse still declares the names its tree holds")
 	testify.Equal(t, types.FAILURE_NONE, types.Failure(subject),
 		"a refused parse is the business of the parser and never of the module")
+	for _, text := range refused_sources() {
+		held, parsed := module_of()
+		source := token.Source(text)
+		index := types.Add_File(held, TEST_PATH, source).File
+		ast.Parse(parsed, source)
+		types.Declare(held, index, parsed)
+		types.Resolve(held, index, parsed)
+		types.Check(held, body_state(), index, parsed)
+		testify.Equal(t, types.FAILURE_NONE, types.Failure(held),
+			"every pass reads a refused tree and leaves the refusal to the parser")
+	}
 }
 
 func test_bounds(t *testing.T) {
@@ -820,6 +916,72 @@ func test_bounds(t *testing.T) {
 	bounds_symbols(t)
 	bounds_types(t)
 	bounds_members(t)
+	bounds_locals(t)
+	bounds_staged(t)
+}
+
+// Checks one body source and reads the kind the identifier the text names folds to at a place.
+func checked_kind(t *testing.T, source string, text string, place int) (kind types.Type_Kind) {
+	t.Helper()
+	subject, tree := module_of()
+	file := analyse(t, subject, tree, []fixture_file{{Path: TEST_PATH, Source: source}})[0]
+	body := body_state()
+	ast.Parse(tree, token.Source(source))
+	testify.True(t, bool(types.Check(subject, body, file, tree)), "the body checks")
+	found := ast.Index(0)
+	seen := 0
+	walk_nodes(tree, 1, func(index ast.Index) {
+		one := ast.Node_At(tree, index)
+		if one.Kind != ast.NODE_IDENTIFIER {
+			return
+		}
+		if string(token.Text(token.Source(source), ast.Token_At(tree, one.Token))) != text {
+			return
+		}
+		if seen == place {
+			found = index
+		}
+		seen = seen + 1
+	})
+	testify.Not_Equal(t, ast.Index(0), found, "the source states %q", text)
+	return types.Type_Kind_Of(subject, types.Type_At(body, found))
+}
+
+// Fills the local storage of one body and opens a block past it. The names bound stand, and a
+// name past the bound binds nothing.
+func bounds_locals(t *testing.T) {
+	buffer := []byte("package one\n\nfunc Wide(")
+	for index := range types.LOCAL_COUNT_MAXIMUM {
+		if index > 0 {
+			buffer = append(buffer, ", "...)
+		}
+		buffer = append(buffer, fmt.Sprintf("l%d", index)...)
+	}
+	buffer = append(buffer, " int) {\n\tvar past int\n\t{\n\t\tpast = l0\n\t}\n}\n"...)
+	source := string(buffer)
+	testify.Equal(t, types.TYPE_INT, checked_kind(t, source, "l0", 0),
+		"a name inside the local bound stands in a block past it")
+	testify.Equal(t, types.TYPE_INVALID, checked_kind(t, source, "past", 1),
+		"a name past the local bound binds nothing")
+}
+
+// Binds the most names one short declaration stages, each to the value at its own place.
+func bounds_staged(t *testing.T) {
+	names := []byte{}
+	values := []byte{}
+	for index := range types.STAGED_NAME_MAXIMUM {
+		if index > 0 {
+			names = append(names, ", "...)
+			values = append(values, ", "...)
+		}
+		names = append(names, fmt.Sprintf("s%d", index)...)
+		values = append(values, fmt.Sprintf("\"%d\"", index)...)
+	}
+	last := fmt.Sprintf("s%d", types.STAGED_NAME_MAXIMUM-1)
+	source := "package one\n\nfunc Many() {\n\t" + string(names) + " := " + string(values) +
+		"\n\tlast := " + last + "\n}\n"
+	testify.Equal(t, types.TYPE_UNTYPED_STRING, checked_kind(t, source, last, 1),
+		"the final staged name wears the value at the final place")
 }
 
 // Reads how many type slots one module spent, which is the first slot no fold wrote.
@@ -853,14 +1015,18 @@ func filled_source(prefix string, one_type string, count int) (source string) {
 	return string(buffer)
 }
 
-// Builds a struct that states one field for each slot a fill needs.
+// Builds a struct that states one field for each member slot a fill needs. One line names every
+// field, thus the parser takes the names as one run.
 func filled_structure(count int) (source string) {
-	buffer := make([]byte, 0, count*16+64)
-	buffer = append(buffer, "package fill\n\ntype Wide struct {\n"...)
+	buffer := make([]byte, 0, count*8+64)
+	buffer = append(buffer, "package fill\n\ntype Wide struct {\n\t"...)
 	for index := range count {
-		buffer = append(buffer, fmt.Sprintf("\tField%d int\n", index)...)
+		if index > 0 {
+			buffer = append(buffer, ", "...)
+		}
+		buffer = append(buffer, fmt.Sprintf("F%d", index)...)
 	}
-	return string(append(buffer, "}\n"...))
+	return string(append(buffer, " int\n}\n"...))
 }
 
 func bounds_files(t *testing.T) {
@@ -1044,41 +1210,54 @@ func bounds_depth(t *testing.T) {
 		"a type past the nesting bound names its code")
 }
 
-// Feeds one tail file into a module whose head already stands, which is how a case reads the
-// final slot of an arena.
+// Copies every storage of one module into storage of its own, thus many cases read one head.
+func clone_module(from *types.Module) (subject *types.Module) {
+	subject = module_state()
+	copy(subject.Files, from.Files)
+	copy(subject.Packages, from.Packages)
+	copy(subject.Symbols, from.Symbols)
+	copy(subject.Types, from.Types)
+	copy(subject.Members, from.Members)
+	copy(subject.Buckets, from.Buckets)
+	copy(subject.Nodes, from.Nodes)
+	copy(subject.Parameters, from.Parameters)
+	copy(subject.Owners, from.Owners)
+	copy(subject.Words, from.Words)
+	copy(subject.Counts, from.Counts)
+	return subject
+}
+
+// Feeds tail files one after another into a copy of a module whose head already stands, which is
+// how a case reads the final slot of an arena. The file is the last tail.
 func fill_arena(
-	t *testing.T, head []string, tail string,
+	head *types.Module, tails ...string,
 ) (subject *types.Module, file types.File_Index) {
-	t.Helper()
-	subject, tree := module_of()
-	heads := []fixture_file{}
-	for _, one := range head {
-		heads = append(heads, fixture_file{Path: TEST_PATH, Source: one})
+	subject = clone_module(head)
+	tree := parse_state()
+	for _, tail := range tails {
+		file = types.Add_File(subject, TEST_PATH, token.Source(tail)).File
+		ast.Parse(tree, token.Source(tail))
+		types.Declare(subject, file, tree)
+		types.Resolve(subject, file, tree)
 	}
-	analyse(t, subject, tree, heads)
-	file = types.Add_File(subject, TEST_PATH, token.Source(tail)).File
-	ast.Parse(tree, token.Source(tail))
-	types.Declare(subject, file, tree)
-	ast.Parse(tree, token.Source(tail))
-	types.Resolve(subject, file, tree)
 	return subject, file
 }
 
-// Builds the head that leaves the symbol arena with the free slot count it names. One declaration
-// states many names, thus the head spends two tokens for each symbol it takes.
-func symbol_head(t *testing.T, free int) (head []string) {
+// Builds the module that leaves the symbol arena with two free slots. One declaration states many
+// names, thus the head spends two tokens for each symbol it takes.
+func symbol_head(t *testing.T) (head *types.Module) {
 	t.Helper()
-	subject, _ := module_of()
-	need := types.SYMBOL_COUNT_MAXIMUM - count_symbols(subject) - free
+	head, tree := module_of()
+	need := types.SYMBOL_COUNT_MAXIMUM - count_symbols(head) - 2
+	files := []fixture_file{}
 	spent := 0
 	for spent < need {
-		count := need - spent
-		if count > TEST_NAME_RUN_MAXIMUM {
-			count = TEST_NAME_RUN_MAXIMUM
-		}
-		head = append(head, named_run(spent, count))
+		count := min(need-spent, TEST_NAME_RUN_MAXIMUM)
+		one := fixture_file{Path: TEST_PATH, Source: named_run(spent, count)}
+		files = append(files, one)
 		spent = spent + count
 	}
+	analyse(t, head, tree, files)
 	return head
 }
 
@@ -1095,12 +1274,12 @@ func named_run(first int, count int) (source string) {
 	return string(append(buffer, " int\n"...))
 }
 
-// Builds the head that leaves the type arena with the free slot count it names. One declaration
-// states two pointers, thus the head spends half the symbol slots the types it takes would.
-func type_head(t *testing.T, free int) (head string) {
+// Builds the module that leaves the type arena with TEST_TYPE_FREE free slots. One declaration
+// states a run of pointers, thus the head spends few symbol slots for the types it takes.
+func type_head(t *testing.T) (head *types.Module) {
 	t.Helper()
-	subject, _ := module_of()
-	need := types.TYPE_COUNT_MAXIMUM - count_types(subject) - free
+	head, tree := module_of()
+	need := types.TYPE_COUNT_MAXIMUM - count_types(head) - TEST_TYPE_FREE
 	buffer := make([]byte, 0, need*4+64)
 	buffer = append(buffer, "package fill\n"...)
 	stars := make([]byte, TEST_POINTER_RUN)
@@ -1113,13 +1292,35 @@ func type_head(t *testing.T, free int) (head string) {
 	for index := range need % TEST_POINTER_RUN {
 		buffer = append(buffer, fmt.Sprintf("var solitary%d *int\n", index)...)
 	}
+	analyse(t, head, tree, []fixture_file{{Path: TEST_PATH, Source: string(buffer)}})
+	return head
+}
+
+// Builds the file that leaves the type arena of a head with the free slot count it names. Each
+// pointer takes one slot.
+func type_pad(free int) (source string) {
+	buffer := []byte("package fill\n")
+	for index := range TEST_TYPE_FREE - free {
+		buffer = append(buffer, fmt.Sprintf("var pad%d *int\n", index)...)
+	}
 	return string(buffer)
 }
 
+// Builds the module that leaves the member arena with two free slots. One grouped field states a
+// name for each member it takes.
+func member_head(t *testing.T) (head *types.Module) {
+	t.Helper()
+	head, tree := module_of()
+	analyse(t, head, tree, []fixture_file{
+		{Path: TEST_PATH, Source: filled_structure(types.MEMBER_COUNT_MAXIMUM - 3)},
+	})
+	return head
+}
+
 func bounds_symbols(t *testing.T) {
+	head := symbol_head(t)
 	last := types.Symbol_Index(types.SYMBOL_INDEX_MAXIMUM)
-	subject, file := fill_arena(t, symbol_head(t, 2),
-		"package fill\n\ntype Solo struct {\n\tOnly int\n}\n")
+	subject, file := fill_arena(head, "package fill\n\ntype Solo struct {\n\tOnly int\n}\n")
 	testify.Equal(t, types.SYMBOL_FIELD, types.Symbol_Kind_Of(subject, last),
 		"the final symbol slot holds the last name a file stated")
 	solo := types.Underlying_Of(subject,
@@ -1128,20 +1329,21 @@ func bounds_symbols(t *testing.T) {
 		types.Member_Index(types.Type_Members_Of(subject, solo)))),
 
 		"the final field wears the final symbol slot")
-	bounds_past_symbol(t)
-	bounds_final_symbol(t)
+	bounds_past_symbol(t, subject)
+	bounds_final_symbol(t, head)
 }
 
-func bounds_past_symbol(t *testing.T) {
-	subject, file := fill_arena(t, symbol_head(t, 0), "package fill\n\nvar past int\n")
+func bounds_past_symbol(t *testing.T, full *types.Module) {
+	subject, file := fill_arena(full, "package fill\n\nvar past int\n")
 	testify.Equal(t, types.FAILURE_SYMBOL_COUNT, types.Failure(subject),
 		"a name past the bound names its code")
 	absent := types.Lookup(subject, types.Package_Of(subject, file), types.Name("past"))
 	testify.False(t, bool(absent.Found), "a name past the bound binds nothing")
 }
 
-func bounds_final_symbol(t *testing.T) {
-	subject, file := fill_arena(t, symbol_head(t, 1), "package fill\n\ntype Last int\n")
+func bounds_final_symbol(t *testing.T, head *types.Module) {
+	subject, file := fill_arena(head, "package fill\n\nvar pad int\n",
+		"package fill\n\ntype Last int\n")
 	result := types.Lookup(subject, types.Package_Of(subject, file), types.Name("Last"))
 	testify.True(t, bool(result.Found), "the final name binds")
 	testify.Equal(t, types.Symbol_Index(types.SYMBOL_INDEX_MAXIMUM), result.Symbol,
@@ -1155,8 +1357,9 @@ func bounds_final_symbol(t *testing.T) {
 }
 
 func bounds_types(t *testing.T) {
+	head := type_head(t)
 	last := types.Type_Index(types.TYPE_INDEX_MAXIMUM)
-	subject, file := fill_arena(t, []string{type_head(t, 2)},
+	subject, file := fill_arena(head, type_pad(2),
 		"package fill\n\nvar pair **int\n\nvar over *int\n")
 	testify.Equal(t, types.TYPE_POINTER, types.Type_Kind_Of(subject, last),
 		"the final type slot holds the last type a file stated")
@@ -1168,20 +1371,20 @@ func bounds_types(t *testing.T) {
 	testify.True(t, bool(pair.Found), "the final declaration binds its name")
 	testify.Equal(t, last-1, types.Symbol_Type_Of(subject, pair.Symbol),
 		"the final declaration wears the type it stated")
-	bounds_final_type(t)
-	bounds_final_field(t)
-	bounds_final_tuple(t)
+	bounds_final_type(t, head)
+	bounds_final_field(t, head)
+	bounds_final_tuple(t, head)
 }
 
-func bounds_final_type(t *testing.T) {
-	subject, file := fill_arena(t, []string{type_head(t, 1)}, "package fill\n\nvar solo *int\n")
+func bounds_final_type(t *testing.T, head *types.Module) {
+	subject, file := fill_arena(head, type_pad(1), "package fill\n\nvar solo *int\n")
 	testify.Equal(t, types.Type_Index(types.TYPE_INDEX_MAXIMUM),
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "solo")),
 		"the final declaration wears the final type slot")
 }
 
-func bounds_final_field(t *testing.T) {
-	subject, file := fill_arena(t, []string{type_head(t, 3)},
+func bounds_final_field(t *testing.T, head *types.Module) {
+	subject, file := fill_arena(head, type_pad(3),
 		"package fill\n\ntype Holder struct {\n\tValue *int\n}\n")
 	holder := types.Underlying_Of(subject,
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Holder")))
@@ -1192,9 +1395,8 @@ func bounds_final_field(t *testing.T) {
 		"the final field wears the final type slot")
 }
 
-func bounds_final_tuple(t *testing.T) {
-	subject, file := fill_arena(t, []string{type_head(t, 2)},
-		"package fill\n\nfunc Only(one int) {\n}\n")
+func bounds_final_tuple(t *testing.T, head *types.Module) {
+	subject, file := fill_arena(head, type_pad(2), "package fill\n\nfunc Only(one int) {\n}\n")
 	signature := types.Symbol_Type_Of(subject, member_of(t, subject, file, "Only"))
 	testify.Equal(t, types.Type_Index(types.TYPE_INDEX_MAXIMUM),
 		types.Type_Index(types.Type_Key_Of(subject, signature)),
@@ -1202,15 +1404,9 @@ func bounds_final_tuple(t *testing.T) {
 }
 
 func bounds_members(t *testing.T) {
-	subject, tree := module_of()
-	head := filled_structure(types.MEMBER_COUNT_MAXIMUM - 3)
-	analyse(t, subject, tree, []fixture_file{{Path: TEST_PATH, Source: head}})
-	tail := "package fill\n\ntype Tail struct {\n\tOne int\n\tTwo int\n\tThree int\n}\n"
-	file := types.Add_File(subject, TEST_PATH, token.Source(tail)).File
-	ast.Parse(tree, token.Source(tail))
-	types.Declare(subject, file, tree)
-	ast.Parse(tree, token.Source(tail))
-	types.Resolve(subject, file, tree)
+	head := member_head(t)
+	subject, file := fill_arena(head,
+		"package fill\n\ntype Tail struct {\n\tOne int\n\tTwo int\n\tThree int\n}\n")
 	last := types.Member_Index(types.MEMBER_INDEX_MAXIMUM)
 	testify.Equal(t, types.FAILURE_MEMBER_COUNT, types.Failure(subject),
 		"a member past the bound names its code")
@@ -1226,23 +1422,16 @@ func bounds_members(t *testing.T) {
 		member_of(t, subject, file, "Tail")))
 	testify.Equal(t, last-1, types.Member_Index(types.Type_Members_Of(subject, tail_type)),
 		"a struct names the first member of its chain")
-	bounds_final_head(t)
+	bounds_final_head(t, head)
 	testify.Equal(t, types.TYPE_INT, types.Type_Kind_Of(subject,
 		types.Type_Index(types.Member_Type_Of(subject, last))),
 		"the final member wears the type it states")
 	bounds_lengths(t)
 }
 
-func bounds_final_head(t *testing.T) {
-	subject, tree := module_of()
-	head := filled_structure(types.MEMBER_COUNT_MAXIMUM - 2)
-	analyse(t, subject, tree, []fixture_file{{Path: TEST_PATH, Source: head}})
-	tail := "package fill\n\ntype Tail struct {\n\tOnly int\n}\n"
-	file := types.Add_File(subject, TEST_PATH, token.Source(tail)).File
-	ast.Parse(tree, token.Source(tail))
-	types.Declare(subject, file, tree)
-	ast.Parse(tree, token.Source(tail))
-	types.Resolve(subject, file, tree)
+func bounds_final_head(t *testing.T, head *types.Module) {
+	subject, file := fill_arena(head, "package fill\n\nfunc Pad(int) {\n}\n",
+		"package fill\n\ntype Tail struct {\n\tOnly int\n}\n")
 	index := types.Underlying_Of(subject,
 		types.Symbol_Type_Of(subject, member_of(t, subject, file, "Tail")))
 	testify.Equal(t, types.Member_Index(types.MEMBER_INDEX_MAXIMUM),
@@ -1602,7 +1791,7 @@ func bodies_final_type(t *testing.T) {
 	t.Helper()
 	tail := "package fill\n\nfunc Only(one int) (two int) {\n\tpointer := &one\n\t" +
 		"return *pointer\n}\n"
-	subject, file := fill_arena(t, []string{type_head(t, 4)}, tail)
+	subject, file := fill_arena(type_head(t), tail)
 	body := body_state()
 	tree := parse_state()
 	ast.Parse(tree, token.Source(tail))
@@ -1704,6 +1893,60 @@ func test_expressions(t *testing.T) {
 	}
 	expression_calls(t, subject, body, tree)
 	expression_selectors(t, subject, body, tree)
+	for _, one := range []struct {
+		Text  string
+		Place int
+		Folds types.Type_Kind
+	}{
+		{"asserted", 1, types.TYPE_NAMED},
+		{"kind", 1, types.TYPE_NAMED},
+		{"grouped", 1, types.TYPE_POINTER},
+	} {
+		kind := ast.NODE_IDENTIFIER
+		folded := folded_kind(t, subject, body, tree, kind, one.Text, one.Place)
+		testify.Equal(t, one.Folds, folded, "%q wears the type Go states", one.Text)
+	}
+	for _, width_size := range []int{1, 2, types.NAME_SIZE_MAXIMUM} {
+		wide_names(t, width_size)
+	}
+}
+
+// TEST_WIDE_PATH is the package the program of wide names imports.
+const TEST_WIDE_PATH = "local/example/wide"
+
+// Checks one program whose every name spans the width it states: a local, a field, a field an
+// embedded struct carries, an import, a member of the package it names, a package value, and a
+// function that calls itself.
+func wide_names(t *testing.T, width_size int) {
+	spelled := func(letter byte) (text string) {
+		name := make([]byte, width_size)
+		for index := range name {
+			name[index] = letter
+		}
+		return string(name)
+	}
+	local, field, carried := spelled('l'), spelled('F'), spelled('G')
+	imported, member, value, called := spelled('i'), spelled('M'), spelled('p'), spelled('c')
+	other := "package wide\n\nvar " + member + " int\n"
+	source := "package one\n\nimport " + imported + " \"" + TEST_WIDE_PATH + "\"\n\n" +
+		"type Inner struct {\n\t" + carried + " int\n}\n\n" +
+		"type Outer struct {\n\t" + field + " int\n\tInner\n}\n\n" +
+		"var " + value + " Outer\n\n" +
+		"func " + called + "(" + local + " Outer) (result int) {\n\treturn " +
+		local + "." + field + " + " + local + "." + carried + " + " +
+		imported + "." + member + " + " + value + "." + field + " + " +
+		called + "(" + local + ")\n}\n"
+	subject, tree := module_of()
+	files := []fixture_file{
+		{Path: TEST_WIDE_PATH, Source: other},
+		{Path: TEST_PATH, Source: source},
+	}
+	indexes := analyse(t, subject, tree, files)
+	for slot, one := range files {
+		ast.Parse(tree, token.Source(one.Source))
+		testify.True(t, bool(types.Check(subject, body_state(), indexes[slot], tree)),
+			"a program whose names span %d bytes checks", width_size)
+	}
 }
 
 func expression_calls(
@@ -1796,7 +2039,7 @@ func benchmark_parity(
 ) {
 	b.Helper()
 	types.Reset(subject)
-	if result := ast.Parse(tree, source); !bool(result.OK) {
+	if result := ast.Parse(tree, source); result.Failure != ast.FAILURE_NONE {
 		b.Fatal("the benchmark source parses")
 	}
 	file := types.Add_File(subject, TEST_PATH, source).File
@@ -1834,8 +2077,8 @@ func Benchmark_Analyse_House(b *testing.B) {
 func Benchmark_Parse_House(b *testing.B) {
 	source := token.Source(benchmark_source())
 	tree := parse_state()
-	if result := ast.Parse(tree, source); !bool(result.OK) {
-		b.Fatal(string(ast.Failure_Message(ast.Failure(tree))))
+	if result := ast.Parse(tree, source); result.Failure != ast.FAILURE_NONE {
+		b.Fatal(string(ast.Failure_Message(result.Failure)))
 	}
 	b.SetBytes(int64(len(source)))
 	b.ReportAllocs()
@@ -1864,4 +2107,280 @@ func Benchmark_Scan_House(b *testing.B) {
 			one = token.Scan(&scanner)
 		}
 	}
+}
+
+// TEST_FILLED_HEAD_TOKENS is how many tokens the head of the filled source holds: package, its
+// name, the semicolon behind them, and func, f, both parentheses and the brace.
+const TEST_FILLED_HEAD_TOKENS = 8
+
+// Builds the refused sources whose reports every entry must read: the first two codes, the deepest
+// code, and refusals at the second token, the third, and the final one of the widest run.
+func refused_sources() (sources []string) {
+	nested := make([]byte, 0, 2*ast.DEPTH_MAXIMUM+64)
+	nested = append(nested, "package one\n\nvar a = "...)
+	for range ast.DEPTH_MAXIMUM + 4 {
+		nested = append(nested, '(')
+	}
+	nested = append(nested, 'b')
+	for range ast.DEPTH_MAXIMUM + 4 {
+		nested = append(nested, ')')
+	}
+	nested = append(nested, '\n')
+	head := "package one\n\nfunc f() {\n"
+	filled := make([]byte, len(head), ast.TOKEN_COUNT_MAXIMUM+len(head))
+	copy(filled, head)
+	for range ast.TOKEN_COUNT_MAXIMUM - TEST_FILLED_HEAD_TOKENS - 1 {
+		filled = append(filled, ';')
+	}
+	return []string{
+		"package )\n", "package one )\n", "package one\n\ntype R interface{\n\tRead() int\n}\n",
+		string(nested), string(filled),
+	}
+}
+
+// TEST_BODY_PATH is the package the body fixture stands in when it shares a module with the
+// declaration fixtures, apart from the names they state.
+const TEST_BODY_PATH = "local/example/body"
+
+// Binds an import that states no name of its own, which takes the segment after the final slash
+// of its path.
+func declared_tail_import(t *testing.T) {
+	subject, tree := module_of()
+	files := analyse(t, subject, tree, []fixture_file{
+		{Path: TEST_OTHER_PATH, Source: TEST_OTHER_SOURCE},
+		{Path: TEST_PATH, Source: "package one\n\nimport \"local/example/two\"\n"},
+	})
+	binding := import_of(t, subject, files[1], "two")
+	target := types.Symbol_Target_Of(subject, binding)
+	testify.Equal(t, types.Package_Of(subject, files[0]), target,
+		"an import with no name of its own names the package its path states")
+}
+
+// TEST_MISSING_PATH is the package a refused module reads a missing name in, which refuses a
+// module that already refused once more.
+const TEST_MISSING_PATH = "local/example/missing"
+
+// TEST_CYCLE_PATH is the package the cycle a refused module opens with stands in, apart from the
+// names the fixture files state.
+const TEST_CYCLE_PATH = "local/example/cycle"
+
+// Refuses a module by filling its file slots, which the files already bound survive.
+func refuse_files(t *testing.T, subject *types.Module) {
+	t.Helper()
+	for bool(types.Add_File(subject, TEST_PATH, token.Source("package one\n")).OK) {
+	}
+}
+
+// Refuses a module by filling its package slots, which the files already bound survive.
+func refuse_packages(t *testing.T, subject *types.Module) {
+	t.Helper()
+	for index := 0; ; index++ {
+		path := types.Path(fmt.Sprintf("local/example/fill%d", index))
+		if !bool(types.Add_File(subject, path, token.Source("package fill\n")).OK) {
+			return
+		}
+	}
+}
+
+// Refuses a module with a type that names itself, in a package of its own.
+func refuse_cycle(t *testing.T, subject *types.Module) {
+	t.Helper()
+	source := token.Source("package cycle\n\ntype Loop Loop\n")
+	file := types.Add_File(subject, TEST_CYCLE_PATH, source).File
+	tree := parse_state()
+	ast.Parse(tree, source)
+	types.Declare(subject, file, tree)
+	types.Resolve(subject, file, tree)
+}
+
+// Refuses one module by checking a body that binds a name a block around it binds, which is the
+// last code a refusal states.
+func refuse_shadow(t *testing.T, subject *types.Module) {
+	t.Helper()
+	source := token.Source("package shadow\n\nfunc F() {\n  held := 1\n" +
+		"  {\n    held := 2\n    _ = held\n  }\n  _ = held\n}\n")
+	file := types.Add_File(subject, TEST_SHADOW_PATH, source).File
+	tree := parse_state()
+	ast.Parse(tree, source)
+	types.Declare(subject, file, tree)
+	ast.Parse(tree, source)
+	types.Resolve(subject, file, tree)
+	ast.Parse(tree, source)
+	types.Check(subject, body_state(), file, tree)
+}
+
+// TEST_SHADOW_PATH names the package one shadowed name stands in.
+const TEST_SHADOW_PATH = "local/example/shadow"
+
+// Runs every pass over the fixture files of a module that already refused, once for each report a
+// module keeps at its bounds: the first two codes and the last. The first cause stands through
+// every later pass, because those passes read state the refusal already left half built.
+func refused_module_passes(t *testing.T) {
+	for _, one := range []struct {
+		Code   types.Failure_Code
+		Refuse func(*testing.T, *types.Module)
+	}{
+		{types.FAILURE_FILE_COUNT, refuse_files},
+		{types.FAILURE_PACKAGE_COUNT, refuse_packages},
+		{types.FAILURE_SHADOWED_NAME, refuse_shadow},
+	} {
+		subject, tree := module_of()
+		files := []fixture_file{
+			{Path: TEST_OTHER_PATH, Source: TEST_OTHER_SOURCE},
+			{Path: TEST_PATH, Source: TEST_SOURCE},
+			{Path: TEST_PATH, Source: TEST_THIRD_SOURCE},
+			{Path: TEST_BODY_PATH, Source: TEST_BODY_SOURCE},
+			{Path: TEST_MISSING_PATH, Source: "package missing\n\nvar value Missing\n"},
+		}
+		indexes := []types.File_Index{}
+		for _, file := range files {
+			path := types.Path(file.Path)
+			result := types.Add_File(subject, path, token.Source(file.Source))
+			indexes = append(indexes, result.File)
+		}
+		one.Refuse(t, subject)
+		testify.Equal(t, one.Code, types.Failure(subject), "the module refuses at a bound")
+		for slot, file := range files {
+			ast.Parse(tree, token.Source(file.Source))
+			types.Declare(subject, indexes[slot], tree)
+		}
+		for slot, file := range files {
+			ast.Parse(tree, token.Source(file.Source))
+			types.Resolve(subject, indexes[slot], tree)
+			ast.Parse(tree, token.Source(file.Source))
+			types.Check(subject, body_state(), indexes[slot], tree)
+		}
+		testify.Equal(t, one.Code, types.Failure(subject),
+			"the first cause stands through every later pass")
+		reads_refused_module(t, subject, indexes[1])
+		types.Reset(subject)
+		testify.Equal(t, types.FAILURE_NONE, types.Failure(subject),
+			"a reset module stands again, whatever the module before it refused")
+	}
+}
+
+// Reads a module that refused through every accessor a caller holds, which answers the way it
+// answers for a module that stands, and binds one more file past the refusal.
+func reads_refused_module(t *testing.T, subject *types.Module, file types.File_Index) {
+	t.Helper()
+	owner := types.Package_Of(subject, file)
+	testify.Equal(t, types.Path(TEST_PATH), types.Path_Of(subject, owner),
+		"a refused module still names the path of a package")
+	testify.True(t, types.Unpaired(subject, owner).Symbol >= types.PACKAGE_SYMBOL_FIRST,
+		"a refused module still answers for the functions it pairs")
+	testify.Equal(t, token.Source(TEST_SOURCE), types.Source_Of(subject, file),
+		"a refused module still holds a source")
+	count := types.Lookup(subject, owner, types.Name("Count"))
+	testify.True(t, bool(count.Found), "a refused module still binds the names it declared")
+	symbol := count.Symbol
+	testify.Equal(t, types.SYMBOL_TYPE, types.Symbol_Kind_Of(subject, symbol),
+		"a refused module still reads the kind of a symbol")
+	testify.Equal(t, types.Name("Count"), types.Symbol_Name_Of(subject, symbol),
+		"a refused module still reads the name of a symbol")
+	testify.Equal(t, file, types.Symbol_File_Of(subject, symbol),
+		"a refused module still reads the file of a symbol")
+	types.Symbol_Target_Of(subject, symbol)
+	named := types.Symbol_Type_Of(subject, symbol)
+	testify.Equal(t, types.TYPE_NAMED, types.Type_Kind_Of(subject, named),
+		"a refused module still reads the kind of a type")
+	testify.Equal(t, symbol, types.Symbol_Index(types.Type_Symbol_Of(subject, named)),
+		"a refused module still reads the declaration of a type")
+	named_entry := types.Lookup(subject, owner, types.Name("Entry")).Symbol
+	entry := types.Underlying_Of(subject, types.Symbol_Type_Of(subject, named_entry))
+	member := types.Member_Index(types.Type_Members_Of(subject, entry))
+	types.Member_Type_Of(subject, member)
+	types.Member_Symbol_Of(subject, member)
+	types.Member_Next_Of(subject, member)
+	types.Type_Element_Of(subject, named)
+	types.Type_Key_Of(subject, named)
+	types.Type_Element_Count_Of(subject, named)
+	types.Add_File(subject, TEST_PATH, token.Source("package one\n"))
+}
+
+// A function that states the invariants of a type stands directly below that type, thus a package
+// that declares no type of that name states a function standing below nothing. The read names the
+// first such function, and names none where every one of them pairs with a type of the package.
+func test_invariant_pairs(t *testing.T) {
+	subject, tree := module_of()
+	held := analyse(t, subject, tree, []fixture_file{
+		{Path: TEST_PATH, Source: "package one\n\ntype Pair int\n\n" +
+			"func Pair_Invariants() {\n}\n"},
+	})
+	owner := types.Package_Of(subject, held[0])
+	testify.False(t, bool(types.Unpaired(subject, owner).Found),
+		"a function that names a type of the package pairs with it")
+	other, second := module_of()
+	stood := analyse(t, other, second, []fixture_file{
+		{Path: TEST_PATH, Source: "package one\n\nfunc Held_Invariants() {\n}\n"},
+	})
+	report := types.Unpaired(other, types.Package_Of(other, stood[0]))
+	testify.True(t, bool(report.Found),
+		"a function that names no type of the package stands below nothing")
+	testify.Equal(t, types.Name("Held_Invariants"),
+		types.Symbol_Name_Of(other, types.Symbol_Index(report.Symbol)),
+		"the report names that function")
+	pairs_second_symbol(t)
+	pairs_final_symbol(t)
+}
+
+// The report names the function wherever the package states it: the slot behind the first name a
+// file binds, and the last slot the arena holds.
+func pairs_second_symbol(t *testing.T) {
+	subject, tree := module_of()
+	held := analyse(t, subject, tree, []fixture_file{
+		{Path: TEST_PATH, Source: "package one\n\nvar pad int\n\n" +
+			"func Held_Invariants() {\n}\n"},
+	})
+	report := types.Unpaired(subject, types.Package_Of(subject, held[0]))
+	testify.Equal(t, types.Name("Held_Invariants"),
+		types.Symbol_Name_Of(subject, types.Symbol_Index(report.Symbol)),
+		"a function behind one name reads back from the slot behind it")
+}
+
+// Reads the report of a module whose final symbol slot holds such a function.
+func pairs_final_symbol(t *testing.T) {
+	subject, file := fill_arena(symbol_head(t), "package fill\n\nvar pad int\n",
+		"package fill\n\nfunc Gone_Invariants() {\n}\n")
+	report := types.Unpaired(subject, types.Package_Of(subject, file))
+	testify.Equal(t, types.Unpaired_Slot(types.SYMBOL_INDEX_MAXIMUM), report.Symbol,
+		"a function in the final slot reads back from it")
+}
+
+// A name one block binds that a block around it already binds hides that binding, thus the check
+// refuses it. A second binding of one name in the one block states an assignment, and two blocks
+// that stand beside each other hide nothing from each other.
+func test_hidden_names(t *testing.T) {
+	for _, one := range []string{
+		"package one\n\nfunc F() {\n  held := 1\n  {\n    held := 2\n" +
+			"    _ = held\n  }\n  _ = held\n}\n",
+		"package one\n\nfunc F(held int) {\n  {\n    held := 2\n    _ = held\n  }\n}\n",
+		"package one\n\nfunc F() {\n  held := 1\n  for step := range 2 {\n" +
+			"    held := step\n    _ = held\n  }\n  _ = held\n}\n",
+	} {
+		testify.Equal(t, types.FAILURE_SHADOWED_NAME, checked_failure(t, one),
+			"a name a block around it binds stands nowhere")
+	}
+	for _, one := range []string{
+		"package one\n\nfunc F() {\n  held, other := g()\n  held, third := g()\n" +
+			"  _, _, _ = held, other, third\n}\n",
+		"package one\n\nfunc F() {\n  {\n    held := 1\n    _ = held\n  }\n" +
+			"  {\n    held := 2\n    _ = held\n  }\n}\n",
+	} {
+		testify.Equal(t, types.FAILURE_NONE, checked_failure(t, one),
+			"a binding that hides nothing stands")
+	}
+}
+
+// Checks one body source and reads why the module refused, or that it stands.
+func checked_failure(t *testing.T, source string) (code types.Failure_Code) {
+	t.Helper()
+	subject, tree := module_of()
+	file := types.Add_File(subject, TEST_PATH, token.Source(source)).File
+	ast.Parse(tree, token.Source(source))
+	types.Declare(subject, file, tree)
+	ast.Parse(tree, token.Source(source))
+	types.Resolve(subject, file, tree)
+	ast.Parse(tree, token.Source(source))
+	types.Check(subject, body_state(), file, tree)
+	return types.Failure(subject)
 }

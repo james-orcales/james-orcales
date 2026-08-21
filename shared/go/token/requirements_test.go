@@ -300,6 +300,12 @@ func test_number_literals(t *testing.T) {
 	testify.Equal(t, []token.Kind{
 		token.KIND_INTEGER, token.KIND_PLUS, token.KIND_INTEGER, token.KIND_SEMICOLON,
 	}, scan_kinds("1+2"), "a sign outside an exponent ends a number")
+	testify.Equal(t, []token.Kind{
+		token.KIND_FLOAT, token.KIND_PLUS, token.KIND_INTEGER, token.KIND_SEMICOLON,
+	}, scan_kinds("1.+2"), "a period before a sign ends a number")
+	testify.Equal(t, []token.Kind{
+		token.KIND_INTEGER, token.KIND_PLUS, token.KIND_INTEGER, token.KIND_SEMICOLON,
+	}, scan_kinds("1z+2"), "the final lowercase letter before a sign ends a number")
 	testify.Equal(t, []token.Kind{token.KIND_PERIOD}, scan_kinds("."),
 		"a lone period opens no fraction")
 	testify.Equal(t, []token.Kind{

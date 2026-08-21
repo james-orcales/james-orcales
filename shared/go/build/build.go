@@ -23,27 +23,6 @@ const DEPTH_MAXIMUM = 32
 // TAG_COUNT_MAXIMUM caps the tags one target names.
 const TAG_COUNT_MAXIMUM = 32
 
-// WORD_SYSTEM holds the operating system one target names.
-const WORD_SYSTEM = 0
-
-// WORD_ARCHITECTURE holds the architecture one target names.
-const WORD_ARCHITECTURE = 1
-
-// WORD_SLOT_COUNT is the word slot count one target holds.
-const WORD_SLOT_COUNT = 2
-
-// COUNT_TAG holds how many tags one target names.
-const COUNT_TAG = 0
-
-// COUNT_PLACE holds the byte of the text one read stands on.
-const COUNT_PLACE = 1
-
-// COUNT_DEPTH holds the brackets the read stands inside of.
-const COUNT_DEPTH = 2
-
-// COUNT_SLOT_COUNT is the counter count one state holds.
-const COUNT_SLOT_COUNT = 3
-
 // COUNT_MINIMUM is the smallest count one read holds.
 const COUNT_MINIMUM = 0
 
@@ -56,45 +35,6 @@ const PLACE_MINIMUM = 0
 // PLACE_MAXIMUM is the byte past the widest name one read admits, which is the widest source one
 // scan of Go text reads.
 const PLACE_MAXIMUM = token.SOURCE_SIZE_MAXIMUM
-
-// SOURCE_TEXT holds the text one read runs over.
-const SOURCE_TEXT = 0
-
-// SOURCE_TAG holds the tag one read stands on.
-const SOURCE_TAG = 1
-
-// SOURCE_WORD holds the word one read compares the tag against.
-const SOURCE_WORD = 2
-
-// SOURCE_SLOT_COUNT is the text slot count one state holds.
-const SOURCE_SLOT_COUNT = 3
-
-// SYMBOL_HELD holds the byte one read stands on.
-const SYMBOL_HELD = 0
-
-// SYMBOL_SLOT_COUNT is the byte slot count one state holds.
-const SYMBOL_SLOT_COUNT = 1
-
-// PLACE_OPENING holds the byte one field of a name opens at.
-const PLACE_OPENING = 0
-
-// PLACE_FIELD holds the byte the final field of a name opens at.
-const PLACE_FIELD = 1
-
-// PLACE_SLOT_COUNT is the name place slot count one state holds.
-const PLACE_SLOT_COUNT = 2
-
-// HEAD_SLOT holds the text one read asks a line to open with.
-const HEAD_SLOT = 0
-
-// HEAD_SLOT_COUNT is the head slot count one state holds.
-const HEAD_SLOT_COUNT = 1
-
-// FLAG_FAILED marks a read that met a text it cannot read.
-const FLAG_FAILED = 0
-
-// FLAG_SLOT_COUNT is the flag count one state holds.
-const FLAG_SLOT_COUNT = 1
 
 // UNIX_WORD is the tag that holds on every operating system Go calls one.
 const UNIX_WORD = "unix"
@@ -244,30 +184,145 @@ func Build_Counts_Invariants(value Build_Counts, namespace aver.Namespace) {
 // Constraint_Text is the complete constraint one reader scans.
 type Constraint_Text token.Source
 
-// Constraint_Text_Invariants states every bounded source view.
+// Constraint_Text_Invariants states every bounded view of one constraint. A read refuses text
+// wider than the widest constraint before it holds any, and a stem that passes that width names
+// no system, thus the view never passes it.
 func Constraint_Text_Invariants(value Constraint_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// TAG_SIZE_MINIMUM is the narrowest tag. A tag opens at a byte a tag holds, thus it holds one.
+const TAG_SIZE_MINIMUM = 1
+
+// Tag is one word of a constraint.
+type Tag token.Source
+
+// Tag_Invariants states every bounded tag view. A tag is one word of a constraint, thus it
+// stands inside the width that constraint states.
+func Tag_Invariants(value Tag, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), TAG_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Term_Text is the text one term of a constraint opens, up to the end of the constraint. The read
+// stands inside the text where it reads a term, thus the term holds one byte at least.
+type Term_Text token.Source
+
+// Term_Text_Invariants states every text a term opens.
+func Term_Text_Invariants(value Term_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), TAG_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// STEM_SIZE_MINIMUM is the narrowest stem a read of fields stands on, which is the underscore
+// that opens the first field.
+const STEM_SIZE_MINIMUM = 1
+
+// Stem is the name of one file ahead of its extension, holding an underscore that opens a field.
+type Stem token.Source
+
+// Stem_Invariants states every stem the read of fields stands on.
+func Stem_Invariants(value Stem, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), STEM_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// NAME_FIELD_SIZE_MAXIMUM is the widest field a name states. A field stands behind the
+// underscore that opened it, thus it is one byte narrower than the widest stem.
+const NAME_FIELD_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM - STEM_SIZE_MINIMUM
+
+// Name_Field is one field of the name of a file, which the underscores of that name divide.
+type Name_Field token.Source
+
+// Name_Field_Invariants states every field a name states, down to the one of no bytes.
+func Name_Field_Invariants(value Name_Field, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, NAME_FIELD_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Scanned_Text is the whole text one scan of lines reads: the imports one file states, or the
+// header one read of a directory holds. It is caller storage and stands as wide as one source.
+type Scanned_Text token.Source
+
+// Scanned_Text_Invariants states every bounded text one scan of lines reads.
+func Scanned_Text_Invariants(value Scanned_Text, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, token.SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// Tag is the constraint word one reader currently holds.
-type Tag token.Source
+// Line is one line of the text a scan reads. A line closes at the first break, and the text holds
+// no break at all where it states one line, thus a line stands as wide as that text.
+type Line token.Source
 
-// Tag_Invariants states every bounded tag view.
-func Tag_Invariants(value Tag, namespace aver.Namespace) {
+// Line_Invariants states every bounded line one scan reads.
+func Line_Invariants(value Line, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, token.SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// IMPORT_LINE_SIZE_MAXIMUM is the widest line an import states. It stands behind the package
+// clause, and the shortest clause is its head and the break that closes it.
+const IMPORT_LINE_SIZE_MAXIMUM = token.SOURCE_SIZE_MAXIMUM - PACKAGE_HEAD_SIZE - 1
+
+// Import_Line is one line of the run of imports a file states. The read skips a line holding
+// nothing ahead of it, thus the line holds one byte at least.
+type Import_Line token.Source
+
+// Import_Line_Invariants states every line of the run of imports.
+func Import_Line_Invariants(value Import_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), IMPORT_LINE_SIZE_MINIMUM, IMPORT_LINE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// IMPORT_LINE_SIZE_MINIMUM is the narrowest line the read of imports stands on.
+const IMPORT_LINE_SIZE_MINIMUM = 1
+
+// IMPORT_PATH_SIZE_MAXIMUM is the widest path an import states, which is the widest line less
+// the head that opens it and the two quotes that hold it.
+const IMPORT_PATH_SIZE_MAXIMUM = IMPORT_LINE_SIZE_MAXIMUM - IMPORT_HEAD_SIZE - 2
+
+// Import_Path is the path one import states.
+type Import_Path token.Source
+
+// Import_Path_Invariants states every path an import states, down to the path of no bytes.
+func Import_Path_Invariants(value Import_Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, IMPORT_PATH_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// BUILD_LINE_SIZE_MAXIMUM is the widest constraint one header states, which is the widest source
+// less the head that opens the line.
+const BUILD_LINE_SIZE_MAXIMUM = token.SOURCE_SIZE_MAXIMUM - HEAD_SIZE_MAXIMUM
+
+// Build_Line is the constraint one header states, as wide as the author wrote it.
+type Build_Line token.Source
+
+// Build_Line_Invariants states every constraint a header states, down to the one of no bytes.
+func Build_Line_Invariants(value Build_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, BUILD_LINE_SIZE_MAXIMUM).
 		Ensure()
 }
 
 // Word is the target word one reader compares against.
 type Word token.Source
 
-// Word_Invariants states every bounded target-word view.
+// Word_Invariants states every bounded target-word view. The read compares a word against a tag
+// of one constraint, and no tag stands wider than the widest constraint, thus a word it holds
+// never passes that width.
 func Word_Invariants(value Word, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, token.SOURCE_SIZE_MAXIMUM).
+		Range_Int(len(value), token.SOURCE_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
@@ -275,26 +330,21 @@ func Word_Invariants(value Word, namespace aver.Namespace) {
 type Build_Sources struct {
 	// Text survives the views taken from it.
 	Text Constraint_Text
-	// Tag separates the current term from the complete constraint.
-	Tag Tag
-	// Word separates target input from the term being compared.
-	Word Word
 }
 
 // Build_Sources_Invariants composes each reader-view domain once.
 func Build_Sources_Invariants(value Build_Sources, namespace aver.Namespace) {
 	Constraint_Text_Invariants(value.Text, namespace)
-	Tag_Invariants(value.Tag, namespace)
-	Word_Invariants(value.Word, namespace)
 }
 
-// SYMBOL_MINIMUM admits the zero value before one read begins.
+// SYMBOL_MINIMUM is the smallest byte a term can open at.
 const SYMBOL_MINIMUM = 0
 
-// SYMBOL_MAXIMUM is the largest byte one constraint can state.
+// SYMBOL_MAXIMUM is the largest byte a term can open at. A term opens at whatever byte the author
+// wrote there, thus every byte stands in the domain.
 const SYMBOL_MAXIMUM = 255
 
-// Held_Symbol is the byte one reader currently holds.
+// Held_Symbol is the byte one read of a tag stands on.
 type Held_Symbol byte
 
 // Held_Symbol_Invariants states every byte.
@@ -304,98 +354,68 @@ func Held_Symbol_Invariants(value Held_Symbol, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Build_Symbols keeps the active byte in named storage.
-type Build_Symbols struct {
-	// Held survives the lookahead that compares the second sign.
-	Held Held_Symbol
-}
+// AND_SIGN is the byte a meeting of terms writes twice.
+const AND_SIGN = '&'
 
-// Build_Symbols_Invariants composes the active-byte domain.
-func Build_Symbols_Invariants(value Build_Symbols, namespace aver.Namespace) {
-	Held_Symbol_Invariants(value.Held, namespace)
+// OR_SIGN is the byte a join of terms writes twice.
+const OR_SIGN = '|'
+
+// Sign is the byte one operator of the constraint language writes twice.
+type Sign byte
+
+// Sign_Invariants states the two operators the language writes.
+func Sign_Invariants(value Sign, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), AND_SIGN, OR_SIGN).
+		Ensure()
 }
 
 // HEAD_SIZE_MAXIMUM is the widest line prefix one build reader searches for.
 const HEAD_SIZE_MAXIMUM = len(BUILD_HEAD)
 
+// IMPORT_HEAD_SIZE is the byte count of the text one import states.
+const IMPORT_HEAD_SIZE = len(IMPORT_HEAD)
+
+// PACKAGE_HEAD_SIZE is the byte count of the text one package clause states, which the opening of
+// an import block matches.
+const PACKAGE_HEAD_SIZE = len(PACKAGE_HEAD)
+
 // Head is one line prefix a build reader searches for.
 type Head string
 
-// Head_Invariants admits absence and every bounded line prefix.
+// Head_Invariants states every line prefix the reader searches for. Three widths stand and no
+// other, thus a prefix of one byte or of two names nothing the reader looks for.
 func Head_Invariants(value Head, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int(len(value), PLACE_MINIMUM, HEAD_SIZE_MAXIMUM).
+		Enum_3_Int(len(value), IMPORT_HEAD_SIZE, PACKAGE_HEAD_SIZE, HEAD_SIZE_MAXIMUM).
 		Ensure()
-}
-
-// Build_Heads keeps the active line prefix in named storage.
-type Build_Heads struct {
-	// Value survives the comparison of the line behind it.
-	Value Head
-}
-
-// Build_Heads_Invariants composes the line-prefix domain.
-func Build_Heads_Invariants(value Build_Heads, namespace aver.Namespace) {
-	Head_Invariants(value.Value, namespace)
 }
 
 // Opening_Place is the byte at which the first name field opens.
 type Opening_Place Place
 
-// Opening_Place_Invariants states every byte of a bounded name.
+// Opening_Place_Invariants states every byte of one constraint text. The place stands at an
+// underscore of that text or at its end, thus it never passes the width the text states.
 func Opening_Place_Invariants(value Opening_Place, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int32(int32(value), PLACE_MINIMUM, PLACE_MAXIMUM).
+		Range_Int32(int32(value), PLACE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
 // Field_Place is the byte at which the final name field opens.
 type Field_Place Place
 
-// Field_Place_Invariants states every byte of a bounded name.
+// Field_Place_Invariants states every byte of one constraint text. A field opens behind an
+// underscore the text holds, and the read names one only where an underscore stands inside the
+// text, thus the place never passes the width the text states.
 func Field_Place_Invariants(value Field_Place, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int32(int32(value), PLACE_MINIMUM, PLACE_MAXIMUM).
+		Range_Int32(int32(value), STEM_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// Build_Places keeps unlike name positions in named storage.
-type Build_Places struct {
-	// Opening survives the backwards scan for the final field.
-	Opening Opening_Place
-	// Field separates the scan answer from its lower bound.
-	Field Field_Place
-}
-
-// Build_Places_Invariants composes each name-position domain once.
-func Build_Places_Invariants(value Build_Places, namespace aver.Namespace) {
-	Opening_Place_Invariants(value.Opening, namespace)
-	Field_Place_Invariants(value.Field, namespace)
-}
-
-// Failed is whether one reader met malformed text.
-type Failed Boolean
-
-// Failed_Invariants states both reader outcomes.
-func Failed_Invariants(value Failed, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Sometimes(bool(value), "The build reader fails malformed text.").
-		Ensure()
-}
-
-// Build_Flags keeps failure separate from returned truth values.
-type Build_Flags struct {
-	// Failed survives nested reads whose truth value differs from validity.
-	Failed Failed
-}
-
-// Build_Flags_Invariants composes the reader-failure domain.
-func Build_Flags_Invariants(value Build_Flags, namespace aver.Namespace) {
-	Failed_Invariants(value.Failed, namespace)
-}
-
-// Target_Fields states the concrete target layout independently of its validated view.
-type Target_Fields struct {
+// Target is the caller-owned target storage.
+type Target struct {
 	// Words holds the operating system and the architecture the build names.
 	Words Target_Words
 	// Tags holds the tags the build states beyond the two words.
@@ -404,39 +424,11 @@ type Target_Fields struct {
 	Counts Target_Counts
 }
 
-// Target_Fields_Invariants composes every concrete target field once.
-func Target_Fields_Invariants(value Target_Fields, namespace aver.Namespace) {
+// Target_Invariants composes every concrete target field once.
+func Target_Invariants(value Target, namespace aver.Namespace) {
 	Target_Words_Invariants(value.Words, namespace)
 	Target_Tag_Storage_Invariants(value.Tags, namespace)
 	Target_Counts_Invariants(value.Counts, namespace)
-}
-
-// Target_Words_Stored prevents one read from proving every caller word length.
-type Target_Words_Stored interface{}
-
-// Target_Words_Stored_Invariants fixes target-word representation.
-func Target_Words_Stored_Invariants(value Target_Words_Stored, _ aver.Namespace) {
-	_, valid := value.(Target_Words)
-	aver.Always(valid == (value != nil), "Target words have expected storage type.")
-}
-
-// Target_Counts_Stored prevents one read from proving every optional-tag count.
-type Target_Counts_Stored interface{}
-
-// Target_Counts_Stored_Invariants fixes target-count representation.
-func Target_Counts_Stored_Invariants(value Target_Counts_Stored, _ aver.Namespace) {
-	_, valid := value.(Target_Counts)
-	aver.Always(valid == (value != nil), "Target counts have expected storage type.")
-}
-
-// Target is one validated view over caller-owned target storage.
-type Target Target_Fields
-
-// Target_Invariants fixes tag storage without proving stale caller values.
-func Target_Invariants(value Target, namespace aver.Namespace) {
-	Target_Words_Stored_Invariants(Target_Words_Stored(value.Words), namespace)
-	Target_Tag_Storage_Invariants(value.Tags, namespace)
-	Target_Counts_Stored_Invariants(Target_Counts_Stored(value.Counts), namespace)
 }
 
 // Target_Handle gives caller-owned target storage one identity.
@@ -450,98 +442,19 @@ func Target_Handle_Invariants(value Target_Handle, namespace aver.Namespace) {
 	Target_Invariants(*value, namespace)
 }
 
-// Build_Fields states the concrete reader layout independently of its validated view.
-type Build_Fields struct {
+// Build is the caller-owned state one read of a constraint runs through. The text and the target
+// stay with the caller, thus the state holds the place the read stands at and nothing else.
+type Build struct {
 	// Counts holds the byte the read stands on and the brackets it stands inside of.
 	Counts Build_Counts
 	// Sources holds the text one read runs over and the tag it stands on.
 	Sources Build_Sources
-	// Symbols holds the byte one read stands on.
-	Symbols Build_Symbols
-	// Heads holds the text one read asks a line to open with.
-	Heads Build_Heads
-	// Places holds the bytes one read of a name stands between.
-	Places Build_Places
-	// Flags holds what the read met.
-	Flags Build_Flags
 }
-
-// Build_Fields_Invariants composes every concrete reader field once.
-func Build_Fields_Invariants(value Build_Fields, namespace aver.Namespace) {
-	Build_Counts_Invariants(value.Counts, namespace)
-	Build_Sources_Invariants(value.Sources, namespace)
-	Build_Symbols_Invariants(value.Symbols, namespace)
-	Build_Heads_Invariants(value.Heads, namespace)
-	Build_Places_Invariants(value.Places, namespace)
-	Build_Flags_Invariants(value.Flags, namespace)
-}
-
-// Build_Counts_Stored keeps one call from proving every cursor value.
-type Build_Counts_Stored interface{}
-
-// Build_Counts_Stored_Invariants fixes reader-count representation.
-func Build_Counts_Stored_Invariants(value Build_Counts_Stored, _ aver.Namespace) {
-	_, valid := value.(Build_Counts)
-	aver.Always(valid == (value != nil), "Build counts have expected storage type.")
-}
-
-// Build_Sources_Stored keeps one call from proving every source length.
-type Build_Sources_Stored interface{}
-
-// Build_Sources_Stored_Invariants fixes reader-source representation.
-func Build_Sources_Stored_Invariants(value Build_Sources_Stored, _ aver.Namespace) {
-	_, valid := value.(Build_Sources)
-	aver.Always(valid == (value != nil), "Build sources have expected storage type.")
-}
-
-// Build_Symbols_Stored keeps one call from proving every held byte.
-type Build_Symbols_Stored interface{}
-
-// Build_Symbols_Stored_Invariants fixes reader-symbol representation.
-func Build_Symbols_Stored_Invariants(value Build_Symbols_Stored, _ aver.Namespace) {
-	_, valid := value.(Build_Symbols)
-	aver.Always(valid == (value != nil), "Build symbols have expected storage type.")
-}
-
-// Build_Heads_Stored keeps one call from proving every line-prefix length.
-type Build_Heads_Stored interface{}
-
-// Build_Heads_Stored_Invariants fixes reader-head representation.
-func Build_Heads_Stored_Invariants(value Build_Heads_Stored, _ aver.Namespace) {
-	_, valid := value.(Build_Heads)
-	aver.Always(valid == (value != nil), "Build heads have expected storage type.")
-}
-
-// Build_Places_Stored keeps one call from proving every name place.
-type Build_Places_Stored interface{}
-
-// Build_Places_Stored_Invariants fixes reader-place representation.
-func Build_Places_Stored_Invariants(value Build_Places_Stored, _ aver.Namespace) {
-	_, valid := value.(Build_Places)
-	aver.Always(valid == (value != nil), "Build places have expected storage type.")
-}
-
-// Build_Flags_Stored keeps one call from proving both mutable outcomes.
-type Build_Flags_Stored interface{}
-
-// Build_Flags_Stored_Invariants fixes reader-flag representation.
-func Build_Flags_Stored_Invariants(value Build_Flags_Stored, _ aver.Namespace) {
-	_, valid := value.(Build_Flags)
-	aver.Always(valid == (value != nil), "Build flags have expected storage type.")
-}
-
-// Build is the caller-owned state one read of a constraint runs through. The text and the target
-// stay with the caller, thus the state holds the place the read stands at and nothing else.
-type Build Build_Fields
 
 // Build_Invariants fixes reader representation without proving stale mutable values.
 func Build_Invariants(value Build, namespace aver.Namespace) {
-	Build_Counts_Stored_Invariants(Build_Counts_Stored(value.Counts), namespace)
-	Build_Sources_Stored_Invariants(Build_Sources_Stored(value.Sources), namespace)
-	Build_Symbols_Stored_Invariants(Build_Symbols_Stored(value.Symbols), namespace)
-	Build_Heads_Stored_Invariants(Build_Heads_Stored(value.Heads), namespace)
-	Build_Places_Stored_Invariants(Build_Places_Stored(value.Places), namespace)
-	Build_Flags_Stored_Invariants(Build_Flags_Stored(value.Flags), namespace)
+	Build_Counts_Invariants(value.Counts, namespace)
+	Build_Sources_Invariants(value.Sources, namespace)
 }
 
 // Read distinguishes accepted input from one reader refused.
@@ -595,145 +508,145 @@ func Holds_Constraint(
 	subject.Sources.Text = Constraint_Text(text)
 	subject.Counts.Place = COUNT_MINIMUM
 	subject.Counts.Depth = COUNT_MINIMUM
-	subject.Flags.Failed = false
-	result.Held = read_join(subject, one)
+	result = read_run(subject, one, OR_SIGN)
+	if !bool(result.OK) {
+		return Read_Result{Held: false, OK: false}
+	}
 	skip_spaces(subject)
 	if int(subject.Counts.Place) != len(text) {
 		return Read_Result{Held: false, OK: false}
 	}
-	if bool(subject.Flags.Failed) {
-		return Read_Result{Held: false, OK: false}
-	}
-	result.OK = true
 	return result
 }
 
-// Reads the tags one join of constraints holds, which is every tag either side of the two bars
-// holds.
-func read_join(subject Build_Handle, one Target_Handle) (held Boolean) {
-	defer func() { Boolean_Invariants(held, "read_join.held") }()
-	Build_Handle_Invariants(subject, "read_join.subject")
-	Target_Handle_Invariants(one, "read_join.one")
-	held = read_meet(subject, one)
+// Reads one run of sides the sign stated twice divides. A join holds where either side holds and
+// divides meetings; a meeting holds where both sides hold and divides terms. A side the reader
+// refused refuses the whole run, thus the read stops there.
+func read_run(subject Build_Handle, one Target_Handle, sign Sign) (result Read_Result) {
+	defer func() { Read_Result_Invariants(result, "read_run.result") }()
+	Build_Handle_Invariants(subject, "read_run.subject")
+	Target_Handle_Invariants(one, "read_run.one")
+	Sign_Invariants(sign, "read_run.sign")
+	result = read_side(subject, one, sign)
 	for range TEXT_SIZE_MAXIMUM {
-		subject.Symbols.Held = '|'
-		if !bool(states_sign(subject)) {
-			return held
+		if !bool(result.OK) {
+			return result
 		}
-		if bool(read_meet(subject, one)) {
-			held = true
+		skip_spaces(subject)
+		text := subject.Sources.Text
+		place := int(subject.Counts.Place)
+		// Every sign this constraint language states writes its byte twice.
+		if place+2 > len(text) {
+			return result
+		}
+		if text[place] != byte(sign) {
+			return result
+		}
+		if text[place+1] != byte(sign) {
+			return result
+		}
+		subject.Counts.Place = Text_Place(place + 2)
+		next := read_side(subject, one, sign)
+		result.OK = next.OK
+		if sign == OR_SIGN {
+			if bool(next.Held) {
+				result.Held = true
+			}
+			continue
+		}
+		if !bool(next.Held) {
+			result.Held = false
 		}
 	}
-	return held
+	return result
 }
 
-// Reads the tags one meeting of constraints holds, which is every tag both sides of the two signs
-// hold.
-func read_meet(subject Build_Handle, one Target_Handle) (held Boolean) {
-	defer func() { Boolean_Invariants(held, "read_meet.held") }()
-	Build_Handle_Invariants(subject, "read_meet.subject")
-	Target_Handle_Invariants(one, "read_meet.one")
-	held = read_term(subject, one)
-	for range TEXT_SIZE_MAXIMUM {
-		subject.Symbols.Held = '&'
-		if !bool(states_sign(subject)) {
-			return held
-		}
-		if !bool(read_term(subject, one)) {
-			held = false
-		}
+// Reads one side of a run: a meeting where the run is a join, and a term where it is a meeting.
+func read_side(subject Build_Handle, one Target_Handle, sign Sign) (result Read_Result) {
+	defer func() { Read_Result_Invariants(result, "read_side.result") }()
+	Build_Handle_Invariants(subject, "read_side.subject")
+	Target_Handle_Invariants(one, "read_side.one")
+	Sign_Invariants(sign, "read_side.sign")
+	if sign == OR_SIGN {
+		return read_run(subject, one, AND_SIGN)
 	}
-	return held
+	return read_term(subject, one)
 }
 
 // Reads one term of a constraint: a tag, a term the exclamation reverses, or a group of terms
 // between brackets.
-func read_term(subject Build_Handle, one Target_Handle) (held Boolean) {
-	defer func() { Boolean_Invariants(held, "read_term.held") }()
+func read_term(subject Build_Handle, one Target_Handle) (result Read_Result) {
+	defer func() { Read_Result_Invariants(result, "read_term.result") }()
 	Build_Handle_Invariants(subject, "read_term.subject")
 	Target_Handle_Invariants(one, "read_term.one")
 	skip_spaces(subject)
-	if bool(subject.Flags.Failed) {
-		return false
-	}
 	text := subject.Sources.Text
 	place := int(subject.Counts.Place)
 	if place == len(text) {
-		subject.Flags.Failed = true
-		return false
+		return Read_Result{Held: false, OK: false}
 	}
 	if text[place] == '!' {
 		subject.Counts.Place = Text_Place(place + 1)
-		return !read_term(subject, one)
+		result = read_term(subject, one)
+		// A term the reader refused states no truth to reverse.
+		if !bool(result.OK) {
+			return result
+		}
+		return Read_Result{Held: Boolean(!bool(result.Held)), OK: true}
 	}
 	if text[place] == '(' {
-		return read_group(subject, one)
+		depth := subject.Counts.Depth
+		if int(depth) >= DEPTH_MAXIMUM {
+			return Read_Result{Held: false, OK: false}
+		}
+		subject.Counts.Depth = depth + 1
+		subject.Counts.Place = Text_Place(place + 1)
+		result = read_run(subject, one, OR_SIGN)
+		if !bool(result.OK) {
+			return result
+		}
+		skip_spaces(subject)
+		bracket := int(subject.Counts.Place)
+		if bracket == len(text) {
+			return Read_Result{Held: false, OK: false}
+		}
+		if text[bracket] != ')' {
+			return Read_Result{Held: false, OK: false}
+		}
+		subject.Counts.Place = Text_Place(bracket + 1)
+		subject.Counts.Depth = depth
+		return result
 	}
-	take_tag(subject)
-	if bool(subject.Flags.Failed) {
-		return false
+	// A term opening at a byte no tag holds states no tag, thus the read refuses it before it
+	// takes one.
+	if !bool(names_tag(Held_Symbol(text[place]))) {
+		return Read_Result{Held: false, OK: false}
 	}
-	return holds_tag(subject, one)
+	tag := take_tag(Term_Text(text[place:]))
+	subject.Counts.Place = Text_Place(place + len(tag))
+	return Read_Result{Held: holds_tag(tag, one), OK: true}
 }
 
-// Reads one group of terms and the bracket that closes it.
-func read_group(subject Build_Handle, one Target_Handle) (held Boolean) {
-	defer func() { Boolean_Invariants(held, "read_group.held") }()
-	Build_Handle_Invariants(subject, "read_group.subject")
-	Target_Handle_Invariants(one, "read_group.one")
-	depth := subject.Counts.Depth
-	if int(depth) >= DEPTH_MAXIMUM {
-		subject.Flags.Failed = true
-		return false
-	}
-	subject.Counts.Depth = depth + 1
-	subject.Counts.Place = subject.Counts.Place + 1
-	held = read_join(subject, one)
-	skip_spaces(subject)
-	text := subject.Sources.Text
-	place := int(subject.Counts.Place)
-	if place == len(text) {
-		subject.Flags.Failed = true
-		return false
-	}
-	if text[place] != ')' {
-		subject.Flags.Failed = true
-		return false
-	}
-	subject.Counts.Place = Text_Place(place + 1)
-	subject.Counts.Depth = depth
-	return held
-}
-
-// Reads the tag the text stands on into the tag slot. A text that states no tag where one belongs
-// fails the read.
-func take_tag(subject Build_Handle) {
-	Build_Handle_Invariants(subject, "take_tag.subject")
-	text := subject.Sources.Text
-	opening := int(subject.Counts.Place)
-	place := opening
-	for place < len(text) {
-		subject.Symbols.Held = Held_Symbol(text[place])
-		if !bool(names_tag(subject)) {
+// Reads the tag one term opens with. The term opens at a byte a tag holds, thus the tag holds one
+// byte at least.
+func take_tag(term Term_Text) (tag Tag) {
+	defer func() { Tag_Invariants(tag, "take_tag.tag") }()
+	Term_Text_Invariants(term, "take_tag.term")
+	place := 0
+	for place < len(term) {
+		if !bool(names_tag(Held_Symbol(term[place]))) {
 			break
 		}
 		place = place + 1
 	}
-	if place == opening {
-		subject.Flags.Failed = true
-		subject.Sources.Tag = nil
-		return
-	}
-	subject.Sources.Tag = Tag(text[opening:place])
-	subject.Counts.Place = Text_Place(place)
+	return Tag(term[:place])
 }
 
-// Reports whether the byte the tag slot holds stands inside a tag, which is a letter, a digit, an
+// Reports whether one byte stands inside a tag, which is a letter, a digit, an
 // underscore, or a period.
-func names_tag(subject Build_Handle) (yes Boolean) {
+func names_tag(value Held_Symbol) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "names_tag.yes") }()
-	Build_Handle_Invariants(subject, "names_tag.subject")
-	value := subject.Symbols.Held
+	Held_Symbol_Invariants(value, "names_tag.value")
 	if value == '_' {
 		return true
 	}
@@ -756,28 +669,6 @@ func names_tag(subject Build_Handle) (yes Boolean) {
 	return false
 }
 
-// Reports whether the sign the read stands on is the one stated twice, and steps past it where it
-// stands. Every sign this constraint language states writes its byte twice.
-func states_sign(subject Build_Handle) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "states_sign.yes") }()
-	Build_Handle_Invariants(subject, "states_sign.subject")
-	skip_spaces(subject)
-	value := subject.Symbols.Held
-	text := subject.Sources.Text
-	place := int(subject.Counts.Place)
-	if place+2 > len(text) {
-		return false
-	}
-	if text[place] != byte(value) {
-		return false
-	}
-	if text[place+1] != byte(value) {
-		return false
-	}
-	subject.Counts.Place = Text_Place(place + 2)
-	return true
-}
-
 // Steps the read past the spaces and the tabs the author wrote between terms.
 func skip_spaces(subject Build_Handle) {
 	Build_Handle_Invariants(subject, "skip_spaces.subject")
@@ -798,24 +689,26 @@ func skip_spaces(subject Build_Handle) {
 
 // Reports whether the tag the read stands on holds in one target: the operating system it names,
 // the architecture it names, one of the tags it states, or the word every Unix system answers to.
-func holds_tag(subject Build_Handle, one Target_Handle) (yes Boolean) {
+func holds_tag(tag Tag, one Target_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_tag.yes") }()
-	Build_Handle_Invariants(subject, "holds_tag.subject")
+	Tag_Invariants(tag, "holds_tag.tag")
 	Target_Handle_Invariants(one, "holds_tag.one")
-	subject.Sources.Word = Word(one.Words.System)
-	if string(subject.Sources.Tag) == UNIX_WORD {
-		return names_unix(subject)
+	if string(tag) == UNIX_WORD {
+		// No system Go calls a Unix spells a word as wide as the widest constraint, thus a
+		// wider word names none of them.
+		if len(one.Words.System) > TEXT_SIZE_MAXIMUM {
+			return false
+		}
+		return names_unix(Word(one.Words.System))
 	}
-	if bool(same_word(subject)) {
+	if bool(same_word(tag, token.Source(one.Words.System))) {
 		return true
 	}
-	subject.Sources.Word = Word(one.Words.Architecture)
-	if bool(same_word(subject)) {
+	if bool(same_word(tag, token.Source(one.Words.Architecture))) {
 		return true
 	}
 	for slot := range int(one.Counts.Tag) {
-		subject.Sources.Word = Word(one.Tags.Values[slot])
-		if bool(same_word(subject)) {
+		if bool(same_word(tag, one.Tags.Values[slot])) {
 			return true
 		}
 	}
@@ -824,33 +717,32 @@ func holds_tag(subject Build_Handle, one Target_Handle) (yes Boolean) {
 
 // Reports whether the tag one read stands on states the word it compares against. A word of no
 // bytes names nothing, thus a target that names no system holds no tag at all.
-func same_word(subject Build_Handle) (yes Boolean) {
+func same_word(tag Tag, word token.Source) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "same_word.yes") }()
-	Build_Handle_Invariants(subject, "same_word.subject")
-	one := subject.Sources.Tag
-	if len(one) == 0 {
-		return false
-	}
-	return Boolean(string(one) == string(subject.Sources.Word))
+	Tag_Invariants(tag, "same_word.tag")
+	token.Source_Invariants(word, "same_word.word")
+	return Boolean(string(tag) == string(word))
 }
 
 // Names_System reports whether the name of one file states the build one target names. A name
 // closing at a known system, a known architecture, or both stands in that build alone, and every
 // other name stands in every build.
-func Names_System(subject Build_Handle, one Target_Handle, name token.Source) (held Boolean) {
+func Names_System(one Target_Handle, name token.Source) (held Boolean) {
 	defer func() { Boolean_Invariants(held, "names_system.held") }()
-	Build_Handle_Invariants(subject, "names_system.subject")
 	Target_Handle_Invariants(one, "names_system.one")
 	token.Source_Invariants(name, "names_system.name")
-	text := take_stem(name)
-	subject.Sources.Text = Constraint_Text(text)
-	take_opening(subject)
-	opening := int(subject.Places.Opening)
-	if opening == len(text) {
+	stem := take_stem(name)
+	// No system and no architecture spells a word as wide as the widest constraint, thus a
+	// stem that passes that width names neither and the read never holds it.
+	if len(stem) > TEXT_SIZE_MAXIMUM {
 		return true
 	}
-	take_field(subject)
-	tail := int(subject.Places.Field)
+	opening := int(take_opening(Constraint_Text(stem)))
+	if opening == len(stem) {
+		return true
+	}
+	text := Stem(stem)
+	tail := int(take_field(text))
 	// A name closing at the word of a test file answers for the name ahead of that word, thus
 	// the read cuts the word and the underscore that opened it.
 	if string(text[tail:]) == TEST_WORD {
@@ -858,43 +750,33 @@ func Names_System(subject Build_Handle, one Target_Handle, name token.Source) (h
 		if len(text) < opening+1 {
 			return true
 		}
-		subject.Sources.Text = Constraint_Text(text)
-		take_field(subject)
-		tail = int(subject.Places.Field)
+		tail = int(take_field(text))
 	}
 	// A name states a system and an architecture only where a second field stands behind the
 	// underscore that opened the run.
 	if tail-1 > opening {
-		subject.Sources.Text = Constraint_Text(text[:tail-1])
-		take_field(subject)
-		head := int(subject.Places.Field)
-		subject.Sources.Tag = Tag(text[head : tail-1])
-		if bool(known_system(subject)) {
-			subject.Sources.Tag = Tag(text[tail:])
-			if bool(known_architecture(subject)) {
-				subject.Sources.Word = Word(one.Words.Architecture)
-				if !bool(same_word(subject)) {
+		head := int(take_field(text[:tail-1]))
+		system := Name_Field(text[head : tail-1])
+		if bool(known_system(system)) {
+			machine := Name_Field(text[tail:])
+			if bool(known_architecture(machine)) {
+				architecture := token.Source(one.Words.Architecture)
+				if !bool(same_word(Tag(machine), architecture)) {
 					return false
 				}
-				subject.Sources.Tag = Tag(text[head : tail-1])
-				subject.Sources.Word = Word(one.Words.System)
-				return same_word(subject)
+				return same_word(Tag(system), token.Source(one.Words.System))
 			}
 		}
 	}
-	subject.Sources.Tag = Tag(text[tail:])
-	return holds_word(subject, one)
+	return holds_word(Name_Field(text[tail:]), one)
 }
 
 // Holds_Imports reports whether every import one file states names this module or the standard
 // library, and whether the reader read them. A path outside both names a third party, which
 // stands in no build this package answers for.
-func Holds_Imports(subject Build_Handle, text token.Source) (result Read_Result) {
+func Holds_Imports(text token.Source) (result Read_Result) {
 	defer func() { Read_Result_Invariants(result, "holds_imports.result") }()
-	Build_Handle_Invariants(subject, "holds_imports.subject")
 	token.Source_Invariants(text, "holds_imports.text")
-	subject.Sources.Text = Constraint_Text(text)
-	subject.Flags.Failed = false
 	place := 0
 	count := 0
 	opened := false
@@ -907,29 +789,29 @@ func Holds_Imports(subject Build_Handle, text token.Source) (result Read_Result)
 			}
 			end = end + 1
 		}
-		subject.Sources.Tag = Tag(text[place:end])
+		line := Line(text[place:end])
 		place = end + 1
 		if !stated {
-			subject.Heads.Value = PACKAGE_HEAD
-			stated = bool(opens_line(subject))
+			stated = bool(opens_line(PACKAGE_HEAD, line))
 			continue
 		}
-		if bool(states_no_import(subject)) {
+		if len(line) == 0 {
+			continue
+		}
+		if bool(states_no_import(Import_Line(line))) {
 			continue
 		}
 		if opened {
-			if string(subject.Sources.Tag) == IMPORT_TAIL {
+			if string(line) == IMPORT_TAIL {
 				opened = false
 				continue
 			}
 		} else {
-			subject.Heads.Value = IMPORT_OPENING
-			if bool(opens_line(subject)) {
+			if bool(opens_line(IMPORT_OPENING, line)) {
 				opened = true
 				continue
 			}
-			subject.Heads.Value = IMPORT_HEAD
-			if !bool(opens_line(subject)) {
+			if !bool(opens_line(IMPORT_HEAD, line)) {
 				// The imports of a file stand ahead of every other declaration,
 				// thus the first one that follows closes the run of them.
 				return Read_Result{Held: true, OK: true}
@@ -939,11 +821,11 @@ func Holds_Imports(subject Build_Handle, text token.Source) (result Read_Result)
 		if count > IMPORT_COUNT_MAXIMUM {
 			return Read_Result{Held: false, OK: false}
 		}
-		line := holds_import_line(subject)
-		if !bool(line.OK) {
+		read := holds_import_line(Import_Line(line))
+		if !bool(read.OK) {
 			return Read_Result{Held: false, OK: false}
 		}
-		if !bool(line.Held) {
+		if !bool(read.Held) {
 			return Read_Result{Held: false, OK: true}
 		}
 	}
@@ -957,24 +839,21 @@ func Holds_Imports(subject Build_Handle, text token.Source) (result Read_Result)
 
 // Reads the path one line states and reports whether it stands in the build, and whether the line
 // stated a path at all.
-func holds_import_line(subject Build_Handle) (result Read_Result) {
+func holds_import_line(line Import_Line) (result Read_Result) {
 	defer func() { Read_Result_Invariants(result, "holds_import_line.result") }()
-	Build_Handle_Invariants(subject, "holds_import_line.subject")
-	if !bool(take_import_path(subject)) {
+	Import_Line_Invariants(line, "holds_import_line.line")
+	path, found := take_import_path(line)
+	if !bool(found) {
 		return Read_Result{Held: false, OK: false}
 	}
-	return Read_Result{Held: Boolean(!bool(names_third_party(subject))), OK: true}
+	return Read_Result{Held: Boolean(!bool(names_third_party(path))), OK: true}
 }
 
-// Reports whether the line the tag slot holds states no import at all, which a blank line and a
-// comment both do. A block of imports holds either between the paths it states.
-func states_no_import(subject Build_Handle) (skipped Boolean) {
+// Reports whether one line states no import at all, which a comment does. A block of imports
+// holds one between the paths it states.
+func states_no_import(line Import_Line) (skipped Boolean) {
 	defer func() { Boolean_Invariants(skipped, "states_no_import.skipped") }()
-	Build_Handle_Invariants(subject, "states_no_import.subject")
-	line := subject.Sources.Tag
-	if len(line) == 0 {
-		return true
-	}
+	Import_Line_Invariants(line, "states_no_import.line")
 	if line[0] == '/' {
 		return true
 	}
@@ -987,12 +866,14 @@ func states_no_import(subject Build_Handle) (skipped Boolean) {
 	return Boolean(line[1] == '/')
 }
 
-// Reads the path the line the tag slot holds states into the word slot, and reports whether it
-// states one. A line whose quotes never close states no path the read can stand on.
-func take_import_path(subject Build_Handle) (found Boolean) {
-	defer func() { Boolean_Invariants(found, "take_import_path.found") }()
-	Build_Handle_Invariants(subject, "take_import_path.subject")
-	line := subject.Sources.Tag
+// Reads the path one line states, and reports whether it states one. A line whose quotes never
+// close states no path the read can stand on.
+func take_import_path(line Import_Line) (path Import_Path, found Boolean) {
+	defer func() {
+		Import_Path_Invariants(path, "take_import_path.path")
+		Boolean_Invariants(found, "take_import_path.found")
+	}()
+	Import_Line_Invariants(line, "take_import_path.line")
 	opening := 0
 	for opening < len(line) {
 		if line[opening] == '"' {
@@ -1001,7 +882,7 @@ func take_import_path(subject Build_Handle) (found Boolean) {
 		opening = opening + 1
 	}
 	if opening == len(line) {
-		return false
+		return Import_Path(""), false
 	}
 	tail := opening + 1
 	for tail < len(line) {
@@ -1011,19 +892,17 @@ func take_import_path(subject Build_Handle) (found Boolean) {
 		tail = tail + 1
 	}
 	if tail == len(line) {
-		return false
+		return Import_Path(""), false
 	}
-	subject.Sources.Word = Word(line[opening+1 : tail])
-	return true
+	return Import_Path(line[opening+1 : tail]), true
 }
 
 // Reports whether the path the word slot holds names a third party. The first element of a path
 // the standard library states holds no period, and neither does one this module states, thus a
 // period there names a host, which is how every module outside this one is named.
-func names_third_party(subject Build_Handle) (yes Boolean) {
+func names_third_party(path Import_Path) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "names_third_party.yes") }()
-	Build_Handle_Invariants(subject, "names_third_party.subject")
-	path := subject.Sources.Word
+	Import_Path_Invariants(path, "names_third_party.path")
 	place := 0
 	for place < len(path) {
 		if path[place] == '/' {
@@ -1052,55 +931,52 @@ func take_stem(name token.Source) (text token.Source) {
 
 // Names the byte the first underscore of one name stands at, or the byte past its end where it
 // holds none. Everything ahead of that underscore names no system.
-func take_opening(subject Build_Handle) {
-	Build_Handle_Invariants(subject, "take_opening.subject")
-	text := subject.Sources.Text
+func take_opening(text Constraint_Text) (opening Opening_Place) {
+	defer func() { Opening_Place_Invariants(opening, "take_opening.opening") }()
+	Constraint_Text_Invariants(text, "take_opening.text")
 	for index := range len(text) {
 		if text[index] == '_' {
-			subject.Places.Opening = Opening_Place(index)
-			return
+			return Opening_Place(index)
 		}
 	}
-	subject.Places.Opening = Opening_Place(len(text))
+	return Opening_Place(len(text))
 }
 
 // Names the byte the final field of one name opens at, which is the byte behind the last
-// underscore standing at or behind the opening one.
-func take_field(subject Build_Handle) {
-	Build_Handle_Invariants(subject, "take_field.subject")
-	text := subject.Sources.Text
-	opening := int(subject.Places.Opening)
-	held := opening + 1
-	for index := int(opening); index < len(text); index++ {
+// underscore the stem holds. The read cuts a stem only behind the underscore that opened it, thus
+// every stem it hands here holds one.
+func take_field(text Stem) (field Field_Place) {
+	defer func() { Field_Place_Invariants(field, "take_field.field") }()
+	Stem_Invariants(text, "take_field.text")
+	held := 0
+	for index := range len(text) {
 		if text[index] == '_' {
 			held = index + 1
 		}
 	}
-	subject.Places.Field = Field_Place(held)
+	return Field_Place(held)
 }
 
 // Reports whether one word of a name states the build the target names. A word that names neither
 // a system nor an architecture says nothing, thus the file stands in every build.
-func holds_word(subject Build_Handle, one Target_Handle) (yes Boolean) {
+func holds_word(field Name_Field, one Target_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "holds_word.yes") }()
-	Build_Handle_Invariants(subject, "holds_word.subject")
+	Name_Field_Invariants(field, "holds_word.field")
 	Target_Handle_Invariants(one, "holds_word.one")
-	if bool(known_system(subject)) {
-		subject.Sources.Word = Word(one.Words.System)
-		return same_word(subject)
+	if bool(known_system(field)) {
+		return same_word(Tag(field), token.Source(one.Words.System))
 	}
-	if bool(known_architecture(subject)) {
-		subject.Sources.Word = Word(one.Words.Architecture)
-		return same_word(subject)
+	if bool(known_architecture(field)) {
+		return same_word(Tag(field), token.Source(one.Words.Architecture))
 	}
 	return true
 }
 
-// Reports whether the tag one read stands on names an operating system the toolchain builds for.
-func known_system(subject Build_Handle) (yes Boolean) {
+// Reports whether one field of a name names an operating system the toolchain builds for.
+func known_system(field Name_Field) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "known_system.yes") }()
-	Build_Handle_Invariants(subject, "known_system.subject")
-	switch string(subject.Sources.Tag) {
+	Name_Field_Invariants(field, "known_system.field")
+	switch string(field) {
 	case "aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios", "js",
 		"linux", "nacl", "netbsd", "openbsd", "plan9", "solaris", "wasip1", "windows",
 		"zos":
@@ -1109,11 +985,11 @@ func known_system(subject Build_Handle) (yes Boolean) {
 	return false
 }
 
-// Reports whether the tag one read stands on names an architecture the toolchain builds for.
-func known_architecture(subject Build_Handle) (yes Boolean) {
+// Reports whether one field of a name names an architecture the toolchain builds for.
+func known_architecture(field Name_Field) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "known_architecture.yes") }()
-	Build_Handle_Invariants(subject, "known_architecture.subject")
-	switch string(subject.Sources.Tag) {
+	Name_Field_Invariants(field, "known_architecture.field")
+	switch string(field) {
 	case "386", "amd64", "amd64p32", "arm", "armbe", "arm64", "arm64be", "loong64", "mips",
 		"mipsle", "mips64", "mips64le", "mips64p32", "mips64p32le", "ppc", "ppc64",
 		"ppc64le", "riscv", "riscv64", "s390", "s390x", "sparc", "sparc64", "wasm":
@@ -1123,10 +999,10 @@ func known_architecture(subject Build_Handle) (yes Boolean) {
 }
 
 // Reports whether the word one read compares against names an operating system Go calls a Unix.
-func names_unix(subject Build_Handle) (yes Boolean) {
+func names_unix(word Word) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "names_unix.yes") }()
-	Build_Handle_Invariants(subject, "names_unix.subject")
-	switch string(subject.Sources.Word) {
+	Word_Invariants(word, "names_unix.word")
+	switch string(word) {
 	case "aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios",
 		"linux", "netbsd", "openbsd", "solaris":
 		return true
@@ -1204,33 +1080,6 @@ const IMPORT_COUNT_MAXIMUM = 256
 
 // SOURCE_TAIL is the text the name of one Go file closes with.
 const SOURCE_TAIL = ".go"
-
-// DIRECTORY_COUNT_NAME holds how many names one read kept.
-const DIRECTORY_COUNT_NAME = 0
-
-// DIRECTORY_COUNT_WRITTEN holds how many bytes of the storage those names view.
-const DIRECTORY_COUNT_WRITTEN = 1
-
-// DIRECTORY_COUNT_ENTRY holds the child of the pass the read stands on.
-const DIRECTORY_COUNT_ENTRY = 2
-
-// DIRECTORY_COUNT_ENTRY_TOTAL holds how many children the pass holds.
-const DIRECTORY_COUNT_ENTRY_TOTAL = 3
-
-// DIRECTORY_COUNT_PHASE holds the read the runner submitted.
-const DIRECTORY_COUNT_PHASE = 4
-
-// DIRECTORY_COUNT_SLOT_COUNT is the counter count one runner holds.
-const DIRECTORY_COUNT_SLOT_COUNT = 5
-
-// DIRECTORY_FLAG_QUEUED marks a runner whose callback stood one continuation.
-const DIRECTORY_FLAG_QUEUED = 0
-
-// DIRECTORY_FLAG_STOPPED marks a read that stopped.
-const DIRECTORY_FLAG_STOPPED = 1
-
-// DIRECTORY_FLAG_SLOT_COUNT is the flag count one runner holds.
-const DIRECTORY_FLAG_SLOT_COUNT = 2
 
 // Name_Count is how many source names one directory read retained.
 type Name_Count Count
@@ -1433,8 +1282,6 @@ type Directory_Memory struct {
 	Bytes Name_Bytes
 	// Header holds the bytes one file opens with.
 	Header Header_Storage
-	// Reader holds the state one read of a constraint runs through.
-	Reader Build_Handle
 }
 
 // Directory_Memory_Invariants states every run of storage one read writes into.
@@ -1444,19 +1291,15 @@ func Directory_Memory_Invariants(value Directory_Memory, namespace aver.Namespac
 	Name_Storage_Invariants(value.Names, namespace)
 	Name_Bytes_Invariants(value.Bytes, namespace)
 	Header_Storage_Invariants(value.Header, namespace)
-	Build_Handle_Invariants(value.Reader, namespace)
 }
 
-// Directory_Runner_Fields states the concrete runner layout independently of its validated view.
-type Directory_Runner_Fields struct {
+// Pass_Fields is the storage one pass over a directory holds. A step of a pass reads no
+// constraint and names no target, thus it takes this and owes those domains nothing.
+type Pass_Fields struct {
 	// Completion stands first so the static callback recovers the runner with no closure.
 	Completion nbio.Completion
 	// Loop submits the storage work the caller drives.
 	Loop Loop
-	// Target names the build the files stand in or stand outside of.
-	Target Target_Handle
-	// Reader holds the state one read of a constraint runs through, which the caller owns.
-	Reader Build_Handle
 	// Entries receives one pass over the children of the directory.
 	Entries Entry_Storage
 	// Records receives the records the backend writes for one pass.
@@ -1481,15 +1324,13 @@ type Directory_Runner_Fields struct {
 	Result error
 }
 
-// Directory_Runner_Fields_Invariants composes every invariant-bearing runner field once.
-func Directory_Runner_Fields_Invariants(value Directory_Runner_Fields, namespace aver.Namespace) {
+// Pass_Fields_Invariants composes every invariant-bearing field of one pass once.
+func Pass_Fields_Invariants(value Pass_Fields, namespace aver.Namespace) {
 	Entry_Storage_Invariants(value.Entries, namespace)
 	Record_Storage_Invariants(value.Records, namespace)
 	Name_Storage_Invariants(value.Names, namespace)
 	Name_Bytes_Invariants(value.Bytes, namespace)
 	Header_Storage_Invariants(value.Header, namespace)
-	Build_Handle_Invariants(value.Reader, namespace)
-	Target_Handle_Invariants(value.Target, namespace)
 	Directory_Counts_Invariants(value.Counts, namespace)
 	Directory_Flags_Invariants(value.Flags, namespace)
 	// The loop stands last because it states a backend: a runner the open has not reached
@@ -1497,40 +1338,29 @@ func Directory_Runner_Fields_Invariants(value Directory_Runner_Fields, namespace
 	Loop_Invariants(value.Loop, namespace)
 }
 
-// Directory_Runner_Fields_Stored keeps one poll from proving stale runner state.
-type Directory_Runner_Fields_Stored interface{}
+// Pass_Handle gives caller-owned pass storage one identity.
+type Pass_Handle *Pass_Fields
 
-// Directory_Runner_Fields_Stored_Invariants fixes runner representation.
-func Directory_Runner_Fields_Stored_Invariants(
-	value Directory_Runner_Fields_Stored, _ aver.Namespace,
-) {
-	_, valid := value.(Directory_Runner_Fields)
-	aver.Always(valid == (value != nil), "Directory runner has expected storage type.")
-}
-
-// Directory_Runner_Envelope keeps the callback-compatible layout behind one boundary.
-type Directory_Runner_Envelope struct {
-	// Directory_Runner_Fields stays embedded so callers retain concrete field access.
-	Directory_Runner_Fields
-}
-
-// Directory_Runner_Envelope_Invariants composes concrete runner storage.
-func Directory_Runner_Envelope_Invariants(
-	value Directory_Runner_Envelope, namespace aver.Namespace,
-) {
-	Directory_Runner_Fields_Invariants(value.Directory_Runner_Fields, namespace)
+// Pass_Handle_Invariants composes present pass storage.
+func Pass_Handle_Invariants(value Pass_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Pass_Fields_Invariants(*value, namespace)
 }
 
 // Directory_Runner reads one directory and keeps the Go files that stand in one build. It composes
 // the injected storage the caller drives, thus this package opens nothing of its own and the
 // composition root alone owns the loop.
-type Directory_Runner Directory_Runner_Envelope
+type Directory_Runner struct {
+	// Pass_Fields stands first so the static callback recovers the runner with no closure,
+	// and so a step that reads no constraint takes the pass alone.
+	Pass_Fields
+}
 
-// Directory_Runner_Invariants states the storage shape one directory read holds.
+// Directory_Runner_Invariants composes every invariant-bearing runner field once.
 func Directory_Runner_Invariants(value Directory_Runner, namespace aver.Namespace) {
-	Directory_Runner_Fields_Stored_Invariants(
-		Directory_Runner_Fields_Stored(value.Directory_Runner_Fields), namespace,
-	)
+	Pass_Fields_Invariants(value.Pass_Fields, namespace)
 }
 
 // Directory_Runner_Handle gives caller-owned directory state one identity.
@@ -1547,28 +1377,27 @@ func Directory_Runner_Handle_Invariants(
 }
 
 // Directory_Runner_Init opens one directory and states the read that follows. The caller owns the
-// loop, the target, and every buffer the read writes into, thus the runner allocates nothing.
+// loop and every buffer the read writes into, thus the runner allocates nothing.
 func Directory_Runner_Init(
 	runner Directory_Runner_Handle,
 	loop nbio.IO,
-	one Target_Handle,
 	path Path,
 	memory Directory_Memory,
 ) {
 	Directory_Runner_Handle_Invariants(runner, "directory_runner_init.runner")
 	nbio.IO_Invariants(loop, "directory_runner_init.loop")
 	Loop_Invariants(Loop(loop), "directory_runner_init.runner_loop")
-	Target_Handle_Invariants(one, "directory_runner_init.one")
 	Path_Invariants(path, "directory_runner_init.path")
 	Directory_Memory_Invariants(memory, "directory_runner_init.memory")
 	// The open states the whole runner ahead of the assertion that reads it, because a runner
 	// the caller has not opened yet holds no loop, and no loop states no backend.
 	counts, flags := runner.Counts, runner.Flags
-	*runner = Directory_Runner{Directory_Runner_Fields: Directory_Runner_Fields{
-		Loop: Loop(loop), Target: one, Reader: memory.Reader, Entries: memory.Entries,
-		Records: memory.Records, Names: memory.Names, Bytes: memory.Bytes,
-		Header: memory.Header, Counts: counts, Flags: flags,
-	},
+	*runner = Directory_Runner{
+		Pass_Fields: Pass_Fields{
+			Loop: Loop(loop), Entries: memory.Entries,
+			Records: memory.Records, Names: memory.Names, Bytes: memory.Bytes,
+			Header: memory.Header, Counts: counts, Flags: flags,
+		},
 	}
 	Directory_Runner_Handle_Invariants(runner, "directory_runner_init.opened")
 	runner.Counts.Phase = PHASE_OPEN_DIRECTORY
@@ -1587,9 +1416,10 @@ func directory_completion(completion nbio.Completion_Handle) {
 
 // Directory_Runner_Rearm runs the continuation the callback queued, or the step the runner owes of
 // its own. False means the caller drives the pending read, or the runner stopped.
-func Directory_Runner_Rearm(runner Directory_Runner_Handle) (rearm Boolean) {
+func Directory_Runner_Rearm(runner Directory_Runner_Handle, one Target_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "directory_runner_rearm.rearm") }()
 	Directory_Runner_Handle_Invariants(runner, "directory_runner_rearm.runner")
+	Target_Handle_Invariants(one, "directory_runner_rearm.one")
 	if bool(runner.Flags.Stopped) {
 		return false
 	}
@@ -1603,40 +1433,40 @@ func Directory_Runner_Rearm(runner Directory_Runner_Handle) (rearm Boolean) {
 	// than ask the backend for a pass it has nowhere to write.
 	if bool(runner.Flags.Queued) {
 		runner.Flags.Queued = false
-		return directory_completion_apply(runner)
+		return directory_completion_apply(runner, one)
 	}
 	if runner.Counts.Phase != PHASE_IDLE {
 		return false
 	}
-	open_next_file(runner)
+	open_next_file(runner, one)
 	return false
 }
 
 // Directory_Runner_Work_Queued reports the callback stored one continuation for the caller.
-func Directory_Runner_Work_Queued(runner Directory_Runner_Handle) (queued Boolean) {
+func Directory_Runner_Work_Queued(runner Pass_Handle) (queued Boolean) {
 	defer func() { Boolean_Invariants(queued, "directory_runner_work_queued.queued") }()
-	Directory_Runner_Handle_Invariants(runner, "directory_runner_work_queued.runner")
+	Pass_Handle_Invariants(runner, "directory_runner_work_queued.runner")
 	return Boolean(bool(runner.Flags.Queued))
 }
 
 // Directory_Runner_Stopped reports the terminal state.
-func Directory_Runner_Stopped(runner Directory_Runner_Handle) (stopped Boolean) {
+func Directory_Runner_Stopped(runner Pass_Handle) (stopped Boolean) {
 	defer func() { Boolean_Invariants(stopped, "directory_runner_stopped.stopped") }()
-	Directory_Runner_Handle_Invariants(runner, "directory_runner_stopped.runner")
+	Pass_Handle_Invariants(runner, "directory_runner_stopped.runner")
 	return Boolean(bool(runner.Flags.Stopped))
 }
 
 // Directory_Runner_Status reports the error that stopped the runner.
-func Directory_Runner_Status(runner Directory_Runner_Handle) (err error) {
-	Directory_Runner_Handle_Invariants(runner, "directory_runner_status.runner")
+func Directory_Runner_Status(runner Pass_Handle) (err error) {
+	Pass_Handle_Invariants(runner, "directory_runner_status.runner")
 	return runner.Result
 }
 
 // Directory_Runner_Names hands back the names of the files that stand in the build, which view the
 // storage the caller owns.
-func Directory_Runner_Names(runner Directory_Runner_Handle) (names Name_Storage) {
+func Directory_Runner_Names(runner Pass_Handle) (names Name_Storage) {
 	defer func() { Name_Storage_Invariants(names, "directory_runner_names.names") }()
-	Directory_Runner_Handle_Invariants(runner, "directory_runner_names.runner")
+	Pass_Handle_Invariants(runner, "directory_runner_names.runner")
 	aver.Always(
 		bool(runner.Flags.Stopped),
 		"A directory read is read after the runner stops.",
@@ -1645,19 +1475,22 @@ func Directory_Runner_Names(runner Directory_Runner_Handle) (names Name_Storage)
 }
 
 // Runs the continuation the read that completed states.
-func directory_completion_apply(runner Directory_Runner_Handle) (rearm Boolean) {
+func directory_completion_apply(
+	runner Directory_Runner_Handle, one Target_Handle,
+) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "directory_completion_apply.rearm") }()
 	Directory_Runner_Handle_Invariants(runner, "directory_completion_apply.runner")
+	Target_Handle_Invariants(one, "directory_completion_apply.one")
 	switch runner.Counts.Phase {
 	case PHASE_OPEN_DIRECTORY:
-		open_directory_apply(runner)
+		open_directory_apply(&runner.Pass_Fields)
 		return false
 	case PHASE_READ_ENTRIES:
-		return read_entries_apply(runner)
+		return read_entries_apply(&runner.Pass_Fields)
 	case PHASE_OPEN_FILE:
-		return open_file_apply(runner)
+		return open_file_apply(&runner.Pass_Fields)
 	case PHASE_READ_HEADER:
-		read_header_apply(runner)
+		read_header_apply(runner, one)
 		return false
 	case PHASE_CLOSE_FILE:
 		runner.Counts.Entry = runner.Counts.Entry + 1
@@ -1669,8 +1502,8 @@ func directory_completion_apply(runner Directory_Runner_Handle) (rearm Boolean) 
 }
 
 // Holds the descriptor the open of the directory answered with, and reads its first pass.
-func open_directory_apply(runner Directory_Runner_Handle) {
-	Directory_Runner_Handle_Invariants(runner, "open_directory_apply.runner")
+func open_directory_apply(runner Pass_Handle) {
+	Pass_Handle_Invariants(runner, "open_directory_apply.runner")
 	if runner.Completion.Error != nil {
 		runner.Result = runner.Completion.Error
 		runner.Flags.Stopped = true
@@ -1681,9 +1514,9 @@ func open_directory_apply(runner Directory_Runner_Handle) {
 }
 
 // Stands the read at the first child of one pass. A pass of no child closes the read.
-func read_entries_apply(runner Directory_Runner_Handle) (rearm Boolean) {
+func read_entries_apply(runner Pass_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "read_entries_apply.rearm") }()
-	Directory_Runner_Handle_Invariants(runner, "read_entries_apply.runner")
+	Pass_Handle_Invariants(runner, "read_entries_apply.runner")
 	held := Count(runner.Completion.Data)
 	if held > Count(len(runner.Entries)) {
 		held = Count(len(runner.Entries))
@@ -1709,9 +1542,9 @@ func read_entries_apply(runner Directory_Runner_Handle) (rearm Boolean) {
 
 // Holds the descriptor the open of one file answered with, and reads the bytes it opens with. A
 // file the open refused stands outside every build the runner answers for.
-func open_file_apply(runner Directory_Runner_Handle) (rearm Boolean) {
+func open_file_apply(runner Pass_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "open_file_apply.rearm") }()
-	Directory_Runner_Handle_Invariants(runner, "open_file_apply.runner")
+	Pass_Handle_Invariants(runner, "open_file_apply.runner")
 	if runner.Completion.Error != nil {
 		runner.Counts.Entry = runner.Counts.Entry + 1
 		runner.Counts.Phase = PHASE_IDLE
@@ -1727,8 +1560,9 @@ func open_file_apply(runner Directory_Runner_Handle) (rearm Boolean) {
 }
 
 // Reads the constraint the header states and keeps the name where it holds.
-func read_header_apply(runner Directory_Runner_Handle) {
+func read_header_apply(runner Directory_Runner_Handle, one Target_Handle) {
 	Directory_Runner_Handle_Invariants(runner, "read_header_apply.runner")
+	Target_Handle_Invariants(one, "read_header_apply.one")
 	count := 0
 	if runner.Completion.Error == nil {
 		count = int(runner.Completion.Data)
@@ -1736,14 +1570,15 @@ func read_header_apply(runner Directory_Runner_Handle) {
 	if count > len(runner.Header) {
 		count = len(runner.Header)
 	}
-	runner.Reader.Sources.Text = Constraint_Text(runner.Header[:count])
 	// A header that states no constraint states no bar to the build, and one that states a
 	// constraint the reader refused keeps the file out of every build.
 	held := Boolean(true)
-	if bool(take_build_line(runner.Reader)) {
-		result := Holds_Constraint(
-			runner.Reader, runner.Target, token.Source(runner.Reader.Sources.Tag),
-		)
+	stated, found := take_build_line(Scanned_Text(runner.Header[:count]))
+	if bool(found) {
+		// Every read of a constraint states its reader afresh, thus the reader is this
+		// read's own and stands on the stack rather than on storage the runner holds.
+		reader := Build{}
+		result := Holds_Constraint(&reader, one, token.Source(stated))
 		held = result.Held
 		if !bool(result.OK) {
 			held = false
@@ -1752,14 +1587,14 @@ func read_header_apply(runner Directory_Runner_Handle) {
 	// A file naming a third party stands in no build, thus the read drops it the same way it
 	// drops one whose constraint fails.
 	if bool(held) {
-		result := Holds_Imports(runner.Reader, token.Source(runner.Header[:count]))
+		result := Holds_Imports(token.Source(runner.Header[:count]))
 		held = result.Held
 		if !bool(result.OK) {
 			held = false
 		}
 	}
 	if bool(held) {
-		hold_name(runner)
+		hold_name(&runner.Pass_Fields)
 	}
 	runner.Counts.Phase = PHASE_CLOSE_FILE
 	nbio.IO_Close(nbio.IO(runner.Loop), &runner.Completion, runner.File, directory_completion)
@@ -1767,10 +1602,13 @@ func read_header_apply(runner Directory_Runner_Handle) {
 
 // Reads the constraint line one header states into the tag slot, and reports whether it states
 // one. That line stands ahead of the package clause, thus the read stops where the clause opens.
-func take_build_line(subject Build_Handle) (found Boolean) {
-	defer func() { Boolean_Invariants(found, "take_build_line.found") }()
-	Build_Handle_Invariants(subject, "take_build_line.subject")
-	text := subject.Sources.Text
+func take_build_line(scanned Scanned_Text) (stated Build_Line, found Boolean) {
+	defer func() {
+		Build_Line_Invariants(stated, "take_build_line.stated")
+		Boolean_Invariants(found, "take_build_line.found")
+	}()
+	Scanned_Text_Invariants(scanned, "take_build_line.scanned")
+	text := scanned
 	place := 0
 	for place < len(text) {
 		end := place
@@ -1780,27 +1618,23 @@ func take_build_line(subject Build_Handle) (found Boolean) {
 			}
 			end = end + 1
 		}
-		subject.Sources.Tag = Tag(text[place:end])
-		subject.Heads.Value = PACKAGE_HEAD
-		if bool(opens_line(subject)) {
-			return false
+		line := Line(text[place:end])
+		if bool(opens_line(PACKAGE_HEAD, line)) {
+			return Build_Line(""), false
 		}
-		subject.Heads.Value = BUILD_HEAD
-		if bool(opens_line(subject)) {
-			subject.Sources.Tag = Tag(text[place+len(BUILD_HEAD) : end])
-			return true
+		if bool(opens_line(BUILD_HEAD, line)) {
+			return Build_Line(text[place+len(BUILD_HEAD) : end]), true
 		}
 		place = end + 1
 	}
-	return false
+	return Build_Line(""), false
 }
 
 // Reports whether the line the tag slot holds opens with the text stated.
-func opens_line(subject Build_Handle) (yes Boolean) {
+func opens_line(head Head, line Line) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "opens_line.yes") }()
-	Build_Handle_Invariants(subject, "opens_line.subject")
-	line := subject.Sources.Tag
-	head := subject.Heads.Value
+	Head_Invariants(head, "opens_line.head")
+	Line_Invariants(line, "opens_line.line")
 	if len(line) < len(head) {
 		return false
 	}
@@ -1810,8 +1644,8 @@ func opens_line(subject Build_Handle) (yes Boolean) {
 // Writes the name of the file the read stands on into the storage the caller owns, because the
 // pass behind this one overwrites the entries it stands in. A name the storage cannot hold stops
 // no read: the file stands unread rather than read wrongly.
-func hold_name(runner Directory_Runner_Handle) {
-	Directory_Runner_Handle_Invariants(runner, "hold_name.runner")
+func hold_name(runner Pass_Handle) {
+	Pass_Handle_Invariants(runner, "hold_name.runner")
 	name := runner.Entries[runner.Counts.Entry].Name
 	if int(runner.Counts.Name) >= len(runner.Names) {
 		return
@@ -1828,8 +1662,8 @@ func hold_name(runner Directory_Runner_Handle) {
 }
 
 // Reads one pass over the children of the directory.
-func read_entries(runner Directory_Runner_Handle) {
-	Directory_Runner_Handle_Invariants(runner, "read_entries.runner")
+func read_entries(runner Pass_Handle) {
+	Pass_Handle_Invariants(runner, "read_entries.runner")
 	runner.Counts.Phase = PHASE_READ_ENTRIES
 	nbio.Storage_Get_Directory_Entries(
 		runner.Loop.Storage, &runner.Completion, runner.Directory,
@@ -1839,16 +1673,17 @@ func read_entries(runner Directory_Runner_Handle) {
 
 // Opens the file the read stands on, over every child that names no Go file of this build. A pass
 // the read stands at the end of opens the pass behind it.
-func open_next_file(runner Directory_Runner_Handle) {
+func open_next_file(runner Directory_Runner_Handle, one Target_Handle) {
 	Directory_Runner_Handle_Invariants(runner, "open_next_file.runner")
+	Target_Handle_Invariants(one, "open_next_file.one")
 	for int(runner.Counts.Entry) < int(runner.Counts.Entry_Total) {
-		if bool(names_source(runner)) {
+		if bool(names_source(runner, one)) {
 			break
 		}
 		runner.Counts.Entry = runner.Counts.Entry + 1
 	}
 	if int(runner.Counts.Entry) >= int(runner.Counts.Entry_Total) {
-		read_entries(runner)
+		read_entries(&runner.Pass_Fields)
 		return
 	}
 	runner.Counts.Phase = PHASE_OPEN_FILE
@@ -1861,9 +1696,10 @@ func open_next_file(runner Directory_Runner_Handle) {
 
 // Reports whether the child the read stands on names a Go file standing in the build the target
 // names.
-func names_source(runner Directory_Runner_Handle) (yes Boolean) {
+func names_source(runner Directory_Runner_Handle, one Target_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "names_source.yes") }()
 	Directory_Runner_Handle_Invariants(runner, "names_source.runner")
+	Target_Handle_Invariants(one, "names_source.one")
 	entry := runner.Entries[runner.Counts.Entry]
 	if entry.Is_Directory {
 		return false
@@ -1883,5 +1719,5 @@ func names_source(runner Directory_Runner_Handle) (yes Boolean) {
 	}
 	copy(runner.Bytes[written:], name)
 	held := token.Source(runner.Bytes[written : written+len(name)])
-	return Names_System(runner.Reader, runner.Target, held)
+	return Names_System(one, held)
 }

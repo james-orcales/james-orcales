@@ -45,6 +45,12 @@ A short declaration, a declaration statement, a range clause, and a type switch 
 and a block scope holds them until it ends. A name a block binds stands ahead of the package name
 it shadows.
 
+# Hidden Names
+
+A name one block binds that a block around it already binds fails with FAILURE_SHADOWED_NAME. Two
+names of one spelling read as one name, thus a reader of the inner block reads the wrong binding.
+A second binding in the one block states an assignment and hides nothing.
+
 # Expressions
 
 An identifier, a literal, a unary or binary operation, a call, a conversion, an index, a slice, a
@@ -56,6 +62,12 @@ type Go states for them.
 One reader answers for each part a symbol, a type, and a member hold, and Lookup names one package
 member. Underlying_Of walks a named type down to the type its declaration states, and Type_At
 reads the type one tree slot folded to.
+
+# Invariants
+
+A function that states the invariants of a type stands directly below that type, thus the name it
+opens with names a type its package declares. Unpaired names the first function of one package
+that names no such type, which a caller reads as the flag it reports.
 
 # Refusals
 

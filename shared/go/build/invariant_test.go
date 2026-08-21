@@ -42,17 +42,31 @@ func Test_Storage_Widths(t *testing.T) {
 	phases := []Phase{
 		PHASE_IDLE, PHASE_OPEN_DIRECTORY, PHASE_READ_ENTRIES, PHASE_CLOSE_DIRECTORY,
 	}
+	tags := []int{0, 1, 2, TAG_COUNT_MAXIMUM}
 	for index := range slots {
 		memory := storage_widths(slots[index], records[index], bytes[index])
 		one := target_state()
-		runner := Directory_Runner{Directory_Runner_Fields: Directory_Runner_Fields{
-			Loop:   Loop(storage_loop(unsafe.Pointer(&one))),
-			Target: &one, Reader: memory.Reader, Entries: memory.Entries,
-			Records: memory.Records, Names: memory.Names, Bytes: memory.Bytes,
-			Header: memory.Header,
-		}}
+		one.Counts.Tag = Tag_Count(tags[index])
+		runner := Directory_Runner{
+			Pass_Fields: Pass_Fields{
+				Loop:    Loop(storage_loop(unsafe.Pointer(&one))),
+				Entries: memory.Entries,
+				Records: memory.Records, Names: memory.Names,
+				Bytes: memory.Bytes, Header: memory.Header,
+			},
+		}
 		runner.Counts.Phase = phases[index]
-		storage_step_widths(runner)
+		runner.Counts.Name = Name_Count(slots[index])
+		runner.Counts.Entry = Entry_Index(slots[index])
+		runner.Counts.Entry_Total = Entry_Total(slots[index])
+		runner.Counts.Written = Written_Count(bytes[index])
+		storage_step_widths(runner, &one)
+		storage_init_widths(runner, memory)
+		// Every step reads the flags the callback and the stop wrote, thus each step stands
+		// on a runner that holds both as well as on one that holds neither.
+		runner.Flags.Stopped = true
+		runner.Flags.Queued = true
+		storage_step_widths(runner, &one)
 		storage_init_widths(runner, memory)
 	}
 	// An open meets the storage it writes into, thus one standing nowhere at all stands read
@@ -60,21 +74,22 @@ func Test_Storage_Widths(t *testing.T) {
 	none := target_state()
 	storage_boundary(func() {
 		Directory_Runner_Init(
-			nil, storage_loop(unsafe.Pointer(&none)), &none, "",
+			nil, storage_loop(unsafe.Pointer(&none)), "",
 			storage_widths(0, 0, 0),
 		)
 	})
 	// A read hands its names back after it stops, thus the widest run of names stands on a
 	// runner that stopped and never on one mid-read.
 	one := target_state()
-	filled := Directory_Runner{Directory_Runner_Fields: Directory_Runner_Fields{
-		Loop:   Loop(storage_loop(unsafe.Pointer(&one))),
-		Target: &one, Reader: new(Build),
-		Names: make(Name_Storage, ENTRY_COUNT_MAXIMUM),
-	}}
+	filled := Directory_Runner{
+		Pass_Fields: Pass_Fields{
+			Loop:  Loop(storage_loop(unsafe.Pointer(&one))),
+			Names: make(Name_Storage, ENTRY_COUNT_MAXIMUM),
+		},
+	}
 	filled.Counts.Name = ENTRY_COUNT_MAXIMUM
 	filled.Flags.Stopped = true
-	storage_boundary(func() { Directory_Runner_Names(&filled) })
+	storage_boundary(func() { Directory_Runner_Names(&filled.Pass_Fields) })
 	testify.True(t, true, "every step of a read stands on every width")
 }
 
@@ -86,27 +101,35 @@ func storage_widths(slots int, records int, bytes int) (memory Directory_Memory)
 		Names:   make(Name_Storage, slots),
 		Bytes:   make(Name_Bytes, bytes),
 		Header:  make(Header_Storage, bytes),
-		Reader:  new(Build),
 	}
 }
 
 // Runs every step of a read on one runner. Each step reads a copy, because a step the width of the
 // storage stops states nothing the step beside it stands on.
-func storage_step_widths(runner Directory_Runner) {
-	storage_boundary(func() { value := runner; Directory_Runner_Rearm(&value) })
-	storage_boundary(func() { value := runner; Directory_Runner_Work_Queued(&value) })
-	storage_boundary(func() { value := runner; Directory_Runner_Stopped(&value) })
-	storage_boundary(func() { value := runner; Directory_Runner_Status(&value) })
-	storage_boundary(func() { value := runner; Directory_Runner_Names(&value) })
-	storage_boundary(func() { value := runner; directory_completion_apply(&value) })
-	storage_boundary(func() { value := runner; open_directory_apply(&value) })
-	storage_boundary(func() { value := runner; read_entries_apply(&value) })
-	storage_boundary(func() { value := runner; open_file_apply(&value) })
-	storage_boundary(func() { value := runner; read_header_apply(&value) })
-	storage_boundary(func() { value := runner; hold_name(&value) })
-	storage_boundary(func() { value := runner; read_entries(&value) })
-	storage_boundary(func() { value := runner; open_next_file(&value) })
-	storage_boundary(func() { value := runner; names_source(&value) })
+func storage_step_widths(runner Directory_Runner, one Target_Handle) {
+	storage_boundary(func() {
+		value := runner
+		Directory_Runner_Rearm(&value, one)
+	})
+	storage_boundary(func() {
+		value := runner
+		Directory_Runner_Work_Queued(&value.Pass_Fields)
+	})
+	storage_boundary(func() { value := runner; Directory_Runner_Stopped(&value.Pass_Fields) })
+	storage_boundary(func() { value := runner; Directory_Runner_Status(&value.Pass_Fields) })
+	storage_boundary(func() { value := runner; Directory_Runner_Names(&value.Pass_Fields) })
+	storage_boundary(func() {
+		value := runner
+		directory_completion_apply(&value, one)
+	})
+	storage_boundary(func() { value := runner; open_directory_apply(&value.Pass_Fields) })
+	storage_boundary(func() { value := runner; read_entries_apply(&value.Pass_Fields) })
+	storage_boundary(func() { value := runner; open_file_apply(&value.Pass_Fields) })
+	storage_boundary(func() { value := runner; read_header_apply(&value, one) })
+	storage_boundary(func() { value := runner; hold_name(&value.Pass_Fields) })
+	storage_boundary(func() { value := runner; read_entries(&value.Pass_Fields) })
+	storage_boundary(func() { value := runner; open_next_file(&value, one) })
+	storage_boundary(func() { value := runner; names_source(&value, one) })
 }
 
 // Opens one read on the widths named, which is the width the caller states rather than the width
@@ -116,7 +139,7 @@ func storage_init_widths(runner Directory_Runner, memory Directory_Memory) {
 	storage_boundary(func() {
 		value := runner
 		Directory_Runner_Init(
-			&value, storage_loop(unsafe.Pointer(&one)), &one, "", memory,
+			&value, storage_loop(unsafe.Pointer(&one)), "", memory,
 		)
 	})
 }
@@ -126,4 +149,25 @@ func storage_init_widths(runner Directory_Runner, memory Directory_Memory) {
 func storage_boundary(step func()) {
 	defer func() { recover() }()
 	step()
+}
+
+// States each place a name scan names, from the first byte to the last the constraint text
+// admits. The two places stand inside that one scan, thus the scan alone can state them.
+func Test_Name_Place_Answers(t *testing.T) {
+	text := ""
+	for range TEXT_SIZE_MAXIMUM {
+		text = text + "x"
+	}
+	wide := Constraint_Text(text)
+	testify.Equal(t, Opening_Place(TEXT_SIZE_MAXIMUM), take_opening(wide),
+		"a text holding no underscore opens at its end")
+	divider := text[:TEXT_SIZE_MAXIMUM-1] + "_"
+	testify.Equal(t, Field_Place(TEXT_SIZE_MAXIMUM), take_field(Stem(divider)),
+		"a stem closing at an underscore opens its field at its end")
+	testify.Equal(t, Opening_Place(1), take_opening(Constraint_Text("a_")),
+		"a text of one letter opens at its second byte")
+	testify.Equal(t, Field_Place(2), take_field(Stem("a_")),
+		"a stem of one letter opens its field at its third byte")
+	testify.Equal(t, Field_Place(1), take_field(Stem("_")),
+		"a stem of one underscore opens its field behind it")
 }

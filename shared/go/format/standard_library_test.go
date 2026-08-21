@@ -120,25 +120,25 @@ const COUNT = 0xFF
 var table [4]int
 
 type Pair struct {
-	Left  int
-	Right string
+  Left  int
+  Right string
 }
 
 func Fold(pair Pair) (sum int) {
-	sum = pair.Left*2 + 3
-	if sum > 0 {
-		sum++
-	}
-	for step := range 4 {
-		sum = sum + step
-	}
-	switch sum {
-	case 1:
-		sum = 2
-	default:
-		sum = 1e6
-	}
-	return sum
+  sum = pair.Left*2 + 3
+  if sum > 0 {
+    sum++
+  }
+  for step := range 4 {
+    sum = sum + step
+  }
+  switch sum {
+  case 1:
+    sum = 2
+  default:
+    sum = 1e6
+  }
+  return sum
 }
 `
 
@@ -149,24 +149,24 @@ import "errors"
 
 // Report states one report.
 func Report(values []int) (held bool, err error) {
-	held = len(values) > 0
-	if !held {
-		err = errors.New("empty")
-		return held, err
-	}
-	total := values[0] + values[len(values)-1]
-	slice := values[1:]
-	_ = slice
-	numbers := []int{0o765, 0o17, 0b1010, 1_000}
-	_ = numbers
-	pairs := map[string]int{
-		"one": 1,
-		"two": 2,
-	}
-	_ = pairs
-	go Report(values)
-	defer func() { held = false }()
-	return total > 0, err
+  held = len(values) > 0
+  if !held {
+    err = errors.New("empty")
+    return held, err
+  }
+  total := values[0] + values[len(values)-1]
+  slice := values[1:]
+  _ = slice
+  numbers := []int{0o765, 0o17, 0b1010, 1_000}
+  _ = numbers
+  pairs := map[string]int{
+    "one": 1,
+    "two": 2,
+  }
+  _ = pairs
+  go Report(values)
+  defer func() { held = false }()
+  return total > 0, err
 }
 `
 
@@ -174,7 +174,7 @@ func Report(values []int) (held bool, err error) {
 const STANDARD_WIDE_FORM = `package three
 
 type Reader interface {
-	~int | string
+  ~int | string
 }
 
 type Handler func(one int, two string) (held bool)
@@ -184,26 +184,26 @@ var sender chan<- int
 var receiver <-chan int
 
 func Wait(values ...int) (sum int) {
-	select {
-	case value := <-receiver:
-		sum = value
-	case sender <- sum:
-		sum = 0
-	}
+  select {
+  case value := <-receiver:
+    sum = value
+  case sender <- sum:
+    sum = 0
+  }
 Loop:
-	for range 4 {
-		for range 2 {
-			break Loop
-		}
-	}
-	switch held := any(sum); held.(type) {
-	case int:
-		sum = 1
-	}
-	sum = sum & ^1
-	sum = sum + +1
-	sum = sum / 2
-	return sum
+  for range 4 {
+    for range 2 {
+      break Loop
+    }
+  }
+  switch held := any(sum); held.(type) {
+  case int:
+    sum = 1
+  }
+  sum = sum & ^1
+  sum = sum + +1
+  sum = sum / 2
+  return sum
 }
 `
 

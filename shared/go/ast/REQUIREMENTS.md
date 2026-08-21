@@ -1,8 +1,9 @@
 
 # Parse
 
-Parse scans a source into the token run, then descends it into the node arena. The caller owns
-one Parse_State and the package holds no storage of its own, thus a parse allocates nothing.
+Parse scans a source into the token run, runs the grammar program over it into the node arena,
+and returns a Parse_Result naming the root, both extents, and why it stopped. The caller owns
+every store and the package holds none of its own, thus a parse allocates nothing.
 
 # Nodes
 
@@ -11,9 +12,14 @@ no node, thus zero names an absent child and a walk needs no separate empty test
 
 # Token Run
 
-Parse_State_Token_Run borrows the exact token prefix one parse wrote. It contains at least the end
-token and at most 131,072 tokens. Caller owns the Parse_State and the borrowed run allocates
-nothing.
+Parse_State_Token_Run borrows the exact token prefix the parse its Parse_Result names wrote. It
+contains at least the end token and at most 131,072 tokens. Caller owns the Parse_State and the
+borrowed run allocates nothing.
+
+# Parsed Cursors
+
+A parse writes the end token and the absent slot whatever it reads, thus the Parse_Result counts
+one token and one slot at least.
 
 # Package Clause
 
@@ -22,13 +28,14 @@ A file opens with the package keyword and one identifier.
 # Imports
 
 An import declaration carries one path literal and an optional name. The name is a node of its
-own, thus a caller tells the name an import binds from the path it binds it to.
+own, thus a caller tells the name an import binds from the path it binds it to. A parenthesized
+group states one import for each path it holds.
 
 # Constants And Variables
 
-A const or var declaration carries one or more names, an optional type, and an optional
-value. A constant name is a node of its own, because it answers to a case rule a variable name
-does not.
+A const or var declaration carries one or more names, an optional type, and an optional value. A
+constant name is a node of its own, because it answers to a case rule a variable name does not. A
+parenthesized group states one declaration for each name it holds.
 
 # Types
 
@@ -49,7 +56,8 @@ union of terms, or an approximation term under the tilde.
 # Statements
 
 Every Go statement form parses: block, declaration, assignment, increment, send, return, if, for,
-range, switch, type switch, select, go, defer, break, continue, goto, fallthrough, and label.
+range, switch, type switch, select, go, defer, break, continue, goto, and label. A fallthrough
+parses and then fails, thus the caller reads the rule it broke.
 
 # Expressions
 
@@ -89,11 +97,6 @@ Valid Go this grammar drops must fail, and must fail with the code named below. 
 therefore never reads a dropped form as a bare syntax error. A form the linter merely rejects is
 not dropped: it parses, so the linter can judge the tree and name the rule itself.
 
-### Declaration Groups
-
-A parenthesized const, var, type, or import group fails with FAILURE_DECLARATION_GROUP. One
-declaration stands for each name, which is what a reader greps for.
-
 ### Interface Methods
 
 An interface holding a method fails with FAILURE_INTERFACE_METHOD, whether it stands as a
@@ -109,12 +112,6 @@ literal still carry any byte.
 
 The iota identifier fails with FAILURE_IOTA wherever it stands, because it ties a constant value
 to the order its declaration happens to sit in.
-
-### Private Fields
-
-A struct field name that opens with a lowercase letter fails with FAILURE_PRIVATE_FIELD, and an
-embedded type names the field it embeds. A field name is a node of its own, thus a caller tells
-it from the type behind it.
 
 ### Refused Signs
 
@@ -174,7 +171,13 @@ A source spending more nodes than the arena holds fails with FAILURE_NODE_COUNT.
 
 ### Nesting Depth
 
-A source nesting deeper than the parent stack holds fails with FAILURE_NESTING_DEPTH.
+A source nesting deeper than the parent stack holds fails with FAILURE_NESTING_DEPTH, and so does
+a run of groupings deeper than the grammar program may call itself.
+
+### Fallthrough
+
+A case that runs on into the case behind it fails with FAILURE_FALLTHROUGH. A case closes where
+its statements close, thus a reader of one case reads the whole of what it runs.
 
 ### Broken Syntax
 
@@ -187,8 +190,9 @@ How a caller reads a refusal back.
 
 ### Codes
 
-Failure reads FAILURE_NONE after a clean parse and the code of the refused form otherwise. Each
-code is distinct, thus a caller switches on it rather than on a message.
+The Failure a Parse_Result carries reads FAILURE_NONE after a clean parse and the code of the
+refused form otherwise. Each code is distinct, thus a caller switches on it rather than on a
+message.
 
 ### Messages
 
@@ -197,8 +201,9 @@ sentence is a compile-time constant, thus naming a failure allocates nothing.
 
 ### Position
 
-Failure_Token names the run position of the token the parse stopped at, and it stays inside the
-run the scan wrote, thus reading it back through Token_At is always safe.
+The Failure_Token a Parse_Result carries names the run position of the token the parse stopped
+at, and it stays inside the run the scan wrote, thus reading it back through Token_At is always
+safe.
 
 ### Tree
 
@@ -233,9 +238,14 @@ where Go reports it unterminated.
 
 # Bounds
 
-A parse holds at most 131,072 tokens and 131,064 nodes. One Parse_State descriptor spans 152
+A parse holds at most 131,072 tokens and 131,064 nodes. One Parse_State descriptor spans 128
 bytes. Caller supplies exact token and node stores plus three stacks of 256 indexes. Empty line
 count rides in a byte token already padded out, thus file spacing costs a parse nothing.
+
+# Tail
+
+A parse empties every token and every slot past what it wrote, thus a wider parse before it leaves
+nothing behind, and a read past the tree fails rather than reading a stale node.
 
 # Allocation
 

@@ -13,15 +13,15 @@ form as well reads the storage it handed over.
 
 # Imports
 
-The imports of one run stand in the order of the paths they name, and the note above an import
-travels with it. An empty line and a declaration of any other kind each close a run, thus the
-groups the author wrote stand where the author put them.
+The imports of one file stand in three runs parted by one empty line: the standard library, then
+this module, then every other one. Each run stands in the order of the paths it names, the note
+above an import travels with it, and an empty line between two imports states nothing.
 
 # Names
 
-A declared name takes the case the linter asks: SCREAMING_SNAKE_CASE for a constant, else Ada_Case
-or snake_case by its first letter. Each identifier that spells it takes the new spelling too. A
-name that opens with no letter, or TestMain, stands as written.
+A declared name takes the case the linter asks: SCREAMING_SNAKE_CASE for a constant, Ada_Case for
+a struct field, else Ada_Case or snake_case by its first letter. Each identifier that spells it
+takes the new spelling too, the clause that names the package aside.
 
 # Declarations
 

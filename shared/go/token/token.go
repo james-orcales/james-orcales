@@ -43,12 +43,6 @@ const COLUMN_MINIMUM = 1
 // COLUMN_MAXIMUM is the column one byte past the widest line a source holds.
 const COLUMN_MAXIMUM = SOURCE_SIZE_MAXIMUM + 1
 
-// LINE_SLOT holds how many lines the index read.
-const LINE_SLOT = 0
-
-// LINE_SLOT_COUNT is the counter count one index holds.
-const LINE_SLOT_COUNT = 1
-
 // OFFSET_MINIMUM is the first byte of a source.
 const OFFSET_MINIMUM = 0
 
@@ -80,14 +74,12 @@ const BLANK_COUNT_MINIMUM = 0
 // and the count rides in a byte the token already pads out.
 const BLANK_COUNT_MAXIMUM = 255
 
-// EXPONENT_TEXT_SIZE is the one byte an exponent letter spans.
-const EXPONENT_TEXT_SIZE = 1
+// EXPONENT_LETTER_MINIMUM is smallest byte numeric text can carry. A number scan takes a digit, a
+// period, an underscore, and a letter of either case, thus the period is the smallest of them.
+const EXPONENT_LETTER_MINIMUM = '.'
 
-// EXPONENT_LETTER_MINIMUM is smallest byte malformed numeric text can carry.
-const EXPONENT_LETTER_MINIMUM = 0
-
-// EXPONENT_LETTER_MAXIMUM is largest byte malformed numeric text can carry.
-const EXPONENT_LETTER_MAXIMUM = 255
+// EXPONENT_LETTER_MAXIMUM is largest byte numeric text can carry, the final lowercase letter.
+const EXPONENT_LETTER_MAXIMUM = 'z'
 
 // OPERATOR_SIZE_ONE is the byte count of a one-byte operator such as the plus sign.
 const OPERATOR_SIZE_ONE = 1
@@ -625,24 +617,15 @@ func Exponent_Letter_Invariants(value Exponent_Letter, namespace aver.Namespace)
 		Ensure()
 }
 
-// Exponent_Letter_Storage keeps lookbehind payload opaque until sign classification.
-type Exponent_Letter_Storage interface{}
-
-// Exponent_Letter_Storage_Invariants fixes one-byte lookbehind representation.
-func Exponent_Letter_Storage_Invariants(value Exponent_Letter_Storage, _ aver.Namespace) {
-	_, valid := value.(Exponent_Letter)
-	aver.Always(valid == (value != nil), "Exponent lookbehind has expected byte type.")
-}
-
 // Exponent_Text leaves no indexed collection around its sole exponent letter.
 type Exponent_Text struct {
 	// Letter stands alone because exponent lookbehind always reads exactly one byte.
-	Letter Exponent_Letter_Storage
+	Letter Exponent_Letter
 }
 
 // Exponent_Text_Invariants states that a sign is judged against one byte alone.
 func Exponent_Text_Invariants(value Exponent_Text, namespace aver.Namespace) {
-	Exponent_Letter_Storage_Invariants(value.Letter, namespace)
+	Exponent_Letter_Invariants(value.Letter, namespace)
 }
 
 // Token_Text is the exact byte run of one token that source bytes spell.
@@ -1260,9 +1243,7 @@ func after_exponent(text Exponent_Text, hexadecimal Boolean) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "after_exponent.yes") }()
 	Exponent_Text_Invariants(text, "after_exponent.text")
 	Boolean_Invariants(hexadecimal, "after_exponent.hexadecimal")
-	letter, valid := text.Letter.(Exponent_Letter)
-	aver.Always(valid, "Exponent classification receives one lookbehind byte.")
-	switch letter {
+	switch text.Letter {
 	case 'e', 'E':
 		return !hexadecimal
 	case 'p', 'P':

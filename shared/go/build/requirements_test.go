@@ -86,9 +86,8 @@ func target(system string, architecture string, tags []string) (held build.Targe
 
 // Reports whether one file name stands in the target a case names.
 func named(name string, system string, architecture string) (held build.Boolean) {
-	subject := new(build.Build)
 	one := target(system, architecture, nil)
-	return build.Names_System(subject, &one, token.Source(name))
+	return build.Names_System(&one, token.Source(name))
 }
 
 // Reports whether one constraint holds in the target a case names.
@@ -184,7 +183,6 @@ func test_constraints(t *testing.T) {
 }
 
 func test_imports(t *testing.T) {
-	subject := build.Build{}
 	// A path this module names and a path the standard library names stand in the build; a
 	// path whose first element holds a dot names a host, thus a third party.
 	for _, item := range []struct {
@@ -208,7 +206,7 @@ func test_imports(t *testing.T) {
 		{"package one\n\nimport (\n\t\"unsafe\"\n", false, false},
 		{"package one\n\nimport \"unsafe\n", false, false},
 	} {
-		result := build.Holds_Imports(&subject, token.Source(item.Text))
+		result := build.Holds_Imports(token.Source(item.Text))
 		held, ok := result.Held, result.OK
 		testify.Equal(t, item.Held, bool(held), "the imports of %q hold", item.Text)
 		testify.Equal(t, item.Ok, bool(ok), "the imports of %q read", item.Text)
@@ -219,7 +217,7 @@ func test_imports(t *testing.T) {
 	for index := range widest {
 		widest[index] = 'a'
 	}
-	result := build.Holds_Imports(&subject, token.Source(widest))
+	result := build.Holds_Imports(token.Source(widest))
 	held, ok := result.Held, result.OK
 	testify.True(t, bool(held), "the widest text names no third party")
 	testify.True(t, bool(ok), "the widest text reads")
@@ -356,15 +354,15 @@ func directory_close(
 }
 
 // Drives one directory read to its terminal state, which a composition root does with its loop.
-func directory_drive(runner build.Directory_Runner_Handle) {
+func directory_drive(runner build.Directory_Runner_Handle, one build.Target_Handle) {
 	for range 4096 {
-		if bool(build.Directory_Runner_Stopped(runner)) {
+		if bool(build.Directory_Runner_Stopped(&runner.Pass_Fields)) {
 			return
 		}
-		if bool(build.Directory_Runner_Rearm(runner)) {
+		if bool(build.Directory_Runner_Rearm(runner, one)) {
 			continue
 		}
-		if bool(build.Directory_Runner_Work_Queued(runner)) {
+		if bool(build.Directory_Runner_Work_Queued(&runner.Pass_Fields)) {
 			continue
 		}
 		return
@@ -376,17 +374,19 @@ func read_directory(
 	t *testing.T, fixture *directory_fixture, path build.Path, names int,
 ) (held build.Name_Storage) {
 	t.Helper()
-	return read_sized(t, fixture, path, TEST_ENTRY_COUNT, TEST_RECORD_COUNT, TEST_BYTE_COUNT)
+	return read_sized(
+		t, fixture, path, TEST_ENTRY_COUNT, TEST_RECORD_COUNT, TEST_BYTE_COUNT,
+		target("linux", "amd64", nil),
+	)
 }
 
 // Reads one directory through storage of the widths stated, which is how a read reaches every
 // width the package admits.
 func read_sized(
 	t *testing.T, fixture *directory_fixture, path build.Path, slots int, records int,
-	bytes int,
+	bytes int, one build.Target,
 ) (held build.Name_Storage) {
 	t.Helper()
-	one := target("linux", "amd64", nil)
 	// Both halves carry one backend, which is what one loop states.
 	loop := nbio.IO{Storage: nbio.Storage{
 		State:                           fixture,
@@ -396,19 +396,19 @@ func read_sized(
 	}, Network: nbio.Network{State: fixture},
 		Close_Procedure: directory_close}
 	runner := build.Directory_Runner{}
-	build.Directory_Runner_Init(&runner, loop, &one, path, build.Directory_Memory{
+	build.Directory_Runner_Init(&runner, loop, path, build.Directory_Memory{
 		Entries: make(build.Entry_Storage, slots),
 		Records: make(build.Record_Storage, records),
 		Names:   make(build.Name_Storage, slots),
 		Bytes:   make(build.Name_Bytes, bytes),
 		Header:  make(build.Header_Storage, bytes),
-		Reader:  new(build.Build),
 	})
-	directory_drive(&runner)
-	testify.True(t, bool(build.Directory_Runner_Stopped(&runner)),
+	directory_drive(&runner, &one)
+	testify.True(t, bool(build.Directory_Runner_Stopped(&runner.Pass_Fields)),
 		"the read of one directory stops")
-	testify.No_Error(t, build.Directory_Runner_Status(&runner), "the read states no error")
-	return build.Directory_Runner_Names(&runner)
+	testify.No_Error(t, build.Directory_Runner_Status(&runner.Pass_Fields),
+		"the read states no error")
+	return build.Directory_Runner_Names(&runner.Pass_Fields)
 }
 
 // TEST_DIGIT_COUNT holds the digits of the widest count of files one fixture states.
@@ -436,17 +436,26 @@ func test_directories(t *testing.T) {
 		Names: []string{
 			"build.go", "file_windows.go", "reader_linux.go", "writer_linux.go",
 			"notes.txt", "sub", "closed_linux.go",
+			"low.go", "next.go", "high.go",
 		},
-		Folders: []bool{false, false, false, false, false, true, false},
+		Folders: []bool{
+			false, false, false, false, false, true, false,
+			false, false, false,
+		},
 		Refused: "closed_linux.go",
 		Headers: []string{
 			"package one\n",
 			"package one\n",
-			"//go:build amd64\n\npackage one\n",
-			"//go:build arm64\n\npackage one\n",
+			"//go:build ((amd64))\n\npackage one\n",
+			"//go:build (arm64)\n\npackage one\n",
 			"",
 			"",
 			"package one\n",
+			// A constraint holding a byte no term spells states nothing the read
+			// admits, thus the file it heads stands in no build at all.
+			"//go:build linux \x01\n\npackage one\n",
+			"//go:build linux \x02\n\npackage one\n",
+			"//go:build linux \xff\n\npackage one\n",
 		},
 	}
 	names := read_directory(t, &fixture, "one", 2)
@@ -455,7 +464,7 @@ func test_directories(t *testing.T) {
 		"a file of no constraint stands in the build")
 	testify.Equal(t, "reader_linux.go", string(names[1]),
 		"a file whose constraint holds stands in the build")
-	testify.Equal(t, 4, fixture.Opened,
+	testify.Equal(t, 7, fixture.Opened,
 		"the read opens the files its names admit and no other")
 	// A directory of no Go file hands back no name, one of a single file hands back one, and
 	// one of every name the read admits hands back that count and no more.
@@ -480,7 +489,7 @@ func test_directories(t *testing.T) {
 	for _, slots := range []int{0, 1, 2, build.ENTRY_COUNT_MAXIMUM} {
 		for _, bytes := range []int{0, 1, 2, build.STORAGE_SIZE_MAXIMUM} {
 			sized := many_files(2)
-			read_sized(t, &sized, "one", slots, 1, bytes)
+			read_sized(t, &sized, "one", slots, 1, bytes, target("linux", "amd64", nil))
 		}
 	}
 	testify.Equal(t, TEST_ENTRY_COUNT,
@@ -513,6 +522,34 @@ func test_bounds(t *testing.T) {
 	held, ok := result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint past the widest text is refused")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
+	widest_text_cases(t, subject, &one, wide)
+}
+
+// States the widest text each read admits, which is how a width a type declares stands
+// observed and not merely stated.
+func widest_text_cases(
+	t *testing.T, subject build.Build_Handle, one build.Target_Handle, wide string,
+) {
+	// The widest constraint the read admits stands one byte inside the refusal, thus the text
+	// the reader holds and every word it names reach that width and never pass it.
+	result := build.Holds_Constraint(subject, one, token.Source(wide))
+	testify.True(t, bool(result.OK), "a constraint of the widest text is read")
+	testify.False(t, bool(result.Held),
+		"a tag no target names holds the file out of the build")
+	// No system and no architecture spells a word as wide as the widest constraint, thus a
+	// name whose stem passes that width names neither and stands in every build.
+	testify.True(t, bool(build.Names_System(one, token.Source(wide+"x.go"))),
+		"a name whose stem passes the widest constraint stands in every build")
+	// Every place a read names stands in the constraint text, thus none passes the width that
+	// text states. A stem holding no underscore opens its field one byte past the text.
+	stem := wide[:build.TEXT_SIZE_MAXIMUM-3]
+	testify.True(t, bool(build.Names_System(one, token.Source(stem+".go"))),
+		"a stem no underscore divides names no system")
+	// A stem holding no underscore names no field at all, thus the read answers at the
+	// opening and the field stands where the read before it left it.
+	divided := wide[:build.TEXT_SIZE_MAXIMUM-6] + "_amd64"
+	testify.True(t, bool(build.Names_System(one, token.Source(divided+".go"))),
+		"a stem the widest constraint holds divides into fields")
 	deep := ""
 	for range build.DEPTH_MAXIMUM + 1 {
 		deep = deep + "("
@@ -521,34 +558,36 @@ func test_bounds(t *testing.T) {
 	for range build.DEPTH_MAXIMUM + 1 {
 		deep = deep + ")"
 	}
-	result = build.Holds_Constraint(subject, &one, token.Source(deep))
-	held, ok = result.Held, result.OK
+	result = build.Holds_Constraint(subject, one, token.Source(deep))
+	held, ok := result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint past the deepest nest is refused")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
+	wide_word_case(t, subject, wide)
+	nested_depth_cases(t, subject, one)
 	// A text of the widest size one source admits stands past the widest constraint, thus the
 	// reader refuses it and every text of a few bytes states no constraint at all.
 	widest := make([]byte, token.SOURCE_SIZE_MAXIMUM)
 	for index := range widest {
 		widest[index] = 'x'
 	}
-	result = build.Holds_Constraint(subject, &one, token.Source(widest))
+	result = build.Holds_Constraint(subject, one, token.Source(widest))
 	held, ok = result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint of the widest source is refused")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
-	testify.True(t, bool(build.Names_System(subject, &one, token.Source(widest))),
+	testify.True(t, bool(build.Names_System(one, token.Source(widest))),
 		"a name of the widest source names no system")
-	testify.True(t, bool(build.Names_System(subject, &one, token.Source(""))),
+	testify.True(t, bool(build.Names_System(one, token.Source(""))),
 		"a name of no bytes names no system")
-	result = build.Holds_Constraint(subject, &one, token.Source(""))
+	result = build.Holds_Constraint(subject, one, token.Source(""))
 	held, ok = result.Held, result.OK
 	testify.False(t, bool(ok), "a constraint of no bytes states none")
 	testify.False(t, bool(held), "a constraint the reader refused holds nothing")
 	for _, text := range []string{"x", "xy"} {
-		result = build.Holds_Constraint(subject, &one, token.Source(text))
+		result = build.Holds_Constraint(subject, one, token.Source(text))
 		held, ok = result.Held, result.OK
 		testify.True(t, bool(ok), "a constraint of a few bytes states one tag")
 		testify.False(t, bool(held), "a tag the target never names holds nothing")
-		testify.True(t, bool(build.Names_System(subject, &one, token.Source(text))),
+		testify.True(t, bool(build.Names_System(one, token.Source(text))),
 			"a name of a few bytes names no system")
 	}
 }
@@ -575,10 +614,10 @@ func allocation_read_checks(t *testing.T) {
 			fixture.Held, fixture.Ok = result.Held, result.OK
 		}},
 		{Name: "Names_System", Call: func() {
-			fixture.Held = build.Names_System(subject, &one, name)
+			fixture.Held = build.Names_System(&one, name)
 		}},
 		{Name: "Holds_Imports", Call: func() {
-			result := build.Holds_Imports(subject, imports)
+			result := build.Holds_Imports(imports)
 			fixture.Held, fixture.Ok = result.Held, result.OK
 		}},
 	}
@@ -610,11 +649,10 @@ func allocation_directory_checks(t *testing.T) {
 		Names:   make(build.Name_Storage, TEST_ENTRY_COUNT),
 		Bytes:   make(build.Name_Bytes, TEST_BYTE_COUNT),
 		Header:  make(build.Header_Storage, TEST_HEADER_COUNT),
-		Reader:  new(build.Build),
 	}
 	runner := build.Directory_Runner{}
 	stopped := build.Directory_Runner{}
-	build.Directory_Runner_Init(&stopped, loop, &one, "one", memory)
+	build.Directory_Runner_Init(&stopped, loop, "one", memory)
 	stopped.Flags.Stopped = true
 	checks := []struct {
 		Name string
@@ -622,33 +660,246 @@ func allocation_directory_checks(t *testing.T) {
 	}{
 		{Name: "Directory_Runner_Init", Call: func() {
 			runner = build.Directory_Runner{}
-			build.Directory_Runner_Init(&runner, loop, &one, "one", memory)
+			build.Directory_Runner_Init(&runner, loop, "one", memory)
 		}},
 		{Name: "Directory_Runner_Rearm", Call: func() {
-			fixture.Rearm = build.Directory_Runner_Rearm(&runner)
+			fixture.Rearm = build.Directory_Runner_Rearm(&runner, &one)
 		}},
 		{Name: "Directory_Runner_Work_Queued", Call: func() {
-			fixture.Queued = build.Directory_Runner_Work_Queued(&runner)
+			fixture.Queued = build.Directory_Runner_Work_Queued(&runner.Pass_Fields)
 		}},
 		{Name: "Directory_Runner_Stopped", Call: func() {
-			fixture.Stopped = build.Directory_Runner_Stopped(&stopped)
+			fixture.Stopped = build.Directory_Runner_Stopped(&stopped.Pass_Fields)
 		}},
 		{Name: "Directory_Runner_Status", Call: func() {
-			fixture.Error = build.Directory_Runner_Status(&stopped)
+			fixture.Error = build.Directory_Runner_Status(&stopped.Pass_Fields)
 		}},
 		{Name: "Directory_Runner_Names", Call: func() {
-			fixture.Names = build.Directory_Runner_Names(&stopped)
+			fixture.Names = build.Directory_Runner_Names(&stopped.Pass_Fields)
 		}},
 		{Name: "Directory_Runner_Drive", Call: func() {
 			directory.Passes = 0
 			directory.Opened = 0
 			runner = build.Directory_Runner{}
-			build.Directory_Runner_Init(&runner, loop, &one, "one", memory)
-			directory_drive(&runner)
-			fixture.Names = build.Directory_Runner_Names(&runner)
+			build.Directory_Runner_Init(&runner, loop, "one", memory)
+			directory_drive(&runner, &one)
+			fixture.Names = build.Directory_Runner_Names(&runner.Pass_Fields)
 		}},
 	}
 	for _, check := range checks {
 		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
 	}
+}
+
+// States each depth the read admits, which is how every depth the type declares stands observed
+// and not merely stated.
+func nested_depth_cases(t *testing.T, subject build.Build_Handle, one build.Target_Handle) {
+	// The deepest nest the read admits stands one bracket inside the refusal, and a nest of
+	// one bracket and of two stand inside it, thus every depth the type states is read.
+	for _, depth := range []int{1, 2, build.DEPTH_MAXIMUM} {
+		nested := ""
+		for range depth {
+			nested = nested + "("
+		}
+		nested = nested + "linux"
+		for range depth {
+			nested = nested + ")"
+		}
+		result := build.Holds_Constraint(subject, one, token.Source(nested))
+		testify.True(t, bool(result.OK), "a nest of %d brackets is read", depth)
+		testify.True(t, bool(result.Held),
+			"a nest of %d brackets holds the system it names", depth)
+	}
+}
+
+// States a target word wider than the widest constraint, which no tag of a constraint matches.
+func wide_word_case(t *testing.T, subject build.Build_Handle, wide string) {
+	stretched := target(wide+"x", "amd64", nil)
+	result := build.Holds_Constraint(subject, &stretched, token.Source("linux"))
+	testify.True(t, bool(result.OK), "a target of a wide word reads a constraint")
+	testify.False(t, bool(result.Held),
+		"a target word wider than the widest constraint names no tag")
+}
+
+// States the width of each line prefix the reader searches for. Four widths stand and no other,
+// thus a prefix of one byte or of two names nothing the reader looks for.
+func Test_Head_Widths(t *testing.T) {
+	testify.Equal(t, build.IMPORT_HEAD_SIZE, len(build.IMPORT_HEAD),
+		"the import prefix states its width")
+	testify.Equal(t, build.PACKAGE_HEAD_SIZE, len(build.PACKAGE_HEAD),
+		"the package prefix states its width")
+	testify.Equal(t, build.PACKAGE_HEAD_SIZE, len(build.IMPORT_OPENING),
+		"the opening of an import block stands as wide as the package prefix")
+	testify.Equal(t, build.HEAD_SIZE_MAXIMUM, len(build.BUILD_HEAD),
+		"the build prefix is the widest the reader searches for")
+}
+
+// States a target word of each width the type admits, which is how a width it declares stands
+// observed and not merely stated. A word of one byte and of two names a system as well as a
+// longer one does, and the widest a source admits names none.
+func Test_Target_Word_Widths(t *testing.T) {
+	subject := new(build.Build)
+	widest := make([]byte, token.SOURCE_SIZE_MAXIMUM)
+	for index := range widest {
+		widest[index] = 'x'
+	}
+	counts := []int{1, 0, 2, build.TAG_COUNT_MAXIMUM}
+	for index, word := range []string{"", "a", "ab", string(widest)} {
+		tags := make([]string, counts[index])
+		for slot := range tags {
+			tags[slot] = word
+		}
+		one := target(word, word, tags)
+		result := build.Holds_Constraint(subject, &one, token.Source("linux"))
+		testify.True(t, bool(result.OK), "a target of a word of %d bytes reads", len(word))
+		testify.False(t, bool(result.Held),
+			"a word of %d bytes names no system the constraint states", len(word))
+		result = build.Holds_Constraint(subject, &one, token.Source("(linux)"))
+		testify.True(t, bool(result.OK), "a group of one tag reads")
+		testify.False(t, bool(result.Held),
+			"a group of a system the target never names holds nothing")
+		testify.True(t, bool(build.Names_System(&one, token.Source("a.go"))),
+			"a name stating no system stands in every build")
+		testify.False(t, bool(build.Names_System(&one, token.Source("a_linux.go"))),
+			"a name stating a system the target never names stands outside the build")
+		fixture := directory_fixture{
+			Names:   []string{"a.go", "b.go"},
+			Folders: []bool{false, false},
+			Headers: []string{"//go:build (linux)\n\npackage one\n", "package one\n"},
+		}
+		names := read_sized(
+			t, &fixture, "one", TEST_ENTRY_COUNT, TEST_RECORD_COUNT, TEST_BYTE_COUNT,
+			one,
+		)
+		testify.Equal(t, 1, len(names),
+			"a directory read keeps the file whose constraint names no system")
+	}
+}
+
+// Drives one name scan over each width the constraint text admits, which is how every width
+// the two places it stands between stands observed.
+func Test_Name_Place_Widths(t *testing.T) {
+	one := target("linux", "amd64", nil)
+	wide := ""
+	for range build.TEXT_SIZE_MAXIMUM {
+		wide = wide + "x"
+	}
+	// A stem holding no underscore opens at its end, thus a stem of the widest text opens at
+	// that width.
+	testify.True(t, bool(build.Names_System(&one, token.Source(wide+".go"))),
+		"a stem of the widest text names no system")
+	// A field opens behind the last underscore, thus a stem closing at one opens its field at
+	// the width of that stem.
+	divider := wide[:build.TEXT_SIZE_MAXIMUM-1] + "_"
+	testify.True(t, bool(build.Names_System(&one, token.Source(divider+".go"))),
+		"a stem closing at an underscore names no system")
+	// One byte and two stand at the other end of the same widths.
+	testify.True(t, bool(build.Names_System(&one, token.Source("a_.go"))),
+		"a stem of one letter and an underscore names no system")
+}
+
+// States each byte one constraint can hold, from the first to the last. A read stands on the
+// byte it reached, thus every byte the type admits stands on that slot at some read.
+func Test_Held_Symbol_Widths(t *testing.T) {
+	subject := new(build.Build)
+	one := target("linux", "amd64", nil)
+	// A term opens at whatever byte the author wrote there, thus the read of a tag stands on
+	// every byte a constraint can state, from none to the widest.
+	for _, symbol := range []byte{0, 1, 2, 255} {
+		for _, text := range []string{
+			string([]byte{symbol}), "linux && " + string([]byte{symbol}),
+		} {
+			result := build.Holds_Constraint(subject, &one, token.Source(text))
+			testify.False(t, bool(result.OK),
+				"a term opening at the byte %d states no tag", symbol)
+			testify.False(t, bool(result.Held),
+				"a constraint the reader refused holds nothing")
+		}
+	}
+}
+
+// States a header whose build line and whose import path both pass the widest constraint. A
+// header states whatever the author wrote, thus a read of one stands on every width a source
+// holds and refuses the ones no constraint states.
+func Test_Header_Widths(t *testing.T) {
+	filler := func(width int) (text string) {
+		held := make([]byte, width)
+		for index := range held {
+			held[index] = 'x'
+		}
+		return string(held)
+	}
+	// The widest run of imports is one path filling the whole source behind the shortest
+	// clause, thus the line and the path it holds reach the widest width each admits.
+	for _, item := range []struct {
+		Text string
+		Held bool
+		Ok   bool
+	}{
+		{"package \nimport \"\"", true, true},
+		{"package \nimport \"a\"", true, true},
+		{"package \nimport \"ab\"", true, true},
+		{"package \nimport (\nx\n)", false, false},
+		{"package \nimport (\nxy\n)", false, false},
+		{"package \nimport \"" + filler(build.IMPORT_PATH_SIZE_MAXIMUM) + "\"", true, true},
+		{"package \nimport \"" + filler(build.TEXT_SIZE_MAXIMUM+1) + "\"\n", true, true},
+	} {
+		result := build.Holds_Imports(token.Source(item.Text))
+		testify.Equal(t, item.Held, bool(result.Held), "the imports of %d bytes hold",
+			len(item.Text))
+		testify.Equal(t, item.Ok, bool(result.OK), "the imports of %d bytes read",
+			len(item.Text))
+	}
+	// A header states its constraint as wide as the author wrote it, thus the read of one
+	// stands on a constraint of none, one, two, and every byte the source holds.
+	one := target("linux", "amd64", nil)
+	for _, header := range []string{
+		"x", "xy", "//go:build \n", "//go:build a\n", "//go:build ab\n",
+		"//go:build " + filler(build.TEXT_SIZE_MAXIMUM+1) + "\n",
+		"//go:build " + filler(build.BUILD_LINE_SIZE_MAXIMUM),
+	} {
+		fixture := directory_fixture{
+			Names: []string{"a.go"}, Folders: []bool{false}, Headers: []string{header},
+		}
+		names := read_sized(
+			t, &fixture, "one", TEST_ENTRY_COUNT, TEST_RECORD_COUNT,
+			token.SOURCE_SIZE_MAXIMUM, one,
+		)
+		testify.True(t, len(names) <= 1, "a header of %d bytes holds one file or none",
+			len(header))
+	}
+}
+
+// States each edge a read of a constraint and a read of a name stand on: a reader that a refused
+// read left inside two groups, a constraint closing at a bracket that opens its widest place, a
+// field of every width a name states, and a system word of every width the word of Unix meets.
+func Test_Read_Edges(t *testing.T) {
+	subject := new(build.Build)
+	one := target("linux", "amd64", nil)
+	testify.False(t, bool(build.Holds_Constraint(subject, &one, token.Source("((")).OK),
+		"two brackets that never close state no constraint")
+	testify.True(t, bool(build.Holds_Constraint(subject, &one, token.Source("linux")).OK),
+		"a reader a refused read left inside two groups reads the next constraint afresh")
+	wide := ""
+	for range build.TEXT_SIZE_MAXIMUM {
+		wide = wide + "x"
+	}
+	result := build.Holds_Constraint(subject, &one, token.Source(wide[:len(wide)-5]+" && ("))
+	testify.False(t, bool(result.OK), "a bracket closing the widest constraint states no term")
+	for _, name := range []string{
+		"x_a.go", "x_ab.go", "_" + wide[:build.NAME_FIELD_SIZE_MAXIMUM] + ".go",
+	} {
+		testify.True(t, bool(build.Names_System(&one, token.Source(name))),
+			"a name of %d bytes stating no system stands in every build", len(name))
+	}
+	for _, word := range []string{"", "a", "ab", wide} {
+		unix := target(word, "amd64", nil)
+		result = build.Holds_Constraint(subject, &unix, token.Source("unix"))
+		testify.True(t, bool(result.OK), "the word unix reads")
+		testify.False(t, bool(result.Held),
+			"a system of %d bytes Go never calls a Unix", len(word))
+	}
+	result = build.Holds_Imports(token.Source("package one\n// one\nimport \"unsafe\"\n"))
+	testify.True(t, bool(result.OK), "a comment between the clause and the imports reads")
+	testify.True(t, bool(result.Held), "a comment names no third party")
 }
