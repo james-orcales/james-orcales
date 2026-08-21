@@ -1,11 +1,11 @@
 
-# Bounded Entry
+# Bounded Archive
 
-Decode_Into reads shared/bytes Slice, finds first classic ZIP member, and writes caller Slice.
-Declared output size must fit destination. Stored and DEFLATE members decode locally.
-Encrypted, multi-disk, ZIP64, unsupported, corrupt, or mismatched input returns Status, never panic.
+Reader and Writer use injected nbio Stream and caller storage. Header and File_System expose
+classic ZIP metadata, raw copy, traversal, and assembly. Every count, path, record, timestamp,
+mode, and buffer stays bounded. Hostile, ZIP64, multi-disk, corrupt, or unsupported input fails.
 
 # Allocation
 
-Every exported operation performs zero heap allocations. Decoder uses fixed stack tables and
-destination history. No reader, error, filename, table, or decompressed-output object escapes.
+Every exported operation performs zero heap allocations. Reader, Writer, filesystem, header,
+stored, and DEFLATE paths retain only caller-owned memory. Tests prove each public operation.
