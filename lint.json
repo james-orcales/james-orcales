@@ -24,7 +24,8 @@
           "shared_lua/**"
   ],
   "opt_out_recursion_ban": [
-          "shared/text/glob/**"
+          "shared/text/glob/**",
+          "shared/go/**"
   ],
   "opt_out_assertion_mandate_packages": [
           "**",
@@ -42,6 +43,7 @@
           "!shared/strings/**",
           "!shared/unicode/**",
           "!shared/path/**",
+          "!shared/go/**",
           "!shared/container/**",
           "!setup/**",
           "!fuzzstall/**"
