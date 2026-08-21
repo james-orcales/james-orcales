@@ -5131,15 +5131,21 @@ func writer_storage_valid(storage Writer_Storage) (valid binary.Boolean) {
 func writer_create(
 	writer *Writer, header_unvalidated *Header_Unvalidated, raw Writer_Raw,
 ) (status Creation_Status) {
-	defer func() {
-		Creation_Status_Invariants(status, "writer_create.status")
-	}()
+	defer func() { Creation_Status_Invariants(status, "writer_create.status") }()
 	Writer_Invariants(writer, "writer_create.writer")
 	Header_Unvalidated_Invariants(header_unvalidated, "writer_create.header_unvalidated")
 	Writer_Raw_Invariants(raw, "writer_create.raw")
-	finalize_status := writer_finalize(writer)
-	if finalize_status != Bounded_Status(STATUS_OK) {
-		return Creation_Status(finalize_status)
+	if bool(writer.Closed) {
+		return Creation_Status(STATUS_INPUT_INVALID)
+	}
+	if bool(writer.In_Flight) {
+		return Creation_Status(STATUS_INPUT_INVALID)
+	}
+	if writer.Active {
+		finalize_status := writer_finalize(writer)
+		if finalize_status != Bounded_Status(STATUS_OK) {
+			return Creation_Status(finalize_status)
+		}
 	}
 	header, extra_size, prepare_status := writer_header_prepare(header_unvalidated, raw)
 	if prepare_status != Preparation_Status(STATUS_OK) {
@@ -5159,7 +5165,6 @@ func writer_create(
 	writer.Directory = Writer_Directory(header.Name[len(header.Name)-1] == '/')
 	name := Writer_Record_Name(header.Name)
 	comment := Writer_Record_Comment(header.Comment)
-	extra := Writer_Record_Extra(header.Extra)
 	flags := writer_record_flags(
 		name, comment, header.Flags, header.Non_UTF8, raw, writer.Directory,
 	)
@@ -5169,9 +5174,9 @@ func writer_create(
 	}
 	local_start := int(writer.Archive_Position)
 	record := Writer_Record{
-		Name: name, Comment: comment, Extra: extra,
-		Extra_Size: extra_size, Flags: flags,
-		Method: method, Creator_Version: header.Creator_Version,
+		Name: name, Comment: comment, Extra: Writer_Record_Extra(header.Extra),
+		Extra_Size: extra_size, Flags: flags, Method: method,
+		Creator_Version:   header.Creator_Version,
 		Extractor_Version: header.Extractor_Version,
 		Modified_Time:     header.Modified_Time, Modified_Date: header.Modified_Date,
 		External_Attributes: header.External_Attributes,
@@ -5181,7 +5186,7 @@ func writer_create(
 	}
 	writer.Header.Flags = flags
 	writer.Header.Method = Header_Method(method)
-	writer.Content_Position = 0
+	writer.Content_Position = Writer_Content_Position(POSITION_MINIMUM)
 	writer.Current_Central_Position = Writer_Current_Central_Position(writer.Central_Position)
 	writer_local_record_write(
 		Writer_Local_Record_Storage(writer.Storage.Archive[local_start:]), record,

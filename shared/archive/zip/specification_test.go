@@ -2548,7 +2548,9 @@ func standard_library_writer_record_domains() {
 	writer := standard_library_writer_valid_domain_value()
 	writer.Storage.Archive = make([]byte, STANDARD_LIBRARY_WRITER_LOCAL_STORAGE_MINIMUM)
 	writer.Storage.Central = make([]byte, STANDARD_LIBRARY_WRITER_CENTRAL_STORAGE_MINIMUM)
-	header := zip.Header_Unvalidated{Name: []byte("x"), Method: zip.METHOD_STORE}
+	header := zip.Header_Unvalidated{
+		Name: []byte("x"), Method: zip.METHOD_STORE, Flags: zip.FLAG_UTF8,
+	}
 	zip.Writer_Create(&writer, &header)
 	writer = standard_library_writer_valid_domain_value()
 	writer.Archive_Position = STANDARD_LIBRARY_WRITER_LOCAL_START_MAXIMUM
