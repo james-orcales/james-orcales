@@ -25,11 +25,42 @@ counts as one replacement character.
 Character_Start identifies a possible first byte. Valid and Valid_Text require complete, shortest
 UTF-8 encodings. Valid_Character rejects negative values, surrogates, and values above RUNE_MAX.
 
+# Raw Storage Extensions
+
+Buffer and Reader character operations decode or encode UTF-8 while borrowing shared/bytes cursor
+storage. Character unread restores the complete encoded boundary. Raw byte ownership remains in
+shared/bytes.
+
+# Search
+
+Contains, Index, and Last_Index forms decode source before matching a character, character set, or
+predicate. Returned indexes identify encoded byte positions. Equal_Fold compares decoded
+characters through Unicode simple folding.
+
+# Fields And Iteration
+
+Fields operations split Unicode-space or predicate-delimited character runs into clipped source
+views. Sequence forms synchronously yield those views and stop when callback rejects continuation.
+
+# Transform
+
+Map, case conversion, legacy title conversion, invalid UTF-8 repair, and rune decoding write
+caller-owned storage. Case operations use shared/unicode/ucd. Special variants accept
+ucd.Special_Case directly. Byte destinations never overlap source.
+
+# Trim
+
+Trim forms remove decoded cut-set characters, Unicode whitespace, or predicate matches. Returned
+Bytes aliases source storage.
+
 # Allocation
 
-Every public operation performs zero heap allocation.
+Every public operation performs zero heap allocation. Transforms and collection operations use
+caller-owned storage.
 
 # Domain Errors
 
-Bytes and Text contain at most SEQUENCE_SIZE_MAXIMUM bytes. A result above this limit causes a
-panic. Encode_Character and Append_Character also cause a panic when caller storage is too short.
+Bytes and Text contain at most SEQUENCE_SIZE_MAXIMUM bytes. Fields and decoded character storage
+use derived bounded counts. A result above these limits, short destination, overlapping transform
+storage, or invalid unread request causes panic. Encode_Character and Append_Character also cause
+panic when caller storage is too short.

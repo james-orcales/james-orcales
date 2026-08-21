@@ -2,8 +2,10 @@
 package utf8
 
 import (
+	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/unicode/ucd"
 )
 
 // REPLACEMENT_CHARACTER is the result for an invalid encoding or character.
@@ -800,4 +802,762 @@ func Valid_Character(character Character) (yes Boolean) {
 		0 <= character && character < SURROGATE_MINIMUM ||
 			SURROGATE_MAXIMUM < character && character <= RUNE_MAX,
 	)
+}
+
+// BYTE_INDEX_ABSENT separates a failed search from the first encoded byte.
+const BYTE_INDEX_ABSENT = -1
+
+// BYTE_INDEX_MAXIMUM prevents an encoded offset from escaping bounded input.
+const BYTE_INDEX_MAXIMUM = SEQUENCE_SIZE_MAXIMUM - 1
+
+// BYTE_COUNT_MINIMUM admits transforms that produce no encoding.
+const BYTE_COUNT_MINIMUM = SEQUENCE_SIZE_MINIMUM
+
+// BYTE_COUNT_MAXIMUM keeps transformed output inside one bounded sequence.
+const BYTE_COUNT_MAXIMUM = SEQUENCE_SIZE_MAXIMUM
+
+// FIELD_COUNT_MINIMUM admits input containing no fields.
+const FIELD_COUNT_MINIMUM = SEQUENCE_SIZE_MINIMUM
+
+// FIELD_COUNT_MAXIMUM follows alternating one-byte fields and separators.
+const FIELD_COUNT_MAXIMUM = (SEQUENCE_SIZE_MAXIMUM + 1) / 2
+
+// Byte_Index identifies encoded character start, not decoded character position.
+type Byte_Index int
+
+// Byte_Index_Invariants admits absence beside every sequence byte.
+func Byte_Index_Invariants(value Byte_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), BYTE_INDEX_ABSENT, BYTE_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Byte_Count measures encoded output without confusing bytes with characters.
+type Byte_Count int
+
+// Byte_Count_Invariants bounds output to caller sequence storage.
+func Byte_Count_Invariants(value Byte_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Field_Slices holds UTF-8 views between character-delimiter runs.
+type Field_Slices []Bytes
+
+// Field_Slices_Invariants bounds alternating one-byte fields and delimiters.
+func Field_Slices_Invariants(value Field_Slices, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), FIELD_COUNT_MINIMUM, FIELD_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Field_Count measures populated field storage.
+type Field_Count int
+
+// Field_Count_Invariants shares exact field bound with caller storage.
+func Field_Count_Invariants(value Field_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), FIELD_COUNT_MINIMUM, FIELD_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Characters holds decoded sequence values in caller storage.
+type Characters []Decoded_Character
+
+// Characters_Invariants permits one replacement character per invalid byte.
+func Characters_Invariants(value Characters, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), CHARACTER_COUNT_MINIMUM, CHARACTER_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Yield_Function receives one clipped source view until it rejects continuation.
+type Yield_Function func(content Bytes) (continued Boolean)
+
+// Predicate keeps character interpretation inside UTF-8 operations.
+type Predicate func(character rune) (matches bool)
+
+// Mapping keeps decoded input and encoded output joined by one contract.
+type Mapping func(character rune) (mapped rune)
+
+// Buffer_Write_Character appends one UTF-8 encoding to raw caller storage.
+func Buffer_Write_Character(
+	buffer bytes.Buffer_Handle, character Character,
+) (count Encoded_Size) {
+	defer func() { Encoded_Size_Invariants(count, "buffer_write_character.count") }()
+	bytes.Buffer_Handle_Invariants(buffer, "buffer_write_character.buffer")
+	Character_Invariants(character, "buffer_write_character.character")
+	var storage [UTF_MAXIMUM]byte
+	count = Encode_Character(storage[:], character)
+	bytes.Buffer_Write(buffer, storage[:count])
+	return count
+}
+
+// Buffer_Read_Character decodes and consumes one character from raw Buffer storage.
+func Buffer_Read_Character(
+	buffer bytes.Buffer_Handle,
+) (character Decoded_Character, size Decoded_Size, found Boolean) {
+	defer func() {
+		Decoded_Character_Invariants(character, "buffer_read_character.character")
+		Decoded_Size_Invariants(size, "buffer_read_character.size")
+		Boolean_Invariants(found, "buffer_read_character.found")
+	}()
+	bytes.Buffer_Handle_Invariants(buffer, "buffer_read_character.buffer")
+	source := bytes.Buffer_Bytes(buffer)
+	if len(source) == 0 {
+		bytes.Buffer_Reset(buffer)
+		return 0, 0, false
+	}
+	character, size = Decode_Character(Bytes(source))
+	bytes.Buffer_Next(buffer, bytes.Boundary(size))
+	buffer.Operation = bytes.Read_Operation(size)
+	return character, size, true
+}
+
+// Buffer_Unread_Character restores character boundary recorded by UTF-8 read.
+func Buffer_Unread_Character(buffer bytes.Buffer_Handle) {
+	bytes.Buffer_Handle_Invariants(buffer, "buffer_unread_character.buffer")
+	if buffer.Operation <= 0 {
+		panic("utf8: no character to unread")
+	}
+	size := Encoded_Size(buffer.Operation)
+	Encoded_Size_Invariants(size, "buffer_unread_character.size")
+	buffer.Position -= bytes.Boundary(size)
+	buffer.Operation = 0
+}
+
+// Reader_Read_Character decodes and consumes one character from raw Reader storage.
+func Reader_Read_Character(
+	reader bytes.Reader_Handle,
+) (character Decoded_Character, size Decoded_Size, found Boolean) {
+	defer func() {
+		Decoded_Character_Invariants(character, "reader_read_character.character")
+		Decoded_Size_Invariants(size, "reader_read_character.size")
+		Boolean_Invariants(found, "reader_read_character.found")
+	}()
+	bytes.Reader_Handle_Invariants(reader, "reader_read_character.reader")
+	if reader.Position >= bytes.Reader_Position(len(reader.Source)) {
+		reader.Previous = bytes.INDEX_ABSENT
+		return 0, 0, false
+	}
+	reader.Previous = bytes.Index_Value(reader.Position)
+	character, size = Decode_Character(Bytes(reader.Source[reader.Position:]))
+	reader.Position += bytes.Reader_Position(size)
+	return character, size, true
+}
+
+// Reader_Unread_Character restores boundary recorded by UTF-8 read.
+func Reader_Unread_Character(reader bytes.Reader_Handle) {
+	bytes.Reader_Handle_Invariants(reader, "reader_unread_character.reader")
+	if reader.Previous < 0 {
+		panic("utf8: no Reader character to unread")
+	}
+	if reader.Previous >= bytes.Index_Value(reader.Position) {
+		panic("utf8: no Reader character to unread")
+	}
+	reader.Position = bytes.Reader_Position(reader.Previous)
+	reader.Previous = bytes.INDEX_ABSENT
+}
+
+// Contains_Any reports whether source contains one character from set.
+func Contains_Any(source Bytes, characters Text) (contained Boolean) {
+	defer func() { Boolean_Invariants(contained, "contains_any.contained") }()
+	Bytes_Invariants(source, "contains_any.source")
+	Text_Invariants(characters, "contains_any.characters")
+	return Boolean(Index_Any(source, characters) >= 0)
+}
+
+// Contains_Rune reports whether source contains character.
+func Contains_Rune(source Bytes, character Character) (contained Boolean) {
+	defer func() { Boolean_Invariants(contained, "contains_rune.contained") }()
+	Bytes_Invariants(source, "contains_rune.source")
+	Character_Invariants(character, "contains_rune.character")
+	return Boolean(Index_Rune(source, character) >= 0)
+}
+
+// Contains_Function reports whether one decoded character satisfies predicate.
+func Contains_Function(
+	source Bytes, predicate Predicate,
+) (contained Boolean) {
+	defer func() { Boolean_Invariants(contained, "contains_function.contained") }()
+	Bytes_Invariants(source, "contains_function.source")
+	return Boolean(Index_Function(source, predicate) >= 0)
+}
+
+// Index_Rune returns encoded byte index of character.
+func Index_Rune(source Bytes, character Character) (index Byte_Index) {
+	defer func() { Byte_Index_Invariants(index, "index_rune.index") }()
+	Bytes_Invariants(source, "index_rune.source")
+	Character_Invariants(character, "index_rune.character")
+	if !Valid_Character(character) {
+		return BYTE_INDEX_ABSENT
+	}
+	for source_index := 0; source_index < len(source); {
+		source_character, size := Decode_Character(source[source_index:])
+		if Character(source_character) == character {
+			return Byte_Index(source_index)
+		}
+		source_index += int(size)
+	}
+	return BYTE_INDEX_ABSENT
+}
+
+// Index_Any returns encoded byte index of first character from set.
+func Index_Any(source Bytes, characters Text) (index Byte_Index) {
+	defer func() { Byte_Index_Invariants(index, "index_any.index") }()
+	Bytes_Invariants(source, "index_any.source")
+	Text_Invariants(characters, "index_any.characters")
+	for source_index := 0; source_index < len(source); {
+		character, size := Decode_Character(source[source_index:])
+		if text_contains_character(characters, character) {
+			return Byte_Index(source_index)
+		}
+		source_index += int(size)
+	}
+	return BYTE_INDEX_ABSENT
+}
+
+// Last_Index_Any returns encoded byte index of final character from set.
+func Last_Index_Any(source Bytes, characters Text) (index Byte_Index) {
+	defer func() { Byte_Index_Invariants(index, "last_index_any.index") }()
+	Bytes_Invariants(source, "last_index_any.source")
+	Text_Invariants(characters, "last_index_any.characters")
+	for boundary_count := len(source); boundary_count > 0; {
+		character, size := Decode_Final_Character(source[:boundary_count])
+		boundary_count -= int(size)
+		if text_contains_character(characters, character) {
+			return Byte_Index(boundary_count)
+		}
+	}
+	return BYTE_INDEX_ABSENT
+}
+
+// Index_Function returns encoded byte index of first predicate match.
+func Index_Function(
+	source Bytes, predicate Predicate,
+) (index Byte_Index) {
+	defer func() { Byte_Index_Invariants(index, "index_function.index") }()
+	Bytes_Invariants(source, "index_function.source")
+	for source_index := 0; source_index < len(source); {
+		character, size := Decode_Character(source[source_index:])
+		if predicate(rune(character)) {
+			return Byte_Index(source_index)
+		}
+		source_index += int(size)
+	}
+	return BYTE_INDEX_ABSENT
+}
+
+// Last_Index_Function returns encoded byte index of final predicate match.
+func Last_Index_Function(
+	source Bytes, predicate Predicate,
+) (index Byte_Index) {
+	defer func() { Byte_Index_Invariants(index, "last_index_function.index") }()
+	Bytes_Invariants(source, "last_index_function.source")
+	for boundary_count := len(source); boundary_count > 0; {
+		character, size := Decode_Final_Character(source[:boundary_count])
+		boundary_count -= int(size)
+		if predicate(rune(character)) {
+			return Byte_Index(boundary_count)
+		}
+	}
+	return BYTE_INDEX_ABSENT
+}
+
+// Fields_Into writes Unicode-space-delimited source views into caller storage.
+func Fields_Into(destination Field_Slices, source Bytes) (count Field_Count) {
+	defer func() { Field_Count_Invariants(count, "fields_into.count") }()
+	Field_Slices_Invariants(destination, "fields_into.destination")
+	Bytes_Invariants(source, "fields_into.source")
+	return fields_into(destination, source, func(character rune) (matches bool) {
+		return bool(ucd.Is_Space(ucd.Character(character)))
+	})
+}
+
+// Fields_Function_Into writes predicate-delimited source views into caller storage.
+func Fields_Function_Into(
+	destination Field_Slices, source Bytes, predicate Predicate,
+) (count Field_Count) {
+	defer func() { Field_Count_Invariants(count, "fields_function_into.count") }()
+	Field_Slices_Invariants(destination, "fields_function_into.destination")
+	Bytes_Invariants(source, "fields_function_into.source")
+	return fields_into(destination, source, predicate)
+}
+
+// Map_Into writes mapped characters into separate caller storage.
+func Map_Into(
+	destination Bytes, mapping Mapping, source Bytes,
+) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "map_into.count") }()
+	Bytes_Invariants(destination, "map_into.destination")
+	Bytes_Invariants(source, "map_into.source")
+	aver.Always(
+		!bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)),
+		"Map destination does not overlap source.",
+	)
+	written := 0
+	for source_index := 0; source_index < len(source); {
+		character, size := Decode_Character(source[source_index:])
+		source_index += int(size)
+		mapped_character := mapping(rune(character))
+		if mapped_character < 0 {
+			continue
+		}
+		mapped := Character(mapped_character)
+		encoded_size := Character_Size(mapped)
+		if encoded_size == CHARACTER_SIZE_INVALID {
+			mapped = Character(REPLACEMENT_CHARACTER)
+			encoded_size = CHARACTER_SIZE_THREE
+		}
+		if int(encoded_size) > len(destination)-written {
+			panic("utf8: destination too small")
+		}
+		written += int(Encode_Character(destination[written:], mapped))
+	}
+	return Byte_Count(written)
+}
+
+// To_Upper_Into writes Unicode uppercase mapping into caller storage.
+func To_Upper_Into(destination Bytes, source Bytes) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "to_upper_into.count") }()
+	Bytes_Invariants(destination, "to_upper_into.destination")
+	Bytes_Invariants(source, "to_upper_into.source")
+	return map_case_into(destination, source, ucd.UPPER_CASE, ucd.Special_Case{}, false)
+}
+
+// To_Lower_Into writes Unicode lowercase mapping into caller storage.
+func To_Lower_Into(destination Bytes, source Bytes) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "to_lower_into.count") }()
+	Bytes_Invariants(destination, "to_lower_into.destination")
+	Bytes_Invariants(source, "to_lower_into.source")
+	return map_case_into(destination, source, ucd.LOWER_CASE, ucd.Special_Case{}, false)
+}
+
+// To_Title_Into writes Unicode title mapping into caller storage.
+func To_Title_Into(destination Bytes, source Bytes) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "to_title_into.count") }()
+	Bytes_Invariants(destination, "to_title_into.destination")
+	Bytes_Invariants(source, "to_title_into.source")
+	return map_case_into(destination, source, ucd.TITLE_CASE, ucd.Special_Case{}, false)
+}
+
+// To_Upper_Special_Into applies language-specific uppercase mapping.
+func To_Upper_Special_Into(
+	destination Bytes, special ucd.Special_Case, source Bytes,
+) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "to_upper_special_into.count") }()
+	Bytes_Invariants(destination, "to_upper_special_into.destination")
+	ucd.Special_Case_Invariants(special, "to_upper_special_into.special")
+	Bytes_Invariants(source, "to_upper_special_into.source")
+	return map_case_into(destination, source, ucd.UPPER_CASE, special, true)
+}
+
+// To_Lower_Special_Into applies language-specific lowercase mapping.
+func To_Lower_Special_Into(
+	destination Bytes, special ucd.Special_Case, source Bytes,
+) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "to_lower_special_into.count") }()
+	Bytes_Invariants(destination, "to_lower_special_into.destination")
+	ucd.Special_Case_Invariants(special, "to_lower_special_into.special")
+	Bytes_Invariants(source, "to_lower_special_into.source")
+	return map_case_into(destination, source, ucd.LOWER_CASE, special, true)
+}
+
+// To_Title_Special_Into applies language-specific title mapping.
+func To_Title_Special_Into(
+	destination Bytes, special ucd.Special_Case, source Bytes,
+) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "to_title_special_into.count") }()
+	Bytes_Invariants(destination, "to_title_special_into.destination")
+	ucd.Special_Case_Invariants(special, "to_title_special_into.special")
+	Bytes_Invariants(source, "to_title_special_into.source")
+	return map_case_into(destination, source, ucd.TITLE_CASE, special, true)
+}
+
+// To_Valid_UTF8_Into replaces each invalid-byte run in caller storage.
+func To_Valid_UTF8_Into(
+	destination Bytes, source Bytes, replacement Bytes,
+) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "to_valid_utf8_into.count") }()
+	Bytes_Invariants(destination, "to_valid_utf8_into.destination")
+	Bytes_Invariants(source, "to_valid_utf8_into.source")
+	Bytes_Invariants(replacement, "to_valid_utf8_into.replacement")
+	aver.Always(
+		!bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)),
+		"UTF-8 destination does not overlap source.",
+	)
+	written := 0
+	invalid := false
+	for source_index := 0; source_index < len(source); {
+		character, size := Decode_Character(source[source_index:])
+		if character == REPLACEMENT_CHARACTER {
+			if size == 1 {
+				source_index++
+				if invalid {
+					continue
+				}
+				invalid = true
+				if len(replacement) > len(destination)-written {
+					panic("utf8: destination too small")
+				}
+				written += copy(destination[written:], replacement)
+				continue
+			}
+		}
+		invalid = false
+		if int(size) > len(destination)-written {
+			panic("utf8: destination too small")
+		}
+		boundary := source_index + int(size)
+		written += copy(destination[written:], source[source_index:boundary])
+		source_index = boundary
+	}
+	return Byte_Count(written)
+}
+
+// Title_Into writes legacy Unicode word-start title mapping.
+func Title_Into(destination Bytes, source Bytes) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "title_into.count") }()
+	Bytes_Invariants(destination, "title_into.destination")
+	Bytes_Invariants(source, "title_into.source")
+	aver.Always(
+		!bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)),
+		"Title destination does not overlap source.",
+	)
+	written := 0
+	previous := Decoded_Character(' ')
+	for source_index := 0; source_index < len(source); {
+		character, size := Decode_Character(source[source_index:])
+		source_index += int(size)
+		mapped := ucd.Character(character)
+		if title_separator(previous) {
+			mapped = ucd.To_Title(mapped)
+		}
+		previous = character
+		encoded_size := Character_Size(Character(mapped))
+		if int(encoded_size) > len(destination)-written {
+			panic("utf8: destination too small")
+		}
+		written += int(Encode_Character(destination[written:], Character(mapped)))
+	}
+	return Byte_Count(written)
+}
+
+// Trim_Left_Function removes leading characters satisfying predicate.
+func Trim_Left_Function(
+	source Bytes, predicate Predicate,
+) (trimmed Bytes) {
+	defer func() { Bytes_Invariants(trimmed, "trim_left_function.trimmed") }()
+	Bytes_Invariants(source, "trim_left_function.source")
+	end := trim_left_boundary(source, predicate)
+	if end == len(source) {
+		return nil
+	}
+	return source[end:]
+}
+
+// Trim_Right_Function removes trailing characters satisfying predicate.
+func Trim_Right_Function(
+	source Bytes, predicate Predicate,
+) (trimmed Bytes) {
+	defer func() { Bytes_Invariants(trimmed, "trim_right_function.trimmed") }()
+	Bytes_Invariants(source, "trim_right_function.source")
+	return source[:trim_right_boundary(source, predicate)]
+}
+
+// Trim_Function removes leading and trailing predicate matches.
+func Trim_Function(
+	source Bytes, predicate Predicate,
+) (trimmed Bytes) {
+	defer func() { Bytes_Invariants(trimmed, "trim_function.trimmed") }()
+	Bytes_Invariants(source, "trim_function.source")
+	left := trim_left_boundary(source, predicate)
+	if left == len(source) {
+		return nil
+	}
+	right := trim_right_boundary(source[left:], predicate)
+	return source[left : left+right]
+}
+
+// Trim removes leading and trailing characters from cut set.
+func Trim(source Bytes, cutset Text) (trimmed Bytes) {
+	defer func() { Bytes_Invariants(trimmed, "trim.trimmed") }()
+	Bytes_Invariants(source, "trim.source")
+	Text_Invariants(cutset, "trim.cutset")
+	return Trim_Function(source, func(character rune) (matches bool) {
+		return bool(text_contains_character(cutset, Decoded_Character(character)))
+	})
+}
+
+// Trim_Left removes leading characters from cut set.
+func Trim_Left(source Bytes, cutset Text) (trimmed Bytes) {
+	defer func() { Bytes_Invariants(trimmed, "trim_left.trimmed") }()
+	Bytes_Invariants(source, "trim_left.source")
+	Text_Invariants(cutset, "trim_left.cutset")
+	return Trim_Left_Function(source, func(character rune) (matches bool) {
+		return bool(text_contains_character(cutset, Decoded_Character(character)))
+	})
+}
+
+// Trim_Right removes trailing characters from cut set.
+func Trim_Right(source Bytes, cutset Text) (trimmed Bytes) {
+	defer func() { Bytes_Invariants(trimmed, "trim_right.trimmed") }()
+	Bytes_Invariants(source, "trim_right.source")
+	Text_Invariants(cutset, "trim_right.cutset")
+	return Trim_Right_Function(source, func(character rune) (matches bool) {
+		return bool(text_contains_character(cutset, Decoded_Character(character)))
+	})
+}
+
+// Trim_Space removes leading and trailing Unicode whitespace.
+func Trim_Space(source Bytes) (trimmed Bytes) {
+	defer func() { Bytes_Invariants(trimmed, "trim_space.trimmed") }()
+	Bytes_Invariants(source, "trim_space.source")
+	return Trim_Function(source, func(character rune) (matches bool) {
+		return bool(ucd.Is_Space(ucd.Character(character)))
+	})
+}
+
+// Runes_Into decodes source into caller character storage.
+func Runes_Into(destination Characters, source Bytes) (count Count) {
+	defer func() { Count_Invariants(count, "runes_into.count") }()
+	Characters_Invariants(destination, "runes_into.destination")
+	Bytes_Invariants(source, "runes_into.source")
+	for source_index := 0; source_index < len(source); {
+		if int(count) == len(destination) {
+			panic("utf8: destination too small")
+		}
+		character, size := Decode_Character(source[source_index:])
+		destination[int(count)] = character
+		count++
+		source_index += int(size)
+	}
+	return count
+}
+
+// Equal_Fold compares decoded characters through Unicode simple folding.
+func Equal_Fold(left Bytes, right Bytes) (equal Boolean) {
+	defer func() { Boolean_Invariants(equal, "equal_fold.equal") }()
+	Bytes_Invariants(left, "equal_fold.left")
+	Bytes_Invariants(right, "equal_fold.right")
+	left_index := 0
+	right_index := 0
+	for left_index < len(left) {
+		if right_index == len(right) {
+			return false
+		}
+		left_character, left_size := Decode_Character(left[left_index:])
+		right_character, right_size := Decode_Character(right[right_index:])
+		left_value := ucd.Character(left_character)
+		right_value := ucd.Character(right_character)
+		if left_value != right_value {
+			folded := ucd.Simple_Fold(left_value)
+			for folded != left_value && folded != right_value {
+				folded = ucd.Simple_Fold(folded)
+			}
+			if folded != right_value {
+				return false
+			}
+		}
+		left_index += int(left_size)
+		right_index += int(right_size)
+	}
+	return Boolean(right_index == len(right))
+}
+
+// Fields_Sequence yields Unicode-space-delimited source views.
+func Fields_Sequence(source Bytes, yield Yield_Function) (count Field_Count) {
+	defer func() { Field_Count_Invariants(count, "fields_sequence.count") }()
+	Bytes_Invariants(source, "fields_sequence.source")
+	return fields_sequence(source, func(character rune) (matches bool) {
+		return bool(ucd.Is_Space(ucd.Character(character)))
+	}, yield)
+}
+
+// Fields_Function_Sequence yields predicate-delimited source views.
+func Fields_Function_Sequence(
+	source Bytes, predicate Predicate, yield Yield_Function,
+) (count Field_Count) {
+	defer func() { Field_Count_Invariants(count, "fields_function_sequence.count") }()
+	Bytes_Invariants(source, "fields_function_sequence.source")
+	return fields_sequence(source, predicate, yield)
+}
+
+func fields_into(
+	destination Field_Slices, source Bytes, predicate Predicate,
+) (count Field_Count) {
+	defer func() { Field_Count_Invariants(count, "fields_internal.count") }()
+	Field_Slices_Invariants(destination, "fields_internal.destination")
+	Bytes_Invariants(source, "fields_internal.source")
+	start := BYTE_INDEX_ABSENT
+	for source_index := 0; source_index < len(source); {
+		character, size := Decode_Character(source[source_index:])
+		if predicate(rune(character)) {
+			if start >= 0 {
+				if int(count) == len(destination) {
+					panic("utf8: destination too small")
+				}
+				destination[int(count)] = source[start:source_index:source_index]
+				count++
+				start = BYTE_INDEX_ABSENT
+			}
+		} else if start == BYTE_INDEX_ABSENT {
+			start = source_index
+		}
+		source_index += int(size)
+	}
+	if start == BYTE_INDEX_ABSENT {
+		return count
+	}
+	if int(count) == len(destination) {
+		panic("utf8: destination too small")
+	}
+	destination[int(count)] = source[start:len(source):len(source)]
+	return count + 1
+}
+
+func map_case_into(
+	destination Bytes, source Bytes, mapping ucd.Case,
+	special ucd.Special_Case, use_special Boolean,
+) (count Byte_Count) {
+	defer func() { Byte_Count_Invariants(count, "map_case_internal.count") }()
+	Bytes_Invariants(destination, "map_case_internal.destination")
+	Bytes_Invariants(source, "map_case_internal.source")
+	ucd.Case_Invariants(mapping, "map_case_internal.mapping")
+	ucd.Special_Case_Invariants(special, "map_case_internal.special")
+	Boolean_Invariants(use_special, "map_case_internal.use_special")
+	aver.Always(
+		!bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)),
+		"Case destination does not overlap source.",
+	)
+	written := 0
+	for source_index := 0; source_index < len(source); {
+		character, size := Decode_Character(source[source_index:])
+		source_index += int(size)
+		mapped := ucd.To(mapping, ucd.Character(character))
+		if use_special {
+			switch mapping {
+			case ucd.UPPER_CASE:
+				mapped = ucd.Special_Case_To_Upper(
+					special, ucd.Character(character),
+				)
+			case ucd.LOWER_CASE:
+				mapped = ucd.Special_Case_To_Lower(
+					special, ucd.Character(character),
+				)
+			case ucd.TITLE_CASE:
+				mapped = ucd.Special_Case_To_Title(
+					special, ucd.Character(character),
+				)
+			}
+		}
+		encoded_size := Character_Size(Character(mapped))
+		if int(encoded_size) > len(destination)-written {
+			panic("utf8: destination too small")
+		}
+		written += int(Encode_Character(destination[written:], Character(mapped)))
+	}
+	return Byte_Count(written)
+}
+
+func trim_left_boundary(
+	source Bytes, predicate Predicate,
+) (end int) {
+	Bytes_Invariants(source, "trim_left_boundary.source")
+	for end < len(source) {
+		character, size := Decode_Character(source[end:])
+		if !predicate(rune(character)) {
+			return end
+		}
+		end += int(size)
+	}
+	return end
+}
+
+func trim_right_boundary(
+	source Bytes, predicate Predicate,
+) (end int) {
+	Bytes_Invariants(source, "trim_right_boundary.source")
+	end = len(source)
+	for end > 0 {
+		character, size := Decode_Final_Character(source[:end])
+		if !predicate(rune(character)) {
+			return end
+		}
+		end -= int(size)
+	}
+	return end
+}
+
+func fields_sequence(
+	source Bytes, predicate Predicate, yield Yield_Function,
+) (count Field_Count) {
+	defer func() { Field_Count_Invariants(count, "fields_sequence_internal.count") }()
+	Bytes_Invariants(source, "fields_sequence_internal.source")
+	start := BYTE_INDEX_ABSENT
+	for index := 0; index < len(source); {
+		character, size := Decode_Character(source[index:])
+		if predicate(rune(character)) {
+			if start >= 0 {
+				continued := yield(source[start:index:index])
+				count++
+				if !continued {
+					return count
+				}
+				start = BYTE_INDEX_ABSENT
+			}
+		} else if start == BYTE_INDEX_ABSENT {
+			start = index
+		}
+		index += int(size)
+	}
+	if start >= 0 {
+		yield(source[start:len(source):len(source)])
+		count++
+	}
+	return count
+}
+
+func text_contains_character(text Text, character Decoded_Character) (contained Boolean) {
+	defer func() { Boolean_Invariants(contained, "text_contains_character.contained") }()
+	Text_Invariants(text, "text_contains_character.text")
+	Decoded_Character_Invariants(character, "text_contains_character.character")
+	for _, text_character := range text {
+		if Decoded_Character(text_character) == character {
+			return true
+		}
+	}
+	return false
+}
+
+func title_separator(character Decoded_Character) (separator Boolean) {
+	defer func() { Boolean_Invariants(separator, "title_separator.separator") }()
+	Decoded_Character_Invariants(character, "title_separator.character")
+	if character <= 0x7F {
+		if '0' <= character {
+			if character <= '9' {
+				return false
+			}
+		}
+		if 'a' <= character {
+			if character <= 'z' {
+				return false
+			}
+		}
+		if 'A' <= character {
+			if character <= 'Z' {
+				return false
+			}
+		}
+		return Boolean(character != '_')
+	}
+	value := ucd.Character(character)
+	if ucd.Is_Letter(value) {
+		return false
+	}
+	if ucd.Is_Digit(value) {
+		return false
+	}
+	return Boolean(ucd.Is_Space(value))
 }

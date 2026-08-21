@@ -6,8 +6,10 @@ package utf8_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
+	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
@@ -602,4 +604,751 @@ func reference_is_surrogate(character rune) (yes bool) {
 		return false
 	}
 	return character < 0xe000
+}
+
+// TEXT_STORAGE_SIZE leaves room for every small transform result under test.
+const TEXT_STORAGE_SIZE = 64
+
+// TEXT_BUFFER_STORAGE_SIZE leaves room for two maximum-width encodings.
+const TEXT_BUFFER_STORAGE_SIZE = 8
+
+// Test_Text_Search keeps decoded search from drifting back into raw-byte semantics.
+func Test_Text_Search(t *testing.T) {
+	source := utf8.Bytes("a☺b-a")
+	if !utf8.Contains_Any(source, "x☺") {
+		t.Fatal("Contains_Any missed character")
+	}
+	if !utf8.Contains_Rune(source, '☺') {
+		t.Fatal("Contains_Rune missed character")
+	}
+	if !utf8.Contains_Function(source, text_is_dash) {
+		t.Fatal("Contains_Function missed predicate")
+	}
+	if utf8.Index_Rune(source, '☺') != 1 {
+		t.Fatal("Index_Rune returned wrong byte index")
+	}
+	if utf8.Index_Any(source, "☺x") != 1 {
+		t.Fatal("Index_Any returned wrong byte index")
+	}
+	if utf8.Last_Index_Any(source, "a") != 6 {
+		t.Fatal("Last_Index_Any missed final character")
+	}
+	if utf8.Index_Function(source, text_is_dash) != 5 {
+		t.Fatal("Index_Function returned wrong byte index")
+	}
+	if utf8.Last_Index_Function(source, text_is_letter_a) != 6 {
+		t.Fatal("Last_Index_Function missed final predicate match")
+	}
+	if !utf8.Equal_Fold(utf8.Bytes("Go"), utf8.Bytes("gO")) {
+		t.Fatal("Equal_Fold rejected Unicode fold")
+	}
+	if utf8.Equal_Fold(utf8.Bytes("Go"), utf8.Bytes("gone")) {
+		t.Fatal("Equal_Fold accepted unequal input")
+	}
+}
+
+// Test_Text_Fields keeps delimiter predicates attached to decoded characters.
+func Test_Text_Fields(t *testing.T) {
+	var slots [8]utf8.Bytes
+	count := utf8.Fields_Into(slots[:], utf8.Bytes(" a\tb "))
+	text_assert_slices(t, slots[:count], []string{"a", "b"})
+	count = utf8.Fields_Function_Into(
+		slots[:], utf8.Bytes("a-b--c"), text_is_dash,
+	)
+	text_assert_slices(t, slots[:count], []string{"a", "b", "c"})
+	if cap(slots[0]) != len(slots[0]) {
+		t.Fatal("Fields_Into returned unclipped view")
+	}
+}
+
+// Test_Text_Transform keeps mapping and repair at decoded UTF-8 boundaries.
+func Test_Text_Transform(t *testing.T) {
+	var storage [TEXT_STORAGE_SIZE]byte
+	count := utf8.Map_Into(storage[:], text_map_character, utf8.Bytes("abx"))
+	if string(storage[:count]) != "☺b" {
+		t.Fatal("Map_Into wrote wrong content")
+	}
+	count = utf8.To_Upper_Into(storage[:], utf8.Bytes("Go"))
+	if string(storage[:count]) != "GO" {
+		t.Fatal("To_Upper_Into wrote wrong content")
+	}
+	count = utf8.To_Lower_Into(storage[:], utf8.Bytes("Go"))
+	if string(storage[:count]) != "go" {
+		t.Fatal("To_Lower_Into wrote wrong content")
+	}
+	count = utf8.To_Title_Into(storage[:], utf8.Bytes("ǳ"))
+	if string(storage[:count]) != "ǲ" {
+		t.Fatal("To_Title_Into wrote wrong content")
+	}
+	var special ucd.Special_Case
+	ucd.Turkish_Case(&special)
+	count = utf8.To_Upper_Special_Into(storage[:], special, utf8.Bytes("i"))
+	if string(storage[:count]) != "İ" {
+		t.Fatal("To_Upper_Special_Into ignored language case")
+	}
+	count = utf8.To_Lower_Special_Into(storage[:], special, utf8.Bytes("I"))
+	if string(storage[:count]) != "ı" {
+		t.Fatal("To_Lower_Special_Into ignored language case")
+	}
+	count = utf8.To_Title_Special_Into(storage[:], special, utf8.Bytes("i"))
+	if string(storage[:count]) != "İ" {
+		t.Fatal("To_Title_Special_Into ignored language case")
+	}
+	count = utf8.To_Valid_UTF8_Into(
+		storage[:], utf8.Bytes{'a', 0xff, 0xfe, 'b'}, utf8.Bytes("?"),
+	)
+	if string(storage[:count]) != "a?b" {
+		t.Fatal("To_Valid_UTF8_Into wrote wrong repair")
+	}
+	count = utf8.Title_Into(storage[:], utf8.Bytes("go gopher"))
+	if string(storage[:count]) != "Go Gopher" {
+		t.Fatal("Title_Into wrote wrong content")
+	}
+	var characters [2]utf8.Decoded_Character
+	character_count := utf8.Runes_Into(characters[:], utf8.Bytes{'a', 0xff})
+	if character_count != 2 {
+		t.Fatal("Runes_Into returned wrong count")
+	}
+	if characters[0] != 'a' || characters[1] != utf8.REPLACEMENT_CHARACTER {
+		t.Fatal("Runes_Into wrote wrong characters")
+	}
+}
+
+// Test_Text_Trim keeps cut sets and predicates on decoded character boundaries.
+func Test_Text_Trim(t *testing.T) {
+	source := utf8.Bytes("xx abc xx")
+	if string(utf8.Trim(source, "x")) != " abc " {
+		t.Fatal("Trim returned wrong view")
+	}
+	if string(utf8.Trim_Left(source, "x")) != " abc xx" {
+		t.Fatal("Trim_Left returned wrong view")
+	}
+	if string(utf8.Trim_Right(source, "x")) != "xx abc " {
+		t.Fatal("Trim_Right returned wrong view")
+	}
+	if string(utf8.Trim_Function(utf8.Bytes("--a--"), text_is_dash)) != "a" {
+		t.Fatal("Trim_Function returned wrong view")
+	}
+	if string(utf8.Trim_Left_Function(utf8.Bytes("--a"), text_is_dash)) != "a" {
+		t.Fatal("Trim_Left_Function returned wrong view")
+	}
+	if string(utf8.Trim_Right_Function(utf8.Bytes("a--"), text_is_dash)) != "a" {
+		t.Fatal("Trim_Right_Function returned wrong view")
+	}
+	if string(utf8.Trim_Space(utf8.Bytes("\u2000 x \u2000"))) != "x" {
+		t.Fatal("Trim_Space retained Unicode whitespace")
+	}
+}
+
+// Test_Text_Iteration keeps yielded views aligned to decoded field boundaries.
+func Test_Text_Iteration(t *testing.T) {
+	var yielded [8]utf8.Bytes
+	yielded_count := 0
+	count := utf8.Fields_Sequence(
+		utf8.Bytes(" a b "),
+		func(field utf8.Bytes) (continued utf8.Boolean) {
+			yielded[yielded_count] = field
+			yielded_count++
+			return true
+		},
+	)
+	text_assert_slices(t, yielded[:count], []string{"a", "b"})
+	yielded_count = 0
+	count = utf8.Fields_Function_Sequence(
+		utf8.Bytes("a-b-c"), text_is_dash,
+		func(field utf8.Bytes) (continued utf8.Boolean) {
+			yielded[yielded_count] = field
+			yielded_count++
+			return utf8.Boolean(yielded_count < 2)
+		},
+	)
+	if count != 2 {
+		t.Fatal("Fields_Function_Sequence ignored early stop")
+	}
+	text_assert_slices(t, yielded[:count], []string{"a", "b"})
+}
+
+// Test_Buffer_Character_Operations keeps UTF-8 cursor state outside raw-byte ownership.
+func Test_Buffer_Character_Operations(t *testing.T) {
+	var storage [TEXT_BUFFER_STORAGE_SIZE]byte
+	var buffer bytes.Buffer
+	bytes.Buffer_Init(&buffer, storage[:], nil)
+	utf8.Buffer_Write_Character(&buffer, '☺')
+	character, size, found := utf8.Buffer_Read_Character(&buffer)
+	if !found {
+		t.Fatal("Buffer_Read_Character returned wrong encoding")
+	}
+	if character != '☺' {
+		t.Fatal("Buffer_Read_Character returned wrong encoding")
+	}
+	if size != 3 {
+		t.Fatal("Buffer_Read_Character returned wrong encoding")
+	}
+	utf8.Buffer_Unread_Character(&buffer)
+	character, size, found = utf8.Buffer_Read_Character(&buffer)
+	if !found || character != '☺' || size != 3 {
+		t.Fatal("Buffer_Unread_Character restored wrong boundary")
+	}
+}
+
+// Test_Reader_Character_Operations keeps grouped reads above raw Reader ownership.
+func Test_Reader_Character_Operations(t *testing.T) {
+	var reader bytes.Reader
+	bytes.Reader_Reset(&reader, bytes.Slice("☺a"))
+	character, size, found := utf8.Reader_Read_Character(&reader)
+	if !found || character != '☺' || size != 3 {
+		t.Fatal("Reader_Read_Character returned wrong encoding")
+	}
+	utf8.Reader_Unread_Character(&reader)
+	character, size, found = utf8.Reader_Read_Character(&reader)
+	if !found || character != '☺' || size != 3 {
+		t.Fatal("Reader_Unread_Character restored wrong boundary")
+	}
+}
+
+// Test_Text_Allocation protects caller-owned storage across the moved API boundary.
+func Test_Text_Allocation(t *testing.T) {
+	fixture := text_allocation_fixture{
+		Storage:     make(utf8.Bytes, 64),
+		Source:      utf8.Bytes("a-b"),
+		Field_Slots: make(utf8.Field_Slices, 4),
+		Characters:  make(utf8.Characters, 4),
+	}
+	ucd.Turkish_Case(&fixture.Special)
+	for _, one := range text_allocation_cases(&fixture) {
+		t.Run(one.Name, func(t *testing.T) {
+			testify.Zero_Allocation(t, one.Run)
+		})
+	}
+}
+
+// Test_Text_API_Domains keeps every moved contract observable in its new package.
+func Test_Text_API_Domains(_ *testing.T) {
+	maximum := make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM)
+	alternate := make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM)
+	fields := make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM)
+	field_slots := make(utf8.Field_Slices, utf8.FIELD_COUNT_MAXIMUM)
+	characters := make(utf8.Characters, utf8.CHARACTER_COUNT_MAXIMUM)
+	for index := range maximum {
+		maximum[index] = 'a'
+		fields[index] = 'a'
+		if index%2 == 1 {
+			fields[index] = ' '
+		}
+	}
+	maximum[0] = 0
+	maximum[1] = 1
+	maximum[2] = 2
+	maximum[utf8.BYTE_INDEX_MAXIMUM] = 'z'
+
+	text_cover_search_domains(maximum)
+	text_cover_transform_domains(maximum, alternate)
+	text_cover_field_domains(fields, field_slots)
+	text_cover_trim_domains(maximum)
+	text_cover_character_domains(maximum, characters)
+	text_cover_special_domains(alternate)
+	text_cover_buffer_domains(alternate)
+	text_cover_reader_domains(maximum)
+}
+
+func text_cover_search_domains(maximum utf8.Bytes) {
+	sources := [...]utf8.Bytes{nil, maximum[:1], maximum[:2], maximum[:]}
+	texts := [...]utf8.Text{"", "a", "aa", utf8.Text(string(maximum))}
+	for index, source := range sources {
+		text := texts[index]
+		utf8.Contains_Any(source, text)
+		utf8.Contains_Function(source, text_never_match)
+		utf8.Index_Any(source, text)
+		utf8.Last_Index_Any(source, text)
+		utf8.Index_Function(source, text_never_match)
+		utf8.Last_Index_Function(source, text_never_match)
+		utf8.Equal_Fold(source, source)
+	}
+	characters := [...]utf8.Character{-2147483648, -1, 0, 1, 2, 2147483647}
+	for _, character := range characters {
+		utf8.Contains_Rune(nil, character)
+		utf8.Index_Rune(nil, character)
+	}
+	utf8.Contains_Rune(maximum[:1], 0)
+	utf8.Contains_Rune(maximum[:2], 0)
+	utf8.Index_Rune(maximum[:1], 0)
+	utf8.Index_Rune(maximum[:2], 0)
+	utf8.Contains_Any(maximum, "z")
+	utf8.Contains_Rune(maximum, 'z')
+	utf8.Contains_Function(maximum, text_is_z)
+	utf8.Index_Rune(maximum, 0)
+	utf8.Index_Rune(maximum, 1)
+	utf8.Index_Rune(maximum, 2)
+	utf8.Index_Rune(maximum, 'z')
+	utf8.Index_Any(maximum, "\x00")
+	utf8.Index_Any(maximum, "\x01")
+	utf8.Index_Any(maximum, "\x02")
+	utf8.Index_Any(maximum, "z")
+	utf8.Last_Index_Any(maximum, "z")
+	utf8.Last_Index_Any(maximum, "\x00")
+	utf8.Last_Index_Any(maximum, "\x01")
+	utf8.Last_Index_Any(maximum, "\x02")
+	utf8.Index_Function(maximum, text_is_zero)
+	utf8.Index_Function(maximum, text_is_one)
+	utf8.Index_Function(maximum, text_is_two)
+	utf8.Index_Function(maximum, text_is_z)
+	utf8.Last_Index_Function(maximum, text_is_z)
+	utf8.Last_Index_Function(maximum, text_is_zero)
+	utf8.Last_Index_Function(maximum, text_is_one)
+	utf8.Last_Index_Function(maximum, text_is_two)
+	utf8.Equal_Fold(maximum[:1], maximum[1:2])
+	var maximum_character [utf8.UTF_MAXIMUM]byte
+	encoded_size := utf8.Encode_Character(maximum_character[:], utf8.RUNE_MAX)
+	utf8.Index_Any(
+		maximum_character[:encoded_size],
+		utf8.Text(string(maximum_character[:encoded_size])),
+	)
+	var title_source [utf8.UTF_MAXIMUM + 1]byte
+	copy(title_source[:], maximum_character[:encoded_size])
+	title_source[encoded_size] = 'a'
+	var title_destination [utf8.UTF_MAXIMUM + 1]byte
+	utf8.Title_Into(title_destination[:], title_source[:])
+}
+
+func text_cover_transform_domains(maximum utf8.Bytes, alternate utf8.Bytes) {
+	special := ucd.Special_Case{}
+	ucd.Turkish_Case(&special)
+	sizes := [...]int{0, 1, 2, utf8.SEQUENCE_SIZE_MAXIMUM}
+	for _, size := range sizes {
+		source := maximum[:size]
+		destination := alternate[:size]
+		utf8.Map_Into(destination, text_identity, source)
+		utf8.To_Upper_Into(destination, source)
+		utf8.To_Lower_Into(destination, source)
+		utf8.To_Title_Into(destination, source)
+		utf8.To_Upper_Special_Into(destination, special, source)
+		utf8.To_Lower_Special_Into(destination, special, source)
+		utf8.To_Title_Special_Into(destination, special, source)
+		utf8.To_Valid_UTF8_Into(destination, source, nil)
+		utf8.Title_Into(destination, source)
+	}
+	replacements := [...]utf8.Bytes{
+		nil, maximum[:1], maximum[:2], maximum[:],
+	}
+	for _, replacement := range replacements {
+		utf8.To_Valid_UTF8_Into(nil, nil, replacement)
+	}
+	utf8.Map_Into(alternate[:0], text_delete, maximum[:1])
+}
+
+func text_cover_field_domains(fields utf8.Bytes, slots utf8.Field_Slices) {
+	destinations := [...]utf8.Field_Slices{nil, slots[:1], slots[:2], slots[:]}
+	for _, destination := range destinations {
+		utf8.Fields_Into(destination, nil)
+		utf8.Fields_Function_Into(destination, nil, text_is_space)
+	}
+	sources := [...]utf8.Bytes{nil, fields[:1], fields[:2], fields[:3], fields[:]}
+	for _, source := range sources {
+		utf8.Fields_Into(slots, source)
+		utf8.Fields_Function_Into(slots, source, text_is_space)
+		utf8.Fields_Sequence(source, text_accept)
+		utf8.Fields_Function_Sequence(source, text_is_space, text_accept)
+	}
+}
+
+func text_cover_trim_domains(maximum utf8.Bytes) {
+	sources := [...]utf8.Bytes{nil, maximum[:1], maximum[:2], maximum[:]}
+	texts := [...]utf8.Text{"", "a", "aa", utf8.Text(string(maximum))}
+	for index, source := range sources {
+		utf8.Trim_Left_Function(source, text_never_match)
+		utf8.Trim_Right_Function(source, text_never_match)
+		utf8.Trim_Function(source, text_never_match)
+		utf8.Trim(source, texts[index])
+		utf8.Trim_Left(source, texts[index])
+		utf8.Trim_Right(source, texts[index])
+		utf8.Trim_Space(source)
+	}
+	utf8.Trim(maximum, "")
+	utf8.Trim_Left(maximum, "")
+	utf8.Trim_Right(maximum, "")
+}
+
+func text_cover_character_domains(
+	maximum utf8.Bytes, characters utf8.Characters,
+) {
+	destinations := [...]utf8.Characters{
+		nil, characters[:1], characters[:2], characters[:],
+	}
+	for _, destination := range destinations {
+		utf8.Runes_Into(destination, nil)
+	}
+	sources := [...]utf8.Bytes{nil, maximum[:1], maximum[:2], maximum[:]}
+	for _, source := range sources {
+		utf8.Runes_Into(characters, source)
+	}
+}
+
+func text_cover_special_domains(destination utf8.Bytes) {
+	counts := [...]ucd.Special_Case_Count{0, 1, 2, 4, 4, 4}
+	characters := [...]ucd.Character{0, 1, 2, 0, 0, ucd.RUNE_MAX}
+	deltas := [...]int32{
+		ucd.CASE_DELTA_MINIMUM, -1, 0, 1, 2, ucd.CASE_DELTA_MAXIMUM,
+	}
+	for index, character := range characters {
+		delta := deltas[index]
+		rule := ucd.Case_Range{
+			Minimum: ucd.Case_Range_Minimum(character),
+			Maximum: ucd.Case_Range_Maximum(character),
+			Deltas: ucd.Case_Delta{
+				Upper: ucd.Upper_Case_Delta(delta),
+				Lower: ucd.Lower_Case_Delta(delta),
+				Title: ucd.Title_Case_Delta(delta),
+			},
+		}
+		special := ucd.Special_Case_Of(
+			counts[index], rule, rule, rule, rule,
+		)
+		utf8.To_Upper_Special_Into(destination[:0], special, nil)
+		utf8.To_Lower_Special_Into(destination[:0], special, nil)
+		utf8.To_Title_Special_Into(destination[:0], special, nil)
+	}
+}
+
+func text_cover_buffer_domains(storage utf8.Bytes) {
+	states := [...]bytes.Buffer{
+		{Content: bytes.Slice(storage[:0:0]), Position: 0, Operation: -1},
+		{Content: bytes.Slice(storage[:1:1]), Position: 1, Operation: 0},
+		{Content: bytes.Slice(storage[:2:2]), Position: 2, Operation: 1},
+		{Content: bytes.Slice(storage[:2:2]), Position: 2, Operation: 2},
+		{Content: bytes.Slice(storage[:3:3]), Position: 3, Operation: 3},
+		{
+			Content:   bytes.Slice(storage[:]),
+			Position:  bytes.BOUNDARY_INDEX_MAXIMUM,
+			Operation: bytes.READ_OPERATION_MAXIMUM,
+		},
+	}
+	for _, state := range states {
+		candidate := state
+		text_panic(func() { utf8.Buffer_Write_Character(&candidate, 0) })
+		candidate = state
+		utf8.Buffer_Read_Character(&candidate)
+		candidate = state
+		text_panic(func() { utf8.Buffer_Unread_Character(&candidate) })
+	}
+	characters := [...]utf8.Character{'a', 0x80, 0x800, 0x10000}
+	for _, character := range characters {
+		var buffer bytes.Buffer
+		bytes.Buffer_Init(&buffer, bytes.Slice(storage), nil)
+		utf8.Buffer_Write_Character(&buffer, character)
+	}
+	character_domain := [...]utf8.Character{-2147483648, -1, 0, 1, 2, 2147483647}
+	for _, character := range character_domain {
+		var buffer bytes.Buffer
+		bytes.Buffer_Init(&buffer, bytes.Slice(storage), nil)
+		utf8.Buffer_Write_Character(&buffer, character)
+	}
+	encodings := [...]utf8.Bytes{
+		nil, {0}, {1}, {2}, {0xc2, 0x80}, {0xe0, 0xa0, 0x80},
+		{0xf4, 0x8f, 0xbf, 0xbf},
+	}
+	for _, encoding := range encodings {
+		var buffer bytes.Buffer
+		bytes.Buffer_Init(
+			&buffer, bytes.Slice(storage), bytes.Slice(encoding),
+		)
+		utf8.Buffer_Read_Character(&buffer)
+	}
+}
+
+func text_cover_reader_domains(source utf8.Bytes) {
+	states := [...]bytes.Reader{
+		{Source: nil, Position: 0, Previous: -1},
+		{Source: bytes.Slice(source[:1]), Position: 1, Previous: 0},
+		{Source: bytes.Slice(source[:2]), Position: 2, Previous: 1},
+		{Source: bytes.Slice(source[:3]), Position: 3, Previous: 2},
+		{
+			Source:   bytes.Slice(source[:]),
+			Position: bytes.Reader_Position(bytes.READER_POSITION_MAXIMUM),
+			Previous: bytes.INDEX_MAXIMUM,
+		},
+	}
+	for _, state := range states {
+		candidate := state
+		utf8.Reader_Read_Character(&candidate)
+		candidate = state
+		text_panic(func() { utf8.Reader_Unread_Character(&candidate) })
+	}
+	encodings := [...]utf8.Bytes{
+		nil, {0}, {1}, {2}, {0xc2, 0x80}, {0xe0, 0xa0, 0x80},
+		{0xf4, 0x8f, 0xbf, 0xbf},
+	}
+	for _, encoding := range encodings {
+		reader := bytes.Reader{Source: bytes.Slice(encoding), Previous: -1}
+		utf8.Reader_Read_Character(&reader)
+	}
+}
+
+func text_never_match(_ rune) (matches bool) {
+	return false
+}
+
+func text_is_zero(character rune) (matches bool) {
+	return character == 0
+}
+
+func text_is_one(character rune) (matches bool) {
+	return character == 1
+}
+
+func text_is_two(character rune) (matches bool) {
+	return character == 2
+}
+
+func text_is_z(character rune) (matches bool) {
+	return character == 'z'
+}
+
+func text_is_space(character rune) (matches bool) {
+	return character == ' '
+}
+
+func text_is_dash(character rune) (matches bool) {
+	return character == '-'
+}
+
+func text_is_letter_a(character rune) (matches bool) {
+	return character == 'a'
+}
+
+func text_map_character(character rune) (mapped rune) {
+	if character == 'x' {
+		return -1
+	}
+	if character == 'a' {
+		return '☺'
+	}
+	return character
+}
+
+func text_identity(character rune) (mapped rune) {
+	return character
+}
+
+func text_delete(_ rune) (mapped rune) {
+	return -1
+}
+
+func text_accept(_ utf8.Bytes) (continued utf8.Boolean) {
+	return true
+}
+
+func text_panic(action func()) {
+	defer func() { recover() }()
+	action()
+}
+
+func text_assert_slices(t *testing.T, got []utf8.Bytes, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("Slices = %q, want %q", got, want)
+	}
+	for index := range got {
+		if string(got[index]) != want[index] {
+			t.Fatalf("Slices = %q, want %q", got, want)
+		}
+	}
+}
+
+type text_allocation_case struct {
+	Name string
+	Run  func()
+}
+
+type text_allocation_fixture struct {
+	Storage           utf8.Bytes
+	Source            utf8.Bytes
+	Field_Slots       utf8.Field_Slices
+	Characters        utf8.Characters
+	Buffer            bytes.Buffer
+	Reader            bytes.Reader
+	Special           ucd.Special_Case
+	Bytes             utf8.Bytes
+	Boolean           utf8.Boolean
+	Byte_Index        utf8.Byte_Index
+	Byte_Count        utf8.Byte_Count
+	Field_Count       utf8.Field_Count
+	Count             utf8.Count
+	Decoded_Character utf8.Decoded_Character
+	Decoded_Size      utf8.Decoded_Size
+}
+
+func text_allocation_cases(
+	fixture *text_allocation_fixture,
+) (cases []text_allocation_case) {
+	cases = append(cases, text_cursor_allocation_cases(fixture)...)
+	cases = append(cases, text_search_allocation_cases(fixture)...)
+	cases = append(cases, text_transform_allocation_cases(fixture)...)
+	cases = append(cases, text_trim_allocation_cases(fixture)...)
+	return cases
+}
+
+func text_cursor_allocation_cases(
+	fixture *text_allocation_fixture,
+) (cases []text_allocation_case) {
+	return []text_allocation_case{
+		{Name: "Buffer_Write_Character", Run: func() {
+			bytes.Buffer_Init(
+				&fixture.Buffer, bytes.Slice(fixture.Storage), nil,
+			)
+			fixture.Byte_Count = utf8.Byte_Count(
+				utf8.Buffer_Write_Character(&fixture.Buffer, 'a'),
+			)
+		}},
+		{Name: "Buffer_Read_Character", Run: func() {
+			bytes.Buffer_Init(
+				&fixture.Buffer, bytes.Slice(fixture.Storage),
+				bytes.Slice(fixture.Source),
+			)
+			fixture.Decoded_Character, fixture.Decoded_Size, fixture.Boolean =
+				utf8.Buffer_Read_Character(&fixture.Buffer)
+		}},
+		{Name: "Buffer_Unread_Character", Run: func() {
+			bytes.Buffer_Init(
+				&fixture.Buffer, bytes.Slice(fixture.Storage),
+				bytes.Slice(fixture.Source),
+			)
+			utf8.Buffer_Read_Character(&fixture.Buffer)
+			utf8.Buffer_Unread_Character(&fixture.Buffer)
+		}},
+		{Name: "Reader_Read_Character", Run: func() {
+			bytes.Reader_Reset(&fixture.Reader, bytes.Slice(fixture.Source))
+			fixture.Decoded_Character, fixture.Decoded_Size, fixture.Boolean =
+				utf8.Reader_Read_Character(&fixture.Reader)
+		}},
+		{Name: "Reader_Unread_Character", Run: func() {
+			bytes.Reader_Reset(&fixture.Reader, bytes.Slice(fixture.Source))
+			utf8.Reader_Read_Character(&fixture.Reader)
+			utf8.Reader_Unread_Character(&fixture.Reader)
+		}},
+	}
+}
+
+func text_search_allocation_cases(
+	fixture *text_allocation_fixture,
+) (cases []text_allocation_case) {
+	return []text_allocation_case{
+		{Name: "Contains_Any", Run: func() {
+			fixture.Boolean = utf8.Contains_Any(fixture.Source, "a")
+		}},
+		{Name: "Contains_Rune", Run: func() {
+			fixture.Boolean = utf8.Contains_Rune(fixture.Source, 'a')
+		}},
+		{Name: "Contains_Function", Run: func() {
+			fixture.Boolean = utf8.Contains_Function(fixture.Source, text_is_space)
+		}},
+		{Name: "Index_Rune", Run: func() {
+			fixture.Byte_Index = utf8.Index_Rune(fixture.Source, 'a')
+		}},
+		{Name: "Index_Any", Run: func() {
+			fixture.Byte_Index = utf8.Index_Any(fixture.Source, "a")
+		}},
+		{Name: "Last_Index_Any", Run: func() {
+			fixture.Byte_Index = utf8.Last_Index_Any(fixture.Source, "a")
+		}},
+		{Name: "Index_Function", Run: func() {
+			fixture.Byte_Index = utf8.Index_Function(fixture.Source, text_is_space)
+		}},
+		{Name: "Last_Index_Function", Run: func() {
+			fixture.Byte_Index = utf8.Last_Index_Function(fixture.Source, text_is_space)
+		}},
+		{Name: "Fields_Into", Run: func() {
+			fixture.Field_Count = utf8.Fields_Into(fixture.Field_Slots, fixture.Source)
+		}},
+		{Name: "Fields_Function_Into", Run: func() {
+			fixture.Field_Count = utf8.Fields_Function_Into(
+				fixture.Field_Slots, fixture.Source, text_is_space,
+			)
+		}},
+	}
+}
+
+func text_transform_allocation_cases(
+	fixture *text_allocation_fixture,
+) (cases []text_allocation_case) {
+	return []text_allocation_case{
+		{Name: "Map_Into", Run: func() {
+			fixture.Byte_Count = utf8.Map_Into(
+				fixture.Storage, text_identity, fixture.Source,
+			)
+		}},
+		{Name: "To_Upper_Into", Run: func() {
+			fixture.Byte_Count = utf8.To_Upper_Into(fixture.Storage, fixture.Source)
+		}},
+		{Name: "To_Lower_Into", Run: func() {
+			fixture.Byte_Count = utf8.To_Lower_Into(fixture.Storage, fixture.Source)
+		}},
+		{Name: "To_Title_Into", Run: func() {
+			fixture.Byte_Count = utf8.To_Title_Into(fixture.Storage, fixture.Source)
+		}},
+		{Name: "To_Upper_Special_Into", Run: func() {
+			fixture.Byte_Count = utf8.To_Upper_Special_Into(
+				fixture.Storage, fixture.Special, fixture.Source,
+			)
+		}},
+		{Name: "To_Lower_Special_Into", Run: func() {
+			fixture.Byte_Count = utf8.To_Lower_Special_Into(
+				fixture.Storage, fixture.Special, fixture.Source,
+			)
+		}},
+		{Name: "To_Title_Special_Into", Run: func() {
+			fixture.Byte_Count = utf8.To_Title_Special_Into(
+				fixture.Storage, fixture.Special, fixture.Source,
+			)
+		}},
+		{Name: "To_Valid_UTF8_Into", Run: func() {
+			fixture.Byte_Count = utf8.To_Valid_UTF8_Into(
+				fixture.Storage, fixture.Source, utf8.Bytes("?"),
+			)
+		}},
+		{Name: "Title_Into", Run: func() {
+			fixture.Byte_Count = utf8.Title_Into(fixture.Storage, fixture.Source)
+		}},
+	}
+}
+
+func text_trim_allocation_cases(
+	fixture *text_allocation_fixture,
+) (cases []text_allocation_case) {
+	return []text_allocation_case{
+		{Name: "Trim_Left_Function", Run: func() {
+			fixture.Bytes = utf8.Trim_Left_Function(fixture.Source, text_is_space)
+		}},
+		{Name: "Trim_Right_Function", Run: func() {
+			fixture.Bytes = utf8.Trim_Right_Function(fixture.Source, text_is_space)
+		}},
+		{Name: "Trim_Function", Run: func() {
+			fixture.Bytes = utf8.Trim_Function(fixture.Source, text_is_space)
+		}},
+		{Name: "Trim", Run: func() {
+			fixture.Bytes = utf8.Trim(fixture.Source, "a")
+		}},
+		{Name: "Trim_Left", Run: func() {
+			fixture.Bytes = utf8.Trim_Left(fixture.Source, "a")
+		}},
+		{Name: "Trim_Right", Run: func() {
+			fixture.Bytes = utf8.Trim_Right(fixture.Source, "a")
+		}},
+		{Name: "Trim_Space", Run: func() {
+			fixture.Bytes = utf8.Trim_Space(fixture.Source)
+		}},
+		{Name: "Runes_Into", Run: func() {
+			fixture.Count = utf8.Runes_Into(fixture.Characters, fixture.Source)
+		}},
+		{Name: "Equal_Fold", Run: func() {
+			fixture.Boolean = utf8.Equal_Fold(fixture.Source, fixture.Source)
+		}},
+		{Name: "Fields_Sequence", Run: func() {
+			fixture.Field_Count = utf8.Fields_Sequence(fixture.Source, text_accept)
+		}},
+		{Name: "Fields_Function_Sequence", Run: func() {
+			fixture.Field_Count = utf8.Fields_Function_Sequence(
+				fixture.Source, text_is_space, text_accept,
+			)
+		}},
+	}
 }
