@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/os"
 	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/slices"
@@ -740,4 +741,260 @@ func descriptor_write(descriptor Descriptor, content File_Content) (err error) {
 		written += count
 	}
 	return nil
+}
+
+// MACHINE_VALUE_ABSENT is the zero a host fact reads when the host does not expose it.
+const MACHINE_VALUE_ABSENT = 0
+
+// PROCESSOR_CORE_COUNT_MAXIMUM is past the core count of any host this repository targets.
+const PROCESSOR_CORE_COUNT_MAXIMUM = 1 << 16
+
+// PROCESSOR_FREQUENCY_HERTZ_MAXIMUM is past any processor clock.
+const PROCESSOR_FREQUENCY_HERTZ_MAXIMUM = bits.TEBIBYTE_BYTES
+
+// CACHE_BYTES_MAXIMUM is past any processor cache.
+const CACHE_BYTES_MAXIMUM = bits.TEBIBYTE_BYTES
+
+// MEMORY_BYTES_MAXIMUM is past the physical memory any host installs.
+const MEMORY_BYTES_MAXIMUM = bits.EXBIBYTE_BYTES
+
+// STORAGE_BYTES_MAXIMUM is past any filesystem capacity statfs reports.
+const STORAGE_BYTES_MAXIMUM = bits.EXBIBYTE_BYTES
+
+// Processor_Model is the processor's marketing name.
+type Processor_Model string
+
+// Processor_Model_Invariants bounds the text.
+func Processor_Model_Invariants(value Processor_Model, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Processor_Architecture is the instruction set this binary was built for.
+type Processor_Architecture string
+
+// Processor_Architecture_Invariants bounds the text.
+func Processor_Architecture_Invariants(value Processor_Architecture, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Physical_Core_Count is the processor cores, not counting hardware threads.
+type Physical_Core_Count int
+
+// Physical_Core_Count_Invariants bounds the count; zero is a host that does not expose it.
+func Physical_Core_Count_Invariants(value Physical_Core_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), MACHINE_VALUE_ABSENT, PROCESSOR_CORE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Logical_Core_Count is the hardware threads the scheduler places work on.
+type Logical_Core_Count int
+
+// Logical_Core_Count_Invariants bounds the count; zero is a host that does not expose it.
+func Logical_Core_Count_Invariants(value Logical_Core_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), MACHINE_VALUE_ABSENT, PROCESSOR_CORE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Performance_Core_Count is the high-performance cores of a heterogeneous processor.
+type Performance_Core_Count int
+
+// Performance_Core_Count_Invariants bounds the count; zero is a host that does not expose it.
+func Performance_Core_Count_Invariants(value Performance_Core_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), MACHINE_VALUE_ABSENT, PROCESSOR_CORE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Efficiency_Core_Count is the efficiency cores of a heterogeneous processor.
+type Efficiency_Core_Count int
+
+// Efficiency_Core_Count_Invariants bounds the count; zero is a host that does not expose it.
+func Efficiency_Core_Count_Invariants(value Efficiency_Core_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), MACHINE_VALUE_ABSENT, PROCESSOR_CORE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Processor_Frequency is the fastest clock the processor reaches, in hertz.
+type Processor_Frequency uint64
+
+// Processor_Frequency_Invariants bounds the value; zero is a host that does not expose it.
+func Processor_Frequency_Invariants(value Processor_Frequency, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), MACHINE_VALUE_ABSENT, PROCESSOR_FREQUENCY_HERTZ_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Level_1_Cache_Size is the first-level data cache of one core, in bytes.
+type Level_1_Cache_Size uint64
+
+// Level_1_Cache_Size_Invariants bounds the value; zero is a host that does not expose it.
+func Level_1_Cache_Size_Invariants(value Level_1_Cache_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), MACHINE_VALUE_ABSENT, CACHE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Level_2_Cache_Size is the second-level cache, in bytes.
+type Level_2_Cache_Size uint64
+
+// Level_2_Cache_Size_Invariants bounds the value; zero is a host that does not expose it.
+func Level_2_Cache_Size_Invariants(value Level_2_Cache_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), MACHINE_VALUE_ABSENT, CACHE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Level_3_Cache_Size is the third-level cache, in bytes.
+type Level_3_Cache_Size uint64
+
+// Level_3_Cache_Size_Invariants bounds the value; zero is a host that does not expose it.
+func Level_3_Cache_Size_Invariants(value Level_3_Cache_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), MACHINE_VALUE_ABSENT, CACHE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Physical_Memory_Size is the installed physical memory, in bytes.
+type Physical_Memory_Size uint64
+
+// Physical_Memory_Size_Invariants bounds the value; zero is a host that does not expose it.
+func Physical_Memory_Size_Invariants(value Physical_Memory_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), MACHINE_VALUE_ABSENT, MEMORY_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Storage_Size is the capacity of the filesystem holding the root directory, in bytes.
+type Storage_Size uint64
+
+// Storage_Size_Invariants bounds the value; zero is a host that does not expose it.
+func Storage_Size_Invariants(value Storage_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), MACHINE_VALUE_ABSENT, STORAGE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// Operating_System_Name is the system's product name.
+type Operating_System_Name string
+
+// Operating_System_Name_Invariants bounds the text.
+func Operating_System_Name_Invariants(value Operating_System_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Operating_System_Version is the system's product version.
+type Operating_System_Version string
+
+// Operating_System_Version_Invariants bounds the text.
+func Operating_System_Version_Invariants(value Operating_System_Version, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Kernel_Version is the kernel's name and release.
+type Kernel_Version string
+
+// Kernel_Version_Invariants bounds the text.
+func Kernel_Version_Invariants(value Kernel_Version, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Machine describes the host hardware and the system it runs. A field the host does not expose
+// is zero, never an error: a report about a machine stays useful when one fact is missing.
+type Machine struct {
+	// Processor_Model is the processor's marketing name.
+	Processor_Model Processor_Model
+	// Processor_Architecture is the instruction set this binary was built for.
+	Processor_Architecture Processor_Architecture
+	// Physical_Core_Count is the processor cores, not counting hardware threads.
+	Physical_Core_Count Physical_Core_Count
+	// Logical_Core_Count is the hardware threads the scheduler places work on.
+	Logical_Core_Count Logical_Core_Count
+	// Performance_Core_Count is the high-performance cores of a heterogeneous processor.
+	Performance_Core_Count Performance_Core_Count
+	// Efficiency_Core_Count is the efficiency cores of a heterogeneous processor.
+	Efficiency_Core_Count Efficiency_Core_Count
+	// Processor_Frequency is the fastest clock the processor reaches, in hertz.
+	Processor_Frequency Processor_Frequency
+	// Level_1_Cache_Size is the first-level data cache of one core, in bytes.
+	Level_1_Cache_Size Level_1_Cache_Size
+	// Level_2_Cache_Size is the second-level cache, in bytes.
+	Level_2_Cache_Size Level_2_Cache_Size
+	// Level_3_Cache_Size is the third-level cache, in bytes.
+	Level_3_Cache_Size Level_3_Cache_Size
+	// Physical_Memory_Size is the installed physical memory, in bytes.
+	Physical_Memory_Size Physical_Memory_Size
+	// Storage_Size is the capacity of the filesystem holding the root directory, in bytes.
+	Storage_Size Storage_Size
+	// Operating_System_Name is the system's product name.
+	Operating_System_Name Operating_System_Name
+	// Operating_System_Version is the system's product version.
+	Operating_System_Version Operating_System_Version
+	// Kernel_Version is the kernel's name and release.
+	Kernel_Version Kernel_Version
+}
+
+// Machine_Invariants bounds every host fact.
+func Machine_Invariants(value Machine, namespace aver.Namespace) {
+	Processor_Model_Invariants(value.Processor_Model, namespace)
+	Processor_Architecture_Invariants(value.Processor_Architecture, namespace)
+	Physical_Core_Count_Invariants(value.Physical_Core_Count, namespace)
+	Logical_Core_Count_Invariants(value.Logical_Core_Count, namespace)
+	Performance_Core_Count_Invariants(value.Performance_Core_Count, namespace)
+	Efficiency_Core_Count_Invariants(value.Efficiency_Core_Count, namespace)
+	Processor_Frequency_Invariants(value.Processor_Frequency, namespace)
+	Level_1_Cache_Size_Invariants(value.Level_1_Cache_Size, namespace)
+	Level_2_Cache_Size_Invariants(value.Level_2_Cache_Size, namespace)
+	Level_3_Cache_Size_Invariants(value.Level_3_Cache_Size, namespace)
+	Physical_Memory_Size_Invariants(value.Physical_Memory_Size, namespace)
+	Storage_Size_Invariants(value.Storage_Size, namespace)
+	Operating_System_Name_Invariants(value.Operating_System_Name, namespace)
+	Operating_System_Version_Invariants(value.Operating_System_Version, namespace)
+	Kernel_Version_Invariants(value.Kernel_Version, namespace)
+}
+
+// Report the capacity of the filesystem holding the root directory, or zero when statfs fails.
+func machine_storage() (size Storage_Size) {
+	defer func() { Storage_Size_Invariants(size, "machine_storage.size") }()
+	facts := syscall.Statfs_t{}
+	if syscall.Statfs("/", &facts) != nil {
+		return 0
+	}
+	return Storage_Size(uint64(facts.Bsize) * facts.Blocks)
+}
+
+// Terminal reports whether a descriptor is a terminal.
+type Terminal bool
+
+// Terminal_Invariants witnesses both answers.
+func Terminal_Invariants(value Terminal, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "A descriptor is a terminal.").
+		Ensure()
+}
+
+// Descriptor_Terminal reports whether descriptor is a character device, the kind a terminal is.
+// A descriptor fstat cannot describe is not a terminal.
+func Descriptor_Terminal(descriptor Descriptor) (terminal Terminal) {
+	defer func() { Terminal_Invariants(terminal, "Descriptor_Terminal.terminal") }()
+	Descriptor_Invariants(descriptor, "Descriptor_Terminal.descriptor")
+	facts := syscall.Stat_t{}
+	if syscall.Fstat(int(descriptor), &facts) != nil {
+		return false
+	}
+	return uint32(facts.Mode)&syscall.S_IFMT == syscall.S_IFCHR
 }

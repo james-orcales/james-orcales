@@ -422,3 +422,34 @@ func Test_File_Read_Absent(t *testing.T) {
 func Test_Standard_Error_Write(t *testing.T) {
 	testify.No_Error(t, os.Standard_Error_Write(os.File_Content("os/default: stderr write\n")))
 }
+
+// Test_Machine_Read verifies the host describes itself. Values differ per machine, thus this checks
+// that every field a supported host exposes is present, not what it holds.
+func Test_Machine_Read(t *testing.T) {
+	machine := os.Machine_Read()
+	testify.Not_Empty(t, machine.Processor_Architecture)
+	testify.Positive(t, machine.Physical_Core_Count)
+	testify.Positive(t, machine.Logical_Core_Count)
+	testify.True(t, int(machine.Physical_Core_Count) <= int(machine.Logical_Core_Count))
+	testify.Positive(t, machine.Physical_Memory_Size)
+	testify.Positive(t, machine.Storage_Size)
+	testify.Not_Empty(t, machine.Operating_System_Name)
+	testify.Not_Empty(t, machine.Kernel_Version)
+	if machine.Operating_System_Name == "macOS" {
+		testify.Not_Empty(t, machine.Processor_Model)
+		testify.Not_Empty(t, machine.Operating_System_Version)
+		testify.Positive(t, machine.Level_1_Cache_Size)
+	}
+}
+
+// PIPE_END_COUNT is a pipe's read end and write end.
+const PIPE_END_COUNT = 2
+
+// Test_Descriptor_Terminal verifies a pipe end is not a terminal.
+func Test_Descriptor_Terminal(t *testing.T) {
+	var ends [PIPE_END_COUNT]int
+	testify.No_Error(t, syscall.Pipe(ends[:]))
+	defer syscall.Close(ends[0])
+	defer syscall.Close(ends[1])
+	testify.False(t, bool(os.Descriptor_Terminal(os.Descriptor(ends[1]))))
+}
