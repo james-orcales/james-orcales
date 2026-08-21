@@ -5,7 +5,6 @@ package flatjson
 import (
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 
 	"local/james-orcales/shared/invariant/default"
@@ -48,6 +47,12 @@ const MARSHAL_TEXT_NAME = "MarshalText"
 
 // IMPOSSIBLE_DATA_SIZE separates errors from the smallest valid JSON document.
 const IMPOSSIBLE_DATA_SIZE = 1
+
+// ERR_SHORT_WRITE distinguishes silent partial acceptance from an ordinary writer error.
+var ERR_SHORT_WRITE = errors.New("flatjson: short write")
+
+// Write keeps blocking ownership at the caller's composition boundary.
+type Write func([]byte) (written int, err error)
 
 // Data is either empty on error or one complete bounded JSON document.
 type Data []byte
@@ -229,17 +234,17 @@ func Marshal(value any) (data Data, err error) {
 }
 
 // Marshal_Write keeps writer failure separate from reflection failure.
-func Marshal_Write(writer io.Writer, value any) (err error) {
+func Marshal_Write(write Write, value any) (err error) {
 	data, marshal_err := Marshal(value)
 	if marshal_err != nil {
 		return marshal_err
 	}
-	written, write_err := writer.Write(data)
+	written, write_err := write(data)
 	if write_err != nil {
 		return write_err
 	}
 	if written != len(data) {
-		return io.ErrShortWrite
+		return ERR_SHORT_WRITE
 	}
 	return nil
 }

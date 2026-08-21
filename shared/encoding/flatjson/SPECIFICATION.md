@@ -50,4 +50,4 @@ so flat output never silently drops a field.
 
 # Stream Write Encodes To Writer
 
-Marshal_Write encodes the value and writes the flat JSON to an io.Writer.
+Marshal_Write encodes the value and writes the flat JSON to a Writer.

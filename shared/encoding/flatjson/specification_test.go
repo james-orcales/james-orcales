@@ -212,7 +212,7 @@ func Test_Colliding_Keys_Are_Rejected(t *testing.T) {
 func Test_Stream_Write_Encodes_To_Writer(t *testing.T) {
 	source := outer{Name: "bob", Address: inner{City: "nyc", Zip: 1}}
 	buffer := &memory_writer{}
-	if err := flatjson.Marshal_Write(buffer, source); err != nil {
+	if err := flatjson.Marshal_Write(buffer.Write, source); err != nil {
 		t.Fatal(err)
 	}
 	want := `{"name":"bob","addr_city":"nyc","addr_zip":1}`
