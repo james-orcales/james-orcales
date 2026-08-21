@@ -1140,11 +1140,11 @@ func main() {
 
 import (
 	"fmt"
-	"os"
+	"time"
 )
 
 func main() {
-	fmt.Println(os.Args)
+	fmt.Println(time.Now())
 }
 `,
 			},
@@ -4717,7 +4717,7 @@ func Test_Unbounded_Read(t *testing.T) {
 		{
 			Name: "os.ReadFile flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"os\"\n" +
+				"shared/simulation/os/test.go": "package os\nimport \"os\"\n" +
 					"func f() { os.ReadFile(\"path\") }\n",
 			},
 			Want_Diag: "API \"os.ReadFile\" is unbounded",
@@ -4725,7 +4725,7 @@ func Test_Unbounded_Read(t *testing.T) {
 		{
 			Name: "os.ReadDir flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"os\"\n" +
+				"shared/simulation/os/test.go": "package os\nimport \"os\"\n" +
 					"func f() { os.ReadDir(\"path\") }\n",
 			},
 			Want_Diag: "API \"os.ReadDir\" is unbounded",

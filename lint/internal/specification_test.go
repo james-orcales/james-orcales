@@ -580,6 +580,7 @@ func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
 	if !specification_flags(t, generated_source, "Banned import") {
 		t.Fatal("generated source must be flagged")
 	}
+	specification_os_import_boundary(t)
 }
 
 // Test_Source_And_Test_Bans_Import_Aliases reserves aliases for package-name collisions.
@@ -2109,6 +2110,41 @@ func specification_flags(
 ) (found bool) {
 	t.Helper()
 	return specification_diagnosed(specification_self_diagnostics(t, files), fragment)
+}
+
+// Exact path boundary prevents similar directory from inheriting OS access.
+func specification_os_import_boundary(t *testing.T) {
+	t.Helper()
+	for _, import_path := range []string{"os", "os/exec"} {
+		files := specification_one_file(
+			"package fixture\n\nimport \"" + import_path + "\"\n")
+		if !specification_flags(t, files, "Banned import") {
+			t.Errorf("import %q must be flagged", import_path)
+		}
+	}
+	third_party := specification_one_file(
+		"package fixture\n\nimport \"example.com/os\"\n")
+	if specification_flags(t, third_party, "Banned import") {
+		t.Error("third-party OS path must stay allowed")
+	}
+	for _, filename := range []string{
+		"shared/simulation/os/rule.go",
+		"shared/simulation/os/default/rule.go",
+	} {
+		files := map[string][]byte{
+			filename: []byte("package os\n\nimport \"os/exec\"\n"),
+		}
+		if specification_flags(t, files, "Banned import") {
+			t.Errorf("simulation OS file %q must be allowed", filename)
+		}
+	}
+	named_like := map[string][]byte{
+		"shared/simulation/os_extra/rule.go": []byte(
+			"package os_extra\n\nimport \"os/exec\"\n"),
+	}
+	if !specification_flags(t, named_like, "Banned import") {
+		t.Fatal("directory named like simulation OS must stay banned")
+	}
 }
 
 // Lints the fixture at whole-workspace scope and reports whether some diagnostic

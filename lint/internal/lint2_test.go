@@ -1543,12 +1543,12 @@ func Test_Snapshot_Single_Module(t *testing.T) {
 // Test_Snapshot_Purity pins the direct impure-stdlib checks.
 func Test_Snapshot_Purity(t *testing.T) {
 	run_snapshot_cases_shared(t, "lib", []snapshot_case{
-		{Snapshot: snap.Init(`lib/library.go:4:8: The stdlib import "os" is impure. See lint/README.md for the resolutions.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:4:8: The stdlib import "flag" is impure. See lint/README.md for the resolutions.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
 
-import "os"
+import "flag"
 `}},
 		{Snapshot: snap.Init(`lib/library.go:8:2: The stdlib call fmt.Println is impure. See lint/README.md for the resolutions.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
@@ -3131,13 +3131,13 @@ func Test_No_Impure_Stdlib_Exemptions(t *testing.T) {
 	}{
 
 		{
-			Name: "package main may use os",
+			Name: "package main may use flag",
 			Files: map[string]string{
 				"main.go": `package main
 
-import "os"
+import "flag"
 
-func main() { print(os.Getenv("X")) }
+func main() { print(flag.Arg(0)) }
 `,
 			},
 			Want_Diag: "",
@@ -3229,12 +3229,12 @@ func Test_No_Impure_Stdlib_Composition_Tier(t *testing.T) {
 				"shared/go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": `package foo
 
-import "os"
+import "flag"
 
-func Read() (name string) { return os.Getenv("X") }
+func Read() (name string) { return flag.Arg(0) }
 `,
 			},
-			Want_Diags: []string{"The stdlib import \"os\""},
+			Want_Diags: []string{"The stdlib import \"flag\""},
 		},
 
 		{
@@ -3247,7 +3247,7 @@ func Read() (name string) { return os.Getenv("X") }
 package foo_default
 
 import (
-	"os"
+	"flag"
 
 )
 
@@ -3258,7 +3258,7 @@ const FIXTURE_HI = 100
 func Read() (name string) {
 	defer func() {
 	}()
-	return os.Getenv("X")
+	return flag.Arg(0)
 }
 `,
 			},
@@ -3288,7 +3288,7 @@ func Test_No_Impure_Stdlib_Composition_Tier_Part2(t *testing.T) {
 package snap_default
 
 import (
-	"os"
+	"flag"
 
 )
 
@@ -3299,7 +3299,7 @@ const FIXTURE_HI = 100
 func Read() (name string) {
 	defer func() {
 	}()
-	return os.Getenv("X")
+	return flag.Arg(0)
 }
 `,
 			},
@@ -3354,7 +3354,7 @@ func Stamp() { fmt.Println("stamped") }
 package library_default
 
 import (
-	"os"
+	"flag"
 
 )
 
@@ -3365,7 +3365,7 @@ const FIXTURE_HI = 100
 func Read() (name string) {
 	defer func() {
 	}()
-	return os.Getenv("X")
+	return flag.Arg(0)
 }
 `,
 			},

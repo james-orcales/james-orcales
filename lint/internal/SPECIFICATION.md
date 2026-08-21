@@ -182,8 +182,8 @@ a library is being imported solely for it's global side-effects, an implicit con
 ### Banned Imports
 
 Code outside `shared/invariant/**` never imports stdlib bytes, strings, slices, strconv, archive,
-compress, container, encoding, io, math, rand, unicode, or uuid families. Invariant stays exempt
-because shared ports depend on its enforcement; routing invariant through them forms import cycle.
+compress, container, encoding, io, math, os, rand, unicode, or uuid families. Only
+`shared/simulation/os/**` may import os for replacement. Invariant avoids shared-port cycle.
 
 ### Import Aliases
 

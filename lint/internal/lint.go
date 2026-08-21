@@ -5114,13 +5114,14 @@ func unquote_literal(text string) (unquoted string, err error) {
 }
 
 // Shared ports depend on invariant enforcement. Routing invariant back through them creates
-// import cycle, so invariant owns sole stdlib exception.
+// import cycle, so invariant keeps broad stdlib exception.
 func check_no_banned_stdlib_import(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
+	directory := ""
 	token_file := file_set.File(file.Pos())
 	if token_file != nil {
-		directory := path.Dir(path.Clean(token_file.Name()))
+		directory = path.Dir(path.Clean(token_file.Name()))
 		if directory == "shared/invariant" {
 			return nil
 		}
@@ -5136,6 +5137,16 @@ func check_no_banned_stdlib_import(
 		family := banned_stdlib_import_family(import_path)
 		if family == "" {
 			continue
+		}
+		// Simulation backend implements shared OS boundary, so replacement needs
+		// family it wraps.
+		if family == "os" {
+			if directory == "shared/simulation/os" {
+				continue
+			}
+			if strings.Has_Prefix(directory, "shared/simulation/os/") {
+				continue
+			}
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(import_specification.Pos()),
@@ -5158,7 +5169,7 @@ func banned_stdlib_import_family(import_path string) (family string) {
 	}
 	for _, candidate := range []string{
 		"archive", "bytes", "compress", "container", "encoding", "io", "math",
-		"slices", "strconv", "strings", "unicode", "uuid",
+		"os", "slices", "strconv", "strings", "unicode", "uuid",
 	} {
 		if import_path == candidate {
 			return candidate
