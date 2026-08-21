@@ -1,158 +1,78 @@
 
-# Edit
+# Diff Into
 
-An edit is a contiguous run of runes tagged Retain, Delete, or Insert; together
-the runs form a diff script.
+Diff Into renders minimal rune edit script into caller-owned output. Caller supplies decoded-rune
+and dynamic-programming matrix storage. Oversized text, short workspace, and short output return
+distinct scalar statuses. Operation performs zero allocations.
 
-### Stringer
+### Cases
 
-String renders the script as kind-prefixed double-quoted runs: a space for
-retain, plus for insert, minus for delete, with inner quotes backslash-escaped.
+Identity, insertion, deletion, substitution, quote escaping, Unicode, bounds, status paths, and
+allocation proof preserve script semantics.
 
-# Differ
+# Line Diff Into
 
-A Differ carries the two texts under comparison as both runes and strings, and
-the edit script the diff functions build for them.
+Line Diff Into renders minimal line edit script into caller-owned output. Each emitted line starts
+with space, plus, or minus. Operation uses same caller-owned workspace and performs zero
+allocations.
 
-### Construction
+### Cases
 
-New copies the Old and New strings into the Differ as both rune slices and
-strings, leaving the edit script empty.
+Empty, identity, insertion, deletion, replacement, trailing newline, bounds, status paths, and
+allocation proof preserve line semantics.
 
-### Reset
+# Diff Boundaries
 
-Reset empties the edit script and clears both texts while retaining the backing
-array capacity of the rune slices.
+Diff Boundaries proves every accepted character output and workspace boundary.
 
-# Diff
+### Cases
 
-Diff returns the character-level script: the runs that retain, delete, and
-insert runes to turn Old into New.
+Zero, one, two, maximum, and first rejected bounds reach public status paths.
 
-### Basics
+# Line Diff Boundaries
 
-Single-rune and empty inputs produce the minimal script: identity retains,
-pure insertion, pure deletion, and one-rune substitutions.
+Line Diff Boundaries proves every accepted line output and workspace boundary.
 
-### Examples
+### Cases
 
-Real sentences and adversarial mixed edits, including invalid UTF-8, diff to a
-compact cleaned-up script of merged and boundary-shifted runs.
-
-# Line Diff
-
-Line Diff renders a diff at line granularity: each output line is an original
-line prefixed by a space, a plus, or a minus.
-
-### Basics
-
-Identity, insertion, deletion, and substitution of single lines render with the
-correct space, plus, and minus prefixes.
-
-### Blocks
-
-Inserting, deleting, or replacing a line inside a block leaves the surrounding
-lines retained and marks only the changed line.
-
-### Code
-
-Edits to source lines render line-for-line, each changed line shown as a paired
-deletion and insertion.
-
-### Records
-
-JSON and YAML records diff line-by-line, retaining unchanged keys and blank
-separators while marking only the altered lines.
-
-### Markup
-
-Nested HTML edits retain the unchanged tags and mark only the lines whose text
-or attributes changed.
-
-### Document
-
-A multi-record YAML document with reorderings retains the stable keys and pairs
-each changed line with its replacement.
-
-### Source
-
-Multi-line function bodies and try blocks diff line-for-line, retaining the
-structural lines and pairing each changed statement.
-
-### Query
-
-A multi-clause SQL statement diffs line-by-line, retaining the stable clauses
-and pairing each changed clause with its replacement.
-
-### License
-
-A whole-license rewrite reduces to the same block diff a line-based tool would
-produce, retaining only the blank separators.
-
-# Algorithm Diff
-
-Algorithm Diff is Myers' O(ND) core: a forward furthest-reaching trace and a
-backtrack that emit a minimal rune-level script.
-
-### Basics
-
-Empty and single-rune inputs short-circuit to identity, pure insert, pure
-delete, or a one-rune substitution.
-
-### Blog
-
-The blog-post sentences diff to a minimal script of single-rune deletes and
-inserts around the retained runs.
-
-### Custom
-
-Adversarial mixed edits diff to a minimal single-rune script, the raw form the
-cleanup pass later merges and shifts.
+Zero, one, two, maximum, and first rejected bounds reach public status paths.
 
 # Find Common Prefix
 
-Find Common Prefix returns the longest run of runes that begins both inputs, or
-nil when they share no leading rune.
+Find Common Prefix returns longest shared leading rune run without allocation.
 
 ### Cases
 
-The result is argument-order independent and is a genuine prefix of both inputs
-across ASCII, accented, CJK, and emoji runes.
+Empty, disjoint, partial, Unicode, and maximum-size inputs return bounded borrowed results.
 
 # Find Common Suffix
 
-Find Common Suffix returns the longest run of runes that ends both inputs, or
-nil when they share no trailing rune.
+Find Common Suffix returns longest shared trailing rune run without allocation.
 
 ### Cases
 
-The result is argument-order independent and is a genuine suffix of both inputs
-across ASCII, accented, CJK, and emoji runes.
+Empty, disjoint, partial, Unicode, and maximum-size inputs return bounded borrowed results.
 
 # Find Common Run
 
-Find Common Run returns the longest contiguous shared run, but only when it
-spans at least half the longer input; otherwise nil.
+Find Common Run returns longest shared run only when run spans at least half longer input.
 
 ### Cases
 
-Centered, prefix, and suffix overlaps are found across odd and even lengths,
-and a too-short overlap yields nil.
+Empty, qualifying, too-short, Unicode, and maximum-size inputs return bounded borrowed results.
 
 # Runes Have Prefix
 
-Runes Have Prefix reports whether a non-empty expected run begins the input.
+Runes Have Prefix reports whether nonempty expected run begins input.
 
 ### Predicate
 
-An empty input, an empty expected run, or an expected run longer than the input
-all report false.
+Matching, empty, oversized, and different expected runs cover both results.
 
 # Runes Have Suffix
 
-Runes Have Suffix reports whether a non-empty expected run ends the input.
+Runes Have Suffix reports whether nonempty expected run ends input.
 
 ### Predicate
 
-An empty input, an empty expected run, or an expected run longer than the input
-all report false.
+Matching, empty, oversized, and different expected runs cover both results.

@@ -4,60 +4,187 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/diff/levenshtein"
+	"local/james-orcales/shared/strings"
+	"local/james-orcales/shared/testify"
 )
 
-// Test_Distance_Cases verifies the edit distance for equality, empties, the three
-// single edits, and symmetry.
+// Test_Distance_Cases covers equality, edits, symmetry, Unicode, and bounds.
 func Test_Distance_Cases(t *testing.T) {
-	check := func(from, to string, want int) {
+	var workspace levenshtein.Workspace
+	check := func(from string, to string, want levenshtein.Distance_Value) {
 		t.Helper()
-		got := levenshtein.Distance(levenshtein.Distance_Input{From: from, To: to})
+		got, status := levenshtein.Distance(levenshtein.Distance_Input{
+			Workspace: &workspace,
+			From:      levenshtein.From_Text_Unvalidated(from),
+			To:        levenshtein.To_Text_Unvalidated(to),
+		})
+		if status != levenshtein.STATUS_OK {
+			t.Fatalf("Distance status = %d, want STATUS_OK", status)
+		}
 		if got != want {
 			t.Errorf("Distance(%q, %q) = %d, want %d", from, to, got, want)
 		}
 	}
-	check("abc", "abc", 0)
-	check("", "abc", 3)
-	check("abc", "", 3)
-	check("ab", "abc", 1)  // insertion
-	check("abc", "ab", 1)  // deletion
-	check("cat", "car", 1) // substitution
-	check("priorty", "priority", 1)
+	check("", "", 0)
+	check("a", "a", 0)
+	check("a", "b", 1)
+	check("ab", "cd", 2)
+	check("ab", "abc", 1)
+	check("abc", "ab", 1)
 	check("kitten", "sitting", 3)
-	check("sitting", "kitten", 3) // symmetric
+	check("sitting", "kitten", 3)
+	check("😀", "😄", 1)
+	maximum := string(make([]byte, strings.TEXT_SIZE_MAXIMUM))
+	check("", maximum, levenshtein.RUNE_COUNT_MAXIMUM)
+	check(maximum, "", levenshtein.RUNE_COUNT_MAXIMUM)
+
+	_, status := levenshtein.Distance(levenshtein.Distance_Input{
+		Workspace: &workspace,
+		From: levenshtein.From_Text_Unvalidated(
+			make([]byte, levenshtein.TEXT_SIZE_UNVALIDATED_MAXIMUM),
+		),
+		To: "",
+	})
+	if status != levenshtein.STATUS_INPUT_INVALID {
+		t.Errorf("oversized Distance status = %d, want STATUS_INPUT_INVALID", status)
+	}
+
+	input := levenshtein.Distance_Input{
+		Workspace: &workspace, From: "kitten", To: "sitting",
+	}
+	testify.Zero_Allocation(t, func() {
+		distance, allocation_status := levenshtein.Distance(input)
+		if allocation_status != levenshtein.STATUS_OK {
+			panic("distance rejected")
+		}
+		if distance != 3 {
+			panic("distance changed")
+		}
+	})
 }
 
-// Test_Closest_Cases verifies a near-miss matches, a wild miss and an empty set do
-// not, and ties keep the earliest candidate.
+// Test_Closest_Cases covers match, miss, tie, empty set, and invalid candidate.
 func Test_Closest_Cases(t *testing.T) {
+	var workspace levenshtein.Workspace
 	commands := []string{"help", "add", "list", "delete"}
-
-	match, found := levenshtein.Closest(levenshtein.Closest_Input{
-		Target: "lst", Candidates: commands,
+	match, found, status := levenshtein.Closest(levenshtein.Closest_Input{
+		Workspace: &workspace, Target: "lst", Candidates: commands,
 	})
-	if match != "list" {
-		t.Errorf("expected list, got %q (found=%v)", match, found)
+	if status != levenshtein.STATUS_OK {
+		t.Errorf("Closest status = %d, want STATUS_OK", status)
+	} else if !found {
+		t.Error("Closest missed list")
+	} else if match != "list" {
+		t.Errorf(
+			"Closest = (%q, %v, %d), want (list, true, STATUS_OK)",
+			match, found, status,
+		)
 	}
 
-	_, found = levenshtein.Closest(levenshtein.Closest_Input{
-		Target: "zzzzzzzz", Candidates: commands,
+	match, found, status = levenshtein.Closest(levenshtein.Closest_Input{
+		Workspace: &workspace, Target: "abcd", Candidates: []string{"abce", "abcf"},
 	})
-	if found {
-		t.Error("expected no match for a wild miss")
+	if status != levenshtein.STATUS_OK {
+		t.Errorf("tie Closest status = %d, want STATUS_OK", status)
+	} else if !found {
+		t.Error("tie Closest missed abce")
+	} else if match != "abce" {
+		t.Errorf("tie Closest = (%q, %v, %d)", match, found, status)
 	}
 
-	_, found = levenshtein.Closest(levenshtein.Closest_Input{
-		Target: "anything", Candidates: nil,
+	_, found, status = levenshtein.Closest(levenshtein.Closest_Input{
+		Workspace: &workspace, Target: "zzzzzzzz", Candidates: commands,
 	})
-	if found {
-		t.Error("expected no match for an empty candidate set")
+	if status != levenshtein.STATUS_OK {
+		t.Errorf("miss Closest status = %d, want STATUS_OK", status)
+	} else if found {
+		t.Errorf("miss Closest = (%v, %d), want (false, STATUS_OK)", found, status)
 	}
 
-	// Two candidates equally near the target: the earliest wins.
-	match, found = levenshtein.Closest(levenshtein.Closest_Input{
-		Target: "abcd", Candidates: []string{"abce", "abcf"},
+	_, found, status = levenshtein.Closest(levenshtein.Closest_Input{
+		Workspace: &workspace, Target: "", Candidates: nil,
 	})
-	if match != "abce" {
-		t.Errorf("expected abce, got %q (found=%v)", match, found)
+	if status != levenshtein.STATUS_OK {
+		t.Errorf("empty Closest status = %d, want STATUS_OK", status)
+	} else if found {
+		t.Errorf("empty Closest = (%v, %d), want (false, STATUS_OK)", found, status)
 	}
+
+	check_closest_boundaries(t, &workspace)
+	check_closest_allocation(t, &workspace)
+}
+
+func check_closest_boundaries(t *testing.T, workspace *levenshtein.Workspace) {
+	t.Helper()
+	_, _, status := levenshtein.Closest(levenshtein.Closest_Input{
+		Workspace: workspace,
+		Target:    "",
+		Candidates: []string{
+			string(make([]byte, levenshtein.TEXT_SIZE_UNVALIDATED_MAXIMUM)),
+		},
+	})
+	if status != levenshtein.STATUS_INPUT_INVALID {
+		t.Errorf("invalid Closest status = %d, want STATUS_INPUT_INVALID", status)
+	}
+
+	for _, target := range []string{
+		"a", "ab", string(make([]byte, levenshtein.TEXT_SIZE_MAXIMUM)),
+	} {
+		match, found, exact_status := levenshtein.Closest(levenshtein.Closest_Input{
+			Workspace:  workspace,
+			Target:     levenshtein.Target_Text_Unvalidated(target),
+			Candidates: []string{target},
+		})
+		if exact_status != levenshtein.STATUS_OK {
+			t.Errorf("exact Closest status = %d, want STATUS_OK", exact_status)
+		} else if !found {
+			t.Errorf("exact Closest missed %d-byte target", len(target))
+		} else if string(match) != target {
+			t.Errorf(
+				"exact Closest returned %d bytes, want %d", len(match), len(target),
+			)
+		}
+	}
+
+	maximum_candidates := make([]string, levenshtein.CANDIDATE_COUNT_MAXIMUM)
+	_, found, status := levenshtein.Closest(levenshtein.Closest_Input{
+		Workspace: workspace, Target: "", Candidates: maximum_candidates,
+	})
+	if status != levenshtein.STATUS_OK {
+		t.Errorf("maximum candidate status = %d, want STATUS_OK", status)
+	} else if !found {
+		t.Error("maximum candidate set missed exact empty candidate")
+	}
+
+	_, _, status = levenshtein.Closest(levenshtein.Closest_Input{
+		Workspace: workspace,
+		Target: levenshtein.Target_Text_Unvalidated(
+			make([]byte, levenshtein.TEXT_SIZE_UNVALIDATED_MAXIMUM),
+		),
+		Candidates: nil,
+	})
+	if status != levenshtein.STATUS_INPUT_INVALID {
+		t.Errorf("oversized target status = %d, want STATUS_INPUT_INVALID", status)
+	}
+}
+
+func check_closest_allocation(t *testing.T, workspace *levenshtein.Workspace) {
+	t.Helper()
+	closest := levenshtein.Closest_Input{
+		Workspace:  workspace,
+		Target:     "lst",
+		Candidates: []string{"help", "add", "list", "delete"},
+	}
+	testify.Zero_Allocation(t, func() {
+		match, found, status := levenshtein.Closest(closest)
+		if status != levenshtein.STATUS_OK {
+			panic("closest rejected")
+		}
+		if !found {
+			panic("closest missed")
+		}
+		if match != "list" {
+			panic("closest changed")
+		}
+	})
 }

@@ -1,919 +1,1545 @@
-// Package myers computes character- and line-level diffs between two texts with
-// Myers' O(ND) algorithm, fronted by prefix, suffix, and common-run fast paths.
+// Package myers renders bounded diffs into caller-owned storage.
 package myers
 
 import (
-	"fmt"
-	"slices"
-	"strings"
-
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/strings"
+	"local/james-orcales/shared/unicode/utf8"
 )
 
-// EDIT_RETAIN marks runes present unchanged in both Old and New.
-const EDIT_RETAIN uint8 = 10
+// TEXT_SIZE_MAXIMUM reuses repository text boundary.
+const TEXT_SIZE_MAXIMUM = strings.TEXT_SIZE_MAXIMUM
 
-// EDIT_DELETE marks runes present only in Old.
-const EDIT_DELETE uint8 = 20
+// TEXT_SIZE_UNVALIDATED_MAXIMUM admits first rejected byte.
+const TEXT_SIZE_UNVALIDATED_MAXIMUM = TEXT_SIZE_MAXIMUM + 1
 
-// EDIT_INSERT marks runes present only in New.
-const EDIT_INSERT uint8 = 30
+// TEXT_SIZE_NONEMPTY_MINIMUM is first comparable text size.
+const TEXT_SIZE_NONEMPTY_MINIMUM = strings.TEXT_SIZE_MINIMUM + 1
 
-// Edit is one contiguous run of runes sharing a single kind in the diff script.
-type Edit struct {
-	// Kind is EDIT_RETAIN, EDIT_DELETE, or EDIT_INSERT.
-	Kind uint8
-	// Data is the runes this edit covers.
-	Data []rune
+// RUNE_COUNT_MAXIMUM follows byte bound because each rune consumes at least one byte.
+const RUNE_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM
+
+// RUNE_STORAGE_COUNT_REQUIRED holds maximum decoded text.
+const RUNE_STORAGE_COUNT_REQUIRED = RUNE_COUNT_MAXIMUM + 1
+
+// LINE_COUNT_MAXIMUM includes one line per byte plus final empty line.
+const LINE_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM + 1
+
+// MATRIX_SIDE_COUNT includes the empty-prefix boundary around maximum line count.
+const MATRIX_SIDE_COUNT = LINE_COUNT_MAXIMUM + 1
+
+// MATRIX_COLUMN_COUNT_MINIMUM holds empty-destination boundary.
+const MATRIX_COLUMN_COUNT_MINIMUM = 1
+
+// MATRIX_STORAGE_COUNT_REQUIRED holds full bounded dynamic-programming matrix.
+const MATRIX_STORAGE_COUNT_REQUIRED = MATRIX_SIDE_COUNT * MATRIX_SIDE_COUNT
+
+// TEXT_PAIR_COUNT accounts for source and destination.
+const TEXT_PAIR_COUNT = 2
+
+// UTF8_EXPANSION_MAXIMUM accounts for invalid bytes decoded as replacement runes.
+const UTF8_EXPANSION_MAXIMUM = utf8.CHARACTER_SIZE_THREE
+
+// EDIT_COUNT_MAXIMUM permits one operation per rune from both texts.
+const EDIT_COUNT_MAXIMUM = RUNE_COUNT_MAXIMUM * TEXT_PAIR_COUNT
+
+// DIFF_SIZE_MAXIMUM includes encoded runes, quote escapes, and edit delimiters.
+const DIFF_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM*TEXT_PAIR_COUNT*UTF8_EXPANSION_MAXIMUM +
+	EDIT_COUNT_MAXIMUM + EDIT_COUNT_MAXIMUM*3
+
+// DIFF_SIZE_UNREPRESENTABLE is first output count caller storage cannot hold.
+const DIFF_SIZE_UNREPRESENTABLE = DIFF_SIZE_MAXIMUM + 1
+
+// LINE_DIFF_SIZE_MAXIMUM includes both texts and one prefix per line.
+const LINE_DIFF_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM*TEXT_PAIR_COUNT +
+	LINE_COUNT_MAXIMUM*TEXT_PAIR_COUNT
+
+// LINE_DIFF_SIZE_UNREPRESENTABLE is first line output count storage cannot hold.
+const LINE_DIFF_SIZE_UNREPRESENTABLE = LINE_DIFF_SIZE_MAXIMUM + 1
+
+// STATUS_OK reports complete output.
+const STATUS_OK Status = 0
+
+// STATUS_INPUT_INVALID reports oversized text.
+const STATUS_INPUT_INVALID Status = 1
+
+// STATUS_WORKSPACE_TOO_SMALL reports insufficient caller scratch storage.
+const STATUS_WORKSPACE_TOO_SMALL Status = 2
+
+// STATUS_OUTPUT_TOO_SMALL reports insufficient caller output storage.
+const STATUS_OUTPUT_TOO_SMALL Status = 3
+
+// Prepare_Status reports validation and workspace preparation outcome.
+type Prepare_Status uint8
+
+// Prepare_Status_Invariants lists preparation outcomes.
+func Prepare_Status_Invariants(value Prepare_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), uint8(PREPARE_STATUS_OK),
+			uint8(PREPARE_STATUS_INPUT_INVALID),
+			uint8(PREPARE_STATUS_WORKSPACE_TOO_SMALL),
+		).
+		Ensure()
 }
 
-// Differ holds the two texts under comparison and the edit script built for
-// them. Only Edits is mutated by the diff functions; the text fields are inputs.
-type Differ struct {
-	// Edits is the diff script the diff functions accumulate.
-	Edits []Edit
-	// Old is the source text as runes.
-	Old []rune
-	// New is the target text as runes.
-	New []rune
-	// Old_String is the source text.
-	Old_String string
-	// New_String is the target text.
-	New_String string
+// PREPARE_STATUS_OK reports prepared state.
+const PREPARE_STATUS_OK Prepare_Status = 0
+
+// PREPARE_STATUS_INPUT_INVALID reports rejected text.
+const PREPARE_STATUS_INPUT_INVALID Prepare_Status = 1
+
+// PREPARE_STATUS_WORKSPACE_TOO_SMALL reports rejected scratch storage.
+const PREPARE_STATUS_WORKSPACE_TOO_SMALL Prepare_Status = 2
+
+// Render_Status reports caller output exhaustion.
+type Render_Status bool
+
+// Render_Status_Invariants requires fitting and overflowing renders.
+func Render_Status_Invariants(value Render_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Caller output is too small.").
+		Ensure()
 }
 
-// New_Input is the constructor input for New.
-type New_Input struct {
-	// Old is the source text.
-	Old string
-	// New is the target text.
-	New string
+// EDIT_RETAIN marks text shared by both inputs.
+const EDIT_RETAIN Edit_Kind = 10
+
+// EDIT_DELETE marks text present only in source.
+const EDIT_DELETE Edit_Kind = 20
+
+// EDIT_INSERT marks text present only in destination.
+const EDIT_INSERT Edit_Kind = 30
+
+// EDIT_NONE marks writer with no open operation.
+const EDIT_NONE Open_Edit_Kind = 0
+
+// Status reports bounded operation outcome.
+type Status uint8
+
+// Status_Invariants lists every operation outcome.
+func Status_Invariants(value Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_4_Uint8(
+			uint8(value),
+			uint8(STATUS_OK),
+			uint8(STATUS_INPUT_INVALID),
+			uint8(STATUS_WORKSPACE_TOO_SMALL),
+			uint8(STATUS_OUTPUT_TOO_SMALL),
+		).
+		Ensure()
 }
 
-// New builds a Differ over the given texts.
-func New(input New_Input) (d *Differ) {
-	return &Differ{
-		Old:        []rune(input.Old),
-		New:        []rune(input.New),
-		Old_String: input.Old,
-		New_String: input.New,
+// Edit_Kind identifies rendered operation.
+type Edit_Kind uint8
+
+// Edit_Kind_Invariants lists three script operations.
+func Edit_Kind_Invariants(value Edit_Kind, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), uint8(EDIT_RETAIN), uint8(EDIT_DELETE), uint8(EDIT_INSERT),
+		).
+		Ensure()
+}
+
+// Count is written size or first unrepresentable size.
+type Count int
+
+// Count_Invariants bounds character diff output count.
+func Count_Invariants(value Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			int(value), strings.TEXT_SIZE_MINIMUM, DIFF_SIZE_UNREPRESENTABLE,
+			1, 2, 3, 3,
+		).
+		Ensure()
+}
+
+// Line_Count is written size or first unrepresentable line output size.
+type Line_Count int
+
+// Line_Count_Invariants bounds line diff output count.
+func Line_Count_Invariants(value Line_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			int(value), strings.TEXT_SIZE_MINIMUM, LINE_DIFF_SIZE_UNREPRESENTABLE,
+			1, 1, 1, 1,
+		).
+		Ensure()
+}
+
+// Diff_Position counts bytes while character output is built.
+type Diff_Position int
+
+// Diff_Position_Invariants bounds every intermediate character position.
+func Diff_Position_Invariants(value Diff_Position, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, DIFF_SIZE_UNREPRESENTABLE).
+		Ensure()
+}
+
+// Line_Position counts bytes while line output is built.
+type Line_Position int
+
+// Line_Position_Invariants bounds every intermediate line position.
+func Line_Position_Invariants(value Line_Position, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, LINE_DIFF_SIZE_UNREPRESENTABLE).
+		Ensure()
+}
+
+// Output is caller-owned character diff storage.
+type Output []byte
+
+// Output_Invariants bounds caller-owned character output.
+func Output_Invariants(value Output, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, DIFF_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Line_Output is caller-owned line diff storage.
+type Line_Output []byte
+
+// Line_Output_Invariants bounds caller-owned line output.
+func Line_Output_Invariants(value Line_Output, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, LINE_DIFF_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Old_Text_Unvalidated is hostile source before size validation.
+type Old_Text_Unvalidated string
+
+// Old_Text_Unvalidated_Invariants admits first rejected source byte.
+func Old_Text_Unvalidated_Invariants(
+	value Old_Text_Unvalidated, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
+		Ensure()
+}
+
+// New_Text_Unvalidated is hostile destination before size validation.
+type New_Text_Unvalidated string
+
+// New_Text_Unvalidated_Invariants admits first rejected destination byte.
+func New_Text_Unvalidated_Invariants(
+	value New_Text_Unvalidated, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
+		Ensure()
+}
+
+// Old_Rune_Storage is caller-owned source decode storage.
+type Old_Rune_Storage []rune
+
+// Old_Rune_Storage_Invariants bounds source storage.
+func Old_Rune_Storage_Invariants(value Old_Rune_Storage, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_STORAGE_COUNT_REQUIRED).
+		Ensure()
+}
+
+// New_Rune_Storage is caller-owned destination decode storage.
+type New_Rune_Storage []rune
+
+// New_Rune_Storage_Invariants bounds destination storage.
+func New_Rune_Storage_Invariants(value New_Rune_Storage, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_STORAGE_COUNT_REQUIRED).
+		Ensure()
+}
+
+// Matrix_Storage is caller-owned LCS matrix.
+type Matrix_Storage []int
+
+// Matrix_Storage_Invariants bounds quadratic scratch storage.
+func Matrix_Storage_Invariants(value Matrix_Storage, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, MATRIX_STORAGE_COUNT_REQUIRED).
+		Ensure()
+}
+
+// Rune_Bytes owns one encoded character.
+type Rune_Bytes [utf8.CHARACTER_SIZE_MAXIMUM]byte
+
+// Rune_Bytes_Invariants fixes maximum UTF-8 character width.
+func Rune_Bytes_Invariants(value Rune_Bytes, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == utf8.CHARACTER_SIZE_MAXIMUM,
+		"Rune byte workspace holds widest UTF-8 character.",
+	)
+}
+
+// Workspace owns every scratch byte, rune, and matrix cell.
+type Workspace struct {
+	// Old_Runes avoids source decode allocation.
+	Old_Runes Old_Rune_Storage
+	// New_Runes avoids destination decode allocation.
+	New_Runes New_Rune_Storage
+	// Matrix holds longest-common-subsequence lengths.
+	Matrix Matrix_Storage
+	// Rune_Bytes avoids encoded-rune temporary allocation.
+	Rune_Bytes Rune_Bytes
+}
+
+// Workspace_Invariants composes caller-owned scratch storage.
+func Workspace_Invariants(value Workspace, namespace invariant.Namespace) {
+	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
+	New_Rune_Storage_Invariants(value.New_Runes, namespace)
+	Matrix_Storage_Invariants(value.Matrix, namespace)
+	Rune_Bytes_Invariants(value.Rune_Bytes, namespace)
+}
+
+// Diff_Input carries character output, workspace, and hostile texts.
+type Diff_Input struct {
+	// Output receives rendered script.
+	Output Output
+	// Workspace owns all scratch state.
+	Workspace *Workspace
+	// Old is source text.
+	Old Old_Text_Unvalidated
+	// New is destination text.
+	New New_Text_Unvalidated
+}
+
+// Diff_Input_Invariants composes character diff boundaries.
+func Diff_Input_Invariants(value Diff_Input, namespace invariant.Namespace) {
+	Output_Invariants(value.Output, namespace)
+	Workspace_Invariants(*value.Workspace, namespace)
+	Old_Text_Unvalidated_Invariants(value.Old, namespace)
+	New_Text_Unvalidated_Invariants(value.New, namespace)
+}
+
+// Old_Count is decoded source rune count.
+type Old_Count int
+
+// Old_Count_Invariants bounds decoded source count.
+func Old_Count_Invariants(value Old_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// New_Count is decoded destination rune count.
+type New_Count int
+
+// New_Count_Invariants bounds decoded destination count.
+func New_Count_Invariants(value New_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Column_Count includes destination empty-prefix boundary.
+type Column_Count int
+
+// Column_Count_Invariants bounds matrix row width.
+func Column_Count_Invariants(value Column_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, MATRIX_SIDE_COUNT).
+		Ensure()
+}
+
+// RUNE_MATRIX_SIDE_COUNT includes character empty-prefix boundary.
+const RUNE_MATRIX_SIDE_COUNT = RUNE_COUNT_MAXIMUM + 1
+
+// Rune_Column_Count is character matrix row width.
+type Rune_Column_Count int
+
+// Rune_Column_Count_Invariants bounds character matrix row width.
+func Rune_Column_Count_Invariants(value Rune_Column_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, RUNE_MATRIX_SIDE_COUNT).
+		Ensure()
+}
+
+// Validated_Old_Text is accepted source text.
+type Validated_Old_Text string
+
+// Validated_Old_Text_Invariants bounds accepted source text.
+func Validated_Old_Text_Invariants(value Validated_Old_Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Validated_New_Text is accepted destination text.
+type Validated_New_Text string
+
+// Validated_New_Text_Invariants bounds accepted destination text.
+func Validated_New_Text_Invariants(value Validated_New_Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Prepared_Matrix is validated matrix storage.
+type Prepared_Matrix []int
+
+// Prepared_Matrix_Invariants requires an empty-prefix cell.
+func Prepared_Matrix_Invariants(value Prepared_Matrix, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), MATRIX_COLUMN_COUNT_MINIMUM, MATRIX_STORAGE_COUNT_REQUIRED).
+		Ensure()
+}
+
+// Diff_State carries prepared character matrix dimensions.
+type Diff_State struct {
+	// Output retains caller destination.
+	Output Output
+	// Old_Runes retains decoded source storage.
+	Old_Runes Old_Rune_Storage
+	// New_Runes retains decoded destination storage.
+	New_Runes New_Rune_Storage
+	// Matrix retains validated matrix storage.
+	Matrix Prepared_Matrix
+	// Rune_Bytes retains encoded-character scratch.
+	Rune_Bytes *Rune_Bytes
+	// Old is validated source text.
+	Old Validated_Old_Text
+	// New is validated destination text.
+	New Validated_New_Text
+	// Old_Count is decoded source rune count.
+	Old_Count Old_Count
+	// New_Count is decoded destination rune count.
+	New_Count New_Count
+	// Column_Count is matrix row width.
+	Column_Count Rune_Column_Count
+}
+
+// Diff_State_Invariants composes prepared character diff state.
+func Diff_State_Invariants(value Diff_State, namespace invariant.Namespace) {
+	Output_Invariants(value.Output, namespace)
+	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
+	New_Rune_Storage_Invariants(value.New_Runes, namespace)
+	Prepared_Matrix_Invariants(value.Matrix, namespace)
+	Rune_Bytes_Invariants(*value.Rune_Bytes, namespace)
+	Validated_Old_Text_Invariants(value.Old, namespace)
+	Validated_New_Text_Invariants(value.New, namespace)
+	Old_Count_Invariants(value.Old_Count, namespace)
+	New_Count_Invariants(value.New_Count, namespace)
+	Rune_Column_Count_Invariants(value.Column_Count, namespace)
+}
+
+// Diff_Prepare_State retains hostile inputs until preparation succeeds.
+type Diff_Prepare_State struct {
+	// Input preserves caller bounds on every failure path.
+	Input Diff_Input
+	// Old_Count records decoded source progress.
+	Old_Count Old_Count
+	// New_Count records decoded destination progress.
+	New_Count New_Count
+	// Column_Count records prepared matrix width.
+	Column_Count Rune_Column_Count
+}
+
+// Diff_Prepare_State_Invariants composes partial preparation state.
+func Diff_Prepare_State_Invariants(
+	value Diff_Prepare_State, namespace invariant.Namespace,
+) {
+	Diff_Input_Invariants(value.Input, namespace)
+	Old_Count_Invariants(value.Old_Count, namespace)
+	New_Count_Invariants(value.New_Count, namespace)
+	Rune_Column_Count_Invariants(value.Column_Count, namespace)
+}
+
+// Overflow reports caller output exhaustion.
+type Overflow bool
+
+// Overflow_Invariants requires fitting and overflowing writes.
+func Overflow_Invariants(value Overflow, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Character diff output overflows.").
+		Ensure()
+}
+
+// Open_Edit_Kind includes no open edit plus three operations.
+type Open_Edit_Kind uint8
+
+// Open_Edit_Kind_Invariants lists writer states.
+func Open_Edit_Kind_Invariants(value Open_Edit_Kind, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_4_Uint8(
+			uint8(value),
+			uint8(EDIT_NONE),
+			uint8(EDIT_RETAIN),
+			uint8(EDIT_DELETE),
+			uint8(EDIT_INSERT),
+		).
+		Ensure()
+}
+
+// Byte is one output byte.
+type Byte uint8
+
+// Byte_Invariants covers complete byte domain.
+func Byte_Invariants(value Byte, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(uint8(value), strings.BYTE_MINIMUM, strings.BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Line_Prefix identifies retained, deleted, or inserted line.
+type Line_Prefix uint8
+
+// Line_Prefix_Invariants lists line operations.
+func Line_Prefix_Invariants(value Line_Prefix, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), uint8(LINE_PREFIX_RETAIN),
+			uint8(LINE_PREFIX_INSERT), uint8(LINE_PREFIX_DELETE),
+		).
+		Ensure()
+}
+
+// LINE_PREFIX_RETAIN marks a shared line.
+const LINE_PREFIX_RETAIN Line_Prefix = ' '
+
+// LINE_PREFIX_INSERT marks a destination-only line.
+const LINE_PREFIX_INSERT Line_Prefix = '+'
+
+// LINE_PREFIX_DELETE marks a source-only line.
+const LINE_PREFIX_DELETE Line_Prefix = '-'
+
+// Diff_Writer carries zero-allocation character rendering state.
+type Diff_Writer struct {
+	// Output receives bytes that fit.
+	Output Output
+	// Rune_Bytes owns one encoded character.
+	Rune_Bytes *Rune_Bytes
+	// Position counts required bytes.
+	Position Diff_Position
+	// Overflow records insufficient output.
+	Overflow Overflow
+	// Kind is currently open operation.
+	Kind Open_Edit_Kind
+}
+
+// Diff_Writer_Invariants composes character rendering state.
+func Diff_Writer_Invariants(value Diff_Writer, namespace invariant.Namespace) {
+	Output_Invariants(value.Output, namespace)
+	Rune_Bytes_Invariants(*value.Rune_Bytes, namespace)
+	Diff_Position_Invariants(value.Position, namespace)
+	Overflow_Invariants(value.Overflow, namespace)
+	Open_Edit_Kind_Invariants(value.Kind, namespace)
+}
+
+func diff_writer_byte(writer *Diff_Writer, value Byte) {
+	Diff_Writer_Invariants(*writer, "diff_writer_byte.writer")
+	Byte_Invariants(value, "diff_writer_byte.value")
+	if int(writer.Position) < len(writer.Output) {
+		writer.Output[writer.Position] = byte(value)
+	} else {
+		writer.Overflow = true
+	}
+	writer.Position++
+}
+
+func diff_writer_rune(writer *Diff_Writer, character utf8.Decoded_Character) {
+	Diff_Writer_Invariants(*writer, "diff_writer_rune.writer")
+	utf8.Decoded_Character_Invariants(character, "diff_writer_rune.character")
+	if character == '"' {
+		diff_writer_byte(writer, '\\')
+	}
+	size := utf8.Encode_Character(writer.Rune_Bytes[:], utf8.Character(character))
+	for index := 0; index < int(size); index++ {
+		diff_writer_byte(writer, Byte(writer.Rune_Bytes[index]))
 	}
 }
 
-// Differ_Reset clears the edits and texts while retaining slice capacity.
-func Differ_Reset(d *Differ) {
-	d.Edits = d.Edits[:0]
-	d.Old, d.New = d.Old[:0], d.New[:0]
-	d.Old_String, d.New_String = "", ""
+func diff_writer_open(writer *Diff_Writer, kind Edit_Kind) {
+	Diff_Writer_Invariants(*writer, "diff_writer_open.writer")
+	Edit_Kind_Invariants(kind, "diff_writer_open.kind")
+	if writer.Kind == Open_Edit_Kind(kind) {
+		return
+	}
+	if writer.Kind != 0 {
+		diff_writer_byte(writer, '"')
+	}
+	if kind == EDIT_RETAIN {
+		diff_writer_byte(writer, ' ')
+	} else if kind == EDIT_DELETE {
+		diff_writer_byte(writer, '-')
+	} else {
+		diff_writer_byte(writer, '+')
+	}
+	diff_writer_byte(writer, '"')
+	writer.Kind = Open_Edit_Kind(kind)
 }
 
-// Returns a deferred check asserting that nothing but the Edits field changed
-// between this call and the deferred invocation.
-func differ_assert_only_edits_mutated(d *Differ) (check func()) {
-	before := *d
-	return func() {
-		// Diffing reads the texts and writes only Edits; the inputs must survive intact.
-		invariant.Always(before.Old_String == d.Old_String,
-			"Old_String unchanged by diffing")
-		invariant.Always(before.New_String == d.New_String,
-			"New_String unchanged by diffing")
-		invariant.Always(slices.Equal(before.Old, d.Old), "Old runes unchanged by diffing")
-		invariant.Always(slices.Equal(before.New, d.New), "New runes unchanged by diffing")
-	}
-}
-
-// Holds the Old and New text reconstructed from a Differ's edits, used by the
-// reconstruction invariants.
-type Differ_Rebuilt_Text struct {
-	// Old is the source text rebuilt from retain and delete edits.
-	Old string
-	// New is the target text rebuilt from retain and insert edits.
-	New string
-}
-
-// Replays the edit script to recover the two texts it encodes.
-func differ_rebuild_string_from_edits(d *Differ) (text Differ_Rebuilt_Text) {
-	var old strings.Builder
-	var new strings.Builder
-	for _, edit := range d.Edits {
-		if edit.Kind == EDIT_RETAIN {
-			for _, r := range edit.Data {
-				old.WriteRune(r)
-				new.WriteRune(r)
-			}
-		} else if edit.Kind == EDIT_DELETE {
-			for _, r := range edit.Data {
-				old.WriteRune(r)
-			}
-		} else if edit.Kind == EDIT_INSERT {
-			for _, r := range edit.Data {
-				new.WriteRune(r)
-			}
-		}
-	}
-	return Differ_Rebuilt_Text{Old: old.String(), New: new.String()}
-}
-
-// Line-to-rune encoding of a Differ's texts: each distinct line becomes a
-// single rune so line diffing reduces to rune diffing.
-type Differ_Line_Codes struct {
-	// Old is Old_String with each line replaced by its code rune.
-	Old string
-	// New is New_String with each line replaced by its code rune.
-	New string
-	// Rune_To_Line recovers the original line for a code rune.
-	Rune_To_Line map[rune]string
-}
-
-// Maps each distinct line in the Differ's texts to a unique rune, returning the
-// rune-encoded texts and the reverse mapping.
-func differ_encode_lines(d *Differ) (codes Differ_Line_Codes) {
-	n_count := strings.Count(d.Old_String, "\n")
-	var old strings.Builder
-	var new strings.Builder
-	old.Grow(n_count)
-	new.Grow(strings.Count(d.New_String, "\n"))
-
-	var ch rune
-	line_to_rune := make(map[string]rune, n_count)
-	rune_to_line := make(map[rune]string, n_count)
-	for line := range strings.SplitSeq(d.Old_String, "\n") {
-		if _, ok := line_to_rune[line]; !ok {
-			line_to_rune[line] = ch
-			rune_to_line[ch] = line
-			ch++
-		}
-		old.WriteRune(line_to_rune[line])
-	}
-	for line := range strings.SplitSeq(d.New_String, "\n") {
-		if _, ok := line_to_rune[line]; !ok {
-			line_to_rune[line] = ch
-			rune_to_line[ch] = line
-			ch++
-		}
-		new.WriteRune(line_to_rune[line])
-	}
-	return Differ_Line_Codes{Old: old.String(), New: new.String(), Rune_To_Line: rune_to_line}
-}
-
-// Differ_Line_Diff renders a line-granularity diff: each output line is an
-// original line prefixed by a space (retained), '+' (inserted), or '-'
-// (deleted).
-//
-// TODO: Concise diffs -> Configurable surrounding line count for each edit.
-func Differ_Line_Diff(dfr *Differ) (diff string) {
-	defer differ_assert_only_edits_mutated(dfr)()
-	if dfr.Old_String == dfr.New_String {
-		if dfr.Old_String == "" {
-			return ""
-		}
-		return fmt.Sprintf(" %s", dfr.Old_String)
-	}
-	if dfr.Old_String == "" {
-		return "+" + strings.ReplaceAll(dfr.New_String, "\n", "\n+")
-	}
-	if dfr.New_String == "" {
-		return "-" + strings.ReplaceAll(dfr.Old_String, "\n", "\n-")
-	}
-
-	invariant.Sometimes(
-		strings.LastIndexByte(dfr.Old_String, '\n') != len(dfr.Old_String)-1,
-		"old text lacks a trailing newline")
-	invariant.Sometimes(
-		strings.LastIndexByte(dfr.New_String, '\n') != len(dfr.New_String)-1,
-		"new text lacks a trailing newline")
-
-	codes := differ_encode_lines(dfr)
-	d := New(New_Input{Old: codes.Old, New: codes.New})
-	defer func() { dfr.Edits = d.Edits }()
-	Differ_Optimized_Diff(d)
-	Differ_Merge_Shift_Diff_Cleanup(d)
-
-	result := make([]string, 0, len(d.Edits))
-	for _, edit := range d.Edits {
-		if len(edit.Data) == 0 {
-			continue
-		}
-		indicator := ""
-		switch edit.Kind {
-		case EDIT_RETAIN:
-			indicator = " "
-		case EDIT_INSERT:
-			indicator = "+"
-		case EDIT_DELETE:
-			indicator = "-"
-		}
-		for _, character := range edit.Data {
-			result = append(result, indicator+codes.Rune_To_Line[character])
-		}
-	}
-	return strings.Join(result, "\n")
-}
-
-// Differ_Diff returns the character-level diff string for the Differ's texts.
-func Differ_Diff(d *Differ) (diff string) {
-	before := *d
-	Differ_Optimized_Diff(d)
-	Differ_Merge_Shift_Diff_Cleanup(d)
-	// The edits rebuild both texts together — except when an invalid UTF-8 byte
-	// decoded to U+FFFD, so the runes can't reproduce the original bytes (the false
-	// branch, witnessed by the invalid-UTF-8 input).
-	rebuilt := differ_rebuild_string_from_edits(d)
-	invariant.Sometimes(
-		(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New),
-		"Differ_Diff rebuilds both texts together")
-	return d.String()
-}
-
-// String renders the edit script as kind-prefixed, double-quoted runs.
-func (d Differ) String() (s string) {
-	var sb strings.Builder
-	for _, edit := range d.Edits {
-		if len(edit.Data) == 0 {
-			continue
-		}
-		kind := ""
-		switch edit.Kind {
-		case EDIT_RETAIN:
-			kind = " "
-		case EDIT_INSERT:
-			kind = "+"
-		case EDIT_DELETE:
-			kind = "-"
-		}
-		sb.WriteString(kind)
-		sb.WriteRune('"')
-		for _, r := range edit.Data {
-			if r == '"' {
-				sb.WriteRune('\\')
-				sb.WriteRune('"')
-			} else {
-				sb.WriteRune(r)
-			}
-		}
-		sb.WriteRune('"')
-	}
-	return sb.String()
-}
-
-// Differ_Merge_Shift_Diff_Cleanup coalesces adjacent same-kind runs and shifts
-// edit boundaries to align with retains, repeating until no boundary moves.
-func Differ_Merge_Shift_Diff_Cleanup(d *Differ) {
-	defer differ_assert_only_edits_mutated(d)()
-	before := *d
+// Diff_Into renders minimal rune script without allocation.
+func Diff_Into(input Diff_Input) (count Count, status Status) {
 	defer func() {
-		// The edits rebuild both texts together, save the invalid-UTF-8 case where a
-		// byte decoded to U+FFFD (the false branch).
-		rebuilt := differ_rebuild_string_from_edits(d)
-		rebuilds_together := (before.Old_String == rebuilt.Old) ==
-			(before.New_String == rebuilt.New)
-		invariant.Sometimes(rebuilds_together,
-			"Differ_Merge_Shift_Diff_Cleanup rebuilds both texts together")
+		Count_Invariants(count, "diff_into.count")
+		Status_Invariants(status, "diff_into.status")
 	}()
-	for is_shifted := true; is_shifted; {
-		if len(d.Edits) < 3 {
-			return
-		}
-		invariant.Always(len(d.Old_String) > 0, "cleanup loop sees non-empty Old_String")
-		invariant.Always(len(d.New_String) > 0, "cleanup loop sees non-empty New_String")
-		invariant.Always(len(d.Old) > 0, "cleanup loop sees non-empty Old")
-		invariant.Always(len(d.New) > 0, "cleanup loop sees non-empty New")
+	Diff_Input_Invariants(input, "diff_into.input")
+	prepared, prepare_status := diff_prepare(input)
+	if prepare_status != PREPARE_STATUS_OK {
+		return 0, Status(prepare_status)
+	}
+	state := Diff_State{
+		Output:     prepared.Input.Output,
+		Old_Runes:  prepared.Input.Workspace.Old_Runes,
+		New_Runes:  prepared.Input.Workspace.New_Runes,
+		Matrix:     Prepared_Matrix(prepared.Input.Workspace.Matrix),
+		Rune_Bytes: &prepared.Input.Workspace.Rune_Bytes,
+		Old:        Validated_Old_Text(prepared.Input.Old),
+		New:        Validated_New_Text(prepared.Input.New),
+		Old_Count:  prepared.Old_Count, New_Count: prepared.New_Count,
+		Column_Count: prepared.Column_Count,
+	}
+	count, render_status := diff_render(state)
+	if render_status {
+		return count, STATUS_OUTPUT_TOO_SMALL
+	}
+	return count, STATUS_OK
+}
 
-		if d.Edits[0].Kind != EDIT_RETAIN {
-			d.Edits = slices.Insert(d.Edits, 0, Edit{Kind: EDIT_RETAIN, Data: nil})
+func diff_prepare(input Diff_Input) (
+	state Diff_Prepare_State, status Prepare_Status,
+) {
+	defer func() {
+		Diff_Prepare_State_Invariants(state, "diff_prepare.state")
+		Prepare_Status_Invariants(status, "diff_prepare.status")
+	}()
+	Diff_Input_Invariants(input, "diff_prepare.input")
+	state.Input = input
+	state.Column_Count = Rune_Column_Count(MATRIX_COLUMN_COUNT_MINIMUM)
+	if len(input.Old) > TEXT_SIZE_MAXIMUM {
+		return state, PREPARE_STATUS_INPUT_INVALID
+	}
+	if len(input.New) > TEXT_SIZE_MAXIMUM {
+		return state, PREPARE_STATUS_INPUT_INVALID
+	}
+	old_count := 0
+	for _, character := range input.Old {
+		if old_count == len(input.Workspace.Old_Runes) {
+			return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
 		}
-		if d.Edits[len(d.Edits)-1].Kind != EDIT_RETAIN {
-			d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: nil})
+		input.Workspace.Old_Runes[old_count] = character
+		old_count++
+	}
+	new_count := 0
+	for _, character := range input.New {
+		if new_count == len(input.Workspace.New_Runes) {
+			return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
 		}
+		input.Workspace.New_Runes[new_count] = character
+		new_count++
+	}
+	column_count := new_count + 1
+	matrix_count := (old_count + 1) * column_count
+	if len(input.Workspace.Matrix) < matrix_count {
+		return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
+	}
+	for old_index := old_count; old_index >= 0; old_index-- {
+		input.Workspace.Matrix[old_index*column_count+new_count] = 0
+	}
+	for new_index := new_count; new_index >= 0; new_index-- {
+		input.Workspace.Matrix[old_count*column_count+new_index] = 0
+	}
+	for old_index := old_count - 1; old_index >= 0; old_index-- {
+		for new_index := new_count - 1; new_index >= 0; new_index-- {
+			cell := old_index*column_count + new_index
+			if input.Workspace.Old_Runes[old_index] ==
+				input.Workspace.New_Runes[new_index] {
+				input.Workspace.Matrix[cell] =
+					input.Workspace.Matrix[cell+column_count+1] + 1
+			} else {
+				input.Workspace.Matrix[cell] = max(
+					input.Workspace.Matrix[cell+column_count],
+					input.Workspace.Matrix[cell+1],
+				)
+			}
+		}
+	}
+	state.Old_Count = Old_Count(old_count)
+	state.New_Count = New_Count(new_count)
+	state.Column_Count = Rune_Column_Count(column_count)
+	return state, PREPARE_STATUS_OK
+}
 
-		differ_merge(d)
-
-		// Both ends now carry empty retains (differ_merge padded them), so 3+ edits exist.
-		invariant.Always(len(d.Edits) >= 3, "padded edits number at least three")
-		if len(d.Edits[0].Data) == 0 {
-			d.Edits = d.Edits[1:]
-		}
-		if len(d.Edits[len(d.Edits)-1].Data) == 0 {
-			d.Edits = d.Edits[:len(d.Edits)-1]
-		}
-		// After trimming the empty boundary retains, every remaining edit carries data.
-		invariant.Always(func() (ok bool) {
-			for _, edit := range d.Edits {
-				if len(edit.Data) == 0 {
-					return false
+func diff_render(state Diff_State) (count Count, status Render_Status) {
+	defer func() {
+		Count_Invariants(count, "diff_render.count")
+		Render_Status_Invariants(status, "diff_render.status")
+	}()
+	Diff_State_Invariants(state, "diff_render.state")
+	old_count := int(state.Old_Count)
+	new_count := int(state.New_Count)
+	column_count := int(state.Column_Count)
+	writer := Diff_Writer{Output: state.Output, Rune_Bytes: state.Rune_Bytes}
+	old_index := 0
+	new_index := 0
+	for old_index < old_count || new_index < new_count {
+		if old_index < old_count {
+			if new_index < new_count {
+				if state.Old_Runes[old_index] == state.New_Runes[new_index] {
+					diff_writer_open(&writer, EDIT_RETAIN)
+					character := utf8.Decoded_Character(
+						state.Old_Runes[old_index],
+					)
+					diff_writer_rune(&writer, character)
+					old_index++
+					new_index++
+					continue
 				}
 			}
-			return true
-		}(), "every remaining edit carries data")
-		is_shifted = differ_shift(d)
-	}
-}
-
-// Rewrites d.Edits so consecutive deletes and inserts are gathered against the
-// retains that bound them, lifting any shared prefix or suffix into the
-// neighbouring retains.
-func differ_merge(d *Differ) {
-	result := make([]Edit, 0, len(d.Edits))
-	defer func() { d.Edits = result }()
-
-	old, new := d.Old, d.New
-	var to_delete, to_insert []rune
-	for _, edit := range d.Edits {
-		if edit.Kind == EDIT_DELETE {
-			to_delete = old[:len(to_delete)+len(edit.Data)]
-			continue
 		}
-		if edit.Kind == EDIT_INSERT {
-			to_insert = new[:len(to_insert)+len(edit.Data)]
-			continue
-		}
-		current_edit := edit
-		has_delete := len(to_delete) > 0
-		has_insert := len(to_insert) > 0
-		if has_delete {
-			if has_insert {
-				lifted := differ_merge_lift_affixes(result, Differ_Affix{
-					Current_Edit: current_edit,
-					To_Delete:    to_delete,
-					To_Insert:    to_insert,
-				})
-				current_edit = lifted.Current_Edit
-				to_delete = lifted.To_Delete
-				to_insert = lifted.To_Insert
+		delete_next := new_index == new_count
+		if old_index < old_count {
+			if new_index < new_count {
+				delete_reach :=
+					state.Matrix[(old_index+1)*column_count+new_index]
+				insert_reach :=
+					state.Matrix[old_index*column_count+new_index+1]
+				delete_next = delete_reach >= insert_reach
 			}
 		}
-		if has_delete {
-			result = append(result, Edit{Kind: EDIT_DELETE, Data: to_delete})
-			old = old[len(to_delete):]
-		}
-		if has_insert {
-			result = append(result, Edit{Kind: EDIT_INSERT, Data: to_insert})
-			new = new[len(to_insert):]
-		}
-		result = append(result, current_edit)
-		old = old[len(current_edit.Data):]
-		new = new[len(current_edit.Data):]
-		to_delete = nil
-		to_insert = nil
-	}
-}
-
-// Carries the merge state mutated when an adjacent insert and delete share an
-// affix run.
-type Differ_Affix struct {
-	// Current_Edit is the bounding retain, possibly extended by a shared suffix.
-	Current_Edit Edit
-	// To_Delete is the pending deletion remainder after lifting.
-	To_Delete []rune
-	// To_Insert is the pending insertion remainder after lifting.
-	To_Insert []rune
-}
-
-// Lifts the run shared at the front of the pending insert and delete into the
-// previous retain, and the run shared at the back into the bounding retain.
-func differ_merge_lift_affixes(result []Edit, state Differ_Affix) (lifted Differ_Affix) {
-	prefix := Find_Common_Prefix(
-		Find_Common_Prefix_Input{A: state.To_Insert, B: state.To_Delete},
-	)
-	if len(prefix) > 0 {
-		previous_retain := &result[len(result)-1]
-		previous_retain.Data = slices.Concat(previous_retain.Data, prefix)
-		state.To_Delete = state.To_Delete[len(prefix):]
-		state.To_Insert = state.To_Insert[len(prefix):]
-	}
-	suffix := Find_Common_Suffix(
-		Find_Common_Suffix_Input{A: state.To_Insert, B: state.To_Delete},
-	)
-	if len(suffix) > 0 {
-		state.Current_Edit.Data = slices.Concat(state.Current_Edit.Data, suffix)
-		state.To_Delete = state.To_Delete[:len(state.To_Delete)-len(suffix)]
-		state.To_Insert = state.To_Insert[:len(state.To_Insert)-len(suffix)]
-	}
-	return state
-}
-
-// Moves a delete or insert that ends with its left retain or begins with its
-// right retain across that retain, aligning runs. Reports whether any boundary
-// moved so the caller can repeat the cleanup.
-func differ_shift(d *Differ) (is_shifted bool) {
-	result := []Edit{d.Edits[0]}
-	defer func() {
-		result = append(result, d.Edits[len(d.Edits)-1])
-		d.Edits = result
-	}()
-	for offset, edit := range d.Edits[1 : len(d.Edits)-1] {
-		offset++
-		previous := &result[len(result)-1]
-		next := &d.Edits[offset+1]
-		if previous.Kind != EDIT_RETAIN {
-			result = append(result, edit)
-			continue
-		}
-		if next.Kind != EDIT_RETAIN {
-			result = append(result, edit)
-			continue
-		}
-		// Both neighbours are retains, so an interior edit between them is never a retain.
-		invariant.Always(edit.Kind != EDIT_RETAIN,
-			"interior edit between retains is not a retain")
-		if Runes_Have_Suffix(
-			Runes_Have_Suffix_Input{String: edit.Data, Expect: previous.Data},
-		) {
-			is_shifted = true
-			next.Data = slices.Concat(previous.Data, next.Data)
-			head := edit.Data[:len(edit.Data)-len(previous.Data)]
-			previous.Data = slices.Concat(previous.Data, head)
-			previous.Kind = edit.Kind
-			continue
-		}
-		if Runes_Have_Prefix(
-			Runes_Have_Prefix_Input{String: edit.Data, Expect: next.Data},
-		) {
-			is_shifted = true
-			previous.Data = slices.Concat(previous.Data, next.Data)
-			next.Data = slices.Concat(edit.Data[len(next.Data):], next.Data)
-			next.Kind = edit.Kind
-			continue
-		}
-		result = append(result, edit)
-	}
-	return is_shifted
-}
-
-// Differ_Optimized_Diff peels common prefix and suffix retains, handles simple
-// inserts, deletes, and single-sided sandwiches directly, and delegates the
-// remainder to a common-run split.
-func Differ_Optimized_Diff(d *Differ) {
-	defer differ_assert_only_edits_mutated(d)()
-	before := *d
-	defer func() {
-		// The edits rebuild both texts together, save the invalid-UTF-8 case where a
-		// byte decoded to U+FFFD (the false branch).
-		rebuilt := differ_rebuild_string_from_edits(d)
-		rebuilds_together := (before.Old_String == rebuilt.Old) ==
-			(before.New_String == rebuilt.New)
-		invariant.Sometimes(rebuilds_together,
-			"Differ_Optimized_Diff rebuilds both texts together")
-	}()
-
-	old, new := d.Old, d.New
-	if d.Old_String == d.New_String {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: old})
-		return
-	}
-	if d.New_String == "" {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old})
-		return
-	}
-	if d.Old_String == "" {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new})
-		return
-	}
-
-	prefix := Find_Common_Prefix(Find_Common_Prefix_Input{A: old, B: new})
-	if len(prefix) > 0 {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: prefix})
-	}
-	old = old[len(prefix):]
-	new = new[len(prefix):]
-
-	suffix := Find_Common_Suffix(Find_Common_Suffix_Input{A: old, B: new})
-	defer func() {
-		if len(suffix) > 0 {
-			d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: suffix})
-		}
-	}()
-	old = old[:len(old)-len(suffix)]
-	new = new[:len(new)-len(suffix)]
-
-	differ_optimized_core(Differ_Optimized_Core_Input{D: d, Old: old, New: new})
-}
-
-// Carries the trimmed texts into the optimized core.
-type Differ_Optimized_Core_Input struct {
-	// D is the Differ whose Edits are extended.
-	D *Differ
-	// Old is the source remainder after affix peeling.
-	Old []rune
-	// New is the target remainder after affix peeling.
-	New []rune
-}
-
-// Handles simple inserts, deletes, and one-sided sandwiches, delegating the
-// genuinely mixed case to a common-run split.
-func differ_optimized_core(input Differ_Optimized_Core_Input) {
-	d, old, new := input.D, input.Old, input.New
-	is_simple_delete := len(old) > 0 && len(new) == 0
-	is_simple_insert := len(old) == 0 && len(new) > 0
-	if is_simple_delete {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old})
-		return
-	}
-	if is_simple_insert {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new})
-		return
-	}
-
-	x := runes_index(Runes_Index_Input{Haystack: old, Needle: new})
-	y := runes_index(Runes_Index_Input{Haystack: new, Needle: old})
-	is_delete_sandwich := x > 0
-	if is_delete_sandwich {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old[:x]})
-		old = old[x:]
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: old[:len(new)]})
-		old = old[len(new):]
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old})
-		return
-	}
-	is_insert_sandwich := y > 0
-	if is_insert_sandwich {
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new[:y]})
-		new = new[y:]
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: new[:len(old)]})
-		new = new[len(old):]
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new})
-		return
-	}
-
-	inner := *d
-	inner.Old = old
-	inner.New = new
-	differ_optimized_split(&inner)
-	d.Edits = inner.Edits
-}
-
-// Recursively divides the texts on their longest common run, falling back to
-// the Myers algorithm where no qualifying run exists.
-func differ_optimized_split(d *Differ) {
-	var recurse func(diff *Differ)
-	recurse = func(diff *Differ) {
-		old_runes, new_runes := diff.Old, diff.New
-		run := Find_Common_Run(Find_Common_Run_Input{A: old_runes, B: new_runes})
-		if len(run) == 0 {
-			Differ_Algorithm_Diff(diff)
-			return
-		}
-		new_run_start := runes_index(Runes_Index_Input{Haystack: new_runes, Needle: run})
-		old_run_start := runes_index(Runes_Index_Input{Haystack: old_runes, Needle: run})
-		{
-			clone := Differ{
-				Edits:      diff.Edits,
-				Old:        old_runes[:old_run_start],
-				New:        new_runes[:new_run_start],
-				Old_String: diff.Old_String,
-				New_String: diff.New_String,
-			}
-			recurse(&clone)
-			diff.Edits = clone.Edits
-		}
-		diff.Edits = append(diff.Edits, Edit{Kind: EDIT_RETAIN, Data: run})
-		{
-			clone := Differ{
-				Edits:      diff.Edits,
-				Old:        old_runes[old_run_start+len(run):],
-				New:        new_runes[new_run_start+len(run):],
-				Old_String: diff.Old_String,
-				New_String: diff.New_String,
-			}
-			recurse(&clone)
-			diff.Edits = clone.Edits
-		}
-	}
-	recurse(d)
-}
-
-// Differ_Algorithm_Diff produces a minimal edit script with Myers' O(ND)
-// algorithm: a forward furthest-reaching trace followed by a backtrack.
-func Differ_Algorithm_Diff(d *Differ) {
-	defer differ_assert_only_edits_mutated(d)()
-	before := *d
-	defer func() {
-		// The runes equal []rune of the text for valid UTF-8, but an invalid byte
-		// decodes to U+FFFD, so the runes no longer reproduce the original bytes. The
-		// false branch is witnessed by the invalid-UTF-8 input, the true branch by the
-		// rest.
-		condition := (string(before.Old) == before.Old_String) ==
-			(string(before.New) == before.New_String)
-		invariant.Sometimes(condition,
-			"runes reproduce the text for both sides alike")
-		if condition {
-			// With the runes equal to the text, the script must replay back to it.
-			rebuilt := differ_rebuild_string_from_edits(d)
-			invariant.Always(
-				(before.Old_String == rebuilt.Old) ==
-					(before.New_String == rebuilt.New),
-				"script replays back to both texts")
-		}
-	}()
-
-	if len(d.Old) == 0 {
-		if len(d.New) == 0 {
-			// Empty rune slices reach here only on a direct call with empty texts.
-			invariant.Always(
-				d.Old_String == "" && d.New_String == "",
-				"empty rune slices imply empty texts")
-			return
-		}
-	}
-	if d.Old_String == d.New_String {
-		if d.Old_String != "" {
-			d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: d.Old})
-			return
-		}
-	}
-	if d.New_String == "" {
-		// Reaching here with both texts empty is handled above, so Old is non-empty.
-		invariant.Always(d.Old_String != "", "Old_String non-empty when New is empty")
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: d.Old})
-		return
-	}
-	if d.Old_String == "" {
-		invariant.Always(d.New_String != "", "New_String non-empty when Old is empty")
-		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: d.New})
-		return
-	}
-
-	old, new := d.Old, d.New
-	before_count := len(d.Edits)
-	trace := differ_algorithm_forward_trace(
-		Differ_Algorithm_Forward_Trace_Input{Old: old, New: new},
-	)
-	d.Edits = append(d.Edits, differ_algorithm_backtrack(Differ_Algorithm_Backtrack_Input{
-		Trace: trace, Old: old, New: new,
-	})...)
-	slices.Reverse(d.Edits[before_count:])
-}
-
-// Carries the texts into the forward trace.
-type Differ_Algorithm_Forward_Trace_Input struct {
-	// Old is the source text as runes.
-	Old []rune
-	// New is the target text as runes.
-	New []rune
-}
-
-// Runs Myers' forward pass, returning the furthest-reaching X snapshot recorded
-// at each edit depth.
-func differ_algorithm_forward_trace(input Differ_Algorithm_Forward_Trace_Input) (trace [][]int) {
-	old, new := input.Old, input.New
-	edits_max := len(old) + len(new)
-	trace = make([][]int, 0, edits_max+1)
-	tracker := make([]int, edits_max*2+1)
-
-	for depth := range edits_max + 1 {
-		previous_tracker := slices.Clone(tracker)
-		more := differ_forward_step(Differ_Forward_Step_Input{
-			Depth:            depth,
-			Tracker:          tracker,
-			Previous_Tracker: previous_tracker,
-			Edits_Max:        edits_max,
-			Old:              old,
-			New:              new,
-		})
-		trace = append(trace, slices.Clone(tracker))
-		if !more {
-			break
-		}
-	}
-	return trace
-}
-
-// Carries one forward-pass depth into differ_forward_step.
-type Differ_Forward_Step_Input struct {
-	// Depth is the current edit depth.
-	Depth int
-	// Tracker is the furthest-reaching X per diagonal, mutated in place.
-	Tracker []int
-	// Previous_Tracker is the prior depth's Tracker snapshot.
-	Previous_Tracker []int
-	// Edits_Max is the longest possible edit script, len(Old)+len(New).
-	Edits_Max int
-	// Old is the source text as runes.
-	Old []rune
-	// New is the target text as runes.
-	New []rune
-}
-
-// Advances every diagonal of one Myers forward-pass depth, updating Tracker and
-// reporting whether the far corner has not yet been reached.
-func differ_forward_step(input Differ_Forward_Step_Input) (more bool) {
-	depth, tracker, previous_tracker := input.Depth, input.Tracker, input.Previous_Tracker
-	edits_max, old, new := input.Edits_Max, input.Old, input.New
-	for k := -depth; k <= depth; k += 2 {
-		k_offset := edits_max + k
-		var x, y, previous_x int
-		is_insert := k == -depth ||
-			(k != depth && tracker[k_offset+1] > tracker[k_offset-1])
-		if is_insert {
-			previous_x = tracker[k_offset+1]
-			x = previous_x
+		if delete_next {
+			diff_writer_open(&writer, EDIT_DELETE)
+			diff_writer_rune(
+				&writer, utf8.Decoded_Character(state.Old_Runes[old_index]),
+			)
+			old_index++
 		} else {
-			previous_x = tracker[k_offset-1]
-			x = previous_x + 1
+			diff_writer_open(&writer, EDIT_INSERT)
+			diff_writer_rune(
+				&writer, utf8.Decoded_Character(state.New_Runes[new_index]),
+			)
+			new_index++
 		}
-		y = x - k
+	}
+	if writer.Kind != EDIT_NONE {
+		diff_writer_byte(&writer, '"')
+	}
+	if writer.Overflow {
+		return DIFF_SIZE_UNREPRESENTABLE, true
+	}
+	return Count(writer.Position), false
+}
 
-		// Reaching x never falls below its diagonal k; x > k means a snake (matching run)
-		// extended this node, x == k means the diagonal was first reached here.
-		invariant.Always(x >= k, "x stays on or above its diagonal")
-		invariant.Sometimes(x > k, "a snake extended this node")
+// Line_Old_Text_Unvalidated is hostile line source before size validation.
+type Line_Old_Text_Unvalidated string
 
-		// Furthest-reaching X is monotonic across depths along each diagonal.
-		invariant.Always(tracker[k_offset] >= previous_tracker[k_offset],
-			"furthest-reaching x is monotonic across depths")
-		if k < depth {
-			invariant.Always(x >= previous_tracker[k_offset+1],
-				"x dominates the upper neighbour's prior reach")
-		}
-		if k > -depth {
-			invariant.Always(x >= previous_tracker[k_offset-1],
-				"x dominates the lower neighbour's prior reach")
-			if is_insert {
-				previous_k := k + 1
-				previous_y := previous_x - previous_k
-				// An insert step advances y by one and leaves x where it was.
-				invariant.Always(x == previous_x, "insert step leaves x unchanged")
-				invariant.Always(y == previous_y+1, "insert step advances y by one")
-			} else {
-				previous_k := k - 1
-				previous_y := previous_x - previous_k
-				// A delete step advances x by one and leaves y where it was.
-				invariant.Always(x == previous_x+1, "delete step advances x by one")
-				invariant.Always(y == previous_y, "delete step leaves y unchanged")
-			}
-		}
+// Line_Old_Text_Unvalidated_Invariants admits first rejected source byte.
+func Line_Old_Text_Unvalidated_Invariants(
+	value Line_Old_Text_Unvalidated, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
+		Ensure()
+}
 
-		for x < len(old) && y < len(new) && old[x] == new[y] {
-			x, y = x+1, y+1
-		}
+// Line_New_Text_Unvalidated is hostile line destination before size validation.
+type Line_New_Text_Unvalidated string
 
-		tracker[k_offset] = x
-		if fully_converted := x >= len(old) && y >= len(new); fully_converted {
+// Line_New_Text_Unvalidated_Invariants admits first rejected destination byte.
+func Line_New_Text_Unvalidated_Invariants(
+	value Line_New_Text_Unvalidated, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
+		Ensure()
+}
+
+// Line_Diff_Input carries line output, workspace, and hostile texts.
+type Line_Diff_Input struct {
+	// Output receives prefixed lines.
+	Output Line_Output
+	// Workspace owns all scratch state.
+	Workspace *Workspace
+	// Old is source text.
+	Old Line_Old_Text_Unvalidated
+	// New is destination text.
+	New Line_New_Text_Unvalidated
+}
+
+// Line_Diff_Input_Invariants composes line diff boundaries.
+func Line_Diff_Input_Invariants(value Line_Diff_Input, namespace invariant.Namespace) {
+	Line_Output_Invariants(value.Output, namespace)
+	Workspace_Invariants(*value.Workspace, namespace)
+	Line_Old_Text_Unvalidated_Invariants(value.Old, namespace)
+	Line_New_Text_Unvalidated_Invariants(value.New, namespace)
+}
+
+// Old_Line_Count is source line count.
+type Old_Line_Count int
+
+// Old_Line_Count_Invariants bounds source lines.
+func Old_Line_Count_Invariants(value Old_Line_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// New_Line_Count is destination line count.
+type New_Line_Count int
+
+// New_Line_Count_Invariants bounds destination lines.
+func New_Line_Count_Invariants(value New_Line_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Line_State carries prepared line matrix dimensions.
+type Line_State struct {
+	// Output retains caller destination.
+	Output Line_Output
+	// Old_Runes retains source line starts.
+	Old_Runes Old_Rune_Storage
+	// New_Runes retains destination line starts.
+	New_Runes New_Rune_Storage
+	// Matrix retains validated storage.
+	Matrix Prepared_Matrix
+	// Old avoids copying validated source text.
+	Old Validated_Old_Text
+	// New avoids copying validated destination text.
+	New Validated_New_Text
+	// Old_Count is source line count.
+	Old_Count Old_Line_Count
+	// New_Count is destination line count.
+	New_Count New_Line_Count
+	// Column_Count is matrix row width.
+	Column_Count Column_Count
+}
+
+// Line_State_Invariants composes prepared line state.
+func Line_State_Invariants(value Line_State, namespace invariant.Namespace) {
+	Line_Output_Invariants(value.Output, namespace)
+	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
+	New_Rune_Storage_Invariants(value.New_Runes, namespace)
+	Prepared_Matrix_Invariants(value.Matrix, namespace)
+	Validated_Old_Text_Invariants(value.Old, namespace)
+	Validated_New_Text_Invariants(value.New, namespace)
+	Old_Line_Count_Invariants(value.Old_Count, namespace)
+	New_Line_Count_Invariants(value.New_Count, namespace)
+	Column_Count_Invariants(value.Column_Count, namespace)
+}
+
+// Line_Prepare_State retains hostile inputs until preparation succeeds.
+type Line_Prepare_State struct {
+	// Input preserves caller bounds on every failure path.
+	Input Line_Diff_Input
+	// Old_Count records source-line progress.
+	Old_Count Old_Line_Count
+	// New_Count records destination-line progress.
+	New_Count New_Line_Count
+	// Column_Count records prepared matrix width.
+	Column_Count Column_Count
+}
+
+// Line_Prepare_State_Invariants composes partial preparation state.
+func Line_Prepare_State_Invariants(
+	value Line_Prepare_State, namespace invariant.Namespace,
+) {
+	Line_Diff_Input_Invariants(value.Input, namespace)
+	Old_Line_Count_Invariants(value.Old_Count, namespace)
+	New_Line_Count_Invariants(value.New_Count, namespace)
+	Column_Count_Invariants(value.Column_Count, namespace)
+}
+
+// Old_Line_Index selects source line.
+type Old_Line_Index int
+
+// Old_Line_Index_Invariants bounds source line index.
+func Old_Line_Index_Invariants(value Old_Line_Index, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// New_Line_Index selects destination line.
+type New_Line_Index int
+
+// New_Line_Index_Invariants bounds destination line index.
+func New_Line_Index_Invariants(value New_Line_Index, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Line_Equal reports equal line bytes.
+type Line_Equal bool
+
+// Line_Equal_Invariants requires equal and different line coverage.
+func Line_Equal_Invariants(value Line_Equal, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Compared lines are equal.").
+		Ensure()
+}
+
+// Compared_Old_Runes excludes empty storage because comparison needs one line.
+type Compared_Old_Runes []rune
+
+// Compared_Old_Runes_Invariants bounds prepared source starts.
+func Compared_Old_Runes_Invariants(
+	value Compared_Old_Runes, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Compared_New_Runes excludes empty storage because comparison needs one line.
+type Compared_New_Runes []rune
+
+// Compared_New_Runes_Invariants bounds prepared destination starts.
+func Compared_New_Runes_Invariants(
+	value Compared_New_Runes, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Compared_Old_Text excludes empty text because it has no line to compare.
+type Compared_Old_Text string
+
+// Compared_Old_Text_Invariants bounds comparable source text.
+func Compared_Old_Text_Invariants(
+	value Compared_Old_Text, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), TEXT_SIZE_NONEMPTY_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Compared_New_Text excludes empty text because it has no line to compare.
+type Compared_New_Text string
+
+// Compared_New_Text_Invariants bounds comparable destination text.
+func Compared_New_Text_Invariants(
+	value Compared_New_Text, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), TEXT_SIZE_NONEMPTY_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Compared_Old_Count excludes zero because comparison selects a source line.
+type Compared_Old_Count int
+
+// Compared_Old_Count_Invariants bounds comparable source lines.
+func Compared_Old_Count_Invariants(
+	value Compared_Old_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Compared_New_Count excludes zero because comparison selects a destination line.
+type Compared_New_Count int
+
+// Compared_New_Count_Invariants bounds comparable destination lines.
+func Compared_New_Count_Invariants(
+	value Compared_New_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Lines_Equal_State carries only state required to compare lines.
+type Lines_Equal_State struct {
+	// Old_Runes permits locating source line boundaries.
+	Old_Runes Compared_Old_Runes
+	// New_Runes permits locating destination line boundaries.
+	New_Runes Compared_New_Runes
+	// Old permits comparing source bytes without copies.
+	Old Compared_Old_Text
+	// New permits comparing destination bytes without copies.
+	New Compared_New_Text
+	// Old_Count permits finding final source line end.
+	Old_Count Compared_Old_Count
+	// New_Count permits finding final destination line end.
+	New_Count Compared_New_Count
+}
+
+// Lines_Equal_State_Invariants composes comparable line state.
+func Lines_Equal_State_Invariants(value Lines_Equal_State, namespace invariant.Namespace) {
+	Compared_Old_Runes_Invariants(value.Old_Runes, namespace)
+	Compared_New_Runes_Invariants(value.New_Runes, namespace)
+	Compared_Old_Text_Invariants(value.Old, namespace)
+	Compared_New_Text_Invariants(value.New, namespace)
+	Compared_Old_Count_Invariants(value.Old_Count, namespace)
+	Compared_New_Count_Invariants(value.New_Count, namespace)
+}
+
+// Line_Overflow reports caller line output exhaustion.
+type Line_Overflow bool
+
+// Line_Overflow_Invariants requires fitting and overflowing line writes.
+func Line_Overflow_Invariants(value Line_Overflow, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Line diff output overflows.").
+		Ensure()
+}
+
+// First_Line reports writer has emitted no line.
+type First_Line bool
+
+// First_Line_Invariants requires first and later line writes.
+func First_Line_Invariants(value First_Line, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Line writer has emitted no line.").
+		Ensure()
+}
+
+// Line_Writer carries zero-allocation line rendering state.
+type Line_Writer struct {
+	// Output receives bytes that fit.
+	Output Line_Output
+	// Position counts required bytes.
+	Position Line_Position
+	// Overflow records insufficient output.
+	Overflow Line_Overflow
+	// First reports whether separator is needed.
+	First First_Line
+}
+
+// Line_Writer_Invariants composes line rendering state.
+func Line_Writer_Invariants(value Line_Writer, namespace invariant.Namespace) {
+	Line_Output_Invariants(value.Output, namespace)
+	Line_Position_Invariants(value.Position, namespace)
+	Line_Overflow_Invariants(value.Overflow, namespace)
+	First_Line_Invariants(value.First, namespace)
+}
+
+// Line_Text is borrowed line source.
+type Line_Text string
+
+// Line_Text_Invariants bounds borrowed line source.
+func Line_Text_Invariants(value Line_Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Line_Start is inclusive byte boundary.
+type Line_Start int
+
+// Line_Start_Invariants bounds inclusive byte boundary.
+func Line_Start_Invariants(value Line_Start, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Line_End is exclusive byte boundary.
+type Line_End int
+
+// Line_End_Invariants bounds exclusive byte boundary.
+func Line_End_Invariants(value Line_End, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Line_Write_Input carries one prefixed line write.
+type Line_Write_Input struct {
+	// Writer receives line bytes.
+	Writer *Line_Writer
+	// Prefix identifies operation.
+	Prefix Line_Prefix
+	// Text contains borrowed line.
+	Text Line_Text
+	// Start is inclusive line boundary.
+	Start Line_Start
+	// End is exclusive line boundary.
+	End Line_End
+}
+
+// Line_Write_Input_Invariants composes one line write.
+func Line_Write_Input_Invariants(value Line_Write_Input, namespace invariant.Namespace) {
+	Line_Writer_Invariants(*value.Writer, namespace)
+	Line_Prefix_Invariants(value.Prefix, namespace)
+	Line_Text_Invariants(value.Text, namespace)
+	Line_Start_Invariants(value.Start, namespace)
+	Line_End_Invariants(value.End, namespace)
+}
+
+// Completed_Line_Writer excludes incomplete result positions.
+type Completed_Line_Writer struct {
+	// Output retains caller destination.
+	Output Line_Output
+	// Position excludes incomplete one-byte line output.
+	Position Line_Count
+	// Overflow selects bounded sentinel result.
+	Overflow Line_Overflow
+	// First distinguishes empty result from emitted lines.
+	First First_Line
+}
+
+// Completed_Line_Writer_Invariants composes completed writer state.
+func Completed_Line_Writer_Invariants(
+	value Completed_Line_Writer, namespace invariant.Namespace,
+) {
+	Line_Output_Invariants(value.Output, namespace)
+	Line_Count_Invariants(value.Position, namespace)
+	Line_Overflow_Invariants(value.Overflow, namespace)
+	First_Line_Invariants(value.First, namespace)
+}
+
+func line_writer_byte(writer *Line_Writer, value Byte) {
+	Line_Writer_Invariants(*writer, "line_writer_byte.writer")
+	Byte_Invariants(value, "line_writer_byte.value")
+	if int(writer.Position) < len(writer.Output) {
+		writer.Output[writer.Position] = byte(value)
+	} else {
+		writer.Overflow = true
+	}
+	writer.Position++
+}
+
+func line_writer_line(input Line_Write_Input) {
+	Line_Write_Input_Invariants(input, "line_writer_line.input")
+	if input.Writer.Overflow {
+		return
+	}
+	if !input.Writer.First {
+		line_writer_byte(input.Writer, '\n')
+	}
+	input.Writer.First = false
+	line_writer_byte(input.Writer, Byte(input.Prefix))
+	for index := int(input.Start); index < int(input.End); index++ {
+		line_writer_byte(input.Writer, Byte(input.Text[index]))
+	}
+}
+
+func line_writer_result(writer Completed_Line_Writer) (
+	count Line_Count, status Render_Status,
+) {
+	defer func() {
+		Line_Count_Invariants(count, "line_writer_result.count")
+		Render_Status_Invariants(status, "line_writer_result.status")
+	}()
+	Completed_Line_Writer_Invariants(writer, "line_writer_result.writer")
+	if writer.Overflow {
+		return LINE_DIFF_SIZE_UNREPRESENTABLE, true
+	}
+	return writer.Position, false
+}
+
+func lines_equal(
+	state Lines_Equal_State, old_index Old_Line_Index, new_index New_Line_Index,
+) (equal Line_Equal) {
+	defer func() { Line_Equal_Invariants(equal, "lines_equal.equal") }()
+	Lines_Equal_State_Invariants(state, "lines_equal.state")
+	Old_Line_Index_Invariants(old_index, "lines_equal.old_index")
+	New_Line_Index_Invariants(new_index, "lines_equal.new_index")
+	old_start := int(state.Old_Runes[old_index])
+	old_end_count := len(state.Old)
+	if int(old_index)+1 < int(state.Old_Count) {
+		old_end_count = int(state.Old_Runes[old_index+1]) - 1
+	}
+	new_start := int(state.New_Runes[new_index])
+	new_end_count := len(state.New)
+	if int(new_index)+1 < int(state.New_Count) {
+		new_end_count = int(state.New_Runes[new_index+1]) - 1
+	}
+	if old_end_count-old_start != new_end_count-new_start {
+		return false
+	}
+	for index := 0; index < old_end_count-old_start; index++ {
+		if state.Old[old_start+index] != state.New[new_start+index] {
 			return false
 		}
 	}
 	return true
 }
 
-// Carries the forward trace and texts into the backtrack pass.
-type Differ_Algorithm_Backtrack_Input struct {
-	// Trace is the per-depth furthest-reaching X snapshots from the forward pass.
-	Trace [][]int
-	// Old is the source text as runes.
-	Old []rune
-	// New is the target text as runes.
-	New []rune
+func old_line_end(
+	runes Compared_Old_Runes, text Compared_Old_Text,
+	count Compared_Old_Count, index Old_Line_Index,
+) (result Line_End) {
+	defer func() { Line_End_Invariants(result, "old_line_end.result") }()
+	Compared_Old_Runes_Invariants(runes, "old_line_end.runes")
+	Compared_Old_Text_Invariants(text, "old_line_end.text")
+	Compared_Old_Count_Invariants(count, "old_line_end.count")
+	Old_Line_Index_Invariants(index, "old_line_end.index")
+	if int(index)+1 < int(count) {
+		return Line_End(int(runes[index+1]) - 1)
+	}
+	return Line_End(len(text))
 }
 
-// Walks the forward trace from the end, emitting the retains, deletes, and
-// inserts of the minimal script in reverse order.
-func differ_algorithm_backtrack(input Differ_Algorithm_Backtrack_Input) (edits []Edit) {
-	trace, old, new := input.Trace, input.Old, input.New
-	edits_max := len(old) + len(new)
-	x, y := len(old), len(new)
-	for depth := len(trace) - 1; depth >= 0; depth-- {
-		trace_entry := trace[depth]
-		k := x - y
-		k_offset := edits_max + k
+func new_line_end(
+	runes Compared_New_Runes, text Compared_New_Text,
+	count Compared_New_Count, index New_Line_Index,
+) (result Line_End) {
+	defer func() { Line_End_Invariants(result, "new_line_end.result") }()
+	Compared_New_Runes_Invariants(runes, "new_line_end.runes")
+	Compared_New_Text_Invariants(text, "new_line_end.text")
+	Compared_New_Count_Invariants(count, "new_line_end.count")
+	New_Line_Index_Invariants(index, "new_line_end.index")
+	if int(index)+1 < int(count) {
+		return Line_End(int(runes[index+1]) - 1)
+	}
+	return Line_End(len(text))
+}
 
-		var edit Edit
-		var previous_k int
-		is_insert := k == -depth ||
-			(k != depth && trace_entry[k_offset+1] > trace_entry[k_offset-1])
-		if is_insert {
-			edit.Kind = EDIT_INSERT
-			previous_k = k + 1
+func line_writer_old(
+	writer *Line_Writer, runes Compared_Old_Runes, text Compared_Old_Text,
+	count Compared_Old_Count, index Old_Line_Index, prefix Line_Prefix,
+) {
+	Line_Writer_Invariants(*writer, "line_writer_old.writer")
+	Compared_Old_Runes_Invariants(runes, "line_writer_old.runes")
+	Compared_Old_Text_Invariants(text, "line_writer_old.text")
+	Compared_Old_Count_Invariants(count, "line_writer_old.count")
+	Old_Line_Index_Invariants(index, "line_writer_old.index")
+	Line_Prefix_Invariants(prefix, "line_writer_old.prefix")
+	line_writer_line(Line_Write_Input{
+		Writer: writer, Prefix: prefix, Text: Line_Text(text),
+		Start: Line_Start(runes[index]),
+		End:   old_line_end(runes, text, count, index),
+	})
+}
+
+func line_writer_new(
+	writer *Line_Writer, runes Compared_New_Runes, text Compared_New_Text,
+	count Compared_New_Count, index New_Line_Index, prefix Line_Prefix,
+) {
+	Line_Writer_Invariants(*writer, "line_writer_new.writer")
+	Compared_New_Runes_Invariants(runes, "line_writer_new.runes")
+	Compared_New_Text_Invariants(text, "line_writer_new.text")
+	Compared_New_Count_Invariants(count, "line_writer_new.count")
+	New_Line_Index_Invariants(index, "line_writer_new.index")
+	Line_Prefix_Invariants(prefix, "line_writer_new.prefix")
+	line_writer_line(Line_Write_Input{
+		Writer: writer, Prefix: prefix, Text: Line_Text(text),
+		Start: Line_Start(runes[index]),
+		End:   new_line_end(runes, text, count, index),
+	})
+}
+
+// Line_Diff_Into renders minimal line script without allocation.
+func Line_Diff_Into(input Line_Diff_Input) (count Line_Count, status Status) {
+	defer func() {
+		Line_Count_Invariants(count, "line_diff_into.count")
+		Status_Invariants(status, "line_diff_into.status")
+	}()
+	Line_Diff_Input_Invariants(input, "line_diff_into.input")
+	prepared, prepare_status := line_prepare(input)
+	if prepare_status != PREPARE_STATUS_OK {
+		return 0, Status(prepare_status)
+	}
+	state := Line_State{
+		Output:    prepared.Input.Output,
+		Old_Runes: prepared.Input.Workspace.Old_Runes,
+		New_Runes: prepared.Input.Workspace.New_Runes,
+		Matrix:    Prepared_Matrix(prepared.Input.Workspace.Matrix),
+		Old:       Validated_Old_Text(prepared.Input.Old),
+		New:       Validated_New_Text(prepared.Input.New),
+		Old_Count: prepared.Old_Count, New_Count: prepared.New_Count,
+		Column_Count: prepared.Column_Count,
+	}
+	line_matrix(state)
+	count, render_status := line_render(state)
+	if render_status {
+		return count, STATUS_OUTPUT_TOO_SMALL
+	}
+	return count, STATUS_OK
+}
+
+func line_prepare(input Line_Diff_Input) (
+	state Line_Prepare_State, status Prepare_Status,
+) {
+	defer func() {
+		Line_Prepare_State_Invariants(state, "line_prepare.state")
+		Prepare_Status_Invariants(status, "line_prepare.status")
+	}()
+	Line_Diff_Input_Invariants(input, "line_prepare.input")
+	state.Input = input
+	state.Column_Count = MATRIX_COLUMN_COUNT_MINIMUM
+	if len(input.Old) > TEXT_SIZE_MAXIMUM {
+		return state, PREPARE_STATUS_INPUT_INVALID
+	}
+	if len(input.New) > TEXT_SIZE_MAXIMUM {
+		return state, PREPARE_STATUS_INPUT_INVALID
+	}
+	old_line_count := 0
+	if len(input.Old) > 0 {
+		if len(input.Workspace.Old_Runes) == 0 {
+			return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
+		}
+		old_line_count = 1
+		input.Workspace.Old_Runes[0] = 0
+		for index := 0; index < len(input.Old); index++ {
+			if input.Old[index] == '\n' {
+				if old_line_count == len(input.Workspace.Old_Runes) {
+					return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
+				}
+				input.Workspace.Old_Runes[old_line_count] = rune(index + 1)
+				old_line_count++
+			}
+		}
+	}
+	new_line_count := 0
+	if len(input.New) > 0 {
+		if len(input.Workspace.New_Runes) == 0 {
+			return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
+		}
+		new_line_count = 1
+		input.Workspace.New_Runes[0] = 0
+		for index := 0; index < len(input.New); index++ {
+			if input.New[index] == '\n' {
+				if new_line_count == len(input.Workspace.New_Runes) {
+					return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
+				}
+				input.Workspace.New_Runes[new_line_count] = rune(index + 1)
+				new_line_count++
+			}
+		}
+	}
+	column_count := new_line_count + 1
+	matrix_count := (old_line_count + 1) * column_count
+	if len(input.Workspace.Matrix) < matrix_count {
+		return state, PREPARE_STATUS_WORKSPACE_TOO_SMALL
+	}
+	state.Old_Count = Old_Line_Count(old_line_count)
+	state.New_Count = New_Line_Count(new_line_count)
+	state.Column_Count = Column_Count(column_count)
+	return state, PREPARE_STATUS_OK
+}
+
+func line_matrix(state Line_State) {
+	Line_State_Invariants(state, "line_matrix.state")
+	old_line_count := int(state.Old_Count)
+	new_line_count := int(state.New_Count)
+	comparison := Lines_Equal_State{
+		Old_Runes: Compared_Old_Runes(state.Old_Runes),
+		New_Runes: Compared_New_Runes(state.New_Runes),
+		Old:       Compared_Old_Text(state.Old), New: Compared_New_Text(state.New),
+		Old_Count: Compared_Old_Count(state.Old_Count),
+		New_Count: Compared_New_Count(state.New_Count),
+	}
+	column_count := int(state.Column_Count)
+	for old_index := old_line_count; old_index >= 0; old_index-- {
+		state.Matrix[old_index*column_count+new_line_count] = 0
+	}
+	for new_index := new_line_count; new_index >= 0; new_index-- {
+		state.Matrix[old_line_count*column_count+new_index] = 0
+	}
+	for old_index := old_line_count - 1; old_index >= 0; old_index-- {
+		for new_index := new_line_count - 1; new_index >= 0; new_index-- {
+			cell := old_index*column_count + new_index
+			if lines_equal(
+				comparison, Old_Line_Index(old_index), New_Line_Index(new_index),
+			) {
+				state.Matrix[cell] = state.Matrix[cell+column_count+1] + 1
+			} else {
+				state.Matrix[cell] = max(
+					state.Matrix[cell+column_count],
+					state.Matrix[cell+1],
+				)
+			}
+		}
+	}
+}
+
+func line_render(state Line_State) (count Line_Count, status Render_Status) {
+	defer func() {
+		Line_Count_Invariants(count, "line_render.count")
+		Render_Status_Invariants(status, "line_render.status")
+	}()
+	Line_State_Invariants(state, "line_render.state")
+	column_count := int(state.Column_Count)
+	old_line_count, new_line_count := int(state.Old_Count), int(state.New_Count)
+	comparison := Lines_Equal_State{
+		Old_Runes: Compared_Old_Runes(state.Old_Runes),
+		New_Runes: Compared_New_Runes(state.New_Runes),
+		Old:       Compared_Old_Text(state.Old), New: Compared_New_Text(state.New),
+		Old_Count: Compared_Old_Count(state.Old_Count),
+		New_Count: Compared_New_Count(state.New_Count),
+	}
+	writer := Line_Writer{Output: state.Output, First: true}
+	old_index, new_index := 0, 0
+	for old_index < old_line_count || new_index < new_line_count {
+		if old_index < old_line_count {
+			if new_index < new_line_count {
+				if lines_equal(
+					comparison,
+					Old_Line_Index(old_index), New_Line_Index(new_index),
+				) {
+					line_writer_old(
+						&writer, comparison.Old_Runes, comparison.Old,
+						comparison.Old_Count,
+						Old_Line_Index(old_index), ' ',
+					)
+					old_index++
+					new_index++
+					continue
+				}
+			}
+		}
+		delete_next := new_index == new_line_count
+		if old_index < old_line_count {
+			if new_index < new_line_count {
+				delete_reach := state.Matrix[(old_index+1)*column_count+new_index]
+				insert_reach := state.Matrix[old_index*column_count+new_index+1]
+				delete_next = delete_reach >= insert_reach
+			}
+		}
+		if delete_next {
+			line_writer_old(
+				&writer, comparison.Old_Runes, comparison.Old,
+				comparison.Old_Count, Old_Line_Index(old_index), '-',
+			)
+			old_index++
 		} else {
-			edit.Kind = EDIT_DELETE
-			previous_k = k - 1
+			line_writer_new(
+				&writer, comparison.New_Runes, comparison.New,
+				comparison.New_Count, New_Line_Index(new_index), '+',
+			)
+			new_index++
 		}
-
-		previous_x := trace_entry[edits_max+previous_k]
-		previous_y := previous_x - previous_k
-
-		right := x
-		for x > previous_x && y > previous_y {
-			x, y = x-1, y-1
-		}
-		left := x
-		if left < right {
-			edits = append(edits, Edit{Kind: EDIT_RETAIN, Data: old[left:right]})
-		}
-
-		if depth > 0 {
-			if edit.Kind == EDIT_DELETE {
-				edit.Data = old[previous_x:][:1]
-			}
-			if edit.Kind == EDIT_INSERT {
-				edit.Data = new[previous_y:][:1]
-			}
-		}
-		if edit.Data != nil {
-			edits = append(edits, edit)
-		}
-
-		x, y = previous_x, previous_y
 	}
-	return edits
+	return line_writer_result(Completed_Line_Writer{
+		Output: writer.Output, Position: Line_Count(writer.Position),
+		Overflow: writer.Overflow, First: writer.First,
+	})
 }
 
-// Helpers.
+// Runes is borrowed bounded character run.
+type Runes []rune
 
-// Find_Common_Prefix_Input is the input for Find_Common_Prefix.
+// Runes_Invariants bounds borrowed result.
+func Runes_Invariants(value Runes, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Left_Runes is first bounded helper operand.
+type Left_Runes []rune
+
+// Left_Runes_Invariants bounds first helper operand.
+func Left_Runes_Invariants(value Left_Runes, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Right_Runes is second bounded helper operand.
+type Right_Runes []rune
+
+// Right_Runes_Invariants bounds second helper operand.
+func Right_Runes_Invariants(value Right_Runes, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Find_Common_Prefix_Input carries both prefix operands.
 type Find_Common_Prefix_Input struct {
-	// A is one rune slice.
-	A []rune
-	// B is the other rune slice.
-	B []rune
+	// Left is first text.
+	Left Left_Runes
+	// Right is second text.
+	Right Right_Runes
 }
 
-// Find_Common_Prefix returns the longest run of runes that begins both inputs.
-func Find_Common_Prefix(input Find_Common_Prefix_Input) (result []rune) {
-	a, b := input.A, input.B
-	defer func() {
-		if len(result) > 0 {
-			invariant.Always(Runes_Have_Prefix(Runes_Have_Prefix_Input{
-				String: a, Expect: result,
-			}), "result is a prefix of A")
-			invariant.Always(Runes_Have_Prefix(Runes_Have_Prefix_Input{
-				String: b, Expect: result,
-			}), "result is a prefix of B")
-		}
-	}()
-	if len(a) == 0 {
-		return nil
-	}
-	if len(b) == 0 {
-		return nil
-	}
-	l := min(len(a), len(b))
-	for i_index := 0; i_index < l; i_index++ {
-		if a[i_index] != b[i_index] {
-			return a[:i_index]
-		}
-	}
-	return a[:l]
+// Find_Common_Prefix_Input_Invariants composes prefix operands.
+func Find_Common_Prefix_Input_Invariants(
+	value Find_Common_Prefix_Input, namespace invariant.Namespace,
+) {
+	Left_Runes_Invariants(value.Left, namespace)
+	Right_Runes_Invariants(value.Right, namespace)
 }
 
-// Find_Common_Suffix_Input is the input for Find_Common_Suffix.
+// Find_Common_Prefix returns longest shared leading run without allocation.
+func Find_Common_Prefix(input Find_Common_Prefix_Input) (result Runes) {
+	defer func() { Runes_Invariants(result, "find_common_prefix.result") }()
+	Find_Common_Prefix_Input_Invariants(input, "find_common_prefix.input")
+	limit := min(len(input.Left), len(input.Right))
+	for index := 0; index < limit; index++ {
+		if input.Left[index] != input.Right[index] {
+			return Runes(input.Left[:index])
+		}
+	}
+	return Runes(input.Left[:limit])
+}
+
+// Find_Common_Suffix_Input carries both suffix operands.
 type Find_Common_Suffix_Input struct {
-	// A is one rune slice.
-	A []rune
-	// B is the other rune slice.
-	B []rune
+	// Left is first text.
+	Left Left_Runes
+	// Right is second text.
+	Right Right_Runes
 }
 
-// Find_Common_Suffix returns the longest run of runes that ends both inputs.
-func Find_Common_Suffix(input Find_Common_Suffix_Input) (result []rune) {
-	a, b := input.A, input.B
-	defer func() {
-		if len(result) > 0 {
-			invariant.Always(Runes_Have_Suffix(Runes_Have_Suffix_Input{
-				String: a, Expect: result,
-			}), "result is a suffix of A")
-			invariant.Always(Runes_Have_Suffix(Runes_Have_Suffix_Input{
-				String: b, Expect: result,
-			}), "result is a suffix of B")
-		}
-	}()
-	la, lb := len(a), len(b)
-	l := min(la, lb)
-	for i_index := 0; i_index < l; i_index++ {
-		if a[la-1-i_index] != b[lb-1-i_index] {
-			return a[la-i_index:]
+// Find_Common_Suffix_Input_Invariants composes suffix operands.
+func Find_Common_Suffix_Input_Invariants(
+	value Find_Common_Suffix_Input, namespace invariant.Namespace,
+) {
+	Left_Runes_Invariants(value.Left, namespace)
+	Right_Runes_Invariants(value.Right, namespace)
+}
+
+// Find_Common_Suffix returns longest shared trailing run without allocation.
+func Find_Common_Suffix(input Find_Common_Suffix_Input) (result Runes) {
+	defer func() { Runes_Invariants(result, "find_common_suffix.result") }()
+	Find_Common_Suffix_Input_Invariants(input, "find_common_suffix.input")
+	limit := min(len(input.Left), len(input.Right))
+	for index := 0; index < limit; index++ {
+		left_index := len(input.Left) - index - 1
+		right_index := len(input.Right) - index - 1
+		if input.Left[left_index] != input.Right[right_index] {
+			return Runes(input.Left[len(input.Left)-index:])
 		}
 	}
-	return a[la-l:]
+	return Runes(input.Left[len(input.Left)-limit:])
 }
 
-// Find_Common_Run_Input is the input for Find_Common_Run.
+// Find_Common_Run_Input carries both run operands.
 type Find_Common_Run_Input struct {
-	// A is one rune slice.
-	A []rune
-	// B is the other rune slice.
-	B []rune
+	// Left is first text.
+	Left Left_Runes
+	// Right is second text.
+	Right Right_Runes
 }
 
-// Find_Common_Run returns the longest contiguous run of runes shared by both
-// inputs, provided it spans at least half the longer input; otherwise nil.
-func Find_Common_Run(input Find_Common_Run_Input) (run []rune) {
-	a, b := input.A, input.B
-	if len(a) < len(b) {
-		a, b = b, a
-	}
+// Find_Common_Run_Input_Invariants composes run operands.
+func Find_Common_Run_Input_Invariants(
+	value Find_Common_Run_Input, namespace invariant.Namespace,
+) {
+	Left_Runes_Invariants(value.Left, namespace)
+	Right_Runes_Invariants(value.Right, namespace)
+}
 
-	al, bl := len(a), len(b)
-	run_size_min := (al + 1) / 2
-	if bl < run_size_min {
+// Find_Common_Run returns longest qualifying shared run without allocation.
+func Find_Common_Run(input Find_Common_Run_Input) (result Runes) {
+	defer func() { Runes_Invariants(result, "find_common_run.result") }()
+	Find_Common_Run_Input_Invariants(input, "find_common_run.input")
+	left := Runes(input.Left)
+	right := Runes(input.Right)
+	if len(left) < len(right) {
+		left, right = right, left
+	}
+	minimum := (len(left) + 1) / 2
+	if len(right) < minimum {
 		return nil
 	}
-	for run_size := bl; run_size >= run_size_min; run_size-- {
-		for i_index := 0; i_index <= al-run_size; i_index++ {
-			for j_index := 0; j_index <= bl-run_size; j_index++ {
-				a_slice := a[i_index:][:run_size:run_size]
-				b_slice := b[j_index:][:run_size:run_size]
-				if slices.Equal(a_slice, b_slice) {
-					return a_slice
+	for run_count := len(right); run_count >= minimum; run_count-- {
+		for left_index := 0; left_index <= len(left)-run_count; left_index++ {
+			for right_index := 0; right_index <= len(right)-run_count; right_index++ {
+				equal := true
+				left_run := left[left_index:]
+				right_run := right[right_index:]
+				for run_index := 0; run_index < run_count; run_index++ {
+					if left_run[run_index] != right_run[run_index] {
+						equal = false
+						break
+					}
+				}
+				if equal {
+					return left[left_index : left_index+run_count]
 				}
 			}
 		}
@@ -921,72 +1547,101 @@ func Find_Common_Run(input Find_Common_Run_Input) (run []rune) {
 	return nil
 }
 
-// Runes_Have_Prefix_Input is the input for Runes_Have_Prefix.
+// Boolean reports bounded rune predicate result.
+type Boolean bool
+
+// Boolean_Invariants requires both predicate outcomes.
+func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Rune predicate reports true.").
+		Ensure()
+}
+
+// String_Runes is bounded searched run.
+type String_Runes []rune
+
+// String_Runes_Invariants bounds searched run.
+func String_Runes_Invariants(value String_Runes, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Expected_Runes is bounded prefix or suffix.
+type Expected_Runes []rune
+
+// Expected_Runes_Invariants bounds expected run.
+func Expected_Runes_Invariants(value Expected_Runes, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Runes_Have_Prefix_Input carries searched run and expected prefix.
 type Runes_Have_Prefix_Input struct {
-	// String is the slice tested.
-	String []rune
-	// Expect is the prefix sought.
-	Expect []rune
+	// String is searched run.
+	String String_Runes
+	// Expect is expected prefix.
+	Expect Expected_Runes
 }
 
-// Runes_Have_Prefix reports whether the input begins with the non-empty Expect.
-func Runes_Have_Prefix(input Runes_Have_Prefix_Input) (ok bool) {
-	if len(input.String) == 0 {
-		return false
-	}
+// Runes_Have_Prefix_Input_Invariants composes predicate operands.
+func Runes_Have_Prefix_Input_Invariants(
+	value Runes_Have_Prefix_Input, namespace invariant.Namespace,
+) {
+	String_Runes_Invariants(value.String, namespace)
+	Expected_Runes_Invariants(value.Expect, namespace)
+}
+
+// Runes_Have_Prefix reports nonempty prefix match without allocation.
+func Runes_Have_Prefix(input Runes_Have_Prefix_Input) (result Boolean) {
+	defer func() { Boolean_Invariants(result, "runes_have_prefix.result") }()
+	Runes_Have_Prefix_Input_Invariants(input, "runes_have_prefix.input")
 	if len(input.Expect) == 0 {
 		return false
 	}
 	if len(input.Expect) > len(input.String) {
 		return false
 	}
-	actual := input.String[:len(input.Expect)]
-	return slices.Equal(actual, input.Expect)
-}
-
-// Runes_Have_Suffix_Input is the input for Runes_Have_Suffix.
-type Runes_Have_Suffix_Input struct {
-	// String is the slice tested.
-	String []rune
-	// Expect is the suffix sought.
-	Expect []rune
-}
-
-// Runes_Have_Suffix reports whether the input ends with the non-empty Expect.
-func Runes_Have_Suffix(input Runes_Have_Suffix_Input) (ok bool) {
-	if len(input.String) == 0 {
-		return false
-	}
-	if len(input.Expect) == 0 {
-		return false
-	}
-	if len(input.Expect) > len(input.String) {
-		return false
-	}
-	actual := input.String[len(input.String)-len(input.Expect):]
-	return slices.Equal(actual, input.Expect)
-}
-
-// Input for runes_index.
-type Runes_Index_Input struct {
-	// Haystack is the slice searched.
-	Haystack []rune
-	// Needle is the slice sought.
-	Needle []rune
-}
-
-// Returns the first index at which Needle occurs in Haystack, or -1.
-func runes_index(input Runes_Index_Input) (index int) {
-	if len(input.Needle) == 0 {
-		return -1
-	}
-	if len(input.Needle) > len(input.Haystack) {
-		return -1
-	}
-	for start := 0; start <= len(input.Haystack)-len(input.Needle); start++ {
-		if slices.Equal(input.Haystack[start:][:len(input.Needle)], input.Needle) {
-			return start
+	for index := range input.Expect {
+		if input.String[index] != input.Expect[index] {
+			return false
 		}
 	}
-	return -1
+	return true
+}
+
+// Runes_Have_Suffix_Input carries searched run and expected suffix.
+type Runes_Have_Suffix_Input struct {
+	// String is searched run.
+	String String_Runes
+	// Expect is expected suffix.
+	Expect Expected_Runes
+}
+
+// Runes_Have_Suffix_Input_Invariants composes predicate operands.
+func Runes_Have_Suffix_Input_Invariants(
+	value Runes_Have_Suffix_Input, namespace invariant.Namespace,
+) {
+	String_Runes_Invariants(value.String, namespace)
+	Expected_Runes_Invariants(value.Expect, namespace)
+}
+
+// Runes_Have_Suffix reports nonempty suffix match without allocation.
+func Runes_Have_Suffix(input Runes_Have_Suffix_Input) (result Boolean) {
+	defer func() { Boolean_Invariants(result, "runes_have_suffix.result") }()
+	Runes_Have_Suffix_Input_Invariants(input, "runes_have_suffix.input")
+	if len(input.Expect) == 0 {
+		return false
+	}
+	if len(input.Expect) > len(input.String) {
+		return false
+	}
+	start := len(input.String) - len(input.Expect)
+	for index := range input.Expect {
+		if input.String[start+index] != input.Expect[index] {
+			return false
+		}
+	}
+	return true
 }
