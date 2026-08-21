@@ -9,7 +9,7 @@ import (
 	"errors"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
+	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/slices"
@@ -413,8 +413,11 @@ type Clock struct {
 	Now_Realtime func(state unsafe.Pointer) (moment Moment)
 }
 
-// Clock_Now_Monotonic passes state explicitly because a bound reader would allocate.
+// Clock_Now_Monotonic passes state explicitly because a bound reader would allocate. Uptime
+// bound hold here, at the one read every backend go through, thus OS clock past one year fail
+// on the read and not at whichever holder happen to assert what it stored.
 func Clock_Now_Monotonic(clock Clock) (moment Monotonic_Moment) {
+	defer func() { Monotonic_Moment_Invariants(moment, "clock_now_monotonic.moment") }()
 	return clock.Now_Monotonic(clock.State)
 }
 
@@ -643,11 +646,6 @@ type Timeline struct {
 	Submit func(
 		state unsafe.Pointer, completion *Completion, delay Duration, callback Callback,
 	)
-	// Timeout fire callback after duration on clock, off same queue every other completion
-	// use. Duration must be positive.
-	Timeout func(
-		state unsafe.Pointer, completion *Completion, duration Duration, callback Callback,
-	)
 	// Open_Event make platform Event primitive.
 	Open_Event func(state unsafe.Pointer) (event Event, err error)
 	// Event_Listen arm completion for one Event notification.
@@ -668,11 +666,15 @@ func Timeline_Submit(
 	loop.Submit(loop.State, completion, delay, callback)
 }
 
-// Timeline_Timeout passes loop state explicitly because a bound timer would allocate.
+// Timeline_Timeout is Submit with one guard. Same queue, same order, same backend body, thus
+// no vtable slot of its own. Simulated IO submit delay 0 to retire in submit tick; timer with
+// duration 0 is caller mistake, never modeled outcome, so guard sit here, once, above every
+// backend.
 func Timeline_Timeout(
 	loop Timeline, completion *Completion, duration Duration, callback Callback,
 ) {
-	loop.Timeout(loop.State, completion, duration, callback)
+	invariant.Always(duration > 0, "A timeout duration is positive.")
+	loop.Submit(loop.State, completion, duration, callback)
 }
 
 // Timeline_Open_Event keeps event ownership with the backend state that opened it.
@@ -698,11 +700,10 @@ func Timeline_Close_Event(loop Timeline, event Event) {
 }
 
 // Timeline_Invariants state every slot full. Timeline is vtable. Zero Timeline read as
-// Timeline, then panic on first use. Backend that fill five slots and forget sixth fail one
+// Timeline, then panic on first use. Backend that fill four slots and forget fifth fail one
 // call later.
 func Timeline_Invariants(loop Timeline, namespace invariant.Namespace) {
 	invariant.Always(loop.Submit != nil, "A Timeline arms a completion.")
-	invariant.Always(loop.Timeout != nil, "A Timeline fires a timer.")
 	invariant.Always(loop.Open_Event != nil, "A Timeline opens a cross-thread event.")
 	invariant.Always(loop.Event_Listen != nil, "A Timeline listens for that event.")
 	invariant.Always(loop.Event_Trigger != nil, "A Timeline triggers that event.")
@@ -871,7 +872,6 @@ func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 	return Timeline{
 		State:         unsafe.Pointer(state),
 		Submit:        virtual_timeline_submit,
-		Timeout:       virtual_timeline_timeout,
 		Open_Event:    virtual_timeline_open_event,
 		Event_Listen:  virtual_timeline_event_listen,
 		Event_Trigger: virtual_timeline_event_trigger,
@@ -883,12 +883,6 @@ func virtual_timeline_submit(
 	state unsafe.Pointer, completion *Completion, delay Duration, callback Callback,
 ) {
 	virtual_submit((*Virtual_Timeline)(state), completion, delay, callback)
-}
-
-func virtual_timeline_timeout(
-	state unsafe.Pointer, completion *Completion, duration Duration, callback Callback,
-) {
-	virtual_timeout((*Virtual_Timeline)(state), completion, duration, callback)
 }
 
 func virtual_timeline_open_event(state unsafe.Pointer) (event Event, err error) {
@@ -919,16 +913,6 @@ func virtual_timeline_close_event(state unsafe.Pointer, event Event) {
 	entry := virtual_event_entry(timeline, event)
 	invariant.Always(!entry.Armed, "An event listener is drained before close.")
 	*entry = Virtual_Event{}
-}
-
-// Arm one simulated timer. Live beside vtable, not inside it: vtable literal is map of
-// control plane, and body there hide that shape.
-func virtual_timeout(
-	state *Virtual_Timeline, completion *Completion, duration Duration,
-	callback Callback,
-) {
-	invariant.Always(duration > 0, "A timeout duration is positive.")
-	virtual_submit(state, completion, duration, callback)
 }
 
 // Arm event listener. Deliver at once when trigger already arrive.

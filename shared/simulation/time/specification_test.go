@@ -2,6 +2,7 @@ package time_test
 
 import (
 	"testing"
+	"unsafe"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/time"
@@ -295,6 +296,21 @@ func Test_Monotonic_Moment(t *testing.T) {
 	const ONE_YEAR_NANOSECONDS int64 = 365 * 24 * 60 * 60 * 1000 * 1000 * 1000
 	testify.Zero(t, time.MONOTONIC_MOMENT_MINIMUM)
 	testify.Equal(t, ONE_YEAR_NANOSECONDS, int64(time.MONOTONIC_MOMENT_MAXIMUM))
+	// Bound hold at the reader, not at each consumer: backend that hand out a moment past one
+	// year fail on the read, before any holder store it.
+	past_bound := time.Clock{
+		Now_Monotonic: past_bound_monotonic,
+		Now_Realtime:  invariant_now_realtime,
+	}
+	testify.Panics(t, func() { time.Clock_Now_Monotonic(past_bound) })
+}
+
+func past_bound_monotonic(_ unsafe.Pointer) (moment time.Monotonic_Moment) {
+	return time.MONOTONIC_MOMENT_MAXIMUM + 1
+}
+
+func invariant_now_realtime(_ unsafe.Pointer) (moment time.Moment) {
+	return 0
 }
 
 // Run_Until cap for loop tests. Generous: completion give pump back instant it fire. This
