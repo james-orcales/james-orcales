@@ -148,7 +148,7 @@ type clock_value struct {
 func new_operating_system_clock() (host time.Clock) {
 	state := &operating_system_clock_state{Origin: operating_system_clock_read()}
 	return time.Clock{
-		State:         unsafe.Pointer(state),
+		State:         state,
 		Now_Monotonic: operating_system_clock_now_monotonic,
 		Now_Realtime:  operating_system_clock_now_realtime,
 	}
@@ -163,8 +163,8 @@ func operating_system_clock_read() (nanoseconds int64) {
 		int64(value.Usec)*int64(time.MICROSECOND)
 }
 
-func operating_system_clock_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_Moment) {
-	host := (*operating_system_clock_state)(state)
+func operating_system_clock_now_monotonic(state time.State) (moment time.Monotonic_Moment) {
+	host := state.(*operating_system_clock_state)
 	maximum := &host.Maximum
 	current := operating_system_clock_read() - host.Origin
 	previous := maximum.Load()
@@ -177,26 +177,26 @@ func operating_system_clock_now_monotonic(state unsafe.Pointer) (moment time.Mon
 	return time.Monotonic_Moment(maximum.Load())
 }
 
-func operating_system_clock_now_realtime(_ unsafe.Pointer) (moment time.Moment) {
+func operating_system_clock_now_realtime(_ time.State) (moment time.Moment) {
 	return time.Moment(operating_system_clock_read())
 }
 
 func clock_value_to_clock(value *clock_value) (host time.Clock) {
 	return time.Clock{
-		State:         unsafe.Pointer(value),
+		State:         value,
 		Now_Monotonic: clock_value_now_monotonic,
 		Now_Realtime:  clock_value_now_realtime,
 	}
 }
 
-func clock_value_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_Moment) {
-	value := (*clock_value)(state)
+func clock_value_now_monotonic(state time.State) (moment time.Monotonic_Moment) {
+	value := state.(*clock_value)
 	value.Moment += time.Monotonic_Moment(value.Step)
 	return value.Moment
 }
 
-func clock_value_now_realtime(state unsafe.Pointer) (moment time.Moment) {
-	return time.Moment((*clock_value)(state).Moment)
+func clock_value_now_realtime(state time.State) (moment time.Moment) {
+	return time.Moment(state.(*clock_value).Moment)
 }
 
 func test_decimal(content []byte) (value int, valid bool) {
@@ -537,7 +537,7 @@ func operating_system_loop(
 func Test_Operating_System_Constructor_Heap_Allocation(t *testing.T) {
 	clock_state := operating_system_clock_state{}
 	host := time.Clock{
-		State:         unsafe.Pointer(&clock_state),
+		State:         &clock_state,
 		Now_Monotonic: operating_system_clock_now_monotonic,
 		Now_Realtime:  operating_system_clock_now_realtime,
 	}

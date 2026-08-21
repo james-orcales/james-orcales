@@ -2,7 +2,6 @@ package time_test
 
 import (
 	"testing"
-	"unsafe"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/time"
@@ -27,11 +26,11 @@ func Test_Civil_Calendar(t *testing.T) {
 		{Days: 11_017, Year: 2000, Month: 3, Day: 1},
 		{Days: 47_541, Year: 2100, Month: 3, Day: 1},
 	} {
-		year, month, day := time.Civil_From_Days(check.Days)
-		testify.Equal(t, check.Year, year)
-		testify.Equal(t, check.Month, month)
-		testify.Equal(t, check.Day, day)
-		testify.Equal(t, check.Days, time.Days_From_Civil(year, month, day))
+		date := time.Civil_From_Days(check.Days)
+		testify.Equal(t, check.Year, date.Year)
+		testify.Equal(t, check.Month, date.Month)
+		testify.Equal(t, check.Day, date.Day)
+		testify.Equal(t, check.Days, time.Days_From_Civil(date))
 	}
 	for _, check := range []struct {
 		Seconds     time.Unix_Second_Count
@@ -46,9 +45,9 @@ func Test_Civil_Calendar(t *testing.T) {
 		{Seconds: time.Unix_Second_Count(time.SECOND_COUNT_PER_DAY), Days: 1,
 			Day_Seconds: 0},
 	} {
-		days, day_seconds := time.Unix_Second_Split(check.Seconds)
-		testify.Equal(t, check.Days, days)
-		testify.Equal(t, check.Day_Seconds, day_seconds)
+		split := time.Unix_Second_Split(check.Seconds)
+		testify.Equal(t, check.Days, split.Days)
+		testify.Equal(t, check.Day_Seconds, split.Day_Seconds)
 	}
 }
 
@@ -109,21 +108,18 @@ func Test_Monotonic_Moment(t *testing.T) {
 	testify.Panics(t, func() { time.Clock_Now_Monotonic(past_bound) })
 }
 
-func past_bound_monotonic(_ unsafe.Pointer) (moment time.Monotonic_Moment) {
+func past_bound_monotonic(_ time.State) (moment time.Monotonic_Moment) {
 	return time.MONOTONIC_MOMENT_MAXIMUM + 1
 }
 
-func invariant_now_realtime(_ unsafe.Pointer) (moment time.Moment) {
+func invariant_now_realtime(_ time.State) (moment time.Moment) {
 	return 0
 }
 
-// SPECIAL_VALUE_COUNT: how many special values full-width signed domain have. Two bounds, plus
-// four interior sentinels framework expand.
-const SPECIAL_VALUE_COUNT = 6
-
-// Signed special values every full-width domain in this package state.
-func special_values() (values [SPECIAL_VALUE_COUNT]int64) {
-	return [...]int64{
+// Signed special values every full-width domain in this package state. Two bounds, plus four
+// interior sentinels framework expand.
+func special_values() (values []int64) {
+	return []int64{
 		bits.INTEGER_64_MINIMUM,
 		bits.INTEGER_64_MAXIMUM,
 		0,
@@ -133,32 +129,83 @@ func special_values() (values [SPECIAL_VALUE_COUNT]int64) {
 	}
 }
 
-// Hit each special value at two scalars virtual clock take. Clock only built, never ticked.
-// Extreme resolution or epoch is legal configuration. Product it would read is not what these
-// domains state.
-func verify_virtual_clock_domains() {
-	for _, value := range special_values() {
-		resolution := time.Virtual_Clock{Resolution: time.Duration(value)}
-		time.Virtual_Clock_To_Clock(&resolution)
-		epoch := time.Virtual_Clock{Epoch: time.Moment(value)}
-		time.Virtual_Clock_To_Clock(&epoch)
-	}
-}
-
-// Hit each skew model, and each special value at both coefficients.
-func verify_skew_domains() {
-	kinds := [...]time.Skew_Kind{
+// Every skew model, for the sweeps that hold one model per variant.
+func skew_kinds() (kinds []time.Skew_Kind) {
+	return []time.Skew_Kind{
 		time.SKEW_KIND_LINEAR,
 		time.SKEW_KIND_PERIODIC,
 		time.SKEW_KIND_STEP,
 	}
-	for _, kind := range kinds {
+}
+
+// One virtual clock per field holding one special value, plus one per skew model. Extreme
+// resolution or epoch is legal configuration. Product it would read is not what these domains
+// state.
+func virtual_clock_variants(value int64) (variants []time.Virtual_Clock) {
+	variants = []time.Virtual_Clock{
+		{Resolution: time.Duration(value)},
+		{Epoch: time.Moment(value)},
+		{Skew: time.Skew(time.SKEW_KIND_LINEAR, time.Skew_Magnitude(value), 0)},
+		{Skew: time.Skew(time.SKEW_KIND_LINEAR, 0, time.Skew_Ticks(value))},
+		{Ticks: time.Tick_Count(value)},
+	}
+	for _, kind := range skew_kinds() {
+		variants = append(variants, time.Virtual_Clock{Skew: time.Skew(kind, 0, 0)})
+	}
+	return variants
+}
+
+// Hit each special value at every field through both entry points that assert the whole
+// clock. To_Clock resets the tick counter after its assertion, thus the tick sweep is the one
+// that advances from a special value; a wrapped counter is legal and unread here.
+func verify_virtual_clock_domains() {
+	for _, value := range special_values() {
+		for _, variant := range virtual_clock_variants(value) {
+			built := variant
+			time.Virtual_Clock_To_Clock(&built)
+			ticked := variant
+			time.Virtual_Clock_Tick(&ticked)
+		}
+	}
+}
+
+// Hit each skew model, and each special value at both coefficients, at the constructor and at
+// the reader. The reader sweeps stay linear: a periodic model at an extreme period would push a
+// phase ratio the fixed-point package does not admit, and the linear model reads every
+// coefficient the domains state. Zero magnitude keeps the tick product inside Duration, thus
+// the read equals coefficient B and the skew output sweeps its own special values too.
+func verify_skew_domains() {
+	for _, kind := range skew_kinds() {
 		time.Skew(kind, 0, 0)
+		time.Offset_Read(time.Skew(kind, 0, 0), 0)
 	}
 	for _, value := range special_values() {
-		time.Skew(time.SKEW_KIND_LINEAR, time.Duration(value), 0)
-		time.Skew(time.SKEW_KIND_LINEAR, 0, time.Tick_Count(value))
+		magnitude := time.Skew(time.SKEW_KIND_LINEAR, time.Skew_Magnitude(value), 0)
+		time.Offset_Read(magnitude, 0)
+		period := time.Skew(time.SKEW_KIND_LINEAR, 0, time.Skew_Ticks(value))
+		time.Offset_Read(period, 0)
+		time.Offset_Read(time.Skew(time.SKEW_KIND_LINEAR, 0, 0), time.Tick_Count(value))
 	}
+}
+
+// Hit each special value at both realtime readers: the injected one through a clock whose
+// state is the moment itself, and the virtual one through an epoch at rest.
+func verify_realtime_domains() {
+	for _, value := range special_values() {
+		moment := time.Moment(value)
+		injected := time.Clock{
+			State:         &moment,
+			Now_Monotonic: past_bound_monotonic,
+			Now_Realtime:  pointer_realtime,
+		}
+		time.Clock_Now_Realtime(injected)
+		virtual := time.Virtual_Clock{Epoch: moment}
+		time.Clock_Now_Realtime(time.Virtual_Clock_To_Clock(&virtual))
+	}
+}
+
+func pointer_realtime(state time.State) (moment time.Moment) {
+	return *state.(*time.Moment)
 }
 
 // Hit uptime domain at each special value framework expand. Resolution of one year reach upper
@@ -200,8 +247,7 @@ func verify_civil_calendar_domains() {
 		2,
 		-1,
 	} {
-		year, month, day := time.Civil_From_Days(days)
-		time.Days_From_Civil(year, month, day)
+		time.Days_From_Civil(time.Civil_From_Days(days))
 	}
 }
 
@@ -210,6 +256,7 @@ func Test_Invariant_Domains(t *testing.T) {
 	t.Parallel()
 	verify_virtual_clock_domains()
 	verify_skew_domains()
+	verify_realtime_domains()
 	verify_uptime_domains()
 	verify_civil_calendar_domains()
 }
@@ -242,34 +289,26 @@ func verify_time_constructor_allocations(t *testing.T) {
 
 func verify_time_reader_allocations(t *testing.T) {
 	t.Run("Unix_Second_Split", func(t *testing.T) {
-		var days time.Calendar_Day_Count
-		var day_seconds time.Day_Second_Count
-		testify.Zero_Allocation(t, func() {
-			days, day_seconds = time.Unix_Second_Split(0)
-		})
-		testify.Zero(t, days)
-		testify.Zero(t, day_seconds)
+		var split time.Day_Split
+		testify.Zero_Allocation(t, func() { split = time.Unix_Second_Split(0) })
+		testify.Zero(t, split.Days)
+		testify.Zero(t, split.Day_Seconds)
 	})
 	t.Run("Civil_From_Days", func(t *testing.T) {
-		var year time.Civil_Year
-		var month time.Civil_Month
-		var day time.Civil_Day
-		testify.Zero_Allocation(t, func() {
-			year, month, day = time.Civil_From_Days(0)
-		})
-		testify.Equal(t, time.Civil_Year(time.CIVIL_UNIX_EPOCH_YEAR), year)
-		testify.Equal(t, time.Civil_Month(time.CIVIL_MONTH_MINIMUM), month)
-		testify.Equal(t, time.Civil_Day(time.CIVIL_DAY_MINIMUM), day)
+		var date time.Civil_Date
+		testify.Zero_Allocation(t, func() { date = time.Civil_From_Days(0) })
+		testify.Equal(t, time.Civil_Year(time.CIVIL_UNIX_EPOCH_YEAR), date.Year)
+		testify.Equal(t, time.Civil_Month(time.CIVIL_MONTH_MINIMUM), date.Month)
+		testify.Equal(t, time.Civil_Day(time.CIVIL_DAY_MINIMUM), date.Day)
 	})
 	t.Run("Days_From_Civil", func(t *testing.T) {
+		epoch := time.Civil_Date{
+			Year:  time.Civil_Year(time.CIVIL_UNIX_EPOCH_YEAR),
+			Month: time.Civil_Month(time.CIVIL_MONTH_MINIMUM),
+			Day:   time.Civil_Day(time.CIVIL_DAY_MINIMUM),
+		}
 		var days time.Calendar_Day_Count
-		testify.Zero_Allocation(t, func() {
-			days = time.Days_From_Civil(
-				time.Civil_Year(time.CIVIL_UNIX_EPOCH_YEAR),
-				time.Civil_Month(time.CIVIL_MONTH_MINIMUM),
-				time.Civil_Day(time.CIVIL_DAY_MINIMUM),
-			)
-		})
+		testify.Zero_Allocation(t, func() { days = time.Days_From_Civil(epoch) })
 		testify.Zero(t, days)
 	})
 	t.Run("Offset_Read", func(t *testing.T) {

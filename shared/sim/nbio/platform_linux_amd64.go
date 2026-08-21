@@ -2,10 +2,6 @@
 
 package nbio
 
-import (
-	"unsafe"
-)
-
 // STATX_BASIC_STATS request basic Linux statx fields.
 const STATX_BASIC_STATS uint32 = 0x7ff
 

@@ -1778,7 +1778,7 @@ func sim_skew_draw(state *Sim) (skew time.Offset) {
 	// Period and onset start at one: a zero period reads as no wobble, and a zero onset is a
 	// step that already happened, so neither would exercise its model.
 	period := 1 + prng.Xoshiro_Below(&state.Clock_Generator, SIM_SKEW_PERIOD_GRAINS)
-	return time.Skew(kind, time.Duration(magnitude), time.Tick_Count(period))
+	return time.Skew(kind, time.Skew_Magnitude(magnitude), time.Skew_Ticks(period))
 }
 
 func sim_watch_signal_procedure(
@@ -4642,7 +4642,7 @@ func Sim_Clock_To_Clock(view *Sim_Clock) (host time.Clock) {
 	aver.Always(view != nil, "A simulated clock view has caller-owned state.")
 	aver.Always(view.Timeline != nil, "A simulated clock view names its timeline.")
 	host = time.Clock{
-		State:         unsafe.Pointer(view),
+		State:         view,
 		Now_Monotonic: sim_clock_now_monotonic,
 		Now_Realtime:  sim_clock_now_realtime,
 	}
@@ -4650,12 +4650,12 @@ func Sim_Clock_To_Clock(view *Sim_Clock) (host time.Clock) {
 	return host
 }
 
-func sim_clock_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_Moment) {
-	return virtual_now((*Sim_Clock)(state).Timeline)
+func sim_clock_now_monotonic(state time.State) (moment time.Monotonic_Moment) {
+	return virtual_now(state.(*Sim_Clock).Timeline)
 }
 
-func sim_clock_now_realtime(state unsafe.Pointer) (moment time.Moment) {
-	view := (*Sim_Clock)(state)
+func sim_clock_now_realtime(state time.State) (moment time.Moment) {
+	view := state.(*Sim_Clock)
 	now := view.Timeline.Epoch + time.Moment(virtual_now(view.Timeline))
 	return now - time.Moment(time.Offset_Read(view.Skew, view.Timeline.Ticks))
 }

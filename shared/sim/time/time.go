@@ -6,8 +6,6 @@
 package time
 
 import (
-	"unsafe"
-
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/sim/aver/default"
@@ -286,33 +284,55 @@ func Day_Second_Count_Invariants(value Day_Second_Count, namespace aver.Namespac
 		Ensure()
 }
 
+// Day_Split is one Unix second as a day count and the second inside that day. One type, thus
+// one deferred assertion covers both halves.
+type Day_Split struct {
+	// Days is the Unix-relative Gregorian day.
+	Days Calendar_Day_Count
+	// Day_Seconds is the normalized second inside Days.
+	Day_Seconds Day_Second_Count
+}
+
+// Day_Split_Invariants keeps both halves inside their own domains.
+func Day_Split_Invariants(split Day_Split, namespace aver.Namespace) {
+	Calendar_Day_Count_Invariants(split.Days, namespace)
+	Day_Second_Count_Invariants(split.Day_Seconds, namespace)
+}
+
+// Civil_Date is one proleptic Gregorian date. One type, thus one deferred assertion covers
+// all three fields.
+type Civil_Date struct {
+	// Year is the Moment-representable year.
+	Year Civil_Year
+	// Month is the calendar month.
+	Month Civil_Month
+	// Day is the day number before month-specific normalization.
+	Day Civil_Day
+}
+
+// Civil_Date_Invariants keeps each field inside its own domain.
+func Civil_Date_Invariants(date Civil_Date, namespace aver.Namespace) {
+	Civil_Year_Invariants(date.Year, namespace)
+	Civil_Month_Invariants(date.Month, namespace)
+	Civil_Day_Invariants(date.Day, namespace)
+}
+
 // Unix_Second_Split floors negative values because truncation would produce negative day seconds.
-func Unix_Second_Split(
-	seconds Unix_Second_Count,
-) (days Calendar_Day_Count, day_seconds Day_Second_Count) {
-	defer func() {
-		Calendar_Day_Count_Invariants(days, "unix_second_split.days")
-		Day_Second_Count_Invariants(day_seconds, "unix_second_split.day_seconds")
-	}()
+func Unix_Second_Split(seconds Unix_Second_Count) (split Day_Split) {
+	defer func() { Day_Split_Invariants(split, "unix_second_split.split") }()
 	Unix_Second_Count_Invariants(seconds, "unix_second_split.seconds")
-	days = Calendar_Day_Count(int64(seconds) / SECOND_COUNT_PER_DAY)
+	days := int64(seconds) / SECOND_COUNT_PER_DAY
 	remainder := int64(seconds) % SECOND_COUNT_PER_DAY
 	if remainder < 0 {
 		days--
 		remainder += SECOND_COUNT_PER_DAY
 	}
-	return days, Day_Second_Count(remainder)
+	return Day_Split{Days: Calendar_Day_Count(days), Day_Seconds: Day_Second_Count(remainder)}
 }
 
 // Civil_From_Days uses era arithmetic so leap rules need no ambient timezone or lookup table.
-func Civil_From_Days(
-	days Calendar_Day_Count,
-) (year Civil_Year, month Civil_Month, day Civil_Day) {
-	defer func() {
-		Civil_Year_Invariants(year, "civil_from_days.year")
-		Civil_Month_Invariants(month, "civil_from_days.month")
-		Civil_Day_Invariants(day, "civil_from_days.day")
-	}()
+func Civil_From_Days(days Calendar_Day_Count) (date Civil_Date) {
+	defer func() { Civil_Date_Invariants(date, "civil_from_days.date") }()
 	Calendar_Day_Count_Invariants(days, "civil_from_days.days")
 	shifted_days := int64(days) + CIVIL_UNIX_EPOCH_DAY_OFFSET
 	era := shifted_days / CIVIL_ERA_DAY_COUNT
@@ -325,31 +345,28 @@ func Civil_From_Days(
 	year_of_era := (day_of_era - day_of_era/CIVIL_QUADRENNIAL_COMMON_DAY_COUNT +
 		day_of_era/CIVIL_CENTURY_DAY_COUNT -
 		day_of_era/CIVIL_ERA_FINAL_DAY_INDEX) / CIVIL_COMMON_YEAR_DAY_COUNT
-	year = Civil_Year(year_of_era + era*CIVIL_ERA_YEAR_INTERVAL)
+	year := Civil_Year(year_of_era + era*CIVIL_ERA_YEAR_INTERVAL)
 	day_of_year := day_of_era -
 		(CIVIL_COMMON_YEAR_DAY_COUNT*year_of_era +
 			year_of_era/CIVIL_LEAP_YEAR_INTERVAL -
 			year_of_era/CIVIL_CENTURY_YEAR_INTERVAL)
 	month_prime := (CIVIL_MARCH_MONTH_GROUP_COUNT*day_of_year +
 		CIVIL_MARCH_MONTH_GROUP_BIAS) / CIVIL_MARCH_MONTH_GROUP_DAY_COUNT
-	day = Civil_Day(day_of_year-(CIVIL_MARCH_MONTH_GROUP_DAY_COUNT*month_prime+
+	day := Civil_Day(day_of_year-(CIVIL_MARCH_MONTH_GROUP_DAY_COUNT*month_prime+
 		CIVIL_MARCH_MONTH_GROUP_BIAS)/CIVIL_MARCH_MONTH_GROUP_COUNT) + CIVIL_DAY_MINIMUM
-	month = Civil_Month(month_prime + CIVIL_MARCH_EPOCH_MONTH)
+	month := Civil_Month(month_prime + CIVIL_MARCH_EPOCH_MONTH)
 	if month > CIVIL_MONTH_MAXIMUM {
 		month -= CIVIL_MONTH_MAXIMUM
 		year++
 	}
-	return year, month, day
+	return Civil_Date{Year: year, Month: month, Day: day}
 }
 
 // Days_From_Civil uses same March epoch so it is exact inverse over representable dates.
-func Days_From_Civil(
-	year Civil_Year, month Civil_Month, day Civil_Day,
-) (days Calendar_Day_Count) {
+func Days_From_Civil(date Civil_Date) (days Calendar_Day_Count) {
 	defer func() { Calendar_Day_Count_Invariants(days, "days_from_civil.days") }()
-	Civil_Year_Invariants(year, "days_from_civil.year")
-	Civil_Month_Invariants(month, "days_from_civil.month")
-	Civil_Day_Invariants(day, "days_from_civil.day")
+	Civil_Date_Invariants(date, "days_from_civil.date")
+	year, month, day := date.Year, date.Month, date.Day
 	adjusted_year := int64(year)
 	if month < CIVIL_MARCH_EPOCH_MONTH {
 		adjusted_year--
@@ -375,11 +392,6 @@ func Days_From_Civil(
 		CIVIL_UNIX_EPOCH_DAY_OFFSET)
 }
 
-// Monotonic_Moment: clock reading in nanoseconds. Count from machine boot (Linux
-// CLOCK_BOOTTIME). Zero mean boot. Reading mean uptime. Bound can hold uptime. Plain Moment
-// have no origin. Plain Moment take full signed range.
-type Monotonic_Moment int64
-
 // MONOTONIC_MOMENT_MINIMUM: zero. Clock restart at zero on each boot. Reading below zero mean
 // clock go backward.
 const MONOTONIC_MOMENT_MINIMUM Monotonic_Moment = 0
@@ -388,6 +400,11 @@ const MONOTONIC_MOMENT_MINIMUM Monotonic_Moment = 0
 // Chaos engineering kill it on purpose. Operating system update reboot it. More uptime than
 // this mean defect, not data point.
 const MONOTONIC_MOMENT_MAXIMUM Monotonic_Moment = Monotonic_Moment(DAY * 365)
+
+// Monotonic_Moment: clock reading in nanoseconds. Count from machine boot (Linux
+// CLOCK_BOOTTIME). Zero mean boot. Reading mean uptime. Bound can hold uptime. Plain Moment
+// have no origin. Plain Moment take full signed range.
+type Monotonic_Moment int64
 
 // Monotonic_Moment_Invariants state complete uptime domain.
 func Monotonic_Moment_Invariants(moment Monotonic_Moment, namespace aver.Namespace) {
@@ -399,29 +416,27 @@ func Monotonic_Moment_Invariants(moment Monotonic_Moment, namespace aver.Namespa
 		Ensure()
 }
 
+// State carries caller-owned backend state. An interface, not an unsafe pointer: a pointer
+// boxed in an interface sits in the data word, thus no allocation, and the reader gets a
+// checked assertion instead of a blind cast.
+type State interface{}
+
+// Monotonic_Reader read monotonic clock over caller-owned state. Never go backward. Use for
+// elapsed time, timeout, latency.
+type Monotonic_Reader func(state State) (moment Monotonic_Moment)
+
+// Realtime_Reader read wall clock as nanoseconds from Unix epoch over caller-owned state. Can
+// jump. Use for calendar timestamp only, never for elapsed time.
+type Realtime_Reader func(state State) (moment Moment)
+
 // Clock: injected time source. Backend state stays explicit so the vtable never capture it.
 type Clock struct {
 	// State stays caller-owned because captured backend state would escape with this vtable.
-	State unsafe.Pointer
-	// Now_Monotonic read monotonic clock. Never go backward. Use for elapsed time, timeout,
-	// latency.
-	Now_Monotonic func(state unsafe.Pointer) (moment Monotonic_Moment)
-	// Now_Realtime read wall clock as nanoseconds from Unix epoch. Can jump. Use for calendar
-	// timestamp only, never for elapsed time.
-	Now_Realtime func(state unsafe.Pointer) (moment Moment)
-}
-
-// Clock_Now_Monotonic passes state explicitly because a bound reader would allocate. Uptime
-// bound hold here, at the one read every backend go through, thus OS clock past one year fail
-// on the read and not at whichever holder happen to assert what it stored.
-func Clock_Now_Monotonic(clock Clock) (moment Monotonic_Moment) {
-	defer func() { Monotonic_Moment_Invariants(moment, "clock_now_monotonic.moment") }()
-	return clock.Now_Monotonic(clock.State)
-}
-
-// Clock_Now_Realtime passes state explicitly because a bound reader would allocate.
-func Clock_Now_Realtime(clock Clock) (moment Moment) {
-	return clock.Now_Realtime(clock.State)
+	State State
+	// Now_Monotonic is the monotonic slot of the vtable.
+	Now_Monotonic Monotonic_Reader
+	// Now_Realtime is the realtime slot of the vtable.
+	Now_Realtime Realtime_Reader
 }
 
 // Clock_Invariants state both readers bound. Clock is vtable. One property only:
@@ -436,6 +451,22 @@ func Clock_Invariants(clock Clock, namespace aver.Namespace) {
 	)
 }
 
+// Clock_Now_Monotonic passes state explicitly because a bound reader would allocate. Uptime
+// bound hold here, at the one read every backend go through, thus OS clock past one year fail
+// on the read and not at whichever holder happen to assert what it stored.
+func Clock_Now_Monotonic(clock Clock) (moment Monotonic_Moment) {
+	defer func() { Monotonic_Moment_Invariants(moment, "clock_now_monotonic.moment") }()
+	Clock_Invariants(clock, "clock_now_monotonic.clock")
+	return clock.Now_Monotonic(clock.State)
+}
+
+// Clock_Now_Realtime passes state explicitly because a bound reader would allocate.
+func Clock_Now_Realtime(clock Clock) (moment Moment) {
+	defer func() { Moment_Invariants(moment, "clock_now_realtime.moment") }()
+	Clock_Invariants(clock, "clock_now_realtime.clock")
+	return clock.Now_Realtime(clock.State)
+}
+
 // Tick_Count: how many time virtual clock advance. It is x in each skew formula.
 type Tick_Count int64
 
@@ -446,14 +477,45 @@ func Tick_Count_Invariants(ticks Tick_Count, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Skew_Magnitude is coefficient A of one model: drift-per-tick, amplitude, or step size, in
+// nanoseconds. Its own type, not Duration, because a Virtual_Clock chain already holds one
+// Duration for Resolution and a chain holds each type one time.
+type Skew_Magnitude int64
+
+// Skew_Magnitude_Invariants states the Duration domain through the same constants.
+func Skew_Magnitude_Invariants(magnitude Skew_Magnitude, namespace aver.Namespace) {
+	aver.Tree(magnitude, namespace).
+		Range_Int64(int64(magnitude), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
+// Skew_Ticks is coefficient B of one model: linear initial offset, periodic period, or onset
+// tick of a step. Its own type, not Tick_Count, for the same chain reason as Skew_Magnitude.
+type Skew_Ticks int64
+
+// Skew_Ticks_Invariants states the Tick_Count domain through the same constants.
+func Skew_Ticks_Invariants(ticks Skew_Ticks, namespace aver.Namespace) {
+	aver.Tree(ticks, namespace).
+		Range_Int64(int64(ticks), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
+		Ensure()
+}
+
 // Offset keeps coefficients by value so a skew reader needs no separately owned state.
 type Offset struct {
 	// Kind permits static evaluator dispatch, avoiding captured procedure state.
 	Kind Skew_Kind
 	// A shares the lifetime of the model that owns it.
-	A Duration
+	A Skew_Magnitude
 	// B shares the lifetime of the model that owns it.
-	B Tick_Count
+	B Skew_Ticks
+}
+
+// Offset_Invariants keeps the model kind to the three evaluators and both coefficients inside
+// their domains.
+func Offset_Invariants(offset Offset, namespace aver.Namespace) {
+	Skew_Kind_Invariants(offset.Kind, namespace)
+	Skew_Magnitude_Invariants(offset.A, namespace)
+	Skew_Ticks_Invariants(offset.B, namespace)
 }
 
 // Virtual_Clock configure deterministic clock that Virtual_Clock_To_Clock build. Time
@@ -470,41 +532,54 @@ type Virtual_Clock struct {
 	Ticks Tick_Count
 }
 
-// Virtual_Clock_Invariants leaves skew coefficients to their own typed invariant chain.
+// Virtual_Clock_Invariants states every field, the skew through its own chain.
 func Virtual_Clock_Invariants(virtual Virtual_Clock, namespace aver.Namespace) {
 	Duration_Invariants(virtual.Resolution, namespace)
 	Moment_Invariants(virtual.Epoch, namespace)
+	Offset_Invariants(virtual.Skew, namespace)
+	Tick_Count_Invariants(virtual.Ticks, namespace)
+}
+
+// Virtual_Clock_Pointer names caller-owned Virtual_Clock storage.
+type Virtual_Clock_Pointer *Virtual_Clock
+
+// Virtual_Clock_Pointer_Invariants admits absent storage; each holder asserts presence.
+func Virtual_Clock_Pointer_Invariants(value Virtual_Clock_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Virtual_Clock_Invariants(*value, namespace)
 }
 
 // Virtual_Clock_To_Clock binds caller-owned state without a captured function environment.
-func Virtual_Clock_To_Clock(virtual *Virtual_Clock) (clock Clock) {
+func Virtual_Clock_To_Clock(virtual Virtual_Clock_Pointer) (clock Clock) {
+	defer func() { Clock_Invariants(clock, "virtual_clock_to_clock.clock") }()
+	Virtual_Clock_Pointer_Invariants(virtual, "virtual_clock_to_clock.virtual")
 	aver.Always(virtual != nil, "A virtual clock has caller-owned state.")
-	Virtual_Clock_Invariants(*virtual, "virtual_clock_to_clock.virtual")
 	virtual.Ticks = 0
-	clock = Clock{
-		State:         unsafe.Pointer(virtual),
+	return Clock{
+		State:         (*Virtual_Clock)(virtual),
 		Now_Monotonic: virtual_clock_now_monotonic,
 		Now_Realtime:  virtual_clock_now_realtime,
 	}
-	Clock_Invariants(clock, "virtual_clock_to_clock.clock")
-	return clock
 }
 
 // Virtual_Clock_Tick keeps advancement with the root that owns mutable clock state.
-func Virtual_Clock_Tick(virtual *Virtual_Clock) {
+func Virtual_Clock_Tick(virtual Virtual_Clock_Pointer) {
+	Virtual_Clock_Pointer_Invariants(virtual, "virtual_clock_tick.virtual")
 	aver.Always(virtual != nil, "A tick advances caller-owned virtual-clock state.")
 	virtual.Ticks++
 }
 
-func virtual_clock_now_monotonic(state unsafe.Pointer) (moment Monotonic_Moment) {
-	virtual := (*Virtual_Clock)(state)
-	uptime := Monotonic_Moment(int64(virtual.Ticks) * int64(virtual.Resolution))
-	Monotonic_Moment_Invariants(uptime, "virtual_clock_to_clock.uptime")
-	return uptime
+func virtual_clock_now_monotonic(state State) (moment Monotonic_Moment) {
+	defer func() { Monotonic_Moment_Invariants(moment, "virtual_clock_now_monotonic.moment") }()
+	virtual := state.(*Virtual_Clock)
+	return Monotonic_Moment(int64(virtual.Ticks) * int64(virtual.Resolution))
 }
 
-func virtual_clock_now_realtime(state unsafe.Pointer) (moment Moment) {
-	virtual := (*Virtual_Clock)(state)
+func virtual_clock_now_realtime(state State) (moment Moment) {
+	defer func() { Moment_Invariants(moment, "virtual_clock_now_realtime.moment") }()
+	virtual := state.(*Virtual_Clock)
 	now := virtual.Epoch + Moment(int64(virtual.Ticks)*int64(virtual.Resolution))
 	return now - Moment(Offset_Read(virtual.Skew, virtual.Ticks))
 }
@@ -539,15 +614,19 @@ func Skew_Kind_Invariants(kind Skew_Kind, namespace aver.Namespace) {
 // Skew build Offset for one deviation model. Take kind plus two coefficients. Coefficient a
 // is magnitude: drift-per-tick, amplitude, or step size. Coefficient b count ticks: linear
 // initial offset, periodic period, or onset tick of step.
-func Skew(kind Skew_Kind, a Duration, b Tick_Count) (offset Offset) {
+func Skew(kind Skew_Kind, a Skew_Magnitude, b Skew_Ticks) (offset Offset) {
+	defer func() { Offset_Invariants(offset, "skew.offset") }()
 	Skew_Kind_Invariants(kind, "skew.kind")
-	Duration_Invariants(a, "skew.a")
-	Tick_Count_Invariants(b, "skew.b")
+	Skew_Magnitude_Invariants(a, "skew.a")
+	Skew_Ticks_Invariants(b, "skew.b")
 	return Offset{Kind: kind, A: a, B: b}
 }
 
 // Offset_Read evaluates stored coefficients without closure state.
 func Offset_Read(offset Offset, ticks Tick_Count) (skew Duration) {
+	defer func() { Duration_Invariants(skew, "offset_read.skew") }()
+	Offset_Invariants(offset, "offset_read.offset")
+	Tick_Count_Invariants(ticks, "offset_read.ticks")
 	switch offset.Kind {
 	case SKEW_KIND_PERIODIC:
 		// Zero period reports no skew because division would panic.
@@ -555,7 +634,7 @@ func Offset_Read(offset Offset, ticks Tick_Count) (skew Duration) {
 			return 0
 		}
 		// Phase reduction prevents scaled numerator overflow during long runs.
-		phase := ticks % offset.B
+		phase := ticks % Tick_Count(offset.B)
 		turns := fixedpoint.From_Ratio(
 			fixedpoint.Numerator(phase),
 			fixedpoint.Denominator(offset.B),
@@ -569,11 +648,11 @@ func Offset_Read(offset Offset, ticks Tick_Count) (skew Duration) {
 		)
 		return Duration(fixedpoint.Whole(wobble))
 	case SKEW_KIND_STEP:
-		if ticks > offset.B {
-			return offset.A
+		if ticks > Tick_Count(offset.B) {
+			return Duration(offset.A)
 		}
 		return 0
 	default:
-		return Duration(ticks)*offset.A + Duration(offset.B)
+		return Duration(ticks)*Duration(offset.A) + Duration(offset.B)
 	}
 }

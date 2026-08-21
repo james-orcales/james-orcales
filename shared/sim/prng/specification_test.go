@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/sim/prng"
+	"local/james-orcales/shared/testify"
 
 	crypto_prng "local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/sim/aver/default"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -64,30 +64,6 @@ func Test_Below_Is_Bounded(t *testing.T) {
 	}
 }
 
-// Test_Element_Comes_From_Slice checks Element returns a member and rejects an empty slice.
-func Test_Element_Comes_From_Slice(t *testing.T) {
-	generator := prng.New(2)
-	items := prng.Items[string]{"a", "b", "c"}
-	for draw_index := 0; draw_index < 1000; draw_index++ {
-		item := prng.Xoshiro_Element(&generator, &items, 3)
-		found := false
-		for _, candidate := range items[:3] {
-			if item == candidate {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("Element returned %q, not in the slice", item)
-		}
-	}
-	died := did_die(func() {
-		prng.Xoshiro_Element(&generator, &items, 0)
-	})
-	if !died {
-		t.Fatalf("Element on an empty slice did not exit")
-	}
-}
-
 // Test_Boolean_Is_Even checks Boolean is roughly balanced over a large sample.
 func Test_Boolean_Is_Even(t *testing.T) {
 	generator := prng.New(3)
@@ -138,21 +114,22 @@ func Test_Chance_Matches_Ratio(t *testing.T) {
 // Test_Sample_Matches_Weights checks Sample honors integer weights and skips zero-weight outcomes.
 func Test_Sample_Matches_Weights(t *testing.T) {
 	generator := prng.New(5)
-	outcomes := prng.Items[string]{"rare", "common", "never"}
+	const RARE, COMMON, NEVER prng.Word = 1, 2, 3
+	outcomes := prng.Outcomes{RARE, COMMON, NEVER}
 	weights := prng.Weights{10, 90, 0}
-	distribution := prng.New_Distribution(outcomes, weights, 3)
+	distribution := prng.New_Distribution(outcomes, weights)
 	sample_count := 100000
 	rare_count := 0
 	common_count := 0
 	for draw_index := 0; draw_index < sample_count; draw_index++ {
 		item := prng.Xoshiro_Sample(&generator, distribution)
-		if item == "never" {
+		if item == NEVER {
 			t.Fatalf("Sample returned a zero-weight outcome")
 		}
-		if item == "rare" {
+		if item == RARE {
 			rare_count++
 		}
-		if item == "common" {
+		if item == COMMON {
 			common_count++
 		}
 	}
@@ -170,11 +147,11 @@ func Test_Sample_Matches_Weights(t *testing.T) {
 // Test_Shuffle_Permutes checks Shuffle preserves the multiset and can reorder.
 func Test_Shuffle_Permutes(t *testing.T) {
 	generator := prng.New(6)
-	original := [...]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	prng.Xoshiro_Shuffle(&generator, &items, prng.Item_Count(len(original)))
+	original := []prng.Index{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	permutation := prng.Permutation{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	prng.Xoshiro_Shuffle(&generator, permutation)
 	seen := make([]bool, len(original))
-	for _, value := range items[:len(original)] {
+	for _, value := range permutation {
 		seen[value] = true
 	}
 	for _, present := range seen {
@@ -184,9 +161,9 @@ func Test_Shuffle_Permutes(t *testing.T) {
 	}
 	reordered := false
 	for attempt_index := 0; attempt_index < 10; attempt_index++ {
-		prng.Xoshiro_Shuffle(&generator, &items, prng.Item_Count(len(original)))
+		prng.Xoshiro_Shuffle(&generator, permutation)
 		for index := 0; index < len(original); index++ {
-			if items[index] != original[index] {
+			if permutation[index] != original[index] {
 				reordered = true
 			}
 		}
@@ -216,7 +193,7 @@ func Test_Types_Hold_No_Floating_Point(t *testing.T) {
 	types := []reflect.Type{
 		reflect.TypeOf(prng.Xoshiro{}),
 		reflect.TypeOf(prng.Ratio{}),
-		reflect.TypeOf(prng.Distribution[int]{}),
+		reflect.TypeOf(prng.Distribution{}),
 	}
 	for _, candidate := range types {
 		if type_has_float(candidate) {
@@ -225,22 +202,68 @@ func Test_Types_Hold_No_Floating_Point(t *testing.T) {
 	}
 }
 
-// Test_Hot_Path_Is_Zero_Allocation checks a steady-state Next draw does not allocate.
-func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
+// Test_Every_Entry_Point_Is_Zero_Allocation checks no public operation reaches the heap. Each
+// result escapes into a package-level sink through the closure, thus the compiler cannot drop
+// the call, and the measurement is of the operation, not of a dead store.
+func Test_Every_Entry_Point_Is_Zero_Allocation(t *testing.T) {
 	generator := prng.New(8)
-	allocations := testing.AllocsPerRun(1000, func() {
-		prng.Xoshiro_Next(&generator)
-	})
-	if allocations != 0 {
-		t.Fatalf("Next allocated %.1f times per call, want zero", allocations)
+	sink := new_allocation_sink()
+	certain := prng.Ratio{Numerator: 1, Denominator: 1}
+	bimodal := prng.Bimodal_Distribution_Input{
+		Fast: 1, Slow: 2, Slow_Chance: prng.Ratio{Numerator: 1, Denominator: 10},
 	}
-	source := prng.Xoshiro_To_Source(&generator)
-	var sink [crypto_prng.WORD_BYTE_COUNT]byte
-	allocations = testing.AllocsPerRun(1000, func() {
-		crypto_prng.Source_Read(source, sink[:])
-	})
-	if allocations != 0 {
-		t.Fatalf("Source_Read allocated %.1f times per call, want zero", allocations)
+	percentile := prng.Percentile_Distribution_Input{
+		P25: 1, P50: 2, P75: 3, P95: 4, P99: 5, P100: 6,
+	}
+	entry_points := []struct {
+		Name   string
+		Action func()
+	}{
+		{Name: "New", Action: func() { sink.Generator = prng.New(8) }},
+		{Name: "Next", Action: func() { sink.Word = prng.Xoshiro_Next(&generator) }},
+		{Name: "Below", Action: func() {
+			sink.Index = prng.Xoshiro_Below(&generator, 100)
+		}},
+		{Name: "Boolean", Action: func() {
+			sink.Boolean = prng.Xoshiro_Boolean(&generator)
+		}},
+		{Name: "Chance", Action: func() {
+			sink.Boolean = prng.Xoshiro_Chance(&generator, certain)
+		}},
+		{Name: "New_Distribution", Action: func() {
+			sink.Distribution = prng.New_Distribution(sink.Outcomes, sink.Weights)
+		}},
+		{Name: "Sample", Action: func() {
+			sink.Word = prng.Xoshiro_Sample(&generator, sink.Distribution)
+		}},
+		{Name: "Bimodal_Fill", Action: func() {
+			prng.Bimodal_Fill(bimodal, sink.Bimodal_Outcomes, sink.Bimodal_Weights)
+		}},
+		{Name: "Percentile_Fill", Action: func() {
+			prng.Percentile_Fill(
+				percentile, sink.Percentile_Outcomes, sink.Percentile_Weights,
+			)
+		}},
+		{Name: "Shuffle", Action: func() {
+			prng.Xoshiro_Shuffle(&generator, sink.Permutation)
+		}},
+		{Name: "Split", Action: func() {
+			sink.Generator = prng.Xoshiro_Split(&generator)
+		}},
+		{Name: "To_Source", Action: func() {
+			sink.Source = prng.Xoshiro_To_Source(&generator)
+		}},
+		{Name: "Source_Read", Action: func() {
+			crypto_prng.Source_Read(sink.Source, sink.Bytes)
+		}},
+	}
+	for _, entry_point := range entry_points {
+		t.Run(entry_point.Name, func(t *testing.T) {
+			// New_Distribution folds weights in place: each run starts from raw mass.
+			sink.Weights[0], sink.Weights[1] = 10, 20
+			sink.Weights[2], sink.Weights[3] = 30, 40
+			testify.Zero_Allocation(t, entry_point.Action)
+		})
 	}
 }
 
@@ -274,9 +297,7 @@ func Test_Xoshiro_Converts_To_Source(t *testing.T) {
 	if prng.Xoshiro_Next(&reference) != prng.Xoshiro_Next(&first) {
 		t.Fatalf("a partial word consumed more than one draw")
 	}
-	if !did_die(func() { prng.Xoshiro_To_Source(nil) }) {
-		t.Fatalf("nil Xoshiro did not die")
-	}
+	testify.Panics(t, func() { prng.Xoshiro_To_Source(nil) }, "nil Xoshiro did not die")
 	// A constructed state reaches each word edge of the slot deterministically; chance would
 	// take 2^64 draws to land on one of them.
 	for _, value := range [...]prng.Word{
@@ -294,11 +315,14 @@ func Test_Xoshiro_Converts_To_Source(t *testing.T) {
 // Test_Bimodal_Distribution_Has_Two_Modes checks a fast and a slow cluster with an empty valley.
 func Test_Bimodal_Distribution_Has_Two_Modes(t *testing.T) {
 	generator := prng.New(12)
-	distribution := prng.Bimodal_Distribution(&prng.Bimodal_Distribution_Input{
+	outcomes := make(prng.Bimodal_Outcomes, prng.BIMODAL_OUTCOME_COUNT)
+	weights := make(prng.Bimodal_Weights, prng.BIMODAL_OUTCOME_COUNT)
+	prng.Bimodal_Fill(prng.Bimodal_Distribution_Input{
 		Fast:        1000,
 		Slow:        8000,
 		Slow_Chance: prng.Ratio{Numerator: 10, Denominator: 100},
-	})
+	}, outcomes, weights)
+	distribution := prng.New_Distribution(prng.Outcomes(outcomes), prng.Weights(weights))
 	sample_count := 200000
 	fast_count := 0
 	slow_count := 0
@@ -326,14 +350,17 @@ func Test_Bimodal_Distribution_Has_Two_Modes(t *testing.T) {
 // Test_Percentile_Distribution_Hits_Percentiles checks draws reproduce the given p50, p95, and p99.
 func Test_Percentile_Distribution_Hits_Percentiles(t *testing.T) {
 	generator := prng.New(13)
-	distribution := prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
+	outcomes := make(prng.Percentile_Outcomes, prng.PERCENTILE_OUTCOME_COUNT)
+	weights := make(prng.Percentile_Weights, prng.PERCENTILE_OUTCOME_COUNT)
+	prng.Percentile_Fill(prng.Percentile_Distribution_Input{
 		P25:  100,
 		P50:  200,
 		P75:  300,
 		P95:  400,
 		P99:  500,
 		P100: 600,
-	})
+	}, outcomes, weights)
+	distribution := prng.New_Distribution(prng.Outcomes(outcomes), prng.Weights(weights))
 	sample_count := 200000
 	below_p50 := 0
 	below_p95 := 0
@@ -373,10 +400,164 @@ func Test_Percentile_Distribution_Hits_Percentiles(t *testing.T) {
 // Test_Invariant_Boundaries constructs deterministic draws because chance cannot prove word edges.
 func Test_Invariant_Boundaries(t *testing.T) {
 	verify_word_boundaries(t)
+	verify_generator_boundaries()
+	verify_seed_boundaries(t)
 	verify_ratio_boundaries()
 	verify_distribution_input_boundaries()
 	verify_collection_boundaries()
 	verify_distribution_boundaries()
+}
+
+// All storage the entry points read and write, allocated once, outside every measurement.
+func new_allocation_sink() (sink allocation_sink) {
+	sink.Outcomes = prng.Outcomes{0, 1, 2, 3}
+	sink.Weights = prng.Weights{10, 20, 30, 40}
+	sink.Bimodal_Outcomes = make(prng.Bimodal_Outcomes, prng.BIMODAL_OUTCOME_COUNT)
+	sink.Bimodal_Weights = make(prng.Bimodal_Weights, prng.BIMODAL_OUTCOME_COUNT)
+	sink.Percentile_Outcomes = make(
+		prng.Percentile_Outcomes, prng.PERCENTILE_OUTCOME_COUNT,
+	)
+	sink.Percentile_Weights = make(
+		prng.Percentile_Weights, prng.PERCENTILE_OUTCOME_COUNT,
+	)
+	sink.Permutation = prng.Permutation{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	sink.Bytes = make([]byte, crypto_prng.WORD_BYTE_COUNT)
+	return sink
+}
+
+// Every result an entry point produces, held outside the measured closure.
+type allocation_sink struct {
+	Generator           prng.Xoshiro
+	Word                prng.Word
+	Index               prng.Index
+	Boolean             prng.Boolean
+	Distribution        prng.Distribution
+	Source              crypto_prng.Source
+	Outcomes            prng.Outcomes
+	Weights             prng.Weights
+	Bimodal_Outcomes    prng.Bimodal_Outcomes
+	Bimodal_Weights     prng.Bimodal_Weights
+	Percentile_Outcomes prng.Percentile_Outcomes
+	Percentile_Weights  prng.Percentile_Weights
+	Permutation         prng.Permutation
+	Bytes               []byte
+}
+
+// Word values every full-width domain in this package states: both bounds and the interior
+// sentinels the framework expands.
+func special_words() (words []prng.Word) {
+	return []prng.Word{prng.WORD_MINIMUM, 1, 2, prng.WORD_MAXIMUM}
+}
+
+// One generator per state word per special value. The other words hold a filler that keeps the
+// state nonzero, thus each variant is a legal generator.
+func boundary_generators() (generators []prng.Xoshiro) {
+	const FILLER = 3
+	filled := prng.Xoshiro{First: FILLER, Second: FILLER, Third: FILLER, Fourth: FILLER}
+	for _, value := range special_words() {
+		first, second, third, fourth := filled, filled, filled, filled
+		first.First = prng.Xoshiro_First(value)
+		second.Second = prng.Xoshiro_Second(value)
+		third.Third = prng.Xoshiro_Third(value)
+		fourth.Fourth = prng.Xoshiro_Fourth(value)
+		generators = append(generators, first, second, third, fourth)
+	}
+	return generators
+}
+
+// Every draw on every boundary generator, so each entry point's state domains see each edge.
+// Each draw takes its own copy: a draw advances the state it is handed.
+func verify_generator_boundaries() {
+	distribution := prng.New_Distribution(prng.Outcomes{0}, prng.Weights{1})
+	certain := prng.Ratio{Numerator: 1, Denominator: 1}
+	for _, boundary := range boundary_generators() {
+		next := boundary
+		prng.Xoshiro_Next(&next)
+		below := boundary
+		prng.Xoshiro_Below(&below, 1)
+		flip := boundary
+		prng.Xoshiro_Boolean(&flip)
+		chance := boundary
+		prng.Xoshiro_Chance(&chance, certain)
+		sample := boundary
+		prng.Xoshiro_Sample(&sample, distribution)
+		shuffle := boundary
+		prng.Xoshiro_Shuffle(&shuffle, prng.Permutation{})
+		split := boundary
+		prng.Xoshiro_Split(&split)
+		source := boundary
+		prng.Xoshiro_To_Source(&source)
+	}
+}
+
+// Seeds whose New lands one state word on each special value. Word k of New(seed) is the
+// splitmix64 avalanche of seed plus k+1 increments, and each avalanche step is a bijection,
+// thus the seed for a target word is its inverse image minus the increments. A Split child is
+// New of the parent's next draw, thus a parent constructed to draw that seed reaches the same
+// edge through Split.
+func verify_seed_boundaries(t *testing.T) {
+	prng.New(2)
+	// The first strided state is seed plus one increment, thus these seeds put that state at
+	// one, two, and the maximum.
+	for _, state := range []uint64{1, 2, uint64(prng.SEED_MAXIMUM)} {
+		prng.New(prng.Seed(state - prng.SPLIT_MIX_INCREMENT))
+	}
+	for _, value := range special_words() {
+		for word_index := uint64(1); word_index <= 4; word_index++ {
+			state := split_mix_inverse(uint64(value))
+			seed := prng.Seed(state - word_index*prng.SPLIT_MIX_INCREMENT)
+			built := prng.New(seed)
+			if word_at(built, word_index) != value {
+				t.Fatalf("seed %d missed word %d at %d", seed, word_index, value)
+			}
+			parent := generator_for_next(prng.Word(seed))
+			prng.Xoshiro_Split(&parent)
+		}
+	}
+}
+
+// State word k, one-based, of a generator.
+func word_at(generator prng.Xoshiro, word_index uint64) (word prng.Word) {
+	switch word_index {
+	case 1:
+		return prng.Word(generator.First)
+	case 2:
+		return prng.Word(generator.Second)
+	case 3:
+		return prng.Word(generator.Third)
+	default:
+		return prng.Word(generator.Fourth)
+	}
+}
+
+// The state whose splitmix64 avalanche is word: each xorshift and each odd multiply inverts.
+func split_mix_inverse(word uint64) (state uint64) {
+	state = xorshift_right_inverse(word, 31)
+	state *= multiplicative_inverse(prng.SPLIT_MIX_MULTIPLIER_SECOND)
+	state = xorshift_right_inverse(state, 27)
+	state *= multiplicative_inverse(prng.SPLIT_MIX_MULTIPLIER_FIRST)
+	state = xorshift_right_inverse(state, 30)
+	return state
+}
+
+// Inverts value ^= value >> shift. Each application recovers shift more high bits, thus one
+// application per shift-width of the word suffices.
+func xorshift_right_inverse(value uint64, shift uint) (original uint64) {
+	original = value
+	for step := uint(0); step <= 64/shift; step++ {
+		original = value ^ (original >> shift)
+	}
+	return original
+}
+
+// The inverse of an odd word modulo 2^64 by Newton iteration: an odd word is its own inverse
+// to three bits, and each step doubles the correct bits, thus six steps pass sixty-four.
+func multiplicative_inverse(odd uint64) (inverse uint64) {
+	inverse = odd
+	for step_index := 0; step_index < 6; step_index++ {
+		inverse *= 2 - odd*inverse
+	}
+	return inverse
 }
 
 func verify_word_boundaries(t *testing.T) {
@@ -400,11 +581,9 @@ func verify_word_boundaries(t *testing.T) {
 	}
 }
 
-// BOUNDARY_RATIO_COUNT holds zero, one, two, and maximum witnesses.
-const BOUNDARY_RATIO_COUNT = 4
-
-func boundary_ratios() (ratios [BOUNDARY_RATIO_COUNT]prng.Ratio) {
-	return [BOUNDARY_RATIO_COUNT]prng.Ratio{
+// Zero, one, two, and maximum witnesses.
+func boundary_ratios() (ratios []prng.Ratio) {
+	return []prng.Ratio{
 		{Numerator: 0, Denominator: 1},
 		{Numerator: 1, Denominator: 1},
 		{Numerator: 2, Denominator: 2},
@@ -427,96 +606,70 @@ func verify_distribution_input_boundaries() {
 		if value == prng.WORD_MAXIMUM {
 			index = len(ratios) - 1
 		}
-		prng.Bimodal_Distribution(&prng.Bimodal_Distribution_Input{
-			Fast:        prng.Bimodal_Fast(value),
-			Slow:        prng.Bimodal_Slow(value),
-			Slow_Chance: ratios[index],
-		})
-		prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
-			P25:  prng.Percentile_25(value),
-			P50:  prng.Percentile_50(value),
-			P75:  prng.Percentile_75(value),
-			P95:  prng.Percentile_95(value),
-			P99:  prng.Percentile_99(value),
-			P100: prng.Percentile_100(value),
-		})
+		// Storage at its floor and at the shared width, thus both ends of each domain.
+		for _, count := range []int{
+			prng.BIMODAL_OUTCOME_COUNT, prng.DISTRIBUTION_COUNT_MAXIMUM,
+		} {
+			prng.Bimodal_Fill(prng.Bimodal_Distribution_Input{
+				Fast:        prng.Bimodal_Fast(value),
+				Slow:        prng.Bimodal_Slow(value),
+				Slow_Chance: ratios[index],
+			}, make(prng.Bimodal_Outcomes, count), make(prng.Bimodal_Weights, count))
+		}
+		for _, count := range []int{
+			prng.PERCENTILE_OUTCOME_COUNT, prng.DISTRIBUTION_COUNT_MAXIMUM,
+		} {
+			prng.Percentile_Fill(prng.Percentile_Distribution_Input{
+				P25:  prng.Percentile_25(value),
+				P50:  prng.Percentile_50(value),
+				P75:  prng.Percentile_75(value),
+				P95:  prng.Percentile_95(value),
+				P99:  prng.Percentile_99(value),
+				P100: prng.Percentile_100(value),
+			},
+				make(prng.Percentile_Outcomes, count),
+				make(prng.Percentile_Weights, count),
+			)
+		}
 	}
 }
 
 func verify_collection_boundaries() {
-	var items prng.Items[int]
-	for _, count := range [...]prng.Item_Count{1, 2, prng.ITEM_COUNT_MAXIMUM} {
+	for _, count := range []int{0, 1, 2, prng.PERMUTATION_COUNT_MAXIMUM} {
 		generator := prng.New(1)
-		prng.Xoshiro_Element(&generator, &items, count)
-	}
-	for _, count := range [...]prng.Item_Count{0, 1, 2, prng.ITEM_COUNT_MAXIMUM} {
-		generator := prng.New(1)
-		prng.Xoshiro_Shuffle(&generator, &items, count)
+		prng.Xoshiro_Shuffle(&generator, make(prng.Permutation, count))
 	}
 }
 
 func verify_distribution_boundaries() {
-	var outcomes prng.Items[int]
-	for index := range outcomes {
-		outcomes[index] = index
-	}
-	var one, two, maximum prng.Weights
-	one[0] = prng.WEIGHT_MAXIMUM
-	two[0], two[1] = 1, 2
-	for index := range maximum {
-		maximum[index] = 1
-	}
-	for _, test_case := range []struct {
-		Weights prng.Weights
-		Count   prng.Distribution_Count
-	}{
-		{Weights: one, Count: 1},
-		{Weights: two, Count: 2},
-		{Weights: maximum, Count: prng.DISTRIBUTION_COUNT_MAXIMUM},
-	} {
-		distribution := prng.New_Distribution(
-			outcomes, test_case.Weights, test_case.Count,
-		)
+	for _, count := range []int{1, 2, prng.DISTRIBUTION_COUNT_MAXIMUM} {
+		outcomes := make(prng.Outcomes, count)
+		weights := make(prng.Weights, count)
+		for index := range outcomes {
+			outcomes[index] = prng.Word(index)
+			weights[index] = 1
+		}
+		if count == 1 {
+			// The one slot: the widest weight, and the widest outcome a sample returns.
+			weights[0] = prng.WEIGHT_MAXIMUM
+			outcomes[0] = prng.WORD_MAXIMUM
+		}
+		if count == 2 {
+			weights[1] = 2
+		}
+		distribution := prng.New_Distribution(outcomes, weights)
 		generator := generator_for_next(prng.WORD_MAXIMUM)
 		prng.Xoshiro_Sample(&generator, distribution)
 	}
 }
 
 func generator_for_next(value prng.Word) (generator prng.Xoshiro) {
-	generator.State[0] = value
-	generator.State[3] = 0 - value
+	generator.First = prng.Xoshiro_First(value)
+	generator.Fourth = prng.Xoshiro_Fourth(0 - value)
 	if value == 0 {
-		generator.State[1] = 1
+		generator.Second = 1
 	}
 	return generator
-}
-
-// Runs action and reports whether it tripped a fatal invariant, used to assert preconditions. A
-// violation exits through the Default recorder, which os.Exit cannot recover, so the helper swaps
-// Exit for a panic — and silences the recorder's stderr — for the duration, then recovers it, so
-// the exit is observable in-process. Exit and Output are restored before returning.
-func did_die(action func()) (died bool) {
-	exit, output := aver.Default.Exit, aver.Default.Output
-	aver.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	aver.Default.Output = discard_writer{}
-	defer func() {
-		aver.Default.Exit, aver.Default.Output = exit, output
-		if recover() != nil {
-			died = true
-		}
-	}()
-	action()
-	return died
-}
-
-// Marks the swapped-in Exit's panic, so did_die's recover tells a deliberately tripped guard from
-// an unrelated panic in the action.
-type tripped_invariant struct{}
-
-type discard_writer struct{}
-
-func (discard_writer) Write(data []byte) (count int, err error) {
-	return len(data), nil
 }
 
 func Benchmark_Next(b *testing.B) {
@@ -548,18 +701,10 @@ func Benchmark_Chance(b *testing.B) {
 	}
 }
 
-func Benchmark_Element(b *testing.B) {
-	generator := prng.New(1)
-	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	for b.Loop() {
-		prng.Xoshiro_Element(&generator, &items, 10)
-	}
-}
-
 func Benchmark_Sample(b *testing.B) {
 	generator := prng.New(1)
 	distribution := prng.New_Distribution(
-		prng.Items[int]{0, 1, 2, 3}, prng.Weights{10, 20, 30, 40}, 4,
+		prng.Outcomes{0, 1, 2, 3}, prng.Weights{10, 20, 30, 40},
 	)
 	for b.Loop() {
 		prng.Xoshiro_Sample(&generator, distribution)
@@ -568,9 +713,9 @@ func Benchmark_Sample(b *testing.B) {
 
 func Benchmark_Shuffle(b *testing.B) {
 	generator := prng.New(1)
-	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	permutation := prng.Permutation{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	for b.Loop() {
-		prng.Xoshiro_Shuffle(&generator, &items, 10)
+		prng.Xoshiro_Shuffle(&generator, permutation)
 	}
 }
 

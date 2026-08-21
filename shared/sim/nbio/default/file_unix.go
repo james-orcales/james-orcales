@@ -350,7 +350,10 @@ func executable_path(name string, search string) (path string, err error) {
 			bytes.Slice(candidate_storage[:]),
 			filepath.Elements{bytes.Text(directory), bytes.Text(name)},
 		)
-		candidate := unsafe.String(&candidate_storage[0], int(count))
+		// A copy, not a view: a view over this array moves the whole array to heap, and
+		// syscall.Stat below copies the path again regardless, thus no path here is
+		// allocation-free.
+		candidate := string(candidate_storage[:count])
 		if executable_check(candidate) == nil {
 			return candidate, nil
 		}

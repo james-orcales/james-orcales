@@ -6,6 +6,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/time"
 )
 
@@ -16,23 +17,13 @@ const CLOCK_BOOTTIME = 7
 // Go syscall package ships no ClockGettime wrapper, and a direct syscall avoids another
 // dependency for one primitive.
 func monotonic_now() (moment time.Monotonic_Moment) {
+	defer func() { time.Monotonic_Moment_Invariants(moment, "monotonic_now.moment") }()
 	var timestamp syscall.Timespec
 	pointer := uintptr(unsafe.Pointer(&timestamp))
 	_, _, errno := syscall.Syscall(
 		syscall.SYS_CLOCK_GETTIME, CLOCK_BOOTTIME, pointer, 0,
 	)
-	if errno != 0 {
-		panic("time: CLOCK_BOOTTIME is required but clock_gettime failed")
-	}
+	aver.Always(errno == 0, "The host reports CLOCK_BOOTTIME.")
 	seconds := int64(timestamp.Sec) * NANOSECONDS_PER_SECOND
 	return time.Monotonic_Moment(seconds + int64(timestamp.Nsec))
-}
-
-func wallclock_now_nanoseconds() (nanoseconds int64) {
-	value := syscall.Timeval{}
-	if err := syscall.Gettimeofday(&value); err != nil {
-		panic("time: gettimeofday failed")
-	}
-	return int64(value.Sec)*NANOSECONDS_PER_SECOND +
-		int64(value.Usec)*NANOSECONDS_PER_MICROSECOND
 }

@@ -1506,6 +1506,7 @@ func sim_api_heap_allocation(t *testing.T) {
 		{Name: "Mkdir_At", Operation: SIM_ALLOCATION_MKDIR_AT},
 		{Name: "Get_Directory_Entries", Operation: SIM_ALLOCATION_DIRECTORY},
 		{Name: "Status", Operation: SIM_ALLOCATION_STATUS},
+		{Name: "Open_Link", Operation: SIM_ALLOCATION_OPEN_LINK},
 		{Name: "Close", Operation: SIM_ALLOCATION_CLOSE},
 		{Name: "Deinit", Operation: SIM_ALLOCATION_DEINIT},
 		{Name: "Watch_Signal", Operation: SIM_ALLOCATION_WATCH_SIGNAL},
@@ -1514,6 +1515,10 @@ func sim_api_heap_allocation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
 			harness := sim_allocation_harness{}
+			if test.Operation == SIM_ALLOCATION_OPEN_LINK {
+				// A seed without a link measures a plain open, proving nothing.
+				testify.True(t, sim_allocation_find_link(&harness))
+			}
 			testify.Zero_Allocation(t, func() {
 				sim_allocation_run(&harness, test.Operation)
 			})
@@ -1541,6 +1546,7 @@ func sim_allocation_assert_retired(
 		SIM_ALLOCATION_OPEN_AT,
 		SIM_ALLOCATION_MKDIR_AT,
 		SIM_ALLOCATION_DIRECTORY,
+		SIM_ALLOCATION_OPEN_LINK,
 		SIM_ALLOCATION_CLOSE:
 		testify.Not_Nil(t, harness.Completion.Self)
 		testify.False(t, harness.Completion.Armed)
@@ -1606,10 +1612,11 @@ const SIM_ALLOCATION_OPEN_AT sim_allocation_operation = 14
 const SIM_ALLOCATION_MKDIR_AT sim_allocation_operation = 15
 const SIM_ALLOCATION_DIRECTORY sim_allocation_operation = 16
 const SIM_ALLOCATION_STATUS sim_allocation_operation = 17
-const SIM_ALLOCATION_CLOSE sim_allocation_operation = 18
-const SIM_ALLOCATION_DEINIT sim_allocation_operation = 19
-const SIM_ALLOCATION_WATCH_SIGNAL sim_allocation_operation = 20
-const SIM_ALLOCATION_SPAWN sim_allocation_operation = 21
+const SIM_ALLOCATION_OPEN_LINK sim_allocation_operation = 18
+const SIM_ALLOCATION_CLOSE sim_allocation_operation = 19
+const SIM_ALLOCATION_DEINIT sim_allocation_operation = 20
+const SIM_ALLOCATION_WATCH_SIGNAL sim_allocation_operation = 21
+const SIM_ALLOCATION_SPAWN sim_allocation_operation = 22
 
 type sim_allocation_harness struct {
 	Memory            sim_memory
@@ -1624,6 +1631,11 @@ type sim_allocation_harness struct {
 	Error             error
 	Address           nbio.Address
 	Status            nbio.File_Status
+	// Seed picks the generated tree; a case that needs a link sweeps for one.
+	Seed uint64
+	// Link_Path is built before measurement because path assembly allocates and one seed
+	// regenerates the same tree on every reset.
+	Link_Path string
 }
 
 func sim_allocation_reset(harness *sim_allocation_harness) {
@@ -1638,11 +1650,27 @@ func sim_allocation_reset(harness *sim_allocation_harness) {
 	}
 	harness.Address = nbio.Address{IP: harness.Address_Storage}
 	harness.Loop, harness.Driver = nbio.New_Simulated_IO(
-		&harness.Memory.Sim, 0, time.NANOSECOND, sim_memory_view(&harness.Memory),
+		&harness.Memory.Sim, harness.Seed, time.NANOSECOND,
+		sim_memory_view(&harness.Memory),
 	)
 	harness.Completion = nbio.Completion{}
 	harness.File = 0
 	harness.Error = nil
+}
+
+// Same sweep width as Test_File_Mode_Symbolic_Link, which already proves a link occurs inside it.
+const SIM_ALLOCATION_LINK_SEED_SWEEP uint64 = 64
+
+func sim_allocation_find_link(harness *sim_allocation_harness) (found bool) {
+	for seed := uint64(0); seed < SIM_ALLOCATION_LINK_SEED_SWEEP; seed++ {
+		harness.Seed = seed
+		sim_allocation_reset(harness)
+		harness.Link_Path, found = sim_first_link_path(harness.Memory.Nodes)
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 func sim_allocation_run(
@@ -1785,6 +1813,8 @@ func sim_allocation_storage_run(
 		sim_allocation_drive(harness)
 	case SIM_ALLOCATION_STATUS:
 		harness.Status, harness.Error = nbio.Storage_Status(harness.Loop.Storage, "/")
+	case SIM_ALLOCATION_OPEN_LINK:
+		sim_allocation_open_link(harness)
 	case SIM_ALLOCATION_CLOSE:
 		sim_allocation_open_tcp(harness)
 		nbio.IO_Close(
@@ -1841,6 +1871,17 @@ func sim_allocation_open_file(harness *sim_allocation_harness) {
 		nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_WRITE, Create: true, Permissions: 0o600,
 		},
+		sim_allocation_callback,
+	)
+	sim_allocation_drive(harness)
+	harness.File = nbio.File(harness.Completion.Data)
+}
+
+// Follow a generated link because target resolution views node bytes as a string.
+func sim_allocation_open_link(harness *sim_allocation_harness) {
+	nbio.Storage_Open_At(
+		harness.Loop.Storage, &harness.Completion, nbio.DIRECTORY_CURRENT,
+		harness.Link_Path, nbio.Open_At_Options{Access: nbio.OPEN_READ_ONLY},
 		sim_allocation_callback,
 	)
 	sim_allocation_drive(harness)

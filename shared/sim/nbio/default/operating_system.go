@@ -345,8 +345,9 @@ func operating_system_spawn(
 	spawn, start_err := process_start(state, request)
 	if start_err != nil {
 		completion.Callback = func(_ nbio.Completion_Handle) {
-			state.Extension_Submitted--
-			callback(completion, nbio.Process_Result{}, start_err)
+			process_deliver(
+				state, completion, callback, nbio.Process_Result{}, start_err,
+			)
 		}
 		operating_system_completion_add(state, completion)
 		return
@@ -802,10 +803,19 @@ func process_finish(state *Operating_System, spawn *Spawn) {
 	completion := spawn.Completion
 	callback := spawn.Callback
 	completion.Callback = func(_ nbio.Completion_Handle) {
-		state.Extension_Submitted--
-		callback(completion, result, err)
+		process_deliver(state, completion, callback, result, err)
 	}
 	operating_system_completion_add(state, completion)
+}
+
+// One process completion reaches its caller: the extension count drops as the callback runs,
+// thus the loop sees the retirement and the caller sees the result in one step.
+func process_deliver(
+	state *Operating_System, completion *nbio.Completion, callback nbio.Process_Callback,
+	result nbio.Process_Result, err error,
+) {
+	state.Extension_Submitted--
+	callback(completion, result, err)
 }
 
 func operating_system_spawn_remove(state *Operating_System, spawn *Spawn) {
@@ -1816,8 +1826,7 @@ func operating_system_signal_deliver(
 		}
 		delivered := waiter
 		delivered.Completion.Callback = func(_ nbio.Completion_Handle) {
-			state.Extension_Submitted--
-			delivered.Callback(delivered.Completion, delivered.Kind, nil)
+			signal_deliver(state, delivered, delivered.Kind, nil)
 		}
 		operating_system_completion_add(state, delivered.Completion)
 	}
@@ -1836,12 +1845,18 @@ func operating_system_expire_signals(state *Operating_System, now time.Monotonic
 		}
 		expired := waiter
 		expired.Completion.Callback = func(_ nbio.Completion_Handle) {
-			state.Extension_Submitted--
-			expired.Callback(
-				expired.Completion, nbio.SIGNAL_EXPIRED, nbio.Deadline_Exceeded,
-			)
+			signal_deliver(state, expired, nbio.SIGNAL_EXPIRED, nbio.Deadline_Exceeded)
 		}
 		operating_system_completion_add(state, expired.Completion)
 	}
 	state.Signal_Waiters = kept
+}
+
+// One signal watch reaches its caller, delivered or expired, with the same retirement step as
+// a process completion.
+func signal_deliver(
+	state *Operating_System, waiter Signal_Waiter, signal nbio.Signal, err error,
+) {
+	state.Extension_Submitted--
+	waiter.Callback(waiter.Completion, signal, err)
 }

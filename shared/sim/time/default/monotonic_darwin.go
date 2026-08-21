@@ -12,32 +12,19 @@ package time
 import "C"
 
 import (
-	"syscall"
-
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/time"
 )
 
 func monotonic_now() (moment time.Monotonic_Moment) {
+	defer func() { time.Monotonic_Moment_Invariants(moment, "monotonic_now.moment") }()
 	timebase := C.mach_timebase_info_data_t{}
-	if C.mach_timebase_info(&timebase) != 0 {
-		panic("time: mach_timebase_info failed")
-	}
-	if timebase.denom == 0 {
-		panic("time: mach_timebase_info returned a zero denominator")
-	}
+	aver.Always(C.mach_timebase_info(&timebase) == 0, "The host reports its timebase.")
+	aver.Always(timebase.denom != 0, "A timebase has a nonzero denominator.")
 	ticks := uint64(C.mach_continuous_time())
 	denominator := uint64(timebase.denom)
 	numerator := uint64(timebase.numer)
 	whole := ticks / denominator * numerator
 	remainder := ticks % denominator * numerator / denominator
 	return time.Monotonic_Moment(whole + remainder)
-}
-
-func wallclock_now_nanoseconds() (nanoseconds int64) {
-	value := syscall.Timeval{}
-	if err := syscall.Gettimeofday(&value); err != nil {
-		panic("time: gettimeofday failed")
-	}
-	return int64(value.Sec)*NANOSECONDS_PER_SECOND +
-		int64(value.Usec)*NANOSECONDS_PER_MICROSECOND
 }

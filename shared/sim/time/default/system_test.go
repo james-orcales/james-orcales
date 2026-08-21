@@ -3,15 +3,9 @@ package time_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/time/default"
 	"local/james-orcales/shared/testify"
 )
-
-// TestMain register package invariant roots before smoke test run.
-func TestMain(m *testing.M) {
-	aver.Run_Test_Main(m)
-}
 
 // Test_Operating_System_Smoke check host clock never read monotonic backward, and report
 // positive wall-clock time. Real time is not deterministic, thus this is smoke test, not
