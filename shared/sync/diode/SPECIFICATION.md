@@ -37,9 +37,9 @@ Close. Later Writes report Stream_Empty.
 
 # Dropping Does Not Allocate
 
-Every bucket is allocated once in New and recycled through a lock-free free list, so no Write
-allocates: a producer that overwrites an unread entry pushes the dropped bucket back, and a
-Write that finds BUCKET_SLACK producers already holding one reports ERR_NO_BUCKET.
+Buckets live in caller storage New initialises once and a lock-free free list recycles, so no
+Write allocates: an overwrite of an unread entry pushes the dropped bucket back, and a Write
+that finds BUCKET_SLACK producers already holding one reports ERR_NO_BUCKET.
 
 # Rate Limit Sheds By Bytes
 

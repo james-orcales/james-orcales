@@ -3,6 +3,7 @@ package diode_test
 import (
 	"sync"
 	"testing"
+	"unsafe"
 
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
@@ -15,7 +16,7 @@ import (
 // rearms.
 func Test_Write_Forwards_To_Sink(t *testing.T) {
 	sink := &recording_sink{}
-	writer, stream := new_diode(diode.New_Input{Stream: recording_stream(sink), Count: 8})
+	writer, stream := new_diode(8, diode.New_Input{Stream: recording_stream(sink)})
 	var completion nbio.Completion
 	write(stream, &completion, "hello")
 	assert_lines(t, sink.Lines, nil...)
@@ -27,7 +28,7 @@ func Test_Write_Forwards_To_Sink(t *testing.T) {
 // Stream, whether that Stream is idle or holds a submission in flight.
 func Test_Write_Does_Not_Block(t *testing.T) {
 	sink := &deferred_sink{}
-	writer, stream := new_diode(diode.New_Input{Stream: deferred_stream(sink), Count: 4})
+	writer, stream := new_diode(4, diode.New_Input{Stream: deferred_stream(sink)})
 	var completion nbio.Completion
 	for index := 0; index < 16; index++ {
 		if index == 8 {
@@ -49,7 +50,7 @@ func Test_Write_Does_Not_Block(t *testing.T) {
 // Test_Overflow_Drops_Oldest checks that overrunning capacity keeps the newest entries.
 func Test_Overflow_Drops_Oldest(t *testing.T) {
 	sink := &deferred_sink{}
-	writer, stream := new_diode(diode.New_Input{Stream: deferred_stream(sink), Count: 4})
+	writer, stream := new_diode(4, diode.New_Input{Stream: deferred_stream(sink)})
 	var completion nbio.Completion
 	for index := 0; index < 8; index++ {
 		write(stream, &completion, decimal(index))
@@ -63,9 +64,8 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 	var missed []int
 	var causes []diode.Drop_Cause
 	sink := &deferred_sink{}
-	writer, stream := new_diode(diode.New_Input{
+	writer, stream := new_diode(4, diode.New_Input{
 		Stream: deferred_stream(sink),
-		Count:  4,
 		Alerter: func(count int, cause diode.Drop_Cause) {
 			missed = append(missed, count)
 			causes = append(causes, cause)
@@ -90,7 +90,7 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 // Test_Order_Is_Preserved checks that delivered entries keep write order.
 func Test_Order_Is_Preserved(t *testing.T) {
 	sink := &recording_sink{}
-	writer, stream := new_diode(diode.New_Input{Stream: recording_stream(sink), Count: 16})
+	writer, stream := new_diode(16, diode.New_Input{Stream: recording_stream(sink)})
 	var completion nbio.Completion
 	want := make([]string, 10)
 	for index := range want {
@@ -105,7 +105,7 @@ func Test_Order_Is_Preserved(t *testing.T) {
 // nothing while that line is in flight, and that the retirement itself continues nothing.
 func Test_Root_Rearms_The_Drain(t *testing.T) {
 	sink := &deferred_sink{}
-	writer, stream := new_diode(diode.New_Input{Stream: deferred_stream(sink), Count: 8})
+	writer, stream := new_diode(8, diode.New_Input{Stream: deferred_stream(sink)})
 	var completion nbio.Completion
 	write(stream, &completion, "a")
 	write(stream, &completion, "b")
@@ -137,7 +137,7 @@ func Test_Root_Rearms_The_Drain(t *testing.T) {
 // reaches it, and that the caller's Close retires only after that.
 func Test_Close_Flushes_And_Stops(t *testing.T) {
 	sink := &deferred_sink{}
-	writer, stream := new_diode(diode.New_Input{Stream: deferred_stream(sink), Count: 8})
+	writer, stream := new_diode(8, diode.New_Input{Stream: deferred_stream(sink)})
 	var completion nbio.Completion
 	for index := 0; index < 3; index++ {
 		write(stream, &completion, decimal(index))
@@ -176,7 +176,7 @@ func Test_Close_Flushes_And_Stops(t *testing.T) {
 // Test_Dropping_Does_Not_Allocate checks that overwriting unread entries recycles buckets.
 func Test_Dropping_Does_Not_Allocate(t *testing.T) {
 	sink := &deferred_sink{}
-	_, stream := new_diode(diode.New_Input{Stream: deferred_stream(sink), Count: 8})
+	_, stream := new_diode(8, diode.New_Input{Stream: deferred_stream(sink)})
 	var completion nbio.Completion
 	line := []byte("a dropped line")
 	// Warm past one full lap so the pool reaches steady-state recycling; nothing rearms, so
@@ -187,16 +187,27 @@ func Test_Dropping_Does_Not_Allocate(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		nbio.Write(stream, &completion, line, retired)
 	})
+	// The Stream's procedure is a func literal that captures nothing: a static value, so
+	// building the Stream allocates nothing either.
+	writer := &diode.Writer{}
+	*writer = diode.New(unsafe.Pointer(&diode.Writer_State{}), diode.New_Input{
+		Clock:   instant_clock(),
+		Slots:   make(diode.Slots, 1),
+		Buckets: make(diode.Buckets, diode.BUCKET_COUNT_MINIMUM),
+		Arena:   make(diode.Line_Arena, diode.LINE_ARENA_SIZE_MINIMUM),
+	})
+	testify.Zero_Allocation(t, func() {
+		diode.Writer_To_Stream(writer)
+	})
 }
 
 // Test_Rate_Limit_Sheds_By_Bytes checks the byte budget and clock-driven refill.
 func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	sink := &recording_sink{}
 	var causes []diode.Drop_Cause
-	writer, stream := new_diode(diode.New_Input{
+	writer, stream := new_diode(16, diode.New_Input{
 		Stream:     recording_stream(sink),
 		Clock:      instant_clock(),
-		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1, Burst: 6},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
 			for index := 0; index < missed; index++ {
@@ -220,10 +231,9 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	}
 
 	steady_sink := &recording_sink{}
-	steady_writer, steady := new_diode(diode.New_Input{
+	steady_writer, steady := new_diode(16, diode.New_Input{
 		Stream:     recording_stream(steady_sink),
 		Clock:      stepping_clock(time.SECOND),
-		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1000, Burst: 2},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
 			t.Errorf("unexpected drop of %d (%v); tokens should refill", missed, cause)
@@ -240,20 +250,23 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 
 // Test_Invariant_Boundaries drives every accepted configuration boundary through New.
 func Test_Invariant_Boundaries(t *testing.T) {
-	for _, input := range [...]diode.New_Input{
-		{Count: diode.CONFIGURATION_MINIMUM,
+	for _, boundary := range [...]struct {
+		Count int
+		Input diode.New_Input
+	}{
+		{1, diode.New_Input{
 			Rate_Limit: diode.Rate_Limit{
 				Bytes_Per_Second: diode.CONFIGURATION_MINIMUM,
-				Burst:            diode.CONFIGURATION_MINIMUM}},
-		{},
-		{Count: 1, Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1, Burst: 1}},
-		{Count: 2, Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 2, Burst: 2}},
-		{Count: diode.SLOT_COUNT_MAXIMUM,
+				Burst:            diode.CONFIGURATION_MINIMUM}}},
+		{1, diode.New_Input{}},
+		{1, diode.New_Input{Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1, Burst: 1}}},
+		{2, diode.New_Input{Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 2, Burst: 2}}},
+		{diode.SLOT_COUNT_MAXIMUM, diode.New_Input{
 			Rate_Limit: diode.Rate_Limit{
 				Bytes_Per_Second: diode.BYTE_RATE_MAXIMUM,
-				Burst:            diode.BURST_SIZE_MAXIMUM}},
+				Burst:            diode.BURST_SIZE_MAXIMUM}}},
 	} {
-		writer, stream := new_diode(input)
+		writer, stream := new_diode(boundary.Count, boundary.Input)
 		var completion nbio.Completion
 		for _, size := range [...]int{0, 1, 2, diode.LINE_BYTES_MAXIMUM} {
 			nbio.Write(stream, &completion, make([]byte, size), retired)
@@ -276,20 +289,51 @@ func Test_Invariant_Boundaries(t *testing.T) {
 	for _, moment := range [...]time.Monotonic_Moment{
 		time.MONOTONIC_MOMENT_MINIMUM, 1, 2, time.MONOTONIC_MOMENT_MAXIMUM,
 	} {
-		diode.New(diode.New_Input{Clock: constant_clock(moment), Count: 1})
+		new_diode(1, diode.New_Input{Clock: constant_clock(moment)})
 	}
 	testify.Panics(t, func() {
 		diode.Writer_To_Stream(&diode.Writer{})
 	}, "zero writer")
+	assert_storage_refused(t)
+}
+
+// Storage is caller-provided, so New must refuse pieces that do not fit one another.
+func assert_storage_refused(t *testing.T) {
+	t.Helper()
+	testify.Panics(t, func() {
+		short_buckets := diode.New_Input{
+			Clock:   instant_clock(),
+			Slots:   make(diode.Slots, 1),
+			Buckets: make(diode.Buckets, diode.BUCKET_COUNT_MINIMUM-1),
+			Arena:   make(diode.Line_Arena, diode.LINE_ARENA_SIZE_MINIMUM),
+		}
+		diode.New(unsafe.Pointer(&diode.Writer_State{}), short_buckets)
+	}, "buckets short of slots plus slack")
+	testify.Panics(t, func() {
+		short_arena := diode.New_Input{
+			Clock:   instant_clock(),
+			Slots:   make(diode.Slots, 1),
+			Buckets: make(diode.Buckets, diode.BUCKET_COUNT_MINIMUM),
+			Arena:   make(diode.Line_Arena, diode.LINE_ARENA_SIZE_MINIMUM-1),
+		}
+		diode.New(unsafe.Pointer(&diode.Writer_State{}), short_arena)
+	}, "arena short of one line per bucket")
+	testify.Panics(t, func() {
+		diode.New(nil, diode.New_Input{
+			Clock:   instant_clock(),
+			Slots:   make(diode.Slots, 1),
+			Buckets: make(diode.Buckets, diode.BUCKET_COUNT_MINIMUM),
+			Arena:   make(diode.Line_Arena, diode.LINE_ARENA_SIZE_MINIMUM),
+		})
+	}, "nil storage")
 }
 
 // Test_Maximum_Drop_Report proves one observed lap cannot overflow its bounded report.
 func Test_Maximum_Drop_Report(t *testing.T) {
 	var missed []int
 	sink := &deferred_sink{}
-	writer, stream := new_diode(diode.New_Input{
+	writer, stream := new_diode(1, diode.New_Input{
 		Stream:  deferred_stream(sink),
-		Count:   1,
 		Alerter: func(count int, _ diode.Drop_Cause) { missed = append(missed, count) },
 	})
 	var completion nbio.Completion
@@ -308,10 +352,9 @@ func Test_Maximum_Drop_Report(t *testing.T) {
 // Test_Rate_Limit_Survives_A_Large_Clock guards the refill math against int64 overflow.
 func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
 	sink := &recording_sink{}
-	writer, stream := new_diode(diode.New_Input{
+	writer, stream := new_diode(16, diode.New_Input{
 		Stream:     recording_stream(sink),
 		Clock:      stepping_clock(10_000 * time.SECOND),
-		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1 << 20, Burst: 1 << 20},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
 			t.Errorf("unexpected drop of %d (%v) under a large host", missed, cause)
@@ -325,12 +368,20 @@ func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
 	assert_lines(t, sink.Lines, "ab", "ab", "ab", "ab")
 }
 
-// Builds a diode, supplying a zero clock when the test does not care about time.
-func new_diode(input diode.New_Input) (writer *diode.Writer, stream nbio.Stream) {
+// Builds a diode over count ring slots, supplying a zero clock when the test does not care
+// about time. Tests may allocate; the library never does, so storage is built here.
+func new_diode(
+	count int, input diode.New_Input,
+) (writer *diode.Writer, stream nbio.Stream) {
 	if input.Clock.Now_Monotonic == nil {
 		input.Clock = instant_clock()
 	}
-	writer = diode.New(input)
+	bucket_count := count + diode.BUCKET_SLACK
+	input.Slots = make(diode.Slots, count)
+	input.Buckets = make(diode.Buckets, bucket_count)
+	input.Arena = make(diode.Line_Arena, bucket_count*diode.LINE_BYTES_MAXIMUM)
+	handle := diode.New(unsafe.Pointer(&diode.Writer_State{}), input)
+	writer = &handle
 	return writer, diode.Writer_To_Stream(writer)
 }
 
@@ -527,8 +578,8 @@ const BENCHMARK_LINE = "Test logging, but use a somewhat realistic message lengt
 
 // Benchmark_Write measures the producer cost alone, with a roomy ring nobody rearms.
 func Benchmark_Write(b *testing.B) {
-	_, stream := new_diode(diode.New_Input{
-		Stream: nbio.Discard_To_Stream(&nbio.Stream_Discard{}), Count: 1024,
+	_, stream := new_diode(1024, diode.New_Input{
+		Stream: nbio.Discard_To_Stream(&nbio.Stream_Discard{}),
 	})
 	line := []byte(BENCHMARK_LINE)
 	b.ReportAllocs()
@@ -544,7 +595,7 @@ func Benchmark_Write(b *testing.B) {
 // Benchmark_Write_Full_Ring measures the producer cost when a tiny ring is saturated, the worst
 // case for collision retries and bucket churn.
 func Benchmark_Write_Full_Ring(b *testing.B) {
-	_, stream := new_diode(diode.New_Input{Stream: deferred_stream(&deferred_sink{}), Count: 8})
+	_, stream := new_diode(8, diode.New_Input{Stream: deferred_stream(&deferred_sink{})})
 	line := []byte(BENCHMARK_LINE)
 	var completion nbio.Completion
 	b.ReportAllocs()
@@ -648,9 +699,8 @@ func Fuzz_Ring(f *testing.F) {
 		for index := range witness.Last {
 			witness.Last[index] = -1
 		}
-		writer, stream := new_diode(diode.New_Input{
+		writer, stream := new_diode(count, diode.New_Input{
 			Stream:  nbio.Stream{State: witness, Procedure: ring_witness_procedure},
-			Count:   diode.Slot_Count(count),
 			Alerter: func(missed int, cause diode.Drop_Cause) {},
 		})
 		var crew sync.WaitGroup
