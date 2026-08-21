@@ -1604,24 +1604,18 @@ func Name() (s string) {
 // Test_Snapshot_Unbounded pins the unbounded-API bans (tier two).
 func Test_Snapshot_Unbounded(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:8:9: The API "io.ReadAll" is unbounded (unbounded-read). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`import "io"
-
-// F reads.
+		{Snapshot: snap.Init(`a.go:6:9: The API "io.ReadAll" is unbounded (unbounded-read). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`// F reads.
 func F(r io.Reader) (b []byte) {
 	b, _ = io.ReadAll(r)
 	return b
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:9: The API "json.NewDecoder" is unbounded (unbounded-decode). Use json.Unmarshal over a bounded []byte instead.`), Files: snapshot_package(`import "io"
-
-// F decodes.
+		{Snapshot: snap.Init(`a.go:6:9: The API "json.NewDecoder" is unbounded (unbounded-decode). Use json.Unmarshal over a bounded []byte instead.`), Files: snapshot_package(`// F decodes.
 func F(r io.Reader) (d *json.Decoder) {
 	return json.NewDecoder(r)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:9: The API "gzip.NewReader" is unbounded (unbounded-decompression). Use wrap the decompressed reader in io.LimitReader instead.`), Files: snapshot_package(`import "io"
-
-// F wraps.
+		{Snapshot: snap.Init(`a.go:6:9: The API "gzip.NewReader" is unbounded (unbounded-decompression). Use wrap the decompressed reader in io.LimitReader instead.`), Files: snapshot_package(`// F wraps.
 func F(r io.Reader) (z *gzip.Reader, err error) {
 	return gzip.NewReader(r)
 }
@@ -1639,12 +1633,7 @@ func F(url string) (resp *http.Response, err error) {
 	return http.Get(url)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:11:9: The API "ioutil.ReadAll" is unbounded (deprecated-ioutil). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`import (
-	"io"
-	"io/ioutil"
-)
-
-// F reads.
+		{Snapshot: snap.Init(`a.go:6:9: The API "ioutil.ReadAll" is unbounded (deprecated-ioutil). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`// F reads.
 func F(r io.Reader) (b []byte, err error) {
 	return ioutil.ReadAll(r)
 }

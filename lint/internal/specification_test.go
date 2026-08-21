@@ -526,6 +526,8 @@ func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
 		"compress/gzip",
 		"container/list",
 		"encoding/json",
+		"io",
+		"io/fs",
 		"math/bits",
 		"math/rand/v2",
 		"crypto/rand",
@@ -545,6 +547,7 @@ func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
 	allowed_paths := []string{
 		"example.com/byte_strings",
 		"example.com/archive/tar",
+		"example.com/io",
 		"github.com/google/uuid",
 		"local/james-orcales/shared/bytes",
 		"local/james-orcales/shared/strings",
@@ -789,7 +792,7 @@ func Test_Source_And_Test_Bans_Blank_Mutexes(t *testing.T) {
 // Test_Source_And_Test_Bans_Unbounded_Read verifies an unbounded read call is flagged.
 func Test_Source_And_Test_Bans_Unbounded_Read(t *testing.T) {
 	t.Parallel()
-	files := specification_one_file("package fixture\n\nimport \"io\"\n\n" +
+	files := specification_one_file("package fixture\n\n" +
 		"// F reads.\nfunc F(r io.Reader) (b []byte) {\n" +
 		"\tb, _ = io.ReadAll(r)\n\treturn b\n}\n")
 	if !specification_flags(t, files, "is unbounded (unbounded-read)") {
@@ -800,7 +803,7 @@ func Test_Source_And_Test_Bans_Unbounded_Read(t *testing.T) {
 // Test_Source_And_Test_Bans_Unbounded_Decode verifies an unbounded decode is flagged.
 func Test_Source_And_Test_Bans_Unbounded_Decode(t *testing.T) {
 	t.Parallel()
-	files := specification_one_file("package fixture\n\nimport \"io\"\n\n" +
+	files := specification_one_file("package fixture\n\n" +
 		"// F decodes.\nfunc F(r io.Reader) (d *json.Decoder) {\n" +
 		"\treturn json.NewDecoder(r)\n}\n")
 	if !specification_flags(t, files, "is unbounded (unbounded-decode)") {
@@ -812,7 +815,7 @@ func Test_Source_And_Test_Bans_Unbounded_Decode(t *testing.T) {
 // decompression is flagged.
 func Test_Source_And_Test_Bans_Unbounded_Decompression(t *testing.T) {
 	t.Parallel()
-	files := specification_one_file("package fixture\n\nimport \"io\"\n\n" +
+	files := specification_one_file("package fixture\n\n" +
 		"// F wraps.\nfunc F(r io.Reader) (z *gzip.Reader, err error) {\n" +
 		"\treturn gzip.NewReader(r)\n}\n")
 	if !specification_flags(t, files, "is unbounded (unbounded-decompression)") {
@@ -847,8 +850,8 @@ func Test_Source_And_Test_Bans_Unbounded_Http(t *testing.T) {
 // is flagged.
 func Test_Source_And_Test_Bans_Deprecated_Ioutil(t *testing.T) {
 	t.Parallel()
-	files := specification_one_file("package fixture\n\nimport (\n\t\"io\"\n" +
-		"\t\"io/ioutil\"\n)\n\n// F reads.\nfunc F(r io.Reader) (b []byte, err error) {\n" +
+	files := specification_one_file("package fixture\n\n" +
+		"// F reads.\nfunc F(r io.Reader) (b []byte, err error) {\n" +
 		"\treturn ioutil.ReadAll(r)\n}\n")
 	if !specification_flags(t, files, "is unbounded (deprecated-ioutil)") {
 		t.Fatal("a deprecated ioutil call must be flagged")
