@@ -38,7 +38,8 @@
           "!maddox/**",
           "!sloc/**",
           "!setup/**",
-          "!fuzzstall/**"
+          "!fuzzstall/**",
+          "!harness/**"
   ],
   "word_replacements": {
     "len":       [],
