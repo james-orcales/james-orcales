@@ -132,9 +132,10 @@ or no TestMain, is banned.
 
 ### Primitive Types
 
-No builtin may be a function parameter, result, or struct field; wrap it in a defined type because
-no bundle or preset exists. Stdlib-interface methods, _test.go files, and opted-out packages are
-exempt. A defined slice may not hide a raw slice element; define the element type first.
+Builtin or inline struct types may not appear as function parameters, results, or struct fields;
+wrap each in a defined type because no bundle or preset exists. Stdlib-interface methods, _test.go
+files, and opted-out packages are exempt. A defined slice may not hide a raw slice element; define
+the element type first.
 
 ### Small Slices
 

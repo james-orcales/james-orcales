@@ -742,6 +742,37 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Primitive_Inline_Struct verifies structural type cannot bypass defined type
+// boundary because its fields already use defined types.
+func Test_Invariants_Primitive_Inline_Struct(t *testing.T) {
+	t.Parallel()
+	parsed := parse(t, &parse_input{
+		Path: "pkg/rule.go",
+		Source_Text: "package fixture\n\n" +
+			"// Slice names defined fixture type.\ntype Slice struct{}\n\n" +
+			"// Holder names fixture owner.\ntype Holder struct {\n" +
+			"\tExpansion struct {\n\t\tResult Slice\n\t}\n}\n\n" +
+			"// Replace_Expansion exercises raw boundaries.\n" +
+			"func Replace_Expansion(expansion *struct {\n" +
+			"\tResult Slice\n\tOriginal Slice\n\tPrefix Slice\n\tSuffix Slice\n\tValues Slice\n" +
+			"}) (replaced struct {\n\tResult Slice\n}) {\n" +
+			"\tprintln(expansion)\n\treturn replaced\n}\n",
+	})
+	diags := check_source(parsed)
+	if !diagnosed(diags, "The declaration Replace_Expansion has a raw struct parameter "+
+		"(expansion). Declare a defined type for the parameter.") {
+		t.Fatal("inline struct parameter must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Replace_Expansion has a raw struct result "+
+		"(replaced). Declare a defined type for the result.") {
+		t.Fatal("inline struct result must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Holder has a raw struct field "+
+		"(Expansion). Declare a defined type for the field.") {
+		t.Fatal("inline struct field must be flagged")
+	}
+}
+
 // Test_Invariants_Small_Slices verifies a defined slice type whose helper bounds len to at most 8
 // is banned as a field, parameter, or result, whatever form the helper takes, and a larger or
 // unresolved bound is not.

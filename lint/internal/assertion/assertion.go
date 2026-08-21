@@ -3291,7 +3291,7 @@ func primitive_type_gaps(expression ast.Expr) (gaps []string) {
 	if collection.Len != nil {
 		return nil
 	}
-	kind := numeric_raw_primitive_kind(collection.Elt)
+	kind := raw_type_kind(collection.Elt)
 	if kind != "slice" {
 		return nil
 	}
@@ -3347,7 +3347,7 @@ func primitive_field_gaps(fields *ast.FieldList, role string) (gaps []string) {
 		return nil
 	}
 	for _, field := range fields.List {
-		kind := numeric_raw_primitive_kind(field.Type)
+		kind := raw_type_kind(field.Type)
 		if kind == "" {
 			continue
 		}
@@ -3391,10 +3391,9 @@ func primitive_field_names(field *ast.Field) (names []string) {
 	return names
 }
 
-// Returns "string", "slice", or "map" when the type is a raw primitive of that kind
-// — a leading * unwrapped, a variadic counted as a slice — or "" otherwise. A fixed
-// [N]T array is not a slice; a defined type that wraps a primitive is not raw.
-func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
+// Defined types anchor invariant bundles; type literals cannot. One pointer layer cannot hide raw
+// type, while fixed arrays remain collection rule's responsibility.
+func raw_type_kind(expression ast.Expr) (kind string) {
 	core := expression
 	if star, is_star := core.(*ast.StarExpr); is_star {
 		core = star.X
@@ -3418,6 +3417,8 @@ func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
 		return "slice"
 	case *ast.MapType:
 		return "map"
+	case *ast.StructType:
+		return "struct"
 	default:
 		return ""
 	}
