@@ -2,8 +2,6 @@
 package rsa
 
 import (
-	"unsafe"
-
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/crypto/sha256"
@@ -20,6 +18,15 @@ const MODULUS_BIT_COUNT = MODULUS_LIMB_COUNT * bits.BIT_COUNT_64_MAXIMUM
 
 // MODULUS_SIZE derives the RSA-2048 wire width.
 const MODULUS_SIZE = MODULUS_BIT_COUNT / bits.BIT_COUNT_8_MAXIMUM
+
+// INTEGER_CHUNK_LANE_COUNT is the visible word count in one storage chunk.
+const INTEGER_CHUNK_LANE_COUNT = binary.UINT_32_SIZE
+
+// INTEGER_CHUNK_SIZE derives one chunk's encoded width.
+const INTEGER_CHUNK_SIZE = INTEGER_CHUNK_LANE_COUNT * binary.UINT_64_SIZE
+
+// INTEGER_CHUNK_COUNT derives the exact number of chunks in one RSA integer.
+const INTEGER_CHUNK_COUNT = MODULUS_SIZE / INTEGER_CHUNK_SIZE
 
 // PUBLIC_EXPONENT is the fixed interoperable Fermat exponent 65537.
 const PUBLIC_EXPONENT = uint32(binary.UINT_8_SIZE<<bits.BIT_COUNT_16_MAXIMUM) +
@@ -223,7 +230,7 @@ func Integer_Chunk_Storage_Invariants(
 // Integer_Chunk_0 gives the least-addressed chunk independent identity.
 type Integer_Chunk_0 Integer_Chunk_Storage
 
-// Integer_Chunk_0_Invariants guards the first unsafe byte-view segment.
+// Integer_Chunk_0_Invariants guards the first encoded segment.
 func Integer_Chunk_0_Invariants(value Integer_Chunk_0, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -231,16 +238,12 @@ func Integer_Chunk_0_Invariants(value Integer_Chunk_0, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"First RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Integer_Chunk_1 gives the second chunk independent identity.
 type Integer_Chunk_1 Integer_Chunk_Storage
 
-// Integer_Chunk_1_Invariants guards the second unsafe byte-view segment.
+// Integer_Chunk_1_Invariants guards the second encoded segment.
 func Integer_Chunk_1_Invariants(value Integer_Chunk_1, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -248,16 +251,12 @@ func Integer_Chunk_1_Invariants(value Integer_Chunk_1, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"Second RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Integer_Chunk_2 gives the third chunk independent identity.
 type Integer_Chunk_2 Integer_Chunk_Storage
 
-// Integer_Chunk_2_Invariants guards the third unsafe byte-view segment.
+// Integer_Chunk_2_Invariants guards the third encoded segment.
 func Integer_Chunk_2_Invariants(value Integer_Chunk_2, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -265,16 +264,12 @@ func Integer_Chunk_2_Invariants(value Integer_Chunk_2, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"Third RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Integer_Chunk_3 gives the fourth chunk independent identity.
 type Integer_Chunk_3 Integer_Chunk_Storage
 
-// Integer_Chunk_3_Invariants guards the fourth unsafe byte-view segment.
+// Integer_Chunk_3_Invariants guards the fourth encoded segment.
 func Integer_Chunk_3_Invariants(value Integer_Chunk_3, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -282,16 +277,12 @@ func Integer_Chunk_3_Invariants(value Integer_Chunk_3, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"Fourth RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Integer_Chunk_4 gives the fifth chunk independent identity.
 type Integer_Chunk_4 Integer_Chunk_Storage
 
-// Integer_Chunk_4_Invariants guards the fifth unsafe byte-view segment.
+// Integer_Chunk_4_Invariants guards the fifth encoded segment.
 func Integer_Chunk_4_Invariants(value Integer_Chunk_4, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -299,16 +290,12 @@ func Integer_Chunk_4_Invariants(value Integer_Chunk_4, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"Fifth RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Integer_Chunk_5 gives the sixth chunk independent identity.
 type Integer_Chunk_5 Integer_Chunk_Storage
 
-// Integer_Chunk_5_Invariants guards the sixth unsafe byte-view segment.
+// Integer_Chunk_5_Invariants guards the sixth encoded segment.
 func Integer_Chunk_5_Invariants(value Integer_Chunk_5, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -316,16 +303,12 @@ func Integer_Chunk_5_Invariants(value Integer_Chunk_5, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"Sixth RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Integer_Chunk_6 gives the seventh chunk independent identity.
 type Integer_Chunk_6 Integer_Chunk_Storage
 
-// Integer_Chunk_6_Invariants guards the seventh unsafe byte-view segment.
+// Integer_Chunk_6_Invariants guards the seventh encoded segment.
 func Integer_Chunk_6_Invariants(value Integer_Chunk_6, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -333,16 +316,12 @@ func Integer_Chunk_6_Invariants(value Integer_Chunk_6, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"Seventh RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Integer_Chunk_7 gives the most-addressed chunk independent identity.
 type Integer_Chunk_7 Integer_Chunk_Storage
 
-// Integer_Chunk_7_Invariants guards the last unsafe byte-view segment.
+// Integer_Chunk_7_Invariants guards the last encoded segment.
 func Integer_Chunk_7_Invariants(value Integer_Chunk_7, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Lane_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -350,10 +329,6 @@ func Integer_Chunk_7_Invariants(value Integer_Chunk_7, namespace aver.Namespace)
 		Range_Uint64(uint64(value.Lane_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Lane_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Integer_Chunk_Storage{}),
-		"Last RSA integer chunk preserves four-word width.",
-	)
 }
 
 // Private_Exponent_Chunk_0 keeps modulus and exponent identities distinct in one key chain.
@@ -511,7 +486,7 @@ func Integer_Storage_Invariants(value Integer_Storage, namespace aver.Namespace)
 // Modulus is opaque copy-safe RSA-2048 modulus ownership.
 type Modulus Integer_Storage
 
-// Modulus_Invariants guards the exact unsafe byte-view width.
+// Modulus_Invariants composes every exact-width storage chunk.
 func Modulus_Invariants(value Modulus, namespace aver.Namespace) {
 	Integer_Chunk_0_Invariants(value.Chunk_0, namespace)
 	Integer_Chunk_1_Invariants(value.Chunk_1, namespace)
@@ -521,10 +496,6 @@ func Modulus_Invariants(value Modulus, namespace aver.Namespace) {
 	Integer_Chunk_5_Invariants(value.Chunk_5, namespace)
 	Integer_Chunk_6_Invariants(value.Chunk_6, namespace)
 	Integer_Chunk_7_Invariants(value.Chunk_7, namespace)
-	aver.Always(
-		unsafe.Sizeof(value) == MODULUS_SIZE,
-		"An RSA modulus has exact 2048-bit storage.",
-	)
 }
 
 // Private_Exponent owns one RSA-2048 exponent without sharing modulus assertion identities.
@@ -547,7 +518,7 @@ type Private_Exponent struct {
 	Chunk_7 Private_Exponent_Chunk_7
 }
 
-// Private_Exponent_Invariants guards the exact unsafe byte-view width.
+// Private_Exponent_Invariants composes every exact-width storage chunk.
 func Private_Exponent_Invariants(value Private_Exponent, namespace aver.Namespace) {
 	Private_Exponent_Chunk_0_Invariants(value.Chunk_0, namespace)
 	Private_Exponent_Chunk_1_Invariants(value.Chunk_1, namespace)
@@ -557,10 +528,6 @@ func Private_Exponent_Invariants(value Private_Exponent, namespace aver.Namespac
 	Private_Exponent_Chunk_5_Invariants(value.Chunk_5, namespace)
 	Private_Exponent_Chunk_6_Invariants(value.Chunk_6, namespace)
 	Private_Exponent_Chunk_7_Invariants(value.Chunk_7, namespace)
-	aver.Always(
-		unsafe.Sizeof(value) == MODULUS_SIZE,
-		"An RSA private exponent has modulus width.",
-	)
 }
 
 // Ready stores caller key-state identity.
@@ -883,7 +850,7 @@ func Public_Key_Set_Bytes(
 		return KEY_STATUS_INPUT_INVALID
 	}
 	var encoding Modulus
-	copy(modulus_bytes(&encoding), modulus)
+	modulus_replace(&encoding, Encoded(modulus))
 	if modulus_encoding_valid(&encoding) != DECISION_TRUE {
 		return KEY_STATUS_INPUT_INVALID
 	}
@@ -914,8 +881,8 @@ func Private_Key_Set_Bytes(
 	}
 	var modulus_encoding Modulus
 	var exponent_encoding Private_Exponent
-	copy(modulus_bytes(&modulus_encoding), modulus)
-	copy(private_exponent_bytes(&exponent_encoding), exponent)
+	modulus_replace(&modulus_encoding, Encoded(modulus))
+	private_exponent_replace(&exponent_encoding, Encoded(exponent))
 	modulus_valid := modulus_encoding_valid(&modulus_encoding)
 	exponent_valid := private_exponent_encoding_valid(
 		&exponent_encoding, &modulus_encoding,
@@ -953,7 +920,7 @@ func Public_Key_Bytes_Into(destination Modulus_Encoding, public_key Public_Key) 
 	Modulus_Encoding_Invariants(destination, "Public_Key_Bytes_Into.destination")
 	Public_Key_Invariants(public_key, "Public_Key_Bytes_Into.public_key")
 	public_key_require(public_key)
-	copy(destination, modulus_bytes(&public_key.Modulus))
+	modulus_copy(Encoded(destination), &public_key.Modulus)
 }
 
 // Encrypt_OAEP_SHA_256 commits one fixed ciphertext after complete padding construction.
@@ -1370,7 +1337,9 @@ func rsa_private_operation(
 	)
 	var exponent_storage [MODULUS_LIMB_COUNT]uint64
 	exponent := Limbs(exponent_storage[:])
-	integer_decode(exponent, private_exponent_bytes(exponent_encoding))
+	var exponent_bytes [MODULUS_SIZE]byte
+	private_exponent_copy(Encoded(exponent_bytes[:]), exponent_encoding)
+	integer_decode(exponent, Encoded(exponent_bytes[:]))
 	rsa_operation(destination, source, modulus, exponent)
 }
 
@@ -1387,7 +1356,9 @@ func rsa_operation(
 	var modulus_storage, source_storage [MODULUS_LIMB_COUNT]uint64
 	modulus := Limbs(modulus_storage[:])
 	source_integer := Limbs(source_storage[:])
-	integer_decode(modulus, modulus_bytes(modulus_encoding))
+	var modulus_encoding_storage [MODULUS_SIZE]byte
+	modulus_copy(Encoded(modulus_encoding_storage[:]), modulus_encoding)
+	integer_decode(modulus, Encoded(modulus_encoding_storage[:]))
 	integer_decode(source_integer, source)
 	var r_squared_storage [MODULUS_LIMB_COUNT]uint64
 	r_squared := Limbs(r_squared_storage[:])
@@ -1599,7 +1570,9 @@ func modulus_encoding_valid(
 ) (valid Decision) {
 	defer func() { Decision_Invariants(valid, "modulus_encoding_valid.valid") }()
 	Modulus_Destination_Invariants(modulus, "modulus_encoding_valid.modulus")
-	encoding := modulus_bytes(modulus)
+	var encoding_storage [MODULUS_SIZE]byte
+	encoding := Encoded(encoding_storage[:])
+	modulus_copy(encoding, modulus)
 	top_bit := uint64(
 		encoding[bits.BIT_COUNT_MINIMUM] >>
 			(bits.BIT_COUNT_8_MAXIMUM - binary.UINT_8_SIZE),
@@ -1620,8 +1593,11 @@ func private_exponent_encoding_valid(
 	)
 	Modulus_Destination_Invariants(modulus, "private_exponent_encoding_valid.modulus")
 	var exponent_integer, modulus_integer [MODULUS_LIMB_COUNT]uint64
-	integer_decode(Limbs(exponent_integer[:]), private_exponent_bytes(exponent))
-	integer_decode(Limbs(modulus_integer[:]), modulus_bytes(modulus))
+	var exponent_bytes, modulus_encoding [MODULUS_SIZE]byte
+	private_exponent_copy(Encoded(exponent_bytes[:]), exponent)
+	modulus_copy(Encoded(modulus_encoding[:]), modulus)
+	integer_decode(Limbs(exponent_integer[:]), Encoded(exponent_bytes[:]))
+	integer_decode(Limbs(modulus_integer[:]), Encoded(modulus_encoding[:]))
 	var difference [MODULUS_LIMB_COUNT]uint64
 	canonical := limbs_subtract(
 		Limbs(difference[:]), Limbs(exponent_integer[:]), Limbs(modulus_integer[:]),
@@ -1641,7 +1617,9 @@ func integer_encoding_canonical(
 	Modulus_Destination_Invariants(modulus, "integer_encoding_canonical.modulus")
 	var value, modulus_integer [MODULUS_LIMB_COUNT]uint64
 	integer_decode(Limbs(value[:]), encoding)
-	integer_decode(Limbs(modulus_integer[:]), modulus_bytes(modulus))
+	var modulus_encoding [MODULUS_SIZE]byte
+	modulus_copy(Encoded(modulus_encoding[:]), modulus)
+	integer_decode(Limbs(modulus_integer[:]), Encoded(modulus_encoding[:]))
 	var difference [MODULUS_LIMB_COUNT]uint64
 	return limbs_subtract(
 		Limbs(difference[:]), Limbs(value[:]), Limbs(modulus_integer[:]),
@@ -1685,19 +1663,184 @@ func limbs_is_zero(
 	return zero
 }
 
-func modulus_bytes(value Modulus_Destination) (encoding Encoded) {
-	defer func() { Encoded_Invariants(encoding, "modulus_bytes.encoding") }()
-	Modulus_Destination_Invariants(value, "modulus_bytes.value")
-	Integer_Storage_Invariants(Integer_Storage(*value), "modulus_bytes.storage")
-	return unsafe.Slice((*byte)(unsafe.Pointer(value)), MODULUS_SIZE)
+func modulus_replace(destination Modulus_Destination, source Encoded) {
+	Modulus_Destination_Invariants(destination, "modulus_replace.destination")
+	Encoded_Invariants(source, "modulus_replace.source")
+	for chunk_index := range INTEGER_CHUNK_COUNT {
+		var chunk Integer_Chunk_Storage
+		for lane_index := range INTEGER_CHUNK_LANE_COUNT {
+			start := chunk_index*INTEGER_CHUNK_SIZE + lane_index*binary.UINT_64_SIZE
+			end := start + binary.UINT_64_SIZE
+			word := binary.Uint_64(
+				binary.Bytes(source[start:end]), binary.LITTLE_ENDIAN,
+			)
+			switch lane_index {
+			case 0:
+				chunk.Lane_0 = Integer_Lane_0(word)
+			case 1:
+				chunk.Lane_1 = Integer_Lane_1(word)
+			case 2:
+				chunk.Lane_2 = Integer_Lane_2(word)
+			default:
+				chunk.Lane_3 = Integer_Lane_3(word)
+			}
+		}
+		switch chunk_index {
+		case 0:
+			destination.Chunk_0 = Integer_Chunk_0(chunk)
+		case 1:
+			destination.Chunk_1 = Integer_Chunk_1(chunk)
+		case 2:
+			destination.Chunk_2 = Integer_Chunk_2(chunk)
+		case 3:
+			destination.Chunk_3 = Integer_Chunk_3(chunk)
+		case 4:
+			destination.Chunk_4 = Integer_Chunk_4(chunk)
+		case 5:
+			destination.Chunk_5 = Integer_Chunk_5(chunk)
+		case 6:
+			destination.Chunk_6 = Integer_Chunk_6(chunk)
+		default:
+			destination.Chunk_7 = Integer_Chunk_7(chunk)
+		}
+	}
 }
 
-func private_exponent_bytes(
-	value Private_Exponent_Destination,
-) (encoding Encoded) {
-	defer func() { Encoded_Invariants(encoding, "private_exponent_bytes.encoding") }()
+func modulus_copy(destination Encoded, source Modulus_Destination) {
+	Encoded_Invariants(destination, "modulus_copy.destination")
+	Modulus_Destination_Invariants(source, "modulus_copy.source")
+	for chunk_index := range INTEGER_CHUNK_COUNT {
+		var chunk Integer_Chunk_Storage
+		switch chunk_index {
+		case 0:
+			chunk = Integer_Chunk_Storage(source.Chunk_0)
+		case 1:
+			chunk = Integer_Chunk_Storage(source.Chunk_1)
+		case 2:
+			chunk = Integer_Chunk_Storage(source.Chunk_2)
+		case 3:
+			chunk = Integer_Chunk_Storage(source.Chunk_3)
+		case 4:
+			chunk = Integer_Chunk_Storage(source.Chunk_4)
+		case 5:
+			chunk = Integer_Chunk_Storage(source.Chunk_5)
+		case 6:
+			chunk = Integer_Chunk_Storage(source.Chunk_6)
+		default:
+			chunk = Integer_Chunk_Storage(source.Chunk_7)
+		}
+		lanes := [INTEGER_CHUNK_LANE_COUNT]uint64{
+			uint64(chunk.Lane_0), uint64(chunk.Lane_1),
+			uint64(chunk.Lane_2), uint64(chunk.Lane_3),
+		}
+		for lane_index, word := range lanes {
+			start := chunk_index*INTEGER_CHUNK_SIZE + lane_index*binary.UINT_64_SIZE
+			binary.Put_Uint_64(
+				binary.Bytes(destination[start:start+binary.UINT_64_SIZE]),
+				binary.Word_64(word), binary.LITTLE_ENDIAN,
+			)
+		}
+	}
+}
+
+func modulus_bytes(value Modulus_Destination) {
+	Modulus_Destination_Invariants(value, "modulus_bytes.value")
+	var destination [MODULUS_SIZE]byte
+	modulus_copy(Encoded(destination[:]), value)
+	modulus_replace(value, Encoded(destination[:]))
+}
+
+func private_exponent_replace(
+	destination Private_Exponent_Destination, source Encoded,
+) {
+	Private_Exponent_Destination_Invariants(
+		destination, "private_exponent_replace.destination",
+	)
+	Encoded_Invariants(source, "private_exponent_replace.source")
+	for chunk_index := range INTEGER_CHUNK_COUNT {
+		var chunk Integer_Chunk_Storage
+		for lane_index := range INTEGER_CHUNK_LANE_COUNT {
+			start := chunk_index*INTEGER_CHUNK_SIZE + lane_index*binary.UINT_64_SIZE
+			end := start + binary.UINT_64_SIZE
+			word := binary.Uint_64(
+				binary.Bytes(source[start:end]), binary.LITTLE_ENDIAN,
+			)
+			switch lane_index {
+			case 0:
+				chunk.Lane_0 = Integer_Lane_0(word)
+			case 1:
+				chunk.Lane_1 = Integer_Lane_1(word)
+			case 2:
+				chunk.Lane_2 = Integer_Lane_2(word)
+			default:
+				chunk.Lane_3 = Integer_Lane_3(word)
+			}
+		}
+		switch chunk_index {
+		case 0:
+			destination.Chunk_0 = Private_Exponent_Chunk_0(chunk)
+		case 1:
+			destination.Chunk_1 = Private_Exponent_Chunk_1(chunk)
+		case 2:
+			destination.Chunk_2 = Private_Exponent_Chunk_2(chunk)
+		case 3:
+			destination.Chunk_3 = Private_Exponent_Chunk_3(chunk)
+		case 4:
+			destination.Chunk_4 = Private_Exponent_Chunk_4(chunk)
+		case 5:
+			destination.Chunk_5 = Private_Exponent_Chunk_5(chunk)
+		case 6:
+			destination.Chunk_6 = Private_Exponent_Chunk_6(chunk)
+		default:
+			destination.Chunk_7 = Private_Exponent_Chunk_7(chunk)
+		}
+	}
+}
+
+func private_exponent_copy(
+	destination Encoded, source Private_Exponent_Destination,
+) {
+	Encoded_Invariants(destination, "private_exponent_copy.destination")
+	Private_Exponent_Destination_Invariants(source, "private_exponent_copy.source")
+	for chunk_index := range INTEGER_CHUNK_COUNT {
+		var chunk Integer_Chunk_Storage
+		switch chunk_index {
+		case 0:
+			chunk = Integer_Chunk_Storage(source.Chunk_0)
+		case 1:
+			chunk = Integer_Chunk_Storage(source.Chunk_1)
+		case 2:
+			chunk = Integer_Chunk_Storage(source.Chunk_2)
+		case 3:
+			chunk = Integer_Chunk_Storage(source.Chunk_3)
+		case 4:
+			chunk = Integer_Chunk_Storage(source.Chunk_4)
+		case 5:
+			chunk = Integer_Chunk_Storage(source.Chunk_5)
+		case 6:
+			chunk = Integer_Chunk_Storage(source.Chunk_6)
+		default:
+			chunk = Integer_Chunk_Storage(source.Chunk_7)
+		}
+		lanes := [INTEGER_CHUNK_LANE_COUNT]uint64{
+			uint64(chunk.Lane_0), uint64(chunk.Lane_1),
+			uint64(chunk.Lane_2), uint64(chunk.Lane_3),
+		}
+		for lane_index, word := range lanes {
+			start := chunk_index*INTEGER_CHUNK_SIZE + lane_index*binary.UINT_64_SIZE
+			binary.Put_Uint_64(
+				binary.Bytes(destination[start:start+binary.UINT_64_SIZE]),
+				binary.Word_64(word), binary.LITTLE_ENDIAN,
+			)
+		}
+	}
+}
+
+func private_exponent_bytes(value Private_Exponent_Destination) {
 	Private_Exponent_Destination_Invariants(value, "private_exponent_bytes.value")
-	return unsafe.Slice((*byte)(unsafe.Pointer(value)), MODULUS_SIZE)
+	var destination [MODULUS_SIZE]byte
+	private_exponent_copy(Encoded(destination[:]), value)
+	private_exponent_replace(value, Encoded(destination[:]))
 }
 
 func public_key_require(public_key Public_Key) {

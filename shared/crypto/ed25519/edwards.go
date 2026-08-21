@@ -2,8 +2,6 @@
 package ed25519
 
 import (
-	"unsafe"
-
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/encoding/binary"
@@ -77,13 +75,13 @@ func Limb_3_Invariants(value Limb_3, namespace aver.Namespace) {
 
 // Limb_Storage gives field and scalar values stable machine layout.
 type Limb_Storage struct {
-	// Limb_0 keeps the least-significant word stable under unsafe arithmetic views.
+	// Limb_0 keeps the least-significant word stable across arithmetic views.
 	Limb_0 Limb_0
 	// Limb_1 prevents layout changes from shifting the second arithmetic word.
 	Limb_1 Limb_1
 	// Limb_2 prevents layout changes from shifting the third arithmetic word.
 	Limb_2 Limb_2
-	// Limb_3 keeps the most-significant word stable under unsafe arithmetic views.
+	// Limb_3 keeps the most-significant word stable across arithmetic views.
 	Limb_3 Limb_3
 }
 
@@ -98,7 +96,7 @@ func Limb_Storage_Invariants(value Limb_Storage, namespace aver.Namespace) {
 // Field is opaque Edwards field arithmetic storage.
 type Field Limb_Storage
 
-// Field_Invariants guards unsafe arithmetic views against layout drift.
+// Field_Invariants guards arithmetic storage against layout drift.
 func Field_Invariants(value Field, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -106,10 +104,6 @@ func Field_Invariants(value Field, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Limb_Storage{}),
-		"Field has aligned Ed25519 width.",
-	)
 }
 
 // Field_Handle names mutable field storage.
@@ -126,7 +120,7 @@ func Field_Handle_Invariants(value Field_Handle, namespace aver.Namespace) {
 // Scalar is opaque Ed25519 group-order arithmetic storage.
 type Scalar Limb_Storage
 
-// Scalar_Invariants guards unsafe arithmetic views against layout drift.
+// Scalar_Invariants guards arithmetic storage against layout drift.
 func Scalar_Invariants(value Scalar, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -134,10 +128,6 @@ func Scalar_Invariants(value Scalar, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Limb_Storage{}),
-		"Scalar has aligned Ed25519 width.",
-	)
 }
 
 // Scalar_Handle names mutable scalar storage.
@@ -154,7 +144,7 @@ func Scalar_Handle_Invariants(value Scalar_Handle, namespace aver.Namespace) {
 // Limbs is common storage for field and scalar carry arithmetic.
 type Limbs Limb_Storage
 
-// Limbs_Invariants guards unsafe arithmetic views against layout drift.
+// Limbs_Invariants guards common arithmetic storage against layout drift.
 func Limbs_Invariants(value Limbs, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -162,10 +152,6 @@ func Limbs_Invariants(value Limbs, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Limb_Storage{}),
-		"Limbs have aligned Ed25519 width.",
-	)
 }
 
 // Limbs_Handle names mutable common arithmetic storage.
@@ -182,19 +168,19 @@ func Limbs_Handle_Invariants(value Limbs_Handle, namespace aver.Namespace) {
 func field_limbs(value Field_Handle) (limbs Limbs_Handle) {
 	defer func() { Limbs_Handle_Invariants(limbs, "field_limbs.limbs") }()
 	Field_Handle_Invariants(value, "field_limbs.value")
-	return Limbs_Handle(unsafe.Pointer(value))
+	return Limbs_Handle((*Limbs)((*Field)(value)))
 }
 
 func scalar_limbs(value Scalar_Handle) (limbs Limbs_Handle) {
 	defer func() { Limbs_Handle_Invariants(limbs, "scalar_limbs.limbs") }()
 	Scalar_Handle_Invariants(value, "scalar_limbs.value")
-	return Limbs_Handle(unsafe.Pointer(value))
+	return Limbs_Handle((*Limbs)((*Scalar)(value)))
 }
 
 // X_Field gives the first extended coordinate a unique invariant identity.
 type X_Field Limb_Storage
 
-// X_Field_Invariants guards the shared arithmetic view against layout drift.
+// X_Field_Invariants guards the shared arithmetic view.
 func X_Field_Invariants(value X_Field, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -202,16 +188,12 @@ func X_Field_Invariants(value X_Field, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Field{}),
-		"X keeps field width.",
-	)
 }
 
 // Y_Field gives the second extended coordinate a unique invariant identity.
 type Y_Field Limb_Storage
 
-// Y_Field_Invariants guards the shared arithmetic view against layout drift.
+// Y_Field_Invariants guards the shared arithmetic view.
 func Y_Field_Invariants(value Y_Field, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -219,16 +201,12 @@ func Y_Field_Invariants(value Y_Field, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Field{}),
-		"Y keeps field width.",
-	)
 }
 
 // Z_Field gives the third extended coordinate a unique invariant identity.
 type Z_Field Limb_Storage
 
-// Z_Field_Invariants guards the shared arithmetic view against layout drift.
+// Z_Field_Invariants guards the shared arithmetic view.
 func Z_Field_Invariants(value Z_Field, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -236,16 +214,12 @@ func Z_Field_Invariants(value Z_Field, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Field{}),
-		"Z keeps field width.",
-	)
 }
 
 // T_Field gives the fourth extended coordinate a unique invariant identity.
 type T_Field Limb_Storage
 
-// T_Field_Invariants guards the shared arithmetic view against layout drift.
+// T_Field_Invariants guards the shared arithmetic view.
 func T_Field_Invariants(value T_Field, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -253,10 +227,6 @@ func T_Field_Invariants(value T_Field, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Field{}),
-		"T keeps field width.",
-	)
 }
 
 // Point_Storage fixes extended coordinate order for complete formulas.
@@ -282,16 +252,12 @@ func Point_Storage_Invariants(value Point_Storage, namespace aver.Namespace) {
 // Point is opaque extended Edwards storage.
 type Point Point_Storage
 
-// Point_Invariants guards complete-formula layout.
+// Point_Invariants guards every complete-formula coordinate.
 func Point_Invariants(value Point, namespace aver.Namespace) {
 	X_Field_Invariants(value.X, namespace)
 	Y_Field_Invariants(value.Y, namespace)
 	Z_Field_Invariants(value.Z, namespace)
 	T_Field_Invariants(value.T, namespace)
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Point_Storage{}),
-		"Point preserves extended Edwards layout.",
-	)
 }
 
 // Point_Handle names mutable extended point storage.
@@ -332,7 +298,7 @@ func Seed_Invariants(value Seed, _ aver.Namespace) {
 // Private_Key stores the authoritative seed without redundant public bytes.
 type Private_Key Limb_Storage
 
-// Private_Key_Invariants fixes caller-owned private storage width.
+// Private_Key_Invariants covers every caller-owned seed word.
 func Private_Key_Invariants(value Private_Key, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value.Limb_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
@@ -340,10 +306,6 @@ func Private_Key_Invariants(value Private_Key, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Limb_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Range_Uint64(uint64(value.Limb_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Limb_Storage{}),
-		"An Ed25519 private key has aligned seed width.",
-	)
 }
 
 // Private_Key_Destination is nonnil caller-owned private storage.
@@ -372,11 +334,41 @@ func Private_Key_Handle_Invariants(
 	Private_Key_Invariants(*value, namespace)
 }
 
-// Private key bytes stay inside the package boundary.
-func private_key_seed(value Private_Key_Handle) (seed Seed) {
-	defer func() { Seed_Invariants(seed, "private_key_seed.seed") }()
-	Private_Key_Handle_Invariants(value, "private_key_seed.value")
-	return Seed(unsafe.Slice((*byte)(unsafe.Pointer(value)), PRIVATE_KEY_SIZE))
+func private_key_seed_replace(destination Private_Key_Destination, source Seed) {
+	Private_Key_Destination_Invariants(destination, "private_key_seed_replace.destination")
+	Seed_Invariants(source, "private_key_seed_replace.source")
+	destination.Limb_0 = Limb_0(binary.Uint_64(
+		binary.Bytes(source[0:8]), binary.LITTLE_ENDIAN,
+	))
+	destination.Limb_1 = Limb_1(binary.Uint_64(
+		binary.Bytes(source[8:16]), binary.LITTLE_ENDIAN,
+	))
+	destination.Limb_2 = Limb_2(binary.Uint_64(
+		binary.Bytes(source[16:24]), binary.LITTLE_ENDIAN,
+	))
+	destination.Limb_3 = Limb_3(binary.Uint_64(
+		binary.Bytes(source[24:32]), binary.LITTLE_ENDIAN,
+	))
+}
+
+func private_key_seed_copy(destination Seed, source Private_Key_Handle) {
+	Seed_Invariants(destination, "private_key_seed.seed")
+	Private_Key_Handle_Invariants(source, "private_key_seed.value")
+	binary.Put_Uint_64(
+		binary.Bytes(destination[0:8]), binary.Word_64(source.Limb_0), binary.LITTLE_ENDIAN,
+	)
+	binary.Put_Uint_64(
+		binary.Bytes(destination[8:16]), binary.Word_64(source.Limb_1),
+		binary.LITTLE_ENDIAN,
+	)
+	binary.Put_Uint_64(
+		binary.Bytes(destination[16:24]), binary.Word_64(source.Limb_2),
+		binary.LITTLE_ENDIAN,
+	)
+	binary.Put_Uint_64(
+		binary.Bytes(destination[24:32]), binary.Word_64(source.Limb_3),
+		binary.LITTLE_ENDIAN,
+	)
 }
 
 // Public_Key is one compressed Edwards point encoding.
@@ -437,7 +429,7 @@ func Private_Key_From_Seed(destination Private_Key_Destination, seed Seed) {
 	}()
 	Private_Key_Destination_Invariants(destination, "Private_Key_From_Seed.destination")
 	Seed_Invariants(seed, "Private_Key_From_Seed.seed")
-	copy(private_key_seed(Private_Key_Handle(destination)), seed)
+	private_key_seed_replace(destination, seed)
 }
 
 // Public_Key_From_Private derives compressed public bytes without retaining duplicate state.
@@ -476,6 +468,18 @@ func Verify(
 
 // FIELD_LIMB_COUNT derives field storage from encoding and machine-word widths.
 const FIELD_LIMB_COUNT = SEED_SIZE / binary.UINT_64_SIZE
+
+// FIELD_MODULUS_LIMB_0 is the least-significant word of 2^255 - 19.
+const FIELD_MODULUS_LIMB_0 = 0xffffffffffffffed
+
+// FIELD_MODULUS_LIMB_1 is the second word of 2^255 - 19.
+const FIELD_MODULUS_LIMB_1 = 0xffffffffffffffff
+
+// FIELD_MODULUS_LIMB_2 is the third word of 2^255 - 19.
+const FIELD_MODULUS_LIMB_2 = 0xffffffffffffffff
+
+// FIELD_MODULUS_LIMB_3 is the most-significant word of 2^255 - 19.
+const FIELD_MODULUS_LIMB_3 = 0x7fffffffffffffff
 
 // FIELD_BIT_COUNT excludes the compressed-sign bit from a field element.
 const FIELD_BIT_COUNT = SEED_SIZE*bits.BIT_COUNT_8_MAXIMUM - binary.UINT_8_SIZE
@@ -531,21 +535,6 @@ type Scalar_Encoding []byte
 func Scalar_Encoding_Invariants(value Scalar_Encoding, _ aver.Namespace) {
 	aver.Always(len(value) == SEED_SIZE, "Scalar encoding has Ed25519 width.")
 }
-
-// POINT_COORDINATE_COUNT stores extended X, Y, Z, and T coordinates.
-const POINT_COORDINATE_COUNT = binary.UINT_32_SIZE
-
-// POINT_X_INDEX selects the extended X coordinate.
-const POINT_X_INDEX = bits.BIT_COUNT_MINIMUM
-
-// POINT_Y_INDEX selects the extended Y coordinate.
-const POINT_Y_INDEX = POINT_X_INDEX + binary.UINT_8_SIZE
-
-// POINT_Z_INDEX selects the extended Z coordinate.
-const POINT_Z_INDEX = POINT_Y_INDEX + binary.UINT_8_SIZE
-
-// POINT_T_INDEX selects the extended T coordinate.
-const POINT_T_INDEX = POINT_Z_INDEX + binary.UINT_8_SIZE
 
 // COFACTOR_DOUBLING_COUNT derives multiplication by Ed25519's cofactor eight.
 const COFACTOR_DOUBLING_COUNT = bits.BIT_COUNT_8_MAXIMUM/binary.UINT_16_SIZE - binary.UINT_8_SIZE
@@ -675,7 +664,9 @@ func hash_seed(destination Wide_Destination, private_key Private_Key_Handle) {
 	Private_Key_Handle_Invariants(private_key, "hash_seed.private_key")
 	var digest sha512.Digest
 	sha512.Digest_Init(&digest, sha512.KIND_SHA_512)
-	sha512.Digest_Write(&digest, sha512.Source(private_key_seed(private_key)))
+	var seed [SEED_SIZE]byte
+	private_key_seed_copy(Seed(seed[:]), private_key)
+	sha512.Digest_Write(&digest, sha512.Source(seed[:]))
 	sha512.Digest_Sum_Into(&digest, sha512.Destination(destination))
 }
 
@@ -730,7 +721,10 @@ func point_scalar_multiply(
 	Point_Handle_Invariants(destination, "point_scalar_multiply.destination")
 	Point_Handle_Invariants(point, "point_scalar_multiply.point")
 	Scalar_Handle_Invariants(scalar, "point_scalar_multiply.scalar")
-	scalar_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(scalar))
+	scalar_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(scalar.Limb_0), uint64(scalar.Limb_1),
+		uint64(scalar.Limb_2), uint64(scalar.Limb_3),
+	}
 	var result Point
 	point_identity(&result)
 	for bit_count := SCALAR_BIT_COUNT; bit_count > bits.BIT_COUNT_MINIMUM; bit_count-- {
@@ -755,42 +749,44 @@ func point_add(
 	Point_Handle_Invariants(destination, "point_add.destination")
 	Point_Handle_Invariants(left, "point_add.left")
 	Point_Handle_Invariants(right, "point_add.right")
-	destination_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(destination))
-	left_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(left))
-	right_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(right))
+	destination_x := Field_Handle((*Field)(&destination.X))
+	destination_y := Field_Handle((*Field)(&destination.Y))
+	destination_z := Field_Handle((*Field)(&destination.Z))
+	destination_t := Field_Handle((*Field)(&destination.T))
+	left_x := Field_Handle((*Field)(&left.X))
+	left_y := Field_Handle((*Field)(&left.Y))
+	left_z := Field_Handle((*Field)(&left.Z))
+	left_t := Field_Handle((*Field)(&left.T))
+	right_x, right_y, right_z, right_t :=
+		Field_Handle((*Field)(&right.X)), Field_Handle((*Field)(&right.Y)),
+		Field_Handle((*Field)(&right.Z)), Field_Handle((*Field)(&right.T))
 	var left_difference, right_difference Field
 	var left_sum, right_sum Field
 	var a, b, c, d, e, f, g, h Field
 	field_subtract(
-		&left_difference, &left_coordinates[POINT_Y_INDEX],
-		&left_coordinates[POINT_X_INDEX],
+		&left_difference, left_y, left_x,
 	)
 	field_subtract(
-		&right_difference, &right_coordinates[POINT_Y_INDEX],
-		&right_coordinates[POINT_X_INDEX],
+		&right_difference, right_y, right_x,
 	)
 	field_multiply(&a, &left_difference, &right_difference)
-	field_add(
-		&left_sum, &left_coordinates[POINT_Y_INDEX], &left_coordinates[POINT_X_INDEX],
-	)
-	field_add(
-		&right_sum, &right_coordinates[POINT_Y_INDEX], &right_coordinates[POINT_X_INDEX],
-	)
+	field_add(&left_sum, left_y, left_x)
+	field_add(&right_sum, right_y, right_x)
 	field_multiply(&b, &left_sum, &right_sum)
 	var twice_d Field
 	field_twice_d(&twice_d)
-	field_multiply(&c, &left_coordinates[POINT_T_INDEX], &right_coordinates[POINT_T_INDEX])
+	field_multiply(&c, left_t, right_t)
 	field_multiply(&c, &c, &twice_d)
-	field_multiply(&d, &left_coordinates[POINT_Z_INDEX], &right_coordinates[POINT_Z_INDEX])
+	field_multiply(&d, left_z, right_z)
 	field_add(&d, &d, &d)
 	field_subtract(&e, &b, &a)
 	field_subtract(&f, &d, &c)
 	field_add(&g, &d, &c)
 	field_add(&h, &b, &a)
-	field_multiply(&destination_coordinates[POINT_X_INDEX], &e, &f)
-	field_multiply(&destination_coordinates[POINT_Y_INDEX], &g, &h)
-	field_multiply(&destination_coordinates[POINT_T_INDEX], &e, &h)
-	field_multiply(&destination_coordinates[POINT_Z_INDEX], &f, &g)
+	field_multiply(destination_x, &e, &f)
+	field_multiply(destination_y, &g, &h)
+	field_multiply(destination_t, &e, &h)
+	field_multiply(destination_z, &f, &g)
 }
 
 func point_double(
@@ -799,25 +795,30 @@ func point_double(
 ) {
 	Point_Handle_Invariants(destination, "point_double.destination")
 	Point_Handle_Invariants(source, "point_double.source")
-	destination_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(destination))
-	source_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(source))
+	destination_x := Field_Handle((*Field)(&destination.X))
+	destination_y := Field_Handle((*Field)(&destination.Y))
+	destination_z := Field_Handle((*Field)(&destination.Z))
+	destination_t := Field_Handle((*Field)(&destination.T))
+	source_x := Field_Handle((*Field)(&source.X))
+	source_y := Field_Handle((*Field)(&source.Y))
+	source_z := Field_Handle((*Field)(&source.Z))
 	var a, b, c, d, e, f, g, h Field
-	field_square(&a, &source_coordinates[POINT_X_INDEX])
-	field_square(&b, &source_coordinates[POINT_Y_INDEX])
-	field_square(&c, &source_coordinates[POINT_Z_INDEX])
+	field_square(&a, source_x)
+	field_square(&b, source_y)
+	field_square(&c, source_z)
 	field_add(&c, &c, &c)
 	field_negate(&d, &a)
-	field_add(&e, &source_coordinates[POINT_X_INDEX], &source_coordinates[POINT_Y_INDEX])
+	field_add(&e, source_x, source_y)
 	field_square(&e, &e)
 	field_subtract(&e, &e, &a)
 	field_subtract(&e, &e, &b)
 	field_add(&g, &d, &b)
 	field_subtract(&f, &g, &c)
 	field_subtract(&h, &d, &b)
-	field_multiply(&destination_coordinates[POINT_X_INDEX], &e, &f)
-	field_multiply(&destination_coordinates[POINT_Y_INDEX], &g, &h)
-	field_multiply(&destination_coordinates[POINT_T_INDEX], &e, &h)
-	field_multiply(&destination_coordinates[POINT_Z_INDEX], &f, &g)
+	field_multiply(destination_x, &e, &f)
+	field_multiply(destination_y, &g, &h)
+	field_multiply(destination_t, &e, &h)
+	field_multiply(destination_z, &f, &g)
 }
 
 func point_negate(
@@ -827,9 +828,10 @@ func point_negate(
 	Point_Handle_Invariants(destination, "point_negate.destination")
 	Point_Handle_Invariants(source, "point_negate.source")
 	point := *source
-	coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(&point))
-	field_negate(&coordinates[POINT_X_INDEX], &coordinates[POINT_X_INDEX])
-	field_negate(&coordinates[POINT_T_INDEX], &coordinates[POINT_T_INDEX])
+	x := Field_Handle((*Field)(&point.X))
+	t := Field_Handle((*Field)(&point.T))
+	field_negate(x, x)
+	field_negate(t, t)
 	*destination = point
 }
 
@@ -843,15 +845,22 @@ func point_select(
 	Point_Handle_Invariants(first, "point_select.first")
 	Point_Handle_Invariants(second, "point_select.second")
 	Decision_Invariants(condition, "point_select.condition")
-	destination_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(destination))
-	first_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(first))
-	second_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(second))
-	for index := range destination_coordinates {
-		field_select(
-			&destination_coordinates[index], &first_coordinates[index],
-			&second_coordinates[index], condition,
-		)
-	}
+	field_select(
+		Field_Handle((*Field)(&destination.X)), Field_Handle((*Field)(&first.X)),
+		Field_Handle((*Field)(&second.X)), condition,
+	)
+	field_select(
+		Field_Handle((*Field)(&destination.Y)), Field_Handle((*Field)(&first.Y)),
+		Field_Handle((*Field)(&second.Y)), condition,
+	)
+	field_select(
+		Field_Handle((*Field)(&destination.Z)), Field_Handle((*Field)(&first.Z)),
+		Field_Handle((*Field)(&second.Z)), condition,
+	)
+	field_select(
+		Field_Handle((*Field)(&destination.T)), Field_Handle((*Field)(&first.T)),
+		Field_Handle((*Field)(&second.T)), condition,
+	)
 }
 
 func point_encode(
@@ -860,11 +869,13 @@ func point_encode(
 ) {
 	Point_Encoding_Invariants(destination, "point_encode.destination")
 	Point_Handle_Invariants(point, "point_encode.point")
-	coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(point))
+	x_coordinate := Field_Handle((*Field)(&point.X))
+	y_coordinate := Field_Handle((*Field)(&point.Y))
+	z_coordinate := Field_Handle((*Field)(&point.Z))
 	var inverse, x, y Field
-	field_inverse(&inverse, &coordinates[POINT_Z_INDEX])
-	field_multiply(&x, &coordinates[POINT_X_INDEX], &inverse)
-	field_multiply(&y, &coordinates[POINT_Y_INDEX], &inverse)
+	field_inverse(&inverse, z_coordinate)
+	field_multiply(&x, x_coordinate, &inverse)
+	field_multiply(&y, y_coordinate, &inverse)
 	field_encode(destination, &y)
 	destination[PUBLIC_KEY_SIZE-binary.UINT_8_SIZE] |=
 		byte(uint64(x.Limb_0)&binary.UINT_8_SIZE) <<
@@ -878,7 +889,6 @@ func point_decode(
 	defer func() { Decision_Invariants(valid, "point_decode.valid") }()
 	Point_Handle_Invariants(destination, "point_decode.destination")
 	Point_Encoding_Invariants(encoding, "point_decode.encoding")
-	destination_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(destination))
 	var y_storage [PUBLIC_KEY_SIZE]byte
 	copy(y_storage[:], encoding)
 	y_encoding := Point_Encoding(y_storage[:])
@@ -910,10 +920,10 @@ func point_decode(
 		Decision(uint64(x.Limb_0)&binary.UINT_8_SIZE^sign),
 	)
 	valid = canonical & square & (x_zero&Decision(sign) ^ DECISION_TRUE)
-	destination_coordinates[POINT_X_INDEX] = x
-	destination_coordinates[POINT_Y_INDEX] = y
-	destination_coordinates[POINT_Z_INDEX] = one
-	field_multiply(&destination_coordinates[POINT_T_INDEX], &x, &y)
+	destination.X = X_Field(x)
+	destination.Y = Y_Field(y)
+	destination.Z = Z_Field(one)
+	field_multiply(Field_Handle((*Field)(&destination.T)), &x, &y)
 	return valid
 }
 
@@ -938,17 +948,17 @@ func point_equal(
 	defer func() { Decision_Invariants(equal, "point_equal.equal") }()
 	Point_Handle_Invariants(left, "point_equal.left")
 	Point_Handle_Invariants(right, "point_equal.right")
-	left_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(left))
-	right_coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(right))
+	left_x_coordinate := Field_Handle((*Field)(&left.X))
+	left_y_coordinate := Field_Handle((*Field)(&left.Y))
+	left_z_coordinate := Field_Handle((*Field)(&left.Z))
+	right_x_coordinate := Field_Handle((*Field)(&right.X))
+	right_y_coordinate := Field_Handle((*Field)(&right.Y))
+	right_z_coordinate := Field_Handle((*Field)(&right.Z))
 	var left_x, right_x, left_y, right_y Field
-	field_multiply(&left_x, &left_coordinates[POINT_X_INDEX], &right_coordinates[POINT_Z_INDEX])
-	field_multiply(
-		&right_x, &right_coordinates[POINT_X_INDEX], &left_coordinates[POINT_Z_INDEX],
-	)
-	field_multiply(&left_y, &left_coordinates[POINT_Y_INDEX], &right_coordinates[POINT_Z_INDEX])
-	field_multiply(
-		&right_y, &right_coordinates[POINT_Y_INDEX], &left_coordinates[POINT_Z_INDEX],
-	)
+	field_multiply(&left_x, left_x_coordinate, right_z_coordinate)
+	field_multiply(&right_x, right_x_coordinate, left_z_coordinate)
+	field_multiply(&left_y, left_y_coordinate, right_z_coordinate)
+	field_multiply(&right_y, right_y_coordinate, left_z_coordinate)
 	x_equal := field_equal(&left_x, &right_x)
 	y_equal := field_equal(&left_y, &right_y)
 	equal = x_equal & y_equal
@@ -957,9 +967,8 @@ func point_equal(
 
 func point_identity(destination Point_Handle) {
 	Point_Handle_Invariants(destination, "point_identity.destination")
-	coordinates := (*[POINT_COORDINATE_COUNT]Field)(unsafe.Pointer(destination))
-	field_one(&coordinates[POINT_Y_INDEX])
-	field_one(&coordinates[POINT_Z_INDEX])
+	field_one(Field_Handle((*Field)(&destination.Y)))
+	field_one(Field_Handle((*Field)(&destination.Z)))
 }
 
 func point_base(destination Point_Handle) {
@@ -977,28 +986,24 @@ func point_base(destination Point_Handle) {
 	)
 }
 
-func field_multiply(
-	destination Field_Handle,
-	left Field_Handle,
-	right Field_Handle,
-) {
+func field_multiply(destination, left, right Field_Handle) {
 	Field_Handle_Invariants(destination, "field_multiply.destination")
 	Field_Handle_Invariants(left, "field_multiply.left")
 	Field_Handle_Invariants(right, "field_multiply.right")
-	var result Field
-	addend := *left
-	result_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(&result))
-	addend_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(&addend))
-	right_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(right))
-	var modulus Field
-	field_modulus(&modulus)
-	modulus_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(&modulus))
+	var result_words [FIELD_LIMB_COUNT]uint64
+	addend_words := [FIELD_LIMB_COUNT]uint64{
+		uint64(left.Limb_0), uint64(left.Limb_1), uint64(left.Limb_2), uint64(left.Limb_3),
+	}
+	right_words := [FIELD_LIMB_COUNT]uint64{
+		uint64(right.Limb_0), uint64(right.Limb_1),
+		uint64(right.Limb_2), uint64(right.Limb_3),
+	}
+	modulus_words := [FIELD_LIMB_COUNT]uint64{
+		FIELD_MODULUS_LIMB_0, FIELD_MODULUS_LIMB_1,
+		FIELD_MODULUS_LIMB_2, FIELD_MODULUS_LIMB_3,
+	}
 	// Local words passed the boundary. Per-bit recording would dominate the product.
-	modular_add := func(
-		destination_words *[FIELD_LIMB_COUNT]uint64,
-		left_words *[FIELD_LIMB_COUNT]uint64,
-		right_words *[FIELD_LIMB_COUNT]uint64,
-	) {
+	modular_add := func(destination_words, left_words, right_words *[FIELD_LIMB_COUNT]uint64) {
 		carry_value := uint64(bits.WORD_64_MINIMUM)
 		var sum [FIELD_LIMB_COUNT]uint64
 		for index := range sum {
@@ -1029,13 +1034,12 @@ func field_multiply(
 		}
 		mask := uint64(bits.WORD_64_MINIMUM) - (borrow_value ^ binary.UINT_8_SIZE)
 		for index := range destination_words {
-			destination_words[index] = sum[index] ^
-				mask&(reduced[index]^sum[index])
+			destination_words[index] = sum[index] ^ mask&(reduced[index]^sum[index])
 		}
 	}
 	for bit_index := bits.BIT_COUNT_MINIMUM; bit_index < FIELD_BIT_COUNT; bit_index++ {
 		var candidate [FIELD_LIMB_COUNT]uint64
-		modular_add(&candidate, result_words, addend_words)
+		modular_add(&candidate, &result_words, &addend_words)
 		word_index := bit_index / bits.BIT_COUNT_64_MAXIMUM
 		word_shift := uint(bit_index % bits.BIT_COUNT_64_MAXIMUM)
 		bit := right_words[word_index] >> word_shift & binary.UINT_8_SIZE
@@ -1044,10 +1048,13 @@ func field_multiply(
 			result_words[index] ^= mask & (candidate[index] ^ result_words[index])
 		}
 		var doubled [FIELD_LIMB_COUNT]uint64
-		modular_add(&doubled, addend_words, addend_words)
-		*addend_words = doubled
+		modular_add(&doubled, &addend_words, &addend_words)
+		addend_words = doubled
 	}
-	*destination = result
+	*destination = Field{
+		Limb_0: Limb_0(result_words[0]), Limb_1: Limb_1(result_words[1]),
+		Limb_2: Limb_2(result_words[2]), Limb_3: Limb_3(result_words[3]),
+	}
 }
 
 func field_square(
@@ -1091,10 +1098,11 @@ func field_subtract(
 	var modulus Field
 	field_modulus(&modulus)
 	mask := uint64(bits.WORD_64_MINIMUM) - uint64(borrow)
-	correction_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(&correction))
-	modulus_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(&modulus))
-	for index := range correction_words {
-		correction_words[index] = modulus_words[index] & mask
+	correction = Field{
+		Limb_0: Limb_0(uint64(modulus.Limb_0) & mask),
+		Limb_1: Limb_1(uint64(modulus.Limb_1) & mask),
+		Limb_2: Limb_2(uint64(modulus.Limb_2) & mask),
+		Limb_3: Limb_3(uint64(modulus.Limb_3) & mask),
 	}
 	limbs_add(
 		field_limbs(destination), field_limbs(&difference), field_limbs(&correction),
@@ -1152,7 +1160,10 @@ func field_power(
 	Field_Handle_Invariants(destination, "field_power.destination")
 	Field_Handle_Invariants(base, "field_power.base")
 	Field_Handle_Invariants(exponent, "field_power.exponent")
-	exponent_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(exponent))
+	exponent_words := [FIELD_LIMB_COUNT]uint64{
+		uint64(exponent.Limb_0), uint64(exponent.Limb_1),
+		uint64(exponent.Limb_2), uint64(exponent.Limb_3),
+	}
 	var result Field
 	field_one(&result)
 	for bit_count := FIELD_BIT_COUNT; bit_count > bits.BIT_COUNT_MINIMUM; bit_count-- {
@@ -1179,12 +1190,15 @@ func field_select(
 	Field_Handle_Invariants(second, "field_select.second")
 	Decision_Invariants(condition, "field_select.condition")
 	mask := uint64(bits.WORD_64_MINIMUM) - uint64(condition)
-	destination_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
-	first_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(first))
-	second_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(second))
-	for index := range destination_words {
-		destination_words[index] = second_words[index] ^
-			mask&(first_words[index]^second_words[index])
+	*destination = Field{
+		Limb_0: Limb_0(uint64(second.Limb_0) ^
+			mask&(uint64(first.Limb_0)^uint64(second.Limb_0))),
+		Limb_1: Limb_1(uint64(second.Limb_1) ^
+			mask&(uint64(first.Limb_1)^uint64(second.Limb_1))),
+		Limb_2: Limb_2(uint64(second.Limb_2) ^
+			mask&(uint64(first.Limb_2)^uint64(second.Limb_2))),
+		Limb_3: Limb_3(uint64(second.Limb_3) ^
+			mask&(uint64(first.Limb_3)^uint64(second.Limb_3))),
 	}
 }
 
@@ -1194,12 +1208,10 @@ func field_equal(
 	defer func() { Decision_Invariants(equal, "field_equal.equal") }()
 	Field_Handle_Invariants(left, "field_equal.left")
 	Field_Handle_Invariants(right, "field_equal.right")
-	left_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(left))
-	right_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(right))
-	difference := uint64(bits.WORD_64_MINIMUM)
-	for index := range left_words {
-		difference |= left_words[index] ^ right_words[index]
-	}
+	difference := uint64(left.Limb_0) ^ uint64(right.Limb_0)
+	difference |= uint64(left.Limb_1) ^ uint64(right.Limb_1)
+	difference |= uint64(left.Limb_2) ^ uint64(right.Limb_2)
+	difference |= uint64(left.Limb_3) ^ uint64(right.Limb_3)
 	equal = Decision((difference|-difference)>>
 		(bits.BIT_COUNT_64_MAXIMUM-binary.UINT_8_SIZE) ^ binary.UINT_8_SIZE)
 	return equal
@@ -1220,13 +1232,19 @@ func field_decode(
 	defer func() { Decision_Invariants(canonical, "field_decode.canonical") }()
 	Field_Handle_Invariants(destination, "field_decode.destination")
 	Point_Encoding_Invariants(source, "field_decode.source")
-	destination_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
+	var words [FIELD_LIMB_COUNT]uint64
 	for index := bits.BIT_COUNT_MINIMUM; index < FIELD_LIMB_COUNT; index++ {
 		source_index := index * binary.UINT_64_SIZE
-		destination_words[index] = uint64(binary.Uint_64(
+		words[index] = uint64(binary.Uint_64(
 			binary.Bytes(source[source_index:source_index+binary.UINT_64_SIZE]),
 			binary.LITTLE_ENDIAN,
 		))
+	}
+	*destination = Field{
+		Limb_0: Limb_0(words[0]),
+		Limb_1: Limb_1(words[1]),
+		Limb_2: Limb_2(words[2]),
+		Limb_3: Limb_3(words[3]),
 	}
 	var modulus Field
 	field_modulus(&modulus)
@@ -1241,13 +1259,16 @@ func field_encode(
 ) {
 	Point_Encoding_Invariants(destination, "field_encode.destination")
 	Field_Handle_Invariants(source, "field_encode.source")
-	source_words := (*[FIELD_LIMB_COUNT]uint64)(unsafe.Pointer(source))
+	words := [FIELD_LIMB_COUNT]uint64{
+		uint64(source.Limb_0), uint64(source.Limb_1),
+		uint64(source.Limb_2), uint64(source.Limb_3),
+	}
 	for index := bits.BIT_COUNT_MINIMUM; index < FIELD_LIMB_COUNT; index++ {
 		destination_index := index * binary.UINT_64_SIZE
 		destination_end := destination_index + binary.UINT_64_SIZE
 		binary.Put_Uint_64(
 			binary.Bytes(destination[destination_index:destination_end]),
-			binary.Word_64(source_words[index]), binary.LITTLE_ENDIAN,
+			binary.Word_64(words[index]), binary.LITTLE_ENDIAN,
 		)
 	}
 }
@@ -1282,13 +1303,19 @@ func scalar_decode_canonical(
 	defer func() { Decision_Invariants(canonical, "scalar_decode_canonical.canonical") }()
 	Scalar_Handle_Invariants(destination, "scalar_decode_canonical.destination")
 	Scalar_Encoding_Invariants(source, "scalar_decode_canonical.source")
-	destination_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
+	var words [SCALAR_LIMB_COUNT]uint64
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
 		source_index := index * binary.UINT_64_SIZE
-		destination_words[index] = uint64(binary.Uint_64(
+		words[index] = uint64(binary.Uint_64(
 			binary.Bytes(source[source_index:source_index+binary.UINT_64_SIZE]),
 			binary.LITTLE_ENDIAN,
 		))
+	}
+	*destination = Scalar{
+		Limb_0: Limb_0(words[0]),
+		Limb_1: Limb_1(words[1]),
+		Limb_2: Limb_2(words[2]),
+		Limb_3: Limb_3(words[3]),
 	}
 	var order Scalar
 	scalar_order(&order)
@@ -1303,13 +1330,16 @@ func scalar_encode(
 ) {
 	Scalar_Encoding_Invariants(destination, "scalar_encode.destination")
 	Scalar_Handle_Invariants(source, "scalar_encode.source")
-	source_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(source))
+	words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(source.Limb_0), uint64(source.Limb_1),
+		uint64(source.Limb_2), uint64(source.Limb_3),
+	}
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
 		destination_index := index * binary.UINT_64_SIZE
 		destination_end := destination_index + binary.UINT_64_SIZE
 		binary.Put_Uint_64(
 			binary.Bytes(destination[destination_index:destination_end]),
-			binary.Word_64(source_words[index]), binary.LITTLE_ENDIAN,
+			binary.Word_64(words[index]), binary.LITTLE_ENDIAN,
 		)
 	}
 }
@@ -1345,7 +1375,10 @@ func scalar_multiply(
 	Scalar_Handle_Invariants(right, "scalar_multiply.right")
 	var result Scalar
 	addend := *left
-	right_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(right))
+	right_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(right.Limb_0), uint64(right.Limb_1),
+		uint64(right.Limb_2), uint64(right.Limb_3),
+	}
 	for bit_index := bits.BIT_COUNT_MINIMUM; bit_index < SCALAR_BIT_COUNT; bit_index++ {
 		var candidate Scalar
 		scalar_add(&candidate, &result, &addend)
@@ -1370,14 +1403,22 @@ func limbs_add(
 	Limbs_Handle_Invariants(destination, "limbs_add.destination")
 	Limbs_Handle_Invariants(left, "limbs_add.left")
 	Limbs_Handle_Invariants(right, "limbs_add.right")
-	destination_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
-	left_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(left))
-	right_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(right))
 	carry_value := uint64(bits.WORD_64_MINIMUM)
-	for index := range destination_words {
-		partial := left_words[index] + right_words[index]
-		partial_carry := ((left_words[index] & right_words[index]) |
-			((left_words[index] | right_words[index]) & ^partial)) >>
+	left_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(left.Limb_0), uint64(left.Limb_1),
+		uint64(left.Limb_2), uint64(left.Limb_3),
+	}
+	right_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(right.Limb_0), uint64(right.Limb_1),
+		uint64(right.Limb_2), uint64(right.Limb_3),
+	}
+	var destination_words [SCALAR_LIMB_COUNT]uint64
+	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
+		left_value := left_words[index]
+		right_value := right_words[index]
+		partial := left_value + right_value
+		partial_carry := ((left_value & right_value) |
+			((left_value | right_value) & ^partial)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 		value := partial + carry_value
 		carry_carry := ((partial & carry_value) |
@@ -1385,6 +1426,12 @@ func limbs_add(
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 		destination_words[index] = value
 		carry_value = partial_carry | carry_carry
+	}
+	*destination = Limbs{
+		Limb_0: Limb_0(destination_words[0]),
+		Limb_1: Limb_1(destination_words[1]),
+		Limb_2: Limb_2(destination_words[2]),
+		Limb_3: Limb_3(destination_words[3]),
 	}
 	carry = Decision(carry_value)
 	return carry
@@ -1399,14 +1446,22 @@ func limbs_subtract(
 	Limbs_Handle_Invariants(destination, "limbs_subtract.destination")
 	Limbs_Handle_Invariants(left, "limbs_subtract.left")
 	Limbs_Handle_Invariants(right, "limbs_subtract.right")
-	destination_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
-	left_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(left))
-	right_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(right))
 	borrow_value := uint64(bits.WORD_64_MINIMUM)
-	for index := range destination_words {
-		partial := left_words[index] - right_words[index]
-		partial_borrow := ((^left_words[index] & right_words[index]) |
-			(^(left_words[index] ^ right_words[index]) & partial)) >>
+	left_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(left.Limb_0), uint64(left.Limb_1),
+		uint64(left.Limb_2), uint64(left.Limb_3),
+	}
+	right_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(right.Limb_0), uint64(right.Limb_1),
+		uint64(right.Limb_2), uint64(right.Limb_3),
+	}
+	var destination_words [SCALAR_LIMB_COUNT]uint64
+	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
+		left_value := left_words[index]
+		right_value := right_words[index]
+		partial := left_value - right_value
+		partial_borrow := ((^left_value & right_value) |
+			(^(left_value ^ right_value) & partial)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 		value := partial - borrow_value
 		borrow_borrow := ((^partial & borrow_value) |
@@ -1414,6 +1469,12 @@ func limbs_subtract(
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
 		destination_words[index] = value
 		borrow_value = partial_borrow | borrow_borrow
+	}
+	*destination = Limbs{
+		Limb_0: Limb_0(destination_words[0]),
+		Limb_1: Limb_1(destination_words[1]),
+		Limb_2: Limb_2(destination_words[2]),
+		Limb_3: Limb_3(destination_words[3]),
 	}
 	borrow = Decision(borrow_value)
 	return borrow
@@ -1430,22 +1491,25 @@ func limbs_select(
 	Limbs_Handle_Invariants(second, "limbs_select.second")
 	Decision_Invariants(condition, "limbs_select.condition")
 	mask := uint64(bits.WORD_64_MINIMUM) - uint64(condition)
-	destination_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(destination))
-	first_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(first))
-	second_words := (*[SCALAR_LIMB_COUNT]uint64)(unsafe.Pointer(second))
-	for index := range destination_words {
-		destination_words[index] = second_words[index] ^
-			mask&(first_words[index]^second_words[index])
+	*destination = Limbs{
+		Limb_0: Limb_0(uint64(second.Limb_0) ^
+			mask&(uint64(first.Limb_0)^uint64(second.Limb_0))),
+		Limb_1: Limb_1(uint64(second.Limb_1) ^
+			mask&(uint64(first.Limb_1)^uint64(second.Limb_1))),
+		Limb_2: Limb_2(uint64(second.Limb_2) ^
+			mask&(uint64(first.Limb_2)^uint64(second.Limb_2))),
+		Limb_3: Limb_3(uint64(second.Limb_3) ^
+			mask&(uint64(first.Limb_3)^uint64(second.Limb_3))),
 	}
 }
 
 func field_modulus(destination Field_Handle) {
 	Field_Handle_Invariants(destination, "field_modulus.destination")
 	*destination = Field{
-		Limb_0: 0xffffffffffffffed,
-		Limb_1: 0xffffffffffffffff,
-		Limb_2: 0xffffffffffffffff,
-		Limb_3: 0x7fffffffffffffff,
+		Limb_0: FIELD_MODULUS_LIMB_0,
+		Limb_1: FIELD_MODULUS_LIMB_1,
+		Limb_2: FIELD_MODULUS_LIMB_2,
+		Limb_3: FIELD_MODULUS_LIMB_3,
 	}
 }
 

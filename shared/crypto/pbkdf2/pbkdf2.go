@@ -2,8 +2,6 @@
 package pbkdf2
 
 import (
-	"unsafe"
-
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/hmac"
 	"local/james-orcales/shared/crypto/subtle"
@@ -123,15 +121,15 @@ func Status_Invariants(value Status, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Digest_Handle names the leading HMAC storage after public lifecycle validation.
-type Digest_Handle *hmac.Storage
+// Digest_Handle names initialized HMAC state owned by Key_Into.
+type Digest_Handle *hmac.Digest
 
-// Digest_Handle_Invariants composes present HMAC state.
+// Digest_Handle_Invariants composes keyed state when storage exists.
 func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
 	if value == nil {
 		return
 	}
-	hmac.Storage_Invariants(*value, namespace)
+	hmac.Digest_Invariants(*value, namespace)
 }
 
 // Key_Into derives output only after proving output-block work fits one bounded call.
@@ -161,9 +159,12 @@ func Key_Into(
 	digest_size := int(hmac.Digest_Size(&digest))
 	block_count := (len(destination) + digest_size - binary.UINT_8_SIZE) / digest_size
 	if block_count > PRF_EVALUATION_COUNT_MAXIMUM/int(iterations) {
+		// Refused work must not leave keyed state live until this frame is reclaimed.
+		digest = hmac.Digest{}
+		derive(destination, Digest_Handle(&digest), salt, iterations)
 		return COUNT_EMPTY, STATUS_WORK_TOO_LARGE
 	}
-	derive(destination, Digest_Handle(&digest.Storage), salt, iterations)
+	derive(destination, Digest_Handle(&digest), salt, iterations)
 	return Count(len(destination)), STATUS_OK
 }
 
@@ -178,7 +179,13 @@ func derive(
 	Digest_Handle_Invariants(digest, "derive.digest")
 	Salt_Invariants(salt, "derive.salt")
 	Iteration_Count_Invariants(iterations, "derive.iterations")
-	live_digest := (*hmac.Digest)(unsafe.Pointer(digest))
+	if digest == nil {
+		return
+	}
+	if !bool(digest.Ready) {
+		return
+	}
+	live_digest := hmac.Digest_Handle(digest)
 	digest_size := int(hmac.Digest_Size(live_digest))
 	written := OUTPUT_SIZE_MINIMUM
 	block_index := BLOCK_INDEX_MINIMUM

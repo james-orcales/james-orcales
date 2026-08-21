@@ -29,8 +29,6 @@
 package prng
 
 import (
-	"unsafe"
-
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
 )
@@ -1020,18 +1018,24 @@ func Word_Invariants(word Word, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Next is one injected full-word entropy draw.
-type Next func(state unsafe.Pointer) (value Word)
+// Backend_State carries caller-owned storage across one injected slot.
+type Backend_State interface{}
 
-// Source is the C-style vtable a caller injects where it needs cryptographic bytes: caller-owned
-// backend state behind an unsafe.Pointer and one procedure that receives it. The house bans
-// interfaces and closures that capture state, so this is the one shape a backend can take. A
-// production root binds a Chacha through Chacha_To_Source. A simulation binds a xoshiro stream
-// through sim/prng's Xoshiro_To_Source, and that call is the one place a fake enters, so a
-// grep for it finds every test that signs with predictable bytes.
+// Backend_State_Invariants rejects an absent backend.
+func Backend_State_Invariants(state Backend_State, _ aver.Namespace) {
+	aver.Always(state != nil, "A Source has caller-owned state.")
+}
+
+// Next is one injected full-word entropy draw.
+type Next func(state Backend_State) (value Word)
+
+// Source is the vtable a caller injects where it needs cryptographic bytes. A procedure value
+// keeps state ownership explicit without a captured closure. A production root binds a Chacha
+// through Chacha_To_Source. A simulation binds a xoshiro stream through sim/prng's
+// Xoshiro_To_Source, and that call is the one place a fake enters.
 type Source struct {
-	// State is the caller-owned backend generator; the procedure casts it back to its own type.
-	State unsafe.Pointer
+	// State is the caller-owned backend generator.
+	State Backend_State
 	// Next draws one full word from the backend behind state. The slot returns a value and
 	// receives no sink, because a pointer handed to a procedure value escapes to the heap under
 	// Go's escape analysis, and a caller's stack sink must stay on its stack.
@@ -1039,8 +1043,8 @@ type Source struct {
 }
 
 // Source_Invariants proves both halves of the vtable are bound before any draw.
-func Source_Invariants(source Source, _ aver.Namespace) {
-	aver.Always(source.State != nil, "A Source has caller-owned state.")
+func Source_Invariants(source Source, namespace aver.Namespace) {
+	Backend_State_Invariants(source.State, namespace)
 	aver.Always(source.Next != nil, "A Source has a bound draw procedure.")
 }
 
@@ -1067,8 +1071,9 @@ func Source_Read(source Source, sink Sink) {
 func Chacha_To_Source(generator Chacha_Handle) (source Source) {
 	defer func() { Source_Invariants(source, "chacha_to_source.source") }()
 	Chacha_Handle_Invariants(generator, "chacha_to_source.generator")
+	aver.Always(generator != nil, "A Source requires Chacha storage.")
 	source = Source{
-		State: unsafe.Pointer(generator),
+		State: generator,
 		Next:  chacha_source_next,
 	}
 	return source
@@ -1076,10 +1081,14 @@ func Chacha_To_Source(generator Chacha_Handle) (source Source) {
 
 // The vtable slot: eight stream bytes assembled little-endian, the same way Chacha_Below
 // assembles its draw, so Source_Read unpacks them back into stream order.
-func chacha_source_next(state unsafe.Pointer) (value Word) {
+func chacha_source_next(state Backend_State) (value Word) {
 	defer func() { Word_Invariants(value, "chacha_source_next.value") }()
+	Backend_State_Invariants(state, "chacha_source_next.state")
+	generator, accepted := state.(Chacha_Handle)
+	aver.Always(accepted, "Chacha source state has Chacha storage.")
+	aver.Always(generator != nil, "Chacha source storage exists.")
 	var octet [WORD_BYTE_COUNT]byte
-	chacha_drain(Chacha_Handle((*Chacha)(state)), Sink(octet[:]))
+	chacha_drain(generator, Sink(octet[:]))
 	for index := WORD_BYTE_COUNT - 1; index >= 0; index-- {
 		value = value<<bits.BIT_COUNT_8_MAXIMUM | Word(octet[index])
 	}

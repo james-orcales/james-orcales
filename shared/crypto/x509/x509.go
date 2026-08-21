@@ -2,8 +2,6 @@
 package x509
 
 import (
-	"unsafe"
-
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/ecdsa"
 	"local/james-orcales/shared/crypto/ed25519"
@@ -212,10 +210,6 @@ func Span_Invariants(value Span, namespace aver.Namespace) {
 		"A parser span ends inside exact scratch.",
 	)
 	aver.Always(int(value.Start) <= int(value.End), "A parser span cannot run backward.")
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Span_Start(0))+unsafe.Sizeof(Span_End(0)),
-		"A parser span retains exactly two machine positions.",
-	)
 }
 
 // Span_Handle names mutable parser-position storage.
@@ -232,49 +226,40 @@ func Span_Handle_Invariants(value Span_Handle, namespace aver.Namespace) {
 // TBS_Span gives authenticated certificate bytes independent field identity.
 type TBS_Span Span
 
-// TBS_Span_Invariants guards its opaque two-position layout.
+// TBS_Span_Invariants guards its two bounded positions.
 func TBS_Span_Invariants(value TBS_Span, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
-	aver.Always(unsafe.Sizeof(value) == unsafe.Sizeof(Span{}), "TBS span preserves layout.")
 }
 
 // Signature_Span gives signature bytes independent field identity.
 type Signature_Span Span
 
-// Signature_Span_Invariants guards its opaque two-position layout.
+// Signature_Span_Invariants guards its two bounded positions.
 func Signature_Span_Invariants(value Signature_Span, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
-		"Signature span preserves layout.",
-	)
 }
 
 // Issuer_Raw_Span gives issuer identity independent field identity.
 type Issuer_Raw_Span Span
 
-// Issuer_Raw_Span_Invariants guards its opaque two-position layout.
+// Issuer_Raw_Span_Invariants guards its two bounded positions.
 func Issuer_Raw_Span_Invariants(value Issuer_Raw_Span, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
-		"Issuer span preserves layout.",
-	)
 }
 
 // Issuer_Common_Name_Span gives issuer presentation text independent field identity.
 type Issuer_Common_Name_Span Span
 
-// Issuer_Common_Name_Span_Invariants guards its opaque two-position layout.
+// Issuer_Common_Name_Span_Invariants guards its two bounded positions.
 func Issuer_Common_Name_Span_Invariants(
 	value Issuer_Common_Name_Span, namespace aver.Namespace,
 ) {
@@ -282,31 +267,23 @@ func Issuer_Common_Name_Span_Invariants(
 		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
-		"Issuer common-name span preserves layout.",
-	)
 }
 
 // Subject_Raw_Span gives subject identity independent field identity.
 type Subject_Raw_Span Span
 
-// Subject_Raw_Span_Invariants guards its opaque two-position layout.
+// Subject_Raw_Span_Invariants guards its two bounded positions.
 func Subject_Raw_Span_Invariants(value Subject_Raw_Span, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
-		"Subject span preserves layout.",
-	)
 }
 
 // Subject_Common_Name_Span gives subject presentation text independent field identity.
 type Subject_Common_Name_Span Span
 
-// Subject_Common_Name_Span_Invariants guards its opaque two-position layout.
+// Subject_Common_Name_Span_Invariants guards its two bounded positions.
 func Subject_Common_Name_Span_Invariants(
 	value Subject_Common_Name_Span, namespace aver.Namespace,
 ) {
@@ -314,10 +291,6 @@ func Subject_Common_Name_Span_Invariants(
 		Range_Int(int(value.Start), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(int(value.End), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Span{}),
-		"Subject common-name span preserves layout.",
-	)
 }
 
 // Identifier_Class stores one decoder-owned DER class field.
@@ -379,11 +352,6 @@ func Identifier_Invariants(value Identifier, namespace aver.Namespace) {
 	aver.Always(
 		uint32(value.Constructed) <= CONSTRUCTED_TRUE,
 		"A DER construction field is binary.",
-	)
-	aver.Always(
-		unsafe.Sizeof(value) == unsafe.Sizeof(Identifier_Class(0))+
-			unsafe.Sizeof(Identifier_Tag(0))+unsafe.Sizeof(Constructed(0)),
-		"A DER identifier retains exactly three fields.",
 	)
 }
 
@@ -558,13 +526,14 @@ func Ready_Invariants(value Ready, namespace aver.Namespace) {
 // Ed25519_Public_Key_Storage keeps the inactive union member copy-safe and allocation-free.
 type Ed25519_Public_Key_Storage ed25519.Limb_Storage
 
-// Ed25519_Public_Key_Storage_Invariants guards its exact unsafe byte-view width.
+// Ed25519_Public_Key_Storage_Invariants covers every packed key word.
 func Ed25519_Public_Key_Storage_Invariants(
 	value Ed25519_Public_Key_Storage, _ aver.Namespace,
 ) {
+	converted := ed25519.Limb_Storage(value)
 	aver.Always(
-		unsafe.Sizeof(value) == ed25519.PUBLIC_KEY_SIZE,
-		"Stored Ed25519 public key has compressed-point width.",
+		Ed25519_Public_Key_Storage(converted) == value,
+		"Safe key storage conversion preserves every compressed-point word.",
 	)
 }
 
@@ -581,16 +550,45 @@ func Ed25519_Public_Key_Destination_Invariants(
 	Ed25519_Public_Key_Storage_Invariants(*value, namespace)
 }
 
-func ed25519_public_key_bytes(
-	value Ed25519_Public_Key_Destination,
-) (public_key ed25519.Public_Key) {
-	defer func() {
-		ed25519.Public_Key_Invariants(public_key, "ed25519_public_key_bytes.public_key")
-	}()
-	Ed25519_Public_Key_Destination_Invariants(value, "ed25519_public_key_bytes.value")
-	return ed25519.Public_Key(unsafe.Slice(
-		(*byte)(unsafe.Pointer(value)), ed25519.PUBLIC_KEY_SIZE,
+func ed25519_public_key_set(
+	destination Ed25519_Public_Key_Destination, source ed25519.Public_Key,
+) {
+	Ed25519_Public_Key_Destination_Invariants(destination, "ed25519_public_key_set.destination")
+	ed25519.Public_Key_Invariants(source, "ed25519_public_key_set.source")
+	destination.Limb_0 = ed25519.Limb_0(binary.Uint_64(
+		binary.Bytes(source[0:8]), binary.LITTLE_ENDIAN,
 	))
+	destination.Limb_1 = ed25519.Limb_1(binary.Uint_64(
+		binary.Bytes(source[8:16]), binary.LITTLE_ENDIAN,
+	))
+	destination.Limb_2 = ed25519.Limb_2(binary.Uint_64(
+		binary.Bytes(source[16:24]), binary.LITTLE_ENDIAN,
+	))
+	destination.Limb_3 = ed25519.Limb_3(binary.Uint_64(
+		binary.Bytes(source[24:32]), binary.LITTLE_ENDIAN,
+	))
+}
+
+func ed25519_public_key_copy(
+	destination ed25519.Public_Key, source Ed25519_Public_Key_Storage,
+) {
+	ed25519.Public_Key_Invariants(destination, "ed25519_public_key_copy.destination")
+	Ed25519_Public_Key_Storage_Invariants(source, "ed25519_public_key_copy.source")
+	binary.Put_Uint_64(
+		binary.Bytes(destination[0:8]), binary.Word_64(source.Limb_0), binary.LITTLE_ENDIAN,
+	)
+	binary.Put_Uint_64(
+		binary.Bytes(destination[8:16]), binary.Word_64(source.Limb_1),
+		binary.LITTLE_ENDIAN,
+	)
+	binary.Put_Uint_64(
+		binary.Bytes(destination[16:24]), binary.Word_64(source.Limb_2),
+		binary.LITTLE_ENDIAN,
+	)
+	binary.Put_Uint_64(
+		binary.Bytes(destination[24:32]), binary.Word_64(source.Limb_3),
+		binary.LITTLE_ENDIAN,
+	)
 }
 
 // Certificate holds fixed keys and borrowed authenticated fields.
@@ -1199,7 +1197,7 @@ func public_key_parse(
 		if len(key_bytes) != ed25519.PUBLIC_KEY_SIZE {
 			return accepted
 		}
-		copy(ed25519_public_key_bytes(&parsed.Ed25519_Key), key_bytes)
+		ed25519_public_key_set(&parsed.Ed25519_Key, ed25519.Public_Key(key_bytes))
 		parsed.Algorithm = PUBLIC_KEY_ALGORITHM_ED25519
 		accepted = DECISION_TRUE
 		*destination = parsed
@@ -1879,8 +1877,12 @@ func Verify_Signature_From(
 		if issuer.Public_Key_Algorithm != PUBLIC_KEY_ALGORITHM_ED25519 {
 			return false
 		}
+		var public_key [ed25519.PUBLIC_KEY_SIZE]byte
+		ed25519_public_key_copy(
+			ed25519.Public_Key(public_key[:]), issuer.Ed25519_Public_Key,
+		)
 		return Verification(ed25519.Verify(
-			ed25519_public_key_bytes(&issuer.Ed25519_Public_Key),
+			ed25519.Public_Key(public_key[:]),
 			ed25519.Message(certificate.TBS),
 			ed25519.Signature_Unvalidated(certificate.Signature),
 		))

@@ -2,8 +2,6 @@
 package subtle
 
 import (
-	"unsafe"
-
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
@@ -279,13 +277,8 @@ func inexact_overlap(left Destination, right Source) (overlap Overlap) {
 	if len(right) == SOURCE_SIZE_MINIMUM {
 		return Overlap(false)
 	}
-	left_address := uintptr(unsafe.Pointer(unsafe.SliceData(left)))
-	right_address := uintptr(unsafe.Pointer(unsafe.SliceData(right)))
-	if left_address == right_address {
+	if &left[bits.BIT_COUNT_MINIMUM] == &right[bits.BIT_COUNT_MINIMUM] {
 		return Overlap(false)
 	}
-	if left_address < right_address {
-		return Overlap(right_address-left_address < uintptr(len(left)))
-	}
-	return Overlap(left_address-right_address < uintptr(len(right)))
+	return Overlap(bytes.Overlap(bytes.Slice(left), bytes.Slice(right)))
 }

@@ -6,7 +6,6 @@ package prng
 
 import (
 	"testing"
-	"unsafe"
 
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/hex"
@@ -276,7 +275,7 @@ func Test_Source_Is_Transparent(t *testing.T) {
 // and that an unbound Source dies.
 func Test_Source_Marks_A_Cryptographic_Parameter(t *testing.T) {
 	counter := Word(0)
-	source := Source{State: unsafe.Pointer(&counter), Next: counter_next}
+	source := Source{State: &counter, Next: counter_next}
 	var got [WORD_BYTE_COUNT + 1]byte
 	Source_Read(source, Sink(got[:]))
 	first := [WORD_BYTE_COUNT]byte{1}
@@ -429,8 +428,8 @@ func domain_chacha(value uint64) (generator Chacha) {
 }
 
 // A slot that counts its draws, so a test can see how many words a read spent.
-func counter_next(state unsafe.Pointer) (value Word) {
-	counter := (*Word)(state)
+func counter_next(state Backend_State) (value Word) {
+	counter := state.(*Word)
 	*counter++
 	return *counter
 }

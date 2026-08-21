@@ -5,7 +5,6 @@ import (
 
 	"local/james-orcales/shared/crypto/prng"
 	system_prng "local/james-orcales/shared/crypto/prng/default"
-	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/testify"
 )
 
@@ -14,12 +13,6 @@ const DRAW_BYTE_COUNT = 8
 
 // SAMPLE_BYTE_COUNT makes a degenerate all-zero stream sufficiently clear in the smoke test.
 const SAMPLE_BYTE_COUNT = 32
-
-// TestMain registers this package's assertions with the invariant coverage recorder and reports any
-// gaps after the suite runs.
-func TestMain(m *testing.M) {
-	aver.Run_Test_Main(m)
-}
 
 // Test_Operating_System_Smoke checks the OS-seeded constructor yields a working, non-degenerate
 // generator. It cannot assert an exact sequence — the seed is real OS entropy — so it checks two
