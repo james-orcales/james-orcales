@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"local/james-orcales/lint/internal/strings"
 	"path"
-	"strings"
-	"unicode"
 
 	"local/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/shared/unicode/ucd"
 )
 
 // Package is one package directory under spec-check, with everything Check needs
@@ -81,7 +81,7 @@ func check_coverage(target Package, scope string) (diags []diagnostic.Diagnostic
 		covered = target.Path == scope
 	}
 	if !covered {
-		covered = strings.HasPrefix(target.Path, scope+"/")
+		covered = strings.Has_Prefix(target.Path, scope+"/")
 	}
 	if !covered {
 		return nil
@@ -125,11 +125,11 @@ func position_at(path string, line int) (position token.Position) {
 
 // Reports a line's heading level: 3 for "### ", 1 for "# ", 0 otherwise.
 func heading_parse(line string) (level int, raw string) {
-	if strings.HasPrefix(line, "### ") {
-		return 3, strings.TrimPrefix(line, "### ")
+	if strings.Has_Prefix(line, "### ") {
+		return 3, strings.Trim_Prefix(line, "### ")
 	}
-	if strings.HasPrefix(line, "# ") {
-		return 1, strings.TrimPrefix(line, "# ")
+	if strings.Has_Prefix(line, "# ") {
+		return 1, strings.Trim_Prefix(line, "# ")
 	}
 	return 0, ""
 }
@@ -145,11 +145,11 @@ func scan_headings(
 		position := position_at(markdown_path, i+1)
 		level, raw := heading_parse(line)
 		if level == 0 {
-			if strings.HasPrefix(line, "#") {
+			if strings.Has_Prefix(line, "#") {
 				diags = append(diags, heading_level_diag(position))
 				continue
 			}
-			if strings.TrimSpace(line) == "" {
+			if strings.Trim_Space(line) == "" {
 				continue
 			}
 			if !seen_heading {
@@ -294,14 +294,14 @@ func scan_bodies(
 			state.Blank = false
 			continue
 		}
-		if strings.HasPrefix(line, "#") {
+		if strings.Has_Prefix(line, "#") {
 			diags = append(diags, body_close(state)...)
 			state.Open = Heading{}
 			state.Body = 0
 			state.Blank = false
 			continue
 		}
-		if strings.TrimSpace(line) == "" {
+		if strings.Trim_Space(line) == "" {
 			if state.Body > 0 {
 				state.Blank = true
 			}
@@ -351,10 +351,10 @@ func body_close(state *Body) (diags []diagnostic.Diagnostic) {
 func heading_words_invalid(raw string) (invalid bool) {
 	for _, word := range strings.Fields(raw) {
 		for _, letter := range word {
-			if unicode.IsLetter(letter) {
+			if ucd.Is_Letter(ucd.Character(letter)) {
 				continue
 			}
-			if unicode.IsDigit(letter) {
+			if ucd.Is_Digit(ucd.Character(letter)) {
 				continue
 			}
 			return true
@@ -586,7 +586,7 @@ func ada_case(raw string) (name string) {
 	words := strings.Fields(raw)
 	for i, word := range words {
 		runes := []rune(word)
-		runes[0] = unicode.ToUpper(runes[0])
+		runes[0] = rune(ucd.To_Upper(ucd.Character(runes[0])))
 		words[i] = string(runes)
 	}
 	return strings.Join(words, "_")

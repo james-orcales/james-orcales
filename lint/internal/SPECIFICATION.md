@@ -179,6 +179,12 @@ and complicates type resolution.
 An import names a package a caller uses; blank imports are banned. Blank imports indicate that
 a library is being imported solely for it's global side-effects, an implicit control flow.
 
+### Banned Imports
+
+Code never imports stdlib bytes, strings, slices, strconv, archive, compress, container,
+encoding, math, rand, unicode, or uuid families. No file is exempt. Local shared and third-party
+imports stay allowed because they are not stdlib. Use shared ports for bounded contracts.
+
 ### Import Aliases
 
 Import alias is permitted only when imported package's declared name collides with another import.

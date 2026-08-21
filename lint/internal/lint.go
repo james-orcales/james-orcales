@@ -7,8 +7,6 @@
 package lint
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -18,21 +16,21 @@ import (
 	"go/types"
 	"io"
 	"io/fs"
+	"local/james-orcales/lint/internal/strings"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
-	"unicode"
-	"unicode/utf8"
 
 	"local/james-orcales/lint/internal/assertion"
 	"local/james-orcales/lint/internal/diagnostic"
 	"local/james-orcales/lint/internal/source"
 	"local/james-orcales/lint/internal/specification"
 	"local/james-orcales/lint/internal/vcs"
+	"local/james-orcales/shared/strconv"
+	"local/james-orcales/shared/unicode/ucd"
+	"local/james-orcales/shared/unicode/utf8"
 )
 
 // LINE_CHARS_MAX is the display-column budget the line-length check enforces per source line.
@@ -410,7 +408,7 @@ const IF_INIT_IDENTIFIER_CHARS_MAX = 55
 const TIER_2_CHECKS_COUNT = 5
 
 // TIER_1_CHECKS_COUNT is the tier-1 dispatch-list length, bumped as checks are added/removed.
-const TIER_1_CHECKS_COUNT = 37
+const TIER_1_CHECKS_COUNT = 38
 
 // GO_FILENAME_CHARS_MIN is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
@@ -836,12 +834,8 @@ func read_configuration(fsys fs.FS) (configuration *Configuration, err error) {
 // JSON is an error; callers treat any of these as a hard failure. The allowlist
 // and deterministic-packages lists are optional and default to empty.
 func Parse_Configuration(data []byte) (configuration *Configuration, err error) {
-	// Decode twice over the same bounded buffer: once as a raw key map to
-	// police unknown keys — json.Decoder.DisallowUnknownFields is the usual
-	// guard, but json.NewDecoder streams an unbounded reader and is banned
-	// here — and once into the typed struct for the values.
-	keys := map[string]json.RawMessage{}
-	if decode_err := json.Unmarshal(data, &keys); decode_err != nil {
+	configuration, keys, decode_err := configuration_json_decode(data)
+	if decode_err != nil {
 		return nil, decode_err
 	}
 	// Every key is required, so a config states its whole surface: an absent key is
@@ -871,10 +865,6 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 			continue
 		}
 		return nil, fmt.Errorf("lint.json: %s is required", key)
-	}
-	configuration = &Configuration{}
-	if decode_err := json.Unmarshal(data, configuration); decode_err != nil {
-		return nil, decode_err
 	}
 	// The keys are all present by now; these two carry a value that an empty form
 	// would nullify. A blank shared_component names no module, and an empty
@@ -932,11 +922,11 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 	negated_count := 0
 	for _, raw := range patterns {
 		where := fmt.Sprintf("lint.json: %s entry %q", field, raw)
-		if strings.TrimSpace(raw) == "" {
+		if strings.Trim_Space(raw) == "" {
 			return fmt.Errorf("lint.json: %s entry is empty", field)
 		}
-		if strings.HasPrefix(raw, "!") {
-			if strings.TrimSpace(strings.TrimPrefix(raw, "!")) == "" {
+		if strings.Has_Prefix(raw, "!") {
+			if strings.Trim_Space(strings.Trim_Prefix(raw, "!")) == "" {
 				return fmt.Errorf("%s: negates nothing", where)
 			}
 			negated_count++
@@ -946,7 +936,7 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 		// which ALSO honors ? and [class] tokens — but that leaked in from the stdlib
 		// and is NOT a feature we support. Reject them here so no entry can ever lean
 		// on path.Match's extra syntax.
-		if strings.ContainsAny(raw, "?[") {
+		if strings.Contains_Any(raw, "?[") {
 			return fmt.Errorf(
 				"%s: the tokens ? and [ are unsupported. Use * and **.", where)
 		}
@@ -1006,15 +996,15 @@ func suggest_split_words(name string) (words []string) {
 			continue
 		}
 		if i > 0 {
-			if unicode.IsUpper(r) {
+			if ucd.Is_Upper(ucd.Character(r)) {
 				previous := runes[i-1]
-				if unicode.IsLower(previous) {
+				if ucd.Is_Lower(ucd.Character(previous)) {
 					flush()
-				} else if unicode.IsDigit(previous) {
+				} else if ucd.Is_Digit(ucd.Character(previous)) {
 					flush()
-				} else if unicode.IsUpper(previous) {
+				} else if ucd.Is_Upper(ucd.Character(previous)) {
 					if i+1 < len(runes) {
-						if unicode.IsLower(runes[i+1]) {
+						if ucd.Is_Lower(ucd.Character(runes[i+1])) {
 							flush()
 						}
 					}
@@ -1044,19 +1034,19 @@ func suggest(input *Suggest_Input) (output string) {
 	parts := make([]string, len(words))
 	for i, w := range words {
 		if input.Want == "snake_case" {
-			parts[i] = strings.ToLower(w)
+			parts[i] = strings.To_Lower(w)
 			continue
 		}
 		if input.Want == "SCREAMING_SNAKE_CASE" {
-			parts[i] = strings.ToUpper(w)
+			parts[i] = strings.To_Upper(w)
 			continue
 		}
 		if suggest_is_all_upper(w) {
 			parts[i] = w
 			continue
 		}
-		rs := []rune(strings.ToLower(w))
-		rs[0] = unicode.ToUpper(rs[0])
+		rs := []rune(strings.To_Lower(w))
+		rs[0] = rune(ucd.To_Upper(ucd.Character(rs[0])))
 		parts[i] = string(rs)
 	}
 	return strings.Join(parts, "_")
@@ -1069,9 +1059,9 @@ func suggest_is_all_upper(s string) (ok bool) {
 
 	has_letter := false
 	for _, r := range s {
-		if unicode.IsLetter(r) {
+		if ucd.Is_Letter(ucd.Character(r)) {
 			has_letter = true
-			if !unicode.IsUpper(r) {
+			if !ucd.Is_Upper(ucd.Character(r)) {
 				return false
 			}
 		}
@@ -1554,6 +1544,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_no_iota,
 		check_no_fallthrough,
 		check_no_blank_import,
+		check_no_banned_stdlib_import,
 		check_no_grouped_declaration,
 		make_check_keyed_struct_init(input.Declarations),
 		check_gofmt,
@@ -1614,12 +1605,12 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 		return
 	}
 	first := rune(identifier.Name[0])
-	if !unicode.IsLetter(first) {
+	if !ucd.Is_Letter(ucd.Character(first)) {
 		return
 	}
 	want := "snake_case"
 	ok := snake_case_re.MatchString(identifier.Name)
-	if unicode.IsUpper(first) {
+	if ucd.Is_Upper(ucd.Character(first)) {
 		want = "Ada_Case"
 		ok = ada_case_re.MatchString(identifier.Name)
 	}
@@ -1872,7 +1863,7 @@ func check_line_character_count(
 		})
 	}
 	for len(source) > 0 {
-		r, size := utf8.DecodeRune(source)
+		r, size := decode_first_character(source)
 		source = source[size:]
 		if r == '\n' {
 			if column > LINE_CHARS_MAX {
@@ -1894,6 +1885,23 @@ func check_line_character_count(
 	return diags
 }
 
+func decode_first_character(source []byte) (character rune, size int) {
+	if len(source) > utf8.UTF_MAXIMUM {
+		source = source[:utf8.UTF_MAXIMUM]
+	}
+	decoded, decoded_size := utf8.Decode_Character(utf8.Bytes(source))
+	return rune(decoded), int(decoded_size)
+}
+
+func decode_final_character(source string) (character rune, size int) {
+	offset := 0
+	if len(source) > utf8.UTF_MAXIMUM {
+		offset = len(source) - utf8.UTF_MAXIMUM
+	}
+	decoded, decoded_size := utf8.Decode_Final_Character_Text(utf8.Text(source[offset:]))
+	return rune(decoded), int(decoded_size)
+}
+
 // Returns the set of source lines wholly or partly covered by a backtick raw
 // string literal. The column cap exempts these: their content is verbatim data
 // the author cannot wrap. A long non-string tail sharing such a line slips by —
@@ -1911,7 +1919,7 @@ func raw_string_literal_lines(
 		if basic_literal.Kind != token.STRING {
 			return true
 		}
-		if !strings.HasPrefix(basic_literal.Value, "`") {
+		if !strings.Has_Prefix(basic_literal.Value, "`") {
 			return true
 		}
 		first := file_set.Position(basic_literal.Pos()).Line
@@ -2261,8 +2269,8 @@ type Configuration_Glob_List struct {
 // negation and the redundant leading slash (matching Parse_Glob_Pattern), and
 // report whether a trailing slash — the directory marker — remained.
 func configuration_entry_literal(entry string) (literal string, has_slash bool) {
-	normalized := strings.TrimPrefix(strings.TrimPrefix(entry, "!"), "/")
-	literal = strings.TrimSuffix(normalized, "/")
+	normalized := strings.Trim_Prefix(strings.Trim_Prefix(entry, "!"), "/")
+	literal = strings.Trim_Suffix(normalized, "/")
 	return literal, normalized != literal
 }
 
@@ -2498,7 +2506,7 @@ func check_file_system_directory_index(tracked map[string]bool) (output map[stri
 	output = make(map[string]bool, len(tracked))
 	for p := range tracked {
 		for step := 0; ; step++ {
-			i := strings.LastIndexByte(p, '/')
+			i := strings.Last_Index_Byte(p, '/')
 			if i < 0 {
 				break
 			}
@@ -2574,14 +2582,14 @@ type Package_Group_State struct {
 func check_file_system_package_split(parsed_files []Parsed_File) (diags []Diagnostic) {
 	groups := map[Package_Group_Key]*Package_Group_State{}
 	for _, pf := range parsed_files {
-		is_test := strings.HasSuffix(pf.Path, "_test.go")
+		is_test := strings.Has_Suffix(pf.Path, "_test.go")
 		key := Package_Group_Key{
 			Directory:             path.Dir(pf.Path),
 			Is_Test:               is_test,
 			Is_Specification_Test: path.Base(pf.Path) == "specification_test.go",
 			// A whitebox (foo) test package and a blackbox (foo_test) test package
 			// compile into different binaries, so they fragment independently.
-			Test_Is_External: is_test && strings.HasSuffix(pf.File.Name.Name, "_test"),
+			Test_Is_External: is_test && strings.Has_Suffix(pf.File.Name.Name, "_test"),
 			Build:            check_file_system_package_split_build_key(pf.File),
 		}
 		st := groups[key]
@@ -2675,7 +2683,7 @@ func check_main_package_size(parsed_files []Parsed_File) (diags []Diagnostic) {
 		if pf.File.Name.Name != "main" {
 			continue
 		}
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		key := Main_Group_Key{
@@ -2901,7 +2909,7 @@ func discover_components(
 			if path.Ext(p) != ".go" {
 				return nil
 			}
-			offset := strings.IndexByte(p, '/')
+			offset := strings.Index_Byte(p, '/')
 			// A Go file directly at the repo root (the build tool) sits in no
 			// top-level directory, so it anchors no module.
 			if offset < 0 {
@@ -2973,7 +2981,7 @@ func resolve_scan_root(components []Component_Information, scope string) (root s
 		}
 		owns := scope == module_root
 		if !owns {
-			owns = strings.HasPrefix(scope, module_root+"/")
+			owns = strings.Has_Prefix(scope, module_root+"/")
 		}
 		if owns {
 			if len(module_root) > len(best) {
@@ -3050,10 +3058,10 @@ func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
 		if directory == prefix {
 			return true
 		}
-		if strings.HasPrefix(directory, prefix+"/") {
+		if strings.Has_Prefix(directory, prefix+"/") {
 			return true
 		}
-		if strings.HasPrefix(prefix, directory+"/") {
+		if strings.Has_Prefix(prefix, directory+"/") {
 			return true
 		}
 	}
@@ -3085,7 +3093,7 @@ func check_binary_component_layout(
 		}
 		relative := pf.Path
 		if m.Root != "." {
-			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+			relative = strings.Trim_Prefix(pf.Path, m.Root+"/")
 		}
 		directory := path.Dir(relative)
 		if check_binary_component_layout_is_legal(directory) {
@@ -3167,7 +3175,7 @@ func check_binary_component_main_package(
 		}
 		relative := pf.Path
 		if m.Root != "." {
-			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+			relative = strings.Trim_Prefix(pf.Path, m.Root+"/")
 		}
 		directory := path.Dir(relative)
 		if directory == "." {
@@ -3209,7 +3217,7 @@ func check_binary_component_internal_main(
 
 	counts := make([]int, len(components.Components))
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		component_index_number := components.File_To_Component[pf.Path]
@@ -3219,7 +3227,7 @@ func check_binary_component_internal_main(
 		m := components.Components[component_index_number]
 		relative := pf.Path
 		if m.Root != "." {
-			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+			relative = strings.Trim_Prefix(pf.Path, m.Root+"/")
 		}
 		if path.Dir(relative) != "internal" {
 			continue
@@ -3421,7 +3429,7 @@ func check_component_tier_depth(
 
 	seen := make(map[string]bool)
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if pf.File.Name.Name == "main" {
@@ -3434,7 +3442,7 @@ func check_component_tier_depth(
 		m := components.Components[component_index_number]
 		relative := pf.Path
 		if m.Root != "." {
-			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+			relative = strings.Trim_Prefix(pf.Path, m.Root+"/")
 		}
 		canonical := source.Canonicalize(path.Dir(relative))
 		if canonical == "." {
@@ -3622,7 +3630,7 @@ func check_package_documentation_comment(
 		if pf.File.Name.Name == "main" {
 			continue
 		}
-		if strings.HasSuffix(pf.File.Name.Name, "_test") {
+		if strings.Has_Suffix(pf.File.Name.Name, "_test") {
 			continue
 		}
 		k := key{Directory: path.Dir(pf.Path), Package: pf.File.Name.Name}
@@ -3809,7 +3817,7 @@ func check_comments(file_set *token.FileSet, file *ast.File, source []byte) (dia
 			continue
 		}
 		first := group.List[0]
-		if !strings.HasPrefix(first.Text, "//") {
+		if !strings.Has_Prefix(first.Text, "//") {
 			continue
 		}
 		var filtered []*ast.Comment
@@ -3847,11 +3855,11 @@ func check_comments_group_capital(file_set *token.FileSet, c *ast.Comment) (diag
 	if body == "" {
 		return nil
 	}
-	r, _ := utf8.DecodeRuneInString(body)
-	if !unicode.IsLetter(r) {
+	r, _ := decode_first_character([]byte(body))
+	if !ucd.Is_Letter(ucd.Character(r)) {
 		return nil
 	}
-	if unicode.IsUpper(r) {
+	if ucd.Is_Upper(ucd.Character(r)) {
 		return nil
 	}
 	return []Diagnostic{{
@@ -3863,11 +3871,11 @@ func check_comments_group_capital(file_set *token.FileSet, c *ast.Comment) (diag
 
 func check_comments_group_terminator(file_set *token.FileSet, c *ast.Comment) (diags []Diagnostic) {
 
-	body := strings.TrimRight(comment_body(c.Text), " \t")
+	body := strings.Trim_Right(comment_body(c.Text), " \t")
 	if body == "" {
 		return nil
 	}
-	r, _ := utf8.DecodeLastRuneInString(body)
+	r, _ := decode_final_character(body)
 	switch r {
 	case '.', ':', '?', '!':
 		return nil
@@ -3881,15 +3889,15 @@ func check_comments_group_terminator(file_set *token.FileSet, c *ast.Comment) (d
 
 func comment_body(text string) (body string) {
 
-	if !strings.HasPrefix(text, "//") {
+	if !strings.Has_Prefix(text, "//") {
 		return ""
 	}
-	return strings.TrimLeft(text[2:], " \t")
+	return strings.Trim_Left(text[2:], " \t")
 }
 
 func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 
-	if !strings.HasPrefix(text, "//") {
+	if !strings.Has_Prefix(text, "//") {
 		return false
 	}
 	if len(text) == 2 {
@@ -4285,12 +4293,12 @@ func check_no_recursion_find_cycles_dfs_diag_message(cycle_nodes []string) (MESS
 			"Write a loop instead.", cycle_nodes[0])
 	}
 	var sb strings.Builder
-	sb.WriteString("The functions recurse in a cycle. Write a loop instead. ")
+	strings.Builder_Write_Text(&sb, "The functions recurse in a cycle. Write a loop instead. ")
 	for _, n := range cycle_nodes {
-		sb.WriteString(n)
-		sb.WriteString(" → ")
+		strings.Builder_Write_Text(&sb, n)
+		strings.Builder_Write_Text(&sb, " → ")
 	}
-	sb.WriteString(cycle_nodes[0])
+	strings.Builder_Write_Text(&sb, cycle_nodes[0])
 	return sb.String()
 }
 
@@ -4444,7 +4452,7 @@ func check_public_struct_fields_named(
 		return
 	}
 	r := rune(identifier.Name[0])
-	if !unicode.IsLower(r) {
+	if !ucd.Is_Lower(ucd.Character(r)) {
 		return
 	}
 	suggested := check_public_struct_fields_named_capitalize(identifier.Name)
@@ -4489,7 +4497,7 @@ func check_public_struct_fields_embedded(
 func check_public_struct_fields_named_capitalize(name string) (output_string string) {
 
 	rs := []rune(name)
-	rs[0] = unicode.ToUpper(rs[0])
+	rs[0] = rune(ucd.To_Upper(ucd.Character(rs[0])))
 	return string(rs)
 }
 
@@ -4512,7 +4520,7 @@ func check_struct_field_documentation_comment(
 	if tok_file == nil {
 		return nil
 	}
-	if strings.HasSuffix(tok_file.Name(), "_test.go") {
+	if strings.Has_Suffix(tok_file.Name(), "_test.go") {
 		return nil
 	}
 	for _, declaration := range file.Decls {
@@ -4632,7 +4640,7 @@ func check_exported_type_exposes_private(
 	if tok_file == nil {
 		return nil
 	}
-	if strings.HasSuffix(tok_file.Name(), "_test.go") {
+	if strings.Has_Suffix(tok_file.Name(), "_test.go") {
 		return nil
 	}
 
@@ -4924,7 +4932,7 @@ func check_type_declaration_exported(
 		return nil
 	}
 	name := tok_file.Name()
-	if strings.HasSuffix(name, "_test.go") {
+	if strings.Has_Suffix(name, "_test.go") {
 		return nil
 	}
 	for _, declaration := range file.Decls {
@@ -5020,6 +5028,64 @@ func check_no_blank_import(file_set *token.FileSet, file *ast.File, _ []byte) (d
 	return diags
 }
 
+func unquote_literal(text string) (unquoted string, err error) {
+	if len(text) > strconv.TEXT_SIZE_MAXIMUM {
+		return "", fmt.Errorf("quoted text exceeds %d bytes", strconv.TEXT_SIZE_MAXIMUM)
+	}
+	var destination [strconv.UNQUOTED_TEXT_SIZE_MAXIMUM]byte
+	count, err := strconv.Unquote_Into(destination[:], strconv.Text(text))
+	if err != nil {
+		return "", err
+	}
+	return string(destination[:int(count)]), nil
+}
+
+// Direct stdlib imports bypass shared bounds and package contracts. Keep boundary absolute.
+func check_no_banned_stdlib_import(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+	for _, import_specification := range file.Imports {
+		import_path, err := unquote_literal(import_specification.Path.Value)
+		if err != nil {
+			continue
+		}
+		family := banned_stdlib_import_family(import_path)
+		if family == "" {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(import_specification.Pos()),
+			Message: fmt.Sprintf(
+				"Banned import %q belongs to stdlib family %q. Use shared package.",
+				import_path, family),
+		})
+	}
+	return diags
+}
+
+func banned_stdlib_import_family(import_path string) (family string) {
+	for _, candidate := range []string{"crypto/rand", "math/rand", "rand"} {
+		if import_path == candidate {
+			return "rand"
+		}
+		if strings.Has_Prefix(import_path, candidate+"/") {
+			return "rand"
+		}
+	}
+	for _, candidate := range []string{
+		"archive", "bytes", "compress", "container", "encoding", "math",
+		"slices", "strconv", "strings", "unicode", "uuid",
+	} {
+		if import_path == candidate {
+			return candidate
+		}
+		if strings.Has_Prefix(import_path, candidate+"/") {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // Parenthesized var/const/type groups put the visual weight on the block
 // boundary rather than on each name, and smear unrelated bindings under one
 // keyword — the reader has to scan into the block to learn what's being
@@ -5095,7 +5161,7 @@ func check_no_third_party_struct_tag(
 // Mirrors stdlib reflect.StructTag.Lookup parsing without that helper's
 // per-key API.
 func check_no_third_party_struct_tag_parse_keys(tag *ast.BasicLit) (keys []string) {
-	raw, err := strconv.Unquote(tag.Value)
+	raw, err := unquote_literal(tag.Value)
 	if err != nil {
 		return nil
 	}
@@ -5111,7 +5177,7 @@ func check_no_third_party_struct_tag_parse_keys(tag *ast.BasicLit) (keys []strin
 		if len(raw) == 0 {
 			break
 		}
-		colon_offset := strings.IndexByte(raw, ':')
+		colon_offset := strings.Index_Byte(raw, ':')
 		if colon_offset <= 0 {
 			break
 		}
@@ -5363,7 +5429,7 @@ func check_gofmt(file_set *token.FileSet, file *ast.File, source []byte) (diags 
 	if err != nil {
 		return nil
 	}
-	if bytes.Equal(formatted, source) {
+	if string(formatted) == string(source) {
 		return nil
 	}
 	filename := ""
@@ -5418,7 +5484,7 @@ func check_import_alias_no_default(
 		if alias == "." {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(alias), "default") {
+		if !strings.Contains(strings.To_Lower(alias), "default") {
 			continue
 		}
 		diags = append(diags, Diagnostic{
@@ -5509,7 +5575,7 @@ func import_declared_package_name(
 	file_path string,
 	import_specification *ast.ImportSpec,
 ) (name string) {
-	import_path, err := strconv.Unquote(import_specification.Path.Value)
+	import_path, err := unquote_literal(import_specification.Path.Value)
 	if err != nil {
 		return ""
 	}
@@ -5553,7 +5619,7 @@ func check_default_package_name(
 	}
 	// Strip _test so an external test package (`package foo_test`) in the
 	// default directory is judged by its base name, not rejected outright.
-	if strings.TrimSuffix(file.Name.Name, "_test") == parent {
+	if strings.Trim_Suffix(file.Name.Name, "_test") == parent {
 		return nil
 	}
 	diags = append(diags, Diagnostic{
@@ -5621,8 +5687,8 @@ func check_names_vocabulary_file_name(
 		return nil
 	}
 	filename := tok_file.Name()
-	stem := strings.TrimSuffix(path.Base(filename), ".go")
-	stem = strings.TrimSuffix(stem, "_test")
+	stem := strings.Trim_Suffix(path.Base(filename), ".go")
+	stem = strings.Trim_Suffix(stem, "_test")
 	return check_names_vocabulary_at(
 		token.Position{Filename: filename, Line: 1, Column: 1}, stem, table)
 }
@@ -5643,7 +5709,7 @@ func check_names_vocabulary_at(
 		style = "Ada_Case"
 	}
 	for word_index, w := range words {
-		lower := strings.ToLower(w)
+		lower := strings.To_Lower(w)
 		candidates := word_replacements_for(table, lower)
 		if candidates == nil {
 			continue
@@ -5963,7 +6029,7 @@ func check_no_package_vars_is_embed(declaration *ast.GenDecl) (embedded bool) {
 		return false
 	}
 	for _, comment := range declaration.Doc.List {
-		if strings.HasPrefix(comment.Text, "//go:embed ") {
+		if strings.Has_Prefix(comment.Text, "//go:embed ") {
 			return true
 		}
 	}
@@ -6087,7 +6153,7 @@ func check_snap_backtick(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 		if lit.Kind != token.STRING {
 			return true
 		}
-		if strings.HasPrefix(lit.Value, "`") {
+		if strings.Has_Prefix(lit.Value, "`") {
 			return true
 		}
 		diags = append(diags, Diagnostic{
@@ -6114,7 +6180,7 @@ func check_test_documentation_comment(
 	if tok_file == nil {
 		return nil
 	}
-	if !strings.HasSuffix(tok_file.Name(), "_test.go") {
+	if !strings.Has_Suffix(tok_file.Name(), "_test.go") {
 		return nil
 	}
 	for _, declaration := range file.Decls {
@@ -6125,7 +6191,7 @@ func check_test_documentation_comment(
 		if function_declaration.Recv != nil {
 			continue
 		}
-		if !strings.HasPrefix(function_declaration.Name.Name, "Test") {
+		if !strings.Has_Prefix(function_declaration.Name.Name, "Test") {
 			continue
 		}
 		if function_declaration.Name.Name == "TestMain" {
@@ -6170,7 +6236,7 @@ func check_exported_documentation_comment(
 	if file.Name.Name == "main" {
 		return nil
 	}
-	if strings.HasSuffix(file.Name.Name, "_test") {
+	if strings.Has_Suffix(file.Name.Name, "_test") {
 		return nil
 	}
 	for _, declaration := range file.Decls {
@@ -6300,7 +6366,7 @@ func comment_group_documents(group *ast.CommentGroup) (yes bool) {
 	if group == nil {
 		return false
 	}
-	return strings.TrimSpace(group.Text()) != ""
+	return strings.Trim_Space(group.Text()) != ""
 }
 
 // Enforces the index/count/offset/size naming convention from
@@ -6774,7 +6840,7 @@ func check_names_terminology_emit_rename(
 	}
 	replaced := false
 	for i, w := range words {
-		if !terminology[strings.ToLower(w)] {
+		if !terminology[strings.To_Lower(w)] {
 			continue
 		}
 		words[i] = input.Term
@@ -6796,7 +6862,7 @@ func check_names_suffix_of(name string) (suffix string) {
 	if len(words) == 0 {
 		return ""
 	}
-	last := strings.ToLower(words[len(words)-1])
+	last := strings.To_Lower(words[len(words)-1])
 	switch last {
 	case "index", "count", "offset", "size":
 		return last
@@ -7221,8 +7287,8 @@ func check_names_participles(file *ast.File) (violations []Name_Violation) {
 		if len(words) == 0 {
 			return
 		}
-		last := strings.ToLower(words[len(words)-1])
-		if !strings.HasSuffix(last, "ing") {
+		last := strings.To_Lower(words[len(words)-1])
+		if !strings.Has_Suffix(last, "ing") {
 			return
 		}
 		if is_allowed_ing_noun(last) {
@@ -7251,7 +7317,7 @@ func check_names_extremum(file *ast.File) (violations []Name_Violation) {
 			style = "Ada_Case"
 		}
 		for word_index, w := range words {
-			lower := strings.ToLower(w)
+			lower := strings.To_Lower(w)
 			if lower != "max" {
 				if lower != "min" {
 					continue
@@ -7471,7 +7537,7 @@ func Ignored_Directory(relative string) (ignored bool) {
 	if relative == "third-party" {
 		return true
 	}
-	base := relative[strings.LastIndexByte(relative, '/')+1:]
+	base := relative[strings.Last_Index_Byte(relative, '/')+1:]
 	return base == "vendor" || base == ".git" || base == ".jj"
 }
 
@@ -7627,7 +7693,7 @@ func load_git_commits(input *Load_Git_Commits_Input) (commits []Git_Commit) {
 		if line == "" {
 			continue
 		}
-		pipe_offset := strings.IndexByte(line, '|')
+		pipe_offset := strings.Index_Byte(line, '|')
 		if pipe_offset < 0 {
 			continue
 		}
@@ -7637,10 +7703,18 @@ func load_git_commits(input *Load_Git_Commits_Input) (commits []Git_Commit) {
 	return commits
 }
 
+func format_integer_text(value int64) (text string) {
+	var destination [strconv.INTEGER_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Format_Integer_Into(
+		destination[:], strconv.Signed_Integer(value), strconv.DECIMAL_BASE,
+	)
+	return string(destination[:int(count)])
+}
+
 // Format_Thousands renders a non-negative int64 with comma thousands
 // separators: 1234567 becomes "1,234,567", and 42 stays "42".
 func Format_Thousands(value int64) (output string) {
-	digits := strconv.FormatInt(value, 10)
+	digits := format_integer_text(value)
 	digit_count := len(digits)
 	if digit_count <= THOUSANDS_GROUP_STRIDE {
 		return digits
@@ -7648,13 +7722,13 @@ func Format_Thousands(value int64) (output string) {
 	var builder strings.Builder
 	head := digit_count % THOUSANDS_GROUP_STRIDE
 	if head > 0 {
-		builder.WriteString(digits[:head])
-		builder.WriteByte(',')
+		strings.Builder_Write_Text(&builder, digits[:head])
+		strings.Builder_Write_Byte(&builder, ',')
 	}
 	for i_index := head; i_index < digit_count; i_index += THOUSANDS_GROUP_STRIDE {
-		builder.WriteString(digits[i_index : i_index+THOUSANDS_GROUP_STRIDE])
+		strings.Builder_Write_Text(&builder, digits[i_index:i_index+THOUSANDS_GROUP_STRIDE])
 		if i_index+THOUSANDS_GROUP_STRIDE < digit_count {
-			builder.WriteByte(',')
+			strings.Builder_Write_Byte(&builder, ',')
 		}
 	}
 	return builder.String()
@@ -7686,7 +7760,7 @@ func check_stream_conflict_markers(
 	line_number := 1
 	for i := 0; i < len(source); {
 		for _, m := range conflict_marker_prefixes {
-			if bytes.HasPrefix(source[i:], m) {
+			if strings.Has_Prefix(string(source[i:]), string(m)) {
 				*output = append(*output, Diagnostic{
 					Position: token.Position{
 						Filename: p,
@@ -7699,7 +7773,7 @@ func check_stream_conflict_markers(
 				break
 			}
 		}
-		newline_offset := bytes.IndexByte(source[i:], '\n')
+		newline_offset := strings.Index_Byte(string(source[i:]), '\n')
 		if newline_offset < 0 {
 			break
 		}
@@ -7719,8 +7793,8 @@ func check_stream_banned_scripts(
 	_ func() (data []byte, err error),
 	output *[]Diagnostic) {
 
-	base := strings.ToLower(information.Name())
-	extension := strings.ToLower(path.Ext(base))
+	base := strings.To_Lower(information.Name())
+	extension := strings.To_Lower(path.Ext(base))
 	banned := false
 	switch extension {
 	case ".py", ".sh", ".bash", ".zsh", ".fish", ".ksh", ".csh", ".pl", ".pm", ".rb", ".lua",
@@ -7754,7 +7828,7 @@ func check_stream_banned_archives(
 	_ func() (data []byte, err error),
 	output *[]Diagnostic) {
 
-	if strings.ToLower(path.Ext(information.Name())) != ".xz" {
+	if strings.To_Lower(path.Ext(information.Name())) != ".xz" {
 		return
 	}
 	*output = append(*output, Diagnostic{
@@ -7774,10 +7848,10 @@ func check_stream_github_actions_uses(
 	load func() (data []byte, err error),
 	output *[]Diagnostic) {
 
-	if !strings.HasPrefix(p, ".github/workflows/") {
+	if !strings.Has_Prefix(p, ".github/workflows/") {
 		return
 	}
-	extension := strings.ToLower(path.Ext(p))
+	extension := strings.To_Lower(path.Ext(p))
 	if extension != ".yml" {
 		if extension != ".yaml" {
 			return
@@ -7796,14 +7870,14 @@ func check_stream_github_actions_uses(
 			}
 		}
 		line := source[line_start:i]
-		trimmed := bytes.TrimLeft(line, " \t")
+		trimmed := strings.Trim_Left(string(line), " \t")
 		// YAML list items prefix the first key with "- ", e.g.
 		// `  - uses: actions/checkout@v4`. Strip an optional leading
 		// dash+space so both list-head and aligned-key forms match.
-		if bytes.HasPrefix(trimmed, []byte("- ")) {
-			trimmed = bytes.TrimLeft(trimmed[2:], " \t")
+		if strings.Has_Prefix(trimmed, "- ") {
+			trimmed = strings.Trim_Left(trimmed[2:], " \t")
 		}
-		if bytes.HasPrefix(trimmed, []byte("uses:")) {
+		if strings.Has_Prefix(trimmed, "uses:") {
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: p, Line: line_number, Column: 1},
 				Message: "Do not use a third-party github action. " +
@@ -7832,7 +7906,7 @@ func check_stream_agent_documentation_lines_max(
 	if err != nil {
 		return
 	}
-	lines_count := bytes.Count(source, []byte{'\n'})
+	lines_count := strings.Count(string(source), "\n")
 	if len(source) > 0 {
 		if source[len(source)-1] != '\n' {
 			lines_count++
@@ -7888,7 +7962,7 @@ func check_path_casing(
 		if p == ".git" {
 			continue
 		}
-		if strings.HasPrefix(p, ".git/") {
+		if strings.Has_Prefix(p, ".git/") {
 			continue
 		}
 		segments := strings.Split(p, "/")
@@ -7962,11 +8036,11 @@ func path_casing_suggest(seg string) (output string) {
 			continue
 		}
 		style := "snake_case"
-		if unicode.IsUpper(rune(c[0])) {
+		if ucd.Is_Upper(ucd.Character(c[0])) {
 			style = "Ada_Case"
 		}
 		components[i] = suggest(&Suggest_Input{
-			Name: strings.ReplaceAll(c, "-", "_"),
+			Name: strings.Replace_All(c, "-", "_"),
 			Want: style,
 		})
 	}
@@ -8118,7 +8192,8 @@ func display_width(text string) (width int) {
 		switch {
 		case glyph == '\t':
 			width += 8 - width%8
-		case unicode.Is(unicode.Mn, glyph), unicode.Is(unicode.Me, glyph):
+		case bool(ucd.Is_Category(ucd.Character(glyph), "Mn")):
+		case bool(ucd.Is_Category(ucd.Character(glyph), "Me")):
 		case display_glyph_wide(glyph):
 			width += 2
 		default:
@@ -8166,7 +8241,7 @@ func check_stream_markdown_line_max(
 	load func() (data []byte, err error),
 	output *[]Diagnostic) {
 
-	if !strings.HasSuffix(information.Name(), ".md") {
+	if !strings.Has_Suffix(information.Name(), ".md") {
 		return
 	}
 	source, err := load()
@@ -8177,7 +8252,7 @@ func check_stream_markdown_line_max(
 	line_number := 0
 	for i := 0; i < len(source); {
 		line_number++
-		newline_offset := bytes.IndexByte(source[i:], '\n')
+		newline_offset := strings.Index_Byte(string(source[i:]), '\n')
 		var line []byte
 		if newline_offset < 0 {
 			line = source[i:]
@@ -8186,13 +8261,12 @@ func check_stream_markdown_line_max(
 			line = source[i : i+newline_offset]
 			i += newline_offset + 1
 		}
-		if bytes.HasPrefix(line, []byte("```")) {
+		if strings.Has_Prefix(string(line), "```") {
 			input_code = !input_code
 			continue
 		}
-		trimmed := bytes.TrimSpace(line)
-		is_table_row := bytes.HasPrefix(
-			trimmed, []byte("|")) && bytes.HasSuffix(trimmed, []byte("|"))
+		trimmed := strings.Trim_Space(string(line))
+		is_table_row := strings.Has_Prefix(trimmed, "|") && strings.Has_Suffix(trimmed, "|")
 		// The table-row and URL exemptions are markdown-rendering allowances: a
 		// real table row cannot wrap and a prose URL has no fold point. Inside a
 		// fenced block the line is literal code, where neither rationale holds, so
@@ -8201,7 +8275,7 @@ func check_stream_markdown_line_max(
 			if is_table_row {
 				continue
 			}
-			if bytes.Contains(line, []byte("://")) {
+			if strings.Contains(string(line), "://") {
 				continue
 			}
 		}
@@ -8224,7 +8298,7 @@ func check_stream_markdown_trailing_whitespace(
 	load func() (data []byte, err error),
 	output *[]Diagnostic) {
 
-	if !strings.HasSuffix(information.Name(), ".md") {
+	if !strings.Has_Suffix(information.Name(), ".md") {
 		return
 	}
 	source, err := load()
@@ -8235,7 +8309,7 @@ func check_stream_markdown_trailing_whitespace(
 	line_number := 0
 	for i := 0; i < len(source); {
 		line_number++
-		newline_offset := bytes.IndexByte(source[i:], '\n')
+		newline_offset := strings.Index_Byte(string(source[i:]), '\n')
 		var line []byte
 		if newline_offset < 0 {
 			line = source[i:]
@@ -8244,7 +8318,7 @@ func check_stream_markdown_trailing_whitespace(
 			line = source[i : i+newline_offset]
 			i += newline_offset + 1
 		}
-		if bytes.HasPrefix(line, []byte("```")) {
+		if strings.Has_Prefix(string(line), "```") {
 			input_code = !input_code
 			continue
 		}
@@ -8252,7 +8326,7 @@ func check_stream_markdown_trailing_whitespace(
 		if input_code {
 			continue
 		}
-		if len(line) == len(bytes.TrimRight(line, " \t")) {
+		if len(line) == len(strings.Trim_Right(string(line), " \t")) {
 			continue
 		}
 		*output = append(*output, Diagnostic{
@@ -8358,7 +8432,7 @@ func agents_claude_pair_finalize(
 				Message: "There is no CLAUDE.md. Add a CLAUDE.md that is " +
 					"AGENTS.md byte-for-byte",
 			})
-		case !bytes.Equal(pp.Agents, pp.Claude):
+		case string(pp.Agents) != string(pp.Claude):
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: d},
 				Message: "AGENTS.md and CLAUDE.md are different. Make " +
@@ -8389,7 +8463,7 @@ func check_no_impure_stdlib(
 		if pf.File.Name.Name == "main" {
 			continue
 		}
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if source.Is_Composition_Tier(pf, components) {
@@ -8426,7 +8500,7 @@ func check_no_impure_stdlib_per_file(
 		case implementation.Name != nil:
 			name = implementation.Name.Name
 		default:
-			slash_offset := strings.LastIndex(path, "/")
+			slash_offset := strings.Last_Index(path, "/")
 			name = path[slash_offset+1:]
 		}
 		if name == "_" {
@@ -8760,7 +8834,7 @@ func collect_stdlib_imports(
 		if import_specification.Name != nil {
 			local = import_specification.Name.Name
 		} else {
-			last_slash := strings.LastIndexByte(path, '/')
+			last_slash := strings.Last_Index_Byte(path, '/')
 			if last_slash < 0 {
 				local = path
 			} else {
@@ -8784,11 +8858,11 @@ func collect_stdlib_imports(
 // golang.org/x/…, gopkg.in/…). Matches the convention `go list std`
 // follows.
 func import_path_is_stdlib(import_path string) (yes bool) {
-	first_slash_offset := strings.IndexByte(import_path, '/')
+	first_slash_offset := strings.Index_Byte(import_path, '/')
 	if first_slash_offset < 0 {
-		return !strings.ContainsRune(import_path, '.')
+		return !strings.Contains_Rune(import_path, '.')
 	}
-	return !strings.ContainsRune(import_path[:first_slash_offset], '.')
+	return !strings.Contains_Rune(import_path[:first_slash_offset], '.')
 }
 
 // Switch-based lookup over the v1 ban list, returning the diagnostic the
@@ -9153,10 +9227,10 @@ func check_deterministic_coverage(
 // which scan_prefixes_reach admits everywhere. A leading "!" is stripped first, so
 // a negated entry's anchor names the same path its positive form would.
 func glob_literal_prefix(entry string) (prefix string) {
-	entry = strings.TrimPrefix(entry, "!")
+	entry = strings.Trim_Prefix(entry, "!")
 	kept := []string{}
 	for _, segment := range strings.Split(entry, "/") {
-		if strings.ContainsAny(segment, "*?[") {
+		if strings.Contains_Any(segment, "*?[") {
 			break
 		}
 		kept = append(kept, segment)
@@ -9312,8 +9386,8 @@ func import_path_workspace_directory(
 	import_path string, m Component_Information,
 ) (directory string) {
 
-	relative := strings.TrimPrefix(import_path, m.Import_Path)
-	relative = strings.TrimPrefix(relative, "/")
+	relative := strings.Trim_Prefix(import_path, m.Import_Path)
+	relative = strings.Trim_Prefix(relative, "/")
 	if m.Root == "." {
 		if relative == "" {
 			return "."
@@ -9375,7 +9449,7 @@ func check_time_import_gateway(
 // The read-only clock constructors mint no Driver, so they are not gated.
 func check_driver_gateway(parsed_files []Parsed_File) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if pf.File.Name.Name == "main" {
@@ -9435,7 +9509,7 @@ func check_driver_type(
 	driver_path := shared + "/simulation/time"
 	gateway := source.IO_Gateway(components)
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if pf.File.Name.Name == "main" {
@@ -9500,7 +9574,7 @@ func check_io_gateway(
 	time_gateway := source.Time_Gateway(components)
 	syscall_gateways := io_gateway_syscall_globs(components)
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if pf.File.Name.Name == "main" {
@@ -9682,7 +9756,7 @@ func check_sim_script(parsed_files []Parsed_File) (diags []Diagnostic) {
 		if path.Dir(pf.Path) != directory {
 			continue
 		}
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		for _, declaration := range pf.File.Decls {
@@ -9763,7 +9837,7 @@ func sim_script_constructor_diagnostics(
 
 // Reports whether name is an exported Sim_* helper.
 func sim_script_named(name string) (named bool) {
-	return strings.HasPrefix(name, "Sim_")
+	return strings.Has_Prefix(name, "Sim_")
 }
 
 // Reports whether expression is an integer type — the shape a seed parameter takes.

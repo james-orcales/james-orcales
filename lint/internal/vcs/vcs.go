@@ -8,8 +8,8 @@ package vcs
 import (
 	"fmt"
 	"go/token"
+	"local/james-orcales/lint/internal/strings"
 	"regexp"
-	"strings"
 
 	"local/james-orcales/lint/internal/diagnostic"
 )
@@ -177,12 +177,12 @@ func non_merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 // no-merge-commits rule — intentional, since a custom-worded merge is
 // indistinguishable from a regular one.
 func is_subtree_merge_subject(subject string) (yes bool) {
-	if strings.HasPrefix(subject, "Add '") {
+	if strings.Has_Prefix(subject, "Add '") {
 		if strings.Contains(subject, "' from commit '") {
 			return true
 		}
 	}
-	if strings.HasPrefix(subject, "Merge commit '") {
+	if strings.Has_Prefix(subject, "Merge commit '") {
 		if strings.Contains(subject, "' as '") {
 			return true
 		}
@@ -197,13 +197,13 @@ func is_subtree_merge_subject(subject string) (yes bool) {
 // conjunctive (verb + noun + "review") so isolated mentions of "review" or
 // "comment" in unrelated subjects don't get caught.
 func is_fixup_subject(subject string) (yes bool) {
-	if strings.HasPrefix(subject, "fixup!") {
+	if strings.Has_Prefix(subject, "fixup!") {
 		return true
 	}
-	if strings.HasPrefix(subject, "squash!") {
+	if strings.Has_Prefix(subject, "squash!") {
 		return true
 	}
-	s := strings.ToLower(subject)
+	s := strings.To_Lower(subject)
 	has_review := strings.Contains(s, "review")
 	has_address := strings.Contains(s, "address")
 	has_apply := strings.Contains(s, "apply")

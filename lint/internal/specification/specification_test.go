@@ -4,7 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"strings"
+	"local/james-orcales/lint/internal/strings"
 	"testing"
 
 	"local/james-orcales/lint/internal/specification"

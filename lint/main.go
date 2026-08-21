@@ -4,11 +4,11 @@ package main
 import (
 	"fmt"
 	"io/fs"
+	"local/james-orcales/lint/internal/strings"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -128,7 +128,7 @@ func main_git_command(root string) (run lint.Git_Command) {
 		if err != nil {
 			return "", false
 		}
-		return strings.TrimSpace(string(stdout)), true
+		return strings.Trim_Space(string(stdout)), true
 	}
 }
 

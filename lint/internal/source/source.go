@@ -7,10 +7,10 @@ package source
 import (
 	"go/ast"
 	"go/token"
+	"local/james-orcales/lint/internal/strings"
 	"path"
 	"regexp"
 	"sort"
-	"strings"
 )
 
 // Parsed_File is one tracked Go file, parsed once and reused by every AST-tier
@@ -88,7 +88,7 @@ func Build_Component_Index(
 	}
 	// Directory_Package excludes test/main files (component-tier-depth rule).
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if pf.File.Name.Name == "main" {
@@ -101,7 +101,7 @@ func Build_Component_Index(
 		root := index.Components[component_index_number].Root
 		relative := pf.Path
 		if root != "." {
-			relative = strings.TrimPrefix(pf.Path, root+"/")
+			relative = strings.Trim_Prefix(pf.Path, root+"/")
 		}
 		canonical_directory := Canonicalize(path.Dir(relative))
 		directory_package := index.Components[component_index_number].Directory_Package
@@ -343,8 +343,8 @@ func import_path_directory(
 		return "", "", false
 	}
 	m := components.Components[component_index_number]
-	relative := strings.TrimPrefix(
-		strings.TrimPrefix(import_path, m.Import_Path), "/")
+	relative := strings.Trim_Prefix(
+		strings.Trim_Prefix(import_path, m.Import_Path), "/")
 	directory = relative
 	if m.Root != "." {
 		directory = m.Root
@@ -364,7 +364,7 @@ func import_path_directory(
 		// No parsed file declared the package, so the best available name is
 		// path's last segment. Default tier is stronger: repository doctrine
 		// requires parent package name even when scoped run did not parse it.
-		package_name = import_path[strings.LastIndex(import_path, "/")+1:]
+		package_name = import_path[strings.Last_Index(import_path, "/")+1:]
 		if package_name == "default" {
 			package_name = path.Base(path.Dir(import_path))
 		}
@@ -478,7 +478,7 @@ func component_index_resolve(file_path string, components []Component) (index in
 		if file_path == module.Root {
 			return i
 		}
-		if strings.HasPrefix(file_path, module.Root+"/") {
+		if strings.Has_Prefix(file_path, module.Root+"/") {
 			return i
 		}
 	}
@@ -547,7 +547,7 @@ func Is_Composition_Tier(pf Parsed_File, components *Component_Index) (yes bool)
 	}
 	relative := pf.Path
 	if m.Root != "." {
-		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+		relative = strings.Trim_Prefix(pf.Path, m.Root+"/")
 	}
 	canonical := Canonicalize(path.Dir(relative))
 	if canonical == "." {
@@ -564,7 +564,7 @@ func Is_Composition_Tier(pf Parsed_File, components *Component_Index) (yes bool)
 // to the downstream no-op convention every other doctrine check follows.
 func Is_Impure_Package(pf Parsed_File, components *Component_Index) (yes bool) {
 
-	base := strings.TrimSuffix(pf.File.Name.Name, "_test")
+	base := strings.Trim_Suffix(pf.File.Name.Name, "_test")
 	if base == "main" {
 		return true
 	}
@@ -575,7 +575,7 @@ func Is_Impure_Package(pf Parsed_File, components *Component_Index) (yes bool) {
 	m := components.Components[component_index_number]
 	relative := pf.Path
 	if m.Root != "." {
-		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+		relative = strings.Trim_Prefix(pf.Path, m.Root+"/")
 	}
 	canonical := Canonicalize(path.Dir(relative))
 	return directory_is_impure(canonical, m)
@@ -597,7 +597,7 @@ func directory_is_impure(canonical string, m Component) (yes bool) {
 		return false
 	}
 	last := canonical
-	slash_offset := strings.LastIndex(canonical, "/")
+	slash_offset := strings.Last_Index(canonical, "/")
 	if slash_offset >= 0 {
 		last = canonical[slash_offset+1:]
 	}
@@ -617,8 +617,8 @@ func Import_Path_Is_Impure(import_path string, components *Component_Index) (yes
 		return false
 	}
 	m := components.Components[component_index_number]
-	relative := strings.TrimPrefix(import_path, m.Import_Path)
-	relative = strings.TrimPrefix(relative, "/")
+	relative := strings.Trim_Prefix(import_path, m.Import_Path)
+	relative = strings.Trim_Prefix(relative, "/")
 	if relative == "" {
 		relative = "."
 	}
@@ -667,7 +667,7 @@ func import_path_under_component(input *Import_Path_Under_Component_Input) (yes 
 	if input.Import_Path == input.Component_Path {
 		return true
 	}
-	return strings.HasPrefix(input.Import_Path, input.Component_Path+"/")
+	return strings.Has_Prefix(input.Import_Path, input.Component_Path+"/")
 }
 
 // Time_Gateway keeps the host clock in the simulation subtree.
@@ -942,10 +942,10 @@ type Glob_Pattern struct {
 // requested explicitly with a leading "**/". Assumes the entry is non-empty once
 // any leading "!" is stripped.
 func Parse_Glob_Pattern(raw string) (parsed Glob_Pattern) {
-	parsed.Negate = strings.HasPrefix(raw, "!")
-	raw = strings.TrimPrefix(raw, "!")
-	trimmed := strings.TrimSuffix(raw, "/")
-	trimmed = strings.TrimPrefix(trimmed, "/")
+	parsed.Negate = strings.Has_Prefix(raw, "!")
+	raw = strings.Trim_Prefix(raw, "!")
+	trimmed := strings.Trim_Suffix(raw, "/")
+	trimmed = strings.Trim_Prefix(trimmed, "/")
 	parsed.Core = trimmed
 	return parsed
 }

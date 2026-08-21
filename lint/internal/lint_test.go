@@ -1,11 +1,9 @@
 package lint_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"go/format"
-	"strings"
+	"local/james-orcales/lint/internal/strings"
 	"testing"
 	"testing/fstest"
 
@@ -207,8 +205,8 @@ func f() {
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -220,7 +218,7 @@ func f() {
 						code, output)
 				}
 			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+				if !strings.Contains(stdout.String(), tt.Want_Diag) {
 					t.Errorf("expected output containing %q, got: %s",
 						tt.Want_Diag, output)
 				}
@@ -268,8 +266,8 @@ func f() {
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -281,7 +279,7 @@ func f() {
 						code, output)
 				}
 			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+				if !strings.Contains(stdout.String(), tt.Want_Diag) {
 					t.Errorf("expected output containing %q, got: %s",
 						tt.Want_Diag, output)
 				}
@@ -320,8 +318,8 @@ func f() {
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -333,7 +331,7 @@ func f() {
 						code, output)
 				}
 			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+				if !strings.Contains(stdout.String(), tt.Want_Diag) {
 					t.Errorf("expected output containing %q, got: %s",
 						tt.Want_Diag, output)
 				}
@@ -375,8 +373,8 @@ func f() {
 	}
 }`
 	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: gofmt_must(t, source)}}
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
 	code := lint_main(t, &lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
 	if code != 0 {
 		t.Errorf("expected exit 0, got %d; output: %s", code, stdout.String())
@@ -427,8 +425,8 @@ func f() {
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -440,7 +438,7 @@ func f() {
 				}
 				return
 			}
-			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+			if !strings.Contains(stdout.String(), tt.Want_Diag) {
 				t.Errorf("expected output containing %q, got: %s",
 					tt.Want_Diag, output)
 			}
@@ -476,8 +474,8 @@ func f() (result int) {
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -489,7 +487,7 @@ func f() (result int) {
 				}
 				return
 			}
-			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+			if !strings.Contains(stdout.String(), tt.Want_Diag) {
 				t.Errorf("expected output containing %q, got: %s",
 					tt.Want_Diag, output)
 			}
@@ -1016,9 +1014,9 @@ import _ "strings"
 			Files: map[string]string{
 				"test.go": `package main
 
-import "strings"
+import "fmt"
 
-func f() (s string) { return strings.TrimSpace("x") }
+func f() (s string) { return fmt.Sprint("x") }
 `,
 			},
 			Want_Diag: "",
@@ -1395,8 +1393,8 @@ type Foo struct {
 }
 `
 	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: gofmt_must(t, source)}}
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
 	code := lint_main(t, &lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
 	if code != 0 {
 		t.Errorf("expected exit 0, got %d; output: %s", code, stdout.String())
@@ -1570,9 +1568,9 @@ func Test_Gofmt(t *testing.T) {
 				fsys_map[k] = &fstest.MapFile{
 					Data: []byte(v)}
 			}
-			stdout := &bytes.Buffer{}
+			stdout := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
+				Fsys: fsys_map, Stdout: stdout, Stderr: &strings.Builder{},
 			})
 			output := stdout.String()
 			if tt.Want_Diag == "" {
@@ -1582,7 +1580,7 @@ func Test_Gofmt(t *testing.T) {
 				}
 				return
 			}
-			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+			if !strings.Contains(stdout.String(), tt.Want_Diag) {
 				t.Errorf("expected output containing %q, got: %s",
 					tt.Want_Diag, output)
 			}
@@ -1688,24 +1686,21 @@ func test_lint_json(t *testing.T, shared_component string, allowlist []string) (
 	if shared_component == "" {
 		shared_component = "lint_test_no_shared_component"
 	}
-	data, err := json.Marshal(lint.Configuration{
-		Shared_Component:         shared_component,
-		Instrumentation_Packages: allowlist,
-		Word_Replacements:        test_word_replacements(),
+	data = []byte(configuration_document(map[string]any{
+		"shared_component":         shared_component,
+		"instrumentation_packages": allowlist,
+		"word_replacements":        test_word_replacements(),
 		// The behavioral suite isolates one rule per fixture; the type-invariant
 		// rule fires on every typed fixture, so disable it wholesale here. Its own
 		// coverage lives in the Test_Invariants_* doctrine tests and the
 		// Test_Type_Invariant_* behavioral tests, which drive the rule directly.
-		Invariant_Exempt_Packages: []string{"**"},
+		"opt_out_assertion_mandate_packages": []string{"**"},
 		// Likewise the deterministic tier now binds every pure package by default,
 		// so a fixture using time/sync/a channel to exercise another rule would trip
 		// it; "**" releases the whole tree. The Test_Deterministic_* tests drive the
 		// tier directly.
-		Pure_But_Indeterministic: []string{"**"},
-	})
-	if err != nil {
-		t.Fatalf("test_lint_json: %v", err)
-	}
+		"pure_but_indeterministic_packages": []string{"**"},
+	}))
 	return data
 }
 
@@ -1724,18 +1719,10 @@ func test_lint_json_recurse_exempt(
 	t *testing.T, input *test_lint_json_recurse_exempt_input,
 ) (data []byte) {
 	t.Helper()
-	var configuration lint.Configuration
-	if err := json.Unmarshal(
-		test_lint_json(t, input.Shared_Component, nil), &configuration,
-	); err != nil {
-		t.Fatalf("test_lint_json_recurse_exempt: %v", err)
-	}
-	configuration.Recursion_Exempt = []string{input.Exempt}
-	data, err := json.Marshal(configuration)
-	if err != nil {
-		t.Fatalf("test_lint_json_recurse_exempt: %v", err)
-	}
-	return data
+	return []byte(configuration_document(map[string]any{
+		"shared_component":      input.Shared_Component,
+		"opt_out_recursion_ban": []string{input.Exempt},
+	}))
 }
 
 // Wraps lint.Main, seeding the fixture's MapFS with a default lint.json
@@ -1767,8 +1754,8 @@ func run_diag_table(t *testing.T, tests []struct {
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -1780,7 +1767,7 @@ func run_diag_table(t *testing.T, tests []struct {
 				}
 				return
 			}
-			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+			if !strings.Contains(stdout.String(), tt.Want_Diag) {
 				t.Errorf("expected output containing %q, got: %s",
 					tt.Want_Diag, output)
 			}
@@ -1804,8 +1791,8 @@ func Test_Scope_Prefix_Filters_Diagnostics(t *testing.T) {
 		"in_scope/test.go":     &fstest.MapFile{Data: gofmt_must(t, source)},
 		"out_of_scope/test.go": &fstest.MapFile{Data: gofmt_must(t, source)},
 	}
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
 	lint_main(t, &lint.Main_Input{
 		Fsys:         fsys_map,
 		Stdout:       stdout,
@@ -1813,7 +1800,7 @@ func Test_Scope_Prefix_Filters_Diagnostics(t *testing.T) {
 		Scope_Prefix: "in_scope/",
 	})
 	output := stdout.String()
-	if bytes.Contains(stdout.Bytes(), []byte("out_of_scope/")) {
+	if strings.Contains(stdout.String(), "out_of_scope/") {
 		t.Errorf("expected out_of_scope/ diagnostics to be filtered; got: %s", output)
 	}
 }
@@ -1829,8 +1816,8 @@ func Test_Scope_Prefix_Must_Exist(t *testing.T) {
 	fsys_map := fstest.MapFS{
 		"real/test.go": &fstest.MapFile{Data: gofmt_must(t, source)},
 	}
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
 	code := lint_main(t, &lint.Main_Input{
 		Fsys:         fsys_map,
 		Stdout:       stdout,
@@ -1861,7 +1848,7 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
 			for k, v := range tt.Files {
-				if strings.HasSuffix(k, ".go") {
+				if strings.Has_Suffix(k, ".go") {
 					fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 					continue
 				}
@@ -3236,8 +3223,8 @@ func F() (x int) {
 }
 `)},
 	}
-	stdout := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	stdout := &strings.Builder{}
+	lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &strings.Builder{}})
 	output := stdout.String()
 	if !strings.Contains(output, "Rename wibble_path -> wobble_path") {
 		t.Fatalf("the word configured in lint.json must be flagged; got: %s", output)
@@ -3537,10 +3524,10 @@ func Test_Package_Split_Threshold_Part2(t *testing.T) {
 	content := []byte("// Package foo is a fixture.\npackage foo\n" +
 		strings.Repeat("\n", 10001))
 	fsys := fstest.MapFS{"a.go": {Data: content}}
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
 	lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: stderr})
-	if !bytes.Contains(stdout.Bytes(), []byte("has 1 source files")) {
+	if !strings.Contains(stdout.String(), "has 1 source files") {
 		t.Errorf("single file over 10k lines must be flagged; got: %s",
 			stdout.String())
 	}
@@ -3640,7 +3627,7 @@ func Test_Import_Alias_Unnecessary(t *testing.T) {
 		{
 			Name: "unaliased import clean",
 			Files: map[string]string{"a.go": "// Package foo is a fixture.\n" +
-				"package foo\n\nimport \"strings\"\n"},
+				"package foo\n\nimport \"fmt\"\n"},
 			Want_Diag: "",
 		},
 	}
@@ -3720,8 +3707,8 @@ func Test_File_Size(t *testing.T) {
 	// equals the newline count here, two from the source plus 9999 of padding.
 	over := []byte("// Package foo is a fixture.\npackage foo\n" +
 		strings.Repeat("\n", 9999))
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &strings.Builder{}
+	stderr := &strings.Builder{}
 	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"a.go": {Data: over},
@@ -3730,23 +3717,23 @@ func Test_File_Size(t *testing.T) {
 		Stdout: stdout,
 		Stderr: stderr,
 	})
-	if !bytes.Contains(stdout.Bytes(),
-		[]byte("The file has 10001 lines. The maximum is 10000.")) {
+	if !strings.Contains(stdout.String(),
+		"The file has 10001 lines. The maximum is 10000.") {
 		t.Errorf("a file over the cap must be flagged; got: %s", stdout.String())
 	}
-	if bytes.Contains(stdout.Bytes(), []byte("source files")) {
+	if strings.Contains(stdout.String(), "source files") {
 		t.Errorf("the file count is already correct here; got: %s", stdout.String())
 	}
 	at_cap := []byte("// Package foo is a fixture.\npackage foo\n" +
 		strings.Repeat("\n", 9998))
-	stdout = &bytes.Buffer{}
-	stderr = &bytes.Buffer{}
+	stdout = &strings.Builder{}
+	stderr = &strings.Builder{}
 	lint_main(t, &lint.Main_Input{
 		Fsys:   fstest.MapFS{"a.go": {Data: at_cap}},
 		Stdout: stdout,
 		Stderr: stderr,
 	})
-	if bytes.Contains(stdout.Bytes(), []byte("(max 10000)")) {
+	if strings.Contains(stdout.String(), "(max 10000)") {
 		t.Errorf("a file at the cap must stay silent; got: %s", stdout.String())
 	}
 }
@@ -3890,9 +3877,9 @@ func Test_Main_Package_Size(t *testing.T) {
 // blank-line padding these fixtures need cannot survive gofmt.
 func main_package_size_output(t *testing.T, fsys fstest.MapFS) (output string) {
 	t.Helper()
-	stdout := &bytes.Buffer{}
+	stdout := &strings.Builder{}
 	lint_main(t, &lint.Main_Input{
-		Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{},
+		Fsys: fsys, Stdout: stdout, Stderr: &strings.Builder{},
 	})
 	return stdout.String()
 }
@@ -4609,8 +4596,8 @@ func b() { a() }`}, Want_Diag: "recurse in a cycle"},
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -4622,7 +4609,7 @@ func b() { a() }`}, Want_Diag: "recurse in a cycle"},
 						code, output)
 				}
 			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+				if !strings.Contains(stdout.String(), tt.Want_Diag) {
 					t.Errorf("expected output containing %q, got: %s",
 						tt.Want_Diag, output)
 				}
@@ -4665,8 +4652,8 @@ func inner() { return }`}, Want_Diag: "recurse in a cycle"},
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -4678,7 +4665,7 @@ func inner() { return }`}, Want_Diag: "recurse in a cycle"},
 						code, output)
 				}
 			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+				if !strings.Contains(stdout.String(), tt.Want_Diag) {
 					t.Errorf("expected output containing %q, got: %s",
 						tt.Want_Diag, output)
 				}
@@ -4808,7 +4795,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 		{
 			Name: "json.NewDecoder flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/json\"\n" +
+				"test.go": "package main\n" +
 					"func f() { json.NewDecoder(nil) }\n",
 			},
 			Want_Diag: "API \"json.NewDecoder\" is unbounded",
@@ -4816,7 +4803,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 		{
 			Name: "xml.NewDecoder flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/xml\"\n" +
+				"test.go": "package main\n" +
 					"func f() { xml.NewDecoder(nil) }\n",
 			},
 			Want_Diag: "API \"xml.NewDecoder\" is unbounded",
@@ -4824,7 +4811,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 		{
 			Name: "gob.NewDecoder flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/gob\"\n" +
+				"test.go": "package main\n" +
 					"func f() { gob.NewDecoder(nil) }\n",
 			},
 			Want_Diag: "API \"gob.NewDecoder\" is unbounded",
@@ -4832,7 +4819,7 @@ func Test_Unbounded_Decode(t *testing.T) {
 		{
 			Name: "csv.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/csv\"\n" +
+				"test.go": "package main\n" +
 					"func f() { csv.NewReader(nil) }\n",
 			},
 			Want_Diag: "API \"csv.NewReader\" is unbounded",
@@ -4862,7 +4849,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 		{
 			Name: "gzip.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/gzip\"\n" +
+				"test.go": "package main\n" +
 					"func f() { gzip.NewReader(nil) }\n",
 			},
 			Want_Diag: "API \"gzip.NewReader\" is unbounded",
@@ -4871,7 +4858,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 		{
 			Name: "flate.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/flate\"\n" +
+				"test.go": "package main\n" +
 					"func f() { flate.NewReader(nil) }\n",
 			},
 			Want_Diag: "API \"flate.NewReader\" is unbounded",
@@ -4880,7 +4867,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 		{
 			Name: "zlib.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/zlib\"\n" +
+				"test.go": "package main\n" +
 					"func f() { zlib.NewReader(nil) }\n",
 			},
 			Want_Diag: "API \"zlib.NewReader\" is unbounded",
@@ -4889,7 +4876,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 		{
 			Name: "bzip2.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/bzip2\"\n" +
+				"test.go": "package main\n" +
 					"func f() { bzip2.NewReader(nil) }\n",
 			},
 			Want_Diag: "API \"bzip2.NewReader\" is unbounded",
@@ -4898,7 +4885,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 		{
 			Name: "lzw.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/lzw\"\n" +
+				"test.go": "package main\n" +
 					"func f() { lzw.NewReader(nil, 0, 0) }\n",
 			},
 			Want_Diag: "API \"lzw.NewReader\" is unbounded",
@@ -4907,7 +4894,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 		{
 			Name: "zip.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"archive/zip\"\n" +
+				"test.go": "package main\n" +
 					"func f() { zip.NewReader(nil, 0) }\n",
 			},
 			Want_Diag: "API \"zip.NewReader\" is unbounded",
@@ -4927,7 +4914,7 @@ func Test_Unbounded_Decompression_Part2(t *testing.T) {
 		{
 			Name: "zip.OpenReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"archive/zip\"\n" +
+				"test.go": "package main\n" +
 					"func f() { zip.OpenReader(\"path\") }\n",
 			},
 			Want_Diag: "API \"zip.OpenReader\" is unbounded",
@@ -4936,7 +4923,7 @@ func Test_Unbounded_Decompression_Part2(t *testing.T) {
 		{
 			Name: "tar.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"archive/tar\"\n" +
+				"test.go": "package main\n" +
 					"func f() { tar.NewReader(nil) }\n",
 			},
 			Want_Diag: "API \"tar.NewReader\" is unbounded",
@@ -4966,7 +4953,7 @@ func Test_Unbounded_Allocation(t *testing.T) {
 		{
 			Name: "bytes.NewBuffer flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"bytes\"\n" +
+				"test.go": "package main\n" +
 					"func f() { bytes.NewBuffer(nil) }\n",
 			},
 			Want_Diag: "API \"bytes.NewBuffer\" is unbounded",
@@ -4974,7 +4961,7 @@ func Test_Unbounded_Allocation(t *testing.T) {
 		{
 			Name: "bytes.NewBufferString flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"bytes\"\n" +
+				"test.go": "package main\n" +
 					"func f() { bytes.NewBufferString(\"\") }\n",
 			},
 			Want_Diag: "API \"bytes.NewBufferString\" is unbounded",
@@ -5258,8 +5245,8 @@ func main() { return }`}, Want_Diag: ""},
 			for k, v := range tt.Files {
 				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			stdout := &strings.Builder{}
+			stderr := &strings.Builder{}
 			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
@@ -5271,7 +5258,7 @@ func main() { return }`}, Want_Diag: ""},
 						code, output)
 				}
 			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+				if !strings.Contains(stdout.String(), tt.Want_Diag) {
 					t.Errorf("expected output containing %q, got: %s",
 						tt.Want_Diag, output)
 				}

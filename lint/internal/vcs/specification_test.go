@@ -1,7 +1,7 @@
 package vcs_test
 
 import (
-	"strings"
+	"local/james-orcales/lint/internal/strings"
 	"testing"
 
 	"local/james-orcales/lint/internal/vcs"

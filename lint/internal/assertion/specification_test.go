@@ -3,7 +3,7 @@ package assertion_test
 import (
 	"go/parser"
 	"go/token"
-	"strings"
+	"local/james-orcales/lint/internal/strings"
 	"testing"
 
 	"local/james-orcales/lint/internal/assertion"
@@ -985,7 +985,7 @@ func assert_invalid_singleton_helper_identity(t *testing.T) {
 	if !diagnosed(check_fixture(t, parent_singleton), "does not call a canonical helper") {
 		t.Fatal("the pure invariant package must not provide the singleton helper")
 	}
-	aliased_singleton := strings.ReplaceAll(integer_helper_source(
+	aliased_singleton := strings.Replace_All(integer_helper_source(
 		"\tinvariant.Always(int(value) == int(Value_Min), \"only\")"),
 		"invariant", "contract")
 	if !diagnosed(check_fixture(t, aliased_singleton), "does not call a canonical helper") {
@@ -1397,7 +1397,7 @@ func check_sources(files []source.Parsed_File) (diags []diagnostic.Diagnostic) {
 	file_to_component := map[string]int{}
 	for _, file := range files {
 		component := 0
-		if strings.HasPrefix(file.Path, "other/") {
+		if strings.Has_Prefix(file.Path, "other/") {
 			component = 1
 		}
 		file_to_component[file.Path] = component

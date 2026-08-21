@@ -5,7 +5,7 @@ package diagnostic
 import (
 	"fmt"
 	"go/token"
-	"strings"
+	"local/james-orcales/lint/internal/strings"
 )
 
 // Diagnostic is one rule violation. Position is the offending source
@@ -41,13 +41,13 @@ func Within_Scope(d Diagnostic, scope string) (within bool) {
 	if scope == "" {
 		return true
 	}
-	if strings.HasPrefix(d.Position.Filename, "<") {
+	if strings.Has_Prefix(d.Position.Filename, "<") {
 		return true
 	}
 	if d.Position.Filename == scope {
 		return true
 	}
-	return strings.HasPrefix(d.Position.Filename, scope+"/")
+	return strings.Has_Prefix(d.Position.Filename, scope+"/")
 }
 
 // Reportable returns, in input order, the diagnostics that should print: those

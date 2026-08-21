@@ -10,14 +10,13 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"local/james-orcales/lint/internal/strings"
 	"path"
-	"slices"
 	"sort"
-	"strconv"
-	"strings"
 
 	"local/james-orcales/lint/internal/diagnostic"
 	"local/james-orcales/lint/internal/source"
+	"local/james-orcales/shared/strconv"
 )
 
 // ASSERTIONS_BUILDER_LINKS_MAX bounds static expansion because a helper larger than a function's
@@ -70,7 +69,7 @@ func check_value_invariants(
 	constants := invariant_package_constants(parsed_files)
 	base_kind := base_kind_declaration_index(parsed_files, components)
 	for _, file := range parsed_files {
-		if strings.HasSuffix(file.Path, "_test.go") {
+		if strings.Has_Suffix(file.Path, "_test.go") {
 			continue
 		}
 		if source.Path_Matches_Glob(file.Path, exempt) {
@@ -92,7 +91,7 @@ func base_kind_declaration_index(
 	base_kind = map[string]ast.Expr{}
 	named := map[string]string{}
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		package_path := helper_package_path(pf, components)
@@ -216,7 +215,7 @@ func invariant_package_constants(
 ) (constants map[string]map[string]bool) {
 	constants = map[string]map[string]bool{}
 	for _, file := range parsed_files {
-		if strings.HasSuffix(file.Path, "_test.go") {
+		if strings.Has_Suffix(file.Path, "_test.go") {
 			continue
 		}
 		directory := path.Dir(file.Path)
@@ -351,15 +350,15 @@ func invariant_identifier_kind(name string) (suffix string, primitive string, co
 	case "string":
 		return "Int", "int", true
 	case "int", "int8", "int16", "int32", "int64":
-		return strings.ToUpper(name[:1]) + name[1:], name, false
+		return strings.To_Upper(name[:1]) + name[1:], name, false
 	case "uint", "uint8", "uint16", "uint32", "uint64":
-		return strings.ToUpper(name[:1]) + name[1:], name, false
+		return strings.To_Upper(name[:1]) + name[1:], name, false
 	case "byte":
 		return "Uint8", "uint8", false
 	case "rune":
 		return "Int32", "int32", false
 	case "float32", "float64":
-		return strings.ToUpper(name[:1]) + name[1:], name, false
+		return strings.To_Upper(name[:1]) + name[1:], name, false
 	case "bool":
 		return "Boolean", "bool", false
 	}
@@ -505,10 +504,22 @@ func invariant_direct_singleton(
 }
 
 func invariant_integer_primitive(primitive string) (integer bool) {
-	if strings.HasPrefix(primitive, "int") {
+	if strings.Has_Prefix(primitive, "int") {
 		return true
 	}
-	return strings.HasPrefix(primitive, "uint")
+	return strings.Has_Prefix(primitive, "uint")
+}
+
+func unquote_literal(text string) (unquoted string, err error) {
+	if len(text) > strconv.TEXT_SIZE_MAXIMUM {
+		return "", fmt.Errorf("quoted text exceeds %d bytes", strconv.TEXT_SIZE_MAXIMUM)
+	}
+	var destination [strconv.UNQUOTED_TEXT_SIZE_MAXIMUM]byte
+	count, err := strconv.Unquote_Into(destination[:], strconv.Text(text))
+	if err != nil {
+		return "", err
+	}
+	return string(destination[:int(count)]), nil
 }
 
 func invariant_string_literal(expression ast.Expr) (literal bool) {
@@ -520,7 +531,7 @@ func invariant_string_literal(expression ast.Expr) (literal bool) {
 	if value.Kind != token.STRING {
 		return false
 	}
-	_, unquote_error := strconv.Unquote(value.Value)
+	_, unquote_error := unquote_literal(value.Value)
 	return unquote_error == nil
 }
 
@@ -613,7 +624,7 @@ func invariant_builder_link(
 		argument_count := 3
 		if method == range_holed_name {
 			argument_count = 7
-			if strings.HasPrefix(suffix, "Uint") {
+			if strings.Has_Prefix(suffix, "Uint") {
 				argument_count = 6
 			}
 		}
@@ -901,7 +912,7 @@ func Check_Type(
 	file_set *token.FileSet, file *ast.File, exempt []string,
 ) (diags []diagnostic.Diagnostic) {
 	filename := file_set.Position(file.Pos()).Filename
-	if strings.HasSuffix(filename, "_test.go") {
+	if strings.Has_Suffix(filename, "_test.go") {
 		return nil
 	}
 	if source.Path_Matches_Glob(filename, exempt) {
@@ -936,7 +947,7 @@ func type_base_name(expression ast.Expr) (name string) {
 }
 
 func helper_identity_name(identity string) (name string) {
-	separator := strings.LastIndexByte(identity, '\x00')
+	separator := strings.Last_Index_Byte(identity, '\x00')
 	if separator < 0 {
 		return identity
 	}
@@ -960,7 +971,7 @@ func helper_package_path(file Parsed_File, components *Component_Index) (import_
 			if directory == component.Root {
 				return component.Import_Path
 			}
-			relative := strings.TrimPrefix(directory, component.Root+"/")
+			relative := strings.Trim_Prefix(directory, component.Root+"/")
 			if relative == directory {
 				return path.Dir(file.Path)
 			}
@@ -976,7 +987,7 @@ func helper_package_path(file Parsed_File, components *Component_Index) (import_
 func helper_import_paths(file *ast.File) (imports map[string]string) {
 	imports = map[string]string{}
 	for _, specification := range file.Imports {
-		import_path, unquote_error := strconv.Unquote(specification.Path.Value)
+		import_path, unquote_error := unquote_literal(specification.Path.Value)
 		if unquote_error != nil {
 			continue
 		}
@@ -1000,10 +1011,10 @@ func helper_default_package(
 		return shared + "/invariant/default"
 	}
 	for _, candidate := range imports {
-		if strings.HasSuffix(candidate, "/invariant/default") {
+		if strings.Has_Suffix(candidate, "/invariant/default") {
 			return candidate
 		}
-		if strings.HasSuffix(candidate, "/invariant") {
+		if strings.Has_Suffix(candidate, "/invariant") {
 			import_path = candidate + "/default"
 		}
 	}
@@ -1069,7 +1080,7 @@ func check_struct_invariants(
 		Constants: invariant_package_constants(parsed_files),
 	}
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if source.Path_Matches_Glob(pf.Path, exempt) {
@@ -1099,7 +1110,7 @@ func boolean_declaration_index(
 	boolean = map[string]bool{}
 	defined := map[string]string{}
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		package_path := helper_package_path(pf, components)
@@ -1171,7 +1182,7 @@ func check_always_condition(
 	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if source.Path_Matches_Glob(pf.Path, exempt) {
@@ -1287,7 +1298,7 @@ func struct_declaration_index(
 	struct_index = map[string]*ast.StructType{}
 	defined := map[string]string{}
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		package_path := helper_package_path(pf, components)
@@ -1363,7 +1374,7 @@ func struct_helper_index(
 ) (defined map[string]bool) {
 	defined = map[string]bool{}
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		for _, declaration := range pf.File.Decls {
@@ -1722,10 +1733,10 @@ func struct_link_field(link *ast.CallExpr, parameter string) (name string) {
 // holds the members, thus each states the field. A Sometimes holds one polarity, which is the whole
 // domain of a Boolean and a fragment of every other.
 func struct_link_states(method string, boolean bool) (states bool) {
-	if strings.HasPrefix(method, "Range_") {
+	if strings.Has_Prefix(method, "Range_") {
 		return true
 	}
-	if strings.HasPrefix(method, "Enum_") {
+	if strings.Has_Prefix(method, "Enum_") {
 		return true
 	}
 	if method != "Sometimes" {
@@ -2102,7 +2113,7 @@ func check_function_invariants(
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if source.Path_Matches_Glob(pf.Path, exempt) {
@@ -2618,7 +2629,7 @@ func recorder_group_absorb(group *Recorder_Group, file Parsed_File) {
 		group.Any_Path = file.Path
 	}
 	position := file.File_Set.Position(file.File.Name.Pos())
-	if strings.HasSuffix(file.Path, "_test.go") {
+	if strings.Has_Suffix(file.Path, "_test.go") {
 		group.Has_Test = true
 		if group.Test_Anchor.Line == 0 {
 			group.Test_Anchor = position
@@ -2842,7 +2853,7 @@ func simulation_internal_dirs(
 	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
 	seen := map[string]bool{}
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if components.File_To_Component[pf.Path] != component_index_number {
@@ -2850,7 +2861,7 @@ func simulation_internal_dirs(
 		}
 		directory := path.Dir(pf.Path)
 		under_internal := directory == internal_root
-		if strings.HasPrefix(directory, internal_root+"/") {
+		if strings.Has_Prefix(directory, internal_root+"/") {
 			under_internal = true
 		}
 		if !under_internal {
@@ -2859,7 +2870,7 @@ func simulation_internal_dirs(
 		if directory == sim_directory {
 			continue
 		}
-		if strings.HasPrefix(directory, sim_directory+"/") {
+		if strings.Has_Prefix(directory, sim_directory+"/") {
 			continue
 		}
 		if source.Path_Matches_Glob(directory, exempt) {
@@ -2895,12 +2906,12 @@ func simulation_package_diagnostics(
 	sim_files []Parsed_File, position token.Position,
 ) (diags []Diagnostic) {
 	for _, pf := range sim_files {
-		if !strings.HasSuffix(pf.Path, "_test.go") {
+		if !strings.Has_Suffix(pf.Path, "_test.go") {
 			return simulation_diagnostic(position, fmt.Sprintf(
 				"The simulation directory has the source file %s. "+
 					"Remove the source file.", pf.Path))
 		}
-		if !strings.HasSuffix(pf.File.Name.Name, "_test") {
+		if !strings.Has_Suffix(pf.File.Name.Name, "_test") {
 			return simulation_diagnostic(position, fmt.Sprintf(
 				"The simulation package %s is not an external test package. "+
 					"Add the suffix %q to the package name.",
@@ -2937,7 +2948,7 @@ func simulation_is_fuzz(declaration ast.Decl) (fuzz bool) {
 	if function.Recv != nil {
 		return false
 	}
-	if !strings.HasPrefix(function.Name.Name, "Fuzz") {
+	if !strings.Has_Prefix(function.Name.Name, "Fuzz") {
 		return false
 	}
 	return simulation_fuzz_parameter(function) != ""
@@ -2952,7 +2963,7 @@ func simulation_internal_functions(
 ) (functions map[string]bool) {
 	functions = map[string]bool{}
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if components.File_To_Component[pf.Path] != component_index_number {
@@ -2960,7 +2971,7 @@ func simulation_internal_functions(
 		}
 		directory := path.Dir(pf.Path)
 		under := directory == internal_root
-		if strings.HasPrefix(directory, internal_root+"/") {
+		if strings.Has_Prefix(directory, internal_root+"/") {
 			under = true
 		}
 		if !under {
@@ -2995,7 +3006,7 @@ func simulation_internal_import_locals(
 	for _, specification := range file.Imports {
 		import_path := strings.Trim(specification.Path.Value, "\"")
 		under := import_path == internal_import_path
-		if strings.HasPrefix(import_path, internal_import_path+"/") {
+		if strings.Has_Prefix(import_path, internal_import_path+"/") {
 			under = true
 		}
 		if !under {
@@ -3197,7 +3208,7 @@ func simulation_string_literal(expression ast.Expr) (value string, ok bool) {
 	if literal.Kind != token.STRING {
 		return "", false
 	}
-	unquoted, unquote_error := strconv.Unquote(literal.Value)
+	unquoted, unquote_error := unquote_literal(literal.Value)
 	if unquote_error != nil {
 		return "", false
 	}
@@ -3219,7 +3230,7 @@ func simulation_diagnostic(position token.Position, message string) (diags []Dia
 // interface keeps its dictated signature. Shares the type-invariant opt-out.
 func check_primitive_types(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
 		if source.Path_Matches_Glob(pf.Path, exempt) {
@@ -3569,10 +3580,10 @@ func type_invariants_preceding_type(
 
 // Reports whether name ends in the bundle suffix.
 func type_invariants_is_bundle_name(name string) (yes bool) {
-	if strings.HasSuffix(name, "_Invariants") {
+	if strings.Has_Suffix(name, "_Invariants") {
 		return true
 	}
-	return strings.HasSuffix(name, "_invariants")
+	return strings.Has_Suffix(name, "_invariants")
 }
 
 // Reports whether the bundle takes its type, by
@@ -3631,7 +3642,15 @@ func type_invariants_generic_matches(
 	}
 	want := type_invariants_field_names(type_specification.TypeParams)
 	got := type_invariants_argument_names(arguments)
-	return slices.Equal(want, got)
+	if len(want) != len(got) {
+		return false
+	}
+	for index, name := range want {
+		if name != got[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // Splits a generic instantiation into its base
@@ -3707,7 +3726,7 @@ func type_invariants_last_is_namespace(
 func type_invariants_import_names(file *ast.File) (names map[string]bool) {
 	names = map[string]bool{}
 	for _, specification := range file.Imports {
-		unquoted, unquote_err := strconv.Unquote(specification.Path.Value)
+		unquoted, unquote_err := unquote_literal(specification.Path.Value)
 		if unquote_err != nil {
 			continue
 		}
