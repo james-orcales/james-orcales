@@ -56,14 +56,19 @@ too small for region returns Memory_Exhausted.
 
 Memory_Unmap returns no error and releases nothing.
 
+### Exit
+
+Exit records the status and marks the simulation exited, then returns. A simulation cannot end
+its own test process, so the caller stops on its own after the call.
+
 # OS
 
-Caller captures allocating ambient values in Host before construction. Kernel reads stay live.
-Host and Self_Exec_Workspace remain caller-owned. Nothing owns a queue or takes a loop.
-Every OS operation, including construction and returned failures, allocates zero heap bytes.
+Caller captures allocating ambient values in Host before construction. Arguments and Environment
+read the process live. Host and Self_Exec_Workspace remain caller-owned. Nothing takes a loop.
+Every OS operation allocates zero heap bytes, except Environment and a nil-environment Self_Exec.
 
 ### Self Exec
 
-Self_Exec replaces process image and returns only on failure. Nil environment uses Host values.
+Self_Exec replaces process image and returns only on failure. Nil environment uses live values.
 Non-nil environment replaces all values; empty inherits nothing. Workspace encodes raw execve input.
 Embedded NUL returns EINVAL. Input exceeding caller-owned workspace returns E2BIG.

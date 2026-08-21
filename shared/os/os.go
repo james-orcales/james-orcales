@@ -181,6 +181,32 @@ func Memory_Offset_Invariants(value Memory_Offset, namespace aver.Namespace) {
 		Ensure()
 }
 
+// EXIT_CODE_MINIMUM is success.
+const EXIT_CODE_MINIMUM = 0
+
+// EXIT_CODE_MAXIMUM is the widest status a parent can read, because wait keeps eight bits.
+const EXIT_CODE_MAXIMUM = 255
+
+// Exit_Code is process termination status.
+type Exit_Code int
+
+// Exit_Code_Invariants keeps status inside what a parent can read back.
+func Exit_Code_Invariants(value Exit_Code, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), EXIT_CODE_MINIMUM, EXIT_CODE_MAXIMUM).
+		Ensure()
+}
+
+// Exited records whether a simulated process has ended.
+type Exited bool
+
+// Exited_Invariants covers a running and an ended simulation.
+func Exited_Invariants(value Exited, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "A simulated process ends.").
+		Ensure()
+}
+
 // Arguments_Procedure copies complete process arguments into caller storage.
 type Arguments_Procedure func(
 	state unsafe.Pointer, destination Arguments,
@@ -225,6 +251,9 @@ type Self_Exec_Procedure func(
 	arguments Arguments, environment Environment,
 ) (err error)
 
+// Exit_Procedure ends process with status.
+type Exit_Procedure func(state unsafe.Pointer, code Exit_Code)
+
 // Memory_Map_Procedure maps one zeroed anonymous region.
 type Memory_Map_Procedure func(
 	state unsafe.Pointer, size Memory_Size,
@@ -262,6 +291,9 @@ type OS struct {
 	// Nil preserves ambient values. Non-nil slice is complete replacement, thus empty inherits
 	// nothing.
 	Self_Exec Self_Exec_Procedure
+	// Exit ends the process with code. The host backend does not return; a simulation records
+	// the code and returns, so the caller must stop on its own after the call.
+	Exit Exit_Procedure
 	// Memory_Map returns private read-write region of exactly size bytes, zeroed. Capacity
 	// equals length, so append reallocates rather than write past region.
 	Memory_Map Memory_Map_Procedure
@@ -284,6 +316,7 @@ func OS_Invariants(system OS, namespace aver.Namespace) {
 	aver.Always(
 		system.Effective_User_Identifier != nil, "An OS reads its effective user id.")
 	aver.Always(system.Self_Exec != nil, "An OS replaces its own image.")
+	aver.Always(system.Exit != nil, "An OS ends its process.")
 	aver.Always(system.Memory_Map != nil, "An OS maps memory.")
 	aver.Always(system.Memory_Unmap != nil, "An OS unmaps memory.")
 }
@@ -388,6 +421,13 @@ func OS_Self_Exec(
 	return system.Self_Exec(system.State, path, arguments, environment)
 }
 
+// OS_Exit keeps backend state explicit so operation needs no captured environment.
+func OS_Exit(system OS, code Exit_Code) {
+	OS_Invariants(system, "os_exit.system")
+	Exit_Code_Invariants(code, "os_exit.code")
+	system.Exit(system.State, code)
+}
+
 // Self_Exec_Unsupported is what every simulated Self_Exec returns. A simulation cannot replace
 // its own test process, so it reports the failure rather than pretending to succeed, which
 // would destroy the run. A caller's real-backend success path never returns, so its failure
@@ -422,6 +462,10 @@ type Virtual_OS struct {
 	Memory Memory
 	// Memory_Offset is arena prefix already handed out.
 	Memory_Offset Memory_Offset
+	// Exited is set by Exit, because a simulation cannot end its own test process.
+	Exited Exited
+	// Exit_Code is the status the last Exit stated.
+	Exit_Code Exit_Code
 }
 
 // Virtual_OS_Invariants states the complete simulated domain. A process id is positive on every
@@ -437,6 +481,8 @@ func Virtual_OS_Invariants(virtual Virtual_OS, namespace aver.Namespace) {
 	Effective_User_Identifier_Invariants(virtual.Effective_User_Identifier, namespace)
 	Memory_Invariants(virtual.Memory, namespace)
 	Memory_Offset_Invariants(virtual.Memory_Offset, namespace)
+	Exited_Invariants(virtual.Exited, namespace)
+	Exit_Code_Invariants(virtual.Exit_Code, namespace)
 	aver.Always(int(virtual.Memory_Offset) <= len(virtual.Memory),
 		"Handed-out prefix lies inside arena.")
 }
@@ -470,6 +516,7 @@ func Virtual_OS_To_OS(virtual Virtual_OS_Pointer) (system OS) {
 		Process_Identifier:        virtual_os_process_identifier,
 		Effective_User_Identifier: virtual_os_effective_user_identifier,
 		Self_Exec:                 virtual_os_self_exec,
+		Exit:                      virtual_os_exit,
 		Memory_Map:                virtual_os_memory_map,
 		Memory_Unmap:              virtual_os_memory_unmap,
 	}
@@ -566,6 +613,13 @@ func virtual_os_self_exec(
 	_ unsafe.Pointer, _ Executable_Path, _ Arguments, _ Environment,
 ) (err error) {
 	return Self_Exec_Unsupported
+}
+
+func virtual_os_exit(state unsafe.Pointer, code Exit_Code) {
+	Exit_Code_Invariants(code, "virtual_os_exit.code")
+	virtual := (*Virtual_OS)(state)
+	virtual.Exited = true
+	virtual.Exit_Code = code
 }
 
 // Environment_Lookup finds name in an environment holding "NAME=VALUE" entries. It is exported

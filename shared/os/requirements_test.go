@@ -140,6 +140,17 @@ func Test_Virtual_OS_Memory_Unmap(t *testing.T) {
 	testify.No_Error(t, os.OS_Memory_Unmap(system, region))
 }
 
+// Test_Virtual_OS_Exit verifies the simulation records the status rather than ending the test
+// process, so a run can assert on the status a real process would have exited with.
+func Test_Virtual_OS_Exit(t *testing.T) {
+	virtual := test_virtual()
+	system := os.Virtual_OS_To_OS(&virtual)
+	testify.False(t, bool(virtual.Exited))
+	os.OS_Exit(system, os.EXIT_CODE_MAXIMUM)
+	testify.True(t, bool(virtual.Exited))
+	testify.Equal(t, os.Exit_Code(os.EXIT_CODE_MAXIMUM), virtual.Exit_Code)
+}
+
 // Test_OS_Self_Exec verifies simulated backend cannot replace test process for either
 // environment ownership mode.
 func Test_OS_Self_Exec(t *testing.T) {
@@ -177,6 +188,8 @@ func Test_OS_Invariant_Boundaries(t *testing.T) {
 		os.Effective_User_Identifier(bits.INTEGER_MAXIMUM),
 	}
 	for index, byte_size := range lengths {
+		// Lengths walk 0, 1, 2, and past maximum, so the clamp hits every exit bound.
+		exit_code := os.Exit_Code(min(byte_size, os.EXIT_CODE_MAXIMUM))
 		text := string(make([]byte, byte_size))
 		arguments := make(os.Arguments, byte_size)
 		environment := make(os.Environment, byte_size)
@@ -191,6 +204,8 @@ func Test_OS_Invariant_Boundaries(t *testing.T) {
 			Hostname:                  os.Hostname(text),
 			Process_Identifier:        process_identifiers[index],
 			Effective_User_Identifier: effective_user_identifiers[index],
+			Exited:                    index%2 == 1,
+			Exit_Code:                 exit_code,
 		}
 		system := os.Virtual_OS_To_OS(&virtual)
 		argument_destination := make(os.Arguments, byte_size)
@@ -205,7 +220,14 @@ func Test_OS_Invariant_Boundaries(t *testing.T) {
 		os.OS_Process_Identifier(system)
 		os.OS_Effective_User_Identifier(system)
 		os.OS_Self_Exec(system, os.Executable_Path(text), arguments, environment)
+		os.OS_Exit(system, exit_code)
 	}
+	verify_memory_boundaries(t)
+}
+
+// Memory sizes reach both limits and small values, and a spent arena reaches exhaustion.
+func verify_memory_boundaries(t *testing.T) {
+	t.Helper()
 	memory_sizes := [...]os.Memory_Size{
 		os.MEMORY_SIZE_MINIMUM,
 		os.MEMORY_SIZE_MINIMUM + 1,
@@ -234,6 +256,9 @@ func verify_virtual_os_allocations(t *testing.T) {
 	})
 	verify_os_ambient_allocations(t, system, virtual)
 	verify_os_memory_allocations(t, system)
+	t.Run("Exit", func(t *testing.T) {
+		testify.Zero_Allocation(t, func() { os.OS_Exit(system, os.EXIT_CODE_MINIMUM) })
+	})
 	var text os.Variable_Value
 	var found os.Variable_Found
 	t.Run("Environment_Lookup", func(t *testing.T) {

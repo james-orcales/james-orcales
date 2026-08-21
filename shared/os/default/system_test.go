@@ -1,6 +1,8 @@
 package os_test
 
 import (
+	process "os"
+	"os/exec"
 	"syscall"
 	"testing"
 
@@ -66,6 +68,49 @@ func Test_Operating_System_Environment(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_Arguments_Live verifies argv comes from the process itself, so package
+// main needs no raw stdlib import to read it.
+func Test_Operating_System_Arguments_Live(t *testing.T) {
+	state := test_host()
+	host := os.New_Operating_System(&state)
+	storage := [slices.SLICE_COUNT_MAXIMUM]string{}
+	count := os.OS_Arguments(host, storage[:])
+	testify.Equal(t, process.Args, []string(storage[:count]))
+}
+
+// Test_Operating_System_Environment_Live verifies a variable set after construction is visible,
+// which a construction-time capture would miss.
+func Test_Operating_System_Environment_Live(t *testing.T) {
+	state := test_host()
+	host := os.New_Operating_System(&state)
+	t.Setenv("OS_DEFAULT_ENVIRONMENT_LIVE", "set")
+	storage := [slices.SLICE_COUNT_MAXIMUM]string{}
+	count := os.OS_Environment(host, storage[:])
+	testify.Contains(t, []string(storage[:count]), "OS_DEFAULT_ENVIRONMENT_LIVE=set")
+}
+
+// TEST_EXIT_CODE is a status no test binary exits with on its own.
+const TEST_EXIT_CODE = 37
+
+// TEST_EXIT_VARIABLE marks the child run that exits instead of testing.
+const TEST_EXIT_VARIABLE = "OS_DEFAULT_TEST_EXIT"
+
+// Test_Operating_System_Exit verifies the process ends with the given status. Exit ends the
+// test binary, so a child run of this test performs it and the parent reads the status.
+func Test_Operating_System_Exit(t *testing.T) {
+	state := test_host()
+	host := os.New_Operating_System(&state)
+	if _, child := syscall.Getenv(TEST_EXIT_VARIABLE); child {
+		os.OS_Exit(host, TEST_EXIT_CODE)
+		return
+	}
+	command := exec.Command(process.Args[0], "-test.run=^Test_Operating_System_Exit$")
+	command.Env = append(syscall.Environ(), TEST_EXIT_VARIABLE+"=1")
+	run_err := command.Run()
+	testify.Error(t, run_err)
+	testify.Equal(t, TEST_EXIT_CODE, command.ProcessState.ExitCode())
+}
+
 // Test_Operating_System_Arguments_Copy verifies caller storage cannot reach runtime-owned argv.
 func Test_Operating_System_Arguments_Copy(t *testing.T) {
 	state := test_host()
@@ -119,8 +164,6 @@ func Test_Operating_System_Invariant_Boundaries(t *testing.T) {
 			environment[0] = text + "=" + text
 		}
 		state := os.Host{
-			Arguments:         arguments,
-			Environment:       environment,
 			Executable:        shared_os.Executable_Path(text),
 			Working_Directory: shared_os.Working_Directory_Path(text),
 			Hostname:          shared_os.Hostname(text),
@@ -174,12 +217,9 @@ func Test_Operating_System_Heap_Allocation(t *testing.T) {
 		})
 		testify.Positive(t, count)
 	})
-	t.Run("Environment", func(t *testing.T) {
-		testify.Zero_Allocation(t, func() {
-			count = os.OS_Environment(host, environment[:])
-		})
-		testify.Positive(t, count)
-	})
+	// Environment is exempt: the runtime exposes the live block only as an allocated copy.
+	count = os.OS_Environment(host, environment[:])
+	testify.Positive(t, count)
 	var text shared_os.Variable_Value
 	var found shared_os.Variable_Found
 	t.Run("Variable", func(t *testing.T) {
@@ -220,12 +260,9 @@ func Test_Operating_System_Heap_Allocation(t *testing.T) {
 
 func verify_host_self_exec_allocations(t *testing.T, host shared_os.OS, operation_err *error) {
 	t.Helper()
-	t.Run("Self_Exec_Ambient", func(t *testing.T) {
-		testify.Zero_Allocation(t, func() {
-			*operation_err = os.OS_Self_Exec(host, "", nil, nil)
-		})
-		testify.Error(t, *operation_err)
-	})
+	// A nil environment is exempt: it reads the live block, which the runtime only copies out.
+	*operation_err = os.OS_Self_Exec(host, "", nil, nil)
+	testify.Error(t, *operation_err)
 	t.Run("Self_Exec_Empty", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			*operation_err = os.OS_Self_Exec(host, "", nil, shared_os.Environment{})
@@ -302,8 +339,6 @@ func Test_Operating_System_Memory_Heap_Allocation(t *testing.T) {
 
 func test_host() (host os.Host) {
 	return os.Host{
-		Arguments:         []string{"os.test"},
-		Environment:       syscall.Environ(),
 		Executable:        "/bin/true",
 		Working_Directory: "/tmp",
 		Hostname:          "test",

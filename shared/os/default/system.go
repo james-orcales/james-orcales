@@ -9,6 +9,7 @@ package os
 
 import (
 	"errors"
+	process "os"
 	"syscall"
 	"unsafe"
 
@@ -216,10 +217,6 @@ func Self_Exec_Workspace_Pointer_Invariants(
 
 // Host holds caller-owned ambient state unavailable through allocation-free syscalls.
 type Host struct {
-	// Arguments is caller-captured argv.
-	Arguments os.Arguments
-	// Environment is caller-captured ambient environment.
-	Environment os.Environment
 	// Executable is caller-captured process image path.
 	Executable os.Executable_Path
 	// Working_Directory is caller-captured relative-path root.
@@ -232,8 +229,6 @@ type Host struct {
 
 // Host_Invariants keeps ambient state inside shared OS bound.
 func Host_Invariants(host Host, namespace aver.Namespace) {
-	os.Arguments_Invariants(host.Arguments, namespace)
-	os.Environment_Invariants(host.Environment, namespace)
 	os.Executable_Path_Invariants(host.Executable, namespace)
 	os.Working_Directory_Path_Invariants(host.Working_Directory, namespace)
 	os.Hostname_Invariants(host.Hostname, namespace)
@@ -318,7 +313,7 @@ func system_self_exec(
 	os.Arguments_Invariants(arguments, "system_self_exec.arguments")
 	os.Environment_Invariants(environment, "system_self_exec.environment")
 	if environment == nil {
-		environment = (*Host)(state).Environment
+		environment = syscall.Environ()
 	}
 	workspace := (*Host)(state).Self_Exec
 	if len(path) > len(*workspace.Path)-SELF_EXEC_TEXT_TERMINATOR_BYTES {
@@ -344,23 +339,25 @@ func system_self_exec(
 	return system_execve(unsafe.Pointer(workspace))
 }
 
+// Argv is what the runtime captured at exec, so reading it needs no syscall and no copy.
 func system_arguments(
-	state unsafe.Pointer, destination os.Arguments,
+	_ unsafe.Pointer, destination os.Arguments,
 ) (count os.Entry_Count) {
 	defer func() { os.Entry_Count_Invariants(count, "system_arguments.count") }()
 	os.Arguments_Invariants(destination, "system_arguments.destination")
-	arguments := (*Host)(state).Arguments
+	arguments := process.Args
 	aver.Always(len(destination) >= len(arguments),
 		"Caller-owned string storage holds complete host arguments.")
 	return os.Entry_Count(copy(destination, arguments))
 }
 
+// The runtime exposes the live environment only as a fresh copy, so this reader allocates.
 func system_environment(
-	state unsafe.Pointer, destination os.Environment,
+	_ unsafe.Pointer, destination os.Environment,
 ) (count os.Entry_Count) {
 	defer func() { os.Entry_Count_Invariants(count, "system_environment.count") }()
 	os.Environment_Invariants(destination, "system_environment.destination")
-	variables := (*Host)(state).Environment
+	variables := syscall.Environ()
 	aver.Always(len(destination) >= len(variables),
 		"Caller-owned string storage holds complete host environment.")
 	return os.Entry_Count(copy(destination, variables))
@@ -434,10 +431,16 @@ func New_Operating_System(state Host_Pointer) (host os.OS) {
 		Process_Identifier:        system_process_identifier,
 		Effective_User_Identifier: system_effective_user_identifier,
 		Self_Exec:                 system_self_exec,
+		Exit:                      system_exit,
 		Memory_Map:                system_memory_map,
 		Memory_Unmap:              system_memory_unmap,
 	}
 	return host
+}
+
+func system_exit(_ unsafe.Pointer, code os.Exit_Code) {
+	os.Exit_Code_Invariants(code, "system_exit.code")
+	process.Exit(int(code))
 }
 
 // MEMORY_DESCRIPTOR_ANONYMOUS is fd -1, which portable anonymous map requires.
@@ -574,6 +577,13 @@ func OS_Self_Exec(
 	os.Arguments_Invariants(arguments, "default_os_self_exec.arguments")
 	os.Environment_Invariants(environment, "default_os_self_exec.environment")
 	return os.OS_Self_Exec(host, path, arguments, environment)
+}
+
+// OS_Exit keeps default-package callers on pure OS operation.
+func OS_Exit(host os.OS, code os.Exit_Code) {
+	os.OS_Invariants(host, "default_os_exit.host")
+	os.Exit_Code_Invariants(code, "default_os_exit.code")
+	os.OS_Exit(host, code)
 }
 
 // FILE_BYTES_MAXIMUM bounds one whole-file read or write; larger files belong on the IO loop,
