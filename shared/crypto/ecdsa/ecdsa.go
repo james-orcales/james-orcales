@@ -4,11 +4,10 @@ package ecdsa
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/elliptic"
-	"local/james-orcales/shared/crypto/rand"
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/csprng"
 )
 
 // SCALAR_SIZE is the P-256 group-order width.
@@ -45,7 +44,7 @@ const SIGNATURE_UNVALIDATED_SIZE_MINIMUM = bytes.SLICE_SIZE_MINIMUM
 const SIGNATURE_UNVALIDATED_SIZE_MAXIMUM = SIGNATURE_SIZE + binary.UINT_8_SIZE
 
 // SIGN_ATTEMPT_MAXIMUM consumes at most one existing CSPRNG output buffer.
-const SIGN_ATTEMPT_MAXIMUM = csprng.BUFFER_BYTES / SCALAR_SIZE
+const SIGN_ATTEMPT_MAXIMUM = prng.BUFFER_BYTES / SCALAR_SIZE
 
 // KEY_STATUS_OK means a validated key committed.
 const KEY_STATUS_OK Key_Status = Key_Status(bits.WORD_8_MINIMUM)
@@ -403,7 +402,7 @@ func Public_Key_Bytes_Into(
 // Sign samples at most one bounded entropy window before committing a low-S signature.
 func Sign(
 	destination Signature_Destination,
-	generator random.Generator,
+	generator prng.Source,
 	private_key Private_Key,
 	digest Digest,
 ) (status Sign_Status) {
@@ -414,11 +413,10 @@ func Sign(
 	Signature_Destination_Invariants(destination, "Sign.destination")
 	Private_Key_Invariants(private_key, "Sign.private_key")
 	Digest_Invariants(digest, "Sign.digest")
-	invariant.Always(generator != nil, "An ECDSA entropy generator has storage.")
-	if generator == nil {
+	prng.Source_Invariants(generator, "Sign.generator")
+	if generator.State == nil {
 		panic("ecdsa: generator is nil")
 	}
-	csprng.Generator_Invariants(*generator, "Sign.generator")
 	invariant.Always(
 		private_key.Ready[READY_INDEX] == READY_COMPLETE,
 		"Signing receives a ready ECDSA private key.",
@@ -431,7 +429,7 @@ func Sign(
 	scalar_decode_reduce(&digest_scalar, (*[SCALAR_SIZE]byte)(&digest))
 	for range SIGN_ATTEMPT_MAXIMUM {
 		var nonce_encoding [SCALAR_SIZE]byte
-		random.Read(generator, nonce_encoding[:])
+		prng.Source_Read(generator, nonce_encoding[:])
 		signature, accepted := sign_candidate(
 			&private_scalar, &digest_scalar, &nonce_encoding,
 		)

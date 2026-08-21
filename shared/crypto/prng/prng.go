@@ -1,35 +1,38 @@
-// Package csprng is a cryptographically secure pseudo-random generator: a ChaCha20 keystream
-// (RFC 8439) seeded once from a 32-byte seed. It is the cryptographic sibling of prng — where prng
-// is a deterministic, non-cryptographic xoshiro256++ for reproducible simulation, csprng produces
-// unpredictable bytes and bounded integers for keys, tokens, nonces, and unbiased choice.
+// Package prng is a cryptographically secure pseudo-random generator: a ChaCha20 keystream
+// (RFC 8439) seeded once from a 32-byte seed. It is the cryptographic sibling of simulation/prng —
+// where that is a deterministic, non-cryptographic xoshiro256++ for reproducible simulation, this
+// produces unpredictable bytes and bounded integers for keys, tokens, nonces, and unbiased choice.
 //
 // The seed is injected, never read here: this library tier holds no operating-system dependency and
 // the linter forbids crypto/rand in it. The one sanctioned reader of OS entropy is the composition
-// tier, csprng/default, whose New_Operating_System_Generator draws the seed from crypto/rand. A
-// test or simulation instead calls New with a seed of its own, and the stream is then a pure,
+// tier, crypto/prng/default, whose New_Operating_System_Chacha draws the seed from crypto/rand.
+// A test or simulation instead calls New with a seed of its own, and the stream is then a pure,
 // deterministic function of that seed.
 //
 // Forward secrecy comes from fast-key-erasure (Bernstein's design, as in arc4random): each refill
 // overwrites the key with fresh keystream and each delivered byte is zeroed, so disclosing a live
-// Generator cannot reconstruct output it already handed out. A Generator is single-owner, like
-// prng.Generator: it is NOT safe for concurrent use, and each goroutine holds its own.
+// Chacha cannot reconstruct output it already handed out. A Chacha is single-owner, like
+// prng.Xoshiro: it is NOT safe for concurrent use, and each goroutine holds its own.
 //
-// Read fills bytes and satisfies io.Reader; Generator_Below draws an unbiased bounded integer. The
+// Read fills bytes and satisfies io.Reader; Chacha_Below draws an unbiased bounded integer. The
 // house forbids returning raw unbounded entropy from a free function (it has no witnessable
 // invariant), so a raw 64-bit draw is a Read into eight bytes.
 //
-//	generator := os_csprng.New_Operating_System_Generator(0)
+//	generator := system_prng.New_Operating_System_Chacha(0)
 //	token := make([]byte, 32)
 //	generator.Read(token)
-//	victim := csprng.Generator_Below(&generator, csprng.Bound(replica_count))
+//	victim := prng.Chacha_Below(&generator, prng.Bound(replica_count))
 //
 // ChaCha20 is by Daniel J. Bernstein; the construction and vectors follow RFC 8439.
-package csprng
+package prng
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/prng"
 )
 
 // CHACHA_CONSTANT_FIRST is the little-endian word for ASCII "expa", first of the four constants
@@ -48,7 +51,7 @@ const CHACHA_CONSTANT_FOURTH = 0x6b206574
 // KEY_BYTES is the ChaCha20 key width, and so the seed width: 256 bits.
 const KEY_BYTES = 32
 
-// WORD_BYTE_COUNT matches the uint64 draw that Generator_Below assembles.
+// WORD_BYTE_COUNT matches the uint64 draw that Chacha_Below assembles.
 const WORD_BYTE_COUNT = 8
 
 // CHACHA_BLOCK_BYTE_COUNT is the block width that RFC 8439 specifies.
@@ -91,7 +94,7 @@ const BLOCK_COUNTER_THIRD = 2
 // BLOCK_COUNTER_MAX is the last block counter of a refill.
 const BLOCK_COUNTER_MAX = REFILL_BLOCKS - 1
 
-// BOUND_MIN is the smallest bound Generator_Below accepts: one.
+// BOUND_MIN is the smallest bound Chacha_Below accepts: one.
 const BOUND_MIN Bound = 1
 
 // BOUND_MAX caps a draw bound well below where the 64-bit multiply could overflow meaning.
@@ -100,15 +103,15 @@ const BOUND_MAX Bound = 1 << 62
 // INDEX_MIN is the low bound of a draw result: zero.
 const INDEX_MIN Index = 0
 
-// INDEX_MAX is one below the largest bound because Generator_Below's range is half-open.
+// INDEX_MAX is one below the largest bound because Chacha_Below's range is half-open.
 const INDEX_MAX Index = (1 << 62) - 1
 
 // SINK_MIN is the smallest fill request: an empty sink.
-const SINK_MIN = 0
+const SINK_MIN = prng.SINK_SIZE_MINIMUM
 
-// SINK_MAX keeps accidental bulk entropy requests bounded while remaining far above any key,
-// token, or nonce this generator is intended to fill.
-const SINK_MAX = 1 << 20
+// SINK_MAX inherits the prng Source bound so a fill the vtable admits can never exceed what this
+// backend accepts.
+const SINK_MAX = prng.SINK_SIZE_MAXIMUM
 
 // Block_Counter is the ChaCha20 block index within one refill, running BLOCK_COUNTER_MIN to
 // BLOCK_COUNTER_MAX.
@@ -127,7 +130,7 @@ func Block_Counter_Invariants(counter Block_Counter, namespace invariant.Namespa
 		Ensure()
 }
 
-// Cursor is the next unread byte of a Generator's buffer, from CURSOR_MIN to CURSOR_MAX.
+// Cursor is the next unread byte of a Chacha's buffer, from CURSOR_MIN to CURSOR_MAX.
 type Cursor uint
 
 // Cursor_Invariants bounds a buffer cursor to the buffer.
@@ -137,7 +140,7 @@ func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Bound is the exclusive upper limit of a Generator_Below draw: a positive count of outcomes.
+// Bound is the exclusive upper limit of a Chacha_Below draw: a positive count of outcomes.
 type Bound uint64
 
 // Bound_Invariants requires a bound to be positive and within the overflow-safe ceiling.
@@ -147,7 +150,7 @@ func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Index is a Generator_Below draw: a value in the half-open range zero to its bound.
+// Index is a Chacha_Below draw: a value in the half-open range zero to its bound.
 type Index uint64
 
 // Index_Invariants bounds a draw result.
@@ -167,11 +170,11 @@ func Sink_Invariants(sink Sink, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Generator is the state of a fast-key-erasure ChaCha20 keystream. Construct it with New; the zero
-// value is degenerate. Its fields are transparent, like prng.Generator's State: a Generator is
+// Chacha is the state of a fast-key-erasure ChaCha20 keystream. Construct it with New; the zero
+// value is degenerate. Its fields are transparent, like prng.Xoshiro's State: a Chacha is
 // single-owner, so copying it forks the stream, and forward secrecy rests on rolling the key and
 // zeroing delivered bytes, not on hiding these fields.
-type Generator struct {
+type Chacha struct {
 	// Key is the current ChaCha20 key. Each refill overwrites it with fresh keystream, so the
 	// seed and every earlier key vanish the moment their output is produced.
 	Key [KEY_BYTES]byte
@@ -183,22 +186,22 @@ type Generator struct {
 	Position Cursor
 }
 
-// Generator_Invariants states a Generator's buffer position; its key and buffer are fixed-size
+// Chacha_Invariants states a Chacha's buffer position; its key and buffer are fixed-size
 // arrays with no bundle of their own.
-func Generator_Invariants(generator Generator, namespace invariant.Namespace) {
+func Chacha_Invariants(generator Chacha, namespace invariant.Namespace) {
 	Cursor_Invariants(generator.Position, namespace)
 }
 
-// New seeds a Generator at position and performs the first fast-key-erasure refill, so the
-// caller-supplied seed is erased from the Generator before New returns. The zero Generator is
+// New seeds a Chacha at position and performs the first fast-key-erasure refill, so the
+// caller-supplied seed is erased from the Chacha before New returns. The zero Chacha is
 // degenerate; always construct through New.
-func New(seed [KEY_BYTES]byte, position Cursor) (generator Generator) {
+func New(seed [KEY_BYTES]byte, position Cursor) (generator Chacha) {
 	defer func() {
-		Generator_Invariants(generator, "new.generator")
+		Chacha_Invariants(generator, "new.generator")
 	}()
 	Cursor_Invariants(position, "new.position")
 	generator.Key = seed
-	generator_refill(&generator)
+	chacha_refill(&generator)
 	for index := 0; index < int(position); index++ {
 		generator.Buffer[index] = 0
 	}
@@ -207,36 +210,77 @@ func New(seed [KEY_BYTES]byte, position Cursor) (generator Generator) {
 }
 
 // Read fills p with cryptographically secure bytes, always fully, returning len(p) and a nil error.
-// It is the one method the house style permits: it exists so *Generator satisfies io.Reader. The
+// It is the one method the house style permits: it exists so *Chacha satisfies io.Reader. The
 // keystream is inexhaustible, so a read never comes up short and never errors.
-func (generator *Generator) Read(p []byte) (n int, err error) {
-	generator_drain(generator, Sink(p))
+func (generator *Chacha) Read(p []byte) (n int, err error) {
+	chacha_drain(generator, Sink(p))
 	return len(p), nil
 }
 
-// Generator_Below returns a value in the half-open range zero to bound, never bound itself, using
+// Source is the random-byte vtable a cryptographic caller requires: the simulation vtable under a
+// distinct name, so a signature that takes it says the parameter must carry real entropy. A
+// production root binds a Chacha through Chacha_To_Source. A simulation converts a xoshiro
+// source into it, Source(prng.Xoshiro_To_Source(&xoshiro)), and that conversion is the one place a
+// fake enters, so a grep for it finds every test that signs with predictable bytes.
+type Source prng.Source
+
+// Source_Invariants proves both halves of the vtable are bound before any draw.
+func Source_Invariants(source Source, namespace invariant.Namespace) {
+	prng.Source_Invariants(prng.Source(source), namespace)
+}
+
+// Source_Read fills sink through the vtable, one word per eight bytes; a partial tail spends a
+// whole word. The bound is this package's Sink, so a caller never names the simulation package.
+func Source_Read(source Source, sink Sink) {
+	Source_Invariants(source, "source_read.source")
+	Sink_Invariants(sink, "source_read.sink")
+	prng.Source_Read(prng.Source(source), prng.Sink(sink))
+}
+
+// Chacha_To_Source binds caller-owned state into Source without a captured function
+// environment. Only a production root calls this; a simulation converts a xoshiro source instead.
+func Chacha_To_Source(generator *Chacha) (source Source) {
+	defer func() { Source_Invariants(source, "chacha_to_source.source") }()
+	Chacha_Invariants(*generator, "chacha_to_source.generator")
+	source = Source{
+		State: unsafe.Pointer(generator),
+		Next:  chacha_source_next,
+	}
+	return source
+}
+
+// The vtable slot: eight stream bytes assembled little-endian, the same way Chacha_Below
+// assembles its draw, so prng.Source_Read unpacks them back into stream order.
+func chacha_source_next(state unsafe.Pointer) (value prng.Word) {
+	defer func() { prng.Word_Invariants(value, "chacha_source_next.value") }()
+	var octet [WORD_BYTE_COUNT]byte
+	chacha_drain((*Chacha)(state), Sink(octet[:]))
+	return prng.Word(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+}
+
+// Chacha_Below returns a value in the half-open range zero to bound, never bound itself, using
 // Lemire's method so the result is unbiased.
-func Generator_Below(generator *Generator, bound Bound) (index Index) {
-	defer func() { Index_Invariants(index, "generator_below.index") }()
-	Generator_Invariants(*generator, "generator_below.generator")
-	Bound_Invariants(bound, "generator_below.bound")
+func Chacha_Below(generator *Chacha, bound Bound) (index Index) {
+	defer func() { Index_Invariants(index, "chacha_below.index") }()
+	Chacha_Invariants(*generator, "chacha_below.generator")
+	Bound_Invariants(bound, "chacha_below.bound")
 	limit := uint64(bound)
 	// The raw draw stays a local: a free function returning unbounded entropy has no
 	// witnessable invariant, so the word is read into bytes and assembled here, not returned.
 	var octet [WORD_BYTE_COUNT]byte
-	generator_drain(generator, Sink(octet[:]))
-	random := uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+	chacha_drain(generator, Sink(octet[:]))
+	word := uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
 	high_word, low_word := bits.Multiply_64(
-		bits.Word_64(random), bits.Multiplier_64(limit),
+		bits.Word_64(word), bits.Multiplier_64(limit),
 	)
 	high, low := uint64(high_word), uint64(low_word)
 	if low < limit {
 		threshold := (-limit) % limit
 		for low < threshold {
-			generator_drain(generator, Sink(octet[:]))
-			random = uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+			chacha_drain(generator, Sink(octet[:]))
+			word = uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
 			high_word, low_word = bits.Multiply_64(
-				bits.Word_64(random), bits.Multiplier_64(limit),
+				bits.Word_64(word), bits.Multiplier_64(limit),
 			)
 			high, low = uint64(high_word), uint64(low_word)
 		}
@@ -247,14 +291,14 @@ func Generator_Below(generator *Generator, bound Bound) (index Index) {
 // Copies the next len(destination) bytes of keystream into destination, refilling as it exhausts
 // the buffer, and zeroes each delivered byte. The zeroing is the second half of fast-key-erasure:
 // with the key already rolled forward on each refill, wiping delivered bytes means a disclosed
-// Generator holds neither an earlier key nor any output it already returned.
-func generator_drain(generator *Generator, destination Sink) {
-	Generator_Invariants(*generator, "generator_drain.generator")
-	Sink_Invariants(destination, "generator_drain.destination")
+// Chacha holds neither an earlier key nor any output it already returned.
+func chacha_drain(generator *Chacha, destination Sink) {
+	Chacha_Invariants(*generator, "chacha_drain.generator")
+	Sink_Invariants(destination, "chacha_drain.destination")
 	filled := 0
 	for filled < len(destination) {
 		if generator.Position == CURSOR_MAX {
-			generator_refill(generator)
+			chacha_refill(generator)
 		}
 		position := int(generator.Position)
 		take := BUFFER_BYTES - position
@@ -275,8 +319,8 @@ func generator_drain(generator *Generator, destination Sink) {
 // the first 32 output bytes, and stores the remaining 224 as the buffer. Nonce is always zero and
 // the counter only runs its refill range: safe against reuse because each key expands exactly one
 // 256-byte block and is then discarded, so no (key, nonce, counter) triple ever repeats.
-func generator_refill(generator *Generator) {
-	Generator_Invariants(*generator, "generator_refill.generator")
+func chacha_refill(generator *Chacha) {
+	Chacha_Invariants(*generator, "chacha_refill.generator")
 	var stream [REFILL_BYTES]byte
 	var block [CHACHA_BLOCK_BYTE_COUNT]byte
 	for block_index := 0; block_index < REFILL_BLOCKS; block_index++ {

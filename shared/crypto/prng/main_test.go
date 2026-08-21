@@ -1,4 +1,4 @@
-package csprng
+package prng
 
 import (
 	"testing"

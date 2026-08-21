@@ -6,10 +6,10 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/crypto/rsa"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/testify"
 )
 
@@ -29,16 +29,17 @@ func Test_Encryption(t *testing.T) {
 	standard_private := standard_private_key(t)
 	private_key, public_key := owned_keys(t, standard_private)
 	message := []byte("bounded RSA OAEP")
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
+	source := prng.Chacha_To_Source(&generator)
 	var ciphertext rsa.Ciphertext
-	rsa.Encrypt_OAEP_SHA_256(&ciphertext, &generator, public_key, message)
+	rsa.Encrypt_OAEP_SHA_256(&ciphertext, source, public_key, message)
 	plaintext, err := standard_rsa.DecryptOAEP(
 		sha256.New(), nil, standard_private, ciphertext[:], nil,
 	)
 	testify.No_Error(t, err)
 	testify.Equal(t, message, plaintext)
 
-	standard_generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	standard_generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
 	standard_ciphertext, err := standard_rsa.EncryptOAEP(
 		sha256.New(), &standard_generator, &standard_private.PublicKey, message, nil,
 	)
@@ -56,9 +57,10 @@ func Test_Signatures(t *testing.T) {
 	standard_private := standard_private_key(t)
 	private_key, public_key := owned_keys(t, standard_private)
 	digest := sha256.Sum256([]byte("bounded RSA signatures"))
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
+	source := prng.Chacha_To_Source(&generator)
 	var signature rsa.Signature
-	rsa.Sign_PSS_SHA_256(&signature, &generator, private_key, digest)
+	rsa.Sign_PSS_SHA_256(&signature, source, private_key, digest)
 	err := standard_rsa.VerifyPSS(
 		&standard_private.PublicKey, crypto.SHA256, digest[:], signature[:], nil,
 	)
@@ -83,12 +85,13 @@ func Test_Signatures(t *testing.T) {
 func Test_Bounds(t *testing.T) {
 	standard_private := standard_private_key(t)
 	private_key, public_key := owned_keys(t, standard_private)
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
+	source := prng.Chacha_To_Source(&generator)
 	var ciphertext rsa.Ciphertext
 	var message_oversized [rsa.MESSAGE_SIZE_MAXIMUM + binary.UINT_8_SIZE]byte
 	testify.Panics(t, func() {
 		rsa.Encrypt_OAEP_SHA_256(
-			&ciphertext, &generator, public_key, message_oversized[:],
+			&ciphertext, source, public_key, message_oversized[:],
 		)
 	})
 	var ciphertext_oversized [rsa.CIPHERTEXT_UNVALIDATED_SIZE_MAXIMUM +
@@ -105,7 +108,7 @@ func Test_Bounds(t *testing.T) {
 	testify.Equal(t, rsa.DECRYPT_STATUS_INPUT_INVALID, status)
 	testify.Equal(t, byte(bits.WORD_8_MAXIMUM), output[bits.BIT_COUNT_MINIMUM])
 
-	rsa.Encrypt_OAEP_SHA_256(&ciphertext, &generator, public_key, []byte("short"))
+	rsa.Encrypt_OAEP_SHA_256(&ciphertext, source, public_key, []byte("short"))
 	var short [rsa.DESTINATION_SIZE_MINIMUM + binary.UINT_8_SIZE]byte
 	short[bits.BIT_COUNT_MINIMUM] = bits.WORD_8_MAXIMUM
 	count, status = rsa.Decrypt_OAEP_SHA_256(short[:], private_key, ciphertext[:])
@@ -147,7 +150,8 @@ func Test_Allocation(t *testing.T) {
 	})
 	message := []byte("allocation")
 	digest := sha256.Sum256(message)
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
+	source := prng.Chacha_To_Source(&generator)
 	var ciphertext rsa.Ciphertext
 	var signature rsa.Signature
 	var output [rsa.MESSAGE_SIZE_MAXIMUM]byte
@@ -155,7 +159,7 @@ func Test_Allocation(t *testing.T) {
 	var decrypt_status rsa.Decrypt_Status
 	var verified rsa.Verification
 	testify.Zero_Allocation(t, func() {
-		rsa.Encrypt_OAEP_SHA_256(&ciphertext, &generator, public_key, message)
+		rsa.Encrypt_OAEP_SHA_256(&ciphertext, source, public_key, message)
 	})
 	testify.Zero_Allocation(t, func() {
 		count, decrypt_status = rsa.Decrypt_OAEP_SHA_256(
@@ -163,7 +167,7 @@ func Test_Allocation(t *testing.T) {
 		)
 	})
 	testify.Zero_Allocation(t, func() {
-		rsa.Sign_PSS_SHA_256(&signature, &generator, private_key, digest)
+		rsa.Sign_PSS_SHA_256(&signature, source, private_key, digest)
 	})
 	testify.Zero_Allocation(t, func() {
 		verified = rsa.Verify_PSS_SHA_256(public_key, digest, signature[:])
@@ -211,7 +215,8 @@ func test_key_domains() {
 }
 
 func test_encryption_domains(private_key rsa.Private_Key, public_key rsa.Public_Key) {
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
+	source := prng.Chacha_To_Source(&generator)
 	var ciphertext rsa.Ciphertext
 	var message [rsa.MESSAGE_SIZE_MAXIMUM]byte
 	var output [rsa.MESSAGE_SIZE_MAXIMUM]byte
@@ -222,7 +227,7 @@ func test_encryption_domains(private_key rsa.Private_Key, public_key rsa.Public_
 		rsa.MESSAGE_SIZE_MAXIMUM - binary.UINT_8_SIZE,
 		rsa.MESSAGE_SIZE_MAXIMUM,
 	} {
-		rsa.Encrypt_OAEP_SHA_256(&ciphertext, &generator, public_key, message[:size])
+		rsa.Encrypt_OAEP_SHA_256(&ciphertext, source, public_key, message[:size])
 		rsa.Decrypt_OAEP_SHA_256(output[:], private_key, ciphertext[:])
 	}
 	for _, size := range [...]int{
@@ -266,21 +271,22 @@ func test_generator_domains(t *testing.T) {
 	digest := sha256.Sum256(nil)
 	var ciphertext rsa.Ciphertext
 	var signature rsa.Signature
-	for _, position := range [...]csprng.Cursor{
-		csprng.CURSOR_MIN,
-		csprng.CURSOR_MIN + binary.UINT_8_SIZE,
-		csprng.CURSOR_MIN + binary.UINT_16_SIZE,
-		csprng.CURSOR_MAX,
+	for _, position := range [...]prng.Cursor{
+		prng.CURSOR_MIN,
+		prng.CURSOR_MIN + binary.UINT_8_SIZE,
+		prng.CURSOR_MIN + binary.UINT_16_SIZE,
+		prng.CURSOR_MAX,
 	} {
-		empty_generator := csprng.Generator{Position: position}
+		empty_generator := prng.Chacha{Position: position}
+		empty_source := prng.Chacha_To_Source(&empty_generator)
 		testify.Panics(t, func() {
 			rsa.Encrypt_OAEP_SHA_256(
-				&ciphertext, &empty_generator, rsa.Public_Key{}, nil,
+				&ciphertext, empty_source, rsa.Public_Key{}, nil,
 			)
 		})
 		testify.Panics(t, func() {
 			rsa.Sign_PSS_SHA_256(
-				&signature, &empty_generator, rsa.Private_Key{}, digest,
+				&signature, empty_source, rsa.Private_Key{}, digest,
 			)
 		})
 	}
@@ -288,7 +294,7 @@ func test_generator_domains(t *testing.T) {
 
 func standard_private_key(t *testing.T) (private_key *standard_rsa.PrivateKey) {
 	t.Helper()
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
 	private_key, err := standard_rsa.GenerateKey(&generator, rsa.MODULUS_BIT_COUNT)
 	testify.No_Error(t, err)
 	return private_key

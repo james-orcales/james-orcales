@@ -3,12 +3,11 @@ package rsa
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/crypto/rand"
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/crypto/sha256"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/csprng"
 )
 
 // MODULUS_LIMB_COUNT fixes RSA-2048 storage to 32 machine words.
@@ -548,7 +547,7 @@ func Public_Key_Bytes_Into(destination Modulus_Destination, public_key Public_Ke
 // Encrypt_OAEP_SHA_256 commits one fixed ciphertext after complete padding construction.
 func Encrypt_OAEP_SHA_256(
 	destination Ciphertext_Destination,
-	generator random.Generator,
+	generator prng.Source,
 	public_key Public_Key,
 	message Message,
 ) {
@@ -556,18 +555,17 @@ func Encrypt_OAEP_SHA_256(
 	Ciphertext_Destination_Invariants(destination, "Encrypt.destination")
 	Public_Key_Invariants(public_key, "Encrypt.public_key")
 	Message_Invariants(message, "Encrypt.message")
-	invariant.Always(generator != nil, "An RSA encryption generator has storage.")
-	if generator == nil {
+	prng.Source_Invariants(generator, "Encrypt.generator")
+	if generator.State == nil {
 		panic("rsa: generator is nil")
 	}
-	csprng.Generator_Invariants(*generator, "Encrypt.generator")
 	public_key_require(public_key)
 	if len(message) > MESSAGE_SIZE_MAXIMUM {
 		panic("rsa: OAEP message exceeds bound")
 	}
 	var encoded [MODULUS_SIZE]byte
 	var seed Digest
-	random.Read(generator, seed[:])
+	prng.Source_Read(generator, seed[:])
 	database := (*[OAEP_DATABASE_SIZE]byte)(
 		encoded[binary.UINT_8_SIZE+HASH_SIZE:],
 	)
@@ -655,7 +653,7 @@ func Decrypt_OAEP_SHA_256(
 // Sign_PSS_SHA_256 uses one digest-width injected salt and fixed private work.
 func Sign_PSS_SHA_256(
 	destination Signature_Destination,
-	generator random.Generator,
+	generator prng.Source,
 	private_key Private_Key,
 	digest Digest,
 ) {
@@ -663,14 +661,13 @@ func Sign_PSS_SHA_256(
 	Signature_Destination_Invariants(destination, "Sign_PSS.destination")
 	Private_Key_Invariants(private_key, "Sign_PSS.private_key")
 	Digest_Invariants(digest, "Sign_PSS.digest")
-	invariant.Always(generator != nil, "An RSA signing generator has storage.")
-	if generator == nil {
+	prng.Source_Invariants(generator, "Sign_PSS.generator")
+	if generator.State == nil {
 		panic("rsa: generator is nil")
 	}
-	csprng.Generator_Invariants(*generator, "Sign_PSS.generator")
 	private_key_require(private_key)
 	var salt Digest
-	random.Read(generator, salt[:])
+	prng.Source_Read(generator, salt[:])
 	encoded := pss_encoding(digest, salt)
 	var signature [MODULUS_SIZE]byte
 	rsa_private_operation(&signature, &encoded, private_key)

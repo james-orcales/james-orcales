@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/crypto/ecdsa"
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/encoding/asn1"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/testify"
 )
 
@@ -43,9 +43,10 @@ func Test_Signatures(t *testing.T) {
 	private_key := private_key_minimum(t)
 	public_key := ecdsa.Public_Key_From_Private(private_key)
 	digest := sha256.Sum256([]byte("bounded ECDSA"))
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
+	source := prng.Chacha_To_Source(&generator)
 	var signature ecdsa.Signature
-	status := ecdsa.Sign(&signature, &generator, private_key, digest)
+	status := ecdsa.Sign(&signature, source, private_key, digest)
 	testify.Equal(t, ecdsa.SIGN_STATUS_OK, status)
 
 	parameters := elliptic.P256().Params()
@@ -80,12 +81,13 @@ func Test_Bounds(t *testing.T) {
 	testify.False(t, bool(ecdsa.Verify(public_key, digest, nil)))
 	var zero_signature ecdsa.Signature
 	testify.False(t, bool(ecdsa.Verify(public_key, digest, zero_signature[:])))
-	var empty_generator csprng.Generator
+	var empty_generator prng.Chacha
+	empty_source := prng.Chacha_To_Source(&empty_generator)
 	var signature ecdsa.Signature
 	signature[bits.BIT_COUNT_MINIMUM] = bits.WORD_8_MAXIMUM
 	signature_before := signature
 	sign_status := ecdsa.Sign(
-		&signature, &empty_generator, private_key, digest,
+		&signature, empty_source, private_key, digest,
 	)
 	testify.Equal(t, ecdsa.SIGN_STATUS_ENTROPY_EXHAUSTED, sign_status)
 	testify.Equal(t, signature_before, signature)
@@ -115,7 +117,8 @@ func Test_Allocation(t *testing.T) {
 	var public_encoding ecdsa.Public_Key_Encoding
 	var signature ecdsa.Signature
 	digest := sha256.Sum256([]byte("allocation"))
-	generator := csprng.New([csprng.KEY_BYTES]byte{}, csprng.CURSOR_MIN)
+	generator := prng.New([prng.KEY_BYTES]byte{}, prng.CURSOR_MIN)
+	source := prng.Chacha_To_Source(&generator)
 	var key_status ecdsa.Key_Status
 	var sign_status ecdsa.Sign_Status
 	var verified ecdsa.Verification
@@ -132,7 +135,7 @@ func Test_Allocation(t *testing.T) {
 		key_status = ecdsa.Public_Key_Set_Bytes(&parsed, public_encoding[:])
 	})
 	testify.Zero_Allocation(t, func() {
-		sign_status = ecdsa.Sign(&signature, &generator, private_key, digest)
+		sign_status = ecdsa.Sign(&signature, source, private_key, digest)
 	})
 	testify.Zero_Allocation(t, func() {
 		verified = ecdsa.Verify(public_key, digest, signature[:])
@@ -182,15 +185,16 @@ func Test_Invariant_Domains(t *testing.T) {
 	}
 
 	var output ecdsa.Signature
-	for _, position := range [...]csprng.Cursor{
-		csprng.CURSOR_MIN,
-		csprng.CURSOR_MIN + binary.UINT_8_SIZE,
-		csprng.CURSOR_MIN + binary.UINT_16_SIZE,
-		csprng.CURSOR_MAX,
+	for _, position := range [...]prng.Cursor{
+		prng.CURSOR_MIN,
+		prng.CURSOR_MIN + binary.UINT_8_SIZE,
+		prng.CURSOR_MIN + binary.UINT_16_SIZE,
+		prng.CURSOR_MAX,
 	} {
-		generator := csprng.Generator{Position: position}
+		generator := prng.Chacha{Position: position}
+		source := prng.Chacha_To_Source(&generator)
 		testify.Panics(t, func() {
-			ecdsa.Sign(&output, &generator, ecdsa.Private_Key{}, digest)
+			ecdsa.Sign(&output, source, ecdsa.Private_Key{}, digest)
 		})
 	}
 }

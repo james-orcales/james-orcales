@@ -1,8 +1,8 @@
-// Whitebox suite (package csprng): most checks are black-box, but the reference-vector test
+// Whitebox suite (package prng): most checks are black-box, but the reference-vector test
 // reaches the unexported chacha20_block to match RFC 8439's vectors before fast-key-erasure hides
 // the raw keystream, and the erasure test reads the key. Every spec-mapped test is in this file, in
 // heading order.
-package csprng
+package prng
 
 import (
 	"testing"
@@ -12,6 +12,7 @@ import (
 	"local/james-orcales/shared/encoding/hex"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/prng"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -179,7 +180,7 @@ func Test_Below_Is_Bounded(t *testing.T) {
 	bounds := []int{1, 2, 7, 1000, 1 << 40}
 	for _, bound := range bounds {
 		for draw_index := 0; draw_index < 10000; draw_index++ {
-			index := Generator_Below(&generator, Bound(bound))
+			index := Chacha_Below(&generator, Bound(bound))
 			if index >= Index(bound) {
 				t.Fatalf("Below(%d) returned %d, out of range", bound, index)
 			}
@@ -190,21 +191,21 @@ func Test_Below_Is_Bounded(t *testing.T) {
 			[KEY_BYTES]byte{byte(byte_size)},
 			Cursor(byte_size),
 		)
-		Generator_Below(&positioned, BOUND_MAX)
+		Chacha_Below(&positioned, BOUND_MAX)
 	}
 	// An all-ones draw reaches the half-open domain's last value deterministically; waiting for
 	// a random stream to hit one point in 2^62 would make the boundary contract untestable.
-	maximum_generator := Generator{}
+	maximum_generator := Chacha{}
 	for index := 0; index < 8; index++ {
 		maximum_generator.Buffer[index] = 0xff
 	}
-	maximum := Generator_Below(&maximum_generator, BOUND_MAX)
+	maximum := Chacha_Below(&maximum_generator, BOUND_MAX)
 	if maximum != INDEX_MAX {
 		t.Fatalf("Below(%d) returned %d from an all-ones draw, want %d",
 			BOUND_MAX, maximum, INDEX_MAX)
 	}
 	died := did_die(func() {
-		Generator_Below(&generator, Bound(0))
+		Chacha_Below(&generator, Bound(0))
 	})
 	if !died {
 		t.Fatalf("Below with a zero bound did not exit")
@@ -212,7 +213,7 @@ func Test_Below_Is_Bounded(t *testing.T) {
 }
 
 // Test_Seed_Is_Erased_After_Construction checks New performs the first refill, so the seed no
-// longer lives in the Generator's key and a later disclosure cannot reproduce it or its output.
+// longer lives in the Chacha's key and a later disclosure cannot reproduce it or its output.
 func Test_Seed_Is_Erased_After_Construction(t *testing.T) {
 	seed := [KEY_BYTES]byte{}
 	for index := 0; index < 32; index++ {
@@ -230,10 +231,67 @@ func Test_Refill_Resets_Cursor(t *testing.T) {
 	positions := []Cursor{CURSOR_MIN, 1, 2, CURSOR_MAX}
 	for _, position := range positions {
 		generator := New([KEY_BYTES]byte{byte(position)}, position)
-		generator_refill(&generator)
+		chacha_refill(&generator)
 		if generator.Position != CURSOR_MIN {
 			t.Fatalf("refill cursor was %d, want %d", generator.Position, CURSOR_MIN)
 		}
+	}
+}
+
+// Test_Source_Is_Transparent checks the vtable path equals the direct Read path from equal state,
+// across a refill boundary, and that a nil Chacha dies before binding.
+func Test_Source_Is_Transparent(t *testing.T) {
+	subject := New([KEY_BYTES]byte{6}, CURSOR_MIN)
+	reference := New([KEY_BYTES]byte{6}, CURSOR_MIN)
+	source := Chacha_To_Source(&subject)
+	got := make([]byte, BUFFER_BYTES+1)
+	want := make([]byte, BUFFER_BYTES+1)
+	Source_Read(source, Sink(got[:WORD_BYTE_COUNT]))
+	Source_Read(source, Sink(got[WORD_BYTE_COUNT:]))
+	reference.Read(want)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("vtable bytes differ from direct Read bytes")
+	}
+	if !did_die(func() { Chacha_To_Source(nil) }) {
+		t.Fatalf("nil Chacha did not die")
+	}
+	// Binding at each cursor boundary witnesses the Chacha invariant that the bind asserts.
+	for _, position := range []Cursor{CURSOR_MIN, CURSOR_MIN + 1, CURSOR_MIN + 2, CURSOR_MAX} {
+		positioned := New([KEY_BYTES]byte{6}, position)
+		Source_Read(Chacha_To_Source(&positioned), Sink(got[:WORD_BYTE_COUNT]))
+	}
+	// A constructed buffer reaches each word edge of the slot deterministically; a keystream
+	// would take 2^64 draws to land on one of them by chance.
+	for _, word := range []uint64{0, 1, 2, bits.WORD_64_MAXIMUM} {
+		edge := Chacha{}
+		binary.Put_Uint_64(edge.Buffer[:], binary.Word_64(word), binary.LITTLE_ENDIAN)
+		var octet [WORD_BYTE_COUNT]byte
+		Source_Read(Chacha_To_Source(&edge), Sink(octet[:]))
+		if uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN)) != word {
+			t.Fatalf("constructed word %d did not pass through the slot", word)
+		}
+	}
+}
+
+// Test_Source_Marks_A_Cryptographic_Parameter checks a simulation enters only through an explicit
+// conversion, that the converted source reads the xoshiro stream, and that an unbound Source dies.
+func Test_Source_Marks_A_Cryptographic_Parameter(t *testing.T) {
+	xoshiro := prng.New(7)
+	reference := prng.New(7)
+	source := Source(prng.Xoshiro_To_Source(&xoshiro))
+	var got, want [WORD_BYTE_COUNT]byte
+	Source_Read(source, Sink(got[:]))
+	prng.Source_Read(prng.Xoshiro_To_Source(&reference), prng.Sink(want[:]))
+	if got != want {
+		t.Fatalf("converted source did not read the xoshiro stream")
+	}
+	if !did_die(func() { Source_Read(Source{}, Sink(got[:])) }) {
+		t.Fatalf("unbound Source did not die")
+	}
+	// Sink boundaries through the wrapper, so its own bundle is witnessed at every edge.
+	var largest [SINK_MAX]byte
+	for _, size := range []int{SINK_MIN, SINK_MIN + 1, SINK_MIN + 2, SINK_MAX} {
+		Source_Read(source, Sink(largest[:size]))
 	}
 }
 

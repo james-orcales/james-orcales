@@ -1,8 +1,8 @@
 
 # Seed Expands To State
 
-New is deterministic: one seed and one initial cursor always yield the same Generator stream.
-Two distinct seeds yield Generators whose first draws differ. New erases each buffer byte before
+New is deterministic: one seed and one initial cursor always yield the same Chacha stream.
+Two distinct seeds yield Chachas whose first draws differ. New erases each buffer byte before
 the injected cursor, because those bytes are already consumed.
 
 # Block Matches Reference Vectors
@@ -37,12 +37,24 @@ violation that exits.
 # Seed Is Erased After Construction
 
 New performs the first fast-key-erasure refill, so the caller's seed no longer lives in the
-Generator's key when New returns; a later disclosure of the key cannot reconstruct the seed
+Chacha's key when New returns; a later disclosure of the key cannot reconstruct the seed
 or the output that refill already produced.
 
 # Refill Resets Cursor
 
 A refill accepts each valid cursor, replaces the prior buffer, and resets the cursor to zero.
+
+# Source Is Transparent
+
+Chacha_To_Source binds a Chacha into Source. Bytes read through it are the bytes Read would
+deliver from the same state, in order, across a refill boundary; a partial tail word spends eight
+stream bytes. A nil Chacha dies before binding.
+
+# Source Marks A Cryptographic Parameter
+
+Source is a distinct type over the simulation vtable, so a signature that takes it names a
+parameter that must carry real entropy. A simulation converts a xoshiro source into it explicitly,
+and bytes then come from the xoshiro stream; an unbound Source dies before any draw.
 
 # Hot Path Is Zero Allocation
 
