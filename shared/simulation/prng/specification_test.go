@@ -13,12 +13,12 @@ import (
 func Test_Seed_Expands_To_State(t *testing.T) {
 	first := prng.New(42)
 	again := prng.New(42)
-	if prng.Generator_Next(&first) != prng.Generator_Next(&again) {
+	if prng.Xoshiro_Next(&first) != prng.Xoshiro_Next(&again) {
 		t.Fatalf("same seed produced different streams")
 	}
 	other := prng.New(43)
 	repeat := prng.New(42)
-	if prng.Generator_Next(&other) == prng.Generator_Next(&repeat) {
+	if prng.Xoshiro_Next(&other) == prng.Xoshiro_Next(&repeat) {
 		t.Fatalf("distinct seeds produced the same first draw")
 	}
 }
@@ -39,7 +39,7 @@ func Test_Known_Sequence(t *testing.T) {
 		15596884590815070553,
 	}
 	for index := 0; index < len(want); index++ {
-		value := prng.Generator_Next(&generator)
+		value := prng.Xoshiro_Next(&generator)
 		if uint64(value) != want[index] {
 			t.Fatalf("draw %d was %d, want %d", index, value, want[index])
 		}
@@ -52,7 +52,7 @@ func Test_Below_Is_Bounded(t *testing.T) {
 	bounds := []int{1, 2, 7, 1000, 1 << 40}
 	for _, bound := range bounds {
 		for draw_index := 0; draw_index < 10000; draw_index++ {
-			value := prng.Generator_Below(&generator, prng.Bound(bound))
+			value := prng.Xoshiro_Below(&generator, prng.Bound(bound))
 			if value < 0 {
 				t.Fatalf("Below(%d) returned negative %d", bound, value)
 			}
@@ -68,7 +68,7 @@ func Test_Element_Comes_From_Slice(t *testing.T) {
 	generator := prng.New(2)
 	items := prng.Items[string]{"a", "b", "c"}
 	for draw_index := 0; draw_index < 1000; draw_index++ {
-		item := prng.Generator_Element(&generator, &items, 3)
+		item := prng.Xoshiro_Element(&generator, &items, 3)
 		found := false
 		for _, candidate := range items[:3] {
 			if item == candidate {
@@ -80,7 +80,7 @@ func Test_Element_Comes_From_Slice(t *testing.T) {
 		}
 	}
 	died := did_die(func() {
-		prng.Generator_Element(&generator, &items, 0)
+		prng.Xoshiro_Element(&generator, &items, 0)
 	})
 	if !died {
 		t.Fatalf("Element on an empty slice did not exit")
@@ -93,7 +93,7 @@ func Test_Boolean_Is_Even(t *testing.T) {
 	sample_count := 100000
 	true_count := 0
 	for draw_index := 0; draw_index < sample_count; draw_index++ {
-		if prng.Generator_Boolean(&generator) {
+		if prng.Xoshiro_Boolean(&generator) {
 			true_count++
 		}
 	}
@@ -113,16 +113,16 @@ func Test_Chance_Matches_Ratio(t *testing.T) {
 	always := prng.Ratio{Numerator: 100, Denominator: 100}
 	quarter := prng.Ratio{Numerator: 25, Denominator: 100}
 	for draw_index := 0; draw_index < sample_count; draw_index++ {
-		if prng.Generator_Chance(&generator, never) {
+		if prng.Xoshiro_Chance(&generator, never) {
 			t.Fatalf("Chance with a zero numerator returned true")
 		}
-		if !prng.Generator_Chance(&generator, always) {
+		if !prng.Xoshiro_Chance(&generator, always) {
 			t.Fatalf("Chance with a full numerator returned false")
 		}
 	}
 	true_count := 0
 	for draw_index := 0; draw_index < sample_count; draw_index++ {
-		if prng.Generator_Chance(&generator, quarter) {
+		if prng.Xoshiro_Chance(&generator, quarter) {
 			true_count++
 		}
 	}
@@ -144,7 +144,7 @@ func Test_Sample_Matches_Weights(t *testing.T) {
 	rare_count := 0
 	common_count := 0
 	for draw_index := 0; draw_index < sample_count; draw_index++ {
-		item := prng.Generator_Sample(&generator, distribution)
+		item := prng.Xoshiro_Sample(&generator, distribution)
 		if item == "never" {
 			t.Fatalf("Sample returned a zero-weight outcome")
 		}
@@ -171,7 +171,7 @@ func Test_Shuffle_Permutes(t *testing.T) {
 	generator := prng.New(6)
 	original := [...]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	prng.Generator_Shuffle(&generator, &items, prng.Item_Count(len(original)))
+	prng.Xoshiro_Shuffle(&generator, &items, prng.Item_Count(len(original)))
 	seen := make([]bool, len(original))
 	for _, value := range items[:len(original)] {
 		seen[value] = true
@@ -183,7 +183,7 @@ func Test_Shuffle_Permutes(t *testing.T) {
 	}
 	reordered := false
 	for attempt_index := 0; attempt_index < 10; attempt_index++ {
-		prng.Generator_Shuffle(&generator, &items, prng.Item_Count(len(original)))
+		prng.Xoshiro_Shuffle(&generator, &items, prng.Item_Count(len(original)))
 		for index := 0; index < len(original); index++ {
 			if items[index] != original[index] {
 				reordered = true
@@ -198,10 +198,10 @@ func Test_Shuffle_Permutes(t *testing.T) {
 // Test_Split_Is_Independent checks a Split child diverges from the parent's stream.
 func Test_Split_Is_Independent(t *testing.T) {
 	parent := prng.New(7)
-	child := prng.Generator_Split(&parent)
+	child := prng.Xoshiro_Split(&parent)
 	differs := false
 	for draw_index := 0; draw_index < 16; draw_index++ {
-		if prng.Generator_Next(&child) != prng.Generator_Next(&parent) {
+		if prng.Xoshiro_Next(&child) != prng.Xoshiro_Next(&parent) {
 			differs = true
 		}
 	}
@@ -213,7 +213,7 @@ func Test_Split_Is_Independent(t *testing.T) {
 // Test_Types_Hold_No_Floating_Point checks the core types carry only integer fields.
 func Test_Types_Hold_No_Floating_Point(t *testing.T) {
 	types := []reflect.Type{
-		reflect.TypeOf(prng.Generator{}),
+		reflect.TypeOf(prng.Xoshiro{}),
 		reflect.TypeOf(prng.Ratio{}),
 		reflect.TypeOf(prng.Distribution[int]{}),
 	}
@@ -228,10 +228,85 @@ func Test_Types_Hold_No_Floating_Point(t *testing.T) {
 func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 	generator := prng.New(8)
 	allocations := testing.AllocsPerRun(1000, func() {
-		prng.Generator_Next(&generator)
+		prng.Xoshiro_Next(&generator)
 	})
 	if allocations != 0 {
 		t.Fatalf("Next allocated %.1f times per call, want zero", allocations)
+	}
+	source := prng.Xoshiro_To_Source(&generator)
+	var sink [prng.WORD_BYTE_COUNT]byte
+	allocations = testing.AllocsPerRun(1000, func() {
+		prng.Source_Read(source, sink[:])
+	})
+	if allocations != 0 {
+		t.Fatalf("Source_Read allocated %.1f times per call, want zero", allocations)
+	}
+}
+
+// Test_Source_Replays_From_Seed checks bytes through the vtable are a pure function of the seed
+// and spend one Next word per eight bytes, so a pinned simulation seed replays each entropy draw.
+func Test_Source_Replays_From_Seed(t *testing.T) {
+	first := prng.New(9)
+	again := prng.New(9)
+	other := prng.New(10)
+	var got, want, differ [prng.WORD_BYTE_COUNT + 1]byte
+	prng.Source_Read(prng.Xoshiro_To_Source(&first), got[:])
+	prng.Source_Read(prng.Xoshiro_To_Source(&again), want[:])
+	prng.Source_Read(prng.Xoshiro_To_Source(&other), differ[:])
+	if got != want {
+		t.Fatalf("same seed produced different bytes")
+	}
+	if got == differ {
+		t.Fatalf("distinct seeds produced the same bytes")
+	}
+	reference := prng.New(9)
+	word := prng.Xoshiro_Next(&reference)
+	for index := 0; index < prng.WORD_BYTE_COUNT; index++ {
+		if got[index] != byte(word>>(index*8)) {
+			t.Fatalf("byte %d was %d, want little-endian word byte", index, got[index])
+		}
+	}
+	if got[prng.WORD_BYTE_COUNT] != byte(prng.Xoshiro_Next(&reference)) {
+		t.Fatalf("ninth byte did not spend a second word")
+	}
+	if prng.Xoshiro_Next(&reference) != prng.Xoshiro_Next(&first) {
+		t.Fatalf("a partial word consumed more than one draw")
+	}
+	var largest [prng.SINK_SIZE_MAXIMUM]byte
+	for _, size := range [...]int{
+		prng.SINK_SIZE_MINIMUM,
+		prng.SINK_SIZE_MINIMUM + 1,
+		prng.SINK_SIZE_MINIMUM + 2,
+		prng.SINK_SIZE_MAXIMUM,
+	} {
+		prng.Source_Read(prng.Xoshiro_To_Source(&first), largest[:size])
+	}
+}
+
+// Test_Source_Is_Bound_Before_Use checks each unbound or oversized input dies before a draw.
+func Test_Source_Is_Bound_Before_Use(t *testing.T) {
+	generator := prng.New(11)
+	source := prng.Xoshiro_To_Source(&generator)
+	var sink [prng.WORD_BYTE_COUNT]byte
+	if !did_die(func() { prng.Source_Read(prng.Source{}, sink[:]) }) {
+		t.Fatalf("zero Source did not die")
+	}
+	headless := source
+	headless.State = nil
+	if !did_die(func() { prng.Source_Read(headless, sink[:]) }) {
+		t.Fatalf("Source without state did not die")
+	}
+	inert := source
+	inert.Next = nil
+	if !did_die(func() { prng.Source_Read(inert, sink[:]) }) {
+		t.Fatalf("Source without procedure did not die")
+	}
+	var oversized [prng.SINK_SIZE_MAXIMUM + 1]byte
+	if !did_die(func() { prng.Source_Read(source, oversized[:]) }) {
+		t.Fatalf("oversized sink did not die")
+	}
+	if !did_die(func() { prng.Xoshiro_To_Source(nil) }) {
+		t.Fatalf("nil Xoshiro did not die")
 	}
 }
 
@@ -247,7 +322,7 @@ func Test_Bimodal_Distribution_Has_Two_Modes(t *testing.T) {
 	fast_count := 0
 	slow_count := 0
 	for draw_index := 0; draw_index < sample_count; draw_index++ {
-		value := prng.Generator_Sample(&generator, distribution)
+		value := prng.Xoshiro_Sample(&generator, distribution)
 		if value <= 2000 {
 			fast_count++
 		}
@@ -283,7 +358,7 @@ func Test_Percentile_Distribution_Hits_Percentiles(t *testing.T) {
 	below_p95 := 0
 	below_p99 := 0
 	for draw_index := 0; draw_index < sample_count; draw_index++ {
-		value := prng.Generator_Sample(&generator, distribution)
+		value := prng.Xoshiro_Sample(&generator, distribution)
 		if value <= 200 {
 			below_p50++
 		}
@@ -332,13 +407,13 @@ func verify_word_boundaries(t *testing.T) {
 		prng.WORD_MAXIMUM,
 	} {
 		generator := generator_for_next(value)
-		if actual := prng.Generator_Next(&generator); actual != value {
+		if actual := prng.Xoshiro_Next(&generator); actual != value {
 			t.Fatalf("constructed draw was %d, want %d", actual, value)
 		}
 	}
 
 	maximum_generator := generator_for_next(prng.WORD_MAXIMUM)
-	maximum_index := prng.Generator_Below(&maximum_generator, prng.BOUND_MAXIMUM)
+	maximum_index := prng.Xoshiro_Below(&maximum_generator, prng.BOUND_MAXIMUM)
 	if maximum_index != prng.INDEX_MAXIMUM {
 		t.Fatalf("maximum index was %d, want %d", maximum_index, prng.INDEX_MAXIMUM)
 	}
@@ -360,7 +435,7 @@ func boundary_ratios() (ratios [BOUNDARY_RATIO_COUNT]prng.Ratio) {
 func verify_ratio_boundaries() {
 	for _, ratio := range boundary_ratios() {
 		generator := generator_for_next(prng.WORD_MAXIMUM)
-		prng.Generator_Chance(&generator, ratio)
+		prng.Xoshiro_Chance(&generator, ratio)
 	}
 }
 
@@ -391,11 +466,11 @@ func verify_collection_boundaries() {
 	var items prng.Items[int]
 	for _, count := range [...]prng.Item_Count{1, 2, prng.ITEM_COUNT_MAXIMUM} {
 		generator := prng.New(1)
-		prng.Generator_Element(&generator, &items, count)
+		prng.Xoshiro_Element(&generator, &items, count)
 	}
 	for _, count := range [...]prng.Item_Count{0, 1, 2, prng.ITEM_COUNT_MAXIMUM} {
 		generator := prng.New(1)
-		prng.Generator_Shuffle(&generator, &items, count)
+		prng.Xoshiro_Shuffle(&generator, &items, count)
 	}
 }
 
@@ -422,11 +497,11 @@ func verify_distribution_boundaries() {
 			outcomes, test_case.Weights, test_case.Count,
 		)
 		generator := generator_for_next(prng.WORD_MAXIMUM)
-		prng.Generator_Sample(&generator, distribution)
+		prng.Xoshiro_Sample(&generator, distribution)
 	}
 }
 
-func generator_for_next(value prng.Word) (generator prng.Generator) {
+func generator_for_next(value prng.Word) (generator prng.Xoshiro) {
 	generator.State[0] = value
 	generator.State[3] = 0 - value
 	if value == 0 {
@@ -466,21 +541,21 @@ func (discard_writer) Write(data []byte) (count int, err error) {
 func Benchmark_Next(b *testing.B) {
 	generator := prng.New(1)
 	for b.Loop() {
-		prng.Generator_Next(&generator)
+		prng.Xoshiro_Next(&generator)
 	}
 }
 
 func Benchmark_Below(b *testing.B) {
 	generator := prng.New(1)
 	for b.Loop() {
-		prng.Generator_Below(&generator, 100)
+		prng.Xoshiro_Below(&generator, 100)
 	}
 }
 
 func Benchmark_Boolean(b *testing.B) {
 	generator := prng.New(1)
 	for b.Loop() {
-		prng.Generator_Boolean(&generator)
+		prng.Xoshiro_Boolean(&generator)
 	}
 }
 
@@ -488,7 +563,7 @@ func Benchmark_Chance(b *testing.B) {
 	generator := prng.New(1)
 	probability := prng.Ratio{Numerator: 8, Denominator: 100}
 	for b.Loop() {
-		prng.Generator_Chance(&generator, probability)
+		prng.Xoshiro_Chance(&generator, probability)
 	}
 }
 
@@ -496,7 +571,7 @@ func Benchmark_Element(b *testing.B) {
 	generator := prng.New(1)
 	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	for b.Loop() {
-		prng.Generator_Element(&generator, &items, 10)
+		prng.Xoshiro_Element(&generator, &items, 10)
 	}
 }
 
@@ -506,7 +581,7 @@ func Benchmark_Sample(b *testing.B) {
 		prng.Items[int]{0, 1, 2, 3}, prng.Weights{10, 20, 30, 40}, 4,
 	)
 	for b.Loop() {
-		prng.Generator_Sample(&generator, distribution)
+		prng.Xoshiro_Sample(&generator, distribution)
 	}
 }
 
@@ -514,14 +589,14 @@ func Benchmark_Shuffle(b *testing.B) {
 	generator := prng.New(1)
 	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	for b.Loop() {
-		prng.Generator_Shuffle(&generator, &items, 10)
+		prng.Xoshiro_Shuffle(&generator, &items, 10)
 	}
 }
 
 func Benchmark_Split(b *testing.B) {
 	generator := prng.New(1)
 	for b.Loop() {
-		prng.Generator_Split(&generator)
+		prng.Xoshiro_Split(&generator)
 	}
 }
 

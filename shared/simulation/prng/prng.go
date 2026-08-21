@@ -6,11 +6,11 @@
 // testing is built on, where a failure replays exactly from the seed that found it.
 //
 // The house linter bans methods, so each draw is a free function named after its first parameter's
-// type. Seed with New; the zero Generator is unusable.
+// type. Seed with New; the zero Xoshiro is unusable.
 //
 //	generator := prng.New(seed)
-//	victim := prng.Generator_Below(&generator, replica_count)
-//	if prng.Generator_Chance(&generator, prng.Ratio{Numerator: 8, Denominator: 100}) {
+//	victim := prng.Xoshiro_Below(&generator, replica_count)
+//	if prng.Xoshiro_Chance(&generator, prng.Ratio{Numerator: 8, Denominator: 100}) {
 //	    drop_packet()
 //	}
 //
@@ -18,6 +18,8 @@
 package prng
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
@@ -31,8 +33,19 @@ const SPLIT_MIX_MULTIPLIER_FIRST = 0xbf58476d1ce4e5b9
 // The second splitmix64 multiplier that avalanches the strided state.
 const SPLIT_MIX_MULTIPLIER_SECOND = 0x94d049bb133111eb
 
-// GENERATOR_STATE_WORD_COUNT is the fixed state width of xoshiro256++.
-const GENERATOR_STATE_WORD_COUNT = 4
+// XOSHIRO_STATE_WORD_COUNT is the fixed state width of xoshiro256++.
+const XOSHIRO_STATE_WORD_COUNT = 4
+
+// WORD_BYTE_COUNT is how many bytes one xoshiro draw fills through a Source. Spelled here because
+// encoding/binary sits above nbio, which sits above this package.
+const WORD_BYTE_COUNT = bits.BIT_COUNT_64_MAXIMUM / bits.BIT_COUNT_8_MAXIMUM
+
+// SINK_SIZE_MINIMUM admits an empty fill.
+const SINK_SIZE_MINIMUM = 0
+
+// SINK_SIZE_MAXIMUM keeps an accidental bulk fill bounded while staying far above any key, token,
+// or nonce a caller fills. Each backend inherits it for its own sink so the two cannot drift.
+const SINK_SIZE_MAXIMUM = 1 << 20
 
 // DISTRIBUTION_COUNT_MAXIMUM keeps weighted sampling linear and stack-owned.
 const DISTRIBUTION_COUNT_MAXIMUM = 32
@@ -244,17 +257,17 @@ func Distribution_Count_Invariants(count Distribution_Count, namespace invariant
 		Ensure()
 }
 
-// Generator is the state of a xoshiro256++ pseudo-random generator. Construct it with New; the zero
+// Xoshiro is the state of a xoshiro256++ pseudo-random generator. Construct it with New; the zero
 // value is degenerate, since an all-zero xoshiro state emits only zeros.
-type Generator struct {
+type Xoshiro struct {
 	// State is the four 64-bit words of xoshiro256++ internal state.
-	State [GENERATOR_STATE_WORD_COUNT]Word
+	State [XOSHIRO_STATE_WORD_COUNT]Word
 }
 
-// Generator_Invariants rejects xoshiro's absorbing all-zero state.
-func Generator_Invariants(generator Generator, _ invariant.Namespace) {
+// Xoshiro_Invariants rejects xoshiro's absorbing all-zero state.
+func Xoshiro_Invariants(generator Xoshiro, _ invariant.Namespace) {
 	invariant.Always(
-		generator.State != [GENERATOR_STATE_WORD_COUNT]Word{},
+		generator.State != [XOSHIRO_STATE_WORD_COUNT]Word{},
 		"A generator has nonzero xoshiro state.",
 	)
 }
@@ -299,13 +312,13 @@ func Distribution_Invariants[T any](
 	)
 }
 
-// New seeds a Generator from one seed, expanding it through splitmix64 into the four words of
-// xoshiro256++ state. The zero Generator is degenerate, so always construct through New.
-func New(seed Seed) (generator Generator) {
-	defer func() { Generator_Invariants(generator, "new.generator") }()
+// New seeds a Xoshiro from one seed, expanding it through splitmix64 into the four words of
+// xoshiro256++ state. The zero Xoshiro is degenerate, so always construct through New.
+func New(seed Seed) (generator Xoshiro) {
+	defer func() { Xoshiro_Invariants(generator, "new.generator") }()
 	Seed_Invariants(seed, "new.seed")
 	state := seed
-	for index := 0; index < GENERATOR_STATE_WORD_COUNT; index++ {
+	for index := 0; index < XOSHIRO_STATE_WORD_COUNT; index++ {
 		state += SPLIT_MIX_INCREMENT
 		value := Word(state)
 		value = (value ^ (value >> 30)) * SPLIT_MIX_MULTIPLIER_FIRST
@@ -315,11 +328,11 @@ func New(seed Seed) (generator Generator) {
 	return generator
 }
 
-// Generator_Next advances the xoshiro256++ state and returns the next value. It is the raw draw
+// Xoshiro_Next advances the xoshiro256++ state and returns the next value. It is the raw draw
 // every other function builds on, and the one hot path that must not allocate.
-func Generator_Next(generator *Generator) (value Word) {
-	defer func() { Word_Invariants(value, "generator_next.value") }()
-	Generator_Invariants(*generator, "generator_next.generator")
+func Xoshiro_Next(generator *Xoshiro) (value Word) {
+	defer func() { Word_Invariants(value, "xoshiro_next.value") }()
+	Xoshiro_Invariants(*generator, "xoshiro_next.generator")
 	result := Word(bits.Rotate_Left_64(
 		bits.Word_64(generator.State[0]+generator.State[3]), 23,
 	)) + generator.State[0]
@@ -333,38 +346,38 @@ func Generator_Next(generator *Generator) (value Word) {
 	return result
 }
 
-// Generator_Below returns a value in the half-open range zero to bound, never bound itself.
-func Generator_Below(generator *Generator, bound Bound) (value Index) {
-	defer func() { Index_Invariants(value, "generator_below.value") }()
-	Generator_Invariants(*generator, "generator_below.generator")
-	Bound_Invariants(bound, "generator_below.bound")
-	return Index(generator_below_unsigned(generator, Draw_Bound(bound)))
+// Xoshiro_Below returns a value in the half-open range zero to bound, never bound itself.
+func Xoshiro_Below(generator *Xoshiro, bound Bound) (value Index) {
+	defer func() { Index_Invariants(value, "xoshiro_below.value") }()
+	Xoshiro_Invariants(*generator, "xoshiro_below.generator")
+	Bound_Invariants(bound, "xoshiro_below.bound")
+	return Index(xoshiro_below_unsigned(generator, Draw_Bound(bound)))
 }
 
-// Generator_Element returns one uniformly chosen element of items; an empty slice panics.
-func Generator_Element[T any](
-	generator *Generator, items *Items[T], count Item_Count,
+// Xoshiro_Element returns one uniformly chosen element of items; an empty slice panics.
+func Xoshiro_Element[T any](
+	generator *Xoshiro, items *Items[T], count Item_Count,
 ) (item T) {
-	Generator_Invariants(*generator, "generator_element.generator")
-	Items_Invariants(*items, "generator_element.items")
-	Item_Count_Invariants(count, "generator_element.count")
+	Xoshiro_Invariants(*generator, "xoshiro_element.generator")
+	Items_Invariants(*items, "xoshiro_element.items")
+	Item_Count_Invariants(count, "xoshiro_element.count")
 	invariant.Always(count > 0, "prng element count is not empty")
-	return items[Generator_Below(generator, Bound(count))]
+	return items[Xoshiro_Below(generator, Bound(count))]
 }
 
-// Generator_Boolean returns true or false with equal probability, from the top state bit.
-func Generator_Boolean(generator *Generator) (value Boolean) {
-	defer func() { Boolean_Invariants(value, "generator_boolean.value") }()
-	Generator_Invariants(*generator, "generator_boolean.generator")
-	return Generator_Next(generator)>>63 != 0
+// Xoshiro_Boolean returns true or false with equal probability, from the top state bit.
+func Xoshiro_Boolean(generator *Xoshiro) (value Boolean) {
+	defer func() { Boolean_Invariants(value, "xoshiro_boolean.value") }()
+	Xoshiro_Invariants(*generator, "xoshiro_boolean.generator")
+	return Xoshiro_Next(generator)>>63 != 0
 }
 
-// Generator_Chance returns true at a frequency tracking the integer Ratio, with no floating point.
-func Generator_Chance(generator *Generator, probability Ratio) (value Boolean) {
-	defer func() { Boolean_Invariants(value, "generator_chance.value") }()
-	Generator_Invariants(*generator, "generator_chance.generator")
-	Ratio_Invariants(probability, "generator_chance.probability")
-	return Draw_Bound(generator_below_unsigned(
+// Xoshiro_Chance returns true at a frequency tracking the integer Ratio, with no floating point.
+func Xoshiro_Chance(generator *Xoshiro, probability Ratio) (value Boolean) {
+	defer func() { Boolean_Invariants(value, "xoshiro_chance.value") }()
+	Xoshiro_Invariants(*generator, "xoshiro_chance.generator")
+	Ratio_Invariants(probability, "xoshiro_chance.probability")
+	return Draw_Bound(xoshiro_below_unsigned(
 		generator, Draw_Bound(probability.Denominator),
 	)) < Draw_Bound(probability.Numerator)
 }
@@ -396,14 +409,14 @@ func New_Distribution[T any](
 	return distribution
 }
 
-// Generator_Sample returns an outcome at a frequency tracking its integer weight in distribution.
-func Generator_Sample[T any](generator *Generator, distribution Distribution[T]) (item T) {
-	Generator_Invariants(*generator, "generator_sample.generator")
-	Distribution_Invariants(distribution, "generator_sample.distribution")
+// Xoshiro_Sample returns an outcome at a frequency tracking its integer weight in distribution.
+func Xoshiro_Sample[T any](generator *Xoshiro, distribution Distribution[T]) (item T) {
+	Xoshiro_Invariants(*generator, "xoshiro_sample.generator")
+	Distribution_Invariants(distribution, "xoshiro_sample.distribution")
 	cumulative := distribution.Cumulative
 	count := DISTRIBUTION_COUNT_MAXIMUM
 	total := cumulative[count-1]
-	roll := generator_below_unsigned(generator, Draw_Bound(total))
+	roll := xoshiro_below_unsigned(generator, Draw_Bound(total))
 	for index := 0; index < count; index++ {
 		if Weight(roll) < cumulative[index] {
 			return distribution.Outcomes[index]
@@ -582,44 +595,112 @@ func Percentile_Distribution(
 	)
 }
 
-// Generator_Shuffle reorders items in place by Fisher-Yates, so each ordering is equally likely.
-func Generator_Shuffle[T any](
-	generator *Generator, items *Items[T], count Item_Count,
+// Xoshiro_Shuffle reorders items in place by Fisher-Yates, so each ordering is equally likely.
+func Xoshiro_Shuffle[T any](
+	generator *Xoshiro, items *Items[T], count Item_Count,
 ) {
-	Generator_Invariants(*generator, "generator_shuffle.generator")
-	Items_Invariants(*items, "generator_shuffle.items")
-	Item_Count_Invariants(count, "generator_shuffle.count")
+	Xoshiro_Invariants(*generator, "xoshiro_shuffle.generator")
+	Items_Invariants(*items, "xoshiro_shuffle.items")
+	Item_Count_Invariants(count, "xoshiro_shuffle.count")
 	for index := int(count) - 1; index > 0; index-- {
-		swap_index := Generator_Below(generator, Bound(index+1))
+		swap_index := Xoshiro_Below(generator, Bound(index+1))
 		items[index], items[swap_index] = items[swap_index], items[index]
 	}
 }
 
-// Generator_Split returns a child Generator seeded from one draw of the parent, an independent
+// Xoshiro_Split returns a child Xoshiro seeded from one draw of the parent, an independent
 // stream so a draw in one cannot perturb the other.
-func Generator_Split(generator *Generator) (child Generator) {
-	defer func() { Generator_Invariants(child, "generator_split.child") }()
-	Generator_Invariants(*generator, "generator_split.generator")
-	return New(Seed(Generator_Next(generator)))
+func Xoshiro_Split(generator *Xoshiro) (child Xoshiro) {
+	defer func() { Xoshiro_Invariants(child, "xoshiro_split.child") }()
+	Xoshiro_Invariants(*generator, "xoshiro_split.generator")
+	return New(Seed(Xoshiro_Next(generator)))
+}
+
+// Sink is bounded caller-owned storage a Source fills, a defined type so the fill takes no raw
+// slice.
+type Sink []byte
+
+// Sink_Invariants bounds one fill request.
+func Sink_Invariants(sink Sink, namespace invariant.Namespace) {
+	invariant.Tree(sink, namespace).
+		Range_Int(len(sink), SINK_SIZE_MINIMUM, SINK_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Source is the C-style vtable a caller injects where it needs random bytes: caller-owned backend
+// state behind an unsafe.Pointer and one procedure that receives it. The house bans interfaces
+// and closures that capture state, so this is the one shape a backend can take. crypto/prng binds
+// its ChaCha20 stream for a production root and wraps this type as its own Source, so a signature
+// says which parameter must carry real entropy; Xoshiro_To_Source binds a xoshiro stream for a
+// simulation, so a signer or key builder under test replays every entropy draw from the run seed.
+type Source struct {
+	// State is the caller-owned backend generator; the procedure casts it back to its own type.
+	State unsafe.Pointer
+	// Next draws one full word from the backend behind state. The slot returns a value and
+	// receives no sink, because a pointer handed to a procedure value escapes to the heap under
+	// Go's escape analysis, and a caller's stack sink must stay on its stack.
+	Next func(state unsafe.Pointer) (value Word)
+}
+
+// Source_Invariants proves both halves of the vtable are bound before any draw.
+func Source_Invariants(source Source, _ invariant.Namespace) {
+	invariant.Always(source.State != nil, "A Source has caller-owned state.")
+	invariant.Always(source.Next != nil, "A Source has a bound draw procedure.")
+}
+
+// Source_Read fills sink through the vtable, one word per eight bytes, little-endian so a shorter
+// read is a prefix of a longer one from the same state. A partial tail spends a whole word. The
+// bytes are packed here, on the caller's side of the slot, so the sink never crosses it.
+func Source_Read(source Source, sink Sink) {
+	Source_Invariants(source, "source_read.source")
+	Sink_Invariants(sink, "source_read.sink")
+	var octet [WORD_BYTE_COUNT]byte
+	for filled := 0; filled < len(sink); filled += WORD_BYTE_COUNT {
+		word := source.Next(source.State)
+		for index := 0; index < WORD_BYTE_COUNT; index++ {
+			octet[index] = byte(word >> (index * bits.BIT_COUNT_8_MAXIMUM))
+		}
+		copy(sink[filled:], octet[:])
+	}
+}
+
+// Xoshiro_To_Source binds caller-owned state into the Source vtable without a captured
+// function environment: the simulation stand-in for a crypto/prng source, same slot, xoshiro words.
+// Fork the generator first; a draw through this source spends the same stream as every other
+// draw on it. Never bind it in a production root.
+func Xoshiro_To_Source(generator *Xoshiro) (source Source) {
+	invariant.Always(generator != nil, "A simulated source has caller-owned state.")
+	Xoshiro_Invariants(*generator, "xoshiro_to_source.generator")
+	source = Source{
+		State: unsafe.Pointer(generator),
+		Next:  xoshiro_source_next,
+	}
+	Source_Invariants(source, "xoshiro_to_source.source")
+	return source
+}
+
+// The vtable slot: one xoshiro draw.
+func xoshiro_source_next(state unsafe.Pointer) (value Word) {
+	return Xoshiro_Next((*Xoshiro)(state))
 }
 
 // Returns a value in the half-open range zero to bound using Lemire's method, so the result is
 // unbiased, not skewed the way a plain modulo would be. The caller guarantees bound is positive.
-func generator_below_unsigned(generator *Generator, bound Draw_Bound) (value Draw) {
-	defer func() { Draw_Invariants(value, "generator_below_unsigned.value") }()
-	Generator_Invariants(*generator, "generator_below_unsigned.generator")
-	Draw_Bound_Invariants(bound, "generator_below_unsigned.bound")
-	random := Generator_Next(generator)
+func xoshiro_below_unsigned(generator *Xoshiro, bound Draw_Bound) (value Draw) {
+	defer func() { Draw_Invariants(value, "xoshiro_below_unsigned.value") }()
+	Xoshiro_Invariants(*generator, "xoshiro_below_unsigned.generator")
+	Draw_Bound_Invariants(bound, "xoshiro_below_unsigned.bound")
+	word := Xoshiro_Next(generator)
 	high_word, low_word := bits.Multiply_64(
-		bits.Word_64(random), bits.Multiplier_64(bound),
+		bits.Word_64(word), bits.Multiplier_64(bound),
 	)
 	high, low := Draw(high_word), Draw(low_word)
 	if Draw_Bound(low) < bound {
 		threshold := (-bound) % bound
 		for Draw_Bound(low) < threshold {
-			random = Generator_Next(generator)
+			word = Xoshiro_Next(generator)
 			high_word, low_word = bits.Multiply_64(
-				bits.Word_64(random), bits.Multiplier_64(bound),
+				bits.Word_64(word), bits.Multiplier_64(bound),
 			)
 			high, low = Draw(high_word), Draw(low_word)
 		}
