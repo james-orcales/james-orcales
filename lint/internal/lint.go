@@ -5168,7 +5168,7 @@ func banned_stdlib_import_family(import_path string) (family string) {
 		}
 	}
 	for _, candidate := range []string{
-		"archive", "bytes", "compress", "container", "encoding", "io", "math",
+		"archive", "bytes", "compress", "container", "encoding", "flag", "io", "math",
 		"os", "slices", "strconv", "strings", "unicode", "uuid",
 	} {
 		if import_path == candidate {

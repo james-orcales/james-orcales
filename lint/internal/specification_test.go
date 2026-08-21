@@ -526,6 +526,7 @@ func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
 		"compress/gzip",
 		"container/list",
 		"encoding/json",
+		"flag",
 		"io",
 		"io/fs",
 		"math/bits",
@@ -547,6 +548,7 @@ func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
 	allowed_paths := []string{
 		"example.com/byte_strings",
 		"example.com/archive/tar",
+		"example.com/flag",
 		"example.com/io",
 		"github.com/google/uuid",
 		"local/james-orcales/shared/bytes",
