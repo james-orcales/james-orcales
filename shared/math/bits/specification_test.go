@@ -437,3 +437,13 @@ func Test_Domain_Errors(t *testing.T) {
 		"Subtract_64 with a borrow above one must panic")
 
 }
+
+// Test_Allocation proves bit queries and carry arithmetic own no heap storage.
+func Test_Allocation(t *testing.T) {
+	testify.Zero_Allocation(t, func() {
+		bits.Leading_Zeros_64(bits.Word_64(1))
+		bits.Trailing_Zeros_64(bits.Word_64(8))
+		bits.Bit_Size(bits.Word(255))
+		bits.Add_64(1, 2, 0)
+	})
+}

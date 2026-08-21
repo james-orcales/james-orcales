@@ -1497,13 +1497,18 @@ func test_float_square_root_storage(
 	big.Float_Set_Int_64(&source, 1)
 	big.Float_Set_Int_64(&expected, 1)
 	source.Exponent, expected.Exponent = -1, 0
-	for _, size := range []int{0, 1, 2, big.WORD_COUNT_MAXIMUM} {
+	// Root of 1 needs one word: zero-word destinations cannot hold it without
+	// allocating, so caller storage must carry at least one word here.
+	for _, size := range []int{1, 2, big.WORD_COUNT_MAXIMUM} {
 		result := big.Float{Mantissa: big.Float_Mantissa{Words: make(big.Words, size)}}
 		testify.Equal_Values(t, big.STATUS_OK,
 			big.Float_Square_Root(&result, &source, workspace))
 		testify.Equal(t, big.ORDER_SAME, big.Float_Compare(&result, &expected))
 		testify.Equal(t, big.ACCURACY_EXACT, result.Accuracy)
 	}
+	// Zero-word destination panics instead of allocating replacement storage.
+	short := big.Float{Mantissa: big.Float_Mantissa{Words: make(big.Words, 0)}}
+	testify.Panics(t, func() { big.Float_Square_Root(&short, &source, workspace) })
 }
 
 func test_float_quotient_storage(

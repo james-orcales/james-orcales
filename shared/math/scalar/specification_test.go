@@ -602,3 +602,14 @@ func compare_quadrants(t *testing.T, tolerance fixedpoint.Number) {
 		"two zero legs give a zero angle")
 
 }
+
+// Test_Allocation proves integer selection and whole-number rounding own no heap storage.
+func Test_Allocation(t *testing.T) {
+	half := whole(7) / 2
+	testify.Zero_Allocation(t, func() {
+		scalar.Absolute_Integer(-5)
+		scalar.Minimum_Integer(1, 2)
+		scalar.Floor(scalar.Value(half))
+		scalar.Round(scalar.Value(half))
+	})
+}

@@ -7783,7 +7783,7 @@ func Float_Int_Into(
 	if result.Count != WORD_COUNT_MINIMUM {
 		result.Negative = value.Negative
 	}
-	*destination = result
+	Int_Set(destination, &result) // Header copy would move scratch to heap.
 	return accuracy, STATUS_OK
 }
 
@@ -7819,7 +7819,8 @@ func Float_Int_64(
 			}
 		}
 	}
-	var integer Int
+	var integer_words [WORD_COUNT_MAXIMUM]Word
+	integer := Int{Words: integer_words[:]}
 	accuracy, status = Float_Int_Into(&integer, value)
 	if status != STATUS_OK {
 		return 0, accuracy, status
@@ -7850,7 +7851,8 @@ func Float_Uint_64(
 			}
 		}
 	}
-	var integer Int
+	var integer_words [WORD_COUNT_MAXIMUM]Word
+	integer := Int{Words: integer_words[:]}
 	accuracy, status = Float_Int_Into(&integer, value)
 	if status != STATUS_OK {
 		return 0, accuracy, status
@@ -8414,10 +8416,19 @@ func float_square_root_commit(
 			precision, &result_exponent,
 		)
 	}
-	*destination = Float{
-		Precision: Float_Precision(precision), Mode: mode, Accuracy: accuracy,
-		Form: FLOAT_FORM_FINITE, Mantissa: Float_Mantissa(*mantissa),
-		Exponent: result_exponent,
+	// Copy words, never the mantissa header: a header copy aliases stack scratch
+	// into caller storage, which moves scratch to heap and leaks it past return.
+	previous_count := destination.Mantissa.Count
+	destination.Precision, destination.Mode = Float_Precision(precision), mode
+	destination.Accuracy, destination.Form = accuracy, FLOAT_FORM_FINITE
+	destination.Negative, destination.Exponent = POLARITY_NONNEGATIVE, result_exponent
+	for index := Word_Count(WORD_COUNT_MINIMUM); index < mantissa.Count; index++ {
+		destination.Mantissa.Words[index] = mantissa.Words[index]
+	}
+	destination.Mantissa.Count = mantissa.Count
+	destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+	if previous_count > mantissa.Count {
+		int_clear((*Int)(&destination.Mantissa), mantissa.Count, previous_count)
 	}
 }
 
