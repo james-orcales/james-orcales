@@ -632,6 +632,13 @@ func Test_Source_And_Test_Bans_Panic(t *testing.T) {
 	if !specification_flags(t, files, "Replace it with aver.Always") {
 		t.Fatal("panic outside shared/sim/aver must be flagged")
 	}
+	test_files := map[string][]byte{
+		"pkg/rule_test.go": []byte(
+			"package fixture\n\n// F fails.\nfunc F() { panic(\"boom\") }\n"),
+	}
+	if !specification_flags(t, test_files, "Replace it with aver.Always") {
+		t.Fatal("panic in test source must be flagged")
+	}
 	aver_files := map[string][]byte{
 		"shared/sim/aver/rule.go": []byte(
 			"package aver\n\n// F fails.\nfunc F() { panic(\"boom\") }\n"),
@@ -640,6 +647,13 @@ func Test_Source_And_Test_Bans_Panic(t *testing.T) {
 	}
 	if specification_flags(t, aver_files, "Replace it with aver.Always") {
 		t.Fatal("panic inside shared/sim/aver must stay allowed")
+	}
+	nearby_files := map[string][]byte{
+		"shared/sim/average/rule.go": []byte(
+			"package average\n\n// F fails.\nfunc F() { panic(\"boom\") }\n"),
+	}
+	if !specification_flags(t, nearby_files, "Replace it with aver.Always") {
+		t.Fatal("similar directory must not inherit panic exemption")
 	}
 }
 

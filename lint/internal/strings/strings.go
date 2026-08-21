@@ -2,6 +2,7 @@
 package strings
 
 import (
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -17,9 +18,10 @@ type Builder struct {
 
 // Builder_Invariants bounds owned text.
 func Builder_Invariants(builder Builder) {
-	if len(builder.Content) > TEXT_SIZE_MAXIMUM {
-		panic("lint strings: text too large")
-	}
+	aver.Always(
+		len(builder.Content) <= TEXT_SIZE_MAXIMUM,
+		"Lint builder text stays bounded.",
+	)
 }
 
 // Builder_Size returns owned byte count.
@@ -31,9 +33,10 @@ func Builder_Size(builder *Builder) (size int) {
 // Write satisfies io.Writer without permitting unbounded growth.
 func (builder *Builder) Write(source []byte) (count int, err error) {
 	Builder_Invariants(*builder)
-	if len(source) > TEXT_SIZE_MAXIMUM-len(builder.Content) {
-		panic("lint strings: text too large")
-	}
+	aver.Always(
+		len(source) <= TEXT_SIZE_MAXIMUM-len(builder.Content),
+		"Lint builder write stays bounded.",
+	)
 	builder.Content = append(builder.Content, source...)
 	return len(source), nil
 }
@@ -47,23 +50,15 @@ func (builder *Builder) String() (text string) {
 // Builder_Write_Text appends text under Builder bound.
 func Builder_Write_Text(builder *Builder, source string) {
 	count, err := builder.Write([]byte(source))
-	if err != nil {
-		panic(err)
-	}
-	if count != len(source) {
-		panic("lint strings: short write")
-	}
+	aver.Always(err == nil, "Lint text write returns no error.")
+	aver.Always(count == len(source), "Lint text write consumes whole source.")
 }
 
 // Builder_Write_Byte appends one byte under Builder bound.
 func Builder_Write_Byte(builder *Builder, value byte) {
 	count, err := builder.Write([]byte{value})
-	if err != nil {
-		panic(err)
-	}
-	if count != 1 {
-		panic("lint strings: short write")
-	}
+	aver.Always(err == nil, "Lint byte write returns no error.")
+	aver.Always(count == 1, "Lint byte write consumes one byte.")
 }
 
 // Contains reports whether separator occurs in source.
@@ -193,14 +188,13 @@ func Index_Byte(source string, value byte) (index int) {
 func Join(parts []string, separator string) (joined string) {
 	size := 0
 	for index, part := range parts {
-		if len(part) > TEXT_SIZE_MAXIMUM-size {
-			panic("lint strings: text too large")
-		}
+		aver.Always(len(part) <= TEXT_SIZE_MAXIMUM-size, "Lint joined part stays bounded.")
 		size += len(part)
 		if index > 0 {
-			if len(separator) > TEXT_SIZE_MAXIMUM-size {
-				panic("lint strings: text too large")
-			}
+			aver.Always(
+				len(separator) <= TEXT_SIZE_MAXIMUM-size,
+				"Lint joined separator stays bounded.",
+			)
 			size += len(separator)
 		}
 	}
@@ -242,13 +236,12 @@ func Last_Index_Byte(source string, value byte) (index int) {
 
 // Repeat repeats source count times under lint input bound.
 func Repeat(source string, count int) (repeated string) {
-	if count < 0 {
-		panic("lint strings: negative repeat count")
-	}
+	aver.Always(count >= 0, "Lint repeat count stays nonnegative.")
 	if len(source) > 0 {
-		if count > TEXT_SIZE_MAXIMUM/len(source) {
-			panic("lint strings: text too large")
-		}
+		aver.Always(
+			count <= TEXT_SIZE_MAXIMUM/len(source),
+			"Lint repeated text stays bounded.",
+		)
 	}
 	size := len(source) * count
 	buffer := make([]byte, 0, size)

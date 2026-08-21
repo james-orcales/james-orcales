@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 
 	"local/james-orcales/lint/internal"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/snap/default"
 	"local/james-orcales/shared/strconv"
 )
@@ -5751,7 +5752,8 @@ func json_field_value_text(value any) (text string) {
 	case map[string][]string:
 		return json_string_list_map_text(typed)
 	default:
-		panic(fmt.Sprintf("unsupported JSON fixture value %T", value))
+		aver.Always(false, "JSON fixture value type stays supported.")
+		return ""
 	}
 }
 
