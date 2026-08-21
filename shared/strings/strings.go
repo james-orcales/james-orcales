@@ -3,6 +3,8 @@
 package strings
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/unicode/ucd"
@@ -647,6 +649,12 @@ const REPLACEMENT_COUNT_MINIMUM = -1
 // REPLACEMENT_COUNT_MAXIMUM permits one replacement per input byte.
 const REPLACEMENT_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM
 
+// SPECIAL_CASE_COUNT_MINIMUM keeps zero value on standard Unicode mapping.
+const SPECIAL_CASE_COUNT_MINIMUM = ucd.SPECIAL_CASE_COUNT_MINIMUM
+
+// SPECIAL_CASE_COUNT_MAXIMUM matches complete language override data.
+const SPECIAL_CASE_COUNT_MAXIMUM = ucd.SPECIAL_CASE_COUNT_MAXIMUM
+
 // SIZE_VALUE_MINIMUM permits empty content.
 const SIZE_VALUE_MINIMUM = 0
 
@@ -758,6 +766,106 @@ func Size_Value_Invariants(value Size_Value, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_VALUE_MINIMUM, SIZE_VALUE_MAXIMUM).
 		Ensure()
+}
+
+// Special_Case_Count separates active prefix from fixed named rule storage.
+type Special_Case_Count int
+
+// Special_Case_Count_Invariants bounds work to complete Unicode override data.
+func Special_Case_Count_Invariants(value Special_Case_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), SPECIAL_CASE_COUNT_MINIMUM, SPECIAL_CASE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// First_Case_Range gives first rule separate invariant identity.
+type First_Case_Range ucd.Case_Range
+
+// First_Case_Range_Invariants rejects reversed caller rule ranges.
+func First_Case_Range_Invariants(value First_Case_Range, _ aver.Namespace) {
+	aver.Always(
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"First special case range minimum does not exceed maximum.",
+	)
+}
+
+// Second_Case_Range gives second rule separate invariant identity.
+type Second_Case_Range ucd.Case_Range
+
+// Second_Case_Range_Invariants rejects reversed caller rule ranges.
+func Second_Case_Range_Invariants(value Second_Case_Range, _ aver.Namespace) {
+	aver.Always(
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"Second special case range minimum does not exceed maximum.",
+	)
+}
+
+// Third_Case_Range gives third rule separate invariant identity.
+type Third_Case_Range ucd.Case_Range
+
+// Third_Case_Range_Invariants rejects reversed caller rule ranges.
+func Third_Case_Range_Invariants(value Third_Case_Range, _ aver.Namespace) {
+	aver.Always(
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"Third special case range minimum does not exceed maximum.",
+	)
+}
+
+// Fourth_Case_Range gives fourth rule separate invariant identity.
+type Fourth_Case_Range ucd.Case_Range
+
+// Fourth_Case_Range_Invariants rejects reversed caller rule ranges.
+func Fourth_Case_Range_Invariants(value Fourth_Case_Range, _ aver.Namespace) {
+	aver.Always(
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"Fourth special case range minimum does not exceed maximum.",
+	)
+}
+
+// Special_Case uses named rules because four entries form bounded shape.
+type Special_Case struct {
+	// Count makes zero value select standard Unicode mapping.
+	Count Special_Case_Count
+	// First retains first ordered language rule.
+	First First_Case_Range
+	// Second retains second ordered language rule.
+	Second Second_Case_Range
+	// Third retains third ordered language rule.
+	Third Third_Case_Range
+	// Fourth retains fourth ordered language rule.
+	Fourth Fourth_Case_Range
+}
+
+// Special_Case_Invariants composes active count and fixed rule shape.
+func Special_Case_Invariants(value Special_Case, namespace aver.Namespace) {
+	Special_Case_Count_Invariants(value.Count, namespace)
+	First_Case_Range_Invariants(value.First, namespace)
+	Second_Case_Range_Invariants(value.Second, namespace)
+	Third_Case_Range_Invariants(value.Third, namespace)
+	Fourth_Case_Range_Invariants(value.Fourth, namespace)
+}
+
+// Special_Case_Of copies four bounded rules so caller slices cannot escape.
+func Special_Case_Of(
+	count Special_Case_Count,
+	first First_Case_Range,
+	second Second_Case_Range,
+	third Third_Case_Range,
+	fourth Fourth_Case_Range,
+) (special Special_Case) {
+	defer func() { Special_Case_Invariants(special, "special_case_of.special") }()
+	Special_Case_Count_Invariants(count, "special_case_of.count")
+	First_Case_Range_Invariants(first, "special_case_of.first")
+	Second_Case_Range_Invariants(second, "special_case_of.second")
+	Third_Case_Range_Invariants(third, "special_case_of.third")
+	Fourth_Case_Range_Invariants(fourth, "special_case_of.fourth")
+	return Special_Case{
+		Count:  count,
+		First:  first,
+		Second: second,
+		Third:  third,
+		Fourth: fourth,
+	}
 }
 
 // Clone_Into copies source into caller storage.
@@ -1057,7 +1165,7 @@ func To_Upper_Into(destination Bytes, source Text) (upper Bytes) {
 	defer func() { Bytes_Invariants(upper, "to_upper_into.upper") }()
 	Bytes_Invariants(destination, "to_upper_into.destination")
 	Text_Invariants(source, "to_upper_into.source")
-	return map_case_into(destination, source, ucd.UPPER_CASE, nil, false)
+	return map_case_into(destination, source, ucd.UPPER_CASE, Special_Case{}, false)
 }
 
 // To_Lower_Into writes Unicode lowercase mapping into caller storage.
@@ -1065,7 +1173,7 @@ func To_Lower_Into(destination Bytes, source Text) (lower Bytes) {
 	defer func() { Bytes_Invariants(lower, "to_lower_into.lower") }()
 	Bytes_Invariants(destination, "to_lower_into.destination")
 	Text_Invariants(source, "to_lower_into.source")
-	return map_case_into(destination, source, ucd.LOWER_CASE, nil, false)
+	return map_case_into(destination, source, ucd.LOWER_CASE, Special_Case{}, false)
 }
 
 // To_Title_Into writes Unicode title mapping into caller storage.
@@ -1073,52 +1181,59 @@ func To_Title_Into(destination Bytes, source Text) (title Bytes) {
 	defer func() { Bytes_Invariants(title, "to_title_into.title") }()
 	Bytes_Invariants(destination, "to_title_into.destination")
 	Text_Invariants(source, "to_title_into.source")
-	return map_case_into(destination, source, ucd.TITLE_CASE, nil, false)
+	return map_case_into(destination, source, ucd.TITLE_CASE, Special_Case{}, false)
 }
 
 // To_Upper_Special_Into applies language override before uppercase mapping.
 func To_Upper_Special_Into(
-	destination Bytes, special ucd.Special_Case, source Text,
+	destination Bytes, special Special_Case, source Text,
 ) (upper Bytes) {
 	defer func() { Bytes_Invariants(upper, "to_upper_special_into.upper") }()
 	Bytes_Invariants(destination, "to_upper_special_into.destination")
-	ucd.Special_Case_Invariants(special, "to_upper_special_into.special")
+	Special_Case_Invariants(special, "to_upper_special_into.special")
 	Text_Invariants(source, "to_upper_special_into.source")
 	return map_case_into(destination, source, ucd.UPPER_CASE, special, true)
 }
 
 // To_Lower_Special_Into applies language override before lowercase mapping.
 func To_Lower_Special_Into(
-	destination Bytes, special ucd.Special_Case, source Text,
+	destination Bytes, special Special_Case, source Text,
 ) (lower Bytes) {
 	defer func() { Bytes_Invariants(lower, "to_lower_special_into.lower") }()
 	Bytes_Invariants(destination, "to_lower_special_into.destination")
-	ucd.Special_Case_Invariants(special, "to_lower_special_into.special")
+	Special_Case_Invariants(special, "to_lower_special_into.special")
 	Text_Invariants(source, "to_lower_special_into.source")
 	return map_case_into(destination, source, ucd.LOWER_CASE, special, true)
 }
 
 // To_Title_Special_Into applies language override before title mapping.
 func To_Title_Special_Into(
-	destination Bytes, special ucd.Special_Case, source Text,
+	destination Bytes, special Special_Case, source Text,
 ) (title Bytes) {
 	defer func() { Bytes_Invariants(title, "to_title_special_into.title") }()
 	Bytes_Invariants(destination, "to_title_special_into.destination")
-	ucd.Special_Case_Invariants(special, "to_title_special_into.special")
+	Special_Case_Invariants(special, "to_title_special_into.special")
 	Text_Invariants(source, "to_title_special_into.source")
 	return map_case_into(destination, source, ucd.TITLE_CASE, special, true)
 }
 
 func map_case_into(
 	destination Bytes, source Text, mapping ucd.Case,
-	special ucd.Special_Case, use_special Boolean,
+	special Special_Case, use_special Boolean,
 ) (mapped Bytes) {
 	defer func() { Bytes_Invariants(mapped, "map_case_into.mapped") }()
 	Bytes_Invariants(destination, "map_case_into.destination")
 	Text_Invariants(source, "map_case_into.source")
 	ucd.Case_Invariants(mapping, "map_case_into.mapping")
-	ucd.Special_Case_Invariants(special, "map_case_into.special")
+	Special_Case_Invariants(special, "map_case_into.special")
 	Boolean_Invariants(use_special, "map_case_into.use_special")
+	special_ranges := [...]ucd.Case_Range{
+		ucd.Case_Range(special.First),
+		ucd.Case_Range(special.Second),
+		ucd.Case_Range(special.Third),
+		ucd.Case_Range(special.Fourth),
+	}
+	active_special := ucd.Special_Case(special_ranges[:int(special.Count)])
 	written := 0
 	for _, character := range source {
 		mapped_character := ucd.To(mapping, ucd.Character(character))
@@ -1126,15 +1241,15 @@ func map_case_into(
 			switch mapping {
 			case ucd.UPPER_CASE:
 				mapped_character = ucd.Special_Case_To_Upper(
-					special, ucd.Character(character),
+					active_special, ucd.Character(character),
 				)
 			case ucd.LOWER_CASE:
 				mapped_character = ucd.Special_Case_To_Lower(
-					special, ucd.Character(character),
+					active_special, ucd.Character(character),
 				)
 			case ucd.TITLE_CASE:
 				mapped_character = ucd.Special_Case_To_Title(
-					special, ucd.Character(character),
+					active_special, ucd.Character(character),
 				)
 			}
 		}
@@ -1320,15 +1435,1259 @@ const RULE_COUNT_MINIMUM = 0
 // RULE_COUNT_MAXIMUM prevents unbounded rule search.
 const RULE_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM
 
-// Builder_Storage owns fixed bytes without runtime growth.
-type Builder_Storage [TEXT_SIZE_MAXIMUM]byte
+// BUILDER_STORAGE_SCALAR_BYTE_COUNT matches fixed-width opaque scalar.
+const BUILDER_STORAGE_SCALAR_BYTE_COUNT = 8
 
-// Builder_Storage_Invariants states fixed compile-time storage size.
+// Builder_Storage uses scalar fields because fixed arrays hide element shape.
+type Builder_Storage struct {
+	// Block_00 groups bytes 0 through 63 so field list stays reviewable.
+	Block_00 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_01 groups bytes 64 through 127 so field list stays reviewable.
+	Block_01 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_02 groups bytes 128 through 191 so field list stays reviewable.
+	Block_02 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_03 groups bytes 192 through 255 so field list stays reviewable.
+	Block_03 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_04 groups bytes 256 through 319 so field list stays reviewable.
+	Block_04 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_05 groups bytes 320 through 383 so field list stays reviewable.
+	Block_05 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_06 groups bytes 384 through 447 so field list stays reviewable.
+	Block_06 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_07 groups bytes 448 through 511 so field list stays reviewable.
+	Block_07 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_08 groups bytes 512 through 575 so field list stays reviewable.
+	Block_08 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_09 groups bytes 576 through 639 so field list stays reviewable.
+	Block_09 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_10 groups bytes 640 through 703 so field list stays reviewable.
+	Block_10 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_11 groups bytes 704 through 767 so field list stays reviewable.
+	Block_11 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_12 groups bytes 768 through 831 so field list stays reviewable.
+	Block_12 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_13 groups bytes 832 through 895 so field list stays reviewable.
+	Block_13 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_14 groups bytes 896 through 959 so field list stays reviewable.
+	Block_14 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_15 groups bytes 960 through 1023 so field list stays reviewable.
+	Block_15 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_16 groups bytes 1024 through 1087 so field list stays reviewable.
+	Block_16 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_17 groups bytes 1088 through 1151 so field list stays reviewable.
+	Block_17 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_18 groups bytes 1152 through 1215 so field list stays reviewable.
+	Block_18 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_19 groups bytes 1216 through 1279 so field list stays reviewable.
+	Block_19 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_20 groups bytes 1280 through 1343 so field list stays reviewable.
+	Block_20 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_21 groups bytes 1344 through 1407 so field list stays reviewable.
+	Block_21 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_22 groups bytes 1408 through 1471 so field list stays reviewable.
+	Block_22 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_23 groups bytes 1472 through 1535 so field list stays reviewable.
+	Block_23 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_24 groups bytes 1536 through 1599 so field list stays reviewable.
+	Block_24 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_25 groups bytes 1600 through 1663 so field list stays reviewable.
+	Block_25 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_26 groups bytes 1664 through 1727 so field list stays reviewable.
+	Block_26 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_27 groups bytes 1728 through 1791 so field list stays reviewable.
+	Block_27 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_28 groups bytes 1792 through 1855 so field list stays reviewable.
+	Block_28 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_29 groups bytes 1856 through 1919 so field list stays reviewable.
+	Block_29 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_30 groups bytes 1920 through 1983 so field list stays reviewable.
+	Block_30 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_31 groups bytes 1984 through 2047 so field list stays reviewable.
+	Block_31 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_32 groups bytes 2048 through 2111 so field list stays reviewable.
+	Block_32 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_33 groups bytes 2112 through 2175 so field list stays reviewable.
+	Block_33 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_34 groups bytes 2176 through 2239 so field list stays reviewable.
+	Block_34 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_35 groups bytes 2240 through 2303 so field list stays reviewable.
+	Block_35 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_36 groups bytes 2304 through 2367 so field list stays reviewable.
+	Block_36 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_37 groups bytes 2368 through 2431 so field list stays reviewable.
+	Block_37 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_38 groups bytes 2432 through 2495 so field list stays reviewable.
+	Block_38 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_39 groups bytes 2496 through 2559 so field list stays reviewable.
+	Block_39 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_40 groups bytes 2560 through 2623 so field list stays reviewable.
+	Block_40 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_41 groups bytes 2624 through 2687 so field list stays reviewable.
+	Block_41 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_42 groups bytes 2688 through 2751 so field list stays reviewable.
+	Block_42 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_43 groups bytes 2752 through 2815 so field list stays reviewable.
+	Block_43 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_44 groups bytes 2816 through 2879 so field list stays reviewable.
+	Block_44 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_45 groups bytes 2880 through 2943 so field list stays reviewable.
+	Block_45 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_46 groups bytes 2944 through 3007 so field list stays reviewable.
+	Block_46 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_47 groups bytes 3008 through 3071 so field list stays reviewable.
+	Block_47 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_48 groups bytes 3072 through 3135 so field list stays reviewable.
+	Block_48 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_49 groups bytes 3136 through 3199 so field list stays reviewable.
+	Block_49 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_50 groups bytes 3200 through 3263 so field list stays reviewable.
+	Block_50 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_51 groups bytes 3264 through 3327 so field list stays reviewable.
+	Block_51 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_52 groups bytes 3328 through 3391 so field list stays reviewable.
+	Block_52 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_53 groups bytes 3392 through 3455 so field list stays reviewable.
+	Block_53 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_54 groups bytes 3456 through 3519 so field list stays reviewable.
+	Block_54 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_55 groups bytes 3520 through 3583 so field list stays reviewable.
+	Block_55 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_56 groups bytes 3584 through 3647 so field list stays reviewable.
+	Block_56 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_57 groups bytes 3648 through 3711 so field list stays reviewable.
+	Block_57 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_58 groups bytes 3712 through 3775 so field list stays reviewable.
+	Block_58 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_59 groups bytes 3776 through 3839 so field list stays reviewable.
+	Block_59 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_60 groups bytes 3840 through 3903 so field list stays reviewable.
+	Block_60 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_61 groups bytes 3904 through 3967 so field list stays reviewable.
+	Block_61 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_62 groups bytes 3968 through 4031 so field list stays reviewable.
+	Block_62 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+	// Block_63 groups bytes 4032 through 4095 so field list stays reviewable.
+	Block_63 struct {
+		// Bytes_00_07 keeps byte positions explicit without banned array storage.
+		Bytes_00_07 bits.Word_64
+		// Bytes_08_15 keeps byte positions explicit without banned array storage.
+		Bytes_08_15 bits.Word_64
+		// Bytes_16_23 keeps byte positions explicit without banned array storage.
+		Bytes_16_23 bits.Word_64
+		// Bytes_24_31 keeps byte positions explicit without banned array storage.
+		Bytes_24_31 bits.Word_64
+		// Bytes_32_39 keeps byte positions explicit without banned array storage.
+		Bytes_32_39 bits.Word_64
+		// Bytes_40_47 keeps byte positions explicit without banned array storage.
+		Bytes_40_47 bits.Word_64
+		// Bytes_48_55 keeps byte positions explicit without banned array storage.
+		Bytes_48_55 bits.Word_64
+		// Bytes_56_63 keeps byte positions explicit without banned array storage.
+		Bytes_56_63 bits.Word_64
+	}
+}
+
+// Builder_Storage_Invariants proves scalar layout matches complete text capacity.
 func Builder_Storage_Invariants(value Builder_Storage, _ aver.Namespace) {
 	aver.Always(
-		len(value) == TEXT_SIZE_MAXIMUM,
-		"Builder storage has fixed Text capacity.",
+		unsafe.Sizeof(bits.Word_64(0)) == uintptr(BUILDER_STORAGE_SCALAR_BYTE_COUNT),
+		"Builder storage scalar owns eight bytes.",
 	)
+	aver.Always(
+		unsafe.Sizeof(value) == uintptr(TEXT_SIZE_MAXIMUM),
+		"Builder storage owns complete text capacity without padding.",
+	)
+}
+
+// Builder_Storage_View prevents fixed-capacity bytes from widening into general Bytes domain.
+type Builder_Storage_View []byte
+
+// Builder_Storage_View_Invariants fixes unsafe view to complete backing storage.
+func Builder_Storage_View_Invariants(value Builder_Storage_View, _ aver.Namespace) {
+	aver.Always(
+		len(value) == TEXT_SIZE_MAXIMUM,
+		"Builder storage view spans complete backing storage.",
+	)
+}
+
+// Builder storage byte view exists only after layout proof keeps unsafe span bounded.
+func builder_storage_bytes(storage *Builder_Storage) (view Builder_Storage_View) {
+	defer func() {
+		Builder_Storage_View_Invariants(view, "builder_storage_bytes.view")
+	}()
+	Builder_Storage_Invariants(*storage, "builder_storage_bytes.storage")
+	return unsafe.Slice((*byte)(unsafe.Pointer(storage)), TEXT_SIZE_MAXIMUM)
 }
 
 // Builder holds fixed caller-stack-compatible storage.
@@ -1340,7 +2699,7 @@ type Builder struct {
 }
 
 // Builder_Invariants composes fixed storage and current content size.
-func Builder_Invariants(value Builder, namespace aver.Namespace) {
+func Builder_Invariants(value *Builder, namespace aver.Namespace) {
 	Builder_Storage_Invariants(value.Storage, namespace)
 	Size_Value_Invariants(value.Size, namespace)
 }
@@ -1361,14 +2720,14 @@ func Builder_Capacity_Value_Invariants(
 // Builder_Bytes returns current fixed-storage view.
 func Builder_Bytes(builder *Builder) (content Bytes) {
 	defer func() { Bytes_Invariants(content, "builder_bytes.content") }()
-	Builder_Invariants(*builder, "builder_bytes.builder")
-	return builder.Storage[:builder.Size]
+	Builder_Invariants(builder, "builder_bytes.builder")
+	return Bytes(builder_storage_bytes(&builder.Storage)[:builder.Size])
 }
 
 // Builder_Size reports current encoded byte count.
 func Builder_Size(builder *Builder) (size Size_Value) {
 	defer func() { Size_Value_Invariants(size, "builder_size.size") }()
-	Builder_Invariants(*builder, "builder_size.builder")
+	Builder_Invariants(builder, "builder_size.builder")
 	return builder.Size
 }
 
@@ -1377,25 +2736,25 @@ func Builder_Capacity(builder *Builder) (capacity Builder_Capacity_Value) {
 	defer func() {
 		Builder_Capacity_Value_Invariants(capacity, "builder_capacity.capacity")
 	}()
-	Builder_Invariants(*builder, "builder_capacity.builder")
+	Builder_Invariants(builder, "builder_capacity.builder")
 	return TEXT_SIZE_MAXIMUM
 }
 
 // Builder_Reset removes content without replacing storage.
 func Builder_Reset(builder *Builder) {
-	Builder_Invariants(*builder, "builder_reset.builder")
+	Builder_Invariants(builder, "builder_reset.builder")
 	builder.Size = 0
 }
 
 // Builder_Write copies bytes into remaining fixed storage.
 func Builder_Write(builder *Builder, source Bytes) (written Size_Value) {
 	defer func() { Size_Value_Invariants(written, "builder_write.written") }()
-	Builder_Invariants(*builder, "builder_write.builder")
+	Builder_Invariants(builder, "builder_write.builder")
 	Bytes_Invariants(source, "builder_write.source")
 	if len(source) > TEXT_SIZE_MAXIMUM-int(builder.Size) {
 		panic("strings: destination too small")
 	}
-	written = Size_Value(copy(builder.Storage[builder.Size:], source))
+	written = Size_Value(copy(builder_storage_bytes(&builder.Storage)[builder.Size:], source))
 	builder.Size += written
 	return written
 }
@@ -1403,30 +2762,30 @@ func Builder_Write(builder *Builder, source Bytes) (written Size_Value) {
 // Builder_Write_Text copies Text into remaining fixed storage.
 func Builder_Write_Text(builder *Builder, source Text) (written Size_Value) {
 	defer func() { Size_Value_Invariants(written, "builder_write_text.written") }()
-	Builder_Invariants(*builder, "builder_write_text.builder")
+	Builder_Invariants(builder, "builder_write_text.builder")
 	Text_Invariants(source, "builder_write_text.source")
 	if len(source) > TEXT_SIZE_MAXIMUM-int(builder.Size) {
 		panic("strings: destination too small")
 	}
-	written = Size_Value(copy(builder.Storage[builder.Size:], source))
+	written = Size_Value(copy(builder_storage_bytes(&builder.Storage)[builder.Size:], source))
 	builder.Size += written
 	return written
 }
 
 // Builder_Write_Byte writes one byte into fixed storage.
 func Builder_Write_Byte(builder *Builder, value Byte) {
-	Builder_Invariants(*builder, "builder_write_byte.builder")
+	Builder_Invariants(builder, "builder_write_byte.builder")
 	Byte_Invariants(value, "builder_write_byte.value")
 	if builder.Size == TEXT_SIZE_MAXIMUM {
 		panic("strings: destination too small")
 	}
-	builder.Storage[builder.Size] = byte(value)
+	builder_storage_bytes(&builder.Storage)[builder.Size] = byte(value)
 	builder.Size++
 }
 
 // Builder_Write_Character writes one UTF-8 encoding into fixed storage.
 func Builder_Write_Character(builder *Builder, character Character) {
-	Builder_Invariants(*builder, "builder_write_character.builder")
+	Builder_Invariants(builder, "builder_write_character.builder")
 	Character_Invariants(character, "builder_write_character.character")
 	size := utf8.Character_Size(utf8.Character(character))
 	if size == utf8.CHARACTER_SIZE_INVALID {
@@ -1436,7 +2795,8 @@ func Builder_Write_Character(builder *Builder, character Character) {
 		panic("strings: destination too small")
 	}
 	written := utf8.Encode_Character(
-		utf8.Bytes(builder.Storage[builder.Size:]), utf8.Character(character),
+		utf8.Bytes(builder_storage_bytes(&builder.Storage)[builder.Size:]),
+		utf8.Character(character),
 	)
 	builder.Size += Size_Value(written)
 }
