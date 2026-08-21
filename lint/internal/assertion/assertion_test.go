@@ -11,7 +11,7 @@ import (
 func Test_Invariants_Unnamed_Default_Import(t *testing.T) {
 	t.Parallel()
 	code := "package fixture\n\n" +
-		"import \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import \"fixture/shared/sim/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +

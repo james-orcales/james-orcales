@@ -1,7 +1,7 @@
 {
   "shared_component": "shared",
   "instrumentation_packages": [
-          "shared/simulation/aver/**",
+          "shared/sim/aver/**",
           "shared/snap/**",
           "shared/jlog/**"
   ],
@@ -9,14 +9,14 @@
     "lint/internal/",
     "sloc/internal/**",
     "shared/sync/diode/",
-    "shared/simulation/aver/",
+    "shared/sim/aver/",
     "shared/jlog/",
     "shared/snap/"
   ],
   "ignore": [
           "install_golang.sh",
           "nix/**",
-          "shared/simulation/aver/enforcement_noop*",
+          "shared/sim/aver/enforcement_noop*",
           "build.go",
           "home/**",
           "documentation/youtube/**",
@@ -31,12 +31,12 @@
   "opt_out_assertion_mandate_packages": [
           "**",
           "!shared/**",
-          "shared/simulation/aver/**",
+          "shared/sim/aver/**",
           "shared/vsr/**",
           "shared/testify/**",
           "shared/snap/**",
           "shared/jlog/**",
-          "shared/simulation/**",
+          "shared/sim/**",
 
           "!maddox/**",
           "!sloc/**",

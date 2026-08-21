@@ -319,7 +319,7 @@ func Test_Comments_Inline_Exempt(t *testing.T) {
 	t.Parallel()
 	source := "package main\n\n" +
 		"import \"github.com/james-orcales/james-orcales/" +
-		"shared/simulation/aver/v2\"\n\n" +
+		"shared/sim/aver/v2\"\n\n" +
 		"const FIXTURE_HI = 100\n\n" +
 		"func f() (result int) { // some inline note\n" +
 		"\tdefer func() {\n" +
@@ -1626,7 +1626,7 @@ func F() {
 }
 `)},
 		{Snapshot: snap.Init(`a.go:8:9: The API "http.Get" is unbounded (unbounded-http). Use (&http.Client{Timeout: N}).Get(...) instead.
-a.go:4:8: Only simulation/nbio/default can import "net/http". Route IO through shared/simulation/nbio.`), Drop: "The stdlib call", Files: snapshot_package(`import "net/http"
+a.go:4:8: Only sim/nbio/default can import "net/http". Route IO through shared/sim/nbio.`), Drop: "The stdlib call", Files: snapshot_package(`import "net/http"
 
 // F fetches.
 func F(url string) (resp *http.Response, err error) {
@@ -2700,8 +2700,8 @@ func Test_Git_No_Fixup_Commits(t *testing.T) {
 func Test_Banned_Stdlib_Import_Aver(t *testing.T) {
 	t.Parallel()
 	aver_files := []string{
-		"shared/simulation/aver/rule.go",
-		"shared/simulation/aver/default/rule.go",
+		"shared/sim/aver/rule.go",
+		"shared/sim/aver/default/rule.go",
 	}
 	for _, filename := range aver_files {
 		diags, err := lint.Check_Source(
@@ -2714,7 +2714,7 @@ func Test_Banned_Stdlib_Import_Aver(t *testing.T) {
 		}
 	}
 	named_like_aver, err := lint.Check_Source(
-		"shared/simulation/aver_extra/rule.go",
+		"shared/sim/aver_extra/rule.go",
 		"package aver_extra\n\nimport \"encoding/json\"\n")
 	if err != nil {
 		t.Fatalf("Check_Source aver-like path: %v", err)
@@ -2999,7 +2999,7 @@ func F(r *http.Request) (h http.Header) {
 }
 `,
 			},
-			Want_Diag: "Route IO through shared/simulation/nbio",
+			Want_Diag: "Route IO through shared/sim/nbio",
 		},
 		{
 			Name: "library calls net.Dial",

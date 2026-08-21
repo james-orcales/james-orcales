@@ -5123,10 +5123,10 @@ func check_no_banned_stdlib_import(
 	token_file := file_set.File(file.Pos())
 	if token_file != nil {
 		directory = path.Dir(path.Clean(token_file.Name()))
-		if directory == "shared/simulation/aver" {
+		if directory == "shared/sim/aver" {
 			invariant_directory = true
 		}
-		if strings.Has_Prefix(directory, "shared/simulation/aver/") {
+		if strings.Has_Prefix(directory, "shared/sim/aver/") {
 			invariant_directory = true
 		}
 	}
@@ -5179,7 +5179,7 @@ func check_no_banned_stdlib_import(
 
 // SIGNAL_GATEWAY_DIRECTORY is the loop backend, which owns signal registration because it
 // owns the poll pass that has to drain the notifier channel.
-const SIGNAL_GATEWAY_DIRECTORY = "shared/simulation/nbio/default"
+const SIGNAL_GATEWAY_DIRECTORY = "shared/sim/nbio/default"
 
 // Reports whether directory is root itself or sits below it. The trailing separator keeps a
 // directory merely named like root from inheriting root's exemption.
@@ -9523,7 +9523,7 @@ func import_path_workspace_directory(
 // Stdlib time is the one ambient source of real wall-clock time. Funneling every
 // read through a single gateway keeps the injected Clock the only way the rest of
 // the shared module sees the clock, so within the shared library importing stdlib
-// "time" is allowed only in simulation/time/default; every other package injects
+// "time" is allowed only in sim/time/default; every other package injects
 // a Clock. Binary components are out of scope — separate tools with their own needs.
 func check_time_import_gateway(
 	parsed_files []Parsed_File, components *Component_Index,
@@ -9551,7 +9551,7 @@ func check_time_import_gateway(
 			diags = append(diags, Diagnostic{
 				Position: pf.File_Set.Position(implementation.Pos()),
 				Name:     "stdlib-time",
-				Want:     "Import simulation/time/default and inject a Clock.",
+				Want:     "Import sim/time/default and inject a Clock.",
 				Message: fmt.Sprintf(
 					"Only %q can import the stdlib time package. "+
 						"Inject the Clock.",
@@ -9627,7 +9627,7 @@ func check_driver_type(
 	if shared == "" {
 		return nil
 	}
-	driver_path := shared + "/simulation/nbio"
+	driver_path := shared + "/sim/nbio"
 	gateway := source.IO_Gateway(components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
@@ -9646,7 +9646,7 @@ func check_driver_type(
 	return diags
 }
 
-// The nbio.Driver references in one file use the simulation/nbio import's local name.
+// The nbio.Driver references in one file use the sim/nbio import's local name.
 func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []Diagnostic) {
 	local := ""
 	for _, implementation := range pf.File.Imports {
@@ -9685,7 +9685,7 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 	return diags
 }
 
-// The simulation/nbio/default package supplies the OS backend. The simulation/time/default
+// The sim/nbio/default package supplies the OS backend. The sim/time/default
 // gateway, instrumentation packages, tests, and package main are also exempt. The syscall
 // gateways are exempt for syscall alone, not for the whole ban.
 func check_io_gateway(
@@ -9754,10 +9754,10 @@ func io_gateway_import_diagnostics(
 		diags = append(diags, Diagnostic{
 			Position: pf.File_Set.Position(implementation.Pos()),
 			Name:     "io-gateway",
-			Want:     "Route IO through shared/simulation/nbio.",
+			Want:     "Route IO through shared/sim/nbio.",
 			Message: fmt.Sprintf(
-				"Only simulation/nbio/default can import %q. "+
-					"Route IO through shared/simulation/nbio.",
+				"Only sim/nbio/default can import %q. "+
+					"Route IO through shared/sim/nbio.",
 				import_path),
 			Tier: 2,
 		})
@@ -9831,9 +9831,9 @@ func io_gateway_call_diagnostic(pf Parsed_File, selector *ast.SelectorExpr) (dia
 	return Diagnostic{
 		Position: pf.File_Set.Position(selector.Pos()),
 		Name:     "io-gateway",
-		Want:     "Route IO through shared/simulation/nbio.",
+		Want:     "Route IO through shared/sim/nbio.",
 		Message: "The call " + identifier.Name + "." + selector.Sel.Name +
-			" does raw IO. Route it through shared/simulation/nbio.",
+			" does raw IO. Route it through shared/sim/nbio.",
 		Tier: 2,
 	}
 }

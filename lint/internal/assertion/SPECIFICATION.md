@@ -2,7 +2,7 @@
 # Invariants
 
 Every type states its properties in a companion function beside it, the
-shared/simulation/aver bundle convention made mandatory.
+shared/sim/aver bundle convention made mandatory.
 
 ### Presence
 
@@ -62,7 +62,7 @@ one form that shares a fact. A foreign helper never satisfies a local typed subj
 
 ### Helper Identity
 
-All canonical calls are direct shared/simulation/aver/default statements with qualifier aver. An
+All canonical calls are direct shared/sim/aver/default statements with qualifier aver. An
 unnamed default-tier import binds parent package name. Tree root takes helper subject before
 namespace. Always uses `subject == CONSTANT` with literal message; every impersonation fails.
 

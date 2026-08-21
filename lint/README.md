@@ -110,11 +110,9 @@ shared/
 ├── go.mod
 ├── snap/                    ← library at depth 1
 │   └── snap.go
-├── simulation/
-│   └── aver/                ← simulation assertion library
-│       └── aver.go
 └── sim/
-    ├── sim.go               ← library at depth 1
+    ├── aver/                ← simulation assertion library
+    │   └── aver.go
     └── time/                ← composition tier of sim (one deeper, OK)
         └── time.go
 ```

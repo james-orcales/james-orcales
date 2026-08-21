@@ -672,7 +672,7 @@ func import_path_under_component(input *Import_Path_Under_Component_Input) (yes 
 
 // Time_Gateway keeps the host clock in the simulation subtree.
 func Time_Gateway(components *Component_Index) (gateway string) {
-	return shared_library_directory(components, "simulation/time/default")
+	return shared_library_directory(components, "sim/time/default")
 }
 
 // Returns the workspace-relative directory named by relative within the shared library
@@ -707,10 +707,10 @@ func Shared_Import(components *Component_Index) (import_path string) {
 
 // IO_Gateway keeps the operating-system backend in the simulation subtree.
 func IO_Gateway(components *Component_Index) (gateway string) {
-	return shared_library_directory(components, "simulation/nbio/default")
+	return shared_library_directory(components, "sim/nbio/default")
 }
 
-// Syscall_Gateways permits the process bindings that simulation/nbio cannot supply.
+// Syscall_Gateways permits the process bindings that sim/nbio cannot supply.
 // The raw-IO ban stays active for all other imports in these directories.
 func Syscall_Gateways(components *Component_Index) (gateways []string) {
 	directory := shared_library_directory(components, "os/default")

@@ -1008,20 +1008,20 @@ func helper_default_package(
 ) (import_path string) {
 	shared := source.Shared_Import(components)
 	if shared != "" {
-		return shared + "/simulation/aver/default"
+		return shared + "/sim/aver/default"
 	}
 	for _, candidate := range imports {
-		if strings.Has_Suffix(candidate, "/simulation/aver/default") {
+		if strings.Has_Suffix(candidate, "/sim/aver/default") {
 			return candidate
 		}
-		if strings.Has_Suffix(candidate, "/simulation/aver") {
+		if strings.Has_Suffix(candidate, "/sim/aver") {
 			import_path = candidate + "/default"
 		}
 	}
 	if import_path != "" {
 		return import_path
 	}
-	return "<simulation/aver/default>"
+	return "<sim/aver/default>"
 }
 
 // A selector resolves only through the file's import table. A method whose receiver happens to

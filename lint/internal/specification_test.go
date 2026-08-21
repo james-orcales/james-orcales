@@ -1508,7 +1508,7 @@ func Test_Stdlib_Time(t *testing.T) {
 func Test_Event_Loop_Driver(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import nbio \"fixture/shared/simulation/nbio\"\n\n" +
+		"import nbio \"fixture/shared/sim/nbio\"\n\n" +
 		"// Build makes a loop.\nfunc Build() (loop nbio.IO) {\n" +
 		"\tloop, _ = nbio.New_Simulated_IO(nil, 0, 1, nbio.Sim_Memory{})\n" +
 		"\treturn loop\n}\n")
@@ -1524,7 +1524,7 @@ func Test_Event_Loop_Gateway(t *testing.T) {
 	files := specification_one_file("package fixture\n\nimport \"syscall\"\n\n" +
 		"// Read does.\nfunc Read() (n int, err error) {\n" +
 		"\treturn syscall.Read(0, nil)\n}\n")
-	if !specification_flags(t, files, "Route IO through shared/simulation/nbio") {
+	if !specification_flags(t, files, "Route IO through shared/sim/nbio") {
 		t.Fatal("importing raw IO stdlib outside the gateway must be flagged")
 	}
 }
@@ -1630,7 +1630,7 @@ func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
 	files := map[string][]byte{
 		"pkg/main.go": []byte(
 			"// Package main is a fixture.\npackage main\n\n" +
-				"import nbio \"fixture/shared/simulation/nbio\"\n\n" +
+				"import nbio \"fixture/shared/sim/nbio\"\n\n" +
 				"func main() {\n" +
 				"\tnbio.New_Simulated_IO(nil, 0, 1, nbio.Sim_Memory{})\n" +
 				"}\n"),
@@ -1647,7 +1647,7 @@ func Test_Driver_Gateway_Test_Allowed(t *testing.T) {
 		"pkg/rule.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
 		"pkg/rule_test.go": []byte("package fixture_test\n\n" +
 			"import (\n\t\"testing\"\n\n" +
-			"\tiodefault \"fixture/shared/simulation/nbio/default\"\n)\n\n" +
+			"\tiodefault \"fixture/shared/sim/nbio/default\"\n)\n\n" +
 			"// Test_X is a fixture.\nfunc Test_X(t *testing.T) {\n" +
 			"\tiodefault.New_Operating_System_IO(nil)\n}\n"),
 	}
@@ -1662,7 +1662,7 @@ func Test_Driver_Gateway_Test_Allowed(t *testing.T) {
 func Test_Driver_Gateway_Logical_Clock_Allowed(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import time \"fixture/shared/simulation/time\"\n\n" +
+		"import time \"fixture/shared/sim/time\"\n\n" +
 		"// Build makes a clock.\nfunc Build() (clock time.Clock) {\n" +
 		"\tc, _ := time.Virtual_Clock_To_Clock(time.Virtual_Clock{})\n\treturn c\n}\n")
 	if specification_flags(t, files, "makes a loop driver") {
@@ -1678,12 +1678,12 @@ func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
 		"// Driver drives.\ntype Driver struct{}\n"
 	consumer := "// Package fixture is a fixture.\npackage fixture\n\n" +
 		"import nbio \"" +
-		"github.com/james-orcales/james-orcales/shared/simulation/nbio\"\n\n" +
+		"github.com/james-orcales/james-orcales/shared/sim/nbio\"\n\n" +
 		"// Main drives.\nfunc Main(driver nbio.Driver) {}\n"
 	fsys := fstest.MapFS{
-		"go.mod":                         {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/nbio/nbio.go": {Data: []byte(library)},
-		"pkg/rule.go":                    {Data: []byte(consumer)},
+		"go.mod":                  {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/sim/nbio/nbio.go": {Data: []byte(library)},
+		"pkg/rule.go":             {Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
@@ -1705,12 +1705,12 @@ func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
 		"// Driver drives.\ntype Driver struct{}\n"
 	consumer := "// Package main is a fixture.\npackage main\n\n" +
 		"import nbio \"" +
-		"github.com/james-orcales/james-orcales/shared/simulation/nbio\"\n\n" +
+		"github.com/james-orcales/james-orcales/shared/sim/nbio\"\n\n" +
 		"// hold takes a driver.\nfunc hold(driver nbio.Driver) {}\n\nfunc main() {}\n"
 	fsys := fstest.MapFS{
-		"go.mod":                         {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/nbio/nbio.go": {Data: []byte(library)},
-		"pkg/main.go":                    {Data: []byte(consumer)},
+		"go.mod":                  {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
+		"shared/sim/nbio/nbio.go": {Data: []byte(library)},
+		"pkg/main.go":             {Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
@@ -1752,7 +1752,7 @@ func Test_IO_Gateway_Network_Pure(t *testing.T) {
 	files := specification_one_file("package fixture\n\nimport \"net\"\n\n" +
 		"// F parses.\nfunc F() (address net.IP) {\n" +
 		"\treturn net.ParseIP(\"127.0.0.1\")\n}\n")
-	if specification_flags(t, files, "Route IO through shared/simulation/nbio") {
+	if specification_flags(t, files, "Route IO through shared/sim/nbio") {
 		t.Fatal("net.ParseIP is a pure address helper and must be allowed")
 	}
 }
@@ -1777,7 +1777,7 @@ func Test_IO_Gateway_Test_Exempt(t *testing.T) {
 			"import (\n\t\"net\"\n\t\"testing\"\n)\n\n// Test_X is a fixture.\n" +
 			"func Test_X(t *testing.T) {\n\tnet.ParseIP(\"\")\n}\n"),
 	}
-	if specification_flags(t, files, "Route IO through shared/simulation/nbio") {
+	if specification_flags(t, files, "Route IO through shared/sim/nbio") {
 		t.Fatal("a test may import raw IO stdlib")
 	}
 }
@@ -1802,7 +1802,7 @@ func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
+	if specification_diagnosed(diags, "Route IO through shared/sim/nbio") {
 		t.Fatal("an instrumentation package may do raw IO")
 	}
 }
@@ -1816,7 +1816,7 @@ func Test_IO_Gateway_Main_Exempt(t *testing.T) {
 			"import \"net\"\n\n" +
 			"// main dials.\nfunc main() {\n\tnet.ParseIP(\"\")\n}\n"),
 	}
-	if specification_flags(t, files, "Route IO through shared/simulation/nbio") {
+	if specification_flags(t, files, "Route IO through shared/sim/nbio") {
 		t.Fatal("package main may do raw IO")
 	}
 }
@@ -1827,20 +1827,20 @@ func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/time/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/sim/time/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package time is a fixture.\npackage time\n\nimport \"syscall\"\n\n" +
 				"// Now reads the clock.\nfunc Now() (n int64) {\n" +
 				"\tstamp := syscall.Timespec{}\n\treturn stamp.Sec\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/simulation/time/default",
+		Scope:            "shared/sim/time/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
+	if specification_diagnosed(diags, "Route IO through shared/sim/nbio") {
 		t.Fatal("the clock/default gateway may import syscall")
 	}
 }
@@ -1866,7 +1866,7 @@ func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
+	if specification_diagnosed(diags, "Route IO through shared/sim/nbio") {
 		t.Fatal("the os/default gateway may import syscall and os/signal")
 	}
 }
@@ -1877,7 +1877,7 @@ func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/nbio/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/sim/nbio/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package nbio is a fixture.\npackage nbio\n\n" +
 				"import (\n\t\"net\"\n\t\"syscall\"\n)\n\n" +
 				"// Resolve resolves a host.\n" +
@@ -1888,13 +1888,13 @@ func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/simulation/nbio/default",
+		Scope:            "shared/sim/nbio/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
+	if specification_diagnosed(diags, "Route IO through shared/sim/nbio") {
 		t.Fatal("the nbio/default gateway may use raw IO")
 	}
 }
@@ -1904,20 +1904,20 @@ func Test_IO_Gateway_Stream_Default_Flagged(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/io/default/system.go": {Data: []byte(
+		"shared/sim/io/default/system.go": {Data: []byte(
 			"// Package io is a fixture.\npackage io\n\nimport \"syscall\"\n\n" +
 				"// Read reads.\nfunc Read() (count int, err error) {\n" +
 				"\treturn syscall.Read(0, nil)\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/simulation/io/default",
+		Scope:            "shared/sim/io/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
+	if !specification_diagnosed(diags, "Route IO through shared/sim/nbio") {
 		t.Fatal("the memory stream default package may not import raw IO")
 	}
 }
@@ -1942,7 +1942,7 @@ func Test_IO_Gateway_Operating_System_Network_Flagged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
+	if !specification_diagnosed(diags, "Route IO through shared/sim/nbio") {
 		t.Fatal("the os/default gateway may not import net/http")
 	}
 }
@@ -2160,7 +2160,7 @@ func specification_signal_gateway_boundary(t *testing.T) {
 	t.Helper()
 	for _, import_path := range []string{"os", "os/signal"} {
 		files := map[string][]byte{
-			"shared/simulation/nbio/default/rule.go": []byte(
+			"shared/sim/nbio/default/rule.go": []byte(
 				"package nbio\n\nimport \"" + import_path + "\"\n"),
 		}
 		if specification_flags(t, files, "Banned import") {
@@ -2168,8 +2168,8 @@ func specification_signal_gateway_boundary(t *testing.T) {
 		}
 	}
 	for _, filename := range []string{
-		"shared/simulation/aver/rule.go",
-		"shared/simulation/nbio/rule.go",
+		"shared/sim/aver/rule.go",
+		"shared/sim/nbio/rule.go",
 		"shared/os/rule.go",
 		"shared/os/default/rule.go",
 	} {
@@ -2183,7 +2183,7 @@ func specification_signal_gateway_boundary(t *testing.T) {
 		}
 	}
 	pure_tier := map[string][]byte{
-		"shared/simulation/nbio/rule.go": []byte(
+		"shared/sim/nbio/rule.go": []byte(
 			"package nbio\n\nimport \"os\"\n"),
 	}
 	if !specification_flags(t, pure_tier, "Banned import") {
@@ -2191,7 +2191,7 @@ func specification_signal_gateway_boundary(t *testing.T) {
 	}
 	// The gateway earns the bare package for chan os.Signal, never the family around it.
 	wider_family := map[string][]byte{
-		"shared/simulation/nbio/default/rule.go": []byte(
+		"shared/sim/nbio/default/rule.go": []byte(
 			"package nbio\n\nimport \"os/exec\"\n"),
 	}
 	if !specification_flags(t, wider_family, "Banned import") {
@@ -2347,7 +2347,7 @@ func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
 func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Widget is a fixture.\ntype Widget struct {\n" +
 		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
@@ -2366,7 +2366,7 @@ func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
 func Test_Type_Invariant_Pointer_First_Parameter_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/simulation/aver\"\n\n" +
+		"import \"fixture/shared/sim/aver\"\n\n" +
 		"// Widget is a fixture.\ntype Widget struct {\n" +
 		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
@@ -2382,7 +2382,7 @@ func Test_Type_Invariant_Pointer_First_Parameter_Passes(t *testing.T) {
 func Test_Type_Invariant_Generic_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/simulation/aver\"\n\n" +
+		"import \"fixture/shared/sim/aver\"\n\n" +
 		"// Box is a fixture.\ntype Box[T any] struct {\n" +
 		"\t// Item is a fixture.\n\tItem T\n}\n\n" +
 		"// Box_Invariants is a fixture.\n" +
@@ -2415,7 +2415,7 @@ func Test_Type_Invariant_Exempt_Kinds_Pass(t *testing.T) {
 func Test_Type_Invariant_Before_A_Consumer(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/simulation/aver\"\n\n" +
+		"import \"fixture/shared/sim/aver\"\n\n" +
 		"// Payload is a fixture.\ntype Payload struct {\n" +
 		"\t// A is a fixture.\n\tA int\n\t// B is a fixture.\n\tB int\n}\n\n" +
 		"// Payload_Invariants is a fixture.\n" +
@@ -2433,7 +2433,7 @@ func Test_Type_Invariant_Before_A_Consumer(t *testing.T) {
 func Test_Type_Invariant_Helper_Body_Mandate(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Level is a fixture.\ntype Level int8\n\n" +
 		"// Level_Invariants is deliberately empty.\n" +
 		"func Level_Invariants(v Level, namespace aver.Namespace) {}\n")
@@ -2447,7 +2447,7 @@ func Test_Type_Invariant_Helper_Body_Mandate(t *testing.T) {
 func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
@@ -2478,7 +2478,7 @@ func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\nimport \"sync\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\nimport \"sync\"\n\n" +
 		"// Guarded is a fixture.\ntype Guarded struct {\n" +
 		"\t// Mu is a fixture.\n\tMu sync.Mutex\n\t// N is a fixture.\n\tN int\n}\n\n" +
 		"// Guarded_Invariants is a fixture.\n" +
@@ -2494,7 +2494,7 @@ func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
 func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Ops is a fixture.\ntype Ops struct {\n" +
 		"\t// Run is a fixture.\n\tRun func()\n}\n\n" +
 		"// Ops_Invariants is a fixture.\n" +
@@ -2510,7 +2510,7 @@ func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Flag is a fixture.\ntype Flag struct {\n" +
 		"\t// On is a fixture.\n\tOn bool\n}\n\n" +
 		"// Flag_Invariants is a fixture.\n" +
@@ -2527,7 +2527,7 @@ func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
@@ -2548,7 +2548,7 @@ func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 func Test_Function_Helper_Complete_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
@@ -2583,7 +2583,7 @@ func Test_Function_Helper_Exempt_Subjects(t *testing.T) {
 func Test_Function_Helper_Raw_Slice_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
@@ -2602,7 +2602,7 @@ func Test_Function_Helper_Raw_Slice_Exempt(t *testing.T) {
 func Test_Function_Helper_Companion_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import aver \"fixture/shared/simulation/aver/default\"\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
@@ -2696,7 +2696,7 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 	}
 	return "package simulation_test\n\n" +
 		"import (\n\t\"testing\"\n\n" +
-		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
+		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n" +
@@ -2708,7 +2708,7 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 func simulation_entry_source(body string) (source string) {
 	return "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
 		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
-		"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
+		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" + body + "\n}\n"
@@ -2830,7 +2830,7 @@ func Test_Recorder_Registration_Extra_Statements(t *testing.T) {
 	t.Parallel()
 	files := recorder_test_files(
 		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
-			"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
+			"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\taver.Run_Test_Main(m)\n" +
 			"\taver.Run_Test_Main(m)\n}\n")
 	if !recorder_flags(t, files,
@@ -2845,7 +2845,7 @@ func Test_Recorder_Registration_Wired_Passes(t *testing.T) {
 	t.Parallel()
 	files := recorder_test_files(
 		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
-			"\taver \"fixture/shared/simulation/aver/default\"\n)\n\n" +
+			"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\taver.Run_Test_Main(m)\n}\n")
 	if recorder_flags(t, files, "Run_Test_Main") {
 		t.Fatal("a TestMain wiring Run_Test_Main must not be flagged")

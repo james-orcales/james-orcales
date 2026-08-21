@@ -181,9 +181,9 @@ a library is being imported solely for it's global side-effects, an implicit con
 
 ### Banned Imports
 
-Outside `shared/simulation/aver/**`, banned stdlib families are archive, bytes, compress, container,
+Outside `shared/sim/aver/**`, banned stdlib families are archive, bytes, compress, container,
 encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid. `os/**` and
-simulation/nbio/default import os; only the latter imports os/signal. Invariant gets no exemption.
+sim/nbio/default import os; only the latter imports os/signal. Invariant gets no exemption.
 
 ### Import Aliases
 
@@ -510,7 +510,7 @@ parses every module.
 
 # Stdlib Time
 
-Stdlib time may be imported only by the shared module's simulation/time/default gateway;
+Stdlib time may be imported only by the shared module's sim/time/default gateway;
 every other shared-module package injects the Clock instead.
 
 # Event Loop
@@ -526,9 +526,9 @@ Internal code takes time.Timeline, and the harness drives it.
 
 ### Gateway
 
-Raw IO stdlib lives only in simulation/nbio/default and simulation/time/default. Instrumentation,
+Raw IO stdlib lives only in sim/nbio/default and sim/time/default. Instrumentation,
 tests, generated files, and package main are exempt. os/default may import syscall alone. Route
-other raw IO through shared/simulation/nbio.
+other raw IO through shared/sim/nbio.
 
 ### Seed
 

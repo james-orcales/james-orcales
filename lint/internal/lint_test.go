@@ -45,7 +45,7 @@ const DOCTRINE_BINARY_INTERNAL_MAIN = "// Package entry is a fixture.\n" +
 	"package entry\n\n// Main is a fixture entry point.\nfunc Main() { return }\n"
 
 const FIXTURE_INVARIANT_IMPORT_PATH = "github.com/james-orcales/james-orcales/" +
-	"shared/simulation/aver/v2/aver_default"
+	"shared/sim/aver/v2/aver_default"
 const FIXTURE_INVARIANT_IMPORT = "import \"" + FIXTURE_INVARIANT_IMPORT_PATH + "\"\n"
 
 // A package whose SPECIFICATION.md, source, and specification_test.go all
@@ -107,7 +107,7 @@ const FIXTURE_DECLARATION_CALLEE_PAIR = "func g() (a *int, b *int) {\n" +
 // need an accompanying .go file but don't care about its specific shape.
 const FIXTURE_CLEAN_GO = "package main\n\n" +
 	"import \"github.com/james-orcales/james-orcales/" +
-	"shared/simulation/aver/v2\"\n\n" +
+	"shared/sim/aver/v2\"\n\n" +
 	"const FIXTURE_HI = 100\n\n" +
 	"func f() (result int) {\n" +
 	"\tdefer func() {\n" +
@@ -1540,7 +1540,7 @@ func Test_Gofmt(t *testing.T) {
 				"test.go": "package main\n\n" +
 					"import \"" +
 					"github.com/james-orcales/james-orcales/" +
-					"shared/simulation/aver/v2\"\n\n" +
+					"shared/sim/aver/v2\"\n\n" +
 					"const FIXTURE_HI = 100\n\n" +
 					"func f() (result int) {\n" +
 					"\tdefer func() {\n" +
@@ -3933,7 +3933,7 @@ func Test_Snap_Backtick(t *testing.T) {
 					"import (\n" +
 					"\t\"x/snap\"\n\n" +
 					"\t\"github.com/james-orcales/james-orcales/" +
-					"shared/simulation/aver/v2\"\n" +
+					"shared/sim/aver/v2\"\n" +
 					")\n\n" +
 					"const FIXTURE_HI = 100\n\n" +
 					"func f(s string) {\n" +
