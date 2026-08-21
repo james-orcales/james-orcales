@@ -349,7 +349,7 @@ func Test_Standard_Library_Largest_Random(t *testing.T) {
 	var values [sort.ELEMENT_COUNT_MAXIMUM]int
 	generator := prng.New(1)
 	for index := range values {
-		values[index] = prng.Generator_Below(&generator, STANDARD_SMALL_COUNT)
+		values[index] = int(prng.Generator_Below(&generator, STANDARD_SMALL_COUNT))
 	}
 	testify.False(t, bool(sort.Is_Sorted(values[:], compare_integer)),
 		"deterministic random fixture must start unordered")
@@ -472,7 +472,7 @@ func fill_standard_distribution(
 		case STANDARD_SAWTOOTH:
 			values[index] = index % modulus
 		case STANDARD_RANDOM:
-			values[index] = prng.Generator_Below(generator, modulus)
+			values[index] = int(prng.Generator_Below(generator, prng.Bound(modulus)))
 		case STANDARD_STAGGER:
 			values[index] = (index*modulus + index) % len(values)
 		case STANDARD_PLATEAU:
@@ -488,7 +488,7 @@ func shuffled_values(
 	generator *prng.Generator, modulus int, left int, right int,
 ) (next_left int, next_right int) {
 	next_left, next_right = left, right
-	if prng.Generator_Below(generator, modulus) != 0 {
+	if prng.Generator_Below(generator, prng.Bound(modulus)) != 0 {
 		next_left += STANDARD_BINARY_PART_COUNT
 		return next_left, next_right
 	}
