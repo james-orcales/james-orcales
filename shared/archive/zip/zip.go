@@ -2247,15 +2247,16 @@ func timestamp_to_dos(
 			binary.Integer_64(modified.Zone_Offset_Seconds),
 	)
 	Local_Timestamp_Seconds_Invariants(local_seconds, "timestamp_to_dos.local_seconds")
-	days, day_seconds := time.Unix_Second_Split(time.Unix_Second_Count(local_seconds))
-	year, month, day := time.Civil_From_Days(days)
+	split := time.Unix_Second_Split(time.Unix_Second_Count(local_seconds))
+	date := time.Civil_From_Days(split.Days)
+	year, month, day := date.Year, date.Month, date.Day
 	if year < DOS_CIVIL_YEAR_MINIMUM {
 		return DOS_Encoding{}, false
 	}
 	if year > DOS_CIVIL_YEAR_MAXIMUM {
 		return DOS_Encoding{}, false
 	}
-	day_second_count := int64(day_seconds)
+	day_second_count := int64(split.Day_Seconds)
 	hour := day_second_count / time.SECOND_COUNT_PER_HOUR
 	minute := day_second_count % time.SECOND_COUNT_PER_HOUR /
 		time.SECOND_COUNT_PER_MINUTE
@@ -2308,9 +2309,9 @@ func timestamp_from_dos(
 		return DOS_Timestamp{}
 	}
 	DOS_Civil_Year_Invariants(year, "timestamp_from_dos.year")
-	days := DOS_Calendar_Day_Count(time.Days_From_Civil(
-		time.Civil_Year(year), month, day,
-	))
+	days := DOS_Calendar_Day_Count(time.Days_From_Civil(time.Civil_Date{
+		Year: time.Civil_Year(year), Month: month, Day: day,
+	}))
 	DOS_Calendar_Day_Count_Invariants(days, "timestamp_from_dos.days")
 	seconds := int64(days)*time.SECOND_COUNT_PER_DAY +
 		int64(hour)*time.SECOND_COUNT_PER_HOUR +
@@ -4471,7 +4472,7 @@ func reader_stream_submit(
 	for reader.Continue {
 		reader.Continue = false
 		callback := nbio.Stream_Callback{
-			State: unsafe.Pointer(reader), Data: int(reader.Stage),
+			State: reader, Data: int(reader.Stage),
 			Procedure: reader_stream_callback,
 		}
 		if reader.Stream.Procedure == nil {
@@ -4490,10 +4491,13 @@ func reader_stream_submit(
 }
 
 func reader_stream_callback(
-	state unsafe.Pointer, data nbio.Stream_Callback_Data, callback nbio.Callback,
+	state_value nbio.State, data nbio.Stream_Callback_Data, callback nbio.Callback,
 	completion nbio.Completion_Handle,
 ) {
-	reader_stream_complete(state, Reader_Stream_Stage(data), callback, completion)
+	reader_stream_complete(
+		unsafe.Pointer(state_value.(*Reader)), Reader_Stream_Stage(data),
+		callback, completion,
+	)
 }
 
 func reader_stream_complete(
@@ -4986,8 +4990,9 @@ func directory_entries_sort(entries Collected_Directory_Entries) {
 	slices.Sort_Function(entries, func(
 		first Directory_Entry, second Directory_Entry,
 	) (comparison slices.Comparison) {
-		order := bytes.Compare(bytes.Slice(first.Name), bytes.Slice(second.Name))
-		return slices.Comparison(order)
+		return slices.Comparison(bytes.Compare(
+			bytes.Slice(first.Name), bytes.Slice(second.Name),
+		))
 	})
 }
 
@@ -5169,8 +5174,9 @@ func file_info_sort(nodes Collected_File_Infos) {
 	slices.Sort_Function(nodes, func(
 		first File_Info, second File_Info,
 	) (comparison slices.Comparison) {
-		order := bytes.Compare(bytes.Slice(first.Name), bytes.Slice(second.Name))
-		return slices.Comparison(order)
+		return slices.Comparison(bytes.Compare(
+			bytes.Slice(first.Name), bytes.Slice(second.Name),
+		))
 	})
 }
 
@@ -5690,7 +5696,7 @@ func writer_directory_end(
 func writer_stream_submit(state unsafe.Pointer, completion nbio.Completion_Handle) {
 	writer := (*Writer)(state)
 	callback := nbio.Stream_Callback{
-		State: unsafe.Pointer(writer), Data: int(writer.Count),
+		State: writer, Data: int(writer.Count),
 		Procedure: writer_stream_callback,
 	}
 	if writer.Stream.Procedure == nil {
@@ -5707,10 +5713,12 @@ func writer_stream_submit(state unsafe.Pointer, completion nbio.Completion_Handl
 }
 
 func writer_stream_callback(
-	state unsafe.Pointer, data nbio.Stream_Callback_Data, callback nbio.Callback,
+	state_value nbio.State, data nbio.Stream_Callback_Data, callback nbio.Callback,
 	completion nbio.Completion_Handle,
 ) {
-	writer_stream_complete(state, Writer_Count(data), callback, completion)
+	writer_stream_complete(
+		unsafe.Pointer(state_value.(*Writer)), Writer_Count(data), callback, completion,
+	)
 }
 
 func writer_stream_complete(

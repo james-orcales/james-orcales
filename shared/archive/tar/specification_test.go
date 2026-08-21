@@ -2,7 +2,6 @@ package tar_test
 
 import (
 	"testing"
-	"unsafe"
 
 	"local/james-orcales/shared/archive/tar"
 	"local/james-orcales/shared/bytes"
@@ -3430,15 +3429,15 @@ type deferred_stream struct {
 }
 
 func deferred_to_stream(state *deferred_stream) (stream nbio.Stream) {
-	stream = nbio.Stream{State: unsafe.Pointer(state), Procedure: deferred_procedure}
+	stream = nbio.Stream{State: state, Procedure: deferred_procedure}
 	return stream
 }
 
 func deferred_procedure(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
+	state_value nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
-	state := (*deferred_stream)(state_pointer)
+	state := state_value.(*deferred_stream)
 	state.Completion = completion
 	state.Buffer = buffer
 	state.Mode = mode
@@ -3649,7 +3648,7 @@ func test_largest_pax_record(t *testing.T) {
 }
 
 func defective_read_procedure(
-	_ unsafe.Pointer, completion *nbio.Completion, _ nbio.Stream_Mode, buffer []byte,
+	_ nbio.State, completion *nbio.Completion, _ nbio.Stream_Mode, buffer []byte,
 	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	completion.Data = len(buffer) + 1
