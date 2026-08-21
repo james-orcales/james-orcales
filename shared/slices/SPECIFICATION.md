@@ -16,20 +16,21 @@ Contains_Function report the same searches as Boolean facts.
 
 # Edits
 
-Insert adds a values slice at an index. Delete removes a half-open index range. Replace exchanges a
-half-open range for a values slice. Delete_Function removes each value that an injected predicate
-selects. The operations reuse available capacity and preserve overlapping inputs.
+Insert_Into adds values. Delete_Into removes one half-open range. Replace_Into exchanges it.
+Delete_Function_Into removes selected values. Caller storage receives results and count.
+Same-start destination supports overlap. Separate destination must not overlap source or values.
 
 # Copy And Capacity
 
-Clone makes a shallow copy. Compact and Compact_Function keep the first value from each consecutive
-equal run. Grow reserves capacity, and Clip removes unused capacity.
+Clone_Into makes shallow copy. Compact_Into forms keep first value from each equal run.
+Grow_Into copies source into storage holding requested additional slots. Clip returns input view.
+Caller storage receives results. Each writing operation returns populated count.
 
 # Order Changes
 
-Reverse exchanges elements in place. Concatenate joins a slice of slices. Repeat copies one slice a
-specified count of times. Sort and Sort_Function order in place, and Sort_Stable_Function preserves
-the input order of equal elements. Is_Sorted and Is_Sorted_Function report the applicable order.
+Reverse exchanges elements in place. Concatenate_Into joins slices inside separate caller storage.
+Repeat_Into writes source copies. Sort forms order in place; stable form preserves equal order.
+Is_Sorted and Is_Sorted_Function report applicable order.
 
 # Extrema
 
@@ -44,23 +45,30 @@ types.
 
 # Iteration
 
-All yields index-value pairs in forward order. Backward yields the pairs in reverse order. Values
-yields only the values. Each iterator stops when its consumer stops.
+All synchronously yields index-value pairs in forward order. Backward yields pairs in reverse order.
+Values yields only values. Injected callbacks stop traversal. Each operation returns yielded count.
+No operation returns closure.
 
 # Collection
 
-Append_Sequence appends an iterator to a slice. Collect makes a new slice. Sorted, Sorted_Function,
-and Sorted_Stable_Function collect and then apply their applicable order.
+Append_Sequence_Into writes prefix followed by source sequence into caller storage. Collect_Into
+copies source sequence. Sorted_Into, Sorted_Function_Into, and Sorted_Stable_Function_Into copy then
+apply applicable order. Each operation returns populated destination count.
 
 # Chunks
 
-Chunk yields consecutive slices of at most one requested count. Each chunk has no unused capacity,
-thus an append to a chunk cannot change the source slice.
+Chunk synchronously yields consecutive source views of at most requested count. Each view has no
+unused capacity. Injected callback stops traversal. Chunk returns yielded view count.
 
 # Nil Preservation
 
-An operation that can return its input preserves a nil input. Collect and the Sorted forms return
-nil for an empty sequence. Repeat always returns a nonnil slice.
+Clip preserves nil input. Caller owns every output destination and nil policy.
+
+# Allocation
+
+Every exported operation performs zero heap allocations, measured separately by Zero_Allocation.
+Owned returns, iterator closures, append growth, and hidden scratch allocation stay absent.
+Output operations accept caller storage and return only populated element count.
 
 # Size Limits
 
@@ -69,8 +77,8 @@ larger input or result before it returns the result.
 
 # Domain Errors
 
-An invalid index range, a negative growth or repeat count, an empty extrema input, or a chunk count
-below one causes a panic.
+Invalid index range, negative growth or repeat count, short or harmful overlapping destination,
+empty extrema input, or chunk count below one causes panic.
 
 # Invariant Domains
 

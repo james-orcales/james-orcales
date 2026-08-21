@@ -1,15 +1,11 @@
-// Package slices supplies the Go standard-library slice algorithms through the repository
-// naming and assertion boundaries. This package contains each slice algorithm.
-// The package also owns the domain names and callback types that first-party callers use.
-// Replacement values use a slice instead of a variadic parameter because a raw variadic
-// collection cannot carry a repository domain.
+// Package slices supplies bounded zero-allocation algorithms. Callers own every output buffer.
 package slices
 
 import (
 	"cmp"
-	"iter"
+	"unsafe"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
 
@@ -140,6 +136,19 @@ type Predicate_Function[Element any] func(element Element) (selected bool)
 type Comparison_Function[Left any, Right any] func(
 	left Left, right Right,
 ) (comparison Comparison)
+
+// Indexed_Yield_Function receives one position and value until it rejects continuation.
+type Indexed_Yield_Function[Element any] func(
+	position Search_Position, element Element,
+) (continued Boolean)
+
+// Yield_Function receives one value until it rejects continuation.
+type Yield_Function[Element any] func(element Element) (continued Boolean)
+
+// Chunk_Yield_Function receives one clipped source view until it rejects continuation.
+type Chunk_Yield_Function[Slice ~[]Element, Element any] func(
+	chunk Slice,
+) (continued Boolean)
 
 // Enforces the package-wide size boundary at one source root. One generic boundary avoids a
 // capacity wrapper that would discard a caller's named slice type.
@@ -277,204 +286,223 @@ func Contains_Function[S ~[]E, E any](
 	return contains
 }
 
-// Insert adds values at index and returns the modified slice.
-func Insert[S ~[]E, Values ~[]E, E any](
-	slice S, position Position, values Values,
-) (result S) {
-	Position_Invariants(position, "insert.position")
-	enforce_slice(slice)
+// Insert_Into writes source with values inserted at position into caller storage.
+func Insert_Into[
+	Destination ~[]E, Source ~[]E, Values ~[]E, E any,
+](
+	destination Destination, source Source, position Position, values Values,
+) (count Count) {
+	defer func() { Count_Invariants(count, "insert_into.count") }()
+	Position_Invariants(position, "insert_into.position")
+	enforce_slice(destination)
+	enforce_slice(source)
 	enforce_slice(values)
 	invariant.Always(
-		position <= Position(len(slice)),
-		"An insertion position does not exceed the slice length.",
+		position <= Position(len(source)),
+		"An insertion position does not exceed source count.",
+	)
+	result_count := len(source) + len(values)
+	invariant.Always(
+		result_count <= SLICE_COUNT_MAXIMUM,
+		"An insertion result admits at most SLICE_COUNT_MAXIMUM elements.",
+	)
+	result, original, same_storage := prepare_result(
+		destination, source, Count(result_count),
 	)
 	index := int(position)
-	value_count := len(values)
-	if value_count == 0 {
-		return slice
+	if len(values) == 0 {
+		return Count(result_count)
 	}
-	slice_count := len(slice)
-	if index == slice_count {
-		result = append(slice, values...)
-		enforce_slice(result)
-		return result
+	if !same_storage {
+		invariant.Always(
+			!slices_overlap(result, values),
+			"Separate insertion output does not overlap values.",
+		)
 	}
-	if slice_count+value_count > cap(slice) {
-		result = append(slice[:index], make(S, slice_count+value_count-index)...)
+	if index == len(original) {
 		copy(result[index:], values)
-		copy(result[index+value_count:], slice[index:])
-		enforce_slice(result)
-		return result
+		return Count(result_count)
 	}
-	result = slice[:slice_count+value_count]
-	if !slices_overlap(values, result[index+value_count:]) {
-		copy(result[index+value_count:], result[index:slice_count])
+	if !slices_overlap(values, result[index+len(values):]) {
+		copy(result[index+len(values):], original[index:])
 		copy(result[index:], values)
-		enforce_slice(result)
-		return result
+		return Count(result_count)
 	}
-	copy(result[slice_count:], values)
-	rotate_right(result[index:], result[slice_count:])
-	enforce_slice(result)
-	return result
+	copy(result[len(original):], values)
+	rotate_right(result[index:], result[len(original):])
+	return Count(result_count)
 }
 
-// Delete removes the half-open range from start through end.
-func Delete[S ~[]E, E any](slice S, start Position, end Position) (result S) {
-	Position_Invariants(start, "delete.start")
-	Position_Invariants(end, "delete.end")
-	enforce_slice(slice)
+// Delete_Into writes source without half-open range into caller storage.
+func Delete_Into[Destination ~[]E, Source ~[]E, E any](
+	destination Destination, source Source, start Position, end Position,
+) (count Count) {
+	defer func() { Count_Invariants(count, "delete_into.count") }()
+	Position_Invariants(start, "delete_into.start")
+	Position_Invariants(end, "delete_into.end")
+	enforce_slice(destination)
+	enforce_slice(source)
 	invariant.Always(start <= end, "A deletion start does not follow its end.")
 	invariant.Always(
-		end <= Position(len(slice)),
-		"A deletion end does not exceed the slice length.",
+		end <= Position(len(source)),
+		"A deletion end does not exceed source count.",
 	)
-	start_index := int(start)
-	end_index := int(end)
-	if start_index == end_index {
-		return slice
-	}
-	old_count := len(slice)
-	result = append(slice[:start_index], slice[end_index:]...)
-	clear(slice[len(result):old_count])
-	enforce_slice(result)
-	return result
+	result_count := len(source) - (int(end) - int(start))
+	result, original, _ := prepare_result(destination, source, Count(result_count))
+	copy(result[int(start):], original[int(end):])
+	clear(destination[result_count:len(source)])
+	return Count(result_count)
 }
 
-// Delete_Function removes each element that predicate accepts.
-func Delete_Function[S ~[]E, E any](
-	slice S, predicate Predicate_Function[E],
-) (result S) {
-	enforce_slice(slice)
-	first := Index_Function(slice, predicate)
-	if first == INDEX_NOT_FOUND {
-		return slice
-	}
-	write_index := int(first)
-	for read_index := write_index + 1; read_index < len(slice); read_index++ {
-		value := slice[read_index]
+// Delete_Function_Into writes elements that predicate rejects into caller storage.
+func Delete_Function_Into[Destination ~[]E, Source ~[]E, E any](
+	destination Destination, source Source, predicate Predicate_Function[E],
+) (count Count) {
+	defer func() { Count_Invariants(count, "delete_function_into.count") }()
+	enforce_slice(destination)
+	enforce_slice(source)
+	result, original, _ := prepare_result(destination, source, Count(len(source)))
+	write_index := 0
+	for _, value := range original {
 		if !predicate(value) {
-			slice[write_index] = value
+			result[write_index] = value
 			write_index++
 		}
 	}
-	clear(slice[write_index:])
-	result = slice[:write_index]
-	enforce_slice(result)
-	return result
+	clear(result[write_index:])
+	return Count(write_index)
 }
 
-// Replace exchanges the half-open range from start through end for values.
-func Replace[S ~[]E, Values ~[]E, E any](
-	slice S, start Position, end Position, values Values,
-) (result S) {
-	Position_Invariants(start, "replace.start")
-	Position_Invariants(end, "replace.end")
-	enforce_slice(slice)
+// Replace_Into exchanges source range for values inside caller storage.
+func Replace_Into[
+	Destination ~[]E, Source ~[]E, Values ~[]E, E any,
+](
+	destination Destination, source Source, start Position, end Position, values Values,
+) (count Count) {
+	defer func() { Count_Invariants(count, "replace_into.count") }()
+	Position_Invariants(start, "replace_into.start")
+	Position_Invariants(end, "replace_into.end")
+	enforce_slice(destination)
+	enforce_slice(source)
 	enforce_slice(values)
 	invariant.Always(start <= end, "A replacement start does not follow its end.")
 	invariant.Always(
-		end <= Position(len(slice)),
-		"A replacement end does not exceed the slice length.",
+		end <= Position(len(source)),
+		"A replacement end does not exceed source count.",
 	)
+	if start == end {
+		return Insert_Into(destination, source, start, values)
+	}
+	result_count := int(start) + len(values) + len(source[int(end):])
+	invariant.Always(
+		result_count <= SLICE_COUNT_MAXIMUM,
+		"A replacement result admits at most SLICE_COUNT_MAXIMUM elements.",
+	)
+	result, original, same_storage := prepare_result(
+		destination, source, Count(result_count),
+	)
+	if !same_storage {
+		invariant.Always(
+			!slices_overlap(result, values),
+			"Separate replacement output does not overlap values.",
+		)
+	}
 	start_index := int(start)
 	end_index := int(end)
-	if start_index == end_index {
-		return Insert(slice, start, values)
-	}
-	if end_index == len(slice) {
-		result = append(slice[:start_index], values...)
-		if len(result) < len(slice) {
-			clear(slice[len(result):])
-		}
-		enforce_slice(result)
-		return result
-	}
-	result_count := start_index + len(values) + len(slice[end_index:])
-	if result_count > cap(slice) {
-		remainder_count := len(values) + len(slice[end_index:])
-		result = append(slice[:start_index], make(S, remainder_count)...)
+	if end_index == len(original) {
 		copy(result[start_index:], values)
-		copy(result[start_index+len(values):], slice[end_index:])
-		enforce_slice(result)
-		return result
+		clear(destination[result_count:len(original)])
+		return Count(result_count)
 	}
-	result = slice[:result_count]
 	if start_index+len(values) <= end_index {
 		copy(result[start_index:], values)
-		copy(result[start_index+len(values):], slice[end_index:])
-		clear(slice[result_count:])
-		enforce_slice(result)
-		return result
+		copy(result[start_index+len(values):], original[end_index:])
+		clear(destination[result_count:len(original)])
+		return Count(result_count)
 	}
-	result = replace_expansion(
+	replace_expansion(
 		result,
-		slice,
-		slice[:start_index],
-		slice[end_index:],
+		original,
+		original[:start_index],
+		original[end_index:],
 		values,
 	)
-	enforce_slice(result)
-	return result
+	return Count(result_count)
 }
 
-// Clone returns a shallow copy and preserves a nil input.
-func Clone[S ~[]E, E any](slice S) (clone S) {
-	enforce_slice(slice)
-	if slice == nil {
-		return nil
-	}
-	clone = append(S{}, slice...)
-	enforce_slice(clone)
-	return clone
+// Clone_Into copies source into caller storage.
+func Clone_Into[Destination ~[]E, Source ~[]E, E any](
+	destination Destination, source Source,
+) (count Count) {
+	defer func() { Count_Invariants(count, "clone_into.count") }()
+	enforce_slice(destination)
+	enforce_slice(source)
+	invariant.Always(
+		len(source) <= len(destination),
+		"Clone destination holds every source element.",
+	)
+	copy(destination, source)
+	return Count(len(source))
 }
 
-// Compact keeps one element from each consecutive run of equal elements.
-func Compact[S ~[]E, E comparable](slice S) (result S) {
-	enforce_slice(slice)
-	if len(slice) < 2 {
-		return slice
+// Compact_Into writes first element from each consecutive equal run into caller storage.
+func Compact_Into[Destination ~[]E, Source ~[]E, E comparable](
+	destination Destination, source Source,
+) (count Count) {
+	defer func() { Count_Invariants(count, "compact_into.count") }()
+	enforce_slice(destination)
+	enforce_slice(source)
+	result, original, _ := prepare_result(destination, source, Count(len(source)))
+	if len(original) == 0 {
+		return 0
 	}
-	for index := 1; index < len(slice); index++ {
-		if slice[index] == slice[index-1] {
-			return compact_tail(slice, slice[index:])
+	write_index := 1
+	for read_index := 1; read_index < len(original); read_index++ {
+		if original[read_index] != original[read_index-1] {
+			result[write_index] = original[read_index]
+			write_index++
 		}
 	}
-	result = slice
-	enforce_slice(result)
-	return result
+	clear(result[write_index:])
+	return Count(write_index)
 }
 
-// Compact_Function keeps the first element from each run that equality joins.
-func Compact_Function[S ~[]E, E any](
-	slice S, equality Equality_Function[E, E],
-) (result S) {
-	enforce_slice(slice)
-	if len(slice) < 2 {
-		return slice
+// Compact_Function_Into writes first element from each equality-joined run.
+func Compact_Function_Into[Destination ~[]E, Source ~[]E, E any](
+	destination Destination, source Source, equality Equality_Function[E, E],
+) (count Count) {
+	defer func() { Count_Invariants(count, "compact_function_into.count") }()
+	enforce_slice(destination)
+	enforce_slice(source)
+	result, original, _ := prepare_result(destination, source, Count(len(source)))
+	if len(original) == 0 {
+		return 0
 	}
-	for index := 1; index < len(slice); index++ {
-		if equality(slice[index], slice[index-1]) {
-			return compact_function_tail(slice, slice[index:], equality)
+	write_index := 1
+	for read_index := 1; read_index < len(original); read_index++ {
+		if !equality(original[read_index], original[read_index-1]) {
+			result[write_index] = original[read_index]
+			write_index++
 		}
 	}
-	result = slice
-	enforce_slice(result)
-	return result
+	clear(result[write_index:])
+	return Count(write_index)
 }
 
-// Grow reserves capacity for count additional elements.
-func Grow[S ~[]E, E any](slice S, count Count) (grown S) {
-	Count_Invariants(count, "grow.count")
-	enforce_slice(slice)
-	additional_count := int(count) - (cap(slice) - len(slice))
-	if additional_count > 0 {
-		grown = append(slice[:cap(slice)], make([]E, additional_count)...)[:len(slice)]
-	} else {
-		grown = slice
-	}
-	enforce_slice(grown)
-	return grown
+// Grow_Into copies source into storage that reserves count additional slots.
+func Grow_Into[Destination ~[]E, Source ~[]E, E any](
+	destination Destination, source Source, count Count,
+) (source_count Count) {
+	defer func() { Count_Invariants(source_count, "grow_into.source_count") }()
+	Count_Invariants(count, "grow_into.count")
+	enforce_slice(destination)
+	enforce_slice(source)
+	invariant.Always(
+		len(source)+int(count) <= len(destination),
+		"Grow destination reserves requested additional slots.",
+	)
+	copy(destination, source)
+	return Count(len(source))
 }
 
 // Clip removes unused capacity from slice.
@@ -493,6 +521,33 @@ func Reverse[S ~[]E, E any](slice S) {
 	}
 }
 
+// Separate storage must not destroy source before copy. Same-start storage enables in-place edits.
+func prepare_result[Destination ~[]E, Source ~[]E, E any](
+	destination Destination, source Source, result_count Count,
+) (result Destination, original Destination, same_storage Boolean) {
+	defer func() { Boolean_Invariants(same_storage, "prepare_result.same_storage") }()
+	Count_Invariants(result_count, "prepare_result.result_count")
+	required_count := max(int(result_count), len(source))
+	invariant.Always(
+		required_count <= len(destination),
+		"Destination holds source and every result element.",
+	)
+	result = destination[:int(result_count)]
+	if len(source) == 0 {
+		return result, destination[:0], false
+	}
+	same_storage = Boolean(&destination[0] == &source[0])
+	if same_storage {
+		return result, destination[:len(source)], true
+	}
+	invariant.Always(
+		!slices_overlap(result, source),
+		"Separate destination does not overlap source.",
+	)
+	copy(destination, source)
+	return result, destination[:len(source)], false
+}
+
 // The expansion needs separate copy orders for each possible overlap shape.
 func replace_expansion[S ~[]E, Values ~[]E, E any](
 	result S,
@@ -500,68 +555,43 @@ func replace_expansion[S ~[]E, Values ~[]E, E any](
 	prefix S,
 	suffix S,
 	values Values,
-) (expanded S) {
+) {
 	prefix_count := len(prefix)
 	replaced_prefix_count := len(original) - len(suffix)
 	if !slices_overlap(result[prefix_count+len(values):], values) {
 		copy(result[prefix_count+len(values):], suffix)
 		copy(result[prefix_count:], values)
-		return result
+		return
 	}
 	overflow_count := len(values) - (replaced_prefix_count - prefix_count)
 	if !slices_overlap(result[prefix_count:replaced_prefix_count], values) {
 		copy(result[prefix_count:replaced_prefix_count], values[overflow_count:])
 		copy(result[len(original):], values[:overflow_count])
 		rotate_right(result[prefix_count:], result[len(original):])
-		return result
+		return
 	}
 	if !slices_overlap(result[len(original):], values) {
 		copy(result[len(original):], values[:overflow_count])
 		copy(result[prefix_count:replaced_prefix_count], values[overflow_count:])
 		rotate_right(result[prefix_count:], result[len(original):])
-		return result
+		return
 	}
 	value_suffix := overlap_suffix(values, suffix)
 	tail_start := len(values) - len(value_suffix)
 	copy(result[prefix_count:], values)
 	copy(result[prefix_count+len(values):], result[prefix_count+tail_start:])
-	return result
 }
 
-func compact_tail[S ~[]E, E comparable](slice S, tail S) (result S) {
-	write_index := len(slice) - len(tail)
-	for read_index := 1; read_index < len(tail); read_index++ {
-		if tail[read_index] != tail[read_index-1] {
-			slice[write_index] = tail[read_index]
-			write_index++
-		}
-	}
-	clear(slice[write_index:])
-	return slice[:write_index]
-}
-
-func compact_function_tail[S ~[]E, E any](
-	slice S,
-	tail S,
-	equality Equality_Function[E, E],
-) (result S) {
-	write_index := len(slice) - len(tail)
-	for read_index := 1; read_index < len(tail); read_index++ {
-		if !equality(tail[read_index], tail[read_index-1]) {
-			slice[write_index] = tail[read_index]
-			write_index++
-		}
-	}
-	clear(slice[write_index:])
-	return slice[:write_index]
-}
-
-// Element addresses identify overlap without an unsafe package dependency.
+// Zero-size elements own no bytes, so their permitted shared addresses never prove overlap.
 func slices_overlap[Left ~[]E, Right ~[]E, E any](
 	left Left,
 	right Right,
 ) (overlap Boolean) {
 	defer func() { Boolean_Invariants(overlap, "slices_overlap.overlap") }()
+	var zero E
+	if unsafe.Sizeof(zero) == 0 {
+		return false
+	}
 	for left_index := range left {
 		for right_index := range right {
 			if &left[left_index] == &right[right_index] {
@@ -597,8 +627,12 @@ func reverse_elements[S ~[]E, E any](slice S) {
 	}
 }
 
-// Concatenate returns a new slice that joins the supplied slices.
-func Concatenate[Slice_List ~[]S, S ~[]E, E any](slices Slice_List) (result S) {
+// Concatenate_Into joins supplied slices inside separate caller storage.
+func Concatenate_Into[
+	Destination ~[]E, Slice_List ~[]S, S ~[]E, E any,
+](destination Destination, slices Slice_List) (count Count) {
+	defer func() { Count_Invariants(count, "concatenate_into.count") }()
+	enforce_slice(destination)
 	enforce_slice(slices)
 	total_count := 0
 	for _, slice := range slices {
@@ -609,32 +643,50 @@ func Concatenate[Slice_List ~[]S, S ~[]E, E any](slices Slice_List) (result S) {
 		)
 		total_count += len(slice)
 	}
-	result = Grow[S](nil, Count(total_count))
+	invariant.Always(
+		total_count <= len(destination),
+		"Concatenation destination holds every result element.",
+	)
 	for _, slice := range slices {
-		result = append(result, slice...)
+		invariant.Always(
+			!slices_overlap(destination[:total_count], slice),
+			"Concatenation destination does not overlap source.",
+		)
 	}
-	enforce_slice(result)
-	return result
+	written := 0
+	for _, slice := range slices {
+		written += copy(destination[written:], slice)
+	}
+	return Count(total_count)
 }
 
-// Repeat returns a new slice that contains count copies of slice.
-func Repeat[S ~[]E, E any](slice S, count Count) (result S) {
-	Count_Invariants(count, "repeat.count")
-	enforce_slice(slice)
-	if len(slice) > 0 {
+// Repeat_Into writes count source copies into caller storage.
+func Repeat_Into[Destination ~[]E, Source ~[]E, E any](
+	destination Destination, source Source, count Count,
+) (result_count Count) {
+	defer func() { Count_Invariants(result_count, "repeat_into.result_count") }()
+	Count_Invariants(count, "repeat_into.count")
+	enforce_slice(destination)
+	enforce_slice(source)
+	if len(source) > 0 {
 		invariant.Always(
-			int(count) <= SLICE_COUNT_MAXIMUM/len(slice),
+			int(count) <= SLICE_COUNT_MAXIMUM/len(source),
 			"A repeat result admits at most SLICE_COUNT_MAXIMUM elements.",
 		)
 	}
-	result_count := len(slice) * int(count)
-	result = make(S, result_count)
-	copied := copy(result, slice)
-	for copied < len(result) {
-		copied += copy(result[copied:], result[:copied])
+	written_count := len(source) * int(count)
+	invariant.Always(
+		written_count <= len(destination),
+		"Repeat destination holds every result element.",
+	)
+	if written_count == 0 {
+		return 0
 	}
-	enforce_slice(result)
-	return result
+	copied := copy(destination[:written_count], source)
+	for copied < written_count {
+		copied += copy(destination[copied:written_count], destination[:copied])
+	}
+	return Count(written_count)
 }
 
 // Sort orders slice in ascending order.
@@ -694,57 +746,22 @@ func sift_down[S ~[]E, E any](
 	}
 }
 
-// One buffer keeps stable sorting at O(n log n) comparisons and movements.
+// Strict movement preserves input order for comparison-equal elements.
 func stable_merge_sort[S ~[]E, E any](
 	slice S,
 	comparison Comparison_Function[E, E],
 ) {
-	if len(slice) < 2 {
-		return
-	}
-	buffer := make([]E, len(slice))
-	current_is_slice := true
-	for width := 1; width < len(slice); width *= 2 {
-		if current_is_slice {
-			merge_pass(slice, buffer, slice[:width], comparison)
-		} else {
-			merge_pass(buffer, slice, buffer[:width], comparison)
-		}
-		current_is_slice = !current_is_slice
-	}
-	if !current_is_slice {
-		copy(slice, buffer)
-	}
-}
-
-func merge_pass[Source ~[]E, Destination ~[]E, Width ~[]E, E any](
-	source Source,
-	destination Destination,
-	width_slice Width,
-	comparison Comparison_Function[E, E],
-) {
-	width_count := len(width_slice)
-	for start := 0; start < len(source); start += width_count * 2 {
-		middle := min(start+width_count, len(source))
-		end := min(start+width_count*2, len(source))
-		left := start
-		right := middle
-		for output := start; output < end; output++ {
-			if left < middle {
-				if right >= end {
-					destination[output] = source[left]
-					left++
-					continue
-				}
-				if comparison(source[right], source[left]) >= ORDERING_EQUAL {
-					destination[output] = source[left]
-					left++
-					continue
-				}
+	for index := 1; index < len(slice); index++ {
+		value := slice[index]
+		position := index
+		for position > 0 {
+			if comparison(value, slice[position-1]) >= ORDERING_EQUAL {
+				break
 			}
-			destination[output] = source[right]
-			right++
+			slice[position] = slice[position-1]
+			position--
 		}
+		slice[position] = value
 	}
 }
 
@@ -856,13 +873,7 @@ func Binary_Search[S ~[]E, E cmp.Ordered](
 	}
 	position = Search_Position(left)
 	if left < len(slice) {
-		if slice[left] == target {
-			found = true
-		} else if is_not_a_number(slice[left]) {
-			if is_not_a_number(target) {
-				found = true
-			}
-		}
+		found = slice[left] == target
 	}
 	return position, found
 }
@@ -894,116 +905,118 @@ func Binary_Search_Function[S ~[]E, E any, Target any](
 	return position, found
 }
 
-func is_not_a_number[Value cmp.Ordered](value Value) (result Boolean) {
-	defer func() { Boolean_Invariants(result, "is_not_a_number.result") }()
-	return value != value
-}
-
-// All returns an iterator that yields each index and value in forward order.
-func All[S ~[]E, E any](slice S) (sequence iter.Seq2[Search_Position, E]) {
+// All synchronously yields each index and value in forward order.
+func All[S ~[]E, E any](
+	slice S, yield Indexed_Yield_Function[E],
+) (count Count) {
+	defer func() { Count_Invariants(count, "all.count") }()
 	enforce_slice(slice)
-	sequence = func(yield func(Search_Position, E) (continued bool)) {
-		for index, value := range slice {
-			if !yield(Search_Position(index), value) {
-				return
-			}
+	for index, value := range slice {
+		continued := yield(Search_Position(index), value)
+		Boolean_Invariants(continued, "all.continued")
+		count++
+		if !continued {
+			return count
 		}
 	}
-	return sequence
+	return count
 }
 
-// Backward returns an iterator that yields each index and value in reverse order.
-func Backward[S ~[]E, E any](slice S) (sequence iter.Seq2[Search_Position, E]) {
+// Backward synchronously yields each index and value in reverse order.
+func Backward[S ~[]E, E any](
+	slice S, yield Indexed_Yield_Function[E],
+) (count Count) {
+	defer func() { Count_Invariants(count, "backward.count") }()
 	enforce_slice(slice)
-	sequence = func(yield func(Search_Position, E) (continued bool)) {
-		for index := len(slice) - 1; index >= 0; index-- {
-			if !yield(Search_Position(index), slice[index]) {
-				return
-			}
+	for index := len(slice) - 1; index >= 0; index-- {
+		continued := yield(Search_Position(index), slice[index])
+		Boolean_Invariants(continued, "backward.continued")
+		count++
+		if !continued {
+			return count
 		}
 	}
-	return sequence
+	return count
 }
 
-// Values returns an iterator that yields each element in forward order.
-func Values[S ~[]E, E any](slice S) (sequence iter.Seq[E]) {
+// Values synchronously yields each element in forward order.
+func Values[S ~[]E, E any](slice S, yield Yield_Function[E]) (count Count) {
+	defer func() { Count_Invariants(count, "values.count") }()
 	enforce_slice(slice)
-	sequence = func(yield func(E) (continued bool)) {
-		for _, value := range slice {
-			if !yield(value) {
-				return
-			}
+	for _, value := range slice {
+		continued := yield(value)
+		Boolean_Invariants(continued, "values.continued")
+		count++
+		if !continued {
+			return count
 		}
 	}
-	return sequence
+	return count
 }
 
-// Append_Sequence appends each yielded element to slice.
-func Append_Sequence[S ~[]E, E any](slice S, sequence iter.Seq[E]) (result S) {
-	enforce_slice(slice)
-	result = slice
-	for value := range sequence {
-		invariant.Always(
-			len(result) < SLICE_COUNT_MAXIMUM,
-			"Append_Sequence admits at most SLICE_COUNT_MAXIMUM result elements.",
-		)
-		result = append(result, value)
-	}
-	enforce_slice(result)
-	return result
+// Append_Sequence_Into writes prefix followed by sequence into caller storage.
+func Append_Sequence_Into[
+	Destination ~[]E, Prefix ~[]E, Sequence ~[]E, E any,
+](destination Destination, prefix Prefix, sequence Sequence) (count Count) {
+	defer func() { Count_Invariants(count, "append_sequence_into.count") }()
+	return Insert_Into(destination, prefix, Position(len(prefix)), sequence)
 }
 
-// Collect returns a new slice that contains each yielded element.
-func Collect[S ~[]E, E any](sequence iter.Seq[E]) (result S) {
-	for value := range sequence {
-		invariant.Always(
-			len(result) < SLICE_COUNT_MAXIMUM,
-			"Collect admits at most SLICE_COUNT_MAXIMUM result elements.",
-		)
-		result = append(result, value)
-	}
-	enforce_slice(result)
-	return result
+// Collect_Into copies sequence into caller storage.
+func Collect_Into[Destination ~[]E, Sequence ~[]E, E any](
+	destination Destination, sequence Sequence,
+) (count Count) {
+	defer func() { Count_Invariants(count, "collect_into.count") }()
+	return Clone_Into(destination, sequence)
 }
 
-// Sorted collects and sorts the yielded elements in ascending order.
-func Sorted[S ~[]E, E cmp.Ordered](sequence iter.Seq[E]) (result S) {
-	result = Collect[S](sequence)
-	Sort(result)
-	return result
+// Sorted_Into copies sequence into caller storage and sorts it ascending.
+func Sorted_Into[Destination ~[]E, Sequence ~[]E, E cmp.Ordered](
+	destination Destination, sequence Sequence,
+) (count Count) {
+	defer func() { Count_Invariants(count, "sorted_into.count") }()
+	count = Clone_Into(destination, sequence)
+	Sort(destination[:int(count)])
+	return count
 }
 
-// Sorted_Function collects and sorts the yielded elements through comparison.
-func Sorted_Function[S ~[]E, E any](
-	sequence iter.Seq[E], comparison Comparison_Function[E, E],
-) (result S) {
-	result = Collect[S](sequence)
-	Sort_Function(result, comparison)
-	return result
+// Sorted_Function_Into copies sequence and sorts it through comparison.
+func Sorted_Function_Into[Destination ~[]E, Sequence ~[]E, E any](
+	destination Destination, sequence Sequence, comparison Comparison_Function[E, E],
+) (count Count) {
+	defer func() { Count_Invariants(count, "sorted_function_into.count") }()
+	count = Clone_Into(destination, sequence)
+	Sort_Function(destination[:int(count)], comparison)
+	return count
 }
 
-// Sorted_Stable_Function collects and stably sorts the yielded elements through comparison.
-func Sorted_Stable_Function[S ~[]E, E any](
-	sequence iter.Seq[E], comparison Comparison_Function[E, E],
-) (result S) {
-	result = Collect[S](sequence)
-	Sort_Stable_Function(result, comparison)
-	return result
+// Sorted_Stable_Function_Into copies sequence and stably sorts it through comparison.
+func Sorted_Stable_Function_Into[Destination ~[]E, Sequence ~[]E, E any](
+	destination Destination, sequence Sequence, comparison Comparison_Function[E, E],
+) (count Count) {
+	defer func() { Count_Invariants(count, "sorted_stable_function_into.count") }()
+	count = Clone_Into(destination, sequence)
+	Sort_Stable_Function(destination[:int(count)], comparison)
+	return count
 }
 
-// Chunk returns an iterator over clipped consecutive slices of at most count elements.
-func Chunk[S ~[]E, E any](slice S, count Count) (sequence iter.Seq[S]) {
+// Chunk synchronously yields clipped consecutive views of at most count elements.
+func Chunk[S ~[]E, E any](
+	slice S, count Count, yield Chunk_Yield_Function[S, E],
+) (chunk_count Count) {
+	defer func() { Count_Invariants(chunk_count, "chunk.chunk_count") }()
 	Count_Invariants(count, "chunk.count")
 	enforce_slice(slice)
 	invariant.Always(count >= 1, "A chunk count is at least one.")
-	sequence = func(yield func(S) (continued bool)) {
-		chunk_count := int(count)
-		for start := 0; start < len(slice); start += chunk_count {
-			end := start + min(chunk_count, len(slice[start:]))
-			if !yield(slice[start:end:end]) {
-				return
-			}
+	count_int := int(count)
+	for start := 0; start < len(slice); start += count_int {
+		end := start + min(count_int, len(slice[start:]))
+		continued := yield(slice[start:end:end])
+		Boolean_Invariants(continued, "chunk.continued")
+		chunk_count++
+		if !continued {
+			return chunk_count
 		}
 	}
-	return sequence
+	return chunk_count
 }
