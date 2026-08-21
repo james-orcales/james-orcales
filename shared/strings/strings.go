@@ -541,6 +541,24 @@ func Equal_Fold(left Text, right Text) (equal Boolean) {
 		right_character, right_size := utf8.Decode_Character_Text(
 			utf8.Text(right[right_index:]),
 		)
+		// Invalid bytes decode to the same replacement character as valid U+FFFD. Byte
+		// identity must remain observable or malformed input compares equal to valid text.
+		if left_character == utf8.REPLACEMENT_CHARACTER {
+			if right_character == utf8.REPLACEMENT_CHARACTER {
+				if left_size != right_size {
+					return false
+				}
+				left_byte_index := left_index
+				right_byte_index := right_index
+				for index := 0; index < int(left_size); index++ {
+					if left[left_byte_index] != right[right_byte_index] {
+						return false
+					}
+					left_byte_index++
+					right_byte_index++
+				}
+			}
+		}
 		left_value := ucd.Character(left_character)
 		right_value := ucd.Character(right_character)
 		if left_value != right_value {
