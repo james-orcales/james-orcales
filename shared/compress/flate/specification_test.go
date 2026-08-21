@@ -245,6 +245,94 @@ func Test_Untrusted_Input(t *testing.T) {
 	}
 }
 
+// Test_Fixed_Symbol_Domain proves ordinary and reserved fixed codes cross the public decoder.
+func Test_Fixed_Symbol_Domain(t *testing.T) {
+	test_cases := [...]struct {
+		Symbol     uint32
+		Append_End bool
+		Status     flate.Decode_Status
+		Count      flate.Count
+	}{
+		{
+			Symbol: uint32(flate.BINARY_RADIX), Append_End: true,
+			Status: flate.STATUS_OK, Count: flate.Count(flate.FINAL_BLOCK_BIT_VALUE),
+		},
+		{
+			Symbol: uint32(flate.LITERAL_SYMBOL_MAXIMUM + 1),
+			Status: flate.STATUS_INPUT_INVALID,
+		},
+		{
+			Symbol: uint32(flate.FIXED_LITERAL_COUNT - 1),
+			Status: flate.STATUS_INPUT_INVALID,
+		},
+	}
+	for _, test_case := range test_cases {
+		var compressed []byte
+		bit_buffer := uint64(bits.WORD_64_MINIMUM)
+		bit_count := uint(bits.WORD_MINIMUM)
+		compressed, bit_buffer, bit_count = test_append_bits(
+			compressed, bit_buffer, bit_count,
+			uint32(flate.BLOCK_KIND_FIXED<<flate.FINAL_BIT_COUNT|
+				flate.FINAL_BLOCK_BIT_VALUE),
+			flate.BLOCK_HEADER_BIT_COUNT,
+		)
+		compressed, bit_buffer, bit_count = test_append_fixed_symbol(
+			compressed, bit_buffer, bit_count, test_case.Symbol,
+		)
+		if test_case.Append_End {
+			compressed, bit_buffer, bit_count = test_append_fixed_symbol(
+				compressed, bit_buffer, bit_count, flate.LITERAL_SYMBOL_END,
+			)
+		}
+		if bit_count > uint(bits.WORD_MINIMUM) {
+			compressed = append(compressed, byte(bit_buffer))
+		}
+		var destination [TEST_OUTPUT_SIZE]byte
+		count, status := flate.Decode_Into(destination[:], compressed)
+		testify.Equal_Values(
+			t, test_case.Status, status,
+			"fixed symbol %d status = %d", test_case.Symbol, status,
+		)
+		testify.Equal(
+			t, test_case.Count, count,
+			"fixed symbol %d count = %d", test_case.Symbol, count,
+		)
+		if test_case.Status == flate.STATUS_OK {
+			testify.Equal(
+				t, byte(test_case.Symbol), destination[bits.WORD_MINIMUM],
+				"fixed symbol %d output differs", test_case.Symbol,
+			)
+		}
+	}
+}
+
+// Test_Fixed_Prefix_Maximum proves the final lookup key crosses the public decoder.
+func Test_Fixed_Prefix_Maximum(t *testing.T) {
+	compressed, bit_buffer, bit_count := test_append_bits(
+		nil, uint64(bits.WORD_64_MINIMUM), uint(bits.WORD_MINIMUM),
+		uint32(flate.BLOCK_KIND_FIXED<<flate.FINAL_BIT_COUNT|
+			flate.FINAL_BLOCK_BIT_VALUE),
+		flate.BLOCK_HEADER_BIT_COUNT,
+	)
+	compressed, bit_buffer, bit_count = test_append_bits(
+		compressed, bit_buffer, bit_count,
+		uint32(flate.HUFFMAN_LOOKUP_MASK), flate.HUFFMAN_LOOKUP_CODE_SIZE,
+	)
+	if bit_count > uint(bits.WORD_MINIMUM) {
+		compressed = append(compressed, byte(bit_buffer))
+	}
+	var destination [TEST_OUTPUT_SIZE]byte
+	count, status := flate.Decode_Into(destination[:], compressed)
+	testify.Equal_Values(
+		t, flate.STATUS_INPUT_INVALID, status,
+		"maximum fixed prefix status = %d", status,
+	)
+	testify.Equal(
+		t, flate.Count(flate.FINAL_BLOCK_BIT_VALUE), count,
+		"maximum fixed prefix count = %d", count,
+	)
+}
+
 // Test_Invariant_Domains drives public bounds through real operation entry points.
 func Test_Invariant_Domains(t *testing.T) {
 	maximum_bytes := make([]byte, flate.BYTE_COUNT_MAXIMUM)
@@ -702,32 +790,32 @@ func verify_decode_allocation(t *testing.T) {
 		observed_count, observed_decode_status = flate.Decode_Into(
 			destination[:], compressed[:],
 		)
-	})
+	}, "full decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_decode_status = flate.Decode_Into(
 			destination[:TEST_SHORT_SIZE], compressed[:],
 		)
-	})
+	}, "short decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_decode_status = flate.Decode_Into(
 			destination[:], nil,
 		)
-	})
+	}, "empty-input decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_decode_status = flate.Decode_Into(
 			aliased[:], aliased[:len(compressed)],
 		)
-	})
+	}, "aliased decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_decode_status = flate.Decode_Dictionary_Into(
 			destination[:], dictionary_compressed[:], dictionary,
 		)
-	})
+	}, "dictionary decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_decode_status = flate.Decode_Dictionary_Into(
 			nil, dictionary_compressed[:], dictionary,
 		)
-	})
+	}, "short dictionary decode")
 	testify.Greater_Or_Equal(
 		t,
 		&testify.Greater_Or_Equal_Input[flate.Count]{First: observed_count, Second: 0},
@@ -755,21 +843,21 @@ func verify_prefix_allocation(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_compressed_count, observed_status =
 			flate.Decode_Prefix_Into(destination[:], compressed[:])
-	})
+	}, "prefix decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_compressed_count, observed_status =
 			flate.Decode_Prefix_Into(nil, compressed[:])
-	})
+	}, "short prefix decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_compressed_count, observed_status =
 			flate.Decode_Prefix_Into(destination[:], nil)
-	})
+	}, "empty-input prefix decode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_compressed_count, observed_status =
 			flate.Decode_Prefix_Into(
 				aliased[:], aliased[:len(compressed)],
 			)
-	})
+	}, "aliased prefix decode")
 	testify.Greater_Or_Equal(
 		t,
 		&testify.Greater_Or_Equal_Input[flate.Count]{First: observed_count, Second: 0},
@@ -811,34 +899,34 @@ func verify_encode_allocation(t *testing.T) {
 				encoded[:], workspace, []byte(TEST_CONTENT),
 				flate.Level_Unvalidated(level),
 			)
-		})
+		}, "encode level %d", level)
 	}
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_encode_status = flate.Encode_Into(
 			nil, workspace, nil, flate.NO_COMPRESSION,
 		)
-	})
+	}, "empty encode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_encode_status = flate.Encode_Into(
 			nil, workspace, nil, flate.HUFFMAN_ONLY-1,
 		)
-	})
+	}, "invalid-level encode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_encode_status = flate.Encode_Into(
 			encoded[:], flate.Workspace_Unvalidated{}, nil, flate.NO_COMPRESSION,
 		)
-	})
+	}, "invalid-workspace encode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_encode_status = flate.Encode_Dictionary_Into(
 			encoded[:], workspace, []byte(TEST_CONTENT), dictionary,
 			flate.BEST_COMPRESSION,
 		)
-	})
+	}, "dictionary encode")
 	testify.Zero_Allocation(t, func() {
 		observed_count, observed_encode_status = flate.Encode_Dictionary_Into(
 			nil, workspace, nil, dictionary, flate.NO_COMPRESSION,
 		)
-	})
+	}, "empty dictionary encode")
 	testify.Greater_Or_Equal(
 		t,
 		&testify.Greater_Or_Equal_Input[flate.Count]{First: observed_count, Second: 0},
@@ -1084,6 +1172,21 @@ func test_append_fixed_zeros_block(
 			compressed, bits, bit_count, 0, flate.MATCH_EXTRA_BIT_COUNT_MAXIMUM,
 		)
 		tail_count -= flate.MATCH_SIZE_MAXIMUM
+	}
+	for tail_count > flate.MATCH_SIZE_MINIMUM {
+		compressed, bits, bit_count = test_append_fixed_symbol(
+			compressed, bits, bit_count, 0,
+		)
+		tail_count--
+	}
+	if tail_count == flate.MATCH_SIZE_MINIMUM {
+		compressed, bits, bit_count = test_append_fixed_symbol(
+			compressed, bits, bit_count, flate.MATCH_SYMBOL_MINIMUM,
+		)
+		compressed, bits, bit_count = test_append_bits(
+			compressed, bits, bit_count, 0, flate.FIXED_DISTANCE_BIT_COUNT,
+		)
+		tail_count -= flate.MATCH_SIZE_MINIMUM
 	}
 	for tail_count > 0 {
 		compressed, bits, bit_count = test_append_fixed_symbol(

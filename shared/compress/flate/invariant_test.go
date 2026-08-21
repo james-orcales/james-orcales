@@ -100,6 +100,12 @@ const INVARIANT_DOMAIN_SECOND = INVARIANT_DOMAIN_MINIMUM + 1
 // INVARIANT_DOMAIN_THIRD follows second boundary witness.
 const INVARIANT_DOMAIN_THIRD = INVARIANT_DOMAIN_SECOND + 1
 
+// INVARIANT_DOMAIN_BOUNDARY_COUNT covers zero and both following witnesses.
+const INVARIANT_DOMAIN_BOUNDARY_COUNT = INVARIANT_DOMAIN_THIRD + FINAL_BIT_COUNT
+
+// INVARIANT_FIXED_MATCH_STATE_COUNT adds the independent maximum witness.
+const INVARIANT_FIXED_MATCH_STATE_COUNT = INVARIANT_DOMAIN_BOUNDARY_COUNT + FINAL_BIT_COUNT
+
 // Test_Constant_Formulas protects shared machine limits and RFC relationships.
 func Test_Constant_Formulas(t *testing.T) {
 	testify.Equal(
@@ -287,6 +293,65 @@ func Test_Writer_State_Domains(t *testing.T) {
 	}
 }
 
+// Test_Fast_Writer_State_Domains keeps the specialized path under the same boundaries.
+func Test_Fast_Writer_State_Domains(t *testing.T) {
+	var one [INVARIANT_BYTE_STORAGE_COUNT]byte
+	var two [INVARIANT_BIT_STORAGE_COUNT]byte
+	maximum := make([]byte, BYTE_COUNT_MAXIMUM)
+	states := [...]Bit_Writer{
+		{},
+		{
+			Destination: one[:], Position: INVARIANT_DOMAIN_SECOND,
+			Bits: INVARIANT_DOMAIN_SECOND, Bits_Count: INVARIANT_DOMAIN_SECOND,
+		},
+		{
+			Destination: two[:], Position: INVARIANT_DOMAIN_THIRD,
+			Bits: INVARIANT_DOMAIN_THIRD, Bits_Count: INVARIANT_DOMAIN_THIRD,
+		},
+		{
+			Destination: maximum, Position: BYTE_COUNT_MAXIMUM,
+			Bits:       Pending_Bits(PENDING_BITS_MAXIMUM),
+			Bits_Count: Pending_Bit_Count(PENDING_BIT_COUNT_MAXIMUM),
+			State:      WRITER_STATE_EXHAUSTED,
+		},
+	}
+	sources := [...]Source{nil, one[:], two[:], maximum}
+	match_sizes := [...]Match_Size{
+		MATCH_SIZE_MINIMUM, MATCH_SIZE_MINIMUM,
+		MATCH_SIZE_MAXIMUM, MATCH_SIZE_MAXIMUM,
+	}
+	distance_sizes := [...]Distance{
+		DISTANCE_MINIMUM,
+		DISTANCE_MINIMUM + INVARIANT_DOMAIN_SECOND,
+		DISTANCE_MAXIMUM,
+		DISTANCE_MAXIMUM,
+	}
+	var heads [HASH_COUNT]int32
+	for state_index, state := range states {
+		writer := state
+		encode_fixed_best_speed(&writer, heads[:], sources[state_index])
+		testify.Less_Or_Equal(
+			t,
+			&testify.Less_Or_Equal_Input[int]{
+				First: int(writer.Position), Second: len(writer.Destination),
+			},
+			"fast writer state %d escaped destination", state_index,
+		)
+
+		writer = state
+		write_fixed_match(
+			&writer, match_sizes[state_index], distance_sizes[state_index],
+		)
+		testify.Less_Or_Equal(
+			t,
+			&testify.Less_Or_Equal_Input[int]{
+				First: int(writer.Position), Second: len(writer.Destination),
+			},
+			"fixed match state %d escaped destination", state_index,
+		)
+	}
+}
+
 // Test_Reader_State_Domains covers each boundary because input may end mid-code.
 func Test_Reader_State_Domains(t *testing.T) {
 	maximum := make([]byte, BYTE_COUNT_MAXIMUM)
@@ -334,8 +399,10 @@ func Test_Reader_State_Domains(t *testing.T) {
 			case INVARIANT_READER_SIZES:
 				valid = dynamic_sizes(&reader, &decoder, dynamic_storage[:])
 			case INVARIANT_READER_HUFFMAN:
+				fixed_reader := reader
+				decode_fixed(&fixed_reader, nil, nil, 0)
 				count, status = decode_huffman(
-					&reader, nil, nil, 0, &decoder, &decoder,
+					&reader, nil, nil, 0, &decoder, &decoder, false,
 				)
 			case INVARIANT_READER_MATCH:
 				count, status = decode_match(
@@ -349,6 +416,100 @@ func Test_Reader_State_Domains(t *testing.T) {
 			}
 			verify_reader_operation(t, operation_index, count, status, valid)
 		}
+	}
+}
+
+// Test_Fixed_Reader_State_Domains keeps the wide cursor bounded at every handoff.
+func Test_Fixed_Reader_State_Domains(t *testing.T) {
+	maximum := make([]byte, BYTE_COUNT_MAXIMUM)
+	for state_index, state := range fixed_match_test_states(maximum) {
+		decoded_cursor, decoded_match := state.Cursor, state.Match
+		fixed_match_read(state.Source, &decoded_cursor, state.Symbol, &decoded_match)
+		decoded_position := int(decoded_cursor.Position)
+		testify.Less_Or_Equal(
+			t,
+			&testify.Less_Or_Equal_Input[int]{
+				First: decoded_position, Second: len(state.Source),
+			},
+			"fixed reader state %d escaped source", state_index,
+		)
+
+		reader := Bit_Reader{Source: state.Source, Position: state.Cursor.Position}
+		bit_reader_store_raw(&reader, &state.Cursor)
+		testify.Less_Or_Equal(
+			t,
+			&testify.Less_Or_Equal_Input[int]{
+				First: int(reader.Position), Second: len(reader.Source),
+			},
+			"stored reader state %d escaped source", state_index,
+		)
+		testify.Less_Or_Equal(
+			t,
+			&testify.Less_Or_Equal_Input[Pending_Bit_Count]{
+				First:  reader.Bits_Count,
+				Second: Pending_Bit_Count(PENDING_BIT_COUNT_MAXIMUM),
+			},
+			"stored reader state %d retained too many bits", state_index,
+		)
+	}
+}
+
+// Holds one real fixed-match operation at an invariant boundary.
+type fixed_match_test_state struct {
+	Source Bit_Storage
+	Cursor Fixed_Bit_Cursor
+	Symbol Match_Symbol
+	Match  Fixed_Match
+}
+
+// Covers minimum, interior, and maximum fixed-match state through real operations.
+func fixed_match_test_states(
+	maximum Bit_Storage,
+) (states [INVARIANT_FIXED_MATCH_STATE_COUNT]fixed_match_test_state) {
+	return [...]fixed_match_test_state{
+		{
+			Symbol: MATCH_SYMBOL_MINIMUM,
+			Match: Fixed_Match{
+				Size: MATCH_SIZE_MINIMUM, Distance: DISTANCE_MINIMUM, Valid: true,
+			},
+		},
+		{
+			Source: []byte{INVARIANT_DOMAIN_MINIMUM},
+			Cursor: Fixed_Bit_Cursor{
+				Position: INVARIANT_DOMAIN_SECOND,
+				Bits:     INVARIANT_DOMAIN_SECOND, Count: INVARIANT_DOMAIN_SECOND,
+			},
+			Symbol: MATCH_SYMBOL_MINIMUM,
+			Match: Fixed_Match{
+				Size:     MATCH_SIZE_MINIMUM,
+				Distance: DISTANCE_MINIMUM + INVARIANT_DOMAIN_SECOND, Valid: true,
+			},
+		},
+		{
+			Source: []byte{
+				INVARIANT_DOMAIN_MINIMUM, INVARIANT_DOMAIN_MINIMUM,
+			},
+			Cursor: Fixed_Bit_Cursor{
+				Position: INVARIANT_DOMAIN_THIRD,
+				Bits:     INVARIANT_DOMAIN_THIRD, Count: INVARIANT_DOMAIN_THIRD,
+			},
+			Symbol: MATCH_SYMBOL_MAXIMUM,
+			Match: Fixed_Match{
+				Size: MATCH_SIZE_MAXIMUM, Distance: DISTANCE_MAXIMUM, Valid: true,
+			},
+		},
+		{
+			Source: maximum,
+			Cursor: Fixed_Bit_Cursor{
+				Position: BYTE_COUNT_MAXIMUM,
+				Bits:     Bit_Value(BIT_VALUE_MAXIMUM),
+				Count:    Bit_Count(BIT_COUNT_MAXIMUM),
+			},
+			Symbol: MATCH_SYMBOL_MAXIMUM,
+			Match: Fixed_Match{
+				Size: MATCH_SIZE_MAXIMUM, Distance: DISTANCE_MAXIMUM, Valid: false,
+			},
+		},
 	}
 }
 
@@ -550,7 +711,7 @@ func Test_Huffman_State_Domains(t *testing.T) {
 
 		count, status := decode_huffman(
 			&reader,
-			nil, nil, 0, &decoder, &decoder,
+			nil, nil, 0, &decoder, &decoder, false,
 		)
 		testify.Zero(t, count, "Huffman state sizes %v wrote %d bytes", sizes, count)
 		testify.Equal(
@@ -733,6 +894,11 @@ func Test_Matching_Size_Domains(t *testing.T) {
 		history_byte(History{INVARIANT_DOMAIN_THIRD}, nil, 0),
 		"history byte two failed",
 	)
+	testify.Equal(
+		t, Byte_Value(INVARIANT_DOMAIN_SECOND),
+		history_byte(nil, Source{INVARIANT_DOMAIN_SECOND}, POSITION_MINIMUM),
+		"source byte one failed",
+	)
 }
 
 // Test_Match_Copy_Domains proves nearest, second, and window-end history reads.
@@ -784,6 +950,121 @@ func Test_Match_Copy_Domains(t *testing.T) {
 	testify.Equal(
 		t, Block_Status(STATUS_OUTPUT_TOO_SMALL), status,
 		"maximum match status = %d", status,
+	)
+
+}
+
+// Test_Fast_Match_Copy_Domains keeps complete copies on every count and distance bound.
+func Test_Fast_Match_Copy_Domains(t *testing.T) {
+	for _, initial_count := range []Count{
+		INVARIANT_DOMAIN_SECOND,
+		INVARIANT_DOMAIN_THIRD,
+	} {
+		destination := make([]byte, int(initial_count)+MATCH_SIZE_MAXIMUM)
+		count, copied := match_copy(
+			destination, nil, initial_count, MATCH_SIZE_MAXIMUM, DISTANCE_MINIMUM,
+		)
+		testify.Equal(t, Boolean(true), copied, "count %d copy failed", initial_count)
+		testify.Equal(
+			t, initial_count+MATCH_SIZE_MAXIMUM, count,
+			"count %d copy ended at %d", initial_count, count,
+		)
+	}
+
+	for _, distance_size := range []Distance{
+		DISTANCE_MINIMUM + INVARIANT_DOMAIN_SECOND,
+		DISTANCE_MAXIMUM,
+	} {
+		history := make([]byte, distance_size)
+		var destination [MATCH_SIZE_MINIMUM]byte
+		count := Count(BYTE_COUNT_MINIMUM)
+		match_copy_complete(
+			Match_Destination(destination[:]), history, Match_Count(count),
+			MATCH_SIZE_MINIMUM, distance_size,
+		)
+		count += MATCH_SIZE_MINIMUM
+		testify.Equal(
+			t, Count(MATCH_SIZE_MINIMUM), count,
+			"distance %d fast copy count = %d", distance_size, count,
+		)
+	}
+
+}
+
+// Test_Decode_Match_Domains keeps dynamic matches observable after fixed specialization.
+func Test_Decode_Match_Domains(t *testing.T) {
+	var distance_sizes [DISTANCE_SYMBOL_COUNT]uint8
+	distance_sizes[DISTANCE_SYMBOL_MINIMUM] = FINAL_BIT_COUNT
+	var distance_decoder Huffman_Decoder
+	testify.Equal(
+		t, Boolean(true), huffman_build(&distance_decoder, distance_sizes[:]),
+		"distance decoder build failed",
+	)
+	maximum_destination := make([]byte, BYTE_COUNT_MAXIMUM)
+	maximum_dictionary := make([]byte, DICTIONARY_SIZE_MAXIMUM)
+	for _, test_case := range [...]struct {
+		Destination Destination
+		Dictionary  History
+		Count       Count
+		Symbol      Match_Symbol
+		Next_Count  Count
+		Status      Block_Status
+	}{
+		{
+			nil, nil, Count(BYTE_COUNT_MINIMUM), MATCH_SYMBOL_MINIMUM,
+			Count(BYTE_COUNT_MINIMUM), STATUS_INPUT_INVALID,
+		},
+		{
+			make([]byte, INVARIANT_DOMAIN_SECOND),
+			make([]byte, INVARIANT_DOMAIN_SECOND),
+			INVARIANT_DOMAIN_SECOND, MATCH_SYMBOL_MINIMUM,
+			INVARIANT_DOMAIN_SECOND, STATUS_OUTPUT_TOO_SMALL,
+		},
+		{
+			make([]byte, INVARIANT_DOMAIN_THIRD),
+			make([]byte, INVARIANT_DOMAIN_THIRD),
+			INVARIANT_DOMAIN_THIRD, MATCH_SYMBOL_MINIMUM,
+			INVARIANT_DOMAIN_THIRD, STATUS_OUTPUT_TOO_SMALL,
+		},
+		{
+			maximum_destination, maximum_dictionary, BYTE_COUNT_MAXIMUM,
+			MATCH_SYMBOL_MAXIMUM, BYTE_COUNT_MAXIMUM, STATUS_OUTPUT_TOO_SMALL,
+		},
+		{
+			make([]byte, MATCH_SIZE_MINIMUM), make([]byte, DISTANCE_MINIMUM),
+			Count(BYTE_COUNT_MINIMUM), MATCH_SYMBOL_MINIMUM,
+			MATCH_SIZE_MINIMUM, STATUS_OK,
+		},
+	} {
+		verify_decode_match_case(
+			t, &distance_decoder, test_case.Destination, test_case.Dictionary,
+			test_case.Count, test_case.Symbol, test_case.Next_Count, test_case.Status,
+		)
+	}
+}
+
+func verify_decode_match_case(
+	t *testing.T,
+	distance_decoder *Huffman_Decoder,
+	destination Destination,
+	dictionary History,
+	initial_count Count,
+	symbol Match_Symbol,
+	expected_count Count,
+	expected_status Block_Status,
+) {
+	t.Helper()
+	reader := Bit_Reader{Source: []byte{byte(BIT_VALUE_MINIMUM)}}
+	count, status := decode_match(
+		&reader, destination, dictionary, initial_count, symbol, distance_decoder,
+	)
+	testify.Equal(
+		t, expected_count, count,
+		"match count %d symbol %d ended at %d", initial_count, symbol, count,
+	)
+	testify.Equal(
+		t, expected_status, status,
+		"match count %d symbol %d status = %d", initial_count, symbol, status,
 	)
 }
 
