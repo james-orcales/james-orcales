@@ -13,9 +13,6 @@ import (
 // migration, or laptop sleep). Monotonic clock that measure real elapsed time must do that.
 const CLOCK_BOOTTIME = 7
 
-// Turn timespec seconds field into nanoseconds.
-const NANOSECONDS_PER_SECOND = 1_000_000_000
-
 // Return reader for CLOCK_BOOTTIME. Go syscall package ship no ClockGettime wrapper, thus
 // raw clock_gettime syscall go direct. x/sys/unix would add dependency this module do not
 // carry.
@@ -37,4 +34,13 @@ func new_monotonic_reader() (read func() (moment time.Monotonic_Moment)) {
 		seconds := int64(timestamp.Sec) * NANOSECONDS_PER_SECOND
 		return time.Monotonic_Moment(seconds + int64(timestamp.Nsec))
 	}
+}
+
+func wallclock_now_nanoseconds() (nanoseconds int64) {
+	value := syscall.Timeval{}
+	if err := syscall.Gettimeofday(&value); err != nil {
+		panic("time: gettimeofday failed")
+	}
+	return int64(value.Sec)*NANOSECONDS_PER_SECOND +
+		int64(value.Usec)*NANOSECONDS_PER_MICROSECOND
 }

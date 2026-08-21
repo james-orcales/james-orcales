@@ -6,15 +6,12 @@ package nbio
 
 import (
 	"errors"
-	"os"
-	"os/signal"
 	"runtime"
-	"strings"
 	"syscall"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/nbio"
-	sysos "local/james-orcales/shared/simulation/os"
+	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -46,7 +43,7 @@ type Operating_System struct {
 	// Next_Identifier is last non-zero kernel correlation identifier issued.
 	Next_Identifier uint64
 	// Signals receive OS signals from os/signal notifier. Nil until first watch.
-	Signals chan os.Signal
+	Signals Operating_System_Signal_Channel
 	// Signal_Waiters are registered signal watchers, fired one-shot on delivery.
 	Signal_Waiters []Signal_Waiter
 	// Spawns track every child loop started and not yet reaped, keyed by process identifier.
@@ -66,13 +63,13 @@ type Operating_System struct {
 // completion and callback to fire once on delivery.
 type Signal_Waiter struct {
 	// System is OS signal this watcher await.
-	System os.Signal
+	System syscall.Signal
 	// Kind is backend-independent signal reported to callback.
-	Kind sysos.Signal
+	Kind os.Signal
 	// Completion is caller-owned completion fired on delivery.
 	Completion *time.Completion
 	// Callback is typed callback run with delivered signal.
-	Callback sysos.Signal_Callback
+	Callback os.Signal_Callback
 	// Deadline is finite moment this repository-extension operation retire at.
 	Deadline time.Monotonic_Moment
 }
@@ -83,21 +80,21 @@ type Signal_Waiter struct {
 // back — os/default supply them — and returned system is that OS completed with signal watch and
 // spawn, which retire on queue of this backend.
 func New_Operating_System_IO(
-	host time.Clock, entries uint16, flags uint32, ambient sysos.OS,
-) (loop nbio.IO, pump time.Timeline, driver time.Driver, system sysos.OS, err error) {
+	host time.Clock, entries uint16, flags uint32, ambient os.OS,
+) (loop nbio.IO, pump time.Timeline, driver time.Driver, system os.OS, err error) {
 	if entries == 0 {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, sysos.OS{}, errors.New(
+		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{}, errors.New(
 			"io: scheduler entries must be in [1, 4095]",
 		)
 	}
 	if entries > 4095 {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, sysos.OS{}, errors.New(
+		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{}, errors.New(
 			"io: scheduler entries must be in [1, 4095]",
 		)
 	}
 	platform, initialize_err := platform_initialize(entries, flags)
 	if initialize_err != nil {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, sysos.OS{}, initialize_err
+		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{}, initialize_err
 	}
 	state := &Operating_System{
 		Host:       host,
@@ -114,7 +111,7 @@ func New_Operating_System_IO(
 	operating_system_wire_effects(state, &system)
 	operating_system_wire_platform(state, &loop)
 	time.Timeline_Invariants(pump, "new_operating_system_io.pump")
-	sysos.OS_Invariants(system, "new_operating_system_io.system")
+	os.OS_Invariants(system, "new_operating_system_io.system")
 	return loop, pump, operating_system_to_driver(state), system, nil
 }
 
@@ -133,30 +130,30 @@ func operating_system_submit(completion *time.Completion) {
 
 // Wire signal watch and spawn onto OS surface that own them. Both retire on same completed queue
 // every IO operation use, thus one timeline hold whole run.
-func operating_system_wire_effects(state *Operating_System, system *sysos.OS) {
+func operating_system_wire_effects(state *Operating_System, system *os.OS) {
 	system.Watch_Signal = func(
-		completion *time.Completion, signal sysos.Signal, deadline time.Duration,
-		callback sysos.Signal_Callback,
+		completion *time.Completion, signal os.Signal, deadline time.Duration,
+		callback os.Signal_Callback,
 	) {
 		invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
 		state.Extension_Submitted++
 		operating_system_submit(completion)
 		operating_system_watch_signal(state, completion, signal, deadline, func(
-			completed *time.Completion, delivered sysos.Signal, watch_err error,
+			completed *time.Completion, delivered os.Signal, watch_err error,
 		) {
 			state.Extension_Submitted--
 			callback(completed, delivered, watch_err)
 		})
 	}
 	system.Spawn = func(
-		completion *time.Completion, request sysos.Process_Request, deadline time.Duration,
-		callback sysos.Process_Callback,
+		completion *time.Completion, request os.Process_Request, deadline time.Duration,
+		callback os.Process_Callback,
 	) {
 		invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
 		state.Extension_Submitted++
 		operating_system_submit(completion)
 		operating_system_spawn(state, completion, request, deadline, func(
-			completed *time.Completion, result sysos.Process_Result, spawn_err error,
+			completed *time.Completion, result os.Process_Result, spawn_err error,
 		) {
 			state.Extension_Submitted--
 			callback(completed, result, spawn_err)
@@ -181,7 +178,7 @@ type Spawn struct {
 	// Completion is caller-owned completion result is delivered on.
 	Completion *time.Completion
 	// Callback is typed callback run once result is whole.
-	Callback sysos.Process_Callback
+	Callback os.Process_Callback
 	// Started is moment child was forked, for wall-time measurement.
 	Started time.Monotonic_Moment
 	// Exit_Descriptor is Linux pidfd polled for exit, or -1 on Darwin.
@@ -199,9 +196,9 @@ type Spawn struct {
 	// Error_Buffer receive one standard-error pass.
 	Error_Buffer []byte
 	// Result accumulate captured output, exit code, and usage.
-	Result sysos.Process_Result
+	Result os.Process_Result
 	// Request hold caller live output sinks.
-	Request sysos.Process_Request
+	Request os.Process_Request
 	// Exit_Completion wait for child to exit.
 	Exit_Completion time.Completion
 	// Output_Completion read one standard-output pass.
@@ -238,13 +235,13 @@ type Spawn struct {
 // Start command of request and arm every operation that finish it: one read for each output
 // pipe, one write for input, exit watch, and deadline. Nothing run off loop thread.
 func operating_system_spawn(
-	state *Operating_System, completion *time.Completion, request sysos.Process_Request,
-	deadline time.Duration, callback sysos.Process_Callback,
+	state *Operating_System, completion *time.Completion, request os.Process_Request,
+	deadline time.Duration, callback os.Process_Callback,
 ) {
 	spawn, start_err := process_start(state, request)
 	if start_err != nil {
 		completion.Callback = func() {
-			callback(completion, sysos.Process_Result{}, start_err)
+			callback(completion, os.Process_Result{}, start_err)
 		}
 		state.Completed = append(state.Completed, completion)
 		return
@@ -267,7 +264,7 @@ func operating_system_spawn(
 // Fork child with its three pipes and return tracking entry. Every descriptor is released on
 // failure part-way through, thus failed start leak nothing.
 func process_start(
-	state *Operating_System, request sysos.Process_Request,
+	state *Operating_System, request os.Process_Request,
 ) (spawn *Spawn, err error) {
 	path, path_err := executable_path(request.Path, operating_system_search_path(request))
 	if path_err != nil {
@@ -313,7 +310,7 @@ func process_start(
 // hold writer for its own standard input, and close of parent end would never give it
 // end-of-file.
 func process_pipes(
-	request sysos.Process_Request,
+	request os.Process_Request,
 ) (spawn *Spawn, child []uintptr, err error) {
 	input_read, input_write, input_err := pipe_open()
 	if input_err != nil {
@@ -377,15 +374,17 @@ func process_argv(path string, arguments []string) (argv []string) {
 // Report PATH a spawn resolve bare command name against. Request carrying its own environment
 // resolve against PATH of that environment, thus parent PATH cannot surprise caller. Request with
 // no environment inherit parent PATH.
-func operating_system_search_path(request sysos.Process_Request) (search string) {
+func operating_system_search_path(request os.Process_Request) (search string) {
 	if request.Environment == nil {
 		search, _ = syscall.Getenv("PATH")
 		return search
 	}
 	for index := len(request.Environment) - 1; index >= 0; index-- {
 		entry := request.Environment[index]
-		if strings.HasPrefix(entry, "PATH=") {
-			return strings.TrimPrefix(entry, "PATH=")
+		if len(entry) >= len("PATH=") {
+			if entry[:len("PATH=")] == "PATH=" {
+				return entry[len("PATH="):]
+			}
 		}
 	}
 	return ""
@@ -1182,7 +1181,7 @@ func operating_system_to_driver(state *Operating_System) (driver time.Driver) {
 			timeout time.Duration, done func() (finished bool),
 		) (completed bool, err error) {
 			err = operating_system_drive(state, func() (drive_err error) {
-				completed, drive_err = operating_system_run_until(
+				completed, drive_err = operating_system_drive_until(
 					state, timeout, done,
 				)
 				return drive_err
@@ -1196,7 +1195,7 @@ func operating_system_to_driver(state *Operating_System) (driver time.Driver) {
 }
 
 // Drive until done, or until host deadline. Propagate every scheduler error.
-func operating_system_run_until(
+func operating_system_drive_until(
 	state *Operating_System, timeout time.Duration, done func() (finished bool),
 ) (completed bool, err error) {
 	deadline := state.Host.Now_Monotonic() + time.Monotonic_Moment(timeout)
@@ -1403,7 +1402,9 @@ func operating_system_flush_completed(state *Operating_System) {
 		state.Completed = state.Completed[1:]
 		invariant.Always(completion.Armed, "A delivered completion was armed.")
 		completion.Armed = false
-		completion.Callback()
+		callback := completion.Callback
+		completion.Callback = nil
+		callback()
 	}
 }
 
@@ -1513,16 +1514,16 @@ func operating_system_deinitialize(state *Operating_System) {
 		"Driver Deinit follows joining every userspace timeout.")
 	invariant.Always(len(state.Operations) == 0,
 		"Driver Deinit follows joining every operation.")
-	if state.Signals != nil {
-		signal.Stop(state.Signals)
+	if state.Signals.Channel != nil {
+		operating_system_signal_stop(state.Signals)
 	}
 	platform_deinitialize(state)
 }
 
 // Register watcher for signal and start OS notification for it.
 func operating_system_watch_signal(
-	state *Operating_System, completion *time.Completion, kind sysos.Signal,
-	deadline time.Duration, callback sysos.Signal_Callback,
+	state *Operating_System, completion *time.Completion, kind os.Signal,
+	deadline time.Duration, callback os.Signal_Callback,
 ) {
 	operating_system_signal_ensure(state)
 	system := signal_to_operating_system(kind)
@@ -1530,20 +1531,20 @@ func operating_system_watch_signal(
 		System: system, Kind: kind, Completion: completion, Callback: callback,
 		Deadline: state.Host.Now_Monotonic() + time.Monotonic_Moment(deadline),
 	})
-	signal.Notify(state.Signals, system)
+	operating_system_signal_notify(state.Signals, system)
 }
 
 // Make buffered signal channel on first watch.
 func operating_system_signal_ensure(state *Operating_System) {
-	if state.Signals != nil {
+	if state.Signals.Channel != nil {
 		return
 	}
-	state.Signals = make(chan os.Signal, SIGNAL_QUEUE_DEPTH)
+	state.Signals = operating_system_signal_channel(SIGNAL_QUEUE_DEPTH)
 }
 
 // Map backend-independent signal to its OS signal.
-func signal_to_operating_system(kind sysos.Signal) (system os.Signal) {
-	if kind == sysos.SIGNAL_INTERRUPT {
+func signal_to_operating_system(kind os.Signal) (system syscall.Signal) {
+	if kind == os.SIGNAL_INTERRUPT {
 		return syscall.SIGINT
 	}
 	return syscall.SIGTERM
@@ -1552,17 +1553,18 @@ func signal_to_operating_system(kind sysos.Signal) (system os.Signal) {
 // Drain delivered signals without block. Fire matching watchers.
 func operating_system_signals(state *Operating_System) {
 	for index := 0; index < SIGNAL_QUEUE_DEPTH; index++ {
-		select {
-		case received := <-state.Signals:
-			operating_system_signal_deliver(state, received)
-		default:
+		received, found := operating_system_signal_receive(state.Signals)
+		if !found {
 			return
 		}
+		operating_system_signal_deliver(state, received)
 	}
 }
 
 // Fire every watcher matching received, one-shot. Keep rest for later delivery.
-func operating_system_signal_deliver(state *Operating_System, received os.Signal) {
+func operating_system_signal_deliver(
+	state *Operating_System, received syscall.Signal,
+) {
 	kept := state.Signal_Waiters[:0]
 	for index := 0; index < len(state.Signal_Waiters); index++ {
 		waiter := state.Signal_Waiters[index]
@@ -1592,7 +1594,7 @@ func operating_system_expire_signals(state *Operating_System, now time.Monotonic
 		expired := waiter
 		expired.Completion.Callback = func() {
 			expired.Callback(
-				expired.Completion, sysos.Signal(-1), time.Deadline_Exceeded,
+				expired.Completion, os.SIGNAL_EXPIRED, time.Deadline_Exceeded,
 			)
 		}
 		state.Completed = append(state.Completed, expired.Completion)

@@ -6,14 +6,12 @@ package nbio
 
 import (
 	"errors"
-	"slices"
-	"strconv"
-	"strings"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/slices"
 )
 
 // IO is injected async IO submit surface. Code submit operation with
@@ -206,6 +204,24 @@ const IPV4_ADDRESS_BYTES = 4
 // IPV6_ADDRESS_BYTES keep public address layout equal to IPv6 protocol layout.
 const IPV6_ADDRESS_BYTES = 16
 
+// ADDRESS_IPV4_OCTET_TEXT_BYTES_MAXIMUM includes every decimal byte value.
+const ADDRESS_IPV4_OCTET_TEXT_BYTES_MAXIMUM = 3
+
+// ADDRESS_IPV4_TEXT_BYTES_MAXIMUM includes four octets and their separators.
+const ADDRESS_IPV4_TEXT_BYTES_MAXIMUM = (IPV4_ADDRESS_BYTES*ADDRESS_IPV4_OCTET_TEXT_BYTES_MAXIMUM +
+	IPV4_ADDRESS_BYTES - 1)
+
+// ADDRESS_IPV6_GROUP_COUNT is the number of two-byte groups in one IPv6 address.
+const ADDRESS_IPV6_GROUP_COUNT = IPV6_ADDRESS_BYTES / 2
+
+// ADDRESS_IPV6_GROUP_TEXT_BYTES_MAXIMUM includes every hexadecimal group value.
+const ADDRESS_IPV6_GROUP_TEXT_BYTES_MAXIMUM = 4
+
+// ADDRESS_TEXT_BYTES_MAXIMUM includes the longest IPv6 form with an embedded dotted quad.
+const ADDRESS_TEXT_BYTES_MAXIMUM = (ADDRESS_IPV6_GROUP_COUNT-2)*
+	ADDRESS_IPV6_GROUP_TEXT_BYTES_MAXIMUM +
+	(ADDRESS_IPV6_GROUP_COUNT - 2) + ADDRESS_IPV4_TEXT_BYTES_MAXIMUM
+
 // Address is IP address and port with explicit family. IP store IPv4 bytes in first four
 // positions, IPv6 bytes in all 16.
 type Address struct {
@@ -243,7 +259,10 @@ func Address_Parse(host string, port int) (address Address, err error) {
 	if port > 65535 {
 		return Address{}, errors.New("io: port is outside uint16")
 	}
-	if strings.Contains(host, ":") {
+	if len(host) > ADDRESS_TEXT_BYTES_MAXIMUM {
+		return Address{}, errors.New("io: host is too large")
+	}
+	if text_contains(host, ":") {
 		sextets, found := address_parse_ipv6(host)
 		if !found {
 			return Address{}, errors.New("io: host is not an IP literal")
@@ -259,7 +278,10 @@ func Address_Parse(host string, port int) (address Address, err error) {
 
 // Parse dotted-quad into four octets.
 func address_parse_ipv4(host string) (quad [IPV4_ADDRESS_BYTES]byte, found bool) {
-	parts := strings.Split(host, ".")
+	parts, split := text_split(host, '.', IPV4_ADDRESS_BYTES)
+	if !split {
+		return [IPV4_ADDRESS_BYTES]byte{}, false
+	}
 	if len(parts) != IPV4_ADDRESS_BYTES {
 		return [IPV4_ADDRESS_BYTES]byte{}, false
 	}
@@ -312,10 +334,10 @@ const ADDRESS_IPV6_PARTS_MAX = 8
 // Parse IPv6 literal into 16 octets. It accept full form, one "::" run, and trailing embedded
 // IPv4. It reject zone identifier: Address hold no zone, thus accept of one would drop it silent.
 func address_parse_ipv6(host string) (sextets [IPV6_ADDRESS_BYTES]byte, found bool) {
-	if strings.Contains(host, "%") {
+	if text_contains(host, "%") {
 		return [IPV6_ADDRESS_BYTES]byte{}, false
 	}
-	head, tail, compressed := strings.Cut(host, "::")
+	head, tail, compressed := text_cut(host, "::")
 	if compressed {
 		return address_join_ipv6(head, tail)
 	}
@@ -333,7 +355,7 @@ func address_parse_ipv6(host string) (sextets [IPV6_ADDRESS_BYTES]byte, found bo
 // Join both halves of a compressed literal, with zeros between them. Run must stand for at least
 // one group, thus the two halves together leave two bytes free.
 func address_join_ipv6(head string, tail string) (sextets [IPV6_ADDRESS_BYTES]byte, found bool) {
-	if strings.Contains(tail, "::") {
+	if text_contains(tail, "::") {
 		return [IPV6_ADDRESS_BYTES]byte{}, false
 	}
 	front, front_valid := address_parse_ipv6_parts(head)
@@ -359,13 +381,13 @@ func address_parse_ipv6_parts(text string) (values []byte, valid bool) {
 	if text == "" {
 		return values, true
 	}
-	parts := strings.Split(text, ":")
-	if len(parts) > ADDRESS_IPV6_PARTS_MAX {
+	parts, split := text_split(text, ':', ADDRESS_IPV6_PARTS_MAX)
+	if !split {
 		return nil, false
 	}
 	for index, part := range parts {
 		if index == len(parts)-1 {
-			if strings.Contains(part, ".") {
+			if text_contains(part, ".") {
 				quad, quad_valid := address_parse_ipv4(part)
 				if !quad_valid {
 					return nil, false
@@ -419,6 +441,50 @@ func address_hexadecimal(character byte) (value byte, valid bool) {
 		}
 	}
 	return 0, false
+}
+
+// These low-level readers stay here because shared/strings depends on the stream layer that
+// nbio defines, so importing it would make the dependency cycle back into this package.
+func text_contains(source string, fragment string) (contained bool) {
+	_, _, contained = text_cut(source, fragment)
+	return contained
+}
+
+func text_cut(source string, separator string) (before string, after string, found bool) {
+	if separator == "" {
+		return "", source, true
+	}
+	if len(separator) > len(source) {
+		return source, "", false
+	}
+	for position := 0; position <= len(source)-len(separator); position++ {
+		if source[position:position+len(separator)] == separator {
+			return source[:position], source[position+len(separator):], true
+		}
+	}
+	return source, "", false
+}
+
+func text_split(
+	source string, separator byte, part_limit_count int,
+) (parts []string, valid bool) {
+	parts = make([]string, 0, part_limit_count)
+	start := 0
+	for position := range source {
+		if source[position] != separator {
+			continue
+		}
+		if len(parts) >= part_limit_count {
+			return nil, false
+		}
+		parts = append(parts, source[start:position])
+		start = position + 1
+	}
+	if len(parts) >= part_limit_count {
+		return nil, false
+	}
+	parts = append(parts, source[start:])
+	return parts, true
 }
 
 // TCP_BUFFER_KIBIBYTES_DEFAULT names the profile size before conversion to bytes.
@@ -620,6 +686,9 @@ var sim_not_a_directory = errors.New("io: not a directory")
 // Returned when file operation name directory.
 var sim_is_a_directory = errors.New("io: is a directory")
 
+// A directory cannot cross the shared slice boundary when it is read back.
+var sim_directory_full = errors.New("io: directory entry limit exceeded")
+
 // Sim_Node is one entry in simulator in-memory filesystem: directory with named children, or
 // file holding bytes. Generated from seed at New_Simulated_IO and mutated by
 // Create/Write/Make_Directory, thus later read reflect earlier write.
@@ -804,7 +873,7 @@ func sim_wire_socket_lifecycle(state *Sim, network *Network) {
 		return sim_shutdown(state, socket, how)
 	}
 	network.Peer_Address = func(file File) (address string, err error) {
-		return sim_peer_address(file), nil
+		return sim_peer_address(state, file), nil
 	}
 }
 
@@ -1207,13 +1276,27 @@ func sim_new_directory() (node *Sim_Node) {
 	return &Sim_Node{Directory: true, Children: map[string]*Sim_Node{}}
 }
 
+// SIM_PATH_TEXT_BYTES_MAXIMUM keeps one simulated path within the repository text budget.
+const SIM_PATH_TEXT_BYTES_MAXIMUM = 4 * bits.KIBIBYTE_BYTES
+
 // Split absolute path into non-empty component names, thus "/a/b" walk as a, b.
 func sim_path_names(path string) (names []string) {
+	invariant.Always(
+		len(path) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
+		"A simulated path stays inside the repository text budget.",
+	)
 	names = []string{}
-	for _, name := range strings.Split(path, "/") {
-		if name != "" {
-			names = append(names, name)
+	start := 0
+	for position := 0; position <= len(path); position++ {
+		if position < len(path) {
+			if path[position] != '/' {
+				continue
+			}
 		}
+		if position > start {
+			names = append(names, path[start:position])
+		}
+		start = position + 1
 	}
 	return names
 }
@@ -1226,7 +1309,7 @@ func sim_mkdir(state *Sim, path string) (err error) {
 	if len(names) == 0 {
 		return Path_Exists
 	}
-	parent, found := sim_resolve(state.Root, strings.Join(names[:len(names)-1], "/"))
+	parent, found := sim_resolve_names(state.Root, names[:len(names)-1])
 	if !found {
 		return sim_file_absent
 	}
@@ -1237,14 +1320,21 @@ func sim_mkdir(state *Sim, path string) (err error) {
 	if _, present := parent.Children[name]; present {
 		return Path_Exists
 	}
+	if len(parent.Children) >= slices.SLICE_COUNT_MAXIMUM {
+		return sim_directory_full
+	}
 	parent.Children[name] = sim_new_directory()
 	return nil
 }
 
 // Resolve path against root. Return node it name, and whether it was found.
 func sim_resolve(root *Sim_Node, path string) (node *Sim_Node, found bool) {
+	return sim_resolve_names(root, sim_path_names(path))
+}
+
+func sim_resolve_names(root *Sim_Node, names []string) (node *Sim_Node, found bool) {
 	node = root
-	for _, name := range sim_path_names(path) {
+	for _, name := range names {
 		if !node.Directory {
 			return nil, false
 		}
@@ -1286,9 +1376,7 @@ func sim_read_directory(root *Sim_Node, path string) (entries []Directory_Entry,
 		entry := Directory_Entry{Name: name, Is_Directory: child.Directory}
 		entries = append(entries, entry)
 	}
-	slices.SortFunc(entries, func(left, right Directory_Entry) (order int) {
-		return strings.Compare(left.Name, right.Name)
-	})
+	slices.Sort_Function(entries, directory_entry_compare)
 	return entries, nil
 }
 
@@ -1308,10 +1396,22 @@ func sim_directory_pass(state *Sim, directory File) (entries []Directory_Entry) 
 		entry := Directory_Entry{Name: name, Is_Directory: child.Directory}
 		entries = append(entries, entry)
 	}
-	slices.SortFunc(entries, func(left, right Directory_Entry) (order int) {
-		return strings.Compare(left.Name, right.Name)
-	})
+	slices.Sort_Function(entries, directory_entry_compare)
 	return entries
+}
+
+// Map order must become explicit because the simulator cannot import the stream-dependent text
+// package that normally owns repository string comparison.
+func directory_entry_compare(
+	left Directory_Entry, right Directory_Entry,
+) (order slices.Comparison) {
+	if left.Name < right.Name {
+		return slices.ORDERING_LESS
+	}
+	if left.Name > right.Name {
+		return slices.ORDERING_GREATER
+	}
+	return slices.ORDERING_EQUAL
 }
 
 // Make path and any missing parent against root. Existing directory converge. File where
@@ -1324,6 +1424,9 @@ func sim_make_directory(root *Sim_Node, path string) (err error) {
 		}
 		child, present := node.Children[name]
 		if !present {
+			if len(node.Children) >= slices.SLICE_COUNT_MAXIMUM {
+				return sim_directory_full
+			}
 			child = sim_new_directory()
 			node.Children[name] = child
 		}
@@ -1389,6 +1492,9 @@ func sim_create_file(root *Sim_Node, path string) (node *Sim_Node, err error) {
 		}
 		leaf_node.Contents = []byte{}
 		return leaf_node, nil
+	}
+	if len(parent.Children) >= slices.SLICE_COUNT_MAXIMUM {
+		return nil, sim_directory_full
 	}
 	created := &Sim_Node{Contents: []byte{}}
 	parent.Children[leaf] = created
@@ -1491,10 +1597,9 @@ func sim_subdirectory_chance() (chance prng.Ratio) {
 	return prng.Ratio{Numerator: 1, Denominator: 4}
 }
 
-// Fabricate filesystem from seed, drawing shape from prng distributions: each directory grow
-// sibling on Chance coin (geometric breadth and depth, no ceiling), child is subdirectory on
-// another Chance, and file size is Sampled from heavy-tailed Percentile spread. It know no
-// consumer layout. Walker impose its own meaning.
+// Fabricate filesystem from seed, drawing shape from prng distributions. The shared slice limit
+// caps the complete tree, because every directory must remain sortable through that boundary.
+// It know no consumer layout. Walker impose its own meaning.
 func sim_generate(generator *prng.Generator) (root *Sim_Node) {
 	sizes := prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
 		P25:  0,
@@ -1506,13 +1611,15 @@ func sim_generate(generator *prng.Generator) (root *Sim_Node) {
 	})
 	root = sim_new_directory()
 	directories := []*Sim_Node{root}
+	node_budget := slices.SLICE_COUNT_MAXIMUM - 1
 	for len(directories) > 0 {
 		directory := directories[len(directories)-1]
 		directories = directories[:len(directories)-1]
 		index := 0
-		for prng.Generator_Chance(generator, sim_grow_chance()) {
-			name := "e" + strconv.Itoa(index)
+		for node_budget > 0 && prng.Generator_Chance(generator, sim_grow_chance()) {
+			name := "e" + decimal_text(index)
 			index++
+			node_budget--
 			if prng.Generator_Chance(generator, sim_subdirectory_chance()) {
 				child := sim_new_directory()
 				directory.Children[name] = child
@@ -1524,6 +1631,24 @@ func sim_generate(generator *prng.Generator) (root *Sim_Node) {
 		}
 	}
 	return root
+}
+
+// DECIMAL_RADIX selects base ten for generated entry names.
+const DECIMAL_RADIX = 10
+
+func decimal_text(value int) (text string) {
+	invariant.Always(value >= 0, "A generated entry index is nonnegative.")
+	buffer := [bits.WORD_SIZE]byte{}
+	position_count := len(buffer)
+	for digit_index := 0; digit_index < len(buffer); digit_index++ {
+		position_count--
+		buffer[position_count] = byte(value%DECIMAL_RADIX) + '0'
+		value /= DECIMAL_RADIX
+		if value == 0 {
+			return string(buffer[position_count:])
+		}
+	}
+	panic("io: a machine integer exceeds its bit count in decimal digits")
 }
 
 // Draw file contents from seed: size Sampled from heavy-tailed distribution, filled with
@@ -1607,9 +1732,16 @@ func sim_yield_socket(
 
 // Report synthetic peer address of live descriptor, simulator getpeername. Empty with no error
 // for unknown descriptor.
-func sim_peer_address(file File) (address string) {
-	if file <= 0 {
+func sim_peer_address(state *Sim, file File) (address string) {
+	socket := state.Sockets[file]
+	if socket == nil {
 		return ""
+	}
+	if !socket.Connected {
+		return ""
+	}
+	if socket.Family == FAMILY_IPV6 {
+		return "::1"
 	}
 	return "127.0.0.1"
 }

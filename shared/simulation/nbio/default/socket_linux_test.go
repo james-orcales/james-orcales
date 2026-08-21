@@ -3,15 +3,12 @@
 package nbio
 
 import (
-	"strconv"
-	"strings"
 	"syscall"
 	"testing"
 
-	sharedio "local/james-orcales/shared/simulation/nbio"
-	sysos "local/james-orcales/shared/simulation/os"
+	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
-	timeos "local/james-orcales/shared/simulation/time/default"
 	"local/james-orcales/shared/testify"
 )
 
@@ -40,7 +37,7 @@ func socket_test_default_buffers(
 // Buffer get may report kernel doubled accounting value, thus requested size is a lower bound.
 func Test_Socket_Open_Linux_Profile(t *testing.T) {
 	options := socket_test_tcp_options()
-	descriptor, open_err := socket_open_tcp(sharedio.FAMILY_IPV4, options)
+	descriptor, open_err := socket_open_tcp(nbio.FAMILY_IPV4, options)
 	if !testify.No_Error(t, open_err) {
 		return
 	}
@@ -108,23 +105,23 @@ const SYSCTL_READ_BYTES = 64
 // internal tests read files through io.IO, not around it.
 func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	t.Helper()
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver, _, loop_err := New_Operating_System_IO(
-		clock, 32, 0, sysos.Virtual_OS_To_OS(sysos.Virtual_OS{Process_Identifier: 1}))
+		clock, 32, 0, os.Virtual_OS_To_OS(os.Virtual_OS{Process_Identifier: 1}))
 	if !testify.No_Error(t, loop_err) {
 		return 0
 	}
-	file := sharedio.File(-1)
+	file := nbio.File(-1)
 	open_done := false
 	var open_completion time.Completion
 	loop.Storage.Open_At(
-		&open_completion, sharedio.DIRECTORY_CURRENT, path, sharedio.Open_At_Options{
-			Access: sharedio.OPEN_READ_ONLY,
+		&open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
+			Access: nbio.OPEN_READ_ONLY,
 		}, func(
 			completed *time.Completion,
 		) {
 			testify.No_Error(t, completed.Error, path)
-			file = sharedio.File(completed.Data)
+			file = nbio.File(completed.Data)
 			open_done = true
 		})
 	driver.Run_Until(SYSCTL_READ_DEADLINE, func() (finished bool) { return open_done })
@@ -155,8 +152,8 @@ func socket_buffer_minimum(t *testing.T, path string, requested int) (minimum in
 	t.Helper()
 	content := make([]byte, SYSCTL_READ_BYTES)
 	count := socket_sysctl_read(t, path, content)
-	maximum, parse_err := strconv.Atoi(strings.TrimSpace(string(content[:count])))
-	if !testify.No_Error(t, parse_err, path) {
+	maximum, parsed := test_decimal(content[:count])
+	if !testify.True(t, parsed, path) {
 		return 0
 	}
 	if maximum < requested {

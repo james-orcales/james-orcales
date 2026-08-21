@@ -25,6 +25,11 @@ deterministic backend, never hand out its queue.
 Timeout fire exactly when virtual clock reach its deadline. Off same Ready_At queue IO
 completions use, thus every wait ride one timeline. Duration must be positive.
 
+### Callback Released
+
+Completion releases its callback before call, so finished operation and borrowed buffer become
+collectable. Clear-before-call lets callback arm same completion again without erasing new work.
+
 ### Event
 
 Open_Event make cross-thread event primitive. Event_Listen arm one completion. Event_Trigger

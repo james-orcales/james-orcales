@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	invariant "local/james-orcales/shared/invariant/default"
-	sharedio "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -38,7 +38,7 @@ const LINUX_BUFFER_SIZE_MAX = 0x7ffff000
 // Platform_Operation keep Linux statx arguments stable until io_uring retire operation.
 type Platform_Operation struct {
 	// Statx_Result receive Linux statx output from io_uring.
-	Statx_Result *sharedio.Statx
+	Statx_Result *nbio.Statx
 	// Statx_Flags are forwarded to Linux statx.
 	Statx_Flags uint32
 	// Statx_Mask select Linux statx fields to return.
@@ -62,14 +62,14 @@ func process_watch_ready(spawn *Spawn) (err error) {
 }
 
 // Wire Linux IORING_OP_STATX, one operation absent from Darwin surface.
-func operating_system_wire_platform(state *Operating_System, loop *sharedio.IO) {
+func operating_system_wire_platform(state *Operating_System, loop *nbio.IO) {
 	loop.Statx = func(
-		completion *time.Completion, directory sharedio.File, file_path string,
-		flags uint32, mask uint32, result *sharedio.Statx, callback time.Callback,
+		completion *time.Completion, directory nbio.File, file_path string,
+		flags uint32, mask uint32, result *nbio.Statx, callback time.Callback,
 	) {
 		operating_system_submit(completion)
 		descriptor := int(directory)
-		if directory == sharedio.DIRECTORY_CURRENT {
+		if directory == nbio.DIRECTORY_CURRENT {
 			descriptor = platform_current_directory()
 		}
 		operation := &Operating_System_Operation{
@@ -97,7 +97,7 @@ func platform_buffer_limit(buffer []byte) (limited []byte) {
 }
 
 // Linux carries both ownership flags in the socket type, so creation is atomic.
-func socket_open_tcp_raw(family sharedio.Address_Family) (descriptor int, err error) {
+func socket_open_tcp_raw(family nbio.Address_Family) (descriptor int, err error) {
 	return syscall.Socket(
 		socket_family(family),
 		syscall.SOCK_STREAM|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC,
@@ -106,7 +106,7 @@ func socket_open_tcp_raw(family sharedio.Address_Family) (descriptor int, err er
 }
 
 // Linux carries both ownership flags in the socket type, so creation is atomic.
-func socket_open_udp_raw(family sharedio.Address_Family) (descriptor int, err error) {
+func socket_open_udp_raw(family nbio.Address_Family) (descriptor int, err error) {
 	return syscall.Socket(
 		socket_family(family),
 		syscall.SOCK_DGRAM|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC,
@@ -896,12 +896,12 @@ func platform_directory_absent(record *syscall.Dirent) (absent bool) {
 }
 
 // Translate portable Open_At option fields to Linux posix.O bits, and always force CLOEXEC.
-func platform_open_flags(options sharedio.Open_At_Options) (flags int) {
+func platform_open_flags(options nbio.Open_At_Options) (flags int) {
 	flags = syscall.O_RDONLY | syscall.O_CLOEXEC
-	if options.Access == sharedio.OPEN_WRITE_ONLY {
+	if options.Access == nbio.OPEN_WRITE_ONLY {
 		flags = syscall.O_WRONLY | syscall.O_CLOEXEC
 	}
-	if options.Access == sharedio.OPEN_READ_WRITE {
+	if options.Access == nbio.OPEN_READ_WRITE {
 		flags = syscall.O_RDWR | syscall.O_CLOEXEC
 	}
 	if options.Create {
@@ -910,7 +910,7 @@ func platform_open_flags(options sharedio.Open_At_Options) (flags int) {
 	if options.Truncate {
 		flags |= syscall.O_TRUNC
 	}
-	if options.Flags&sharedio.OPEN_AT_NO_FOLLOW != 0 {
+	if options.Flags&nbio.OPEN_AT_NO_FOLLOW != 0 {
 		flags |= syscall.O_NOFOLLOW
 	}
 	return flags

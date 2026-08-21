@@ -7,7 +7,11 @@ package time
 */
 import "C"
 
-import "local/james-orcales/shared/simulation/time"
+import (
+	"syscall"
+
+	"local/james-orcales/shared/simulation/time"
+)
 
 // Return reader for mach_continuous_time. That is monotonic clock that keep counting across
 // system suspend. mach_absolute_time do not. Timebase turn mach ticks into nanoseconds. libc
@@ -31,4 +35,13 @@ func new_monotonic_reader() (read func() (moment time.Monotonic_Moment)) {
 		return time.Monotonic_Moment(
 			ticks * uint64(timebase.numer) / uint64(timebase.denom))
 	}
+}
+
+func wallclock_now_nanoseconds() (nanoseconds int64) {
+	value := syscall.Timeval{}
+	if err := syscall.Gettimeofday(&value); err != nil {
+		panic("time: gettimeofday failed")
+	}
+	return int64(value.Sec)*NANOSECONDS_PER_SECOND +
+		int64(value.Usec)*NANOSECONDS_PER_MICROSECOND
 }

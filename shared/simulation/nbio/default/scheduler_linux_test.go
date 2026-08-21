@@ -3,13 +3,61 @@
 package nbio
 
 import (
+	"path/filepath"
 	"syscall"
 	"testing"
 	"unsafe"
 
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
+
+// Linux statx must stay in this platform suite because the linter permits one white-box file
+// for one build constraint.
+func Test_Operating_System_IO_Statx(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "statx")
+	clock := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, clock)
+	opened := nbio.File(-1)
+	var open_completion time.Completion
+	loop.Storage.Open_At(&open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+	}, func(completed *time.Completion) {
+		if !testify.No_Error(t, completed.Error) {
+			return
+		}
+		opened = nbio.File(completed.Data)
+	})
+	testify.True(t,
+		operating_system_run_until(
+			t, driver, func() (finished bool) { return opened >= 0 },
+		))
+	written := false
+	var write_completion time.Completion
+	loop.Storage.Write(&write_completion, opened, []byte("hello"), 10, REAL_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			written = completed.Data == 5
+		})
+	testify.True(t,
+		operating_system_run_until(t, driver, func() (finished bool) { return written }))
+	self_exec_close(loop, driver, opened)
+
+	status := nbio.Statx{}
+	statted := false
+	var statx_completion time.Completion
+	loop.Statx(
+		&statx_completion, nbio.DIRECTORY_CURRENT, path, 0, nbio.STATX_BASIC_STATS, &status,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			statted = true
+		},
+	)
+	testify.True(t,
+		operating_system_run_until(t, driver, func() (finished bool) { return statted }))
+	testify.Equal(t, uint64(15), status.Size)
+}
 
 // A terminal primary CQE is kernel truth even when the linked timeout also reached ETIME.
 func Test_Platform_Bounded_Timeout_Winner(t *testing.T) {
@@ -33,6 +81,56 @@ func Test_Platform_Bounded_Timeout_Winner(t *testing.T) {
 		got := platform_bounded_timeout_won(test.Operation, test.Deadline)
 		testify.Equal(t, test.Timeout, got, test.Name)
 	}
+}
+
+// CQE drain must only queue interrupted operation. Inline retry can recurse when ring is full.
+func Test_Platform_Retry_Is_Deferred(t *testing.T) {
+	completion := &time.Completion{Armed: true}
+	operation := &Operating_System_Operation{
+		Completion: completion,
+		Identifier: 1,
+		Kind:       OPERATING_SYSTEM_OPERATION_READ,
+		Deliver:    func(_ *time.Completion) {},
+	}
+	state := &Operating_System{
+		Operations: map[uint64]*Operating_System_Operation{1: operation},
+	}
+	err := platform_complete_entry(state, Kernel_Completion_Entry{
+		User_Data: 1,
+		Result:    -int32(syscall.EINTR),
+	})
+	testify.No_Error(t, err)
+	testify.Equal(t, 1, len(state.Platform.Retry_Backlog))
+	testify.True(t, state.Platform.Retry_Backlog[0] == operation)
+	testify.True(t, state.Operations[1] == operation)
+	testify.True(t, completion.Armed)
+}
+
+// Parked retry keeps original absolute deadline; queue delay never extend operation lifetime.
+func Test_Platform_Retry_Uses_Remaining_Deadline(t *testing.T) {
+	completion := &time.Completion{Armed: true}
+	operation := &Operating_System_Operation{
+		Completion: completion,
+		Identifier: 1,
+		Kind:       OPERATING_SYSTEM_OPERATION_READ,
+		Deadline:   9,
+		Deliver:    func(_ *time.Completion) {},
+	}
+	state := &Operating_System{
+		Host: time.Clock{
+			Now_Monotonic: func() (moment time.Monotonic_Moment) { return 10 },
+		},
+		Operations: map[uint64]*Operating_System_Operation{1: operation},
+		Platform: Platform_Scheduler{
+			Retry_Backlog: []*Operating_System_Operation{operation},
+		},
+	}
+	testify.No_Error(t, platform_retry_operations(state))
+	testify.Zero(t, len(state.Platform.Retry_Backlog))
+	testify.Zero(t, len(state.Operations))
+	testify.Zero(t, completion.Data)
+	testify.Error_Is(t, completion.Error, time.Deadline_Exceeded)
+	testify.Equal(t, 1, len(state.Completed))
 }
 
 // Storage needs the same indivisible primary-plus-timeout chain that bounds socket operations.
@@ -230,7 +328,7 @@ func Test_Platform_Submission_Publication(t *testing.T) {
 	testify.Zero(t, *kernel_tail)
 	entry.Opcode = 99
 	published := platform_publish(&platform)
-	testify.Equal(t, uint32(1), published)
+	testify.Equal(t, 1, published)
 	testify.Equal(t, uint32(1), *kernel_tail)
 	array := (*uint32)(unsafe.Pointer(&submission[array_offset]))
 	testify.Zero(t, *array)

@@ -3,7 +3,7 @@ package nbio_test
 import (
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 )
 
 // TestMain register completion-machine assertions. Thus unused legal edge fail suite.

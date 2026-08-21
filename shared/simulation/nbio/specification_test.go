@@ -2,13 +2,12 @@ package nbio_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
-	snap "local/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/snap/default"
 	"local/james-orcales/shared/testify"
 )
 
@@ -209,10 +208,10 @@ func Test_Sim_Connect(t *testing.T) {
 	saw_refusal := false
 	for seed := uint64(0); seed < 64; seed++ {
 		outcome := sim_connect_lifecycle(t, seed)
-		if strings.HasSuffix(outcome, "outcome=success") {
+		if test_text_has_suffix(outcome, "outcome=success") {
 			saw_success = true
 		}
-		if strings.HasSuffix(outcome, "outcome=refused") {
+		if test_text_has_suffix(outcome, "outcome=refused") {
 			saw_refusal = true
 		}
 	}
@@ -371,17 +370,33 @@ func Test_Sim_Create(t *testing.T) {
 	loop.Deinit()
 }
 
-// Test_Sim_Peer_Address verify Peer_Address report address of live descriptor, and empty address
-// of unknown one.
+// Test_Sim_Peer_Address verify only live connected socket has peer. File numbers and released
+// sockets must never fabricate client identity.
 func Test_Sim_Peer_Address(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	socket, _ := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	unconnected, err := loop.Network.Peer_Address(socket)
+	testify.No_Error(t, err)
+	testify.Empty(t, unconnected)
+	connected := false
+	var completion time.Completion
+	loop.Network.Connect(
+		&completion, socket,
+		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123),
+		SIM_DEADLINE, func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			connected = true
+		},
+	)
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return connected })
 	address, err := loop.Network.Peer_Address(socket)
 	testify.No_Error(t, err)
-	testify.Not_Empty(t, address)
-	unknown, _ := loop.Network.Peer_Address(0)
+	testify.Equal(t, "127.0.0.1", address)
+	unknown, _ := loop.Network.Peer_Address(nbio.File(65535))
 	testify.Empty(t, unknown)
 	sim_close(t, loop, driver, socket)
+	released, _ := loop.Network.Peer_Address(socket)
+	testify.Empty(t, released)
 	loop.Deinit()
 }
 
@@ -456,6 +471,9 @@ func Test_Address_Parse(t *testing.T) {
 	testify.Error(t, negative_err)
 	_, overflow_err := nbio.Address_Parse("127.0.0.1", 65536)
 	testify.Error(t, overflow_err)
+	oversized := string(make([]byte, nbio.ADDRESS_TEXT_BYTES_MAXIMUM+1))
+	_, oversized_err := nbio.Address_Parse(oversized, 8123)
+	testify.Error(t, oversized_err)
 }
 
 // The Stream function owns callback time because only it knows if the concrete operation is
@@ -773,6 +791,13 @@ func Test_Stream_Composition(t *testing.T) {
 	testify.Equal(t, int64(6), count.Tally)
 	testify.Equal(t, "abcdef\x00\x00", string(stored[:8]))
 	testify.Equal(t, "abcdefghij", string(audit[:10]))
+}
+
+func test_text_has_suffix(source string, suffix string) (present bool) {
+	if len(suffix) > len(source) {
+		return false
+	}
+	return source[len(source)-len(suffix):] == suffix
 }
 
 // One literal the parse must accept, with the address it must yield.

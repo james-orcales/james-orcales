@@ -8,7 +8,6 @@
 package os
 
 import (
-	startup "os"
 	"syscall"
 
 	"local/james-orcales/shared/simulation/os"
@@ -30,22 +29,18 @@ func New_Operating_System() (host os.OS) {
 		Variable: func(name string) (value string, found bool) {
 			return syscall.Getenv(name)
 		},
-		Executable:         startup.Executable,
+		Executable:         system_executable,
 		Working_Directory:  syscall.Getwd,
 		Hostname:           system_hostname,
 		Process_Identifier: syscall.Getpid,
 
 		Effective_User_Identifier: syscall.Geteuid,
 		Self_Exec: func(path string, arguments []string, environment []string) (err error) {
+			if environment == nil {
+				environment = syscall.Environ()
+			}
 			return syscall.Exec(path, arguments, environment)
 		},
 	}
 	return host
-}
-
-// Returns a copy of the runtime's argv, so a caller that edits the result cannot reach os.Args.
-func system_arguments() (arguments []string) {
-	arguments = make([]string, len(startup.Args))
-	copy(arguments, startup.Args)
-	return arguments
 }

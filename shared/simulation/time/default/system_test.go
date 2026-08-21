@@ -3,8 +3,8 @@ package time_test
 import (
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
-	timeos "local/james-orcales/shared/simulation/time/default"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/time/default"
 	"local/james-orcales/shared/testify"
 )
 
@@ -17,7 +17,7 @@ func TestMain(m *testing.M) {
 // positive wall-clock time. Real time is not deterministic, thus this is smoke test, not
 // snapshot.
 func Test_Operating_System_Smoke(t *testing.T) {
-	host := timeos.New_Operating_System_Clock()
+	host := time.New_Operating_System_Clock()
 	first := host.Now_Monotonic()
 	second := host.Now_Monotonic()
 	testify.True(t, second >= first, first, second)

@@ -7,21 +7,21 @@ import (
 	"testing"
 	"unsafe"
 
-	sharedio "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
 
 // One profile keeps platform checks comparable instead of letting each kernel test weaker values.
-func socket_test_tcp_options() (options sharedio.TCP_Options) {
-	return sharedio.TCP_Options{
+func socket_test_tcp_options() (options nbio.TCP_Options) {
+	return nbio.TCP_Options{
 		Receive_Buffer_Bytes:     SOCKET_RECEIVE_BUFFER_SIZE,
 		Send_Buffer_Bytes:        SOCKET_SEND_BUFFER_SIZE,
 		Receive_Low_Water_Bytes:  1,
 		Linger_Timeout:           1 * time.SECOND,
 		Maximum_Segment_Bytes:    512,
 		Not_Sent_Low_Water_Bytes: 1024,
-		Keepalive: sharedio.TCP_Keepalive{
+		Keepalive: nbio.TCP_Keepalive{
 			Idle: 5 * time.SECOND, Interval: 4 * time.SECOND, Probe_Count: 3,
 		},
 		No_Delay: true,
@@ -29,8 +29,8 @@ func socket_test_tcp_options() (options sharedio.TCP_Options) {
 }
 
 // UDP has no portable transport-specific override, so its profile contains the shared set.
-func socket_test_udp_options() (options sharedio.UDP_Options) {
-	return sharedio.UDP_Options{
+func socket_test_udp_options() (options nbio.UDP_Options) {
+	return nbio.UDP_Options{
 		Receive_Buffer_Bytes:    SOCKET_RECEIVE_BUFFER_SIZE,
 		Send_Buffer_Bytes:       SOCKET_SEND_BUFFER_SIZE,
 		Receive_Low_Water_Bytes: 1,
@@ -39,37 +39,37 @@ func socket_test_udp_options() (options sharedio.UDP_Options) {
 }
 
 // Build the pure TCP profile explicitly because zero is a disabled limit, not an omission.
-func socket_test_tcp_default_options() (options sharedio.TCP_Options) {
-	return sharedio.TCP_Options{
-		Receive_Buffer_Bytes:     sharedio.TCP_RECEIVE_BUFFER_BYTES_DEFAULT,
-		Send_Buffer_Bytes:        sharedio.TCP_SEND_BUFFER_BYTES_DEFAULT,
-		Receive_Low_Water_Bytes:  sharedio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT,
-		Linger_Timeout:           sharedio.SOCKET_LINGER_TIMEOUT_DEFAULT,
-		Maximum_Segment_Bytes:    sharedio.TCP_MAXIMUM_SEGMENT_BYTES_DEFAULT,
-		Not_Sent_Low_Water_Bytes: sharedio.TCP_NOT_SENT_LOW_WATER_BYTES_DEFAULT,
-		Keepalive: sharedio.TCP_Keepalive{
-			Idle:        sharedio.TCP_KEEPALIVE_IDLE_DEFAULT,
-			Interval:    sharedio.TCP_KEEPALIVE_INTERVAL_DEFAULT,
-			Probe_Count: sharedio.TCP_KEEPALIVE_PROBE_COUNT_DEFAULT,
+func socket_test_tcp_default_options() (options nbio.TCP_Options) {
+	return nbio.TCP_Options{
+		Receive_Buffer_Bytes:     nbio.TCP_RECEIVE_BUFFER_BYTES_DEFAULT,
+		Send_Buffer_Bytes:        nbio.TCP_SEND_BUFFER_BYTES_DEFAULT,
+		Receive_Low_Water_Bytes:  nbio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT,
+		Linger_Timeout:           nbio.SOCKET_LINGER_TIMEOUT_DEFAULT,
+		Maximum_Segment_Bytes:    nbio.TCP_MAXIMUM_SEGMENT_BYTES_DEFAULT,
+		Not_Sent_Low_Water_Bytes: nbio.TCP_NOT_SENT_LOW_WATER_BYTES_DEFAULT,
+		Keepalive: nbio.TCP_Keepalive{
+			Idle:        nbio.TCP_KEEPALIVE_IDLE_DEFAULT,
+			Interval:    nbio.TCP_KEEPALIVE_INTERVAL_DEFAULT,
+			Probe_Count: nbio.TCP_KEEPALIVE_PROBE_COUNT_DEFAULT,
 		},
-		No_Delay: sharedio.TCP_NO_DELAY_DEFAULT,
+		No_Delay: nbio.TCP_NO_DELAY_DEFAULT,
 	}
 }
 
 // Build the pure UDP profile explicitly because zero is a disabled limit, not an omission.
-func socket_test_udp_default_options() (options sharedio.UDP_Options) {
-	return sharedio.UDP_Options{
-		Receive_Buffer_Bytes:    sharedio.UDP_RECEIVE_BUFFER_BYTES_DEFAULT,
-		Send_Buffer_Bytes:       sharedio.UDP_SEND_BUFFER_BYTES_DEFAULT,
-		Receive_Low_Water_Bytes: sharedio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT,
-		Linger_Timeout:          sharedio.SOCKET_LINGER_TIMEOUT_DEFAULT,
+func socket_test_udp_default_options() (options nbio.UDP_Options) {
+	return nbio.UDP_Options{
+		Receive_Buffer_Bytes:    nbio.UDP_RECEIVE_BUFFER_BYTES_DEFAULT,
+		Send_Buffer_Bytes:       nbio.UDP_SEND_BUFFER_BYTES_DEFAULT,
+		Receive_Low_Water_Bytes: nbio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT,
+		Linger_Timeout:          nbio.SOCKET_LINGER_TIMEOUT_DEFAULT,
 	}
 }
 
 // Inspect both descriptors because a TCP-only check cannot prove UDP also receives generic limits.
 func Test_Socket_Open_Portable_Profiles(t *testing.T) {
 	tcp_options := socket_test_tcp_options()
-	tcp, tcp_err := socket_open_tcp(sharedio.FAMILY_IPV4, tcp_options)
+	tcp, tcp_err := socket_open_tcp(nbio.FAMILY_IPV4, tcp_options)
 	if !testify.No_Error(t, tcp_err) {
 		return
 	}
@@ -95,7 +95,7 @@ func Test_Socket_Open_Portable_Profiles(t *testing.T) {
 	socket_test_option_positive(t, tcp, syscall.IPPROTO_TCP, syscall.TCP_NODELAY)
 
 	udp_options := socket_test_udp_options()
-	udp, udp_err := socket_open_udp(sharedio.FAMILY_IPV4, udp_options)
+	udp, udp_err := socket_open_udp(nbio.FAMILY_IPV4, udp_options)
 	if !testify.No_Error(t, udp_err) {
 		return
 	}
@@ -146,18 +146,18 @@ func Test_Socket_Open_Rejects_Disabled_Limits(t *testing.T) {
 	socket_test_udp_limit_rejected(t, "linger timeout", udp)
 }
 
-func socket_test_tcp_limit_rejected(t *testing.T, name string, options sharedio.TCP_Options) {
+func socket_test_tcp_limit_rejected(t *testing.T, name string, options nbio.TCP_Options) {
 	t.Helper()
-	descriptor, err := socket_open_tcp(sharedio.FAMILY_IPV4, options)
+	descriptor, err := socket_open_tcp(nbio.FAMILY_IPV4, options)
 	if testify.Error(t, err, name) {
 		return
 	}
 	syscall.Close(descriptor)
 }
 
-func socket_test_udp_limit_rejected(t *testing.T, name string, options sharedio.UDP_Options) {
+func socket_test_udp_limit_rejected(t *testing.T, name string, options nbio.UDP_Options) {
 	t.Helper()
-	descriptor, err := socket_open_udp(sharedio.FAMILY_IPV4, options)
+	descriptor, err := socket_open_udp(nbio.FAMILY_IPV4, options)
 	if testify.Error(t, err, name) {
 		return
 	}
@@ -166,43 +166,43 @@ func socket_test_udp_limit_rejected(t *testing.T, name string, options sharedio.
 
 // A backend can reduce a pure default when its per-socket limit is lower.
 func Test_Socket_Open_Default_Profiles(t *testing.T) {
-	tcp, tcp_err := socket_open_tcp(sharedio.FAMILY_IPV4, socket_test_tcp_default_options())
+	tcp, tcp_err := socket_open_tcp(nbio.FAMILY_IPV4, socket_test_tcp_default_options())
 	if !testify.No_Error(t, tcp_err) {
 		return
 	}
 	defer syscall.Close(tcp)
 	socket_test_common_defaults(
 		t, tcp,
-		sharedio.TCP_RECEIVE_BUFFER_BYTES_DEFAULT,
-		sharedio.TCP_SEND_BUFFER_BYTES_DEFAULT)
+		nbio.TCP_RECEIVE_BUFFER_BYTES_DEFAULT,
+		nbio.TCP_SEND_BUFFER_BYTES_DEFAULT)
 	socket_test_option_positive(t, tcp, syscall.SOL_SOCKET, syscall.SO_KEEPALIVE)
 	socket_test_option_equal(
 		t, tcp, syscall.IPPROTO_TCP, SOCKET_TCP_KEEPALIVE_IDLE,
-		int(sharedio.TCP_KEEPALIVE_IDLE_DEFAULT/time.SECOND))
+		int(nbio.TCP_KEEPALIVE_IDLE_DEFAULT/time.SECOND))
 	socket_test_option_equal(
 		t, tcp, syscall.IPPROTO_TCP, syscall.TCP_KEEPINTVL,
-		int(sharedio.TCP_KEEPALIVE_INTERVAL_DEFAULT/time.SECOND))
+		int(nbio.TCP_KEEPALIVE_INTERVAL_DEFAULT/time.SECOND))
 	socket_test_option_equal(
 		t, tcp, syscall.IPPROTO_TCP, syscall.TCP_KEEPCNT,
-		int(sharedio.TCP_KEEPALIVE_PROBE_COUNT_DEFAULT))
+		int(nbio.TCP_KEEPALIVE_PROBE_COUNT_DEFAULT))
 	socket_test_option_positive(t, tcp, syscall.IPPROTO_TCP, syscall.TCP_NODELAY)
 	socket_test_option_equal(
 		t, tcp, syscall.IPPROTO_TCP, syscall.TCP_MAXSEG,
 		int(platform_tcp_maximum_segment_clamp(
-			sharedio.TCP_MAXIMUM_SEGMENT_BYTES_DEFAULT)))
+			nbio.TCP_MAXIMUM_SEGMENT_BYTES_DEFAULT)))
 	socket_test_option_equal(
 		t, tcp, syscall.IPPROTO_TCP, SOCKET_TCP_NOT_SENT_LOW_WATER,
-		int(sharedio.TCP_NOT_SENT_LOW_WATER_BYTES_DEFAULT))
+		int(nbio.TCP_NOT_SENT_LOW_WATER_BYTES_DEFAULT))
 
-	udp, udp_err := socket_open_udp(sharedio.FAMILY_IPV4, socket_test_udp_default_options())
+	udp, udp_err := socket_open_udp(nbio.FAMILY_IPV4, socket_test_udp_default_options())
 	if !testify.No_Error(t, udp_err) {
 		return
 	}
 	defer syscall.Close(udp)
 	socket_test_common_defaults(
 		t, udp,
-		sharedio.UDP_RECEIVE_BUFFER_BYTES_DEFAULT,
-		sharedio.UDP_SEND_BUFFER_BYTES_DEFAULT)
+		nbio.UDP_RECEIVE_BUFFER_BYTES_DEFAULT,
+		nbio.UDP_SEND_BUFFER_BYTES_DEFAULT)
 }
 
 // Every backend owns the comparison because the platform can cap the pure buffer profile.
@@ -213,7 +213,7 @@ func socket_test_common_defaults(
 	socket_test_default_buffers(t, descriptor, receive_buffer_bytes, send_buffer_bytes)
 	socket_test_option_equal(
 		t, descriptor, syscall.SOL_SOCKET, syscall.SO_RCVLOWAT,
-		int(sharedio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT))
+		int(nbio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT))
 	socket_test_linger_default(t, descriptor)
 }
 
@@ -265,7 +265,7 @@ func socket_test_linger_default(t *testing.T, descriptor int) {
 		unsafe.Pointer(&value), unsafe.Sizeof(value))
 	testify.Equal(t, int32(1), value.Onoff)
 	testify.Equal(t,
-		int32(sharedio.SOCKET_LINGER_TIMEOUT_DEFAULT/time.SECOND), value.Linger)
+		int32(nbio.SOCKET_LINGER_TIMEOUT_DEFAULT/time.SECOND), value.Linger)
 }
 
 func socket_test_option_get(

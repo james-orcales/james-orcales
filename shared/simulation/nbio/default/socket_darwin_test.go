@@ -6,7 +6,7 @@ import (
 	"syscall"
 	"testing"
 
-	sharedio "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
@@ -25,7 +25,7 @@ func socket_test_default_buffers(
 // Test_Socket_Open_Darwin_No_Sigpipe verify Darwin-only portable client option suppress SIGPIPE.
 // It complement common black-box buffer, keepalive, nonblocking, and CLOEXEC checks.
 func Test_Socket_Open_Darwin_No_Sigpipe(t *testing.T) {
-	descriptor, open_err := socket_open_tcp(sharedio.FAMILY_IPV4, socket_test_tcp_options())
+	descriptor, open_err := socket_open_tcp(nbio.FAMILY_IPV4, socket_test_tcp_options())
 	if !testify.No_Error(t, open_err) {
 		return
 	}

@@ -61,6 +61,33 @@ func Test_Timeline_Timeout(t *testing.T) {
 	testify.Equal(t, time.Monotonic_Moment(5), fired_at)
 }
 
+// Long-lived completion must not keep callback closure, or closure keep operation buffer live.
+// Clear before call so callback can arm same completion again without new callback being erased.
+func Test_Timeline_Callback_Released(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+
+	var once time.Completion
+	loop.Timeout(&once, time.NANOSECOND, func(_ *time.Completion) {})
+	driver.Run_For(2 * time.NANOSECOND)
+	testify.Nil(t, once.Callback)
+
+	var repeated time.Completion
+	fired := 0
+	var arm func()
+	arm = func() {
+		loop.Timeout(&repeated, time.NANOSECOND, func(_ *time.Completion) {
+			fired++
+			if fired < 3 {
+				arm()
+			}
+		})
+	}
+	arm()
+	driver.Run_For(4 * time.NANOSECOND)
+	testify.Equal(t, 3, fired)
+	testify.Nil(t, repeated.Callback)
+}
+
 // Test_Timeline_Event check Event primitive retire its listener before callback run. Same
 // completion can then arm again for later trigger.
 func Test_Timeline_Event(t *testing.T) {

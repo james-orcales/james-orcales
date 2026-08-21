@@ -50,14 +50,19 @@ process, so it reports the failure rather than destroying the run.
 The seeded backend draws the signal grain and the exit code from its seed and retires both
 operations on the injected loop, so a run reproduces and nothing is scriptable.
 
+### Self Exec
+
+Self_Exec replaces process image and returns only on failure. Nil environment preserves ambient
+values. Non-nil slice is complete replacement environment, thus empty slice inherits nothing.
+
 ### Watch Signal
 
-Watch_Signal requires a positive finite deadline. A signal arriving first fires once; the deadline
-wins ties and retires once with Deadline_Exceeded and no signal. This finite lifetime deliberately
-diverges from TigerBeetle, which has no signal-watch operation.
+Watch_Signal requires positive finite deadline; signal arriving first fires once, and deadline wins
+ties with Deadline_Exceeded and SIGNAL_EXPIRED. Caller retains armed signal because expired value
+identifies no watch.
 
 ### Spawn
 
 A spawn requires a positive finite deadline; natural completion returns the seed-drawn exit code,
 while the deadline wins ties with Deadline_Exceeded. The real backend kills its subprocess group,
-bounds pipe cleanup to one second, and returns partial output. TigerBeetle has no Spawn counterpart.
+bounds pipe cleanup to one second, and returns partial output.

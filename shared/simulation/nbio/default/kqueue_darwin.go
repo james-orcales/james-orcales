@@ -6,8 +6,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	invariant "local/james-orcales/shared/invariant/default"
-	sharedio "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -63,8 +63,8 @@ type Platform_Operation struct {
 }
 
 // Wire no Linux-only operation on Darwin.
-func operating_system_wire_platform(state *Operating_System, loop *sharedio.IO) {
-	loop.Platform_IO = sharedio.Platform_IO{}
+func operating_system_wire_platform(state *Operating_System, loop *nbio.IO) {
+	loop.Platform_IO = nbio.Platform_IO{}
 }
 
 // Build child process attributes. Setpgid put child in its own group, thus deadline kill its
@@ -86,7 +86,7 @@ func platform_buffer_limit(buffer []byte) (limited []byte) {
 }
 
 // NOSIGPIPE prevents a closed peer from terminating the process, so every TCP socket gets it.
-func socket_open_tcp_raw(family sharedio.Address_Family) (descriptor int, err error) {
+func socket_open_tcp_raw(family nbio.Address_Family) (descriptor int, err error) {
 	descriptor, err = socket_create(&Socket_Create_Input{
 		Family: family, Type: syscall.SOCK_STREAM, Protocol: syscall.IPPROTO_TCP,
 	})
@@ -104,7 +104,7 @@ func socket_open_tcp_raw(family sharedio.Address_Family) (descriptor int, err er
 }
 
 // UDP has no SIGPIPE path, so it needs only the common ownership flags.
-func socket_open_udp_raw(family sharedio.Address_Family) (descriptor int, err error) {
+func socket_open_udp_raw(family nbio.Address_Family) (descriptor int, err error) {
 	return socket_create(&Socket_Create_Input{
 		Family: family, Type: syscall.SOCK_DGRAM, Protocol: syscall.IPPROTO_UDP,
 	})
@@ -113,7 +113,7 @@ func socket_open_udp_raw(family sharedio.Address_Family) (descriptor int, err er
 // Input of socket_create.
 type Socket_Create_Input struct {
 	// Family is socket address family.
-	Family sharedio.Address_Family
+	Family nbio.Address_Family
 	// Type is SOCK_STREAM or SOCK_DGRAM.
 	Type int
 	// Protocol is transport protocol.
@@ -291,7 +291,7 @@ func operating_system_operation_do(
 		return socket_connect_attempt(operation)
 	case OPERATING_SYSTEM_OPERATION_READ:
 		count, read_err := read_at(
-			sharedio.File(operation.Descriptor),
+			nbio.File(operation.Descriptor),
 			operation.Buffer,
 			int64(operation.Offset),
 		)
@@ -311,7 +311,7 @@ func operating_system_operation_do(
 		return count, would_block, socket_send_translate(send_err)
 	case OPERATING_SYSTEM_OPERATION_WRITE:
 		count, write_err := write_at(
-			sharedio.File(operation.Descriptor),
+			nbio.File(operation.Descriptor),
 			operation.Buffer,
 			int64(operation.Offset),
 		)
@@ -406,12 +406,12 @@ func platform_directory_absent(record *syscall.Dirent) (absent bool) {
 }
 
 // Translate portable Open_At option fields to Darwin posix.O bits.
-func platform_open_flags(options sharedio.Open_At_Options) (flags int) {
+func platform_open_flags(options nbio.Open_At_Options) (flags int) {
 	flags = syscall.O_RDONLY
-	if options.Access == sharedio.OPEN_WRITE_ONLY {
+	if options.Access == nbio.OPEN_WRITE_ONLY {
 		flags = syscall.O_WRONLY
 	}
-	if options.Access == sharedio.OPEN_READ_WRITE {
+	if options.Access == nbio.OPEN_READ_WRITE {
 		flags = syscall.O_RDWR
 	}
 	if options.Create {
@@ -420,7 +420,7 @@ func platform_open_flags(options sharedio.Open_At_Options) (flags int) {
 	if options.Truncate {
 		flags |= syscall.O_TRUNC
 	}
-	if options.Flags&sharedio.OPEN_AT_NO_FOLLOW != 0 {
+	if options.Flags&nbio.OPEN_AT_NO_FOLLOW != 0 {
 		flags |= syscall.O_NOFOLLOW
 	}
 	return flags

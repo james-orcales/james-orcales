@@ -4,10 +4,18 @@ package time
 
 import (
 	"sync/atomic"
-	wallclock "time"
 
 	"local/james-orcales/shared/simulation/time"
 )
+
+// NANOSECONDS_PER_SECOND converts the host timeval seconds field to repository duration units.
+const NANOSECONDS_PER_SECOND = 1_000_000_000
+
+// MICROSECONDS_PER_SECOND makes the timeval subsecond conversion visible as a formula.
+const MICROSECONDS_PER_SECOND = 1_000_000
+
+// NANOSECONDS_PER_MICROSECOND converts the host timeval microseconds field without a literal.
+const NANOSECONDS_PER_MICROSECOND = NANOSECONDS_PER_SECOND / MICROSECONDS_PER_SECOND
 
 // New_Operating_System_Clock return read-only Clock backed by host operating system.
 // Now_Monotonic read OS monotonic clock behind guard that panic when clock go backward.
@@ -43,7 +51,7 @@ func New_Operating_System_Clock() (host time.Clock) {
 			return raw
 		},
 		Now_Realtime: func() (moment time.Moment) {
-			return time.Moment(wallclock.Now().UnixNano())
+			return time.Moment(wallclock_now_nanoseconds())
 		},
 	}
 	return host

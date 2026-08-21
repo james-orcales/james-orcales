@@ -16,7 +16,7 @@ package os
 import (
 	"errors"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
@@ -46,7 +46,8 @@ type OS struct {
 	Effective_User_Identifier func() (identifier int)
 	// Self_Exec replaces the process image and returns only on failure. Every descriptor is
 	// close-on-exec, so a successful replacement closes listeners and the new image rebinds.
-	// An empty environment inherits nothing.
+	// Nil preserves ambient values. Non-nil slice is complete replacement, thus empty inherits
+	// nothing.
 	Self_Exec func(path string, arguments []string, environment []string) (err error)
 	// Watch_Signal fires callback when the process receives signal before the finite
 	// deadline, or with time.Deadline_Exceeded. The lifetime is finite deliberately: a
@@ -187,6 +188,9 @@ func copy_strings(source []string) (copied []string) {
 // deterministic and OS backends agree on a value without the pure tier importing syscall.
 type Signal int
 
+// SIGNAL_EXPIRED names no delivered signal. Caller retain signal it armed to identify watch.
+const SIGNAL_EXPIRED Signal = -1
+
 // SIGNAL_TERMINATE is the graceful-termination request (SIGTERM on the OS backend).
 const SIGNAL_TERMINATE Signal = 0
 
@@ -306,7 +310,7 @@ func sim_watch_signal(
 	latency := sim_latency(state)
 	if latency >= deadline {
 		state.Timeline.Submit(completion, deadline, func(_ *time.Completion) {
-			callback(completion, Signal(-1), time.Deadline_Exceeded)
+			callback(completion, SIGNAL_EXPIRED, time.Deadline_Exceeded)
 		})
 	} else {
 		state.Timeline.Submit(completion, latency, func(_ *time.Completion) {

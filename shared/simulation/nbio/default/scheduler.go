@@ -3,12 +3,50 @@
 package nbio
 
 import (
+	"os"
+	"os/signal"
 	"runtime"
 	"syscall"
 
-	sharedio "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
+
+// Operating_System_Signal_Channel keeps the standard signal type out of the simulation OS file.
+type Operating_System_Signal_Channel struct {
+	// Channel stays opaque to the file that also imports the simulated OS package.
+	Channel chan os.Signal
+}
+
+func operating_system_signal_channel(depth_count int) (channel Operating_System_Signal_Channel) {
+	channel.Channel = make(chan os.Signal, depth_count)
+	return channel
+}
+
+func operating_system_signal_notify(
+	channel Operating_System_Signal_Channel, system syscall.Signal,
+) {
+	signal.Notify(channel.Channel, system)
+}
+
+func operating_system_signal_stop(channel Operating_System_Signal_Channel) {
+	signal.Stop(channel.Channel)
+}
+
+func operating_system_signal_receive(
+	channel Operating_System_Signal_Channel,
+) (received syscall.Signal, found bool) {
+	select {
+	case value := <-channel.Channel:
+		system, valid := value.(syscall.Signal)
+		if !valid {
+			panic("io: signal notifier returned an unknown signal type")
+		}
+		return system, true
+	default:
+		return 0, false
+	}
+}
 
 // This bound hold largest socket address of either supported platform.
 const SOCKET_ADDRESS_BYTES = 28
@@ -101,11 +139,11 @@ type Operating_System_Operation struct {
 	// Offset keep requested file position.
 	Offset uint64
 	// Address hold typed socket address until submission.
-	Address sharedio.Address
+	Address nbio.Address
 	// File_Path hold zero-terminated path memory until kernel retire it.
 	File_Path []byte
 	// Open_Options hold Open_At behavior until submission.
-	Open_Options sharedio.Open_At_Options
+	Open_Options nbio.Open_At_Options
 	// Event_Value correlate synthetic event without Go pointer.
 	Event_Value uint64
 	// Process_Identifier name spawned child a PROCESS_EXIT operation wait for. Darwin use it
@@ -172,14 +210,20 @@ func operating_system_operation_submit(
 func operating_system_operation_register(
 	state *Operating_System, operation *Operating_System_Operation,
 ) {
+	stable_event_identifier := false
 	if operation.Kind == OPERATING_SYSTEM_OPERATION_EVENT {
 		operation.Identifier = operation.Completion.Kernel_Identifier
+		stable_event_identifier = operation.Identifier != 0
 	}
 	if operation.Identifier == 0 {
 		state.Next_Identifier++
 		operation.Identifier = state.Next_Identifier
 	}
-	operation.Completion.Kernel_Identifier = operation.Identifier
+	// Trigger thread reads event token while loop rearms listener. Reused token needs no write,
+	// since even same-value write races that read.
+	if !stable_event_identifier {
+		operation.Completion.Kernel_Identifier = operation.Identifier
+	}
 	state.Operations[operation.Identifier] = operation
 }
 
@@ -235,19 +279,19 @@ func operating_system_translate_result(
 	}
 	errno := syscall.Errno(-result)
 	if errno == syscall.ECONNREFUSED {
-		return 0, sharedio.Connection_Refused
+		return 0, nbio.Connection_Refused
 	}
 	if errno == syscall.EPIPE {
-		return 0, sharedio.Broken_Pipe
+		return 0, nbio.Broken_Pipe
 	}
 	if errno == syscall.ENOTCONN {
-		return 0, sharedio.Socket_Not_Connected
+		return 0, nbio.Socket_Not_Connected
 	}
 	if errno == syscall.ECANCELED {
-		return 0, sharedio.Canceled
+		return 0, nbio.Canceled
 	}
 	if errno == syscall.EEXIST {
-		return 0, sharedio.Path_Exists
+		return 0, nbio.Path_Exists
 	}
 	if operation.Kind == OPERATING_SYSTEM_OPERATION_TIMEOUT {
 		if errno == syscall.ETIME {

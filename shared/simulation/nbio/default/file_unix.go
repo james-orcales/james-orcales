@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"unsafe"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
-	sysos "local/james-orcales/shared/simulation/os"
+	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -24,6 +24,9 @@ const PIPE_ENDS = 2
 // Cap EINTR retries of one reap. Signal can interrupt wait4, but only broken kernel interrupt
 // it over and over, thus bound turn that into reported error, not spin.
 const PROCESS_REAP_RETRIES_MAX = 16
+
+// EXECUTABLE_SEARCH_TEXT_BYTES_MAXIMUM bounds the environment text one spawn scans.
+const EXECUTABLE_SEARCH_TEXT_BYTES_MAXIMUM = 4 * bits.KIBIBYTE_BYTES
 
 // Bound one readdir pass into fixed buffer, thus large directory is read in repeated passes,
 // not one unbounded allocation.
@@ -270,10 +273,25 @@ func executable_path(name string, search string) (path string, err error) {
 	if name == "" {
 		return "", syscall.ENOENT
 	}
-	if strings.Contains(name, "/") {
-		return name, executable_check(name)
+	if len(name) > EXECUTABLE_SEARCH_TEXT_BYTES_MAXIMUM {
+		return "", syscall.ENAMETOOLONG
 	}
-	for _, directory := range strings.Split(search, ":") {
+	if len(search) > EXECUTABLE_SEARCH_TEXT_BYTES_MAXIMUM {
+		return "", syscall.ENAMETOOLONG
+	}
+	for index := range name {
+		if name[index] == '/' {
+			return name, executable_check(name)
+		}
+	}
+	start := 0
+	for position := 0; position <= len(search); position++ {
+		if position < len(search) {
+			if search[position] != ':' {
+				continue
+			}
+		}
+		directory := search[start:position]
 		if directory == "" {
 			directory = "."
 		}
@@ -281,6 +299,7 @@ func executable_path(name string, search string) (path string, err error) {
 		if executable_check(candidate) == nil {
 			return candidate, nil
 		}
+		start = position + 1
 	}
 	return "", syscall.ENOENT
 }
@@ -302,7 +321,7 @@ func executable_check(path string) (err error) {
 
 // Reap exited child. Return its exit code and resource accounting. WNOHANG return at once,
 // because caller run this only after kernel reported exit.
-func process_reap(identifier int) (exit int, usage sysos.Process_Usage, err error) {
+func process_reap(identifier int) (exit int, usage os.Process_Usage, err error) {
 	status := syscall.WaitStatus(0)
 	rusage := syscall.Rusage{}
 	reaped := false
@@ -312,13 +331,13 @@ func process_reap(identifier int) (exit int, usage sysos.Process_Usage, err erro
 			continue
 		}
 		if wait_err != nil {
-			return 0, sysos.Process_Usage{}, wait_err
+			return 0, os.Process_Usage{}, wait_err
 		}
 		reaped = true
 		break
 	}
 	if !reaped {
-		return 0, sysos.Process_Usage{}, syscall.EINTR
+		return 0, os.Process_Usage{}, syscall.EINTR
 	}
 	usage.CPU_User = time.Duration(
 		rusage.Utime.Sec*1_000_000_000 + int64(rusage.Utime.Usec)*1_000)

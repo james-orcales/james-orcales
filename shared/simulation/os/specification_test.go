@@ -96,6 +96,16 @@ func Test_Virtual_OS_Self_Exec(t *testing.T) {
 	testify.Error_Is(t, err, os.Self_Exec_Unsupported)
 }
 
+// Test_OS_Self_Exec verifies seeded backend cannot replace test process for either environment
+// ownership mode.
+func Test_OS_Self_Exec(t *testing.T) {
+	for _, environment := range [][]string{nil, {}} {
+		system, _ := sim_system(0)
+		err := system.Self_Exec("/bin/true", []string{"true"}, environment)
+		testify.Error_Is(t, err, os.Self_Exec_Unsupported)
+	}
+}
+
 // Test_OS_Watch_Signal verifies a signal watch resolves exactly once with either its signal or
 // Deadline_Exceeded.
 func Test_OS_Watch_Signal(t *testing.T) {
@@ -103,7 +113,7 @@ func Test_OS_Watch_Signal(t *testing.T) {
 	deadline_count := 0
 	for seed := uint64(0); seed < 64; seed++ {
 		system, driver := sim_system(seed)
-		got := os.Signal(-1)
+		got := os.SIGNAL_EXPIRED
 		callback_count := 0
 		var operation_err error
 		var completion time.Completion
@@ -121,7 +131,7 @@ func Test_OS_Watch_Signal(t *testing.T) {
 		testify.Equal(t, 1, callback_count, seed)
 		if operation_err == time.Deadline_Exceeded {
 			deadline_count++
-			testify.Equal(t, os.Signal(-1), got, seed)
+			testify.Equal(t, os.SIGNAL_EXPIRED, got, seed)
 		} else {
 			testify.No_Error(t, operation_err, seed)
 			signal_count++

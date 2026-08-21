@@ -7,7 +7,7 @@ package time
 import (
 	"errors"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/fixedpoint"
 )
 
@@ -578,7 +578,9 @@ func virtual_step(state *Virtual_Timeline) (advanced bool) {
 	// Repeating-timer pattern.
 	invariant.Always(completion.Armed, "A delivered completion was armed.")
 	completion.Armed = false
-	completion.Callback()
+	callback := completion.Callback
+	completion.Callback = nil
+	callback()
 	return true
 }
 

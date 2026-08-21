@@ -1,23 +1,18 @@
-package nbio_test
+package nbio
 
 import (
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
 	"net"
 	"path/filepath"
-	"strconv"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
-	system_io "local/james-orcales/shared/simulation/nbio/default"
-	sysos "local/james-orcales/shared/simulation/os"
+	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
-	timeos "local/james-orcales/shared/simulation/time/default"
 	"local/james-orcales/shared/testify"
 )
 
@@ -31,39 +26,106 @@ const REAL_OPERATION_DEADLINE = 25 * time.MILLISECOND
 // Bound buffer holding process identifier read back from fixture file.
 const PROCESS_IDENTIFIER_BYTES = 64
 
-// Inspect the full simulation tree because one inconsistent callback order makes every caller
-// remember a different rule.
-func Test_Callback_Parameter_Is_Last(t *testing.T) {
-	files := token.NewFileSet()
-	err := filepath.WalkDir("../..", func(
-		path string, entry fs.DirEntry, walk_err error,
-	) (err error) {
-		if walk_err != nil {
-			return walk_err
+// A local host clock keeps these backend tests independent of another backend package.
+func new_operating_system_clock() (clock time.Clock) {
+	maximum := &atomic.Int64{}
+	read := func() (nanoseconds int64) {
+		value := syscall.Timeval{}
+		if err := syscall.Gettimeofday(&value); err != nil {
+			panic(err)
 		}
-		if entry.IsDir() {
-			return nil
+		return int64(value.Sec)*int64(time.SECOND) +
+			int64(value.Usec)*int64(time.MICROSECOND)
+	}
+	clock.Now_Monotonic = func() (moment time.Monotonic_Moment) {
+		current := read()
+		previous := maximum.Load()
+		if current <= previous {
+			return time.Monotonic_Moment(previous)
 		}
-		if filepath.Ext(path) != ".go" {
-			return nil
+		if maximum.CompareAndSwap(previous, current) {
+			return time.Monotonic_Moment(current)
 		}
-		parsed, parse_err := parser.ParseFile(
-			files, path, nil, parser.SkipObjectResolution,
-		)
-		if parse_err != nil {
-			return parse_err
+		return time.Monotonic_Moment(maximum.Load())
+	}
+	clock.Now_Realtime = func() (moment time.Moment) {
+		return time.Moment(read())
+	}
+	return clock
+}
+
+func test_decimal(content []byte) (value int, valid bool) {
+	start := 0
+	for start < len(content) {
+		if !test_space(content[start]) {
+			break
 		}
-		ast.Inspect(parsed, func(node ast.Node) (visit_children bool) {
-			function, is_function := node.(*ast.FuncType)
-			if !is_function {
-				return true
-			}
-			callback_parameter_last(t, files, function)
-			return true
-		})
-		return nil
-	})
-	testify.No_Error(t, err)
+		start++
+	}
+	end_count := len(content)
+	for end_count > start {
+		if !test_space(content[end_count-1]) {
+			break
+		}
+		end_count--
+	}
+	if start == end_count {
+		return 0, false
+	}
+	for _, character := range content[start:end_count] {
+		if character < '0' {
+			return 0, false
+		}
+		if character > '9' {
+			return 0, false
+		}
+		digit := int(character - '0')
+		if value > (bits.INTEGER_MAXIMUM-digit)/nbio.DECIMAL_RADIX {
+			return 0, false
+		}
+		value = value*nbio.DECIMAL_RADIX + digit
+	}
+	return value, true
+}
+
+func test_decimal_text(value int) (text string) {
+	if value < 0 {
+		return ""
+	}
+	buffer := [bits.WORD_SIZE]byte{}
+	position_count := len(buffer)
+	for digit_index := 0; digit_index < len(buffer); digit_index++ {
+		position_count--
+		buffer[position_count] = byte(value%nbio.DECIMAL_RADIX) + '0'
+		value /= nbio.DECIMAL_RADIX
+		if value == 0 {
+			return string(buffer[position_count:])
+		}
+	}
+	return ""
+}
+
+func test_trimmed_text(content []byte) (text string) {
+	start := 0
+	for start < len(content) {
+		if !test_space(content[start]) {
+			break
+		}
+		start++
+	}
+	end_count := len(content)
+	for end_count > start {
+		if !test_space(content[end_count-1]) {
+			break
+		}
+		end_count--
+	}
+	return string(content[start:end_count])
+}
+
+func test_space(character byte) (space bool) {
+	return character == ' ' || character == '\t' || character == '\n' ||
+		character == '\r' || character == '\v' || character == '\f'
 }
 
 // A required bound must fail before the backend can borrow a caller-owned descriptor.
@@ -71,7 +133,7 @@ func Test_Operating_System_Storage_Rejects_Disabled_Timeouts(t *testing.T) {
 	for _, operation := range []string{"read", "write", "fsync"} {
 		for _, timeout := range []time.Duration{0, -time.NANOSECOND} {
 			loop, _, driver := operating_system_loop(
-				t, timeos.New_Operating_System_Clock(),
+				t, new_operating_system_clock(),
 			)
 			testify.Panics(t, func() {
 				var completion time.Completion
@@ -93,33 +155,6 @@ func Test_Operating_System_Storage_Rejects_Disabled_Timeouts(t *testing.T) {
 			driver.Deinit()
 		}
 	}
-}
-
-func callback_parameter_last(t *testing.T, files *token.FileSet, function *ast.FuncType) {
-	t.Helper()
-	if function.Params == nil {
-		return
-	}
-	for index, parameter := range function.Params.List {
-		if !callback_parameter_type(parameter.Type) {
-			continue
-		}
-		position := files.Position(parameter.Pos())
-		testify.Equal(t, len(function.Params.List)-1, index, position)
-		testify.True(t, len(parameter.Names) <= 1, position)
-	}
-}
-
-func callback_parameter_type(expression ast.Expr) (callback bool) {
-	switch value := expression.(type) {
-	case *ast.FuncType:
-		return true
-	case *ast.Ident:
-		return strings.HasSuffix(value.Name, "Callback")
-	case *ast.SelectorExpr:
-		return strings.HasSuffix(value.Sel.Name, "Callback")
-	}
-	return false
 }
 
 // Write content to path through loop. Fixture setup in this package go through io.IO same as
@@ -348,12 +383,12 @@ func operating_system_loop(
 // — two operations OS surface own.
 func operating_system_all(
 	t *testing.T, clock time.Clock,
-) (loop nbio.IO, pump time.Timeline, driver time.Driver, system sysos.OS) {
+) (loop nbio.IO, pump time.Timeline, driver time.Driver, system os.OS) {
 	t.Helper()
-	loop, pump, driver, system, err := system_io.New_Operating_System_IO(
-		clock, 32, 0, sysos.Virtual_OS_To_OS(sysos.Virtual_OS{Process_Identifier: 1}))
+	loop, pump, driver, system, err := New_Operating_System_IO(
+		clock, 32, 0, os.Virtual_OS_To_OS(os.Virtual_OS{Process_Identifier: 1}))
 	if !testify.No_Error(t, err) {
-		return nbio.IO{}, time.Timeline{}, time.Driver{}, sysos.OS{}
+		return nbio.IO{}, time.Timeline{}, time.Driver{}, os.OS{}
 	}
 	return loop, pump, driver, system
 }
@@ -372,7 +407,7 @@ func operating_system_run_until(
 
 // Every entry rejects an absent bound before it can reach a platform scheduler.
 func Test_Operating_System_IO_Network_Rejects_Disabled_Timeouts(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	for _, operation := range []string{"accept", "connect", "receive", "send"} {
 		for _, timeout := range []time.Duration{0, -time.NANOSECOND} {
@@ -489,7 +524,7 @@ func test_connect(
 // Test_Operating_System_IO_Read write temp file and read it back through real backend. It
 // confirm read run in loop and report bytes.
 func Test_Operating_System_IO_Read(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	path := filepath.Join(t.TempDir(), "read")
 	write_file(t, loop, driver, path, []byte("hello"))
@@ -520,7 +555,7 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 // Test_Resolve_Passes_IP_Literal confirm IP-literal host return unchanged, thus already-resolved
 // address skip blocking DNS lookup, and dial path of loop see only IPs.
 func Test_Resolve_Passes_IP_Literal(t *testing.T) {
-	address, err := system_io.Resolve("93.184.216.34")
+	address, err := Resolve("93.184.216.34")
 	testify.No_Error(t, err)
 	testify.Equal(t, "93.184.216.34", address)
 }
@@ -529,7 +564,7 @@ func Test_Resolve_Passes_IP_Literal(t *testing.T) {
 // pending fail loud, not block forever: predicate no event can flip is deadlock, thus pump panic
 // instead of hang of caller.
 func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver := operating_system_loop(t, clock)
 	testify.Panics(t, func() {
 		driver.Run_Until(-1*time.NANOSECOND, func() (finished bool) { return false })
@@ -538,7 +573,7 @@ func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
 
 // Test_Operating_System_IO_Timeout verify timeout fire once real time pass its deadline.
 func Test_Operating_System_IO_Timeout(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, pump, driver := operating_system_loop(t, clock)
 	fired := false
 	var completion time.Completion
@@ -549,10 +584,27 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 	testify.True(t, fired)
 }
 
+// Long-lived completion must release callback closure after real backend retire operation.
+func Test_Operating_System_IO_Callback_Released(t *testing.T) {
+	clock := new_operating_system_clock()
+	_, pump, driver := operating_system_loop(t, clock)
+	var completion time.Completion
+	fired := false
+	pump.Timeout(&completion, time.MILLISECOND, func(_ *time.Completion) {
+		fired = true
+	})
+	completed, drive_err := driver.Run_Until(
+		REAL_DEADLINE, func() (finished bool) { return fired },
+	)
+	testify.No_Error(t, drive_err)
+	testify.True(t, completed)
+	testify.Nil(t, completion.Callback)
+}
+
 // Test_Operating_System_IO_Open_Socket_Profile verify outbound socket is non-blocking,
 // close-on-exec, buffered for client workload, keepalive-enabled, and caller-owned in Raw_Open.
 func Test_Operating_System_IO_Open_Socket_Profile(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	socket, open_err := test_open_socket(loop)
 	if !testify.No_Error(t, open_err) {
@@ -582,7 +634,7 @@ func Test_Operating_System_IO_Open_Socket_Profile(t *testing.T) {
 // A public UDP constructor check prevents the typed transport split from existing only below the
 // composition root.
 func Test_Operating_System_IO_Open_UDP_Profile(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	socket, open_err := loop.Network.Socket_UDP(nbio.FAMILY_IPV4, test_udp_options())
 	if !testify.No_Error(t, open_err) {
@@ -600,7 +652,7 @@ func Test_Operating_System_IO_Open_UDP_Profile(t *testing.T) {
 // Test_Operating_System_IO_Bind_Reuse_Address verify Bind enables address reuse before it gives
 // the socket its local address.
 func Test_Operating_System_IO_Bind_Reuse_Address(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, test_tcp_options())
 	if !testify.No_Error(t, open_err) {
@@ -622,7 +674,7 @@ func Test_Operating_System_IO_Bind_Reuse_Address(t *testing.T) {
 // Completion back one operation at a time, and real backend must fail as loud as sim, not
 // silently double-arm it.
 func Test_Operating_System_IO_Reuse(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, pump, _ := operating_system_loop(t, clock)
 	var completion time.Completion
 	pump.Timeout(&completion, time.SECOND, func(_ *time.Completion) {})
@@ -634,7 +686,7 @@ func Test_Operating_System_IO_Reuse(t *testing.T) {
 // Test_Operating_System_IO_Reentrancy verify drive of real loop from inside completion callback
 // panic, thus re-entrant Run* fail loud, not corrupt it.
 func Test_Operating_System_IO_Reentrancy(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, pump, driver := operating_system_loop(t, clock)
 	var completion time.Completion
 	pump.Timeout(&completion, time.MILLISECOND, func(_ *time.Completion) {
@@ -650,7 +702,7 @@ func Test_Operating_System_IO_Reentrancy(t *testing.T) {
 // single event loop.
 func Test_Operating_System_IO_Socket(t *testing.T) {
 	port := free_port(t)
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
@@ -699,7 +751,7 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 // Test_Operating_System_IO_Accept_Deadline prove listener with no inbound connection retire its
 // accept exactly once, after which listener and backend release safe.
 func Test_Operating_System_IO_Accept_Deadline(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", 0)
 	if !testify.No_Error(t, listen_err) {
@@ -729,7 +781,7 @@ func Test_Operating_System_IO_Accept_Deadline(t *testing.T) {
 // A receive timeout must retire the kernel registration without taking socket ownership.
 func Test_Operating_System_IO_Receive_Timeout_Preserves_Socket(t *testing.T) {
 	port := free_port(t)
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
@@ -765,7 +817,7 @@ func Test_Operating_System_IO_Receive_Timeout_Preserves_Socket(t *testing.T) {
 // descriptor open until caller explicitly close it.
 func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 	port := free_port(t)
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 
 	socket, open_err := test_open_socket(loop)
@@ -797,7 +849,7 @@ func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 // and never fire (ClickHouse-daemon bug).
 func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 	port := free_port(t)
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
@@ -859,7 +911,7 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 // after which later connection still receive readiness normally.
 func Test_Operating_System_IO_Drain_Then_Recycle(t *testing.T) {
 	port := free_port(t)
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
@@ -943,7 +995,7 @@ func loopback_pair(
 // by submitted receive. Owner must shutdown, drain receive callback, and only then close.
 func Test_Operating_System_IO_Close_With_Armed_Receive(t *testing.T) {
 	port := free_port(t)
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
@@ -974,7 +1026,7 @@ func Test_Operating_System_IO_Close_With_Armed_Receive(t *testing.T) {
 
 // Test_Operating_System_IO_Open open file through loop and read it back.
 func Test_Operating_System_IO_Open(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	path := filepath.Join(t.TempDir(), "open")
 	write_file(t, loop, driver, path, []byte("hello"))
@@ -1004,7 +1056,7 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 
 // Test_Operating_System_IO_Create make file through loop and write to it.
 func Test_Operating_System_IO_Create(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	path := filepath.Join(t.TempDir(), "create")
 	file, create_err := create_file(t, loop, driver, path)
@@ -1036,7 +1088,7 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 // and close all reuse caller-owned completions, and keep written bytes.
 func Test_Operating_System_IO_File_Chain(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file-chain")
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	opened := nbio.File(-1)
 	var open_completion time.Completion
@@ -1093,7 +1145,7 @@ func Test_Operating_System_IO_File_Chain(t *testing.T) {
 // Test_Operating_System_IO_Open_At_No_Follow verify OPEN_AT_NO_FOLLOW reject symbolic link in
 // final path part, and does not reject ordinary file.
 func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
-	clock_setup := timeos.New_Operating_System_Clock()
+	clock_setup := new_operating_system_clock()
 	loop_setup, _, driver_setup := operating_system_loop(t, clock_setup)
 	root := t.TempDir()
 	target := filepath.Join(root, "target")
@@ -1106,7 +1158,7 @@ func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
 		return
 	}
 
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	assert_open_at_result(t, loop, driver, target, nil)
 	assert_open_at_result(t, loop, driver, link, errors.New("symbolic link must fail"))
@@ -1150,7 +1202,7 @@ func assert_open_at_result(
 // Test_Operating_System_IO_Event verify Event reattachment contract: one trigger retire one
 // listener on loop thread, after which same completion may arm again.
 func Test_Operating_System_IO_Event(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, pump, driver := operating_system_loop(t, clock)
 	event, open_err := pump.Open_Event()
 	if !testify.No_Error(t, open_err) {
@@ -1170,10 +1222,47 @@ func Test_Operating_System_IO_Event(t *testing.T) {
 	pump.Close_Event(event)
 }
 
+// Trigger thread must never read completion metadata while loop rearm writes same storage.
+func Test_Operating_System_IO_Event_Concurrent_Rearm(t *testing.T) {
+	clock := new_operating_system_clock()
+	_, pump, driver := operating_system_loop(t, clock)
+	event, open_err := pump.Open_Event()
+	if !testify.No_Error(t, open_err) {
+		return
+	}
+	const FIRES = 64
+	fired := &atomic.Int64{}
+	stopped := &atomic.Bool{}
+	workers := &sync.WaitGroup{}
+	var completion time.Completion
+	var callback time.Callback
+	callback = func(_ *time.Completion) {
+		if fired.Add(1) < FIRES {
+			pump.Event_Listen(event, &completion, callback)
+		}
+	}
+	pump.Event_Listen(event, &completion, callback)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		for !stopped.Load() {
+			pump.Event_Trigger(event, &completion)
+		}
+	}()
+	completed, drive_err := driver.Run_Until(
+		REAL_DEADLINE, func() (finished bool) { return fired.Load() == FIRES },
+	)
+	stopped.Store(true)
+	workers.Wait()
+	testify.No_Error(t, drive_err)
+	testify.True(t, completed)
+	pump.Close_Event(event)
+}
+
 // Test_Operating_System_IO_Peer_Address report remote address of accepted loopback connection.
 func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 	port := free_port(t)
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	listener, listen_err := test_listen(loop, driver, "127.0.0.1", port)
 	if !testify.No_Error(t, listen_err) {
@@ -1209,12 +1298,12 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 // Event/backend while Spawn still own repository-extension completion. Spawn is vehicle because
 // it retire through same off-loop post path Event bridge.
 func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	drained := false
 	var completion time.Completion
-	system.Spawn(&completion, sysos.Process_Request{Path: "true"}, REAL_DEADLINE, func(
-		_ *time.Completion, _ sysos.Process_Result, _ error,
+	system.Spawn(&completion, os.Process_Request{Path: "true"}, REAL_DEADLINE, func(
+		_ *time.Completion, _ os.Process_Result, _ error,
 	) {
 		drained = true
 	})
@@ -1228,13 +1317,13 @@ func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
 
 // Test_Operating_System_IO_Watch_Signal deliver real SIGTERM onto loop.
 func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
-	got := sysos.Signal(-1)
+	got := os.SIGNAL_EXPIRED
 	fired := 0
 	var completion time.Completion
-	system.Watch_Signal(&completion, sysos.SIGNAL_TERMINATE, REAL_DEADLINE, func(
-		_ *time.Completion, signal sysos.Signal, err error,
+	system.Watch_Signal(&completion, os.SIGNAL_TERMINATE, REAL_DEADLINE, func(
+		_ *time.Completion, signal os.Signal, err error,
 	) {
 		testify.No_Error(t, err)
 		fired++
@@ -1244,21 +1333,21 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	driver.Run_Until(REAL_DEADLINE, func() (finished bool) { return fired > 0 })
 
 	testify.Equal(t, 1, fired)
-	testify.Equal(t, sysos.SIGNAL_TERMINATE, got)
+	testify.Equal(t, os.SIGNAL_TERMINATE, got)
 }
 
 // Test_Operating_System_IO_Watch_Signal_Deadline prove signal that never arrive retire extension
 // completion exactly once, and permit backend deinitialization.
 func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	callback_count := 0
-	got := sysos.Signal(-1)
+	got := os.SIGNAL_EXPIRED
 	var operation_err error
 	var completion time.Completion
 	system.Watch_Signal(
-		&completion, sysos.SIGNAL_TERMINATE, REAL_OPERATION_DEADLINE, func(
-			_ *time.Completion, signal sysos.Signal, err error,
+		&completion, os.SIGNAL_TERMINATE, REAL_OPERATION_DEADLINE, func(
+			_ *time.Completion, signal os.Signal, err error,
 		) {
 			callback_count++
 			got = signal
@@ -1269,25 +1358,25 @@ func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
 	))
 	testify.Equal(t, 1, callback_count)
 	testify.Error_Is(t, operation_err, time.Deadline_Exceeded)
-	testify.Equal(t, sysos.Signal(-1), got)
+	testify.Equal(t, os.SIGNAL_EXPIRED, got)
 	driver.Deinit()
 }
 
 // Test_Operating_System_IO_Spawn run real commands through loop: success with captured output,
 // and non-zero exit reported without start error.
 func Test_Operating_System_IO_Spawn(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 
-	echo := sysos.Process_Result{}
+	echo := os.Process_Result{}
 	echoed := false
 	var echo_completion time.Completion
 	system.Spawn(
 		&echo_completion,
-		sysos.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}},
+		os.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}},
 		REAL_DEADLINE,
 		func(
-			_ *time.Completion, result sysos.Process_Result, err error,
+			_ *time.Completion, result os.Process_Result, err error,
 		) {
 			testify.No_Error(t, err)
 			echo = result
@@ -1299,13 +1388,13 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 	testify.Zero(t, echo.Exit)
 	testify.Equal(t, "hi\n", string(echo.Output))
 
-	fail := sysos.Process_Result{}
+	fail := os.Process_Result{}
 	failed := false
 	var fail_completion time.Completion
-	system.Spawn(&fail_completion, sysos.Process_Request{
+	system.Spawn(&fail_completion, os.Process_Request{
 		Path: "/bin/sh", Arguments: []string{"-c", "exit 1"},
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, result sysos.Process_Result, err error,
+		_ *time.Completion, result os.Process_Result, err error,
 	) {
 		testify.No_Error(t, err)
 		fail = result
@@ -1321,18 +1410,18 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 // backend stream child output to writer as it run, instead of capture of it — affordance long
 // build need — and leave Output empty.
 func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 
 	streamed := nbio.Stream_Memory{Memory: make([]byte, 64)}
-	result := sysos.Process_Result{}
+	result := os.Process_Result{}
 	done := false
 	var completion time.Completion
-	system.Spawn(&completion, sysos.Process_Request{
+	system.Spawn(&completion, os.Process_Request{
 		Path: "/bin/echo", Arguments: []string{"hi"},
 		Stdout: nbio.Memory_To_Stream(&streamed),
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned sysos.Process_Result, err error,
+		_ *time.Completion, spawned os.Process_Result, err error,
 	) {
 		testify.No_Error(t, err)
 		result = spawned
@@ -1378,19 +1467,18 @@ func spawn_recorded_identifier(
 	})
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return close_done }))
-	identifier, parse_err := strconv.Atoi(
-		strings.TrimSpace(string(process_buffer[:process_count])))
-	testify.No_Error(t, parse_err)
+	identifier, parsed := test_decimal(process_buffer[:process_count])
+	testify.True(t, parsed)
 	return identifier
 }
 
 // Test_Operating_System_IO_Spawn_Deadline prove timeout kill whole subprocess group, keep output
 // captured before expiry, and deliver one terminal callback.
 func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver, system := operating_system_all(t, clock)
 	process_path := filepath.Join(t.TempDir(), "process")
-	request := sysos.Process_Request{
+	request := os.Process_Request{
 		Path: "/bin/sh",
 		Arguments: []string{
 			"-c", "printf '%d' $$ > \"$1\"; printf partial; sleep 30 & wait",
@@ -1398,11 +1486,11 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 		},
 	}
 	callback_count := 0
-	result := sysos.Process_Result{}
+	result := os.Process_Result{}
 	var operation_err error
 	var completion time.Completion
 	system.Spawn(&completion, request, 100*time.MILLISECOND, func(
-		_ *time.Completion, spawned sysos.Process_Result, err error,
+		_ *time.Completion, spawned os.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -1427,15 +1515,15 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 // Completion retire early on Deadline_Exceeded, thus exit event arrive for child nobody wait on,
 // and only own tracking of backend keep reap on that path.
 func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	callback_count := 0
 	var operation_err error
 	var completion time.Completion
-	system.Spawn(&completion, sysos.Process_Request{
+	system.Spawn(&completion, os.Process_Request{
 		Path: "/bin/sleep", Arguments: []string{"30"},
 	}, 50*time.MILLISECOND, func(
-		_ *time.Completion, _ sysos.Process_Result, err error,
+		_ *time.Completion, _ os.Process_Result, err error,
 	) {
 		callback_count++
 		operation_err = err
@@ -1454,19 +1542,19 @@ func Test_Operating_System_IO_Spawn_Reaps_After_Deadline(t *testing.T) {
 // holding standard output must retire about one second later, not wait out whole deadline. This
 // is bound exec.Cmd.WaitDelay supplied before.
 func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	const SPAWN_DEADLINE = 4 * time.SECOND
 	started := clock.Now_Monotonic()
 	callback_count := 0
-	result := sysos.Process_Result{}
+	result := os.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	system.Spawn(&completion, sysos.Process_Request{
+	system.Spawn(&completion, os.Process_Request{
 		Path:      "/bin/sh",
 		Arguments: []string{"-c", "printf quick; sleep 30 & exit 0"},
 	}, SPAWN_DEADLINE, func(
-		_ *time.Completion, spawned sysos.Process_Result, err error,
+		_ *time.Completion, spawned os.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -1489,7 +1577,7 @@ func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
 // pipes separate. Pipe end that leak into fork of other child would hold standard input of that
 // child open, thus this fail by deadlock, not by wrong result.
 func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	const SPAWNS_COUNT = 4
 	finished := 0
@@ -1498,11 +1586,11 @@ func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 	for index := 0; index < SPAWNS_COUNT; index++ {
 		position := index
 		completions[position] = &time.Completion{}
-		system.Spawn(completions[position], sysos.Process_Request{
+		system.Spawn(completions[position], os.Process_Request{
 			Path:  "/bin/cat",
-			Input: []byte(strconv.Itoa(position)),
+			Input: []byte(test_decimal_text(position)),
 		}, REAL_DEADLINE, func(
-			_ *time.Completion, spawned sysos.Process_Result, err error,
+			_ *time.Completion, spawned os.Process_Result, err error,
 		) {
 			testify.No_Error(t, err, position)
 			outputs[position] = string(spawned.Output)
@@ -1513,7 +1601,7 @@ func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 		t, driver, func() (finished_all bool) { return finished == SPAWNS_COUNT },
 	))
 	for index := 0; index < SPAWNS_COUNT; index++ {
-		want := strconv.Itoa(index)
+		want := test_decimal_text(index)
 		testify.Equal(t, want, outputs[index], index)
 	}
 	driver.Deinit()
@@ -1522,16 +1610,16 @@ func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 // Test_Operating_System_IO_Spawn_Feeds_Input verify Process_Request.Input reach child standard
 // input, and write end close, thus child observe end-of-file, not wait for more.
 func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	callback_count := 0
-	result := sysos.Process_Result{}
+	result := os.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	system.Spawn(&completion, sysos.Process_Request{
+	system.Spawn(&completion, os.Process_Request{
 		Path: "/bin/cat", Input: []byte("fed through stdin"),
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned sysos.Process_Result, err error,
+		_ *time.Completion, spawned os.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -1549,20 +1637,20 @@ func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
 // still complete. Child that fill pipe block until loop read it, thus this fail by deadlock when
 // reads are not armed for whole life of child.
 func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	const LINES = 20000
 	callback_count := 0
-	result := sysos.Process_Result{}
+	result := os.Process_Result{}
 	var operation_err error
 	var completion time.Completion
-	system.Spawn(&completion, sysos.Process_Request{
+	system.Spawn(&completion, os.Process_Request{
 		Path: "/bin/sh",
 		Arguments: []string{
 			"-c", "i=0; while [ $i -lt 20000 ]; do echo line; i=$((i+1)); done",
 		},
 	}, REAL_DEADLINE, func(
-		_ *time.Completion, spawned sysos.Process_Result, err error,
+		_ *time.Completion, spawned os.Process_Result, err error,
 	) {
 		callback_count++
 		result = spawned
@@ -1579,18 +1667,18 @@ func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
 // Test_Operating_System_IO_Spawn_Resolves_Path verify bare command name still resolve through
 // PATH. exec.Command supplied this before, and syscall.StartProcess does not.
 func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	callback_count := 0
-	result := sysos.Process_Result{}
+	result := os.Process_Result{}
 	var operation_err error
 	var completion time.Completion
 	system.Spawn(
 		&completion,
-		sysos.Process_Request{Path: "echo", Arguments: []string{"resolved"}},
+		os.Process_Request{Path: "echo", Arguments: []string{"resolved"}},
 		REAL_DEADLINE,
 		func(
-			_ *time.Completion, spawned sysos.Process_Result, err error,
+			_ *time.Completion, spawned os.Process_Result, err error,
 		) {
 			callback_count++
 			result = spawned
@@ -1600,21 +1688,21 @@ func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	))
 	testify.No_Error(t, operation_err)
-	testify.Equal(t, "resolved", strings.TrimSpace(string(result.Output)))
+	testify.Equal(t, "resolved", test_trimmed_text(result.Output))
 	driver.Deinit()
 }
 
 // Test_Operating_System_IO_Spawn_Reports_Missing_Command verify unresolvable command name fail
 // spawn, not start anything.
 func Test_Operating_System_IO_Spawn_Reports_Missing_Command(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	_, _, driver, system := operating_system_all(t, clock)
 	callback_count := 0
 	var operation_err error
 	var completion time.Completion
-	system.Spawn(&completion, sysos.Process_Request{Path: "no-such-command-anywhere"},
+	system.Spawn(&completion, os.Process_Request{Path: "no-such-command-anywhere"},
 		REAL_DEADLINE, func(
-			_ *time.Completion, _ sysos.Process_Result, err error,
+			_ *time.Completion, _ os.Process_Result, err error,
 		) {
 			callback_count++
 			operation_err = err
@@ -1649,7 +1737,7 @@ func process_group_wait_for_exit(
 // Test_Operating_System_IO_Make_Directory cover what converging mkdir can hide: repeat call,
 // relative path, trailing slash, and final component that already exist as file.
 func Test_Operating_System_IO_Make_Directory(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 	root := t.TempDir()
 
@@ -1686,7 +1774,7 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 // Make_Directory build nested path, into which fixture file is seeded, and Status and
 // Read_Directory then report tree shape, absent path included.
 func Test_Operating_System_IO_Directory(t *testing.T) {
-	clock := timeos.New_Operating_System_Clock()
+	clock := new_operating_system_clock()
 	loop, _, driver := operating_system_loop(t, clock)
 
 	root := t.TempDir()

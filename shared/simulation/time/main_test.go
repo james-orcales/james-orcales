@@ -3,7 +3,7 @@ package time_test
 import (
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 )
 
 // TestMain register package invariant roots before specification run.
