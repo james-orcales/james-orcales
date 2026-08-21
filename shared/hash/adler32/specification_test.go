@@ -10,6 +10,9 @@ import (
 
 // Test_Package_Owned_State verifies streaming operations need no common dispatcher.
 func Test_Package_Owned_State(t *testing.T) {
+	// Boolean backing makes third lifecycle state unrepresentable.
+	testify.False(t, bool(adler32.READY_EMPTY))
+	testify.True(t, bool(adler32.READY_COMPLETE))
 	var digest adler32.Digest
 	adler32.Digest_Init(&digest)
 	count := adler32.Digest_Write(&digest, adler32.Source("abc"))
@@ -217,7 +220,13 @@ func Test_Invariant_Domains(t *testing.T) {
 
 // Test_Allocation proves every runtime path owns no heap storage.
 func Test_Allocation(t *testing.T) {
-	fixture := allocation_fixture{Source: adler32.Source("abc")}
+	// Buffers made here, outside every measured closure, so each closure sees
+	// caller storage and only production allocation would register.
+	fixture := allocation_fixture{
+		Source: adler32.Source("abc"),
+		Output: make(adler32.Destination, adler32.DIGEST_SIZE),
+		State:  make(adler32.Destination, adler32.STATE_SIZE),
+	}
 	adler32.Digest_Init(&fixture.Digest)
 	testify.Zero_Allocation(t, func() { adler32.Digest_Init(&fixture.Digest) })
 	testify.Zero_Allocation(t, func() {
@@ -228,7 +237,7 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Output_Count, fixture.Output_Status = adler32.Digest_Sum_Into(
-			&fixture.Digest, fixture.Output[:],
+			&fixture.Digest, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
@@ -236,12 +245,12 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Count, fixture.State_Output_Status = adler32.Digest_Marshal_Into(
-			&fixture.Digest, fixture.State[:],
+			&fixture.Digest, fixture.State,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Input_Status = adler32.Digest_Unmarshal(
-			&fixture.Clone_Digest, fixture.State[:],
+			&fixture.Clone_Digest, adler32.Source(fixture.State),
 		)
 	})
 	testify.Zero_Allocation(t, func() {
@@ -254,8 +263,8 @@ type allocation_fixture struct {
 	Digest              adler32.Digest
 	Clone_Digest        adler32.Digest
 	Source              adler32.Source
-	Output              [adler32.DIGEST_SIZE]byte
-	State               [adler32.STATE_SIZE]byte
+	Output              adler32.Destination
+	State               adler32.Destination
 	Count               adler32.Count
 	Output_Count        adler32.Output_Count
 	Output_Status       adler32.Output_Status

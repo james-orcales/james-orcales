@@ -11,6 +11,9 @@ import (
 
 // Test_Package_Owned_State verifies streaming operations need no common dispatcher.
 func Test_Package_Owned_State(t *testing.T) {
+	// Boolean backing makes third lifecycle state unrepresentable.
+	testify.False(t, bool(fnv.READY_EMPTY))
+	testify.True(t, bool(fnv.READY_COMPLETE))
 	var digest fnv.Digest_32
 	fnv.Digest_32_Init(&digest, fnv.KIND_1A)
 	count := fnv.Digest_32_Write(&digest, fnv.Source("abc"))
@@ -129,24 +132,24 @@ func Test_Caller_Owned_Output(t *testing.T) {
 
 // Test_State_Compatibility protects all six standard FNV state identities.
 func Test_State_Compatibility(t *testing.T) {
-	state_32_test(t, fnv.KIND_1, [fnv.STATE_32_SIZE]byte{
+	state_32_test(t, fnv.KIND_1, fnv.Source{
 		'f', 'n', 'v', 1, 0x05, 0x0c, 0x5d, 0x7e,
 	})
-	state_32_test(t, fnv.KIND_1A, [fnv.STATE_32_SIZE]byte{
+	state_32_test(t, fnv.KIND_1A, fnv.Source{
 		'f', 'n', 'v', 2, 0xe4, 0x0c, 0x29, 0x2c,
 	})
-	state_64_test(t, fnv.KIND_1, [fnv.STATE_64_SIZE]byte{
+	state_64_test(t, fnv.KIND_1, fnv.Source{
 		'f', 'n', 'v', 3, 0xaf, 0x63, 0xbd, 0x4c, 0x86, 0x01, 0xb7, 0xbe,
 	})
-	state_64_test(t, fnv.KIND_1A, [fnv.STATE_64_SIZE]byte{
+	state_64_test(t, fnv.KIND_1A, fnv.Source{
 		'f', 'n', 'v', 4, 0xaf, 0x63, 0xdc, 0x4c, 0x86, 0x01, 0xec, 0x8c,
 	})
-	state_128_test(t, fnv.KIND_1, [fnv.STATE_128_SIZE]byte{
+	state_128_test(t, fnv.KIND_1, fnv.Source{
 		'f', 'n', 'v', 5,
 		0xd2, 0x28, 0xcb, 0x69, 0x10, 0x1a, 0x8c, 0xaf,
 		0x78, 0x91, 0x2b, 0x70, 0x4e, 0x4a, 0x14, 0x1e,
 	})
-	state_128_test(t, fnv.KIND_1A, [fnv.STATE_128_SIZE]byte{
+	state_128_test(t, fnv.KIND_1A, fnv.Source{
 		'f', 'n', 'v', 6,
 		0xd2, 0x28, 0xcb, 0x69, 0x6f, 0x1a, 0x8c, 0xaf,
 		0x78, 0x91, 0x2b, 0x70, 0x4e, 0x4a, 0x89, 0x64,
@@ -267,7 +270,13 @@ func Test_Invariant_Domains(t *testing.T) {
 
 // Test_Allocation proves every width and Kind path owns no heap storage.
 func Test_Allocation(t *testing.T) {
-	fixture := allocation_fixture{Source: fnv.Source("abc")}
+	fixture := allocation_fixture{
+		Source:    fnv.Source("abc"),
+		Output:    make(fnv.Destination, fnv.DIGEST_128_SIZE),
+		State_32:  make(fnv.Destination, fnv.STATE_32_SIZE),
+		State_64:  make(fnv.Destination, fnv.STATE_64_SIZE),
+		State_128: make(fnv.Destination, fnv.STATE_128_SIZE),
+	}
 	fnv.Digest_32_Init(&fixture.Digest_32, fnv.KIND_1A)
 	fnv.Digest_64_Init(&fixture.Digest_64, fnv.KIND_1A)
 	fnv.Digest_128_Init(&fixture.Digest_128, fnv.KIND_1A)
@@ -285,17 +294,17 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Count_32, fixture.Status = fnv.Digest_32_Sum_Into(
-			&fixture.Digest_32, fixture.Output[:],
+			&fixture.Digest_32, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Count_32, fixture.State_Output_Status = fnv.Digest_32_Marshal_Into(
-			&fixture.Digest_32, fixture.State_32[:],
+			&fixture.Digest_32, fixture.State_32,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Input_Status = fnv.Digest_32_Unmarshal(
-			&fixture.Clone_32, fixture.State_32[:],
+			&fixture.Clone_32, fnv.Source(fixture.State_32),
 		)
 	})
 	testify.Zero_Allocation(t, func() { fnv.Digest_32_Reset(&fixture.Digest_32) })
@@ -319,17 +328,17 @@ func fnv_64_allocation(t *testing.T, fixture *allocation_fixture) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Count_64, fixture.Status = fnv.Digest_64_Sum_Into(
-			&fixture.Digest_64, fixture.Output[:],
+			&fixture.Digest_64, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Count_64, fixture.State_Output_Status = fnv.Digest_64_Marshal_Into(
-			&fixture.Digest_64, fixture.State_64[:],
+			&fixture.Digest_64, fixture.State_64,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Input_Status = fnv.Digest_64_Unmarshal(
-			&fixture.Clone_64, fixture.State_64[:],
+			&fixture.Clone_64, fnv.Source(fixture.State_64),
 		)
 	})
 	testify.Zero_Allocation(t, func() { fnv.Digest_64_Reset(&fixture.Digest_64) })
@@ -350,17 +359,17 @@ func fnv_128_allocation(t *testing.T, fixture *allocation_fixture) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Count_128, fixture.Status = fnv.Digest_128_Sum_Into(
-			&fixture.Digest_128, fixture.Output[:],
+			&fixture.Digest_128, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Count_128, fixture.State_Output_Status = fnv.Digest_128_Marshal_Into(
-			&fixture.Digest_128, fixture.State_128[:],
+			&fixture.Digest_128, fixture.State_128,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Input_Status = fnv.Digest_128_Unmarshal(
-			&fixture.Clone_128, fixture.State_128[:],
+			&fixture.Clone_128, fnv.Source(fixture.State_128),
 		)
 	})
 	testify.Zero_Allocation(t, func() { fnv.Digest_128_Reset(&fixture.Digest_128) })
@@ -377,10 +386,10 @@ type allocation_fixture struct {
 	Clone_64            fnv.Digest_64
 	Clone_128           fnv.Digest_128
 	Source              fnv.Source
-	Output              [fnv.DIGEST_128_SIZE]byte
-	State_32            [fnv.STATE_32_SIZE]byte
-	State_64            [fnv.STATE_64_SIZE]byte
-	State_128           [fnv.STATE_128_SIZE]byte
+	Output              fnv.Destination
+	State_32            fnv.Destination
+	State_64            fnv.Destination
+	State_128           fnv.Destination
 	Count               fnv.Count
 	Value_32            fnv.Value_32
 	Value_64            fnv.Value_64
@@ -396,7 +405,7 @@ type allocation_fixture struct {
 	State_Input_Status  fnv.State_Input_Status
 }
 
-func state_32_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_32_SIZE]byte) {
+func state_32_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 	var digest fnv.Digest_32
 	fnv.Digest_32_Init(&digest, kind)
 	fnv.Digest_32_Write(&digest, fnv.Source("a"))
@@ -404,7 +413,7 @@ func state_32_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_32_SIZE]byte) {
 	count, status := fnv.Digest_32_Marshal_Into(&digest, state[:])
 	testify.Equal(t, fnv.STATE_32_COUNT_COMPLETE, count)
 	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_OK, status)
-	testify.Equal(t, want, state)
+	testify.Equal(t, want, fnv.Source(state[:]))
 
 	var restored fnv.Digest_32
 	fnv.Digest_32_Init(&restored, kind)
@@ -424,7 +433,7 @@ func state_32_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_32_SIZE]byte) {
 	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_TOO_SMALL, status)
 }
 
-func state_64_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_64_SIZE]byte) {
+func state_64_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 	var digest fnv.Digest_64
 	fnv.Digest_64_Init(&digest, kind)
 	fnv.Digest_64_Write(&digest, fnv.Source("a"))
@@ -432,7 +441,7 @@ func state_64_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_64_SIZE]byte) {
 	count, status := fnv.Digest_64_Marshal_Into(&digest, state[:])
 	testify.Equal(t, fnv.STATE_64_COUNT_COMPLETE, count)
 	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_OK, status)
-	testify.Equal(t, want, state)
+	testify.Equal(t, want, fnv.Source(state[:]))
 
 	var restored fnv.Digest_64
 	fnv.Digest_64_Init(&restored, kind)
@@ -452,7 +461,7 @@ func state_64_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_64_SIZE]byte) {
 	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_TOO_SMALL, status)
 }
 
-func state_128_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_128_SIZE]byte) {
+func state_128_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 	var digest fnv.Digest_128
 	fnv.Digest_128_Init(&digest, kind)
 	fnv.Digest_128_Write(&digest, fnv.Source("a"))
@@ -460,7 +469,7 @@ func state_128_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_128_SIZE]byte) 
 	count, status := fnv.Digest_128_Marshal_Into(&digest, state[:])
 	testify.Equal(t, fnv.STATE_128_COUNT_COMPLETE, count)
 	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_OK, status)
-	testify.Equal(t, want, state)
+	testify.Equal(t, want, fnv.Source(state[:]))
 
 	var restored fnv.Digest_128
 	fnv.Digest_128_Init(&restored, kind)
@@ -480,7 +489,8 @@ func state_128_test(t *testing.T, kind fnv.Kind, want [fnv.STATE_128_SIZE]byte) 
 	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_TOO_SMALL, status)
 }
 
-func state_32_make(kind fnv.Kind, value fnv.Value_32) (state [fnv.STATE_32_SIZE]byte) {
+func state_32_make(kind fnv.Kind, value fnv.Value_32) (state fnv.Source) {
+	state = make(fnv.Source, fnv.STATE_32_SIZE)
 	identity := fnv.STATE_32_1_IDENTITY
 	if kind == fnv.KIND_1A {
 		identity = fnv.STATE_32_1A_IDENTITY
@@ -493,7 +503,8 @@ func state_32_make(kind fnv.Kind, value fnv.Value_32) (state [fnv.STATE_32_SIZE]
 	return state
 }
 
-func state_64_make(kind fnv.Kind, value fnv.Value_64) (state [fnv.STATE_64_SIZE]byte) {
+func state_64_make(kind fnv.Kind, value fnv.Value_64) (state fnv.Source) {
+	state = make(fnv.Source, fnv.STATE_64_SIZE)
 	identity := fnv.STATE_64_1_IDENTITY
 	if kind == fnv.KIND_1A {
 		identity = fnv.STATE_64_1A_IDENTITY
@@ -506,7 +517,8 @@ func state_64_make(kind fnv.Kind, value fnv.Value_64) (state [fnv.STATE_64_SIZE]
 	return state
 }
 
-func state_128_make(kind fnv.Kind, value fnv.Value_128) (state [fnv.STATE_128_SIZE]byte) {
+func state_128_make(kind fnv.Kind, value fnv.Value_128) (state fnv.Source) {
+	state = make(fnv.Source, fnv.STATE_128_SIZE)
 	identity := fnv.STATE_128_1_IDENTITY
 	if kind == fnv.KIND_1A {
 		identity = fnv.STATE_128_1A_IDENTITY

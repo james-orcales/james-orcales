@@ -10,10 +10,13 @@ import (
 
 // Test_Package_Owned_State verifies streaming operations need no common dispatcher.
 func Test_Package_Owned_State(t *testing.T) {
-	var table crc32.Table
-	crc32.Table_Make_Into(&table, crc32.IEEE)
+	// Boolean backing makes third lifecycle state unrepresentable.
+	testify.False(t, bool(crc32.READY_EMPTY))
+	testify.True(t, bool(crc32.READY_COMPLETE))
+	table := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(table, crc32.IEEE)
 	var digest crc32.Digest
-	crc32.Digest_Init(&digest, &table)
+	crc32.Digest_Init(&digest, table)
 	count := crc32.Digest_Write(&digest, crc32.Source("abc"))
 	testify.Equal(t, crc32.Count(len("abc")), count)
 	var output [crc32.DIGEST_SIZE]byte
@@ -36,15 +39,15 @@ func Test_Reference_Values(t *testing.T) {
 		{Text: "abc", IEEE: 0x352441c2, Castagnoli: 0x364b3fb7},
 		{Text: "123456789", IEEE: 0xcbf43926, Castagnoli: 0xe3069283},
 	}
-	var ieee crc32.Table
-	crc32.Table_Make_Into(&ieee, crc32.IEEE)
-	var castagnoli crc32.Table
-	crc32.Table_Make_Into(&castagnoli, crc32.CASTAGNOLI)
+	ieee := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(ieee, crc32.IEEE)
+	castagnoli := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(castagnoli, crc32.CASTAGNOLI)
 	for _, test := range tests {
 		source := crc32.Source(test.Text)
-		testify.Equal(t, test.IEEE, crc32.Checksum(source, &ieee))
+		testify.Equal(t, test.IEEE, crc32.Checksum(source, ieee))
 		testify.Equal(t, test.IEEE, crc32.Checksum_IEEE(source))
-		testify.Equal(t, test.Castagnoli, crc32.Checksum(source, &castagnoli))
+		testify.Equal(t, test.Castagnoli, crc32.Checksum(source, castagnoli))
 	}
 }
 
@@ -55,25 +58,25 @@ func Test_Table(t *testing.T) {
 	}
 	source := crc32.Source("table-driven reference")
 	for _, polynomial := range polynomials {
-		var table crc32.Table
-		crc32.Table_Make_Into(&table, polynomial)
+		table := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+		crc32.Table_Make_Into(table, polynomial)
 		testify.Equal(t, reference_checksum(source, polynomial),
-			crc32.Checksum(source, &table))
+			crc32.Checksum(source, table))
 	}
 }
 
 // Test_Streaming_And_Update protects write-division independence and seeded continuation.
 func Test_Streaming_And_Update(t *testing.T) {
-	var table crc32.Table
-	crc32.Table_Make_Into(&table, crc32.IEEE)
+	table := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(table, crc32.IEEE)
 	prefix := crc32.Source("bounded ")
 	suffix := crc32.Source("crc32")
-	want := crc32.Checksum(crc32.Source("bounded crc32"), &table)
-	continued := crc32.Update(crc32.Checksum(prefix, &table), &table, suffix)
+	want := crc32.Checksum(crc32.Source("bounded crc32"), table)
+	continued := crc32.Update(crc32.Checksum(prefix, table), table, suffix)
 	testify.Equal(t, want, continued)
 
 	var digest crc32.Digest
-	crc32.Digest_Init(&digest, &table)
+	crc32.Digest_Init(&digest, table)
 	crc32.Digest_Write(&digest, prefix)
 	crc32.Digest_Write(&digest, suffix)
 	testify.Equal(t, want, crc32.Digest_Sum_32(&digest))
@@ -83,10 +86,10 @@ func Test_Streaming_And_Update(t *testing.T) {
 
 // Test_Caller_Owned_Output keeps short output untouched and checksum state reusable.
 func Test_Caller_Owned_Output(t *testing.T) {
-	var table crc32.Table
-	crc32.Table_Make_Into(&table, crc32.IEEE)
+	table := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(table, crc32.IEEE)
 	var digest crc32.Digest
-	crc32.Digest_Init(&digest, &table)
+	crc32.Digest_Init(&digest, table)
 	crc32.Digest_Write(&digest, crc32.Source("abc"))
 	var short [crc32.DIGEST_SIZE - 1]byte
 	count, status := crc32.Digest_Sum_Into(&digest, short[:])
@@ -101,10 +104,10 @@ func Test_Caller_Owned_Output(t *testing.T) {
 
 // Test_State_Compatibility protects standard state bytes and rejects hostile replacement.
 func Test_State_Compatibility(t *testing.T) {
-	var ieee crc32.Table
-	crc32.Table_Make_Into(&ieee, crc32.IEEE)
+	ieee := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(ieee, crc32.IEEE)
 	var digest crc32.Digest
-	crc32.Digest_Init(&digest, &ieee)
+	crc32.Digest_Init(&digest, ieee)
 	crc32.Digest_Write(&digest, crc32.Source("ab"))
 
 	var state [crc32.STATE_SIZE]byte
@@ -116,7 +119,7 @@ func Test_State_Compatibility(t *testing.T) {
 	}, state)
 
 	var restored crc32.Digest
-	crc32.Digest_Init(&restored, &ieee)
+	crc32.Digest_Init(&restored, ieee)
 	testify.Equal(t, crc32.STATE_INPUT_STATUS_OK,
 		crc32.Digest_Unmarshal(&restored, state[:]))
 	testify.Equal(t, crc32.Digest_Sum_32(&digest), crc32.Digest_Sum_32(&restored))
@@ -131,10 +134,10 @@ func Test_State_Compatibility(t *testing.T) {
 	testify.Equal(t, previous, restored)
 	state[0] ^= 1
 
-	var castagnoli crc32.Table
-	crc32.Table_Make_Into(&castagnoli, crc32.CASTAGNOLI)
+	castagnoli := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(castagnoli, crc32.CASTAGNOLI)
 	var other crc32.Digest
-	crc32.Digest_Init(&other, &castagnoli)
+	crc32.Digest_Init(&other, castagnoli)
 	other_before := other
 	testify.Equal(t, crc32.STATE_INPUT_STATUS_TABLE_INVALID,
 		crc32.Digest_Unmarshal(&other, state[:]))
@@ -148,13 +151,13 @@ func Test_State_Compatibility(t *testing.T) {
 
 // Test_Clone keeps table and checksum state caller-owned and independent.
 func Test_Clone(t *testing.T) {
-	var table crc32.Table
-	crc32.Table_Make_Into(&table, crc32.IEEE)
+	table := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(table, crc32.IEEE)
 	var source crc32.Digest
-	crc32.Digest_Init(&source, &table)
+	crc32.Digest_Init(&source, table)
 	crc32.Digest_Write(&source, crc32.Source("ab"))
 	var destination crc32.Digest
-	crc32.Digest_Init(&destination, &table)
+	crc32.Digest_Init(&destination, table)
 	crc32.Digest_Clone_Into(&destination, &source)
 	crc32.Digest_Write(&source, crc32.Source("c"))
 	testify.Equal(t, crc32.Digest_Value(0x352441c2), crc32.Digest_Sum_32(&source))
@@ -165,16 +168,31 @@ func Test_Clone(t *testing.T) {
 func Test_Bounds(t *testing.T) {
 	var uninitialized_table crc32.Table
 	var uninitialized_digest crc32.Digest
-	testify.Panics(t, func() { crc32.Checksum(nil, &uninitialized_table) })
+	testify.Panics(t, func() { crc32.Checksum(nil, uninitialized_table) })
+	testify.Panics(t, func() { crc32.Digest_Write(nil, nil) })
 	testify.Panics(t, func() { crc32.Digest_Write(&uninitialized_digest, nil) })
+	testify.Panics(t, func() { crc32.Digest_Reset(&uninitialized_digest) })
+	testify.Panics(t, func() { crc32.Digest_Sum_32(&uninitialized_digest) })
+	testify.Panics(t, func() {
+		crc32.Digest_Sum_Into(&uninitialized_digest, nil)
+	})
+	testify.Panics(t, func() {
+		crc32.Digest_Marshal_Into(&uninitialized_digest, nil)
+	})
+	testify.Panics(t, func() {
+		crc32.Digest_Unmarshal(&uninitialized_digest, nil)
+	})
+	testify.Panics(t, func() {
+		crc32.Digest_Clone_Into(&uninitialized_digest, &uninitialized_digest)
+	})
 
-	var table crc32.Table
-	crc32.Table_Make_Into(&table, crc32.IEEE)
+	table := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(table, crc32.IEEE)
 	var digest crc32.Digest
-	crc32.Digest_Init(&digest, &table)
+	crc32.Digest_Init(&digest, table)
 	var source [crc32.SOURCE_SIZE_MAXIMUM + 1]byte
-	testify.Panics(t, func() { crc32.Checksum(source[:], &table) })
-	testify.Panics(t, func() { crc32.Update(0, &table, source[:]) })
+	testify.Panics(t, func() { crc32.Checksum(source[:], table) })
+	testify.Panics(t, func() { crc32.Update(0, table, source[:]) })
 	testify.Panics(t, func() { crc32.Digest_Write(&digest, source[:]) })
 }
 
@@ -184,20 +202,20 @@ func Test_Invariant_Domains(t *testing.T) {
 	var output [crc32.DESTINATION_SIZE_MAXIMUM]byte
 	crc32_polynomial_domains(output[:])
 
-	var ieee crc32.Table
-	crc32.Table_Make_Into(&ieee, crc32.IEEE)
+	ieee := make(crc32.Table, crc32.TABLE_WORD_COUNT)
+	crc32.Table_Make_Into(ieee, crc32.IEEE)
 	for _, size := range [...]int{0, 1, 2, crc32.SOURCE_SIZE_MAXIMUM} {
-		crc32.Checksum(source[:size], &ieee)
+		crc32.Checksum(source[:size], ieee)
 		crc32.Checksum_IEEE(source[:size])
-		crc32.Update(0, &ieee, source[:size])
+		crc32.Update(0, ieee, source[:size])
 		var digest crc32.Digest
-		crc32.Digest_Init(&digest, &ieee)
+		crc32.Digest_Init(&digest, ieee)
 		crc32.Digest_Write(&digest, source[:size])
 		crc32.Digest_Unmarshal(&digest, source[:size])
 	}
 	for _, size := range [...]int{0, 1, 2, crc32.DESTINATION_SIZE_MAXIMUM} {
 		var digest crc32.Digest
-		crc32.Digest_Init(&digest, &ieee)
+		crc32.Digest_Init(&digest, ieee)
 		crc32.Digest_Sum_Into(&digest, output[:size])
 		crc32.Digest_Marshal_Into(&digest, output[:size])
 	}
@@ -214,12 +232,12 @@ func Test_Invariant_Domains(t *testing.T) {
 		crc32.Digest_Value(bits.WORD_32_MAXIMUM),
 	}
 	for index, preimage := range preimages {
-		testify.Equal(t, values[index], crc32.Checksum(preimage[:], &ieee))
+		testify.Equal(t, values[index], crc32.Checksum(preimage[:], ieee))
 		testify.Equal(t, values[index], crc32.Checksum_IEEE(preimage[:]))
-		testify.Equal(t, values[index], crc32.Update(0, &ieee, preimage[:]))
-		testify.Equal(t, values[index], crc32.Update(values[index], &ieee, nil))
+		testify.Equal(t, values[index], crc32.Update(0, ieee, preimage[:]))
+		testify.Equal(t, values[index], crc32.Update(values[index], ieee, nil))
 		var digest crc32.Digest
-		crc32.Digest_Init(&digest, &ieee)
+		crc32.Digest_Init(&digest, ieee)
 		crc32.Digest_Write(&digest, preimage[:])
 		crc32.Digest_Write(&digest, nil)
 		crc32.Digest_Sum_32(&digest)
@@ -227,38 +245,43 @@ func Test_Invariant_Domains(t *testing.T) {
 		var state [crc32.STATE_SIZE]byte
 		crc32.Digest_Marshal_Into(&digest, state[:])
 		var restored crc32.Digest
-		crc32.Digest_Init(&restored, &ieee)
+		crc32.Digest_Init(&restored, ieee)
 		crc32.Digest_Clone_Into(&restored, &digest)
 		crc32.Digest_Unmarshal(&restored, state[:])
 		var clone crc32.Digest
-		crc32.Digest_Init(&clone, &ieee)
+		crc32.Digest_Init(&clone, ieee)
 		crc32.Digest_Write(&clone, preimage[:])
 		crc32.Digest_Clone_Into(&clone, &digest)
-		crc32.Digest_Init(&clone, &ieee)
+		crc32.Digest_Init(&clone, ieee)
 		crc32.Digest_Reset(&digest)
 	}
 }
 
 // Test_Allocation proves table, one-shot, streaming, output, and clone paths own no heap storage.
 func Test_Allocation(t *testing.T) {
-	fixture := allocation_fixture{Source: crc32.Source("abc")}
-	crc32.Table_Make_Into(&fixture.Table, crc32.IEEE)
-	crc32.Digest_Init(&fixture.Digest, &fixture.Table)
-	crc32.Digest_Init(&fixture.Clone, &fixture.Table)
+	fixture := allocation_fixture{
+		Table:  make(crc32.Table, crc32.TABLE_WORD_COUNT),
+		Source: crc32.Source("abc"),
+		Output: make(crc32.Destination, crc32.DIGEST_SIZE),
+		State:  make(crc32.Destination, crc32.STATE_SIZE),
+	}
+	crc32.Table_Make_Into(fixture.Table, crc32.IEEE)
+	crc32.Digest_Init(&fixture.Digest, fixture.Table)
+	crc32.Digest_Init(&fixture.Clone, fixture.Table)
 	testify.Zero_Allocation(t, func() {
-		crc32.Table_Make_Into(&fixture.Table, crc32.IEEE)
+		crc32.Table_Make_Into(fixture.Table, crc32.IEEE)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Value = crc32.Checksum(fixture.Source, &fixture.Table)
+		fixture.Value = crc32.Checksum(fixture.Source, fixture.Table)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Value = crc32.Checksum_IEEE(fixture.Source)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Value = crc32.Update(fixture.Value, &fixture.Table, fixture.Source)
+		fixture.Value = crc32.Update(fixture.Value, fixture.Table, fixture.Source)
 	})
 	testify.Zero_Allocation(t, func() {
-		crc32.Digest_Init(&fixture.Digest, &fixture.Table)
+		crc32.Digest_Init(&fixture.Digest, fixture.Table)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Count = crc32.Digest_Write(&fixture.Digest, fixture.Source)
@@ -268,17 +291,17 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Output_Count, fixture.Output_Status = crc32.Digest_Sum_Into(
-			&fixture.Digest, fixture.Output[:],
+			&fixture.Digest, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Count, fixture.State_Output_Status = crc32.Digest_Marshal_Into(
-			&fixture.Digest, fixture.State[:],
+			&fixture.Digest, fixture.State,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.State_Input_Status = crc32.Digest_Unmarshal(
-			&fixture.Clone, fixture.State[:],
+			&fixture.Clone, crc32.Source(fixture.State),
 		)
 	})
 	testify.Zero_Allocation(t, func() { crc32.Digest_Reset(&fixture.Digest) })
@@ -293,8 +316,8 @@ type allocation_fixture struct {
 	Digest              crc32.Digest
 	Clone               crc32.Digest
 	Source              crc32.Source
-	Output              [crc32.DIGEST_SIZE]byte
-	State               [crc32.STATE_SIZE]byte
+	Output              crc32.Destination
+	State               crc32.Destination
 	Count               crc32.Count
 	Value               crc32.Digest_Value
 	Output_Count        crc32.Output_Count
@@ -328,14 +351,14 @@ func crc32_polynomial_domains(output crc32.Destination) {
 		crc32.Polynomial(bits.WORD_32_MINIMUM + 1 + 1),
 		crc32.Polynomial(bits.WORD_32_MAXIMUM),
 	}
-	var table crc32.Table
+	table := make(crc32.Table, crc32.TABLE_WORD_COUNT)
 	for _, polynomial := range polynomials {
-		crc32.Table_Make_Into(&table, polynomial)
-		crc32.Checksum(nil, &table)
-		crc32.Update(0, &table, nil)
+		crc32.Table_Make_Into(table, polynomial)
+		crc32.Checksum(nil, table)
+		crc32.Update(0, table, nil)
 		var digest crc32.Digest
-		crc32.Digest_Init(&digest, &table)
-		crc32.Digest_Init(&digest, &table)
+		crc32.Digest_Init(&digest, table)
+		crc32.Digest_Init(&digest, table)
 		crc32.Digest_Write(&digest, nil)
 		crc32.Digest_Sum_32(&digest)
 		crc32.Digest_Sum_Into(&digest, output)
@@ -343,9 +366,9 @@ func crc32_polynomial_domains(output crc32.Destination) {
 		crc32.Digest_Marshal_Into(&digest, state[:])
 		crc32.Digest_Unmarshal(&digest, state[:])
 		var clone crc32.Digest
-		crc32.Digest_Init(&clone, &table)
+		crc32.Digest_Init(&clone, table)
 		crc32.Digest_Clone_Into(&clone, &digest)
 		crc32.Digest_Reset(&digest)
 	}
-	crc32.Table_Make_Into(&table, polynomials[0])
+	crc32.Table_Make_Into(table, polynomials[0])
 }

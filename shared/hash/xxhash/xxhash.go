@@ -3,8 +3,7 @@
 // not collision-resistant against an adversary — for maps keyed by untrusted input use a keyed
 // hash, and for unpredictable output use crypto/prng.
 //
-// Hash is the one-shot form over a whole slice. Digest is the streaming form and an io.Writer (the
-// one method the house style permits), so io.Copy can feed it and Digest_Sum64 reads the result.
+// Hash is one-shot form. Digest_Init, Digest_Write, and Digest_Sum_64 provide streaming form.
 // Both produce identical output for identical bytes and seed.
 //
 // The algorithm and constants follow the xxHash specification; XXH64 is by Yann Collet.
@@ -90,29 +89,45 @@ func Accumulator_Invariants(value Accumulator, namespace aver.Namespace) {
 		Ensure()
 }
 
-// STATE_ACCUMULATOR_1_INDEX starts opaque state with first parallel lane.
-const STATE_ACCUMULATOR_1_INDEX = 0
+// Accumulator_1 is first streaming mixing lane.
+type Accumulator_1 uint64
 
-// STATE_ACCUMULATOR_2_INDEX follows first parallel lane.
-const STATE_ACCUMULATOR_2_INDEX = STATE_ACCUMULATOR_1_INDEX + 1
+// Accumulator_1_Invariants preserves complete first-lane state.
+func Accumulator_1_Invariants(value Accumulator_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
 
-// STATE_ACCUMULATOR_3_INDEX follows second parallel lane.
-const STATE_ACCUMULATOR_3_INDEX = STATE_ACCUMULATOR_2_INDEX + 1
+// Accumulator_2 is second streaming mixing lane.
+type Accumulator_2 uint64
 
-// STATE_ACCUMULATOR_4_INDEX follows third parallel lane.
-const STATE_ACCUMULATOR_4_INDEX = STATE_ACCUMULATOR_3_INDEX + 1
+// Accumulator_2_Invariants preserves complete second-lane state.
+func Accumulator_2_Invariants(value Accumulator_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
 
-// STATE_TOTAL_BYTES_INDEX keeps message length after parallel lanes.
-const STATE_TOTAL_BYTES_INDEX = STATE_ACCUMULATOR_4_INDEX + 1
+// Accumulator_3 is third streaming mixing lane.
+type Accumulator_3 uint64
 
-// STATE_SEED_INDEX keeps reset identity after message length.
-const STATE_SEED_INDEX = STATE_TOTAL_BYTES_INDEX + 1
+// Accumulator_3_Invariants preserves complete third-lane state.
+func Accumulator_3_Invariants(value Accumulator_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
 
-// STATE_BUFFER_FILL_INDEX keeps partial-stripe length after seed.
-const STATE_BUFFER_FILL_INDEX = STATE_SEED_INDEX + 1
+// Accumulator_4 is fourth streaming mixing lane.
+type Accumulator_4 uint64
 
-// STATE_WORD_COUNT derives exact caller-owned opaque storage.
-const STATE_WORD_COUNT = STATE_BUFFER_FILL_INDEX + 1
+// Accumulator_4_Invariants preserves complete fourth-lane state.
+func Accumulator_4_Invariants(value Accumulator_4, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
 
 // Source is one bounded input chunk.
 type Source []byte
@@ -134,25 +149,200 @@ func Tail_Invariants(value Tail, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Digest is the streaming XXH64 state. Construct it with New_Digest; the zero value is usable only
-// after a Digest_Reset. Fields are transparent, like prng.Xoshiro's State.
+// Count is bytes consumed by one bounded write.
+type Count int
+
+// Count_Invariants covers complete source count.
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Message_Size is bytes accepted by current digest.
+type Message_Size uint64
+
+// Message_Size_Invariants preserves overflow-safe message accounting.
+func Message_Size_Invariants(value Message_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Fill is live bytes in partial-stripe storage.
+type Buffer_Fill uint8
+
+// Buffer_Fill_Invariants excludes complete stripes.
+func Buffer_Fill_Invariants(value Buffer_Fill, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Source is bytes copied into one partial stripe.
+type Buffer_Source []byte
+
+// Buffer_Source_Invariants excludes complete stripes.
+func Buffer_Source_Invariants(value Buffer_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_1 packs first eight partial bytes.
+type Buffer_Lane_1 uint64
+
+// Buffer_Lane_1_Invariants preserves every packed first lane.
+func Buffer_Lane_1_Invariants(value Buffer_Lane_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_2 packs second eight partial bytes.
+type Buffer_Lane_2 uint64
+
+// Buffer_Lane_2_Invariants preserves every packed second lane.
+func Buffer_Lane_2_Invariants(value Buffer_Lane_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_3 packs third eight partial bytes.
+type Buffer_Lane_3 uint64
+
+// Buffer_Lane_3_Invariants preserves every packed third lane.
+func Buffer_Lane_3_Invariants(value Buffer_Lane_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer_Lane_4 packs fourth eight partial bytes.
+type Buffer_Lane_4 uint64
+
+// Buffer_Lane_4_Invariants preserves every packed fourth lane.
+func Buffer_Lane_4_Invariants(value Buffer_Lane_4, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Buffer packs partial bytes into little-endian lanes without fixed-array ownership.
+type Buffer struct {
+	// Lane_1 holds positions 0 through 7.
+	Lane_1 Buffer_Lane_1
+	// Lane_2 holds positions 8 through 15.
+	Lane_2 Buffer_Lane_2
+	// Lane_3 holds positions 16 through 23.
+	Lane_3 Buffer_Lane_3
+	// Lane_4 holds positions 24 through 31.
+	Lane_4 Buffer_Lane_4
+}
+
+// Buffer_Invariants covers each opaque lane through one buffer chain.
+func Buffer_Invariants(value Buffer, namespace aver.Namespace) {
+	Buffer_Lane_1_Invariants(value.Lane_1, namespace)
+	Buffer_Lane_2_Invariants(value.Lane_2, namespace)
+	Buffer_Lane_3_Invariants(value.Lane_3, namespace)
+	Buffer_Lane_4_Invariants(value.Lane_4, namespace)
+}
+
+// Four words avoid fixed storage while keeping partial bytes caller-owned.
+func buffer_write(
+	buffer Buffer, position Buffer_Fill, source Buffer_Source,
+) (updated Buffer) {
+	defer func() { Buffer_Invariants(updated, "buffer_write.updated") }()
+	Buffer_Invariants(buffer, "buffer_write.buffer")
+	Buffer_Fill_Invariants(position, "buffer_write.position")
+	Buffer_Source_Invariants(source, "buffer_write.source")
+	updated = buffer
+	for _, item := range source {
+		shift := uint(position%binary.UINT_64_SIZE) * binary.BITS_PER_BYTE
+		mask := uint64(bits.WORD_8_MAXIMUM) << shift
+		word := uint64(item) << shift
+		switch position / binary.UINT_64_SIZE {
+		case 0:
+			updated.Lane_1 = Buffer_Lane_1(uint64(updated.Lane_1)&^mask | word)
+		case 1:
+			updated.Lane_2 = Buffer_Lane_2(uint64(updated.Lane_2)&^mask | word)
+		case 2:
+			updated.Lane_3 = Buffer_Lane_3(uint64(updated.Lane_3)&^mask | word)
+		case 3:
+			updated.Lane_4 = Buffer_Lane_4(uint64(updated.Lane_4)&^mask | word)
+		default:
+			panic("xxhash: partial stripe exceeds bound")
+		}
+		position++
+	}
+	return updated
+}
+
+// Digest is caller-owned streaming XXH64 state.
 type Digest struct {
-	// State keeps opaque machine words in fixed caller storage. Private element meaning keeps
-	// machine-width implementation values from pretending to have narrower semantic domains.
-	State [STATE_WORD_COUNT]uint64
-	// Buffer holds bytes that did not complete a stripe, held until the next Write or Sum.
-	Buffer [STRIPE_BYTES]byte
+	// Accumulator_1 is first parallel lane.
+	Accumulator_1 Accumulator_1
+	// Accumulator_2 is second parallel lane.
+	Accumulator_2 Accumulator_2
+	// Accumulator_3 is third parallel lane.
+	Accumulator_3 Accumulator_3
+	// Accumulator_4 is fourth parallel lane.
+	Accumulator_4 Accumulator_4
+	// Total_Bytes keeps final length mixing exact.
+	Total_Bytes Message_Size
+	// Seed retains reset identity.
+	Seed Seed
+	// Buffer_Fill selects live Buffer prefix.
+	Buffer_Fill Buffer_Fill
+	// Buffer keeps partial bytes without fixed-array fields.
+	Buffer Buffer
 }
 
 // Digest_Invariants composes caller-owned streaming state.
 func Digest_Invariants(value Digest, namespace aver.Namespace) {
+	Accumulator_1_Invariants(value.Accumulator_1, namespace)
+	Accumulator_2_Invariants(value.Accumulator_2, namespace)
+	Accumulator_3_Invariants(value.Accumulator_3, namespace)
+	Accumulator_4_Invariants(value.Accumulator_4, namespace)
+	Message_Size_Invariants(value.Total_Bytes, namespace)
+	Seed_Invariants(value.Seed, namespace)
+	Buffer_Fill_Invariants(value.Buffer_Fill, namespace)
+	Buffer_Invariants(value.Buffer, namespace)
+}
+
+// Digest_Handle keeps caller-owned streaming state nonnil.
+type Digest_Handle *Digest
+
+// Digest_Handle_Invariants states state behind required handle.
+func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "XXH64 digest handle exists.")
+	Buffer_Invariants(value.Buffer, namespace)
+	aver.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value.Accumulator_1), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Accumulator_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Accumulator_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Accumulator_4), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Total_Bytes), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.Seed), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint8(
+			uint8(value.Buffer_Fill), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM,
+		).
+		Ensure()
 	aver.Always(
-		value.State[STATE_BUFFER_FILL_INDEX] <= BUFFER_FILL_MAXIMUM,
-		"Partial stripe fill cannot hold one complete stripe.",
-	)
-	aver.Always(
-		value.State[STATE_BUFFER_FILL_INDEX] <=
-			value.State[STATE_TOTAL_BYTES_INDEX],
+		uint64(value.Buffer_Fill) <= uint64(value.Total_Bytes),
 		"Partial stripe cannot contain more bytes than complete message.",
 	)
 }
@@ -172,26 +362,34 @@ func Hash(source Source, seed Seed) (hash Value) {
 		for len(source) >= STRIPE_BYTES {
 			accumulator_1 = xxhash_round(
 				accumulator_1,
-				read_lane((*[binary.UINT_64_SIZE]byte)(
-					source[0:binary.UINT_64_SIZE],
+				Lane(binary.Uint_64(
+					binary.Bytes(source[0:binary.UINT_64_SIZE]),
+					binary.LITTLE_ENDIAN,
 				)),
 			)
 			accumulator_2 = xxhash_round(
 				accumulator_2,
-				read_lane((*[binary.UINT_64_SIZE]byte)(
-					source[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2],
+				Lane(binary.Uint_64(
+					binary.Bytes(
+						source[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2],
+					),
+					binary.LITTLE_ENDIAN,
 				)),
 			)
 			accumulator_3 = xxhash_round(
 				accumulator_3,
-				read_lane((*[binary.UINT_64_SIZE]byte)(
-					source[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3],
+				Lane(binary.Uint_64(
+					binary.Bytes(
+						source[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3],
+					),
+					binary.LITTLE_ENDIAN,
 				)),
 			)
 			accumulator_4 = xxhash_round(
 				accumulator_4,
-				read_lane((*[binary.UINT_64_SIZE]byte)(
-					source[binary.UINT_64_SIZE*3:STRIPE_BYTES],
+				Lane(binary.Uint_64(
+					binary.Bytes(source[binary.UINT_64_SIZE*3:STRIPE_BYTES]),
+					binary.LITTLE_ENDIAN,
 				)),
 			)
 			source = source[STRIPE_BYTES:]
@@ -212,151 +410,155 @@ func Hash(source Source, seed Seed) (hash Value) {
 	return Value(xxhash_avalanche(accumulator))
 }
 
-// New_Digest returns a streaming Digest seeded with seed, ready to Write.
-func New_Digest(seed Seed) (digest Digest) {
-	defer func() { Digest_Invariants(digest, "New_Digest.digest") }()
-	Seed_Invariants(seed, "New_Digest.seed")
-	digest.State[STATE_SEED_INDEX] = uint64(seed)
-	digest_reset_accumulators(&digest)
-	return digest
+// Digest_Init establishes seeded state in caller storage.
+func Digest_Init(digest Digest_Handle, seed Seed) {
+	Digest_Handle_Invariants(digest, "Digest_Init.digest.input")
+	Seed_Invariants(seed, "Digest_Init.seed")
+	digest.Accumulator_1 = Accumulator_1(uint64(seed) + PRIME64_1 + PRIME64_2)
+	digest.Accumulator_2 = Accumulator_2(uint64(seed) + PRIME64_2)
+	digest.Accumulator_3 = Accumulator_3(seed)
+	digest.Accumulator_4 = Accumulator_4(uint64(seed) - PRIME64_1)
+	digest.Total_Bytes = 0
+	digest.Seed = seed
+	digest.Buffer_Fill = 0
+	digest.Buffer = Buffer{
+		Lane_1: Buffer_Lane_1(seed), Lane_2: Buffer_Lane_2(seed),
+		Lane_3: Buffer_Lane_3(seed), Lane_4: Buffer_Lane_4(seed),
+	}
 }
 
-// Digest_Reset returns digest to the state of a fresh New_Digest with the same seed, so the state
-// can be reused for another hash without reallocating.
-func Digest_Reset(digest *Digest) {
-	Digest_Invariants(*digest, "Digest_Reset.digest.input")
-	digest_reset_accumulators(digest)
-	Digest_Invariants(*digest, "Digest_Reset.digest.output")
+// Digest_Reset discards bytes while retaining seed.
+func Digest_Reset(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "Digest_Reset.digest.input")
+	Digest_Init(digest, digest.Seed)
 }
 
-// Write folds data into the running hash and reports every byte consumed with a nil error. It is
-// the one method the house style permits: it makes *Digest an io.Writer, so io.Copy can stream
-// into it. A Write never fails.
-func (digest *Digest) Write(data []byte) (consumed int, err error) {
-	Digest_Invariants(*digest, "Digest.Write.digest.input")
-	Source_Invariants(Source(data), "Digest.Write.data")
-	defer func() { Digest_Invariants(*digest, "Digest.Write.digest.output") }()
-	if len(data) > SOURCE_SIZE_MAXIMUM {
+// Digest_Write consumes one bounded source completely.
+func Digest_Write(digest Digest_Handle, source Source) (consumed Count) {
+	defer func() { Count_Invariants(consumed, "Digest_Write.consumed") }()
+	Digest_Handle_Invariants(digest, "Digest_Write.digest.input")
+	Source_Invariants(source, "Digest_Write.source")
+	defer func() { Digest_Handle_Invariants(digest, "Digest_Write.digest.output") }()
+	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("xxhash: source exceeds bound")
 	}
-	if digest.State[STATE_TOTAL_BYTES_INDEX] > bits.WORD_64_MAXIMUM-uint64(len(data)) {
+	if uint64(digest.Total_Bytes) > bits.WORD_64_MAXIMUM-uint64(len(source)) {
 		panic("xxhash: message exceeds bound")
 	}
-	consumed = len(data)
-	digest.State[STATE_TOTAL_BYTES_INDEX] += uint64(consumed)
+	consumed = Count(len(source))
+	digest.Total_Bytes += Message_Size(len(source))
 
-	// Not enough buffered plus new to complete a stripe: stash it and wait for more.
-	buffer_fill := int(digest.State[STATE_BUFFER_FILL_INDEX])
-	if buffer_fill+len(data) < STRIPE_BYTES {
-		copy(digest.Buffer[buffer_fill:], data)
-		digest.State[STATE_BUFFER_FILL_INDEX] += uint64(len(data))
-		return consumed, nil
+	process_lanes := func(lane_1 Lane, lane_2 Lane, lane_3 Lane, lane_4 Lane) {
+		digest.Accumulator_1 = Accumulator_1(xxhash_round(
+			Accumulator(digest.Accumulator_1), lane_1))
+		digest.Accumulator_2 = Accumulator_2(xxhash_round(
+			Accumulator(digest.Accumulator_2), lane_2))
+		digest.Accumulator_3 = Accumulator_3(xxhash_round(
+			Accumulator(digest.Accumulator_3), lane_3))
+		digest.Accumulator_4 = Accumulator_4(xxhash_round(
+			Accumulator(digest.Accumulator_4), lane_4))
 	}
 
-	// Finish the buffered partial stripe with the head of data, then fold it.
+	buffer_fill := int(digest.Buffer_Fill)
+	if buffer_fill+len(source) < STRIPE_BYTES {
+		digest.Buffer = buffer_write(digest.Buffer, digest.Buffer_Fill,
+			Buffer_Source(source))
+		digest.Buffer_Fill += Buffer_Fill(len(source))
+		return consumed
+	}
+
+	// Buffered head must fold before direct source stripes to preserve byte order.
 	if buffer_fill > 0 {
-		filled := copy(digest.Buffer[buffer_fill:], data)
-		data = data[filled:]
-		digest_process_stripe(digest, &digest.Buffer)
-		digest.State[STATE_BUFFER_FILL_INDEX] = 0
+		head_size := STRIPE_BYTES - buffer_fill
+		digest.Buffer = buffer_write(
+			digest.Buffer, digest.Buffer_Fill, Buffer_Source(source[:head_size]),
+		)
+		process_lanes(Lane(digest.Buffer.Lane_1), Lane(digest.Buffer.Lane_2),
+			Lane(digest.Buffer.Lane_3), Lane(digest.Buffer.Lane_4))
+		source = source[head_size:]
+		digest.Buffer_Fill = 0
 	}
 
-	// Fold whole stripes straight from data.
-	for len(data) >= STRIPE_BYTES {
-		digest_process_stripe(digest, (*[STRIPE_BYTES]byte)(data[:STRIPE_BYTES]))
-		data = data[STRIPE_BYTES:]
+	for len(source) >= STRIPE_BYTES {
+		process_lanes(
+			Lane(binary.Uint_64(
+				binary.Bytes(source[0:binary.UINT_64_SIZE]), binary.LITTLE_ENDIAN,
+			)),
+			Lane(binary.Uint_64(
+				binary.Bytes(source[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2]),
+				binary.LITTLE_ENDIAN,
+			)),
+			Lane(binary.Uint_64(
+				binary.Bytes(source[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3]),
+				binary.LITTLE_ENDIAN,
+			)),
+			Lane(binary.Uint_64(
+				binary.Bytes(source[binary.UINT_64_SIZE*3:STRIPE_BYTES]),
+				binary.LITTLE_ENDIAN,
+			)),
+		)
+		source = source[STRIPE_BYTES:]
 	}
 
-	// Stash the sub-stripe remainder for the next Write or the final Sum.
-	copy(digest.Buffer[:], data)
-	digest.State[STATE_BUFFER_FILL_INDEX] = uint64(len(data))
-	return consumed, nil
+	digest.Buffer = buffer_write(digest.Buffer, 0, Buffer_Source(source))
+	digest.Buffer_Fill = Buffer_Fill(len(source))
+	return consumed
 }
 
 // Digest_Sum64 returns the XXH64 of everything written so far, without disturbing the state, so
 // more can be written afterward.
-func Digest_Sum_64(digest *Digest) (hash Value) {
+func Digest_Sum_64(digest Digest_Handle) (hash Value) {
 	defer func() { Value_Invariants(hash, "Digest_Sum_64.hash") }()
-	Digest_Invariants(*digest, "Digest_Sum_64.digest")
+	Digest_Handle_Invariants(digest, "Digest_Sum_64.digest")
 	var accumulator Accumulator
 	// With no completed stripe the short-input path is used; otherwise the four accumulators
 	// converge. Total_Bytes, not Buffer_Fill, decides, since a long input can leave a tail.
-	if digest.State[STATE_TOTAL_BYTES_INDEX] >= STRIPE_BYTES {
+	if digest.Total_Bytes >= STRIPE_BYTES {
 		accumulator = Accumulator(bits.Rotate_Left_64(
-			bits.Word_64(digest.State[STATE_ACCUMULATOR_1_INDEX]), 1,
+			bits.Word_64(digest.Accumulator_1), 1,
 		)) + Accumulator(bits.Rotate_Left_64(
-			bits.Word_64(digest.State[STATE_ACCUMULATOR_2_INDEX]), 7,
+			bits.Word_64(digest.Accumulator_2), 7,
 		)) + Accumulator(bits.Rotate_Left_64(
-			bits.Word_64(digest.State[STATE_ACCUMULATOR_3_INDEX]), 12,
+			bits.Word_64(digest.Accumulator_3), 12,
 		)) + Accumulator(bits.Rotate_Left_64(
-			bits.Word_64(digest.State[STATE_ACCUMULATOR_4_INDEX]), 18,
+			bits.Word_64(digest.Accumulator_4), 18,
 		))
 		accumulator = xxhash_merge_accumulator(
-			accumulator, Lane(digest.State[STATE_ACCUMULATOR_1_INDEX]),
+			accumulator, Lane(digest.Accumulator_1),
 		)
 		accumulator = xxhash_merge_accumulator(
-			accumulator, Lane(digest.State[STATE_ACCUMULATOR_2_INDEX]),
+			accumulator, Lane(digest.Accumulator_2),
 		)
 		accumulator = xxhash_merge_accumulator(
-			accumulator, Lane(digest.State[STATE_ACCUMULATOR_3_INDEX]),
+			accumulator, Lane(digest.Accumulator_3),
 		)
 		accumulator = xxhash_merge_accumulator(
-			accumulator, Lane(digest.State[STATE_ACCUMULATOR_4_INDEX]),
+			accumulator, Lane(digest.Accumulator_4),
 		)
 	} else {
-		accumulator = Accumulator(digest.State[STATE_SEED_INDEX] + PRIME64_5)
+		accumulator = Accumulator(uint64(digest.Seed) + PRIME64_5)
 	}
-	accumulator += Accumulator(digest.State[STATE_TOTAL_BYTES_INDEX])
-	buffer_fill := digest.State[STATE_BUFFER_FILL_INDEX]
-	accumulator = xxhash_consume_tail(accumulator, Tail(digest.Buffer[:buffer_fill]))
+	accumulator += Accumulator(digest.Total_Bytes)
+	var tail_storage [STRIPE_BYTES]byte
+	for position := range int(digest.Buffer_Fill) {
+		var lane Lane
+		switch position / binary.UINT_64_SIZE {
+		case 0:
+			lane = Lane(digest.Buffer.Lane_1)
+		case 1:
+			lane = Lane(digest.Buffer.Lane_2)
+		case 2:
+			lane = Lane(digest.Buffer.Lane_3)
+		case 3:
+			lane = Lane(digest.Buffer.Lane_4)
+		}
+		shift := uint(position%binary.UINT_64_SIZE) * binary.BITS_PER_BYTE
+		tail_storage[position] = byte(uint64(lane) >> shift)
+	}
+	accumulator = xxhash_consume_tail(
+		accumulator, Tail(tail_storage[:digest.Buffer_Fill]),
+	)
 	return Value(xxhash_avalanche(accumulator))
-}
-
-// Resets the four accumulators to their seeded values and clears the byte count and buffer.
-func digest_reset_accumulators(digest *Digest) {
-	Digest_Invariants(*digest, "digest_reset_accumulators.digest.input")
-	seed := digest.State[STATE_SEED_INDEX]
-	digest.State[STATE_ACCUMULATOR_1_INDEX] = seed + PRIME64_1 + PRIME64_2
-	digest.State[STATE_ACCUMULATOR_2_INDEX] = seed + PRIME64_2
-	digest.State[STATE_ACCUMULATOR_3_INDEX] = seed
-	digest.State[STATE_ACCUMULATOR_4_INDEX] = seed - PRIME64_1
-	digest.State[STATE_TOTAL_BYTES_INDEX] = 0
-	digest.State[STATE_BUFFER_FILL_INDEX] = 0
-	Digest_Invariants(*digest, "digest_reset_accumulators.digest.output")
-}
-
-// Folds one 32-byte stripe into the four accumulators, one 8-byte lane each.
-func digest_process_stripe(digest *Digest, stripe *[STRIPE_BYTES]byte) {
-	Digest_Invariants(*digest, "digest_process_stripe.digest.input")
-	digest.State[STATE_ACCUMULATOR_1_INDEX] = uint64(xxhash_round(
-		Accumulator(digest.State[STATE_ACCUMULATOR_1_INDEX]),
-		read_lane((*[binary.UINT_64_SIZE]byte)(stripe[0:binary.UINT_64_SIZE])),
-	))
-	digest.State[STATE_ACCUMULATOR_2_INDEX] = uint64(xxhash_round(
-		Accumulator(digest.State[STATE_ACCUMULATOR_2_INDEX]),
-		read_lane((*[binary.UINT_64_SIZE]byte)(
-			stripe[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2],
-		)),
-	))
-	digest.State[STATE_ACCUMULATOR_3_INDEX] = uint64(xxhash_round(
-		Accumulator(digest.State[STATE_ACCUMULATOR_3_INDEX]),
-		read_lane((*[binary.UINT_64_SIZE]byte)(
-			stripe[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3],
-		)),
-	))
-	digest.State[STATE_ACCUMULATOR_4_INDEX] = uint64(xxhash_round(
-		Accumulator(digest.State[STATE_ACCUMULATOR_4_INDEX]),
-		read_lane((*[binary.UINT_64_SIZE]byte)(
-			stripe[binary.UINT_64_SIZE*3:STRIPE_BYTES],
-		)),
-	))
-	Digest_Invariants(*digest, "digest_process_stripe.digest.output")
-}
-
-// Reads eight bytes as a little-endian lane.
-func read_lane(source *[binary.UINT_64_SIZE]byte) (word Lane) {
-	defer func() { Lane_Invariants(word, "read_lane.word") }()
-	return Lane(binary.Uint_64(binary.Bytes(source[:]), binary.LITTLE_ENDIAN))
 }
 
 // Folds one lane into an accumulator: scale by PRIME64_2, rotate left 31, multiply by PRIME64_1.
@@ -388,9 +590,10 @@ func xxhash_consume_tail(accumulator Accumulator, tail Tail) (mixed Accumulator)
 	Accumulator_Invariants(accumulator, "xxhash_consume_tail.accumulator")
 	Tail_Invariants(tail, "xxhash_consume_tail.tail")
 	for len(tail) >= binary.UINT_64_SIZE {
-		accumulator ^= xxhash_round(0, read_lane(
-			(*[binary.UINT_64_SIZE]byte)(tail[0:binary.UINT_64_SIZE]),
+		word := Lane(binary.Uint_64(
+			binary.Bytes(tail[0:binary.UINT_64_SIZE]), binary.LITTLE_ENDIAN,
 		))
+		accumulator ^= xxhash_round(0, word)
 		accumulator = Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator), 27))*
 			PRIME64_1 + PRIME64_4
 		tail = tail[binary.UINT_64_SIZE:]

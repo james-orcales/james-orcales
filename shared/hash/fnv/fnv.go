@@ -315,18 +315,18 @@ func Value_128_Invariants(value Value_128, namespace aver.Namespace) {
 }
 
 // READY_EMPTY marks caller storage before initialization.
-const READY_EMPTY Ready = 0
+const READY_EMPTY Ready = false
 
 // READY_COMPLETE marks state established by width-specific Init.
-const READY_COMPLETE Ready = READY_EMPTY + 1
+const READY_COMPLETE Ready = true
 
-// Ready separates zero caller storage from valid FNV-1 state whose Kind is zero.
-type Ready uint8
+// Ready reports whether caller storage contains initialized FNV state.
+type Ready bool
 
-// Ready_Invariants admits zero storage and initialized state.
+// Ready_Invariants covers both lifecycle states.
 func Ready_Invariants(value Ready, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
+		Sometimes(bool(value), "FNV digest is initialized.").
 		Ensure()
 }
 
@@ -347,6 +347,21 @@ func Digest_32_Invariants(value Digest_32, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
+// Digest_32_Handle keeps caller-owned 32-bit state nonnil.
+type Digest_32_Handle *Digest_32
+
+// Digest_32_Handle_Invariants states 32-bit state behind required handle.
+func Digest_32_Handle_Invariants(value Digest_32_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "FNV-32 digest handle exists.")
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value.Kind), uint8(KIND_1), uint8(KIND_1A)).
+		Range_Uint32(
+			uint32(value.Value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM,
+		).
+		Sometimes(bool(value.Ready), "FNV-32 digest handle is initialized.").
+		Ensure()
+}
+
 // Digest_64 is caller-owned 64-bit streaming state.
 type Digest_64 struct {
 	// Kind selects FNV-1 or FNV-1a.
@@ -364,6 +379,21 @@ func Digest_64_Invariants(value Digest_64, namespace aver.Namespace) {
 	Ready_Invariants(value.Ready, namespace)
 }
 
+// Digest_64_Handle keeps caller-owned 64-bit state nonnil.
+type Digest_64_Handle *Digest_64
+
+// Digest_64_Handle_Invariants states 64-bit state behind required handle.
+func Digest_64_Handle_Invariants(value Digest_64_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "FNV-64 digest handle exists.")
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value.Kind), uint8(KIND_1), uint8(KIND_1A)).
+		Range_Uint64(
+			uint64(value.Value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Sometimes(bool(value.Ready), "FNV-64 digest handle is initialized.").
+		Ensure()
+}
+
 // Digest_128 is caller-owned 128-bit streaming state.
 type Digest_128 struct {
 	// Kind selects FNV-1 or FNV-1a.
@@ -379,6 +409,19 @@ func Digest_128_Invariants(value Digest_128, namespace aver.Namespace) {
 	Kind_Invariants(value.Kind, namespace)
 	Value_128_Invariants(value.Value, namespace)
 	Ready_Invariants(value.Ready, namespace)
+}
+
+// Digest_128_Handle keeps caller-owned 128-bit state nonnil.
+type Digest_128_Handle *Digest_128
+
+// Digest_128_Handle_Invariants states 128-bit state behind required handle.
+func Digest_128_Handle_Invariants(value Digest_128_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "FNV-128 digest handle exists.")
+	Value_128_Invariants(value.Value, namespace)
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value.Kind), uint8(KIND_1), uint8(KIND_1A)).
+		Sometimes(bool(value.Ready), "FNV-128 digest handle is initialized.").
+		Ensure()
 }
 
 // State_32_Count is either no state or one complete 32-bit state.
@@ -445,8 +488,8 @@ func State_Input_Status_Invariants(value State_Input_Status, namespace aver.Name
 }
 
 // Digest_32_Init establishes width-specific offset basis and caller-selected Kind.
-func Digest_32_Init(digest *Digest_32, kind Kind) {
-	Digest_32_Invariants(*digest, "Digest_32_Init.digest.input")
+func Digest_32_Init(digest Digest_32_Handle, kind Kind) {
+	Digest_32_Handle_Invariants(digest, "Digest_32_Init.digest.input")
 	Kind_Invariants(kind, "Digest_32_Init.kind")
 	kind_require(kind)
 	digest.Kind = kind
@@ -463,8 +506,8 @@ func Digest_32_Init(digest *Digest_32, kind Kind) {
 }
 
 // Digest_32_Reset retains Kind while discarding prior bytes.
-func Digest_32_Reset(digest *Digest_32) {
-	Digest_32_Invariants(*digest, "Digest_32_Reset.digest.input")
+func Digest_32_Reset(digest Digest_32_Handle) {
+	Digest_32_Handle_Invariants(digest, "Digest_32_Reset.digest.input")
 	digest_32_require(digest)
 	digest.Value = OFFSET_32
 	aver.Always(
@@ -475,11 +518,13 @@ func Digest_32_Reset(digest *Digest_32) {
 }
 
 // Digest_32_Write consumes one bounded source completely.
-func Digest_32_Write(digest *Digest_32, source Source) (count Count) {
+func Digest_32_Write(digest Digest_32_Handle, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_32_Write.count") }()
-	Digest_32_Invariants(*digest, "Digest_32_Write.digest.input")
+	Digest_32_Handle_Invariants(digest, "Digest_32_Write.digest.input")
 	Source_Invariants(source, "Digest_32_Write.source")
-	defer func() { Digest_32_Invariants(*digest, "Digest_32_Write.digest.output") }()
+	defer func() {
+		Digest_32_Handle_Invariants(digest, "Digest_32_Write.digest.output")
+	}()
 	digest_32_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -499,22 +544,22 @@ func Digest_32_Write(digest *Digest_32, source Source) (count Count) {
 }
 
 // Digest_32_Sum observes state without consuming it.
-func Digest_32_Sum(digest *Digest_32) (value Value_32) {
+func Digest_32_Sum(digest Digest_32_Handle) (value Value_32) {
 	defer func() { Value_32_Invariants(value, "Digest_32_Sum.value") }()
-	Digest_32_Invariants(*digest, "Digest_32_Sum.digest")
+	Digest_32_Handle_Invariants(digest, "Digest_32_Sum.digest")
 	digest_32_require(digest)
 	return digest.Value
 }
 
 // Digest_32_Sum_Into writes a complete big-endian value or leaves short storage untouched.
 func Digest_32_Sum_Into(
-	digest *Digest_32, destination Destination,
+	digest Digest_32_Handle, destination Destination,
 ) (count Output_32_Count, status Output_Status) {
 	defer func() {
 		Output_32_Count_Invariants(count, "Digest_32_Sum_Into.count")
 		Output_Status_Invariants(status, "Digest_32_Sum_Into.status")
 	}()
-	Digest_32_Invariants(*digest, "Digest_32_Sum_Into.digest")
+	Digest_32_Handle_Invariants(digest, "Digest_32_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_32_Sum_Into.destination")
 	digest_32_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -532,19 +577,19 @@ func Digest_32_Sum_Into(
 }
 
 // Digest_32_Clone_Into keeps source and result in caller storage.
-func Digest_32_Clone_Into(destination *Digest_32, source *Digest_32) {
-	Digest_32_Invariants(*destination, "Digest_32_Clone_Into.destination.input")
-	Digest_32_Invariants(*source, "Digest_32_Clone_Into.source")
+func Digest_32_Clone_Into(destination Digest_32_Handle, source Digest_32_Handle) {
+	Digest_32_Handle_Invariants(destination, "Digest_32_Clone_Into.destination.input")
+	Digest_32_Handle_Invariants(source, "Digest_32_Clone_Into.source")
 	defer func() {
-		Digest_32_Invariants(*destination, "Digest_32_Clone_Into.destination.output")
+		Digest_32_Handle_Invariants(destination, "Digest_32_Clone_Into.destination.output")
 	}()
 	digest_32_require(source)
 	*destination = *source
 }
 
 // Digest_64_Init establishes width-specific offset basis and caller-selected Kind.
-func Digest_64_Init(digest *Digest_64, kind Kind) {
-	Digest_64_Invariants(*digest, "Digest_64_Init.digest.input")
+func Digest_64_Init(digest Digest_64_Handle, kind Kind) {
+	Digest_64_Handle_Invariants(digest, "Digest_64_Init.digest.input")
 	Kind_Invariants(kind, "Digest_64_Init.kind")
 	kind_require(kind)
 	digest.Kind = kind
@@ -561,8 +606,8 @@ func Digest_64_Init(digest *Digest_64, kind Kind) {
 }
 
 // Digest_64_Reset retains Kind while discarding prior bytes.
-func Digest_64_Reset(digest *Digest_64) {
-	Digest_64_Invariants(*digest, "Digest_64_Reset.digest.input")
+func Digest_64_Reset(digest Digest_64_Handle) {
+	Digest_64_Handle_Invariants(digest, "Digest_64_Reset.digest.input")
 	digest_64_require(digest)
 	digest.Value = OFFSET_64
 	aver.Always(
@@ -573,11 +618,13 @@ func Digest_64_Reset(digest *Digest_64) {
 }
 
 // Digest_64_Write consumes one bounded source completely.
-func Digest_64_Write(digest *Digest_64, source Source) (count Count) {
+func Digest_64_Write(digest Digest_64_Handle, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_64_Write.count") }()
-	Digest_64_Invariants(*digest, "Digest_64_Write.digest.input")
+	Digest_64_Handle_Invariants(digest, "Digest_64_Write.digest.input")
 	Source_Invariants(source, "Digest_64_Write.source")
-	defer func() { Digest_64_Invariants(*digest, "Digest_64_Write.digest.output") }()
+	defer func() {
+		Digest_64_Handle_Invariants(digest, "Digest_64_Write.digest.output")
+	}()
 	digest_64_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -597,22 +644,22 @@ func Digest_64_Write(digest *Digest_64, source Source) (count Count) {
 }
 
 // Digest_64_Sum observes state without consuming it.
-func Digest_64_Sum(digest *Digest_64) (value Value_64) {
+func Digest_64_Sum(digest Digest_64_Handle) (value Value_64) {
 	defer func() { Value_64_Invariants(value, "Digest_64_Sum.value") }()
-	Digest_64_Invariants(*digest, "Digest_64_Sum.digest")
+	Digest_64_Handle_Invariants(digest, "Digest_64_Sum.digest")
 	digest_64_require(digest)
 	return digest.Value
 }
 
 // Digest_64_Sum_Into writes a complete big-endian value or leaves short storage untouched.
 func Digest_64_Sum_Into(
-	digest *Digest_64, destination Destination,
+	digest Digest_64_Handle, destination Destination,
 ) (count Output_64_Count, status Output_Status) {
 	defer func() {
 		Output_64_Count_Invariants(count, "Digest_64_Sum_Into.count")
 		Output_Status_Invariants(status, "Digest_64_Sum_Into.status")
 	}()
-	Digest_64_Invariants(*digest, "Digest_64_Sum_Into.digest")
+	Digest_64_Handle_Invariants(digest, "Digest_64_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_64_Sum_Into.destination")
 	digest_64_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -630,19 +677,19 @@ func Digest_64_Sum_Into(
 }
 
 // Digest_64_Clone_Into keeps source and result in caller storage.
-func Digest_64_Clone_Into(destination *Digest_64, source *Digest_64) {
-	Digest_64_Invariants(*destination, "Digest_64_Clone_Into.destination.input")
-	Digest_64_Invariants(*source, "Digest_64_Clone_Into.source")
+func Digest_64_Clone_Into(destination Digest_64_Handle, source Digest_64_Handle) {
+	Digest_64_Handle_Invariants(destination, "Digest_64_Clone_Into.destination.input")
+	Digest_64_Handle_Invariants(source, "Digest_64_Clone_Into.source")
 	defer func() {
-		Digest_64_Invariants(*destination, "Digest_64_Clone_Into.destination.output")
+		Digest_64_Handle_Invariants(destination, "Digest_64_Clone_Into.destination.output")
 	}()
 	digest_64_require(source)
 	*destination = *source
 }
 
 // Digest_128_Init establishes width-specific offset basis and caller-selected Kind.
-func Digest_128_Init(digest *Digest_128, kind Kind) {
-	Digest_128_Invariants(*digest, "Digest_128_Init.digest.input")
+func Digest_128_Init(digest Digest_128_Handle, kind Kind) {
+	Digest_128_Handle_Invariants(digest, "Digest_128_Init.digest.input")
 	Kind_Invariants(kind, "Digest_128_Init.kind")
 	kind_require(kind)
 	digest.Kind = kind
@@ -663,8 +710,8 @@ func Digest_128_Init(digest *Digest_128, kind Kind) {
 }
 
 // Digest_128_Reset retains Kind while discarding prior bytes.
-func Digest_128_Reset(digest *Digest_128) {
-	Digest_128_Invariants(*digest, "Digest_128_Reset.digest.input")
+func Digest_128_Reset(digest Digest_128_Handle) {
+	Digest_128_Handle_Invariants(digest, "Digest_128_Reset.digest.input")
 	digest_128_require(digest)
 	digest.Value = Value_128{High: OFFSET_128_HIGH, Low: OFFSET_128_LOW}
 	aver.Always(
@@ -679,11 +726,13 @@ func Digest_128_Reset(digest *Digest_128) {
 }
 
 // Digest_128_Write consumes one bounded source completely.
-func Digest_128_Write(digest *Digest_128, source Source) (count Count) {
+func Digest_128_Write(digest Digest_128_Handle, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_128_Write.count") }()
-	Digest_128_Invariants(*digest, "Digest_128_Write.digest.input")
+	Digest_128_Handle_Invariants(digest, "Digest_128_Write.digest.input")
 	Source_Invariants(source, "Digest_128_Write.source")
-	defer func() { Digest_128_Invariants(*digest, "Digest_128_Write.digest.output") }()
+	defer func() {
+		Digest_128_Handle_Invariants(digest, "Digest_128_Write.digest.output")
+	}()
 	digest_128_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -718,22 +767,22 @@ func Digest_128_Write(digest *Digest_128, source Source) (count Count) {
 }
 
 // Digest_128_Sum observes state without consuming it.
-func Digest_128_Sum(digest *Digest_128) (value Value_128) {
+func Digest_128_Sum(digest Digest_128_Handle) (value Value_128) {
 	defer func() { Value_128_Invariants(value, "Digest_128_Sum.value") }()
-	Digest_128_Invariants(*digest, "Digest_128_Sum.digest")
+	Digest_128_Handle_Invariants(digest, "Digest_128_Sum.digest")
 	digest_128_require(digest)
 	return digest.Value
 }
 
 // Digest_128_Sum_Into writes a complete big-endian value or leaves short storage untouched.
 func Digest_128_Sum_Into(
-	digest *Digest_128, destination Destination,
+	digest Digest_128_Handle, destination Destination,
 ) (count Output_128_Count, status Output_Status) {
 	defer func() {
 		Output_128_Count_Invariants(count, "Digest_128_Sum_Into.count")
 		Output_Status_Invariants(status, "Digest_128_Sum_Into.status")
 	}()
-	Digest_128_Invariants(*digest, "Digest_128_Sum_Into.digest")
+	Digest_128_Handle_Invariants(digest, "Digest_128_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_128_Sum_Into.destination")
 	digest_128_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -755,11 +804,13 @@ func Digest_128_Sum_Into(
 }
 
 // Digest_128_Clone_Into keeps source and result in caller storage.
-func Digest_128_Clone_Into(destination *Digest_128, source *Digest_128) {
-	Digest_128_Invariants(*destination, "Digest_128_Clone_Into.destination.input")
-	Digest_128_Invariants(*source, "Digest_128_Clone_Into.source")
+func Digest_128_Clone_Into(destination Digest_128_Handle, source Digest_128_Handle) {
+	Digest_128_Handle_Invariants(destination, "Digest_128_Clone_Into.destination.input")
+	Digest_128_Handle_Invariants(source, "Digest_128_Clone_Into.source")
 	defer func() {
-		Digest_128_Invariants(*destination, "Digest_128_Clone_Into.destination.output")
+		Digest_128_Handle_Invariants(
+			destination, "Digest_128_Clone_Into.destination.output",
+		)
 	}()
 	digest_128_require(source)
 	*destination = *source
@@ -767,13 +818,13 @@ func Digest_128_Clone_Into(destination *Digest_128, source *Digest_128) {
 
 // Digest_32_Marshal_Into emits standard width-and-kind state into caller storage.
 func Digest_32_Marshal_Into(
-	digest *Digest_32, destination Destination,
+	digest Digest_32_Handle, destination Destination,
 ) (count State_32_Count, status State_Output_Status) {
 	defer func() {
 		State_32_Count_Invariants(count, "Digest_32_Marshal_Into.count")
 		State_Output_Status_Invariants(status, "Digest_32_Marshal_Into.status")
 	}()
-	Digest_32_Invariants(*digest, "Digest_32_Marshal_Into.digest")
+	Digest_32_Handle_Invariants(digest, "Digest_32_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_32_Marshal_Into.destination")
 	digest_32_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -796,11 +847,13 @@ func Digest_32_Marshal_Into(
 }
 
 // Digest_32_Unmarshal changes state only after exact width-and-kind validation.
-func Digest_32_Unmarshal(digest *Digest_32, source Source) (status State_Input_Status) {
+func Digest_32_Unmarshal(digest Digest_32_Handle, source Source) (status State_Input_Status) {
 	defer func() { State_Input_Status_Invariants(status, "Digest_32_Unmarshal.status") }()
-	Digest_32_Invariants(*digest, "Digest_32_Unmarshal.digest.input")
+	Digest_32_Handle_Invariants(digest, "Digest_32_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_32_Unmarshal.source")
-	defer func() { Digest_32_Invariants(*digest, "Digest_32_Unmarshal.digest.output") }()
+	defer func() {
+		Digest_32_Handle_Invariants(digest, "Digest_32_Unmarshal.digest.output")
+	}()
 	digest_32_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -825,13 +878,13 @@ func Digest_32_Unmarshal(digest *Digest_32, source Source) (status State_Input_S
 
 // Digest_64_Marshal_Into emits standard width-and-kind state into caller storage.
 func Digest_64_Marshal_Into(
-	digest *Digest_64, destination Destination,
+	digest Digest_64_Handle, destination Destination,
 ) (count State_64_Count, status State_Output_Status) {
 	defer func() {
 		State_64_Count_Invariants(count, "Digest_64_Marshal_Into.count")
 		State_Output_Status_Invariants(status, "Digest_64_Marshal_Into.status")
 	}()
-	Digest_64_Invariants(*digest, "Digest_64_Marshal_Into.digest")
+	Digest_64_Handle_Invariants(digest, "Digest_64_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_64_Marshal_Into.destination")
 	digest_64_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -854,11 +907,13 @@ func Digest_64_Marshal_Into(
 }
 
 // Digest_64_Unmarshal changes state only after exact width-and-kind validation.
-func Digest_64_Unmarshal(digest *Digest_64, source Source) (status State_Input_Status) {
+func Digest_64_Unmarshal(digest Digest_64_Handle, source Source) (status State_Input_Status) {
 	defer func() { State_Input_Status_Invariants(status, "Digest_64_Unmarshal.status") }()
-	Digest_64_Invariants(*digest, "Digest_64_Unmarshal.digest.input")
+	Digest_64_Handle_Invariants(digest, "Digest_64_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_64_Unmarshal.source")
-	defer func() { Digest_64_Invariants(*digest, "Digest_64_Unmarshal.digest.output") }()
+	defer func() {
+		Digest_64_Handle_Invariants(digest, "Digest_64_Unmarshal.digest.output")
+	}()
 	digest_64_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -883,13 +938,13 @@ func Digest_64_Unmarshal(digest *Digest_64, source Source) (status State_Input_S
 
 // Digest_128_Marshal_Into emits standard width-and-kind state into caller storage.
 func Digest_128_Marshal_Into(
-	digest *Digest_128, destination Destination,
+	digest Digest_128_Handle, destination Destination,
 ) (count State_128_Count, status State_Output_Status) {
 	defer func() {
 		State_128_Count_Invariants(count, "Digest_128_Marshal_Into.count")
 		State_Output_Status_Invariants(status, "Digest_128_Marshal_Into.status")
 	}()
-	Digest_128_Invariants(*digest, "Digest_128_Marshal_Into.digest")
+	Digest_128_Handle_Invariants(digest, "Digest_128_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_128_Marshal_Into.destination")
 	digest_128_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -915,11 +970,13 @@ func Digest_128_Marshal_Into(
 }
 
 // Digest_128_Unmarshal changes state only after exact width-and-kind validation.
-func Digest_128_Unmarshal(digest *Digest_128, source Source) (status State_Input_Status) {
+func Digest_128_Unmarshal(digest Digest_128_Handle, source Source) (status State_Input_Status) {
 	defer func() { State_Input_Status_Invariants(status, "Digest_128_Unmarshal.status") }()
-	Digest_128_Invariants(*digest, "Digest_128_Unmarshal.digest.input")
+	Digest_128_Handle_Invariants(digest, "Digest_128_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_128_Unmarshal.source")
-	defer func() { Digest_128_Invariants(*digest, "Digest_128_Unmarshal.digest.output") }()
+	defer func() {
+		Digest_128_Handle_Invariants(digest, "Digest_128_Unmarshal.digest.output")
+	}()
 	digest_128_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -954,8 +1011,8 @@ func kind_require(kind Kind) {
 	}
 }
 
-func digest_32_require(digest *Digest_32) {
-	Digest_32_Invariants(*digest, "digest_32_require.digest")
+func digest_32_require(digest Digest_32_Handle) {
+	Digest_32_Handle_Invariants(digest, "digest_32_require.digest")
 	kind_require(digest.Kind)
 	aver.Always(
 		digest.Ready == READY_COMPLETE,
@@ -966,8 +1023,8 @@ func digest_32_require(digest *Digest_32) {
 	}
 }
 
-func digest_64_require(digest *Digest_64) {
-	Digest_64_Invariants(*digest, "digest_64_require.digest")
+func digest_64_require(digest Digest_64_Handle) {
+	Digest_64_Handle_Invariants(digest, "digest_64_require.digest")
 	kind_require(digest.Kind)
 	aver.Always(
 		digest.Ready == READY_COMPLETE,
@@ -978,8 +1035,8 @@ func digest_64_require(digest *Digest_64) {
 	}
 }
 
-func digest_128_require(digest *Digest_128) {
-	Digest_128_Invariants(*digest, "digest_128_require.digest")
+func digest_128_require(digest Digest_128_Handle) {
+	Digest_128_Handle_Invariants(digest, "digest_128_require.digest")
 	kind_require(digest.Kind)
 	aver.Always(
 		digest.Ready == READY_COMPLETE,

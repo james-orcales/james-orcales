@@ -10,6 +10,9 @@ import (
 
 // Test_Package_Owned_State verifies streaming operations need no common dispatcher.
 func Test_Package_Owned_State(t *testing.T) {
+	// Boolean backing makes third lifecycle state unrepresentable.
+	testify.False(t, bool(maphash.READY_EMPTY))
+	testify.True(t, bool(maphash.READY_COMPLETE))
 	var value maphash.Hash
 	maphash.Hash_Init(&value, test_seed())
 	count, write_status := maphash.Hash_Write(&value, maphash.Source("abc"))
@@ -153,12 +156,13 @@ func Test_Bounds(t *testing.T) {
 	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, status)
 }
 
-// Test_Invariant_Domains reaches seed, state, count, and caller-byte sentinels.
+// Test_Invariant_Domains reaches seed, state, count, tail position, and caller-byte sentinels.
 func Test_Invariant_Domains(t *testing.T) {
 	var source [maphash.SOURCE_SIZE_MAXIMUM]byte
 	var output [maphash.DESTINATION_SIZE_MAXIMUM]byte
 	maphash_seed_domains(source[:], output[:])
 	maphash_state_domains(t, output[:])
+	maphash_tail_byte_domains(test_seed())
 	seed := test_seed()
 	for _, size := range [...]int{0, 1, 2, maphash.DESTINATION_SIZE_MAXIMUM} {
 		var value maphash.Hash
@@ -202,8 +206,10 @@ func Test_Invariant_Domains(t *testing.T) {
 
 // Test_Allocation proves byte, text, stream, clone, reset, and output paths own no heap storage.
 func Test_Allocation(t *testing.T) {
+	// Output storage is made here, outside every Zero_Allocation closure.
 	fixture := allocation_fixture{
 		Seed: test_seed(), Source: maphash.Source("allocation"), Text: "allocation",
+		Output:               make(maphash.Destination, maphash.DIGEST_SIZE),
 		Message_Size_Maximum: maphash.Message_Size_Maximum(maphash.SOURCE_SIZE_MAXIMUM),
 	}
 	maphash.Hash_Init(&fixture.Hash, fixture.Seed)
@@ -236,7 +242,7 @@ func Test_Allocation(t *testing.T) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Output_Count, fixture.Output_Status = maphash.Hash_Sum_Into(
-			&fixture.Hash, fixture.Output[:],
+			&fixture.Hash, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
@@ -277,6 +283,14 @@ func maphash_state_domains(t *testing.T, output maphash.Destination) {
 		maphash.TAIL_COUNT_MINIMUM + 1 + 1,
 		maphash.TAIL_COUNT_MAXIMUM,
 	}
+	// Every position takes the row byte, because stale bytes past Tail_Count are legal state
+	// and the top position is otherwise only reachable through a completed word.
+	tail_bytes := [...]uint8{
+		maphash.TAIL_BYTE_MINIMUM,
+		maphash.TAIL_BYTE_MINIMUM + 1,
+		maphash.TAIL_BYTE_MINIMUM + 1 + 1,
+		maphash.TAIL_BYTE_MAXIMUM,
+	}
 	for index, word := range words {
 		value := maphash.Hash{
 			Seed: maphash.Seed{
@@ -288,6 +302,7 @@ func maphash_state_domains(t *testing.T, output maphash.Destination) {
 			State_1:              maphash.State_1(word),
 			State_2:              maphash.State_2(word),
 			State_3:              maphash.State_3(word),
+			Tail:                 test_tail(tail_bytes[index]),
 			Tail_Count:           maphash.Tail_Count(tails[index]),
 			Total_Count:          maphash.Total_Count(counts[index]),
 			Message_Size_Maximum: maphash.Message_Size_Maximum(counts[index]),
@@ -316,6 +331,41 @@ func maphash_state_domains(t *testing.T, output maphash.Destination) {
 		maphash.Hash_Init_Bounded(
 			&initialized, test_seed(), maphash.MESSAGE_SIZE_MAXIMUM,
 		)
+	}
+}
+
+// A completed word leaves every position holding its byte, so the next write sees each sentinel
+// in every position, the top one included.
+func maphash_tail_byte_domains(seed maphash.Seed) {
+	for _, item := range [...]uint8{
+		maphash.TAIL_BYTE_MINIMUM,
+		maphash.TAIL_BYTE_MINIMUM + 1,
+		maphash.TAIL_BYTE_MINIMUM + 1 + 1,
+		maphash.TAIL_BYTE_MAXIMUM,
+	} {
+		source := make(maphash.Source, maphash.BLOCK_SIZE)
+		for index := range source {
+			source[index] = item
+		}
+		var value maphash.Hash
+		maphash.Hash_Init(&value, seed)
+		maphash.Hash_Write(&value, source[:maphash.TAIL_COUNT_MAXIMUM])
+		maphash.Hash_Sum_64(&value)
+		maphash.Hash_Write_Byte(&value, maphash.Byte(item))
+		maphash.Hash_Write_Byte(&value, maphash.Byte(item))
+	}
+}
+
+func test_tail(item uint8) (tail maphash.Tail) {
+	return maphash.Tail{
+		Byte_0: maphash.Tail_Byte_0(item),
+		Byte_1: maphash.Tail_Byte_1(item),
+		Byte_2: maphash.Tail_Byte_2(item),
+		Byte_3: maphash.Tail_Byte_3(item),
+		Byte_4: maphash.Tail_Byte_4(item),
+		Byte_5: maphash.Tail_Byte_5(item),
+		Byte_6: maphash.Tail_Byte_6(item),
+		Byte_7: maphash.Tail_Byte_7(item),
 	}
 }
 
@@ -389,7 +439,7 @@ type allocation_fixture struct {
 	Clone                         maphash.Hash
 	Source                        maphash.Source
 	Text                          maphash.Text
-	Output                        [maphash.DIGEST_SIZE]byte
+	Output                        maphash.Destination
 	Value                         maphash.Value
 	Count                         maphash.Count
 	Write_Status                  maphash.Write_Status

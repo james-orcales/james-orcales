@@ -112,6 +112,12 @@ const STATE_COUNT_EMPTY State_Count = 0
 // STATE_COUNT_COMPLETE means one complete standard state reached caller storage.
 const STATE_COUNT_COMPLETE State_Count = State_Count(STATE_SIZE)
 
+// READY_EMPTY marks caller storage before initialization.
+const READY_EMPTY Ready = false
+
+// READY_COMPLETE marks state established by Digest_Init.
+const READY_COMPLETE Ready = true
+
 // Polynomial is any reflected 32-bit CRC polynomial.
 type Polynomial uint32
 
@@ -184,26 +190,57 @@ func Digest_Value_Invariants(value Digest_Value, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Table is caller-owned entries plus initialization identity.
-type Table [TABLE_WORD_COUNT]uint32
+// Table views caller-owned entries plus initialization identity.
+type Table []uint32
 
 // Table_Invariants binds table identity to its construction polynomial.
 func Table_Invariants(value Table, namespace aver.Namespace) {
+	aver.Always(len(value) == TABLE_WORD_COUNT, "CRC-32 table storage has required width.")
 	Polynomial_Invariants(Polynomial(value[TABLE_POLYNOMIAL_INDEX]), namespace)
+}
+
+// Ready reports whether caller storage contains initialized digest state.
+type Ready bool
+
+// Ready_Invariants covers both lifecycle states.
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "CRC-32 digest is initialized.").
+		Ensure()
 }
 
 // Digest is caller-owned streaming checksum and immutable table state.
 type Digest struct {
 	// Checksum is current standard state.
 	Checksum Digest_Value
-	// Table retains initialized caller table by value.
-	Table Table
+	// Polynomial retains table identity without aliasing caller storage.
+	Polynomial Polynomial
+	// Ready separates zero storage from initialized state.
+	Ready Ready
 }
 
 // Digest_Invariants composes current checksum with table identity.
 func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	Digest_Value_Invariants(value.Checksum, namespace)
-	Table_Invariants(value.Table, namespace)
+	Polynomial_Invariants(value.Polynomial, namespace)
+	Ready_Invariants(value.Ready, namespace)
+}
+
+// Digest_Handle keeps caller-owned state nonnil at every digest boundary.
+type Digest_Handle *Digest
+
+// Digest_Handle_Invariants states state behind required handle without hiding pointer fields.
+func Digest_Handle_Invariants(value Digest_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "CRC-32 digest handle exists.")
+	aver.Tree(value, namespace).
+		Range_Uint32(
+			uint32(value.Checksum), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM,
+		).
+		Range_Uint32(
+			uint32(value.Polynomial), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM,
+		).
+		Sometimes(bool(value.Ready), "CRC-32 digest handle is initialized.").
+		Ensure()
 }
 
 // State_Count is either no state or one complete standard state.
@@ -246,8 +283,8 @@ func State_Input_Status_Invariants(value State_Input_Status, namespace aver.Name
 
 // Table_Make_Into derives each entry from caller-selected polynomial instead of caching global
 // tables whose lifetime and initialization would sit outside dependency injection.
-func Table_Make_Into(table *Table, polynomial Polynomial) {
-	Table_Invariants(*table, "Table_Make_Into.table.input")
+func Table_Make_Into(table Table, polynomial Polynomial) {
+	Table_Invariants(table, "Table_Make_Into.table.input")
 	Polynomial_Invariants(polynomial, "Table_Make_Into.polynomial")
 	for index := range TABLE_ENTRY_COUNT {
 		checksum := uint32(index)
@@ -262,16 +299,16 @@ func Table_Make_Into(table *Table, polynomial Polynomial) {
 	}
 	table[TABLE_POLYNOMIAL_INDEX] = uint32(polynomial)
 	table[TABLE_READY_INDEX] = TABLE_READY_MARKER
-	Table_Invariants(*table, "Table_Make_Into.table.output")
+	Table_Invariants(table, "Table_Make_Into.table.output")
 }
 
 // Update continues a checksum over one bounded source using caller-owned table state.
 func Update(
-	checksum Digest_Value, table *Table, source Source,
+	checksum Digest_Value, table Table, source Source,
 ) (updated Digest_Value) {
 	defer func() { Digest_Value_Invariants(updated, "Update.updated") }()
 	Digest_Value_Invariants(checksum, "Update.checksum")
-	Table_Invariants(*table, "Update.table")
+	Table_Invariants(table, "Update.table")
 	Source_Invariants(source, "Update.source")
 	table_require(table)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
@@ -285,10 +322,10 @@ func Update(
 }
 
 // Checksum computes one bounded source with caller-selected table.
-func Checksum(source Source, table *Table) (checksum Digest_Value) {
+func Checksum(source Source, table Table) (checksum Digest_Value) {
 	defer func() { Digest_Value_Invariants(checksum, "Checksum.checksum") }()
 	Source_Invariants(source, "Checksum.source")
-	Table_Invariants(*table, "Checksum.table")
+	Table_Invariants(table, "Checksum.table")
 	table_require(table)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("crc32: source exceeds bound")
@@ -303,62 +340,67 @@ func Checksum_IEEE(source Source) (checksum Digest_Value) {
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("crc32: source exceeds bound")
 	}
-	var table Table
-	Table_Make_Into(&table, IEEE)
-	return Update(0, &table, source)
+	var table_storage [TABLE_WORD_COUNT]uint32
+	table := Table(table_storage[:])
+	Table_Make_Into(table, IEEE)
+	return Update(0, table, source)
 }
 
-// Digest_Init copies immutable table state so no external pointer can replace it during a stream.
-func Digest_Init(digest *Digest, table *Table) {
-	Digest_Invariants(*digest, "Digest_Init.digest.input")
-	Table_Invariants(*table, "Digest_Init.table")
+// Digest_Init copies table identity so external table mutation cannot alter one stream.
+func Digest_Init(digest Digest_Handle, table Table) {
+	Digest_Handle_Invariants(digest, "Digest_Init.digest.input")
+	Table_Invariants(table, "Digest_Init.table")
 	table_require(table)
 	digest.Checksum = 0
-	digest.Table = *table
+	digest.Polynomial = Polynomial(table[TABLE_POLYNOMIAL_INDEX])
+	digest.Ready = READY_COMPLETE
 	aver.Always(digest.Checksum == 0, "Fresh CRC-32 state starts at zero.")
-	Table_Invariants(digest.Table, "Digest_Init.digest.table.output")
+	Polynomial_Invariants(digest.Polynomial, "Digest_Init.digest.polynomial.output")
 }
 
 // Digest_Reset retains caller-selected polynomial while discarding prior bytes.
-func Digest_Reset(digest *Digest) {
-	Digest_Invariants(*digest, "Digest_Reset.digest.input")
+func Digest_Reset(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "Digest_Reset.digest.input")
 	digest_require(digest)
 	digest.Checksum = 0
 	aver.Always(digest.Checksum == 0, "Reset CRC-32 state starts at zero.")
-	Table_Invariants(digest.Table, "Digest_Reset.digest.table.output")
+	Polynomial_Invariants(digest.Polynomial, "Digest_Reset.digest.polynomial.output")
 }
 
 // Digest_Write consumes one bounded source completely.
-func Digest_Write(digest *Digest, source Source) (count Count) {
+func Digest_Write(digest Digest_Handle, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_Write.count") }()
-	Digest_Invariants(*digest, "Digest_Write.digest.input")
+	Digest_Handle_Invariants(digest, "Digest_Write.digest.input")
 	Source_Invariants(source, "Digest_Write.source")
+	defer func() { Digest_Handle_Invariants(digest, "Digest_Write.digest.output") }()
 	digest_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("crc32: source exceeds bound")
 	}
-	digest.Checksum = Update(digest.Checksum, &digest.Table, source)
-	Digest_Invariants(*digest, "Digest_Write.digest.output")
+	var table_storage [TABLE_WORD_COUNT]uint32
+	table := Table(table_storage[:])
+	Table_Make_Into(table, digest.Polynomial)
+	digest.Checksum = Update(digest.Checksum, table, source)
 	return Count(len(source))
 }
 
 // Digest_Sum_32 observes state without consuming it.
-func Digest_Sum_32(digest *Digest) (checksum Digest_Value) {
+func Digest_Sum_32(digest Digest_Handle) (checksum Digest_Value) {
 	defer func() { Digest_Value_Invariants(checksum, "Digest_Sum_32.checksum") }()
-	Digest_Invariants(*digest, "Digest_Sum_32.digest")
+	Digest_Handle_Invariants(digest, "Digest_Sum_32.digest")
 	digest_require(digest)
 	return digest.Checksum
 }
 
 // Digest_Sum_Into writes a complete big-endian checksum or leaves short storage untouched.
 func Digest_Sum_Into(
-	digest *Digest, destination Destination,
+	digest Digest_Handle, destination Destination,
 ) (count Output_Count, status Output_Status) {
 	defer func() {
 		Output_Count_Invariants(count, "Digest_Sum_Into.count")
 		Output_Status_Invariants(status, "Digest_Sum_Into.status")
 	}()
-	Digest_Invariants(*digest, "Digest_Sum_Into.digest")
+	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
 	digest_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -376,23 +418,25 @@ func Digest_Sum_Into(
 }
 
 // Digest_Clone_Into keeps table and checksum state in caller storage.
-func Digest_Clone_Into(destination *Digest, source *Digest) {
-	Digest_Invariants(*destination, "Digest_Clone_Into.destination.input")
-	Digest_Invariants(*source, "Digest_Clone_Into.source")
+func Digest_Clone_Into(destination Digest_Handle, source Digest_Handle) {
+	defer func() {
+		Digest_Handle_Invariants(destination, "Digest_Clone_Into.destination.output")
+	}()
+	Digest_Handle_Invariants(destination, "Digest_Clone_Into.destination.input")
+	Digest_Handle_Invariants(source, "Digest_Clone_Into.source")
 	digest_require(source)
 	*destination = *source
-	Digest_Invariants(*destination, "Digest_Clone_Into.destination.output")
 }
 
 // Digest_Marshal_Into emits standard state into caller storage.
 func Digest_Marshal_Into(
-	digest *Digest, destination Destination,
+	digest Digest_Handle, destination Destination,
 ) (count State_Count, status State_Output_Status) {
 	defer func() {
 		State_Count_Invariants(count, "Digest_Marshal_Into.count")
 		State_Output_Status_Invariants(status, "Digest_Marshal_Into.status")
 	}()
-	Digest_Invariants(*digest, "Digest_Marshal_Into.digest")
+	Digest_Handle_Invariants(digest, "Digest_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_Marshal_Into.destination")
 	digest_require(digest)
 	if len(destination) > DESTINATION_SIZE_MAXIMUM {
@@ -402,11 +446,15 @@ func Digest_Marshal_Into(
 		return STATE_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
 	}
 	copy(destination[:STATE_IDENTITY_SIZE], STATE_IDENTITY)
-	var identity_table Table
-	Table_Make_Into(&identity_table, IEEE)
+	var identity_table_storage [TABLE_WORD_COUNT]uint32
+	identity_table := Table(identity_table_storage[:])
+	Table_Make_Into(identity_table, IEEE)
+	var digest_table_storage [TABLE_WORD_COUNT]uint32
+	digest_table := Table(digest_table_storage[:])
+	Table_Make_Into(digest_table, digest.Polynomial)
 	register := ^uint32(0)
 	for entry_index := range TABLE_ENTRY_COUNT {
-		entry := digest.Table[entry_index]
+		entry := digest_table[entry_index]
 		for byte_index := range DIGEST_SIZE {
 			shift := bits.BIT_COUNT_32_MAXIMUM - binary.BITS_PER_BYTE*(byte_index+1)
 			item := byte(entry >> shift)
@@ -424,10 +472,13 @@ func Digest_Marshal_Into(
 }
 
 // Digest_Unmarshal changes checksum only after identity, size, and table validation.
-func Digest_Unmarshal(digest *Digest, source Source) (status State_Input_Status) {
+func Digest_Unmarshal(digest Digest_Handle, source Source) (status State_Input_Status) {
 	defer func() { State_Input_Status_Invariants(status, "Digest_Unmarshal.status") }()
-	Digest_Invariants(*digest, "Digest_Unmarshal.digest.input")
+	Digest_Handle_Invariants(digest, "Digest_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_Unmarshal.source")
+	defer func() {
+		Digest_Handle_Invariants(digest, "Digest_Unmarshal.digest.output")
+	}()
 	digest_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("crc32: source exceeds bound")
@@ -457,11 +508,15 @@ func Digest_Unmarshal(digest *Digest, source Source) (status State_Input_Status)
 		table_identity |= uint32(source[STATE_TABLE_POSITION+index]) << shift
 		checksum |= uint32(source[STATE_DIGEST_POSITION+index]) << shift
 	}
-	var identity_table Table
-	Table_Make_Into(&identity_table, IEEE)
+	var identity_table_storage [TABLE_WORD_COUNT]uint32
+	identity_table := Table(identity_table_storage[:])
+	Table_Make_Into(identity_table, IEEE)
+	var digest_table_storage [TABLE_WORD_COUNT]uint32
+	digest_table := Table(digest_table_storage[:])
+	Table_Make_Into(digest_table, digest.Polynomial)
 	register := ^uint32(0)
 	for entry_index := range TABLE_ENTRY_COUNT {
-		entry := digest.Table[entry_index]
+		entry := digest_table[entry_index]
 		for byte_index := range DIGEST_SIZE {
 			shift := bits.BIT_COUNT_32_MAXIMUM - binary.BITS_PER_BYTE*(byte_index+1)
 			item := byte(entry >> shift)
@@ -473,13 +528,12 @@ func Digest_Unmarshal(digest *Digest, source Source) (status State_Input_Status)
 		return STATE_INPUT_STATUS_TABLE_INVALID
 	}
 	digest.Checksum = Digest_Value(checksum)
-	Digest_Invariants(*digest, "Digest_Unmarshal.digest.output")
 	return STATE_INPUT_STATUS_OK
 }
 
 // Table and digest readiness prevent zero caller storage from becoming attacker-selected state.
-func table_require(table *Table) {
-	Table_Invariants(*table, "table_require.table")
+func table_require(table Table) {
+	Table_Invariants(table, "table_require.table")
 	aver.Always(
 		table[TABLE_READY_INDEX] == TABLE_READY_MARKER,
 		"CRC-32 table operations require Table_Make_Into.",
@@ -489,9 +543,9 @@ func table_require(table *Table) {
 	}
 }
 
-func digest_require(digest *Digest) {
-	Digest_Invariants(*digest, "digest_require.digest")
-	ready := digest.Table[TABLE_READY_INDEX] == TABLE_READY_MARKER
+func digest_require(digest Digest_Handle) {
+	Digest_Handle_Invariants(digest, "digest_require.digest")
+	ready := digest.Ready == READY_COMPLETE
 	aver.Always(
 		ready,
 		"CRC-32 digest operations require Digest_Init.",

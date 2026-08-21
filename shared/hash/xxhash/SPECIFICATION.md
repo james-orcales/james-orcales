@@ -18,8 +18,7 @@ fixed vectors underweight.
 
 # Write Reports Full Count
 
-Write consumes and reports every byte and never errors, and a *Digest works as an io.Writer, so
-io.Copy feeds it the same result Hash produces.
+Digest_Write consumes and reports every byte.
 
 # Reset Restores Initial State
 

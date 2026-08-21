@@ -29,6 +29,18 @@ const TAIL_COUNT_MINIMUM = 0
 // TAIL_COUNT_MAXIMUM leaves a complete word for immediate compression.
 const TAIL_COUNT_MAXIMUM = BLOCK_SIZE - 1
 
+// TAIL_BYTE_MINIMUM admits a zero message byte in any partial-word position.
+const TAIL_BYTE_MINIMUM uint8 = bits.WORD_8_MINIMUM
+
+// TAIL_BYTE_MAXIMUM keeps every byte value because message bytes are opaque.
+const TAIL_BYTE_MAXIMUM uint8 = bits.WORD_8_MAXIMUM
+
+// TAIL_INDEX_MINIMUM is the lowest little-endian word position.
+const TAIL_INDEX_MINIMUM = 0
+
+// TAIL_INDEX_MAXIMUM reaches the top word position because a completed word drains through Tail.
+const TAIL_INDEX_MAXIMUM = BLOCK_SIZE - 1
+
 // TOTAL_COUNT_MINIMUM is an empty message.
 const TOTAL_COUNT_MINIMUM uint32 = bits.WORD_32_MINIMUM
 
@@ -254,6 +266,147 @@ func Tail_Count_Invariants(value Tail_Count, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Tail_Byte_0 is the partial-word byte at bits 0 through 7.
+type Tail_Byte_0 uint8
+
+// Tail_Byte_0_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_0_Invariants(value Tail_Byte_0, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Byte_1 is the partial-word byte at bits 8 through 15.
+type Tail_Byte_1 uint8
+
+// Tail_Byte_1_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_1_Invariants(value Tail_Byte_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Byte_2 is the partial-word byte at bits 16 through 23.
+type Tail_Byte_2 uint8
+
+// Tail_Byte_2_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_2_Invariants(value Tail_Byte_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Byte_3 is the partial-word byte at bits 24 through 31.
+type Tail_Byte_3 uint8
+
+// Tail_Byte_3_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_3_Invariants(value Tail_Byte_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Byte_4 is the partial-word byte at bits 32 through 39.
+type Tail_Byte_4 uint8
+
+// Tail_Byte_4_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_4_Invariants(value Tail_Byte_4, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Byte_5 is the partial-word byte at bits 40 through 47.
+type Tail_Byte_5 uint8
+
+// Tail_Byte_5_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_5_Invariants(value Tail_Byte_5, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Byte_6 is the partial-word byte at bits 48 through 55.
+type Tail_Byte_6 uint8
+
+// Tail_Byte_6_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_6_Invariants(value Tail_Byte_6, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Byte_7 is the partial-word byte at bits 56 through 63.
+type Tail_Byte_7 uint8
+
+// Tail_Byte_7_Invariants keeps the full byte domain because message bytes are opaque.
+func Tail_Byte_7_Invariants(value Tail_Byte_7, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Index selects one little-endian position of the partial word.
+type Tail_Index int
+
+// Tail_Index_Invariants reaches the top position because a completed word drains through Tail.
+func Tail_Index_Invariants(value Tail_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), TAIL_INDEX_MINIMUM, TAIL_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Tail is the partial SipHash message word. One field per position, each with its own defined
+// type, because a fixed array field is banned and one coverage tree holds a type one time.
+type Tail struct {
+	// Byte_0 sits at bits 0 through 7.
+	Byte_0 Tail_Byte_0
+	// Byte_1 sits at bits 8 through 15.
+	Byte_1 Tail_Byte_1
+	// Byte_2 sits at bits 16 through 23.
+	Byte_2 Tail_Byte_2
+	// Byte_3 sits at bits 24 through 31.
+	Byte_3 Tail_Byte_3
+	// Byte_4 sits at bits 32 through 39.
+	Byte_4 Tail_Byte_4
+	// Byte_5 sits at bits 40 through 47.
+	Byte_5 Tail_Byte_5
+	// Byte_6 sits at bits 48 through 55.
+	Byte_6 Tail_Byte_6
+	// Byte_7 sits at bits 56 through 63.
+	Byte_7 Tail_Byte_7
+}
+
+// Tail_Invariants composes every position so each byte keeps its own coverage axes.
+func Tail_Invariants(value Tail, namespace aver.Namespace) {
+	Tail_Byte_0_Invariants(value.Byte_0, namespace)
+	Tail_Byte_1_Invariants(value.Byte_1, namespace)
+	Tail_Byte_2_Invariants(value.Byte_2, namespace)
+	Tail_Byte_3_Invariants(value.Byte_3, namespace)
+	Tail_Byte_4_Invariants(value.Byte_4, namespace)
+	Tail_Byte_5_Invariants(value.Byte_5, namespace)
+	Tail_Byte_6_Invariants(value.Byte_6, namespace)
+	Tail_Byte_7_Invariants(value.Byte_7, namespace)
+}
+
+// Tail_Handle keeps partial-word state nonnil while one byte changes.
+type Tail_Handle *Tail
+
+// Tail_Handle_Invariants states partial-word bytes behind required handle.
+func Tail_Handle_Invariants(value Tail_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "Map hash tail handle exists.")
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value.Byte_0), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Range_Uint8(uint8(value.Byte_1), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Range_Uint8(uint8(value.Byte_2), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Range_Uint8(uint8(value.Byte_3), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Range_Uint8(uint8(value.Byte_4), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Range_Uint8(uint8(value.Byte_5), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Range_Uint8(uint8(value.Byte_6), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Range_Uint8(uint8(value.Byte_7), TAIL_BYTE_MINIMUM, TAIL_BYTE_MAXIMUM).
+		Ensure()
+}
+
 // Message_Size_Maximum is caller-selected logical message bound.
 type Message_Size_Maximum uint32
 
@@ -315,18 +468,18 @@ func Total_Count_Invariants(value Total_Count, namespace aver.Namespace) {
 }
 
 // READY_EMPTY marks caller storage before initialization.
-const READY_EMPTY Ready = 0
+const READY_EMPTY Ready = false
 
 // READY_COMPLETE marks keyed initialized state.
-const READY_COMPLETE Ready = READY_EMPTY + 1
+const READY_COMPLETE Ready = true
 
-// Ready separates zero caller storage from keyed state.
-type Ready uint8
+// Ready reports whether caller storage contains keyed state.
+type Ready bool
 
-// Ready_Invariants admits zero storage and keyed state.
+// Ready_Invariants covers both lifecycle states.
 func Ready_Invariants(value Ready, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
+		Sometimes(bool(value), "Map hash state is initialized.").
 		Ensure()
 }
 
@@ -342,8 +495,9 @@ type Hash struct {
 	State_2 State_2
 	// State_3 is fourth SipHash lane.
 	State_3 State_3
-	// Tail holds partial word bytes until compression.
-	Tail [BLOCK_SIZE]byte
+	// Tail holds partial word bytes until compression. Positions at and past Tail_Count keep
+	// stale bytes, because a flush never clears them and no reader looks past Tail_Count.
+	Tail Tail
 	// Tail_Count is partial bytes currently stored in Tail.
 	Tail_Count Tail_Count
 	// Total_Count is accepted bytes in current logical message.
@@ -362,10 +516,46 @@ func Hash_Invariants(value Hash, namespace aver.Namespace) {
 	State_1_Invariants(value.State_1, namespace)
 	State_2_Invariants(value.State_2, namespace)
 	State_3_Invariants(value.State_3, namespace)
+	Tail_Invariants(value.Tail, namespace)
 	Tail_Count_Invariants(value.Tail_Count, namespace)
 	Total_Count_Invariants(value.Total_Count, namespace)
 	Message_Size_Maximum_Invariants(value.Message_Size_Maximum, namespace)
 	Ready_Invariants(value.Ready, namespace)
+}
+
+// Hash_Handle keeps caller-owned keyed state nonnil.
+type Hash_Handle *Hash
+
+// Hash_Handle_Invariants states keyed state behind required handle.
+func Hash_Handle_Invariants(value Hash_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "Map hash handle exists.")
+	Seed_Invariants(value.Seed, namespace)
+	Tail_Invariants(value.Tail, namespace)
+	aver.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value.State_0), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.State_1), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.State_2), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Uint64(
+			uint64(value.State_3), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
+		).
+		Range_Int(
+			int(value.Tail_Count), TAIL_COUNT_MINIMUM, TAIL_COUNT_MAXIMUM,
+		).
+		Range_Uint32(
+			uint32(value.Total_Count), TOTAL_COUNT_MINIMUM, TOTAL_COUNT_MAXIMUM,
+		).
+		Range_Uint32(
+			uint32(value.Message_Size_Maximum),
+			TOTAL_COUNT_MINIMUM, TOTAL_COUNT_MAXIMUM,
+		).
+		Sometimes(bool(value.Ready), "Map hash handle is initialized.").
+		Ensure()
 	aver.Always(
 		uint32(value.Total_Count) <= uint32(value.Message_Size_Maximum),
 		"Map hash total count stays inside configured message bound.",
@@ -383,15 +573,15 @@ func Value_Invariants(value Value, namespace aver.Namespace) {
 }
 
 // Hash_Init applies package logical-message bound.
-func Hash_Init(value *Hash, seed Seed) {
-	Hash_Invariants(*value, "Hash_Init.value")
+func Hash_Init(value Hash_Handle, seed Seed) {
+	Hash_Handle_Invariants(value, "Hash_Init.value")
 	Seed_Invariants(seed, "Hash_Init.seed")
 	Hash_Init_Bounded(value, seed, MESSAGE_SIZE_MAXIMUM)
 }
 
 // Hash_Init_Bounded injects key and logical-message bound into opaque caller storage.
-func Hash_Init_Bounded(value *Hash, seed Seed, maximum Message_Size_Maximum) {
-	Hash_Invariants(*value, "Hash_Init_Bounded.value.input")
+func Hash_Init_Bounded(value Hash_Handle, seed Seed, maximum Message_Size_Maximum) {
+	Hash_Handle_Invariants(value, "Hash_Init_Bounded.value.input")
 	Seed_Invariants(seed, "Hash_Init_Bounded.seed")
 	Message_Size_Maximum_Invariants(maximum, "Hash_Init_Bounded.maximum")
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
@@ -404,7 +594,7 @@ func Hash_Init_Bounded(value *Hash, seed Seed, maximum Message_Size_Maximum) {
 	value.State_1 = State_1(uint64(seed.Key_1) ^ SIP_INITIAL_1)
 	value.State_2 = State_2(uint64(seed.Key_0) ^ SIP_INITIAL_2)
 	value.State_3 = State_3(uint64(seed.Key_1) ^ SIP_INITIAL_3)
-	clear(value.Tail[:])
+	value.Tail = Tail{}
 	value.Tail_Count = 0
 	value.Total_Count = 0
 	value.Message_Size_Maximum = maximum
@@ -416,15 +606,15 @@ func Hash_Init_Bounded(value *Hash, seed Seed, maximum Message_Size_Maximum) {
 
 // Hash_Write absorbs one bounded source or leaves state unchanged at the logical-message bound.
 func Hash_Write(
-	value *Hash, source Source,
+	value Hash_Handle, source Source,
 ) (count Count, status Write_Status) {
 	defer func() {
 		Count_Invariants(count, "Hash_Write.count")
 		Write_Status_Invariants(status, "Hash_Write.status")
 	}()
-	Hash_Invariants(*value, "Hash_Write.value.input")
+	Hash_Handle_Invariants(value, "Hash_Write.value.input")
 	Source_Invariants(source, "Hash_Write.source")
-	defer func() { Hash_Invariants(*value, "Hash_Write.value.output") }()
+	defer func() { Hash_Handle_Invariants(value, "Hash_Write.value.output") }()
 	// Empty input cannot touch keyed lanes. Structural storage remains safe to inspect before
 	// lifecycle rejection; nonempty input never crosses readiness boundary.
 	if len(source) == 0 {
@@ -445,30 +635,27 @@ func Hash_Write(
 		return 0, WRITE_STATUS_MESSAGE_TOO_LARGE
 	}
 	value.Total_Count += Total_Count(len(source))
-	if value.Tail_Count != 0 {
-		copied := copy(value.Tail[value.Tail_Count:], source)
-		value.Tail_Count += Tail_Count(copied)
-		source = source[copied:]
-	}
-	if value.Tail_Count == BLOCK_SIZE {
-		value.Tail_Count = 0
-		hash_write_blocks(value, value.Tail[:])
-	}
 	hash_write_blocks(value, source)
 	return Count(source_size), WRITE_STATUS_OK
 }
 
 // Complete words move through one helper so Write keeps validation and bound policy visible.
-func hash_write_blocks(value *Hash, source Source) {
-	Hash_Invariants(*value, "hash_write_blocks.value.input")
+func hash_write_blocks(value Hash_Handle, source Source) {
+	Hash_Handle_Invariants(value, "hash_write_blocks.value.input")
 	Source_Invariants(source, "hash_write_blocks.source")
-	tail_wait := value.Tail_Count != 0 &&
-		value.Tail_Count < BLOCK_SIZE && len(source) == 0
-	for !tail_wait && (value.Tail_Count == BLOCK_SIZE || len(source) >= BLOCK_SIZE) {
+	// Partial word first, one position at a time. Tail_Count sits at BLOCK_SIZE only until the
+	// word loop drains it, and Hash_Invariants never runs in between.
+	for value.Tail_Count != 0 && value.Tail_Count != BLOCK_SIZE && len(source) != 0 {
+		set_tail_byte(&value.Tail, Tail_Index(value.Tail_Count), Byte(source[0]))
+		value.Tail_Count++
+		source = source[1:]
+	}
+	for value.Tail_Count == BLOCK_SIZE || len(source) >= BLOCK_SIZE {
 		var word uint64
 		if value.Tail_Count == BLOCK_SIZE {
 			for index := range BLOCK_SIZE {
-				word |= uint64(value.Tail[index]) << (BITS_PER_BYTE * index)
+				item := tail_byte_at(value.Tail, Tail_Index(index))
+				word |= uint64(item) << (BITS_PER_BYTE * index)
 			}
 			value.Tail_Count = 0
 		} else {
@@ -508,22 +695,77 @@ func hash_write_blocks(value *Hash, source Source) {
 		value.State_2 = State_2(state_2)
 		value.State_3 = State_3(state_3)
 	}
-	if !tail_wait {
-		copy(value.Tail[:], source)
+	// Tail is empty whenever bytes remain: the fill loop consumed the source or completed the
+	// word the block loop drained.
+	if len(source) != 0 {
+		for index := range len(source) {
+			set_tail_byte(&value.Tail, Tail_Index(index), Byte(source[index]))
+		}
 		value.Tail_Count = Tail_Count(len(source))
 	}
-	Hash_Invariants(*value, "hash_write_blocks.value.output")
+	Hash_Handle_Invariants(value, "hash_write_blocks.value.output")
+}
+
+// One read over Tail positions, so Sum and the word flush share it.
+func tail_byte_at(value Tail, index Tail_Index) (item Byte) {
+	defer func() { Byte_Invariants(item, "tail_byte_at.item") }()
+	Tail_Invariants(value, "tail_byte_at.value")
+	Tail_Index_Invariants(index, "tail_byte_at.index")
+	switch index {
+	case 0:
+		item = Byte(value.Byte_0)
+	case 1:
+		item = Byte(value.Byte_1)
+	case 2:
+		item = Byte(value.Byte_2)
+	case 3:
+		item = Byte(value.Byte_3)
+	case 4:
+		item = Byte(value.Byte_4)
+	case 5:
+		item = Byte(value.Byte_5)
+	case 6:
+		item = Byte(value.Byte_6)
+	case 7:
+		item = Byte(value.Byte_7)
+	}
+	return item
+}
+
+// One write over Tail positions, so the partial-word fill stays byte-wise.
+func set_tail_byte(value Tail_Handle, index Tail_Index, item Byte) {
+	Tail_Handle_Invariants(value, "set_tail_byte.value")
+	Tail_Index_Invariants(index, "set_tail_byte.index")
+	Byte_Invariants(item, "set_tail_byte.item")
+	switch index {
+	case 0:
+		value.Byte_0 = Tail_Byte_0(item)
+	case 1:
+		value.Byte_1 = Tail_Byte_1(item)
+	case 2:
+		value.Byte_2 = Tail_Byte_2(item)
+	case 3:
+		value.Byte_3 = Tail_Byte_3(item)
+	case 4:
+		value.Byte_4 = Tail_Byte_4(item)
+	case 5:
+		value.Byte_5 = Tail_Byte_5(item)
+	case 6:
+		value.Byte_6 = Tail_Byte_6(item)
+	case 7:
+		value.Byte_7 = Tail_Byte_7(item)
+	}
 }
 
 // Hash_Write_Text uses bounded stack conversion so string support does not allocate.
 func Hash_Write_Text(
-	value *Hash, text Text,
+	value Hash_Handle, text Text,
 ) (count Count, status Write_Status) {
 	defer func() {
 		Count_Invariants(count, "Hash_Write_Text.count")
 		Write_Status_Invariants(status, "Hash_Write_Text.status")
 	}()
-	Hash_Invariants(*value, "Hash_Write_Text.value")
+	Hash_Handle_Invariants(value, "Hash_Write_Text.value")
 	Text_Invariants(text, "Hash_Write_Text.text")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Text requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
@@ -538,9 +780,9 @@ func Hash_Write_Text(
 }
 
 // Hash_Write_Byte avoids caller slice construction while preserving total bound status.
-func Hash_Write_Byte(value *Hash, item Byte) (status Write_Status) {
+func Hash_Write_Byte(value Hash_Handle, item Byte) (status Write_Status) {
 	defer func() { Write_Status_Invariants(status, "Hash_Write_Byte.status") }()
-	Hash_Invariants(*value, "Hash_Write_Byte.value")
+	Hash_Handle_Invariants(value, "Hash_Write_Byte.value")
 	Byte_Invariants(item, "Hash_Write_Byte.item")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Byte requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
@@ -552,9 +794,9 @@ func Hash_Write_Byte(value *Hash, item Byte) (status Write_Status) {
 }
 
 // Hash_Sum_64 finalizes a copy of state so more bytes may follow.
-func Hash_Sum_64(value *Hash) (result Value) {
+func Hash_Sum_64(value Hash_Handle) (result Value) {
 	defer func() { Value_Invariants(result, "Hash_Sum_64.result") }()
-	Hash_Invariants(*value, "Hash_Sum_64.value")
+	Hash_Handle_Invariants(value, "Hash_Sum_64.value")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Sum_64 requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
@@ -565,7 +807,8 @@ func Hash_Sum_64(value *Hash) (result Value) {
 	state_3 := uint64(value.State_3)
 	word := uint64(value.Total_Count) << (bits.BIT_COUNT_64_MAXIMUM - BITS_PER_BYTE)
 	for index := range int(value.Tail_Count) {
-		word |= uint64(value.Tail[index]) << (BITS_PER_BYTE * index)
+		item := tail_byte_at(value.Tail, Tail_Index(index))
+		word |= uint64(item) << (BITS_PER_BYTE * index)
 	}
 	state_3 ^= word
 	for range SIP_COMPRESSION_ROUNDS {
@@ -619,13 +862,13 @@ func Hash_Sum_64(value *Hash) (result Value) {
 
 // Hash_Sum_Into writes the standard little-endian maphash value.
 func Hash_Sum_Into(
-	value *Hash, destination Destination,
+	value Hash_Handle, destination Destination,
 ) (count Output_Count, status Output_Status) {
 	defer func() {
 		Output_Count_Invariants(count, "Hash_Sum_Into.count")
 		Output_Status_Invariants(status, "Hash_Sum_Into.status")
 	}()
-	Hash_Invariants(*value, "Hash_Sum_Into.value")
+	Hash_Handle_Invariants(value, "Hash_Sum_Into.value")
 	Destination_Invariants(destination, "Hash_Sum_Into.destination")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Sum_Into requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
@@ -645,9 +888,9 @@ func Hash_Sum_Into(
 }
 
 // Hash_Seed returns explicit function identity without exposing ambient process state.
-func Hash_Seed(value *Hash) (seed Seed) {
+func Hash_Seed(value Hash_Handle) (seed Seed) {
 	defer func() { Seed_Invariants(seed, "Hash_Seed.seed") }()
-	Hash_Invariants(*value, "Hash_Seed.value")
+	Hash_Handle_Invariants(value, "Hash_Seed.value")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Seed requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
@@ -656,11 +899,11 @@ func Hash_Seed(value *Hash) (seed Seed) {
 }
 
 // Hash_Message_Size_Maximum returns injected logical-message bound.
-func Hash_Message_Size_Maximum(value *Hash) (maximum Message_Size_Maximum) {
+func Hash_Message_Size_Maximum(value Hash_Handle) (maximum Message_Size_Maximum) {
 	defer func() {
 		Message_Size_Maximum_Invariants(maximum, "Hash_Message_Size_Maximum.maximum")
 	}()
-	Hash_Invariants(*value, "Hash_Message_Size_Maximum.value")
+	Hash_Handle_Invariants(value, "Hash_Message_Size_Maximum.value")
 	aver.Always(
 		value.Ready == READY_COMPLETE,
 		"Hash_Message_Size_Maximum requires Hash_Init.",
@@ -672,8 +915,8 @@ func Hash_Message_Size_Maximum(value *Hash) (maximum Message_Size_Maximum) {
 }
 
 // Hash_Reset discards bytes while retaining explicit Seed.
-func Hash_Reset(value *Hash) {
-	Hash_Invariants(*value, "Hash_Reset.value.input")
+func Hash_Reset(value Hash_Handle) {
+	Hash_Handle_Invariants(value, "Hash_Reset.value.input")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Reset requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
@@ -684,8 +927,8 @@ func Hash_Reset(value *Hash) {
 }
 
 // Hash_Set_Seed discards bytes and installs a different explicit function identity.
-func Hash_Set_Seed(value *Hash, seed Seed) {
-	Hash_Invariants(*value, "Hash_Set_Seed.value.input")
+func Hash_Set_Seed(value Hash_Handle, seed Seed) {
+	Hash_Handle_Invariants(value, "Hash_Set_Seed.value.input")
 	Seed_Invariants(seed, "Hash_Set_Seed.seed")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Set_Seed requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
@@ -700,11 +943,11 @@ func Hash_Set_Seed(value *Hash, seed Seed) {
 }
 
 // Hash_Clone_Into keeps source and result in caller storage.
-func Hash_Clone_Into(destination *Hash, source *Hash) {
-	Hash_Invariants(*destination, "Hash_Clone_Into.destination.input")
-	Hash_Invariants(*source, "Hash_Clone_Into.source")
+func Hash_Clone_Into(destination Hash_Handle, source Hash_Handle) {
+	Hash_Handle_Invariants(destination, "Hash_Clone_Into.destination.input")
+	Hash_Handle_Invariants(source, "Hash_Clone_Into.source")
 	defer func() {
-		Hash_Invariants(*destination, "Hash_Clone_Into.destination.output")
+		Hash_Handle_Invariants(destination, "Hash_Clone_Into.destination.output")
 	}()
 	aver.Always(
 		source.Ready == READY_COMPLETE,
