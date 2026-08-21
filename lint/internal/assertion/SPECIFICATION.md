@@ -77,6 +77,18 @@ A struct type's helper directly calls the exact package-qualified _Invariants he
 Foreign, nested, or shadowed calls never substitute. A pointer field composes its pointee, and an
 immediate mutex is exempt.
 
+### Inherited Fields
+
+A defined type over a same-package struct, not a pointer, states each inherited scalar field
+inline, because one tree holds a type at one position. A struct field has no inline form, thus
+the defined type composes it directly or through a defined type of its own.
+
+### Inline Form
+
+An inline statement is a Range or an Enum link whose subject is the field, or a direct Always
+equating the field to a package constant. Only a Boolean field takes a Sometimes. Another link
+states nothing about the field's domain and never counts.
+
 ### Defined Pointers
 
 Defined pointer helper body is exactly `if value == nil { return }` then

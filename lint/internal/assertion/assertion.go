@@ -1078,6 +1078,7 @@ func check_struct_invariants(
 	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
+	declarations := index_declarations(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
@@ -1085,7 +1086,8 @@ func check_struct_invariants(
 		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
-		diags = append(diags, struct_file_diagnostics(pf, defined, components)...)
+		diags = append(diags,
+			struct_file_diagnostics(pf, defined, declarations, components)...)
 		diags = append(diags, defined_pointer_file_diagnostics(pf, defined, components)...)
 	}
 	return diags
@@ -1099,14 +1101,11 @@ func check_struct_invariants(
 // exact body. Struct pointee, non-struct pointee, destination, handle: ALL of them. Pointee
 // without helper is a diagnostic, not a skip. Unnamed pointee is a diagnostic, not a skip. Owner
 // has repaired this rule repeatedly after agents carved out a case. Last carve-out skipped struct
-// pointees and pushed them into a per-field "inherited" check, which then demanded each field
-// twice. That check is deleted. Do NOT add a skip here. Do NOT add a skip upstream. Fix the code
-// under lint instead.
+// pointees and pushed them into the per-field inherited check, which then demanded each field
+// twice. Do NOT add a skip here. Do NOT add a skip upstream. Fix the code under lint instead.
 func defined_pointer_file_diagnostics(
 	file Parsed_File, defined map[string]bool, components *Component_Index,
 ) (diags []Diagnostic) {
-	current_package := helper_package_path(file, components)
-	imports := helper_import_paths(file.File)
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
 		if !is_general {
@@ -1126,8 +1125,8 @@ func defined_pointer_file_diagnostics(
 		if !is_pointer {
 			continue
 		}
-		// Absent, misnamed, or mis-signed helper is the Layout, Orphan, and Signature rules'
-		// report. Same defect twice hides nothing and helps nobody.
+		// Absent, misnamed, or mis-signed helper is the Layout, Orphan, and Signature
+		// rules' report. Same defect twice hides nothing and helps nobody.
 		helper := type_invariants_following_function(file.File, index)
 		if helper == nil {
 			continue
@@ -1142,41 +1141,44 @@ func defined_pointer_file_diagnostics(
 		scope := &Invariant_Scope{
 			Type_Parameters: struct_type_parameter_set(type_specification),
 			Defined:         defined,
-			Current_Package: current_package,
-			Imports:         imports,
+			Current_Package: helper_package_path(file, components),
+			Imports:         helper_import_paths(file.File),
 			Shadowed:        function_value_names(helper),
 		}
-		position := file.File_Set.Position(helper.Name.Pos())
-		expected := struct_named_invariant(pointer.X, scope)
-		if expected == "" {
-			diags = append(diags, Diagnostic{
-				Position: position,
-				Message: "Function " + helper.Name.Name + " points at an unnamed type. " +
-					"Name the pointee type, then call its _Invariants on *" + parameter + ".",
-			})
-			continue
-		}
-		if !defined[expected] {
-			diags = append(diags, Diagnostic{
-				Position: position,
-				Message: "Function " + helper.Name.Name + " points at " +
-					type_base_name(pointer.X) + " without " + helper_identity_name(expected) +
-					". Declare " + helper_identity_name(expected) + ".",
-			})
-			continue
-		}
-		namespace := helper_namespace_parameter(helper)
-		if defined_pointer_body_exact(helper, parameter, namespace, expected, scope) {
+		gap := defined_pointer_gap(helper, pointer, parameter, scope)
+		if gap == "" {
 			continue
 		}
 		diags = append(diags, Diagnostic{
-			Position: position,
-			Message: "Function " + helper.Name.Name + " body is not exactly `if " + parameter +
-				" == nil { return }` then `" + defined_pointer_callee_text(pointer.X, expected) +
-				"(*" + parameter + ", " + namespace + ")`.",
+			Position: file.File_Set.Position(helper.Name.Pos()),
+			Message:  "Function " + helper.Name.Name + " " + gap,
 		})
 	}
 	return diags
+}
+
+// One helper, one gap. Pointee first: a body cannot be judged against a helper that has no name
+// or does not exist, and each of those is its own defect.
+func defined_pointer_gap(
+	helper *ast.FuncDecl, pointer *ast.StarExpr, parameter string, scope *Invariant_Scope,
+) (gap string) {
+	expected := struct_named_invariant(pointer.X, scope)
+	if expected == "" {
+		return "points at an unnamed type. Name the pointee type, then call its " +
+			"_Invariants on *" + parameter + "."
+	}
+	if !scope.Defined[expected] {
+		return "points at " + type_base_name(pointer.X) + " without " +
+			helper_identity_name(expected) + ". Declare " +
+			helper_identity_name(expected) + "."
+	}
+	namespace := helper_namespace_parameter(helper)
+	if defined_pointer_body_exact(helper, parameter, namespace, expected, scope) {
+		return ""
+	}
+	return "body is not exactly `if " + parameter + " == nil { return }` then `" +
+		defined_pointer_callee_text(pointer.X, expected) +
+		"(*" + parameter + ", " + namespace + ")`."
 }
 
 // Remedy text is what the reader types. A foreign pointee's helper is reached through the
@@ -1197,7 +1199,10 @@ func defined_pointer_callee_text(pointee ast.Expr, expected string) (text string
 // Body's own Namespace parameter is the only namespace a nested bundle call may forward. A blank
 // name cannot be forwarded, thus the message names the conventional one.
 func helper_namespace_parameter(helper *ast.FuncDecl) (name string) {
-	if helper.Type.Params == nil || len(helper.Type.Params.List) == 0 {
+	if helper.Type.Params == nil {
+		return "namespace"
+	}
+	if len(helper.Type.Params.List) == 0 {
 		return "namespace"
 	}
 	last := helper.Type.Params.List[len(helper.Type.Params.List)-1]
@@ -1240,43 +1245,69 @@ func defined_pointer_body_exact(
 		return false
 	}
 	subject, is_identifier := dereference.X.(*ast.Ident)
-	if !is_identifier || subject.Name != parameter {
+	if !is_identifier {
+		return false
+	}
+	if subject.Name != parameter {
 		return false
 	}
 	forwarded, is_identifier := call.Args[1].(*ast.Ident)
-	return is_identifier && forwarded.Name == namespace
+	if !is_identifier {
+		return false
+	}
+	return forwarded.Name == namespace
 }
 
 // Only `if parameter == nil { return }`: no init, no else, one bare return. Same shape sim/aver
 // permits in a pointer bundle, thus the two rules agree on one body.
 func defined_pointer_nil_guard(statement ast.Stmt, parameter string) (guards bool) {
 	guard, is_if := statement.(*ast.IfStmt)
-	if !is_if || guard.Init != nil || guard.Else != nil {
+	if !is_if {
+		return false
+	}
+	if guard.Init != nil {
+		return false
+	}
+	if guard.Else != nil {
 		return false
 	}
 	condition, is_binary := guard.Cond.(*ast.BinaryExpr)
-	if !is_binary || condition.Op != token.EQL {
+	if !is_binary {
+		return false
+	}
+	if condition.Op != token.EQL {
 		return false
 	}
 	subject, is_identifier := condition.X.(*ast.Ident)
-	if !is_identifier || subject.Name != parameter {
+	if !is_identifier {
+		return false
+	}
+	if subject.Name != parameter {
 		return false
 	}
 	nil_identifier, is_identifier := condition.Y.(*ast.Ident)
-	if !is_identifier || nil_identifier.Name != "nil" {
+	if !is_identifier {
+		return false
+	}
+	if nil_identifier.Name != "nil" {
 		return false
 	}
 	if len(guard.Body.List) != 1 {
 		return false
 	}
 	exit, is_return := guard.Body.List[0].(*ast.ReturnStmt)
-	return is_return && len(exit.Results) == 0
+	if !is_return {
+		return false
+	}
+	return len(exit.Results) == 0
 }
 
-// Checks every literal struct type in one file. A defined type over another name is not a struct
-// here: a defined pointer has its own rule, and any other defined type composes through its base.
+// Checks every literal struct type in one file, and every defined type that stands over a
+// same-package struct and thus inherits its fields. A defined pointer is not here: it has its
+// own exact-body rule in defined_pointer_file_diagnostics.
 func struct_file_diagnostics(
-	file Parsed_File, defined map[string]bool, components *Component_Index,
+	file Parsed_File, defined map[string]bool,
+	declarations *Declaration_Index, components *Component_Index,
 ) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
@@ -1290,7 +1321,8 @@ func struct_file_diagnostics(
 		if !is_type {
 			continue
 		}
-		struct_type, is_struct := type_specification.Type.(*ast.StructType)
+		struct_type, is_struct, inherits := struct_declared_fields(
+			type_specification, file, declarations.Structs, components)
 		if !is_struct {
 			continue
 		}
@@ -1300,22 +1332,48 @@ func struct_file_diagnostics(
 		if struct_has_mutex(struct_type) {
 			continue
 		}
-		diags = append(diags, struct_type_diagnostics(
-			file, index, type_specification, struct_type, defined, components,
-		)...)
+		diags = append(diags, struct_type_diagnostics(&Struct_Type_Input{
+			File:               file,
+			Index:              index,
+			Type_Specification: type_specification,
+			Struct_Type:        struct_type,
+			Defined:            defined,
+			Declarations:       declarations,
+			Inherits:           inherits,
+			Components:         components,
+		})...)
 	}
 	return diags
 }
 
+// One struct declaration under check, with what its bundle is judged against.
+type Struct_Type_Input struct {
+	// File holds the declaration.
+	File Parsed_File
+	// Index is the declaration's position in File, because the bundle follows it directly.
+	Index int
+	// Type_Specification is the declaration.
+	Type_Specification *ast.TypeSpec
+	// Struct_Type holds the fields the bundle owes, own or inherited.
+	Struct_Type *ast.StructType
+	// Defined is the module-wide helper index.
+	Defined map[string]bool
+	// Declarations classifies an inherited field's type.
+	Declarations *Declaration_Index
+	// Inherits selects the inherited-field rule over the own-field rule.
+	Inherits bool
+	// Components resolves package paths.
+	Components *Component_Index
+}
+
 // Checks that one struct's bundle composes every coverable field.
-func struct_type_diagnostics(
-	file Parsed_File,
-	index int,
-	type_specification *ast.TypeSpec,
-	struct_type *ast.StructType,
-	defined map[string]bool,
-	components *Component_Index,
-) (diags []Diagnostic) {
+func struct_type_diagnostics(input *Struct_Type_Input) (diags []Diagnostic) {
+	file := input.File
+	index := input.Index
+	type_specification := input.Type_Specification
+	struct_type := input.Struct_Type
+	defined := input.Defined
+	components := input.Components
 	bundle := type_invariants_following_function(file.File, index)
 	if bundle == nil {
 		return nil
@@ -1339,6 +1397,12 @@ func struct_type_diagnostics(
 	}
 	present := struct_present_calls(bundle, parameter, scope)
 	position := file.File_Set.Position(bundle.Name.Pos())
+	if input.Inherits {
+		scope.Declarations = input.Declarations
+		scope.Constants = input.Declarations.Constants[path.Dir(file.Path)]
+		return struct_inherited_diagnostics(
+			bundle, struct_type, scope, present, parameter, position)
+	}
 	for _, field := range struct_type.Fields.List {
 		for _, gap := range struct_field_missing_calls(field, scope, present, parameter) {
 			diags = append(diags, Diagnostic{
@@ -1426,6 +1490,489 @@ func always_named_call(
 		return false
 	}
 	return imports[qualifier.Name] == default_package
+}
+
+// Declaration_Index names what each defined type of the module stands over, because an inherited
+// field is judged by the kind at the end of its type's chain and not by the name it carries.
+type Declaration_Index struct {
+	// Structs maps a package-qualified type name to the struct it declares or stands over.
+	Structs map[string]*ast.StructType
+	// Booleans holds each package-qualified type name that stands over bool.
+	Booleans map[string]bool
+	// Constants holds each package's constant names by directory, for singleton Always
+	// operands.
+	Constants map[string]map[string]bool
+}
+
+// One walk over every declaration serves both indexes. A defined type over a same-package name
+// is followed to its end, thus type A B, type B struct{} puts A's fields in reach.
+func index_declarations(
+	parsed_files []Parsed_File, components *Component_Index,
+) (index *Declaration_Index) {
+	index = &Declaration_Index{
+		Structs:   map[string]*ast.StructType{},
+		Booleans:  map[string]bool{},
+		Constants: invariant_package_constants(parsed_files),
+	}
+	chains := map[string]string{}
+	for _, file := range parsed_files {
+		if strings.Has_Suffix(file.Path, "_test.go") {
+			continue
+		}
+		package_path := helper_package_path(file, components)
+		for _, declaration := range file.File.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range general.Specs {
+				index_declaration_specification(
+					specification, package_path, index, chains)
+			}
+		}
+	}
+	declaration_resolve_chains(index, chains)
+	return index
+}
+
+// An alias adds a name and no identity, thus it is never indexed. A pointer to a struct still
+// reaches every field, thus a field typed by a defined pointer composes like a struct field.
+func index_declaration_specification(
+	specification ast.Spec, package_path string,
+	index *Declaration_Index, chains map[string]string,
+) {
+	type_specification, is_type := specification.(*ast.TypeSpec)
+	if !is_type {
+		return
+	}
+	if type_specification.Assign.IsValid() {
+		return
+	}
+	identity := package_path + "\x00" + type_specification.Name.Name
+	if struct_type, literal := type_specification.Type.(*ast.StructType); literal {
+		index.Structs[identity] = struct_type
+		return
+	}
+	base, named := struct_declared_base(type_specification.Type)
+	if !named {
+		return
+	}
+	if base == "bool" {
+		index.Booleans[identity] = true
+		return
+	}
+	chains[identity] = package_path + "\x00" + base
+}
+
+// Every chain ends within the declaration count, because a cycle does not compile. The bound
+// keeps the walk finite on input the compiler never saw.
+func declaration_resolve_chains(index *Declaration_Index, chains map[string]string) {
+	for identity := range chains {
+		current := identity
+		for step := 0; step <= len(chains); step++ {
+			if struct_type, found := index.Structs[current]; found {
+				index.Structs[identity] = struct_type
+				break
+			}
+			if index.Booleans[current] {
+				index.Booleans[identity] = true
+				break
+			}
+			next, chained := chains[current]
+			if !chained {
+				break
+			}
+			current = next
+		}
+	}
+}
+
+// Gives the name a type declaration stands over. A leading star is unwrapped because Go selects a
+// field through a pointer, thus a field typed by a defined pointer holds a struct's fields too.
+func struct_declared_base(expression ast.Expr) (name string, named bool) {
+	star, is_star := expression.(*ast.StarExpr)
+	if is_star {
+		expression = star.X
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return "", false
+	}
+	return identifier.Name, true
+}
+
+// Gives the struct whose fields a type declaration owns, and whether it inherits them. A literal
+// struct owns its own. A defined type over a same-package struct inherits that struct's fields
+// and states them under the inherited rule. A defined pointer never reaches here: its body is
+// exactly the nil exit and the pointee helper, see defined_pointer_file_diagnostics. An alias is
+// out of scope.
+func struct_declared_fields(
+	type_specification *ast.TypeSpec, file Parsed_File,
+	struct_index map[string]*ast.StructType, components *Component_Index,
+) (struct_type *ast.StructType, is_struct bool, inherits bool) {
+	if declared, literal := type_specification.Type.(*ast.StructType); literal {
+		return declared, true, false
+	}
+	if type_specification.Assign.IsValid() {
+		return nil, false, false
+	}
+	identifier, is_identifier := type_specification.Type.(*ast.Ident)
+	if !is_identifier {
+		return nil, false, false
+	}
+	identity := helper_package_path(file, components) + "\x00" + identifier.Name
+	inherited, found := struct_index[identity]
+	return inherited, found, found
+}
+
+// Checks that a defined type's bundle states every field it inherits. The inline and the
+// converted names are collected one time so the per-field walk stays out of the bundle body.
+func struct_inherited_diagnostics(
+	bundle *ast.FuncDecl,
+	struct_type *ast.StructType,
+	scope *Invariant_Scope,
+	present map[string]bool,
+	parameter string,
+	position token.Position,
+) (diags []Diagnostic) {
+	gaps_input := &Struct_Inherited_Field_Gaps_Input{
+		Scope:     scope,
+		Present:   present,
+		Converted: struct_converted_fields(bundle, parameter, scope),
+		Inline:    struct_inline_fields(bundle, struct_type, parameter, scope),
+		Parameter: parameter,
+	}
+	for _, field := range struct_type.Fields.List {
+		gaps_input.Field = field
+		for _, gap := range struct_inherited_field_gaps(gaps_input) {
+			diags = append(diags, Diagnostic{
+				Position: position,
+				Message:  "The function " + bundle.Name.Name + " " + gap,
+			})
+		}
+	}
+	return diags
+}
+
+// The three name sets one inherited field is checked against.
+type Struct_Inherited_Field_Gaps_Input struct {
+	// Field is the inherited field under check.
+	Field *ast.Field
+	// Scope resolves the field type and the bundle it must carry.
+	Scope *Invariant_Scope
+	// Present holds helper\x00field for each direct helper call in the bundle.
+	Present map[string]bool
+	// Converted holds each field the bundle composes through a defined type of its own.
+	Converted map[string]bool
+	// Inline holds each field a Range, Enum, Sometimes, or singleton Always states.
+	Inline map[string]bool
+	// Parameter is the bundle's value name.
+	Parameter string
+}
+
+// A scalar inherited field is stated inline, because the struct it comes from already holds its
+// type under any shared root and a second helper call would place it twice. A struct field has no
+// inline form, thus it is composed, directly or through a defined type of its own.
+func struct_inherited_field_gaps(
+	gaps_input *Struct_Inherited_Field_Gaps_Input,
+) (gaps []string) {
+	field := gaps_input.Field
+	names := struct_field_names(field)
+	if len(names) == 0 {
+		return nil
+	}
+	expected := struct_field_invariant(field.Type, gaps_input.Scope)
+	if expected == "" {
+		return nil
+	}
+	if !gaps_input.Scope.Defined[expected] {
+		return nil
+	}
+	is_struct := struct_field_is_struct(field.Type, gaps_input.Scope)
+	for _, name := range names {
+		subject := gaps_input.Parameter + "." + name
+		if !is_struct {
+			if !gaps_input.Inline[name] {
+				gaps = append(gaps, "does not assert the inherited field "+
+					subject+" inline. Write an inline assertion for "+
+					subject+".")
+			}
+			continue
+		}
+		if gaps_input.Present[expected+"\x00"+name] {
+			continue
+		}
+		if gaps_input.Converted[name] {
+			continue
+		}
+		gaps = append(gaps, "does not call a helper for the inherited field "+
+			subject+". Call "+helper_identity_name(expected)+"("+subject+", ...).")
+	}
+	return gaps
+}
+
+// Reports whether a field's type is a struct. Only a struct keeps its composition duty under a
+// defined type, because no single link states a struct. A foreign type is opaque to this pass, thus
+// it keeps that duty too rather than owe an inline form this pass cannot read.
+func struct_field_is_struct(field_type ast.Expr, scope *Invariant_Scope) (yes bool) {
+	star, is_star := field_type.(*ast.StarExpr)
+	if is_star {
+		field_type = star.X
+	}
+	if _, literal := field_type.(*ast.StructType); literal {
+		return true
+	}
+	if _, foreign := field_type.(*ast.SelectorExpr); foreign {
+		return true
+	}
+	identifier, is_identifier := field_type.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	_, found := scope.Declarations.Structs[scope.Current_Package+"\x00"+identifier.Name]
+	return found
+}
+
+// Gives the inherited fields a bundle states inline. A Range or an Enum link states a domain, a
+// direct Always states a single value, and a Sometimes states only a Boolean.
+func struct_inline_fields(
+	bundle *ast.FuncDecl, struct_type *ast.StructType,
+	parameter string, scope *Invariant_Scope,
+) (inline map[string]bool) {
+	inline = map[string]bool{}
+	boolean_fields := struct_boolean_fields(struct_type, scope)
+	for _, statement := range bundle.Body.List {
+		call := statement_call(statement)
+		if call == nil {
+			continue
+		}
+		for _, name := range struct_chain_fields(call, parameter, boolean_fields) {
+			inline[name] = true
+		}
+		if !always_named_call(call, scope.Imports, scope.Default_Package) {
+			continue
+		}
+		name := struct_always_field(call, parameter, scope)
+		if name != "" {
+			inline[name] = true
+		}
+	}
+	return inline
+}
+
+// A singleton is the one domain with no Range and no Enum, thus a direct equality against a
+// package constant is the only inline form that states it. A literal names no shared fact and a
+// comparison holds one side, thus neither counts.
+func struct_always_field(
+	call *ast.CallExpr, parameter string, scope *Invariant_Scope,
+) (name string) {
+	if len(call.Args) == 0 {
+		return ""
+	}
+	equality, is_binary := invariant_unparen(call.Args[0]).(*ast.BinaryExpr)
+	if !is_binary {
+		return ""
+	}
+	if equality.Op != token.EQL {
+		return ""
+	}
+	if !struct_constant_operand(equality.Y, scope) {
+		return ""
+	}
+	return struct_expression_field(equality.X, parameter)
+}
+
+// A constant operand is a package constant of this package or a qualified one of an imported
+// package, under at most one conversion. A shadowed name denotes a local value, never the
+// constant.
+func struct_constant_operand(expression ast.Expr, scope *Invariant_Scope) (constant bool) {
+	expression = struct_unwrap_conversion(expression, scope.Shadowed)
+	if selector, qualified := expression.(*ast.SelectorExpr); qualified {
+		return invariant_qualified_constant(selector, scope)
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	if scope.Shadowed[identifier.Name] {
+		return false
+	}
+	return scope.Constants[identifier.Name]
+}
+
+// Strips one conversion, because an inline link takes a primitive and a value of a defined kind
+// reaches it through one. A shadowed conversion name is a local function, not a conversion.
+func struct_unwrap_conversion(
+	expression ast.Expr, shadowed map[string]bool,
+) (unwrapped ast.Expr) {
+	expression = invariant_unparen(expression)
+	call, is_call := expression.(*ast.CallExpr)
+	if !is_call {
+		return expression
+	}
+	if len(call.Args) != 1 {
+		return expression
+	}
+	conversion, is_identifier := call.Fun.(*ast.Ident)
+	if !is_identifier {
+		return expression
+	}
+	if shadowed[conversion.Name] {
+		return expression
+	}
+	return invariant_unparen(call.Args[0])
+}
+
+// Gives the inherited fields whose type stands over bool, the one kind a Sometimes states in
+// full.
+func struct_boolean_fields(
+	struct_type *ast.StructType, scope *Invariant_Scope,
+) (booleans map[string]bool) {
+	booleans = map[string]bool{}
+	for _, field := range struct_type.Fields.List {
+		identifier, is_identifier := field.Type.(*ast.Ident)
+		if !is_identifier {
+			continue
+		}
+		identity := scope.Current_Package + "\x00" + identifier.Name
+		if !scope.Declarations.Booleans[identity] {
+			continue
+		}
+		for _, name := range struct_field_names(field) {
+			booleans[name] = true
+		}
+	}
+	return booleans
+}
+
+// Walks one ensured chain from Ensure back to its root and names the field each stating link
+// takes. The root takes the whole value and names no field, thus the walk ends there.
+func struct_chain_fields(
+	call *ast.CallExpr, parameter string, boolean_fields map[string]bool,
+) (names []string) {
+	current, ensured := invariant_ensure_receiver(call)
+	if !ensured {
+		return nil
+	}
+	for current != nil {
+		method, receiver, matched := invariant_builder_method(current)
+		if !matched {
+			break
+		}
+		name := struct_link_field(current, parameter)
+		if name != "" {
+			if struct_link_states(method, boolean_fields[name]) {
+				names = append(names, name)
+			}
+		}
+		current = receiver
+	}
+	return names
+}
+
+// The link's first argument is its subject.
+func struct_link_field(link *ast.CallExpr, parameter string) (name string) {
+	if len(link.Args) == 0 {
+		return ""
+	}
+	return struct_expression_field(link.Args[0], parameter)
+}
+
+// A Range or an Enum states a domain. A Sometimes states two values and nothing more, thus it
+// states a Boolean and no other kind.
+func struct_link_states(method string, boolean bool) (states bool) {
+	if strings.Has_Prefix(method, "Range_") {
+		return true
+	}
+	if strings.Has_Prefix(method, "Enum_") {
+		return true
+	}
+	if method != "Sometimes" {
+		return false
+	}
+	return boolean
+}
+
+// Reads parameter.Field under at most one conversion and one dereference, because an inline link
+// takes a primitive and a field of a defined kind reaches it through a conversion.
+func struct_expression_field(expression ast.Expr, parameter string) (field string) {
+	expression = struct_unwrap_conversion(expression, map[string]bool{})
+	if star, is_star := expression.(*ast.StarExpr); is_star {
+		expression = invariant_unparen(star.X)
+	}
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if !is_selector {
+		return ""
+	}
+	base, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return ""
+	}
+	if base.Name != parameter {
+		return ""
+	}
+	return selector.Sel.Name
+}
+
+// Gives the inherited struct fields a bundle composes through a defined type of its own. The Go
+// compiler already proves the conversion shares the field's underlying type, thus this pass only
+// checks that the called bundle belongs to the converted type.
+func struct_converted_fields(
+	bundle *ast.FuncDecl, parameter string, scope *Invariant_Scope,
+) (converted map[string]bool) {
+	converted = map[string]bool{}
+	shadowed := function_shadow_copy(scope.Shadowed)
+	for _, statement := range bundle.Body.List {
+		call := statement_call(statement)
+		if call != nil {
+			defined, field := struct_conversion_argument(call, parameter)
+			callee := helper_callee_identity(
+				call.Fun, scope.Current_Package, scope.Imports, shadowed)
+			owner := scope.Current_Package + "\x00" + source.Invariant_Name(defined)
+			if field != "" {
+				if callee == owner {
+					converted[field] = true
+				}
+			}
+		}
+		function_statement_shadows(statement, shadowed)
+	}
+	return converted
+}
+
+// Reads a first argument of the form Defined(parameter.Field).
+func struct_conversion_argument(
+	call *ast.CallExpr, parameter string,
+) (defined string, field string) {
+	if len(call.Args) == 0 {
+		return "", ""
+	}
+	conversion, is_call := invariant_unparen(call.Args[0]).(*ast.CallExpr)
+	if !is_call {
+		return "", ""
+	}
+	if len(conversion.Args) != 1 {
+		return "", ""
+	}
+	identifier, is_identifier := conversion.Fun.(*ast.Ident)
+	if !is_identifier {
+		return "", ""
+	}
+	selector, is_selector := invariant_unparen(conversion.Args[0]).(*ast.SelectorExpr)
+	if !is_selector {
+		return "", ""
+	}
+	base, is_base := selector.X.(*ast.Ident)
+	if !is_base {
+		return "", ""
+	}
+	if base.Name != parameter {
+		return "", ""
+	}
+	return identifier.Name, selector.Sel.Name
 }
 
 // Package-qualified keys ensure adding Foo_Invariants in one package cannot silently impose or
@@ -1813,6 +2360,9 @@ type Invariant_Scope struct {
 	// Base_Kind resolves a type that stands over another name to the kind at the end of that
 	// chain, thus a name of its own hides no mandate.
 	Base_Kind map[string]ast.Expr
+	// Declarations tells an inherited field that owns fields from one a link can state, and
+	// names the Boolean types, the one kind a Sometimes states in full.
+	Declarations *Declaration_Index
 }
 
 // One subject and the exact package-qualified helper it must carry.

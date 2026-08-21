@@ -437,120 +437,69 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Inherited_Fields verifies a defined type over a struct states an inherited scalar
+// field inline and composes an inherited struct field, which has no inline form.
+func Test_Invariants_Inherited_Fields(t *testing.T) {
+	t.Parallel()
+	assert_inherited_scalar_is_inline(t)
+	assert_inherited_struct_is_composed(t)
+}
+
+// Test_Invariants_Inline_Form verifies a Sometimes states no domain, thus it counts for a Boolean
+// field and for nothing else.
+func Test_Invariants_Inline_Form(t *testing.T) {
+	t.Parallel()
+	loose := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		INHERITED_STRUCT_LINK + "\taver.Tree(v, namespace)." +
+		"Sometimes(int(v.Mk) == Mark_Min, \"the mark is least\").Ensure()\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: loose})),
+		"does not assert the inherited field v.Mk inline") {
+		t.Fatal("a Sometimes over a bounded field must not state it")
+	}
+	// A comparison holds one side of the domain, and a literal names no shared fact.
+	for _, condition := range []string{
+		"int(v.Mk) > Mark_Min", "int(v.Mk) == 0", "int(v.Mk) != Mark_Min"} {
+		partial := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+			"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+			"\taver.Always(" + condition + ", \"partial\")\n" +
+			INHERITED_STRUCT_LINK + "}\n"
+		if !diagnosed(check_source(parse(t, &parse_input{
+			Path: "pkg/rule.go", Source_Text: partial})),
+			"does not assert the inherited field v.Mk inline") {
+			t.Fatalf("%q must not state the field", condition)
+		}
+	}
+	boolean := "package fixture\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"// Flag is a fixture.\ntype Flag bool\n\n" +
+		"// Flag_Invariants is a fixture.\n" +
+		"func Flag_Invariants(v Flag, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace).Sometimes(bool(v), \"set\").Ensure()\n}\n\n" +
+		"// Switchboard is a fixture.\ntype Switchboard struct {\n" +
+		"\t// Flg is a fixture.\n\tFlg Flag\n}\n\n" +
+		"// Switchboard_Invariants is a fixture.\n" +
+		"func Switchboard_Invariants(v Switchboard, namespace aver.Namespace) {\n" +
+		"\tFlag_Invariants(v.Flg, namespace)\n}\n\n" +
+		"// Panel is a fixture.\ntype Panel Switchboard\n\n" +
+		"// Panel_Invariants is a fixture.\n" +
+		"func Panel_Invariants(v Panel, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
+		"Sometimes(bool(v.Flg), \"set\").Ensure()\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: boolean})), "v.Flg") {
+		t.Fatal("a Sometimes must state an inherited Boolean field")
+	}
+}
+
 // Test_Invariants_Defined_Pointers verifies a defined pointer helper holds exactly the nil exit
 // and the pointee helper on the dereferenced value, for struct and non-struct pointees alike.
 func Test_Invariants_Defined_Pointers(t *testing.T) {
 	t.Parallel()
-	head := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
-		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
-		"// Mark is a fixture.\ntype Mark int\n\n" +
-		"// Mark_Invariants is a fixture.\n" +
-		"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
-		"\taver.Tree(v, namespace)." +
-		"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
-		"// Frame is a fixture.\ntype Frame struct {\n" +
-		"\t// Mk is a fixture.\n\tMk Mark\n}\n\n" +
-		"// Frame_Invariants is a fixture.\n" +
-		"func Frame_Invariants(v Frame, namespace aver.Namespace) {\n" +
-		"\tMark_Invariants(v.Mk, namespace)\n}\n\n" +
-		"// Handle is a fixture.\ntype Handle *Frame\n\n" +
-		"// Handle_Invariants is a fixture.\n" +
-		"func Handle_Invariants(v Handle, namespace aver.Namespace) {\n"
-	want := "Function Handle_Invariants body is not exactly `if v == nil { return }` " +
-		"then `Frame_Invariants(*v, namespace)`."
-	guard := "\tif v == nil {\n\t\treturn\n\t}\n"
-	exact := head + guard + "\tFrame_Invariants(*v, namespace)\n}\n"
-	if diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: exact})), "Handle_Invariants") {
-		t.Fatal("exact pointer body must be accepted")
-	}
-	off_shape := map[string]string{
-		"guard only":        guard,
-		"aver guard":        "\taver.Always(v != nil, \"present\")\n\tFrame_Invariants(*v, namespace)\n",
-		"extra statement":   guard + "\tFrame_Invariants(*v, namespace)\n\tMark_Invariants(v.Mk, namespace)\n",
-		"late guard":        "\tFrame_Invariants(*v, namespace)\n" + guard,
-		"inequality guard":  "\tif v != nil {\n\t\tFrame_Invariants(*v, namespace)\n\t}\n",
-		"field helper":      guard + "\tMark_Invariants(v.Mk, namespace)\n",
-		"literal namespace": guard + "\tFrame_Invariants(*v, \"handle\")\n",
-		"value argument":    guard + "\tFrame_Invariants(v, namespace)\n",
-	}
-	for name, body := range off_shape {
-		if !diagnosed(check_source(parse(t, &parse_input{
-			Path: "pkg/rule.go", Source_Text: head + body + "}\n"})), want) {
-			t.Fatalf("%s must be flagged", name)
-		}
-	}
-	scalar := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
-		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
-		"// Mark is a fixture.\ntype Mark int\n\n" +
-		"// Mark_Invariants is a fixture.\n" +
-		"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
-		"\taver.Tree(v, namespace)." +
-		"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
-		"// Mark_Pointer is a fixture.\ntype Mark_Pointer *Mark\n\n" +
-		"// Mark_Pointer_Invariants is a fixture.\n" +
-		"func Mark_Pointer_Invariants(v Mark_Pointer, _ aver.Namespace) {\n" +
-		"\taver.Always(v != nil, \"present\")\n}\n"
-	if !diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: scalar})),
-		"Function Mark_Pointer_Invariants body is not exactly `if v == nil { return }` "+
-			"then `Mark_Invariants(*v, namespace)`.") {
-		t.Fatal("non-struct pointee owes the same body")
-	}
-	orphan := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
-		"// Raw is a fixture.\ntype Raw int\n\n" +
-		"// Raw_Pointer is a fixture.\ntype Raw_Pointer *Raw\n\n" +
-		"// Raw_Pointer_Invariants is a fixture.\n" +
-		"func Raw_Pointer_Invariants(v Raw_Pointer, namespace aver.Namespace) {\n" +
-		"\tif v == nil {\n\t\treturn\n\t}\n}\n"
-	if !diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: orphan})),
-		"Function Raw_Pointer_Invariants points at Raw without Raw_Invariants.") {
-		t.Fatal("pointee without helper must be flagged on the pointer helper")
-	}
-	unnamed := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
-		"// Blob is a fixture.\ntype Blob *[]byte\n\n" +
-		"// Blob_Invariants is a fixture.\n" +
-		"func Blob_Invariants(v Blob, namespace aver.Namespace) {\n" +
-		"\tif v == nil {\n\t\treturn\n\t}\n}\n"
-	if !diagnosed(check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: unnamed})),
-		"Function Blob_Invariants points at an unnamed type.") {
-		t.Fatal("unnamed pointee must be flagged")
-	}
-	external := parse(t, &parse_input{
-		Path: "other/token.go",
-		Source_Text: "package other\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
-			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
-			"// Token is a fixture.\ntype Token string\n\n" +
-			"// Token_Invariants is a fixture.\n" +
-			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
-			"\taver.Tree(v, namespace)." +
-			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n"})
-	foreign_head := "package fixture\n\n" +
-		"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
-		"\texternal \"fixture/other\"\n)\n\n" +
-		"// Token_Pointer is a fixture.\ntype Token_Pointer *external.Token\n\n" +
-		"// Token_Pointer_Invariants is a fixture.\n" +
-		"func Token_Pointer_Invariants(v Token_Pointer, namespace aver.Namespace) {\n"
-	foreign_want := "Function Token_Pointer_Invariants body is not exactly " +
-		"`if v == nil { return }` then `external.Token_Invariants(*v, namespace)`."
-	foreign_guard := parse(t, &parse_input{Path: "pkg/pointer.go",
-		Source_Text: foreign_head + guard + "}\n"})
-	if !diagnosed(check_sources([]source.Parsed_File{external, foreign_guard}), foreign_want) {
-		t.Fatal("foreign pointee owes its package-qualified helper")
-	}
-	foreign_exact := parse(t, &parse_input{Path: "pkg/pointer.go",
-		Source_Text: foreign_head + guard + "\texternal.Token_Invariants(*v, namespace)\n}\n"})
-	if diagnosed(check_sources([]source.Parsed_File{external, foreign_exact}),
-		"Token_Pointer_Invariants") {
-		t.Fatal("exact foreign pointer body must be accepted")
-	}
+	assert_defined_pointer_body(t)
+	assert_defined_pointer_pointee(t)
+	assert_defined_pointer_foreign(t)
 }
 
 // Test_Invariants_Embedded_Fields verifies an anonymous field still owes its helper, under the name
@@ -726,10 +675,12 @@ func Test_Invariants_Raw_Types(t *testing.T) {
 			"\tLocal Token\n\tQualified outside.Token\n\tBuiltin int\n" +
 			"\tPointer *Token\n\tInline struct { Value Token }\n}\n\n" +
 			"// Convert exercises type boundaries.\n" +
-			"func Convert(local Token, qualified outside.Token, builtin string, raw *Token) " +
+			"func Convert(local Token, qualified outside.Token, builtin string, " +
+			"raw *Token) " +
 			"(local_result Token, qualified_result outside.Token, raw_result *Token, " +
 			"builtin_result int32, failure error) {\n" +
-			"\tprintln(local, qualified, builtin, raw)\n\treturn local, qualified, raw, 0, nil\n}\n",
+			"\tprintln(local, qualified, builtin, raw)\n" +
+			"\treturn local, qualified, raw, 0, nil\n}\n",
 	})
 	diags := check_source(parsed)
 	if !diagnosed(diags, "The declaration Convert has a raw type parameter (raw). "+
@@ -760,7 +711,7 @@ func Test_Invariants_Raw_Types(t *testing.T) {
 		"Declare a defined type for the result.") {
 		t.Fatal("predeclared result type must be flagged")
 	}
-	// error is an interface with no length and no domain, thus no assertion could state it.
+	// An error is an interface with no length and no domain, thus no assertion could state it.
 	for _, accepted := range []string{"Local", "Qualified", "local", "qualified",
 		"local_result", "qualified_result", "failure"} {
 		for _, entry := range diags {
@@ -1584,4 +1535,230 @@ func simulation_fixture_source(call string) (code string) {
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
+}
+
+// INHERITED_FIELD_HEAD declares a struct over a scalar and a struct field, its composing bundle,
+// and a defined type over it. Each case appends that defined type's own bundle.
+const INHERITED_FIELD_HEAD = "package fixture\n\n" +
+	"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+	"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
+	"// Mark is a fixture.\ntype Mark int\n\n" +
+	"// Mark_Invariants is a fixture.\n" +
+	"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
+	"\taver.Tree(v, namespace).Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+	"// Token is a fixture.\ntype Token string\n\n" +
+	"// Token_Invariants is a fixture.\n" +
+	"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+	"\taver.Tree(v, namespace).Range_Int(len(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+	"// Inner is a fixture.\ntype Inner struct {\n" +
+	"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
+	"// Inner_Invariants is a fixture.\n" +
+	"func Inner_Invariants(v Inner, namespace aver.Namespace) {\n" +
+	"\tToken_Invariants(v.Tok, namespace)\n}\n\n" +
+	"// Holder is a fixture.\ntype Holder struct {\n" +
+	"\t// Mk is a fixture.\n\tMk Mark\n\t// In is a fixture.\n\tIn Inner\n}\n\n" +
+	"// Holder_Invariants is a fixture.\n" +
+	"func Holder_Invariants(v Holder, namespace aver.Namespace) {\n" +
+	"\tMark_Invariants(v.Mk, namespace)\n\tInner_Invariants(v.In, namespace)\n}\n\n" +
+	"// Kept is a fixture.\ntype Kept Holder\n\n"
+
+// INHERITED_STRUCT_LINK composes the inherited struct field, which every scalar case still owes.
+const INHERITED_STRUCT_LINK = "\tInner_Invariants(v.In, namespace)\n"
+
+// A defined type cannot compose the scalar field's helper, because the struct it inherits from
+// already holds that type under any shared root.
+func assert_inherited_scalar_is_inline(t *testing.T) {
+	t.Helper()
+	composed := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		"\tMark_Invariants(v.Mk, namespace)\n" + INHERITED_STRUCT_LINK + "}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: composed})),
+		"does not assert the inherited field v.Mk inline") {
+		t.Fatal("a composed inherited scalar field must be flagged")
+	}
+	inline := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		INHERITED_STRUCT_LINK + "\taver.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: inline})), "v.Mk") {
+		t.Fatal("an inlined inherited scalar field must be accepted")
+	}
+	// A singleton value has no Range and no Enum, thus a direct Always is all that states it.
+	singleton := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		"\taver.Always(int(v.Mk) == Mark_Min, \"the only mark\")\n" +
+		INHERITED_STRUCT_LINK + "}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: singleton})), "v.Mk") {
+		t.Fatal("a direct Always must state an inherited scalar field")
+	}
+}
+
+// A struct has no single link that states it, thus the defined type composes it. A defined type of
+// its own keeps that struct at one position when the field type is already occupied.
+func assert_inherited_struct_is_composed(t *testing.T) {
+	t.Helper()
+	inline_only := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: inline_only})),
+		"Call Inner_Invariants(v.In, ...).") {
+		t.Fatal("an omitted inherited struct field must be flagged")
+	}
+	converted := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace aver.Namespace) {\n" +
+		"\tSpare_Invariants(Spare(v.In), namespace)\n" +
+		"\taver.Tree(v, namespace)." +
+		"Range_Int(int(v.Mk), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+		"// Spare is a fixture.\ntype Spare Inner\n\n" +
+		"// Spare_Invariants is a fixture.\n" +
+		"func Spare_Invariants(v Spare, namespace aver.Namespace) {\n" +
+		"\tToken_Invariants(v.Tok, namespace)\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: converted})), "v.In") {
+		t.Fatal("a defined type of its own must compose the inherited struct field")
+	}
+}
+
+// DEFINED_POINTER_HEAD declares a scalar, a struct over it, and a defined pointer to that struct.
+// Each case appends the pointer's own bundle body.
+const DEFINED_POINTER_HEAD = "package fixture\n\n" +
+	"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+	"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
+	"// Mark is a fixture.\ntype Mark int\n\n" +
+	"// Mark_Invariants is a fixture.\n" +
+	"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
+	"\taver.Tree(v, namespace)." +
+	"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+	"// Frame is a fixture.\ntype Frame struct {\n" +
+	"\t// Mk is a fixture.\n\tMk Mark\n}\n\n" +
+	"// Frame_Invariants is a fixture.\n" +
+	"func Frame_Invariants(v Frame, namespace aver.Namespace) {\n" +
+	"\tMark_Invariants(v.Mk, namespace)\n}\n\n" +
+	"// Handle is a fixture.\ntype Handle *Frame\n\n" +
+	"// Handle_Invariants is a fixture.\n" +
+	"func Handle_Invariants(v Handle, namespace aver.Namespace) {\n"
+
+// DEFINED_POINTER_GUARD is the one nil exit a pointer bundle holds.
+const DEFINED_POINTER_GUARD = "\tif v == nil {\n\t\treturn\n\t}\n"
+
+// DEFINED_POINTER_WANT names the exact body every off-shape case is told to write.
+const DEFINED_POINTER_WANT = "Function Handle_Invariants body is not exactly " +
+	"`if v == nil { return }` then `Frame_Invariants(*v, namespace)`."
+
+// The exact body passes. Every other body, guard alone, aver guard, extra statement, late guard,
+// inequality guard, field helper, literal namespace, or value argument, is flagged.
+func assert_defined_pointer_body(t *testing.T) {
+	t.Helper()
+	guard := DEFINED_POINTER_GUARD
+	exact := DEFINED_POINTER_HEAD + guard + "\tFrame_Invariants(*v, namespace)\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: exact})), "Handle_Invariants") {
+		t.Fatal("exact pointer body must be accepted")
+	}
+	off_shape := map[string]string{
+		"guard only": guard,
+		"aver guard": "\taver.Always(v != nil, \"present\")\n" +
+			"\tFrame_Invariants(*v, namespace)\n",
+		"extra statement": guard + "\tFrame_Invariants(*v, namespace)\n" +
+			"\tMark_Invariants(v.Mk, namespace)\n",
+		"late guard":        "\tFrame_Invariants(*v, namespace)\n" + guard,
+		"inequality guard":  "\tif v != nil {\n\t\tFrame_Invariants(*v, namespace)\n\t}\n",
+		"field helper":      guard + "\tMark_Invariants(v.Mk, namespace)\n",
+		"literal namespace": guard + "\tFrame_Invariants(*v, \"handle\")\n",
+		"value argument":    guard + "\tFrame_Invariants(v, namespace)\n",
+	}
+	for name, body := range off_shape {
+		if !diagnosed(check_source(parse(t, &parse_input{
+			Path: "pkg/rule.go", Source_Text: DEFINED_POINTER_HEAD + body + "}\n"})),
+			DEFINED_POINTER_WANT) {
+			t.Fatalf("%s must be flagged", name)
+		}
+	}
+}
+
+// A non-struct pointee owes the same body. A pointee without a helper and an unnamed pointee are
+// each their own diagnostic, never a skip.
+func assert_defined_pointer_pointee(t *testing.T) {
+	t.Helper()
+	scalar := "package fixture\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
+		"// Mark is a fixture.\ntype Mark int\n\n" +
+		"// Mark_Invariants is a fixture.\n" +
+		"func Mark_Invariants(v Mark, namespace aver.Namespace) {\n" +
+		"\taver.Tree(v, namespace)." +
+		"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+		"// Mark_Pointer is a fixture.\ntype Mark_Pointer *Mark\n\n" +
+		"// Mark_Pointer_Invariants is a fixture.\n" +
+		"func Mark_Pointer_Invariants(v Mark_Pointer, _ aver.Namespace) {\n" +
+		"\taver.Always(v != nil, \"present\")\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: scalar})),
+		"Function Mark_Pointer_Invariants body is not exactly `if v == nil { return }` "+
+			"then `Mark_Invariants(*v, namespace)`.") {
+		t.Fatal("non-struct pointee owes the same body")
+	}
+	orphan := "package fixture\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"// Raw is a fixture.\ntype Raw int\n\n" +
+		"// Raw_Pointer is a fixture.\ntype Raw_Pointer *Raw\n\n" +
+		"// Raw_Pointer_Invariants is a fixture.\n" +
+		"func Raw_Pointer_Invariants(v Raw_Pointer, namespace aver.Namespace) {\n" +
+		DEFINED_POINTER_GUARD + "}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: orphan})),
+		"Function Raw_Pointer_Invariants points at Raw without Raw_Invariants.") {
+		t.Fatal("pointee without helper must be flagged on the pointer helper")
+	}
+	unnamed := "package fixture\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"// Blob is a fixture.\ntype Blob *[]byte\n\n" +
+		"// Blob_Invariants is a fixture.\n" +
+		"func Blob_Invariants(v Blob, namespace aver.Namespace) {\n" +
+		DEFINED_POINTER_GUARD + "}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: unnamed})),
+		"Function Blob_Invariants points at an unnamed type.") {
+		t.Fatal("unnamed pointee must be flagged")
+	}
+}
+
+// A foreign pointee is reached through the file's import name, and the remedy names it that way.
+func assert_defined_pointer_foreign(t *testing.T) {
+	t.Helper()
+	external := parse(t, &parse_input{
+		Path: "other/token.go",
+		Source_Text: "package other\n\n" +
+			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
+			"// Token is a fixture.\ntype Token string\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n"})
+	head := "package fixture\n\n" +
+		"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+		"\texternal \"fixture/other\"\n)\n\n" +
+		"// Token_Pointer is a fixture.\ntype Token_Pointer *external.Token\n\n" +
+		"// Token_Pointer_Invariants is a fixture.\n" +
+		"func Token_Pointer_Invariants(v Token_Pointer, namespace aver.Namespace) {\n"
+	want := "Function Token_Pointer_Invariants body is not exactly " +
+		"`if v == nil { return }` then `external.Token_Invariants(*v, namespace)`."
+	guarded := parse(t, &parse_input{Path: "pkg/pointer.go",
+		Source_Text: head + DEFINED_POINTER_GUARD + "}\n"})
+	if !diagnosed(check_sources([]source.Parsed_File{external, guarded}), want) {
+		t.Fatal("foreign pointee owes its package-qualified helper")
+	}
+	exact := parse(t, &parse_input{Path: "pkg/pointer.go",
+		Source_Text: head + DEFINED_POINTER_GUARD +
+			"\texternal.Token_Invariants(*v, namespace)\n}\n"})
+	if diagnosed(check_sources([]source.Parsed_File{external, exact}),
+		"Token_Pointer_Invariants") {
+		t.Fatal("exact foreign pointer body must be accepted")
+	}
 }
