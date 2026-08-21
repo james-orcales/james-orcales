@@ -3,6 +3,8 @@
 package bytes
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/unicode/ucd"
@@ -2278,17 +2280,21 @@ func title_separator(character Decoded_Character) (separator Boolean) {
 	return Boolean(ucd.Is_Space(ucd_character))
 }
 
-// Overlap exposes storage identity because caller-owned transforms must reject harmful aliases.
+// Overlap uses address distance because nested scans let hostile maximum slices multiply work.
 func Overlap(left Slice, right Slice) (overlap Boolean) {
 	defer func() { Boolean_Invariants(overlap, "overlap.overlap") }()
 	Slice_Invariants(left, "overlap.left")
 	Slice_Invariants(right, "overlap.right")
-	for left_index := range left {
-		for right_index := range right {
-			if &left[left_index] == &right[right_index] {
-				return true
-			}
-		}
+	if len(left) == SLICE_SIZE_MINIMUM {
+		return false
 	}
-	return false
+	if len(right) == SLICE_SIZE_MINIMUM {
+		return false
+	}
+	left_address := uintptr(unsafe.Pointer(unsafe.SliceData(left)))
+	right_address := uintptr(unsafe.Pointer(unsafe.SliceData(right)))
+	if left_address < right_address {
+		return Boolean(right_address-left_address < uintptr(len(left)))
+	}
+	return Boolean(left_address-right_address < uintptr(len(right)))
 }

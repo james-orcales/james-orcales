@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/bytes"
+	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/unicode/ucd"
 )
@@ -39,9 +40,19 @@ func Test_Comparison(t *testing.T) {
 	testify.Equal(t, bytes.Order(bytes.ORDER_EQUAL), bytes.Compare([]byte("ab"), []byte("ab")))
 	testify.True(t, bool(bytes.Equal_Fold([]byte("Go"), []byte("gO"))))
 	storage := []byte("abcdef")
-	testify.True(t, bool(bytes.Overlap(storage[:3], storage[2:])))
-	testify.False(t, bool(bytes.Overlap(storage[:3], []byte("abc"))))
-	testify.False(t, bool(bytes.Overlap(storage[:0], storage)))
+	middle := len(storage) / 2
+	testify.False(t, bool(bytes.Overlap(storage[:middle], storage[middle:])))
+	testify.True(t, bool(bytes.Overlap(
+		storage[:middle+binary.UINT_8_SIZE], storage[middle:],
+	)))
+	testify.True(t, bool(bytes.Overlap(
+		storage[middle:], storage[:middle+binary.UINT_8_SIZE],
+	)))
+	testify.True(t, bool(bytes.Overlap(storage, storage)))
+	testify.False(t, bool(bytes.Overlap(storage[:bytes.SLICE_SIZE_MINIMUM], storage)))
+	disjoint := make([]byte, len(storage))
+	copy(disjoint, storage)
+	testify.False(t, bool(bytes.Overlap(storage, disjoint)))
 	testify.True(t, bool(bytes.Has_Text_Suffix([]byte("archive.txt"), ".txt")))
 	testify.False(t, bool(bytes.Has_Text_Suffix([]byte("archive.txt"), ".zip")))
 	testify.False(t, bool(bytes.Has_Text_Suffix([]byte("x"), "longer")))
