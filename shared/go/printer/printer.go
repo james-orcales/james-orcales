@@ -586,8 +586,19 @@ func emit_indent(subject *Printer) {
 	if !bool(subject.Flags[FLAG_LINE]) {
 		return
 	}
-	for range int(subject.Counts[COUNT_INDENT]) {
-		emit_byte(subject, '\t')
+	written := int(subject.Counts[COUNT_WRITTEN])
+	indent_count := int(subject.Counts[COUNT_INDENT])
+	available_count := len(subject.Forms[FORM_SLOT]) - written
+	if available_count < indent_count {
+		indent_count = available_count
+		subject.Flags[FLAG_FULL] = true
+	}
+	for index := range indent_count {
+		subject.Forms[FORM_SLOT][written+index] = '\t'
+	}
+	if indent_count > 0 {
+		subject.Counts[COUNT_WRITTEN] = Count(written + indent_count)
+		subject.Flags[FLAG_LINE] = false
 	}
 }
 
@@ -5408,8 +5419,9 @@ func closer_position(subject *Printer, tree *ast.Parse_State) {
 	node := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]])
 	subject.Positions[POSITION_FOUND] = 0
 	depth := 0
-	for offset := int(node.Token); offset <= ast.TOKEN_INDEX_MAXIMUM; offset++ {
-		kind := ast.Token_At(tree, ast.Token_Index(offset)).Kind
+	run := ast.Parse_State_Token_Run(tree)
+	for offset := int(node.Token); offset < len(run); offset++ {
+		kind := run[offset].Kind
 		if kind == token.KIND_END_OF_FILE {
 			return
 		}
