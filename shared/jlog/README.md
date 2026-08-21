@@ -31,7 +31,7 @@ narrow buys:
 
 - **Barebones.** Roughly 6× less code — ≈1.1k lines of Go source against zerolog's
   ≈6.5k — and zero third-party dependencies, only the standard library and
-  `shared/simulation/time`. No hooks, sampling, or CBOR, and the zero-allocation core is just the
+  `shared/sim/time`. No hooks, sampling, or CBOR, and the zero-allocation core is just the
   encoder and the diode. A pretty console writer does exist — `Console` in the
   composition tier — but it is opt-in and reads *finished* JSON lines back through the
   explicit `Write` procedure, so the hot path never carries console work.

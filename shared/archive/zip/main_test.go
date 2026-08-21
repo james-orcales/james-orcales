@@ -3,7 +3,7 @@ package zip_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // TestMain keeps invariant coverage load-bearing for ZIP parsing.

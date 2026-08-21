@@ -5,7 +5,7 @@ import (
 
 	"local/james-orcales/shared/hash/xxhash"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/prng"
+	"local/james-orcales/shared/sim/prng"
 	"local/james-orcales/shared/testify"
 )
 

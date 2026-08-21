@@ -4,7 +4,7 @@ import (
 	"testing"
 	standard_tabwriter "text/tabwriter"
 
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/text/tabwriter"

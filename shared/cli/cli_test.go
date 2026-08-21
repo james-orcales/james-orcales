@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/cli"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/snap/default"
 	"local/james-orcales/shared/strings"
 )

@@ -23,7 +23,7 @@
 //   - Failure values render with fmt, not the vendored go-spew, and diffs render with
 //     shared/diff/myers, not the vendored go-difflib.
 //   - InDelta and InEpsilon were float64, which a deterministic package bans, so they are
-//     rebuilt on shared/math/fixedpoint. WithinDuration compares shared/simulation/time moments.
+//     rebuilt on shared/math/fixedpoint. WithinDuration compares shared/sim/time moments.
 //   - The environment-dependent assertions take an injected Asserter: File_Exists reads an
 //     file-stat procedure, and Eventually and Never poll on an injected io loop the caller drives.
 //   - HTTP assertions, YAMLEq (JSON_Eq stays), and the mock, suite, and http sub-packages
@@ -42,8 +42,8 @@ import (
 	"local/james-orcales/shared/diff/myers"
 	"local/james-orcales/shared/encoding/json"
 	"local/james-orcales/shared/math/fixedpoint"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 )
 
 // Asserter carries the ambient collaborators the environment-dependent assertions need.

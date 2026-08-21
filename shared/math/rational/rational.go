@@ -5,7 +5,7 @@ package rational
 
 import (
 	"local/james-orcales/shared/math/integer"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // TEXT_SIZE_MINIMUM admits no output.

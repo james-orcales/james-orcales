@@ -6,7 +6,7 @@ import (
 	"local/james-orcales/shared/encoding/asn1"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // ENCODED_SIZE_MINIMUM admits empty hostile DER input.

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/simulation/aver/default"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/uuid"
 )
 

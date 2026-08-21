@@ -18,9 +18,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/prng"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/prng"
+	"local/james-orcales/shared/sim/time"
 )
 
 // Builds a fresh simulated io loop for the Expirable ports: the submit surface to inject, the

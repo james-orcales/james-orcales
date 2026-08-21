@@ -6,7 +6,7 @@ package prng
 import (
 	"local/james-orcales/shared/crypto/prng"
 
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // SEED_BYTE_COUNT gives ChaCha20 the full key width from one operating-system read.

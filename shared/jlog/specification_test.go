@@ -8,7 +8,7 @@ import (
 
 	"local/james-orcales/shared/encoding/json"
 	"local/james-orcales/shared/jlog"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/testify"
 )
 
@@ -84,7 +84,7 @@ func Test_Auto_Timestamp(t *testing.T) {
 	assert_output(t, buffer, "{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\"}\n")
 }
 
-// Test_Time_And_Duration covers the shared/simulation/time value encoders.
+// Test_Time_And_Duration covers the shared/sim/time value encoders.
 func Test_Time_And_Duration(t *testing.T) {
 	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",

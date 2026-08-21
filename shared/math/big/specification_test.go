@@ -7,7 +7,7 @@ import (
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/big"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/prng"
+	"local/james-orcales/shared/sim/prng"
 	"local/james-orcales/shared/testify"
 )
 

@@ -6,7 +6,7 @@ import (
 
 	"local/james-orcales/shared/database/driver"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/strings"
 	"local/james-orcales/shared/testify"

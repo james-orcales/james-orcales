@@ -5,7 +5,7 @@ import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // FIELD_LIMB_COUNT derives P-256 storage from its bit and machine-word widths.

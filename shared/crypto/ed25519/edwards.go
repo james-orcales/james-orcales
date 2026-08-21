@@ -6,7 +6,7 @@ import (
 	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // SEED_SIZE is the RFC 8032 private seed width.

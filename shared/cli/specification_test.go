@@ -8,8 +8,8 @@ import (
 
 	"local/james-orcales/shared/cli"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/strings"

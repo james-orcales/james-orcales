@@ -5,7 +5,7 @@
 package heap
 
 import (
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/slices"
 )
 

@@ -7,9 +7,9 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/simulation/aver/default"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 )
 
 // TEXT_SIZE_MAXIMUM is the widest constraint one read admits, which is wider than any constraint

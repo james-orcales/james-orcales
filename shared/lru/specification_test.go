@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/lru"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 )
 
 // Test_Simple_Evicts_Oldest checks New_Simple caps at its size, evicting the LRU entry and

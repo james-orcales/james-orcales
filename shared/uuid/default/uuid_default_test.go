@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/uuid"
 	system_uuid "local/james-orcales/shared/uuid/default"
 )

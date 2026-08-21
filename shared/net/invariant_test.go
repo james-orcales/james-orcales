@@ -7,9 +7,9 @@ import (
 
 	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/net"
-	"local/james-orcales/shared/simulation/aver/default"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 )
 
 // Test_Invariants reaches boundaries through ownership APIs because direct helper calls would

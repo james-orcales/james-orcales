@@ -5,7 +5,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/testify"
 )
 

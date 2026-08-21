@@ -17,7 +17,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/diff/myers"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // Keys the diff colors so readers can map - / + to red / green without

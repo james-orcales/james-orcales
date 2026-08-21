@@ -1,7 +1,7 @@
 // Package bzip2 decodes bzip2 streams into fixed caller storage.
 package bzip2
 
-import "local/james-orcales/shared/simulation/aver/default"
+import "local/james-orcales/shared/sim/aver/default"
 
 // FILE_MAGIC identifies bzip2 container.
 const FILE_MAGIC = 0x425a

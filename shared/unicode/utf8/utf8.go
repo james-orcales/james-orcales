@@ -3,7 +3,7 @@ package utf8
 
 import (
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // REPLACEMENT_CHARACTER is the result for an invalid encoding or character.

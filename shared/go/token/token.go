@@ -4,7 +4,7 @@
 package token
 
 import (
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // SOURCE_SIZE_MINIMUM admits the empty source, which scans to KIND_END_OF_FILE at once.

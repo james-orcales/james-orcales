@@ -33,9 +33,9 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/math/fixedpoint"
-	"local/james-orcales/shared/simulation/aver/default"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/slices"
 )
 

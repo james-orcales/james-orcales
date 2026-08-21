@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // SLICE_COUNT_MAXIMUM caps each slice that crosses this deterministic package boundary.

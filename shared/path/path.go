@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
 

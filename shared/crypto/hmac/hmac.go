@@ -12,7 +12,7 @@ import (
 	"local/james-orcales/shared/crypto/subtle"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // KIND_MD5 selects RFC 1321 compression.

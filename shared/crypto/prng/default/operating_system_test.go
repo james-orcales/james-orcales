@@ -5,7 +5,7 @@ import (
 
 	"local/james-orcales/shared/crypto/prng"
 	system_prng "local/james-orcales/shared/crypto/prng/default"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // DRAW_BYTE_COUNT compares one complete uint64 draw from each generator.

@@ -7,7 +7,7 @@ package printer
 import (
 	"local/james-orcales/shared/go/ast"
 	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // FORM_SIZE_MINIMUM admits no output.

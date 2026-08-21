@@ -208,9 +208,9 @@ func test_elision_imports(t *testing.T) {
 		},
 		{
 			Source: "package one\n\nimport invariant " +
-				"\"local/james-orcales/shared/simulation/aver/default\"\n",
+				"\"local/james-orcales/shared/sim/aver/default\"\n",
 			Form: "package one\n\nimport " +
-				"\"local/james-orcales/shared/simulation/aver/default\"\n",
+				"\"local/james-orcales/shared/sim/aver/default\"\n",
 		},
 	} {
 		testify.Equal(t, one.Form, printed(t, one.Source),

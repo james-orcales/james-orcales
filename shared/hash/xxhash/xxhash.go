@@ -14,7 +14,7 @@ import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // PRIME64_1 is the primary multiplier, applied after every rotate to spread bits (xxHash spec).

@@ -6,7 +6,7 @@ package constant
 import (
 	"local/james-orcales/shared/math/integer"
 	"local/james-orcales/shared/math/rational"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // KIND_UNKNOWN names a value the grammar could not fold.

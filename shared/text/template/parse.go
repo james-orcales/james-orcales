@@ -5,7 +5,7 @@ import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/math/big"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"

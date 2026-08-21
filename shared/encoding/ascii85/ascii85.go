@@ -4,7 +4,7 @@ package ascii85
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // DECODED_GROUP_SIZE follows ASCII85's 32-bit source word.

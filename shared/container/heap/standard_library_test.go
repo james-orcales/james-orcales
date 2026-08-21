@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"testing"
 
-	"local/james-orcales/shared/simulation/prng"
+	"local/james-orcales/shared/sim/prng"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )

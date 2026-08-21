@@ -7,8 +7,8 @@ import (
 	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/net"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 )
 
 // Test_Name protects host grammar before untrusted text reaches wire encoder.

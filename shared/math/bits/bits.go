@@ -6,7 +6,7 @@
 package bits
 
 import (
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // WORD_SIZE is the bit width of a machine word. This repository builds for 64-bit targets

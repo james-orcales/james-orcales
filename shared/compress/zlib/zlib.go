@@ -1,7 +1,7 @@
 // Package zlib decodes zlib streams into fixed caller storage.
 package zlib
 
-import "local/james-orcales/shared/simulation/aver/default"
+import "local/james-orcales/shared/sim/aver/default"
 
 // DEFLATE_METHOD is zlib compression-method identifier.
 const DEFLATE_METHOD = 8

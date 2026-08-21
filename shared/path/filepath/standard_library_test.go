@@ -11,8 +11,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/testify"
 )
 

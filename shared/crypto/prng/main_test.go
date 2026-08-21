@@ -3,7 +3,7 @@ package prng
 import (
 	"testing"
 
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 )
 
 // TestMain registers this package's assertions with the invariant coverage recorder and reports any

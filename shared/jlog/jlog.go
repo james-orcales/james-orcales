@@ -32,7 +32,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/unicode/utf8"
 )

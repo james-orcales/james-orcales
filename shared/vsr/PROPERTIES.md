@@ -14,12 +14,12 @@ external_references:
 The testable correctness properties of the VSR core, from applying the *applicable* parts of the
 `antithesis-research` methodology to a pure deterministic protocol core. This is not an
 Antithesis-platform artifact — no containers, SDK, or deployment topology. The
-`shared/simulation/aver` framework is the assertion system; the VOPR simulator
+`shared/sim/aver` framework is the assertion system; the VOPR simulator
 (`shared/vsr/simulation`) is the harness.
 
 ## How to read this
 
-Assertion vocabulary maps the methodology's Antithesis SDK onto `shared/simulation/aver`: `Always` →
+Assertion vocabulary maps the methodology's Antithesis SDK onto `shared/sim/aver`: `Always` →
 `aver.Always` (safety; must be *reached*); `Sometimes(cond)` → an
 `aver.Sometimes(...)` call (must be observed *both ways* — stricter than
 Antithesis); `Reachable` → a meaningful `Sometimes` link (no one-shot form exists). The
@@ -508,7 +508,7 @@ normal primary.
 
 - The simulator's reference model is the linearizability ground truth; "linearizable" here means
   result-equals-reference applied in commit order (real-time ordering is only partially checked).
-- `shared/simulation/aver`'s coverage model is stricter than Antithesis (every `Always` reached,
+- `shared/sim/aver`'s coverage model is stricter than Antithesis (every `Always` reached,
   every `Sometimes` both ways), so reach-only `Always` is preferred for membership/bound
   properties.
 - Crash-only fault model: Byzantine/corruption faults are out of scope (the core is not BFT and has

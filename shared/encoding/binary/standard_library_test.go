@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/testify"
 )
 

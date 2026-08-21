@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/strings"
 )

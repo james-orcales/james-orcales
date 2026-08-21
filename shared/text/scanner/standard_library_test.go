@@ -5,7 +5,7 @@ import (
 	standard_scanner "text/scanner"
 
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/text/scanner"
 )

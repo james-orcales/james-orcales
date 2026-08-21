@@ -7,7 +7,7 @@ import (
 	"local/james-orcales/shared/math/bits"
 	shared_os "local/james-orcales/shared/os"
 	"local/james-orcales/shared/os/default"
-	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )

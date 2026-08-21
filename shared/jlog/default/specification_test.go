@@ -7,7 +7,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/jlog/default"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/time"
 )
 
 // Test_Default_Floor_Is_Info covers New_Default_Logger building with an Info floor, so trace and

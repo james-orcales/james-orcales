@@ -19,8 +19,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/jlog"
-	"local/james-orcales/shared/simulation/time"
-	system_time "local/james-orcales/shared/simulation/time/default"
+	"local/james-orcales/shared/sim/time"
+	system_time "local/james-orcales/shared/sim/time/default"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/sync/diode"
 )

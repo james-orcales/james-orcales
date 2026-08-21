@@ -11,7 +11,7 @@ package uuid
 import (
 	"local/james-orcales/shared/crypto/prng"
 	system_prng "local/james-orcales/shared/crypto/prng/default"
-	"local/james-orcales/shared/simulation/time/default"
+	"local/james-orcales/shared/sim/time/default"
 	"local/james-orcales/shared/uuid"
 )
 

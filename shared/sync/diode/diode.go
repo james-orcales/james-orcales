@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"local/james-orcales/shared/simulation/aver/default"
-	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/time"
 )
 
 // Ring slot count used when New_Input.Count is unset; 1000 lines of slack absorbs
