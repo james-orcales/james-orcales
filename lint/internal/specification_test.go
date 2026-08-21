@@ -624,6 +624,17 @@ func Test_Source_And_Test_Bans_Iota(t *testing.T) {
 	}
 }
 
+// Test_Source_And_Test_Bans_Generics verifies type parameters are flagged.
+func Test_Source_And_Test_Bans_Generics(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Identity returns value.\n" +
+		"func Identity[Value any](value Value) (result Value) { return value }\n")
+	if !specification_flags(t, files, "Do not use generics") {
+		t.Fatal("type parameters must be flagged")
+	}
+}
+
 // Test_Source_And_Test_Bans_Interface_Declarations verifies an interface declaration is flagged.
 func Test_Source_And_Test_Bans_Interface_Declarations(t *testing.T) {
 	t.Parallel()

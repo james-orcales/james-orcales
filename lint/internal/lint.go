@@ -1616,6 +1616,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		make_check_import_alias_unnecessary(input.Declarations),
 		check_default_package_name,
 		check_no_empty_function_body,
+		check_no_generics,
 		check_no_interfaces,
 		make_check_names_vocabulary(input.Word_Replacements),
 		check_test_documentation_comment,
@@ -5963,19 +5964,31 @@ func check_no_function_init(
 	return diags
 }
 
-// Interface method sets are banned. Methods exist to make a concrete type fit
-// a contract; once the contract concept is removed, every method that does
-// not satisfy a stdlib interface is just dressed-up free-function syntax.
-// Type-element interfaces (generic constraints built from unions and
-// approximations like `~int | ~int64`) carry no method set and are allowed.
-// `any` / bare `interface{}` is allowed as the empty interface.
-//
-// Detection rule: any *ast.InterfaceType whose Methods.List contains at least
-// one *ast.Field with a non-empty Names slice (a method element). Embedded
-// interface names (Names empty, Type is Ident/SelectorExpr) are not flagged
-// here because at the AST level they are indistinguishable from
-// type-set constraints; they fall out naturally once the underlying
-// method-set interfaces are removed.
+// Type parameters hide multiple concrete programs behind one declaration.
+func check_no_generics(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+
+	ast.Inspect(file, func(node ast.Node) (recurse bool) {
+		var type_parameters *ast.FieldList
+		switch declaration := node.(type) {
+		case *ast.TypeSpec:
+			type_parameters = declaration.TypeParams
+		case *ast.FuncType:
+			type_parameters = declaration.TypeParams
+		}
+		if type_parameters == nil {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(type_parameters.Opening),
+			Message:  "Do not use generics. Write concrete types.",
+		})
+		return true
+	})
+	return diags
+}
+
+// Package-owned method sets create receiver methods rejected by method rule.
+// Ban contract at source. Keep method-free interfaces for dynamic values.
 func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (recurse bool) {
@@ -5992,8 +6005,8 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(interface_type.Pos()),
-				Message: "Do not declare an interface. " +
-					"A generic constraint is the one exception.",
+				Message: "Do not declare an interface with methods. " +
+					"Use concrete types.",
 			})
 			return true
 		}

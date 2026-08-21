@@ -201,9 +201,13 @@ language surface area. It also helps grepping for constants with the regex `^con
 A constant spells out its value; iota is banned. Make the value explicit instead of relying on
 declaration order.
 
+### Generics
+
+Type and func declarations have no type parameters. Each declaration names one concrete program.
+
 ### Interface Declarations
 
-A package declares no method-set interface; a type-constraint interface for generics is allowed.
+A package declares no method-set interface. Method-free interfaces remain allowed.
 
 ### Variable Shadows
 

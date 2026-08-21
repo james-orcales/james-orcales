@@ -1313,8 +1313,11 @@ func G() {
 // Test_Snapshot_Bans_Types pins the type-construct bans.
 func Test_Snapshot_Bans_Types(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:8: Do not declare an interface. A generic constraint is the one exception.`), Files: snapshot_package(`// I is a fixture.
+		{Snapshot: snap.Init(`a.go:5:8: Do not declare an interface with methods. Use concrete types.`), Files: snapshot_package(`// I is a fixture.
 type I interface{ M() }
+`)},
+		{Snapshot: snap.Init(`a.go:5:14: Do not use generics. Write concrete types.`), Files: snapshot_package(`// Identity returns value.
+func Identity[Value any](value Value) (result Value) { return value }
 `)},
 		{Snapshot: snap.Init(`a.go:11:12: The method Compute satisfies no stdlib interface. Convert the method to a free function. Write the receiver as the first parameter.`), Files: snapshot_package(`// T is a fixture.
 type T struct {
