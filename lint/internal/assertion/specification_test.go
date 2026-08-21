@@ -483,6 +483,33 @@ func Test_Invariants_Defined_Pointers(t *testing.T) {
 		Path: "pkg/rule.go", Source_Text: whole})), "inherited field") {
 		t.Fatal("a defined pointer that states every inherited field must be accepted")
 	}
+	document := "package fixture\n\n" +
+		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"const Document_Min = 0\n\nconst Document_Max = 8\n\n" +
+		"// Document fixture.\ntype Document []byte\n\n" +
+		"// Document_Invariants bounds document.\n" +
+		"func Document_Invariants(value Document, namespace aver.Namespace) {\n" +
+		"\taver.Tree(value, namespace)." +
+		"Range_Int(len(value), Document_Min, Document_Max).Ensure()\n}\n\n" +
+		"// Document_Handle fixture.\ntype Document_Handle *Document\n\n"
+	guard_only := document + "// Document_Handle_Invariants checks handle.\n" +
+		"func Document_Handle_Invariants(value Document_Handle, _ aver.Namespace) {\n" +
+		"\taver.Always(value != nil, \"document exists\")\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: guard_only})),
+		"Call Document_Invariants(*value, ...).") {
+		t.Fatal("defined pointer must compose pointed value")
+	}
+	composed := document + "// Document_Handle_Invariants checks handle.\n" +
+		"func Document_Handle_Invariants(" +
+		"value Document_Handle, namespace aver.Namespace) {\n" +
+		"\taver.Always(value != nil, \"document exists\")\n" +
+		"\tDocument_Invariants(*value, namespace)\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: composed})),
+		"Call Document_Invariants(*value, ...).") {
+		t.Fatal("pointed value helper must compose")
+	}
 }
 
 // Test_Invariants_Embedded_Fields verifies an anonymous field still owes its helper, under the name

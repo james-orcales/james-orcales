@@ -85,9 +85,8 @@ defined type composes it, through a defined type of its own when the field type 
 
 ### Defined Pointers
 
-A defined type over a pointer to a struct inherits that struct's fields. Go selects a field through
-the pointer, thus the bundle reaches every one and owes every one. A nil guard states that the
-pointer is present and never states what it points at.
+Defined pointer to named non-struct type calls pointee helper on dereferenced value. Defined pointer
+to struct inherits its fields. Nil guard states pointer presence, never pointed value properties.
 
 ### Embedded Fields
 

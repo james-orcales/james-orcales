@@ -1091,6 +1091,8 @@ func check_struct_invariants(
 			continue
 		}
 		diags = append(diags, struct_file_diagnostics(pf, defined, index, components)...)
+		diags = append(diags,
+			defined_pointer_file_diagnostics(pf, defined, index, components)...)
 	}
 	return diags
 }
@@ -1369,6 +1371,136 @@ func struct_resolve_defined(
 			settled = false
 		}
 	}
+}
+
+// Named non-struct pointees hide mandates behind dereference. Pointee helper keeps pointer presence
+// from replacing pointed value coverage.
+func defined_pointer_file_diagnostics(
+	file Parsed_File, defined map[string]bool,
+	declarations *Declaration_Index, components *Component_Index,
+) (diags []Diagnostic) {
+	current_package := helper_package_path(file, components)
+	imports := helper_import_paths(file.File)
+	for index, declaration := range file.File.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.TYPE {
+			continue
+		}
+		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if type_specification.Assign.IsValid() {
+			continue
+		}
+		pointer, is_pointer := type_specification.Type.(*ast.StarExpr)
+		if !is_pointer {
+			continue
+		}
+		scope := &Invariant_Scope{
+			Type_Parameters: struct_type_parameter_set(type_specification),
+			Defined:         defined,
+			Current_Package: current_package,
+			Imports:         imports,
+		}
+		expected := struct_named_invariant(pointer.X, scope)
+		if expected == "" {
+			continue
+		}
+		if !defined[expected] {
+			continue
+		}
+		pointed_identity := defined_pointer_type_identity(pointer.X, scope)
+		if _, pointed_struct := declarations.Structs[pointed_identity]; pointed_struct {
+			continue
+		}
+		helper := type_invariants_following_function(file.File, index)
+		if helper == nil {
+			continue
+		}
+		if helper.Name.Name != source.Invariant_Name(type_specification.Name.Name) {
+			continue
+		}
+		parameter := struct_parameter_name(helper, type_specification.Name.Name)
+		if parameter == "" {
+			continue
+		}
+		scope.Shadowed = function_value_names(helper)
+		if defined_pointer_calls_helper(helper, parameter, expected, scope) {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file.File_Set.Position(helper.Name.Pos()),
+			Message: fmt.Sprintf(
+				"Function %s does not compose pointed value *%s. "+
+					"Call %s(*%s, ...).",
+				helper.Name.Name,
+				parameter,
+				helper_identity_name(expected),
+				parameter,
+			),
+		})
+	}
+	return diags
+}
+
+// Package identity assigns pointer coverage to existing inherited-struct checks.
+func defined_pointer_type_identity(
+	expression ast.Expr, scope *Invariant_Scope,
+) (identity string) {
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if is_selector {
+		package_path := struct_selector_package(selector, scope.Imports)
+		if package_path == "" {
+			return ""
+		}
+		return package_path + "\x00" + selector.Sel.Name
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return ""
+	}
+	return scope.Current_Package + "\x00" + identifier.Name
+}
+
+// Exact dereference blocks unrelated value or pointer helper calls from covering pointee.
+func defined_pointer_calls_helper(
+	helper *ast.FuncDecl, parameter string, expected string, scope *Invariant_Scope,
+) (calls bool) {
+	shadowed := function_shadow_copy(scope.Shadowed)
+	for _, statement := range helper.Body.List {
+		call := statement_call(statement)
+		if call != nil {
+			callee := helper_callee_identity(
+				call.Fun, scope.Current_Package, scope.Imports, shadowed)
+			if callee == expected {
+				if defined_pointer_first_argument(call, parameter) {
+					return true
+				}
+			}
+		}
+		function_statement_shadows(statement, shadowed)
+	}
+	return false
+}
+
+// Only direct *parameter denotes value stored behind defined pointer.
+func defined_pointer_first_argument(call *ast.CallExpr, parameter string) (matches bool) {
+	if len(call.Args) == 0 {
+		return false
+	}
+	dereference, is_dereference := invariant_unparen(call.Args[0]).(*ast.StarExpr)
+	if !is_dereference {
+		return false
+	}
+	identifier, is_identifier := invariant_unparen(dereference.X).(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return identifier.Name == parameter
 }
 
 // Package-qualified keys ensure adding Foo_Invariants in one package cannot silently impose or
