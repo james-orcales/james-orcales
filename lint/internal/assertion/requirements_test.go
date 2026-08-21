@@ -858,16 +858,15 @@ func Test_Simulation_Presence(t *testing.T) {
 }
 
 // Test_Simulation_Contents verifies a simulation package with no Fuzz function is
-// flagged: the fuzz driver must be present.
+// not flagged: only the reach into pkg is restricted, not the test shape.
 func Test_Simulation_Contents(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
 		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n"
-	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
-		"The simulation package has no fuzz function for pkg.Main.") {
-		t.Fatal("a simulation package without a fuzz function must be flagged")
+	if diagnosed(simulation_diagnostics(simulation_files(t, sim)), "simulation") {
+		t.Fatal("a simulation package without a fuzz function must not be flagged")
 	}
 }
 

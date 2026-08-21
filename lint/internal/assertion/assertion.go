@@ -2992,7 +2992,7 @@ func recorder_group_diagnostics(group *Recorder_Group) (diags []Diagnostic) {
 }
 
 // SIMULATION_DIRECTORY names the test-only package under a binary component's
-// pkg/ whose fuzz test drives pkg.Main.
+// pkg/ whose test drives pkg.Main.
 const SIMULATION_DIRECTORY = "simulation_test"
 
 // SIMULATION_GLOB is the sole TestMain directory argument: the pkg package and
@@ -3000,9 +3000,9 @@ const SIMULATION_DIRECTORY = "simulation_test"
 const SIMULATION_GLOB = "../**"
 
 // A binary component's invariants are witnessed only by a simulation package that
-// drives pkg.Main through a fuzz test, never by a per-package Run_Test_Main.
-// This holds that package to its contract: it exists, declares nothing but the
-// fuzz driver and its TestMain, and registers every non-exempt pkg package
+// drives pkg.Main, never by a per-package Run_Test_Main.
+// This holds that package to its contract: it exists, refers to no pkg function
+// but Main, and registers every non-exempt pkg package
 // for coverage. Every diagnostic is tier two, so a tier-one issue suppresses it.
 func check_simulation(
 	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
@@ -3022,7 +3022,7 @@ func check_simulation(
 }
 
 // The simulation diagnostics for one binary component: none when its pkg tree
-// carries no non-exempt package (nothing to witness), else the presence, contents,
+// carries no non-exempt package (nothing to witness), else the presence, entry,
 // and TestMain checks against the package at pkg/simulation_test.
 func simulation_component_diagnostics(
 	parsed_files []Parsed_File, components *Component_Index,
@@ -3045,7 +3045,6 @@ func simulation_component_diagnostics(
 			component.Import_Path, SIMULATION_DIRECTORY, SIMULATION_DIRECTORY))
 	}
 	diags = append(diags, simulation_package_diagnostics(sim_files, position)...)
-	diags = append(diags, simulation_contents_diagnostics(sim_files, position)...)
 	package_functions := simulation_package_functions(
 		parsed_files, components, component_index_number, package_root)
 	diags = append(diags, simulation_entry_diagnostics(
@@ -3112,7 +3111,7 @@ func simulation_package_files(
 
 // The simulation directory holds one blackbox test package and no source package:
 // every file is a _test.go whose clause ends in _test. A source file would compile
-// into the same tree the fuzz drives, a back door around the isolated test binary.
+// into the same tree the simulation drives, a back door around the isolated test binary.
 func simulation_package_diagnostics(
 	sim_files []Parsed_File, position token.Position,
 ) (diags []Diagnostic) {
@@ -3130,39 +3129,6 @@ func simulation_package_diagnostics(
 		}
 	}
 	return nil
-}
-
-// The simulation package declares a fuzz function that drives pkg.Main — the
-// witness for the component's invariants. Any other declaration is allowed; the fuzz
-// driver just has to be present.
-func simulation_contents_diagnostics(
-	files []Parsed_File, position token.Position,
-) (diags []Diagnostic) {
-	for _, pf := range files {
-		for _, declaration := range pf.File.Decls {
-			if simulation_is_fuzz(declaration) {
-				return nil
-			}
-		}
-	}
-	return simulation_diagnostic(position,
-		"The simulation package has no fuzz function for pkg.Main. "+
-			"Declare a fuzz function that calls pkg.Main.")
-}
-
-// Reports whether the declaration is a free Fuzz function taking a *testing.F.
-func simulation_is_fuzz(declaration ast.Decl) (fuzz bool) {
-	function, is_function := declaration.(*ast.FuncDecl)
-	if !is_function {
-		return false
-	}
-	if function.Recv != nil {
-		return false
-	}
-	if !strings.Has_Prefix(function.Name.Name, "Fuzz") {
-		return false
-	}
-	return simulation_fuzz_parameter(function) != ""
 }
 
 // The exported free-function names, Main aside, declared across the component's
@@ -3267,39 +3233,6 @@ func simulation_entry_node(
 		"The simulation package refers to %s.%s. Refer only to Main.",
 		identifier.Name, selector.Sel.Name))...)
 	return true
-}
-
-// Returns the name of the function's *testing.F parameter, or "" when it has none —
-// a Fuzz function without one is not a real fuzz target.
-func simulation_fuzz_parameter(function *ast.FuncDecl) (name string) {
-	if function.Type.Params == nil {
-		return ""
-	}
-	for _, field := range function.Type.Params.List {
-		star, is_star := field.Type.(*ast.StarExpr)
-		if !is_star {
-			continue
-		}
-		selector, is_selector := star.X.(*ast.SelectorExpr)
-		if !is_selector {
-			continue
-		}
-		qualifier, is_qualifier := selector.X.(*ast.Ident)
-		if !is_qualifier {
-			continue
-		}
-		if qualifier.Name != "testing" {
-			continue
-		}
-		if selector.Sel.Name != "F" {
-			continue
-		}
-		if len(field.Names) == 0 {
-			continue
-		}
-		return field.Names[0].Name
-	}
-	return ""
 }
 
 // The simulation's TestMain body must be exactly aver.Run_Test_Main(m, "../**"):

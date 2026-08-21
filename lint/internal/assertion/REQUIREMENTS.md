@@ -151,7 +151,7 @@ alike. Convert fixed arrays to slices instead.
 # Simulation
 
 A binary component's invariants are witnessed only by a simulation package under its internal
-directory, whose fuzz test drives internal.Main; its coverage is judged tier two.
+directory, whose test drives internal.Main; its coverage is judged tier two.
 
 ### Presence
 
@@ -161,8 +161,8 @@ none.
 
 ### Contents
 
-The simulation package declares a Fuzz function that drives internal.Main; that fuzz, in its own
-isolated test binary, witnesses the component's invariants. Other declarations are allowed.
+The simulation package refers to no internal function but Main; any other is a second entry point
+that could witness an invariant without driving Main. Test shape and other declarations are free.
 
 ### Test Main
 
