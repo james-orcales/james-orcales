@@ -13,7 +13,8 @@ shared/math/bits. Equal numbers with different meanings remain separate definiti
 # Comparison
 
 Equal reports byte equality. Compare gives normalized lexical order. Equal_Fold compares decoded
-characters through Unicode simple folding. Nil Slice and empty Slice are equal.
+characters. Has_Text_Suffix compares byte storage with string without conversion storage.
+Nil and empty Slice are equal. Overlap reports whether two nonempty views share byte storage.
 
 # Search
 

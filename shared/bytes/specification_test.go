@@ -32,24 +32,19 @@ func Test_Constant_Facts(t *testing.T) {
 
 // Test_Comparison protects byte equality, lexical order, and Unicode folding.
 func Test_Comparison(t *testing.T) {
-	if !bytes.Equal(nil, []byte{}) {
-		t.Fatal("Equal distinguished nil from empty")
-	}
-	if bytes.Equal([]byte("a"), []byte("b")) {
-		t.Fatal("Equal accepted different bytes")
-	}
-	if bytes.Compare([]byte("ab"), []byte("ac")) != bytes.ORDER_BEFORE {
-		t.Fatal("Compare missed lexical order")
-	}
-	if bytes.Compare([]byte("ac"), []byte("ab")) != bytes.ORDER_AFTER {
-		t.Fatal("Compare missed reverse lexical order")
-	}
-	if bytes.Compare([]byte("ab"), []byte("ab")) != bytes.ORDER_EQUAL {
-		t.Fatal("Compare missed equality")
-	}
-	if !bytes.Equal_Fold([]byte("Go"), []byte("gO")) {
-		t.Fatal("Equal_Fold missed simple folding")
-	}
+	testify.True(t, bool(bytes.Equal(nil, []byte{})))
+	testify.False(t, bool(bytes.Equal([]byte("a"), []byte("b"))))
+	testify.Equal(t, bytes.Order(bytes.ORDER_BEFORE), bytes.Compare([]byte("ab"), []byte("ac")))
+	testify.Equal(t, bytes.Order(bytes.ORDER_AFTER), bytes.Compare([]byte("ac"), []byte("ab")))
+	testify.Equal(t, bytes.Order(bytes.ORDER_EQUAL), bytes.Compare([]byte("ab"), []byte("ab")))
+	testify.True(t, bool(bytes.Equal_Fold([]byte("Go"), []byte("gO"))))
+	storage := []byte("abcdef")
+	testify.True(t, bool(bytes.Overlap(storage[:3], storage[2:])))
+	testify.False(t, bool(bytes.Overlap(storage[:3], []byte("abc"))))
+	testify.False(t, bool(bytes.Overlap(storage[:0], storage)))
+	testify.True(t, bool(bytes.Has_Text_Suffix([]byte("archive.txt"), ".txt")))
+	testify.False(t, bool(bytes.Has_Text_Suffix([]byte("archive.txt"), ".zip")))
+	testify.False(t, bool(bytes.Has_Text_Suffix([]byte("x"), "longer")))
 }
 
 // Test_Search protects every search form and empty UTF-8 boundaries.
@@ -685,6 +680,7 @@ func cover_query_slice_inputs(source bytes.Slice) {
 	bytes.Last_Index_Any(source, text)
 	bytes.Has_Prefix(source, source)
 	bytes.Has_Suffix(source, source)
+	bytes.Has_Text_Suffix(source, text)
 	bytes.Index_Function(source, is_zero)
 	bytes.Last_Index_Function(source, is_zero)
 	bytes.Equal_Fold(source, source)
@@ -1736,6 +1732,16 @@ func query_suffix_allocation_checks(
 		}},
 		{Name: "Has_Suffix", Call: func() {
 			fixture.Observable = zero_allocation_boolean(bytes.Has_Suffix(
+				fixture.Source[:], fixture.Source[1:],
+			))
+		}},
+		{Name: "Has_Text_Suffix", Call: func() {
+			fixture.Observable = zero_allocation_boolean(bytes.Has_Text_Suffix(
+				fixture.Source[:], "b",
+			))
+		}},
+		{Name: "Overlap", Call: func() {
+			fixture.Observable = zero_allocation_boolean(bytes.Overlap(
 				fixture.Source[:], fixture.Source[1:],
 			))
 		}},

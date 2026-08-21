@@ -1420,12 +1420,12 @@ func Join_Into(
 	)
 	for _, part := range parts {
 		invariant.Always(
-			!slices_overlap(destination[:result_size], part),
+			!Overlap(destination[:result_size], part),
 			"Join destination does not overlap a part.",
 		)
 	}
 	invariant.Always(
-		!slices_overlap(destination[:result_size], separator),
+		!Overlap(destination[:result_size], separator),
 		"Join destination does not overlap separator.",
 	)
 	written := 0
@@ -1460,6 +1460,23 @@ func Has_Suffix(source Slice, suffix Slice) (present Boolean) {
 	return Equal(source[len(source)-len(suffix):], suffix)
 }
 
+// Has_Text_Suffix avoids allocating a byte copy when a caller already owns string input.
+func Has_Text_Suffix(source Slice, suffix Text) (present Boolean) {
+	defer func() { Boolean_Invariants(present, "has_text_suffix.present") }()
+	Slice_Invariants(source, "has_text_suffix.source")
+	Text_Invariants(suffix, "has_text_suffix.suffix")
+	if len(suffix) > len(source) {
+		return false
+	}
+	start := len(source) - len(suffix)
+	for index := range suffix {
+		if source[start+index] != suffix[index] {
+			return false
+		}
+	}
+	return true
+}
+
 // Map_Into writes mapped characters into caller storage.
 func Map_Into(
 	destination Slice, mapping func(rune) (mapped_character rune), source Slice,
@@ -1468,7 +1485,7 @@ func Map_Into(
 	Slice_Invariants(destination, "map_into.destination")
 	Slice_Invariants(source, "map_into.source")
 	invariant.Always(
-		!slices_overlap(destination, source),
+		!Overlap(destination, source),
 		"Map destination does not overlap source.",
 	)
 	written := 0
@@ -1589,7 +1606,7 @@ func map_case_into(
 	ucd.Special_Case_Invariants(special, "map_case_into.special")
 	Boolean_Invariants(use_special, "map_case_into.use_special")
 	invariant.Always(
-		!slices_overlap(destination, source),
+		!Overlap(destination, source),
 		"Case destination does not overlap source.",
 	)
 	written := 0
@@ -1634,7 +1651,7 @@ func To_Valid_UTF8_Into(
 	Slice_Invariants(source, "to_valid_utf8_into.source")
 	Slice_Invariants(replacement, "to_valid_utf8_into.replacement")
 	invariant.Always(
-		!slices_overlap(destination, source),
+		!Overlap(destination, source),
 		"UTF-8 destination does not overlap source.",
 	)
 	written := 0
@@ -1672,7 +1689,7 @@ func Title_Into(destination Slice, source Slice) (count Boundary) {
 	Slice_Invariants(destination, "title_into.destination")
 	Slice_Invariants(source, "title_into.source")
 	invariant.Always(
-		!slices_overlap(destination, source),
+		!Overlap(destination, source),
 		"Title destination does not overlap source.",
 	)
 	written := 0
@@ -1875,15 +1892,15 @@ func Replace_Into(
 	Slice_Invariants(replacement, "replace_into.replacement")
 	Replacement_Count_Invariants(count, "replace_into.count")
 	invariant.Always(
-		!slices_overlap(destination, source),
+		!Overlap(destination, source),
 		"Replace destination does not overlap source.",
 	)
 	invariant.Always(
-		!slices_overlap(destination, old),
+		!Overlap(destination, old),
 		"Replace destination does not overlap old value.",
 	)
 	invariant.Always(
-		!slices_overlap(destination, replacement),
+		!Overlap(destination, replacement),
 		"Replace destination does not overlap replacement.",
 	)
 	match_count := Count(source, old)
@@ -2261,10 +2278,11 @@ func title_separator(character Decoded_Character) (separator Boolean) {
 	return Boolean(ucd.Is_Space(ucd_character))
 }
 
-func slices_overlap(left Slice, right Slice) (overlap Boolean) {
-	defer func() { Boolean_Invariants(overlap, "slices_overlap.overlap") }()
-	Slice_Invariants(left, "slices_overlap.left")
-	Slice_Invariants(right, "slices_overlap.right")
+// Overlap exposes storage identity because caller-owned transforms must reject harmful aliases.
+func Overlap(left Slice, right Slice) (overlap Boolean) {
+	defer func() { Boolean_Invariants(overlap, "overlap.overlap") }()
+	Slice_Invariants(left, "overlap.left")
+	Slice_Invariants(right, "overlap.right")
 	for left_index := range left {
 		for right_index := range right {
 			if &left[left_index] == &right[right_index] {
