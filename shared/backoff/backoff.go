@@ -117,6 +117,197 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 		Ensure()
 }
 
+// RATIO_PART_MINIMUM is the smallest unsigned ratio part.
+const RATIO_PART_MINIMUM uint64 = uint64(bits.WORD_64_MINIMUM)
+
+// RATIO_PART_POSITIVE_MINIMUM is the first denominator and growth numerator.
+const RATIO_PART_POSITIVE_MINIMUM = RATIO_PART_MINIMUM + 1
+
+// RATIO_PART_MAXIMUM is the complete unsigned ratio-part domain.
+const RATIO_PART_MAXIMUM uint64 = bits.WORD_64_MAXIMUM
+
+// Multiplier_Numerator is positive growth mass.
+type Multiplier_Numerator uint64
+
+// Multiplier_Numerator_Invariants preserves complete storage while constructor validates use.
+func Multiplier_Numerator_Invariants(
+	value Multiplier_Numerator, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), RATIO_PART_POSITIVE_MINIMUM, RATIO_PART_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Multiplier_Denominator is positive unchanged mass.
+type Multiplier_Denominator uint64
+
+// Multiplier_Denominator_Invariants preserves complete storage while constructor validates use.
+func Multiplier_Denominator_Invariants(
+	value Multiplier_Denominator, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), RATIO_PART_POSITIVE_MINIMUM, RATIO_PART_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Multiplier is an exponential growth ratio, where numerator is never below denominator in use.
+type Multiplier struct {
+	// Numerator is the growth mass.
+	Numerator Multiplier_Numerator
+	// Denominator is the unchanged interval mass.
+	Denominator Multiplier_Denominator
+}
+
+// Multiplier_Invariants rejects a shrinking interval.
+func Multiplier_Invariants(multiplier Multiplier, namespace invariant.Namespace) {
+	Multiplier_Numerator_Invariants(multiplier.Numerator, namespace)
+	Multiplier_Denominator_Invariants(multiplier.Denominator, namespace)
+	invariant.Always(
+		multiplier.Numerator >= Multiplier_Numerator(multiplier.Denominator),
+		"Multiplier never shrinks interval.",
+	)
+}
+
+// Jitter_Numerator is spread mass, with zero selecting no jitter.
+type Jitter_Numerator uint64
+
+// Jitter_Numerator_Invariants preserves every representable spread mass.
+func Jitter_Numerator_Invariants(value Jitter_Numerator, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
+		Ensure()
+}
+
+// Jitter_Denominator is positive interval mass.
+type Jitter_Denominator uint64
+
+// Jitter_Denominator_Invariants preserves complete storage while constructor validates use.
+func Jitter_Denominator_Invariants(value Jitter_Denominator, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), RATIO_PART_POSITIVE_MINIMUM, RATIO_PART_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Jitter is the fraction of one interval available to the random spread.
+type Jitter struct {
+	// Numerator is random spread mass.
+	Numerator Jitter_Numerator
+	// Denominator is complete interval mass.
+	Denominator Jitter_Denominator
+}
+
+// Jitter_Invariants rejects spread beyond a complete interval.
+func Jitter_Invariants(jitter Jitter, namespace invariant.Namespace) {
+	Jitter_Numerator_Invariants(jitter.Numerator, namespace)
+	Jitter_Denominator_Invariants(jitter.Denominator, namespace)
+	invariant.Always(
+		jitter.Numerator <= Jitter_Numerator(jitter.Denominator),
+		"Jitter never exceeds complete interval.",
+	)
+}
+
+// Stored_Multiplier_Numerator includes zero while caller storage is uninitialized.
+type Stored_Multiplier_Numerator uint64
+
+// Stored_Multiplier_Numerator_Invariants spans complete caller storage.
+func Stored_Multiplier_Numerator_Invariants(
+	value Stored_Multiplier_Numerator, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
+		Ensure()
+}
+
+// Stored_Multiplier_Denominator includes zero while caller storage is uninitialized.
+type Stored_Multiplier_Denominator uint64
+
+// Stored_Multiplier_Denominator_Invariants spans complete caller storage.
+func Stored_Multiplier_Denominator_Invariants(
+	value Stored_Multiplier_Denominator, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
+		Ensure()
+}
+
+// Stored_Multiplier separates uninitialized policy storage from configured input.
+type Stored_Multiplier struct {
+	// Numerator is stored growth mass.
+	Numerator Stored_Multiplier_Numerator
+	// Denominator is stored unchanged mass.
+	Denominator Stored_Multiplier_Denominator
+}
+
+// Stored_Multiplier_Invariants composes complete caller storage.
+func Stored_Multiplier_Invariants(value Stored_Multiplier, namespace invariant.Namespace) {
+	Stored_Multiplier_Numerator_Invariants(value.Numerator, namespace)
+	Stored_Multiplier_Denominator_Invariants(value.Denominator, namespace)
+}
+
+// Stored_Jitter_Numerator spans zero through complete unsigned storage.
+type Stored_Jitter_Numerator uint64
+
+// Stored_Jitter_Numerator_Invariants spans complete caller storage.
+func Stored_Jitter_Numerator_Invariants(
+	value Stored_Jitter_Numerator, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
+		Ensure()
+}
+
+// Stored_Jitter_Denominator includes zero while caller storage is uninitialized.
+type Stored_Jitter_Denominator uint64
+
+// Stored_Jitter_Denominator_Invariants spans complete caller storage.
+func Stored_Jitter_Denominator_Invariants(
+	value Stored_Jitter_Denominator, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
+		Ensure()
+}
+
+// Stored_Jitter separates uninitialized policy storage from configured input.
+type Stored_Jitter struct {
+	// Numerator is stored spread mass.
+	Numerator Stored_Jitter_Numerator
+	// Denominator is stored interval mass.
+	Denominator Stored_Jitter_Denominator
+}
+
+// Stored_Jitter_Invariants composes complete caller storage.
+func Stored_Jitter_Invariants(value Stored_Jitter, namespace invariant.Namespace) {
+	Stored_Jitter_Numerator_Invariants(value.Numerator, namespace)
+	Stored_Jitter_Denominator_Invariants(value.Denominator, namespace)
+}
+
+// Generator_Storage includes zero while caller policy storage is uninitialized.
+type Generator_Storage prng.Generator
+
+// Generator_Storage_Invariants fixes the xoshiro state width without requiring initialization.
+func Generator_Storage_Invariants(generator Generator_Storage, _ invariant.Namespace) {
+	invariant.Always(
+		len(generator.State) == prng.GENERATOR_STATE_WORD_COUNT,
+		"Generator storage keeps the xoshiro state width.",
+	)
+}
+
+// Required_Generator is active caller-owned jitter entropy.
+type Required_Generator *prng.Generator
+
+// Required_Generator_Invariants rejects missing entropy before dereferencing caller storage.
+func Required_Generator_Invariants(generator Required_Generator, namespace invariant.Namespace) {
+	invariant.Always(generator != nil, "Jitter has caller-owned entropy.")
+	prng.Generator_Invariants(*generator, namespace)
+}
+
 // Error_Permanent is the sentinel Permanent wraps; Retry stops at once when the
 // operation's error matches it.
 var Error_Permanent = errors.New("backoff: permanent error")
@@ -176,11 +367,11 @@ type Policy_State struct {
 	// Interval_Max caps exponential base.
 	Interval_Max Maximum_Interval
 	// Multiplier grows exponential base.
-	Multiplier prng.Ratio
+	Multiplier Stored_Multiplier
 	// Jitter spreads exponential delay.
-	Jitter prng.Ratio
+	Jitter Stored_Jitter
 	// Generator supplies deterministic jitter.
-	Generator *prng.Generator
+	Generator Generator_Storage
 }
 
 // Policy_State_Invariants closes kind and bounds interval state.
@@ -189,6 +380,9 @@ func Policy_State_Invariants(state Policy_State, namespace invariant.Namespace) 
 	Initial_Interval_Invariants(state.Initial_Interval, namespace)
 	Current_Interval_Invariants(state.Current_Interval, namespace)
 	Maximum_Interval_Invariants(state.Interval_Max, namespace)
+	Stored_Multiplier_Invariants(state.Multiplier, namespace)
+	Stored_Jitter_Invariants(state.Jitter, namespace)
+	Generator_Storage_Invariants(state.Generator, namespace)
 	invariant.Always(
 		state.Initial_Interval <= Initial_Interval(state.Interval_Max),
 		"Policy initial interval fits maximum.",
@@ -204,7 +398,9 @@ func Constant(state *Policy_State, interval Initial_Interval) (policy Policy) {
 		Kind: POLICY_KIND_CONSTANT, Initial_Interval: interval,
 		Current_Interval: Current_Interval(interval),
 		Interval_Max:     Maximum_Interval(interval),
-		Multiplier:       prng.Ratio{Denominator: 1}, Jitter: prng.Ratio{Denominator: 1},
+		Multiplier:       Stored_Multiplier{Numerator: 1, Denominator: 1},
+		Jitter:           Stored_Jitter{Denominator: 1},
+		Generator:        Generator_Storage(prng.New(1)),
 	}
 	return Policy{State: unsafe.Pointer(state), Next: policy_next, Reset: policy_reset}
 }
@@ -215,7 +411,9 @@ func Zero(state *Policy_State) (policy Policy) {
 	Policy_State_Invariants(*state, "zero.state")
 	*state = Policy_State{
 		Kind:       POLICY_KIND_CONSTANT,
-		Multiplier: prng.Ratio{Denominator: 1}, Jitter: prng.Ratio{Denominator: 1},
+		Multiplier: Stored_Multiplier{Numerator: 1, Denominator: 1},
+		Jitter:     Stored_Jitter{Denominator: 1},
+		Generator:  Generator_Storage(prng.New(1)),
 	}
 	return Policy{State: unsafe.Pointer(state), Next: policy_next, Reset: policy_reset}
 }
@@ -226,7 +424,9 @@ func Stopped(state *Policy_State) (policy Policy) {
 	Policy_State_Invariants(*state, "stopped.state")
 	*state = Policy_State{
 		Kind:       POLICY_KIND_STOPPED,
-		Multiplier: prng.Ratio{Denominator: 1}, Jitter: prng.Ratio{Denominator: 1},
+		Multiplier: Stored_Multiplier{Numerator: 1, Denominator: 1},
+		Jitter:     Stored_Jitter{Denominator: 1},
+		Generator:  Generator_Storage(prng.New(1)),
 	}
 	return Policy{State: unsafe.Pointer(state), Next: policy_next, Reset: policy_reset}
 }
@@ -239,17 +439,20 @@ type Exponential_Input struct {
 	// Interval_Max caps the growing interval (not the jittered result).
 	Interval_Max Maximum_Interval
 	// Multiplier is the integer ratio the interval grows by each attempt, e.g. {3,2} is 1.5x.
-	Multiplier prng.Ratio
+	Multiplier Multiplier
 	// Jitter is the integer ratio of random spread per interval, e.g. {1,2} is half.
-	Jitter prng.Ratio
+	Jitter Jitter
 	// Generator is the injected entropy the jitter draws from, for a reproducible spread.
-	Generator *prng.Generator
+	Generator prng.Generator
 }
 
 // Exponential_Input_Invariants bounds configured duration and ratio domains.
 func Exponential_Input_Invariants(input Exponential_Input, namespace invariant.Namespace) {
 	Initial_Interval_Invariants(input.Initial_Interval, namespace)
 	Maximum_Interval_Invariants(input.Interval_Max, namespace)
+	Multiplier_Invariants(input.Multiplier, namespace)
+	Jitter_Invariants(input.Jitter, namespace)
+	prng.Generator_Invariants(input.Generator, namespace)
 	invariant.Always(
 		input.Initial_Interval <= Initial_Interval(input.Interval_Max),
 		"Exponential initial interval fits maximum.",
@@ -258,19 +461,11 @@ func Exponential_Input_Invariants(input Exponential_Input, namespace invariant.N
 }
 
 func exponential_ratio_validate(
-	multiplier prng.Ratio, jitter_ratio prng.Ratio, generator *prng.Generator,
+	multiplier Multiplier, jitter_ratio Jitter, generator prng.Generator,
 ) {
-	invariant.Always(multiplier.Denominator > 0, "Multiplier denominator is positive.")
-	invariant.Always(
-		multiplier.Numerator >= multiplier.Denominator,
-		"Multiplier never shrinks interval.",
-	)
-	invariant.Always(jitter_ratio.Denominator > 0, "Jitter denominator is positive.")
-	invariant.Always(
-		jitter_ratio.Numerator <= jitter_ratio.Denominator,
-		"Jitter never exceeds complete interval.",
-	)
-	invariant.Always(generator != nil, "Jitter generator has caller-owned state.")
+	Multiplier_Invariants(multiplier, "exponential_ratio_validate.multiplier")
+	Jitter_Invariants(jitter_ratio, "exponential_ratio_validate.jitter_ratio")
+	prng.Generator_Invariants(generator, "exponential_ratio_validate.generator")
 }
 
 // Exponential initializes caller state and returns growing jittered policy.
@@ -283,9 +478,15 @@ func Exponential(state *Policy_State, input *Exponential_Input) (policy Policy) 
 		Initial_Interval: input.Initial_Interval,
 		Current_Interval: Current_Interval(input.Initial_Interval),
 		Interval_Max:     input.Interval_Max,
-		Multiplier:       input.Multiplier,
-		Jitter:           input.Jitter,
-		Generator:        input.Generator,
+		Multiplier: Stored_Multiplier{
+			Numerator:   Stored_Multiplier_Numerator(input.Multiplier.Numerator),
+			Denominator: Stored_Multiplier_Denominator(input.Multiplier.Denominator),
+		},
+		Jitter: Stored_Jitter{
+			Numerator:   Stored_Jitter_Numerator(input.Jitter.Numerator),
+			Denominator: Stored_Jitter_Denominator(input.Jitter.Denominator),
+		},
+		Generator: Generator_Storage(input.Generator),
 	}
 	return Policy{State: unsafe.Pointer(state), Next: policy_next, Reset: policy_reset}
 }
@@ -306,15 +507,16 @@ func Policy_Reset(policy Policy) {
 // New_Exponential returns an Exponential Policy with the classic defaults: a 500ms
 // initial interval, a 60s cap, 1.5x growth, and half-interval jitter from generator.
 func New_Exponential(
-	state *Policy_State, generator *prng.Generator,
+	state *Policy_State, generator prng.Generator,
 ) (policy Policy) {
 	defer func() { Policy_Invariants(policy, "new_exponential.policy") }()
 	Policy_State_Invariants(*state, "new_exponential.state")
+	prng.Generator_Invariants(generator, "new_exponential.generator")
 	return Exponential(state, &Exponential_Input{
 		Initial_Interval: Initial_Interval(DEFAULT_INITIAL_INTERVAL),
 		Interval_Max:     Maximum_Interval(DEFAULT_INTERVAL_MAX),
-		Multiplier:       prng.Ratio{Numerator: 3, Denominator: 2},
-		Jitter:           prng.Ratio{Numerator: 1, Denominator: 2},
+		Multiplier:       Multiplier{Numerator: 3, Denominator: 2},
+		Jitter:           Jitter{Numerator: 1, Denominator: 2},
 		Generator:        generator,
 	})
 }
@@ -322,13 +524,25 @@ func New_Exponential(
 func policy_next(pointer unsafe.Pointer) (delay Delay) {
 	defer func() { Delay_Invariants(delay, "policy_procedure_next.delay") }()
 	state := (*Policy_State)(pointer)
-	Policy_State_Invariants(*state, "policy_procedure_next.state")
 	switch state.Kind {
 	case POLICY_KIND_STOPPED:
 		return STOP
 	case POLICY_KIND_EXPONENTIAL:
-		delay = Delay(jitter(state.Current_Interval, state.Jitter, state.Generator))
-		state.Current_Interval = grow(state.Current_Interval, state.Multiplier)
+		factor := Jitter{
+			Numerator:   Jitter_Numerator(state.Jitter.Numerator),
+			Denominator: Jitter_Denominator(state.Jitter.Denominator),
+		}
+		delay = Delay(jitter(
+			state.Current_Interval, factor,
+			Required_Generator((*prng.Generator)(&state.Generator)),
+		))
+		multiplier := Multiplier{
+			Numerator:   Multiplier_Numerator(state.Multiplier.Numerator),
+			Denominator: Multiplier_Denominator(state.Multiplier.Denominator),
+		}
+		state.Current_Interval = grow(
+			state.Current_Interval, multiplier,
+		)
 		if state.Current_Interval > Current_Interval(state.Interval_Max) {
 			state.Current_Interval = Current_Interval(state.Interval_Max)
 		}
@@ -340,30 +554,31 @@ func policy_next(pointer unsafe.Pointer) (delay Delay) {
 
 func policy_reset(pointer unsafe.Pointer) {
 	state := (*Policy_State)(pointer)
-	Policy_State_Invariants(*state, "policy_procedure_reset.state")
 	state.Current_Interval = Current_Interval(state.Initial_Interval)
 }
 
 // Multiplies interval by multiplier in integers, the upstream exponential step.
-func grow(interval Current_Interval, multiplier prng.Ratio) (grown Current_Interval) {
+func grow(interval Current_Interval, multiplier Multiplier) (grown Current_Interval) {
 	defer func() { Current_Interval_Invariants(grown, "grow.grown") }()
 	Current_Interval_Invariants(interval, "grow.interval")
+	Multiplier_Invariants(multiplier, "grow.multiplier")
 	if multiplier.Denominator == 0 {
 		return Current_Interval(INTERVAL_MAXIMUM)
 	}
-	numerator := multiplier.Numerator
-	if numerator < multiplier.Denominator {
-		numerator = multiplier.Denominator
+	numerator := uint64(multiplier.Numerator)
+	denominator := uint64(multiplier.Denominator)
+	if numerator < denominator {
+		numerator = denominator
 	}
 	high, low := bits.Multiply_64(
 		bits.Word_64(interval), bits.Multiplier_64(numerator),
 	)
-	if uint64(high) >= multiplier.Denominator {
+	if uint64(high) >= denominator {
 		return Current_Interval(INTERVAL_MAXIMUM)
 	}
 	quotient, _ := bits.Divide_64(
 		bits.Dividend_High_64(high), bits.Dividend_Low_64(low),
-		bits.Divisor_64(multiplier.Denominator),
+		bits.Divisor_64(denominator),
 	)
 	if uint64(quotient) > uint64(INTERVAL_MAXIMUM) {
 		return Current_Interval(INTERVAL_MAXIMUM)
@@ -374,31 +589,31 @@ func grow(interval Current_Interval, multiplier prng.Ratio) (grown Current_Inter
 // Spreads interval by a random offset up to factor of itself either way, drawn from
 // generator; a zero factor returns interval unchanged.
 func jitter(
-	interval Current_Interval, factor prng.Ratio, generator *prng.Generator,
+	interval Current_Interval, factor Jitter, generator Required_Generator,
 ) (spread Wait) {
 	defer func() { Wait_Invariants(spread, "jitter.spread") }()
 	Current_Interval_Invariants(interval, "jitter.interval")
+	Jitter_Invariants(factor, "jitter.factor")
+	Required_Generator_Invariants(generator, "jitter.generator")
 	if factor.Numerator == 0 {
 		return Wait(interval)
 	}
 	if factor.Denominator == 0 {
 		return Wait(interval)
 	}
-	if generator == nil {
-		return Wait(interval)
-	}
-	numerator := factor.Numerator
-	if numerator > factor.Denominator {
-		numerator = factor.Denominator
+	numerator := uint64(factor.Numerator)
+	denominator := uint64(factor.Denominator)
+	if numerator > denominator {
+		numerator = denominator
 	}
 	high, low := bits.Multiply_64(bits.Word_64(interval), bits.Multiplier_64(numerator))
 	quotient, _ := bits.Divide_64(
 		bits.Dividend_High_64(high), bits.Dividend_Low_64(low),
-		bits.Divisor_64(factor.Denominator),
+		bits.Divisor_64(denominator),
 	)
 	delta := Current_Interval(quotient)
 	span := int(2*delta + 1)
-	offset := Current_Interval(prng.Generator_Below(generator, span))
+	offset := Current_Interval(prng.Generator_Below(generator, prng.Bound(span)))
 	value := interval - delta + offset
 	if value > Current_Interval(INTERVAL_MAXIMUM) {
 		return Wait(INTERVAL_MAXIMUM)

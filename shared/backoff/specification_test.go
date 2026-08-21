@@ -14,7 +14,9 @@ import (
 // Test_Constant_Waits_Fixed checks Constant returns a fixed interval and Reset is inert.
 func Test_Constant_Waits_Fixed(t *testing.T) {
 	var state backoff.Policy_State
-	policy := backoff.Constant(&state, backoff.Initial_Interval(5*time.SECOND))
+	policy := backoff.Constant(
+		&state, backoff.Initial_Interval(5*time.SECOND),
+	)
 	for draw_index := 0; draw_index < 4; draw_index++ {
 		if backoff.Policy_Next(policy) != backoff.Delay(5*time.SECOND) {
 			t.Fatalf("draw %d was not the fixed interval", draw_index)
@@ -51,9 +53,9 @@ func Test_Exponential_Grows_And_Caps(t *testing.T) {
 	policy := backoff.Exponential(&state, &backoff.Exponential_Input{
 		Initial_Interval: backoff.Initial_Interval(1 * time.SECOND),
 		Interval_Max:     backoff.Maximum_Interval(10 * time.SECOND),
-		Multiplier:       prng.Ratio{Numerator: 2, Denominator: 1},
-		Jitter:           prng.Ratio{Numerator: 0, Denominator: 1},
-		Generator:        &generator,
+		Multiplier:       backoff.Multiplier{Numerator: 2, Denominator: 1},
+		Jitter:           backoff.Jitter{Numerator: 0, Denominator: 1},
+		Generator:        generator,
 	})
 	want := []time.Duration{
 		1 * time.SECOND, 2 * time.SECOND, 4 * time.SECOND, 8 * time.SECOND,
@@ -75,9 +77,9 @@ func Test_Jitter_Stays_Within_Bounds(t *testing.T) {
 	policy := backoff.Exponential(&state, &backoff.Exponential_Input{
 		Initial_Interval: backoff.Initial_Interval(interval),
 		Interval_Max:     backoff.Maximum_Interval(interval),
-		Multiplier:       prng.Ratio{Numerator: 1, Denominator: 1},
-		Jitter:           prng.Ratio{Numerator: 1, Denominator: 2},
-		Generator:        &generator,
+		Multiplier:       backoff.Multiplier{Numerator: 1, Denominator: 1},
+		Jitter:           backoff.Jitter{Numerator: 1, Denominator: 2},
+		Generator:        generator,
 	})
 	low := interval - interval/2
 	high := interval + interval/2
@@ -98,17 +100,22 @@ func Test_Exponential_Saturates_Wide_Product(t *testing.T) {
 	input := backoff.Exponential_Input{
 		Initial_Interval: backoff.INTERVAL_MAXIMUM,
 		Interval_Max:     backoff.Maximum_Interval(backoff.INTERVAL_MAXIMUM),
-		Multiplier:       prng.Ratio{Numerator: ^uint64(0), Denominator: 1},
-		Jitter:           prng.Ratio{Denominator: 1},
-		Generator:        &generator,
+		Multiplier: backoff.Multiplier{
+			Numerator: backoff.Multiplier_Numerator(^uint64(0)), Denominator: 1,
+		},
+		Jitter:    backoff.Jitter{Denominator: 1},
+		Generator: generator,
 	}
 	var state backoff.Policy_State
 	policy := backoff.Exponential(&state, &input)
 	if backoff.Policy_Next(policy) != backoff.Delay(backoff.INTERVAL_MAXIMUM) {
 		t.Fatal("wide multiplier did not saturate")
 	}
-	input.Multiplier = prng.Ratio{Numerator: 1, Denominator: 1}
-	input.Jitter = prng.Ratio{Numerator: ^uint64(0), Denominator: ^uint64(0)}
+	input.Multiplier = backoff.Multiplier{Numerator: 1, Denominator: 1}
+	input.Jitter = backoff.Jitter{
+		Numerator:   backoff.Jitter_Numerator(^uint64(0)),
+		Denominator: backoff.Jitter_Denominator(^uint64(0)),
+	}
 	policy = backoff.Exponential(&state, &input)
 	delay := backoff.Policy_Next(policy)
 	if delay < 0 {
@@ -125,8 +132,8 @@ func Test_Seed_Reproduces_Delays(t *testing.T) {
 	again := prng.New(7)
 	var state_first backoff.Policy_State
 	var state_again backoff.Policy_State
-	policy_first := backoff.New_Exponential(&state_first, &first)
-	policy_again := backoff.New_Exponential(&state_again, &again)
+	policy_first := backoff.New_Exponential(&state_first, first)
+	policy_again := backoff.New_Exponential(&state_again, again)
 	for draw_index := 0; draw_index < 20; draw_index++ {
 		if backoff.Policy_Next(policy_first) != backoff.Policy_Next(policy_again) {
 			t.Fatalf("draw %d diverged for the same seed", draw_index)
@@ -136,8 +143,8 @@ func Test_Seed_Reproduces_Delays(t *testing.T) {
 	repeat := prng.New(7)
 	var state_other backoff.Policy_State
 	var state_repeat backoff.Policy_State
-	policy_other := backoff.New_Exponential(&state_other, &other)
-	policy_repeat := backoff.New_Exponential(&state_repeat, &repeat)
+	policy_other := backoff.New_Exponential(&state_other, other)
+	policy_repeat := backoff.New_Exponential(&state_repeat, repeat)
 	if backoff.Policy_Next(policy_other) == backoff.Policy_Next(policy_repeat) {
 		t.Fatalf("distinct seeds produced the same first delay")
 	}
@@ -221,7 +228,9 @@ func Test_Retry_Waits_On_Timeline(t *testing.T) {
 	}
 	var state backoff.Policy_State
 	outcome := run_retry(
-		backoff.Constant(&state, backoff.Initial_Interval(interval)), 5, operation,
+		backoff.Constant(
+			&state, backoff.Initial_Interval(interval),
+		), 5, operation,
 	)
 	if outcome.Error != nil {
 		t.Fatalf("error = %v, want nil", outcome.Error)
@@ -270,7 +279,25 @@ func Test_Invariant_Domains(t *testing.T) {
 func policy_invariant_domains() {
 	generator := prng.New(11)
 	intervals := invariant_intervals()
-	states := invariant_policy_states(&generator)
+	states := invariant_policy_states(generator)
+	multipliers := [...]backoff.Multiplier{
+		{Numerator: 1, Denominator: 1},
+		{Numerator: 1, Denominator: 1},
+		{Numerator: 2, Denominator: 2},
+		{
+			Numerator:   backoff.Multiplier_Numerator(^uint64(0)),
+			Denominator: backoff.Multiplier_Denominator(^uint64(0)),
+		},
+	}
+	jitters := [...]backoff.Jitter{
+		{Numerator: 0, Denominator: 1},
+		{Numerator: 1, Denominator: 2},
+		{Numerator: 2, Denominator: 2},
+		{
+			Numerator:   backoff.Jitter_Numerator(^uint64(0)),
+			Denominator: backoff.Jitter_Denominator(^uint64(0)),
+		},
+	}
 	for index, interval := range intervals {
 		state := states[index]
 		policy := backoff.Constant(&state, interval)
@@ -288,27 +315,37 @@ func policy_invariant_domains() {
 		backoff.Policy_Reset(policy)
 
 		state = states[index]
-		policy = backoff.Exponential(&state, &backoff.Exponential_Input{
-			Initial_Interval: interval,
-			Interval_Max:     backoff.Maximum_Interval(interval),
-			Multiplier:       prng.Ratio{Numerator: 1, Denominator: 1},
-			Jitter:           prng.Ratio{Numerator: 0, Denominator: 1},
-			Generator:        &generator,
-		})
+		policy = backoff.Exponential(
+			&state, &backoff.Exponential_Input{
+				Initial_Interval: interval,
+				Interval_Max:     backoff.Maximum_Interval(interval),
+				Multiplier:       multipliers[index],
+				Jitter:           jitters[index],
+				Generator:        generator,
+			})
 		backoff.Policy_Next(policy)
 		backoff.Policy_Reset(policy)
 
 		state = states[index]
-		policy = backoff.New_Exponential(&state, &generator)
+		policy = backoff.New_Exponential(&state, generator)
 		backoff.Policy_Next(policy)
 		backoff.Policy_Reset(policy)
 	}
+	var exact_state backoff.Policy_State
+	exact_policy := backoff.Exponential(&exact_state, &backoff.Exponential_Input{
+		Initial_Interval: 2,
+		Interval_Max:     2,
+		Multiplier:       backoff.Multiplier{Numerator: 2, Denominator: 2},
+		Jitter:           backoff.Jitter{Numerator: 0, Denominator: 2},
+		Generator:        generator,
+	})
+	backoff.Policy_Next(exact_policy)
 }
 
 func retry_invariant_domains() {
 	generator := prng.New(12)
 	intervals := invariant_intervals()
-	states := invariant_policy_states(&generator)
+	states := invariant_policy_states(generator)
 	var timeline time.Virtual_Timeline
 	queue := [ALLOCATION_TIMELINE_CAPACITY]*time.Completion{}
 	events := [ALLOCATION_TIMELINE_CAPACITY]time.Virtual_Event{}
@@ -376,28 +413,38 @@ func invariant_intervals() (
 }
 
 func invariant_policy_states(
-	generator *prng.Generator,
+	generator prng.Generator,
 ) (states [INVARIANT_SENTINEL_COUNT]backoff.Policy_State) {
+	ratio_parts := [...]uint64{0, 1, 2, ^uint64(0)}
 	return [INVARIANT_SENTINEL_COUNT]backoff.Policy_State{
-		policy_state(backoff.POLICY_KIND_CONSTANT, 0, generator),
-		policy_state(backoff.POLICY_KIND_STOPPED, 1, generator),
-		policy_state(backoff.POLICY_KIND_EXPONENTIAL, 2, generator),
-		policy_state(backoff.POLICY_KIND_CONSTANT, backoff.INTERVAL_MAXIMUM, generator),
+		policy_state(backoff.POLICY_KIND_CONSTANT, 0, ratio_parts[0], generator),
+		policy_state(backoff.POLICY_KIND_STOPPED, 1, ratio_parts[1], generator),
+		policy_state(backoff.POLICY_KIND_EXPONENTIAL, 2, ratio_parts[2], generator),
+		policy_state(
+			backoff.POLICY_KIND_CONSTANT, backoff.INTERVAL_MAXIMUM,
+			ratio_parts[3], generator,
+		),
 	}
 }
 
 func policy_state(
 	kind backoff.Policy_Kind, interval backoff.Initial_Interval,
-	generator *prng.Generator,
+	ratio_part uint64, generator prng.Generator,
 ) (state backoff.Policy_State) {
 	return backoff.Policy_State{
 		Kind:             kind,
 		Initial_Interval: interval,
 		Current_Interval: backoff.Current_Interval(interval),
 		Interval_Max:     backoff.Maximum_Interval(interval),
-		Multiplier:       prng.Ratio{Numerator: 1, Denominator: 1},
-		Jitter:           prng.Ratio{Numerator: 0, Denominator: 1},
-		Generator:        generator,
+		Multiplier: backoff.Stored_Multiplier{
+			Numerator:   backoff.Stored_Multiplier_Numerator(ratio_part),
+			Denominator: backoff.Stored_Multiplier_Denominator(ratio_part),
+		},
+		Jitter: backoff.Stored_Jitter{
+			Numerator:   backoff.Stored_Jitter_Numerator(ratio_part),
+			Denominator: backoff.Stored_Jitter_Denominator(ratio_part),
+		},
+		Generator: backoff.Generator_Storage(generator),
 	}
 }
 
@@ -477,12 +524,13 @@ func Test_Allocation(t *testing.T) {
 	fixture.Input = backoff.Exponential_Input{
 		Initial_Interval: backoff.Initial_Interval(time.SECOND),
 		Interval_Max:     backoff.Maximum_Interval(10 * time.SECOND),
-		Multiplier:       prng.Ratio{Numerator: 2, Denominator: 1},
-		Jitter:           prng.Ratio{Numerator: 1, Denominator: 2},
-		Generator:        &fixture.Generator,
+		Multiplier:       backoff.Multiplier{Numerator: 2, Denominator: 1},
+		Jitter:           backoff.Jitter{Numerator: 1, Denominator: 2},
+		Generator:        fixture.Generator,
 	}
 	fixture.Retry_State.Input = backoff.Retry_Input{
-		Timer: loop, Policy: backoff.Zero(&fixture.Constant), Tries_Max: 1, Clock: clock,
+		Timer: loop, Policy: backoff.Zero(&fixture.Constant),
+		Tries_Max: 1, Clock: clock,
 		Notify: allocation_notify,
 	}
 	fixture.Retry_State.Context = unsafe.Pointer(&fixture)
@@ -496,7 +544,8 @@ func Test_Allocation(t *testing.T) {
 func allocation_policy_paths(t *testing.T, fixture *Allocation_Fixture) {
 	testify.Zero_Allocation(t, func() {
 		fixture.Policy_Constant = backoff.Constant(
-			&fixture.Constant, backoff.Initial_Interval(time.SECOND),
+			&fixture.Constant,
+			backoff.Initial_Interval(time.SECOND),
 		)
 	})
 	testify.Zero_Allocation(t, func() {
@@ -512,7 +561,7 @@ func allocation_policy_paths(t *testing.T, fixture *Allocation_Fixture) {
 	})
 	testify.Zero_Allocation(t, func() {
 		fixture.Policy_Exponential = backoff.New_Exponential(
-			&fixture.Exponential, &fixture.Generator,
+			&fixture.Exponential, fixture.Generator,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
@@ -599,6 +648,7 @@ func allocation_retry_paths(t *testing.T, fixture *Allocation_Fixture) {
 	fixture.Retry_State.Input.Policy = fixture.Policy_Constant
 	fixture.Retry_State.Input.Elapsed_Time_Max = 1
 	testify.Zero_Allocation(t, func() {
+		allocation_retry_state_reset(fixture)
 		backoff.Retry(&fixture.Retry_State, allocation_operation)
 		fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
 			&fixture.Retry_State,
@@ -621,4 +671,11 @@ func allocation_retry_paths(t *testing.T, fixture *Allocation_Fixture) {
 			&fixture.Retry_State,
 		)
 	})
+}
+
+func allocation_retry_state_reset(fixture *Allocation_Fixture) {
+	input := fixture.Retry_State.Input
+	fixture.Retry_State = backoff.Retry_State[int]{
+		Input: input, Context: unsafe.Pointer(fixture),
+	}
 }
