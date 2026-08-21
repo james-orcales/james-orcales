@@ -4,15 +4,14 @@ import (
 	"reflect"
 	"testing"
 
-	"local/james-orcales/shared/io"
 	"local/james-orcales/shared/lru"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/simulation/time"
 )
 
 // Test_Simple_Evicts_Oldest checks New_Simple caps at its size, evicting the LRU entry and
 // reporting it, while re-adding a key overwrites in place without eviction.
 func Test_Simple_Evicts_Oldest(t *testing.T) {
-	c := lru.New_Simple[int, int](2, nil)
+	c := new_simple_cache[int, int](2, nil)
 	evicted_1 := lru.Simple_Add(c, 1, 1)
 	evicted_2 := lru.Simple_Add(c, 2, 2)
 	if evicted_1 {
@@ -48,7 +47,7 @@ func Test_Simple_Evicts_Oldest(t *testing.T) {
 // Test_Simple_Get_Renews_Recency checks Simple_Get returns a hit and moves it to the MRU end
 // so eviction falls elsewhere; a miss returns zero, false.
 func Test_Simple_Get_Renews_Recency(t *testing.T) {
-	c := lru.New_Simple[int, int](2, nil)
+	c := new_simple_cache[int, int](2, nil)
 	lru.Simple_Add(c, 1, 1)
 	lru.Simple_Add(c, 2, 2)
 	value, ok := lru.Simple_Get(c, 1)
@@ -74,7 +73,7 @@ func Test_Simple_Get_Renews_Recency(t *testing.T) {
 // Test_Simple_Peek_And_Contains_Leave_Recency checks neither Simple_Peek nor Simple_Contains
 // updates recency, so the inspected entry stays the eviction target.
 func Test_Simple_Peek_And_Contains_Leave_Recency(t *testing.T) {
-	c := lru.New_Simple[int, int](2, nil)
+	c := new_simple_cache[int, int](2, nil)
 	lru.Simple_Add(c, 1, 1)
 	lru.Simple_Add(c, 2, 2)
 	value, ok := lru.Simple_Peek(c, 1)
@@ -96,7 +95,7 @@ func Test_Simple_Peek_And_Contains_Leave_Recency(t *testing.T) {
 // Test_Simple_Contains_Or_Add_Skips_Present_Keys checks Simple_Contains_Or_Add inserts only when
 // absent and Simple_Peek_Or_Add returns the existing value without overwriting.
 func Test_Simple_Contains_Or_Add_Skips_Present_Keys(t *testing.T) {
-	c := lru.New_Simple[int, int](2, nil)
+	c := new_simple_cache[int, int](2, nil)
 	present, _ := lru.Simple_Contains_Or_Add(c, 1, 1)
 	if present {
 		t.Fatalf("contains-or-add reported a fresh key as present")
@@ -128,7 +127,7 @@ func Test_Simple_Contains_Or_Add_Skips_Present_Keys(t *testing.T) {
 // Test_Simple_Remove_Deletes checks Simple_Remove deletes and reports presence, and the oldest
 // accessors return the LRU entry (Remove_Oldest also deleting it).
 func Test_Simple_Remove_Deletes(t *testing.T) {
-	c := lru.New_Simple[int, int](3, nil)
+	c := new_simple_cache[int, int](3, nil)
 	lru.Simple_Add(c, 1, 1)
 	lru.Simple_Add(c, 2, 2)
 	lru.Simple_Add(c, 3, 3)
@@ -166,25 +165,32 @@ func Test_Simple_Remove_Deletes(t *testing.T) {
 // Test_Simple_Keys_And_Values_Fill_Buffer checks Simple_Keys and Simple_Values write entries
 // oldest to newest into the caller's buffer and return the count, bounded by the buffer length.
 func Test_Simple_Keys_And_Values_Fill_The_Buffer(t *testing.T) {
-	c := lru.New_Simple[int, int](3, nil)
+	c := new_simple_cache[int, int](3, nil)
 	lru.Simple_Add(c, 1, 10)
 	lru.Simple_Add(c, 2, 20)
 	lru.Simple_Add(c, 3, 30)
-	keys := make([]int, lru.Simple_Cap(c))
-	if n := lru.Simple_Keys(c, keys); !reflect.DeepEqual(keys[:n], []int{1, 2, 3}) {
-		t.Fatalf("keys = %v, want [1 2 3]", keys[:n])
+	key_storage := new([lru.COUNT_MAXIMUM]int)
+	keys := lru.Keys[int]{Storage: key_storage, Count: lru.Key_Count(lru.Simple_Cap(c))}
+	if n := lru.Simple_Keys(c, keys); !reflect.DeepEqual(key_storage[:n], []int{1, 2, 3}) {
+		t.Fatalf("keys = %v, want [1 2 3]", key_storage[:n])
 	}
-	values := make([]int, lru.Simple_Cap(c))
-	if n := lru.Simple_Values(c, values); !reflect.DeepEqual(values[:n], []int{10, 20, 30}) {
-		t.Fatalf("values = %v, want [10 20 30]", values[:n])
+	value_storage := new([lru.COUNT_MAXIMUM]int)
+	values := lru.Values[int]{
+		Storage: value_storage, Count: lru.Value_Count(lru.Simple_Cap(c)),
+	}
+	if n := lru.Simple_Values(c, values); !reflect.DeepEqual(
+		value_storage[:n], []int{10, 20, 30},
+	) {
+		t.Fatalf("values = %v, want [10 20 30]", value_storage[:n])
 	}
 	// A short buffer bounds the read: it writes only what fits and reports that count.
-	short := make([]int, 2)
+	short_storage := new([lru.COUNT_MAXIMUM]int)
+	short := lru.Keys[int]{Storage: short_storage, Count: 2}
 	if n := lru.Simple_Keys(c, short); n != 2 {
 		t.Fatalf("short read wrote %d, want 2", n)
 	}
-	if !reflect.DeepEqual(short, []int{1, 2}) {
-		t.Fatalf("short read = %v, want [1 2]", short)
+	if !reflect.DeepEqual(short_storage[:2], []int{1, 2}) {
+		t.Fatalf("short read = %v, want [1 2]", short_storage[:2])
 	}
 }
 
@@ -192,7 +198,7 @@ func Test_Simple_Keys_And_Values_Fill_The_Buffer(t *testing.T) {
 // full cache evicts the oldest before inserting, Simple_Cap never changes, and the steady-state
 // churn of Add and Get allocates nothing (the node pool and pre-sized map are committed up front).
 func Test_Simple_Capacity_Is_Fixed(t *testing.T) {
-	c := lru.New_Simple[int, int](4, nil)
+	c := new_simple_cache[int, int](4, nil)
 	for i_index := 0; i_index < 4; i_index++ {
 		lru.Simple_Add(c, i_index, i_index)
 	}
@@ -227,7 +233,7 @@ func Test_Simple_Capacity_Is_Fixed(t *testing.T) {
 func Test_Simple_Evict_Callback_Fires(t *testing.T) {
 	var evicted []int
 	on_evict := func(key int, value int) { evicted = append(evicted, key) }
-	c := lru.New_Simple[int, int](2, on_evict)
+	c := new_simple_cache[int, int](2, on_evict)
 	lru.Simple_Add(c, 1, 1)
 	lru.Simple_Add(c, 2, 2)
 	lru.Simple_Add(c, 3, 3) // Evicts 1.
@@ -241,7 +247,7 @@ func Test_Simple_Evict_Callback_Fires(t *testing.T) {
 // Test_Two_Queue_Promotes_Recent_To_Frequent checks a second access promotes a key from the
 // recent list to the frequent list, where later one-off keys cannot evict it.
 func Test_Two_Queue_Promotes_Recent_To_Frequent(t *testing.T) {
-	c := lru.New_Two_Queue[int, int](lru.Two_Queue_Input{Capacity: 4})
+	c := new_two_queue_cache[int, int](lru.Two_Queue_Input{Capacity: 4})
 	lru.Two_Queue_Add(c, 1, 1)
 	// A get is the second access: it promotes 1 into the frequent list.
 	value, ok := lru.Two_Queue_Get(c, 1)
@@ -270,7 +276,7 @@ func Test_Two_Queue_Promotes_Recent_To_Frequent(t *testing.T) {
 // Test_Two_Queue_Resists_Scan checks keys promoted to the frequent list survive a burst of
 // one-off keys that only churns the recent list.
 func Test_Two_Queue_Resists_Scan(t *testing.T) {
-	c := lru.New_Two_Queue[int, int](lru.Two_Queue_Input{Capacity: 4})
+	c := new_two_queue_cache[int, int](lru.Two_Queue_Input{Capacity: 4})
 	// Promote 1 and 2 to the frequent list.
 	lru.Two_Queue_Add(c, 1, 1)
 	lru.Two_Queue_Get(c, 1)
@@ -291,7 +297,7 @@ func Test_Two_Queue_Resists_Scan(t *testing.T) {
 // Test_Two_Queue_Ghost_Promotes_On_Re_Add checks a key evicted into the ghost list is promoted
 // straight to the frequent list when re-added, so it then survives a scan.
 func Test_Two_Queue_Ghost_Promotes_On_Re_Add(t *testing.T) {
-	c := lru.New_Two_Queue[int, int](lru.Two_Queue_Input{Capacity: 4})
+	c := new_two_queue_cache[int, int](lru.Two_Queue_Input{Capacity: 4})
 	lru.Two_Queue_Add(c, 1, 1)
 	// Push 1 out of the recent list into the ghost list without ever promoting it. The ghost
 	// list holds only size/2 = 2 keys, so keep the scan short enough that 1 is still a ghost.
@@ -314,7 +320,7 @@ func Test_Two_Queue_Ghost_Promotes_On_Re_Add(t *testing.T) {
 // Test_Two_Queue_Reads_Do_Not_Mutate checks Two_Queue_Peek and Two_Queue_Contains do not promote
 // a recent key, so a scan still evicts it, and that unset ratios take their defaults.
 func Test_Two_Queue_Reads_Do_Not_Mutate(t *testing.T) {
-	c := lru.New_Two_Queue[int, int](lru.Two_Queue_Input{Capacity: 4})
+	c := new_two_queue_cache[int, int](lru.Two_Queue_Input{Capacity: 4})
 	if lru.Two_Queue_Cap(c) != 4 {
 		t.Fatalf("cap = %d, want 4", lru.Two_Queue_Cap(c))
 	}
@@ -341,12 +347,12 @@ func Test_Two_Queue_Reads_Do_Not_Mutate(t *testing.T) {
 // Test_Expirable_Get_Rejects_Expired checks Expirable_Get and Expirable_Peek reject an entry once
 // the injected clock has passed its TTL, advanced by driving the io loop.
 func Test_Expirable_Get_Rejects_Expired(t *testing.T) {
-	loop, driver, clock := io.New_Sim(1)
-	c := lru.New_Expirable[int, int](lru.Expirable_Input[int, int]{
+	loop, driver, clock := new_expirable_loop()
+	c := new_expirable_cache[int, int](lru.Expirable_Input[int, int]{
 		Capacity: 4,
-		TTL:      time.MICROSECOND,
+		TTL:      lru.TTL(time.MICROSECOND),
 		Clock:    clock,
-		IO:       &loop,
+		Timeline: loop,
 	})
 	lru.Expirable_Add(c, 1, 1)
 	value, ok := lru.Expirable_Get(c, 1)
@@ -357,7 +363,7 @@ func Test_Expirable_Get_Rejects_Expired(t *testing.T) {
 		t.Fatalf("get 1 = %d, want 1", value)
 	}
 	// Advance the loop well past the TTL; the cleanup timer rides this same timeline.
-	driver.Run_For(4 * time.MICROSECOND)
+	time.Driver_Run_For(driver, 4*time.MICROSECOND)
 	_, ok = lru.Expirable_Get(c, 1)
 	if ok {
 		t.Fatalf("get 1 returned an expired entry")
@@ -371,12 +377,12 @@ func Test_Expirable_Get_Rejects_Expired(t *testing.T) {
 // Test_Expirable_Timer_Reaps_Expired checks the repeating io.Timeout reaps expired entries as the
 // harness drives the loop, walking the bucket ring with no manual sweep.
 func Test_Expirable_Timer_Reaps_Expired(t *testing.T) {
-	loop, driver, clock := io.New_Sim(1)
-	c := lru.New_Expirable[int, int](lru.Expirable_Input[int, int]{
+	loop, driver, clock := new_expirable_loop()
+	c := new_expirable_cache[int, int](lru.Expirable_Input[int, int]{
 		Capacity: 8,
-		TTL:      time.MICROSECOND,
+		TTL:      lru.TTL(time.MICROSECOND),
 		Clock:    clock,
-		IO:       &loop,
+		Timeline: loop,
 	})
 	lru.Expirable_Add(c, 1, 1)
 	lru.Expirable_Add(c, 2, 2)
@@ -387,7 +393,7 @@ func Test_Expirable_Timer_Reaps_Expired(t *testing.T) {
 	reaped := func() (finished bool) {
 		return lru.Expirable_Count(c) == 0
 	}
-	completed, drive_err := driver.Run_Until(reaped, time.MILLISECOND)
+	completed, drive_err := time.Driver_Run_Until(driver, time.MILLISECOND, reaped)
 	if drive_err != nil {
 		t.Fatalf("drive until the timer reaps the expired entries: %v", drive_err)
 	}
@@ -402,12 +408,12 @@ func Test_Expirable_Timer_Reaps_Expired(t *testing.T) {
 // Test_Expirable_Evicts_Oldest_By_Size checks Expirable still evicts the least-recently-used entry
 // past its size, and that re-adding a key renews its recency.
 func Test_Expirable_Evicts_Oldest_By_Size(t *testing.T) {
-	loop, _, clock := io.New_Sim(1)
-	c := lru.New_Expirable[int, int](lru.Expirable_Input[int, int]{
+	loop, _, clock := new_expirable_loop()
+	c := new_expirable_cache[int, int](lru.Expirable_Input[int, int]{
 		Capacity: 2,
-		TTL:      time.HOUR,
+		TTL:      lru.TTL(time.HOUR),
 		Clock:    clock,
-		IO:       &loop,
+		Timeline: loop,
 	})
 	if lru.Expirable_Add(c, 1, 1) {
 		t.Fatalf("add 1 under cap reported eviction")
@@ -433,18 +439,18 @@ func Test_Expirable_Evicts_Oldest_By_Size(t *testing.T) {
 // seeded io loop produce identical results, proving expiry reads only the injected clock.
 func Test_Expirable_Reproduces_Under_Virtual_Clock(t *testing.T) {
 	run := func() (results []bool) {
-		loop, driver, clock := io.New_Sim(7)
-		c := lru.New_Expirable[int, int](lru.Expirable_Input[int, int]{
+		loop, driver, clock := new_expirable_loop()
+		c := new_expirable_cache[int, int](lru.Expirable_Input[int, int]{
 			Capacity: 4,
-			TTL:      time.MICROSECOND,
+			TTL:      lru.TTL(time.MICROSECOND),
 			Clock:    clock,
-			IO:       &loop,
+			Timeline: loop,
 		})
 		for step_index := 0; step_index < 8; step_index++ {
 			lru.Expirable_Add(c, step_index, step_index)
 			_, ok := lru.Expirable_Get(c, step_index/2)
-			results = append(results, ok)
-			driver.Run_For(200 * time.NANOSECOND)
+			results = append(results, bool(ok))
+			time.Driver_Run_For(driver, 200*time.NANOSECOND)
 		}
 		return results
 	}
@@ -453,4 +459,46 @@ func Test_Expirable_Reproduces_Under_Virtual_Clock(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("expirable diverged across identical runs: %v vs %v", first, second)
 	}
+}
+
+// Allocates test ownership outside production initialization.
+func new_simple_cache[K lru.Key_Kind, V lru.Value_Kind](
+	capacity lru.Capacity, on_evict lru.Evict_Callback[K, V],
+) (cache *lru.Simple[K, V]) {
+	cache = new(lru.Simple[K, V])
+	nodes := new(lru.Nodes[K, V])
+	lru.New_Simple(cache, nodes, capacity, on_evict)
+	return cache
+}
+
+// Allocates test ownership outside production initialization.
+func new_two_queue_cache[K lru.Key_Kind, V lru.Value_Kind](
+	input lru.Two_Queue_Input,
+) (cache *lru.Two_Queue[K, V]) {
+	cache = new(lru.Two_Queue[K, V])
+	nodes := new(lru.Two_Queue_Nodes[K, V])
+	lru.New_Two_Queue(cache, nodes, input)
+	return cache
+}
+
+// Allocates test ownership outside production initialization.
+func new_expirable_cache[K lru.Key_Kind, V lru.Value_Kind](
+	input lru.Expirable_Input[K, V],
+) (cache *lru.Expirable[K, V]) {
+	cache = new(lru.Expirable[K, V])
+	nodes := new(lru.Nodes[K, V])
+	lru.New_Expirable(cache, nodes, input)
+	return cache
+}
+
+// Builds simulated timeline storage owned by test heap.
+func new_expirable_loop() (
+	loop time.Timeline, driver time.Driver, clock time.Clock,
+) {
+	state := new(time.Virtual_Timeline)
+	queue := make([]*time.Completion, 64)
+	events := make([]time.Virtual_Event, 1)
+	virtual := time.Virtual_Clock{Resolution: 1}
+	memory := time.Virtual_Timeline_Memory{Queue: queue, Events: events}
+	return time.New_Virtual_Timeline(state, virtual, memory)
 }
