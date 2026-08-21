@@ -483,6 +483,20 @@ func Test_Invariants_Defined_Pointers(t *testing.T) {
 		Path: "pkg/rule.go", Source_Text: whole})), "inherited field") {
 		t.Fatal("a defined pointer that states every inherited field must be accepted")
 	}
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: whole})),
+		"Call Frame_Invariants(*v, ...).") {
+		t.Fatal("defined pointer to struct must compose pointed value")
+	}
+	composed_struct := head + "// Handle_Invariants is a fixture.\n" +
+		"func Handle_Invariants(v Handle, namespace aver.Namespace) {\n" +
+		"\taver.Always(v != nil, \"the handle is present\")\n" +
+		"\tFrame_Invariants(*v, namespace)\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: composed_struct})),
+		"Call Frame_Invariants(*v, ...).") {
+		t.Fatal("struct pointee helper call must compose")
+	}
 	document := "package fixture\n\n" +
 		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
 		"const Document_Min = 0\n\nconst Document_Max = 8\n\n" +

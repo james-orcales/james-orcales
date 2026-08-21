@@ -85,8 +85,9 @@ defined type composes it, through a defined type of its own when the field type 
 
 ### Defined Pointers
 
-Defined pointer to named non-struct type calls pointee helper on dereferenced value. Defined pointer
-to struct inherits its fields. Nil guard states pointer presence, never pointed value properties.
+Defined pointer whose pointee has helper calls that helper on dereferenced value. No exemption:
+struct pointee owes helper same as non-struct pointee. Defined pointer to struct also inherits
+its fields. Nil guard states pointer presence, never pointed value properties.
 
 ### Embedded Fields
 

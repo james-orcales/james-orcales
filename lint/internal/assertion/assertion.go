@@ -1373,8 +1373,14 @@ func struct_resolve_defined(
 	}
 }
 
-// Named non-struct pointees hide mandates behind dereference. Pointee helper keeps pointer presence
-// from replacing pointed value coverage.
+// Pointee helper keeps pointer presence from replacing pointed value coverage.
+//
+// NO EXEMPTIONS. NONE AUTHORIZED. NONE WILL BE AUTHORIZED. EVERY defined pointer whose
+// pointee has a helper calls that helper on the dereferenced value. Struct pointee, non-struct
+// pointee, destination, handle: ALL of them. Owner has repaired this rule repeatedly after agents
+// carved out a case. Last carve-out skipped struct pointees on the theory that inherited-field
+// checks cover them; they owe nothing when no field carries a helper, thus nil guard alone
+// passed. Do NOT add a skip here. Do NOT add a skip upstream. Fix the code under lint instead.
 func defined_pointer_file_diagnostics(
 	file Parsed_File, defined map[string]bool,
 	declarations *Declaration_Index, components *Component_Index,
@@ -1413,10 +1419,6 @@ func defined_pointer_file_diagnostics(
 		if !defined[expected] {
 			continue
 		}
-		pointed_identity := defined_pointer_type_identity(pointer.X, scope)
-		if _, pointed_struct := declarations.Structs[pointed_identity]; pointed_struct {
-			continue
-		}
 		helper := type_invariants_following_function(file.File, index)
 		if helper == nil {
 			continue
@@ -1445,25 +1447,6 @@ func defined_pointer_file_diagnostics(
 		})
 	}
 	return diags
-}
-
-// Package identity assigns pointer coverage to existing inherited-struct checks.
-func defined_pointer_type_identity(
-	expression ast.Expr, scope *Invariant_Scope,
-) (identity string) {
-	selector, is_selector := expression.(*ast.SelectorExpr)
-	if is_selector {
-		package_path := struct_selector_package(selector, scope.Imports)
-		if package_path == "" {
-			return ""
-		}
-		return package_path + "\x00" + selector.Sel.Name
-	}
-	identifier, is_identifier := expression.(*ast.Ident)
-	if !is_identifier {
-		return ""
-	}
-	return scope.Current_Package + "\x00" + identifier.Name
 }
 
 // Exact dereference blocks unrelated value or pointer helper calls from covering pointee.
