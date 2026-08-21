@@ -6,7 +6,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/backoff"
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
@@ -346,14 +347,7 @@ func retry_invariant_domains() {
 	generator := prng.New(12)
 	intervals := invariant_intervals()
 	states := invariant_policy_states(generator)
-	var timeline time.Virtual_Timeline
-	queue := [ALLOCATION_TIMELINE_CAPACITY]*time.Completion{}
-	events := [ALLOCATION_TIMELINE_CAPACITY]time.Virtual_Event{}
-	loop, _, clock := time.New_Virtual_Timeline(
-		&timeline,
-		time.Virtual_Clock{Resolution: time.NANOSECOND},
-		time.Virtual_Timeline_Memory{Queue: queue[:], Events: events[:]},
-	)
+	loop, _, host := retry_loop(time.NANOSECOND, ALLOCATION_TIMELINE_CAPACITY)
 	tries := [...]backoff.Try_Count{1, 2, 2, backoff.TRY_COUNT_MAXIMUM}
 	attempts := [...]backoff.Attempt_Count{0, 1, 2, backoff.Attempt_Count(
 		backoff.TRY_COUNT_MAXIMUM,
@@ -363,7 +357,7 @@ func retry_invariant_domains() {
 		policy := backoff.Zero(&policy_storage)
 		state := backoff.Retry_State[int]{
 			Input: backoff.Retry_Input{
-				Timer: loop, Policy: policy, Tries_Max: tries[index], Clock: clock,
+				Timer: loop, Policy: policy, Tries_Max: tries[index], Clock: host,
 				Elapsed_Time_Max: backoff.Elapsed_Limit(interval),
 			},
 			Try_Count: attempts[index],
@@ -413,7 +407,7 @@ func invariant_intervals() (
 }
 
 func invariant_policy_states(
-	generator prng.Generator,
+	generator prng.Xoshiro,
 ) (states [INVARIANT_SENTINEL_COUNT]backoff.Policy_State) {
 	ratio_parts := [...]uint64{0, 1, 2, ^uint64(0)}
 	return [INVARIANT_SENTINEL_COUNT]backoff.Policy_State{
@@ -429,7 +423,7 @@ func invariant_policy_states(
 
 func policy_state(
 	kind backoff.Policy_Kind, interval backoff.Initial_Interval,
-	ratio_part uint64, generator prng.Generator,
+	ratio_part uint64, generator prng.Xoshiro,
 ) (state backoff.Policy_State) {
 	return backoff.Policy_State{
 		Kind:             kind,
@@ -449,7 +443,7 @@ func policy_state(
 }
 
 type Allocation_Fixture struct {
-	Generator          prng.Generator
+	Generator          prng.Xoshiro
 	Input              backoff.Exponential_Input
 	Constant           backoff.Policy_State
 	Exponential        backoff.Policy_State
@@ -471,7 +465,7 @@ type Allocation_Fixture struct {
 	Operation_Kind     uint8
 	Operation_Count    int
 	Notify_Count       int
-	Driver             time.Driver
+	Driver             nbio.Driver
 }
 
 const ALLOCATION_TIMELINE_CAPACITY = 1
@@ -513,14 +507,7 @@ func allocation_notify(context unsafe.Pointer, _ error, _ backoff.Delay) {
 // Test_Allocation proves every public runtime path owns no heap storage.
 func Test_Allocation(t *testing.T) {
 	fixture := Allocation_Fixture{Generator: prng.New(1)}
-	var timeline time.Virtual_Timeline
-	queue := [ALLOCATION_TIMELINE_CAPACITY]*time.Completion{}
-	events := [ALLOCATION_TIMELINE_CAPACITY]time.Virtual_Event{}
-	loop, driver, clock := time.New_Virtual_Timeline(
-		&timeline,
-		time.Virtual_Clock{Resolution: time.NANOSECOND},
-		time.Virtual_Timeline_Memory{Queue: queue[:], Events: events[:]},
-	)
+	loop, driver, host := retry_loop(time.NANOSECOND, ALLOCATION_TIMELINE_CAPACITY)
 	fixture.Input = backoff.Exponential_Input{
 		Initial_Interval: backoff.Initial_Interval(time.SECOND),
 		Interval_Max:     backoff.Maximum_Interval(10 * time.SECOND),
@@ -530,7 +517,7 @@ func Test_Allocation(t *testing.T) {
 	}
 	fixture.Retry_State.Input = backoff.Retry_Input{
 		Timer: loop, Policy: backoff.Zero(&fixture.Constant),
-		Tries_Max: 1, Clock: clock,
+		Tries_Max: 1, Clock: host,
 		Notify: allocation_notify,
 	}
 	fixture.Retry_State.Context = unsafe.Pointer(&fixture)
@@ -662,8 +649,8 @@ func allocation_retry_paths(t *testing.T, fixture *Allocation_Fixture) {
 		fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
 			&fixture.Retry_State,
 		)
-		time.Driver_Run(fixture.Driver)
-		time.Driver_Run(fixture.Driver)
+		nbio.Driver_Run(fixture.Driver)
+		nbio.Driver_Run(fixture.Driver)
 		fixture.Match = backoff.Retry_Work_Queued(&fixture.Retry_State)
 		fixture.Match = backoff.Retry_Rearm(&fixture.Retry_State)
 		fixture.Match = backoff.Retry_Stopped(&fixture.Retry_State)

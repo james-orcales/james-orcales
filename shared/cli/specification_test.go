@@ -1258,7 +1258,6 @@ type cli_secret_boundary_state struct {
 
 func cli_secret_boundary_loop() (loop nbio.IO) {
 	state := &cli_secret_boundary_state{}
-	loop.State = unsafe.Pointer(state)
 	loop.Storage.State = unsafe.Pointer(state)
 	loop.Storage.Status_Procedure = cli_secret_boundary_status
 	loop.Storage.Open_At_Procedure = cli_secret_boundary_open
@@ -1311,8 +1310,8 @@ func cli_secret_boundary_status(
 }
 
 func cli_secret_boundary_open(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File,
-	file_path string, _ nbio.Open_At_Options, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	file_path string, _ nbio.Open_At_Options, callback nbio.Callback,
 ) {
 	state := (*cli_secret_boundary_state)(state_pointer)
 	state.Path = file_path
@@ -1322,8 +1321,8 @@ func cli_secret_boundary_open(
 }
 
 func cli_secret_boundary_read(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File,
-	buffer []byte, _ int64, _ time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	buffer []byte, _ int64, _ time.Duration, callback nbio.Callback,
 ) {
 	state := (*cli_secret_boundary_state)(state_pointer)
 	if state.Path == "/secrets/NEGATIVE" {
@@ -1396,8 +1395,8 @@ func cli_secret_boundary_size(file_path string) (size int) {
 }
 
 func cli_secret_boundary_close(
-	_ unsafe.Pointer, completion *time.Completion, _ nbio.File,
-	callback time.Callback,
+	_ unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	callback nbio.Callback,
 ) {
 	completion.Error = nil
 	callback(completion)
@@ -1635,7 +1634,7 @@ type secret_file struct {
 func seed_secret_files(
 	t *testing.T,
 	loop nbio.IO,
-	driver time.Driver,
+	driver nbio.Driver,
 	files []secret_file,
 ) {
 	t.Helper()
@@ -1655,9 +1654,9 @@ func seed_secret_files(
 			t.Fatalf("create secret file: %v", create_err)
 		}
 		completed := false
-		var completion time.Completion
+		var completion nbio.Completion
 		nbio.Storage_Write(loop.Storage, &completion, file, []byte(source.Content), 0,
-			CLI_SIM_DEADLINE, func(completed_write *time.Completion) {
+			CLI_SIM_DEADLINE, func(completed_write *nbio.Completion) {
 				if completed_write.Error != nil {
 					t.Errorf("write secret file: %v", completed_write.Error)
 				}
@@ -1672,7 +1671,7 @@ func seed_secret_files(
 			})
 		drive_sim_operation(t, driver, func() (finished bool) { return completed })
 		completed = false
-		nbio.IO_Close(loop, &completion, file, func(completed_close *time.Completion) {
+		nbio.IO_Close(loop, &completion, file, func(completed_close *nbio.Completion) {
 			if completed_close.Error != nil {
 				t.Errorf("close secret file: %v", completed_close.Error)
 			}
@@ -1685,11 +1684,11 @@ func seed_secret_files(
 // The test root drives the simulator until one public operation retires.
 func drive_sim_operation(
 	t *testing.T,
-	driver time.Driver,
+	driver nbio.Driver,
 	done func() (finished bool),
 ) {
 	t.Helper()
-	completed, drive_err := time.Driver_Run_Until(driver, CLI_SIM_DEADLINE, done)
+	completed, drive_err := nbio.Driver_Run_Until(driver, CLI_SIM_DEADLINE, done)
 	if drive_err != nil {
 		t.Fatalf("drive simulator: %v", drive_err)
 	}
@@ -1701,7 +1700,7 @@ func drive_sim_operation(
 // The test root drives the parser because shared/cli cannot own the application timeline.
 func drive_parser(
 	t *testing.T,
-	driver time.Driver,
+	driver nbio.Driver,
 	parser *cli.Parser,
 ) (result cli.Parse_Result) {
 	t.Helper()
@@ -1720,34 +1719,37 @@ const CLI_SIM_DESCRIPTOR_CAPACITY = 16
 const CLI_SIM_EVENT_CAPACITY = 1
 const CLI_SIM_DEADLINE = time.MICROSECOND
 
-// CLI test owns timeline because library only submits secret I/O.
-func cli_sim_loop(seed uint64) (loop nbio.IO, driver time.Driver) {
-	var timeline_state time.Virtual_Timeline
-	queue := [CLI_SIM_COMPLETION_CAPACITY]*time.Completion{}
-	events := [CLI_SIM_EVENT_CAPACITY]time.Virtual_Event{}
-	timeline, driver, _ := time.New_Virtual_Timeline(
-		&timeline_state,
-		time.Virtual_Clock{Resolution: time.NANOSECOND},
-		time.Virtual_Timeline_Memory{Queue: queue[:], Events: events[:]},
-	)
+// CLI reads no clock, so one view slot satisfies the simulator's bound.
+const CLI_SIM_CLOCK_CAPACITY = 1
+
+// CLI test owns the loop because library only submits secret I/O.
+func cli_sim_loop(seed uint64) (loop nbio.IO, driver nbio.Driver) {
 	var state nbio.Sim
+	queue := [CLI_SIM_COMPLETION_CAPACITY]*nbio.Completion{}
+	events := [CLI_SIM_EVENT_CAPACITY]nbio.Virtual_Event{}
+	clocks := [CLI_SIM_CLOCK_CAPACITY]nbio.Sim_Clock{}
 	nodes := [CLI_SIM_NODE_CAPACITY]nbio.Sim_Node{}
 	descriptors := [CLI_SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor{}
 	operations := [CLI_SIM_OPERATION_CAPACITY]nbio.Sim_Operation{}
-	return nbio.New_Simulated_IO(&state, seed, timeline, nbio.Sim_Memory{
-		Nodes: nodes[:], Descriptors: descriptors[:], Operations: operations[:],
-	}), driver
+	return nbio.New_Simulated_IO(&state, seed, time.NANOSECOND, nbio.Sim_Memory{
+		Nodes:       nodes[:],
+		Descriptors: descriptors[:],
+		Operations:  operations[:],
+		Queue:       queue[:],
+		Events:      events[:],
+		Clocks:      clocks[:],
+	})
 }
 
 func cli_sim_open(
-	t *testing.T, loop nbio.IO, driver time.Driver, file_path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file_path string,
 	options nbio.Open_At_Options,
 ) (file nbio.File, operation_err error) {
 	t.Helper()
 	done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Open_At(loop.Storage, &completion, nbio.DIRECTORY_CURRENT, file_path, options,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			file = nbio.File(completed.Data)
 			operation_err = completed.Error
 			done = true
@@ -1757,13 +1759,13 @@ func cli_sim_open(
 }
 
 func cli_sim_make_directory(
-	t *testing.T, loop nbio.IO, driver time.Driver, directory_path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, directory_path string,
 ) (operation_err error) {
 	t.Helper()
 	done := false
-	var completion time.Completion
+	var completion nbio.Completion
 	nbio.Storage_Mkdir_At(loop.Storage, &completion, nbio.DIRECTORY_CURRENT, directory_path,
-		0o700, func(completed *time.Completion) {
+		0o700, func(completed *nbio.Completion) {
 			operation_err = completed.Error
 			done = true
 		})
@@ -5248,7 +5250,6 @@ func cli_secret_injected_name(stage cli_secret_injected_stage) (name string) {
 
 func cli_secret_injected_loop(stage cli_secret_injected_stage) (loop nbio.IO) {
 	state := &cli_secret_injected_state{Stage: stage}
-	loop.State = unsafe.Pointer(state)
 	loop.Storage.State = unsafe.Pointer(state)
 	loop.Storage.Status_Procedure = cli_secret_injected_status_procedure
 	loop.Storage.Open_At_Procedure = cli_secret_injected_open_procedure
@@ -5270,8 +5271,8 @@ func cli_secret_injected_status_procedure(
 }
 
 func cli_secret_injected_open_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File,
-	_ string, _ nbio.Open_At_Options, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	_ string, _ nbio.Open_At_Options, callback nbio.Callback,
 ) {
 	state := (*cli_secret_injected_state)(state_pointer)
 	completion.Data = 1
@@ -5282,8 +5283,8 @@ func cli_secret_injected_open_procedure(
 }
 
 func cli_secret_injected_read_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File,
-	buffer []byte, _ int64, _ time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	buffer []byte, _ int64, _ time.Duration, callback nbio.Callback,
 ) {
 	state := (*cli_secret_injected_state)(state_pointer)
 	buffer[0] = 'x'
@@ -5296,8 +5297,8 @@ func cli_secret_injected_read_procedure(
 }
 
 func cli_secret_injected_close_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File,
-	callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	callback nbio.Callback,
 ) {
 	state := (*cli_secret_injected_state)(state_pointer)
 	completion.Error = nil

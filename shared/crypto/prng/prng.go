@@ -1,5 +1,5 @@
 // Package prng is a cryptographically secure pseudo-random generator: a ChaCha20 keystream
-// (RFC 8439) seeded once from a 32-byte seed. It is the cryptographic sibling of simulation/prng —
+// (RFC 8439) seeded once from a 32-byte seed. It is the cryptographic sibling of sim/prng —
 // where that is a deterministic, non-cryptographic xoshiro256++ for reproducible simulation, this
 // produces unpredictable bytes and bounded integers for keys, tokens, nonces, and unbiased choice.
 //
@@ -238,7 +238,7 @@ func Word_Invariants(word Word, namespace invariant.Namespace) {
 // backend state behind an unsafe.Pointer and one procedure that receives it. The house bans
 // interfaces and closures that capture state, so this is the one shape a backend can take. A
 // production root binds a Chacha through Chacha_To_Source. A simulation binds a xoshiro stream
-// through simulation/prng's Xoshiro_To_Source, and that call is the one place a fake enters, so a
+// through sim/prng's Xoshiro_To_Source, and that call is the one place a fake enters, so a
 // grep for it finds every test that signs with predictable bytes.
 type Source struct {
 	// State is the caller-owned backend generator; the procedure casts it back to its own type.
@@ -289,7 +289,7 @@ func chacha_source_next(state unsafe.Pointer) (value Word) {
 }
 
 // Assembles eight bytes into one little-endian word. Spelled here rather than through
-// encoding/binary, because that package reaches simulation/prng through nbio, and simulation/prng
+// encoding/binary, because that package reaches sim/prng through nbio, and sim/prng
 // imports this one to bind a Xoshiro into Source.
 func word_from_bytes(octet [WORD_BYTE_COUNT]byte) (word Word) {
 	defer func() { Word_Invariants(word, "word_from_bytes.word") }()
@@ -404,7 +404,7 @@ func chacha20_block(
 	state[2] = CHACHA_CONSTANT_THIRD
 	state[3] = CHACHA_CONSTANT_FOURTH
 	// Key and nonce words assemble little-endian by hand: encoding/binary reaches
-	// simulation/prng through nbio, and simulation/prng imports this package to bind a Xoshiro.
+	// sim/prng through nbio, and sim/prng imports this package to bind a Xoshiro.
 	for word_index := 0; word_index < 8; word_index++ {
 		for byte_index := CHACHA_WORD_BYTE_COUNT - 1; byte_index >= 0; byte_index-- {
 			state[4+word_index] = state[4+word_index]<<bits.BIT_COUNT_8_MAXIMUM |

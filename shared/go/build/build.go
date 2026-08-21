@@ -949,7 +949,7 @@ func Directory_Memory_Invariants(value Directory_Memory, namespace invariant.Nam
 // composition root alone owns the loop.
 type Directory_Runner struct {
 	// Completion stands first so the static callback recovers the runner with no closure.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Loop submits the storage work the caller drives.
 	Loop Loop
 	// Target names the build the files stand in or stand outside of.
@@ -1020,7 +1020,7 @@ func Directory_Runner_Init(
 }
 
 // Holds the continuation one completion queued, which the caller reads through the rearm.
-func directory_completion(completion *time.Completion) {
+func directory_completion(completion *nbio.Completion) {
 	// First-field ownership avoids a closure allocation and a self-pointer escape.
 	runner := (*Directory_Runner)(unsafe.Pointer(completion))
 	runner.Flags[DIRECTORY_FLAG_QUEUED] = true

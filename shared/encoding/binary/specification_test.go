@@ -6,7 +6,6 @@ import (
 
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
 
@@ -87,7 +86,7 @@ func Test_Stream_IO(t *testing.T) {
 	write_called := false
 	binary.Write(
 		&writer, &writer.Completion, value, binary.BIG_ENDIAN,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			write_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -101,7 +100,7 @@ func Test_Stream_IO(t *testing.T) {
 	read_called := false
 	binary.Read(
 		&reader, &reader.Completion, &decoded, binary.BIG_ENDIAN,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			read_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -149,7 +148,7 @@ type deferred_stream struct {
 	Source     []byte
 	Position   int
 	Buffer     []byte
-	Completion *time.Completion
+	Completion *nbio.Completion
 	Callback   nbio.Stream_Callback
 	Mode       nbio.Stream_Mode
 }
@@ -159,7 +158,7 @@ func deferred_to_stream(state *deferred_stream) (stream nbio.Stream) {
 }
 
 func deferred_stream_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	state := (*deferred_stream)(state_pointer)
@@ -204,7 +203,7 @@ func inline_reader_to_stream(state *inline_reader_stream) (stream nbio.Stream) {
 }
 
 func inline_reader_stream_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	state := (*inline_reader_stream)(state_pointer)
@@ -239,7 +238,7 @@ func inline_reader_stream_procedure(
 	})
 }
 
-func stream_probe_completion(completion *time.Completion) {
+func stream_probe_completion(completion *nbio.Completion) {
 	if completion == nil {
 		panic("binary probe completion is absent")
 	}
@@ -257,7 +256,7 @@ func verify_deferred_stream(t *testing.T, value uint64) {
 	read_called := false
 	binary.Read(
 		&reader, &reader.Completion, &decoded, binary.BIG_ENDIAN,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			read_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -284,7 +283,7 @@ func verify_deferred_stream(t *testing.T, value uint64) {
 	write_called := false
 	binary.Write(
 		&writer, &writer.Completion, value, binary.BIG_ENDIAN,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			write_called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -316,7 +315,7 @@ func verify_inline_reader_state(t *testing.T) {
 	called := false
 	binary.Read(
 		&reader, &reader.Completion, &destination, binary.BIG_ENDIAN,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			called = true
 			testify.No_Error(t, completed.Error)
 		},
@@ -626,7 +625,7 @@ func verify_stream_boundaries(t *testing.T) {
 	if !panics(func() {
 		binary.Read(
 			&reader, &reader.Completion, &empty, binary.LITTLE_ENDIAN,
-			func(completed *time.Completion) { testify.Not_Nil(t, completed) },
+			func(completed *nbio.Completion) { testify.Not_Nil(t, completed) },
 		)
 	}) {
 		t.Fatal("Read accepted uninitialized Reader")
@@ -635,7 +634,7 @@ func verify_stream_boundaries(t *testing.T) {
 	if !panics(func() {
 		binary.Write(
 			&writer, &writer.Completion, empty, binary.LITTLE_ENDIAN,
-			func(completed *time.Completion) { testify.Not_Nil(t, completed) },
+			func(completed *nbio.Completion) { testify.Not_Nil(t, completed) },
 		)
 	}) {
 		t.Fatal("Write accepted uninitialized Writer")
@@ -650,12 +649,12 @@ func verify_read_boundary(
 	binary.Reader_Init(&reader, nbio.Memory_To_Stream(&memory), scratch)
 	binary.Read(
 		&reader, &reader.Completion, destination, order,
-		func(completed *time.Completion) { testify.No_Error(t, completed.Error) },
+		func(completed *nbio.Completion) { testify.No_Error(t, completed.Error) },
 	)
 	memory.Cursor = 0
 	binary.Read(
 		&reader, &reader.Completion, destination, order,
-		func(completed *time.Completion) { testify.No_Error(t, completed.Error) },
+		func(completed *nbio.Completion) { testify.No_Error(t, completed.Error) },
 	)
 	binary.Reader_Init(&reader, nbio.Memory_To_Stream(&memory), scratch)
 }
@@ -667,11 +666,11 @@ func verify_write_boundary(
 	memory := nbio.Stream_Memory{Memory: destination[:len(scratch)]}
 	var writer binary.Writer
 	binary.Writer_Init(&writer, nbio.Memory_To_Stream(&memory), scratch)
-	binary.Write(&writer, &writer.Completion, source, order, func(completed *time.Completion) {
+	binary.Write(&writer, &writer.Completion, source, order, func(completed *nbio.Completion) {
 		testify.No_Error(t, completed.Error)
 	})
 	memory.Cursor = 0
-	binary.Write(&writer, &writer.Completion, source, order, func(completed *time.Completion) {
+	binary.Write(&writer, &writer.Completion, source, order, func(completed *nbio.Completion) {
 		testify.No_Error(t, completed.Error)
 	})
 	binary.Writer_Init(&writer, nbio.Memory_To_Stream(&memory), scratch)

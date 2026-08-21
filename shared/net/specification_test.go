@@ -173,7 +173,7 @@ func Test_Deadline(t *testing.T) {
 		0, fixture.Addresses[:], network.Timeout(time.NANOSECOND),
 		resolver_allocation_complete,
 	)
-	if fixture.Resolver.Completion.Error != time.Deadline_Exceeded {
+	if fixture.Resolver.Completion.Error != nbio.Deadline_Exceeded {
 		t.Fatalf("error = %v", fixture.Resolver.Completion.Error)
 	}
 	if fixture.DNS.Close_Count != 1 {
@@ -240,13 +240,13 @@ func Test_TCP_Partial_Transfers(t *testing.T) {
 // descriptor already owned by the resolver.
 func Test_Transport_Errors(t *testing.T) {
 	resolver_transport_error(t, FAKE_DNS_UDP, FAKE_DNS_FAULT_UDP_SOCKET,
-		time.Deadline_Exceeded, 0)
+		nbio.Deadline_Exceeded, 0)
 	resolver_transport_error(t, FAKE_DNS_UDP, FAKE_DNS_FAULT_CONNECT,
-		time.Deadline_Exceeded, 1)
+		nbio.Deadline_Exceeded, 1)
 	resolver_transport_error(t, FAKE_DNS_UDP, FAKE_DNS_FAULT_UDP_SEND,
-		time.Deadline_Exceeded, 1)
+		nbio.Deadline_Exceeded, 1)
 	resolver_transport_error(t, FAKE_DNS_UDP, FAKE_DNS_FAULT_UDP_RECEIVE,
-		time.Deadline_Exceeded, 1)
+		nbio.Deadline_Exceeded, 1)
 	resolver_transport_error(t, FAKE_DNS_UDP, FAKE_DNS_FAULT_UDP_SEND_ZERO,
 		network.Error_Transfer_No_Progress, 1)
 	resolver_transport_error(t, FAKE_DNS_UDP, FAKE_DNS_FAULT_UDP_SEND_OVERSIZE,
@@ -256,9 +256,9 @@ func Test_Transport_Errors(t *testing.T) {
 	resolver_transport_error(t, FAKE_DNS_UDP, FAKE_DNS_FAULT_UDP_RECEIVE_OVERSIZE,
 		network.Error_Transfer_Count, 1)
 	resolver_transport_error(t, FAKE_DNS_TCP, FAKE_DNS_FAULT_TCP_SOCKET,
-		time.Deadline_Exceeded, 1)
+		nbio.Deadline_Exceeded, 1)
 	resolver_transport_error(t, FAKE_DNS_TCP, FAKE_DNS_FAULT_TCP_CONNECT,
-		time.Deadline_Exceeded, 2)
+		nbio.Deadline_Exceeded, 2)
 	resolver_transport_error(t, FAKE_DNS_TCP, FAKE_DNS_FAULT_TCP_SEND_ZERO,
 		network.Error_Transfer_No_Progress, 2)
 	resolver_transport_error(t, FAKE_DNS_TCP, FAKE_DNS_FAULT_TCP_SIZE_ZERO,
@@ -285,7 +285,7 @@ func Test_Deferred_Completion(t *testing.T) {
 	network.Resolve(
 		&fixture.Resolver, &fixture.Resolver.Completion, "example.com",
 		network.RECORD_TYPE_A, 0, fixture.Addresses[:], network.Timeout(time.SECOND),
-		func(*time.Completion) { callback_count++ },
+		func(*nbio.Completion) { callback_count++ },
 	)
 	if callback_count != 0 {
 		t.Fatal("resolver retired before deferred connect")
@@ -368,8 +368,8 @@ type fake_dns struct {
 	Fault                  fake_dns_fault
 	Close_Error            bool
 	Defer_Connect          bool
-	Deferred_Completion    *time.Completion
-	Deferred_Callback      time.Callback
+	Deferred_Completion    *nbio.Completion
+	Deferred_Callback      nbio.Callback
 	Response_Kind          fake_dns_response
 	Datagram               bool
 	TCP_Send_Limit         int
@@ -421,7 +421,7 @@ func resolver_transport_error(
 	network.Resolve(
 		&fixture.Resolver, &fixture.Resolver.Completion, "example.com",
 		network.RECORD_TYPE_A, 0, fixture.Addresses[:], network.Timeout(time.SECOND),
-		func(*time.Completion) { callback_count++ },
+		func(*nbio.Completion) { callback_count++ },
 	)
 	if callback_count != 1 {
 		t.Fatalf("callback count = %d", callback_count)
@@ -452,7 +452,7 @@ func resolver_transport_close_error(t *testing.T) {
 		network.RECORD_TYPE_A, 0, fixture.Addresses[:], network.Timeout(time.SECOND),
 		resolver_allocation_complete,
 	)
-	if fixture.Resolver.Completion.Error != time.Deadline_Exceeded {
+	if fixture.Resolver.Completion.Error != nbio.Deadline_Exceeded {
 		t.Fatalf("error = %v", fixture.Resolver.Completion.Error)
 	}
 	if fixture.DNS.Close_Count != 1 {
@@ -465,11 +465,11 @@ func resolver_success(t *testing.T, mode fake_dns_mode, record_type network.Reco
 	var fixture resolver_fixture
 	fixture.DNS.Mode = mode
 	fixture.Virtual.Resolution = time.NANOSECOND
-	clock := time.Virtual_Clock_To_Clock(&fixture.Virtual)
+	host := time.Virtual_Clock_To_Clock(&fixture.Virtual)
 	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	loop := fake_dns_loop(&fixture.DNS)
 	network.Resolver_Init(
-		&fixture.Resolver, loop, clock, prng.Chacha_To_Source(&fixture.Generator),
+		&fixture.Resolver, loop, host, prng.Chacha_To_Source(&fixture.Generator),
 		&fixture.Workspace, network.Resolver_Configuration{
 			Server: nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{192, 0, 2, 53}, 53),
 			UDP:    resolver_udp_options(),
@@ -485,7 +485,7 @@ func resolver_success(t *testing.T, mode fake_dns_mode, record_type network.Reco
 		&fixture.Resolver, &fixture.Resolver.Completion, name, record_type,
 		network.Port(443),
 		fixture.Addresses[:], network.Timeout(time.SECOND),
-		func(completion *time.Completion) { called = true },
+		func(completion *nbio.Completion) { called = true },
 	)
 	if !called {
 		t.Fatal("resolver callback did not retire")
@@ -587,7 +587,8 @@ func resolver_named_error(
 	}
 	network.Resolve(
 		&fixture.Resolver, &fixture.Resolver.Completion, name, network.RECORD_TYPE_A,
-		0, fixture.Addresses[:], network.Timeout(time.SECOND), resolver_allocation_complete,
+		0, fixture.Addresses[:], network.Timeout(time.SECOND),
+		resolver_allocation_complete,
 	)
 	if fixture.Resolver.Completion.Error != expected_error {
 		t.Fatalf("error = %v, want %v", fixture.Resolver.Completion.Error, expected_error)
@@ -634,7 +635,7 @@ func resolver_response_case(
 	network.Resolve(
 		&fixture.Resolver, &fixture.Resolver.Completion, name, network.RECORD_TYPE_A,
 		443, fixture.Addresses[:result_capacity], network.Timeout(time.SECOND),
-		func(*time.Completion) { called = true },
+		func(*nbio.Completion) { called = true },
 	)
 	if !called {
 		t.Fatal("resolver callback did not retire")
@@ -653,7 +654,7 @@ func resolver_allocation(t *testing.T, mode fake_dns_mode) {
 	var fixture resolver_fixture
 	fixture.DNS.Mode = mode
 	fixture.Virtual.Resolution = time.NANOSECOND
-	clock := time.Virtual_Clock_To_Clock(&fixture.Virtual)
+	host := time.Virtual_Clock_To_Clock(&fixture.Virtual)
 	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	loop := fake_dns_loop(&fixture.DNS)
 	configuration := network.Resolver_Configuration{
@@ -661,7 +662,7 @@ func resolver_allocation(t *testing.T, mode fake_dns_mode) {
 		UDP:    resolver_udp_options(), TCP: resolver_tcp_options(),
 	}
 	network.Resolver_Init(
-		&fixture.Resolver, loop, clock, prng.Chacha_To_Source(&fixture.Generator),
+		&fixture.Resolver, loop, host, prng.Chacha_To_Source(&fixture.Generator),
 		&fixture.Workspace, configuration,
 	)
 	name, name_error := network.Name_Validate("example.com")
@@ -707,13 +708,13 @@ func resolver_init_allocation(t *testing.T) {
 	t.Helper()
 	var fixture resolver_fixture
 	fixture.Virtual.Resolution = time.NANOSECOND
-	clock := time.Virtual_Clock_To_Clock(&fixture.Virtual)
+	host := time.Virtual_Clock_To_Clock(&fixture.Virtual)
 	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	loop := fake_dns_loop(&fixture.DNS)
 	configuration := resolver_configuration(nbio.FAMILY_IPV4)
 	allocations := testing.AllocsPerRun(RESOLVER_ALLOCATION_RUN_COUNT, func() {
 		network.Resolver_Init(
-			&fixture.Resolver, loop, clock, prng.Chacha_To_Source(&fixture.Generator),
+			&fixture.Resolver, loop, host, prng.Chacha_To_Source(&fixture.Generator),
 			&fixture.Workspace, configuration,
 		)
 	})
@@ -722,14 +723,16 @@ func resolver_init_allocation(t *testing.T) {
 	}
 }
 
-func resolver_allocation_complete(completion *time.Completion) {
+func resolver_allocation_complete(completion *nbio.Completion) {
 	if completion == nil {
 		panic("resolver allocation callback lost completion")
 	}
 }
 
 func fake_dns_loop(state *fake_dns) (loop nbio.IO) {
-	loop.State = unsafe.Pointer(state)
+	// Close read the storage half's state; this fake has no storage, so point it at the same
+	// backend the network half use.
+	loop.Storage.State = unsafe.Pointer(state)
 	loop.Close_Procedure = fake_dns_close
 	loop.Network = nbio.Network{
 		State:                unsafe.Pointer(state),
@@ -752,7 +755,7 @@ func fake_dns_socket_tcp(
 	state.TCP_Response_Count = 0
 	state.Socket_Count++
 	if state.Fault == FAKE_DNS_FAULT_TCP_SOCKET {
-		return network.DNS_SOCKET_INVALID, time.Deadline_Exceeded
+		return network.DNS_SOCKET_INVALID, nbio.Deadline_Exceeded
 	}
 	return FAKE_DNS_SOCKET, nil
 }
@@ -764,7 +767,7 @@ func fake_dns_socket_udp(
 	state.Datagram = true
 	state.Socket_Count++
 	if state.Fault == FAKE_DNS_FAULT_UDP_SOCKET {
-		return network.DNS_SOCKET_INVALID, time.Deadline_Exceeded
+		return network.DNS_SOCKET_INVALID, nbio.Deadline_Exceeded
 	}
 	if state.Tick_On_Socket {
 		time.Virtual_Clock_Tick(state.Virtual)
@@ -773,8 +776,8 @@ func fake_dns_socket_udp(
 }
 
 func fake_dns_connect(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File, _ nbio.Address,
-	_ time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File, _ nbio.Address,
+	_ time.Duration, callback nbio.Callback,
 ) {
 	state := (*fake_dns)(state_pointer)
 	if state.Defer_Connect {
@@ -785,24 +788,24 @@ func fake_dns_connect(
 	completion.Data = 0
 	completion.Error = nil
 	if state.Fault == FAKE_DNS_FAULT_CONNECT {
-		completion.Error = time.Deadline_Exceeded
+		completion.Error = nbio.Deadline_Exceeded
 	}
 	if state.Fault == FAKE_DNS_FAULT_TCP_CONNECT {
 		if !state.Datagram {
-			completion.Error = time.Deadline_Exceeded
+			completion.Error = nbio.Deadline_Exceeded
 		}
 	}
 	callback(completion)
 }
 
 func fake_dns_send(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File, buffer []byte,
-	_ time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File, buffer []byte,
+	_ time.Duration, callback nbio.Callback,
 ) {
 	state := (*fake_dns)(state_pointer)
 	if state.Fault == FAKE_DNS_FAULT_UDP_SEND {
 		completion.Data = 0
-		completion.Error = time.Deadline_Exceeded
+		completion.Error = nbio.Deadline_Exceeded
 		callback(completion)
 		return
 	}
@@ -1247,8 +1250,8 @@ func fake_dns_resource_header(
 }
 
 func fake_dns_receive(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File, buffer []byte,
-	_ time.Duration, callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File, buffer []byte,
+	_ time.Duration, callback nbio.Callback,
 ) {
 	state := (*fake_dns)(state_pointer)
 	if fake_dns_receive_fault(state, completion, buffer, callback) {
@@ -1276,11 +1279,11 @@ func fake_dns_receive(
 }
 
 func fake_dns_receive_fault(
-	state *fake_dns, completion *time.Completion, buffer []byte, callback time.Callback,
+	state *fake_dns, completion *nbio.Completion, buffer []byte, callback nbio.Callback,
 ) (retired bool) {
 	if state.Fault == FAKE_DNS_FAULT_UDP_RECEIVE {
 		completion.Data = 0
-		completion.Error = time.Deadline_Exceeded
+		completion.Error = nbio.Deadline_Exceeded
 		callback(completion)
 		return true
 	}
@@ -1340,15 +1343,15 @@ func fake_dns_tcp_size_receive(state *fake_dns, buffer []byte) (count int) {
 }
 
 func fake_dns_close(
-	state_pointer unsafe.Pointer, completion *time.Completion, _ nbio.File,
-	callback time.Callback,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	callback nbio.Callback,
 ) {
 	state := (*fake_dns)(state_pointer)
 	state.Close_Count++
 	completion.Data = 0
 	completion.Error = nil
 	if state.Close_Error {
-		completion.Error = time.Deadline_Exceeded
+		completion.Error = nbio.Deadline_Exceeded
 	}
 	callback(completion)
 }

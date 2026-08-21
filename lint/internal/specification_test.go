@@ -1508,9 +1508,9 @@ func Test_Stdlib_Time(t *testing.T) {
 func Test_Event_Loop_Driver(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import time \"fixture/shared/simulation/time\"\n\n" +
-		"// Build makes a loop.\nfunc Build() (loop time.Timeline) {\n" +
-		"\tloop, _, _ = time.New_Virtual_Timeline(time.Virtual_Clock{})\n" +
+		"import nbio \"fixture/shared/simulation/nbio\"\n\n" +
+		"// Build makes a loop.\nfunc Build() (loop nbio.IO) {\n" +
+		"\tloop, _ = nbio.New_Simulated_IO(nil, 0, 1, nbio.Sim_Memory{})\n" +
 		"\treturn loop\n}\n")
 	if !specification_flags(t, files, "makes a loop driver") {
 		t.Fatal("a library call to an IO loop constructor must be flagged")
@@ -1629,8 +1629,8 @@ func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
-			"import time \"fixture/shared/simulation/time\"\n\n" +
-			"func main() {\n\ttime.New_Virtual_Timeline(time.Virtual_Clock{})\n}\n"),
+			"import nbio \"fixture/shared/simulation/nbio\"\n\n" +
+			"func main() {\n\tnbio.New_Simulated_IO(nil, 0, 1, nbio.Sim_Memory{})\n}\n"),
 	}
 	if specification_flags(t, files, "makes a loop driver") {
 		t.Fatal("package main must be allowed to construct a loop driver")
@@ -1667,19 +1667,19 @@ func Test_Driver_Gateway_Logical_Clock_Allowed(t *testing.T) {
 	}
 }
 
-// Test_Driver_Gateway_Type_Flagged verifies a non-main package that names time.Driver
-// is flagged. Internal code takes the Timeline, and only the harness holds the Driver.
+// Test_Driver_Gateway_Type_Flagged verifies a non-main package that names nbio.Driver
+// is flagged. Internal code takes the IO surface, and only the harness holds the Driver.
 func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
 	t.Parallel()
-	library := "// Package time is a fixture.\npackage time\n\n" +
+	library := "// Package nbio is a fixture.\npackage nbio\n\n" +
 		"// Driver drives.\ntype Driver struct{}\n"
 	consumer := "// Package fixture is a fixture.\npackage fixture\n\n" +
-		"import time \"" +
-		"github.com/james-orcales/james-orcales/shared/simulation/time\"\n\n" +
-		"// Main drives.\nfunc Main(driver time.Driver) {}\n"
+		"import nbio \"" +
+		"github.com/james-orcales/james-orcales/shared/simulation/nbio\"\n\n" +
+		"// Main drives.\nfunc Main(driver nbio.Driver) {}\n"
 	fsys := fstest.MapFS{
 		"go.mod":                         {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/time/time.go": {Data: []byte(library)},
+		"shared/simulation/nbio/nbio.go": {Data: []byte(library)},
 		"pkg/rule.go":                    {Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
@@ -1690,23 +1690,23 @@ func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if !specification_diagnosed(diags, "can hold a time.Driver") {
-		t.Fatal("naming time.Driver outside main or a test must be flagged")
+	if !specification_diagnosed(diags, "can hold an nbio.Driver") {
+		t.Fatal("naming nbio.Driver outside main or a test must be flagged")
 	}
 }
 
-// Test_Driver_Gateway_Type_Main_Allowed verifies package main may hold the time.Driver type.
+// Test_Driver_Gateway_Type_Main_Allowed verifies package main may hold the nbio.Driver type.
 func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
 	t.Parallel()
-	library := "// Package time is a fixture.\npackage time\n\n" +
+	library := "// Package nbio is a fixture.\npackage nbio\n\n" +
 		"// Driver drives.\ntype Driver struct{}\n"
 	consumer := "// Package main is a fixture.\npackage main\n\n" +
-		"import time \"" +
-		"github.com/james-orcales/james-orcales/shared/simulation/time\"\n\n" +
-		"// hold takes a driver.\nfunc hold(driver time.Driver) {}\n\nfunc main() {}\n"
+		"import nbio \"" +
+		"github.com/james-orcales/james-orcales/shared/simulation/nbio\"\n\n" +
+		"// hold takes a driver.\nfunc hold(driver nbio.Driver) {}\n\nfunc main() {}\n"
 	fsys := fstest.MapFS{
 		"go.mod":                         {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/time/time.go": {Data: []byte(library)},
+		"shared/simulation/nbio/nbio.go": {Data: []byte(library)},
 		"pkg/main.go":                    {Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
@@ -1717,8 +1717,8 @@ func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "can hold a time.Driver") {
-		t.Fatal("package main may hold time.Driver")
+	if specification_diagnosed(diags, "can hold an nbio.Driver") {
+		t.Fatal("package main may hold nbio.Driver")
 	}
 }
 
@@ -1818,8 +1818,8 @@ func Test_IO_Gateway_Main_Exempt(t *testing.T) {
 	}
 }
 
-// Test_IO_Gateway_Time_Exempt verifies the time/default clock gateway may import
-// syscall — the clock is the one capability the loop is built on, not IO it carries.
+// Test_IO_Gateway_Time_Exempt verifies the clock/default gateway may import syscall — the
+// clock is the one capability the loop is built on, not IO it carries.
 func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
@@ -1838,7 +1838,7 @@ func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
-		t.Fatal("the time/default clock gateway may import syscall")
+		t.Fatal("the clock/default gateway may import syscall")
 	}
 }
 

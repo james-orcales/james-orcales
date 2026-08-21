@@ -42,6 +42,7 @@ import (
 	"local/james-orcales/shared/diff/myers"
 	"local/james-orcales/shared/encoding/json"
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -58,7 +59,7 @@ type Asserter struct {
 	Clock time.Clock
 	// IO is the loop the Eventually and Never poll rides: the assertion arms a repeating
 	// Timeout and the caller's driver fires it, because a library never drives the loop.
-	IO *time.Timeline
+	IO *nbio.Timeline
 }
 
 // File_Kind is one injected path classification.
@@ -1927,8 +1928,8 @@ func Asserter_Eventually(
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Eventually")
 	assert(a.IO != nil, "testify: Asserter io is required for Eventually")
 	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
-	var poll time.Callback
-	poll = func(completion *time.Completion) {
+	var poll nbio.Callback
+	poll = func(completion *nbio.Completion) {
 		if condition() {
 			return
 		}
@@ -1938,9 +1939,9 @@ func Asserter_Eventually(
 			Fail(t, message)
 			return
 		}
-		time.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
+		nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
 	}
-	time.Timeline_Timeout(*a.IO, &time.Completion{}, input.Tick, poll)
+	nbio.Timeline_Timeout(*a.IO, &nbio.Completion{}, input.Tick, poll)
 }
 
 // Asserter_Never_Input pairs the two durations of Asserter_Never, which repeat a type.
@@ -1961,8 +1962,8 @@ func Asserter_Never(
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Never")
 	assert(a.IO != nil, "testify: Asserter io is required for Never")
 	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
-	var poll time.Callback
-	poll = func(completion *time.Completion) {
+	var poll nbio.Callback
+	poll = func(completion *nbio.Completion) {
 		if condition() {
 			Fail(t, "Condition satisfied, but should never be")
 			return
@@ -1970,7 +1971,7 @@ func Asserter_Never(
 		if time.Clock_Now_Monotonic(a.Clock) >= deadline {
 			return
 		}
-		time.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
+		nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
 	}
-	time.Timeline_Timeout(*a.IO, &time.Completion{}, input.Tick, poll)
+	nbio.Timeline_Timeout(*a.IO, &nbio.Completion{}, input.Tick, poll)
 }

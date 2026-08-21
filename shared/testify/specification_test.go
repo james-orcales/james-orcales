@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
@@ -320,16 +321,9 @@ func Test_Files(t *testing.T) {
 // Test_Eventually_And_Never checks the polling assertions under a driven sim loop.
 func Test_Eventually_And_Never(t *testing.T) {
 	t.Parallel()
-	// Polling arms one timeout at a time, so larger storage would hide lifecycle defects.
-	const POLLING_TIMELINE_CAPACITY = 1
-	state := time.Virtual_Timeline{}
-	queue := [POLLING_TIMELINE_CAPACITY]*time.Completion{}
-	events := [POLLING_TIMELINE_CAPACITY]time.Virtual_Event{}
-	loop, driver, clock := time.New_Virtual_Timeline(&state,
-		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
-			Queue: queue[:], Events: events[:],
-		})
-	a := &testify.Asserter{Clock: clock, IO: &loop}
+	memory := &polling_memory{}
+	loop, driver, host := polling_loop(memory)
+	a := &testify.Asserter{Clock: host, IO: &loop}
 	poll_count := 0
 	condition := func() (satisfied bool) {
 		poll_count++
@@ -340,22 +334,48 @@ func Test_Eventually_And_Never(t *testing.T) {
 		Tick: 10 * time.NANOSECOND,
 	}
 	testify.Asserter_Eventually(a, t, condition, eventually)
-	time.Driver_Run_For(driver, 100*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 100*time.NANOSECOND)
 
-	never_state := time.Virtual_Timeline{}
-	never_queue := [POLLING_TIMELINE_CAPACITY]*time.Completion{}
-	never_events := [POLLING_TIMELINE_CAPACITY]time.Virtual_Event{}
-	never_loop, never_driver, never_clock := time.New_Virtual_Timeline(&never_state,
-		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
-			Queue: never_queue[:], Events: never_events[:],
-		})
+	never_memory := &polling_memory{}
+	never_loop, never_driver, never_clock := polling_loop(never_memory)
 	never_asserter := &testify.Asserter{Clock: never_clock, IO: &never_loop}
 	never := &testify.Asserter_Never_Input{
 		Wait: 50 * time.NANOSECOND,
 		Tick: 10 * time.NANOSECOND,
 	}
 	testify.Asserter_Never(never_asserter, t, func() (satisfied bool) { return false }, never)
-	time.Driver_Run_For(never_driver, 60*time.NANOSECOND)
+	nbio.Driver_Run_For(never_driver, 60*time.NANOSECOND)
+}
+
+// Polling arms one timeout at a time, so larger storage would hide lifecycle defects.
+const POLLING_TIMELINE_CAPACITY = 1
+
+// One slot of every other simulator resource: polling touches no endpoint and reads one clock.
+const POLLING_SLOT_CAPACITY = 1
+
+// Smallest simulated loop that still hand out a timeline.
+type polling_memory struct {
+	Sim         nbio.Sim
+	Nodes       [POLLING_SLOT_CAPACITY]nbio.Sim_Node
+	Descriptors [POLLING_SLOT_CAPACITY]nbio.Sim_Descriptor
+	Operations  [POLLING_SLOT_CAPACITY]nbio.Sim_Operation
+	Queue       [POLLING_TIMELINE_CAPACITY]*nbio.Completion
+	Events      [POLLING_SLOT_CAPACITY]nbio.Virtual_Event
+	Clocks      [POLLING_SLOT_CAPACITY]nbio.Sim_Clock
+}
+
+func polling_loop(
+	memory *polling_memory,
+) (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
+	surface, driver := nbio.New_Simulated_IO(&memory.Sim, 0, time.NANOSECOND, nbio.Sim_Memory{
+		Nodes:       memory.Nodes[:],
+		Descriptors: memory.Descriptors[:],
+		Operations:  memory.Operations[:],
+		Queue:       memory.Queue[:],
+		Events:      memory.Events[:],
+		Clocks:      memory.Clocks[:],
+	})
+	return surface.Timeline, driver, nbio.Sim_Clock_To_Clock(&memory.Sim.Clocks[0])
 }
 
 // Checks the pointer-identity and membership predicates.

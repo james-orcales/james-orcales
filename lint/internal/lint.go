@@ -9565,7 +9565,7 @@ func check_time_import_gateway(
 
 // A package drives the loop only through package main or a test; elsewhere it may
 // submit IO and read the clock but never mint the loop Driver. This flags a call to an
-// IO loop constructor (New_Virtual_Timeline, New_Operating_System_IO) outside main and _test.go.
+// IO loop constructor (New_Simulated_IO, New_Operating_System_IO) outside main and _test.go.
 // The read-only clock constructors mint no Driver, so they are not gated.
 func check_driver_gateway(parsed_files []Parsed_File) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
@@ -9611,14 +9611,15 @@ func driver_gateway_file_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 // Reports whether name is an IO loop constructor that mints a Driver.
 func driver_gateway_constructor(name string) (constructor bool) {
 	switch name {
-	case "New_Virtual_Timeline", "New_Operating_System_IO":
+	case "New_Simulated_IO", "New_Operating_System_IO":
 		return true
 	}
 	return false
 }
 
 // The Driver drives the timeline. Only package main or a test may hold it. Internal.Main
-// takes time.Timeline, and the harness holds the Driver. The nbio backend can return it.
+// takes nbio.IO or its Timeline half, and the harness holds the Driver. The OS backend can
+// return it, and the simulator is the package that declares it.
 func check_driver_type(
 	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
@@ -9626,7 +9627,7 @@ func check_driver_type(
 	if shared == "" {
 		return nil
 	}
-	driver_path := shared + "/simulation/time"
+	driver_path := shared + "/simulation/nbio"
 	gateway := source.IO_Gateway(components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
@@ -9645,7 +9646,7 @@ func check_driver_type(
 	return diags
 }
 
-// The time.Driver references in one file use the simulation/time import's local name.
+// The nbio.Driver references in one file use the simulation/nbio import's local name.
 func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []Diagnostic) {
 	local := ""
 	for _, implementation := range pf.File.Imports {
@@ -9675,8 +9676,8 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 			Position: pf.File_Set.Position(selector.Pos()),
 			Name:     "driver-gateway",
 			Want:     "Hold the Driver only in package main or in a test.",
-			Message: "Only package main or a test can hold a time.Driver. " +
-				"An internal package takes time.Timeline and the harness runs it.",
+			Message: "Only package main or a test can hold an nbio.Driver. " +
+				"An internal package takes nbio.IO and the harness runs it.",
 			Tier: 1,
 		})
 		return true

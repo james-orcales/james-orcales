@@ -381,7 +381,7 @@ func reader_archive_header(
 			Name: name, Link_Name: link_name,
 			User_Name: user_name[:], Group_Name: group_name[:],
 		},
-		func(_ *time.Completion) {
+		func(_ *nbio.Completion) {
 			header = reader.Archive.Header
 			called = true
 		},
@@ -907,7 +907,7 @@ func test_storage_overlap_domains(t *testing.T) {
 	tar.Reader_Next(
 		&reader, &reader.Completion,
 		tar.Header_Storage{Name: metadata[:tar.HEADER_TEXT_SIZE_MAXIMUM]},
-		func(_ *time.Completion) { called = true },
+		func(_ *nbio.Completion) { called = true },
 	)
 	if !called {
 		t.Fatal("overlap Reader_Next did not retire")
@@ -920,7 +920,7 @@ func test_storage_overlap_domains(t *testing.T) {
 	tar.Reader_Next(
 		&reader, &reader.Completion,
 		tar.Header_Storage{Name: shared, Link_Name: shared},
-		func(_ *time.Completion) { called = true },
+		func(_ *nbio.Completion) { called = true },
 	)
 	if !called {
 		t.Fatal("field overlap Reader_Next did not retire")
@@ -2332,7 +2332,7 @@ func test_domain_change_time_unvalidated(
 	}
 }
 
-func test_domain_callback(completion *time.Completion) {
+func test_domain_callback(completion *nbio.Completion) {
 	if completion == nil {
 		panic("missing domain completion")
 	}
@@ -2888,7 +2888,7 @@ func test_stream_boundary(t *testing.T) {
 		t.Fatalf("Writer_Init status = %v", writer_status)
 	}
 	callback_called := false
-	tar.Writer_Close(&writer, &writer.Completion, func(_ *time.Completion) {
+	tar.Writer_Close(&writer, &writer.Completion, func(_ *nbio.Completion) {
 		callback_called = true
 	})
 	if !callback_called {
@@ -2936,7 +2936,7 @@ func reader_fixture_next(fixture *reader_fixture) {
 	fixture.Called = false
 	tar.Reader_Next(
 		&fixture.Reader, &fixture.Reader.Completion, reader_fixture_storage(fixture),
-		func(_ *time.Completion) {
+		func(_ *nbio.Completion) {
 			fixture.Header = fixture.Reader.Archive.Header
 			fixture.Called = true
 		},
@@ -2947,7 +2947,7 @@ func reader_fixture_read(fixture *reader_fixture, destination []byte) {
 	fixture.Called = false
 	tar.Reader_Read(
 		&fixture.Reader, &fixture.Reader.Completion, destination,
-		func(_ *time.Completion) { fixture.Called = true },
+		func(_ *nbio.Completion) { fixture.Called = true },
 	)
 }
 
@@ -2976,7 +2976,7 @@ func writer_fixture_write_header(
 	fixture.Called = false
 	tar.Writer_Write_Header(
 		&fixture.Writer, &fixture.Writer.Completion, header,
-		func(_ *time.Completion) { fixture.Called = true },
+		func(_ *nbio.Completion) { fixture.Called = true },
 	)
 }
 
@@ -2984,7 +2984,7 @@ func writer_fixture_write(fixture *writer_fixture, source []byte) {
 	fixture.Called = false
 	tar.Writer_Write(
 		&fixture.Writer, &fixture.Writer.Completion, source,
-		func(_ *time.Completion) { fixture.Called = true },
+		func(_ *nbio.Completion) { fixture.Called = true },
 	)
 }
 
@@ -2992,7 +2992,7 @@ func writer_fixture_close(fixture *writer_fixture) {
 	fixture.Called = false
 	tar.Writer_Close(
 		&fixture.Writer, &fixture.Writer.Completion,
-		func(_ *time.Completion) { fixture.Called = true },
+		func(_ *nbio.Completion) { fixture.Called = true },
 	)
 }
 
@@ -3408,7 +3408,7 @@ func test_writer_header_validation(t *testing.T) {
 type deferred_stream struct {
 	Memory     []byte
 	Cursor     int
-	Completion *time.Completion
+	Completion *nbio.Completion
 	Buffer     []byte
 	Mode       nbio.Stream_Mode
 	Callback   nbio.Stream_Callback
@@ -3421,7 +3421,7 @@ func deferred_to_stream(state *deferred_stream) (stream nbio.Stream) {
 }
 
 func deferred_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	state := (*deferred_stream)(state_pointer)
@@ -3484,7 +3484,7 @@ func test_deferred_stream(t *testing.T) {
 		&reader, &reader.Completion, tar.Header_Storage{
 			Name: name[:], User_Name: user_name[:], Group_Name: group_name[:],
 		},
-		func(_ *time.Completion) { called = true },
+		func(_ *nbio.Completion) { called = true },
 	)
 	if called {
 		t.Fatal("Reader_Next retired before deferred Stream")
@@ -3515,7 +3515,7 @@ func test_defective_stream_count(t *testing.T) {
 	called := false
 	tar.Reader_Next(
 		&reader, &reader.Completion, tar.Header_Storage{},
-		func(_ *time.Completion) { called = true },
+		func(_ *nbio.Completion) { called = true },
 	)
 	if !called {
 		t.Fatal("defective Reader_Next did not retire")
@@ -3571,7 +3571,7 @@ func test_large_pax_payload(t *testing.T) {
 	called := false
 	tar.Writer_Write_Header(
 		&writer, &writer.Completion, &header,
-		func(_ *time.Completion) { called = true },
+		func(_ *nbio.Completion) { called = true },
 	)
 	if !called {
 		t.Fatal("large PAX Writer_Write_Header did not retire")
@@ -3624,7 +3624,7 @@ func test_largest_pax_record(t *testing.T) {
 			Name: name[:], Link_Name: link_name[:],
 			User_Name: user_name[:], Group_Name: group_name[:],
 		},
-		func(_ *time.Completion) { called = true },
+		func(_ *nbio.Completion) { called = true },
 	)
 	if !called {
 		t.Fatal("largest PAX Reader_Next did not retire")
@@ -3635,7 +3635,7 @@ func test_largest_pax_record(t *testing.T) {
 }
 
 func defective_read_procedure(
-	_ unsafe.Pointer, completion *time.Completion, _ nbio.Stream_Mode, buffer []byte,
+	_ unsafe.Pointer, completion *nbio.Completion, _ nbio.Stream_Mode, buffer []byte,
 	_ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	completion.Data = len(buffer) + 1
@@ -3699,7 +3699,7 @@ func test_allocation(t *testing.T) {
 	}
 }
 
-func allocation_callback(completion *time.Completion) {
+func allocation_callback(completion *nbio.Completion) {
 	if completion == nil {
 		panic("missing completion")
 	}

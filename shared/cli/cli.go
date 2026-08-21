@@ -6373,6 +6373,7 @@ type Program_Parse_Input struct {
 func Program_Parse_Input_Invariants(
 	value Program_Parse_Input, namespace invariant.Namespace,
 ) {
+	nbio.IO_Invariants(value.Loop, namespace)
 	Process_Arguments_Invariants(value.Arguments, namespace)
 	Process_Environment_Invariants(value.Environment, namespace)
 	Command_Argument_Storage_Invariants(value.Command_Arguments, namespace)
@@ -6580,6 +6581,7 @@ type Publication struct {
 
 // Publication_Invariants composes ordered external and terminal state.
 func Publication_Invariants(value Publication, namespace invariant.Namespace) {
+	nbio.IO_Invariants(value.Loop, namespace)
 	Parse_Result_Invariants(value.Result, namespace)
 	Parser_Completion_Invariants(value.Completion, namespace)
 	Environment_Failures_Invariants(value.Environment_Errors, namespace)
@@ -7799,7 +7801,7 @@ func Publication_Reference_Invariants(
 // One state owns every completion for one declaration and never moves after submission.
 type Secret_Parser struct {
 	// Completion stays first so one static callback recovers caller-owned runner state.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Parser is the parent state that owns the terminal result.
 	Parser Publication_Reference
 	// Index is the secret declaration index.
@@ -7937,7 +7939,7 @@ func secret_start_paths(state *Secret_Parser) {
 }
 
 // One static callback recovers stable caller storage and dispatches the submitted stage.
-func secret_operation_complete(completed *time.Completion) {
+func secret_operation_complete(completed *nbio.Completion) {
 	state := (*Secret_Parser)(unsafe.Pointer(completed))
 	Secret_Parser_Invariants(*state, "secret_operation_complete.state")
 	switch state.Stage[0] {

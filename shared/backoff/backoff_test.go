@@ -5,6 +5,7 @@ import (
 
 	"local/james-orcales/shared/backoff"
 	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -23,23 +24,36 @@ type Retry_Result struct {
 	Elapsed time.Duration
 }
 
+// Every other simulator resource is one slot: retry touches no endpoint and reads one clock.
+const RETRY_SLOT_CAPACITY = 1
+
+// Simulated loop whose timeline hold timer_count timers at once, on a grain of resolution.
+// Test-side slices allocate; the constructor under test still must not.
+func retry_loop(
+	resolution time.Duration, timer_count int,
+) (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
+	state := &nbio.Sim{}
+	surface, driver := nbio.New_Simulated_IO(state, 0, resolution, nbio.Sim_Memory{
+		Nodes:       make([]nbio.Sim_Node, RETRY_SLOT_CAPACITY),
+		Descriptors: make([]nbio.Sim_Descriptor, RETRY_SLOT_CAPACITY),
+		Operations:  make([]nbio.Sim_Operation, RETRY_SLOT_CAPACITY),
+		Queue:       make([]*nbio.Completion, timer_count),
+		Events:      make([]nbio.Virtual_Event, RETRY_SLOT_CAPACITY),
+		Clocks:      make([]nbio.Sim_Clock, RETRY_SLOT_CAPACITY),
+	})
+	return surface.Timeline, driver, nbio.Sim_Clock_To_Clock(&state.Clocks[0])
+}
+
 // Drives Retry on a fresh seeded sim loop, pumping until it finishes, and reports the
 // delivered outcome with the virtual time the waits consumed.
 func run_retry(
 	policy backoff.Policy, tries_count backoff.Try_Count,
 	operation backoff.Operation[int],
 ) (outcome Retry_Result) {
-	var timeline time.Virtual_Timeline
-	queue := make([]*time.Completion, int(tries_count))
-	events := make([]time.Virtual_Event, 1)
-	loop, driver, clock := time.New_Virtual_Timeline(
-		&timeline,
-		time.Virtual_Clock{Resolution: time.MILLISECOND},
-		time.Virtual_Timeline_Memory{Queue: queue, Events: events},
-	)
-	started := time.Clock_Now_Monotonic(clock)
+	loop, driver, host := retry_loop(time.MILLISECOND, int(tries_count))
+	started := time.Clock_Now_Monotonic(host)
 	retry_state := backoff.Retry_State[int]{Input: backoff.Retry_Input{
-		Timer: loop, Policy: policy, Tries_Max: tries_count, Clock: clock,
+		Timer: loop, Policy: policy, Tries_Max: tries_count, Clock: host,
 	}}
 	backoff.Retry[int](&retry_state, operation)
 	attempt_max := backoff.Attempt_Count(tries_count)
@@ -52,7 +66,7 @@ func run_retry(
 		if bool(backoff.Retry_Stopped(&retry_state)) {
 			break
 		}
-		time.Driver_Run_Until(
+		nbio.Driver_Run_Until(
 			driver, time.Duration(tries_count)*time.MINUTE,
 			func() (finished bool) {
 				return bool(backoff.Retry_Work_Queued(&retry_state))

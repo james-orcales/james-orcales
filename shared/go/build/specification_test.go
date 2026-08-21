@@ -269,8 +269,8 @@ type directory_fixture struct {
 // Opens the directory the runner names, or one child of it. The descriptor of a child names the
 // slot of that child, thus a read of it finds the bytes the fixture states.
 func directory_open(
-	state unsafe.Pointer, completion *time.Completion, directory nbio.File, file_path string,
-	options nbio.Open_At_Options, callback time.Callback,
+	state unsafe.Pointer, completion *nbio.Completion, directory nbio.File, file_path string,
+	options nbio.Open_At_Options, callback nbio.Callback,
 ) {
 	fixture := (*directory_fixture)(state)
 	completion.Error = nil
@@ -296,8 +296,8 @@ func directory_open(
 // Hands the runner one pass over the children of the directory, and no child on the pass behind
 // it.
 func directory_entries(
-	state unsafe.Pointer, completion *time.Completion, directory nbio.File, buffer []byte,
-	entries []nbio.Directory_Entry, callback time.Callback,
+	state unsafe.Pointer, completion *nbio.Completion, directory nbio.File, buffer []byte,
+	entries []nbio.Directory_Entry, callback nbio.Callback,
 ) {
 	fixture := (*directory_fixture)(state)
 	completion.Error = nil
@@ -319,8 +319,8 @@ func directory_entries(
 
 // Reads the bytes the child of the fixture opens with into the buffer the runner owns.
 func directory_read(
-	state unsafe.Pointer, completion *time.Completion, file nbio.File, buffer []byte,
-	offset int64, timeout time.Duration, callback time.Callback,
+	state unsafe.Pointer, completion *nbio.Completion, file nbio.File, buffer []byte,
+	offset int64, timeout time.Duration, callback nbio.Callback,
 ) {
 	fixture := (*directory_fixture)(state)
 	completion.Error = nil
@@ -336,7 +336,7 @@ func directory_read(
 
 // Closes one descriptor the read held.
 func directory_close(
-	state unsafe.Pointer, completion *time.Completion, file nbio.File, callback time.Callback,
+	state unsafe.Pointer, completion *nbio.Completion, file nbio.File, callback nbio.Callback,
 ) {
 	completion.Error = nil
 	completion.Data = 0

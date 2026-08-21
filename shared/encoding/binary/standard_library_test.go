@@ -7,7 +7,6 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
 
@@ -86,7 +85,7 @@ func memory_to_stream(state *memory_stream) (stream nbio.Stream) {
 }
 
 func memory_stream_procedure(
-	state_pointer unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
 	state := (*memory_stream)(state_pointer)
@@ -138,7 +137,7 @@ func memory_stream_write(stream *memory_stream, source []byte) (count int, err e
 
 func read_memory(
 	stream *memory_stream, scratch Bytes, destination any, order Byte_Order,
-) (completion time.Completion) {
+) (completion nbio.Completion) {
 	var reader Reader
 	Reader_Init(&reader, memory_to_stream(stream), scratch)
 	Read(&reader, &reader.Completion, destination, order, memory_completion)
@@ -147,14 +146,14 @@ func read_memory(
 
 func write_memory(
 	stream *memory_stream, scratch Bytes, source any, order Byte_Order,
-) (completion time.Completion) {
+) (completion nbio.Completion) {
 	var writer Writer
 	Writer_Init(&writer, memory_to_stream(stream), scratch)
 	Write(&writer, &writer.Completion, source, order, memory_completion)
 	return writer.Completion
 }
 
-func memory_completion(completion *time.Completion) {
+func memory_completion(completion *nbio.Completion) {
 	if completion == nil {
 		panic("binary test completion is absent")
 	}

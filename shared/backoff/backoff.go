@@ -1,14 +1,14 @@
-// Package backoff computes retry delays and submits retries to simulation/time timeline.
+// Package backoff computes retry delays and submits retries to sim/clock timeline.
 // It is a dependency-injected port of github.com/cenkalti/backoff: the upstream
 // package is float-based (Multiplier 1.5, RandomizationFactor 0.5), draws jitter
 // from the global math/rand, and waits on a real time.Timer under a context — none
 // of which the house linter allows and deterministic simulation cannot replay. Here
 // the growth factor and jitter are integer prng.Ratios, the jitter entropy is an
-// injected prng.Generator, and durations derive from simulation/time.Duration, so a schedule
+// injected prng.Generator, and durations derive from sim/time.Duration, so a schedule
 // reproduces bit-for-bit from a seed.
 //
 // Linter bans user interfaces. Policy becomes static procedures over explicit caller-owned
-// Policy_State. No closure captures state. Library never holds time.Driver. Retry submits one
+// Policy_State. No closure captures state. Library never holds nbio.Driver. Retry submits one
 // timeout. Its callback records work; root rearms runner and reads Retry_Status.
 package backoff
 
@@ -18,7 +18,8 @@ import (
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/slices"
 )
@@ -289,23 +290,23 @@ func Stored_Jitter_Invariants(value Stored_Jitter, namespace invariant.Namespace
 }
 
 // Generator_Storage includes zero while caller policy storage is uninitialized.
-type Generator_Storage prng.Generator
+type Generator_Storage prng.Xoshiro
 
 // Generator_Storage_Invariants fixes the xoshiro state width without requiring initialization.
 func Generator_Storage_Invariants(generator Generator_Storage, _ invariant.Namespace) {
 	invariant.Always(
-		len(generator.State) == prng.GENERATOR_STATE_WORD_COUNT,
+		len(generator.State) == prng.XOSHIRO_STATE_WORD_COUNT,
 		"Generator storage keeps the xoshiro state width.",
 	)
 }
 
 // Required_Generator is active caller-owned jitter entropy.
-type Required_Generator *prng.Generator
+type Required_Generator *prng.Xoshiro
 
 // Required_Generator_Invariants rejects missing entropy before dereferencing caller storage.
 func Required_Generator_Invariants(generator Required_Generator, namespace invariant.Namespace) {
 	invariant.Always(generator != nil, "Jitter has caller-owned entropy.")
-	prng.Generator_Invariants(*generator, namespace)
+	prng.Xoshiro_Invariants(*generator, namespace)
 }
 
 // Error_Permanent is the sentinel Permanent wraps; Retry stops at once when the
@@ -443,7 +444,7 @@ type Exponential_Input struct {
 	// Jitter is the integer ratio of random spread per interval, e.g. {1,2} is half.
 	Jitter Jitter
 	// Generator is the injected entropy the jitter draws from, for a reproducible spread.
-	Generator prng.Generator
+	Generator prng.Xoshiro
 }
 
 // Exponential_Input_Invariants bounds configured duration and ratio domains.
@@ -452,7 +453,7 @@ func Exponential_Input_Invariants(input Exponential_Input, namespace invariant.N
 	Maximum_Interval_Invariants(input.Interval_Max, namespace)
 	Multiplier_Invariants(input.Multiplier, namespace)
 	Jitter_Invariants(input.Jitter, namespace)
-	prng.Generator_Invariants(input.Generator, namespace)
+	prng.Xoshiro_Invariants(input.Generator, namespace)
 	invariant.Always(
 		input.Initial_Interval <= Initial_Interval(input.Interval_Max),
 		"Exponential initial interval fits maximum.",
@@ -461,11 +462,11 @@ func Exponential_Input_Invariants(input Exponential_Input, namespace invariant.N
 }
 
 func exponential_ratio_validate(
-	multiplier Multiplier, jitter_ratio Jitter, generator prng.Generator,
+	multiplier Multiplier, jitter_ratio Jitter, generator prng.Xoshiro,
 ) {
 	Multiplier_Invariants(multiplier, "exponential_ratio_validate.multiplier")
 	Jitter_Invariants(jitter_ratio, "exponential_ratio_validate.jitter_ratio")
-	prng.Generator_Invariants(generator, "exponential_ratio_validate.generator")
+	prng.Xoshiro_Invariants(generator, "exponential_ratio_validate.generator")
 }
 
 // Exponential initializes caller state and returns growing jittered policy.
@@ -507,11 +508,11 @@ func Policy_Reset(policy Policy) {
 // New_Exponential returns an Exponential Policy with the classic defaults: a 500ms
 // initial interval, a 60s cap, 1.5x growth, and half-interval jitter from generator.
 func New_Exponential(
-	state *Policy_State, generator prng.Generator,
+	state *Policy_State, generator prng.Xoshiro,
 ) (policy Policy) {
 	defer func() { Policy_Invariants(policy, "new_exponential.policy") }()
 	Policy_State_Invariants(*state, "new_exponential.state")
-	prng.Generator_Invariants(generator, "new_exponential.generator")
+	prng.Xoshiro_Invariants(generator, "new_exponential.generator")
 	return Exponential(state, &Exponential_Input{
 		Initial_Interval: Initial_Interval(DEFAULT_INITIAL_INTERVAL),
 		Interval_Max:     Maximum_Interval(DEFAULT_INTERVAL_MAX),
@@ -534,7 +535,7 @@ func policy_next(pointer unsafe.Pointer) (delay Delay) {
 		}
 		delay = Delay(jitter(
 			state.Current_Interval, factor,
-			Required_Generator((*prng.Generator)(&state.Generator)),
+			Required_Generator((*prng.Xoshiro)(&state.Generator)),
 		))
 		multiplier := Multiplier{
 			Numerator:   Multiplier_Numerator(state.Multiplier.Numerator),
@@ -613,7 +614,7 @@ func jitter(
 	)
 	delta := Current_Interval(quotient)
 	span := int(2*delta + 1)
-	offset := Current_Interval(prng.Generator_Below(generator, prng.Bound(span)))
+	offset := Current_Interval(prng.Xoshiro_Below(generator, prng.Bound(span)))
 	value := interval - delta + offset
 	if value > Current_Interval(INTERVAL_MAXIMUM) {
 		return Wait(INTERVAL_MAXIMUM)
@@ -788,7 +789,7 @@ func Started_Moment_Invariants(started Started_Moment, namespace invariant.Names
 // Retry_Input configures Retry. It holds timeline submission, never Driver.
 type Retry_Input struct {
 	// Timer submits between-attempt wait on injected timeline.
-	Timer time.Timeline
+	Timer nbio.Timeline
 	// Policy computes the delay before each retry.
 	Policy Policy
 	// Tries_Max bounds total attempts; must be positive (the house bans unbounded loops).
@@ -803,7 +804,7 @@ type Retry_Input struct {
 
 // Retry_Input_Invariants bounds total attempts.
 func Retry_Input_Invariants(input Retry_Input, namespace invariant.Namespace) {
-	time.Timeline_Invariants(input.Timer, namespace)
+	nbio.Timeline_Invariants(input.Timer, namespace)
 	Policy_Invariants(input.Policy, namespace)
 	Try_Count_Invariants(input.Tries_Max, namespace)
 	time.Clock_Invariants(input.Clock, namespace)
@@ -813,7 +814,7 @@ func Retry_Input_Invariants(input Retry_Input, namespace invariant.Namespace) {
 // Retry_State is caller-owned storage retained across timer completion.
 type Retry_State[T any] struct {
 	// Completion retains timer lifecycle and records when root has work to rearm.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Input retains dependencies across asynchronous attempts.
 	Input Retry_Input
 	// Operation is caller procedure retried.
@@ -940,7 +941,7 @@ func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
 		state.Completion.Data = RETRY_WORK_READY
 		return true
 	}
-	time.Timeline_Timeout(
+	nbio.Timeline_Timeout(
 		state.Input.Timer, &state.Completion, duration-late, retry_wait_complete,
 	)
 	return true
@@ -975,6 +976,6 @@ const RETRY_WORK_IDLE = 0
 // RETRY_WORK_READY means root must call Retry_Rearm.
 const RETRY_WORK_READY = 1
 
-func retry_wait_complete(completion *time.Completion) {
+func retry_wait_complete(completion *nbio.Completion) {
 	completion.Data = RETRY_WORK_READY
 }

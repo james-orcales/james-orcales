@@ -50,10 +50,10 @@ func Test_Write_Does_Not_Block(t *testing.T) {
 // entries and discards the oldest.
 func Test_Overflow_Drops_Oldest(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 8)}
-	clock, sleep, parked, resume := gated_clock()
+	host, sleep, parked, resume := gated_clock()
 	writer := diode.New(diode.New_Input{
 		Sink_State: unsafe.Pointer(sink), Write: recording_sink_write,
-		Clock: clock, Sleep: sleep, Count: 4,
+		Clock: host, Sleep: sleep, Count: 4,
 	})
 	<-parked
 	for index := 0; index < 8; index++ {
@@ -74,11 +74,11 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 	dropped := make(chan int, 8)
 	causes := make(chan diode.Drop_Cause, 8)
 	sink := &recording_sink{Written: make(chan string, 8)}
-	clock, sleep, parked, resume := gated_clock()
+	host, sleep, parked, resume := gated_clock()
 	writer := diode.New(diode.New_Input{
 		Sink_State: unsafe.Pointer(sink),
 		Write:      recording_sink_write,
-		Clock:      clock,
+		Clock:      host,
 		Sleep:      sleep,
 		Count:      4,
 		Alerter: func(missed int, cause diode.Drop_Cause) {
@@ -134,10 +134,10 @@ func Test_Poll_Interval_Is_Configurable(t *testing.T) {
 // sink and that Close then returns (the drain goroutine has exited).
 func Test_Close_Flushes_And_Stops(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 4)}
-	clock, sleep, parked, resume := gated_clock()
+	host, sleep, parked, resume := gated_clock()
 	writer := diode.New(diode.New_Input{
 		Sink_State: unsafe.Pointer(sink), Write: recording_sink_write,
-		Clock: clock, Sleep: sleep, Count: 8,
+		Clock: host, Sleep: sleep, Count: 8,
 	})
 	<-parked
 	for index := 0; index < 3; index++ {
@@ -160,9 +160,9 @@ func Test_Close_Flushes_And_Stops(t *testing.T) {
 // Test_Dropping_Does_Not_Allocate checks that overwriting unread entries recycles
 // their buckets, so a diode shedding load allocates nothing per dropped line.
 func Test_Dropping_Does_Not_Allocate(t *testing.T) {
-	clock, sleep, parked, resume := gated_clock()
+	host, sleep, parked, resume := gated_clock()
 	writer := diode.New(diode.New_Input{
-		Write: discard, Clock: clock, Sleep: sleep, Count: 8,
+		Write: discard, Clock: host, Sleep: sleep, Count: 8,
 	})
 	<-parked
 	line := []byte("a dropped line")
@@ -284,9 +284,9 @@ func Test_Invariant_Boundaries(t *testing.T) {
 // Test_Maximum_Drop_Report proves one observed lap cannot overflow its bounded report.
 func Test_Maximum_Drop_Report(t *testing.T) {
 	dropped := make(chan int, 1)
-	clock, sleep, parked, resume := gated_clock()
+	host, sleep, parked, resume := gated_clock()
 	writer := diode.New(diode.New_Input{
-		Clock: clock, Sleep: sleep, Count: 1,
+		Clock: host, Sleep: sleep, Count: 1,
 		Alerter: func(missed int, _ diode.Drop_Cause) { dropped <- missed },
 	})
 	<-parked
@@ -313,7 +313,7 @@ func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1 << 20, Burst: 1 << 20},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
-			t.Errorf("unexpected drop of %d (%v) under a large clock", missed, cause)
+			t.Errorf("unexpected drop of %d (%v) under a large host", missed, cause)
 		},
 	})
 	for index := 0; index < 4; index++ {
@@ -321,7 +321,7 @@ func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
 	}
 	for index := 0; index < 4; index++ {
 		if got := <-sink.Written; got != "ab" {
-			t.Fatalf("large-clock delivery %q, want ab", got)
+			t.Fatalf("large-host delivery %q, want ab", got)
 		}
 	}
 	writer.Close()
@@ -364,14 +364,14 @@ func discard(
 
 // A read-only clock reading zero, paired with no_sleep in tests that synchronize on the
 // sink rather than on wall-clock time.
-func instant_clock() (clock time.Clock) {
+func instant_clock() (host time.Clock) {
 	return time.Clock{
 		Now_Monotonic: zero_monotonic,
 		Now_Realtime:  zero_realtime,
 	}
 }
 
-func constant_clock(moment time.Monotonic_Moment) (clock time.Clock) {
+func constant_clock(moment time.Monotonic_Moment) (host time.Clock) {
 	return time.Clock{
 		State:         unsafe.Pointer(&moment),
 		Now_Monotonic: constant_monotonic,
@@ -397,13 +397,13 @@ func no_sleep() (sleep func(duration time.Duration)) {
 // closes parked (so a test learns the drain is idle on an empty ring) and every call blocks
 // until resume closes. After resume closes, the sleep returns immediately.
 func gated_clock() (
-	clock time.Clock, sleep func(duration time.Duration),
+	host time.Clock, sleep func(duration time.Duration),
 	parked chan struct{}, resume chan struct{},
 ) {
 	parked = make(chan struct{})
 	resume = make(chan struct{})
 	var once sync.Once
-	clock = time.Clock{
+	host = time.Clock{
 		Now_Monotonic: zero_monotonic,
 		Now_Realtime:  zero_realtime,
 	}
@@ -411,13 +411,13 @@ func gated_clock() (
 		once.Do(func() { close(parked) })
 		<-resume
 	}
-	return clock, sleep, parked, resume
+	return host, sleep, parked, resume
 }
 
 // A read-only clock whose monotonic reading advances by step on every read, so a test can
 // drive the rate limiter's token refill deterministically; pair it with no_sleep. Only the
 // single drain goroutine reads Now_Monotonic, so the captured counter needs no synchronization.
-func stepping_clock(step time.Duration) (clock time.Clock) {
+func stepping_clock(step time.Duration) (host time.Clock) {
 	state := stepping_clock_state{Step: step}
 	return time.Clock{
 		State:         unsafe.Pointer(&state),
@@ -432,9 +432,9 @@ type stepping_clock_state struct {
 }
 
 func stepping_clock_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_Moment) {
-	clock := (*stepping_clock_state)(state)
-	clock.Elapsed += time.Monotonic_Moment(clock.Step)
-	return clock.Elapsed
+	host := (*stepping_clock_state)(state)
+	host.Elapsed += time.Monotonic_Moment(host.Step)
+	return host.Elapsed
 }
 
 // Builds a diode with the configured interval and returns the duration the drain
@@ -442,7 +442,7 @@ func stepping_clock_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_M
 func capture_interval(t *testing.T, configured time.Duration) (observed time.Duration) {
 	t.Helper()
 	intervals := make(chan time.Duration, 1)
-	clock := time.Clock{
+	host := time.Clock{
 		Now_Monotonic: zero_monotonic,
 		Now_Realtime:  zero_realtime,
 	}
@@ -454,7 +454,7 @@ func capture_interval(t *testing.T, configured time.Duration) (observed time.Dur
 	}
 	writer := diode.New(diode.New_Input{
 		Write:         discard,
-		Clock:         clock,
+		Clock:         host,
 		Sleep:         sleep,
 		Poll_Interval: diode.Stored_Poll_Interval(configured),
 	})

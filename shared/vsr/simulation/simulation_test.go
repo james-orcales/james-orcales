@@ -395,13 +395,13 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 		cluster_count = 5 // Exercise both quorum sizes.
 	}
 	virtual := time.Virtual_Clock{Resolution: time.MILLISECOND}
-	clock := time.Virtual_Clock_To_Clock(&virtual)
+	host := time.Virtual_Clock_To_Clock(&virtual)
 	tick := func() { time.Virtual_Clock_Tick(&virtual) }
 	state = &simulator{
 		T:              t,
 		Seed:           seed,
 		Generator:      prng.New(prng.Seed(seed)),
-		Clock:          clock,
+		Clock:          host,
 		Tick:           tick,
 		Replica_Clocks: make([]time.Clock, SIM_SUPERSET),
 		Replica_Ticks:  make([]func(), SIM_SUPERSET),
@@ -524,8 +524,8 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			configuration = dormant_configuration(index)
 		}
 		state.Active[index] = active
-		clock, tick := simulator_replica_clock(state)
-		state.Replica_Clocks[index], state.Replica_Ticks[index] = clock, tick
+		host, tick := simulator_replica_clock(state)
+		state.Replica_Clocks[index], state.Replica_Ticks[index] = host, tick
 		state.Replicas[index] = vsr.New_Replica(&vsr.New_Replica_Input{
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,
@@ -551,7 +551,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 // per-replica offset (Epoch) and a bounded linear drift, so no two replicas share time: the
 // offset differentiates the §4.4 timestamps each would stamp and the drift desynchronizes their
 // timeouts — what VSR safety must survive by leaning on consensus, not the clock.
-func simulator_replica_clock(state *simulator) (clock time.Clock, tick func()) {
+func simulator_replica_clock(state *simulator) (host time.Clock, tick func()) {
 	virtual := time.Virtual_Clock{Resolution: time.MILLISECOND}
 	if state.Clock_Skew {
 		virtual.Epoch = time.Moment(prng.Xoshiro_Below(&state.Clock_Generator, 50)) *
@@ -561,9 +561,9 @@ func simulator_replica_clock(state *simulator) (clock time.Clock, tick func()) {
 		rate := time.Duration(prng.Xoshiro_Below(&state.Clock_Generator, 40001) - 20000)
 		virtual.Skew = time.Skew(time.SKEW_KIND_LINEAR, rate, 0)
 	}
-	clock = time.Virtual_Clock_To_Clock(&virtual)
+	host = time.Virtual_Clock_To_Clock(&virtual)
 	tick = func() { time.Virtual_Clock_Tick(&virtual) }
-	return clock, tick
+	return host, tick
 }
 
 // A dormant pre-allocated node's placeholder configuration: three members including itself,
@@ -1182,7 +1182,9 @@ func simulator_count_delivery(
 // Simulator_drop_reason reports why the network drops this message before delivery, or "" if it is
 // deliverable: a partition on the sender, a partition on the target, or a shut-down/dormant target
 // (§7.1). The string doubles as the trace event name.
-func simulator_drop_reason(state *simulator, message vsr.Message, now time.Moment) (reason string) {
+func simulator_drop_reason(
+	state *simulator, message vsr.Message, now time.Moment,
+) (reason string) {
 	if simulator_is_isolated(state, message.From, now) {
 		return "drop:iso-from"
 	}
@@ -1768,7 +1770,7 @@ func simulator_record_coverage(state *simulator) {
 	// sometimes not, so the fault path is witnessed both ways across the sweep.
 	invariant.Sometimes(
 		simulator_clock_fault_active(state),
-		"a replica clock is faulted",
+		"a replica host is faulted",
 	)
 	simulator_record_result_coverage(state)
 }

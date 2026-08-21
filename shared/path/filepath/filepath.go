@@ -10,7 +10,6 @@ import (
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/path"
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
@@ -259,7 +258,7 @@ const GLOB_PHASE_CLOSE Glob_Phase = GLOB_PHASE_READ + NONEMPTY_SIZE_MINIMUM
 // first so static callback can recover caller-owned runner without closure allocation.
 type Glob_Runner struct {
 	// Completion stays first so static callback recovers runner with no retained closure.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Loop submits storage work while composition root alone owns driver.
 	Loop nbio.IO
 	// Pattern remains borrowed until runner stops.
@@ -301,6 +300,7 @@ type Glob_Runner struct {
 // Glob_Runner_Invariants states complete runner scalar domains.
 func Glob_Runner_Invariants(value *Glob_Runner, namespace invariant.Namespace) {
 	invariant.Always(value != nil, "A Glob_Runner has caller-owned state.")
+	nbio.IO_Invariants(value.Loop, namespace)
 	Text_Invariants(value.Pattern, namespace)
 	Glob_Current_Paths_Invariants(value.Current, namespace)
 	Glob_Next_Paths_Invariants(value.Next, namespace)
@@ -323,6 +323,7 @@ func Glob_Runner_Init(
 	runner *Glob_Runner, loop nbio.IO, pattern Text, memory Glob_Memory,
 ) (err error) {
 	Glob_Runner_Invariants(runner, "glob_runner_init.runner")
+	nbio.IO_Invariants(loop, "glob_runner_init.loop")
 	Text_Invariants(pattern, "glob_runner_init.pattern")
 	Glob_Memory_Invariants(memory, "glob_runner_init.memory")
 	path_storage_slots_validate(Path_Storage(memory.Current))
@@ -434,7 +435,7 @@ func Glob_Runner_Matches(runner *Glob_Runner) (matches Path_Storage) {
 	return Path_Storage(runner.Current[:runner.Current_Count])
 }
 
-func glob_completion(completion *time.Completion) {
+func glob_completion(completion *nbio.Completion) {
 	// First-field ownership avoids closure allocation and a self-pointer escape.
 	runner := (*Glob_Runner)(unsafe.Pointer(completion))
 	runner.Work_Ready = true
@@ -778,7 +779,7 @@ const WALK_PHASE_CLOSE Walk_Phase = WALK_PHASE_READ + NONEMPTY_SIZE_MINIMUM
 // same intrusive static-callback ownership as Glob_Runner.
 type Walk_Runner[State any] struct {
 	// Completion stays first so static callback recovers runner with no retained closure.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Loop submits storage work while composition root alone owns driver.
 	Loop nbio.IO
 	// Visitor_State remains explicit callback state.
@@ -820,6 +821,7 @@ func Walk_Runner_Invariants[State any](
 	value *Walk_Runner[State], namespace invariant.Namespace,
 ) {
 	invariant.Always(value != nil, "A Walk_Runner has caller-owned state.")
+	nbio.IO_Invariants(value.Loop, namespace)
 	Walk_Queue_Paths_Invariants(value.Queue, namespace)
 	Walk_Child_Paths_Invariants(value.Children, namespace)
 	Directory_Entries_Invariants(value.Entries, namespace)
@@ -838,6 +840,7 @@ func Walk_Runner_Init[State any](
 	visitor_state *State, visitor Walk_Function[State], memory Walk_Memory,
 ) (err error) {
 	Walk_Runner_Invariants(runner, "walk_runner_init.runner")
+	nbio.IO_Invariants(loop, "walk_runner_init.loop")
 	Text_Invariants(root, "walk_runner_init.root")
 	Walk_Memory_Invariants(memory, "walk_runner_init.memory")
 	return walk_runner_init(runner, loop, root, visitor_state, visitor, memory)
@@ -850,6 +853,7 @@ func Walk_Directory_Runner_Init[State any](
 	visitor_state *State, visitor Walk_Function[State], memory Walk_Memory,
 ) (err error) {
 	Walk_Runner_Invariants(runner, "walk_directory_runner_init.runner")
+	nbio.IO_Invariants(loop, "walk_directory_runner_init.loop")
 	Text_Invariants(root, "walk_directory_runner_init.root")
 	Walk_Memory_Invariants(memory, "walk_directory_runner_init.memory")
 	return walk_runner_init(runner, loop, root, visitor_state, visitor, memory)
@@ -860,6 +864,7 @@ func walk_runner_init[State any](
 	visitor_state *State, visitor Walk_Function[State], memory Walk_Memory,
 ) (err error) {
 	Walk_Runner_Invariants(runner, "walk_runner_init_internal.runner")
+	nbio.IO_Invariants(loop, "walk_runner_init_internal.loop")
 	Text_Invariants(root, "walk_runner_init_internal.root")
 	Walk_Memory_Invariants(memory, "walk_runner_init_internal.memory")
 	invariant.Always(visitor != nil, "A Walk_Runner has visitor.")
@@ -920,7 +925,7 @@ func Walk_Runner_Status[State any](runner *Walk_Runner[State]) (err error) {
 	return runner.Result
 }
 
-func walk_io_complete[State any](completion *time.Completion) {
+func walk_io_complete[State any](completion *nbio.Completion) {
 	runner := (*Walk_Runner[State])(unsafe.Pointer(completion))
 	runner.Work_Ready = true
 }

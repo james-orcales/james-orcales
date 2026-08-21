@@ -625,15 +625,15 @@ func Null_UUID_Invariants(value Null_UUID, namespace invariant.Namespace) {
 
 // New builds Generator from injected dependencies and explicit replay state.
 func New(
-	source prng.Source, clock time.Clock, node Node, state Generator_State,
+	source prng.Source, host time.Clock, node Node, state Generator_State,
 ) (generator Generator) {
 	defer func() { Generator_Invariants(generator, "new.generator") }()
 	prng.Source_Invariants(source, "new.source")
-	time.Clock_Invariants(clock, "new.clock")
+	time.Clock_Invariants(host, "new.host")
 	Node_Invariants(node, "new.node")
 	Generator_State_Invariants(state, "new.state")
 	generator.Source = source
-	generator.Clock = clock
+	generator.Clock = host
 	generator.Node = node
 	generator.Clock_Sequence = state.Clock_Sequence
 	generator.Last_Time = state.Last_Time
@@ -826,14 +826,14 @@ func V5(namespace UUID, name Name) (uuid UUID) {
 // the clock sequence, advancing the sequence if the clock did not move forward so
 // successive UUIDs stay distinct and ordered.
 func generator_time(
-	clock time.Clock, source prng.Source, clock_sequence *Clock_Sequence_State,
+	host time.Clock, source prng.Source, clock_sequence *Clock_Sequence_State,
 	last_time *Timestamp_State,
 ) (timestamp Generated_Time, sequence Clock_Sequence) {
 	defer func() {
 		Generated_Time_Invariants(timestamp, "generator_time.timestamp")
 		Clock_Sequence_Invariants(sequence, "generator_time.sequence")
 	}()
-	time.Clock_Invariants(clock, "generator_time.clock")
+	time.Clock_Invariants(host, "generator_time.host")
 	prng.Source_Invariants(source, "generator_time.source")
 	Clock_Sequence_State_Invariants(*clock_sequence, "generator_time.clock_sequence")
 	Timestamp_State_Invariants(*last_time, "generator_time.last_time")
@@ -845,7 +845,7 @@ func generator_time(
 			Clock_Sequence(sequence_bits&CLOCK_SEQUENCE_MAXIMUM) + 1,
 		)
 	}
-	now := Generated_Time(int64(time.Clock_Now_Realtime(clock))/
+	now := Generated_Time(int64(time.Clock_Now_Realtime(host))/
 		UUID_TICK_NANOSECOND_COUNT + EPOCH_100NS)
 	if Time(now) <= Time(*last_time) {
 		sequence = Clock_Sequence(*clock_sequence - 1)
@@ -859,7 +859,7 @@ func generator_time(
 // Returns Unix milliseconds and a sub-millisecond sequence, forced strictly upward
 // past the last V7 draw so a same-millisecond burst still orders by creation.
 func generator_v7_time(
-	clock time.Clock, last_v7 *V7_State,
+	host time.Clock, last_v7 *V7_State,
 ) (milliseconds Generated_Unix_Millisecond, sequence V7_Sequence, err error) {
 	defer func() {
 		Generated_Unix_Millisecond_Invariants(
@@ -867,9 +867,9 @@ func generator_v7_time(
 		)
 		V7_Sequence_Invariants(sequence, "generator_v7_time.sequence")
 	}()
-	time.Clock_Invariants(clock, "generator_v7_time.clock")
+	time.Clock_Invariants(host, "generator_v7_time.host")
 	V7_State_Invariants(*last_v7, "generator_v7_time.last_v7")
-	nanoseconds := int64(time.Clock_Now_Realtime(clock))
+	nanoseconds := int64(time.Clock_Now_Realtime(host))
 	if nanoseconds < 0 {
 		return 0, 0, ERROR_V7_TIME_OUTPUT_OF_RANGE
 	}

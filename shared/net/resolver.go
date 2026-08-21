@@ -497,10 +497,10 @@ type Resolver_Clock time.Clock
 func Resolver_Clock_Invariants(value Resolver_Clock, namespace invariant.Namespace) {
 	invariant.Always(
 		(value.Now_Monotonic == nil) == (value.Now_Realtime == nil),
-		"Resolver clock binds both readers or neither reader.",
+		"Resolver host binds both readers or neither reader.",
 	)
 	invariant.Tree(value, namespace).
-		Sometimes(value.Now_Monotonic != nil, "Resolver clock is bound.").
+		Sometimes(value.Now_Monotonic != nil, "Resolver host is bound.").
 		Ensure()
 }
 
@@ -734,7 +734,7 @@ const RESULT_COUNT_MAXIMUM Result_Count = DNS_ADDRESS_COUNT_MAXIMUM
 // Resolver owns one active DNS exchange while every byte array stays in Workspace.
 type Resolver struct {
 	// Completion stays first so static callback recovers Resolver without allocation.
-	Completion time.Completion
+	Completion nbio.Completion
 	// IO supplies socket operations and asynchronous close.
 	IO nbio.IO
 	// Clock bounds complete exchange instead of restarting timeout at each transfer.
@@ -746,7 +746,7 @@ type Resolver struct {
 	// Configuration stays fixed across one exchange.
 	Configuration Resolver_Configuration
 	// Callback retires after owned descriptor closes.
-	Callback time.Callback
+	Callback nbio.Callback
 	// Results borrows caller slots until Callback.
 	Results Resolver_Results
 	// Name borrows validated caller text until query construction finishes.
@@ -783,6 +783,7 @@ func Resolver_Invariants(value Resolver, namespace invariant.Namespace) {
 		unsafe.Pointer(&value) == unsafe.Pointer(&value.Completion),
 		"Resolver completion stays first for static callback recovery.",
 	)
+	nbio.IO_Invariants(value.IO, namespace)
 	Resolver_Entropy_Invariants(value.Entropy, namespace)
 	Resolver_Clock_Invariants(value.Clock, namespace)
 	Resolver_Workspace_Pointer_Invariants(value.Workspace, namespace)
@@ -809,11 +810,12 @@ func Resolver_Invariants(value Resolver, namespace invariant.Namespace) {
 // Resolver_Init binds dependencies and caller workspace without opening socket.
 func Resolver_Init(
 	resolver *Resolver,
-	loop nbio.IO, clock time.Clock, entropy prng.Source,
+	loop nbio.IO, host time.Clock, entropy prng.Source,
 	workspace Resolver_Workspace_Pointer, configuration Resolver_Configuration,
 ) {
 	Resolver_Invariants(*resolver, "Resolver_Init.resolver")
-	time.Clock_Invariants(clock, "Resolver_Init.clock")
+	nbio.IO_Invariants(loop, "Resolver_Init.loop")
+	time.Clock_Invariants(host, "Resolver_Init.host")
 	prng.Source_Invariants(entropy, "Resolver_Init.entropy")
 	Resolver_Workspace_Pointer_Invariants(workspace, "Resolver_Init.workspace")
 	Resolver_Configuration_Invariants(configuration, "Resolver_Init.configuration")
@@ -838,7 +840,7 @@ func Resolver_Init(
 	invariant.Always(loop.Network.Send_Procedure != nil,
 		"Resolver has send procedure.")
 	*resolver = Resolver{
-		IO: loop, Clock: Resolver_Clock(clock), Entropy: Resolver_Entropy(entropy),
+		IO: loop, Clock: Resolver_Clock(host), Entropy: Resolver_Entropy(entropy),
 		Workspace: workspace, Configuration: configuration, Socket: DNS_SOCKET_INVALID,
 		Stage: RESOLVER_STAGE_IDLE,
 	}
@@ -846,8 +848,8 @@ func Resolver_Init(
 
 // Resolve starts one bounded asynchronous address query.
 func Resolve(
-	resolver *Resolver, completion *time.Completion, name Name, record_type Record_Type,
-	port Port, results Address_Storage, timeout Timeout, callback time.Callback,
+	resolver *Resolver, completion *nbio.Completion, name Name, record_type Record_Type,
+	port Port, results Address_Storage, timeout Timeout, callback nbio.Callback,
 ) {
 	Resolver_Invariants(*resolver, "Resolve.resolver")
 	Name_Invariants(name, "Resolve.name")
@@ -855,7 +857,7 @@ func Resolve(
 	Port_Invariants(port, "Resolve.port")
 	Address_Storage_Invariants(results, "Resolve.results")
 	Timeout_Invariants(timeout, "Resolve.timeout")
-	time.Clock_Invariants(time.Clock(resolver.Clock), "Resolve.clock")
+	time.Clock_Invariants(time.Clock(resolver.Clock), "Resolve.host")
 	invariant.Always(resolver.Entropy.State != nil, "Resolve has bound entropy.")
 	invariant.Always(resolver.Workspace != nil, "Resolve has bound workspace.")
 	invariant.Always(completion != nil, "Resolve has completion storage.")
@@ -901,7 +903,7 @@ func Resolve(
 }
 
 // Query uses lowercase canonical copy so response owner comparison ignores presentation case.
-func resolver_query_build(completion *time.Completion) {
+func resolver_query_build(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	query := resolver.Workspace.Query[:]
 	for index := range query {
@@ -963,7 +965,7 @@ func resolver_query_build(completion *time.Completion) {
 }
 
 // Progress submits one operation at time and absorbs inline callback retirement without recursion.
-func resolver_progress(completion *time.Completion) {
+func resolver_progress(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	for resolver.Flags&RESOLVER_FLAG_ACTIVE != 0 {
 		if resolver.Flags&RESOLVER_FLAG_WAIT_ACTIVE != 0 {
@@ -998,7 +1000,7 @@ func resolver_progress(completion *time.Completion) {
 	}
 }
 
-func resolver_udp_open(completion *time.Completion) {
+func resolver_udp_open(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	socket, socket_error := nbio.Network_Socket_UDP(
 		resolver.IO.Network, resolver.Configuration.Server.Family,
@@ -1013,7 +1015,7 @@ func resolver_udp_open(completion *time.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CONNECT_UDP
 }
 
-func resolver_tcp_open(completion *time.Completion) {
+func resolver_tcp_open(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	socket, socket_error := nbio.Network_Socket_TCP(
 		resolver.IO.Network, resolver.Configuration.Server.Family,
@@ -1029,7 +1031,7 @@ func resolver_tcp_open(completion *time.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CONNECT_TCP
 }
 
-func resolver_connect(completion *time.Completion) {
+func resolver_connect(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1043,7 +1045,7 @@ func resolver_connect(completion *time.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_udp_send(completion *time.Completion) {
+func resolver_udp_send(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1059,7 +1061,7 @@ func resolver_udp_send(completion *time.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_udp_receive(completion *time.Completion) {
+func resolver_udp_receive(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1073,14 +1075,14 @@ func resolver_udp_receive(completion *time.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_close(completion *time.Completion) {
+func resolver_close(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	resolver.Flags |= RESOLVER_FLAG_WAIT_ACTIVE | RESOLVER_FLAG_SUBMISSION_ACTIVE
 	nbio.IO_Close(resolver.IO, completion, resolver.Socket, resolver_operation_complete)
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_tcp_send(completion *time.Completion) {
+func resolver_tcp_send(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1095,7 +1097,7 @@ func resolver_tcp_send(completion *time.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_tcp_size_receive(completion *time.Completion) {
+func resolver_tcp_size_receive(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1109,7 +1111,7 @@ func resolver_tcp_size_receive(completion *time.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_tcp_message_receive(completion *time.Completion) {
+func resolver_tcp_message_receive(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1123,26 +1125,26 @@ func resolver_tcp_message_receive(completion *time.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_timeout(completion *time.Completion) (timeout Resolver_Timeout) {
+func resolver_timeout(completion *nbio.Completion) (timeout Resolver_Timeout) {
 	defer func() { Resolver_Timeout_Invariants(timeout, "resolver_timeout.timeout") }()
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	now := time.Clock_Now_Monotonic(time.Clock(resolver.Clock))
 	return Resolver_Timeout(time.Monotonic_Moment(resolver.Deadline) - now)
 }
 
-func resolver_deadline_expired(completion *time.Completion) (expired bytes.Boolean) {
+func resolver_deadline_expired(completion *nbio.Completion) (expired bytes.Boolean) {
 	defer func() { bytes.Boolean_Invariants(expired, "resolver_deadline_expired.expired") }()
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if time.Clock_Now_Monotonic(time.Clock(resolver.Clock)) <
 		time.Monotonic_Moment(resolver.Deadline) {
 		return false
 	}
-	resolver.Error = time.Deadline_Exceeded
+	resolver.Error = nbio.Deadline_Exceeded
 	resolver_close_or_finish(completion)
 	return true
 }
 
-func resolver_close_or_finish(completion *time.Completion) {
+func resolver_close_or_finish(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver.Socket == DNS_SOCKET_INVALID {
 		resolver_finish(completion)
@@ -1155,7 +1157,7 @@ func resolver_close_or_finish(completion *time.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CLOSE_TCP
 }
 
-func resolver_operation_complete(completion *time.Completion) {
+func resolver_operation_complete(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	invariant.Always(
 		resolver.Flags&RESOLVER_FLAG_ACTIVE != 0,
@@ -1191,7 +1193,7 @@ func resolver_operation_complete(completion *time.Completion) {
 	resolver_progress(completion)
 }
 
-func resolver_operation_succeeded(completion *time.Completion) {
+func resolver_operation_succeeded(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	switch resolver.Stage {
 	case RESOLVER_STAGE_CONNECT_UDP:
@@ -1241,7 +1243,7 @@ func resolver_operation_succeeded(completion *time.Completion) {
 	}
 }
 
-func resolver_receive_udp_complete(completion *time.Completion) {
+func resolver_receive_udp_complete(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	if count <= 0 {
@@ -1282,7 +1284,7 @@ func resolver_receive_udp_complete(completion *time.Completion) {
 
 // TCP costs another descriptor and stream handshake, so an untrusted datagram must prove it owns
 // this question before it can force fallback.
-func response_truncated_validate(completion *time.Completion) {
+func response_truncated_validate(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	message := resolver.Workspace.Response[:resolver.Response_Bytes]
 	transaction := uint16(message[0])<<8 | uint16(message[1])
@@ -1308,7 +1310,7 @@ func response_truncated_validate(completion *time.Completion) {
 	response_question_parse(completion)
 }
 
-func resolver_send_tcp_complete(completion *time.Completion) {
+func resolver_send_tcp_complete(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	remaining_count := DNS_TCP_SIZE_BYTES + int(resolver.Query_Bytes) -
@@ -1334,7 +1336,7 @@ func resolver_send_tcp_complete(completion *time.Completion) {
 	}
 }
 
-func resolver_receive_tcp_size_complete(completion *time.Completion) {
+func resolver_receive_tcp_size_complete(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	remaining_count := DNS_TCP_SIZE_BYTES - int(resolver.Transfer_Bytes)
@@ -1368,7 +1370,7 @@ func resolver_receive_tcp_size_complete(completion *time.Completion) {
 	resolver.Stage = RESOLVER_STAGE_RECEIVE_TCP_MESSAGE
 }
 
-func resolver_receive_tcp_message_complete(completion *time.Completion) {
+func resolver_receive_tcp_message_complete(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	remaining_count := int(resolver.Response_Bytes) - int(resolver.Transfer_Bytes)
@@ -1394,7 +1396,7 @@ func resolver_receive_tcp_message_complete(completion *time.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CLOSE_TCP
 }
 
-func resolver_finish(completion *time.Completion) {
+func resolver_finish(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	callback := resolver.Callback
 	result_count := resolver.Result_Count
@@ -1759,7 +1761,7 @@ const RESPONSE_ALIAS_NAME_BYTE_COUNT_MAXIMUM = Response_Alias_Name_Byte_Count(
 	DNS_NAME_WIRE_BYTES_MAXIMUM,
 )
 
-func resolver_response_parse(completion *time.Completion) {
+func resolver_response_parse(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	answer_count := response_header_parse(completion)
 	if resolver.Error != nil {
@@ -1773,7 +1775,7 @@ func resolver_response_parse(completion *time.Completion) {
 }
 
 func response_header_parse(
-	completion *time.Completion,
+	completion *nbio.Completion,
 ) (answer_count Response_Answer_Count) {
 	defer func() {
 		Response_Answer_Count_Invariants(answer_count, "response_header_parse.answer_count")
@@ -1831,7 +1833,7 @@ func response_header_parse(
 }
 
 func response_question_parse(
-	completion *time.Completion,
+	completion *nbio.Completion,
 ) (answer_start Response_Answer_Start) {
 	defer func() {
 		Response_Answer_Start_Invariants(
@@ -1874,7 +1876,7 @@ func response_question_parse(
 }
 
 func response_answers_parse(
-	completion *time.Completion, answer_start Response_Answer_Start,
+	completion *nbio.Completion, answer_start Response_Answer_Start,
 	answer_count Response_Answer_Count,
 ) {
 	Response_Answer_Start_Invariants(answer_start, "response_answers_parse.answer_start")
@@ -1919,7 +1921,7 @@ func response_answers_parse(
 }
 
 func response_resource_parse(
-	completion *time.Completion, offset Response_Answer_Offset,
+	completion *nbio.Completion, offset Response_Answer_Offset,
 	canonical_bytes Response_Canonical_Byte_Count,
 	alias_bytes Response_Alias_Byte_Count,
 ) (next Response_Answer_Offset, next_alias Response_Alias_Byte_Count) {
@@ -1988,7 +1990,7 @@ func response_resource_parse(
 }
 
 func response_alias_parse(
-	completion *time.Completion, resource_offset Response_Resource_Offset,
+	completion *nbio.Completion, resource_offset Response_Resource_Offset,
 	end_offset Response_Resource_End, alias_bytes Response_Alias_Byte_Count,
 ) (next_alias Response_Alias_Byte_Count) {
 	defer func() {
@@ -2024,7 +2026,7 @@ func response_alias_parse(
 }
 
 func response_alias_match(
-	completion *time.Completion, alias_bytes Response_Alias_Name_Byte_Count,
+	completion *nbio.Completion, alias_bytes Response_Alias_Name_Byte_Count,
 	decoded_bytes Response_Name_Byte_Count,
 ) {
 	Response_Alias_Name_Byte_Count_Invariants(
@@ -2048,7 +2050,7 @@ func response_alias_match(
 }
 
 func response_name_decode(
-	completion *time.Completion, start Response_Offset,
+	completion *nbio.Completion, start Response_Offset,
 ) (next Response_Encoded_Next, decoded Response_Decoded_Byte_Count) {
 	defer func() {
 		Response_Encoded_Next_Invariants(next, "response_name_decode.next")
@@ -2121,7 +2123,7 @@ func response_name_decode(
 }
 
 func response_label_decode(
-	completion *time.Completion, offset Response_Label_Offset,
+	completion *nbio.Completion, offset Response_Label_Offset,
 	decoded Response_Decoded_Prefix_Byte_Count,
 ) (next Response_Offset, next_decoded Response_Decoded_Prefix_Byte_Count) {
 	defer func() {
@@ -2167,7 +2169,7 @@ func response_label_decode(
 }
 
 func response_decoded_match(
-	completion *time.Completion, decoded_bytes Response_Name_Byte_Count,
+	completion *nbio.Completion, decoded_bytes Response_Name_Byte_Count,
 	canonical_bytes Response_Canonical_Byte_Count,
 ) (same bytes.Boolean) {
 	defer func() { bytes.Boolean_Invariants(same, "response_decoded_match.same") }()
@@ -2191,7 +2193,7 @@ func response_decoded_match(
 }
 
 func response_alias_is_canonical(
-	completion *time.Completion, alias_bytes Response_Alias_Name_Byte_Count,
+	completion *nbio.Completion, alias_bytes Response_Alias_Name_Byte_Count,
 	canonical_bytes Response_Canonical_Byte_Count,
 ) (same bytes.Boolean) {
 	defer func() {
@@ -2217,7 +2219,7 @@ func response_alias_is_canonical(
 }
 
 func response_address_append(
-	completion *time.Completion, resource_offset Response_Address_Offset,
+	completion *nbio.Completion, resource_offset Response_Address_Offset,
 ) {
 	Response_Address_Offset_Invariants(
 		resource_offset, "response_address_append.resource_offset",

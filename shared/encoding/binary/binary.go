@@ -9,7 +9,6 @@ import (
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/time"
 )
 
 // BYTE_SIZE_MINIMUM is empty byte storage size.
@@ -459,11 +458,11 @@ func Stream_Size_Invariants(value Stream_Size, namespace invariant.Namespace) {
 // Reader retains caller scratch and one structured read continuation.
 type Reader struct {
 	// Completion stays first so static callback recovers Reader without allocating closure.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Stream owns transport and callback timing.
 	Stream nbio.Stream
 	// Callback retires after complete structured value, not each transfer.
-	Callback time.Callback
+	Callback nbio.Callback
 	// Scratch remains caller-owned across every partial transfer.
 	Scratch Bytes
 	// Destination remains borrowed until decode or transport failure.
@@ -515,11 +514,11 @@ func Reader_Invariants(value *Reader, namespace invariant.Namespace) {
 // Writer retains caller scratch and one structured write continuation.
 type Writer struct {
 	// Completion stays first so static callback recovers Writer without allocating closure.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Stream owns transport and callback timing.
 	Stream nbio.Stream
 	// Callback retires after encoded bytes leave caller scratch.
-	Callback time.Callback
+	Callback nbio.Callback
 	// Scratch remains caller-owned until Stream retirement.
 	Scratch Bytes
 	// Order records encoded byte layout during active operation.
@@ -1277,8 +1276,8 @@ func Reader_Init(reader *Reader, stream nbio.Stream, scratch Bytes) {
 
 // Read defers decode until Stream supplies complete fixed-width value.
 func Read(
-	reader *Reader, completion *time.Completion, destination any, order Byte_Order,
-	callback time.Callback,
+	reader *Reader, completion *nbio.Completion, destination any, order Byte_Order,
+	callback nbio.Callback,
 ) {
 	Reader_Invariants(reader, "Read.reader")
 	Byte_Order_Invariants(order, "Read.order")
@@ -1326,7 +1325,7 @@ func Read(
 }
 
 // Reader progress uses trampoline because concrete Stream may retire inline.
-func reader_progress(completion *time.Completion) {
+func reader_progress(completion *nbio.Completion) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	for bool(reader.Active) && !bool(reader.Wait_Active) {
 		if reader.Count == Byte_Count(reader.Size) {
@@ -1351,7 +1350,7 @@ func reader_progress(completion *time.Completion) {
 	}
 }
 
-func reader_stream_complete(completion *time.Completion) {
+func reader_stream_complete(completion *nbio.Completion) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	invariant.Always(reader.Active, "Reader callback belongs to active operation.")
 	invariant.Always(reader.Wait_Active, "Reader callback retires submitted transfer.")
@@ -1394,7 +1393,7 @@ func reader_stream_complete(completion *time.Completion) {
 	reader_progress(completion)
 }
 
-func reader_decode_finish(completion *time.Completion) {
+func reader_decode_finish(completion *nbio.Completion) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	_, completion.Error = Decode(
 		reader.Scratch[:reader.Size], reader.Destination, reader.Order,
@@ -1402,7 +1401,7 @@ func reader_decode_finish(completion *time.Completion) {
 	reader_finish(completion)
 }
 
-func reader_finish(completion *time.Completion) {
+func reader_finish(completion *nbio.Completion) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	callback := reader.Callback
 	count := reader.Count
@@ -1427,8 +1426,8 @@ func Writer_Init(writer *Writer, stream nbio.Stream, scratch Bytes) {
 
 // Write encodes before submission so invalid grammar never mutates Stream.
 func Write(
-	writer *Writer, completion *time.Completion, source any, order Byte_Order,
-	callback time.Callback,
+	writer *Writer, completion *nbio.Completion, source any, order Byte_Order,
+	callback nbio.Callback,
 ) {
 	Writer_Invariants(writer, "Write.writer")
 	Byte_Order_Invariants(order, "Write.order")
@@ -1471,7 +1470,7 @@ func Write(
 	nbio.Write(writer.Stream, completion, writer.Scratch[:size], writer_stream_complete)
 }
 
-func writer_stream_complete(completion *time.Completion) {
+func writer_stream_complete(completion *nbio.Completion) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	invariant.Always(writer.Active, "Writer callback belongs to active operation.")
 	count := completion.Data
@@ -1492,7 +1491,7 @@ func writer_stream_complete(completion *time.Completion) {
 	writer_finish(completion)
 }
 
-func writer_finish(completion *time.Completion) {
+func writer_finish(completion *nbio.Completion) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	callback := writer.Callback
 	count := completion.Data

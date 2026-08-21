@@ -644,7 +644,7 @@ func Test_Standard_Library_Glob(t *testing.T) {
 	}
 	standard_glob_symlinks(t)
 	nbio.IO_Deinit(loop)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 func standard_glob_symlinks(t *testing.T) {
@@ -658,7 +658,7 @@ func standard_glob_symlinks(t *testing.T) {
 		Read_Link_Procedure: standard_link_read,
 	}
 	for _, path := range []Text{"link", "broken"} {
-		matches, err := standard_glob(t, nbio.IO{Storage: storage}, time.Driver{}, path)
+		matches, err := standard_glob(t, nbio.IO{Storage: storage}, nbio.Driver{}, path)
 		testify.No_Error(t, err)
 		testify.Equal(t, 1, len(matches))
 		testify.Equal(t, string(path), string(matches[0]))
@@ -729,7 +729,7 @@ func standard_walk_test(t *testing.T, directory_entry bool) {
 	testify.Error_Is(t, err, Error_Path_Absent)
 	standard_walk_symlink_root(t, directory_entry)
 	nbio.IO_Deinit(loop)
-	time.Driver_Deinit(driver)
+	nbio.Driver_Deinit(driver)
 }
 
 func standard_walk_symlink_root(t *testing.T, directory_entry bool) {
@@ -744,7 +744,7 @@ func standard_walk_symlink_root(t *testing.T, directory_entry bool) {
 	}
 	state := standard_walk_state{}
 	err := standard_walk_root(
-		t, nbio.IO{Storage: storage}, time.Driver{}, &state, directory_entry, "link",
+		t, nbio.IO{Storage: storage}, nbio.Driver{}, &state, directory_entry, "link",
 	)
 	testify.No_Error(t, err)
 	testify.Equal(t, 1, state.Count)
@@ -770,14 +770,14 @@ func standard_walk_visit(
 }
 
 func standard_walk(
-	t *testing.T, loop nbio.IO, driver time.Driver, state *standard_walk_state,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, state *standard_walk_state,
 	directory_entry bool,
 ) (err error) {
 	return standard_walk_root(t, loop, driver, state, directory_entry, "stdlib_walk")
 }
 
 func standard_walk_root(
-	t *testing.T, loop nbio.IO, driver time.Driver, state *standard_walk_state,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, state *standard_walk_state,
 	directory_entry bool, root Text,
 ) (err error) {
 	t.Helper()
@@ -809,7 +809,7 @@ func standard_walk_root(
 }
 
 func standard_walk_drive[State any](
-	t *testing.T, driver time.Driver, runner *Walk_Runner[State],
+	t *testing.T, driver nbio.Driver, runner *Walk_Runner[State],
 ) {
 	t.Helper()
 	for !bool(Walk_Runner_Stopped(runner)) {
@@ -818,7 +818,7 @@ func standard_walk_drive[State any](
 		if bool(Walk_Runner_Stopped(runner)) {
 			break
 		}
-		completed, err := time.Driver_Run_Until(
+		completed, err := nbio.Driver_Run_Until(
 			driver, STANDARD_FILESYSTEM_DEADLINE,
 			func() (done bool) { return bool(Walk_Runner_Work_Queued(runner)) },
 		)
@@ -828,7 +828,7 @@ func standard_walk_drive[State any](
 }
 
 func standard_glob(
-	t *testing.T, loop nbio.IO, driver time.Driver, pattern Text,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, pattern Text,
 ) (matches Path_Storage, err error) {
 	t.Helper()
 	runner := Glob_Runner{}
@@ -851,7 +851,7 @@ func standard_glob(
 		if bool(Glob_Runner_Stopped(&runner)) {
 			break
 		}
-		completed, drive_err := time.Driver_Run_Until(
+		completed, drive_err := nbio.Driver_Run_Until(
 			driver, STANDARD_FILESYSTEM_DEADLINE,
 			func() (done bool) { return bool(Glob_Runner_Work_Queued(&runner)) },
 		)
@@ -869,62 +869,65 @@ func standard_path_storage() (paths Path_Storage) {
 	return paths
 }
 
-func standard_filesystem_loop(seed uint64) (loop nbio.IO, driver time.Driver) {
-	timeline_state := time.Virtual_Timeline{}
-	queue := [STANDARD_FILESYSTEM_TIMELINE_CAPACITY]*time.Completion{}
-	events := [STANDARD_FILESYSTEM_EVENT_CAPACITY]time.Virtual_Event{}
-	timeline, driver, _ := time.New_Virtual_Timeline(
-		&timeline_state, time.Virtual_Clock{Resolution: time.NANOSECOND},
-		time.Virtual_Timeline_Memory{Queue: queue[:], Events: events[:]},
-	)
+// Walks read no clock, so one view slot satisfies the simulator's bound.
+const STANDARD_FILESYSTEM_CLOCK_CAPACITY = 1
+
+func standard_filesystem_loop(seed uint64) (loop nbio.IO, driver nbio.Driver) {
 	state := nbio.Sim{}
+	queue := [STANDARD_FILESYSTEM_TIMELINE_CAPACITY]*nbio.Completion{}
+	events := [STANDARD_FILESYSTEM_EVENT_CAPACITY]nbio.Virtual_Event{}
+	clocks := [STANDARD_FILESYSTEM_CLOCK_CAPACITY]nbio.Sim_Clock{}
 	nodes := [STANDARD_FILESYSTEM_NODE_CAPACITY]nbio.Sim_Node{}
 	descriptors := [STANDARD_FILESYSTEM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor{}
 	operations := [STANDARD_FILESYSTEM_OPERATION_CAPACITY]nbio.Sim_Operation{}
-	loop = nbio.New_Simulated_IO(&state, seed, timeline, nbio.Sim_Memory{
-		Nodes: nodes[:], Descriptors: descriptors[:], Operations: operations[:],
+	return nbio.New_Simulated_IO(&state, seed, time.NANOSECOND, nbio.Sim_Memory{
+		Nodes:       nodes[:],
+		Descriptors: descriptors[:],
+		Operations:  operations[:],
+		Queue:       queue[:],
+		Events:      events[:],
+		Clocks:      clocks[:],
 	})
-	return loop, driver
 }
 
 func standard_filesystem_directory(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) {
 	t.Helper()
 	done := false
-	completion := time.Completion{}
+	completion := nbio.Completion{}
 	nbio.Storage_Mkdir_At(
 		loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path, 0o755,
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error, path)
 			done = true
 		},
 	)
-	time.Driver_Run_Until(
+	nbio.Driver_Run_Until(
 		driver, STANDARD_FILESYSTEM_DEADLINE, func() (ready bool) { return done },
 	)
 	testify.True(t, done, path)
 }
 
 func standard_filesystem_file(
-	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, path string,
 ) {
 	t.Helper()
 	done := false
 	file := nbio.File(-1)
-	completion := time.Completion{}
+	completion := nbio.Completion{}
 	nbio.Storage_Open_At(
 		loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path,
 		nbio.Open_At_Options{
 			Access: nbio.OPEN_WRITE_ONLY, Create: true, Permissions: 0o600,
 		},
-		func(completed *time.Completion) {
+		func(completed *nbio.Completion) {
 			testify.No_Error(t, completed.Error, path)
 			file = nbio.File(completed.Data)
 			done = true
 		},
 	)
-	time.Driver_Run_Until(
+	nbio.Driver_Run_Until(
 		driver, STANDARD_FILESYSTEM_DEADLINE, func() (ready bool) { return done },
 	)
 	testify.True(t, done, path)
@@ -932,16 +935,16 @@ func standard_filesystem_file(
 }
 
 func standard_filesystem_close(
-	t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File,
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File,
 ) {
 	t.Helper()
 	done := false
-	completion := time.Completion{}
-	nbio.IO_Close(loop, &completion, file, func(completed *time.Completion) {
+	completion := nbio.Completion{}
+	nbio.IO_Close(loop, &completion, file, func(completed *nbio.Completion) {
 		testify.No_Error(t, completed.Error)
 		done = true
 	})
-	time.Driver_Run_Until(
+	nbio.Driver_Run_Until(
 		driver, STANDARD_FILESYSTEM_DEADLINE, func() (ready bool) { return done },
 	)
 	testify.True(t, done)

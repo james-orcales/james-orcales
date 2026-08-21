@@ -2254,24 +2254,24 @@ func timestamp_to_dos(
 }
 
 func timestamp_from_dos(
-	date binary.Word_16, clock binary.Word_16,
+	date binary.Word_16, time_of_day binary.Word_16,
 ) (modified DOS_Timestamp) {
 	defer func() {
 		DOS_Timestamp_Invariants(modified, "timestamp_from_dos.modified")
 	}()
 	binary.Word_16_Invariants(date, "timestamp_from_dos.date")
-	binary.Word_16_Invariants(clock, "timestamp_from_dos.clock")
+	binary.Word_16_Invariants(time_of_day, "timestamp_from_dos.time_of_day")
 	if date == 0 {
-		if clock == 0 {
+		if time_of_day == 0 {
 			return DOS_Timestamp{}
 		}
 	}
 	year := DOS_Civil_Year(date>>DOS_DATE_YEAR_SHIFT) + DOS_CIVIL_YEAR_MINIMUM
 	month := time.Civil_Month(date>>DOS_DATE_MONTH_SHIFT) & DOS_DATE_MONTH_MASK
 	day := time.Civil_Day(date & DOS_DATE_DAY_MASK)
-	hour := int(clock >> DOS_TIME_HOUR_SHIFT)
-	minute := int(clock>>DOS_TIME_MINUTE_SHIFT) & DOS_TIME_MINUTE_MASK
-	second := int(clock&DOS_TIME_SECOND_MASK) * DOS_TIMESTAMP_SECOND_PRECISION
+	hour := int(time_of_day >> DOS_TIME_HOUR_SHIFT)
+	minute := int(time_of_day>>DOS_TIME_MINUTE_SHIFT) & DOS_TIME_MINUTE_MASK
+	second := int(time_of_day&DOS_TIME_SECOND_MASK) * DOS_TIMESTAMP_SECOND_PRECISION
 	if month < time.CIVIL_MONTH_MINIMUM {
 		return DOS_Timestamp{}
 	}
@@ -2557,7 +2557,7 @@ type Reader struct {
 	// Archive is populated storage after successful Stream read.
 	Archive Reader_Archive
 	// Callback retires complete Reader_Init, not internal Stream steps.
-	Callback time.Callback
+	Callback nbio.Callback
 	// Status reports ZIP validation separately from Completion.Error.
 	Status Status
 	// Entry_Count records validated central member count.
@@ -3634,7 +3634,7 @@ type Writer struct {
 	// Header keeps fixed current member metadata after variable fields are copied.
 	Header Header
 	// Callback retires complete flush or close operation.
-	Callback time.Callback
+	Callback nbio.Callback
 	// Status reports ZIP validation separately from Completion.Error.
 	Status Status
 	// Count reports complete archive bytes after close.
@@ -3703,7 +3703,7 @@ func Writer_Invariants(value *Writer, namespace invariant.Namespace) {
 // Reader_Init loads one bounded archive through injected Stream.
 func Reader_Init(
 	reader *Reader, stream nbio.Stream, storage Reader_Storage,
-	completion *time.Completion, callback time.Callback,
+	completion *nbio.Completion, callback nbio.Callback,
 ) {
 	Reader_Invariants(reader, "Reader_Init.reader")
 	Reader_Storage_Invariants(storage, "Reader_Init.storage")
@@ -4327,7 +4327,7 @@ func Writer_Write(
 
 // Writer_Close emits central directory, then submits complete archive through Stream.
 func Writer_Close(
-	writer *Writer, completion *time.Completion, callback time.Callback,
+	writer *Writer, completion *nbio.Completion, callback nbio.Callback,
 ) {
 	Writer_Invariants(writer, "Writer_Close.writer")
 	invariant.Always(completion != nil, "ZIP Writer close has completion storage.")
@@ -4357,7 +4357,7 @@ func Writer_Close(
 
 // Writer_Flush finalizes current member and submits current local records.
 func Writer_Flush(
-	writer *Writer, completion *time.Completion, callback time.Callback,
+	writer *Writer, completion *nbio.Completion, callback nbio.Callback,
 ) {
 	Writer_Invariants(writer, "Writer_Flush.writer")
 	invariant.Always(completion != nil, "ZIP Writer flush has completion storage.")
@@ -4374,7 +4374,7 @@ func Writer_Flush(
 }
 
 func reader_stream_submit(
-	state unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	state unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
 ) {
 	reader := (*Reader)(state)
 	reader.Transfer_Buffer = nil
@@ -4411,15 +4411,15 @@ func reader_stream_submit(
 }
 
 func reader_stream_callback[Data ~int](
-	state unsafe.Pointer, data Data, callback time.Callback,
-	completion *time.Completion,
+	state unsafe.Pointer, data Data, callback nbio.Callback,
+	completion *nbio.Completion,
 ) {
 	reader_stream_complete(state, Reader_Stream_Stage(data), callback, completion)
 }
 
 func reader_stream_complete(
-	state unsafe.Pointer, stage Reader_Stream_Stage, _ time.Callback,
-	completion *time.Completion,
+	state unsafe.Pointer, stage Reader_Stream_Stage, _ nbio.Callback,
+	completion *nbio.Completion,
 ) {
 	Reader_Stream_Stage_Invariants(stage, "reader_stream_complete.stage")
 	reader := (*Reader)(state)
@@ -4440,7 +4440,7 @@ func reader_stream_complete(
 	reader_finish(state, completion)
 }
 
-func reader_size_complete(state unsafe.Pointer, completion *time.Completion) {
+func reader_size_complete(state unsafe.Pointer, completion *nbio.Completion) {
 	reader := (*Reader)(state)
 	if completion.Error != nil {
 		reader_finish(state, completion)
@@ -4469,7 +4469,7 @@ func reader_size_complete(state unsafe.Pointer, completion *time.Completion) {
 	)
 }
 
-func reader_read_complete(state unsafe.Pointer, completion *time.Completion) {
+func reader_read_complete(state unsafe.Pointer, completion *nbio.Completion) {
 	reader := (*Reader)(state)
 	if completion.Error != nil {
 		reader_finish(state, completion)
@@ -4509,7 +4509,7 @@ func reader_read_complete(state unsafe.Pointer, completion *time.Completion) {
 	reader_finish(state, completion)
 }
 
-func reader_finish(state unsafe.Pointer, completion *time.Completion) {
+func reader_finish(state unsafe.Pointer, completion *nbio.Completion) {
 	reader := (*Reader)(state)
 	callback := reader.Callback
 	reader.Callback = nil
@@ -5608,7 +5608,7 @@ func writer_directory_end(
 	return Capacity_Status(STATUS_OK)
 }
 
-func writer_stream_submit(state unsafe.Pointer, completion *time.Completion) {
+func writer_stream_submit(state unsafe.Pointer, completion *nbio.Completion) {
 	writer := (*Writer)(state)
 	callback := nbio.Stream_Callback{
 		State: unsafe.Pointer(writer), Data: int(writer.Count),
@@ -5628,15 +5628,15 @@ func writer_stream_submit(state unsafe.Pointer, completion *time.Completion) {
 }
 
 func writer_stream_callback[Data ~int](
-	state unsafe.Pointer, data Data, callback time.Callback,
-	completion *time.Completion,
+	state unsafe.Pointer, data Data, callback nbio.Callback,
+	completion *nbio.Completion,
 ) {
 	writer_stream_complete(state, Writer_Count(data), callback, completion)
 }
 
 func writer_stream_complete(
-	state unsafe.Pointer, requested_count Writer_Count, _ time.Callback,
-	completion *time.Completion,
+	state unsafe.Pointer, requested_count Writer_Count, _ nbio.Callback,
+	completion *nbio.Completion,
 ) {
 	Writer_Count_Invariants(requested_count, "writer_stream_complete.requested_count")
 	writer := (*Writer)(state)
@@ -5654,7 +5654,7 @@ func writer_stream_complete(
 	callback(completion)
 }
 
-func writer_callback(completion *time.Completion, callback time.Callback) {
+func writer_callback(completion *nbio.Completion, callback nbio.Callback) {
 	completion.Data = 0
 	callback(completion)
 }
