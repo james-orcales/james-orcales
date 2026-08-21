@@ -5226,6 +5226,10 @@ func banned_stdlib_import_family(import_path string) (family string) {
 			return "rand"
 		}
 	}
+	family = shared_stdlib_import_family(import_path)
+	if family != "" {
+		return family
+	}
 	for _, candidate := range []string{
 		"archive", "bytes", "compress", "container", "encoding", "flag", "io", "math",
 		"os", "slices", "strconv", "strings", "unicode", "uuid",
@@ -5236,6 +5240,33 @@ func banned_stdlib_import_family(import_path string) (family string) {
 		if strings.Has_Prefix(import_path, candidate+"/") {
 			return candidate
 		}
+	}
+	return ""
+}
+
+// Shared packages cover these exact paths; banning whole parents would reject missing ports.
+func shared_stdlib_import_family(import_path string) (family string) {
+	switch import_path {
+	case "crypto/ecdsa", "crypto/ed25519", "crypto/elliptic", "crypto/hkdf",
+		"crypto/hmac", "crypto/md5", "crypto/pbkdf2", "crypto/rsa", "crypto/sha1",
+		"crypto/sha256", "crypto/sha512", "crypto/subtle", "crypto/x509",
+		"crypto/x509/pkix":
+		return "crypto"
+	case "database/sql", "database/sql/driver":
+		return "database"
+	case "go/ast", "go/build", "go/constant", "go/format", "go/printer", "go/token",
+		"go/types":
+		return "go"
+	case "hash/adler32", "hash/crc32", "hash/crc64", "hash/fnv", "hash/maphash":
+		return "hash"
+	case "net":
+		return "net"
+	case "path", "path/filepath":
+		return "path"
+	case "sort":
+		return "sort"
+	case "text/scanner", "text/tabwriter", "text/template":
+		return "text"
 	}
 	return ""
 }

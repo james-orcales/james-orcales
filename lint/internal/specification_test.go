@@ -582,7 +582,7 @@ func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
 	if !specification_flags(t, generated_source, "Banned import") {
 		t.Fatal("generated source must be flagged")
 	}
-	specification_os_import_boundary(t)
+	specification_banned_import_boundaries(t)
 }
 
 // Test_Source_And_Test_Bans_Import_Aliases reserves aliases for package-name collisions.
@@ -2182,6 +2182,88 @@ func specification_flags(
 ) (found bool) {
 	t.Helper()
 	return specification_diagnosed(specification_self_diagnostics(t, files), fragment)
+}
+
+// Shared ports own exact boundaries; matching stdlib imports bypass bounded contracts.
+func specification_shared_import_matches(t *testing.T) {
+	t.Helper()
+	banned_paths := []string{
+		"crypto/ecdsa",
+		"crypto/ed25519",
+		"crypto/elliptic",
+		"crypto/hkdf",
+		"crypto/hmac",
+		"crypto/md5",
+		"crypto/pbkdf2",
+		"crypto/rsa",
+		"crypto/sha1",
+		"crypto/sha256",
+		"crypto/sha512",
+		"crypto/subtle",
+		"crypto/x509",
+		"crypto/x509/pkix",
+		"database/sql",
+		"database/sql/driver",
+		"go/ast",
+		"go/build",
+		"go/constant",
+		"go/format",
+		"go/printer",
+		"go/token",
+		"go/types",
+		"hash/adler32",
+		"hash/crc32",
+		"hash/crc64",
+		"hash/fnv",
+		"hash/maphash",
+		"net",
+		"path",
+		"path/filepath",
+		"sort",
+		"text/scanner",
+		"text/tabwriter",
+		"text/template",
+	}
+	for _, import_path := range banned_paths {
+		files := specification_one_file(
+			"package fixture\n\nimport \"" + import_path + "\"\n")
+		if !specification_flags(t, files, "Banned import") {
+			t.Errorf("import %q must be flagged", import_path)
+		}
+	}
+}
+
+// Similar stdlib paths stay usable until matching bounded ports exist.
+func specification_shared_import_nonmatches(t *testing.T) {
+	t.Helper()
+	allowed_paths := []string{
+		"crypto/aes",
+		"crypto/cipher",
+		"example.com/crypto/sha256",
+		"example.com/database/sql",
+		"example.com/net/http",
+		"go/parser",
+		"go/scanner",
+		"local/james-orcales/shared/net",
+		"local/james-orcales/shared/path",
+		"net/http",
+		"text/template/parse",
+	}
+	for _, import_path := range allowed_paths {
+		files := specification_one_file(
+			"package fixture\n\nimport \"" + import_path + "\"\n")
+		if specification_flags(t, files, "Banned import") {
+			t.Errorf("import %q must stay allowed", import_path)
+		}
+	}
+}
+
+// Split boundary coverage keeps doctrine test within function cap.
+func specification_banned_import_boundaries(t *testing.T) {
+	t.Helper()
+	specification_shared_import_matches(t)
+	specification_shared_import_nonmatches(t)
+	specification_os_import_boundary(t)
 }
 
 // Exact path boundary prevents similar directory from inheriting OS access.

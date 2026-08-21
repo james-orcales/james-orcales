@@ -1572,7 +1572,8 @@ func F() {
 // Test_Snapshot_Transitive pins the transitive-purity checks.
 func Test_Snapshot_Transitive(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/lib/library_test.go:7:2: The transitive call path/filepath.Walk is impure. A pure package calls only pure APIs.`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/lib/library_test.go:3:8: Banned import "path/filepath" belongs to stdlib family "path". Use shared package.
+shared/lib/library_test.go:7:2: The transitive call path/filepath.Walk is impure. A pure package calls only pure APIs.`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/lib/library.go": "// Package library x.\npackage library\n",
 			"shared/lib/library_test.go": `package library_test
 
@@ -3021,9 +3022,7 @@ func F() (c net.Conn, err error) { return net.Dial("tcp", "x:1") }
 	run_diag_table(t, tests)
 }
 
-// Test_Transitive_Stdlib_Curated verifies the curated stdlib APIs that reach the
-// impure set only transitively are flagged on a pure package, while their pure
-// siblings (filepath.Join) are not.
+// Curated call diagnostics remain visible beside stronger shared import bans.
 func Test_Transitive_Stdlib_Curated(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -3107,7 +3106,7 @@ func F() (err error) { return smtp.SendMail("h:25", nil, "f", nil, nil) }
 			Want_Diag: "The transitive call",
 		},
 		{
-			Name: "filepath.Join is pure",
+			Name: "filepath.Join import banned",
 			Files: map[string]string{
 				"a.go": `// Package library x.
 package library
@@ -3118,7 +3117,7 @@ import "path/filepath"
 func F() (s string) { return filepath.Join("a", "b") }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "Banned import",
 		},
 	}
 	run_diag_table(t, tests)

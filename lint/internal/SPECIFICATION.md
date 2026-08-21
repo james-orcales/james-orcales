@@ -182,8 +182,8 @@ a library is being imported solely for it's global side-effects, an implicit con
 ### Banned Imports
 
 Outside `shared/sim/aver/**`, banned stdlib families are archive, bytes, compress, container,
-encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid. `os/**` and
-sim/nbio/default import os; only the latter imports os/signal. Invariant gets no exemption.
+encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid. Exact shared
+counterparts under crypto, database, go, hash, net, path, sort, and text are also banned.
 
 ### Import Aliases
 
