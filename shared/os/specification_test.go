@@ -3,7 +3,9 @@ package os_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/os"
+	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )
 
@@ -13,11 +15,11 @@ func Test_Virtual_OS_Arguments(t *testing.T) {
 	system := os.Virtual_OS_To_OS(&virtual)
 	storage := [TEST_ARGUMENT_COUNT + 1]string{}
 	first_count := os.OS_Arguments(system, storage[:])
-	testify.Equal(t, TEST_ARGUMENT_COUNT, first_count)
+	testify.Equal(t, os.Entry_Count(TEST_ARGUMENT_COUNT), first_count)
 	testify.Equal(t, "setup", storage[0])
 	storage[0] = "edited"
 	second_count := os.OS_Arguments(system, storage[:])
-	testify.Equal(t, TEST_ARGUMENT_COUNT, second_count)
+	testify.Equal(t, os.Entry_Count(TEST_ARGUMENT_COUNT), second_count)
 	testify.Equal(t, "setup", storage[0])
 }
 
@@ -27,10 +29,10 @@ func Test_Virtual_OS_Environment(t *testing.T) {
 	system := os.Virtual_OS_To_OS(&virtual)
 	storage := [TEST_ENVIRONMENT_COUNT + 1]string{}
 	first_count := os.OS_Environment(system, storage[:])
-	testify.Equal(t, TEST_ENVIRONMENT_COUNT, first_count)
+	testify.Equal(t, os.Entry_Count(TEST_ENVIRONMENT_COUNT), first_count)
 	storage[0] = "EDITED=1"
 	second_count := os.OS_Environment(system, storage[:])
-	testify.Equal(t, TEST_ENVIRONMENT_COUNT, second_count)
+	testify.Equal(t, os.Entry_Count(TEST_ENVIRONMENT_COUNT), second_count)
 	testify.Equal(t, "HOME=/root", storage[0])
 }
 
@@ -40,15 +42,15 @@ func Test_Virtual_OS_Variable(t *testing.T) {
 	virtual := test_virtual()
 	system := os.Virtual_OS_To_OS(&virtual)
 	value, found := os.OS_Variable(system, "HOME")
-	testify.True(t, found)
-	testify.Equal(t, "/root", value)
+	testify.True(t, bool(found))
+	testify.Equal(t, os.Variable_Value("/root"), value)
 	_, absent := os.OS_Variable(system, "ABSENT")
-	testify.False(t, absent)
+	testify.False(t, bool(absent))
 	empty, empty_found := os.OS_Variable(system, "EMPTY")
-	testify.True(t, empty_found)
+	testify.True(t, bool(empty_found))
 	testify.Empty(t, empty)
 	last, _ := os.Environment_Lookup([]string{"SAME=first", "SAME=last"}, "SAME")
-	testify.Equal(t, "last", last)
+	testify.Equal(t, os.Variable_Value("last"), last)
 }
 
 // Test_Virtual_OS_Executable verifies the stated image path reads back with no error.
@@ -57,7 +59,7 @@ func Test_Virtual_OS_Executable(t *testing.T) {
 	system := os.Virtual_OS_To_OS(&virtual)
 	path, err := os.OS_Executable(system)
 	testify.No_Error(t, err)
-	testify.Equal(t, "/usr/local/bin/setup", path)
+	testify.Equal(t, os.Executable_Path("/usr/local/bin/setup"), path)
 }
 
 // Test_Virtual_OS_Working_Directory verifies the stated directory reads back with no error.
@@ -66,7 +68,7 @@ func Test_Virtual_OS_Working_Directory(t *testing.T) {
 	system := os.Virtual_OS_To_OS(&virtual)
 	path, err := os.OS_Working_Directory(system)
 	testify.No_Error(t, err)
-	testify.Equal(t, "/home/simulation", path)
+	testify.Equal(t, os.Working_Directory_Path("/home/simulation"), path)
 }
 
 // Test_Virtual_OS_Hostname verifies the stated machine name reads back with no error.
@@ -75,14 +77,14 @@ func Test_Virtual_OS_Hostname(t *testing.T) {
 	system := os.Virtual_OS_To_OS(&virtual)
 	name, err := os.OS_Hostname(system)
 	testify.No_Error(t, err)
-	testify.Equal(t, "simulation", name)
+	testify.Equal(t, os.Hostname("simulation"), name)
 }
 
 // Test_Virtual_OS_Process_Identifier verifies the stated process id reads back.
 func Test_Virtual_OS_Process_Identifier(t *testing.T) {
 	virtual := test_virtual()
 	system := os.Virtual_OS_To_OS(&virtual)
-	testify.Equal(t, 4242, os.OS_Process_Identifier(system))
+	testify.Equal(t, os.Process_Identifier(4242), os.OS_Process_Identifier(system))
 }
 
 // Test_Virtual_OS_Effective_User_Identifier verifies the stated effective user id reads
@@ -90,7 +92,9 @@ func Test_Virtual_OS_Process_Identifier(t *testing.T) {
 func Test_Virtual_OS_Effective_User_Identifier(t *testing.T) {
 	virtual := test_virtual()
 	system := os.Virtual_OS_To_OS(&virtual)
-	testify.Equal(t, 501, os.OS_Effective_User_Identifier(system))
+	testify.Equal(
+		t, os.Effective_User_Identifier(501), os.OS_Effective_User_Identifier(system),
+	)
 	root := test_virtual()
 	root.Effective_User_Identifier = 0
 	elevated := os.Virtual_OS_To_OS(&root)
@@ -122,6 +126,58 @@ func Test_OS_API_Heap_Allocation(t *testing.T) {
 	verify_virtual_os_allocations(t)
 }
 
+// Every bounded domain reaches both limits and small values through production entries.
+func Test_OS_Invariant_Boundaries(t *testing.T) {
+	lengths := [...]int{
+		slices.COUNT_MINIMUM,
+		slices.COUNT_MINIMUM + 1,
+		slices.COUNT_MINIMUM + 2,
+		slices.COUNT_MAXIMUM,
+	}
+	process_identifiers := [...]os.Process_Identifier{
+		os.Process_Identifier(os.PROCESS_IDENTIFIER_MINIMUM),
+		os.Process_Identifier(os.PROCESS_IDENTIFIER_MINIMUM + 1),
+		os.Process_Identifier(os.PROCESS_IDENTIFIER_MINIMUM + 2),
+		os.Process_Identifier(bits.INTEGER_MAXIMUM),
+	}
+	effective_user_identifiers := [...]os.Effective_User_Identifier{
+		os.Effective_User_Identifier(slices.COUNT_MINIMUM),
+		os.Effective_User_Identifier(slices.COUNT_MINIMUM + 1),
+		os.Effective_User_Identifier(slices.COUNT_MINIMUM + 2),
+		os.Effective_User_Identifier(bits.INTEGER_MAXIMUM),
+	}
+	for index, byte_size := range lengths {
+		text := string(make([]byte, byte_size))
+		arguments := make(os.Arguments, byte_size)
+		environment := make(os.Environment, byte_size)
+		if byte_size > slices.COUNT_MINIMUM {
+			environment[0] = text + "=" + text
+		}
+		virtual := os.Virtual_OS{
+			Arguments:                 arguments,
+			Environment:               environment,
+			Executable:                os.Executable_Path(text),
+			Working_Directory:         os.Working_Directory_Path(text),
+			Hostname:                  os.Hostname(text),
+			Process_Identifier:        process_identifiers[index],
+			Effective_User_Identifier: effective_user_identifiers[index],
+		}
+		system := os.Virtual_OS_To_OS(&virtual)
+		argument_destination := make(os.Arguments, byte_size)
+		environment_destination := make(os.Environment, byte_size)
+		os.OS_Arguments(system, argument_destination)
+		os.OS_Environment(system, environment_destination)
+		os.OS_Variable(system, os.Variable_Name(text))
+		os.Environment_Lookup(environment, os.Variable_Name(text))
+		os.OS_Executable(system)
+		os.OS_Working_Directory(system)
+		os.OS_Hostname(system)
+		os.OS_Process_Identifier(system)
+		os.OS_Effective_User_Identifier(system)
+		os.OS_Self_Exec(system, os.Executable_Path(text), arguments, environment)
+	}
+}
+
 func verify_virtual_os_allocations(t *testing.T) {
 	virtual := test_virtual()
 	var system os.OS
@@ -129,14 +185,14 @@ func verify_virtual_os_allocations(t *testing.T) {
 		testify.Zero_Allocation(t, func() { system = os.Virtual_OS_To_OS(&virtual) })
 	})
 	verify_os_ambient_allocations(t, system, virtual)
-	var text string
-	var found bool
+	var text os.Variable_Value
+	var found os.Variable_Found
 	t.Run("Environment_Lookup", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			text, found = os.Environment_Lookup(virtual.Environment, "HOME")
 		})
-		testify.True(t, found)
-		testify.Equal(t, "/root", text)
+		testify.True(t, bool(found))
+		testify.Equal(t, os.Variable_Value("/root"), text)
 	})
 }
 
@@ -144,29 +200,29 @@ func verify_os_ambient_allocations(t *testing.T, system os.OS, virtual os.Virtua
 	t.Helper()
 	argument_storage := [TEST_ARGUMENT_COUNT]string{}
 	environment_storage := [TEST_ENVIRONMENT_COUNT]string{}
-	var count int
+	var count os.Entry_Count
 	t.Run("Arguments", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			count = os.OS_Arguments(system, argument_storage[:])
 		})
-		testify.Equal(t, len(virtual.Arguments), count)
+		testify.Equal(t, os.Entry_Count(len(virtual.Arguments)), count)
 	})
 	t.Run("Environment", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			count = os.OS_Environment(system, environment_storage[:])
 		})
-		testify.Equal(t, len(virtual.Environment), count)
+		testify.Equal(t, os.Entry_Count(len(virtual.Environment)), count)
 	})
-	var text string
-	var found bool
+	var text os.Variable_Value
+	var found os.Variable_Found
 	t.Run("Variable", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			text, found = os.OS_Variable(system, "HOME")
 		})
-		testify.True(t, found)
+		testify.True(t, bool(found))
 	})
 	verify_virtual_os_text_allocations(t, system, &text)
-	var identifier int
+	var identifier os.Process_Identifier
 	t.Run("Process_Identifier", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
 			identifier = os.OS_Process_Identifier(system)
@@ -175,7 +231,7 @@ func verify_os_ambient_allocations(t *testing.T, system os.OS, virtual os.Virtua
 	})
 	t.Run("Effective_User_Identifier", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
-			identifier = os.OS_Effective_User_Identifier(system)
+			identifier = os.Process_Identifier(os.OS_Effective_User_Identifier(system))
 		})
 	})
 	var operation_err error
@@ -187,24 +243,27 @@ func verify_os_ambient_allocations(t *testing.T, system os.OS, virtual os.Virtua
 	})
 }
 
-func verify_virtual_os_text_allocations(t *testing.T, system os.OS, text *string) {
+func verify_virtual_os_text_allocations(t *testing.T, system os.OS, text *os.Variable_Value) {
 	t.Helper()
 	var read_err error
 	t.Run("Executable", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
-			*text, read_err = os.OS_Executable(system)
+			path, err := os.OS_Executable(system)
+			*text, read_err = os.Variable_Value(path), err
 		})
 		testify.No_Error(t, read_err)
 	})
 	t.Run("Working_Directory", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
-			*text, read_err = os.OS_Working_Directory(system)
+			path, err := os.OS_Working_Directory(system)
+			*text, read_err = os.Variable_Value(path), err
 		})
 		testify.No_Error(t, read_err)
 	})
 	t.Run("Hostname", func(t *testing.T) {
 		testify.Zero_Allocation(t, func() {
-			*text, read_err = os.OS_Hostname(system)
+			name, err := os.OS_Hostname(system)
+			*text, read_err = os.Variable_Value(name), err
 		})
 		testify.No_Error(t, read_err)
 	})

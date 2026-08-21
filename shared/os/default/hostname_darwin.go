@@ -3,25 +3,21 @@
 package os
 
 import (
-	"os"
 	"syscall"
+	"unsafe"
 )
 
-func system_executable() (path string, err error) {
-	return os.Executable()
-}
-
-// The runtime owns Args, so a caller must not receive its slice.
-func system_arguments(destination []string) (count int) {
-	return copy(destination, os.Args)
-}
-
-func system_argument_count() (count int) {
-	return len(os.Args)
-}
-
-// Reads the machine name from the kern.hostname sysctl. Go exports no Gethostname, and Darwin
-// has no gethostname trap of its own: libc reads this same sysctl, so the sysctl is the syscall.
-func system_hostname() (name string, err error) {
-	return syscall.Sysctl("kern.hostname")
+// Darwin exposes execve through its BSD syscall table.
+func system_execve(workspace_pointer unsafe.Pointer) (err error) {
+	workspace := (*Self_Exec_Workspace)(workspace_pointer)
+	_, _, operation_errno := syscall.RawSyscall(
+		syscall.SYS_EXECVE,
+		uintptr(unsafe.Pointer(&workspace.Path[0])),
+		uintptr(unsafe.Pointer(&workspace.Argument_Pointers[0])),
+		uintptr(unsafe.Pointer(&workspace.Environment_Pointers[0])),
+	)
+	if operation_errno != 0 {
+		return operation_errno
+	}
+	return nil
 }

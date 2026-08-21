@@ -48,10 +48,12 @@ process, so it reports the failure rather than destroying the run.
 
 # OS
 
-Host backend reads every value from the kernel, thus it owns no queue and takes no loop. Nothing
-here retires a completion: a signal watch and a spawn live on nbio.IO instead.
+Caller captures allocating ambient values in Host before construction. Kernel reads stay live.
+Host and Self_Exec_Workspace remain caller-owned. Nothing owns a queue or takes a loop.
+Every OS operation, including construction and returned failures, allocates zero heap bytes.
 
 ### Self Exec
 
-Self_Exec replaces process image and returns only on failure. Nil environment preserves ambient
-values. Non-nil slice is complete replacement environment, thus empty slice inherits nothing.
+Self_Exec replaces process image and returns only on failure. Nil environment uses Host values.
+Non-nil environment replaces all values; empty inherits nothing. Workspace encodes raw execve input.
+Embedded NUL returns EINVAL. Input exceeding caller-owned workspace returns E2BIG.
