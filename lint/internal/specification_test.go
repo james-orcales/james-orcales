@@ -1843,15 +1843,17 @@ func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 }
 
 // Test_IO_Gateway_Operating_System_Exempt verifies the os/default gateway may import
-// syscall — process and environment access is ambient state, not IO the loop carries.
+// syscall and os/signal because both bind process state owned by that gateway.
 func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"shared/simulation/os/default/system.go": &fstest.MapFile{Data: []byte(
-			"// Package os is a fixture.\npackage os\n\nimport \"syscall\"\n\n" +
+			"// Package os is a fixture.\npackage os\n\n" +
+				"import (\n\t\"os/signal\"\n\t\"syscall\"\n)\n\n" +
 				"// Identifier reads the process identifier.\n" +
 				"func Identifier() (identifier int) {\n" +
+				"\tsignal.Ignore(syscall.SIGPIPE)\n" +
 				"\treturn syscall.Getpid()\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
@@ -1863,7 +1865,7 @@ func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	if specification_diagnosed(diags, "Route IO through shared/simulation/nbio") {
-		t.Fatal("the os/default gateway may import syscall")
+		t.Fatal("the os/default gateway may import syscall and os/signal")
 	}
 }
 
@@ -1875,10 +1877,11 @@ func Test_IO_Gateway_Non_Blocking_IO_Exempt(t *testing.T) {
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"shared/simulation/nbio/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package nbio is a fixture.\npackage nbio\n\n" +
-				"import (\n\t\"net\"\n\t\"os/signal\"\n\t\"syscall\"\n)\n\n" +
+				"import (\n\t\"net\"\n\t\"syscall\"\n)\n\n" +
 				"// Resolve resolves a host.\n" +
-				"func Resolve() (addresses []net.IP, err error) {\n" +
-				"\tsignal.Ignore(syscall.SIGPIPE)\n" +
+				"func Resolve(system syscall.Signal) " +
+				"(addresses []net.IP, err error) {\n" +
+				"\tif system == 0 {\n\t\treturn nil, nil\n\t}\n" +
 				"\treturn net.LookupIP(\"localhost\")\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
@@ -2146,6 +2149,27 @@ func specification_os_import_boundary(t *testing.T) {
 	}
 	if !specification_flags(t, named_like, "Banned import") {
 		t.Fatal("directory named like simulation OS must stay banned")
+	}
+	signal_gateway := map[string][]byte{
+		"shared/simulation/os/default/rule.go": []byte(
+			"package os\n\nimport \"os/signal\"\n"),
+	}
+	if specification_flags(t, signal_gateway, "Banned import") {
+		t.Fatal("simulation OS default gateway must allow os/signal")
+	}
+	for _, filename := range []string{
+		"shared/invariant/rule.go",
+		"shared/simulation/nbio/default/rule.go",
+		"shared/simulation/os/rule.go",
+	} {
+		files := map[string][]byte{
+			filename: []byte("package fixture\n\nimport \"os/signal\"\n"),
+		}
+		if !specification_flags(t, files, "Banned import") {
+			t.Errorf(
+				"os/signal outside OS gateway %q must be flagged", filename,
+			)
+		}
 	}
 }
 

@@ -5119,14 +5119,15 @@ func check_no_banned_stdlib_import(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
 	directory := ""
+	invariant_directory := false
 	token_file := file_set.File(file.Pos())
 	if token_file != nil {
 		directory = path.Dir(path.Clean(token_file.Name()))
 		if directory == "shared/invariant" {
-			return nil
+			invariant_directory = true
 		}
 		if strings.Has_Prefix(directory, "shared/invariant/") {
-			return nil
+			invariant_directory = true
 		}
 	}
 	for _, import_specification := range file.Imports {
@@ -5138,14 +5139,28 @@ func check_no_banned_stdlib_import(
 		if family == "" {
 			continue
 		}
-		// Simulation backend implements shared OS boundary, so replacement needs
-		// family it wraps.
-		if family == "os" {
-			if directory == "shared/simulation/os" {
+		// Signal registration mutates process-global notifier state, so only OS
+		// composition tier owns it. Invariant's cycle exemption cannot widen ownership.
+		if import_path == "os/signal" {
+			if directory == "shared/simulation/os/default" {
 				continue
 			}
-			if strings.Has_Prefix(directory, "shared/simulation/os/") {
+			if strings.Has_Prefix(directory, "shared/simulation/os/default/") {
 				continue
+			}
+		} else {
+			if invariant_directory {
+				continue
+			}
+			// Simulation backend implements shared OS boundary, so replacement needs
+			// family it wraps.
+			if family == "os" {
+				if directory == "shared/simulation/os" {
+					continue
+				}
+				if strings.Has_Prefix(directory, "shared/simulation/os/") {
+					continue
+				}
 			}
 		}
 		diags = append(diags, Diagnostic{
@@ -9743,7 +9758,7 @@ func io_gateway_import_diagnostics(
 // its dialing, listening, and resolving surface is flagged at the call site.
 func io_gateway_banned_import(import_path string) (banned bool) {
 	switch import_path {
-	case "net/http", "syscall", "os/exec", "bufio", "crypto/tls", "os/signal":
+	case "net/http", "syscall", "os/exec", "bufio", "crypto/tls":
 		return true
 	}
 	return false
