@@ -455,14 +455,6 @@ func Escape_Sequence_Buffer_Invariants(
 		Ensure()
 }
 
-// Byte_Escape_Buffer is exact storage for one hexadecimal byte escape.
-type Byte_Escape_Buffer []byte
-
-// Byte_Escape_Buffer_Invariants states hexadecimal byte escape width.
-func Byte_Escape_Buffer_Invariants(value Byte_Escape_Buffer, namespace aver.Namespace) {
-	aver.Always(len(value) == BYTE_ESCAPE_SIZE, "Byte escape storage has four bytes.")
-}
-
 // Unquoted_Buffer is exact caller storage for one decoded literal value.
 type Unquoted_Buffer []byte
 
@@ -1925,11 +1917,15 @@ func quoted_into(
 		if width == utf8.CHARACTER_SIZE_MINIMUM {
 			if value == utf8.REPLACEMENT_CHARACTER {
 				if rest[0] >= byte(utf8.CHARACTER_SELF) {
-					escape_end := written + BYTE_ESCAPE_SIZE
-					write_byte_escape(
-						Byte_Escape_Buffer(destination[written:escape_end]),
-						Invalid_Text_Byte(rest[0]),
+					invalid_byte := Invalid_Text_Byte(rest[0])
+					Invalid_Text_Byte_Invariants(
+						invalid_byte, "quoted_into.invalid_byte",
 					)
+					destination[written], destination[written+1] = '\\', 'x'
+					destination[written+2] =
+						HEXADECIMAL_SYMBOLS[invalid_byte>>4]
+					destination[written+3] =
+						HEXADECIMAL_SYMBOLS[invalid_byte&0xf]
 					written += BYTE_ESCAPE_SIZE
 					rest = rest[1:]
 					continue
@@ -2134,18 +2130,6 @@ func write_escape_sequence(destination Escape_Sequence_Buffer, value Code_Point)
 		destination[index+2] = HEXADECIMAL_SYMBOLS[value&0xf]
 		value >>= 4
 	}
-}
-
-// Writes invalid input byte as hexadecimal escape.
-func write_byte_escape(destination Byte_Escape_Buffer, value Invalid_Text_Byte) {
-	Byte_Escape_Buffer_Invariants(destination, "write_byte_escape.destination")
-	Invalid_Text_Byte_Invariants(value, "write_byte_escape.value")
-	if BYTE_ESCAPE_SIZE > len(destination) {
-		panic("strconv: destination too small")
-	}
-	destination[0], destination[1] = '\\', 'x'
-	destination[2] = HEXADECIMAL_SYMBOLS[value>>4]
-	destination[3] = HEXADECIMAL_SYMBOLS[value&0xf]
 }
 
 // Reports whether the quoted form keeps the character as it is.

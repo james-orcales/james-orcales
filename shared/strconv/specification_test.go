@@ -722,13 +722,15 @@ type allocation_check struct {
 }
 
 type allocation_fixture struct {
-	Storage    [strconv.BUFFER_SIZE_MAXIMUM]byte
+	Storage    []byte
 	Observable int
 	Error      error
 }
 
 func verify_api_is_zero_allocation(t *testing.T) {
-	fixture := allocation_fixture{}
+	fixture := allocation_fixture{
+		Storage: make([]byte, strconv.BUFFER_SIZE_MAXIMUM),
+	}
 	groups := [][]allocation_check{
 		parse_allocation_checks(&fixture),
 		format_allocation_checks(&fixture),
