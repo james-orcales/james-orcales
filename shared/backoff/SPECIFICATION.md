@@ -21,6 +21,11 @@ Interval_Max, and Reset returns it to Initial_Interval.
 A jittered delay stays within Jitter of the interval either way, so it never drops
 below the interval's lower spread nor exceeds its upper spread.
 
+# Exponential Saturates Wide Product
+
+Full-width multiplier and jitter terms saturate inside the bounded interval domain;
+their products never wrap.
+
 # Seed Reproduces Delays
 
 Two Exponential policies over generators of the same seed emit an identical delay
@@ -33,7 +38,7 @@ attempts.
 
 # Retry Stops On Permanent
 
-A Permanent error ends Retry at once, matchable with errors.Is, with no wait and no
+A Permanent error ends Retry at once, matchable with Error_Matches, with no wait and no
 further attempt.
 
 # Retry Exhausts After Tries
@@ -43,7 +48,7 @@ failure, having run the operation exactly Tries_Max times.
 
 # Retry Waits On Timeline
 
-Between attempts Retry waits the policy delay on the io clock, so virtual time
+Between attempts Retry waits the policy delay on the timeline clock, so virtual time
 advances by the sum of the delays.
 
 # Retry After Overrides Delay
