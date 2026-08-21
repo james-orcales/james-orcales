@@ -1,0 +1,580 @@
+// Package hex implements bounded hexadecimal encoding on caller-owned storage.
+package hex
+
+import (
+	"local/james-orcales/shared/bytes"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
+)
+
+// NIBBLE_BIT_COUNT follows the two equal halves of one byte.
+const NIBBLE_BIT_COUNT = bits.BIT_COUNT_8_MAXIMUM / 2
+
+// ALPHABET_SIZE follows every value representable by one nibble.
+const ALPHABET_SIZE = 1 << NIBBLE_BIT_COUNT
+
+// ALPHABET_FINAL_INDEX masks one nibble without a detached hexadecimal literal.
+const ALPHABET_FINAL_INDEX = ALPHABET_SIZE - 1
+
+// ENCODED_BYTE_SIZE follows the nibbles required to represent one source byte.
+const ENCODED_BYTE_SIZE = bits.BIT_COUNT_8_MAXIMUM / NIBBLE_BIT_COUNT
+
+// ENCODED_BYTE_FINAL_INDEX is the low-nibble position in one encoded byte.
+const ENCODED_BYTE_FINAL_INDEX = ENCODED_BYTE_SIZE - 1
+
+// SIZE_MINIMUM admits empty source and output.
+const SIZE_MINIMUM = bytes.SLICE_SIZE_MINIMUM
+
+// COUNT_HOLE_FIRST excludes one byte from representations that require pairs or full lines.
+const COUNT_HOLE_FIRST = SIZE_MINIMUM + 1
+
+// COUNT_HOLE_SECOND excludes two bytes from representations that require a full dump line.
+const COUNT_HOLE_SECOND = COUNT_HOLE_FIRST + 1
+
+// ENCODED_SIZE_MAXIMUM follows the repository byte-slice boundary.
+const ENCODED_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
+
+// SOURCE_SIZE_MAXIMUM is the largest source whose hexadecimal form stays bounded.
+const SOURCE_SIZE_MAXIMUM = ENCODED_SIZE_MAXIMUM / ENCODED_BYTE_SIZE
+
+// DECODED_SIZE_MAXIMUM is the largest result from bounded encoded input.
+const DECODED_SIZE_MAXIMUM = ENCODED_SIZE_MAXIMUM / ENCODED_BYTE_SIZE
+
+// DUMP_SOURCE_GROUP_SIZE follows the sixteen-byte canonical hexdump line.
+const DUMP_SOURCE_GROUP_SIZE = ALPHABET_SIZE
+
+// DUMP_OFFSET_SOURCE_SIZE follows the canonical 32-bit hexdump offset.
+const DUMP_OFFSET_SOURCE_SIZE = bits.BIT_COUNT_32_MAXIMUM / bits.BIT_COUNT_8_MAXIMUM
+
+// DUMP_OFFSET_ENCODED_SIZE is the hexadecimal width of one canonical offset.
+const DUMP_OFFSET_ENCODED_SIZE = DUMP_OFFSET_SOURCE_SIZE * ENCODED_BYTE_SIZE
+
+// DUMP_OFFSET_SEPARATOR_SIZE separates offset from hexadecimal fields.
+const DUMP_OFFSET_SEPARATOR_SIZE = ENCODED_BYTE_SIZE
+
+// DUMP_FIELD_SEPARATOR_SIZE separates adjacent hexadecimal bytes.
+const DUMP_FIELD_SEPARATOR_SIZE = SIZE_MINIMUM + 1
+
+// DUMP_FIELD_SIZE holds one hexadecimal byte and its separator.
+const DUMP_FIELD_SIZE = ENCODED_BYTE_SIZE + DUMP_FIELD_SEPARATOR_SIZE
+
+// DUMP_MIDPOINT_SEPARATOR_SIZE divides the two eight-byte field groups.
+const DUMP_MIDPOINT_SEPARATOR_SIZE = DUMP_FIELD_SEPARATOR_SIZE
+
+// DUMP_ASCII_PREFIX_SIZE separates hexadecimal fields from printable bytes.
+const DUMP_ASCII_PREFIX_SIZE = ENCODED_BYTE_SIZE
+
+// DUMP_ASCII_SUFFIX_SIZE closes the printable column and line.
+const DUMP_ASCII_SUFFIX_SIZE = ENCODED_BYTE_SIZE
+
+// DUMP_LEFT_COLUMN_SIZE is fixed even when the final source group is partial.
+const DUMP_LEFT_COLUMN_SIZE = DUMP_OFFSET_ENCODED_SIZE + DUMP_OFFSET_SEPARATOR_SIZE +
+	DUMP_SOURCE_GROUP_SIZE*DUMP_FIELD_SIZE + DUMP_MIDPOINT_SEPARATOR_SIZE +
+	DUMP_ASCII_PREFIX_SIZE
+
+// DUMP_PARTIAL_LINE_FIXED_SIZE excludes only the variable printable bytes.
+const DUMP_PARTIAL_LINE_FIXED_SIZE = DUMP_LEFT_COLUMN_SIZE + DUMP_ASCII_SUFFIX_SIZE
+
+// DUMP_LINE_SIZE is one complete canonical line.
+const DUMP_LINE_SIZE = DUMP_PARTIAL_LINE_FIXED_SIZE + DUMP_SOURCE_GROUP_SIZE
+
+// DUMP_SIZE_MAXIMUM follows the repository byte-slice boundary.
+const DUMP_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
+
+// DUMP_FULL_LINE_COUNT_MAXIMUM is the complete lines fitting bounded output.
+const DUMP_FULL_LINE_COUNT_MAXIMUM = DUMP_SIZE_MAXIMUM / DUMP_LINE_SIZE
+
+// DUMP_OUTPUT_REMAINDER_SIZE is storage left after every fitting complete line.
+const DUMP_OUTPUT_REMAINDER_SIZE = DUMP_SIZE_MAXIMUM % DUMP_LINE_SIZE
+
+// DUMP_TAIL_SOURCE_SIZE_MAXIMUM is the partial source fitting output remainder.
+const DUMP_TAIL_SOURCE_SIZE_MAXIMUM = DUMP_OUTPUT_REMAINDER_SIZE -
+	DUMP_PARTIAL_LINE_FIXED_SIZE
+
+// DUMP_SOURCE_SIZE_MAXIMUM is the largest source whose exact dump stays bounded.
+const DUMP_SOURCE_SIZE_MAXIMUM = DUMP_FULL_LINE_COUNT_MAXIMUM*DUMP_SOURCE_GROUP_SIZE +
+	DUMP_TAIL_SOURCE_SIZE_MAXIMUM
+
+// ENCODE_ALPHABET is the canonical lowercase hexadecimal representation.
+const ENCODE_ALPHABET = "0123456789abcdef"
+
+// DECIMAL_DIGIT_MINIMUM is the first decimal hexadecimal digit.
+const DECIMAL_DIGIT_MINIMUM byte = '0'
+
+// DECIMAL_DIGIT_MAXIMUM is the final decimal hexadecimal digit.
+const DECIMAL_DIGIT_MAXIMUM byte = '9'
+
+// LOWER_DIGIT_MINIMUM is the first lowercase hexadecimal digit.
+const LOWER_DIGIT_MINIMUM byte = 'a'
+
+// LOWER_DIGIT_MAXIMUM is the final lowercase hexadecimal digit.
+const LOWER_DIGIT_MAXIMUM byte = 'f'
+
+// UPPER_DIGIT_MINIMUM is the first uppercase hexadecimal digit.
+const UPPER_DIGIT_MINIMUM byte = 'A'
+
+// UPPER_DIGIT_MAXIMUM is the final uppercase hexadecimal digit.
+const UPPER_DIGIT_MAXIMUM byte = 'F'
+
+// ALPHABETIC_DIGIT_VALUE_MINIMUM follows the first value after decimal digits.
+const ALPHABETIC_DIGIT_VALUE_MINIMUM = DECIMAL_DIGIT_MAXIMUM - DECIMAL_DIGIT_MINIMUM + 1
+
+// PRINTABLE_MINIMUM is the first byte retained in the hexdump text column.
+const PRINTABLE_MINIMUM byte = ' '
+
+// PRINTABLE_MAXIMUM is the final byte retained in the hexdump text column.
+const PRINTABLE_MAXIMUM byte = '~'
+
+// FIELD_SEPARATOR separates hexdump columns without an allocation-backed format string.
+const FIELD_SEPARATOR byte = ' '
+
+// ASCII_COLUMN_MARKER encloses the hexdump text column.
+const ASCII_COLUMN_MARKER byte = '|'
+
+// UNPRINTABLE_MARKER replaces bytes outside printable ASCII.
+const UNPRINTABLE_MARKER byte = '.'
+
+// LINE_FEED terminates each canonical hexdump line.
+const LINE_FEED byte = '\n'
+
+// STATUS_OK means the operation completed.
+const STATUS_OK = 0
+
+// STATUS_INPUT_INVALID means encoded input contains a non-hexadecimal digit.
+const STATUS_INPUT_INVALID = STATUS_OK + 1
+
+// STATUS_INPUT_INCOMPLETE means otherwise valid encoded input has an unmatched digit.
+const STATUS_INPUT_INCOMPLETE = STATUS_INPUT_INVALID + 1
+
+// STATUS_OUTPUT_TOO_SMALL means caller storage cannot hold the required output.
+const STATUS_OUTPUT_TOO_SMALL = STATUS_INPUT_INCOMPLETE + 1
+
+// STATUS_STORAGE_INVALID means source and destination overlap.
+const STATUS_STORAGE_INVALID = STATUS_OUTPUT_TOO_SMALL + 1
+
+// Source is decoded input whose encoded form stays within package bounds.
+type Source []byte
+
+// Source_Invariants rejects source whose encoded representation cannot stay bounded.
+func Source_Invariants(value Source, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Encoded is encoded input or writable encoded destination.
+type Encoded []byte
+
+// Encoded_Invariants keeps hexadecimal storage within repository bounds.
+func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Decoded is writable decoded destination.
+type Decoded []byte
+
+// Decoded_Invariants keeps decoded output within its encoded-input-derived bound.
+func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Dump_Source is source whose complete canonical dump stays within package bounds.
+type Dump_Source []byte
+
+// Dump_Source_Invariants rejects source whose exact dump cannot fit bounded output.
+func Dump_Source_Invariants(value Dump_Source, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SIZE_MINIMUM, DUMP_SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Dump is writable canonical hexdump destination.
+type Dump []byte
+
+// Dump_Invariants keeps dump output within repository bounds.
+func Dump_Invariants(value Dump, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), SIZE_MINIMUM, DUMP_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Source_Count is a decoded byte count accepted by Encoded_Size.
+type Source_Count int
+
+// Source_Count_Invariants follows Source's complete length domain.
+func Source_Count_Invariants(value Source_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Encoded_Input_Count is an encoded byte count accepted by Decoded_Size_Maximum.
+type Encoded_Input_Count int
+
+// Encoded_Input_Count_Invariants follows Encoded's complete length domain.
+func Encoded_Input_Count_Invariants(
+	value Encoded_Input_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Encoded_Count is an exact required or written hexadecimal byte count.
+type Encoded_Count int
+
+// Encoded_Count_Invariants excludes counts that cannot represent whole source bytes.
+func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace) {
+	invariant.Always(
+		int(value)%ENCODED_BYTE_SIZE == 0,
+		"Encoded count contains complete hexadecimal byte pairs.",
+	)
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
+			COUNT_HOLE_FIRST, COUNT_HOLE_FIRST, COUNT_HOLE_FIRST, COUNT_HOLE_FIRST,
+		).
+		Ensure()
+}
+
+// Decoded_Count is a maximum or written decoded byte count.
+type Decoded_Count int
+
+// Decoded_Count_Invariants follows bounded encoded input contraction.
+func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Dump_Source_Count is a source byte count accepted by Dump_Size.
+type Dump_Source_Count int
+
+// Dump_Source_Count_Invariants follows Dump_Source's complete length domain.
+func Dump_Source_Count_Invariants(value Dump_Source_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SIZE_MINIMUM, DUMP_SOURCE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Dump_Count is an exact required or written canonical dump byte count.
+type Dump_Count int
+
+// Dump_Count_Invariants excludes counts that cannot end at a canonical line boundary.
+func Dump_Count_Invariants(value Dump_Count, namespace invariant.Namespace) {
+	remainder := int(value) % DUMP_LINE_SIZE
+	valid := remainder == SIZE_MINIMUM || remainder >= DUMP_PARTIAL_LINE_FIXED_SIZE+1
+	invariant.Always(valid, "Dump count ends after a complete canonical line.")
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			int(value), SIZE_MINIMUM, DUMP_SIZE_MAXIMUM,
+			COUNT_HOLE_FIRST, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND,
+		).
+		Ensure()
+}
+
+// Encode_Status is a scalar result so storage refusal allocates no error interface.
+type Encode_Status uint8
+
+// Encode_Status_Invariants lists every encoder outcome.
+func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
+			uint8(STATUS_STORAGE_INVALID),
+		).
+		Ensure()
+}
+
+// Decode_Status is a scalar result so malformed input allocates no error interface.
+type Decode_Status uint8
+
+// Decode_Status_Invariants lists every decoder outcome.
+func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_STORAGE_INVALID),
+		).
+		Ensure()
+}
+
+// Dump_Status is a scalar result so storage refusal allocates no error interface.
+type Dump_Status uint8
+
+// Dump_Status_Invariants lists every dumper outcome.
+func Dump_Status_Invariants(value Dump_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
+			uint8(STATUS_STORAGE_INVALID),
+		).
+		Ensure()
+}
+
+// Nibble retains one decoded hexadecimal digit without widening its valid domain.
+type Nibble uint8
+
+// Nibble_Invariants bounds decoded digits to one nibble.
+func Nibble_Invariants(value Nibble, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, ALPHABET_FINAL_INDEX).
+		Ensure()
+}
+
+// Nibble_Valid reports whether one input byte names a hexadecimal digit.
+type Nibble_Valid bool
+
+// Nibble_Valid_Invariants reaches accepted and rejected input bytes.
+func Nibble_Valid_Invariants(value Nibble_Valid, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "An input byte names a hexadecimal digit.").
+		Ensure()
+}
+
+// Encoded_Size reports exact caller storage required for source_count.
+func Encoded_Size(source_count Source_Count) (count Encoded_Count) {
+	defer func() { Encoded_Count_Invariants(count, "Encoded_Size.count") }()
+	Source_Count_Invariants(source_count, "Encoded_Size.source_count")
+	return Encoded_Count(int(source_count) * ENCODED_BYTE_SIZE)
+}
+
+// Decoded_Size_Maximum reports the complete bytes possible from encoded_count.
+func Decoded_Size_Maximum(encoded_count Encoded_Input_Count) (count Decoded_Count) {
+	defer func() {
+		Decoded_Count_Invariants(count, "Decoded_Size_Maximum.count")
+	}()
+	Encoded_Input_Count_Invariants(encoded_count, "Decoded_Size_Maximum.encoded_count")
+	return Decoded_Count(int(encoded_count) / ENCODED_BYTE_SIZE)
+}
+
+// Dump_Size reports exact canonical hexdump storage for source_count.
+func Dump_Size(source_count Dump_Source_Count) (count Dump_Count) {
+	defer func() { Dump_Count_Invariants(count, "Dump_Size.count") }()
+	Dump_Source_Count_Invariants(source_count, "Dump_Size.source_count")
+	full_line_count := int(source_count) / DUMP_SOURCE_GROUP_SIZE
+	tail_size := int(source_count) % DUMP_SOURCE_GROUP_SIZE
+	count = Dump_Count(full_line_count * DUMP_LINE_SIZE)
+	if tail_size > SIZE_MINIMUM {
+		count += Dump_Count(DUMP_PARTIAL_LINE_FIXED_SIZE + tail_size)
+	}
+	return count
+}
+
+// Encode_Into checks exact storage before exposing any partial representation.
+func Encode_Into(
+	destination Encoded, source Source,
+) (count Encoded_Count, status Encode_Status) {
+	defer func() {
+		Encoded_Count_Invariants(count, "Encode_Into.count")
+		Encode_Status_Invariants(status, "Encode_Into.status")
+	}()
+	Encoded_Invariants(destination, "Encode_Into.destination")
+	Source_Invariants(source, "Encode_Into.source")
+	if bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)) {
+		return 0, STATUS_STORAGE_INVALID
+	}
+	required := Encoded_Size(Source_Count(len(source)))
+	if len(destination) < int(required) {
+		return 0, STATUS_OUTPUT_TOO_SMALL
+	}
+	for source_position, source_byte := range source {
+		destination_position := source_position * ENCODED_BYTE_SIZE
+		destination[destination_position] = ENCODE_ALPHABET[source_byte>>NIBBLE_BIT_COUNT]
+		destination[destination_position+ENCODED_BYTE_FINAL_INDEX] =
+			ENCODE_ALPHABET[source_byte&ALPHABET_FINAL_INDEX]
+	}
+	return required, STATUS_OK
+}
+
+// Decode_Into returns the valid prefix before malformed or unavailable output.
+func Decode_Into(
+	destination Decoded, source Encoded,
+) (count Decoded_Count, status Decode_Status) {
+	defer func() {
+		Decoded_Count_Invariants(count, "Decode_Into.count")
+		Decode_Status_Invariants(status, "Decode_Into.status")
+	}()
+	Decoded_Invariants(destination, "Decode_Into.destination")
+	Encoded_Invariants(source, "Decode_Into.source")
+	if bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)) {
+		return 0, STATUS_STORAGE_INVALID
+	}
+	source_position := SIZE_MINIMUM
+	for len(source)-source_position >= ENCODED_BYTE_SIZE {
+		high, high_valid := decode_nibble(source[source_position])
+		low, low_valid := decode_nibble(source[source_position+ENCODED_BYTE_FINAL_INDEX])
+		if !bool(high_valid) {
+			return count, STATUS_INPUT_INVALID
+		}
+		if !bool(low_valid) {
+			return count, STATUS_INPUT_INVALID
+		}
+		if len(destination) <= int(count) {
+			return count, STATUS_OUTPUT_TOO_SMALL
+		}
+		destination[count] = byte(high)<<NIBBLE_BIT_COUNT | byte(low)
+		count++
+		source_position += ENCODED_BYTE_SIZE
+	}
+	if source_position < len(source) {
+		_, valid := decode_nibble(source[source_position])
+		if !bool(valid) {
+			return count, STATUS_INPUT_INVALID
+		}
+		return count, STATUS_INPUT_INCOMPLETE
+	}
+	return count, STATUS_OK
+}
+
+// Dump_Into checks exact storage before exposing any partial line.
+func Dump_Into(
+	destination Dump, source Dump_Source,
+) (count Dump_Count, status Dump_Status) {
+	defer func() {
+		Dump_Count_Invariants(count, "Dump_Into.count")
+		Dump_Status_Invariants(status, "Dump_Into.status")
+	}()
+	Dump_Invariants(destination, "Dump_Into.destination")
+	Dump_Source_Invariants(source, "Dump_Into.source")
+	if bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)) {
+		return 0, STATUS_STORAGE_INVALID
+	}
+	required := Dump_Size(Dump_Source_Count(len(source)))
+	if len(destination) < int(required) {
+		return 0, STATUS_OUTPUT_TOO_SMALL
+	}
+	dump_unchecked(destination, source)
+	return required, STATUS_OK
+}
+
+func decode_nibble[Encoded_Byte ~byte](
+	encoded Encoded_Byte,
+) (nibble Nibble, valid Nibble_Valid) {
+	defer func() {
+		Nibble_Invariants(nibble, "decode_nibble.nibble")
+		Nibble_Valid_Invariants(valid, "decode_nibble.valid")
+	}()
+	encoded_byte := byte(encoded)
+	if DECIMAL_DIGIT_MINIMUM <= encoded_byte {
+		if encoded_byte <= DECIMAL_DIGIT_MAXIMUM {
+			return Nibble(encoded_byte - DECIMAL_DIGIT_MINIMUM), true
+		}
+	}
+	if LOWER_DIGIT_MINIMUM <= encoded_byte {
+		if encoded_byte <= LOWER_DIGIT_MAXIMUM {
+			return Nibble(
+				encoded_byte - LOWER_DIGIT_MINIMUM + ALPHABETIC_DIGIT_VALUE_MINIMUM,
+			), true
+		}
+	}
+	if UPPER_DIGIT_MINIMUM <= encoded_byte {
+		if encoded_byte <= UPPER_DIGIT_MAXIMUM {
+			return Nibble(
+				encoded_byte - UPPER_DIGIT_MINIMUM + ALPHABETIC_DIGIT_VALUE_MINIMUM,
+			), true
+		}
+	}
+	return 0, false
+}
+
+func dump_unchecked[Destination ~[]byte, Source_Bytes ~[]byte](
+	destination Destination, source Source_Bytes,
+) {
+	destination_position := SIZE_MINIMUM
+	for source_position := SIZE_MINIMUM; source_position < len(source); {
+		line_source_size := len(source) - source_position
+		if line_source_size > DUMP_SOURCE_GROUP_SIZE {
+			line_source_size = DUMP_SOURCE_GROUP_SIZE
+		}
+		destination_position = dump_offset(
+			destination, destination_position, source_position,
+		)
+		destination_position = dump_hexadecimal(
+			destination, source, destination_position,
+			source_position, line_source_size,
+		)
+		destination_position = dump_ascii(
+			destination, source, destination_position,
+			source_position, line_source_size,
+		)
+		source_position += line_source_size
+	}
+}
+
+func dump_offset[Destination ~[]byte, Position ~int](
+	destination Destination, destination_position Position, source_position Position,
+) (next_position Position) {
+	destination_position_value := int(destination_position)
+	offset := uint32(source_position)
+	for encoded_position := range DUMP_OFFSET_ENCODED_SIZE {
+		shift := (DUMP_OFFSET_ENCODED_SIZE - encoded_position - 1) * NIBBLE_BIT_COUNT
+		nibble := offset >> shift & uint32(ALPHABET_FINAL_INDEX)
+		destination[destination_position_value+encoded_position] = ENCODE_ALPHABET[nibble]
+	}
+	next := destination_position_value + DUMP_OFFSET_ENCODED_SIZE
+	for range DUMP_OFFSET_SEPARATOR_SIZE {
+		destination[next] = FIELD_SEPARATOR
+		next++
+	}
+	return Position(next)
+}
+
+func dump_hexadecimal[
+	Destination ~[]byte, Source_Bytes ~[]byte, Position ~int,
+](
+	destination Destination, source Source_Bytes, destination_position Position,
+	source_position Position, line_source_size Position,
+) (next_position Position) {
+	next := int(destination_position)
+	source_index := int(source_position)
+	line_size := int(line_source_size)
+	for line_position := SIZE_MINIMUM; line_position < DUMP_SOURCE_GROUP_SIZE; line_position++ {
+		if line_position < line_size {
+			source_byte := source[source_index+line_position]
+			destination[next] = ENCODE_ALPHABET[source_byte>>NIBBLE_BIT_COUNT]
+			destination[next+ENCODED_BYTE_FINAL_INDEX] =
+				ENCODE_ALPHABET[source_byte&ALPHABET_FINAL_INDEX]
+		} else {
+			for encoded_position := range ENCODED_BYTE_SIZE {
+				destination[next+encoded_position] = FIELD_SEPARATOR
+			}
+		}
+		next += ENCODED_BYTE_SIZE
+		destination[next] = FIELD_SEPARATOR
+		next++
+		if line_position == DUMP_SOURCE_GROUP_SIZE/ENCODED_BYTE_SIZE-1 {
+			destination[next] = FIELD_SEPARATOR
+			next++
+		}
+	}
+	destination[next] = FIELD_SEPARATOR
+	destination[next+DUMP_FIELD_SEPARATOR_SIZE] = ASCII_COLUMN_MARKER
+	return Position(next + DUMP_ASCII_PREFIX_SIZE)
+}
+
+func dump_ascii[
+	Destination ~[]byte, Source_Bytes ~[]byte, Position ~int,
+](
+	destination Destination, source Source_Bytes, destination_position Position,
+	source_position Position, line_source_size Position,
+) (next_position Position) {
+	next := int(destination_position)
+	source_index := int(source_position)
+	for line_position := range int(line_source_size) {
+		source_byte := source[source_index+line_position]
+		destination[next] = UNPRINTABLE_MARKER
+		if PRINTABLE_MINIMUM <= source_byte {
+			if source_byte <= PRINTABLE_MAXIMUM {
+				destination[next] = source_byte
+			}
+		}
+		next++
+	}
+	destination[next] = ASCII_COLUMN_MARKER
+	destination[next+DUMP_FIELD_SEPARATOR_SIZE] = LINE_FEED
+	return Position(next + DUMP_ASCII_SUFFIX_SIZE)
+}
