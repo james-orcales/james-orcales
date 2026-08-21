@@ -136,7 +136,8 @@ and all other markers. A rejected record changes no branch.
 # Assertions Registration
 
 Registration finds one fluent call nest that ends in `Ensure`. It walks to the `Assertions` root.
-Then, it publishes an immutable ordered plan of resolved handles.
+Then, it publishes an immutable ordered plan of resolved handles. The `invariant_noop` build does
+not register assertions: registration reads no source, seeds no events, and publishes no plans.
 
 ### Packages
 

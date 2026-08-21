@@ -4,14 +4,23 @@ package invariant_test
 
 import (
 	"fmt"
+	"io/fs"
 	"testing"
 
 	"local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/testify"
 )
 
 // Fixture_Subject stands in for a bundle subject where the test drives the builder directly.
 // This build resolves no plan, so the chain type only has to compile.
 type Fixture_Subject int
+
+// Any read fails so scan-and-discard cannot masquerade as disabled registration.
+type noop_registration_file_system struct{}
+
+func (noop_registration_file_system) Open(string) (fs.File, error) {
+	panic("noop registration read source")
+}
 
 // Opens a chain on a plan-free recorder over the fixture subject, keeping call sites short.
 func fixture_assertions(namespace invariant.Namespace) (builder invariant.Assertion_Builder) {
@@ -170,6 +179,23 @@ func Test_Noop_Assertions_Are_Completely_Inert(t *testing.T) {
 	if count := noop_event_count(&recorder.Events); count != 0 {
 		t.Fatalf("events = %d, want none", count)
 	}
+}
+
+// Registration must disappear with enforcement, or benchmark startup still pays source-analysis
+// cost for obligations this build can never observe.
+func Test_Noop_Assertion_Registration_Is_Inert(t *testing.T) {
+	recorder := &invariant.Recorder{
+		File_System:         noop_registration_file_system{},
+		Exit:                func(int) {},
+		Is_Test:             true,
+		Packages_To_Analyze: []string{"/existing"},
+	}
+	testify.Not_Panics(t, func() {
+		invariant.Recorder_Register_Packages_For_Analysis(recorder, "/replacement")
+	})
+	testify.Equal(t, 0, noop_event_count(&recorder.Events))
+	testify.Nil(t, recorder.Assertion_Plans)
+	testify.Equal(t, []string{"/existing"}, recorder.Packages_To_Analyze)
 }
 
 func noop_event_count(events interface{ Range(func(any, any) bool) }) (count int) {

@@ -17,3 +17,9 @@ type Assertion_Builder struct {
 	// State_B holds the union tag, deferred failure, ordinal, and remaining observations.
 	State_B uintptr
 }
+
+// Recorder_Register_Packages_For_Analysis keeps source analysis outside noop benchmarks because
+// registration cost belongs only to builds that can observe registered obligations.
+func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...string) {
+	recorder_register_packages_for_analysis(recorder, directories...)
+}

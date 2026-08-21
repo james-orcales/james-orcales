@@ -555,14 +555,14 @@ func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
 	}
 }
 
-// Recorder_Register_Packages_For_Analysis parses non-test Go files, seeds individual
-// obligations, and publishes the registration-owned emission plan before the suite starts.
+// Parses non-test Go files, seeds individual obligations, and publishes the registration-owned
+// emission plan before the suite starts.
 //
 // Directories default to recorder.Packages_To_Analyze when none are passed; a
 // directory may glob, a `*` segment matching one path element and `**` any depth,
 // expanded against File_System. Always uses its literal message directly; a builder assertion
 // uses its literal namespace, expanded ordinal, and literal or preset-owned message.
-func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...string) {
+func recorder_register_packages_for_analysis(recorder *Recorder, directories ...string) {
 	if len(directories) > 0 {
 		recorder.Packages_To_Analyze = directories
 	}
