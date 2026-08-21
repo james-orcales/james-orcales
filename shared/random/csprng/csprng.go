@@ -27,10 +27,9 @@
 package csprng
 
 import (
-	"encoding/binary"
-	"math/bits"
-
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 )
 
 // CHACHA_CONSTANT_FIRST is the little-endian word for ASCII "expa", first of the four constants
@@ -226,14 +225,20 @@ func Generator_Below(generator *Generator, bound Bound) (index Index) {
 	// witnessable invariant, so the word is read into bytes and assembled here, not returned.
 	var octet [WORD_BYTE_COUNT]byte
 	generator_drain(generator, Sink(octet[:]))
-	random := binary.LittleEndian.Uint64(octet[:])
-	high, low := bits.Mul64(random, limit)
+	random := uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+	high_word, low_word := bits.Multiply_64(
+		bits.Word_64(random), bits.Multiplier_64(limit),
+	)
+	high, low := uint64(high_word), uint64(low_word)
 	if low < limit {
 		threshold := (-limit) % limit
 		for low < threshold {
 			generator_drain(generator, Sink(octet[:]))
-			random = binary.LittleEndian.Uint64(octet[:])
-			high, low = bits.Mul64(random, limit)
+			random = uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
+			high_word, low_word = bits.Multiply_64(
+				bits.Word_64(random), bits.Multiplier_64(limit),
+			)
+			high, low = uint64(high_word), uint64(low_word)
 		}
 	}
 	return Index(high)
@@ -305,11 +310,15 @@ func chacha20_block(
 	state[2] = CHACHA_CONSTANT_THIRD
 	state[3] = CHACHA_CONSTANT_FOURTH
 	for word_index := 0; word_index < 8; word_index++ {
-		state[4+word_index] = binary.LittleEndian.Uint32(key[word_index*4:])
+		state[4+word_index] = uint32(binary.Uint_32(
+			key[word_index*4:], binary.LITTLE_ENDIAN,
+		))
 	}
 	state[12] = uint32(counter)
 	for word_index := 0; word_index < 3; word_index++ {
-		state[13+word_index] = binary.LittleEndian.Uint32(nonce[word_index*4:])
+		state[13+word_index] = uint32(binary.Uint_32(
+			nonce[word_index*4:], binary.LITTLE_ENDIAN,
+		))
 	}
 	scratch := state
 	for round_index := 0; round_index < 10; round_index++ {
@@ -324,7 +333,11 @@ func chacha20_block(
 	}
 	for word_index := 0; word_index < 16; word_index++ {
 		scratch[word_index] += state[word_index]
-		binary.LittleEndian.PutUint32(output[word_index*4:], scratch[word_index])
+		binary.Put_Uint_32(
+			output[word_index*4:],
+			binary.Word_32(scratch[word_index]),
+			binary.LITTLE_ENDIAN,
+		)
 	}
 }
 
@@ -338,14 +351,14 @@ func quarter_round(
 	a, b, c, d := indices[0], indices[1], indices[2], indices[3]
 	state[a] += state[b]
 	state[d] ^= state[a]
-	state[d] = bits.RotateLeft32(state[d], 16)
+	state[d] = uint32(bits.Rotate_Left_32(bits.Word_32(state[d]), 16))
 	state[c] += state[d]
 	state[b] ^= state[c]
-	state[b] = bits.RotateLeft32(state[b], 12)
+	state[b] = uint32(bits.Rotate_Left_32(bits.Word_32(state[b]), 12))
 	state[a] += state[b]
 	state[d] ^= state[a]
-	state[d] = bits.RotateLeft32(state[d], 8)
+	state[d] = uint32(bits.Rotate_Left_32(bits.Word_32(state[d]), 8))
 	state[c] += state[d]
 	state[b] ^= state[c]
-	state[b] = bits.RotateLeft32(state[b], 7)
+	state[b] = uint32(bits.Rotate_Left_32(bits.Word_32(state[b]), 7))
 }

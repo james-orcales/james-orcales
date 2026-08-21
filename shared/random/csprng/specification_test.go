@@ -5,14 +5,13 @@
 package csprng
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/hex"
-	"io"
-	"math/bits"
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/bytes"
+	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/encoding/hex"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -94,7 +93,7 @@ func Test_Block_Matches_Reference_Vectors(t *testing.T) {
 		want := decode_bytes(t, test_case.Want)
 		var output [CHACHA_BLOCK_BYTE_COUNT]byte
 		chacha20_block(key, test_case.Counter, nonce, &output)
-		if !bytes.Equal(output[:], want) {
+		if !bytes.Equal(bytes.Slice(output[:]), bytes.Slice(want)) {
 			t.Fatalf("%s: block was %x, want %x", test_case.Name, output[:], want)
 		}
 	}
@@ -120,7 +119,7 @@ func Test_Known_Sequence(t *testing.T) {
 	for index := 0; index < len(want); index++ {
 		var octet [WORD_BYTE_COUNT]byte
 		generator.Read(octet[:])
-		value := binary.LittleEndian.Uint64(octet[:])
+		value := uint64(binary.Uint_64(octet[:], binary.LITTLE_ENDIAN))
 		if value != want[index] {
 			t.Fatalf("draw %d was %d, want %d", index, value, want[index])
 		}
@@ -163,7 +162,7 @@ func Test_Bytes_Are_Uniform(t *testing.T) {
 	generator.Read(buffer)
 	set_bits := 0
 	for _, octet := range buffer {
-		set_bits += bits.OnesCount8(octet)
+		set_bits += int(bits.Ones_Count_8(bits.Word_8(octet)))
 	}
 	total_bits := len(buffer) * 8
 	if set_bits < total_bits*49/100 {
@@ -258,7 +257,7 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 func did_die(action func()) (died bool) {
 	exit, output := invariant.Default.Exit, invariant.Default.Output
 	invariant.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	invariant.Default.Output = io.Discard
+	invariant.Default.Output = discard_writer{}
 	defer func() {
 		invariant.Default.Exit, invariant.Default.Output = exit, output
 		if recover() != nil {
@@ -272,6 +271,13 @@ func did_die(action func()) (died bool) {
 // Marks the swapped-in Exit's panic, so did_die's recover tells a deliberately tripped guard from
 // an unrelated panic in the action.
 type tripped_invariant struct{}
+
+type discard_writer struct{}
+
+// Write keeps invariant diagnostics silent while preserving complete writes.
+func (discard_writer) Write(data []byte) (count int, err error) {
+	return len(data), nil
+}
 
 // Decodes a 32-byte hex key, failing the test on a wrong length.
 func decode_key(t *testing.T, encoded string) (key [KEY_BYTES]byte) {
@@ -295,9 +301,10 @@ func decode_nonce(t *testing.T, encoded string) (nonce [NONCE_BYTE_COUNT]byte) {
 
 // Decodes a hex string into bytes, failing the test on malformed input.
 func decode_bytes(t *testing.T, encoded string) (decoded []byte) {
-	decoded, decode_error := hex.DecodeString(encoded)
-	if decode_error != nil {
-		t.Fatalf("decode %q: %v", encoded, decode_error)
+	decoded = make([]byte, len(encoded)/2)
+	count, status := hex.Decode_Into(decoded, hex.Encoded(encoded))
+	if status != hex.STATUS_OK {
+		t.Fatalf("decode %q: status %d", encoded, status)
 	}
-	return decoded
+	return decoded[:count]
 }
