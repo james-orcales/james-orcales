@@ -23,26 +23,24 @@
 //   - Failure values render with fmt, not the vendored go-spew, and diffs render with
 //     shared/diff/myers, not the vendored go-difflib.
 //   - InDelta and InEpsilon were float64, which a deterministic package bans, so they are
-//     rebuilt on shared/math/fixedpoint. WithinDuration compares shared/time moments.
+//     rebuilt on shared/math/fixedpoint. WithinDuration compares shared/simulation/time moments.
 //   - The environment-dependent assertions take an injected Asserter: File_Exists reads an
-//     fs.FS, and Eventually and Never poll on an injected io loop the caller drives.
+//     file-stat procedure, and Eventually and Never poll on an injected io loop the caller drives.
 //   - HTTP assertions, YAMLEq (JSON_Eq stays), and the mock, suite, and http sub-packages
 //     are not ported.
 package testify
 
 import (
-	"bytes"
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"reflect"
 	"regexp"
-	"strings"
 	"testing"
+	"unsafe"
 
 	"local/james-orcales/shared/diff/myers"
+	"local/james-orcales/shared/encoding/json"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -52,15 +50,31 @@ import (
 // Eventually families reach through it. The sibling testify/default binds a Default
 // Asserter to the host OS so callers rarely construct one by hand.
 type Asserter struct {
-	// File_System backs the File_Exists and Dir_Exists family. Paths handed to those
-	// assertions are operating-system absolute; the leading separator is stripped first.
-	File_System fs.FS
+	// File_System_State belongs to Stat and stays opaque to assertions.
+	File_System_State unsafe.Pointer
+	// Stat classifies one path without transferring filesystem ownership.
+	Stat Stat
 	// Clock measures elapsed time for Eventually and Never against Now_Monotonic.
 	Clock time.Clock
 	// IO is the loop the Eventually and Never poll rides: the assertion arms a repeating
 	// Timeout and the caller's driver fires it, because a library never drives the loop.
 	IO *time.Timeline
 }
+
+// File_Kind is one injected path classification.
+type File_Kind uint8
+
+// FILE_NONE reports no entry.
+const FILE_NONE File_Kind = 0
+
+// FILE_REGULAR reports a non-directory entry.
+const FILE_REGULAR File_Kind = 1
+
+// FILE_DIRECTORY reports a directory entry.
+const FILE_DIRECTORY File_Kind = 2
+
+// Stat classifies one path through caller-owned state.
+type Stat func(state unsafe.Pointer, path string) (kind File_Kind, err error)
 
 // Panics with message when condition is false. It is the local stand-in for a
 // precondition the caller can only get wrong in code, never at runtime.
@@ -134,7 +148,44 @@ func Objects_Are_Equal[E, A any](expected E, actual A) (equal bool) {
 	if actual_bytes == nil {
 		return false
 	}
-	return bytes.Equal(expected_bytes, actual_bytes)
+	return bytes_equal(expected_bytes, actual_bytes)
+}
+
+func bytes_equal(expected []byte, actual []byte) (equal bool) {
+	if len(expected) != len(actual) {
+		return false
+	}
+	for index := 0; index < len(expected); index++ {
+		if expected[index] != actual[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func string_contains(value string, sought string) (contained bool) {
+	if len(sought) == 0 {
+		return true
+	}
+	if len(sought) > len(value) {
+		return false
+	}
+	last_start := len(value) - len(sought)
+	for start_index := 0; start_index <= last_start; start_index++ {
+		matched := true
+		value_index := start_index
+		for sought_index := 0; sought_index < len(sought); sought_index++ {
+			if value[value_index] != sought[sought_index] {
+				matched = false
+				break
+			}
+			value_index++
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 // Objects_Are_Equal_Values reports equality after a convertibility coercion, so values that
@@ -256,7 +307,7 @@ func Contains_Element[L, E any](list L, element E) (searchable bool, found bool)
 	}()
 	if list_type.Kind() == reflect.String {
 		fragment := reflect.ValueOf(any(element)).String()
-		return true, strings.Contains(list_value.String(), fragment)
+		return true, string_contains(list_value.String(), fragment)
 	}
 	if list_type.Kind() == reflect.Map {
 		for _, key := range list_value.MapKeys() {
@@ -863,15 +914,14 @@ func is_list(t *testing.T, list any, message_and_args ...any) (listlike bool) {
 
 // Renders the extra-element report for Elements_Match.
 func format_list_difference[A, B any](extra_a []A, extra_b []B) (message string) {
-	var report strings.Builder
-	report.WriteString("elements differ")
+	report := []byte("elements differ")
 	if len(extra_a) > 0 {
-		report.WriteString(fmt.Sprintf("\n\nextra elements in list A:\n%#v", extra_a))
+		report = fmt.Appendf(report, "\n\nextra elements in list A:\n%#v", extra_a)
 	}
 	if len(extra_b) > 0 {
-		report.WriteString(fmt.Sprintf("\n\nextra elements in list B:\n%#v", extra_b))
+		report = fmt.Appendf(report, "\n\nextra elements in list B:\n%#v", extra_b)
 	}
-	return report.String()
+	return string(report)
 }
 
 // No_Error asserts that err is nil.
@@ -917,7 +967,7 @@ func Error_Contains(
 	if !Error(t, err, message_and_args...) {
 		return false
 	}
-	if !strings.Contains(err.Error(), contains) {
+	if !string_contains(err.Error(), contains) {
 		message := fmt.Sprintf("Error %q does not contain %q", err.Error(), contains)
 		return Fail(t, message, message_and_args...)
 	}
@@ -1496,24 +1546,263 @@ func JSON_Eq[E, A ~string](
 	t *testing.T, expected E, actual A, message_and_args ...any,
 ) (equal bool) {
 	t.Helper()
-	var expected_value any
-	expected_error := json.Unmarshal([]byte(string(expected)), &expected_value)
-	if expected_error != nil {
-		message := fmt.Sprintf("Expected value (%q) is not valid json: %s",
-			string(expected), expected_error)
+	expected_text := string(expected)
+	actual_text := string(actual)
+	expected_position, expected_status := json.Validate(json.Encoded(expected_text))
+	if expected_status != json.STATUS_OK {
+		message := fmt.Sprintf("Expected value (%q) is not valid json at %d",
+			expected_text, expected_position)
 		return Fail(t, message, message_and_args...)
 	}
-	if string(actual) == string(expected) {
+	if actual_text == expected_text {
 		return true
 	}
-	var actual_value any
-	actual_error := json.Unmarshal([]byte(string(actual)), &actual_value)
-	if actual_error != nil {
-		message := fmt.Sprintf("Input (%q) needs to be valid json: %s",
-			string(actual), actual_error)
+	actual_position, actual_status := json.Validate(json.Encoded(actual_text))
+	if actual_status != json.STATUS_OK {
+		message := fmt.Sprintf("Input (%q) needs to be valid json at %d",
+			actual_text, actual_position)
 		return Fail(t, message, message_and_args...)
 	}
-	return Equal(t, expected_value, actual_value, message_and_args...)
+	if json_values_equal(expected_text, actual_text) {
+		return true
+	}
+	return Fail(t, "JSON values are not equal", message_and_args...)
+}
+
+func json_values_equal(expected string, actual string) (equal bool) {
+	expected = json_trim_space(expected)
+	actual = json_trim_space(actual)
+	if expected == actual {
+		return true
+	}
+	if len(expected) == 0 {
+		return false
+	}
+	if len(actual) == 0 {
+		return false
+	}
+	if expected[0] == '{' {
+		if actual[0] != '{' {
+			return false
+		}
+		return json_objects_equal(expected, actual)
+	}
+	if expected[0] == '[' {
+		if actual[0] != '[' {
+			return false
+		}
+		return json_arrays_equal(expected, actual)
+	}
+	return false
+}
+
+func json_trim_space(value string) (trimmed string) {
+	start_index := 0
+	for start_index < len(value) {
+		if !json_space(value[start_index]) {
+			break
+		}
+		start_index++
+	}
+	end_count := len(value)
+	for end_count > start_index {
+		if !json_space(value[end_count-1]) {
+			break
+		}
+		end_count--
+	}
+	return value[start_index:end_count]
+}
+
+func json_space(value byte) (space bool) {
+	switch value {
+	case ' ', '\t', '\n', '\r':
+		return true
+	}
+	return false
+}
+
+func json_value_end(value string, start int) (end int) {
+	index := start
+	if value[index] == '"' {
+		return json_string_end(value, index)
+	}
+	if value[index] == '{' {
+		return json_compound_end(value, index, '{', '}')
+	}
+	if value[index] == '[' {
+		return json_compound_end(value, index, '[', ']')
+	}
+	for index < len(value) {
+		switch value[index] {
+		case ',', '}', ']', ' ', '\t', '\n', '\r':
+			return index
+		}
+		index++
+	}
+	return index
+}
+
+func json_string_end(value string, start int) (end int) {
+	index := start + 1
+	for index < len(value) {
+		if value[index] == '\\' {
+			index += 2
+			continue
+		}
+		if value[index] == '"' {
+			return index + 1
+		}
+		index++
+	}
+	return len(value)
+}
+
+func json_compound_end(value string, start int, open byte, close byte) (end int) {
+	depth := 0
+	index := start
+	for index < len(value) {
+		if value[index] == '"' {
+			index = json_string_end(value, index)
+			continue
+		}
+		if value[index] == open {
+			depth++
+		}
+		if value[index] == close {
+			depth--
+			if depth == 0 {
+				return index + 1
+			}
+		}
+		index++
+	}
+	return len(value)
+}
+
+func json_next_non_space(value string, start int) (next int) {
+	next = start
+	for next < len(value) {
+		if !json_space(value[next]) {
+			return next
+		}
+		next++
+	}
+	return next
+}
+
+func json_object_member(
+	value string, start int,
+) (key string, member string, next int, found bool) {
+	index := json_next_non_space(value, start)
+	if value[index] == '}' {
+		return "", "", index, false
+	}
+	key_end := json_string_end(value, index)
+	key = value[index:key_end]
+	index = json_next_non_space(value, key_end)
+	index = json_next_non_space(value, index+1)
+	member_end := json_value_end(value, index)
+	member = value[index:member_end]
+	next = json_next_non_space(value, member_end)
+	if value[next] == ',' {
+		next++
+	}
+	return key, member, next, true
+}
+
+func json_objects_equal(expected string, actual string) (equal bool) {
+	expected_index := 1
+	expected_count := 0
+	for guard_index := 0; guard_index < len(expected); guard_index++ {
+		key, member, next, found := json_object_member(expected, expected_index)
+		if !found {
+			break
+		}
+		expected_count++
+		actual_index := 1
+		matched := false
+		for scan_index := 0; scan_index < len(actual); scan_index++ {
+			actual_key, actual_member, actual_next, actual_found :=
+				json_object_member(actual, actual_index)
+			if !actual_found {
+				break
+			}
+			if key == actual_key {
+				if json_compact_equal(member, actual_member) {
+					matched = true
+					break
+				}
+			}
+			actual_index = actual_next
+		}
+		if !matched {
+			return false
+		}
+		expected_index = next
+	}
+	actual_index := 1
+	actual_count := 0
+	for guard_index := 0; guard_index < len(actual); guard_index++ {
+		_, _, next, found := json_object_member(actual, actual_index)
+		if !found {
+			break
+		}
+		actual_count++
+		actual_index = next
+	}
+	return expected_count == actual_count
+}
+
+func json_arrays_equal(expected string, actual string) (equal bool) {
+	expected_index := json_next_non_space(expected, 1)
+	actual_index := json_next_non_space(actual, 1)
+	for guard_index := 0; guard_index < len(expected); guard_index++ {
+		expected_done := expected[expected_index] == ']'
+		actual_done := actual[actual_index] == ']'
+		if expected_done {
+			return actual_done
+		}
+		if actual_done {
+			return false
+		}
+		expected_end := json_value_end(expected, expected_index)
+		actual_end := json_value_end(actual, actual_index)
+		if !json_compact_equal(
+			expected[expected_index:expected_end], actual[actual_index:actual_end],
+		) {
+			return false
+		}
+		expected_index = json_next_non_space(expected, expected_end)
+		actual_index = json_next_non_space(actual, actual_end)
+		if expected[expected_index] == ',' {
+			expected_index = json_next_non_space(expected, expected_index+1)
+		}
+		if actual[actual_index] == ',' {
+			actual_index = json_next_non_space(actual, actual_index+1)
+		}
+	}
+	return false
+}
+
+func json_compact_equal(expected string, actual string) (equal bool) {
+	var expected_storage [json.OUTPUT_SIZE_MAXIMUM]byte
+	var actual_storage [json.OUTPUT_SIZE_MAXIMUM]byte
+	expected_count, _, expected_status := json.Compact_Into(
+		expected_storage[:], json.Encoded(expected),
+	)
+	if expected_status != json.STATUS_OK {
+		return false
+	}
+	actual_count, _, actual_status := json.Compact_Into(
+		actual_storage[:], json.Encoded(actual),
+	)
+	if actual_status != json.STATUS_OK {
+		return false
+	}
+	return bytes_equal(
+		expected_storage[:int(expected_count)], actual_storage[:int(actual_count)],
+	)
 }
 
 // Zero_Allocation owns bounded run count so caller cannot turn assertion into
@@ -1547,12 +1836,12 @@ func Asserter_File_Exists(
 	a *Asserter, t *testing.T, path string, message_and_args ...any,
 ) (exists bool) {
 	t.Helper()
-	information, err := fs.Stat(a.File_System, file_system_path(path))
+	information, err := a.Stat(a.File_System_State, file_system_path(path))
 	if err != nil {
 		message := fmt.Sprintf("unable to find file %q: %v", path, err)
 		return Fail(t, message, message_and_args...)
 	}
-	if information.IsDir() {
+	if information == FILE_DIRECTORY {
 		return Fail(t, fmt.Sprintf("%q is a directory", path), message_and_args...)
 	}
 	return true
@@ -1563,11 +1852,11 @@ func Asserter_No_File_Exists(
 	a *Asserter, t *testing.T, path string, message_and_args ...any,
 ) (absent bool) {
 	t.Helper()
-	information, err := fs.Stat(a.File_System, file_system_path(path))
+	information, err := a.Stat(a.File_System_State, file_system_path(path))
 	if err != nil {
 		return true
 	}
-	if information.IsDir() {
+	if information == FILE_DIRECTORY {
 		return true
 	}
 	return Fail(t, fmt.Sprintf("file %q exists", path), message_and_args...)
@@ -1578,12 +1867,12 @@ func Asserter_Directory_Exists(
 	a *Asserter, t *testing.T, path string, message_and_args ...any,
 ) (exists bool) {
 	t.Helper()
-	information, err := fs.Stat(a.File_System, file_system_path(path))
+	information, err := a.Stat(a.File_System_State, file_system_path(path))
 	if err != nil {
 		message := fmt.Sprintf("unable to find directory %q: %v", path, err)
 		return Fail(t, message, message_and_args...)
 	}
-	if !information.IsDir() {
+	if information != FILE_DIRECTORY {
 		return Fail(t, fmt.Sprintf("%q is a file", path), message_and_args...)
 	}
 	return true
@@ -1594,20 +1883,25 @@ func Asserter_No_Directory_Exists(
 	a *Asserter, t *testing.T, path string, message_and_args ...any,
 ) (absent bool) {
 	t.Helper()
-	information, err := fs.Stat(a.File_System, file_system_path(path))
+	information, err := a.Stat(a.File_System_State, file_system_path(path))
 	if err != nil {
 		return true
 	}
-	if !information.IsDir() {
+	if information != FILE_DIRECTORY {
 		return true
 	}
 	return Fail(t, fmt.Sprintf("directory %q exists", path), message_and_args...)
 }
 
-// Turns an operating-system absolute path into an fs.FS path: fs.FS names are slash-rooted
-// and carry no leading separator, so a bound os.DirFS resolves the original path.
+// Turns an operating-system absolute path into the slash-rooted path the injected stat procedure
+// receives.
 func file_system_path(path string) (name string) {
-	return strings.TrimPrefix(path, "/")
+	if len(path) > 0 {
+		if path[0] == '/' {
+			return path[1:]
+		}
+	}
+	return path
 }
 
 // Asserter_Eventually_Input pairs the two durations of Asserter_Eventually, which repeat a

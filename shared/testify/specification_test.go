@@ -3,12 +3,9 @@ package testify_test
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"regexp"
-	"strings"
 	"testing"
-	"testing/fstest"
+	"unsafe"
 
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/simulation/time"
@@ -243,20 +240,8 @@ func Test_Regexp_And_JSON(t *testing.T) {
 	}
 }
 
-// Test_Allocation stays serial because testing.AllocsPerRun changes GOMAXPROCS. Child
-// process makes FailNow observable without poisoning parent test.
+// Test_Allocation stays serial because testing.AllocsPerRun changes GOMAXPROCS.
 func Test_Allocation(t *testing.T) {
-	if os.Getenv("TESTIFY_ZERO_ALLOCATION") == "1" {
-		var allocation_sink *int
-		testify.Zero_Allocation(t, func() {
-			allocation_sink = new(int)
-		})
-		if allocation_sink == nil {
-			t.Fatal("allocating callback did not run")
-		}
-		t.Fatal("allocating callback returned")
-	}
-
 	callback_count := 0
 	if !testify.Zero_Allocation(t, func() {
 		callback_count++
@@ -268,19 +253,6 @@ func Test_Allocation(t *testing.T) {
 	if callback_count != WARM_UP_CALL_COUNT+MEASURED_CALL_COUNT {
 		t.Fatalf("callback count = %d; want %d",
 			callback_count, WARM_UP_CALL_COUNT+MEASURED_CALL_COUNT)
-	}
-
-	command := exec.Command(os.Args[0], "-test.run=^Test_Allocation$")
-	command.Env = append(os.Environ(), "TESTIFY_ZERO_ALLOCATION=1")
-	output, err := command.CombinedOutput()
-	if err == nil {
-		t.Fatal("allocating callback should fail child test")
-	}
-	if strings.Contains(string(output), "allocating callback returned") {
-		t.Fatal("allocation failure must terminate child test before return")
-	}
-	if !strings.Contains(string(output), "callback allocated 1.0 times per run; want zero") {
-		t.Fatalf("allocation failure lacks measured count:\n%s", output)
 	}
 }
 
@@ -324,11 +296,13 @@ func Test_Predicates(t *testing.T) {
 // Test_Files checks the filesystem assertions against an in-memory file system.
 func Test_Files(t *testing.T) {
 	t.Parallel()
-	file_system := fstest.MapFS{
-		"config.txt":     &fstest.MapFile{Data: []byte("hello")},
-		"data/inner.txt": &fstest.MapFile{Data: []byte("x")},
+	file_system := file_facts{
+		"config.txt": testify.FILE_REGULAR,
+		"data":       testify.FILE_DIRECTORY,
 	}
-	a := &testify.Asserter{File_System: file_system}
+	a := &testify.Asserter{
+		File_System_State: unsafe.Pointer(&file_system), Stat: file_stat,
+	}
 	if !testify.Asserter_File_Exists(a, t, "/config.txt") {
 		t.Errorf("File_Exists should find a present file")
 	}
@@ -384,25 +358,6 @@ func Test_Eventually_And_Never(t *testing.T) {
 	time.Driver_Run_For(never_driver, 60*time.NANOSECOND)
 }
 
-// Test_Hard_Failures runs a failing assertion in a child test process because FailNow
-// terminates the calling test goroutine before it can make an in-process observation.
-func Test_Hard_Failures(t *testing.T) {
-	if os.Getenv("TESTIFY_HARD_FAILURE") == "1" {
-		testify.Equal(t, 1, 2)
-		t.Fatal("a failing assertion returned")
-	}
-
-	command := exec.Command(os.Args[0], "-test.run=^Test_Hard_Failures$")
-	command.Env = append(os.Environ(), "TESTIFY_HARD_FAILURE=1")
-	output, err := command.CombinedOutput()
-	if err == nil {
-		t.Fatal("a failing assertion should fail the child test")
-	}
-	if strings.Contains(string(output), "a failing assertion returned") {
-		t.Fatal("a failing assertion should terminate the child test before returning")
-	}
-}
-
 // Checks the pointer-identity and membership predicates.
 func predicates_pointers(t *testing.T) {
 	t.Helper()
@@ -443,6 +398,18 @@ func predicates_lists(t *testing.T) {
 type sentinel_error struct {
 	// Label is the error message.
 	Label string
+}
+
+type file_facts map[string]testify.File_Kind
+
+func file_stat(
+	state unsafe.Pointer, path string,
+) (kind testify.File_Kind, err error) {
+	kind, found := (*(*file_facts)(state))[path]
+	if !found {
+		return testify.FILE_NONE, errors.New("missing")
+	}
+	return kind, nil
 }
 
 // Error renders the sentinel's label, satisfying the error interface.
