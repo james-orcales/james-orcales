@@ -333,26 +333,49 @@ func test_self_exec_workspace() (workspace *os.Self_Exec_Workspace) {
 // FILE_TEST_PERMISSION is owner read and write, the mode a rewritten source file keeps.
 const FILE_TEST_PERMISSION os.File_Permission = 0o600
 
-// Test_File_Round_Trip covers File_Write creating a file with the given content and File_Read
-// returning exactly those bytes, then a rewrite replacing rather than appending.
+// Test_File_Round_Trip covers File_Write creating a file with the given content and
+// File_Read_Into returning exactly those bytes, then a rewrite replacing rather than appending.
 func Test_File_Round_Trip(t *testing.T) {
 	path := os.File_Path(t.TempDir() + "/round_trip.txt")
+	const STORAGE_BYTES = 32
+	var storage [STORAGE_BYTES]byte
 	first := os.File_Content("first content\n")
 	testify.No_Error(t, os.File_Write(path, first, FILE_TEST_PERMISSION))
-	read, read_err := os.File_Read(path)
+	read, read_err := os.File_Read_Into(path, storage[:])
 	testify.No_Error(t, read_err)
 	testify.Equal(t, string(first), string(read))
 
 	second := os.File_Content("second\n")
 	testify.No_Error(t, os.File_Write(path, second, FILE_TEST_PERMISSION))
-	read, read_err = os.File_Read(path)
+	read, read_err = os.File_Read_Into(path, storage[:])
 	testify.No_Error(t, read_err)
 	testify.Equal(t, string(second), string(read))
 }
 
+// Test_File_Read_Into covers reading into caller storage: content lands in destination, and a
+// file larger than destination reports File_Too_Large instead of a partial read.
+func Test_File_Read_Into(t *testing.T) {
+	path := os.File_Path(t.TempDir() + "/into.txt")
+	content := os.File_Content("into content\n")
+	testify.No_Error(t, os.File_Write(path, content, FILE_TEST_PERMISSION))
+	const STORAGE_BYTES = 32
+	const SMALL_BYTES = 4
+	var storage [STORAGE_BYTES]byte
+	read, read_err := os.File_Read_Into(path, storage[:])
+	testify.No_Error(t, read_err)
+	testify.Equal(t, string(content), string(read))
+	testify.Equal(t, &storage[0], &read[0])
+	var small [SMALL_BYTES]byte
+	read, read_err = os.File_Read_Into(path, small[:])
+	testify.Error_Is(t, read_err, os.File_Too_Large)
+	testify.Equal(t, 0, len(read))
+}
+
 // Test_File_Read_Absent covers a missing path reporting the kernel's error and no content.
 func Test_File_Read_Absent(t *testing.T) {
-	read, read_err := os.File_Read(os.File_Path(t.TempDir() + "/absent.txt"))
+	const STORAGE_BYTES = 32
+	var storage [STORAGE_BYTES]byte
+	read, read_err := os.File_Read_Into(os.File_Path(t.TempDir()+"/absent.txt"), storage[:])
 	if read_err == nil {
 		t.Fatal("reading an absent file must fail")
 	}

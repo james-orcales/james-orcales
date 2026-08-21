@@ -644,11 +644,14 @@ var File_Too_Large = errors.New("os: file exceeds the synchronous read bound")
 // File_Short_Write reports a write the kernel stopped advancing before the content ended.
 var File_Short_Write = errors.New("os: file write made no progress")
 
-// File_Read reads one whole file. It is synchronous by design: it serves tools that run
-// before or outside an IO loop, such as a test rewriting its own source.
-func File_Read(path File_Path) (content File_Content, err error) {
-	defer func() { File_Content_Invariants(content, "File_Read.content") }()
-	File_Path_Invariants(path, "File_Read.path")
+// File_Read_Into reads one whole file into destination and returns the filled prefix. It is
+// synchronous by design: it serves tools that run before or outside an IO loop, such as a test
+// rewriting its own source. A file larger than destination is File_Too_Large, never a partial
+// read, so the caller's storage is the bound and nothing allocates.
+func File_Read_Into(path File_Path, destination File_Content) (content File_Content, err error) {
+	defer func() { File_Content_Invariants(content, "File_Read_Into.content") }()
+	File_Path_Invariants(path, "File_Read_Into.path")
+	File_Content_Invariants(destination, "File_Read_Into.destination")
 	file, open_err := syscall.Open(string(path), syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
 	if open_err != nil {
 		return nil, open_err
@@ -658,10 +661,10 @@ func File_Read(path File_Path) (content File_Content, err error) {
 	if stat_err := syscall.Fstat(file, &facts); stat_err != nil {
 		return nil, stat_err
 	}
-	if facts.Size > FILE_BYTES_MAXIMUM {
+	if facts.Size > int64(len(destination)) {
 		return nil, File_Too_Large
 	}
-	content = make(File_Content, int(facts.Size))
+	content = destination[:int(facts.Size)]
 	filled := 0
 	// Each pass advances by at least one byte or ends, so the size bounds the loop.
 	for pass_index := 0; pass_index < len(content); pass_index++ {
