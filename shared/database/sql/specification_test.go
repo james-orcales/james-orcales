@@ -12,7 +12,7 @@ import (
 	"local/james-orcales/shared/testify"
 )
 
-// Test_Initialization protects fixed caller capacity and injected dependencies.
+// Test_Initialization protects fixed caller capacity and injected driver.
 func Test_Initialization(t *testing.T) {
 	state := fake_state{}
 	data_source, validation := driver.Data_Source_Validate("memory")
@@ -20,7 +20,7 @@ func Test_Initialization(t *testing.T) {
 	var pool sql.Pool
 	var slots [POOL_CAPACITY]sql.Slot
 	status := sql.Pool_Init(
-		&pool, fake_driver(&state), data_source, fake_synchronizer(&state), slots[:],
+		&pool, fake_driver(&state), data_source, slots[:],
 	)
 	testify.Equal_Values(t, sql.STATUS_OK, status, "pool init")
 	statistics := sql.Pool_Statistics(&pool)
@@ -29,13 +29,9 @@ func Test_Initialization(t *testing.T) {
 
 	var empty sql.Pool
 	status = sql.Pool_Init(
-		&empty, fake_driver(&state), data_source, fake_synchronizer(&state), nil,
+		&empty, fake_driver(&state), data_source, nil,
 	)
 	testify.Equal_Values(t, sql.STATUS_STORAGE_INVALID, status, "empty capacity")
-	status = sql.Pool_Init(
-		&empty, fake_driver(&state), data_source, sql.Synchronizer{}, nil,
-	)
-	testify.Equal_Values(t, sql.STATUS_STORAGE_INVALID, status, "empty dependencies")
 }
 
 // Test_Pool protects reuse, exhaustion, stale lease rejection, and bounded close.
@@ -58,7 +54,6 @@ func Test_Pool(t *testing.T) {
 	testify.Equal_Values(t, sql.STATUS_OK, sql.Connection_Close(&second), "release second")
 	testify.Equal_Values(t, sql.STATUS_OK, sql.Pool_Close(&pool), "close")
 	testify.Equal(t, POOL_CAPACITY, state.Close_Count, "driver close count")
-	testify.Zero(t, state.Lock_Depth, "balanced synchronization")
 }
 
 // Test_Connections protects direct ping, execute, query, rows ownership, and release.
@@ -172,6 +167,7 @@ func Test_Invariant_Domains(t *testing.T) {
 	test_pointer_storage_domains()
 	test_request_operation_domains(t)
 	test_pool_pointer_domains()
+	test_zero_pool_pointer_domains(t)
 	test_pool_initialization_storage_domains()
 	test_output_storage_domains(t)
 	test_statistics_result_domains(t)
@@ -216,8 +212,7 @@ func test_allocation_initialization(t *testing.T, data_source driver.Data_Source
 		pool = sql.Pool{}
 		slots = [POOL_CAPACITY]sql.Slot{}
 		status = sql.Pool_Init(
-			&pool, fake_driver(&state), data_source,
-			fake_synchronizer(&state), slots[:],
+			&pool, fake_driver(&state), data_source, slots[:],
 		)
 	})
 	testify.Equal_Values(t, sql.STATUS_OK, status, "initialization")
@@ -246,8 +241,7 @@ func test_allocation_pool(
 		statement = sql.Statement{}
 		transaction = sql.Transaction{}
 		sql.Pool_Init(
-			&pool, fake_driver(&state), data_source,
-			fake_synchronizer(&state), slots[:],
+			&pool, fake_driver(&state), data_source, slots[:],
 		)
 		status = sql.Pool_Probe(&pool)
 		status = sql.Pool_Exec(&pool, request, &result)
@@ -306,8 +300,7 @@ func test_allocation_connection(
 		statement = sql.Statement{}
 		transaction = sql.Transaction{}
 		sql.Pool_Init(
-			&pool, fake_driver(&state), data_source,
-			fake_synchronizer(&state), slots[:],
+			&pool, fake_driver(&state), data_source, slots[:],
 		)
 		var acquired sql.Status
 		connection, acquired = sql.Pool_Connection_Acquire(&pool)
@@ -356,8 +349,7 @@ func test_allocation_rejection(
 		statement = sql.Statement{}
 		transaction = sql.Transaction{}
 		sql.Pool_Init(
-			&pool, fake_driver(&state), data_source,
-			fake_synchronizer(&state), slots[:],
+			&pool, fake_driver(&state), data_source, slots[:],
 		)
 		var acquired sql.Status
 		first, acquired = sql.Pool_Connection_Acquire(&pool)
@@ -437,8 +429,7 @@ func test_pool_storage_domains(t *testing.T) {
 			text_of(count % (strings.TEXT_SIZE_MAXIMUM + NUMBER_ONE)),
 		)
 		sql.Pool_Init(
-			&pool, fake_driver(&state), data_source,
-			fake_synchronizer(&state), storage,
+			&pool, fake_driver(&state), data_source, storage,
 		)
 		statistics := sql.Pool_Statistics(&pool)
 		sql.Statistics_Capacity(statistics)
@@ -450,8 +441,7 @@ func test_pool_storage_domains(t *testing.T) {
 		var slots [POOL_CAPACITY]sql.Slot
 		data_source := driver.Data_Source(text_of(size))
 		sql.Pool_Init(
-			&pool, fake_driver(&state), data_source,
-			fake_synchronizer(&state), slots[:],
+			&pool, fake_driver(&state), data_source, slots[:],
 		)
 		sql.Pool_Statistics(&pool)
 	}
@@ -706,8 +696,7 @@ func test_handle_boundary_domains(t *testing.T) {
 	var pool sql.Pool
 	data_source := driver.Data_Source("memory")
 	sql.Pool_Init(
-		&pool, fake_driver(&state), data_source,
-		fake_synchronizer(&state), storage,
+		&pool, fake_driver(&state), data_source, storage,
 	)
 	for _, index := range []sql.Slot_Index{
 		NUMBER_ZERO, NUMBER_ONE, NUMBER_TWO, sql.SLOT_INDEX_MAXIMUM,
@@ -745,7 +734,7 @@ func test_connection_of_domains(t *testing.T) {
 	var pool sql.Pool
 	sql.Pool_Init(
 		&pool, fake_driver(&state), driver.Data_Source("memory"),
-		fake_synchronizer(&state), storage,
+		storage,
 	)
 	for index := NUMBER_ZERO; index < len(storage)-NUMBER_ONE; index++ {
 		storage[index].State = sql.SLOT_CONNECTION
@@ -755,7 +744,7 @@ func test_connection_of_domains(t *testing.T) {
 	pool = sql.Pool{}
 	sql.Pool_Init(
 		&pool, fake_driver(&state), driver.Data_Source("memory"),
-		fake_synchronizer(&state), storage,
+		storage,
 	)
 	for index := range storage {
 		if index != NUMBER_TWO {
@@ -768,7 +757,7 @@ func test_connection_of_domains(t *testing.T) {
 	pool = sql.Pool{}
 	sql.Pool_Init(
 		&pool, fake_driver(&state), driver.Data_Source("memory"),
-		fake_synchronizer(&state), single[:],
+		single[:],
 	)
 	fake_connect(
 		unsafe.Pointer(&state), driver.Data_Source("memory"),
@@ -1055,6 +1044,48 @@ func test_pool_pointer_domains() {
 	}
 }
 
+// Nonnil zero pools reach structural bounds before initialized-state rejection.
+func test_zero_pool_pointer_domains(t *testing.T) {
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		sql.Pool_Connection_Acquire(&pool)
+	}, "zero pool acquire")
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		sql.Pool_Probe(&pool)
+	}, "zero pool probe")
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		var result sql.Result
+		sql.Pool_Exec(&pool, driver.Request{}, &result)
+	}, "zero pool execute")
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		var rows sql.Rows
+		sql.Pool_Query(&pool, driver.Request{}, &rows)
+	}, "zero pool query")
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		var statement sql.Statement
+		sql.Pool_Prepare(&pool, "", &statement)
+	}, "zero pool prepare")
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		var transaction sql.Transaction
+		options := driver.Transaction_Options_Of(driver.ISOLATION_DEFAULT, false)
+		sql.Pool_Begin(&pool, options, &transaction)
+	}, "zero pool begin")
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		sql.Pool_Close(&pool)
+	}, "zero pool close")
+	testify.Panics(t, func() {
+		var pool sql.Pool
+		connection := sql.Connection{Pool: unsafe.Pointer(&pool)}
+		sql.Connection_Probe(&connection)
+	}, "zero pool handle")
+}
+
 func exercise_pool_pointer_domain(
 	data_size int, slot_count int, closed bool,
 ) {
@@ -1088,7 +1119,7 @@ func domain_pool(data_size int, slot_count int, closed bool) (pool sql.Pool) {
 	storage := make([]sql.Slot, slot_count)
 	sql.Pool_Init(
 		&pool, fake_driver(&state), driver.Data_Source(text_of(data_size)),
-		fake_synchronizer(&state), storage,
+		storage,
 	)
 	pool.Closed = sql.POOL_OPEN
 	if closed {
@@ -1111,15 +1142,14 @@ func test_pool_initialization_storage_domains() {
 			closed = sql.POOL_CLOSED
 		}
 		pool := sql.Pool{
-			Driver:       fake_driver(&state),
-			Data_Source:  driver.Data_Source(text_of(data_sizes[index])),
-			Synchronizer: fake_synchronizer(&state),
-			Slots:        make(sql.Slot_Storage, slot_counts[index]),
-			Closed:       closed,
+			Driver:      fake_driver(&state),
+			Data_Source: driver.Data_Source(text_of(data_sizes[index])),
+			Slots:       make(sql.Slot_Storage, slot_counts[index]),
+			Closed:      closed,
 		}
 		var storage [POOL_CAPACITY]sql.Slot
 		sql.Pool_Init(
-			&pool, fake_driver(&state), "", fake_synchronizer(&state), storage[:],
+			&pool, fake_driver(&state), "", storage[:],
 		)
 	}
 
@@ -1142,7 +1172,7 @@ func test_pool_initialization_storage_domains() {
 	}
 	var pool sql.Pool
 	sql.Pool_Init(
-		&pool, fake_driver(&state), "", fake_synchronizer(&state), storage,
+		&pool, fake_driver(&state), "", storage,
 	)
 }
 
@@ -1337,7 +1367,7 @@ func test_discard_pool_domains() {
 		var pool sql.Pool
 		sql.Pool_Init(
 			&pool, fake_driver(&state), driver.Data_Source(text_of(data_sizes[index])),
-			fake_synchronizer(&state), storage,
+			storage,
 		)
 		connection, _ := sql.Pool_Connection_Acquire(&pool)
 		state.Return_Status = driver.STATUS_BAD_CONNECTION
@@ -1358,11 +1388,10 @@ func test_initialization_connection_domains() {
 		state := fake_state{}
 		storage := make([]sql.Slot, sql.CONNECTION_COUNT_MAXIMUM)
 		pool := sql.Pool{
-			Driver:       fake_driver(&state),
-			Data_Source:  "",
-			Synchronizer: fake_synchronizer(&state),
-			Slots:        storage,
-			Closed:       sql.POOL_OPEN,
+			Driver:      fake_driver(&state),
+			Data_Source: "",
+			Slots:       storage,
+			Closed:      sql.POOL_OPEN,
 		}
 		slot := &storage[indexes[index]]
 		fake_connect(unsafe.Pointer(&state), "", &slot.Connection)
@@ -1411,7 +1440,6 @@ type fake_state struct {
 	Row_Position      int
 	Connect_Count     int
 	Close_Count       int
-	Lock_Depth        int
 	Slots             sql.Slot_Storage
 	Mutate_Generation bool
 	Mutate_State      bool
@@ -1427,7 +1455,7 @@ func test_pool(t *testing.T, state *fake_state) (pool sql.Pool) {
 	testify.Equal_Values(t, driver.STATUS_OK, validation, "data source")
 	var slots [POOL_CAPACITY]sql.Slot
 	status := sql.Pool_Init(
-		&pool, fake_driver(state), data_source, fake_synchronizer(state), slots[:],
+		&pool, fake_driver(state), data_source, slots[:],
 	)
 	testify.Equal_Values(t, sql.STATUS_OK, status, "pool init")
 	return pool
@@ -1440,21 +1468,6 @@ func test_request(t *testing.T) (request driver.Request) {
 	request, validation = driver.Request_Of(query, nil)
 	testify.Equal_Values(t, driver.STATUS_OK, validation, "request")
 	return request
-}
-
-func fake_synchronizer(state *fake_state) (synchronizer sql.Synchronizer) {
-	return sql.Synchronizer{
-		State: unsafe.Pointer(state), Lock_Procedure: fake_lock,
-		Unlock_Procedure: fake_unlock,
-	}
-}
-
-func fake_lock(state unsafe.Pointer) {
-	(*fake_state)(state).Lock_Depth++
-}
-
-func fake_unlock(state unsafe.Pointer) {
-	(*fake_state)(state).Lock_Depth--
 }
 
 func fake_driver(state *fake_state) (injected driver.Driver) {

@@ -122,34 +122,6 @@ const STATUS_BUSY Status = STATUS_HANDLE_INVALID + 1
 // STATUS_GENERATION_EXHAUSTED refuses lease identity wraparound.
 const STATUS_GENERATION_EXHAUSTED Status = STATUS_BUSY + 1
 
-// Synchronizer_Lock_Procedure enters pool critical section.
-type Synchronizer_Lock_Procedure func(state unsafe.Pointer)
-
-// Synchronizer_Unlock_Procedure leaves pool critical section.
-type Synchronizer_Unlock_Procedure func(state unsafe.Pointer)
-
-// Synchronizer injects exclusion without ambient synchronization state.
-type Synchronizer struct {
-	// State belongs to synchronization implementation.
-	State unsafe.Pointer
-	// Lock_Procedure enters pool critical section.
-	Lock_Procedure Synchronizer_Lock_Procedure
-	// Unlock_Procedure leaves pool critical section.
-	Unlock_Procedure Synchronizer_Unlock_Procedure
-}
-
-// Synchronizer_Invariants admits zero storage before dependency injection.
-func Synchronizer_Invariants(value Synchronizer, namespace aver.Namespace) {
-	aver.Sometimes(
-		value.Lock_Procedure != nil,
-		"Pool synchronizer lock dependency is bound.",
-	)
-	aver.Sometimes(
-		value.Unlock_Procedure != nil,
-		"Pool synchronizer unlock dependency is bound.",
-	)
-}
-
 // CONNECTION_COUNT_MAXIMUM shares repository collection capacity.
 const CONNECTION_COUNT_MAXIMUM = slices.SLICE_COUNT_MAXIMUM
 
@@ -396,13 +368,12 @@ const POOL_OPEN Pool_Closed = Pool_Closed(bits.WORD_8_MINIMUM)
 // POOL_CLOSED refuses new connection work.
 const POOL_CLOSED Pool_Closed = POOL_OPEN + 1
 
-// POOL_SIZE keeps pool representation equal to injected dependencies and caller storage.
+// POOL_SIZE keeps pool representation equal to injected driver and caller storage.
 const POOL_SIZE = unsafe.Sizeof(struct {
-	Driver       driver.Driver
-	Data_Source  driver.Data_Source
-	Synchronizer Synchronizer
-	Slots        Slot_Storage
-	Closed       Pool_Closed
+	Driver      driver.Driver
+	Data_Source driver.Data_Source
+	Slots       Slot_Storage
+	Closed      Pool_Closed
 }{})
 
 // Pool owns no dynamic storage; every connection slot belongs to caller.
@@ -411,8 +382,6 @@ type Pool struct {
 	Driver driver.Driver
 	// Data_Source remains validated before connection creation.
 	Data_Source driver.Data_Source
-	// Synchronizer keeps exclusion injected.
-	Synchronizer Synchronizer
 	// Slots keeps capacity caller-owned and bounded.
 	Slots Slot_Storage
 	// Closed prevents acquisition after terminal resource release.
@@ -423,7 +392,6 @@ type Pool struct {
 func Pool_Invariants(value Pool, namespace aver.Namespace) {
 	driver.Driver_Invariants(value.Driver, namespace)
 	driver.Data_Source_Invariants(value.Data_Source, namespace)
-	Synchronizer_Invariants(value.Synchronizer, namespace)
 	Slot_Storage_Invariants(value.Slots, namespace)
 	Pool_Closed_Invariants(value.Closed, namespace)
 	aver.Always(
@@ -435,63 +403,34 @@ func Pool_Invariants(value Pool, namespace aver.Namespace) {
 // Pool_Pointer names caller-owned Pool storage.
 type Pool_Pointer *Pool
 
-// Pool_Pointer_Invariants proves initialized storage presence and shape.
+// Pool_Pointer_Invariants admits absent optional storage.
 func Pool_Pointer_Invariants(value Pool_Pointer, namespace aver.Namespace) {
-	aver.Always(value != nil, "SQL Pool storage exists.")
-	driver.Driver_Invariants(value.Driver, namespace)
-	driver.Data_Source_Invariants(value.Data_Source, namespace)
-	Synchronizer_Invariants(value.Synchronizer, namespace)
-	aver.Tree(value, namespace).
-		Range_Int(
-			len(value.Slots), INITIALIZED_CONNECTION_COUNT_MINIMUM,
-			CONNECTION_COUNT_MAXIMUM,
-		).
-		Enum_Uint8(
-			uint8(value.Closed), uint8(POOL_OPEN), uint8(POOL_CLOSED),
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == POOL_SIZE,
-		"SQL Pool pointer preserves dependency storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Pool_Invariants(*value, namespace)
 }
 
 // Pool_Destination names caller-owned storage before initialization.
 type Pool_Destination *Pool
 
-// Pool_Destination_Invariants admits zero and initialized prior storage.
+// Pool_Destination_Invariants admits absent optional storage.
 func Pool_Destination_Invariants(
 	value Pool_Destination, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "SQL Pool destination exists.")
-	driver.Driver_Invariants(value.Driver, namespace)
-	driver.Data_Source_Invariants(value.Data_Source, namespace)
-	Synchronizer_Invariants(value.Synchronizer, namespace)
-	aver.Tree(value, namespace).
-		Range_Int(
-			len(value.Slots), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM,
-		).
-		Enum_Uint8(
-			uint8(value.Closed), uint8(POOL_OPEN), uint8(POOL_CLOSED),
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == POOL_SIZE,
-		"SQL Pool destination preserves dependency storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Pool_Invariants(*value, namespace)
 }
 
-// Open_Pool_Pointer names initialized storage that still admits work.
-type Open_Pool_Pointer *Pool
+// Open_Pool excludes empty and closed pool states proven before internal work.
+type Open_Pool Pool
 
-// Open_Pool_Pointer_Invariants excludes closed and empty storage.
-func Open_Pool_Pointer_Invariants(
-	value Open_Pool_Pointer, namespace aver.Namespace,
-) {
-	aver.Always(value != nil, "Open SQL Pool storage exists.")
+// Open_Pool_Invariants preserves proof needed by internal pool operations.
+func Open_Pool_Invariants(value Open_Pool, namespace aver.Namespace) {
 	driver.Driver_Invariants(value.Driver, namespace)
 	driver.Data_Source_Invariants(value.Data_Source, namespace)
-	Synchronizer_Invariants(value.Synchronizer, namespace)
 	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Slots), INITIALIZED_CONNECTION_COUNT_MINIMUM,
@@ -500,9 +439,22 @@ func Open_Pool_Pointer_Invariants(
 		Ensure()
 	aver.Always(value.Closed == POOL_OPEN, "Open SQL Pool accepts work.")
 	aver.Always(
-		unsafe.Sizeof(*value) == POOL_SIZE,
-		"Open SQL Pool pointer preserves dependency storage size.",
+		unsafe.Sizeof(value) == POOL_SIZE,
+		"Open SQL Pool preserves dependency storage size.",
 	)
+}
+
+// Open_Pool_Pointer names proven open storage without copying Pool.
+type Open_Pool_Pointer *Open_Pool
+
+// Open_Pool_Pointer_Invariants admits absent optional storage.
+func Open_Pool_Pointer_Invariants(
+	value Open_Pool_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Open_Pool_Invariants(*value, namespace)
 }
 
 // CONNECTION_SIZE keeps lease representation equal to owner, index, and generation.
@@ -535,24 +487,14 @@ func Connection_Invariants(value Connection, namespace aver.Namespace) {
 // Connection_Pointer names caller-owned Connection storage.
 type Connection_Pointer *Connection
 
-// Connection_Pointer_Invariants proves storage presence and shape.
+// Connection_Pointer_Invariants admits absent optional storage.
 func Connection_Pointer_Invariants(
 	value Connection_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "SQL Connection storage exists.")
-	aver.Tree(value, namespace).
-		Range_Int(
-			int(value.Slot_Index), slices.COUNT_MINIMUM, SLOT_INDEX_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Generation), bits.WORD_64_MINIMUM,
-			bits.WORD_64_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == CONNECTION_SIZE,
-		"SQL Connection pointer preserves handle storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Connection_Invariants(*value, namespace)
 }
 
 // Live_Connection is one validated nonzero lease identity.
@@ -577,27 +519,17 @@ func Live_Connection_Invariants(
 	)
 }
 
-// Live_Connection_Pointer names validated lease storage.
-type Live_Connection_Pointer *Connection
+// Live_Connection_Pointer names validated lease storage without copying it.
+type Live_Connection_Pointer *Live_Connection
 
-// Live_Connection_Pointer_Invariants excludes empty generation sentinel.
+// Live_Connection_Pointer_Invariants admits absent optional storage.
 func Live_Connection_Pointer_Invariants(
 	value Live_Connection_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Live SQL Connection storage exists.")
-	aver.Tree(value, namespace).
-		Range_Int(
-			int(value.Slot_Index), slices.COUNT_MINIMUM, SLOT_INDEX_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Generation), uint64(LEASE_GENERATION_MINIMUM),
-			bits.WORD_64_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == CONNECTION_SIZE,
-		"Live SQL Connection pointer preserves handle storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Live_Connection_Invariants(*value, namespace)
 }
 
 // Return_State is state restored after a dependent resource closes.
@@ -676,20 +608,12 @@ func Rows_Invariants(value Rows, namespace aver.Namespace) {
 // Rows_Pointer names caller-owned Rows storage.
 type Rows_Pointer *Rows
 
-// Rows_Pointer_Invariants proves storage presence and shape.
+// Rows_Pointer_Invariants admits absent optional storage.
 func Rows_Pointer_Invariants(value Rows_Pointer, namespace aver.Namespace) {
-	aver.Always(value != nil, "SQL Rows storage exists.")
-	Connection_Invariants(value.Connection, namespace)
-	driver.Rows_Invariants(value.Driver_Rows, namespace)
-	aver.Tree(value, namespace).
-		Range_Uint8(
-			uint8(value.Return_State), uint8(SLOT_EMPTY), uint8(SLOT_CLOSE),
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == ROWS_SIZE,
-		"SQL Rows pointer preserves cursor storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Rows_Invariants(*value, namespace)
 }
 
 // STATEMENT_SIZE keeps prepared handle representation equal to explicit fields.
@@ -723,22 +647,14 @@ func Statement_Invariants(value Statement, namespace aver.Namespace) {
 // Statement_Pointer names caller-owned Statement storage.
 type Statement_Pointer *Statement
 
-// Statement_Pointer_Invariants proves storage presence and shape.
+// Statement_Pointer_Invariants admits absent optional storage.
 func Statement_Pointer_Invariants(
 	value Statement_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "SQL Statement storage exists.")
-	Connection_Invariants(value.Connection, namespace)
-	driver.Statement_Invariants(value.Driver_Statement, namespace)
-	aver.Tree(value, namespace).
-		Range_Uint8(
-			uint8(value.Return_State), uint8(SLOT_EMPTY), uint8(SLOT_CLOSE),
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == STATEMENT_SIZE,
-		"SQL Statement pointer preserves prepared storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Statement_Invariants(*value, namespace)
 }
 
 // TRANSACTION_SIZE keeps transaction handle representation equal to explicit fields.
@@ -772,22 +688,14 @@ func Transaction_Invariants(value Transaction, namespace aver.Namespace) {
 // Transaction_Pointer names caller-owned Transaction storage.
 type Transaction_Pointer *Transaction
 
-// Transaction_Pointer_Invariants proves storage presence and shape.
+// Transaction_Pointer_Invariants admits absent optional storage.
 func Transaction_Pointer_Invariants(
 	value Transaction_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "SQL Transaction storage exists.")
-	Connection_Invariants(value.Connection, namespace)
-	driver.Transaction_Invariants(value.Driver_Transaction, namespace)
-	aver.Tree(value, namespace).
-		Range_Uint8(
-			uint8(value.Return_State), uint8(SLOT_EMPTY), uint8(SLOT_CLOSE),
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == TRANSACTION_SIZE,
-		"SQL Transaction pointer preserves transaction storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Transaction_Invariants(*value, namespace)
 }
 
 // Transaction_Terminal selects commit or rollback.
@@ -833,14 +741,12 @@ func Result_Invariants(value Result, namespace aver.Namespace) {
 // Result_Pointer names caller-owned Result storage.
 type Result_Pointer *Result
 
-// Result_Pointer_Invariants proves storage presence and shape.
+// Result_Pointer_Invariants admits absent optional storage.
 func Result_Pointer_Invariants(value Result_Pointer, namespace aver.Namespace) {
-	aver.Always(value != nil, "SQL Result storage exists.")
-	driver.Result_Invariants(value.Driver_Result, namespace)
-	aver.Always(
-		unsafe.Sizeof(*value) == RESULT_SIZE,
-		"SQL Result pointer preserves driver result storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Result_Invariants(*value, namespace)
 }
 
 // STATISTICS_SIZE keeps snapshot representation equal to four explicit counts.
@@ -875,10 +781,10 @@ func Statistics_Invariants(value Statistics, namespace aver.Namespace) {
 	)
 }
 
-// Pool_Init binds injected dependencies to fixed caller-owned slots.
+// Pool_Init binds injected driver to fixed caller-owned slots.
 func Pool_Init(
 	pool Pool_Destination, injected driver.Driver, data_source driver.Data_Source,
-	synchronizer Synchronizer, slots Slot_Storage,
+	slots Slot_Storage,
 ) (status Initialization_Status) {
 	defer func() {
 		Initialization_Status_Invariants(status, "pool_init.status")
@@ -887,23 +793,20 @@ func Pool_Init(
 	Pool_Invariants(*pool, "pool_init.pool_value")
 	driver.Driver_Invariants(injected, "pool_init.injected")
 	driver.Data_Source_Invariants(data_source, "pool_init.data_source")
-	Synchronizer_Invariants(synchronizer, "pool_init.synchronizer")
 	Slot_Storage_Invariants(slots, "pool_init.slots")
 	if len(slots) == slices.COUNT_MINIMUM {
 		return Initialization_Status(STATUS_STORAGE_INVALID)
 	}
 	pool_driver_live(injected)
-	synchronizer_live(synchronizer)
 	for index := range slots {
 		Slot_Invariants(slots[index], "pool_init.slot")
 		slots[index] = Slot{}
 	}
 	*pool = Pool{
-		Driver:       injected,
-		Data_Source:  data_source,
-		Synchronizer: synchronizer,
-		Slots:        slots,
-		Closed:       POOL_OPEN,
+		Driver:      injected,
+		Data_Source: data_source,
+		Slots:       slots,
+		Closed:      POOL_OPEN,
 	}
 	return Initialization_Status(STATUS_OK)
 }
@@ -916,10 +819,8 @@ func Pool_Connection_Acquire(pool Pool_Pointer) (connection Connection, status S
 	}()
 	Pool_Pointer_Invariants(pool, "pool_connection_acquire.pool")
 	pool_initialized(pool)
-	synchronizer := pool.Synchronizer
-	synchronizer.Lock_Procedure(synchronizer.State)
+	open_pool := (*Open_Pool)((*Pool)(pool))
 	if pool.Closed == POOL_CLOSED {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Connection{}, STATUS_CLOSED
 	}
 	slots := pool.Slots
@@ -936,10 +837,8 @@ func Pool_Connection_Acquire(pool Pool_Pointer) (connection Connection, status S
 		slot.Generation++
 		slot.State = SLOT_CONNECTION
 		connection = Connection(connection_of(
-			Open_Pool_Pointer(pool), Slot_Index(index),
-			Lease_Generation(slot.Generation),
+			open_pool, Slot_Index(index), Lease_Generation(slot.Generation),
 		))
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return connection, STATUS_OK
 	}
 	for index := range slots {
@@ -955,25 +854,20 @@ func Pool_Connection_Acquire(pool Pool_Pointer) (connection Connection, status S
 		generation := slot.Generation
 		slot.State = SLOT_CONNECTION_CREATION
 		slot.Connection = driver.Connection{}
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		driver_status := driver.Connect(
-			pool.Driver, pool.Data_Source,
-			&slot.Connection,
+			pool.Driver, pool.Data_Source, &slot.Connection,
 		)
-		synchronizer.Lock_Procedure(synchronizer.State)
 		if driver_status != driver.STATUS_OK {
 			slot.Connection = driver.Connection{}
 			slot.State = SLOT_EMPTY
-			synchronizer.Unlock_Procedure(synchronizer.State)
 			return Connection{}, Status(status_of_driver(driver_status))
 		}
 		slot.State = SLOT_CONNECTION
-		connection = Connection(connection_of(Open_Pool_Pointer(pool), Slot_Index(index),
-			Lease_Generation(generation)))
-		synchronizer.Unlock_Procedure(synchronizer.State)
+		connection = Connection(connection_of(
+			open_pool, Slot_Index(index), Lease_Generation(generation),
+		))
 		return connection, STATUS_OK
 	}
-	synchronizer.Unlock_Procedure(synchronizer.State)
 	if generation_exhausted {
 		return Connection{}, STATUS_GENERATION_EXHAUSTED
 	}
@@ -994,7 +888,8 @@ func Connection_Close(connection Connection_Pointer) (status Reservation_Status)
 		return status
 	}
 	transition_status := connection_transition(
-		Live_Connection_Pointer(connection), Activity_State(SLOT_CLOSE), TRANSITION_RETURN,
+		Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))),
+		Activity_State(SLOT_CLOSE), TRANSITION_RETURN,
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status == Transition_Status(STATUS_OK) {
@@ -1008,10 +903,7 @@ func Pool_Close(pool Pool_Pointer) (status Operation_Status) {
 	defer func() { Operation_Status_Invariants(status, "pool_close.status") }()
 	Pool_Pointer_Invariants(pool, "pool_close.pool")
 	pool_initialized(pool)
-	synchronizer := pool.Synchronizer
-	synchronizer.Lock_Procedure(synchronizer.State)
 	if pool.Closed == POOL_CLOSED {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Operation_Status(STATUS_OK)
 	}
 	slots := pool.Slots
@@ -1019,7 +911,6 @@ func Pool_Close(pool Pool_Pointer) (status Operation_Status) {
 		state := slots[index].State
 		if state != SLOT_EMPTY {
 			if state != SLOT_IDLE {
-				synchronizer.Unlock_Procedure(synchronizer.State)
 				return Operation_Status(STATUS_BUSY)
 			}
 		}
@@ -1030,7 +921,6 @@ func Pool_Close(pool Pool_Pointer) (status Operation_Status) {
 			slots[index].State = SLOT_CLOSE
 		}
 	}
-	synchronizer.Unlock_Procedure(synchronizer.State)
 	status = Operation_Status(STATUS_OK)
 	for index := range slots {
 		slot := &slots[index]
@@ -1049,13 +939,11 @@ func Pool_Close(pool Pool_Pointer) (status Operation_Status) {
 	return status
 }
 
-// Pool_Statistics returns one synchronized bounded count snapshot.
+// Pool_Statistics returns one bounded count snapshot.
 func Pool_Statistics(pool Pool_Pointer) (statistics Statistics) {
 	defer func() { Statistics_Invariants(statistics, "pool_statistics.statistics") }()
 	Pool_Pointer_Invariants(pool, "pool_statistics.pool")
 	pool_initialized(pool)
-	synchronizer := pool.Synchronizer
-	synchronizer.Lock_Procedure(synchronizer.State)
 	slots := pool.Slots
 	statistics.Capacity = Capacity_Count(len(slots))
 	for index := range slots {
@@ -1074,7 +962,6 @@ func Pool_Statistics(pool Pool_Pointer) (statistics Statistics) {
 			}
 		}
 	}
-	synchronizer.Unlock_Procedure(synchronizer.State)
 	return statistics
 }
 
@@ -1227,7 +1114,8 @@ func Rows_Next(rows Rows_Pointer, destination driver.Values) (status Operation_S
 	if driver_status == driver.STATUS_OK {
 		return Operation_Status(
 			connection_transition(
-				connection, Activity_State(SLOT_ROWS_READING), TRANSITION_ROWS,
+				Live_Connection_Pointer((*Live_Connection)(connection)),
+				Activity_State(SLOT_ROWS_READING), TRANSITION_ROWS,
 				Return_State(SLOT_IDLE),
 			),
 		)
@@ -1236,14 +1124,16 @@ func Rows_Next(rows Rows_Pointer, destination driver.Values) (status Operation_S
 		close_status := driver.Rows_Close(&rows.Driver_Rows)
 		if close_status != driver.STATUS_OK {
 			status = operation_complete(
-				connection, &table, Activity_State(SLOT_ROWS_READING),
+				Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+				Activity_State(SLOT_ROWS_READING),
 				Return_State(rows.Return_State), close_status,
 			)
 			*rows = Rows{}
 			return status
 		}
 		transition_status := connection_transition(
-			connection, Activity_State(SLOT_ROWS_READING), TRANSITION_RETURN,
+			Live_Connection_Pointer((*Live_Connection)(connection)),
+			Activity_State(SLOT_ROWS_READING), TRANSITION_RETURN,
 			Return_State(rows.Return_State),
 		)
 		*rows = Rows{}
@@ -1255,7 +1145,8 @@ func Rows_Next(rows Rows_Pointer, destination driver.Values) (status Operation_S
 	if driver_status == driver.STATUS_BAD_CONNECTION {
 		driver.Connection_Close(&table)
 		transition_status := connection_discard(
-			connection, Discard_State(SLOT_ROWS_READING),
+			Live_Connection_Pointer((*Live_Connection)(connection)),
+			Discard_State(SLOT_ROWS_READING),
 		)
 		*rows = Rows{}
 		if transition_status != Transition_Status(STATUS_OK) {
@@ -1264,7 +1155,8 @@ func Rows_Next(rows Rows_Pointer, destination driver.Values) (status Operation_S
 		return Operation_Status(STATUS_BAD_CONNECTION)
 	}
 	transition_status := connection_transition(
-		connection, Activity_State(SLOT_ROWS_READING), TRANSITION_ROWS,
+		Live_Connection_Pointer((*Live_Connection)(connection)),
+		Activity_State(SLOT_ROWS_READING), TRANSITION_ROWS,
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
@@ -1287,7 +1179,8 @@ func Rows_Close(rows Rows_Pointer) (status Operation_Status) {
 	}
 	driver_status := driver.Rows_Close(&rows.Driver_Rows)
 	status = operation_complete(
-		connection, &table, Activity_State(SLOT_CLOSE),
+		Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+		Activity_State(SLOT_CLOSE),
 		Return_State(rows.Return_State), driver_status,
 	)
 	*rows = Rows{}
@@ -1348,7 +1241,8 @@ func Statement_Exec(
 		&result.Driver_Result,
 	)
 	status = operation_complete(
-		connection, &table, Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+		Activity_State(SLOT_EXECUTION),
 		Return_State(SLOT_STATEMENT), driver_status,
 	)
 	return status
@@ -1371,21 +1265,26 @@ func Statement_Query(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	rows_initialize(rows, connection, Return_State(SLOT_STATEMENT))
+	rows_initialize(
+		rows, Live_Connection_Pointer((*Live_Connection)(connection)),
+		Return_State(SLOT_STATEMENT),
+	)
 	driver_status := driver.Statement_Query(
 		&statement.Driver_Statement, arguments,
 		&rows.Driver_Rows,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			connection, &table, Activity_State(SLOT_EXECUTION),
+			Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+			Activity_State(SLOT_EXECUTION),
 			Return_State(SLOT_STATEMENT), driver_status,
 		)
 		*rows = Rows{}
 		return status
 	}
 	transition_status := connection_transition(
-		connection, Activity_State(SLOT_EXECUTION), TRANSITION_ROWS,
+		Live_Connection_Pointer((*Live_Connection)(connection)),
+		Activity_State(SLOT_EXECUTION), TRANSITION_ROWS,
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
@@ -1410,7 +1309,8 @@ func Statement_Close(statement Statement_Pointer) (status Operation_Status) {
 	}
 	driver_status := driver.Statement_Close(&statement.Driver_Statement)
 	status = operation_complete(
-		connection, &table, Activity_State(SLOT_CLOSE),
+		Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+		Activity_State(SLOT_CLOSE),
 		Return_State(statement.Return_State), driver_status,
 	)
 	*statement = Statement{}
@@ -1472,7 +1372,8 @@ func Transaction_Exec(
 		&table, request, &result.Driver_Result,
 	)
 	status = operation_complete(
-		connection, &table, Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+		Activity_State(SLOT_EXECUTION),
 		Return_State(SLOT_TRANSACTION), driver_status,
 	)
 	return status
@@ -1495,20 +1396,25 @@ func Transaction_Query(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	rows_initialize(rows, connection, Return_State(SLOT_TRANSACTION))
+	rows_initialize(
+		rows, Live_Connection_Pointer((*Live_Connection)(connection)),
+		Return_State(SLOT_TRANSACTION),
+	)
 	driver_status := driver.Connection_Query(
 		&table, request, &rows.Driver_Rows,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			connection, &table, Activity_State(SLOT_EXECUTION),
+			Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+			Activity_State(SLOT_EXECUTION),
 			Return_State(SLOT_TRANSACTION), driver_status,
 		)
 		*rows = Rows{}
 		return status
 	}
 	transition_status := connection_transition(
-		connection, Activity_State(SLOT_EXECUTION), TRANSITION_ROWS,
+		Live_Connection_Pointer((*Live_Connection)(connection)),
+		Activity_State(SLOT_EXECUTION), TRANSITION_ROWS,
 		Return_State(SLOT_IDLE),
 	)
 	if transition_status != Transition_Status(STATUS_OK) {
@@ -1555,7 +1461,8 @@ func connection_probe(
 	}
 	driver_status := driver.Connection_Probe(&table)
 	return operation_complete(
-		Live_Connection_Pointer(connection), &table, Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))), &table,
+		Activity_State(SLOT_EXECUTION),
 		Return_State(return_state), driver_status,
 	)
 }
@@ -1589,7 +1496,8 @@ func connection_exec(
 		&table, request, &result.Driver_Result,
 	)
 	status = operation_complete(
-		Live_Connection_Pointer(connection), &table, Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))), &table,
+		Activity_State(SLOT_EXECUTION),
 		Return_State(return_state), driver_status,
 	)
 	return status
@@ -1620,14 +1528,15 @@ func connection_query(
 		return Operation_Status(reservation_status)
 	}
 	rows_initialize(
-		rows, Live_Connection_Pointer(connection), Return_State(return_state),
+		rows, Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))),
+		Return_State(return_state),
 	)
 	driver_status := driver.Connection_Query(
 		&table, request, &rows.Driver_Rows,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			Live_Connection_Pointer(connection), &table,
+			(*Live_Connection)((*Connection)(connection)), &table,
 			Activity_State(SLOT_EXECUTION),
 			Return_State(return_state), driver_status,
 		)
@@ -1635,7 +1544,8 @@ func connection_query(
 		return status
 	}
 	transition_status := connection_transition(
-		Live_Connection_Pointer(connection), Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))),
+		Activity_State(SLOT_EXECUTION),
 		TRANSITION_ROWS,
 		Return_State(SLOT_IDLE),
 	)
@@ -1673,13 +1583,16 @@ func connection_prepare(
 	if reservation_status != Reservation_Status(STATUS_OK) {
 		return Operation_Status(reservation_status)
 	}
-	statement_initialize(statement, Live_Connection_Pointer(connection), return_state)
+	statement_initialize(
+		statement, Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))),
+		return_state,
+	)
 	driver_status := driver.Connection_Prepare(
 		&table, query, &statement.Driver_Statement,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			Live_Connection_Pointer(connection), &table,
+			(*Live_Connection)((*Connection)(connection)), &table,
 			Activity_State(SLOT_EXECUTION),
 			Return_State(return_state), driver_status,
 		)
@@ -1687,7 +1600,8 @@ func connection_prepare(
 		return status
 	}
 	transition_status := connection_transition(
-		Live_Connection_Pointer(connection), Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))),
+		Activity_State(SLOT_EXECUTION),
 		TRANSITION_RETURN,
 		Return_State(SLOT_STATEMENT),
 	)
@@ -1725,14 +1639,15 @@ func connection_begin(
 		return Operation_Status(reservation_status)
 	}
 	transaction_initialize(
-		transaction, Live_Connection_Pointer(connection), return_state,
+		transaction, Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))),
+		return_state,
 	)
 	driver_status := driver.Connection_Begin(
 		&table, options, &transaction.Driver_Transaction,
 	)
 	if driver_status != driver.STATUS_OK {
 		status = operation_complete(
-			Live_Connection_Pointer(connection), &table,
+			(*Live_Connection)((*Connection)(connection)), &table,
 			Activity_State(SLOT_EXECUTION),
 			Return_State(return_state), driver_status,
 		)
@@ -1740,7 +1655,8 @@ func connection_begin(
 		return status
 	}
 	transition_status := connection_transition(
-		Live_Connection_Pointer(connection), Activity_State(SLOT_EXECUTION),
+		Live_Connection_Pointer((*Live_Connection)((*Connection)(connection))),
+		Activity_State(SLOT_EXECUTION),
 		TRANSITION_RETURN,
 		Return_State(SLOT_TRANSACTION),
 	)
@@ -1778,7 +1694,8 @@ func transaction_finish(
 		)
 	}
 	status = operation_complete(
-		connection, &table, Activity_State(SLOT_CLOSE),
+		Live_Connection_Pointer((*Live_Connection)(connection)), &table,
+		Activity_State(SLOT_CLOSE),
 		Return_State(transaction.Return_State), driver_status,
 	)
 	*transaction = Transaction{}
@@ -1806,25 +1723,19 @@ func connection_reserve(
 	generation := Lease_Generation(connection.Generation)
 	Slot_Index_Invariants(index, "connection_reserve.index")
 	Lease_Generation_Invariants(generation, "connection_reserve.generation")
-	synchronizer := pool.Synchronizer
-	synchronizer.Lock_Procedure(synchronizer.State)
 	if pool.Closed == POOL_CLOSED {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Reservation_Status(STATUS_CLOSED)
 	}
 	slots := pool.Slots
 	if int(index) >= len(slots) {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Reservation_Status(STATUS_HANDLE_INVALID)
 	}
 	slot := &slots[index]
 	if Lease_Generation(slot.Generation) != generation {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Reservation_Status(STATUS_HANDLE_INVALID)
 	}
 	if Reservation_State(slot.State) != expected {
 		state := slot.State
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		if state == SLOT_EMPTY {
 			return Reservation_Status(STATUS_HANDLE_INVALID)
 		}
@@ -1835,7 +1746,6 @@ func connection_reserve(
 	}
 	*destination = slot.Connection
 	slot.State = Slot_State(next)
-	synchronizer.Unlock_Procedure(synchronizer.State)
 	return Reservation_Status(STATUS_OK)
 }
 
@@ -1857,27 +1767,22 @@ func connection_transition(
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	Open_Pool_Pointer_Invariants(
-		Open_Pool_Pointer(pool), "connection_transition.pool",
+		Open_Pool_Pointer((*Open_Pool)(pool)), "connection_transition.pool",
 	)
 	pool_initialized(pool)
 	index := connection.Slot_Index
 	generation := Lease_Generation(connection.Generation)
 	Slot_Index_Invariants(index, "connection_transition.index")
 	Lease_Generation_Invariants(generation, "connection_transition.generation")
-	synchronizer := pool.Synchronizer
-	synchronizer.Lock_Procedure(synchronizer.State)
 	slots := pool.Slots
 	if int(index) >= len(slots) {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	slot := &slots[index]
 	if Lease_Generation(slot.Generation) != generation {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	if Activity_State(slot.State) != expected {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_BUSY)
 	}
 	next := Slot_State(return_state)
@@ -1885,9 +1790,8 @@ func connection_transition(
 		next = SLOT_ROWS
 	}
 	slot.State = next
-	synchronizer.Unlock_Procedure(synchronizer.State)
 	if next == SLOT_IDLE {
-		*connection = Connection{}
+		*connection = Live_Connection{}
 	}
 	return Transition_Status(STATUS_OK)
 }
@@ -1907,33 +1811,27 @@ func connection_discard(
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	Open_Pool_Pointer_Invariants(
-		Open_Pool_Pointer(pool), "connection_discard.pool",
+		Open_Pool_Pointer((*Open_Pool)(pool)), "connection_discard.pool",
 	)
 	pool_initialized(pool)
 	index := connection.Slot_Index
 	generation := Lease_Generation(connection.Generation)
 	Slot_Index_Invariants(index, "connection_discard.index")
 	Lease_Generation_Invariants(generation, "connection_discard.generation")
-	synchronizer := pool.Synchronizer
-	synchronizer.Lock_Procedure(synchronizer.State)
 	slots := pool.Slots
 	if int(index) >= len(slots) {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	slot := &slots[index]
 	if Lease_Generation(slot.Generation) != generation {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_HANDLE_INVALID)
 	}
 	if Discard_State(slot.State) != expected {
-		synchronizer.Unlock_Procedure(synchronizer.State)
 		return Transition_Status(STATUS_BUSY)
 	}
 	slot.Connection = driver.Connection{}
 	slot.State = SLOT_EMPTY
-	synchronizer.Unlock_Procedure(synchronizer.State)
-	*connection = Connection{}
+	*connection = Live_Connection{}
 	return Transition_Status(STATUS_OK)
 }
 
@@ -1988,7 +1886,7 @@ func rows_initialize(
 	Live_Connection_Pointer_Invariants(connection, "rows_initialize.connection")
 	Return_State_Invariants(return_state, "rows_initialize.return_state")
 	*rows = Rows{
-		Connection:   *connection,
+		Connection:   Connection(*connection),
 		Return_State: Slot_State(return_state),
 	}
 }
@@ -2003,7 +1901,7 @@ func statement_initialize(
 	)
 	Connection_Return_State_Invariants(return_state, "statement_initialize.return_state")
 	*statement = Statement{
-		Connection:   *connection,
+		Connection:   Connection(*connection),
 		Return_State: Slot_State(return_state),
 	}
 }
@@ -2020,7 +1918,7 @@ func transaction_initialize(
 		return_state, "transaction_initialize.return_state",
 	)
 	*transaction = Transaction{
-		Connection:   *connection,
+		Connection:   Connection(*connection),
 		Return_State: Slot_State(return_state),
 	}
 }
@@ -2054,15 +1952,11 @@ func pool_initialized(pool Pool_Pointer) {
 	driver.Data_Source_Invariants(
 		pool.Data_Source, "pool_initialized.data_source",
 	)
-	Synchronizer_Invariants(
-		pool.Synchronizer, "pool_initialized.synchronizer",
-	)
 	Initialized_Slot_Storage_Invariants(
 		Initialized_Slot_Storage(pool.Slots),
 		"pool_initialized.slots",
 	)
 	pool_driver_live(pool.Driver)
-	synchronizer_live(pool.Synchronizer)
 }
 
 func pool_driver_live(value driver.Driver) {
@@ -2070,17 +1964,5 @@ func pool_driver_live(value driver.Driver) {
 	aver.Always(
 		value.Connect_Procedure != nil,
 		"Pool driver can open one connection.",
-	)
-}
-
-func synchronizer_live(value Synchronizer) {
-	Synchronizer_Invariants(value, "synchronizer_live.value")
-	aver.Always(
-		value.Lock_Procedure != nil,
-		"Live pool synchronizer can lock.",
-	)
-	aver.Always(
-		value.Unlock_Procedure != nil,
-		"Live pool synchronizer can unlock.",
 	)
 }

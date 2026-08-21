@@ -1,8 +1,9 @@
 
 # Initialization
 
-Pool_Init binds one driver, data source, injected synchronizer, and caller-owned slot storage.
+Pool_Init binds one driver, data source, and caller-owned slot storage.
 Zero slots are rejected; capacity never grows after initialization.
+Package is single-threaded. Caller serializes all access to pools and handles.
 
 # Pool
 
@@ -12,7 +13,7 @@ allocates a waiter. Close refuses active leases and closes every idle driver con
 # Connections
 
 Connection is a generation-checked lease. Probe, execute, query, prepare, begin, and close reject
-stale, closed, or concurrently active handles.
+stale, closed, or handles with active dependent work.
 
 # Rows
 

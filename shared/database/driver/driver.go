@@ -252,33 +252,12 @@ func Value_Invariants(value Value, namespace aver.Namespace) {
 // Value_Pointer names caller-owned Value storage.
 type Value_Pointer *Value
 
-// Value_Pointer_Invariants proves storage presence and shape.
+// Value_Pointer_Invariants admits absent optional storage.
 func Value_Pointer_Invariants(value Value_Pointer, namespace aver.Namespace) {
-	aver.Always(value != nil, "Driver Value storage exists.")
-	aver.Tree(value, namespace).
-		Range_Uint8(
-			uint8(value.Kind), uint8(VALUE_NULL),
-			uint8(VALUE_KIND_UNVALIDATED_MAXIMUM),
-		).
-		Sometimes(bool(value.Boolean), "Driver Value Boolean payload is true.").
-		Range_Int64(
-			int64(value.Integer), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM,
-		).
-		Range_Uint64(
-			uint64(value.Float), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM,
-		).
-		Range_Int(
-			len(value.Bytes), bytes.SLICE_SIZE_MINIMUM, bytes.SLICE_SIZE_MAXIMUM,
-		).
-		Range_Int(
-			len(value.Text), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM,
-		).
-		Ensure()
-	time.Moment_Invariants(value.Moment, namespace)
-	aver.Always(
-		unsafe.Sizeof(*value) == VALUE_STORAGE_SIZE,
-		"Driver Value pointer preserves closed-union storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Value_Invariants(*value, namespace)
 }
 
 // Value_Null overwrites caller storage so construction needs no heap.
@@ -636,27 +615,14 @@ func Named_Value_Invariants(value Named_Value, namespace aver.Namespace) {
 // Named_Value_Pointer names caller-owned Named_Value storage.
 type Named_Value_Pointer *Named_Value
 
-// Named_Value_Pointer_Invariants proves storage presence and shape.
+// Named_Value_Pointer_Invariants admits absent optional storage.
 func Named_Value_Pointer_Invariants(
 	value Named_Value_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Driver Named_Value storage exists.")
-	aver.Tree(value, namespace).
-		Range_Int(
-			len(value.Name), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM,
-		).
-		Range_Int(
-			int(value.Ordinal), slices.COUNT_MINIMUM, ARGUMENT_COUNT_MAXIMUM,
-		).
-		Sometimes(
-			bool(value.Validity), "Driver Named_Value passed bounded validation.",
-		).
-		Ensure()
-	Value_Invariants(value.Value, namespace)
-	aver.Always(
-		unsafe.Sizeof(*value) == NAMED_VALUE_STORAGE_SIZE,
-		"Driver Named_Value pointer preserves argument storage size.",
-	)
+	if value == nil {
+		return
+	}
+	Named_Value_Invariants(*value, namespace)
 }
 
 // Named_Value_Of overwrites caller storage only after every argument validates.
@@ -958,31 +924,11 @@ func Result_Invariants(value Result, namespace aver.Namespace) {
 // Result_Pointer names caller-owned Result storage.
 type Result_Pointer *Result
 
-// Result_Pointer_Invariants proves storage presence and shape.
+// Result_Pointer_Invariants admits absent optional storage.
 func Result_Pointer_Invariants(value Result_Pointer, namespace aver.Namespace) {
-	aver.Always(value != nil, "Driver Result storage exists.")
-	aver.Tree(value, namespace).
-		Range_Int64(
-			int64(value.Last_Insert_Identifier),
-			bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM,
-		).
-		Range_Int64(
-			int64(value.Rows_Affected),
-			bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM,
-		).
-		Sometimes(
-			bool(value.Last_Insert_Identifier_Validity),
-			"Driver Result contains last insert identifier.",
-		).
-		Sometimes(
-			bool(value.Rows_Affected_Validity),
-			"Driver Result contains rows affected.",
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == RESULT_STORAGE_SIZE,
-		"Driver Result pointer preserves optional counter storage size.",
-	)
+	if value == nil {
+		return
+	}
 	Result_Invariants(*value, namespace)
 }
 
@@ -1127,21 +1073,13 @@ func Statement_Invariants(value Statement, namespace aver.Namespace) {
 // Statement_Pointer names caller-owned Statement storage.
 type Statement_Pointer *Statement
 
-// Statement_Pointer_Invariants proves storage presence and shape.
+// Statement_Pointer_Invariants admits absent optional storage.
 func Statement_Pointer_Invariants(
 	value Statement_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Driver Statement storage exists.")
-	aver.Tree(value, namespace).
-		Range_Int(
-			int(value.Argument_Count), STATEMENT_ARGUMENT_COUNT_UNKNOWN,
-			ARGUMENT_COUNT_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == STATEMENT_STORAGE_SIZE,
-		"Driver Statement pointer preserves procedure table storage size.",
-	)
+	if value == nil {
+		return
+	}
 	Statement_Invariants(*value, namespace)
 }
 
@@ -1172,11 +1110,13 @@ func Transaction_Invariants(subject Transaction, namespace aver.Namespace) {
 // Transaction_Pointer names caller-owned Transaction storage.
 type Transaction_Pointer *Transaction
 
-// Transaction_Pointer_Invariants proves storage presence and state.
+// Transaction_Pointer_Invariants admits absent optional storage.
 func Transaction_Pointer_Invariants(
 	value Transaction_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Driver Transaction storage exists.")
+	if value == nil {
+		return
+	}
 	Transaction_Invariants(*value, namespace)
 }
 
@@ -1263,15 +1203,13 @@ func Connection_Invariants(subject Connection, namespace aver.Namespace) {
 // Connection_Pointer names caller-owned Connection storage.
 type Connection_Pointer *Connection
 
-// Connection_Pointer_Invariants proves storage presence and state.
+// Connection_Pointer_Invariants admits absent optional storage.
 func Connection_Pointer_Invariants(
 	value Connection_Pointer, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Driver Connection storage exists.")
-	aver.Sometimes(
-		value.Close_Procedure != nil,
-		"Driver Connection pointer storage is live.",
-	)
+	if value == nil {
+		return
+	}
 	Connection_Invariants(*value, namespace)
 }
 
@@ -1333,19 +1271,11 @@ func Rows_Invariants(value Rows, namespace aver.Namespace) {
 // Rows_Pointer names caller-owned Rows storage.
 type Rows_Pointer *Rows
 
-// Rows_Pointer_Invariants proves storage presence and shape.
+// Rows_Pointer_Invariants admits absent optional storage.
 func Rows_Pointer_Invariants(value Rows_Pointer, namespace aver.Namespace) {
-	aver.Always(value != nil, "Driver Rows storage exists.")
-	aver.Tree(value, namespace).
-		Range_Int(
-			int(value.Column_Count), slices.COUNT_MINIMUM,
-			slices.SLICE_COUNT_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		unsafe.Sizeof(*value) == ROWS_STORAGE_SIZE,
-		"Driver Rows pointer preserves cursor storage size.",
-	)
+	if value == nil {
+		return
+	}
 	Rows_Invariants(*value, namespace)
 }
 

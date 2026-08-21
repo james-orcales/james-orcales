@@ -188,6 +188,10 @@ func Test_Transactions(t *testing.T) {
 
 // Test_Allocation protects each driver operation without hidden storage.
 func Test_Allocation(t *testing.T) {
+	test_value_allocation(t)
+	test_metadata_allocation(t)
+	test_result_allocation(t)
+
 	state := fake_state{}
 	injected := fake_driver(&state)
 	data_source, validation := driver.Data_Source_Validate("memory")
@@ -207,6 +211,9 @@ func Test_Allocation(t *testing.T) {
 
 	testify.Zero_Allocation(t, func() {
 		status = driver.Connect(injected, data_source, &connection)
+	})
+	testify.Zero_Allocation(t, func() {
+		status = driver.Connection_Probe(&connection)
 	})
 	testify.Zero_Allocation(t, func() {
 		status = driver.Connection_Exec(&connection, request, &result)
@@ -250,6 +257,90 @@ func Test_Invariant_Domains(t *testing.T) {
 	test_transaction_domains()
 	test_driver_status_domains()
 	test_operation_storage_domains()
+}
+
+func test_value_allocation(t *testing.T) {
+	too_large := make([]byte, strings.TEXT_SIZE_MAXIMUM+NUMBER_ONE)
+	bytes_value := driver.Bytes_Unvalidated("bytes")
+	text_value := driver.Text_Unvalidated("text")
+	invalid_text := driver.Text_Unvalidated(string(too_large))
+	moment := time.Moment(bits.INTEGER_64_MAXIMUM)
+	var value driver.Value
+	testify.Zero_Allocation(t, func() {
+		driver.Value_Null(&value)
+		driver.Value_Kind_Of(value)
+		driver.Value_As_Boolean(value)
+		driver.Value_As_Integer(value)
+		driver.Value_As_Float(value)
+		driver.Value_As_Bytes(value)
+		driver.Value_As_Text(value)
+		driver.Value_As_Time(value)
+		driver.Value_Of_Boolean(&value, true)
+		driver.Value_As_Boolean(value)
+		driver.Value_Of_Integer(&value, driver.Integer(bits.INTEGER_64_MINIMUM))
+		driver.Value_As_Integer(value)
+		driver.Value_Of_Float(&value, driver.Float(bits.WORD_64_MAXIMUM))
+		driver.Value_As_Float(value)
+		driver.Value_Of_Bytes(&value, bytes_value)
+		driver.Value_As_Bytes(value)
+		driver.Value_Of_Text(&value, text_value)
+		driver.Value_As_Text(value)
+		driver.Value_Of_Time(&value, moment)
+		driver.Value_As_Time(value)
+		driver.Value_Of_Bytes(&value, too_large)
+		driver.Value_Of_Text(&value, invalid_text)
+		value.Kind = driver.Value_Kind_Unvalidated(driver.VALUE_KIND_UNVALIDATED_MAXIMUM)
+		driver.Value_Kind_Of(value)
+	})
+}
+
+func test_metadata_allocation(t *testing.T) {
+	too_large := make([]byte, strings.TEXT_SIZE_MAXIMUM+NUMBER_ONE)
+	invalid_text := string(too_large)
+	var value driver.Value
+	var named driver.Named_Value
+	var arguments [NUMBER_ONE]driver.Named_Value
+	var request driver.Request
+	testify.Zero_Allocation(t, func() {
+		query, _ := driver.Query_Validate("select :good")
+		driver.Query_Validate(driver.Query_Unvalidated(invalid_text))
+		driver.Data_Source_Validate("memory")
+		driver.Data_Source_Validate(driver.Data_Source_Unvalidated(invalid_text))
+		driver.Value_Of_Integer(&value, NUMBER_ONE)
+		driver.Named_Value_Of(&named, "1bad", NUMBER_ONE, value)
+		driver.Named_Value_Of(&named, "good", NUMBER_ZERO, value)
+		driver.Named_Value_Of(
+			&named, "good", driver.ARGUMENT_COUNT_MAXIMUM+NUMBER_ONE, value,
+		)
+		driver.Named_Value_Of(&named, "good", NUMBER_ONE, value)
+		driver.Named_Value_Name(named)
+		driver.Named_Value_Ordinal(named)
+		driver.Named_Value_Value(named)
+		arguments[NUMBER_ZERO] = named
+		request, _ = driver.Request_Of(query, arguments[:])
+		driver.Request_Validate(request)
+		arguments[NUMBER_ZERO].Ordinal = NUMBER_TWO
+		driver.Request_Validate(request)
+		driver.Transaction_Options_Of(driver.ISOLATION_DEFAULT, false)
+		driver.Transaction_Options_Of(driver.ISOLATION_LINEARIZABLE, true)
+	})
+}
+
+func test_result_allocation(t *testing.T) {
+	var result driver.Result
+	testify.Zero_Allocation(t, func() {
+		result = driver.Result{}
+		driver.Result_Last_Insert_Identifier(&result)
+		driver.Result_Rows_Affected(&result)
+		driver.Result_Set_Last_Insert_Identifier(
+			&result, driver.Last_Insert_Identifier(bits.INTEGER_64_MINIMUM),
+		)
+		driver.Result_Set_Rows_Affected(
+			&result, driver.Rows_Affected(bits.INTEGER_64_MAXIMUM),
+		)
+		driver.Result_Last_Insert_Identifier(&result)
+		driver.Result_Rows_Affected(&result)
+	})
 }
 
 func test_validation_domains() {

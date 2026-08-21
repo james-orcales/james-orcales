@@ -18,6 +18,7 @@ STATUS_UNSUPPORTED without error allocation.
 
 Driver, Connection, and Rows are procedure tables over explicit state. Connect, execute, query,
 advance, probe, and close validate all bounded inputs and outputs.
+Package is single-threaded. Caller serializes all access to driver values and their state.
 
 # Prepared Statements
 
