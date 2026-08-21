@@ -683,6 +683,82 @@ func Test_New_Validation(t *testing.T) {
 	assert_external_validation(t)
 }
 
+// Test_Allocation proves exported operation paths stay stack-owned, success or error.
+func Test_Allocation(t *testing.T) {
+	program := new_cli_fixture().Program
+	output := new_cli_output()
+	var storage [cli.CANDIDATE_COUNT_MAXIMUM]cli.Candidate
+	var reference cli.Output_Reference
+	var script_error error
+	operations := [...]func(){
+		func() { reference = cli.Output_Reference_Of(&output) },
+		func() {
+			cli.Output_Reset(cli_output_reference(&output))
+			cli.Print_Help(cli_output_reference(&output), program)
+		},
+		func() {
+			cli.Output_Reset(cli_output_reference(&output))
+			cli.Print_Requested_Help(cli_output_reference(&output), program, "")
+		},
+		func() { cli.Complete(program, []string{"todoctl", "l"}, storage[:]) },
+		func() { cli.Complete(program, []string{"todoctl", "add", "-"}, storage[:]) },
+		func() {
+			cli.Output_Reset(cli_output_reference(&output))
+			cli.Handle_Completion(program, []string{"todoctl", "completion", "bash"},
+				cli_output_reference(&output), storage[:])
+		},
+		func() {
+			cli.Handle_Completion(program, []string{"todoctl", "add"}, reference, nil)
+		},
+	}
+	for _, operation := range operations {
+		testify.Zero_Allocation(t, operation)
+	}
+	for _, shell := range [...]cli.Shell{"bash", "zsh", "fish", "tcsh"} {
+		testify.Zero_Allocation(t, func() {
+			cli.Output_Reset(cli_output_reference(&output))
+			script_error = cli.Completion_Script(
+				program, shell, cli_output_reference(&output),
+			)
+		})
+	}
+	if script_error == nil {
+		t.Fatal("unsupported shell script result was discarded")
+	}
+	test_allocation_parse(t, program)
+}
+
+func test_allocation_parse(t *testing.T, program cli.Program) {
+	t.Helper()
+	for _, arguments := range [...][]string{
+		{"todoctl", "add", "task", "-deadline=x", "-noop"},
+		{"todoctl", "list", "-help"},
+		{"todoctl", "delete", "no"},
+		{"todoctl", "add", "task", "-deadlin=x"},
+	} {
+		input := cli_test_parse_input(program, arguments)
+		var parser cli.Parser
+		var result cli.Parse_Result
+		var present cli.Boolean
+		var equal cli.Boolean
+		var content cli.Parse_Error_Content
+		testify.Zero_Allocation(t, func() {
+			parser = cli.Parser{}
+			cli.Program_Parse(program, &parser, input)
+			result, _ = cli.Parser_Done(&parser)
+			present = cli.Parse_Error_Present(result.Error)
+			content = cli.Parse_Error_Bytes(result.Error)
+			equal = cli.Parse_Error_Equals(result.Error, "")
+		})
+		if bool(present) == (len(content) == 0) {
+			t.Fatalf("%v: parse error presence disagrees with its bytes", arguments)
+		}
+		if bool(equal) == bool(present) {
+			t.Fatalf("%v: parse error comparison result was discarded", arguments)
+		}
+	}
+}
+
 // Integer conversion must preserve every element boundary inside caller storage.
 func cli_parse_variadic_integers(t *testing.T) {
 	t.Helper()

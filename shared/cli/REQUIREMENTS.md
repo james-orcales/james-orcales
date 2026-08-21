@@ -138,3 +138,8 @@ New validates a program's configuration and panics when it is malformed.
 An invalid label, collision, non-terminal slice, malformed enum, or reserved name panics.
 An invalid external key, source collision, or required environment default also panics.
 A secret with no path, a relative path, or different base filenames panics.
+
+# Allocation
+
+Every exported operation performs zero heap allocations on every path, success or error.
+The caller owns all storage.
