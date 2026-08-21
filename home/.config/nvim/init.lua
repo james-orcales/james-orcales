@@ -602,6 +602,14 @@ do
 			Type = [[^\s*pub (?:struct|union|enum|trait|type) [a-zA-Z0-9_#]+]],
 		},
 	}
+	-- Invariant bundles support validation plumbing, not package API discovery.
+	local golang_function_search_entry = function(line)
+		local name = line:match("func%s+%b()%s*([a-zA-Z0-9_]+)") or line:match("func%s+([a-zA-Z0-9_]+)")
+		if name and name:match("_Invariants$") then
+			return nil
+		end
+		return line
+	end
 	local parse_programming_language = function(path)
 		if path:match("%.go$") or path == "go.mod" then
 			return "Golang"
@@ -664,6 +672,9 @@ do
 						else
 							operation({
 								search = rules[programming_language][selected],
+								fn_transform = programming_language == "Golang" and selected == "Function"
+										and golang_function_search_entry
+									or nil,
 								no_esc = true,
 								-- Error: unable to init vim.regex
 								-- https://github.com/ibhagwan/fzf-lua/issues/1858#issuecomment-2689899556
