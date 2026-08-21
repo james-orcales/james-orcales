@@ -1441,35 +1441,42 @@ func always_condition_diagnostics(
 	imports := helper_import_paths(file.File)
 	default_package := helper_default_package(components, imports)
 	ast.Inspect(file.File, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		if !always_named_call(call, imports, default_package) {
-			return true
-		}
-		if len(call.Args) == 0 {
-			return true
-		}
-		join, is_join := invariant_unparen(call.Args[0]).(*ast.BinaryExpr)
-		if !is_join {
-			return true
-		}
-		if join.Op != token.LAND {
-			if join.Op != token.LOR {
-				return true
-			}
-		}
-		diags = append(diags, Diagnostic{
-			Position: file.File_Set.Position(call.Args[0].Pos()),
-			Message: fmt.Sprintf(
-				"The Always condition has the compound operator %q. "+
-					"Write a Range for a bound, an Enum for a membership, "+
-					"or separate Always calls.", join.Op.String()),
-		})
-		return true
+		return always_condition_node(file, imports, default_package, node, &diags)
 	})
 	return diags
+}
+
+func always_condition_node(
+	file Parsed_File, imports map[string]string, default_package string,
+	node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	if !always_named_call(call, imports, default_package) {
+		return true
+	}
+	if len(call.Args) == 0 {
+		return true
+	}
+	join, is_join := invariant_unparen(call.Args[0]).(*ast.BinaryExpr)
+	if !is_join {
+		return true
+	}
+	if join.Op != token.LAND {
+		if join.Op != token.LOR {
+			return true
+		}
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file.File_Set.Position(call.Args[0].Pos()),
+		Message: fmt.Sprintf(
+			"The Always condition has the compound operator %q. "+
+				"Write a Range for a bound, an Enum for a membership, "+
+				"or separate Always calls.", join.Op.String()),
+	})
+	return true
 }
 
 // Reports whether call names the composition tier's Always or Recorder_Always.
@@ -3205,27 +3212,35 @@ func simulation_entry_diagnostics(
 	for _, pf := range sim_files {
 		locals := simulation_internal_import_locals(pf.File, internal_import_path)
 		ast.Inspect(pf.File, func(node ast.Node) (descend bool) {
-			selector, is_selector := node.(*ast.SelectorExpr)
-			if !is_selector {
-				return true
-			}
-			identifier, is_identifier := selector.X.(*ast.Ident)
-			if !is_identifier {
-				return true
-			}
-			if !locals[identifier.Name] {
-				return true
-			}
-			if !internal_functions[selector.Sel.Name] {
-				return true
-			}
-			diags = append(diags, simulation_diagnostic(position, fmt.Sprintf(
-				"The simulation package refers to %s.%s. Refer only to Main.",
-				identifier.Name, selector.Sel.Name))...)
-			return true
+			return simulation_entry_node(
+				locals, internal_functions, position, node, &diags)
 		})
 	}
 	return diags
+}
+
+func simulation_entry_node(
+	locals map[string]bool, internal_functions map[string]bool,
+	position token.Position, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	selector, is_selector := node.(*ast.SelectorExpr)
+	if !is_selector {
+		return true
+	}
+	identifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	if !locals[identifier.Name] {
+		return true
+	}
+	if !internal_functions[selector.Sel.Name] {
+		return true
+	}
+	*diags = append(*diags, simulation_diagnostic(position, fmt.Sprintf(
+		"The simulation package refers to %s.%s. Refer only to Main.",
+		identifier.Name, selector.Sel.Name))...)
+	return true
 }
 
 // Returns the name of the function's *testing.F parameter, or "" when it has none —

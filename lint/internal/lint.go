@@ -1040,10 +1040,7 @@ func suggest_split_words(name string) (words []string) {
 	var current []rune
 	runes := []rune(name)
 	flush := func() {
-		if len(current) > 0 {
-			words = append(words, string(current))
-			current = nil
-		}
+		suggest_split_flush(&words, &current)
 	}
 	for i, r := range runes {
 		if r == '_' {
@@ -1070,6 +1067,13 @@ func suggest_split_words(name string) (words []string) {
 	}
 	flush()
 	return words
+}
+
+func suggest_split_flush(words *[]string, current *[]rune) {
+	if len(*current) > 0 {
+		*words = append(*words, string(*current))
+		*current = nil
+	}
 }
 
 // Suggest_Input carries an identifier and the case style to rewrite it into.
@@ -1609,6 +1613,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		make_check_import_alias_unnecessary(input.Declarations),
 		check_default_package_name,
 		check_no_empty_function_body,
+		check_closure_bodies,
 		check_no_generics, resolution.Make(input.Declarations),
 		check_no_interfaces,
 		make_check_names_vocabulary(input.Word_Replacements),
@@ -1645,8 +1650,7 @@ func check_file_run_tier(
 	for i, c := range checks {
 		wg.Add(1)
 		go func(i int, c Check_Function) {
-			defer wg.Done()
-			per_check[i] = c(file_set, file, source)
+			check_file_run_one(i, c, file_set, file, source, per_check, &wg)
 		}(i, c)
 	}
 	wg.Wait()
@@ -1654,6 +1658,14 @@ func check_file_run_tier(
 		diags = append(diags, d...)
 	}
 	return diags
+}
+
+func check_file_run_one(
+	index int, check Check_Function, file_set *token.FileSet, file *ast.File,
+	source []byte, per_check [][]Diagnostic, wait_group *sync.WaitGroup,
+) {
+	defer wait_group.Done()
+	per_check[index] = check(file_set, file, source)
 }
 
 func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[]Diagnostic) {
@@ -1692,57 +1704,69 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 		screaming_case_constants[identifier] = true
 	}
 
-	check := func(identifier *ast.Ident) {
-		check_casing_ident(file_set, identifier, &diags)
-	}
 	check_field_list := func(fl *ast.FieldList) {
-		if fl == nil {
-			return
-		}
-		for _, f := range fl.List {
-			for _, n := range f.Names {
-				check(n)
-			}
-		}
+		check_casing_field_list(file_set, fl, &diags)
 	}
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		switch x := n.(type) {
-		case *ast.FuncDecl:
-			// TestMain is a Go testing-package reserved name; the
-			// runner only recognizes that exact spelling.
-			if x.Name.Name != "TestMain" {
-				check(x.Name)
+		return check_casing_node(
+			file_set, n, screaming_case_constants, check_field_list, &diags)
+	})
+	return diags
+}
+
+func check_casing_field_list(
+	file_set *token.FileSet, fields *ast.FieldList, diags *[]Diagnostic,
+) {
+	if fields == nil {
+		return
+	}
+	for _, field := range fields.List {
+		for _, name := range field.Names {
+			check_casing_ident(file_set, name, diags)
+		}
+	}
+}
+
+func check_casing_node(
+	file_set *token.FileSet, node ast.Node,
+	screaming_case_constants map[*ast.Ident]bool,
+	check_field_list func(*ast.FieldList), diags *[]Diagnostic,
+) (descend bool) {
+	switch value := node.(type) {
+	case *ast.FuncDecl:
+		// TestMain is reserved by testing package, so spelling cannot follow house case.
+		if value.Name.Name != "TestMain" {
+			check_casing_ident(file_set, value.Name, diags)
+		}
+		check_field_list(value.Recv)
+	case *ast.TypeSpec:
+		check_casing_ident(file_set, value.Name, diags)
+	case *ast.ValueSpec:
+		for _, name := range value.Names {
+			if screaming_case_constants[name] {
+				continue
 			}
-			check_field_list(x.Recv)
-		case *ast.TypeSpec:
-			check(x.Name)
-		case *ast.ValueSpec:
-			for _, name := range x.Names {
-				if screaming_case_constants[name] {
-					continue
-				}
-				check(name)
-			}
-		case *ast.FuncType:
-			check_field_list(x.Params)
-			check_field_list(x.Results)
-		case *ast.StructType:
-			check_field_list(x.Fields)
-		case *ast.InterfaceType:
-			check_field_list(x.Methods)
-		case *ast.AssignStmt:
-			if x.Tok == token.DEFINE {
-				for _, lhs := range x.Lhs {
-					if identifier, ok := lhs.(*ast.Ident); ok {
-						check(identifier)
-					}
+			check_casing_ident(file_set, name, diags)
+		}
+	case *ast.FuncType:
+		check_field_list(value.Params)
+		check_field_list(value.Results)
+	case *ast.StructType:
+		check_field_list(value.Fields)
+	case *ast.InterfaceType:
+		check_field_list(value.Methods)
+	case *ast.AssignStmt:
+		if value.Tok == token.DEFINE {
+			for _, left := range value.Lhs {
+				identifier, is_identifier := left.(*ast.Ident)
+				if is_identifier {
+					check_casing_ident(file_set, identifier, diags)
 				}
 			}
 		}
-		return true
-	})
-	return diags
+	}
+	return true
 }
 
 // Check_casing_constant_idents walks the whole file — function bodies
@@ -1752,24 +1776,27 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 // general Ada_Case/snake_case rule check_casing would otherwise apply.
 func check_casing_constant_idents(file *ast.File) (idents []*ast.Ident) {
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		generic_declaration, ok := n.(*ast.GenDecl)
-		if !ok {
-			return true
-		}
-		if generic_declaration.Tok != token.CONST {
-			return true
-		}
-		for _, specification := range generic_declaration.Specs {
-			value_specification, is_value_specification :=
-				specification.(*ast.ValueSpec)
-			if !is_value_specification {
-				continue
-			}
-			idents = append(idents, value_specification.Names...)
-		}
-		return true
+		return check_casing_constant_node(n, &idents)
 	})
 	return idents
+}
+
+func check_casing_constant_node(node ast.Node, idents *[]*ast.Ident) (descend bool) {
+	generic_declaration, ok := node.(*ast.GenDecl)
+	if !ok {
+		return true
+	}
+	if generic_declaration.Tok != token.CONST {
+		return true
+	}
+	for _, specification := range generic_declaration.Specs {
+		value_specification, is_value_specification := specification.(*ast.ValueSpec)
+		if !is_value_specification {
+			continue
+		}
+		*idents = append(*idents, value_specification.Names...)
+	}
+	return true
 }
 
 func check_constant_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
@@ -1792,27 +1819,32 @@ func check_constant_casing(file_set *token.FileSet, file *ast.File, _ []byte) (d
 func check_named_returns(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		ft, ok := n.(*ast.FuncType)
-		if !ok {
-			return true
-		}
-		if ft.Results == nil {
-			return true
-		}
-		for _, f := range ft.Results.List {
-			if len(f.Names) == 0 {
-				diags = append(diags, Diagnostic{
-					Position: file_set.Position(f.Pos()),
-					Message: fmt.Sprintf(
-						"The return type %s has no name. "+
-							"Name the return value.", types.ExprString(
-							f.Type)),
-				})
-			}
-		}
-		return true
+		return check_named_returns_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_named_returns_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	function_type, ok := node.(*ast.FuncType)
+	if !ok {
+		return true
+	}
+	if function_type.Results == nil {
+		return true
+	}
+	for _, field := range function_type.Results.List {
+		if len(field.Names) == 0 {
+			*diags = append(*diags, Diagnostic{
+				Position: file_set.Position(field.Pos()),
+				Message: fmt.Sprintf(
+					"The return type %s has no name. Name the return value.",
+					types.ExprString(field.Type)),
+			})
+		}
+	}
+	return true
 }
 
 // Shared exit-postcondition for per-file checks: diagnostics and declarations
@@ -1837,46 +1869,61 @@ func check_no_naked_return(file_set *token.FileSet, file *ast.File, _ []byte) (d
 	var function_stack []*ast.FuncType
 	var push_history []bool
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		if n == nil {
-			top := len(push_history) - 1
-			pushed := push_history[top]
-			push_history = push_history[:top]
-			if pushed {
-				function_stack = function_stack[:len(function_stack)-1]
-			}
-			return true
-		}
-		pushed := false
-		switch x := n.(type) {
-		case *ast.FuncDecl:
-			function_stack = append(function_stack, x.Type)
-			pushed = true
-		case *ast.FuncLit:
-			function_stack = append(function_stack, x.Type)
-			pushed = true
-		case *ast.ReturnStmt:
-			if len(function_stack) == 0 {
-				break
-			}
-			if len(x.Results) > 0 {
-				break
-			}
-			signature := function_stack[len(function_stack)-1]
-			if signature.Results == nil {
-				break
-			}
-			if len(signature.Results.List) == 0 {
-				break
-			}
-			diags = append(diags, Diagnostic{
-				Position: file_set.Position(x.Return),
-				Message:  "Do not use a naked return. Write the return values.",
-			})
-		}
-		push_history = append(push_history, pushed)
-		return true
+		return check_no_naked_return_node(
+			file_set, n, &function_stack, &push_history, &diags)
 	})
 	return diags
+}
+
+func check_no_naked_return_node(
+	file_set *token.FileSet, node ast.Node, function_stack *[]*ast.FuncType,
+	push_history *[]bool, diags *[]Diagnostic,
+) (descend bool) {
+	if node == nil {
+		top := len(*push_history) - 1
+		pushed := (*push_history)[top]
+		*push_history = (*push_history)[:top]
+		if pushed {
+			*function_stack = (*function_stack)[:len(*function_stack)-1]
+		}
+		return true
+	}
+	pushed := false
+	switch value := node.(type) {
+	case *ast.FuncDecl:
+		*function_stack = append(*function_stack, value.Type)
+		pushed = true
+	case *ast.FuncLit:
+		*function_stack = append(*function_stack, value.Type)
+		pushed = true
+	case *ast.ReturnStmt:
+		check_no_naked_return_statement(file_set, value, *function_stack, diags)
+	}
+	*push_history = append(*push_history, pushed)
+	return true
+}
+
+func check_no_naked_return_statement(
+	file_set *token.FileSet, statement *ast.ReturnStmt,
+	function_stack []*ast.FuncType, diags *[]Diagnostic,
+) {
+	if len(function_stack) == 0 {
+		return
+	}
+	if len(statement.Results) > 0 {
+		return
+	}
+	signature := function_stack[len(function_stack)-1]
+	if signature.Results == nil {
+		return
+	}
+	if len(signature.Results.List) == 0 {
+		return
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(statement.Return),
+		Message:  "Do not use a naked return. Write the return values.",
+	})
 }
 
 func check_line_character_count(
@@ -1901,21 +1948,8 @@ func check_line_character_count(
 	line_number := 1
 	column := 0
 	emit := func(n int) {
-		if import_lines[line_number] {
-			return
-		}
-		if raw_string_lines[line_number] {
-			return
-		}
-		diags = append(diags, Diagnostic{
-			Position: token.Position{
-				Filename: filename,
-				Line:     line_number,
-				Column:   LINE_CHARS_MAX + 1,
-			},
-			Message: fmt.Sprintf("The line has %d characters. The maximum is %d.",
-				n, LINE_CHARS_MAX),
-		})
+		check_line_character_count_emit(
+			filename, line_number, n, import_lines, raw_string_lines, &diags)
 	}
 	for len(source) > 0 {
 		r, size := decode_first_character(source)
@@ -1938,6 +1972,27 @@ func check_line_character_count(
 		emit(column)
 	}
 	return diags
+}
+
+func check_line_character_count_emit(
+	filename string, line_number int, count int,
+	import_lines map[int]bool, raw_string_lines map[int]bool, diags *[]Diagnostic,
+) {
+	if import_lines[line_number] {
+		return
+	}
+	if raw_string_lines[line_number] {
+		return
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: token.Position{
+			Filename: filename,
+			Line:     line_number,
+			Column:   LINE_CHARS_MAX + 1,
+		},
+		Message: fmt.Sprintf("The line has %d characters. The maximum is %d.",
+			count, LINE_CHARS_MAX),
+	})
 }
 
 func decode_first_character(source []byte) (character rune, size int) {
@@ -1977,109 +2032,131 @@ func raw_string_literal_lines(
 
 	lines = map[int]bool{}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		basic_literal, is_basic_literal := n.(*ast.BasicLit)
-		if !is_basic_literal {
-			return true
-		}
-		if basic_literal.Kind != token.STRING {
-			return true
-		}
-		if !strings.Has_Prefix(basic_literal.Value, "`") {
-			return true
-		}
-		first := file_set.Position(basic_literal.Pos()).Line
-		last := file_set.Position(basic_literal.End()).Line
-		for line := first; line <= last; line++ {
-			lines[line] = true
-		}
-		return true
+		return raw_string_literal_node(file_set, n, lines)
 	})
 	return lines
+}
+
+func raw_string_literal_node(
+	file_set *token.FileSet, node ast.Node, lines map[int]bool,
+) (descend bool) {
+	basic_literal, is_basic_literal := node.(*ast.BasicLit)
+	if !is_basic_literal {
+		return true
+	}
+	if basic_literal.Kind != token.STRING {
+		return true
+	}
+	if !strings.Has_Prefix(basic_literal.Value, "`") {
+		return true
+	}
+	first := file_set.Position(basic_literal.Pos()).Line
+	last := file_set.Position(basic_literal.End()).Line
+	for line := first; line <= last; line++ {
+		lines[line] = true
+	}
+	return true
 }
 
 // TigerStyle: compound conditions hide cases. Split into nested if/else trees so each branch
 // is verifiable in isolation. Only the top-level operator is flagged — `&&`/`||` deep inside a
 // subexpression (e.g. a function call arg) doesn't make the if itself compound.
 func check_compound_if(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-
-	unwrap := func(e ast.Expr) (output ast.Expr) {
-		for step := 0; ; step++ {
-			pe, ok := e.(*ast.ParenExpr)
-			if !ok {
-				return e
-			}
-			e = pe.X
-		}
-	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		if_statement, ok := n.(*ast.IfStmt)
-		if !ok {
-			return true
-		}
-		be, ok := unwrap(if_statement.Cond).(*ast.BinaryExpr)
-		if !ok {
-			return true
-		}
-		is_logical := false
-		if be.Op == token.LAND {
-			is_logical = true
-		}
-		if be.Op == token.LOR {
-			is_logical = true
-		}
-		if is_logical {
-			diags = append(diags, Diagnostic{
-				Position: file_set.Position(if_statement.Cond.Pos()),
-				Message: fmt.Sprintf(
-					"The if condition has the compound operator %q. "+
-						"Write nested if statements.", be.Op.String()),
-			})
-		}
-		return true
+		return check_compound_if_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func unparen_expression(expression ast.Expr) (output ast.Expr) {
+	for step := 0; ; step++ {
+		parenthesized, is_parenthesized := expression.(*ast.ParenExpr)
+		if !is_parenthesized {
+			return expression
+		}
+		expression = parenthesized.X
+	}
+}
+
+func check_compound_if_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	if_statement, ok := node.(*ast.IfStmt)
+	if !ok {
+		return true
+	}
+	binary, ok := unparen_expression(if_statement.Cond).(*ast.BinaryExpr)
+	if !ok {
+		return true
+	}
+	is_logical := false
+	if binary.Op == token.LAND {
+		is_logical = true
+	}
+	if binary.Op == token.LOR {
+		is_logical = true
+	}
+	if is_logical {
+		*diags = append(*diags, Diagnostic{
+			Position: file_set.Position(if_statement.Cond.Pos()),
+			Message: fmt.Sprintf(
+				"The if condition has the compound operator %q. "+
+					"Write nested if statements.", binary.Op.String()),
+		})
+	}
+	return true
 }
 
 func check_function_line_count(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
 
-	check := func(pos, lbrace, rbrace token.Pos, label string) {
-		position := file_set.Position(pos)
-		lbrace_position := file_set.Position(lbrace)
-		rbrace_position := file_set.Position(rbrace)
-		if !lbrace_position.IsValid() {
-			return
-		}
-		if !rbrace_position.IsValid() {
-			return
-		}
-		start := lbrace_position.Line
-		end := rbrace_position.Line
-		line_count := end - start + 1
-		if line_count > FUNCTION_LINES_MAX {
-			diags = append(diags, Diagnostic{
-				Position: position,
-				Message: fmt.Sprintf(
-					"The %s has %d lines. The maximum is %d.",
-					label, line_count, FUNCTION_LINES_MAX),
-			})
-		}
-	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		switch x := n.(type) {
-		case *ast.FuncDecl:
-			if x.Body != nil {
-				check(x.Pos(), x.Body.Lbrace, x.Body.Rbrace, "function")
-			}
-		case *ast.FuncLit:
-			if x.Body != nil {
-				check(x.Pos(), x.Body.Lbrace, x.Body.Rbrace, "function literal")
-			}
-		}
-		return true
+		return check_function_line_count_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_function_line_count_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	switch value := node.(type) {
+	case *ast.FuncDecl:
+		if value.Body != nil {
+			check_function_line_count_body(
+				file_set, value.Pos(), value.Body, "function", diags)
+		}
+	case *ast.FuncLit:
+		if value.Body != nil {
+			check_function_line_count_body(
+				file_set, value.Pos(), value.Body, "function literal", diags)
+		}
+	}
+	return true
+}
+
+func check_function_line_count_body(
+	file_set *token.FileSet, position_token token.Pos, body *ast.BlockStmt,
+	label string, diags *[]Diagnostic,
+) {
+	position := file_set.Position(position_token)
+	lbrace_position := file_set.Position(body.Lbrace)
+	rbrace_position := file_set.Position(body.Rbrace)
+	if !lbrace_position.IsValid() {
+		return
+	}
+	if !rbrace_position.IsValid() {
+		return
+	}
+	line_count := rbrace_position.Line - lbrace_position.Line + 1
+	if line_count > FUNCTION_LINES_MAX {
+		*diags = append(*diags, Diagnostic{
+			Position: position,
+			Message: fmt.Sprintf(
+				"The %s has %d lines. The maximum is %d.",
+				label, line_count, FUNCTION_LINES_MAX),
+		})
+	}
 }
 
 // The per-file line cap. A file past the cap stops being readable
@@ -2120,30 +2197,35 @@ func check_array_capacity(
 ) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		array_type, is_array_type := n.(*ast.ArrayType)
-		if !is_array_type {
-			return true
-		}
-		// A slice carries no capacity, and an ellipsis defers it to the compiler.
-		if array_type.Len == nil {
-			return true
-		}
-		literal, is_literal := array_type.Len.(*ast.BasicLit)
-		if !is_literal {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(literal.Pos()),
-			Name:     literal.Value,
-			Want:     "a named constant",
-			Message: fmt.Sprintf(
-				"The array capacity %s is a literal. "+
-					"Declare the bound as a constant.",
-				literal.Value),
-		})
-		return true
+		return check_array_capacity_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_array_capacity_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	array_type, is_array_type := node.(*ast.ArrayType)
+	if !is_array_type {
+		return true
+	}
+	// Slice has no capacity. Ellipsis delegates capacity to compiler.
+	if array_type.Len == nil {
+		return true
+	}
+	literal, is_literal := array_type.Len.(*ast.BasicLit)
+	if !is_literal {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(literal.Pos()),
+		Name:     literal.Value,
+		Want:     "a named constant",
+		Message: fmt.Sprintf(
+			"The array capacity %s is a literal. Declare the bound as a constant.",
+			literal.Value),
+	})
+	return true
 }
 
 // Check_Source parses a single source buffer and returns diagnostics
@@ -2673,16 +2755,7 @@ func check_file_system_package_split(parsed_files []Parsed_File) (diags []Diagno
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) (less bool) {
-		if keys[i].Directory != keys[j].Directory {
-			return keys[i].Directory < keys[j].Directory
-		}
-		if keys[i].Is_Test != keys[j].Is_Test {
-			return !keys[i].Is_Test
-		}
-		if keys[i].Test_Is_External != keys[j].Test_Is_External {
-			return keys[i].Test_Is_External
-		}
-		return keys[i].Build < keys[j].Build
+		return package_group_key_less(keys, i, j)
 	})
 	for _, key := range keys {
 		st := groups[key]
@@ -2696,6 +2769,19 @@ func check_file_system_package_split(parsed_files []Parsed_File) (diags []Diagno
 		diags = append(diags, package_group_key_diag(key, st, files_max))
 	}
 	return diags
+}
+
+func package_group_key_less(keys []Package_Group_Key, i int, j int) (less bool) {
+	if keys[i].Directory != keys[j].Directory {
+		return keys[i].Directory < keys[j].Directory
+	}
+	if keys[i].Is_Test != keys[j].Is_Test {
+		return !keys[i].Is_Test
+	}
+	if keys[i].Test_Is_External != keys[j].Test_Is_External {
+		return keys[i].Test_Is_External
+	}
+	return keys[i].Build < keys[j].Build
 }
 
 func package_group_key_diag(
@@ -2771,10 +2857,7 @@ func check_main_package_size(parsed_files []Parsed_File) (diags []Diagnostic) {
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) (less bool) {
-		if keys[i].Directory != keys[j].Directory {
-			return keys[i].Directory < keys[j].Directory
-		}
-		return keys[i].Build < keys[j].Build
+		return main_group_key_less(keys, i, j)
 	})
 	for _, key := range keys {
 		st := groups[key]
@@ -2784,6 +2867,13 @@ func check_main_package_size(parsed_files []Parsed_File) (diags []Diagnostic) {
 		diags = append(diags, main_package_size_diag(key, st))
 	}
 	return diags
+}
+
+func main_group_key_less(keys []Main_Group_Key, i int, j int) (less bool) {
+	if keys[i].Directory != keys[j].Directory {
+		return keys[i].Directory < keys[j].Directory
+	}
+	return keys[i].Build < keys[j].Build
 }
 
 func main_package_size_diag(
@@ -2842,8 +2932,7 @@ func check_file_system_read_files(fsys fs.FS, paths []string) (sources [][]byte,
 	for i, p := range paths {
 		wg.Add(1)
 		go func(i int, p string) {
-			defer wg.Done()
-			sources[i], errs[i] = fs.ReadFile(fsys, p)
+			check_file_system_read_one(fsys, p, i, sources, errs, &wg)
 		}(i, p)
 	}
 	wg.Wait()
@@ -2853,6 +2942,14 @@ func check_file_system_read_files(fsys fs.FS, paths []string) (sources [][]byte,
 		}
 	}
 	return sources, nil
+}
+
+func check_file_system_read_one(
+	fsys fs.FS, file_path string, index int, sources [][]byte,
+	errs []error, wait_group *sync.WaitGroup,
+) {
+	defer wait_group.Done()
+	sources[index], errs[index] = fs.ReadFile(fsys, file_path)
 }
 
 // Parses files in parallel — CPU bound, capped at NumCPU. Per-file parse
@@ -2874,24 +2971,8 @@ func check_file_system_parse_files(
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, p string, source []byte) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			file_set := token.NewFileSet()
-			file, parse_err := parser.ParseFile(
-				file_set, p, source,
-				parser.SkipObjectResolution|parser.ParseComments)
-			if parse_err != nil {
-				diags[i] = Diagnostic{
-					Position: token.Position{Filename: p},
-					Message: fmt.Sprintf(
-						"The parser cannot read the file: %v", parse_err),
-				}
-				had_err[i] = true
-				return
-			}
-			results[i] = Parsed_File{
-				Path: p, File_Set: file_set, File: file, Source: source,
-			}
+			check_file_system_parse_one(
+				i, p, source, results, diags, had_err, sem, &wg)
 		}(i, p, sources[i])
 	}
 	wg.Wait()
@@ -2903,6 +2984,35 @@ func check_file_system_parse_files(
 		parsed_files = append(parsed_files, results[i])
 	}
 	return parsed_files, parse_diags
+}
+
+func check_file_system_parse_one(
+	index int, file_path string, source []byte, results []Parsed_File,
+	diags []Diagnostic, had_err []bool, semaphore chan struct{},
+	wait_group *sync.WaitGroup,
+) {
+	defer wait_group.Done()
+	defer check_file_system_parse_release(semaphore)
+	file_set := token.NewFileSet()
+	file, parse_err := parser.ParseFile(
+		file_set, file_path, source,
+		parser.SkipObjectResolution|parser.ParseComments)
+	if parse_err != nil {
+		diags[index] = Diagnostic{
+			Position: token.Position{Filename: file_path},
+			Message: fmt.Sprintf(
+				"The parser cannot read the file: %v", parse_err),
+		}
+		had_err[index] = true
+		return
+	}
+	results[index] = Parsed_File{
+		Path: file_path, File_Set: file_set, File: file, Source: source,
+	}
+}
+
+func check_file_system_parse_release(semaphore chan struct{}) {
+	<-semaphore
 }
 
 // Paths and sources have a 1:1 relationship by contract (caller
@@ -2952,59 +3062,64 @@ func discover_components(
 	seen := map[string]bool{}
 	walk_err := fs.WalkDir(fsys, ".",
 		func(p string, d fs.DirEntry, entry_err error) (output error) {
-			if entry_err != nil {
-				return entry_err
-			}
-			if d.IsDir() {
-				if p == "." {
-					return nil
-				}
-				if Ignored_Directory(p) {
-					return fs.SkipDir
-				}
-				// Prune the gitignored subtrees every other tier skips so an
-				// untracked stray tree never contributes a phantom module.
-				if directory_has_tracked != nil {
-					if !directory_has_tracked[p] {
-						return fs.SkipDir
-					}
-				}
-				return nil
-			}
-			if path.Ext(p) != ".go" {
-				return nil
-			}
-			offset := strings.Index_Byte(p, '/')
-			// A Go file directly at the repo root (the build tool) sits in no
-			// top-level directory, so it anchors no module.
-			if offset < 0 {
-				return nil
-			}
-			top := p[:offset]
-			if seen[top] {
-				return nil
-			}
-			seen[top] = true
-			// A component's import path is the root module path joined with its
-			// directory — what the deleted per-directory go.mod files declared.
-			import_path := ""
-			if root_module_path != "" {
-				import_path = root_module_path + "/" + top
-			}
-			components = append(components, Component_Information{
-				Root:              top,
-				Import_Path:       import_path,
-				Directory_Package: make(map[string]string),
-			})
-			if len(components) > COMPONENTS_MAX {
-				return fmt.Errorf("more than %d components", COMPONENTS_MAX)
-			}
-			return nil
+			return discover_component_entry(
+				p, d, entry_err, root_module_path, directory_has_tracked,
+				seen, &components)
 		})
 	if walk_err != nil {
 		return nil, walk_err
 	}
 	return components, nil
+}
+
+func discover_component_entry(
+	file_path string, entry fs.DirEntry, entry_err error,
+	root_module_path string, directory_has_tracked map[string]bool,
+	seen map[string]bool, components *[]Component_Information,
+) (output error) {
+	if entry_err != nil {
+		return entry_err
+	}
+	if entry.IsDir() {
+		if file_path == "." {
+			return nil
+		}
+		if Ignored_Directory(file_path) {
+			return fs.SkipDir
+		}
+		// Untracked trees must not create phantom components.
+		if directory_has_tracked != nil {
+			if !directory_has_tracked[file_path] {
+				return fs.SkipDir
+			}
+		}
+		return nil
+	}
+	if path.Ext(file_path) != ".go" {
+		return nil
+	}
+	offset := strings.Index_Byte(file_path, '/')
+	if offset < 0 {
+		return nil
+	}
+	top := file_path[:offset]
+	if seen[top] {
+		return nil
+	}
+	seen[top] = true
+	import_path := ""
+	if root_module_path != "" {
+		import_path = root_module_path + "/" + top
+	}
+	*components = append(*components, Component_Information{
+		Root:              top,
+		Import_Path:       import_path,
+		Directory_Package: make(map[string]string),
+	})
+	if len(*components) > COMPONENTS_MAX {
+		return fmt.Errorf("more than %d components", COMPONENTS_MAX)
+	}
+	return nil
 }
 
 // Reads the single root go.mod's module path. Empty when the file is absent or
@@ -3560,29 +3675,8 @@ func check_single_module(input *Check_Single_Module_Input) (diags []Diagnostic) 
 	root_module_present := false
 	walk_err := fs.WalkDir(input.Fsys, ".",
 		func(p string, d fs.DirEntry, entry_err error) (output error) {
-			if entry_err != nil {
-				return entry_err
-			}
-			if d.IsDir() {
-				if p == "." {
-					return nil
-				}
-				if Ignored_Directory(p) {
-					return fs.SkipDir
-				}
-				if input.Directory_Has_Tracked != nil {
-					if !input.Directory_Has_Tracked[p] {
-						return fs.SkipDir
-					}
-				}
-				return nil
-			}
-			file_diags, root := single_module_file(p, input.Tracked)
-			if root {
-				root_module_present = true
-			}
-			diags = append(diags, file_diags...)
-			return nil
+			return single_module_entry(
+				input, p, d, entry_err, &root_module_present, &diags)
 		})
 	if walk_err != nil {
 		// A walk failure surfaces through the stream tier already; nothing to add.
@@ -3598,6 +3692,35 @@ func check_single_module(input *Check_Single_Module_Input) (diags []Diagnostic) 
 		}))
 	}
 	return diags
+}
+
+func single_module_entry(
+	input *Check_Single_Module_Input, file_path string, entry fs.DirEntry,
+	entry_err error, root_module_present *bool, diags *[]Diagnostic,
+) (output error) {
+	if entry_err != nil {
+		return entry_err
+	}
+	if entry.IsDir() {
+		if file_path == "." {
+			return nil
+		}
+		if Ignored_Directory(file_path) {
+			return fs.SkipDir
+		}
+		if input.Directory_Has_Tracked != nil {
+			if !input.Directory_Has_Tracked[file_path] {
+				return fs.SkipDir
+			}
+		}
+		return nil
+	}
+	file_diags, root := single_module_file(file_path, input.Tracked)
+	if root {
+		*root_module_present = true
+	}
+	*diags = append(*diags, file_diags...)
+	return nil
 }
 
 // Classifies one non-directory walk entry: any single-module diagnostic for a
@@ -3714,10 +3837,9 @@ func check_package_documentation_comment(
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) (less bool) {
-		if keys[i].Directory != keys[j].Directory {
-			return keys[i].Directory < keys[j].Directory
-		}
-		return keys[i].Package < keys[j].Package
+		return string_pair_less(
+			keys[i].Directory, keys[i].Package,
+			keys[j].Directory, keys[j].Package)
 	})
 	for _, k := range keys {
 		st := groups[k]
@@ -3725,7 +3847,7 @@ func check_package_documentation_comment(
 			continue
 		}
 		sort.Slice(st.Files, func(i, j int) (less bool) {
-			return st.Files[i].Path < st.Files[j].Path
+			return parsed_file_path_less(st.Files, i, j)
 		})
 		first := st.Files[0]
 		diags = append(diags, Diagnostic{
@@ -3738,6 +3860,19 @@ func check_package_documentation_comment(
 		})
 	}
 	return diags
+}
+
+func string_pair_less(
+	left_first string, left_second string, right_first string, right_second string,
+) (less bool) {
+	if left_first != right_first {
+		return left_first < right_first
+	}
+	return left_second < right_second
+}
+
+func parsed_file_path_less(files []Parsed_File, i int, j int) (less bool) {
+	return files[i].Path < files[j].Path
 }
 
 // SPECIFICATION.md doctrine: every pure Go package carries a SPECIFICATION.md
@@ -3852,15 +3987,7 @@ func check_file_system_run_checks(
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, pf Parsed_File) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			per_file_diags[i] = Check_File(&Check_File_Input{
-				File_Set: pf.File_Set, File: pf.File, Source: pf.Source,
-				Instrumentation:   input.Instrumentation,
-				Word_Replacements: input.Word_Replacements,
-				Invariant_Exempt:  input.Invariant_Exempt,
-				Declarations:      input.Declarations,
-			})
+			check_file_system_run_one(input, i, pf, per_file_diags, sem, &wg)
 		}(i, pf)
 	}
 	wg.Wait()
@@ -3868,6 +3995,22 @@ func check_file_system_run_checks(
 		diags = append(diags, d...)
 	}
 	return diags
+}
+
+func check_file_system_run_one(
+	input *Check_File_System_Run_Checks_Input, index int, file Parsed_File,
+	per_file_diags [][]Diagnostic, semaphore chan struct{},
+	wait_group *sync.WaitGroup,
+) {
+	defer wait_group.Done()
+	defer check_file_system_parse_release(semaphore)
+	per_file_diags[index] = Check_File(&Check_File_Input{
+		File_Set: file.File_Set, File: file.File, Source: file.Source,
+		Instrumentation:   input.Instrumentation,
+		Word_Replacements: input.Word_Replacements,
+		Invariant_Exempt:  input.Invariant_Exempt,
+		Declarations:      input.Declarations,
+	})
 }
 
 // TigerStyle: comments are sentences with a capital letter, ending in `.` or `:`.
@@ -4004,10 +4147,9 @@ func check_no_recursion_packages(
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i int, j int) (less bool) {
-		if keys[i].Directory != keys[j].Directory {
-			return keys[i].Directory < keys[j].Directory
-		}
-		return keys[i].Package < keys[j].Package
+		return string_pair_less(
+			keys[i].Directory, keys[i].Package,
+			keys[j].Directory, keys[j].Package)
 	})
 	for _, key := range keys {
 		for _, diag := range check_no_recursion(groups[key]) {
@@ -4413,41 +4555,45 @@ func check_no_discard(file_set *token.FileSet, file *ast.File, _ []byte) (diags 
 	const MESSAGE = "The assignment to the blank identifier hides the value. " +
 		"Name the value or remove the assignment."
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		switch x := n.(type) {
-		case *ast.AssignStmt:
-			if check_no_discard_all_blank_exprs(x.Lhs) {
-				diags = append(diags, Diagnostic{
-					Position: file_set.Position(x.Pos()),
-					Message:  MESSAGE,
-				})
-			}
-		case *ast.GenDecl:
-			if x.Tok != token.VAR {
-				return true
-			}
-			for _, specification := range x.Specs {
-				vs, ok := specification.(*ast.ValueSpec)
-				if !ok {
-					continue
-				}
-				if vs.Type != nil {
-					continue
-				}
-				if len(vs.Values) == 0 {
-					continue
-				}
-				if !check_no_discard_all_blank_idents(vs.Names) {
-					continue
-				}
-				diags = append(diags, Diagnostic{
-					Position: file_set.Position(vs.Pos()),
-					Message:  MESSAGE,
-				})
-			}
-		}
-		return true
+		return check_no_discard_node(file_set, n, MESSAGE, &diags)
 	})
 	return diags
+}
+
+func check_no_discard_node(
+	file_set *token.FileSet, node ast.Node, message string, diags *[]Diagnostic,
+) (descend bool) {
+	switch value := node.(type) {
+	case *ast.AssignStmt:
+		if check_no_discard_all_blank_exprs(value.Lhs) {
+			*diags = append(*diags, Diagnostic{
+				Position: file_set.Position(value.Pos()), Message: message})
+		}
+	case *ast.GenDecl:
+		if value.Tok != token.VAR {
+			return true
+		}
+		for _, specification := range value.Specs {
+			value_specification, ok := specification.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if value_specification.Type != nil {
+				continue
+			}
+			if len(value_specification.Values) == 0 {
+				continue
+			}
+			if !check_no_discard_all_blank_idents(value_specification.Names) {
+				continue
+			}
+			*diags = append(*diags, Diagnostic{
+				Position: file_set.Position(value_specification.Pos()),
+				Message:  message,
+			})
+		}
+	}
+	return true
 }
 
 func check_no_discard_all_blank_exprs(exprs []ast.Expr) (all bool) {
@@ -4488,25 +4634,31 @@ func check_public_struct_fields(
 ) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		st, ok := n.(*ast.StructType)
-		if !ok {
-			return true
-		}
-		if st.Fields == nil {
-			return true
-		}
-		for _, f := range st.Fields.List {
-			if len(f.Names) == 0 {
-				check_public_struct_fields_embedded(file_set, f.Type, &diags)
-				continue
-			}
-			for _, name := range f.Names {
-				check_public_struct_fields_named(file_set, name, &diags)
-			}
-		}
-		return true
+		return check_public_struct_fields_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_public_struct_fields_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	struct_type, ok := node.(*ast.StructType)
+	if !ok {
+		return true
+	}
+	if struct_type.Fields == nil {
+		return true
+	}
+	for _, field := range struct_type.Fields.List {
+		if len(field.Names) == 0 {
+			check_public_struct_fields_embedded(file_set, field.Type, diags)
+			continue
+		}
+		for _, name := range field.Names {
+			check_public_struct_fields_named(file_set, name, diags)
+		}
+	}
+	return true
 }
 
 func check_public_struct_fields_named(
@@ -5035,20 +5187,25 @@ func check_type_declaration_exported(
 func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		identifier, ok := n.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if identifier.Name != "iota" {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(identifier.Pos()),
-			Message:  "Do not use iota.",
-		})
-		return true
+		return check_no_iota_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_no_iota_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	identifier, ok := node.(*ast.Ident)
+	if !ok {
+		return true
+	}
+	if identifier.Name != "iota" {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(identifier.Pos()), Message: "Do not use iota.",
+	})
+	return true
 }
 
 // Fallthrough makes a case silently run the next one — a control jump that is
@@ -5057,20 +5214,25 @@ func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 func check_no_fallthrough(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		branch, ok := n.(*ast.BranchStmt)
-		if !ok {
-			return true
-		}
-		if branch.Tok != token.FALLTHROUGH {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(branch.Pos()),
-			Message:  "Do not use fallthrough.",
-		})
-		return true
+		return check_no_fallthrough_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_no_fallthrough_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	branch, ok := node.(*ast.BranchStmt)
+	if !ok {
+		return true
+	}
+	if branch.Tok != token.FALLTHROUGH {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(branch.Pos()), Message: "Do not use fallthrough.",
+	})
+	return true
 }
 
 // A blank import runs a package's init for its side effects alone, smuggling
@@ -5105,27 +5267,33 @@ func check_no_panic(
 		}
 	}
 	ast.Inspect(file, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		callee, is_identifier := call.Fun.(*ast.Ident)
-		if !is_identifier {
-			return true
-		}
-		if callee.Name != "panic" {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(callee.Pos()),
-			Name:     "panic",
-			Want:     "aver.Always",
-			Message: "Do not call panic outside shared/sim/aver. " +
-				"Replace it with aver.Always.",
-		})
-		return true
+		return check_no_panic_node(file_set, node, &diags)
 	})
 	return diags
+}
+
+func check_no_panic_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	callee, is_identifier := call.Fun.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	if callee.Name != "panic" {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(callee.Pos()),
+		Name:     "panic",
+		Want:     "aver.Always",
+		Message: "Do not call panic outside shared/sim/aver. " +
+			"Replace it with aver.Always.",
+	})
+	return true
 }
 
 func unquote_literal(text string) (unquoted string, err error) {
@@ -5315,28 +5483,36 @@ func check_no_third_party_struct_tag(
 
 	stdlib_keys := map[string]bool{"json": true, "xml": true, "asn1": true}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		field, is_field := n.(*ast.Field)
-		if !is_field {
-			return true
-		}
-		if field.Tag == nil {
-			return true
-		}
-		keys := check_no_third_party_struct_tag_parse_keys(field.Tag)
-		for _, key := range keys {
-			if stdlib_keys[key] {
-				continue
-			}
-			diags = append(diags, Diagnostic{
-				Position: file_set.Position(field.Tag.Pos()),
-				Message: fmt.Sprintf(
-					"The struct tag key %q is not a stdlib key. "+
-						"Use only json, xml, and asn1.", key),
-			})
-		}
-		return true
+		return check_no_third_party_struct_tag_node(
+			file_set, n, stdlib_keys, &diags)
 	})
 	return diags
+}
+
+func check_no_third_party_struct_tag_node(
+	file_set *token.FileSet, node ast.Node, stdlib_keys map[string]bool,
+	diags *[]Diagnostic,
+) (descend bool) {
+	field, is_field := node.(*ast.Field)
+	if !is_field {
+		return true
+	}
+	if field.Tag == nil {
+		return true
+	}
+	keys := check_no_third_party_struct_tag_parse_keys(field.Tag)
+	for _, key := range keys {
+		if stdlib_keys[key] {
+			continue
+		}
+		*diags = append(*diags, Diagnostic{
+			Position: file_set.Position(field.Tag.Pos()),
+			Message: fmt.Sprintf(
+				"The struct tag key %q is not a stdlib key. "+
+					"Use only json, xml, and asn1.", key),
+		})
+	}
+	return true
 }
 
 // Parses the keys out of a struct tag literal as it appears in source —
@@ -5409,33 +5585,40 @@ func check_blank_synchronization_mutex(
 
 	stdlib_imports := collect_stdlib_imports(file)
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		struct_type, is_struct := n.(*ast.StructType)
-		if !is_struct {
-			return true
-		}
-		if struct_type.Fields == nil {
-			return true
-		}
-		for _, field := range struct_type.Fields.List {
-			if !type_expression_is_mutex(
-				field.Type, stdlib_imports) {
-				continue
-			}
-			for _, name := range field.Names {
-				if name.Name != "_" {
-					continue
-				}
-				diags = append(diags, Diagnostic{
-					Position: file_set.Position(name.Pos()),
-					Message: "A sync mutex with a blank name has no Lock " +
-						"receiver. Use the noCopy idiom for non-copy " +
-						"semantics, or name the field.",
-				})
-			}
-		}
-		return true
+		return check_blank_synchronization_mutex_node(
+			file_set, n, stdlib_imports, &diags)
 	})
 	return diags
+}
+
+func check_blank_synchronization_mutex_node(
+	file_set *token.FileSet, node ast.Node,
+	stdlib_imports map[string]bool, diags *[]Diagnostic,
+) (descend bool) {
+	struct_type, is_struct := node.(*ast.StructType)
+	if !is_struct {
+		return true
+	}
+	if struct_type.Fields == nil {
+		return true
+	}
+	for _, field := range struct_type.Fields.List {
+		if !type_expression_is_mutex(field.Type, stdlib_imports) {
+			continue
+		}
+		for _, name := range field.Names {
+			if name.Name != "_" {
+				continue
+			}
+			*diags = append(*diags, Diagnostic{
+				Position: file_set.Position(name.Pos()),
+				Message: "A sync mutex with a blank name has no Lock receiver. " +
+					"Use the noCopy idiom for non-copy semantics, or name " +
+					"the field.",
+			})
+		}
+	}
+	return true
 }
 
 // Builds the keyed-literal check, closing over the workspace's declaration
@@ -5466,39 +5649,46 @@ func check_keyed_struct_init(
 		path_name = tok_file.Name()
 	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		lit, ok := n.(*ast.CompositeLit)
-		if !ok {
-			return true
-		}
-		qualifier, name := check_keyed_struct_init_type_ident(lit.Type)
-		if name == "" {
-			return true
-		}
-		if !keyed_struct_init_is_struct(&Keyed_Struct_Init_Is_Struct_Input{
-			Index: index, Path: path_name, Qualifier: qualifier,
-			Name: name, File: file,
-		}) {
-			return true
-		}
-		if len(lit.Elts) == 0 {
-			return true
-		}
-		for _, e := range lit.Elts {
-			_, is_kv := e.(*ast.KeyValueExpr)
-			if is_kv {
-				continue
-			}
-			diags = append(diags, Diagnostic{
-				Position: file_set.Position(lit.Pos()),
-				Message: fmt.Sprintf(
-					"The %s literal has no field keys. Write keyed fields.",
-					name),
-			})
-			return true
-		}
-		return true
+		return check_keyed_struct_init_node(
+			file_set, file, index, path_name, n, &diags)
 	})
 	return diags
+}
+
+func check_keyed_struct_init_node(
+	file_set *token.FileSet, file *ast.File, index *source.Declaration_Index,
+	path_name string, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	literal, ok := node.(*ast.CompositeLit)
+	if !ok {
+		return true
+	}
+	qualifier, name := check_keyed_struct_init_type_ident(literal.Type)
+	if name == "" {
+		return true
+	}
+	if !keyed_struct_init_is_struct(&Keyed_Struct_Init_Is_Struct_Input{
+		Index: index, Path: path_name, Qualifier: qualifier,
+		Name: name, File: file,
+	}) {
+		return true
+	}
+	if len(literal.Elts) == 0 {
+		return true
+	}
+	for _, element := range literal.Elts {
+		_, is_key_value := element.(*ast.KeyValueExpr)
+		if is_key_value {
+			continue
+		}
+		*diags = append(*diags, Diagnostic{
+			Position: file_set.Position(literal.Pos()),
+			Message: fmt.Sprintf(
+				"The %s literal has no field keys. Write keyed fields.", name),
+		})
+		return true
+	}
+	return true
 }
 
 // Keyed_Struct_Init_Is_Struct_Input carries one literal's type reference: the
@@ -5842,11 +6032,18 @@ func check_names_vocabulary(
 			file_set.Position(file.Name.Pos()), file.Name.Name, table)...)
 	diags = append(diags, check_names_vocabulary_file_name(file_set, file, table)...)
 	check_names_walk_decls(file, func(identifier *ast.Ident) {
-		position := file_set.Position(identifier.Pos())
-		diags = append(diags,
-			check_names_vocabulary_at(position, identifier.Name, table)...)
+		check_names_vocabulary_identifier(file_set, identifier, table, &diags)
 	})
 	return diags
+}
+
+func check_names_vocabulary_identifier(
+	file_set *token.FileSet, identifier *ast.Ident,
+	table map[string][]string, diags *[]Diagnostic,
+) {
+	position := file_set.Position(identifier.Pos())
+	*diags = append(*diags,
+		check_names_vocabulary_at(position, identifier.Name, table)...)
 }
 
 // Binds the word-replacements table (decoded from lint.json's word_replacements)
@@ -5994,6 +6191,72 @@ func check_no_empty_function_body(
 	return diags
 }
 
+// Named functions keep callback logic independently testable and keep capture
+// boundaries visible. Empty closures remain useful as bounded no-op callbacks.
+func check_closure_bodies(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+	tok_file := file_set.File(file.Pos())
+	if tok_file != nil {
+		if strings.Has_Suffix(tok_file.Name(), "_test.go") {
+			return nil
+		}
+	}
+	ast.Inspect(file, func(node ast.Node) (descend bool) {
+		return check_closure_body_node(file_set, node, &diags)
+	})
+	return diags
+}
+
+func check_closure_body_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	literal, is_literal := node.(*ast.FuncLit)
+	if !is_literal {
+		return true
+	}
+	if len(literal.Body.List) == 0 {
+		return true
+	}
+	if closure_body_is_call(literal.Body.List) {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(literal.Pos()),
+		Message: "The closure body must be empty or contain one function call. " +
+			"Move logic into a named function.",
+	})
+	return true
+}
+
+func closure_body_is_call(statements []ast.Stmt) (is_call bool) {
+	if len(statements) != 1 {
+		return false
+	}
+	switch statement := statements[0].(type) {
+	case *ast.ExprStmt:
+		return closure_expression_is_call(statement.X)
+	case *ast.ReturnStmt:
+		if len(statement.Results) != 1 {
+			return false
+		}
+		return closure_expression_is_call(statement.Results[0])
+	}
+	return false
+}
+
+func closure_expression_is_call(expression ast.Expr) (is_call bool) {
+	for {
+		parenthesized, is_parenthesized := expression.(*ast.ParenExpr)
+		if !is_parenthesized {
+			break
+		}
+		expression = parenthesized.X
+	}
+	_, is_call = expression.(*ast.CallExpr)
+	return is_call
+}
+
 // `func init` runs implicitly at package load, scattering startup logic across
 // files in an order that depends on filename sort. An explicit, named
 // initialization function called from `main` keeps control flow visible.
@@ -6025,23 +6288,29 @@ func check_no_function_init(
 func check_no_generics(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(node ast.Node) (recurse bool) {
-		var type_parameters *ast.FieldList
-		switch declaration := node.(type) {
-		case *ast.TypeSpec:
-			type_parameters = declaration.TypeParams
-		case *ast.FuncType:
-			type_parameters = declaration.TypeParams
-		}
-		if type_parameters == nil {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(type_parameters.Opening),
-			Message:  "Do not use generics. Write concrete types.",
-		})
-		return true
+		return check_no_generics_node(file_set, node, &diags)
 	})
 	return diags
+}
+
+func check_no_generics_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (recurse bool) {
+	var type_parameters *ast.FieldList
+	switch declaration := node.(type) {
+	case *ast.TypeSpec:
+		type_parameters = declaration.TypeParams
+	case *ast.FuncType:
+		type_parameters = declaration.TypeParams
+	}
+	if type_parameters == nil {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(type_parameters.Opening),
+		Message:  "Do not use generics. Write concrete types.",
+	})
+	return true
 }
 
 // Package-owned method sets create receiver methods rejected by method rule.
@@ -6049,27 +6318,32 @@ func check_no_generics(file_set *token.FileSet, file *ast.File, _ []byte) (diags
 func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (recurse bool) {
-		interface_type, ok := n.(*ast.InterfaceType)
-		if !ok {
-			return true
-		}
-		if interface_type.Methods == nil {
-			return true
-		}
-		for _, f := range interface_type.Methods.List {
-			if len(f.Names) == 0 {
-				continue
-			}
-			diags = append(diags, Diagnostic{
-				Position: file_set.Position(interface_type.Pos()),
-				Message: "Do not declare an interface with methods. " +
-					"Use concrete types.",
-			})
-			return true
-		}
-		return true
+		return check_no_interfaces_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_no_interfaces_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (recurse bool) {
+	interface_type, ok := node.(*ast.InterfaceType)
+	if !ok {
+		return true
+	}
+	if interface_type.Methods == nil {
+		return true
+	}
+	for _, field := range interface_type.Methods.List {
+		if len(field.Names) == 0 {
+			continue
+		}
+		*diags = append(*diags, Diagnostic{
+			Position: file_set.Position(interface_type.Pos()),
+			Message:  "Do not declare an interface with methods. Use concrete types.",
+		})
+		return true
+	}
+	return true
 }
 
 // Reports whether the import resolves to a first-party package at or under a listed
@@ -6332,49 +6606,55 @@ func method_is_aver_assertion_builder(
 func check_snap_backtick(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		selector_expression, is_selector_expression := call.Fun.(*ast.SelectorExpr)
-		if !is_selector_expression {
-			return true
-		}
-		ident, is_ident := selector_expression.X.(*ast.Ident)
-		if !is_ident {
-			return true
-		}
-		if ident.Name != "snap" {
-			return true
-		}
-		method := selector_expression.Sel.Name
-		if method != "Init" {
-			if method != "Edit" {
-				return true
-			}
-		}
-		if len(call.Args) == 0 {
-			return true
-		}
-		lit, is_lit := call.Args[0].(*ast.BasicLit)
-		if !is_lit {
-			return true
-		}
-		if lit.Kind != token.STRING {
-			return true
-		}
-		if strings.Has_Prefix(lit.Value, "`") {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(lit.Pos()),
-			Message: fmt.Sprintf(
-				"The call snap.%s has no raw string literal. "+
-					"Write a raw string literal.", method),
-		})
-		return true
+		return check_snap_backtick_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_snap_backtick_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	call, ok := node.(*ast.CallExpr)
+	if !ok {
+		return true
+	}
+	selector_expression, is_selector_expression := call.Fun.(*ast.SelectorExpr)
+	if !is_selector_expression {
+		return true
+	}
+	identifier, is_identifier := selector_expression.X.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	if identifier.Name != "snap" {
+		return true
+	}
+	method := selector_expression.Sel.Name
+	if method != "Init" {
+		if method != "Edit" {
+			return true
+		}
+	}
+	if len(call.Args) == 0 {
+		return true
+	}
+	literal, is_literal := call.Args[0].(*ast.BasicLit)
+	if !is_literal {
+		return true
+	}
+	if literal.Kind != token.STRING {
+		return true
+	}
+	if strings.Has_Prefix(literal.Value, "`") {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(literal.Pos()),
+		Message: fmt.Sprintf(
+			"The call snap.%s has no raw string literal. Write a raw string literal.",
+			method),
+	})
+	return true
 }
 
 // Tests are the executable specification of the system; a future reader hits
@@ -6596,12 +6876,16 @@ func check_names(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Dia
 			Diagnostic{Position: file_set.Position(v.Position), Message: v.Message})
 	}
 	sort.Slice(diags, func(i, j int) (less bool) {
-		if diags[i].Position.Line != diags[j].Position.Line {
-			return diags[i].Position.Line < diags[j].Position.Line
-		}
-		return diags[i].Position.Column < diags[j].Position.Column
+		return diagnostic_position_less(diags, i, j)
 	})
 	return diags
+}
+
+func diagnostic_position_less(diags []Diagnostic, i int, j int) (less bool) {
+	if diags[i].Position.Line != diags[j].Position.Line {
+		return diags[i].Position.Line < diags[j].Position.Line
+	}
+	return diags[i].Position.Column < diags[j].Position.Column
 }
 
 // One violation against a name-rule, attached to the source position of
@@ -6663,23 +6947,37 @@ func check_names_terminology(file *ast.File) (violations []Name_Violation) {
 			function_declaration)
 		requirements := map[*ast.Ident]map[string]bool{}
 		require := func(identifier *ast.Ident, term string) {
-			if identifier == nil {
-				return
-			}
-			if requirements[identifier] == nil {
-				requirements[identifier] = map[string]bool{}
-			}
-			requirements[identifier][term] = true
+			check_names_terminology_require(requirements, identifier, term)
 		}
 		ast.Inspect(function_declaration.Body, func(n ast.Node) (descend bool) {
-			check_names_terminology_attach(&Check_Names_Terminology_Attach_Input{
-				Node: n, Declarations: declarations_map, Require: require,
-			})
-			return true
+			return check_names_terminology_node(n, declarations_map, require)
 		})
 		violations = append(violations, check_names_terminology_emit(requirements)...)
 	}
 	return violations
+}
+
+func check_names_terminology_require(
+	requirements map[*ast.Ident]map[string]bool,
+	identifier *ast.Ident, term string,
+) {
+	if identifier == nil {
+		return
+	}
+	if requirements[identifier] == nil {
+		requirements[identifier] = map[string]bool{}
+	}
+	requirements[identifier][term] = true
+}
+
+func check_names_terminology_node(
+	node ast.Node, declarations map[string]*ast.Ident,
+	require func(*ast.Ident, string),
+) (descend bool) {
+	check_names_terminology_attach(&Check_Names_Terminology_Attach_Input{
+		Node: node, Declarations: declarations, Require: require,
+	})
+	return true
 }
 
 // Builds a flat name → declaring ident map for a function. Includes params,
@@ -6692,16 +6990,7 @@ func check_names_terminology_function_declarations(
 
 	declarations = map[string]*ast.Ident{}
 	add := func(identifier *ast.Ident) {
-		if identifier == nil {
-			return
-		}
-		if identifier.Name == "_" {
-			return
-		}
-		if declarations[identifier.Name] != nil {
-			return
-		}
-		declarations[identifier.Name] = identifier
+		check_names_terminology_add(declarations, identifier)
 	}
 	if function.Type.Params != nil {
 		for _, f := range function.Type.Params.List {
@@ -6718,34 +7007,58 @@ func check_names_terminology_function_declarations(
 		}
 	}
 	ast.Inspect(function.Body, func(n ast.Node) (descend bool) {
-		switch x := n.(type) {
-		case *ast.ValueSpec:
-			for _, identifier := range x.Names {
-				add(identifier)
-			}
-		case *ast.AssignStmt:
-			if x.Tok != token.DEFINE {
-				return true
-			}
-			for _, lhs := range x.Lhs {
-				if identifier, is_ident := lhs.(*ast.Ident); is_ident {
-					add(identifier)
-				}
-			}
-		case *ast.RangeStmt:
-			if x.Tok != token.DEFINE {
-				return true
-			}
-			if identifier, is_ident := x.Key.(*ast.Ident); is_ident {
-				add(identifier)
-			}
-			if identifier, is_ident := x.Value.(*ast.Ident); is_ident {
+		return check_names_terminology_declaration_node(n, add)
+	})
+	return declarations
+}
+
+func check_names_terminology_add(
+	declarations map[string]*ast.Ident, identifier *ast.Ident,
+) {
+	if identifier == nil {
+		return
+	}
+	if identifier.Name == "_" {
+		return
+	}
+	if declarations[identifier.Name] != nil {
+		return
+	}
+	declarations[identifier.Name] = identifier
+}
+
+func check_names_terminology_declaration_node(
+	node ast.Node, add func(*ast.Ident),
+) (descend bool) {
+	switch value := node.(type) {
+	case *ast.ValueSpec:
+		for _, identifier := range value.Names {
+			add(identifier)
+		}
+	case *ast.AssignStmt:
+		if value.Tok != token.DEFINE {
+			return true
+		}
+		for _, left := range value.Lhs {
+			identifier, is_identifier := left.(*ast.Ident)
+			if is_identifier {
 				add(identifier)
 			}
 		}
-		return true
-	})
-	return declarations
+	case *ast.RangeStmt:
+		if value.Tok != token.DEFINE {
+			return true
+		}
+		key, key_is_identifier := value.Key.(*ast.Ident)
+		if key_is_identifier {
+			add(key)
+		}
+		item, item_is_identifier := value.Value.(*ast.Ident)
+		if item_is_identifier {
+			add(item)
+		}
+	}
+	return true
 }
 
 // Check_Names_Terminology_Attach_Input carries the AST node and accumulators for
@@ -6998,7 +7311,7 @@ func check_names_terminology_emit(
 			entry{Name: identifier.Name, Terms: term_list, Position: identifier.Pos()})
 	}
 	sort.Slice(entries, func(i, j int) (less bool) {
-		return entries[i].Position < entries[j].Position
+		return token_position_less(entries[i].Position, entries[j].Position)
 	})
 	for _, e := range entries {
 		category := strings.Join(e.Terms, " or ")
@@ -7018,6 +7331,10 @@ func check_names_terminology_emit(
 		})
 	}
 	return violations
+}
+
+func token_position_less(left token.Pos, right token.Pos) (less bool) {
+	return left < right
 }
 
 // Check_Names_Terminology_Emit_Rename_Input carries an identifier and the
@@ -7093,24 +7410,31 @@ func check_names_arithmetic(file *ast.File) (violations []Name_Violation) {
 
 	rhs_of := check_names_arithmetic_rhs_map(file)
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		binary_expression, is_binary_expression := n.(*ast.BinaryExpr)
-		if !is_binary_expression {
-			return true
-		}
-		if binary_expression.Op != token.ADD {
-			if binary_expression.Op != token.SUB {
-				return true
-			}
-		}
-		violations = append(violations,
-			check_names_arithmetic_check_binary(
-				&Check_Names_Arithmetic_Check_Binary_Input{
-					Binary_Expression: binary_expression,
-					Lhs:               rhs_of[binary_expression],
-				})...)
-		return true
+		return check_names_arithmetic_node(n, rhs_of, &violations)
 	})
 	return violations
+}
+
+func check_names_arithmetic_node(
+	node ast.Node, rhs_of map[*ast.BinaryExpr]*ast.Ident,
+	violations *[]Name_Violation,
+) (descend bool) {
+	binary_expression, is_binary_expression := node.(*ast.BinaryExpr)
+	if !is_binary_expression {
+		return true
+	}
+	if binary_expression.Op != token.ADD {
+		if binary_expression.Op != token.SUB {
+			return true
+		}
+	}
+	*violations = append(*violations,
+		check_names_arithmetic_check_binary(
+			&Check_Names_Arithmetic_Check_Binary_Input{
+				Binary_Expression: binary_expression,
+				Lhs:               rhs_of[binary_expression],
+			})...)
+	return true
 }
 
 // Maps each BinaryExpr that is the sole RHS of a `:=` assignment to its
@@ -7121,34 +7445,40 @@ func check_names_arithmetic_rhs_map(file *ast.File) (m map[*ast.BinaryExpr]*ast.
 
 	m = map[*ast.BinaryExpr]*ast.Ident{}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		assign, is_assign := n.(*ast.AssignStmt)
-		if !is_assign {
-			return true
-		}
-		if assign.Tok != token.DEFINE {
-			return true
-		}
-		if len(assign.Lhs) != 1 {
-			return true
-		}
-		if len(assign.Rhs) != 1 {
-			return true
-		}
-		binary_expression, is_binary_expression := assign.Rhs[0].(*ast.BinaryExpr)
-		if !is_binary_expression {
-			return true
-		}
-		lhs, is_ident := assign.Lhs[0].(*ast.Ident)
-		if !is_ident {
-			return true
-		}
-		if lhs.Name == "_" {
-			return true
-		}
-		m[binary_expression] = lhs
-		return true
+		return check_names_arithmetic_rhs_node(n, m)
 	})
 	return m
+}
+
+func check_names_arithmetic_rhs_node(
+	node ast.Node, assignments map[*ast.BinaryExpr]*ast.Ident,
+) (descend bool) {
+	assign, is_assign := node.(*ast.AssignStmt)
+	if !is_assign {
+		return true
+	}
+	if assign.Tok != token.DEFINE {
+		return true
+	}
+	if len(assign.Lhs) != 1 {
+		return true
+	}
+	if len(assign.Rhs) != 1 {
+		return true
+	}
+	binary_expression, is_binary_expression := assign.Rhs[0].(*ast.BinaryExpr)
+	if !is_binary_expression {
+		return true
+	}
+	left, is_identifier := assign.Lhs[0].(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	if left.Name == "_" {
+		return true
+	}
+	assignments[binary_expression] = left
+	return true
 }
 
 // Check_Names_Arithmetic_Check_Binary_Input carries one ADD/SUB binary site to
@@ -7378,13 +7708,7 @@ func is_allowed_ing_noun(word string) (allowed bool) {
 func check_names_walk_decls(file *ast.File, visit func(identifier *ast.Ident)) {
 
 	emit := func(identifier *ast.Ident) {
-		if identifier == nil {
-			return
-		}
-		if identifier.Name == "_" {
-			return
-		}
-		visit(identifier)
+		check_names_walk_emit(identifier, visit)
 	}
 	for _, declaration := range file.Decls {
 		switch x := declaration.(type) {
@@ -7394,6 +7718,16 @@ func check_names_walk_decls(file *ast.File, visit func(identifier *ast.Ident)) {
 			check_names_walk_declarations_generic(x, emit)
 		}
 	}
+}
+
+func check_names_walk_emit(identifier *ast.Ident, visit func(*ast.Ident)) {
+	if identifier == nil {
+		return
+	}
+	if identifier.Name == "_" {
+		return
+	}
+	visit(identifier)
 }
 
 func check_names_walk_declarations_function(
@@ -7425,9 +7759,15 @@ func check_names_walk_declarations_function(
 		return
 	}
 	ast.Inspect(function.Body, func(n ast.Node) (descend bool) {
-		check_names_walk_decls_body(n, emit)
-		return true
+		return check_names_walk_decls_body_node(n, emit)
 	})
+}
+
+func check_names_walk_decls_body_node(
+	node ast.Node, emit func(*ast.Ident),
+) (descend bool) {
+	check_names_walk_decls_body(node, emit)
+	return true
 }
 
 func check_names_walk_decls_body(n ast.Node, emit func(identifier *ast.Ident)) {
@@ -7490,25 +7830,30 @@ func check_names_walk_declarations_generic(gd *ast.GenDecl, emit func(identifier
 func check_names_participles(file *ast.File) (violations []Name_Violation) {
 
 	check_names_walk_decls(file, func(identifier *ast.Ident) {
-		words := suggest_split_words(identifier.Name)
-		if len(words) == 0 {
-			return
-		}
-		last := strings.To_Lower(words[len(words)-1])
-		if !strings.Has_Suffix(last, "ing") {
-			return
-		}
-		if is_allowed_ing_noun(last) {
-			return
-		}
-		violations = append(violations, Name_Violation{
-			Position: identifier.Pos(),
-			Message: fmt.Sprintf(
-				"The name %q is a present participle. "+
-					"Rename it to a noun form.", last),
-		})
+		check_names_participle_identifier(identifier, &violations)
 	})
 	return violations
+}
+
+func check_names_participle_identifier(
+	identifier *ast.Ident, violations *[]Name_Violation,
+) {
+	words := suggest_split_words(identifier.Name)
+	if len(words) == 0 {
+		return
+	}
+	last := strings.To_Lower(words[len(words)-1])
+	if !strings.Has_Suffix(last, "ing") {
+		return
+	}
+	if is_allowed_ing_noun(last) {
+		return
+	}
+	*violations = append(*violations, Name_Violation{
+		Position: identifier.Pos(),
+		Message: fmt.Sprintf(
+			"The name %q is a present participle. Rename it to a noun form.", last),
+	})
 }
 
 // Flags any declared identifier whose tokenized words include "max" or "min"
@@ -7518,33 +7863,39 @@ func check_names_participles(file *ast.File) (violations []Name_Violation) {
 func check_names_extremum(file *ast.File) (violations []Name_Violation) {
 
 	check_names_walk_decls(file, func(identifier *ast.Ident) {
-		words := suggest_split_words(identifier.Name)
-		style := "snake_case"
-		if ada_case_re.MatchString(identifier.Name) {
-			style = "Ada_Case"
-		}
-		for word_index, w := range words {
-			lower := strings.To_Lower(w)
-			if lower != "max" {
-				if lower != "min" {
-					continue
-				}
-			}
-			if word_index == len(words)-1 {
-				continue
-			}
-			reordered := append([]string{}, words[:word_index]...)
-			reordered = append(reordered, words[word_index+1:]...)
-			reordered = append(reordered, w)
-			violations = append(violations, Name_Violation{
-				Position: identifier.Pos(),
-				Message: fmt.Sprintf("Rename %s -> %s.", identifier.Name,
-					suggest(&Suggest_Input{
-						Name: strings.Join(reordered, "_"), Want: style})),
-			})
-		}
+		check_names_extremum_identifier(identifier, &violations)
 	})
 	return violations
+}
+
+func check_names_extremum_identifier(
+	identifier *ast.Ident, violations *[]Name_Violation,
+) {
+	words := suggest_split_words(identifier.Name)
+	style := "snake_case"
+	if ada_case_re.MatchString(identifier.Name) {
+		style = "Ada_Case"
+	}
+	for word_index, word := range words {
+		lower := strings.To_Lower(word)
+		if lower != "max" {
+			if lower != "min" {
+				continue
+			}
+		}
+		if word_index == len(words)-1 {
+			continue
+		}
+		reordered := append([]string{}, words[:word_index]...)
+		reordered = append(reordered, words[word_index+1:]...)
+		reordered = append(reordered, word)
+		*violations = append(*violations, Name_Violation{
+			Position: identifier.Pos(),
+			Message: fmt.Sprintf("Rename %s -> %s.", identifier.Name,
+				suggest(&Suggest_Input{
+					Name: strings.Join(reordered, "_"), Want: style})),
+		})
+	}
 }
 
 func check_comments_group_is_inline(
@@ -7712,16 +8063,23 @@ func check_file_system_stream_walk(
 		loaded   bool
 	)
 	load := func() (data []byte, err error) {
-		if !loaded {
-			source, read_err = fs.ReadFile(input.Fsys, p)
-			loaded = true
-		}
-		return source, read_err
+		return check_file_system_stream_load(
+			input.Fsys, p, &source, &read_err, &loaded)
 	}
 	for i, c := range checks {
 		c.Visit(p, information, load, &per_check[i])
 	}
 	return nil
+}
+
+func check_file_system_stream_load(
+	fsys fs.FS, file_path string, source *[]byte, read_err *error, loaded *bool,
+) (data []byte, err error) {
+	if !*loaded {
+		*source, *read_err = fs.ReadFile(fsys, file_path)
+		*loaded = true
+	}
+	return *source, *read_err
 }
 
 // Ignored_Directory reports whether a directory a walker reaches should be
@@ -7769,33 +8127,39 @@ func Tracked_Paths(
 	tracked = make(map[string]bool)
 	walk_err := fs.WalkDir(fsys, ".",
 		func(p string, d fs.DirEntry, entry_err error) (output error) {
-			if entry_err != nil {
-				return entry_err
-			}
-			if p == "." {
-				return nil
-			}
-			if !d.IsDir() {
-				if ignored[p] {
-					return nil
-				}
-				tracked[p] = true
-				return nil
-			}
-			// One ignore list, shared with every tier, so third_party and vendor
-			// never enter the Tracked set the path-casing check reads directly.
-			if Ignored_Directory(p) {
-				return fs.SkipDir
-			}
-			if ignored[p+"/"] {
-				return fs.SkipDir
-			}
-			return nil
+			return tracked_paths_entry(p, d, entry_err, ignored, tracked)
 		})
 	if walk_err != nil {
 		return nil, false
 	}
 	return tracked, true
+}
+
+func tracked_paths_entry(
+	file_path string, entry fs.DirEntry, entry_err error,
+	ignored map[string]bool, tracked map[string]bool,
+) (output error) {
+	if entry_err != nil {
+		return entry_err
+	}
+	if file_path == "." {
+		return nil
+	}
+	if !entry.IsDir() {
+		if ignored[file_path] {
+			return nil
+		}
+		tracked[file_path] = true
+		return nil
+	}
+	// Shared ignore list keeps ignored trees absent from path-casing input.
+	if Ignored_Directory(file_path) {
+		return fs.SkipDir
+	}
+	if ignored[file_path+"/"] {
+		return fs.SkipDir
+	}
+	return nil
 }
 
 // Parse_Ignored_Set reads `git ls-files -z` output into the set Tracked_Paths
@@ -8273,23 +8637,29 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 	}
 	walk_err := fs.WalkDir(fsys, ".",
 		func(p string, d fs.DirEntry, entry_err error) (output error) {
-			if entry_err != nil {
-				return nil
-			}
-			if d.IsDir() {
-				if Ignored_Directory(p) {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			paths = append(paths, p)
-			return nil
+			return check_path_casing_entry(p, d, entry_err, &paths)
 		})
 	if walk_err != nil {
 		return nil
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+func check_path_casing_entry(
+	file_path string, entry fs.DirEntry, entry_err error, paths *[]string,
+) (output error) {
+	if entry_err != nil {
+		return nil
+	}
+	if entry.IsDir() {
+		if Ignored_Directory(file_path) {
+			return fs.SkipDir
+		}
+		return nil
+	}
+	*paths = append(*paths, file_path)
+	return nil
 }
 
 // Check_File_System_Stream_Checks_Stream_Symlinks_Checker_Input carries the
@@ -8328,62 +8698,69 @@ func check_file_system_stream_checks_stream_symlinks_checker(
 			info fs.FileInfo,
 			_ func() (data []byte, err error),
 			output *[]Diagnostic) {
-			if root_directory == "" {
-				return
-			}
-			if readlink == nil {
-				return
-			}
-			if tracked == nil {
-				return
-			}
-			if info.Mode()&fs.ModeSymlink == 0 {
-				return
-			}
-			operating_system_path := filepath.Join(root_directory, p)
-			target, read_err := readlink(operating_system_path)
-			if read_err != nil {
-				*output = append(*output, Diagnostic{
-					Position: token.Position{Filename: p},
-					Message:  "The linter cannot read the symlink target.",
-				})
-				return
-			}
-			resolved := target
-			if !filepath.IsAbs(target) {
-				resolved = filepath.Join(
-					filepath.Dir(operating_system_path), target)
-			}
-			relative, relative_err := filepath.Rel(root_directory, resolved)
-			target_path := filepath.ToSlash(relative)
-			// A relative_err means resolved can't be expressed under the root (a
-			// different volume) — outside the tracked tree, so it falls through to
-			// the untracked diagnostic. Self-reference is ruled out first: the
-			// symlink's own path is tracked, so a link to itself would otherwise
-			// pass the membership test below.
-			if relative_err == nil {
-				if target_path == p {
-					*output = append(*output, Diagnostic{
-						Position: token.Position{Filename: p},
-						Message:  "The symlink points to itself.",
-					})
-					return
-				}
-				if tracked[target_path] {
-					return
-				}
-				if directory_has_tracked[target_path] {
-					return
-				}
-			}
-			*output = append(*output, Diagnostic{
-				Position: token.Position{Filename: p},
-				Message: fmt.Sprintf(
-					"The symlink target %q is not tracked. "+
-						"Track the target or remove the symlink.", target),
-			})
+			check_symlink_entry(
+				root_directory, tracked, directory_has_tracked, readlink,
+				p, info, output)
 		},
 	}
+}
+
+func check_symlink_entry(
+	root_directory string, tracked map[string]bool,
+	directory_has_tracked map[string]bool,
+	readlink func(name string) (target string, err error), file_path string,
+	information fs.FileInfo, output *[]Diagnostic,
+) {
+	if root_directory == "" {
+		return
+	}
+	if readlink == nil {
+		return
+	}
+	if tracked == nil {
+		return
+	}
+	if information.Mode()&fs.ModeSymlink == 0 {
+		return
+	}
+	operating_system_path := filepath.Join(root_directory, file_path)
+	target, read_err := readlink(operating_system_path)
+	if read_err != nil {
+		*output = append(*output, Diagnostic{
+			Position: token.Position{Filename: file_path},
+			Message:  "The linter cannot read the symlink target.",
+		})
+		return
+	}
+	resolved := target
+	if !filepath.IsAbs(target) {
+		resolved = filepath.Join(filepath.Dir(operating_system_path), target)
+	}
+	relative, relative_err := filepath.Rel(root_directory, resolved)
+	target_path := filepath.ToSlash(relative)
+	// Another volume cannot belong to tracked tree. Self path is tracked, so
+	// reject it before membership checks.
+	if relative_err == nil {
+		if target_path == file_path {
+			*output = append(*output, Diagnostic{
+				Position: token.Position{Filename: file_path},
+				Message:  "The symlink points to itself.",
+			})
+			return
+		}
+		if tracked[target_path] {
+			return
+		}
+		if directory_has_tracked[target_path] {
+			return
+		}
+	}
+	*output = append(*output, Diagnostic{
+		Position: token.Position{Filename: file_path},
+		Message: fmt.Sprintf(
+			"The symlink target %q is not tracked. "+
+				"Track the target or remove the symlink.", target),
+	})
 }
 
 // Enforces a 100-rune visual cap on every .md line. Outside fenced code, two
@@ -8722,29 +9099,38 @@ func check_no_impure_stdlib_per_file(
 		local_to_path[name] = path
 	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		selection, is_selection := n.(*ast.SelectorExpr)
-		if !is_selection {
-			return true
-		}
-		ident, is_ident := selection.X.(*ast.Ident)
-		if !is_ident {
-			return true
-		}
-		path, has := local_to_path[ident.Name]
-		if !has {
-			return true
-		}
-		soft_input := &Is_Impure_Soft_Ident_Input{Package: path, Name: selection.Sel.Name}
-		if !is_impure_soft_ident(soft_input) {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(selection.Pos()),
-			Message:  fmt.Sprintf(CALL_MESSAGE, path, selection.Sel.Name),
-		})
-		return true
+		return check_no_impure_stdlib_node(
+			file_set, n, local_to_path, CALL_MESSAGE, &diags)
 	})
 	return diags
+}
+
+func check_no_impure_stdlib_node(
+	file_set *token.FileSet, node ast.Node, local_to_path map[string]string,
+	call_message string, diags *[]Diagnostic,
+) (descend bool) {
+	selection, is_selection := node.(*ast.SelectorExpr)
+	if !is_selection {
+		return true
+	}
+	identifier, is_identifier := selection.X.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	import_path, has := local_to_path[identifier.Name]
+	if !has {
+		return true
+	}
+	soft_input := &Is_Impure_Soft_Ident_Input{
+		Package: import_path, Name: selection.Sel.Name}
+	if !is_impure_soft_ident(soft_input) {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(selection.Pos()),
+		Message:  fmt.Sprintf(call_message, import_path, selection.Sel.Name),
+	})
+	return true
 }
 
 func is_impure_hard_import(path string) (yes bool) {
@@ -8861,38 +9247,46 @@ func check_transitive_purity_per_file(
 		local_to_path[name] = import_path
 	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		selection, is_selection := n.(*ast.SelectorExpr)
-		if !is_selection {
-			return true
-		}
-		ident, is_ident := selection.X.(*ast.Ident)
-		if !is_ident {
-			return true
-		}
-		import_path, has := local_to_path[ident.Name]
-		if !has {
-			return true
-		}
-		// A write-only instrumentation package is exempt at the call level as it is at
-		// the import level: emitting to a telemetry sink (log, slog, a profiler) is a
-		// layer on top of the program, not part of its evaluated result.
-		if import_path_is_instrumentation(import_path, components, instrumentation) {
-			return true
-		}
-		curated := &Is_Transitive_Stdlib_Ident_Input{
-			Package: import_path, Name: selection.Sel.Name}
-		if !is_transitive_stdlib_ident(curated) {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(selection.Pos()),
-			Name:     "transitive-purity",
-			Want:     "call only pure stdlib APIs",
-			Message:  fmt.Sprintf(CALL_MESSAGE, import_path, selection.Sel.Name),
-		})
-		return true
+		return check_transitive_purity_node(
+			file_set, n, local_to_path, components, instrumentation,
+			CALL_MESSAGE, &diags)
 	})
 	return diags
+}
+
+func check_transitive_purity_node(
+	file_set *token.FileSet, node ast.Node, local_to_path map[string]string,
+	components *Component_Index, instrumentation []string,
+	call_message string, diags *[]Diagnostic,
+) (descend bool) {
+	selection, is_selection := node.(*ast.SelectorExpr)
+	if !is_selection {
+		return true
+	}
+	identifier, is_identifier := selection.X.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	import_path, has := local_to_path[identifier.Name]
+	if !has {
+		return true
+	}
+	// Write-only instrumentation cannot feed impurity into evaluated result.
+	if import_path_is_instrumentation(import_path, components, instrumentation) {
+		return true
+	}
+	curated := &Is_Transitive_Stdlib_Ident_Input{
+		Package: import_path, Name: selection.Sel.Name}
+	if !is_transitive_stdlib_ident(curated) {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(selection.Pos()),
+		Name:     "transitive-purity",
+		Want:     "call only pure stdlib APIs",
+		Message:  fmt.Sprintf(call_message, import_path, selection.Sel.Name),
+	})
+	return true
 }
 
 // Is_Transitive_Stdlib_Ident_Input names a stdlib selector to test against the
@@ -8958,26 +9352,31 @@ func check_no_bare_for(file_set *token.FileSet, file *ast.File, _ []byte) (diags
 	const MESSAGE = "Do not use a bare \"for {}\" loop. " +
 		"For an unbounded loop, write a different form."
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		f, is_for := n.(*ast.ForStmt)
-		if !is_for {
-			return true
-		}
-		if f.Init != nil {
-			return true
-		}
-		if f.Post != nil {
-			return true
-		}
-		if !is_bare_for_condition(f.Cond) {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(f.Pos()),
-			Message:  MESSAGE,
-		})
-		return true
+		return check_no_bare_for_node(file_set, n, MESSAGE, &diags)
 	})
 	return diags
+}
+
+func check_no_bare_for_node(
+	file_set *token.FileSet, node ast.Node, message string, diags *[]Diagnostic,
+) (descend bool) {
+	for_statement, is_for := node.(*ast.ForStmt)
+	if !is_for {
+		return true
+	}
+	if for_statement.Init != nil {
+		return true
+	}
+	if for_statement.Post != nil {
+		return true
+	}
+	if !is_bare_for_condition(for_statement.Cond) {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(for_statement.Pos()), Message: message,
+	})
+	return true
 }
 
 // True for Cond shapes that don't actually constrain iteration: nil (bare
@@ -9232,18 +9631,24 @@ func check_no_unbounded_apis(
 	}
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		selector_expression, is_selector := n.(*ast.SelectorExpr)
-		if !is_selector {
-			return true
-		}
-		diag, found := check_no_unbounded_apis_lookup(file_set, selector_expression)
-		if !found {
-			return true
-		}
-		diags = append(diags, diag)
-		return true
+		return check_no_unbounded_apis_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_no_unbounded_apis_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	selector_expression, is_selector := node.(*ast.SelectorExpr)
+	if !is_selector {
+		return true
+	}
+	diag, found := check_no_unbounded_apis_lookup(file_set, selector_expression)
+	if !found {
+		return true
+	}
+	*diags = append(*diags, diag)
+	return true
 }
 
 // Reports whether the file carries the `// Code generated ... DO NOT EDIT`
@@ -9451,31 +9856,44 @@ func check_deterministic_constructs(
 ) (diags []Diagnostic) {
 
 	report := func(position token.Position, tail string) {
-		diags = append(diags, Diagnostic{
-			Position: position,
-			Name:     "deterministic",
-			Message:  "A deterministic package " + tail,
-			Tier:     1,
-		})
+		check_deterministic_report(position, tail, &diags)
 	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		switch node := n.(type) {
-		case *ast.GoStmt:
-			report(file_set.Position(node.Pos()), "must not start a goroutine.")
-		case *ast.SelectStmt:
-			report(file_set.Position(node.Pos()), "must not use select.")
-		case *ast.ChanType:
-			report(file_set.Position(node.Pos()), "must not use a channel.")
-		case *ast.SendStmt:
-			report(file_set.Position(node.Pos()), "must not use a channel.")
-		case *ast.UnaryExpr:
-			if node.Op == token.ARROW {
-				report(file_set.Position(node.Pos()), "must not use a channel.")
-			}
-		}
-		return true
+		return check_deterministic_construct_node(file_set, n, report)
 	})
 	return diags
+}
+
+func check_deterministic_report(
+	position token.Position, tail string, diags *[]Diagnostic,
+) {
+	*diags = append(*diags, Diagnostic{
+		Position: position,
+		Name:     "deterministic",
+		Message:  "A deterministic package " + tail,
+		Tier:     1,
+	})
+}
+
+func check_deterministic_construct_node(
+	file_set *token.FileSet, node ast.Node,
+	report func(token.Position, string),
+) (descend bool) {
+	switch value := node.(type) {
+	case *ast.GoStmt:
+		report(file_set.Position(value.Pos()), "must not start a goroutine.")
+	case *ast.SelectStmt:
+		report(file_set.Position(value.Pos()), "must not use select.")
+	case *ast.ChanType:
+		report(file_set.Position(value.Pos()), "must not use a channel.")
+	case *ast.SendStmt:
+		report(file_set.Position(value.Pos()), "must not use a channel.")
+	case *ast.UnaryExpr:
+		if value.Op == token.ARROW {
+			report(file_set.Position(value.Pos()), "must not use a channel.")
+		}
+	}
+	return true
 }
 
 // Flags the float types a deterministic package may not use. IEEE-754 results
@@ -9491,25 +9909,30 @@ func check_deterministic_floats(
 ) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		identifier, is_identifier := n.(*ast.Ident)
-		if !is_identifier {
-			return true
-		}
-		if identifier.Name != "float32" {
-			if identifier.Name != "float64" {
-				return true
-			}
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(identifier.Pos()),
-			Name:     "deterministic",
-			Message: "A deterministic package must not use " +
-				identifier.Name + ".",
-			Tier: 1,
-		})
-		return true
+		return check_deterministic_float_node(file_set, n, &diags)
 	})
 	return diags
+}
+
+func check_deterministic_float_node(
+	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
+) (descend bool) {
+	identifier, is_identifier := node.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	if identifier.Name != "float32" {
+		if identifier.Name != "float64" {
+			return true
+		}
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(identifier.Pos()),
+		Name:     "deterministic",
+		Message:  "A deterministic package must not use " + identifier.Name + ".",
+		Tier:     1,
+	})
+	return true
 }
 
 // Flags the imports a deterministic package may not make: time and context
@@ -9667,29 +10090,34 @@ func check_driver_gateway(parsed_files []Parsed_File) (diags []Diagnostic) {
 // The loop-constructor calls in one file have names that are unique to the simulation packages.
 func driver_gateway_file_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		selector, is_selector := call.Fun.(*ast.SelectorExpr)
-		if !is_selector {
-			return true
-		}
-		if !driver_gateway_constructor(selector.Sel.Name) {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: pf.File_Set.Position(selector.Pos()),
-			Name:     "driver-gateway",
-			Want:     "Call the constructor only in package main or in a test.",
-			Message: "The constructor " + selector.Sel.Name +
-				" makes a loop driver. Call it only in package main or " +
-				"in a test.",
-			Tier: 1,
-		})
-		return true
+		return driver_gateway_node(pf, node, &diags)
 	})
 	return diags
+}
+
+func driver_gateway_node(
+	file Parsed_File, node ast.Node, diags *[]Diagnostic,
+) (recurse bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return true
+	}
+	if !driver_gateway_constructor(selector.Sel.Name) {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file.File_Set.Position(selector.Pos()),
+		Name:     "driver-gateway",
+		Want:     "Call the constructor only in package main or in a test.",
+		Message: "The constructor " + selector.Sel.Name +
+			" makes a loop driver. Call it only in package main or in a test.",
+		Tier: 1,
+	})
+	return true
 }
 
 // Reports whether name is an IO loop constructor that mints a Driver.
@@ -9742,31 +10170,37 @@ func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []D
 		return nil
 	}
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
-		selector, is_selector := node.(*ast.SelectorExpr)
-		if !is_selector {
-			return true
-		}
-		if selector.Sel.Name != "Driver" {
-			return true
-		}
-		identifier, is_identifier := selector.X.(*ast.Ident)
-		if !is_identifier {
-			return true
-		}
-		if identifier.Name != local {
-			return true
-		}
-		diags = append(diags, Diagnostic{
-			Position: pf.File_Set.Position(selector.Pos()),
-			Name:     "driver-gateway",
-			Want:     "Hold the Driver only in package main or in a test.",
-			Message: "Only package main or a test can hold an nbio.Driver. " +
-				"An internal package takes nbio.IO and the harness runs it.",
-			Tier: 1,
-		})
-		return true
+		return driver_type_node(pf, local, node, &diags)
 	})
 	return diags
+}
+
+func driver_type_node(
+	file Parsed_File, local string, node ast.Node, diags *[]Diagnostic,
+) (recurse bool) {
+	selector, is_selector := node.(*ast.SelectorExpr)
+	if !is_selector {
+		return true
+	}
+	if selector.Sel.Name != "Driver" {
+		return true
+	}
+	identifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	if identifier.Name != local {
+		return true
+	}
+	*diags = append(*diags, Diagnostic{
+		Position: file.File_Set.Position(selector.Pos()),
+		Name:     "driver-gateway",
+		Want:     "Hold the Driver only in package main or in a test.",
+		Message: "Only package main or a test can hold an nbio.Driver. " +
+			"An internal package takes nbio.IO and the harness runs it.",
+		Tier: 1,
+	})
+	return true
 }
 
 // The sim/nbio/default package supplies the OS backend. The sim/time/default
@@ -9885,28 +10319,36 @@ func io_gateway_call_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 		}
 	}
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
-		selector, is_selector := node.(*ast.SelectorExpr)
-		if !is_selector {
-			return true
-		}
-		identifier, is_identifier := selector.X.(*ast.Ident)
-		if !is_identifier {
-			return true
-		}
-		if identifier.Name == operating_system_local {
-			if io_gateway_banned_operating_system(selector.Sel.Name) {
-				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
-			}
-			return true
-		}
-		if identifier.Name == network_local {
-			if !io_gateway_network_pure(selector.Sel.Name) {
-				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
-			}
-		}
-		return true
+		return io_gateway_call_node(
+			pf, operating_system_local, network_local, node, &diags)
 	})
 	return diags
+}
+
+func io_gateway_call_node(
+	file Parsed_File, operating_system_local string, network_local string,
+	node ast.Node, diags *[]Diagnostic,
+) (recurse bool) {
+	selector, is_selector := node.(*ast.SelectorExpr)
+	if !is_selector {
+		return true
+	}
+	identifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return true
+	}
+	if identifier.Name == operating_system_local {
+		if io_gateway_banned_operating_system(selector.Sel.Name) {
+			*diags = append(*diags, io_gateway_call_diagnostic(file, selector))
+		}
+		return true
+	}
+	if identifier.Name == network_local {
+		if !io_gateway_network_pure(selector.Sel.Name) {
+			*diags = append(*diags, io_gateway_call_diagnostic(file, selector))
+		}
+	}
+	return true
 }
 
 // One io-gateway diagnostic for a raw-IO call at selector.

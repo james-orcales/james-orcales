@@ -122,14 +122,18 @@ func main_print_rss_and_elapsed(start time.Time) {
 // sequence of subcommands; shelling out is the impurity that stays here.
 func main_git_command(root string) (run lint.Git_Command) {
 	return func(args ...string) (output string, ok bool) {
-		command := exec.Command("git", args...)
-		command.Dir = root
-		stdout, err := command.Output()
-		if err != nil {
-			return "", false
-		}
-		return strings.Trim_Space(string(stdout)), true
+		return main_git_command_run(root, args...)
 	}
+}
+
+func main_git_command_run(root string, args ...string) (output string, ok bool) {
+	command := exec.Command("git", args...)
+	command.Dir = root
+	stdout, err := command.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.Trim_Space(string(stdout)), true
 }
 
 // Builds the tracked-file set the linter walks: git answers which paths are

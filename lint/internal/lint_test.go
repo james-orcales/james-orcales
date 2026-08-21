@@ -836,7 +836,7 @@ const FIXTURE_HI = 100
 func f() (output int) {
 	defer func() {
 	}()
-	callback := func() { return }
+	callback := func() {}
 	callback()
 	return 0
 }
@@ -4059,6 +4059,162 @@ func F() { return }
 		},
 	}
 	run_diag_table(t, tests)
+}
+
+// Test_Closure_Bodies pins closures to delegation only, while test fixtures
+// keep freedom to build compact callbacks with local setup and checks.
+func Test_Closure_Bodies(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "empty closure allowed",
+			Files: map[string]string{"rule.go": `package main
+
+func f() {
+	callback := func() {}
+	callback()
+}
+`},
+			Want_Diag: "",
+		},
+		{
+			Name: "one call closure allowed",
+			Files: map[string]string{"rule.go": `package main
+
+func called() { return }
+
+func f() {
+	callback := func() { called() }
+	callback()
+}
+`},
+			Want_Diag: "",
+		},
+		{
+			Name: "two call closure flagged",
+			Files: map[string]string{"rule.go": `package main
+
+func called() { return }
+
+func f() {
+	callback := func() {
+		called()
+		called()
+	}
+	callback()
+}
+`},
+			Want_Diag: "closure body must be empty or contain one function call",
+		},
+		{
+			Name: "non-call closure flagged",
+			Files: map[string]string{"rule.go": `package main
+
+func f() {
+	callback := func() { return }
+	callback()
+}
+`},
+			Want_Diag: "closure body must be empty or contain one function call",
+		},
+	})
+}
+
+// Test_Closure_Bodies_Part2 covers returned delegation, assignments, ordinary
+// functions, and test-file exemption without breaching function size limit.
+func Test_Closure_Bodies_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "return call closure allowed",
+			Files: map[string]string{"rule.go": `package main
+
+func called() (result int) { return 0 }
+
+func f() {
+	callback := func() (result int) { return called() }
+	callback()
+}
+`},
+			Want_Diag: "",
+		},
+		{
+			Name: "assignment call closure flagged",
+			Files: map[string]string{"rule.go": `package main
+
+func called() (result int) { return 0 }
+
+func f() {
+	callback := func() { result := called() }
+	callback()
+}
+`},
+			Want_Diag: "closure body must be empty or contain one function call",
+		},
+		{
+			Name: "function declaration unaffected",
+			Files: map[string]string{"rule.go": `package main
+
+func called() { return }
+
+func f() {
+	called()
+	called()
+}
+`},
+			Want_Diag: "",
+		},
+		{
+			Name: "test file exempt",
+			Files: map[string]string{"rule_test.go": `package main
+
+func called() { return }
+
+func f() {
+	callback := func() {
+		called()
+		called()
+	}
+	callback()
+}
+`},
+			Want_Diag: "",
+		},
+	})
+}
+
+// Test_Closure_Bodies_Call_Arguments preserves argument construction inside
+// one direct delegation call; banning it would force pointless wrappers.
+func Test_Closure_Bodies_Call_Arguments(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "call argument may contain call",
+			Files: map[string]string{"rule.go": `package main
+
+func input() (result int) { return 0 }
+func called(value int) { return }
+
+func f() {
+	callback := func() { called(input()) }
+	callback()
+}
+`},
+			Want_Diag: "",
+		},
+	})
 }
 
 // Test_No_Interfaces verifies method-bearing interfaces fail wherever they appear.

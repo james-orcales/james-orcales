@@ -727,6 +727,20 @@ func Test_Source_And_Test_Bans_Empty_Bodies(t *testing.T) {
 	}
 }
 
+// Test_Source_And_Test_Bans_Closure_Bodies verifies callback logic must move
+// into a named function outside test files.
+func Test_Source_And_Test_Bans_Closure_Bodies(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nfunc called() { return }\n\n" +
+		"// F does.\nfunc F() {\n\tcallback := func() {\n\t\tcalled()\n" +
+		"\t\tcalled()\n\t}\n\tcallback()\n}\n")
+	if !specification_flags(
+		t, files, "closure body must be empty or contain one function call",
+	) {
+		t.Fatal("closure logic outside a test file must be flagged")
+	}
+}
+
 // Test_Source_And_Test_Bans_Methods verifies every non-builder method is flagged.
 func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 	t.Parallel()

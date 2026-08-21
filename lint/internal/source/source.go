@@ -80,7 +80,7 @@ func Build_Component_Index(
 		index.Components[i].Is_Shared_Library = index.Components[i].Root == shared_root
 	}
 	sort.Slice(index.Components, func(i, j int) (less bool) {
-		return len(index.Components[i].Root) > len(index.Components[j].Root)
+		return component_index_less(index.Components, i, j)
 	})
 	for _, pf := range parsed_files {
 		index.File_To_Component[pf.Path] =
@@ -110,6 +110,10 @@ func Build_Component_Index(
 		}
 	}
 	return index
+}
+
+func component_index_less(components []Component, i int, j int) (less bool) {
+	return len(components[i].Root) > len(components[j].Root)
 }
 
 // Declaration_Kind tells a resolved name apart. There is no fourth kind: a
@@ -229,16 +233,7 @@ func declaration_index_file(
 ) {
 
 	record := func(name string, declaration Declaration) {
-		if name == "_" {
-			return
-		}
-		key := Package_Symbol{
-			Directory: home.Directory, Package: home.Package, Name: name}
-		if _, present := index.Declarations[key]; present {
-			declaration.Ambiguous = true
-		}
-		declaration.Path = pf.Path
-		index.Declarations[key] = declaration
+		declaration_index_record(index, pf, home, name, declaration)
 	}
 	for _, declaration := range pf.File.Decls {
 		function_declaration, is_function := declaration.(*ast.FuncDecl)
@@ -259,6 +254,22 @@ func declaration_index_file(
 		}
 		declaration_index_generic(generic_declaration, record)
 	}
+}
+
+func declaration_index_record(
+	index *Declaration_Index, pf Parsed_File, home Package_Symbol,
+	name string, declaration Declaration,
+) {
+	if name == "_" {
+		return
+	}
+	key := Package_Symbol{
+		Directory: home.Directory, Package: home.Package, Name: name}
+	if _, present := index.Declarations[key]; present {
+		declaration.Ambiguous = true
+	}
+	declaration.Path = pf.Path
+	index.Declarations[key] = declaration
 }
 
 // Records the type and const specs of one package-level GenDecl. A var spec is
