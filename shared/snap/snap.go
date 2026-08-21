@@ -7,6 +7,10 @@
 // This package is the pure library tier. All dependencies arrive as fields of
 // Snapper. For an OS-bound default ready to drop into tests, import the sibling
 // composition-tier package snap/default.
+//
+// Every byte the package stages lives inside the caller's Snapper: capture
+// buffers, the diagnostic line, the rewritten source, the Run report, and the
+// edit table. Nothing here allocates at runtime.
 package snap
 
 import (
@@ -24,6 +28,40 @@ import (
 // consulting docs. Embedded in every Snapshot mismatch header.
 const MISMATCH_LEGEND = "\033[31mexpected\033[0m vs \033[32mactual\033[0m"
 
+// BUFFER_SIZE_MAXIMUM bounds one captured stream. Test output past it is a
+// test defect, so Buffer_Write panics rather than growing.
+const BUFFER_SIZE_MAXIMUM = 1 << 16
+
+// PRINT_SIZE_MAXIMUM bounds one diagnostic line: a source location plus its
+// message, or one colored diff line. A diff line is at most a myers line diff.
+const PRINT_SIZE_MAXIMUM = myers.LINE_DIFF_SIZE_MAXIMUM
+
+// SOURCE_SIZE_MAXIMUM bounds one source file read for an edit. Snapshot test
+// files in this repository stay well under 1 MiB.
+const SOURCE_SIZE_MAXIMUM = 1 << 20
+
+// REWRITE_SIZE_MAXIMUM bounds one rewritten source file: the source plus the
+// actual output, which Snapshot_Is_Equal already bounds by myers.
+const REWRITE_SIZE_MAXIMUM = SOURCE_SIZE_MAXIMUM + myers.TEXT_SIZE_MAXIMUM
+
+// EDIT_COUNT_MAXIMUM bounds edits recorded by one Snapper. Edit mode is a
+// manual one-shot operation, so hundreds per test binary is generous.
+const EDIT_COUNT_MAXIMUM = 256
+
+// REPORT_DECORATION_SIZE counts the framing bytes Run adds around both
+// streams: "\nSTDOUT:\n" (9), "\n\nSTDERR:\n" (10), and the closing "\n" (1).
+const REPORT_DECORATION_SIZE = 20
+
+// REPORT_SIZE_MAXIMUM bounds Run's combined report of both captured streams.
+const REPORT_SIZE_MAXIMUM = BUFFER_SIZE_MAXIMUM*2 + REPORT_DECORATION_SIZE
+
+// LINE_DIGIT_COUNT_MAXIMUM bounds the decimal digits of a source line number.
+// A 64-bit int has 19 digits.
+const LINE_DIGIT_COUNT_MAXIMUM = 19
+
+// DECIMAL_BASE is the radix line numbers print in.
+const DECIMAL_BASE = 10
+
 // Data is one byte sequence crossing an injected sink or file boundary.
 type Data []byte
 
@@ -36,33 +74,50 @@ type Permission uint32
 // Write sends bytes to explicit caller state.
 type Write func(state unsafe.Pointer, data Data) (written Data_Size, err error)
 
-// Read_File reads one source path through explicit caller state.
-type Read_File func(state unsafe.Pointer, path string) (data Data, err error)
+// Read_File reads one absolute source path through explicit caller state into
+// destination and returns the filled prefix. A file past destination is an error.
+type Read_File func(state unsafe.Pointer, path string, destination Data) (data Data, err error)
 
 // Write_File replaces one source path through explicit caller state.
 type Write_File func(
 	state unsafe.Pointer, path string, data Data, permission Permission,
 ) (err error)
 
-// Buffer owns captured test output.
-type Buffer []byte
+// Buffer owns captured test output over root-provided storage.
+type Buffer struct {
+	// Bytes is root-provided storage of BUFFER_SIZE_MAXIMUM; only the first
+	// Size bytes are live.
+	Bytes Data
+	// Size counts bytes captured since the last Buffer_Reset.
+	Size Data_Size
+}
 
-// Buffer_String returns immutable text without exposing mutable storage.
-func Buffer_String(buffer *Buffer) (text string) { return string(*buffer) }
+// Buffer_String borrows captured text. The view aliases Bytes, so it is valid
+// only until the next Buffer_Reset or Buffer_Write; borrowing avoids copying.
+func Buffer_String(buffer *Buffer) (text string) {
+	if buffer.Size == 0 {
+		return ""
+	}
+	return unsafe.String(&buffer.Bytes[0], int(buffer.Size))
+}
 
 // Buffer_Reset retains storage between captured runs.
-func Buffer_Reset(buffer *Buffer) { *buffer = (*buffer)[:0] }
+func Buffer_Reset(buffer *Buffer) { buffer.Size = 0 }
 
 // Buffer_Data borrows captured bytes.
-func Buffer_Data(buffer *Buffer) (data Data) { return Data(*buffer) }
+func Buffer_Data(buffer *Buffer) (data Data) { return Data(buffer.Bytes[:buffer.Size]) }
 
 // Buffer_Size reports captured bytes.
-func Buffer_Size(buffer *Buffer) (size Data_Size) { return Data_Size(len(*buffer)) }
+func Buffer_Size(buffer *Buffer) (size Data_Size) { return buffer.Size }
 
-// Buffer_Write appends bytes to capture storage.
+// Buffer_Write copies bytes into capture storage. Overflow panics: the bound
+// is the contract, not a hint.
 func Buffer_Write(buffer *Buffer, data Data) (written Data_Size, err error) {
-	*buffer = append(*buffer, data...)
-	return Data_Size(len(data)), nil
+	aver.Always(int(buffer.Size)+len(data) <= len(buffer.Bytes),
+		"captured output fits the root-provided buffer")
+	copied := copy(buffer.Bytes[buffer.Size:], data)
+	buffer.Size += Data_Size(copied)
+	return Data_Size(copied), nil
 }
 
 // Snapshot represents an expected output value captured at a specific source location.
@@ -80,17 +135,65 @@ type Snapshot struct {
 	Snapper *Snapper
 }
 
-// File_Edit tracks a snapshot edit operation for adjusting line numbers in subsequent edits.
+// File_Edit records one snapshot rewrite so later edits in the same file can
+// shift their target line.
 type File_Edit struct {
-	// Line is the source line the edit occurred on.
+	// File_Path is the absolute path of the rewritten source file.
+	File_Path string
+	// Line is the compile-time source line the edit occurred on.
 	Line int
 	// Delta is the change in line count the edit introduced.
 	Delta int
 }
 
-// Snapper holds injectable dependencies and per-instance edit state.
-// Construct a Snapper directly for in-process tests that need to redirect I/O
-// away from disk, or import snap_default for an OS-bound default.
+// Edit_Storage is root-provided storage for EDIT_COUNT_MAXIMUM edits.
+type Edit_Storage []File_Edit
+
+// Storage is every byte a Snapper writes into, provided by the root that
+// owns it. Slices rather than arrays so the root chooses where they live.
+type Storage struct {
+	// Stdout backs Snapper.Stdout; BUFFER_SIZE_MAXIMUM bytes.
+	Stdout Data
+	// Stderr backs Snapper.Stderr; BUFFER_SIZE_MAXIMUM bytes.
+	Stderr Data
+	// Print backs Snapper.Print; PRINT_SIZE_MAXIMUM bytes.
+	Print Data
+	// Source backs Snapper.Source; SOURCE_SIZE_MAXIMUM bytes.
+	Source Data
+	// Rewrite backs Snapper.Rewrite; REWRITE_SIZE_MAXIMUM bytes.
+	Rewrite Data
+	// Report backs Snapper.Report; REPORT_SIZE_MAXIMUM bytes.
+	Report Data
+	// Edits backs Snapper.Edits; EDIT_COUNT_MAXIMUM entries.
+	Edits Edit_Storage
+}
+
+// Snapper_Bind_Storage hands root storage to s. Exact sizes are the
+// contract: every bound in this package is a constant, so a short slice
+// would only move the panic to a later, less readable site.
+func Snapper_Bind_Storage(s *Snapper, storage Storage) {
+	aver.Always(len(storage.Stdout) == BUFFER_SIZE_MAXIMUM, "Stdout storage is exact")
+	aver.Always(len(storage.Stderr) == BUFFER_SIZE_MAXIMUM, "Stderr storage is exact")
+	aver.Always(len(storage.Print) == PRINT_SIZE_MAXIMUM, "Print storage is exact")
+	aver.Always(len(storage.Source) == SOURCE_SIZE_MAXIMUM, "Source storage is exact")
+	aver.Always(len(storage.Rewrite) == REWRITE_SIZE_MAXIMUM, "Rewrite storage is exact")
+	aver.Always(len(storage.Report) == REPORT_SIZE_MAXIMUM, "Report storage is exact")
+	aver.Always(len(storage.Edits) == EDIT_COUNT_MAXIMUM, "Edits storage is exact")
+	s.Stdout = Buffer{Bytes: storage.Stdout}
+	s.Stderr = Buffer{Bytes: storage.Stderr}
+	s.Print = storage.Print
+	s.Source = storage.Source
+	s.Rewrite = storage.Rewrite
+	s.Report = storage.Report
+	s.Edits = storage.Edits
+	s.Edit_Count = 0
+}
+
+// Snapper holds injectable dependencies, per-instance edit state, and every
+// staging buffer the library writes into. Construct one directly for
+// in-process tests that need to redirect I/O away from disk, or import
+// snap/default for an OS-bound default. Storage arrives through
+// Snapper_Bind_Storage; an unbound Snapper panics on its first write.
 type Snapper struct {
 	// File_System_State belongs to Read_File.
 	File_System_State unsafe.Pointer
@@ -108,15 +211,27 @@ type Snapper struct {
 	Write_File Write_File
 	// Write_File_State belongs to Write_File.
 	Write_File_State unsafe.Pointer
-	// Get_Caller returns the frame information for the caller at the given skip depth.
+	// Get_Caller returns the frame skip frames above Get_Caller itself: 0 is
+	// Get_Caller's direct caller.
 	Get_Caller func(skip int) (frame_information Frame_Information, err error)
 	// Stdout is reset by Run before calling function, then read after.
-	Stdout *Buffer
+	Stdout Buffer
 	// Stderr is reset by Run before calling function, then read after.
-	Stderr *Buffer
-	// Edits records per-file line deltas accumulated by edit-mode snapshots.
-	Edits map[string][]File_Edit
-	// Edits_Mu guards Edits.
+	Stderr Buffer
+	// Edits records rewrites in occurrence order; only the first Edit_Count are live.
+	Edits Edit_Storage
+	// Edit_Count counts live Edits.
+	Edit_Count int
+	// Print stages one diagnostic line before Output_Write. Snapper-owned so
+	// the slice handed to the injected writer needs no fresh storage.
+	Print Data
+	// Source receives one source file from Read_File before an edit.
+	Source Data
+	// Rewrite stages one rewritten source file before Write or Write_File.
+	Rewrite Data
+	// Report stages Run's combined stream report before comparison.
+	Report Data
+	// Edits_Mu guards Edits and every staging buffer.
 	Edits_Mu sync.Mutex
 }
 
@@ -133,7 +248,8 @@ type Frame_Information struct {
 // directly so they can choose a skip count matching their own call depth.
 // Snapper_Init / Snapper_Edit are convenience wrappers around this.
 func Snapper_Init_At(s *Snapper, skip int, data string, should_edit bool) (snapshot Snapshot) {
-	frame_information, _ := s.Get_Caller(skip)
+	frame_information, err := s.Get_Caller(skip)
+	aver.Always(err == nil, "caller frame lookup succeeds")
 	return Snapshot{
 		Expected_Output: data,
 		File_Path:       frame_information.File,
@@ -145,11 +261,13 @@ func Snapper_Init_At(s *Snapper, skip int, data string, should_edit bool) (snaps
 
 // Snapper_Init creates a snapshot bound to s with expected output captured at the call site.
 func Snapper_Init(s *Snapper, data string) (snapshot Snapshot) {
+	// Frames above Get_Caller: 0 Snapper_Init_At, 1 Snapper_Init, 2 the call site.
 	return Snapper_Init_At(s, 2, data, false)
 }
 
 // Snapper_Edit creates an edit-mode snapshot bound to s.
 func Snapper_Edit(s *Snapper, data string) (snapshot Snapshot) {
+	// Same depth as Snapper_Init.
 	return Snapper_Init_At(s, 2, data, true)
 }
 
@@ -180,32 +298,77 @@ func New_Snapshot(input *New_Snapshot_Input) (snapshot Snapshot) {
 	}
 }
 
+// The mismatch header already went to Output_Write, so the test log carries
+// only the failure mark; t.Fatal would box its message.
 func expect_fail_mismatch(t *testing.T) {
 	t.Helper()
-	t.Fatal("Snapshot mismatch")
+	t.FailNow()
 }
 
-func expect_panic_fail_no_panic(t *testing.T, expected string) {
+func expect_panic_fail_no_panic(t *testing.T, snapshot Snapshot) {
 	t.Helper()
-	t.Fatalf("Expected panic but none occurred. Expected: %s", expected)
+	s := snapshot.Snapper
+	offset := print_text(s, 0, "Expected panic but none occurred. Expected: ")
+	offset = print_text(s, offset, snapshot.Expected_Output)
+	offset = print_text(s, offset, "\n")
+	print_flush(s, offset)
+	t.FailNow()
 }
 
-func snapper_print(snapper *Snapper, format string, values ...any) {
-	if snapper.Output_Write == nil {
+// Stages text into s.Print at offset and returns the new end.
+func print_text(s *Snapper, offset int, text string) (end int) {
+	aver.Always(offset+len(text) <= len(s.Print), "diagnostic line fits Print")
+	return offset + copy(s.Print[offset:], text)
+}
+
+// Stages bytes into s.Print at offset and returns the new end.
+func print_bytes(s *Snapper, offset int, data []byte) (end int) {
+	aver.Always(offset+len(data) <= len(s.Print), "diagnostic line fits Print")
+	return offset + copy(s.Print[offset:], data)
+}
+
+// Stages a decimal line number into s.Print at offset and returns the new end.
+func print_line_number(s *Snapper, offset int, line int) (end int) {
+	aver.Always(line > 0, "printed line number is 1-based")
+	var digits [LINE_DIGIT_COUNT_MAXIMUM]byte
+	digit_size := 0
+	for quotient := line; quotient > 0; quotient /= DECIMAL_BASE {
+		digits[digit_size] = byte('0' + quotient%DECIMAL_BASE)
+		digit_size++
+	}
+	aver.Always(offset+digit_size <= len(s.Print), "diagnostic line fits Print")
+	end = offset
+	for digit_index := digit_size - 1; digit_index >= 0; digit_index-- {
+		s.Print[end] = digits[digit_index]
+		end++
+	}
+	return end
+}
+
+// Hands the staged line to Output_Write. A nil Output_Write drops diagnostics.
+func print_flush(s *Snapper, size int) {
+	if s.Output_Write == nil {
 		return
 	}
-	data := fmt.Appendf(nil, format, values...)
-	snapper.Output_Write(snapper.Output_State, Data(data))
+	s.Output_Write(s.Output_State, Data(s.Print[:size]))
 }
 
-func string_trim_prefix(value string, prefix string) (trimmed string) {
-	if len(prefix) > len(value) {
-		return value
-	}
-	if value[:len(prefix)] == prefix {
-		return value[len(prefix):]
-	}
-	return value
+// Prints "<prefix><file>:<line><suffix>".
+func print_location(s *Snapper, prefix string, snapshot Snapshot, suffix string) {
+	offset := print_text(s, 0, prefix)
+	offset = print_text(s, offset, snapshot.File_Path)
+	offset = print_text(s, offset, ":")
+	offset = print_line_number(s, offset, snapshot.Line)
+	offset = print_text(s, offset, suffix)
+	print_flush(s, offset)
+}
+
+// Prints "<prefix><line><suffix>" for one diff line.
+func print_diff_line(s *Snapper, prefix string, line []byte, suffix string) {
+	offset := print_text(s, 0, prefix)
+	offset = print_bytes(s, offset, line)
+	offset = print_text(s, offset, suffix)
+	print_flush(s, offset)
 }
 
 func string_index(value string, sought string) (index int) {
@@ -255,11 +418,19 @@ func expect_panic_match(recovered any, snapshot Snapshot) {
 		"recovered panic output matches its snapshot")
 }
 
+// A string actual needs no formatting; fmt.Sprint only for other kinds.
+func actual_text(actual any) (text string) {
+	if actual_string, is_string := actual.(string); is_string {
+		return actual_string
+	}
+	return fmt.Sprint(actual)
+}
+
 // Expect compares the actual output against the snapshot's expected output.
 // If they don't match, the test fails and displays a Myers diff of the changes.
 func Expect(t *testing.T, snapshot Snapshot, actual any) (got string) {
 	t.Helper()
-	actual_string := fmt.Sprint(actual)
+	actual_string := actual_text(actual)
 	if !Snapshot_Is_Equal(snapshot, actual_string) {
 		expect_fail_mismatch(t)
 	}
@@ -274,7 +445,7 @@ func Expect_Panic(t *testing.T, snapshot Snapshot, callback func()) {
 	defer expect_panic_recover(snapshot, &did_panic)
 	callback()
 	if !did_panic {
-		expect_panic_fail_no_panic(t, snapshot.Expected_Output)
+		expect_panic_fail_no_panic(t, snapshot)
 	}
 }
 
@@ -288,7 +459,7 @@ func expect_panic_recover(snapshot Snapshot, did_panic *bool) {
 
 // Entry represents a string test case with expected output snapshot.
 type Entry struct {
-	// Name is the subtest name.
+	// Name is the entry name printed when the entry mismatches.
 	Name string
 	// Input is the test-case input passed to the batch function.
 	Input string
@@ -296,36 +467,76 @@ type Entry struct {
 	Snapshot Snapshot
 }
 
-// Batch_Expect runs multiple test cases as subtests, each with snapshot validation.
-// The function callback transforms each input into output for snapshot comparison.
+// Batch_Expect checks every entry in order. The function callback transforms
+// each input into output for snapshot comparison. Entries run inline rather
+// than as t.Run subtests: a subtest closure escapes to the heap.
 func Batch_Expect(t *testing.T, function func(string) (result any), entries []Entry) {
 	t.Helper()
-	for _, e := range entries {
-		t.Run(e.Name, func(st *testing.T) {
-			st.Helper()
-			batch_expect_entry(st, function, e)
-		})
+	for entry_index := 0; entry_index < len(entries); entry_index++ {
+		entry := &entries[entry_index]
+		result := function(entry.Input)
+		if !Snapshot_Is_Equal(entry.Snapshot, actual_text(result)) {
+			batch_fail_entry(t, entry)
+		}
 	}
 }
 
-func batch_expect_entry(t *testing.T, function func(string) (result any), entry Entry) {
-	t.Helper()
-	result := function(entry.Input)
-	Expect(t, entry.Snapshot, result)
-}
-
-// Batch_Expect_Panic runs multiple panic test cases as subtests with a shared callback.
-// The function callback is expected to panic for each input.
+// Batch_Expect_Panic checks every entry's panic in order with a shared
+// callback. The function callback is expected to panic for each input.
 func Batch_Expect_Panic(t *testing.T, function func(string), entries []Entry) {
 	t.Helper()
-	for _, e := range entries {
-		t.Run(e.Name, func(st *testing.T) {
-			st.Helper()
-			Expect_Panic(st, e.Snapshot, func() {
-				function(e.Input)
-			})
+	for entry_index := 0; entry_index < len(entries); entry_index++ {
+		entry := &entries[entry_index]
+		Expect_Panic(t, entry.Snapshot, func() {
+			function(entry.Input)
 		})
 	}
+}
+
+// Names the failed entry on Output before failing, since inline entries have
+// no subtest name in the test log.
+func batch_fail_entry(t *testing.T, entry *Entry) {
+	t.Helper()
+	s := entry.Snapshot.Snapper
+	offset := print_text(s, 0, "BATCH ENTRY ")
+	offset = print_text(s, offset, entry.Name)
+	offset = print_text(s, offset, "\n")
+	print_flush(s, offset)
+	expect_fail_mismatch(t)
+}
+
+// Sums the line deltas of earlier edits in the same file that sit above line.
+func snapper_edit_offset(s *Snapper, file_path string, line int) (offset int) {
+	for edit_index := 0; edit_index < s.Edit_Count; edit_index++ {
+		edit := &s.Edits[edit_index]
+		if edit.File_Path != file_path {
+			continue
+		}
+		if edit.Line < line {
+			offset += edit.Delta
+		}
+	}
+	return offset
+}
+
+// Stages head + replace + actual + tail in s.Rewrite and returns the staged size.
+func snapper_stage_rewrite(
+	s *Snapper, content []byte, span Snapper_Edit_Span, actual string,
+) (size int) {
+	search := "snap.Edit(`"
+	replace := "snap.Init(`"
+	// Equal lengths keep the byte math below (Open+1-len(search)) aligned.
+	aver.Always(len(search) == len(replace),
+		"snap.Edit and snap.Init prefixes are equal length")
+	head := content[:span.Open+1-len(search)]
+	tail := content[span.Close:]
+	aver.Always(len(head)+len(replace)+len(actual)+len(tail) <= len(s.Rewrite),
+		"rewritten source fits Rewrite")
+	size = copy(s.Rewrite[:], head)
+	size += copy(s.Rewrite[size:], replace)
+	size += copy(s.Rewrite[size:], actual)
+	size += copy(s.Rewrite[size:], tail)
+	return size
 }
 
 // Should_Edit branch of Snapshot_Is_Equal. Called with s.Edits_Mu held.
@@ -334,19 +545,9 @@ func snapper_is_equal_edit(
 	s *Snapper, snapshot Snapshot, actual string, is_equal bool,
 ) (updated bool) {
 	compile_time_line := snapshot.Line
-	if edits, ok := s.Edits[snapshot.File_Path]; ok {
-		offset := 0
-		for _, edit := range edits {
-			if edit.Line < compile_time_line {
-				offset += edit.Delta
-			}
-		}
-		snapshot.Line += offset
-	}
+	snapshot.Line += snapper_edit_offset(s, snapshot.File_Path, compile_time_line)
 
-	content, err := s.Read_File(
-		s.File_System_State, string_trim_prefix(snapshot.File_Path, "/"),
-	)
+	content, err := s.Read_File(s.File_System_State, snapshot.File_Path, s.Source)
 	aver.Always(err == nil, "snapshot source file read succeeds")
 
 	span := snapper_locate_edit(s, snapshot, content)
@@ -354,39 +555,28 @@ func snapper_is_equal_edit(
 		return false
 	}
 
-	search := "snap.Edit(`"
-	replace := "snap.Init(`"
-	// Equal lengths keep the byte math below (Open+1-len(search)) aligned.
-	aver.Always(len(search) == len(replace),
-		"snap.Edit and snap.Init prefixes are equal length")
-	new_content := make(Buffer, 0, len(content)+len(actual))
-	new_content = append(new_content, content[:span.Open+1-len(search)]...)
-	new_content = append(new_content, replace...)
-	new_content = append(new_content, actual...)
-	new_content = append(new_content, content[span.Close:]...)
-
+	size := snapper_stage_rewrite(s, content, span, actual)
+	new_content := Data(s.Rewrite[:size])
 	if s.Write != nil {
-		_, write_err := s.Write(s.Writer_State, Data(new_content))
+		_, write_err := s.Write(s.Writer_State, new_content)
 		aver.Always(write_err == nil, "injected snapshot write succeeds")
 	} else {
 		write_err := s.Write_File(
-			s.Write_File_State, snapshot.File_Path, Data(new_content), 0o664,
+			s.Write_File_State, snapshot.File_Path, new_content, 0o664,
 		)
 		aver.Always(write_err == nil, "snapshot source file write succeeds")
 	}
 
 	if !is_equal {
 		delta := string_count(actual, "\n") - string_count(snapshot.Expected_Output, "\n")
-		if _, ok := s.Edits[snapshot.File_Path]; !ok {
-			s.Edits[snapshot.File_Path] = make([]File_Edit, 0)
+		aver.Always(s.Edit_Count < len(s.Edits), "edit table has room")
+		s.Edits[s.Edit_Count] = File_Edit{
+			File_Path: snapshot.File_Path, Line: compile_time_line, Delta: delta,
 		}
-		s.Edits[snapshot.File_Path] = append(
-			s.Edits[snapshot.File_Path],
-			File_Edit{Line: compile_time_line, Delta: delta},
-		)
+		s.Edit_Count++
 	}
 
-	snapper_print(s, "UPDATED SNAPSHOT %s:%d\n", snapshot.File_Path, snapshot.Line)
+	print_location(s, "UPDATED SNAPSHOT ", snapshot, "\n")
 	return true
 }
 
@@ -439,13 +629,12 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span Sn
 	aver.Always(content[bounds.Start-1] == '\n', "byte before line start is a newline")
 	aver.Always(content[bounds.End] == '\n', "line ends on a newline")
 
-	line := string(content[bounds.Start:bounds.End])
+	// Borrowed view: content outlives every use of line below, and a copy would allocate.
+	line := unsafe.String(&content[bounds.Start], bounds.End-bounds.Start)
 	search := "snap.Edit(`"
 	if string_count(line, search) == 0 {
-		snapper_print(s,
-			"snap.Edit at %s:%d must use a backticked raw string (snap.Edit(`...`))\n",
-			snapshot.File_Path, snapshot.Line,
-		)
+		print_location(s, "snap.Edit at ", snapshot,
+			" must use a backticked raw string (snap.Edit(`...`))\n")
 		return span
 	}
 	aver.Always(string_count(line, search) == 1, "exactly one snap.Edit on the line")
@@ -487,8 +676,7 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 		defer s.Edits_Mu.Unlock()
 		return snapper_is_equal_edit(s, snapshot, actual, is_equal)
 	} else if !is_equal {
-		snapper_print(s, "Snapshot mismatch %s:%d  (%s)\n",
-			snapshot.File_Path, snapshot.Line, MISMATCH_LEGEND)
+		print_location(s, "Snapshot mismatch ", snapshot, "  ("+MISMATCH_LEGEND+")\n")
 		if len(snapshot.Expected_Output) > myers.TEXT_SIZE_MAXIMUM {
 			return false
 		}
@@ -513,57 +701,88 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 		if status != myers.STATUS_OK {
 			return false
 		}
-		snapper_print_lines(s, string(output[:count]))
+		snapper_print_lines(s, output[:count])
 	}
 	return is_equal
 }
 
-func snapper_print_lines(snapper *Snapper, text string) {
+func snapper_print_lines(snapper *Snapper, text []byte) {
 	for len(text) > 0 {
-		index := string_index(text, "\n")
+		index := bytes_index_newline(text)
 		line := text
 		if index >= 0 {
 			line = text[:index]
 			text = text[index+1:]
 		} else {
-			text = ""
+			text = text[len(text):]
 		}
 		if len(line) == 0 {
 			continue
 		}
 		switch line[0] {
 		case '+':
-			snapper_print(snapper, "\033[32m%s\033[0m\n", line)
+			print_diff_line(snapper, "\033[32m", line, "\033[0m\n")
 		case '-':
-			snapper_print(snapper, "\033[31m%s\033[0m\n", line)
+			print_diff_line(snapper, "\033[31m", line, "\033[0m\n")
 		default:
-			snapper_print(snapper, "%s\n", line)
+			print_diff_line(snapper, "", line, "\n")
 		}
 	}
+}
+
+func bytes_index_newline(text []byte) (index int) {
+	for byte_index := 0; byte_index < len(text); byte_index++ {
+		if text[byte_index] == '\n' {
+			return byte_index
+		}
+	}
+	return -1
+}
+
+// Stages "<prefix><data>" into s.Report at offset and returns the new end.
+func report_text(s *Snapper, offset int, text string) (end int) {
+	aver.Always(offset+len(text) <= len(s.Report), "run report fits Report")
+	return offset + copy(s.Report[offset:], text)
+}
+
+// Frames the captured streams the way readers expect them in a snapshot
+// literal. The result borrows s.Report and is valid until the next Run.
+func run_report(s *Snapper, output string, err string) (report string) {
+	if output == "" {
+		if err == "" {
+			return "snap.Run: no output"
+		}
+		offset := report_text(s, 0, "\nSTDERR:\n")
+		offset = report_text(s, offset, err)
+		offset = report_text(s, offset, "\n")
+		return unsafe.String(&s.Report[0], offset)
+	}
+	offset := report_text(s, 0, "\nSTDOUT:\n")
+	offset = report_text(s, offset, output)
+	offset = report_text(s, offset, "\n")
+	if err != "" {
+		offset = report_text(s, offset, "\nSTDERR:\n")
+		offset = report_text(s, offset, err)
+		offset = report_text(s, offset, "\n")
+	}
+	return unsafe.String(&s.Report[0], offset)
 }
 
 // Run executes function, captures what function writes through Buffer_Write, and asserts the
 // combined output against snapshot.
 // Run resets Stdout and Stderr before calling function and reads them after.
+// The returned strings borrow the Snapper's buffers until the next Run.
 func Run(t *testing.T, function func(), snapshot Snapshot) (output string, err string) {
 	t.Helper()
 	aver.Always(snapshot.Snapper != nil, "Run snapshot is bound to a Snapper")
 	s := snapshot.Snapper
-	Buffer_Reset(s.Stdout)
-	Buffer_Reset(s.Stderr)
+	Buffer_Reset(&s.Stdout)
+	Buffer_Reset(&s.Stderr)
 	function()
-	output = Buffer_String(s.Stdout)
-	err = Buffer_String(s.Stderr)
-	if output == "" {
-		if err == "" {
-			Expect(t, snapshot, "snap.Run: no output")
-		} else {
-			Expect(t, snapshot, fmt.Sprintf("\nSTDERR:\n%s\n", err))
-		}
-	} else if err == "" {
-		Expect(t, snapshot, fmt.Sprintf("\nSTDOUT:\n%s\n", output))
-	} else {
-		Expect(t, snapshot, fmt.Sprintf("\nSTDOUT:\n%s\n\nSTDERR:\n%s\n", output, err))
+	output = Buffer_String(&s.Stdout)
+	err = Buffer_String(&s.Stderr)
+	if !Snapshot_Is_Equal(snapshot, run_report(s, output, err)) {
+		expect_fail_mismatch(t)
 	}
 	return output, err
 }

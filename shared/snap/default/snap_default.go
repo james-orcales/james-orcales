@@ -1,6 +1,6 @@
 // Package snap is the composition-tier sibling of the snap library. It wires
 // the snap library to the real OS (the filesystem and stderr through the os gateway,
-// runtime.Callers) and re-exports the surface so callers can write:
+// runtime.Caller) and re-exports the surface so callers can write:
 //
 //	import snap "local/james-orcales/shared/snap/default"
 //
@@ -15,9 +15,6 @@ import (
 	"local/james-orcales/shared/os/default"
 	"local/james-orcales/shared/snap"
 )
-
-// CALLER_FRAME_COUNT requests only the program counter that identifies the test site.
-const CALLER_FRAME_COUNT = 1
 
 // Snapper re-exports the library's Snapper so callers need only this import.
 type Snapper = snap.Snapper
@@ -37,38 +34,41 @@ type New_Snapshot_Input = snap.New_Snapshot_Input
 // Entry re-exports the library's Entry.
 type Entry = snap.Entry
 
-// Default is the OS-bound Snapper used by the package-level Init / Edit / …
-// convenience functions. Tests that need to redirect I/O construct their own
-// Snapper directly via the snap package; Default exists for the common case.
-var Default = Init_Default_Snapper()
-
-// Init_Default_Snapper builds a Snapper wired to the host OS: the local
-// filesystem, standard error, file writes, and runtime.Callers. This is the one
-// place in the snap tree where ambient binding is permitted.
-func Init_Default_Snapper() (snapper *snap.Snapper) {
-	return &snap.Snapper{
-		Read_File:    operating_read_file,
-		Output_Write: standard_error_write,
-		Write_File:   operating_write_file,
-		Get_Caller:   operating_caller,
-		Stdout:       &snap.Buffer{},
-		Stderr:       &snap.Buffer{},
-		Edits:        make(map[string][]snap.File_Edit),
-	}
+// Default is the Snapper the package-level Init / Edit / … convenience
+// functions bind to, wired to the host OS: the local filesystem, standard
+// error, file writes, and runtime.Caller. This is the one place in the snap
+// tree where ambient binding is permitted, and the one place that allocates:
+// a struct field cannot be a fixed array, a package may declare no var but
+// Default, and TestMain must be exactly aver.Run_Test_Main(m), so no root
+// exists to own the storage. Six allocations, once, at package init. Built
+// in place because Snapper carries a mutex and must not be copied. Tests
+// that need to redirect I/O construct their own Snapper via the snap package.
+var Default = snap.Snapper{
+	Read_File:    operating_read_file,
+	Output_Write: standard_error_write,
+	Write_File:   operating_write_file,
+	Get_Caller:   operating_caller,
+	Stdout:       snap.Buffer{Bytes: make(snap.Data, snap.BUFFER_SIZE_MAXIMUM)},
+	Stderr:       snap.Buffer{Bytes: make(snap.Data, snap.BUFFER_SIZE_MAXIMUM)},
+	Print:        make(snap.Data, snap.PRINT_SIZE_MAXIMUM),
+	Source:       make(snap.Data, snap.SOURCE_SIZE_MAXIMUM),
+	Rewrite:      make(snap.Data, snap.REWRITE_SIZE_MAXIMUM),
+	Report:       make(snap.Data, snap.REPORT_SIZE_MAXIMUM),
+	Edits:        make(snap.Edit_Storage, snap.EDIT_COUNT_MAXIMUM),
 }
 
+// Counts skip from operating_caller's own caller, matching the Get_Caller
+// contract exactly; runtime.Caller allocates nothing where runtime.Callers
+// needs a Frames iterator.
 func operating_caller(skip int) (frame_information snap.Frame_Information, err error) {
-	callers := [CALLER_FRAME_COUNT]uintptr{}
-	count := runtime.Callers(skip, callers[:])
-	frame, _ := runtime.CallersFrames(callers[:count]).Next()
-	return snap.Frame_Information{File: frame.File, Line: frame.Line}, nil
+	_, file, line, _ := runtime.Caller(skip + 1)
+	return snap.Frame_Information{File: file, Line: line}, nil
 }
 
-// The library hands the path without its leading slash; the OS gateway wants it absolute.
 func operating_read_file(
-	_ unsafe.Pointer, path string,
+	_ unsafe.Pointer, path string, destination snap.Data,
 ) (data snap.Data, err error) {
-	content, read_err := os.File_Read(os.File_Path("/" + path))
+	content, read_err := os.File_Read_Into(os.File_Path(path), os.File_Content(destination))
 	return snap.Data(content), read_err
 }
 
@@ -90,20 +90,19 @@ func standard_error_write(
 }
 
 // Init creates a snapshot bound to Default with the call-site location
-// captured via runtime.Callers. WARN: brittle under go:generate — the
+// captured via runtime.Caller. WARN: brittle under go:generate — the
 // source location is captured at runtime.
 func Init(data string) (snapshot snap.Snapshot) {
-	// Runtime.Callers frames from inside Get_Caller: 0 Callers, 1 Get_Caller,
-	// 2 Snapper_Init_At, 3 this wrapper, 4 the test call site.
-	return snap.Snapper_Init_At(Default, 4, data, false)
+	// Frames above Get_Caller: 0 Snapper_Init_At, 1 this wrapper, 2 the test call site.
+	return snap.Snapper_Init_At(&Default, 2, data, false)
 }
 
 // Edit creates a snapshot bound to Default that will rewrite the source line
 // with the actual output on the next test run. Use this temporarily to
 // update a specific snapshot, then change it back to Init.
 func Edit(data string) (snapshot snap.Snapshot) {
-	// Same frame depth as Init: the test call site is 4 frames above Callers.
-	return snap.Snapper_Init_At(Default, 4, data, true)
+	// Same frame depth as Init.
+	return snap.Snapper_Init_At(&Default, 2, data, true)
 }
 
 // New_Snapshot forwards to snap.New_Snapshot.
