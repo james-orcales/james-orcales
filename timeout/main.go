@@ -1,133 +1,155 @@
-// Package main is the timeout command: the thin composition root over the internal
-// library tier, and the one place allowed to bind a real process. The child is started
-// with os/exec rather than through shared/io, whose Spawn keeps the process handle to
-// itself and so offers no way to kill a child that outlives its deadline — the one thing
-// this program exists to do.
+// Package main is the timeout command: the thin composition root over the internal library
+// tier, and the one place allowed to bind the real loop and pump it.
 package main
 
 import (
-	"os"
-	"os/exec"
-	"os/signal"
-	"syscall"
-	"time"
-
-	systime "local/james-orcales/shared/time"
-	timeout "local/james-orcales/timeout/internal"
+	"local/james-orcales/shared/jlog/default"
+	shared_os "local/james-orcales/shared/os"
+	"local/james-orcales/shared/os/default"
+	"local/james-orcales/shared/sim/nbio"
+	system_nbio "local/james-orcales/shared/sim/nbio/default"
+	"local/james-orcales/shared/sim/time"
+	system_time "local/james-orcales/shared/sim/time/default"
+	"local/james-orcales/shared/slices"
+	"local/james-orcales/timeout/internal"
 )
 
-// SIGNAL_EXIT_BASE is the shell's convention for a process killed by a signal: 128 plus
-// the signal number. A signalled process carries no exit status of its own, so this is the
-// only code there is to report for one.
-const SIGNAL_EXIT_BASE = 128
+// STANDARD_OUTPUT is the descriptor the child's output is relayed to.
+const STANDARD_OUTPUT nbio.File = 1
+
+// STANDARD_ERROR is the descriptor the child's errors and this program's diagnostic go to.
+const STANDARD_ERROR nbio.File = 2
+
+// EXIT_FAILURE reports a loop that could not be built or driven: nothing the child did.
+const EXIT_FAILURE = timeout.EXIT_START_FAILURE
+
+// SPAWN_CAPACITY is one: the run is one child.
+const SPAWN_CAPACITY = 1
+
+// OPERATION_CAPACITY covers the child's pipe reads, exit watch, deadline, pipe drain, relayed
+// writes, and the diagnostic, with slack.
+const OPERATION_CAPACITY = 16
+
+// DESCRIPTOR_CAPACITY covers the child's three pipes, both ends each, with slack.
+const DESCRIPTOR_CAPACITY = 8
+
+// SCHEDULER_ENTRY_COUNT sizes the kernel queue; it only has to hold OPERATION_CAPACITY.
+const SCHEDULER_ENTRY_COUNT = 32
+
+// PUMP_DURATION caps one pump pass. The spawn's own deadline bounds the run, so a pass that
+// ends without progress simply starts the next one.
+const PUMP_DURATION = 1 * time.MINUTE
 
 func main() {
-	os.Exit(timeout.Main(&timeout.Main_Input{
-		Arguments:    os.Args,
-		Error_Output: os.Stderr,
-		Start:        main_start,
-	}))
-}
-
-// Starts path with arguments as a transparent child: it inherits this process's standard
-// input, output, and error, so a command run under timeout behaves as it would run alone.
-// The wait runs on its own goroutine and parks the exit code in a buffered channel, so the
-// deadline race never blocks it and Terminate can still collect that code after killing.
-func main_start(path string, arguments []string) (child timeout.Child, err error) {
-	command := exec.Command(path, arguments...)
-	command.Stdin = os.Stdin
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	// The child leads a process group of its own so the deadline reaches the whole tree it
-	// spawns, not just the process this program can see: killing a shell script alone
-	// leaves the commands it launched running, which is the case a deadline exists for.
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	start_err := command.Start()
-	if start_err != nil {
-		return timeout.Child{}, start_err
+	system := os.New_Operating_System(&os.Host{Self_Exec: main_self_exec_workspace()})
+	memory := main_memory()
+	state := system_nbio.Operating_System{}
+	loop, driver, loop_err := system_nbio.New_Operating_System_IO(
+		&state, memory, system_time.New_Operating_System_Clock(), SCHEDULER_ENTRY_COUNT, 0)
+	if loop_err != nil {
+		main_fail(system, loop_err)
 	}
-	// A group led by the child is numbered by the child's own pid.
-	group := command.Process.Pid
-	exit := make(chan int, 1)
-	go func() {
-		command.Wait()
-		exit <- main_exit_code(command.ProcessState)
-	}()
-	main_forward(group)
-	return timeout.Child{
-		Wait_Until: main_wait_until(exit),
-		Terminate:  main_terminate(group, exit),
-	}, nil
+	child_output := jlog.Stream_File{Storage: loop.Storage, File: STANDARD_OUTPUT}
+	child_error := jlog.Stream_File{Storage: loop.Storage, File: STANDARD_ERROR}
+	own_error := jlog.Stream_File{Storage: loop.Storage, File: STANDARD_ERROR}
+	environment := make(shared_os.Environment, slices.COUNT_MAXIMUM)
+	environment = environment[:os.OS_Environment(system, environment)]
+	arguments := make(shared_os.Arguments, slices.COUNT_MAXIMUM)
+	arguments = arguments[:os.OS_Arguments(system, arguments)]
+	runner := timeout.Runner{
+		IO:           loop,
+		Environment:  environment,
+		Stdout:       jlog.File_To_Stream(&child_output),
+		Stderr:       jlog.File_To_Stream(&child_error),
+		Error_Output: jlog.File_To_Stream(&own_error),
+		Message:      make([]byte, timeout.MESSAGE_SIZE_MAXIMUM),
+	}
+	// Built once: a closure literal inside the pump would allocate on every pass.
+	done := func() (finished bool) { return main_pump_done(&runner) }
+	timeout.Main(&runner, arguments)
+	for !timeout.Stopped(&runner) {
+		main_pump(system, driver, &runner, done)
+	}
+	os.OS_Exit(system, shared_os.Exit_Code(runner.Status))
 }
 
-// Forwards an interrupt or a termination aimed at this program on to the child's group. A
-// child in its own group is out of the terminal's foreground group, so without this a
-// Ctrl-C would kill the wrapper alone and leave the very tree it was bounding orphaned and
-// running. This program outlives the signal on purpose: its answer is the child's fate.
-func main_forward(group int) {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals,
-		syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
-	go func() {
-		for received := range signals {
-			forwarded, ok := received.(syscall.Signal)
-			if !ok {
-				continue
-			}
-			syscall.Kill(-group, forwarded)
-		}
-	}()
-}
-
-// Returns the bounded wait: the child's exit code when it arrives before the deadline, or
-// nothing and a false report once the deadline elapses first.
-func main_wait_until(
-	exit chan int,
-) (wait func(deadline systime.Duration) (status_code int, exited bool)) {
-	return func(deadline systime.Duration) (status_code int, exited bool) {
-		alarm := time.NewTimer(time.Duration(deadline))
-		defer alarm.Stop()
-		select {
-		case code := <-exit:
-			return code, true
-		case <-alarm.C:
-			return 0, false
-		}
+// Runs every recorded continuation, then makes one pump pass. A failed drive leaves work in
+// flight, so it ends the process without Deinit, which would assert every operation retired.
+func main_pump(
+	system shared_os.OS,
+	driver nbio.Driver,
+	runner *timeout.Runner,
+	done func() (finished bool),
+) {
+	for timeout.Rearm(runner) {
+	}
+	if timeout.Stopped(runner) {
+		return
+	}
+	_, drive_err := nbio.Driver_Run_Until(driver, PUMP_DURATION, done)
+	if drive_err != nil {
+		main_fail(system, drive_err)
 	}
 }
 
-// Returns the terminator: it kills the child's whole process group and waits for the exit
-// its wait goroutine posts, so the child is reaped here rather than orphaned as this
-// program exits.
-func main_terminate(group int, exit chan int) (terminate func()) {
-	return func() {
-		// A negated group id is kill(2)'s spelling of "every process in this group". The
-		// group outlives its leader, so this still reaches the grandchildren even when the
-		// child itself has already exited.
-		//
-		// SIGKILL, not SIGTERM: a deadline a child may decline is not a deadline. Nothing
-		// downstream waits on a graceful stop — the caller asked for the command to be
-		// over by now.
-		syscall.Kill(-group, syscall.SIGKILL)
-		<-exit
+// The loop is gone or broken, so the diagnostic bypasses it. Only a failure to build or drive
+// the loop reaches here, never a step of the run, so the allocation stays off the run's path.
+func main_fail(system shared_os.OS, err error) {
+	os.Standard_Error_Write([]byte(timeout.MESSAGE_PREFIX + err.Error() + "\n"))
+	os.OS_Exit(system, shared_os.Exit_Code(EXIT_FAILURE))
+}
+
+// The host vtable requires exec storage. Timeout never replaces its image, so the pages stay
+// untouched.
+func main_self_exec_workspace() (workspace os.Self_Exec_Workspace_Pointer) {
+	path := make(os.Self_Exec_Path_Bytes, os.SELF_EXEC_PATH_STORAGE_BYTES)
+	arguments := make(os.Self_Exec_Argument_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
+	environment := make(os.Self_Exec_Environment_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
+	argument_pointers := make(
+		os.Self_Exec_Argument_Pointer_Vector, os.SELF_EXEC_VECTOR_POINTER_COUNT)
+	environment_pointers := make(
+		os.Self_Exec_Environment_Pointer_Vector, os.SELF_EXEC_VECTOR_POINTER_COUNT)
+	return &os.Self_Exec_Workspace{
+		Path: &path, Arguments: &arguments, Environment: &environment,
+		Argument_Pointers: &argument_pointers, Environment_Pointers: &environment_pointers,
 	}
 }
 
-// Reports the exit code of a finished process. A process killed by a signal has no exit
-// status of its own and takes the shell's 128+signal form instead; a process whose state
-// cannot be read at all yields no outcome to report and so answers with the wrapper's own
-// failure code.
-func main_exit_code(state *os.ProcessState) (status_code int) {
-	if state == nil {
-		return timeout.EXIT_START_FAILURE
+// A pass ends once the run stops or a callback recorded work only Rearm can act on.
+func main_pump_done(runner *timeout.Runner) (finished bool) {
+	if timeout.Stopped(runner) {
+		return true
 	}
-	code := state.ExitCode()
-	if code >= 0 {
-		return code
+	return timeout.Work_Queued(runner)
+}
+
+// Sizes every bounded queue the backend retains for one child and its relayed output.
+func main_memory() (memory system_nbio.Operating_System_Memory) {
+	return system_nbio.Operating_System_Memory{
+		Timeouts:   make([]*nbio.Completion, OPERATION_CAPACITY),
+		Completed:  make([]*nbio.Completion, OPERATION_CAPACITY),
+		Operations: make([]system_nbio.Operating_System_Operation, OPERATION_CAPACITY),
+		Operation_File_Paths: make(
+			[]byte, OPERATION_CAPACITY*system_nbio.OPERATING_SYSTEM_PATH_BYTES_MAXIMUM),
+		Operation_Socket_Addresses: make(
+			[]byte, OPERATION_CAPACITY*system_nbio.SOCKET_ADDRESS_BYTES),
+		Operation_Registry: make(
+			[]*system_nbio.Operating_System_Operation, OPERATION_CAPACITY),
+		Descriptors: make(
+			[]system_nbio.Operating_System_Descriptor, DESCRIPTOR_CAPACITY),
+		Signal_Waiters: make([]system_nbio.Signal_Waiter, SPAWN_CAPACITY),
+		Spawns:         make([]system_nbio.Spawn, SPAWN_CAPACITY),
+		Spawn_Registry: make([]*system_nbio.Spawn, SPAWN_CAPACITY),
+		Spawn_Pipe_Buffers: make([]byte, SPAWN_CAPACITY*
+			system_nbio.PROCESS_PIPE_BUFFER_COUNT*system_nbio.PROCESS_PIPE_BYTES),
+		Spawn_Paths: make([]byte, SPAWN_CAPACITY*system_nbio.PROCESS_PATH_BYTES),
+		Spawn_Arguments: make(
+			[]string, SPAWN_CAPACITY*system_nbio.PROCESS_ARGUMENT_COUNT_MAXIMUM),
+		Spawn_Child_Files: make(
+			[]uintptr, SPAWN_CAPACITY*system_nbio.PROCESS_CHILD_DESCRIPTOR_COUNT),
+		Platform_Operations: make(
+			[]*system_nbio.Operating_System_Operation, OPERATION_CAPACITY),
+		Platform_Changes: make([]system_nbio.Kernel_Event, system_nbio.POLL_EVENTS_MAX),
+		Platform_Events:  make([]system_nbio.Kernel_Event, system_nbio.POLL_EVENTS_MAX),
 	}
-	status, ok := state.Sys().(syscall.WaitStatus)
-	if !ok {
-		return timeout.EXIT_START_FAILURE
-	}
-	return SIGNAL_EXIT_BASE + int(status.Signal())
 }

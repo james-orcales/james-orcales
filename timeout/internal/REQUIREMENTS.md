@@ -40,3 +40,28 @@ code — with a line on standard error, so a killed child is never read as a fai
 
 A command that cannot be started at all reports 125 and writes the reason, keeping the
 wrapper's own failure distinct from the child's.
+
+### Message Full
+
+A diagnostic too large for the message store is replaced by one whole line saying so, never
+cut short and never grown past the store.
+
+# Allocation
+
+Package main allocates the message store once. After that a run allocates zero heap bytes.
+
+### Usage
+
+The usage failure allocates nothing.
+
+### Exit Code
+
+A child that exits inside its deadline allocates nothing.
+
+### Timeout
+
+A child killed at its deadline allocates nothing.
+
+### Start Failure
+
+A child that never starts allocates nothing.
