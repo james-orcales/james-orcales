@@ -1,9 +1,10 @@
-# invariant
+# aver
 
-`shared/invariant` contains the pure assertion engine. `shared/invariant/default` supplies the
-OS-backed recorder. It also supplies the package-level API for application code.
+`shared/simulation/aver` contains the pure assertion engine.
+`shared/simulation/aver/default` supplies the OS-backed recorder. It also supplies the
+package-level API for application code.
 
-Application code and canonical `TestMain` functions import `shared/invariant/default`.
+Application code and canonical `TestMain` functions import `shared/simulation/aver/default`.
 The complete API, registration rules, coverage rules, build modes, and output contract are in
 [`SPECIFICATION.md`](SPECIFICATION.md).
 

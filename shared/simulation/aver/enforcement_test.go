@@ -1,6 +1,6 @@
 //go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
-package invariant
+package aver
 
 import (
 	"fmt"

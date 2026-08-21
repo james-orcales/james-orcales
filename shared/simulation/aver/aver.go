@@ -1,6 +1,6 @@
 // Package invariant exposes eager Always guards and deferred assertion builders. Registration
 // owns coverage identity; Ensure owns builder enforcement and individual branch emission.
-package invariant
+package aver
 
 import (
 	"bytes"
@@ -2222,7 +2222,7 @@ func ast_bundle_qualifier(call *ast.CallExpr) (qualifier string, name string) {
 // Maps each of a file's imports to its local name: the explicit alias when
 // present, else the import path's last segment. The latter is a heuristic —
 // correct when the package's clause name matches its directory basename, which
-// holds for the common case but not for, e.g., a package "invariant" in dir "v3".
+// holds for the common case but not for, e.g., a package "aver" in dir "v3".
 func ast_file_imports(file *ast.File) (imports map[string]string) {
 	imports = map[string]string{}
 	for _, specification := range file.Imports {
@@ -3514,7 +3514,7 @@ func ast_assertion_named_call(
 	if !is_qualifier {
 		return false
 	}
-	return qualifier.Name == "invariant"
+	return qualifier.Name == "aver"
 }
 
 func recorder_seed_assertion_root(

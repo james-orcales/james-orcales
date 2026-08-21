@@ -1,6 +1,6 @@
 //go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
-package invariant_test
+package aver_test
 
 import (
 	"bytes"
@@ -14,8 +14,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	core "local/james-orcales/shared/invariant"
-	invariant "local/james-orcales/shared/invariant/default"
+	core "local/james-orcales/shared/simulation/aver"
+	aver "local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/testify"
 )
 
@@ -42,7 +42,7 @@ func Test_Always_Eager(t *testing.T) {
 // Test_Always_Reachability keeps successful guards in the coverage mandate.
 func Test_Always_Reachability(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
-func check(ok bool) { invariant.Always(ok, "reachable") }
+func check(ok bool) { aver.Always(ok, "reachable") }
 `)
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 1 coverage gaps 🚨\n\n" +
@@ -65,22 +65,22 @@ func Test_Always_Constant(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 const PRESENT = true
 const ABSENT = false
-func literal() { invariant.Always(true, "literal") }
-func parenthesized() { invariant.Always((true), "parenthesized") }
-func named() { invariant.Always(PRESENT, "named") }
-func negated() { invariant.Always(!ABSENT, "negated") }
-func recorded(recorder *invariant.Recorder) { invariant.Recorder_Always(recorder, true, "recorded") }
-func variable(value bool) { invariant.Always(value, "variable") }
+func literal() { aver.Always(true, "literal") }
+func parenthesized() { aver.Always((true), "parenthesized") }
+func named() { aver.Always(PRESENT, "named") }
+func negated() { aver.Always(!ABSENT, "negated") }
+func recorded(recorder *aver.Recorder) { aver.Recorder_Always(recorder, true, "recorded") }
+func variable(value bool) { aver.Always(value, "variable") }
 `)
 	if code != 1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
 	want := "🚨 5 constant Always conditions 🚨\n" +
-		"/invariant_test/check.go:4  Always condition is constant true\n" +
-		"/invariant_test/check.go:5  Always condition is constant true\n" +
-		"/invariant_test/check.go:6  Always condition is constant true\n" +
-		"/invariant_test/check.go:7  Always condition is constant true\n" +
-		"/invariant_test/check.go:8  Always condition is constant true\n" +
+		"/simulation/aver_test/check.go:4  Always condition is constant true\n" +
+		"/simulation/aver_test/check.go:5  Always condition is constant true\n" +
+		"/simulation/aver_test/check.go:6  Always condition is constant true\n" +
+		"/simulation/aver_test/check.go:7  Always condition is constant true\n" +
+		"/simulation/aver_test/check.go:8  Always condition is constant true\n" +
 		"🚨 5 constant Always conditions 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
@@ -93,14 +93,14 @@ func variable(value bool) { invariant.Always(value, "variable") }
 // Test_Always_Uniqueness prevents two eager roots from sharing one global coverage identity.
 func Test_Always_Uniqueness(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
-func first(ok bool) { invariant.Always(ok, "duplicate") }
-func second(ok bool) { invariant.Always(ok, "duplicate") }
+func first(ok bool) { aver.Always(ok, "duplicate") }
+func second(ok bool) { aver.Always(ok, "duplicate") }
 `)
 	if code != 1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
 	want := "🚨 1 duplicate messages 🚨\n" +
-		"/invariant_test/check.go:3  duplicate message: \"duplicate\"\n" +
+		"/simulation/aver_test/check.go:3  duplicate message: \"duplicate\"\n" +
 		"🚨 1 duplicate messages 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
@@ -185,8 +185,8 @@ func Test_Sometimes_Gap(t *testing.T) {
 func Test_Inline_Identity(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
 func check(value bool, count int) {
-	invariant.Sometimes(value, "inline axis")
-	invariant.Range(count, 0, 4, "inline range")
+	aver.Sometimes(value, "inline axis")
+	aver.Range(count, 0, 4, "inline range")
 }
 `)
 	if code != -1 {
@@ -197,8 +197,8 @@ func check(value bool, count int) {
 	inline_metadata(t, recorder, "inline range", 2, core.RANGE_MESSAGE_MINIMUM)
 	_, output, code := registered_fixture(`package fixture
 func check(value bool) {
-	invariant.Always(value, "shared")
-	invariant.Sometimes(value, "shared")
+	aver.Always(value, "shared")
+	aver.Sometimes(value, "shared")
 }
 `)
 	if code != 1 {
@@ -213,7 +213,7 @@ func check(value bool) {
 // Test_Inline_Record credits an inline helper's branches the way Always credits its guard.
 func Test_Inline_Record(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
-func check(value bool) { invariant.Sometimes(value, "recorded") }
+func check(value bool) { aver.Sometimes(value, "recorded") }
 `)
 	if code != -1 {
 		t.Fatalf("exit = %d", code)
@@ -231,7 +231,7 @@ func check(value bool) { invariant.Sometimes(value, "recorded") }
 		t.Fatal("inline Sometimes did not credit the false branch")
 	}
 	gapped, output, _ := registered_fixture(`package fixture
-func check(count int) { invariant.Range(count, 0, 4, "gapped") }
+func check(count int) { aver.Range(count, 0, 4, "gapped") }
 `)
 	core.Recorder_Range(gapped, 0, 0, 4, "gapped")
 	core.Recorder_Analyze_Assertion_Frequency(gapped)
@@ -250,7 +250,7 @@ func check(count int) { invariant.Range(count, 0, 4, "gapped") }
 // Test_Inline_Plan keeps the record path off the joined key, so it stays allocation free.
 func Test_Inline_Plan(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
-func check(count int) { invariant.Range(count, 0, 4, "planned") }
+func check(count int) { aver.Range(count, 0, 4, "planned") }
 `)
 	if code != -1 {
 		t.Fatalf("exit = %d", code)
@@ -302,8 +302,8 @@ func Test_Assertions_Identity(t *testing.T) {
 func Test_Assertions_Subject(t *testing.T) {
 	_, output, code := registered_fixture("package fixture\n" +
 		"type Value int\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(int(value), namespace)." +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
+		"\taver.Tree(int(value), namespace)." +
 		"Sometimes(value == 0, \"zero\").Ensure()\n" +
 		"}\n" +
 		"func check(value Value) { Value_Invariants(value, \"unnamed\") }\n")
@@ -317,9 +317,9 @@ func Test_Assertions_Subject(t *testing.T) {
 	// rule is what has to reject it.
 	_, output, code = registered_fixture("package fixture\n" +
 		"type Value int\n" +
-		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
 		"\ttype Local int\n" +
-		"\tinvariant.Tree(Local(0), namespace)." +
+		"\taver.Tree(Local(0), namespace)." +
 		"Sometimes(value == 0, \"zero\").Ensure()\n" +
 		"}\n" +
 		"func check(value Value) { Value_Invariants(value, \"local\") }\n")
@@ -333,12 +333,12 @@ func Test_Assertions_Subject(t *testing.T) {
 
 // Test_Assertions_Atomic prevents partial coverage from a failing chain.
 func Test_Assertions_Atomic(t *testing.T) {
-	recorder, _, _ := registered_fixture(`package invariant_test
+	recorder, _, _ := registered_fixture(`package aver_test
 const Minimum = 0
 const Maximum = 4
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(true, "axis").
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(true, "axis").
 		Range_Int(int(value), Minimum, Maximum).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "atomic") }
@@ -428,9 +428,9 @@ func Test_Assertions_Record_Validation(t *testing.T) {
 func Test_Assertions_Registration_Packages(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Always(value != 9, "guard")
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Always(value != 9, "guard")
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "direct") }
 `)
@@ -448,20 +448,20 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "direct") 
 func Test_Assertions_Registration_Test_Source(t *testing.T) {
 	recorder, output, code := registered_fixture_with_test(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Always(value != 9, "guard")
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Always(value != 9, "guard")
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "production") }
 `, `package fixture
 type Fixture_Subject int
 func direct(value Fixture_Subject) {
-	invariant.Always(value != 9, "test guard")
-	invariant.Tree(value, "test").Sometimes(value == 0, "test axis").Ensure()
-	invariant.Int_Invariants(1, "production")
+	aver.Always(value != 9, "test guard")
+	aver.Tree(value, "test").Sometimes(value == 0, "test axis").Ensure()
+	aver.Int_Invariants(1, "production")
 }
 func alias() {
-	writer := invariant.Int_Invariants
+	writer := aver.Int_Invariants
 	writer(1, "production")
 }
 `)
@@ -469,10 +469,10 @@ func alias() {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
 	want := "🚨 4 test assertion callsites 🚨\n" +
-		"/invariant_test/check_test.go:4  test source calls Always\n" +
-		"/invariant_test/check_test.go:5  test source calls Tree\n" +
-		"/invariant_test/check_test.go:6  test source calls Int_Invariants\n" +
-		"/invariant_test/check_test.go:9  test source references Int_Invariants\n" +
+		"/simulation/aver_test/check_test.go:4  test source calls Always\n" +
+		"/simulation/aver_test/check_test.go:5  test source calls Tree\n" +
+		"/simulation/aver_test/check_test.go:6  test source calls Int_Invariants\n" +
+		"/simulation/aver_test/check_test.go:9  test source references Int_Invariants\n" +
 		"🚨 4 test assertion callsites 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
@@ -497,10 +497,10 @@ func Test_Assertions_Registration_Transitive(t *testing.T) {
 			"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
 			"a/a.go": &fstest.MapFile{Data: []byte(`package a
 type Leaf int
-func Leaf_Invariants(value Leaf, namespace invariant.Namespace) {
-	invariant.Always(value != 99, "leaf is not ninety nine")
-	invariant.Sometimes(value == 7, "leaf is seven")
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Leaf_Invariants(value Leaf, namespace aver.Namespace) {
+	aver.Always(value != 99, "leaf is not ninety nine")
+	aver.Sometimes(value == 7, "leaf is seven")
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 `)},
 			"b/b.go": &fstest.MapFile{Data: []byte(`package b
@@ -525,10 +525,10 @@ func check(value a.Leaf) { a.Leaf_Invariants(value, "root") }
 	// callsite. Its eager guards must register one time, not report themselves as duplicates.
 	twice, output, code := registered_fixture(`package fixture
 type Leaf int
-func Leaf_Invariants(value Leaf, namespace invariant.Namespace) {
-	invariant.Always(value != 99, "twice guard")
-	invariant.Sometimes(value == 7, "twice axis")
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Leaf_Invariants(value Leaf, namespace aver.Namespace) {
+	aver.Always(value != 99, "twice guard")
+	aver.Sometimes(value == 7, "twice axis")
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func check(value Leaf) { Leaf_Invariants(value, "twice") }
 `)
@@ -633,8 +633,8 @@ func Test_Assertions_Registration_Walk(t *testing.T) {
 type Fixture_Subject int
 const Minimum = 0
 const Maximum = 4
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 1, "flag").
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 1, "flag").
 		Range_Int(int(value), Minimum, Maximum).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "walk") }
@@ -657,8 +657,8 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "walk") }
 func Test_Assertions_Registration_Template(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
 type Number int
-func Number_Invariants(value Number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Number_Invariants(value Number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func check(value Number) { Number_Invariants(value, "number") }
 `)
@@ -675,8 +675,8 @@ func check(value Number) { Number_Invariants(value, "number") }
 func Test_Assertions_Registration_Ensured(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis")
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis")
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "dangling") }
 `)
@@ -688,8 +688,8 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "dangling"
 	}
 	_, output, code = registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "empty") }
 `)
@@ -702,9 +702,9 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "empty") }
 	_, output, code = registered_fixture(`package fixture
 type Fixture_Subject int
 func Fixture_Subject_Invariants(
-	value Fixture_Subject, namespace invariant.Namespace,
-) invariant.Assertion_Builder {
-	return invariant.Tree(value, namespace).Sometimes(value == 0, "axis")
+	value Fixture_Subject, namespace aver.Namespace,
+) aver.Assertion_Builder {
+	return aver.Tree(value, namespace).Sometimes(value == 0, "axis")
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "returned") }
 `)
@@ -721,7 +721,7 @@ func Test_Assertions_Registration_Bundle_Only(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture
 type Value int
 func check(value Value) {
-	invariant.Tree(value, "loose").Sometimes(value == 0, "zero").Ensure()
+	aver.Tree(value, "loose").Sometimes(value == 0, "zero").Ensure()
 }
 `)
 	if code != 1 {
@@ -732,8 +732,8 @@ func check(value Value) {
 	}
 	recorder, output, code := registered_fixture(`package fixture
 type Value int
-func Value_Invariants(value Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func check(value Value) { Value_Invariants(value, "owned") }
 `)
@@ -764,8 +764,8 @@ func check(value Value) { println(value.Count) }
 	// A named right side adds no identity either, thus it is refused on the same terms.
 	_, output, code = registered_fixture(`package fixture
 type Value int
-func Value_Invariants(value Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 type Named = Value
 func check(value Named) { Value_Invariants(Value(value), "named") }
@@ -779,8 +779,8 @@ func check(value Named) { Value_Invariants(Value(value), "named") }
 	// A defined type carries an identity of its own, thus it is what a second name must be.
 	_, output, code = registered_fixture(`package fixture
 type Value int
-func Value_Invariants(value Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func check(value Value) { Value_Invariants(value, "defined") }
 `)
@@ -794,9 +794,9 @@ func Test_Assertions_Registration_Literal(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
 func Fixture_Subject_Invariants(
-	value Fixture_Subject, message string, namespace invariant.Namespace,
+	value Fixture_Subject, message string, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, message).Ensure()
+	aver.Tree(value, namespace).Sometimes(value == 0, message).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "m", "literal") }
 `)
@@ -812,8 +812,8 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "m", "lite
 func Test_Assertions_Registration_Namespace(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Number int
-func Number_Invariants(value Number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Number_Invariants(value Number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func first(value Number) { Number_Invariants(value, "number") }
 func second(value Number) { Number_Invariants(value, "number") }
@@ -822,10 +822,10 @@ func second(value Number) { Number_Invariants(value, "number") }
 		t.Fatalf("reuse exit=%d output=%q", code, output.String())
 	}
 	want := "🚨 1 duplicate bundle namespaces 🚨\n" +
-		"/invariant_test/check.go:7  banned: duplicate namespace \"number\"\n" +
+		"/simulation/aver_test/check.go:7  banned: duplicate namespace \"number\"\n" +
 		"🚨 1 duplicate bundle namespaces 🚨\n" +
 		"🚨 1 repeated subject types 🚨\n" +
-		"/invariant_test/check.go:7  repeated subject type \"Number\"" +
+		"/simulation/aver_test/check.go:7  repeated subject type \"Number\"" +
 		" under namespace \"number\"\n" +
 		"🚨 1 repeated subject types 🚨\n"
 	if output.String() != want {
@@ -839,8 +839,8 @@ func second(value Number) { Number_Invariants(value, "number") }
 	}
 	recorder, output, code = registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "a").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "a").Ensure()
 }
 func first(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
 func second(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
@@ -880,11 +880,11 @@ func second(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
 func Test_Assertions_Registration_Source_Owner(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Leaf int
-func Leaf_Invariants(value Leaf, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Leaf_Invariants(value Leaf, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 type Parent struct { Value Leaf }
-func Parent_Invariants(value Parent, namespace invariant.Namespace) {
+func Parent_Invariants(value Parent, namespace aver.Namespace) {
 	Leaf_Invariants(value.Value, namespace)
 }
 func first(value Parent) { Parent_Invariants(value, "first") }
@@ -916,13 +916,13 @@ func Test_Assertions_Registration_Source_Path(t *testing.T) {
 type First int
 type Second int
 type Parent struct { First First; Second Second }
-func First_Invariants(value First, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "first").Ensure()
+func First_Invariants(value First, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "first").Ensure()
 }
-func Second_Invariants(value Second, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 1, "second").Ensure()
+func Second_Invariants(value Second, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 1, "second").Ensure()
 }
-func Parent_Invariants(value Parent, namespace invariant.Namespace) {
+func Parent_Invariants(value Parent, namespace aver.Namespace) {
 	First_Invariants(value.First, namespace)
 	Second_Invariants(value.Second, namespace)
 }
@@ -987,8 +987,8 @@ func Test_Assertions_Registration_Caps(t *testing.T) {
 func Test_Bundles_Static(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture
 type Number int
-func Number_Invariants(value Number, namespace invariant.Namespace) {
-	if value == 0 { invariant.Tree(value, namespace).Sometimes(true, "zero").Ensure() }
+func Number_Invariants(value Number, namespace aver.Namespace) {
+	if value == 0 { aver.Tree(value, namespace).Sometimes(true, "zero").Ensure() }
 }
 `)
 	if code != 1 {
@@ -1003,11 +1003,11 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 func Test_Bundles_Namespace_Source(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Inner int
-func Inner_Invariants(value Inner, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Inner_Invariants(value Inner, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 type Outer struct { Inner Inner }
-func Outer_Invariants(value Outer, namespace invariant.Namespace) {
+func Outer_Invariants(value Outer, namespace aver.Namespace) {
 	Inner_Invariants(value.Inner, "outer.inner")
 }
 func check(value Outer) { Outer_Invariants(value, "outer") }
@@ -1030,8 +1030,8 @@ func check(value Outer) { Outer_Invariants(value, "outer") }
 func Test_Bundles_Duplicate_Namespace(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Number int
-func Number_Invariants(value Number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Number_Invariants(value Number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func first(value Number) { Number_Invariants(value, "number") }
 func second(value Number) { Number_Invariants(value, "number") }
@@ -1084,17 +1084,17 @@ func Test_Bundles_Tree(t *testing.T) {
 		"type Left struct { Value Leaf }\n" +
 		"type Right struct { Value Leaf }\n" +
 		"type Root struct { Left Left; Right Right }\n" +
-		"func Leaf_Invariants(value Leaf, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(value, namespace)." +
+		"func Leaf_Invariants(value Leaf, namespace aver.Namespace) {\n" +
+		"\taver.Tree(value, namespace)." +
 		"Sometimes(value == 0, \"zero\").Ensure()\n" +
 		"}\n" +
-		"func Left_Invariants(value Left, namespace invariant.Namespace) {\n" +
+		"func Left_Invariants(value Left, namespace aver.Namespace) {\n" +
 		"\tLeaf_Invariants(value.Value, namespace)\n" +
 		"}\n" +
-		"func Right_Invariants(value Right, namespace invariant.Namespace) {\n" +
+		"func Right_Invariants(value Right, namespace aver.Namespace) {\n" +
 		"\tLeaf_Invariants(value.Value, namespace)\n" +
 		"}\n" +
-		"func Root_Invariants(value Root, namespace invariant.Namespace) {\n" +
+		"func Root_Invariants(value Root, namespace aver.Namespace) {\n" +
 		"\tLeft_Invariants(value.Left, namespace)\n" +
 		"\tRight_Invariants(value.Right, namespace)\n" +
 		"}\n" +
@@ -1114,11 +1114,11 @@ func Test_Bundles_Tree(t *testing.T) {
 	_, output, code = registered_fixture("package fixture\n" +
 		"type Leaf int\n" +
 		"type Pair struct { Low Leaf; High Leaf }\n" +
-		"func Leaf_Invariants(value Leaf, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(value, namespace)." +
+		"func Leaf_Invariants(value Leaf, namespace aver.Namespace) {\n" +
+		"\taver.Tree(value, namespace)." +
 		"Sometimes(value == 0, \"zero\").Ensure()\n" +
 		"}\n" +
-		"func Pair_Invariants(value Pair, namespace invariant.Namespace) {\n" +
+		"func Pair_Invariants(value Pair, namespace aver.Namespace) {\n" +
 		"\tLeaf_Invariants(value.Low, namespace)\n" +
 		"\tLeaf_Invariants(value.High, namespace)\n" +
 		"}\n" +
@@ -1135,8 +1135,8 @@ func Test_Bundles_Tree(t *testing.T) {
 func Test_Bundles_Casing(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
 type number int
-func number_invariants(value number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func number_invariants(value number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func check(value number) { number_invariants(value, "number") }
 `)
@@ -1148,7 +1148,7 @@ func check(value number) { number_invariants(value, "number") }
 
 // Test_Bundles_Sugar protects unqualified roots only inside the configured sugar package.
 func Test_Bundles_Sugar(t *testing.T) {
-	recorder, _, code := registered_fixture_with_sugar(`package invariant
+	recorder, _, code := registered_fixture_with_sugar(`package aver
 type Number int
 func Number_Invariants(value Number, namespace Namespace) {
 	Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
@@ -1171,13 +1171,13 @@ func Test_Bundles_Cross_Package(t *testing.T) {
 			"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
 			"a/a.go": &fstest.MapFile{Data: []byte(`package a
 type Number int
-func Number_Invariants(value Number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Number_Invariants(value Number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 	Position_Invariants(Position(value), "position")
 }
 type Position int
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value > 0, "positive").Ensure()
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value > 0, "positive").Ensure()
 }
 `)},
 			"b/b.go": &fstest.MapFile{Data: []byte(`package b
@@ -1203,8 +1203,8 @@ func check(value a.Number) { a.Number_Invariants(value, "number") }
 func Test_Bundles_Callsite(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func first(value Fixture_Subject) { Fixture_Subject_Invariants(value, "first") }
 func second(value Fixture_Subject) { Fixture_Subject_Invariants(value, "second") }
@@ -1251,8 +1251,8 @@ func second(value Fixture_Subject) { Fixture_Subject_Invariants(value, "second")
 func Test_Bundles_Gap_Location(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
 type Number int
-func Number_Invariants(value Number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Number_Invariants(value Number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 func check(value Number) { Number_Invariants(value, "number") }
 `)
@@ -1267,8 +1267,8 @@ func check(value Number) { Number_Invariants(value, "number") }
 func Test_Bundles_Boolean(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Flag bool
-func Flag_Invariants(value Flag, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(bool(value), "set").Ensure()
+func Flag_Invariants(value Flag, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(bool(value), "set").Ensure()
 }
 func check(value Flag) { Flag_Invariants(value, "flag") }
 `)
@@ -1278,8 +1278,8 @@ func check(value Flag) { Flag_Invariants(value, "flag") }
 	chain_metadata(t, recorder, fixture_chain_key_typed("flag", "Flag", 0, "set"))
 	_, output, code = registered_fixture(`package fixture
 type Flag bool
-func Flag_Invariants(value Flag, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Flag_Invariants(value Flag, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "set").
 		Sometimes(!bool(value), "clear").
 		Ensure()
@@ -1294,8 +1294,8 @@ func check(value Flag) { Flag_Invariants(value, "flag") }
 	}
 	_, output, code = registered_fixture(`package fixture
 type Flag bool
-func Flag_Invariants(value Flag, namespace invariant.Namespace) {
-	invariant.Always(bool(value) || !bool(value), "flag is a flag")
+func Flag_Invariants(value Flag, namespace aver.Namespace) {
+	aver.Always(bool(value) || !bool(value), "flag is a flag")
 }
 func check(value Flag) { Flag_Invariants(value, "flag") }
 `)
@@ -1310,8 +1310,8 @@ func check(value Flag) { Flag_Invariants(value, "flag") }
 // Test_Bundles_Custom_Types prevents primitive helpers from replacing typed domain helpers.
 func Test_Bundles_Custom_Types(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture
-func Int_Invariants(value int, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Int_Invariants(value int, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 `)
 	if code != 1 {
@@ -1356,12 +1356,12 @@ func Test_Analysis_Reached(t *testing.T) {
 func Test_Analysis_Namespace_Summary(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
 type Alpha int
-func Alpha_Invariants(value Alpha, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Alpha_Invariants(value Alpha, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "first").
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "first").
 		Sometimes(value == 1, "second").Sometimes(value == 2, "third").Ensure()
 }
 func alpha(value Alpha) { Alpha_Invariants(value, "alpha") }
@@ -1409,8 +1409,8 @@ func Test_Analysis_Domains(t *testing.T) {
 func Test_Analysis_Reachability_Identity(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Range_Int(int(value), 0, 4).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Range_Int(int(value), 0, 4).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
 `)
@@ -1450,12 +1450,12 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
 func Test_Analysis_Table_Order(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
 type Alpha int
-func Alpha_Invariants(value Alpha, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Alpha_Invariants(value Alpha, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "second").
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "second").
 		Sometimes(value == 1, "first").Ensure()
 }
 func alpha(value Alpha) { Alpha_Invariants(value, "alpha") }
@@ -1589,9 +1589,9 @@ type Fixture_Subject int
 const Minimum = -2
 const Maximum = 3
 const Hole = 0
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Always(value != 99, "guard")
-	invariant.Tree(value, namespace).
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Always(value != 99, "guard")
+	aver.Tree(value, namespace).
 		Sometimes(value == 0, "axis").
 		Range_Holed_Int(int(value), Minimum, Maximum, Hole, Hole, Hole, Hole).
 		Enum_Int(int(value), Minimum, Maximum).
@@ -1599,7 +1599,7 @@ func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Names
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "summary") }
 `)
-	want := "✓ invariant_test: tested \033[34m21\033[0m properties, " +
+	want := "✓ simulation/aver_test: tested \033[34m21\033[0m properties, " +
 		"of which \033[33m5\033[0m are panic-able"
 	if summary := core.Recorder_Assertion_Summary(recorder); summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
@@ -1657,8 +1657,8 @@ func Test_Coverage_Literal(t *testing.T) {
 func Test_Range_Holed(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(int(value), -4, 6, -2, 3, 3, 3).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "holed") }
@@ -1757,8 +1757,8 @@ func Test_Range_Cardinality(t *testing.T) {
 func Test_Range_Exclusions(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(int(value), -4, 6, -2, 3, 3, 3).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
@@ -1840,16 +1840,16 @@ func Test_Enum_Guard(t *testing.T) {
 func Test_Enum_Members(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
 type Pair int
-func Pair_Invariants(value Pair, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Enum_Int(int(value), -3, 9).Ensure()
+func Pair_Invariants(value Pair, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Enum_Int(int(value), -3, 9).Ensure()
 }
 type Triple int
-func Triple_Invariants(value Triple, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Enum_3_Int(int(value), -3, 2, 9).Ensure()
+func Triple_Invariants(value Triple, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Enum_3_Int(int(value), -3, 2, 9).Ensure()
 }
 type Quartet int
-func Quartet_Invariants(value Quartet, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Enum_4_Int(int(value), -3, 0, 2, 9).Ensure()
+func Quartet_Invariants(value Quartet, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Enum_4_Int(int(value), -3, 0, 2, 9).Ensure()
 }
 func pair(value Pair) { Pair_Invariants(value, "enum.2") }
 func triple(value Triple) { Triple_Invariants(value, "enum.3") }
@@ -1963,7 +1963,7 @@ func assert_large_range_registered(t *testing.T, call string, value_type string)
 	t.Helper()
 	source := "package fixture\ntype Fixture_Subject " + value_type + "\n" +
 		"func Fixture_Subject_Invariants(value Fixture_Subject, " +
-		"namespace invariant.Namespace) {\n\tinvariant.Tree(value, namespace)." +
+		"namespace aver.Namespace) {\n\taver.Tree(value, namespace)." +
 		call + bundle_fixture_tail("range")
 	_, output, code := registered_fixture(source)
 	if code != -1 {
@@ -2034,7 +2034,7 @@ func registered_repository_fixture(
 		File_System: os.DirFS("/"), Working_Directory: working_directory,
 		Packages_To_Analyze: []string{directory}, Output: output,
 		Exit: func(exit_status int) { status = exit_status }, Is_Test: true,
-		Sugar_Package: reflect.TypeOf(invariant.Sugar_Package_Marker{}).PkgPath(),
+		Sugar_Package: reflect.TypeOf(aver.Sugar_Package_Marker{}).PkgPath(),
 	}
 	core.Recorder_Register_Packages_For_Analysis(recorder)
 	if status != -1 {
@@ -2047,7 +2047,7 @@ func registered_repository_fixture(
 // appends its own fluent links. bundle_fixture_tail closes it and adds the callsite.
 const BUNDLE_FIXTURE_HEAD = "package fixture\ntype Fixture_Subject int\n" +
 	"func Fixture_Subject_Invariants(value Fixture_Subject, " +
-	"namespace invariant.Namespace) {\n\tinvariant.Tree(value, namespace)"
+	"namespace aver.Namespace) {\n\taver.Tree(value, namespace)"
 
 // Closes a bundle opened by BUNDLE_FIXTURE_HEAD and names it at one callsite.
 func bundle_fixture_tail(namespace string) (source string) {
@@ -2091,8 +2091,8 @@ func assert_qualified_descent_registers_once(t *testing.T) {
 		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
 		"a/a.go": &fstest.MapFile{Data: []byte(`package a
 type Widget int
-func Widget_Invariants(value Widget, namespace invariant.Namespace) {
-	invariant.Always(value >= 0, "a widget is not negative")
+func Widget_Invariants(value Widget, namespace aver.Namespace) {
+	aver.Always(value >= 0, "a widget is not negative")
 }
 `)},
 		"b/b.go": &fstest.MapFile{Data: []byte(`package b
@@ -2126,8 +2126,8 @@ const LABEL_BYTES_MIN = 0
 const LABEL_BYTES_MAX = len("prefix.") +
 	len(part.MIDDLE) + len(".suffix")
 type Label string
-func Label_Invariants(value Label, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Label_Invariants(value Label, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), LABEL_BYTES_MIN, LABEL_BYTES_MAX).Ensure()
 }
 func check(value Label) { Label_Invariants(value, "label") }
@@ -2159,8 +2159,8 @@ const LABEL = "a seeded label"
 const LABEL_BYTES_MAX = len(LABEL)
 const LABEL_BYTES_MIN = 0
 type Label string
-func Label_Invariants(value Label, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Label_Invariants(value Label, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), LABEL_BYTES_MIN, LABEL_BYTES_MAX).Ensure()
 }
 func check(value Label) { Label_Invariants(value, "label") }
@@ -2181,8 +2181,8 @@ const ENVELOPE_BYTES_MAX = 32 - len(
 		"</b></a>")
 const ENVELOPE_BYTES_MIN = 0
 type Envelope string
-func Envelope_Invariants(value Envelope, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Envelope_Invariants(value Envelope, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ENVELOPE_BYTES_MIN, ENVELOPE_BYTES_MAX).Ensure()
 }
 func check(value Envelope) { Envelope_Invariants(value, "envelope") }
@@ -2211,8 +2211,8 @@ func assert_constant_expression_bound(t *testing.T, expression string, declared 
 	t.Helper()
 	recorder, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
 		"const SPAN_MAXIMUM = " + expression + "\n" + `type Span string
-func Span_Invariants(value Span, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SPAN_MINIMUM, SPAN_MAXIMUM).Ensure()
 }
 func check(value Span) { Span_Invariants(value, "span") }
@@ -2233,8 +2233,8 @@ func assert_unrepresentable_conversion(t *testing.T) {
 	for _, operand := range []string{"uint8(300)", "int8(200)", "uint16(70000)"} {
 		_, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
 			"const SPAN_MAXIMUM = " + operand + "\n" + `type Span string
-func Span_Invariants(value Span, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SPAN_MINIMUM, SPAN_MAXIMUM).Ensure()
 }
 func check(value Span) { Span_Invariants(value, "span") }
@@ -2259,7 +2259,7 @@ func assert_constant_condition(t *testing.T) {
 	}
 	for _, condition := range conditions {
 		_, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
-			"func check() { invariant.Always(" + condition + ", \"constant\") }\n")
+			"func check() { aver.Always(" + condition + ", \"constant\") }\n")
 		if code != 1 {
 			t.Fatalf("%s exit=%d output=%q", condition, code, output.String())
 		}
@@ -2279,8 +2279,8 @@ func assert_non_constant_operand(t *testing.T) {
 		_, output, code := registered_fixture(CONSTANT_EXPRESSION_HEAD +
 			"var variable = 4\nfunc measure() (count int) { return 4 }\n" +
 			`type Span string
-func Span_Invariants(value Span, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SPAN_MINIMUM, ` + operand + `).Ensure()
 }
 func check(value Span) { Span_Invariants(value, "span") }
@@ -2305,8 +2305,8 @@ func assert_local_declaration_scope(t *testing.T) {
 const SPAN_MINIMUM = 0
 const SPAN_MAXIMUM = 10
 type Span int
-func Span_Invariants(value Span, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SPAN_MINIMUM, SPAN_MAXIMUM).Ensure()
 }
 func check(value Span) { Span_Invariants(value, "root") }
@@ -2347,8 +2347,8 @@ import width "fixture/a"
 const BITS = 9
 const SPAN_MINIMUM = 0
 type Span string
-func Span_Invariants(value Span, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SPAN_MINIMUM, width.SCALE).Ensure()
 }
 func check(value Span) { Span_Invariants(value, "span") }
@@ -2383,8 +2383,8 @@ const SPAN_MAXIMUM = 4
 		"b/b.go": &fstest.MapFile{Data: []byte(`package b
 import bound "fixture/a"
 type Span int
-func Span_Invariants(value Span, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Range_Int(int(value), ` + bounds + `).Ensure()
+func Span_Invariants(value Span, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Range_Int(int(value), ` + bounds + `).Ensure()
 }
 func check(value Span) { Span_Invariants(value, "root") }
 `)},
@@ -2398,8 +2398,8 @@ func bundle_fixture(namespace string, links string) (source string) {
 	return "package fixture\n" +
 		"type Fixture_Subject int\n" +
 		"func Fixture_Subject_Invariants(" +
-		"value Fixture_Subject, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Tree(value, namespace)" + links + ".Ensure()\n}\n" +
+		"value Fixture_Subject, namespace aver.Namespace) {\n" +
+		"\taver.Tree(value, namespace)" + links + ".Ensure()\n}\n" +
 		"func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, \"" +
 		namespace + "\") }\n"
 }
@@ -2410,18 +2410,18 @@ func bundle_fixture(namespace string, links string) (source string) {
 func analysis_gap_names_its_subject(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
 type Alpha int
-func Alpha_Invariants(value Alpha, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Alpha_Invariants(value Alpha, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 type Beta int
-func Beta_Invariants(value Beta, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Beta_Invariants(value Beta, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 type Fixture_Subject struct {
 	A Alpha
 	B Beta
 }
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
 	Alpha_Invariants(value.A, namespace)
 	Beta_Invariants(value.B, namespace)
 }
@@ -2443,7 +2443,7 @@ func registered_fixture(source string) (
 
 // FIXTURE_PACKAGE is the import path registered_fixture gives its one package. It suits a test
 // that only registers, because no runtime chain has to agree with it.
-const FIXTURE_PACKAGE = "local/james-orcales/shared/invariant_test"
+const FIXTURE_PACKAGE = "local/james-orcales/shared/simulation/aver_test"
 
 // Pair mirrors the enum-width fixture's two-member subject, so a runtime chain resolves the same
 // plan that fixture registered. Triple and Quartet do the same for three and four members.
@@ -2465,15 +2465,15 @@ func registered_global_namespace_fixture() (
 			"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
 			"a/a.go": &fstest.MapFile{Data: []byte(`package a
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "a").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "a").Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "global") }
 `)},
 			"b/b.go": &fstest.MapFile{Data: []byte(`package b
 type Other_Subject int
-func Other_Subject_Invariants(value Other_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "b").Ensure()
+func Other_Subject_Invariants(value Other_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "b").Ensure()
 }
 func check(value Other_Subject) { Other_Subject_Invariants(value, "global") }
 `)},
@@ -2501,10 +2501,14 @@ func registered_fixture_with_test(source string, test_source string) (
 			"go.mod": &fstest.MapFile{
 				Data: []byte("module local/james-orcales/shared\n"),
 			},
-			"invariant_test/check.go":      &fstest.MapFile{Data: []byte(source)},
-			"invariant_test/check_test.go": &fstest.MapFile{Data: []byte(test_source)},
+			"simulation/aver_test/check.go": &fstest.MapFile{
+				Data: []byte(source),
+			},
+			"simulation/aver_test/check_test.go": &fstest.MapFile{
+				Data: []byte(test_source),
+			},
 		},
-		Packages_To_Analyze: []string{"/invariant_test"}, Output: output,
+		Packages_To_Analyze: []string{"/simulation/aver_test"}, Output: output,
 		Exit: func(status int) { code = status }, Is_Test: true,
 	}
 	core.Recorder_Register_Packages_For_Analysis(recorder)
@@ -2521,9 +2525,9 @@ func registered_fixture_options(source string, sugar string) (
 			"go.mod": &fstest.MapFile{
 				Data: []byte("module local/james-orcales/shared\n"),
 			},
-			"invariant_test/check.go": &fstest.MapFile{Data: []byte(source)},
+			"simulation/aver_test/check.go": &fstest.MapFile{Data: []byte(source)},
 		},
-		Packages_To_Analyze: []string{"/invariant_test"}, Output: output,
+		Packages_To_Analyze: []string{"/simulation/aver_test"}, Output: output,
 		Exit: func(status int) { code = status }, Is_Test: true,
 		Sugar_Package: sugar,
 	}
@@ -2648,11 +2652,11 @@ func registered_nested_bundle(t *testing.T) (recorder *core.Recorder) {
 	t.Helper()
 	recorder, output, code := registered_fixture(`package fixture
 type Inner int
-func Inner_Invariants(value Inner, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+func Inner_Invariants(value Inner, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
 }
 type Outer struct { Inner Inner }
-func Outer_Invariants(value Outer, namespace invariant.Namespace) {
+func Outer_Invariants(value Outer, namespace aver.Namespace) {
 	Inner_Invariants(value.Inner, namespace)
 }
 func check(value Outer) { Outer_Invariants(value, "outer") }

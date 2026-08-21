@@ -2,7 +2,7 @@
 
 // The enforcing build keeps fluent links observationally silent: they only advance a value and
 // latch raw verdicts. Ensure is the single boundary that can panic or mutate coverage.
-package invariant
+package aver
 
 import (
 	"fmt"

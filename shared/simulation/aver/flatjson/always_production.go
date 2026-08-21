@@ -1,13 +1,13 @@
 //go:build (invariant_disable_coverage || prd || prod || production) && !invariant_noop
 
-package invariant_flatjson
+package aver_flatjson
 
-import "local/james-orcales/shared/invariant"
+import "local/james-orcales/shared/simulation/aver"
 
 // Always preserves lazy production failure formatting without adding recorder ownership.
 func Always[T ~bool](condition T, message string) {
 	if !condition {
-		panic(invariant.Assertion_Failure{
+		panic(aver.Assertion_Failure{
 			Identity: message,
 			Reason:   "  Always — condition was false",
 			Value:    condition,

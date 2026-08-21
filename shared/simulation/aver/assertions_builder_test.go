@@ -1,6 +1,6 @@
 //go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
-package invariant_test
+package aver_test
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/simulation/aver"
 	"local/james-orcales/shared/testify"
 )
 
@@ -19,9 +19,9 @@ type Fixture_Subject int
 
 // Opens a chain over the fixture subject, so a preset table stays inside the line limit.
 func fixture_assertions(
-	recorder *invariant.Recorder, namespace invariant.Namespace,
-) (builder invariant.Assertion_Builder) {
-	return invariant.Recorder_Tree(recorder, Fixture_Subject(0), namespace)
+	recorder *aver.Recorder, namespace aver.Namespace,
+) (builder aver.Assertion_Builder) {
+	return aver.Recorder_Tree(recorder, Fixture_Subject(0), namespace)
 }
 
 // Test_Assertions_Defers_Coverage_Until_Ensure protects the chain's atomic commit boundary.
@@ -76,8 +76,8 @@ func Test_Assertions_Defers_Range_Failure_And_Credits_Atomically(t *testing.T) {
 type Fixture_Subject int
 const Minimum = 0
 const Maximum = 10
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Range_Int(int(value), Minimum, Maximum).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Range_Int(int(value), Minimum, Maximum).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "bounded") }
 `)
@@ -100,7 +100,7 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "bounded")
 
 // Test_Assertions_Defers_Enum_Failure keeps membership enforcement at Ensure.
 func Test_Assertions_Defers_Enum_Failure(t *testing.T) {
-	builder := fixture_assertions(&invariant.Recorder{}, "mode").
+	builder := fixture_assertions(&aver.Recorder{}, "mode").
 		Enum_Int(3, 1, 2)
 	message := panic_text(builder.Ensure)
 	if !strings.Contains(message, "not a member") {
@@ -110,16 +110,16 @@ func Test_Assertions_Defers_Enum_Failure(t *testing.T) {
 
 // Test_Assertions_Has_Zero_Allocations protects the builder's register-value shape.
 func Test_Assertions_Has_Zero_Allocations(t *testing.T) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	testify.Zero_Allocation(t, func() {
 		fixture_assertions(recorder, "allocation").
 			Sometimes(true, "axis").Range_Int(5, 0, 10).Ensure()
 	})
 	recording, _, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Always(value >= 0, "allocation always")
-	invariant.Tree(value, namespace).
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Always(value >= 0, "allocation always")
+	aver.Tree(value, namespace).
 		Sometimes(value == 5, "axis").
 		Range_Int(int(value), 0, 10).
 		Range_Holed_Int(int(value), 0, 10, 1, 2, 3, 4).
@@ -129,10 +129,10 @@ func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Names
 		Ensure()
 }
 func inline(value int) {
-	invariant.Sometimes(value == 5, "allocation inline sometimes")
-	invariant.Range(value, 0, 10, "allocation inline range")
-	invariant.Range_Holed(value, 0, 10, 1, 2, 3, 4, "allocation inline holed range")
-	invariant.Enum(value, 5, 6, "allocation inline enum")
+	aver.Sometimes(value == 5, "allocation inline sometimes")
+	aver.Range(value, 0, 10, "allocation inline range")
+	aver.Range_Holed(value, 0, 10, 1, 2, 3, 4, "allocation inline holed range")
+	aver.Enum(value, 5, 6, "allocation inline enum")
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "allocation") }
 `)
@@ -140,12 +140,12 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "allocatio
 		t.Fatalf("registration exit = %d", code)
 	}
 	testify.Zero_Allocation(t, func() {
-		invariant.Recorder_Always(recording, true, "allocation always")
-		invariant.Recorder_Sometimes(recording, true, "allocation inline sometimes")
-		invariant.Recorder_Range(recording, 5, 0, 10, "allocation inline range")
-		invariant.Recorder_Range_Holed(
+		aver.Recorder_Always(recording, true, "allocation always")
+		aver.Recorder_Sometimes(recording, true, "allocation inline sometimes")
+		aver.Recorder_Range(recording, 5, 0, 10, "allocation inline range")
+		aver.Recorder_Range_Holed(
 			recording, 5, 0, 10, 1, 2, 3, 4, "allocation inline holed range")
-		invariant.Recorder_Enum(recording, 5, 5, 6, "allocation inline enum")
+		aver.Recorder_Enum(recording, 5, 5, 6, "allocation inline enum")
 		fixture_assertions(recording, "allocation").
 			Sometimes(true, "axis").
 			Range_Int(5, 0, 10).
@@ -182,8 +182,8 @@ func Test_Assertions_Typed_Presets_Register_Every_Integer_Width(t *testing.T) {
 	for _, fixture := range fixtures {
 		source := fmt.Sprintf(`package fixture
 type Fixture_Subject %s
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Range_%s(value, %s, %s).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Range_%s(value, %s, %s).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, %q) }
 `, fixture.Value_Type, fixture.Suffix, fixture.Minimum, fixture.Maximum, fixture.Suffix)
@@ -199,8 +199,8 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, %q) }
 		}
 		source = fmt.Sprintf(`package fixture
 type Fixture_Subject %s
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Range_Holed_%s(value, %s, %s, %s).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Range_Holed_%s(value, %s, %s, %s).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, %q) }
 `, fixture.Value_Type, fixture.Suffix,
@@ -232,8 +232,8 @@ func assert_enum_widths_register(t *testing.T, value_type string, suffix string)
 		}
 		source := fmt.Sprintf(`package fixture
 type Fixture_Subject %s
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).%s(value, %s).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).%s(value, %s).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, %q) }
 `, value_type, method, members, method)
@@ -246,8 +246,8 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, %q) }
 
 // Test_Assertions_Range_Families_Execute_Every_Integer_Width prevents wrapper drift.
 func Test_Assertions_Range_Families_Execute_Every_Integer_Width(t *testing.T) {
-	recorder := &invariant.Recorder{}
-	builders := []invariant.Assertion_Builder{
+	recorder := &aver.Recorder{}
+	builders := []aver.Assertion_Builder{
 		fixture_assertions(recorder, "int8").Range_Int8(1, 0, 2),
 		fixture_assertions(recorder, "int16").Range_Int16(1, 0, 2),
 		fixture_assertions(recorder, "int32").Range_Int32(1, 0, 2),
@@ -285,8 +285,8 @@ func Test_Assertions_Range_Families_Execute_Every_Integer_Width(t *testing.T) {
 
 // Test_Assertions_Enum_Families_Execute_Every_Integer_Width prevents capacity drift.
 func Test_Assertions_Enum_Families_Execute_Every_Integer_Width(t *testing.T) {
-	recorder := &invariant.Recorder{}
-	builders := []invariant.Assertion_Builder{
+	recorder := &aver.Recorder{}
+	builders := []aver.Assertion_Builder{
 		fixture_assertions(recorder, "enum-int8").Enum_Int8(1, 1, 2),
 		fixture_assertions(recorder, "enum-int16").Enum_Int16(1, 1, 2),
 		fixture_assertions(recorder, "enum-int32").Enum_Int32(1, 1, 2),
@@ -343,9 +343,9 @@ func Test_Assertions_Enum_Families_Execute_Every_Integer_Width(t *testing.T) {
 
 // Test_Assertions_Defers_Every_Value_Failure keeps runtime failure precedence at Ensure.
 func Test_Assertions_Defers_Every_Value_Failure(t *testing.T) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	failures := []struct {
-		Builder invariant.Assertion_Builder
+		Builder aver.Assertion_Builder
 		Message string
 	}{
 		{fixture_assertions(recorder, "lower").Range_Int(-1, 0, 2),
@@ -371,8 +371,8 @@ type Fixture_Subject int
 const Unit = 1
 const Minimum = -(Unit << 3)
 const Maximum = int(((Unit + 3) * 4) / 2)
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Range_Int(int(value), Minimum, Maximum).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Range_Int(int(value), Minimum, Maximum).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "arithmetic") }
 `)
@@ -386,31 +386,31 @@ func Test_Assertions_Registration_Expands_Directory_Globs(t *testing.T) {
 	file_system := fstest.MapFS{
 		"tree/top.go": &fstest.MapFile{Data: []byte(`package top
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 func top(value Fixture_Subject) { Fixture_Subject_Invariants(value, "top") }
 `)},
 		"tree/child/child.go": &fstest.MapFile{Data: []byte(`package child
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 func child(value Fixture_Subject) { Fixture_Subject_Invariants(value, "child") }
 `)},
 		"tree/child/grand/grand.go": &fstest.MapFile{Data: []byte(`package grand
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
 func grand(value Fixture_Subject) { Fixture_Subject_Invariants(value, "grand") }
 `)},
 	}
-	recorder := &invariant.Recorder{
+	recorder := &aver.Recorder{
 		File_System: file_system, Output: &bytes.Buffer{},
 		Exit: func(int) {}, Is_Test: true,
 	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/tree/**")
+	aver.Recorder_Register_Packages_For_Analysis(recorder, "/tree/**")
 	chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "top", Package: "", Type: "Fixture_Subject", Ordinal: 0, Message: "axis",
 	})
@@ -422,11 +422,11 @@ func grand(value Fixture_Subject) { Fixture_Subject_Invariants(value, "grand") }
 		Namespace: "grand", Package: "", Type: "Fixture_Subject",
 		Ordinal: 0, Message: "axis",
 	})
-	immediate := &invariant.Recorder{
+	immediate := &aver.Recorder{
 		File_System: file_system, Output: &bytes.Buffer{},
 		Exit: func(int) {}, Is_Test: true,
 	}
-	invariant.Recorder_Register_Packages_For_Analysis(immediate, "/tree/*")
+	aver.Recorder_Register_Packages_For_Analysis(immediate, "/tree/*")
 	if event_count(&immediate.Events) != 1 {
 		t.Fatalf("single-star events = %d, want 1", event_count(&immediate.Events))
 	}
@@ -436,9 +436,9 @@ func grand(value Fixture_Subject) { Fixture_Subject_Invariants(value, "grand") }
 	})
 }
 
-func count_covered(recorder *invariant.Recorder) (count int) {
+func count_covered(recorder *aver.Recorder) (count int) {
 	recorder.Events.Range(func(_, value any) (continue_iteration bool) {
-		metadata := value.(*invariant.Assertion_Metadata)
+		metadata := value.(*aver.Assertion_Metadata)
 		covered := metadata.Frequency.Load() != 0
 		if metadata.False_Frequency.Load() != 0 {
 			covered = true
@@ -452,7 +452,7 @@ func count_covered(recorder *invariant.Recorder) (count int) {
 }
 
 func Benchmark_Assertions_Enforcement(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		fixture_assertions(recorder, "benchmark").
 			Sometimes(true, "axis").Range_Int(5, 0, 10).Ensure()
@@ -460,7 +460,7 @@ func Benchmark_Assertions_Enforcement(benchmark *testing.B) {
 }
 
 func Benchmark_Assertions_Sometimes(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		fixture_assertions(recorder, "benchmark").
 			Sometimes(true, "axis").Ensure()
@@ -468,7 +468,7 @@ func Benchmark_Assertions_Sometimes(benchmark *testing.B) {
 }
 
 func Benchmark_Assertions_Range(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		fixture_assertions(recorder, "benchmark").
 			Range_Int(5, 0, 10).Ensure()
@@ -476,7 +476,7 @@ func Benchmark_Assertions_Range(benchmark *testing.B) {
 }
 
 func Benchmark_Assertions_Range_Uint8(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		fixture_assertions(recorder, "benchmark").
 			Range_Uint8(5, 0, 10).Ensure()
@@ -484,7 +484,7 @@ func Benchmark_Assertions_Range_Uint8(benchmark *testing.B) {
 }
 
 func Benchmark_Assertions_Range_Uint8_Domain(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		fixture_assertions(recorder, "benchmark").
 			Range_Uint8(5, 0, ^uint8(0)).Ensure()
@@ -492,7 +492,7 @@ func Benchmark_Assertions_Range_Uint8_Domain(benchmark *testing.B) {
 }
 
 func Benchmark_Assertions_Range_Holes(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		fixture_assertions(recorder, "benchmark").
 			Range_Holed_Int(5, 0, 10, 2, 4, 6, 8).Ensure()
@@ -500,7 +500,7 @@ func Benchmark_Assertions_Range_Holes(benchmark *testing.B) {
 }
 
 func Benchmark_Assertions_Enum_4(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		fixture_assertions(recorder, "benchmark").
 			Enum_4_Int(5, 1, 3, 5, 7).Ensure()
@@ -508,7 +508,7 @@ func Benchmark_Assertions_Enum_4(benchmark *testing.B) {
 }
 
 func Benchmark_Assertions_Ensure(benchmark *testing.B) {
-	builder := fixture_assertions(&invariant.Recorder{}, "benchmark").
+	builder := fixture_assertions(&aver.Recorder{}, "benchmark").
 		Sometimes(true, "axis")
 	for benchmark.Loop() {
 		builder.Ensure()
@@ -518,8 +518,8 @@ func Benchmark_Assertions_Ensure(benchmark *testing.B) {
 func Benchmark_Assertions_Recording(benchmark *testing.B) {
 	recorder, _, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(value == 5, "axis").Range_Int(int(value), 0, 10).Ensure()
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "benchmark") }
@@ -535,7 +535,7 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "benchmark
 
 // Nested helpers preserve the amplification that a solitary fluent chain
 // cannot represent.
-func benchmark_dense_leaf(recorder *invariant.Recorder, value int) {
+func benchmark_dense_leaf(recorder *aver.Recorder, value int) {
 	fixture_assertions(recorder, "dense-leaf").
 		Sometimes(value&1 == 1, "odd").
 		Range_Holed_Int(value, 0, 10, 2, 4, 6, 8).
@@ -543,7 +543,7 @@ func benchmark_dense_leaf(recorder *invariant.Recorder, value int) {
 		Ensure()
 }
 
-func benchmark_dense_branch(recorder *invariant.Recorder, value int) {
+func benchmark_dense_branch(recorder *aver.Recorder, value int) {
 	fixture_assertions(recorder, "dense-branch").
 		Range_Int(value, 0, 10).
 		Sometimes(value < 8, "below eight").
@@ -551,7 +551,7 @@ func benchmark_dense_branch(recorder *invariant.Recorder, value int) {
 	benchmark_dense_leaf(recorder, value)
 }
 
-func benchmark_dense_root(recorder *invariant.Recorder, value int) {
+func benchmark_dense_root(recorder *aver.Recorder, value int) {
 	fixture_assertions(recorder, "dense-root").
 		Enum_4_Int(value, 1, 3, 5, 7).
 		Sometimes(value != 0, "nonzero").
@@ -561,7 +561,7 @@ func benchmark_dense_root(recorder *invariant.Recorder, value int) {
 }
 
 func Benchmark_Assertions_Dense(benchmark *testing.B) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for benchmark.Loop() {
 		benchmark_dense_root(recorder, 5)
 	}

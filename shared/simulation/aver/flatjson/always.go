@@ -1,13 +1,13 @@
 //go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
-package invariant_flatjson
+package aver_flatjson
 
-import "local/james-orcales/shared/invariant"
+import "local/james-orcales/shared/simulation/aver"
 
 // Always enforces encoder assertions locally because recording would create false obligations.
 func Always[T ~bool](condition T, message string) {
 	if !condition {
-		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + message +
+		panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX + message +
 			"  Always — condition was false: false")
 	}
 }

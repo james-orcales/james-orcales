@@ -1,13 +1,13 @@
 //go:build invariant_noop && !invariant_disable_coverage && !prd && !prod && !production
 
-package invariant_test
+package aver_test
 
 import (
 	"fmt"
 	"io/fs"
 	"testing"
 
-	"local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/simulation/aver"
 	"local/james-orcales/shared/testify"
 )
 
@@ -23,8 +23,8 @@ func (noop_registration_file_system) Open(string) (fs.File, error) {
 }
 
 // Opens a chain on a plan-free recorder over the fixture subject, keeping call sites short.
-func fixture_assertions(namespace invariant.Namespace) (builder invariant.Assertion_Builder) {
-	return invariant.Recorder_Tree(&invariant.Recorder{}, Fixture_Subject(0), namespace)
+func fixture_assertions(namespace aver.Namespace) (builder aver.Assertion_Builder) {
+	return aver.Recorder_Tree(&aver.Recorder{}, Fixture_Subject(0), namespace)
 }
 
 // Test_Optimized_Noop_Enforcement_Matches_Literal_Reference prevents the benchmark lower bound
@@ -32,7 +32,7 @@ func fixture_assertions(namespace invariant.Namespace) (builder invariant.Assert
 func Test_Optimized_Noop_Enforcement_Matches_Literal_Reference(t *testing.T) {
 	noop_pair(
 		t, "always",
-		func() { invariant.Recorder_Always(&invariant.Recorder{}, false, "ignored") },
+		func() { aver.Recorder_Always(&aver.Recorder{}, false, "ignored") },
 		func() { noop_reference_always(false, "ignored") },
 	)
 	builder := fixture_assertions("ignored")
@@ -118,10 +118,10 @@ func noop_panic_text(action func()) (message string) {
 // Test_Noop_Assertions_Are_Completely_Inert exercises every invalid link because a partial noop
 // would make benchmark comparisons depend on which primitive happens to reach a hot path.
 func Test_Noop_Assertions_Are_Completely_Inert(t *testing.T) {
-	recorder := &invariant.Recorder{Is_Test: true}
-	invariant.Recorder_Always(recorder, false, "ignored")
-	builder := invariant.Recorder_Tree(recorder, Fixture_Subject(0), "ignored")
-	if builder != (invariant.Assertion_Builder{}) {
+	recorder := &aver.Recorder{Is_Test: true}
+	aver.Recorder_Always(recorder, false, "ignored")
+	builder := aver.Recorder_Tree(recorder, Fixture_Subject(0), "ignored")
+	if builder != (aver.Assertion_Builder{}) {
 		t.Fatalf("builder = %+v, want zero value", builder)
 	}
 	builder = builder.Sometimes(false, "ignored")
@@ -184,14 +184,14 @@ func Test_Noop_Assertions_Are_Completely_Inert(t *testing.T) {
 // Registration must disappear with enforcement, or benchmark startup still pays source-analysis
 // cost for obligations this build can never observe.
 func Test_Noop_Assertion_Registration_Is_Inert(t *testing.T) {
-	recorder := &invariant.Recorder{
+	recorder := &aver.Recorder{
 		File_System:         noop_registration_file_system{},
 		Exit:                func(int) {},
 		Is_Test:             true,
 		Packages_To_Analyze: []string{"/existing"},
 	}
 	testify.Not_Panics(t, func() {
-		invariant.Recorder_Register_Packages_For_Analysis(recorder, "/replacement")
+		aver.Recorder_Register_Packages_For_Analysis(recorder, "/replacement")
 	})
 	testify.Equal(t, 0, noop_event_count(&recorder.Events))
 	testify.Nil(t, recorder.Assertion_Plans)

@@ -2,7 +2,7 @@
 
 // The production build removes recording and deferred failure so successful checks collapse into
 // their callers while violations still stop execution.
-package invariant
+package aver
 
 import "unsafe"
 

@@ -1,6 +1,6 @@
 //go:build invariant_noop
 
-package invariant
+package aver
 
 // Assertion_Builder carries nothing in the noop build. A link returns the value it was handed, so
 // an empty builder makes every fluent return free and lets the inliner fold a whole chain away.

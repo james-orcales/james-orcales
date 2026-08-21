@@ -1,6 +1,6 @@
 //go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
-package invariant_flatjson
+package aver_flatjson
 
 import "testing"
 

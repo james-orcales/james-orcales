@@ -1,9 +1,9 @@
-// Package invariant_default is the composition-tier sibling of invariant. It
+// Package aver_default is the composition-tier sibling of aver. It
 // wires the pure library to the real OS — local filesystem, stderr, os.Args
-// sniffing, os.Exit — and re-exports the surface. Import it aliased as invariant
-// and use invariant.Always / invariant.Assertions as if no split between pure
+// sniffing, os.Exit — and re-exports the surface. Import it as aver
+// and use aver.Always / aver.Assertions as if no split between pure
 // and OS-bound tiers existed.
-package invariant
+package aver
 
 import (
 	"io"
@@ -13,22 +13,22 @@ import (
 	"strings"
 	"testing"
 
-	"local/james-orcales/shared/invariant"
-	"local/james-orcales/shared/invariant/flatjson"
+	"local/james-orcales/shared/simulation/aver"
+	"local/james-orcales/shared/simulation/aver/flatjson"
 )
 
 // Recorder re-exports the library type so callers importing only this package
 // can refer to it without a second import.
-type Recorder = invariant.Recorder
+type Recorder = aver.Recorder
 
 // Assertion_Metadata re-exports the library coverage-tracker entry type.
-type Assertion_Metadata = invariant.Assertion_Metadata
+type Assertion_Metadata = aver.Assertion_Metadata
 
 // Sugar_Package_Marker gives registration an import identity without a hard-coded module path.
 type Sugar_Package_Marker struct{}
 
 // Default is the OS-bound Recorder backing the package-level sugar. Tests that
-// need to redirect I/O construct their own Recorder via the pure invariant
+// need to redirect I/O construct their own Recorder via the pure aver
 // package; Default serves the common case.
 var Default = Init_Default_Recorder()
 
@@ -36,7 +36,7 @@ var Default = Init_Default_Recorder()
 // filesystem rooted at "/", os.Stderr, and os.Exit. It sniffs os.Args once for
 // the test / fuzz / benchmark environment flags. No caller seam is wired — an
 // assertion is identified by its message, not its source location.
-func Init_Default_Recorder() (recorder *invariant.Recorder) {
+func Init_Default_Recorder() (recorder *aver.Recorder) {
 	is_test, is_fuzz, is_fuzz_worker, is_benchmark := running_environment_flags()
 	// /dev/tty bypasses `go test`'s stdout/stderr capture so the success summary
 	// shows without -v. Assigned only on success: a nil *os.File stored in an
@@ -47,7 +47,7 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 		tty = opened
 	}
 	working_directory, _ := os.Getwd()
-	recorder = &invariant.Recorder{
+	recorder = &aver.Recorder{
 		Output:              os.Stderr,
 		Tty:                 tty,
 		File_System:         os.DirFS("/"),
@@ -69,7 +69,7 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 // each output mode, because a spilled report is read by a later pass and never by eye. It stays on
 // disk after the run: it is the artifact the terminal line points at.
 func coverage_gap_overflow_write(
-	gaps []invariant.Coverage_Gap,
+	gaps []aver.Coverage_Gap,
 ) (path string, err error) {
 	file, create_error := os.CreateTemp("", "invariant-coverage-gaps-*.json")
 	if create_error != nil {
@@ -113,15 +113,15 @@ func running_environment_flags() (
 // Run_Test_Main adds OS-backed fuzz coverage and the selected report format to the core runner.
 func Run_Test_Main(m *testing.M, directories ...string) {
 	fuzz_coverage_setup(Default)
-	invariant.Recorder_Run_Test_Main(Default, m, directories...)
+	aver.Recorder_Run_Test_Main(Default, m, directories...)
 }
 
 // OUTPUT_ENVIRONMENT selects the complete coverage-gap representation for a test process.
 const OUTPUT_ENVIRONMENT = "INVARIANT_OUTPUT"
 
 // Coverage_Gap_Json_Write emits one compact flat array and its terminating newline.
-func Coverage_Gap_Json_Write(output io.Writer, gaps []invariant.Coverage_Gap) (err error) {
-	if marshal_error := invariant_flatjson.Marshal_Write(output, gaps); marshal_error != nil {
+func Coverage_Gap_Json_Write(output io.Writer, gaps []aver.Coverage_Gap) (err error) {
+	if marshal_error := aver_flatjson.Marshal_Write(output, gaps); marshal_error != nil {
 		return marshal_error
 	}
 	written, write_error := io.WriteString(output, "\n")
@@ -135,11 +135,11 @@ func Coverage_Gap_Json_Write(output io.Writer, gaps []invariant.Coverage_Gap) (e
 }
 
 // Applies one already-read environment value before the suite can emit a different format.
-func recorder_output_configure(recorder *invariant.Recorder, output string) {
+func recorder_output_configure(recorder *aver.Recorder, output string) {
 	recorder.Output_Configuration_Diagnostic = ""
 	switch output {
 	case "", "table":
-		recorder.Report_Coverage_Gaps = invariant.Coverage_Gap_Table_Write
+		recorder.Report_Coverage_Gaps = aver.Coverage_Gap_Table_Write
 	case "json":
 		recorder.Report_Coverage_Gaps = Coverage_Gap_Json_Write
 	default:
@@ -160,7 +160,7 @@ const FUZZ_COVERAGE_FILE_ENVIRONMENT = "INVARIANT_FUZZ_COVERAGE_FILE"
 // each worker appends every newly-covered branch to one shared append-only file, and the
 // coordinator unions that file into its registered entries before analyzing. A plain test or
 // benchmark wires nothing.
-func fuzz_coverage_setup(recorder *invariant.Recorder) {
+func fuzz_coverage_setup(recorder *aver.Recorder) {
 	if recorder.Is_Fuzz_Worker {
 		path := os.Getenv(FUZZ_COVERAGE_FILE_ENVIRONMENT)
 		if path == "" {
@@ -174,7 +174,7 @@ func fuzz_coverage_setup(recorder *invariant.Recorder) {
 		// processes, so no mutex (useless across processes) and no flock are needed.
 		// The line format lives in Fuzz_Coverage_Line so it round-trips with the merge.
 		recorder.Coverage_Sink = func(key string, fired_true bool) {
-			io.WriteString(file, invariant.Fuzz_Coverage_Line(key, fired_true))
+			io.WriteString(file, aver.Fuzz_Coverage_Line(key, fired_true))
 		}
 		return
 	}
@@ -193,7 +193,7 @@ func fuzz_coverage_setup(recorder *invariant.Recorder) {
 	recorder.Merge_Fuzz_Coverage = func() {
 		opened, open_error := os.Open(path)
 		if open_error == nil {
-			invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, opened)
+			aver.Recorder_Merge_Fuzz_Coverage_From(recorder, opened)
 			opened.Close()
 		}
 		os.Remove(path)
@@ -202,13 +202,13 @@ func fuzz_coverage_setup(recorder *invariant.Recorder) {
 
 // Register_Packages_For_Analysis forwards to the library function on Default.
 func Register_Packages_For_Analysis(directories ...string) {
-	invariant.Recorder_Register_Packages_For_Analysis(Default, directories...)
+	aver.Recorder_Register_Packages_For_Analysis(Default, directories...)
 }
 
 // Analyze_Assertion_Frequency forwards to the library function on Default.
 func Analyze_Assertion_Frequency() {
-	invariant.Recorder_Analyze_Assertion_Frequency(Default)
+	aver.Recorder_Analyze_Assertion_Frequency(Default)
 }
 
 // Namespace re-exports the chain identity used by every _Invariants helper.
-type Namespace = invariant.Namespace
+type Namespace = aver.Namespace

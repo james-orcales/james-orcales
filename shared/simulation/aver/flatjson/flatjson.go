@@ -1,6 +1,7 @@
-// Package invariant_flatjson owns invariant reporting's flat JSON copy. It stays separate because
-// shared/encoding/flatjson depends on shared/invariant/default for its own checked implementation.
-package invariant_flatjson
+// Package aver_flatjson owns invariant reporting's flat JSON copy. It stays separate because
+// shared/encoding/flatjson depends on shared/simulation/aver/default for its own checked
+// implementation.
+package aver_flatjson
 
 import (
 	"encoding"

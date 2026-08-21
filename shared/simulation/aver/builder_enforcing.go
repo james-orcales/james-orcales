@@ -1,6 +1,6 @@
 //go:build !invariant_noop
 
-package invariant
+package aver
 
 import "unsafe"
 

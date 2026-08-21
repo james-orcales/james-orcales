@@ -1,6 +1,6 @@
 //go:build (invariant_disable_coverage || prd || prod || production) && !invariant_noop
 
-package invariant_test
+package aver_test
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/simulation/aver"
 )
 
 // Fixture_Subject stands in for a bundle subject where the test drives the builder directly.
@@ -20,24 +20,24 @@ type Fixture_Subject int
 func Test_Production_Fatal_Hook(t *testing.T) {
 	tests := []struct {
 		Name string
-		Run  func(recorder *invariant.Recorder)
+		Run  func(recorder *aver.Recorder)
 	}{
-		{Name: "always", Run: func(recorder *invariant.Recorder) {
-			invariant.Recorder_Always(recorder, false, "fatal hook guard")
+		{Name: "always", Run: func(recorder *aver.Recorder) {
+			aver.Recorder_Always(recorder, false, "fatal hook guard")
 		}},
-		{Name: "inline range", Run: func(recorder *invariant.Recorder) {
-			invariant.Recorder_Range(recorder, -1, 0, 1, "fatal hook range")
+		{Name: "inline range", Run: func(recorder *aver.Recorder) {
+			aver.Recorder_Range(recorder, -1, 0, 1, "fatal hook range")
 		}},
-		{Name: "inline enum", Run: func(recorder *invariant.Recorder) {
-			invariant.Recorder_Enum(recorder, 3, 1, 2, "fatal hook enum")
+		{Name: "inline enum", Run: func(recorder *aver.Recorder) {
+			aver.Recorder_Enum(recorder, 3, 1, 2, "fatal hook enum")
 		}},
-		{Name: "fluent range", Run: func(recorder *invariant.Recorder) {
-			invariant.Recorder_Tree(recorder, Fixture_Subject(0), "fatal hook tree").
+		{Name: "fluent range", Run: func(recorder *aver.Recorder) {
+			aver.Recorder_Tree(recorder, Fixture_Subject(0), "fatal hook tree").
 				Range_Int(-1, 0, 1).Ensure()
 		}},
 	}
 	for _, test := range tests {
-		recorder := &invariant.Recorder{}
+		recorder := &aver.Recorder{}
 		hook_count := 0
 		hook_message := ""
 		recorder.On_Fatal = func(message string) {
@@ -56,22 +56,22 @@ func Test_Production_Fatal_Hook(t *testing.T) {
 }
 
 // Opens a chain on a plan-free recorder over the fixture subject, keeping call sites short.
-func fixture_assertions(namespace invariant.Namespace) (builder invariant.Assertion_Builder) {
-	return invariant.Recorder_Tree(&invariant.Recorder{}, Fixture_Subject(0), namespace)
+func fixture_assertions(namespace aver.Namespace) (builder aver.Assertion_Builder) {
+	return aver.Recorder_Tree(&aver.Recorder{}, Fixture_Subject(0), namespace)
 }
 
 // Test_Optimized_Production_Enforcement_Matches_Literal_Reference keeps the inlineable build tied
 // to a direct test implementation whose branches can be inspected without packed state or helpers.
 func Test_Optimized_Production_Enforcement_Matches_Literal_Reference(t *testing.T) {
-	recorder := &invariant.Recorder{}
+	recorder := &aver.Recorder{}
 	for _, condition := range []bool{false, true} {
 		production_pair(
 			t, fmt.Sprintf("always=%t", condition),
-			func() { invariant.Recorder_Always(recorder, condition, "identity") },
+			func() { aver.Recorder_Always(recorder, condition, "identity") },
 			func() { production_reference_always(condition, "identity") },
 		)
 	}
-	builder := invariant.Recorder_Tree(recorder, Fixture_Subject(0), "ignored")
+	builder := aver.Recorder_Tree(recorder, Fixture_Subject(0), "ignored")
 	production_pair(
 		t, "sometimes",
 		func() { builder.Sometimes(false, "axis").Ensure() },
@@ -121,7 +121,7 @@ func production_pair(t *testing.T, name string, optimized func(), reference func
 
 func production_reference_always(condition bool, message string) {
 	if !condition {
-		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + message +
+		panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX + message +
 			"  Always — condition was false: " + fmt.Sprint(condition))
 	}
 }
@@ -136,12 +136,12 @@ func production_reference_ensure() {
 
 func production_reference_range_int(value int, minimum int, maximum int) {
 	if value < minimum {
-		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-			invariant.RANGE_GUARD_MINIMUM + "  value below min: " + fmt.Sprint(value))
+		panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX +
+			aver.RANGE_GUARD_MINIMUM + "  value below min: " + fmt.Sprint(value))
 	}
 	if value > maximum {
-		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-			invariant.RANGE_GUARD_MAXIMUM + "  value exceeds max: " + fmt.Sprint(value))
+		panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX +
+			aver.RANGE_GUARD_MAXIMUM + "  value exceeds max: " + fmt.Sprint(value))
 	}
 }
 
@@ -151,7 +151,7 @@ func production_reference_range_holed_int(
 	production_reference_range_int(value, minimum, maximum)
 	switch value {
 	case hole_1, hole_2, hole_3, hole_4:
-		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
+		panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX +
 			"Range value is excluded: " + fmt.Sprint(value))
 	}
 }
@@ -161,8 +161,8 @@ func production_reference_enum_int(value int, first int, second int) {
 	case first, second:
 		return
 	}
-	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-		invariant.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
+	panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX +
+		aver.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 func production_reference_enum_3_int(value int, first int, second int, third int) {
@@ -170,8 +170,8 @@ func production_reference_enum_3_int(value int, first int, second int, third int
 	case first, second, third:
 		return
 	}
-	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-		invariant.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
+	panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX +
+		aver.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 func production_reference_enum_4_int(
@@ -181,8 +181,8 @@ func production_reference_enum_4_int(
 	case first, second, third, fourth:
 		return
 	}
-	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-		invariant.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
+	panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX +
+		aver.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 // Test_Production_Int_Assertions_Enforce_At_The_Violating_Link keeps every int family eager.
@@ -487,9 +487,9 @@ func Test_Production_Uint64_Assertions_Enforce_At_The_Violating_Link(t *testing.
 
 // Test_Production_Assertions_Retain_Only_Enforcement protects the zero builder from regressing.
 func Test_Production_Assertions_Retain_Only_Enforcement(t *testing.T) {
-	recorder := &invariant.Recorder{Is_Test: true}
-	builder := invariant.Recorder_Tree(recorder, Fixture_Subject(0), "must-not-appear")
-	if builder != (invariant.Assertion_Builder{}) {
+	recorder := &aver.Recorder{Is_Test: true}
+	builder := aver.Recorder_Tree(recorder, Fixture_Subject(0), "must-not-appear")
+	if builder != (aver.Assertion_Builder{}) {
 		t.Fatalf("builder = %+v, want zero value", builder)
 	}
 	builder.Sometimes(false, "ignored").Ensure()
@@ -501,9 +501,9 @@ func Test_Production_Assertions_Retain_Only_Enforcement(t *testing.T) {
 // Test_Production_Always_Remains_Eager keeps the bare guard independent of fluent-link timing.
 func Test_Production_Always_Remains_Eager(t *testing.T) {
 	message := production_panic_text(func() {
-		invariant.Recorder_Always(&invariant.Recorder{}, false, "always identity")
+		aver.Recorder_Always(&aver.Recorder{}, false, "always identity")
 	})
-	want := invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + "always identity"
+	want := aver.ASSERTION_FAILURE_MESSAGE_PREFIX + "always identity"
 	if !strings.Contains(message, want) {
 		t.Fatalf("panic = %q", message)
 	}
@@ -520,12 +520,12 @@ func Test_Production_Panics_Use_Fixed_Identity_Without_Namespace(t *testing.T) {
 		{
 			"range minimum",
 			func() { builder.Range_Int(-1, 0, 2) },
-			invariant.RANGE_GUARD_MINIMUM,
+			aver.RANGE_GUARD_MINIMUM,
 		},
 		{
 			"range maximum",
 			func() { builder.Range_Int(3, 0, 2) },
-			invariant.RANGE_GUARD_MAXIMUM,
+			aver.RANGE_GUARD_MAXIMUM,
 		},
 		{
 			"range hole",
@@ -535,13 +535,13 @@ func Test_Production_Panics_Use_Fixed_Identity_Without_Namespace(t *testing.T) {
 		{
 			"enum member",
 			func() { builder.Enum_Int(3, 1, 2) },
-			invariant.ENUM_GUARD_MEMBER,
+			aver.ENUM_GUARD_MEMBER,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
 			message := production_panic_text(test.Action)
-			if !strings.HasPrefix(message, invariant.ASSERTION_FAILURE_MESSAGE_PREFIX) {
+			if !strings.HasPrefix(message, aver.ASSERTION_FAILURE_MESSAGE_PREFIX) {
 				t.Fatalf("panic = %q, want assertion prefix", message)
 			}
 			if !strings.Contains(message, test.Identity) {
