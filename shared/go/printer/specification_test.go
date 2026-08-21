@@ -24,6 +24,11 @@ func Test_Elision(t *testing.T) {
 	test_elision(t)
 }
 
+// Test_Names binds the Names specification leaf before fixture declarations.
+func Test_Names(t *testing.T) {
+	test_elision_imports(t)
+}
+
 // Test_Spread binds the Spread specification leaf before fixture declarations.
 func Test_Spread(t *testing.T) {
 	test_spread(t)
@@ -112,7 +117,9 @@ func round_trip(t *testing.T, source string) {
 func test_printer(t *testing.T) {
 	round_trip(t, "package one\n")
 	round_trip(t, "package one\n\nimport \"local/example/two\"\n")
-	round_trip(t, "package one\n\nimport two \"local/example/two\"\n")
+	// A name another package of the file already binds stands, thus the import that states it
+	// keeps the name the author wrote.
+	round_trip(t, "package one\n\nimport \"local/example/two\"\nimport two \"other/two\"\n")
 	subject := new(printer.Printer)
 	tree := new(ast.Parse_State)
 	storage := make([]byte, printer.FORM_SIZE_MAXIMUM)
@@ -175,6 +182,47 @@ func test_elision(t *testing.T) {
 
 // States the forms the canonical one writes where the author wrote what another form states.
 func test_elision_forms(t *testing.T) {
+	test_elision_written(t)
+}
+
+// States the name an import drops, which is the name the path it states already names.
+func test_elision_imports(t *testing.T) {
+	// A name the path already states says nothing twice, thus the import drops it and every
+	// form that read it names the package the path states. A name another import already
+	// binds stands, because dropping it would leave two packages of one name.
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{
+			Source: "package one\n\nimport errors \"errors\"\n",
+			Form:   "package one\n\nimport \"errors\"\n",
+		},
+		{
+			Source: "package one\n\nimport held \"errors\"\n\n" +
+				"func Fold() (err error) {\n\terr = held.New(\"one\")\n" +
+				"\treturn err\n}\n",
+			Form: "package one\n\nimport \"errors\"\n\n" +
+				"func Fold() (err error) {\n\terr = errors.New(\"one\")\n" +
+				"\treturn err\n}\n",
+		},
+		{
+			Source: "package one\n\nimport invariant " +
+				"\"local/james-orcales/shared/invariant/default\"\n",
+			Form: "package one\n\nimport " +
+				"\"local/james-orcales/shared/invariant/default\"\n",
+		},
+	} {
+		testify.Equal(t, one.Form, printed(t, one.Source),
+			"an import states the name its path already names")
+	}
+	round_trip(t, "package one\n\nimport \"errors\"\nimport held \"one/errors\"\n\n"+
+		"func Fold() (err error) {\n\terr = held.New(\"one\")\n\treturn err\n}\n")
+	round_trip(t, "package one\n\nimport \"zz\"\n\nfunc Fold() {\n\tzz.One()\n}\n")
+}
+
+// States the forms the canonical one writes where the author wrote what another form states.
+func test_elision_written(t *testing.T) {
 	// A field list of no fields closes on the line it opened on, and a variable of values and
 	// no type binds the short sign, thus neither form waits on the author to write it.
 	for _, one := range []struct {

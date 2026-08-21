@@ -17,6 +17,12 @@ A form that repeats what another already states writes it once: the type of an e
 the length a slice closes at, a name a range binds to nothing, and the type of a variable its own
 values name. A field list of no fields closes on the line it opened on.
 
+# Names
+
+An import writes the name the author bound only where dropping it would leave two packages of one
+name; every other import writes its path alone, and each form that read the name it bound names
+the package instead. A path closing at default or internal names the element ahead of that one.
+
 # Spread
 
 A signature the author broke, and a call whose parenthesis closes its line, each close on a line

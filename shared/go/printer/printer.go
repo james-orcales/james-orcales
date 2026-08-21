@@ -220,13 +220,29 @@ const COUNT_COLUMNS = 22
 // what says whether an operation inside it stands in that run or opens one of its own.
 const COUNT_SPLIT = 23
 
+// COUNT_ALIAS holds how many import names the print drops, which the run of names it holds states.
+const COUNT_ALIAS = 24
+
 // COUNT_SLOT_COUNT is the counter count one printer holds.
-const COUNT_SLOT_COUNT = 24
+const COUNT_SLOT_COUNT = 25
 
 // INVARIANTS_TAIL is the text the name of a function that states the invariants of a type closes
 // with. A type states its invariants in one function of its own name, thus the canonical form
 // stands that function under the type it answers for.
 const INVARIANTS_TAIL = "_Invariants"
+
+// IMPORT_COUNT_MAXIMUM caps the imports of one file whose name the print drops. A file that binds
+// more names than this states them as the author wrote them, because the storage that holds them
+// is fixed and a print allocates nothing.
+const IMPORT_COUNT_MAXIMUM = 64
+
+// DEFAULT_TAIL is the element a path closes with where the package it names stands one element
+// ahead of it, which is the directory holding the build of a package rather than a package of its
+// own.
+const DEFAULT_TAIL = "default"
+
+// INTERNAL_TAIL is the other such element, which holds what one component keeps to itself.
+const INTERNAL_TAIL = "internal"
 
 // RESULT_COUNT_MAXIMUM caps the result names one signature binds that a return writes for it. A
 // signature that binds more states a form no return of this dialect writes, thus a return there
@@ -463,6 +479,11 @@ type Printer struct {
 	// Results holds the tokens of the result names the signature the print stands inside of
 	// binds, which a return that names no value writes.
 	Results [RESULT_COUNT_MAXIMUM]ast.Token_Index
+	// Aliases holds the name tokens of the imports whose name the print drops.
+	Aliases [IMPORT_COUNT_MAXIMUM]ast.Token_Index
+	// Paths holds the path token of each of those imports, which names the package the forms
+	// that read the name now name.
+	Paths [IMPORT_COUNT_MAXIMUM]ast.Token_Index
 	// Signs holds the classes of the tokens one reader of the run stands between.
 	Signs [SIGN_SLOT_COUNT]token.Kind
 	// Words holds the keyword one form opens with, which the tree drops.
@@ -850,6 +871,7 @@ func print_file(subject *Printer, tree *ast.Parse_State) {
 	if node_kind(subject, tree) != ast.NODE_FILE {
 		return
 	}
+	take_aliases(subject, tree)
 	if !bool(descend(subject, tree)) {
 		return
 	}
@@ -1326,6 +1348,188 @@ func print_declaration(subject *Printer, tree *ast.Parse_State) {
 	}
 }
 
+// Reports whether the name the walk stands on is one the print dropped from an import, and reads
+// the name that import's path states into the name slot where it is. A name of any other form
+// stands as the author wrote it, thus only the head of a selector answers here.
+func names_alias(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+	defer func() { Boolean_Invariants(yes, "names_alias.yes") }()
+	Printer_Invariants(subject, "names_alias.subject")
+	ast.Parse_State_Invariants(tree, "names_alias.tree")
+	if node_kind(subject, tree) != ast.NODE_IDENTIFIER {
+		return false
+	}
+	one := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
+	source := subject.Sources[SOURCE_SLOT]
+	text := token.Text(source, ast.Token_At(tree, one))
+	for slot := range int(subject.Counts[COUNT_ALIAS]) {
+		held := token.Text(source, ast.Token_At(tree, subject.Aliases[slot]))
+		if string(held) != string(text) {
+			continue
+		}
+		subject.Marks[MARK_TEXT] = subject.Paths[slot]
+		take_package_name(subject, tree)
+		return true
+	}
+	return false
+}
+
+// Writes the name one import path states, which the name slot holds.
+func emit_package_name(subject *Printer) {
+	Printer_Invariants(subject, "emit_package_name.subject")
+	text := subject.Sources[SOURCE_NAME]
+	for index := range len(text) {
+		emit_byte(subject, Symbol(text[index]))
+	}
+}
+
+// Reports whether the print drops the import name the walk stands on, which the run of names it
+// read from the imports of the file states.
+func drops_alias(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+	defer func() { Boolean_Invariants(yes, "drops_alias.yes") }()
+	Printer_Invariants(subject, "drops_alias.subject")
+	ast.Parse_State_Invariants(tree, "drops_alias.tree")
+	one := ast.Node_At(tree, subject.Nodes[subject.Counts[COUNT_DEPTH]]).Token
+	for slot := range int(subject.Counts[COUNT_ALIAS]) {
+		if subject.Aliases[slot] == one {
+			return true
+		}
+	}
+	return false
+}
+
+// Reads the name the path the text mark names states, which is the element that path closes with.
+// A path closing at the default or the internal element names the element ahead of that one,
+// because such a directory holds what its parent names rather than a package of its own.
+func take_package_name(subject *Printer, tree *ast.Parse_State) {
+	Printer_Invariants(subject, "take_package_name.subject")
+	ast.Parse_State_Invariants(tree, "take_package_name.tree")
+	one := ast.Token_At(tree, subject.Marks[MARK_TEXT])
+	text := token.Text(subject.Sources[SOURCE_SLOT], one)
+	subject.Sources[SOURCE_NAME] = nil
+	if len(text) < 3 {
+		return
+	}
+	text = text[1 : len(text)-1]
+	for range DEPTH_MAXIMUM {
+		opening_count := len(text)
+		for opening_count > 0 {
+			if text[opening_count-1] == '/' {
+				break
+			}
+			opening_count = opening_count - 1
+		}
+		held := text[opening_count:]
+		if string(held) != DEFAULT_TAIL {
+			if string(held) != INTERNAL_TAIL {
+				subject.Sources[SOURCE_NAME] = held
+				return
+			}
+		}
+		if opening_count == 0 {
+			break
+		}
+		text = text[:opening_count-1]
+	}
+	subject.Sources[SOURCE_NAME] = text
+}
+
+// Reads the imports of the file whose name the print drops. An import states a name the path
+// already names, or a name the forms that read it can name by the path instead, thus the print
+// writes the path alone. A name another import of the file already binds stands as the author
+// wrote it, because two packages of one name name neither.
+func take_aliases(subject *Printer, tree *ast.Parse_State) {
+	Printer_Invariants(subject, "take_aliases.subject")
+	ast.Parse_State_Invariants(tree, "take_aliases.tree")
+	subject.Counts[COUNT_ALIAS] = 0
+	file := subject.Nodes[subject.Counts[COUNT_DEPTH]]
+	child := ast.Index(ast.Node_At(tree, file).First_Child)
+	for range ast.NODE_COUNT_MAXIMUM {
+		if child == ast.INDEX_ABSENT {
+			return
+		}
+		held := ast.Node_At(tree, child)
+		if held.Kind == ast.NODE_IMPORT {
+			subject.Types[TYPE_NAMED] = child
+			hold_alias(subject, tree)
+		}
+		child = ast.Index(held.Next)
+	}
+}
+
+// Holds the name of the import the named slot states where the print drops that name.
+func hold_alias(subject *Printer, tree *ast.Parse_State) {
+	Printer_Invariants(subject, "hold_alias.subject")
+	ast.Parse_State_Invariants(tree, "hold_alias.tree")
+	one := subject.Types[TYPE_NAMED]
+	name := ast.Index(ast.Node_At(tree, one).First_Child)
+	if name == ast.INDEX_ABSENT {
+		return
+	}
+	if ast.Node_At(tree, name).Kind != ast.NODE_IMPORT_NAME {
+		return
+	}
+	path := ast.Index(ast.Node_At(tree, name).Next)
+	if path == ast.INDEX_ABSENT {
+		return
+	}
+	subject.Marks[MARK_TEXT] = ast.Node_At(tree, path).Token
+	take_package_name(subject, tree)
+	if len(subject.Sources[SOURCE_NAME]) == 0 {
+		return
+	}
+	if bool(clobbers_name(subject, tree)) {
+		return
+	}
+	count := int(subject.Counts[COUNT_ALIAS])
+	if count >= IMPORT_COUNT_MAXIMUM {
+		return
+	}
+	subject.Aliases[count] = ast.Node_At(tree, name).Token
+	subject.Paths[count] = ast.Node_At(tree, path).Token
+	subject.Counts[COUNT_ALIAS] = Count(count + 1)
+}
+
+// Reports whether another import of the file already binds the name the named slot's import would
+// take once the print drops the name the author wrote for it.
+func clobbers_name(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
+	defer func() { Boolean_Invariants(yes, "clobbers_name.yes") }()
+	Printer_Invariants(subject, "clobbers_name.subject")
+	ast.Parse_State_Invariants(tree, "clobbers_name.tree")
+	named := subject.Sources[SOURCE_NAME]
+	one := subject.Types[TYPE_NAMED]
+	file := ast.Index(ast.Node_At(tree, one).Parent)
+	child := ast.Index(ast.Node_At(tree, file).First_Child)
+	for range ast.NODE_COUNT_MAXIMUM {
+		if child == ast.INDEX_ABSENT {
+			return false
+		}
+		held := ast.Node_At(tree, child)
+		if held.Kind == ast.NODE_IMPORT {
+			if child != one {
+				// An import states its name where the author wrote one and
+				// states the name of its path where the author wrote none.
+				first := ast.Index(held.First_Child)
+				if first == ast.INDEX_ABSENT {
+					return false
+				}
+				node := ast.Node_At(tree, first)
+				source := subject.Sources[SOURCE_SLOT]
+				text := token.Text(source, ast.Token_At(tree, node.Token))
+				if node.Kind != ast.NODE_IMPORT_NAME {
+					subject.Marks[MARK_TEXT] = node.Token
+					take_package_name(subject, tree)
+					text = subject.Sources[SOURCE_NAME]
+				}
+				if string(text) == string(named) {
+					return true
+				}
+			}
+		}
+		child = ast.Index(held.Next)
+	}
+	return false
+}
+
 // Writes one import: the word, the name the file binds where it states one, and the path.
 func print_import(subject *Printer, tree *ast.Parse_State) {
 	Printer_Invariants(subject, "print_import.subject")
@@ -1338,8 +1542,12 @@ func print_import(subject *Printer, tree *ast.Parse_State) {
 		return
 	}
 	if node_kind(subject, tree) == ast.NODE_IMPORT_NAME {
-		emit_token(subject, tree)
-		emit_space(subject)
+		// A name the path itself states, or one the forms that read it now name by the
+		// path, states nothing the import needs, thus the print writes the path alone.
+		if !bool(drops_alias(subject, tree)) {
+			emit_token(subject, tree)
+			emit_space(subject)
+		}
 		advance_part(subject, tree)
 	}
 	emit_token(subject, tree)
@@ -3897,7 +4105,14 @@ func print_selector(subject *Printer, tree *ast.Parse_State) {
 	if !bool(descend_part(subject, tree)) {
 		return
 	}
-	print_expression(subject, tree)
+	// A form that read an import by the name the author wrote for it names the package the
+	// path states, because the import states that name no longer.
+	if bool(names_alias(subject, tree)) {
+		emit_package_name(subject)
+	}
+	if !bool(names_alias(subject, tree)) {
+		print_expression(subject, tree)
+	}
 	emit_byte(subject, '.')
 	if bool(advance_part(subject, tree)) {
 		open_continuation(subject, tree, breaks_before(subject, tree))

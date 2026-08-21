@@ -220,8 +220,8 @@ func test_imports(t *testing.T) {
 			Form:   "package one\n\nimport \"aa\"\nimport \"zz\"\n",
 		},
 		{
-			Source: "package one\n\nimport first \"zz\"\nimport \"aa\"\n",
-			Form:   "package one\n\nimport \"aa\"\nimport first \"zz\"\n",
+			Source: "package one\n\nimport held \"zz\"\nimport \"aa\"\n",
+			Form:   "package one\n\nimport \"aa\"\nimport \"zz\"\n",
 		},
 		{
 			Source: "package one\n\nimport \"zz\" // A note stands behind it.\n" +
