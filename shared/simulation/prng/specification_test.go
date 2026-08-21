@@ -6,6 +6,7 @@ import (
 
 	"local/james-orcales/shared/simulation/prng"
 
+	crypto_prng "local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/invariant/default"
 )
 
@@ -234,25 +235,26 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 		t.Fatalf("Next allocated %.1f times per call, want zero", allocations)
 	}
 	source := prng.Xoshiro_To_Source(&generator)
-	var sink [prng.WORD_BYTE_COUNT]byte
+	var sink [crypto_prng.WORD_BYTE_COUNT]byte
 	allocations = testing.AllocsPerRun(1000, func() {
-		prng.Source_Read(source, sink[:])
+		crypto_prng.Source_Read(source, sink[:])
 	})
 	if allocations != 0 {
 		t.Fatalf("Source_Read allocated %.1f times per call, want zero", allocations)
 	}
 }
 
-// Test_Source_Replays_From_Seed checks bytes through the vtable are a pure function of the seed
-// and spend one Next word per eight bytes, so a pinned simulation seed replays each entropy draw.
-func Test_Source_Replays_From_Seed(t *testing.T) {
+// Test_Xoshiro_Converts_To_Source checks the bound crypto/prng Source is a pure function of the
+// seed and spends one Next word per eight bytes, so a pinned simulation seed replays each entropy
+// draw a signer or key builder makes; a nil Xoshiro dies before binding.
+func Test_Xoshiro_Converts_To_Source(t *testing.T) {
 	first := prng.New(9)
 	again := prng.New(9)
 	other := prng.New(10)
-	var got, want, differ [prng.WORD_BYTE_COUNT + 1]byte
-	prng.Source_Read(prng.Xoshiro_To_Source(&first), got[:])
-	prng.Source_Read(prng.Xoshiro_To_Source(&again), want[:])
-	prng.Source_Read(prng.Xoshiro_To_Source(&other), differ[:])
+	var got, want, differ [crypto_prng.WORD_BYTE_COUNT + 1]byte
+	crypto_prng.Source_Read(prng.Xoshiro_To_Source(&first), got[:])
+	crypto_prng.Source_Read(prng.Xoshiro_To_Source(&again), want[:])
+	crypto_prng.Source_Read(prng.Xoshiro_To_Source(&other), differ[:])
 	if got != want {
 		t.Fatalf("same seed produced different bytes")
 	}
@@ -261,52 +263,31 @@ func Test_Source_Replays_From_Seed(t *testing.T) {
 	}
 	reference := prng.New(9)
 	word := prng.Xoshiro_Next(&reference)
-	for index := 0; index < prng.WORD_BYTE_COUNT; index++ {
+	for index := 0; index < crypto_prng.WORD_BYTE_COUNT; index++ {
 		if got[index] != byte(word>>(index*8)) {
 			t.Fatalf("byte %d was %d, want little-endian word byte", index, got[index])
 		}
 	}
-	if got[prng.WORD_BYTE_COUNT] != byte(prng.Xoshiro_Next(&reference)) {
+	if got[crypto_prng.WORD_BYTE_COUNT] != byte(prng.Xoshiro_Next(&reference)) {
 		t.Fatalf("ninth byte did not spend a second word")
 	}
 	if prng.Xoshiro_Next(&reference) != prng.Xoshiro_Next(&first) {
 		t.Fatalf("a partial word consumed more than one draw")
 	}
-	var largest [prng.SINK_SIZE_MAXIMUM]byte
-	for _, size := range [...]int{
-		prng.SINK_SIZE_MINIMUM,
-		prng.SINK_SIZE_MINIMUM + 1,
-		prng.SINK_SIZE_MINIMUM + 2,
-		prng.SINK_SIZE_MAXIMUM,
-	} {
-		prng.Source_Read(prng.Xoshiro_To_Source(&first), largest[:size])
-	}
-}
-
-// Test_Source_Is_Bound_Before_Use checks each unbound or oversized input dies before a draw.
-func Test_Source_Is_Bound_Before_Use(t *testing.T) {
-	generator := prng.New(11)
-	source := prng.Xoshiro_To_Source(&generator)
-	var sink [prng.WORD_BYTE_COUNT]byte
-	if !did_die(func() { prng.Source_Read(prng.Source{}, sink[:]) }) {
-		t.Fatalf("zero Source did not die")
-	}
-	headless := source
-	headless.State = nil
-	if !did_die(func() { prng.Source_Read(headless, sink[:]) }) {
-		t.Fatalf("Source without state did not die")
-	}
-	inert := source
-	inert.Next = nil
-	if !did_die(func() { prng.Source_Read(inert, sink[:]) }) {
-		t.Fatalf("Source without procedure did not die")
-	}
-	var oversized [prng.SINK_SIZE_MAXIMUM + 1]byte
-	if !did_die(func() { prng.Source_Read(source, oversized[:]) }) {
-		t.Fatalf("oversized sink did not die")
-	}
 	if !did_die(func() { prng.Xoshiro_To_Source(nil) }) {
 		t.Fatalf("nil Xoshiro did not die")
+	}
+	// A constructed state reaches each word edge of the slot deterministically; chance would
+	// take 2^64 draws to land on one of them.
+	for _, value := range [...]prng.Word{
+		prng.WORD_MINIMUM, prng.WORD_MINIMUM + 1, prng.WORD_MINIMUM + 2, prng.WORD_MAXIMUM,
+	} {
+		edge := generator_for_next(value)
+		var octet [crypto_prng.WORD_BYTE_COUNT]byte
+		crypto_prng.Source_Read(prng.Xoshiro_To_Source(&edge), octet[:])
+		if octet[0] != byte(value) {
+			t.Fatalf("constructed draw %d did not pass through the slot", value)
+		}
 	}
 }
 

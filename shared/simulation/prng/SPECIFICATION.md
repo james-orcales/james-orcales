@@ -50,19 +50,14 @@ reproducible bit-for-bit across machines.
 
 # Hot Path Is Zero Allocation
 
-A steady-state Next draw performs no heap allocation, and neither does a Source_Read through the
-vtable.
+A steady-state Next draw performs no heap allocation, and neither does a crypto/prng Source_Read
+through a bound Xoshiro.
 
-# Source Replays From Seed
+# Xoshiro Converts To Source
 
-Xoshiro_To_Source binds a Xoshiro into the Source vtable a cryptographic caller injects. Bytes
-read through it are a function of the seed alone: equal seeds agree, distinct seeds differ, each
-eight bytes spend one Next word little-endian, and a partial tail spends a whole word.
-
-# Source Is Bound Before Use
-
-Source_Read dies on a Source with no state, no procedure, or a sink past the size bound, and
-Xoshiro_To_Source dies on a nil Xoshiro, before any draw.
+Xoshiro_To_Source binds a Xoshiro into the crypto/prng Source vtable. Bytes read through it are a
+function of the seed alone: equal seeds agree, distinct seeds differ, each eight bytes spend one
+Next word little-endian, a partial tail spends a whole word, and a nil Xoshiro dies before binding.
 
 # Bimodal Distribution Has Two Modes
 

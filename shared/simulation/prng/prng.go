@@ -20,6 +20,7 @@ package prng
 import (
 	"unsafe"
 
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
@@ -35,17 +36,6 @@ const SPLIT_MIX_MULTIPLIER_SECOND = 0x94d049bb133111eb
 
 // XOSHIRO_STATE_WORD_COUNT is the fixed state width of xoshiro256++.
 const XOSHIRO_STATE_WORD_COUNT = 4
-
-// WORD_BYTE_COUNT is how many bytes one xoshiro draw fills through a Source. Spelled here because
-// encoding/binary sits above nbio, which sits above this package.
-const WORD_BYTE_COUNT = bits.BIT_COUNT_64_MAXIMUM / bits.BIT_COUNT_8_MAXIMUM
-
-// SINK_SIZE_MINIMUM admits an empty fill.
-const SINK_SIZE_MINIMUM = 0
-
-// SINK_SIZE_MAXIMUM keeps an accidental bulk fill bounded while staying far above any key, token,
-// or nonce a caller fills. Each backend inherits it for its own sink so the two cannot drift.
-const SINK_SIZE_MAXIMUM = 1 << 20
 
 // DISTRIBUTION_COUNT_MAXIMUM keeps weighted sampling linear and stack-owned.
 const DISTRIBUTION_COUNT_MAXIMUM = 32
@@ -616,72 +606,26 @@ func Xoshiro_Split(generator *Xoshiro) (child Xoshiro) {
 	return New(Seed(Xoshiro_Next(generator)))
 }
 
-// Sink is bounded caller-owned storage a Source fills, a defined type so the fill takes no raw
-// slice.
-type Sink []byte
-
-// Sink_Invariants bounds one fill request.
-func Sink_Invariants(sink Sink, namespace invariant.Namespace) {
-	invariant.Tree(sink, namespace).
-		Range_Int(len(sink), SINK_SIZE_MINIMUM, SINK_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Source is the C-style vtable a caller injects where it needs random bytes: caller-owned backend
-// state behind an unsafe.Pointer and one procedure that receives it. The house bans interfaces
-// and closures that capture state, so this is the one shape a backend can take. crypto/prng binds
-// its ChaCha20 stream for a production root and wraps this type as its own Source, so a signature
-// says which parameter must carry real entropy; Xoshiro_To_Source binds a xoshiro stream for a
-// simulation, so a signer or key builder under test replays every entropy draw from the run seed.
-type Source struct {
-	// State is the caller-owned backend generator; the procedure casts it back to its own type.
-	State unsafe.Pointer
-	// Next draws one full word from the backend behind state. The slot returns a value and
-	// receives no sink, because a pointer handed to a procedure value escapes to the heap under
-	// Go's escape analysis, and a caller's stack sink must stay on its stack.
-	Next func(state unsafe.Pointer) (value Word)
-}
-
-// Source_Invariants proves both halves of the vtable are bound before any draw.
-func Source_Invariants(source Source, _ invariant.Namespace) {
-	invariant.Always(source.State != nil, "A Source has caller-owned state.")
-	invariant.Always(source.Next != nil, "A Source has a bound draw procedure.")
-}
-
-// Source_Read fills sink through the vtable, one word per eight bytes, little-endian so a shorter
-// read is a prefix of a longer one from the same state. A partial tail spends a whole word. The
-// bytes are packed here, on the caller's side of the slot, so the sink never crosses it.
-func Source_Read(source Source, sink Sink) {
-	Source_Invariants(source, "source_read.source")
-	Sink_Invariants(sink, "source_read.sink")
-	var octet [WORD_BYTE_COUNT]byte
-	for filled := 0; filled < len(sink); filled += WORD_BYTE_COUNT {
-		word := source.Next(source.State)
-		for index := 0; index < WORD_BYTE_COUNT; index++ {
-			octet[index] = byte(word >> (index * bits.BIT_COUNT_8_MAXIMUM))
-		}
-		copy(sink[filled:], octet[:])
-	}
-}
-
-// Xoshiro_To_Source binds caller-owned state into the Source vtable without a captured
-// function environment: the simulation stand-in for a crypto/prng source, same slot, xoshiro words.
-// Fork the generator first; a draw through this source spends the same stream as every other
-// draw on it. Never bind it in a production root.
-func Xoshiro_To_Source(generator *Xoshiro) (source Source) {
-	invariant.Always(generator != nil, "A simulated source has caller-owned state.")
+// Xoshiro_To_Source binds caller-owned state into the crypto/prng Source vtable without a
+// captured function environment: the simulation stand-in for a ChaCha source, same slot, xoshiro
+// words, so a signer or key builder under test replays every entropy draw from the run seed. This
+// call is the one place a fake enters a cryptographic parameter, so a grep for it finds every
+// test that signs with predictable bytes. Fork the generator first; a draw through this source
+// spends the same stream as every other draw on it. Never bind it in a production root.
+func Xoshiro_To_Source(generator *Xoshiro) (source prng.Source) {
+	defer func() { prng.Source_Invariants(source, "xoshiro_to_source.source") }()
 	Xoshiro_Invariants(*generator, "xoshiro_to_source.generator")
-	source = Source{
+	source = prng.Source{
 		State: unsafe.Pointer(generator),
 		Next:  xoshiro_source_next,
 	}
-	Source_Invariants(source, "xoshiro_to_source.source")
 	return source
 }
 
 // The vtable slot: one xoshiro draw.
-func xoshiro_source_next(state unsafe.Pointer) (value Word) {
-	return Xoshiro_Next((*Xoshiro)(state))
+func xoshiro_source_next(state unsafe.Pointer) (value prng.Word) {
+	defer func() { prng.Word_Invariants(value, "xoshiro_source_next.value") }()
+	return prng.Word(Xoshiro_Next((*Xoshiro)(state)))
 }
 
 // Returns a value in the half-open range zero to bound using Lemire's method, so the result is
