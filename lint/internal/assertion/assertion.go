@@ -3252,10 +3252,51 @@ func primitive_file_diagnostics(file Parsed_File) (diags []Diagnostic) {
 		case *ast.FuncDecl:
 			diags = append(diags, primitive_function_diagnostics(file, typed)...)
 		case *ast.GenDecl:
+			diags = append(diags, primitive_type_diagnostics(file, typed)...)
 			diags = append(diags, primitive_struct_diagnostics(file, typed)...)
 		}
 	}
 	return diags
+}
+
+// Naming only an outer collection leaves an inner collection with no invariant bundle.
+func primitive_type_diagnostics(
+	file Parsed_File, general *ast.GenDecl,
+) (diags []Diagnostic) {
+	if general.Tok != token.TYPE {
+		return nil
+	}
+	for _, specification := range general.Specs {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if type_specification.Assign.IsValid() {
+			continue
+		}
+		gaps := primitive_type_gaps(type_specification.Type)
+		position := file.File_Set.Position(type_specification.Name.Pos())
+		owner := type_specification.Name.Name
+		diags = append(diags, primitive_owner_diagnostics(gaps, owner, position)...)
+	}
+	return diags
+}
+
+// Only nested collections need another name; scalar elements stay bounded by their Go type.
+func primitive_type_gaps(expression ast.Expr) (gaps []string) {
+	collection, is_collection := expression.(*ast.ArrayType)
+	if !is_collection {
+		return nil
+	}
+	if collection.Len != nil {
+		return nil
+	}
+	kind := numeric_raw_primitive_kind(collection.Elt)
+	if kind != "slice" {
+		return nil
+	}
+	return []string{"has a raw " + kind + " element. " +
+		"Declare a defined type for the element."}
 }
 
 // Flags a non-stdlib function's raw string/slice/map parameters and results.

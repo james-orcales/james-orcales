@@ -730,6 +730,16 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 		"Declare a defined type for the field.") {
 		t.Fatal("a raw float64 field must be flagged")
 	}
+	nested := parse(t, &parse_input{
+		Path: "pkg/rule.go",
+		Source_Text: "package fixture\n\n" +
+			"// Field_Slices is a fixture.\ntype Field_Slices [][]byte\n",
+	})
+	diags = check_source(nested)
+	if !diagnosed(diags, "The declaration Field_Slices has a raw slice element. "+
+		"Declare a defined type for the element.") {
+		t.Fatal("a named outer slice must not hide its raw slice element")
+	}
 }
 
 // Test_Invariants_Small_Slices verifies a defined slice type whose helper bounds len to at most 8
