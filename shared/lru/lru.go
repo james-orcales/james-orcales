@@ -39,15 +39,11 @@ import (
 	"local/james-orcales/shared/slices"
 )
 
-// Key_Kind is any equality-comparable cache key.
-type Key_Kind interface {
-	comparable
-}
+// Key is one comparable cache key.
+type Key interface{}
 
-// Value_Kind is any cache value.
-type Value_Kind interface {
-	any
-}
+// Value is one cache value.
+type Value interface{}
 
 // Count is cache entry quantity or capacity.
 type Count int
@@ -79,6 +75,56 @@ func Status_Invariants(status Status, namespace aver.Namespace) {
 	aver.Tree(status, namespace).
 		Sometimes(bool(status), "Cache predicate is true.").
 		Ensure()
+}
+
+// Present_Status reports key presence before conditional insertion.
+type Present_Status bool
+
+// Present_Status_Invariants requires both presence results.
+func Present_Status_Invariants(status Present_Status, namespace aver.Namespace) {
+	aver.Tree(status, namespace).
+		Sometimes(bool(status), "Key is present.").
+		Ensure()
+}
+
+// Evicted_Status reports eviction during conditional insertion.
+type Evicted_Status bool
+
+// Evicted_Status_Invariants requires both eviction results.
+func Evicted_Status_Invariants(status Evicted_Status, namespace aver.Namespace) {
+	aver.Tree(status, namespace).
+		Sometimes(bool(status), "Conditional insertion evicts one entry.").
+		Ensure()
+}
+
+// Conditional_Result holds presence and eviction results from one conditional insertion.
+type Conditional_Result struct {
+	// Present reports whether key already existed.
+	Present Present_Status
+	// Evicted reports whether insertion discarded one entry.
+	Evicted Evicted_Status
+}
+
+// Conditional_Result_Invariants composes conditional insertion results.
+func Conditional_Result_Invariants(result Conditional_Result, namespace aver.Namespace) {
+	Present_Status_Invariants(result.Present, namespace)
+	Evicted_Status_Invariants(result.Evicted, namespace)
+}
+
+// Peek_Or_Add_Result holds existing value and conditional insertion results.
+type Peek_Or_Add_Result struct {
+	// Previous is existing value when Present is true.
+	Previous Value
+	// Present reports whether key already existed.
+	Present Present_Status
+	// Evicted reports whether insertion discarded one entry.
+	Evicted Evicted_Status
+}
+
+// Peek_Or_Add_Result_Invariants composes conditional insertion results.
+func Peek_Or_Add_Result_Invariants(result Peek_Or_Add_Result, namespace aver.Namespace) {
+	Present_Status_Invariants(result.Present, namespace)
+	Evicted_Status_Invariants(result.Evicted, namespace)
 }
 
 // Position identifies one node or POSITION_NONE.
@@ -120,18 +166,30 @@ func Key_Count_Invariants(count Key_Count, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Keys is fixed caller-owned key storage plus requested write bound.
-type Keys[K Key_Kind] struct {
-	// Storage owns maximum bounded output without heap growth.
-	Storage *[COUNT_MAXIMUM]K
+// Key_Storage is caller-owned key output. An assertion tree takes no generic subject, thus one
+// Always states the one length every read admits.
+type Key_Storage []Key
+
+// Key_Storage_Invariants fixes key output to the largest cache.
+func Key_Storage_Invariants(value Key_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == COUNT_MAXIMUM,
+		"Key output holds every entry of the largest cache.",
+	)
+}
+
+// Keys is caller-owned key storage plus requested write bound.
+type Keys struct {
+	// Storage is caller-owned output sized to largest cache, thus read never grows heap.
+	Storage Key_Storage
 	// Count bounds this call below full storage.
 	Count Key_Count
 }
 
-// Keys_Invariants requires storage and bounds requested writes.
-func Keys_Invariants[K Key_Kind](keys Keys[K], namespace aver.Namespace) {
+// Keys_Invariants composes storage and bounds requested writes.
+func Keys_Invariants(keys Keys, namespace aver.Namespace) {
+	Key_Storage_Invariants(keys.Storage, namespace)
 	Key_Count_Invariants(keys.Count, namespace)
-	aver.Always(keys.Storage != nil, "Key output has caller storage.")
 }
 
 // Value_Count is maximum value quantity one call writes.
@@ -144,18 +202,29 @@ func Value_Count_Invariants(count Value_Count, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Values is fixed caller-owned value storage plus requested write bound.
-type Values[V Value_Kind] struct {
-	// Storage owns maximum bounded output without heap growth.
-	Storage *[COUNT_MAXIMUM]V
+// Value_Storage is caller-owned value output.
+type Value_Storage []Value
+
+// Value_Storage_Invariants fixes value output to largest cache.
+func Value_Storage_Invariants(value Value_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == COUNT_MAXIMUM,
+		"Value output holds every entry of the largest cache.",
+	)
+}
+
+// Values is caller-owned value storage plus requested write bound.
+type Values struct {
+	// Storage is caller-owned output sized to largest cache, thus read never grows heap.
+	Storage Value_Storage
 	// Count bounds this call below full storage.
 	Count Value_Count
 }
 
 // Values_Invariants requires storage and bounds requested writes.
-func Values_Invariants[V Value_Kind](values Values[V], namespace aver.Namespace) {
+func Values_Invariants(values Values, namespace aver.Namespace) {
+	Value_Storage_Invariants(values.Storage, namespace)
 	Value_Count_Invariants(values.Count, namespace)
-	aver.Always(values.Storage != nil, "Value output has caller storage.")
 }
 
 // Capacity is immutable cache entry limit, or zero before initialization.
@@ -228,28 +297,25 @@ func Back_Position_Invariants(position Back_Position, namespace aver.Namespace) 
 }
 
 // Buckets owns fixed expiry-ring storage.
-type Buckets[K Key_Kind, V Value_Kind] [BUCKET_COUNT]Expirable_Bucket[K, V]
+type Buckets []Expirable_Bucket
 
 // Buckets_Invariants fixes expiry-ring size.
-func Buckets_Invariants[K Key_Kind, V Value_Kind](
-	buckets Buckets[K, V], _ aver.Namespace,
-) {
-	aver.Always(
-		len(buckets) == BUCKET_COUNT,
-		"Expiry cache owns one complete bucket ring.",
-	)
+func Buckets_Invariants(buckets Buckets, namespace aver.Namespace) {
+	aver.Tree(buckets, namespace).
+		Enum_Int(len(buckets), COUNT_MINIMUM, BUCKET_COUNT).
+		Ensure()
 }
 
 // Evict_Callback runs when a cache discards an entry — through eviction, removal, or purge.
 // One type serves every cache here; the upstream declared an identical callback twice
 // (simplelru and expirable), which the flat package collapses into this.
-type Evict_Callback[K Key_Kind, V Value_Kind] func(key K, value V)
+type Evict_Callback func(key Key, value Value)
 
 // Entry is one node of the intrusive lists shared by every cache in this package. Its storage is
 // owned by a List's pre-allocated pool, not the heap, so an Add reuses a node rather than
 // allocating one. Every node lives in the recency ring (Next/Previous); an Expirable node lives
 // simultaneously in its expiry bucket chain (Bucket_Next/Bucket_Previous) over the same node.
-type Entry[K Key_Kind, V Value_Kind] struct {
+type Entry struct {
 	// Next is newer neighbor or next free node.
 	Next Position
 	// Previous is older neighbor.
@@ -261,9 +327,9 @@ type Entry[K Key_Kind, V Value_Kind] struct {
 	// Bucket_Previous chains toward previous entry in expiry bucket.
 	Bucket_Previous Position
 	// Key is the lookup key.
-	Key K
+	Key Key
 	// Value is the stored value.
-	Value V
+	Value Value
 	// Expires_At is the Moment past which Expirable treats this entry as gone; zero for the
 	// non-expiring caches.
 	Expires_At time.Monotonic_Moment
@@ -273,7 +339,7 @@ type Entry[K Key_Kind, V Value_Kind] struct {
 }
 
 // Entry_Invariants composes node handles, status, time, and bucket.
-func Entry_Invariants[K Key_Kind, V Value_Kind](entry Entry[K, V], namespace aver.Namespace) {
+func Entry_Invariants(entry Entry, namespace aver.Namespace) {
 	Position_Invariants(entry.Next, namespace)
 	Position_Invariants(entry.Previous, namespace)
 	Status_Invariants(entry.Used, namespace)
@@ -284,19 +350,21 @@ func Entry_Invariants[K Key_Kind, V Value_Kind](entry Entry[K, V], namespace ave
 }
 
 // Nodes is caller-owned fixed entry storage.
-type Nodes[K Key_Kind, V Value_Kind] [COUNT_MAXIMUM]Entry[K, V]
+type Nodes []Entry
 
 // Nodes_Invariants admits nil before initialization and fixed storage afterward.
-func Nodes_Invariants[K Key_Kind, V Value_Kind](nodes *Nodes[K, V], _ aver.Namespace) {
-	aver.Always(len(nodes) == COUNT_MAXIMUM, "Node storage has fixed bound.")
+func Nodes_Invariants(nodes Nodes, namespace aver.Namespace) {
+	aver.Tree(nodes, namespace).
+		Enum_Int(len(nodes), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Ensure()
 }
 
 // List is fixed-capacity doubly-linked metadata over caller-owned Nodes. Positions replace
 // pointers because pointer cycles cannot form bounded assertion trees. POSITION_NONE closes
 // each end. Nodes move between active and free chains, so every operation reuses storage.
-type List[K Key_Kind, V Value_Kind] struct {
+type List struct {
 	// Nodes points at caller-owned fixed pool.
-	Nodes *Nodes[K, V]
+	Nodes Nodes
 	// Capacity is initialized prefix of Nodes.
 	Capacity Node_Capacity
 	// Free heads free chain.
@@ -310,7 +378,7 @@ type List[K Key_Kind, V Value_Kind] struct {
 }
 
 // List_Invariants composes pool state and node handles.
-func List_Invariants[K Key_Kind, V Value_Kind](list List[K, V], namespace aver.Namespace) {
+func List_Invariants(list List, namespace aver.Namespace) {
 	Nodes_Invariants(list.Nodes, namespace)
 	Node_Capacity_Invariants(list.Capacity, namespace)
 	Free_Position_Invariants(list.Free, namespace)
@@ -327,15 +395,24 @@ func List_Invariants[K Key_Kind, V Value_Kind](list List[K, V], namespace aver.N
 	)
 }
 
+// List_Handle borrows mutable list state.
+type List_Handle *List
+
+// List_Handle_Invariants composes borrowed list state.
+func List_Handle_Invariants(list List_Handle, namespace aver.Namespace) {
+	if list == nil {
+		return
+	}
+	List_Invariants(*list, namespace)
+}
+
 // List initialization readies caller-owned node storage at fixed capacity.
-func list_initialize[K Key_Kind, V Value_Kind](
-	l *List[K, V], nodes *Nodes[K, V], capacity_count Count,
-) {
-	List_Invariants(*l, "list_initialize.list")
+func list_initialize(l List_Handle, nodes Nodes, capacity_count Count) {
+	List_Handle_Invariants(l, "list_initialize.list")
 	Nodes_Invariants(nodes, "list_initialize.nodes")
 	Count_Invariants(capacity_count, "list_initialize.capacity_count")
 	aver.Always(nodes != nil, "List initialization has node storage.")
-	*nodes = Nodes[K, V]{}
+	clear(nodes)
 	l.Nodes = nodes
 	l.Capacity = Node_Capacity(capacity_count)
 	list_reset(l)
@@ -343,10 +420,10 @@ func list_initialize[K Key_Kind, V Value_Kind](
 
 // Empties l: zeroes every node, re-threads them all onto Free, and closes the sentinel ring. It
 // runs at construction and on Purge, so a purge reclaims every node without touching the heap.
-func list_reset[K Key_Kind, V Value_Kind](l *List[K, V]) {
-	List_Invariants(*l, "list_reset.list")
-	var zero_key K
-	var zero_value V
+func list_reset(l List_Handle) {
+	List_Handle_Invariants(l, "list_reset.list")
+	var zero_key Key
+	var zero_value Value
 	l.Free = Free_Position(POSITION_NONE)
 	for index := 0; index < int(l.Capacity); index++ {
 		node := &l.Nodes[index]
@@ -368,9 +445,9 @@ func list_reset[K Key_Kind, V Value_Kind](l *List[K, V]) {
 
 // Pops a node from the free-list. It asserts the pool is not empty: every cache evicts before it
 // inserts, so peak node use equals capacity and the pool cannot underflow — a nil here is a bug.
-func list_allocate[K Key_Kind, V Value_Kind](l *List[K, V]) (position Position) {
+func list_allocate(l List_Handle) (position Position) {
 	defer func() { Position_Invariants(position, "list_allocate.position") }()
-	List_Invariants(*l, "list_allocate.list")
+	List_Handle_Invariants(l, "list_allocate.list")
 	if l.Free == Free_Position(POSITION_NONE) {
 		return POSITION_NONE
 	}
@@ -382,11 +459,11 @@ func list_allocate[K Key_Kind, V Value_Kind](l *List[K, V]) (position Position) 
 // Returns e to the free-list, zeroing its key and value first so a pooled node pins neither the
 // key nor the value it used to hold — the references are released for GC even though the node is
 // reused.
-func list_free[K Key_Kind, V Value_Kind](l *List[K, V], position Position) {
+func list_free(l List_Handle, position Position) {
 	Position_Invariants(position, "list_free.position")
-	List_Invariants(*l, "list_free.list")
-	var zero_key K
-	var zero_value V
+	List_Handle_Invariants(l, "list_free.list")
+	var zero_key Key
+	var zero_value Value
 	e := &l.Nodes[position]
 	e.Key = zero_key
 	e.Value = zero_value
@@ -401,16 +478,16 @@ func list_free[K Key_Kind, V Value_Kind](l *List[K, V], position Position) {
 }
 
 // Returns the least-recently-used element (the eviction target) or nil when empty.
-func list_back[K Key_Kind, V Value_Kind](l *List[K, V]) (back Position) {
+func list_back(l List_Handle) (back Position) {
 	defer func() { Position_Invariants(back, "list_back.back") }()
-	List_Invariants(*l, "list_back.list")
+	List_Handle_Invariants(l, "list_back.list")
 	return Position(l.Back)
 }
 
 // Links node at most-recently-used front.
-func list_splice_front[K Key_Kind, V Value_Kind](l *List[K, V], position Position) {
+func list_splice_front(l List_Handle, position Position) {
 	Position_Invariants(position, "list_splice_front.position")
-	List_Invariants(*l, "list_splice_front.list")
+	List_Handle_Invariants(l, "list_splice_front.list")
 	node := &l.Nodes[position]
 	node.Previous = POSITION_NONE
 	node.Next = Position(l.Front)
@@ -426,9 +503,9 @@ func list_splice_front[K Key_Kind, V Value_Kind](l *List[K, V], position Positio
 
 // Unlinks e from the active ring and returns it to the pool. Callers capture e's key and value
 // first, since list_free zeroes them.
-func list_remove[K Key_Kind, V Value_Kind](l *List[K, V], position Position) {
+func list_remove(l List_Handle, position Position) {
 	Position_Invariants(position, "list_remove.position")
-	List_Invariants(*l, "list_remove.list")
+	List_Handle_Invariants(l, "list_remove.list")
 	e := &l.Nodes[position]
 	if e.Previous != POSITION_NONE {
 		l.Nodes[e.Previous].Next = e.Next
@@ -445,32 +522,32 @@ func list_remove[K Key_Kind, V Value_Kind](l *List[K, V], position Position) {
 }
 
 // Takes a node from the pool for a non-expiring (k, v) and splices it at the front.
-func list_push_front[K Key_Kind, V Value_Kind](l *List[K, V], k K, v V) (pushed Position) {
+func list_push_front(l List_Handle, key Key, value Value) (pushed Position) {
 	defer func() { Position_Invariants(pushed, "list_push_front.pushed") }()
-	List_Invariants(*l, "list_push_front.list")
+	List_Handle_Invariants(l, "list_push_front.list")
 	position := list_allocate(l)
 	if position == POSITION_NONE {
 		return position
 	}
-	l.Nodes[position].Key = k
-	l.Nodes[position].Value = v
+	l.Nodes[position].Key = key
+	l.Nodes[position].Value = value
 	list_splice_front(l, position)
 	return position
 }
 
 // Takes a node from the pool for (k, v) carrying its expiry Moment and splices it at the front.
-func list_push_front_expirable[K Key_Kind, V Value_Kind](
-	l *List[K, V], k K, v V, expires_at time.Monotonic_Moment,
+func list_push_front_expirable(
+	l List_Handle, key Key, value Value, expires_at time.Monotonic_Moment,
 ) (pushed Position) {
 	defer func() { Position_Invariants(pushed, "list_push_front_expirable.pushed") }()
-	List_Invariants(*l, "list_push_front_expirable.list")
+	List_Handle_Invariants(l, "list_push_front_expirable.list")
 	time.Monotonic_Moment_Invariants(expires_at, "list_push_front_expirable.expires_at")
 	position := list_allocate(l)
 	if position == POSITION_NONE {
 		return position
 	}
-	l.Nodes[position].Key = k
-	l.Nodes[position].Value = v
+	l.Nodes[position].Key = key
+	l.Nodes[position].Value = value
 	l.Nodes[position].Expires_At = expires_at
 	list_splice_front(l, position)
 	return position
@@ -478,9 +555,9 @@ func list_push_front_expirable[K Key_Kind, V Value_Kind](
 
 // Promotes e to the most-recently-used front. It ignores an entry owned by another list or one
 // already at the front, so a stray call cannot corrupt l.
-func list_move_to_front[K Key_Kind, V Value_Kind](l *List[K, V], position Position) {
+func list_move_to_front(l List_Handle, position Position) {
 	Position_Invariants(position, "list_move_to_front.position")
-	List_Invariants(*l, "list_move_to_front.list")
+	List_Handle_Invariants(l, "list_move_to_front.list")
 	if l.Front == Front_Position(position) {
 		return
 	}
@@ -498,52 +575,57 @@ func list_move_to_front[K Key_Kind, V Value_Kind](l *List[K, V], position Positi
 }
 
 // Returns entry one step toward newer end, or POSITION_NONE after front.
-func entry_previous[K Key_Kind, V Value_Kind](
-	l *List[K, V], position Position,
-) (previous Position) {
+func entry_previous(l List_Handle, position Position) (previous Position) {
 	defer func() { Position_Invariants(previous, "entry_previous.previous") }()
 	Position_Invariants(position, "entry_previous.position")
-	List_Invariants(*l, "entry_previous.list")
+	List_Handle_Invariants(l, "entry_previous.list")
 	return l.Nodes[position].Previous
 }
 
 // Finds key without separate allocation-owning index.
-func list_find[K Key_Kind, V Value_Kind](
-	l *List[K, V], key K,
-) (position Position, found Status) {
-	defer func() {
-		Position_Invariants(position, "list_find.position")
-		Status_Invariants(found, "list_find.found")
-	}()
-	List_Invariants(*l, "list_find.list")
+func list_find(l List_Handle, key Key) (result Find_Result) {
+	defer func() { Find_Result_Invariants(result, "list_find.result") }()
+	List_Handle_Invariants(l, "list_find.list")
 	for index := 0; index < int(l.Capacity); index++ {
 		if l.Nodes[index].Used {
 			if l.Nodes[index].Key == key {
-				return Position(index), true
+				return Find_Result{Position: Position(index), Found: true}
 			}
 		}
 	}
-	return POSITION_NONE, false
+	return Find_Result{Position: POSITION_NONE}
+}
+
+// Find_Result holds one lookup position and presence result.
+type Find_Result struct {
+	// Position identifies matching node or absence.
+	Position Position
+	// Found reports whether node exists.
+	Found Status
+}
+
+// Find_Result_Invariants composes lookup results.
+func Find_Result_Invariants(result Find_Result, namespace aver.Namespace) {
+	Position_Invariants(result.Position, namespace)
+	Status_Invariants(result.Found, namespace)
 }
 
 // Simple is a fixed-capacity LRU cache. It is single-threaded like every cache here: the upstream
 // split a lock-free base (simplelru.LRU) from a thread-safe wrapper (lru.Cache), but a
 // deterministic package holds no lock, so the two collapse into this one type and the caller
 // serializes access through the io loop. Its Capacity is pre-allocated and immutable.
-type Simple[K Key_Kind, V Value_Kind] struct {
+type Simple struct {
 	// Capacity is the fixed maximum, set once at construction and never changed; a full cache
 	// evicts the oldest before an insert.
 	Capacity Capacity
 	// Evict_List orders entries by recency, most-recently-used at the front, over its own pool.
-	Evict_List List[K, V]
+	Evict_List List
 	// On_Evict, when non-nil, runs for every entry the cache discards.
-	On_Evict Evict_Callback[K, V]
+	On_Evict Evict_Callback
 }
 
 // Simple_Invariants composes capacity, list, and key index.
-func Simple_Invariants[K Key_Kind, V Value_Kind](
-	cache *Simple[K, V], namespace aver.Namespace,
-) {
+func Simple_Invariants(cache Simple, namespace aver.Namespace) {
 	Capacity_Invariants(cache.Capacity, namespace)
 	List_Invariants(cache.Evict_List, namespace)
 	aver.Always(
@@ -552,30 +634,41 @@ func Simple_Invariants[K Key_Kind, V Value_Kind](
 	)
 }
 
+// Simple_Handle borrows mutable Simple state.
+type Simple_Handle *Simple
+
+// Simple_Handle_Invariants composes borrowed Simple state.
+func Simple_Handle_Invariants(cache Simple_Handle, namespace aver.Namespace) {
+	if cache == nil {
+		return
+	}
+	Simple_Invariants(*cache, namespace)
+}
+
 // New_Simple builds a Simple of the given capacity; on_evict (may be nil) runs for each discarded
 // entry. Capacity must be positive. Caller owns c and nodes, so initialization allocates nothing.
-func New_Simple[K Key_Kind, V Value_Kind](
-	c *Simple[K, V], nodes *Nodes[K, V], capacity_count Capacity,
-	on_evict Evict_Callback[K, V],
+func New_Simple(
+	c Simple_Handle, nodes Nodes, capacity_count Capacity, on_evict Evict_Callback,
 ) {
-	Simple_Invariants(c, "new_simple.cache")
+	Simple_Handle_Invariants(c, "new_simple.cache")
 	Nodes_Invariants(nodes, "new_simple.nodes")
 	Capacity_Invariants(capacity_count, "new_simple.capacity_count")
 	aver.Always(capacity_count > 0, "A Simple cache has positive capacity.")
-	*c = Simple[K, V]{Capacity: capacity_count, On_Evict: on_evict}
+	*c = Simple{Capacity: capacity_count, On_Evict: on_evict}
 	list_initialize(&c.Evict_List, nodes, Count(capacity_count))
 }
 
 // Simple_Add inserts or overwrites key, returning whether the insert forced an eviction. An
 // overwrite renews recency without evicting. A new key into a full cache evicts the oldest first,
 // so peak node use never exceeds Capacity and the pool holds.
-func Simple_Add[K Key_Kind, V Value_Kind](c *Simple[K, V], key K, value V) (evicted Status) {
+func Simple_Add(c Simple_Handle, key Key, value Value) (evicted Status) {
 	defer func() { Status_Invariants(evicted, "simple_add.evicted") }()
-	Simple_Invariants(c, "simple_add.cache")
+	Simple_Handle_Invariants(c, "simple_add.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple add cache is initialized.")
-	if ent, found := list_find(&c.Evict_List, key); found {
-		list_move_to_front(&c.Evict_List, ent)
-		c.Evict_List.Nodes[ent].Value = value
+	found := list_find(&c.Evict_List, key)
+	if found.Found {
+		list_move_to_front(&c.Evict_List, found.Position)
+		c.Evict_List.Nodes[found.Position].Value = value
 		return false
 	}
 	evicted = c.Evict_List.Count >= Entry_Count(c.Capacity)
@@ -588,90 +681,86 @@ func Simple_Add[K Key_Kind, V Value_Kind](c *Simple[K, V], key K, value V) (evic
 
 // Simple_Get returns key's value and renews its recency; a miss returns the zero value and
 // false.
-func Simple_Get[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (value V, ok Status) {
+func Simple_Get(c Simple_Handle, key Key) (value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_get.ok") }()
-	Simple_Invariants(c, "simple_get.cache")
+	Simple_Handle_Invariants(c, "simple_get.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple get cache is initialized.")
-	ent, found := list_find(&c.Evict_List, key)
-	if found {
-		list_move_to_front(&c.Evict_List, ent)
-		return c.Evict_List.Nodes[ent].Value, true
+	found := list_find(&c.Evict_List, key)
+	if found.Found {
+		list_move_to_front(&c.Evict_List, found.Position)
+		return c.Evict_List.Nodes[found.Position].Value, true
 	}
 	return value, false
 }
 
 // Simple_Contains reports membership without renewing recency.
-func Simple_Contains[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (ok Status) {
+func Simple_Contains(c Simple_Handle, key Key) (ok Status) {
 	defer func() { Status_Invariants(ok, "simple_contains.ok") }()
-	Simple_Invariants(c, "simple_contains.cache")
+	Simple_Handle_Invariants(c, "simple_contains.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple contains cache is initialized.")
-	_, found := list_find(&c.Evict_List, key)
-	ok = Status(found)
+	found := list_find(&c.Evict_List, key)
+	ok = found.Found
 	return ok
 }
 
 // Simple_Peek returns key's value without renewing recency; a miss returns the zero value and
 // false.
-func Simple_Peek[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (value V, ok Status) {
+func Simple_Peek(c Simple_Handle, key Key) (value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_peek.ok") }()
-	Simple_Invariants(c, "simple_peek.cache")
+	Simple_Handle_Invariants(c, "simple_peek.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple peek cache is initialized.")
-	ent, found := list_find(&c.Evict_List, key)
-	if found {
-		return c.Evict_List.Nodes[ent].Value, true
+	found := list_find(&c.Evict_List, key)
+	if found.Found {
+		return c.Evict_List.Nodes[found.Position].Value, true
 	}
 	return value, false
 }
 
 // Simple_Contains_Or_Add inserts key only when absent, reporting whether it was already present
 // and whether the insert evicted. A present key is left untouched, its recency unchanged.
-func Simple_Contains_Or_Add[K Key_Kind, V Value_Kind](
-	c *Simple[K, V], key K, value V,
-) (present Status, evicted Status) {
-	defer func() {
-		Status_Invariants(present, "simple_contains_or_add.present")
-		Status_Invariants(evicted, "simple_contains_or_add.evicted")
-	}()
-	Simple_Invariants(c, "simple_contains_or_add.cache")
+func Simple_Contains_Or_Add(
+	c Simple_Handle, key Key, value Value,
+) (result Conditional_Result) {
+	defer func() { Conditional_Result_Invariants(result, "simple_contains_or_add.result") }()
+	Simple_Handle_Invariants(c, "simple_contains_or_add.cache")
 	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Simple contains or add cache is initialized.",
 	)
 	if Simple_Contains(c, key) {
-		return true, false
+		return Conditional_Result{Present: true}
 	}
-	evicted = Simple_Add(c, key, value)
-	return false, evicted
+	result.Evicted = Evicted_Status(Simple_Add(c, key, value))
+	return result
 }
 
 // Simple_Peek_Or_Add inserts key only when absent, returning the existing value when present
 // and reporting whether it was present and whether the insert evicted. A present key's recency
 // is left unchanged.
-func Simple_Peek_Or_Add[K Key_Kind, V Value_Kind](
-	c *Simple[K, V], key K, value V,
-) (previous V, present Status, evicted Status) {
-	defer func() {
-		Status_Invariants(present, "simple_peek_or_add.present")
-		Status_Invariants(evicted, "simple_peek_or_add.evicted")
-	}()
-	Simple_Invariants(c, "simple_peek_or_add.cache")
+func Simple_Peek_Or_Add(
+	c Simple_Handle, key Key, value Value,
+) (result Peek_Or_Add_Result) {
+	defer func() { Peek_Or_Add_Result_Invariants(result, "simple_peek_or_add.result") }()
+	Simple_Handle_Invariants(c, "simple_peek_or_add.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple peek or add cache is initialized.")
-	previous, present = Simple_Peek(c, key)
-	if present {
-		return previous, true, false
+	previous, found := Simple_Peek(c, key)
+	result.Previous = previous
+	result.Present = Present_Status(found)
+	if found {
+		return result
 	}
-	evicted = Simple_Add(c, key, value)
-	return previous, false, evicted
+	result.Evicted = Evicted_Status(Simple_Add(c, key, value))
+	return result
 }
 
 // Simple_Remove deletes a present key, reporting whether it was there.
-func Simple_Remove[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (present Status) {
+func Simple_Remove(c Simple_Handle, key Key) (present Status) {
 	defer func() { Status_Invariants(present, "simple_remove.present") }()
-	Simple_Invariants(c, "simple_remove.cache")
+	Simple_Handle_Invariants(c, "simple_remove.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple remove cache is initialized.")
-	ent, found := list_find(&c.Evict_List, key)
-	if found {
-		simple_remove_element(c, ent)
+	found := list_find(&c.Evict_List, key)
+	if found.Found {
+		simple_remove_element(c, found.Position)
 		return true
 	}
 	return false
@@ -679,9 +768,9 @@ func Simple_Remove[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (present St
 
 // Simple_Remove_Oldest deletes and returns the least-recently-used entry; ok is false when the
 // cache is empty.
-func Simple_Remove_Oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) (key K, value V, ok Status) {
+func Simple_Remove_Oldest(c Simple_Handle) (key Key, value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_remove_oldest.ok") }()
-	Simple_Invariants(c, "simple_remove_oldest.cache")
+	Simple_Handle_Invariants(c, "simple_remove_oldest.cache")
 	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Simple remove oldest cache is initialized.",
@@ -698,9 +787,9 @@ func Simple_Remove_Oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) (key K, val
 
 // Simple_Get_Oldest returns the least-recently-used entry without removing it; ok is false when
 // the cache is empty.
-func Simple_Get_Oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) (key K, value V, ok Status) {
+func Simple_Get_Oldest(c Simple_Handle) (key Key, value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_get_oldest.ok") }()
-	Simple_Invariants(c, "simple_get_oldest.cache")
+	Simple_Handle_Invariants(c, "simple_get_oldest.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple get oldest cache is initialized.")
 	ent := list_back(&c.Evict_List)
 	if ent != POSITION_NONE {
@@ -712,9 +801,9 @@ func Simple_Get_Oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) (key K, value 
 // Simple_Keys writes the keys, oldest to newest, into buffer up to len(buffer) and returns how
 // many it wrote. The caller sizes buffer — pass one of length Simple_Cap to receive them all —
 // so the read allocates nothing and is bounded by the caller.
-func Simple_Keys[K Key_Kind, V Value_Kind](c *Simple[K, V], buffer Keys[K]) (count Count) {
+func Simple_Keys(c Simple_Handle, buffer Keys) (count Count) {
 	defer func() { Count_Invariants(count, "simple_keys.count") }()
-	Simple_Invariants(c, "simple_keys.cache")
+	Simple_Handle_Invariants(c, "simple_keys.cache")
 	Keys_Invariants(buffer, "simple_keys.buffer")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple keys cache is initialized.")
 	for ent := list_back(&c.Evict_List); ent != POSITION_NONE; {
@@ -730,9 +819,9 @@ func Simple_Keys[K Key_Kind, V Value_Kind](c *Simple[K, V], buffer Keys[K]) (cou
 
 // Simple_Values writes the values, oldest to newest, into buffer up to len(buffer) and returns
 // how many it wrote. Like Simple_Keys, the caller sizes and thus bounds the read.
-func Simple_Values[K Key_Kind, V Value_Kind](c *Simple[K, V], buffer Values[V]) (count Count) {
+func Simple_Values(c Simple_Handle, buffer Values) (count Count) {
 	defer func() { Count_Invariants(count, "simple_values.count") }()
-	Simple_Invariants(c, "simple_values.cache")
+	Simple_Handle_Invariants(c, "simple_values.cache")
 	Values_Invariants(buffer, "simple_values.buffer")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple values cache is initialized.")
 	for ent := list_back(&c.Evict_List); ent != POSITION_NONE; {
@@ -747,25 +836,25 @@ func Simple_Values[K Key_Kind, V Value_Kind](c *Simple[K, V], buffer Values[V]) 
 }
 
 // Simple_Count returns the number of entries held.
-func Simple_Count[K Key_Kind, V Value_Kind](c *Simple[K, V]) (count Count) {
+func Simple_Count(c Simple_Handle) (count Count) {
 	defer func() { Count_Invariants(count, "simple_count.count") }()
-	Simple_Invariants(c, "simple_count.cache")
+	Simple_Handle_Invariants(c, "simple_count.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple count cache is initialized.")
 	return Count(c.Evict_List.Count)
 }
 
 // Simple_Cap returns the fixed capacity.
-func Simple_Cap[K Key_Kind, V Value_Kind](c *Simple[K, V]) (capacity Capacity) {
+func Simple_Cap(c Simple_Handle) (capacity Capacity) {
 	defer func() { Capacity_Invariants(capacity, "simple_cap.capacity") }()
-	Simple_Invariants(c, "simple_cap.cache")
+	Simple_Handle_Invariants(c, "simple_cap.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple cap cache is initialized.")
 	return c.Capacity
 }
 
 // Simple_Purge empties the cache, calling On_Evict for every discarded entry, and returns every
 // node to the pool.
-func Simple_Purge[K Key_Kind, V Value_Kind](c *Simple[K, V]) {
-	Simple_Invariants(c, "simple_purge.cache")
+func Simple_Purge(c Simple_Handle) {
+	Simple_Handle_Invariants(c, "simple_purge.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple purge cache is initialized.")
 	if c.On_Evict != nil {
 		for position := c.Evict_List.Back; position != Back_Position(POSITION_NONE); {
@@ -778,8 +867,8 @@ func Simple_Purge[K Key_Kind, V Value_Kind](c *Simple[K, V]) {
 }
 
 // Drops the least-recently-used entry, if any.
-func simple_remove_oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) {
-	Simple_Invariants(c, "simple_remove_oldest_internal.cache")
+func simple_remove_oldest(c Simple_Handle) {
+	Simple_Handle_Invariants(c, "simple_remove_oldest_internal.cache")
 	ent := list_back(&c.Evict_List)
 	if ent != POSITION_NONE {
 		simple_remove_element(c, ent)
@@ -788,9 +877,9 @@ func simple_remove_oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) {
 
 // Unlinks ent, deletes its Items entry, and fires On_Evict. It captures the key and value before
 // list_remove frees (and zeroes) the node.
-func simple_remove_element[K Key_Kind, V Value_Kind](c *Simple[K, V], position Position) {
+func simple_remove_element(c Simple_Handle, position Position) {
 	Position_Invariants(position, "simple_remove_element.position")
-	Simple_Invariants(c, "simple_remove_element.cache")
+	Simple_Handle_Invariants(c, "simple_remove_element.cache")
 	key := c.Evict_List.Nodes[position].Key
 	value := c.Evict_List.Nodes[position].Value
 	list_remove(&c.Evict_List, position)
@@ -872,7 +961,7 @@ func Ghost_Ratio_Input_Invariants(ratio Ghost_Ratio_Input, namespace aver.Namesp
 // churns only the recent list and cannot flush the frequently used entries. The upstream held
 // its three sub-caches behind the LRUCache interface; here they are concrete *Simple, each with
 // its own caller-owned pool. Capacity is fixed at construction.
-type Two_Queue[K Key_Kind, V Value_Kind] struct {
+type Two_Queue struct {
 	// Capacity is the fixed total across the recent and frequent lists.
 	Capacity Capacity
 	// Recent_Size caps the recent list; once it is reached, ensure-space spills the oldest
@@ -883,34 +972,19 @@ type Two_Queue[K Key_Kind, V Value_Kind] struct {
 	// Ghost_Ratio is the fixed-point share of Capacity the ghost list tracks.
 	Ghost_Ratio Ghost_Ratio
 	// Live stores recent then frequent cache without duplicating one invariant subject type.
-	Live Live_Caches[K, V]
+	Live Live_Caches
 	// Ghost stores value-less recently evicted cache.
-	Ghost Ghost_Caches[K]
+	Ghost Ghost_Caches
 }
 
 // Two_Queue_Invariants composes fixed split and owned stores.
-func Two_Queue_Invariants[K Key_Kind, V Value_Kind](
-	cache *Two_Queue[K, V], namespace aver.Namespace,
-) {
+func Two_Queue_Invariants(cache Two_Queue, namespace aver.Namespace) {
 	Capacity_Invariants(cache.Capacity, namespace)
 	Count_Invariants(cache.Recent_Size, namespace)
 	Recent_Ratio_Invariants(cache.Recent_Ratio, namespace)
 	Ghost_Ratio_Invariants(cache.Ghost_Ratio, namespace)
 	Live_Caches_Invariants(cache.Live, namespace)
 	Ghost_Caches_Invariants(cache.Ghost, namespace)
-	aver.Always(
-		cache.Live[0].Capacity == cache.Capacity,
-		"Recent storage matches Two_Queue capacity.",
-	)
-	aver.Always(
-		cache.Live[1].Capacity == cache.Capacity,
-		"Frequent storage matches Two_Queue capacity.",
-	)
-	aver.Always(
-		(cache.Ghost[0].Capacity > CAPACITY_MINIMUM) ==
-			(cache.Capacity > CAPACITY_MINIMUM),
-		"Ghost storage shares Two_Queue initialization state.",
-	)
 	aver.Always(
 		cache.Recent_Size <= Count(cache.Capacity),
 		"Recent limit does not exceed Two_Queue capacity.",
@@ -927,53 +1001,240 @@ func Two_Queue_Invariants[K Key_Kind, V Value_Kind](
 	)
 }
 
+// Two_Queue_Handle borrows mutable Two_Queue state.
+type Two_Queue_Handle *Two_Queue
+
+// Two_Queue_Handle_Invariants composes borrowed Two_Queue state.
+func Two_Queue_Handle_Invariants(cache Two_Queue_Handle, namespace aver.Namespace) {
+	if cache == nil {
+		return
+	}
+	Two_Queue_Invariants(*cache, namespace)
+}
+
 // LIVE_CACHE_COUNT holds recent and frequent stores.
 const LIVE_CACHE_COUNT = 2
 
-// Live_Caches stores recent and frequent caches in fixed order.
-type Live_Caches[K Key_Kind, V Value_Kind] [LIVE_CACHE_COUNT]Simple[K, V]
+// Recent_List keeps recent cache assertions independent from frequent and ghost chains.
+type Recent_List List
+
+// Recent_List_Invariants states fields inline so shared List type occurs no second time.
+func Recent_List_Invariants(list Recent_List, namespace aver.Namespace) {
+	aver.Tree(list, namespace).
+		Enum_Int(len(list.Nodes), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Range_Int(int(list.Capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
+		Range_Int(int(list.Free), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Front), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Back), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Count), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Ensure()
+	aver.Always(
+		(list.Capacity == 0) == (list.Nodes == nil),
+		"Recent list capacity and node ownership share initialization state.",
+	)
+	aver.Always(
+		list.Count <= Entry_Count(list.Capacity),
+		"Recent list count does not exceed initialized storage.",
+	)
+}
+
+// Recent_Cache keeps recent assertions distinct inside aggregate cache chain.
+type Recent_Cache Simple
+
+// Recent_Cache_Invariants composes recent list and inlines cache capacity.
+func Recent_Cache_Invariants(cache Recent_Cache, namespace aver.Namespace) {
+	Recent_List_Invariants(Recent_List(cache.Evict_List), namespace)
+	aver.Tree(cache, namespace).
+		Range_Int(int(cache.Capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
+		Ensure()
+	aver.Always(
+		cache.Capacity == Capacity(cache.Evict_List.Capacity),
+		"Recent cache capacity matches list storage.",
+	)
+}
+
+// Frequent_List keeps frequent cache assertions independent from other cache chains.
+type Frequent_List List
+
+// Frequent_List_Invariants states frequent list fields inline.
+func Frequent_List_Invariants(list Frequent_List, namespace aver.Namespace) {
+	aver.Tree(list, namespace).
+		Enum_Int(len(list.Nodes), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Range_Int(int(list.Capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
+		Range_Int(int(list.Free), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Front), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Back), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Count), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Ensure()
+	aver.Always(
+		(list.Capacity == 0) == (list.Nodes == nil),
+		"Frequent list capacity and node ownership share initialization state.",
+	)
+	aver.Always(
+		list.Count <= Entry_Count(list.Capacity),
+		"Frequent list count does not exceed initialized storage.",
+	)
+}
+
+// Frequent_Cache keeps frequent assertions distinct inside aggregate cache chain.
+type Frequent_Cache Simple
+
+// Frequent_Cache_Invariants composes frequent list and inlines cache capacity.
+func Frequent_Cache_Invariants(cache Frequent_Cache, namespace aver.Namespace) {
+	Frequent_List_Invariants(Frequent_List(cache.Evict_List), namespace)
+	aver.Tree(cache, namespace).
+		Range_Int(int(cache.Capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
+		Ensure()
+	aver.Always(
+		cache.Capacity == Capacity(cache.Evict_List.Capacity),
+		"Frequent cache capacity matches list storage.",
+	)
+}
+
+// Live_Caches gives each list semantic type so one assertion chain repeats no subject.
+type Live_Caches struct {
+	// Recent owns entries seen one time.
+	Recent Recent_Cache
+	// Frequent owns entries seen more than one time.
+	Frequent Frequent_Cache
+}
 
 // Live_Caches_Invariants fixes live-cache pair and requires both stores.
-func Live_Caches_Invariants[K Key_Kind, V Value_Kind](
-	caches Live_Caches[K, V], _ aver.Namespace,
-) {
-	aver.Always(
-		caches[0].Capacity >= CAPACITY_MINIMUM,
-		"Recent storage has valid zero state.",
-	)
-	aver.Always(
-		caches[1].Capacity >= CAPACITY_MINIMUM,
-		"Frequent storage has valid zero state.",
-	)
+func Live_Caches_Invariants(caches Live_Caches, namespace aver.Namespace) {
+	Recent_Cache_Invariants(caches.Recent, namespace)
+	Frequent_Cache_Invariants(caches.Frequent, namespace)
 }
 
 // GHOST_CACHE_COUNT holds one ghost store.
 const GHOST_CACHE_COUNT = 1
 
-// Ghost_Caches stores one value-less eviction cache.
-type Ghost_Caches[K Key_Kind] [GHOST_CACHE_COUNT]Simple[K, struct{}]
+// Ghost_List keeps ghost cache assertions independent from live cache chains.
+type Ghost_List List
 
-// Ghost_Caches_Invariants requires ghost storage.
-func Ghost_Caches_Invariants[K Key_Kind](caches Ghost_Caches[K], _ aver.Namespace) {
+// Ghost_List_Invariants states ghost list fields inline.
+func Ghost_List_Invariants(list Ghost_List, namespace aver.Namespace) {
+	aver.Tree(list, namespace).
+		Enum_Int(len(list.Nodes), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Range_Int(int(list.Capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
+		Range_Int(int(list.Free), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Front), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Back), POSITION_MINIMUM, POSITION_MAXIMUM).
+		Range_Int(int(list.Count), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Ensure()
 	aver.Always(
-		caches[0].Capacity >= CAPACITY_MINIMUM,
-		"Ghost storage has valid zero state.",
+		(list.Capacity == 0) == (list.Nodes == nil),
+		"Ghost list capacity and node ownership share initialization state.",
+	)
+	aver.Always(
+		list.Count <= Entry_Count(list.Capacity),
+		"Ghost list count does not exceed initialized storage.",
 	)
 }
 
+// Ghost_Cache keeps ghost assertions distinct inside aggregate cache chain.
+type Ghost_Cache Simple
+
+// Ghost_Cache_Invariants composes ghost list and inlines cache capacity.
+func Ghost_Cache_Invariants(cache Ghost_Cache, namespace aver.Namespace) {
+	Ghost_List_Invariants(Ghost_List(cache.Evict_List), namespace)
+	aver.Tree(cache, namespace).
+		Range_Int(int(cache.Capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
+		Ensure()
+	aver.Always(
+		cache.Capacity == Capacity(cache.Evict_List.Capacity),
+		"Ghost cache capacity matches list storage.",
+	)
+}
+
+// Ghost_Caches gives ghost storage one semantic cache type.
+type Ghost_Caches struct {
+	// Cache owns value-less recently evicted entries.
+	Cache Ghost_Cache
+}
+
+// Ghost_Caches_Invariants requires ghost storage.
+func Ghost_Caches_Invariants(caches Ghost_Caches, namespace aver.Namespace) {
+	Ghost_Cache_Invariants(caches.Cache, namespace)
+}
+
+// Recent_Nodes owns recent list entries without sharing assertion identity.
+type Recent_Nodes []Entry
+
+// Recent_Nodes_Invariants admits zero state and complete caller storage.
+func Recent_Nodes_Invariants(nodes Recent_Nodes, namespace aver.Namespace) {
+	aver.Tree(nodes, namespace).
+		Enum_Int(len(nodes), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Frequent_Nodes owns frequent list entries without sharing assertion identity.
+type Frequent_Nodes []Entry
+
+// Frequent_Nodes_Invariants admits zero state and complete caller storage.
+func Frequent_Nodes_Invariants(nodes Frequent_Nodes, namespace aver.Namespace) {
+	aver.Tree(nodes, namespace).
+		Enum_Int(len(nodes), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Live_Nodes separates recent and frequent node assertion identities.
+type Live_Nodes struct {
+	// Recent backs recent cache.
+	Recent Recent_Nodes
+	// Frequent backs frequent cache.
+	Frequent Frequent_Nodes
+}
+
+// Live_Nodes_Invariants admits empty storage before initialization or complete pair.
+func Live_Nodes_Invariants(nodes Live_Nodes, namespace aver.Namespace) {
+	Recent_Nodes_Invariants(nodes.Recent, namespace)
+	Frequent_Nodes_Invariants(nodes.Frequent, namespace)
+}
+
+// Ghost_Node_Storage owns ghost entries without sharing live assertion identity.
+type Ghost_Node_Storage []Entry
+
+// Ghost_Node_Storage_Invariants admits zero state and complete caller storage.
+func Ghost_Node_Storage_Invariants(nodes Ghost_Node_Storage, namespace aver.Namespace) {
+	aver.Tree(nodes, namespace).
+		Enum_Int(len(nodes), COUNT_MINIMUM, COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Ghost_Nodes stores one ghost node pool.
+type Ghost_Nodes struct {
+	// Cache backs ghost cache.
+	Cache Ghost_Node_Storage
+}
+
+// Ghost_Nodes_Invariants admits empty storage before initialization or complete set.
+func Ghost_Nodes_Invariants(nodes Ghost_Nodes, namespace aver.Namespace) {
+	Ghost_Node_Storage_Invariants(nodes.Cache, namespace)
+}
+
 // Two_Queue_Nodes owns fixed node storage for recent, frequent, and ghost lists.
-type Two_Queue_Nodes[K Key_Kind, V Value_Kind] struct {
+type Two_Queue_Nodes struct {
 	// Live stores recent then frequent nodes.
-	Live [LIVE_CACHE_COUNT]Nodes[K, V]
+	Live Live_Nodes
 	// Ghost stores value-less ghost nodes.
-	Ghost [GHOST_CACHE_COUNT]Nodes[K, struct{}]
+	Ghost Ghost_Nodes
 }
 
 // Two_Queue_Nodes_Invariants requires caller storage.
-func Two_Queue_Nodes_Invariants[K Key_Kind, V Value_Kind](
-	nodes *Two_Queue_Nodes[K, V], _ aver.Namespace,
-) {
-	aver.Always(nodes != nil, "Two_Queue has caller-owned node storage.")
+func Two_Queue_Nodes_Invariants(nodes Two_Queue_Nodes, namespace aver.Namespace) {
+	Live_Nodes_Invariants(nodes.Live, namespace)
+	Ghost_Nodes_Invariants(nodes.Ghost, namespace)
+}
+
+// Two_Queue_Nodes_Handle borrows caller-owned Two_Queue storage.
+type Two_Queue_Nodes_Handle *Two_Queue_Nodes
+
+// Two_Queue_Nodes_Handle_Invariants composes caller-owned Two_Queue storage.
+func Two_Queue_Nodes_Handle_Invariants(nodes Two_Queue_Nodes_Handle, namespace aver.Namespace) {
+	if nodes == nil {
+		return
+	}
+	Two_Queue_Nodes_Invariants(*nodes, namespace)
 }
 
 // Two_Queue_Input configures New_Two_Queue. It is not generic: neither the capacity nor the ratios
@@ -1000,11 +1261,9 @@ func Two_Queue_Input_Invariants(input Two_Queue_Input, namespace aver.Namespace)
 // must be positive and each ratio must lie in [0, 1]; the ghost
 // list must come out non-empty, so a capacity too small for the ghost ratio panics — all
 // programmer errors, asserted rather than returned.
-func New_Two_Queue[K Key_Kind, V Value_Kind](
-	c *Two_Queue[K, V], nodes *Two_Queue_Nodes[K, V], input Two_Queue_Input,
-) {
-	Two_Queue_Invariants(c, "new_two_queue.cache")
-	Two_Queue_Nodes_Invariants(nodes, "new_two_queue.nodes")
+func New_Two_Queue(c Two_Queue_Handle, nodes Two_Queue_Nodes_Handle, input Two_Queue_Input) {
+	Two_Queue_Handle_Invariants(c, "new_two_queue.cache")
+	Two_Queue_Nodes_Handle_Invariants(nodes, "new_two_queue.nodes")
 	Two_Queue_Input_Invariants(input, "new_two_queue.input")
 	recent_ratio := Recent_Ratio(input.Recent_Ratio)
 	if recent_ratio == 0 {
@@ -1028,110 +1287,137 @@ func New_Two_Queue[K Key_Kind, V Value_Kind](
 	recent_size := ratio_of(Count(input.Capacity), Ratio(recent_ratio))
 	evict_size := ratio_of(Count(input.Capacity), Ratio(ghost_ratio))
 	aver.Always(evict_size > 0, "A ghost ratio gives at least one ghost entry.")
-	*c = Two_Queue[K, V]{
+	*c = Two_Queue{
 		Capacity:     input.Capacity,
 		Recent_Size:  recent_size,
 		Recent_Ratio: recent_ratio,
 		Ghost_Ratio:  ghost_ratio,
 	}
-	New_Simple(&c.Live[0], &nodes.Live[0], input.Capacity, nil)
-	New_Simple(&c.Live[1], &nodes.Live[1], input.Capacity, nil)
-	New_Simple(&c.Ghost[0], &nodes.Ghost[0], Capacity(evict_size), nil)
+	c.Live.Recent.Capacity = input.Capacity
+	list_initialize(
+		&c.Live.Recent.Evict_List, Nodes(nodes.Live.Recent), Count(input.Capacity),
+	)
+	c.Live.Frequent.Capacity = input.Capacity
+	list_initialize(
+		&c.Live.Frequent.Evict_List, Nodes(nodes.Live.Frequent), Count(input.Capacity),
+	)
+	c.Ghost.Cache.Capacity = Capacity(evict_size)
+	list_initialize(&c.Ghost.Cache.Evict_List, Nodes(nodes.Ghost.Cache), evict_size)
 }
 
 // Two_Queue_Get returns key's value, promoting a recent hit to the frequent list; a miss returns
 // the zero value and false. A frequent hit renews recency in place.
-func Two_Queue_Get[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (value V, ok Status) {
+func Two_Queue_Get(c Two_Queue_Handle, key Key) (value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "two_queue_get.ok") }()
-	Two_Queue_Invariants(c, "two_queue_get.cache")
+	Two_Queue_Handle_Invariants(c, "two_queue_get.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue get cache is initialized.")
-	value, ok = Simple_Get(&c.Live[1], key)
-	if ok {
-		return value, ok
+	frequent := list_find(&c.Live.Frequent.Evict_List, key)
+	if frequent.Found {
+		list_move_to_front(&c.Live.Frequent.Evict_List, frequent.Position)
+		return c.Live.Frequent.Evict_List.Nodes[frequent.Position].Value, true
 	}
 	// A recent hit is the second access, so promote it into the frequent list.
-	value, ok = Simple_Peek(&c.Live[0], key)
-	if ok {
-		Simple_Remove(&c.Live[0], key)
-		Simple_Add(&c.Live[1], key, value)
-		return value, ok
+	recent := list_find(&c.Live.Recent.Evict_List, key)
+	if recent.Found {
+		value = c.Live.Recent.Evict_List.Nodes[recent.Position].Value
+		list_remove(&c.Live.Recent.Evict_List, recent.Position)
+		list_push_front(&c.Live.Frequent.Evict_List, key, value)
+		return value, true
 	}
 	return value, false
 }
 
 // Two_Queue_Add inserts or refreshes key. A frequent key is updated in place, a recent key is
 // promoted to frequent, a ghost key returns as frequent, and a brand-new key lands in recent.
-func Two_Queue_Add[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K, value V) {
-	Two_Queue_Invariants(c, "two_queue_add.cache")
+func Two_Queue_Add(c Two_Queue_Handle, key Key, value Value) {
+	Two_Queue_Handle_Invariants(c, "two_queue_add.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue add cache is initialized.")
-	if Simple_Contains(&c.Live[1], key) {
-		Simple_Add(&c.Live[1], key, value)
+	frequent := list_find(&c.Live.Frequent.Evict_List, key)
+	if frequent.Found {
+		list_move_to_front(&c.Live.Frequent.Evict_List, frequent.Position)
+		c.Live.Frequent.Evict_List.Nodes[frequent.Position].Value = value
 		return
 	}
-	if Simple_Contains(&c.Live[0], key) {
-		Simple_Remove(&c.Live[0], key)
-		Simple_Add(&c.Live[1], key, value)
+	recent := list_find(&c.Live.Recent.Evict_List, key)
+	if recent.Found {
+		list_remove(&c.Live.Recent.Evict_List, recent.Position)
+		list_push_front(&c.Live.Frequent.Evict_List, key, value)
 		return
 	}
 	// A ghost hit means the key was frequent-worthy before being evicted, so it returns as
 	// frequent; ensure space treating this as a ghost-driven add.
-	if Simple_Contains(&c.Ghost[0], key) {
+	ghost := list_find(&c.Ghost.Cache.Evict_List, key)
+	if ghost.Found {
 		two_queue_ensure_space(c, true)
-		Simple_Remove(&c.Ghost[0], key)
-		Simple_Add(&c.Live[1], key, value)
+		list_remove(&c.Ghost.Cache.Evict_List, ghost.Position)
+		list_push_front(&c.Live.Frequent.Evict_List, key, value)
 		return
 	}
 	two_queue_ensure_space(c, false)
-	Simple_Add(&c.Live[0], key, value)
+	list_push_front(&c.Live.Recent.Evict_List, key, value)
 }
 
 // Two_Queue_Contains reports membership across the frequent and recent lists (not the ghost list)
 // without promoting the key.
-func Two_Queue_Contains[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (ok Status) {
+func Two_Queue_Contains(c Two_Queue_Handle, key Key) (ok Status) {
 	defer func() { Status_Invariants(ok, "two_queue_contains.ok") }()
-	Two_Queue_Invariants(c, "two_queue_contains.cache")
+	Two_Queue_Handle_Invariants(c, "two_queue_contains.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue contains cache is initialized.")
-	if Simple_Contains(&c.Live[1], key) {
+	if list_find(&c.Live.Frequent.Evict_List, key).Found {
 		return true
 	}
-	return Simple_Contains(&c.Live[0], key)
+	return list_find(&c.Live.Recent.Evict_List, key).Found
 }
 
 // Two_Queue_Peek returns key's value across the frequent and recent lists without promoting it; a
 // miss returns the zero value and false.
-func Two_Queue_Peek[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (value V, ok Status) {
+func Two_Queue_Peek(c Two_Queue_Handle, key Key) (value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "two_queue_peek.ok") }()
-	Two_Queue_Invariants(c, "two_queue_peek.cache")
+	Two_Queue_Handle_Invariants(c, "two_queue_peek.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue peek cache is initialized.")
-	value, ok = Simple_Peek(&c.Live[1], key)
-	if ok {
-		return value, ok
+	frequent := list_find(&c.Live.Frequent.Evict_List, key)
+	if frequent.Found {
+		return c.Live.Frequent.Evict_List.Nodes[frequent.Position].Value, true
 	}
-	return Simple_Peek(&c.Live[0], key)
+	recent := list_find(&c.Live.Recent.Evict_List, key)
+	if recent.Found {
+		return c.Live.Recent.Evict_List.Nodes[recent.Position].Value, true
+	}
+	return value, false
 }
 
 // Two_Queue_Remove deletes key from whichever of the frequent, recent, or ghost lists holds it.
-func Two_Queue_Remove[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) {
-	Two_Queue_Invariants(c, "two_queue_remove.cache")
+func Two_Queue_Remove(c Two_Queue_Handle, key Key) {
+	Two_Queue_Handle_Invariants(c, "two_queue_remove.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue remove cache is initialized.")
-	if Simple_Remove(&c.Live[1], key) {
+	frequent := list_find(&c.Live.Frequent.Evict_List, key)
+	if frequent.Found {
+		list_remove(&c.Live.Frequent.Evict_List, frequent.Position)
 		return
 	}
-	if Simple_Remove(&c.Live[0], key) {
+	recent := list_find(&c.Live.Recent.Evict_List, key)
+	if recent.Found {
+		list_remove(&c.Live.Recent.Evict_List, recent.Position)
 		return
 	}
-	Simple_Remove(&c.Ghost[0], key)
+	ghost := list_find(&c.Ghost.Cache.Evict_List, key)
+	if ghost.Found {
+		list_remove(&c.Ghost.Cache.Evict_List, ghost.Position)
+	}
 }
 
 // Two_Queue_Keys writes the keys into buffer — frequent entries first, then recent, each oldest
 // to newest — up to len(buffer), and returns how many it wrote. Zero-alloc and caller-bounded.
-func Two_Queue_Keys[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], buffer Keys[K]) (count Count) {
+func Two_Queue_Keys(c Two_Queue_Handle, buffer Keys) (count Count) {
 	defer func() { Count_Invariants(count, "two_queue_keys.count") }()
-	Two_Queue_Invariants(c, "two_queue_keys.cache")
+	Two_Queue_Handle_Invariants(c, "two_queue_keys.cache")
 	Keys_Invariants(buffer, "two_queue_keys.buffer")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue keys cache is initialized.")
-	for live_index := LIVE_CACHE_COUNT - 1; live_index >= 0; live_index-- {
-		list := &c.Live[live_index].Evict_List
+	lists := [LIVE_CACHE_COUNT]List_Handle{
+		&c.Live.Frequent.Evict_List,
+		&c.Live.Recent.Evict_List,
+	}
+	for _, list := range lists {
 		for position := list_back(list); position != POSITION_NONE; {
 			if count >= Count(buffer.Count) {
 				return count
@@ -1146,15 +1432,16 @@ func Two_Queue_Keys[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], buffer Keys[K]
 
 // Two_Queue_Values writes the values into buffer — frequent first, then recent, each oldest to
 // newest — up to len(buffer), and returns how many it wrote.
-func Two_Queue_Values[K Key_Kind, V Value_Kind](
-	c *Two_Queue[K, V], buffer Values[V],
-) (count Count) {
+func Two_Queue_Values(c Two_Queue_Handle, buffer Values) (count Count) {
 	defer func() { Count_Invariants(count, "two_queue_values.count") }()
-	Two_Queue_Invariants(c, "two_queue_values.cache")
+	Two_Queue_Handle_Invariants(c, "two_queue_values.cache")
 	Values_Invariants(buffer, "two_queue_values.buffer")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue values cache is initialized.")
-	for live_index := LIVE_CACHE_COUNT - 1; live_index >= 0; live_index-- {
-		list := &c.Live[live_index].Evict_List
+	lists := [LIVE_CACHE_COUNT]List_Handle{
+		&c.Live.Frequent.Evict_List,
+		&c.Live.Recent.Evict_List,
+	}
+	for _, list := range lists {
 		for position := list_back(list); position != POSITION_NONE; {
 			if count >= Count(buffer.Count) {
 				return count
@@ -1168,39 +1455,39 @@ func Two_Queue_Values[K Key_Kind, V Value_Kind](
 }
 
 // Two_Queue_Count returns the number of live entries (frequent plus recent, excluding ghosts).
-func Two_Queue_Count[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) (count Count) {
+func Two_Queue_Count(c Two_Queue_Handle) (count Count) {
 	defer func() { Count_Invariants(count, "two_queue_count.count") }()
-	Two_Queue_Invariants(c, "two_queue_count.cache")
+	Two_Queue_Handle_Invariants(c, "two_queue_count.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue count cache is initialized.")
-	return Simple_Count(&c.Live[1]) + Simple_Count(&c.Live[0])
+	return Count(c.Live.Frequent.Evict_List.Count + c.Live.Recent.Evict_List.Count)
 }
 
 // Two_Queue_Cap returns the fixed total capacity.
-func Two_Queue_Cap[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) (capacity Capacity) {
+func Two_Queue_Cap(c Two_Queue_Handle) (capacity Capacity) {
 	defer func() { Capacity_Invariants(capacity, "two_queue_cap.capacity") }()
-	Two_Queue_Invariants(c, "two_queue_cap.cache")
+	Two_Queue_Handle_Invariants(c, "two_queue_cap.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue cap cache is initialized.")
 	return c.Capacity
 }
 
 // Two_Queue_Purge empties the frequent, recent, and ghost lists.
-func Two_Queue_Purge[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) {
-	Two_Queue_Invariants(c, "two_queue_purge.cache")
+func Two_Queue_Purge(c Two_Queue_Handle) {
+	Two_Queue_Handle_Invariants(c, "two_queue_purge.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue purge cache is initialized.")
-	Simple_Purge(&c.Live[0])
-	Simple_Purge(&c.Live[1])
-	Simple_Purge(&c.Ghost[0])
+	list_reset(&c.Live.Recent.Evict_List)
+	list_reset(&c.Live.Frequent.Evict_List)
+	list_reset(&c.Ghost.Cache.Evict_List)
 }
 
 // Makes room for one insert. When the recent and frequent lists together fill the cache, it
 // evicts the oldest recent entry to the ghost list if recent is at or over its target, otherwise
 // it drops the oldest frequent entry. A ghost-driven add (recent_evict) defers to frequent at the
 // exact target, so a promotion from the ghost list does not immediately re-evict recent.
-func two_queue_ensure_space[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], recent_evict Status) {
+func two_queue_ensure_space(c Two_Queue_Handle, recent_evict Status) {
 	Status_Invariants(recent_evict, "two_queue_ensure_space.recent_evict")
-	Two_Queue_Invariants(c, "two_queue_ensure_space.cache")
-	recent_count := Simple_Count(&c.Live[0])
-	frequent_count := Simple_Count(&c.Live[1])
+	Two_Queue_Handle_Invariants(c, "two_queue_ensure_space.cache")
+	recent_count := Count(c.Live.Recent.Evict_List.Count)
+	frequent_count := Count(c.Live.Frequent.Evict_List.Count)
 	if recent_count+frequent_count < Count(c.Capacity) {
 		return
 	}
@@ -1215,12 +1502,21 @@ func two_queue_ensure_space[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], recent
 			}
 		}
 		if evict_from_recent {
-			key, _, _ := Simple_Remove_Oldest(&c.Live[0])
-			Simple_Add(&c.Ghost[0], key, struct{}{})
+			recent_back := list_back(&c.Live.Recent.Evict_List)
+			key := c.Live.Recent.Evict_List.Nodes[recent_back].Key
+			list_remove(&c.Live.Recent.Evict_List, recent_back)
+			if c.Ghost.Cache.Evict_List.Count >= Entry_Count(c.Ghost.Cache.Capacity) {
+				ghost_back := list_back(&c.Ghost.Cache.Evict_List)
+				list_remove(&c.Ghost.Cache.Evict_List, ghost_back)
+			}
+			list_push_front(&c.Ghost.Cache.Evict_List, key, struct{}{})
 			return
 		}
 	}
-	Simple_Remove_Oldest(&c.Live[1])
+	frequent_back := list_back(&c.Live.Frequent.Evict_List)
+	if frequent_back != POSITION_NONE {
+		list_remove(&c.Live.Frequent.Evict_List, frequent_back)
+	}
 }
 
 // Scales size by a fixed-point ratio, truncating toward zero — the deterministic replacement for
@@ -1281,7 +1577,7 @@ const CLEANUP_INTERVAL_MAXIMUM = Cleanup_Interval(TTL_MAXIMUM / BUCKET_COUNT)
 // Expirable_Bucket groups entries whose TTLs land in the same slice of the expiry ring, so the
 // cleanup sweep reaps a whole cohort at once instead of scanning every entry. The entries chain
 // intrusively through their nodes (Bucket_Next/Bucket_Previous), so the bucket allocates nothing.
-type Expirable_Bucket[K Key_Kind, V Value_Kind] struct {
+type Expirable_Bucket struct {
 	// Head is first entry in bucket chain, or POSITION_NONE when empty.
 	Head Position
 	// Newest_Entry is the latest Expires_At among the chain, so cleanup can tell when the whole
@@ -1290,9 +1586,7 @@ type Expirable_Bucket[K Key_Kind, V Value_Kind] struct {
 }
 
 // Expirable_Bucket_Invariants composes chain head and expiry bound.
-func Expirable_Bucket_Invariants[K Key_Kind, V Value_Kind](
-	bucket Expirable_Bucket[K, V], namespace aver.Namespace,
-) {
+func Expirable_Bucket_Invariants(bucket Expirable_Bucket, namespace aver.Namespace) {
 	Position_Invariants(bucket.Head, namespace)
 	time.Monotonic_Moment_Invariants(bucket.Newest_Entry, namespace)
 }
@@ -1314,10 +1608,6 @@ type Cache_Timeline nbio.Timeline
 // Cache_Timeline_Invariants admits zero storage and complete timeline vtable.
 func Cache_Timeline_Invariants(timeline Cache_Timeline, _ aver.Namespace) {
 	empty := timeline.Submit == nil
-	aver.Always(
-		(timeline.Timeout == nil) == empty,
-		"A cache timeline timeout matches initialization state.",
-	)
 	aver.Always(
 		(timeline.Open_Event == nil) == empty,
 		"A cache timeline event opener matches initialization state.",
@@ -1353,7 +1643,7 @@ func Cleanup_Invariants(cleanup Cleanup, namespace aver.Namespace) {
 // removes ticker goroutine. Timeout marks cleanup due. Next access reaps all ripe buckets before
 // returning observable state, then re-arms timeout. Reads reject stale entry even before sweep.
 // Caller keeps cache address stable because Timeline tracks embedded Completion by address.
-type Expirable[K Key_Kind, V Value_Kind] struct {
+type Expirable struct {
 	// Capacity is the fixed maximum; adding past it evicts the least-recently-used entry.
 	Capacity Capacity
 	// TTL is how long past insertion an entry stays live.
@@ -1366,19 +1656,17 @@ type Expirable[K Key_Kind, V Value_Kind] struct {
 	// Cleanup is caller-owned timeout storage and due state.
 	Cleanup Cleanup
 	// Evict_List orders entries by recency, most-recently-used at the front, over its own pool.
-	Evict_List List[K, V]
+	Evict_List List
 	// On_Evict, when non-nil, runs for every entry the cache discards.
-	On_Evict Evict_Callback[K, V]
+	On_Evict Evict_Callback
 	// Buckets is the expiry ring; an entry is filed by insertion time so cleanup reaps cohorts.
-	Buckets Buckets[K, V]
+	Buckets Buckets
 	// Next_Cleanup_Bucket is the ring position the cleanup sweep will consider next.
 	Next_Cleanup_Bucket Bucket_Index
 }
 
 // Expirable_Invariants composes cache storage and injected timeline.
-func Expirable_Invariants[K Key_Kind, V Value_Kind](
-	cache *Expirable[K, V], namespace aver.Namespace,
-) {
+func Expirable_Invariants(cache Expirable, namespace aver.Namespace) {
 	Capacity_Invariants(cache.Capacity, namespace)
 	TTL_Invariants(cache.TTL, namespace)
 	Cache_Clock_Invariants(cache.Clock, namespace)
@@ -1402,14 +1690,25 @@ func Expirable_Invariants[K Key_Kind, V Value_Kind](
 		"Clock shares Expirable initialization state.",
 	)
 	aver.Always(
-		(cache.Timeline.Timeout != nil) ==
+		(cache.Timeline.Submit != nil) ==
 			(cache.Capacity > CAPACITY_MINIMUM),
 		"Timeline shares Expirable initialization state.",
 	)
 }
 
+// Expirable_Handle borrows mutable Expirable state.
+type Expirable_Handle *Expirable
+
+// Expirable_Handle_Invariants composes borrowed Expirable state.
+func Expirable_Handle_Invariants(cache Expirable_Handle, namespace aver.Namespace) {
+	if cache == nil {
+		return
+	}
+	Expirable_Invariants(*cache, namespace)
+}
+
 // Expirable_Input configures New_Expirable.
-type Expirable_Input[K Key_Kind, V Value_Kind] struct {
+type Expirable_Input struct {
 	// Capacity is the fixed maximum; adding past it evicts the least-recently-used entry.
 	Capacity Capacity
 	// TTL is how long past insertion an entry stays live.
@@ -1418,27 +1717,26 @@ type Expirable_Input[K Key_Kind, V Value_Kind] struct {
 	Clock time.Clock
 	// Timeline is the injected timer the cleanup sweep rides; required.
 	Timeline nbio.Timeline
+	// Buckets is caller-owned expiry-ring storage.
+	Buckets Buckets
 	// On_Evict, when non-nil, runs for every entry the cache discards.
-	On_Evict Evict_Callback[K, V]
+	On_Evict Evict_Callback
 }
 
 // Expirable_Input_Invariants composes cache bounds and injected timeline.
-func Expirable_Input_Invariants[K Key_Kind, V Value_Kind](
-	input Expirable_Input[K, V], namespace aver.Namespace,
-) {
+func Expirable_Input_Invariants(input Expirable_Input, namespace aver.Namespace) {
 	Capacity_Invariants(input.Capacity, namespace)
 	TTL_Invariants(input.TTL, namespace)
 	time.Clock_Invariants(input.Clock, namespace)
 	nbio.Timeline_Invariants(input.Timeline, namespace)
+	Buckets_Invariants(input.Buckets, namespace)
 }
 
 // New_Expirable initializes caller cache and node storage, then arms cleanup timer. Positive
 // Capacity and TTL plus complete Clock and Timeline are programmer requirements. The upstream
 // size<=0 "unlimited" and ttl<=0 "no expiry" modes are gone. No-expiry cache is Simple.
-func New_Expirable[K Key_Kind, V Value_Kind](
-	c *Expirable[K, V], nodes *Nodes[K, V], input Expirable_Input[K, V],
-) {
-	Expirable_Invariants(c, "new_expirable.cache")
+func New_Expirable(c Expirable_Handle, nodes Nodes, input Expirable_Input) {
+	Expirable_Handle_Invariants(c, "new_expirable.cache")
 	Nodes_Invariants(nodes, "new_expirable.nodes")
 	Expirable_Input_Invariants(input, "new_expirable.input")
 	aver.Always(
@@ -1451,13 +1749,15 @@ func New_Expirable[K Key_Kind, V Value_Kind](
 		"An Expirable cache has positive TTL.",
 	)
 	aver.Always(input.Clock.Now_Monotonic != nil, "An Expirable cache has a clock.")
-	aver.Always(input.Timeline.Timeout != nil, "An Expirable cache has a timeline.")
-	*c = Expirable[K, V]{
+	aver.Always(input.Timeline.Submit != nil, "An Expirable cache has a timeline.")
+	aver.Always(len(input.Buckets) == BUCKET_COUNT, "An Expirable cache has one bucket ring.")
+	*c = Expirable{
 		Capacity: input.Capacity,
 		TTL:      input.TTL,
 		Clock:    Cache_Clock(input.Clock),
 		Timeline: Cache_Timeline(input.Timeline),
 		On_Evict: input.On_Evict,
+		Buckets:  input.Buckets,
 	}
 	list_initialize(&c.Evict_List, nodes, Count(input.Capacity))
 	for index := range c.Buckets {
@@ -1469,20 +1769,21 @@ func New_Expirable[K Key_Kind, V Value_Kind](
 // Expirable_Add inserts or overwrites key, stamping its expiry TTL from now, and returns whether
 // the insert forced a size eviction. An overwrite renews both recency and expiry. A new key into
 // a full cache evicts the oldest first, so peak node use never exceeds Capacity.
-func Expirable_Add[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K, value V) (evicted Status) {
+func Expirable_Add(c Expirable_Handle, key Key, value Value) (evicted Status) {
 	defer func() { Status_Invariants(evicted, "expirable_add.evicted") }()
-	Expirable_Invariants(c, "expirable_add.cache")
+	Expirable_Handle_Invariants(c, "expirable_add.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable add cache is initialized.")
 	expirable_reap_due(c)
 	now := time.Clock_Now_Monotonic(time.Clock(c.Clock))
 	expires_at := now + time.Monotonic_Moment(c.TTL)
-	if ent, found := list_find(&c.Evict_List, key); found {
-		list_move_to_front(&c.Evict_List, ent)
+	found := list_find(&c.Evict_List, key)
+	if found.Found {
+		list_move_to_front(&c.Evict_List, found.Position)
 		// The renewed expiry belongs in a different bucket, so refile it.
-		expirable_remove_from_bucket(c, ent)
-		c.Evict_List.Nodes[ent].Value = value
-		c.Evict_List.Nodes[ent].Expires_At = expires_at
-		expirable_add_to_bucket(c, ent)
+		expirable_remove_from_bucket(c, found.Position)
+		c.Evict_List.Nodes[found.Position].Value = value
+		c.Evict_List.Nodes[found.Position].Expires_At = expires_at
+		expirable_add_to_bucket(c, found.Position)
 		return false
 	}
 	evicted = c.Evict_List.Count >= Entry_Count(c.Capacity)
@@ -1496,62 +1797,64 @@ func Expirable_Add[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K, value V)
 
 // Expirable_Get returns key's value and renews its recency; an entry past its TTL is rejected
 // as a miss, and a genuine miss returns the zero value and false.
-func Expirable_Get[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (value V, ok Status) {
+func Expirable_Get(c Expirable_Handle, key Key) (value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_get.ok") }()
-	Expirable_Invariants(c, "expirable_get.cache")
+	Expirable_Handle_Invariants(c, "expirable_get.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable get cache is initialized.")
 	expirable_reap_due(c)
-	ent, found := list_find(&c.Evict_List, key)
-	if !found {
+	found := list_find(&c.Evict_List, key)
+	if !found.Found {
 		return value, false
 	}
 	// Cleanup runs on the harness's cadence, so a read must reject an already-expired entry
 	// itself rather than hand back a value whose TTL has passed.
-	if time.Clock_Now_Monotonic(time.Clock(c.Clock)) > c.Evict_List.Nodes[ent].Expires_At {
+	if time.Clock_Now_Monotonic(time.Clock(c.Clock)) >
+		c.Evict_List.Nodes[found.Position].Expires_At {
 		return value, false
 	}
-	list_move_to_front(&c.Evict_List, ent)
-	return c.Evict_List.Nodes[ent].Value, true
+	list_move_to_front(&c.Evict_List, found.Position)
+	return c.Evict_List.Nodes[found.Position].Value, true
 }
 
 // Expirable_Contains reports membership without renewing recency and without checking expiry, so
 // it may report an expired-but-not-yet-reaped entry (upstream parity).
-func Expirable_Contains[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (ok Status) {
+func Expirable_Contains(c Expirable_Handle, key Key) (ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_contains.ok") }()
-	Expirable_Invariants(c, "expirable_contains.cache")
+	Expirable_Handle_Invariants(c, "expirable_contains.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable contains cache is initialized.")
 	expirable_reap_due(c)
-	_, found := list_find(&c.Evict_List, key)
-	ok = Status(found)
+	found := list_find(&c.Evict_List, key)
+	ok = found.Found
 	return ok
 }
 
 // Expirable_Peek returns key's value without renewing recency; an entry past its TTL is rejected
 // as a miss, and a genuine miss returns the zero value and false.
-func Expirable_Peek[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (value V, ok Status) {
+func Expirable_Peek(c Expirable_Handle, key Key) (value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_peek.ok") }()
-	Expirable_Invariants(c, "expirable_peek.cache")
+	Expirable_Handle_Invariants(c, "expirable_peek.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable peek cache is initialized.")
 	expirable_reap_due(c)
-	ent, found := list_find(&c.Evict_List, key)
-	if !found {
+	found := list_find(&c.Evict_List, key)
+	if !found.Found {
 		return value, false
 	}
-	if time.Clock_Now_Monotonic(time.Clock(c.Clock)) > c.Evict_List.Nodes[ent].Expires_At {
+	if time.Clock_Now_Monotonic(time.Clock(c.Clock)) >
+		c.Evict_List.Nodes[found.Position].Expires_At {
 		return value, false
 	}
-	return c.Evict_List.Nodes[ent].Value, true
+	return c.Evict_List.Nodes[found.Position].Value, true
 }
 
 // Expirable_Remove deletes a present key, reporting whether it was there.
-func Expirable_Remove[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (present Status) {
+func Expirable_Remove(c Expirable_Handle, key Key) (present Status) {
 	defer func() { Status_Invariants(present, "expirable_remove.present") }()
-	Expirable_Invariants(c, "expirable_remove.cache")
+	Expirable_Handle_Invariants(c, "expirable_remove.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable remove cache is initialized.")
 	expirable_reap_due(c)
-	ent, found := list_find(&c.Evict_List, key)
-	if found {
-		expirable_remove_element(c, ent)
+	found := list_find(&c.Evict_List, key)
+	if found.Found {
+		expirable_remove_element(c, found.Position)
 		return true
 	}
 	return false
@@ -1559,11 +1862,9 @@ func Expirable_Remove[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (pres
 
 // Expirable_Remove_Oldest deletes and returns the least-recently-used entry; ok is false when
 // the cache is empty.
-func Expirable_Remove_Oldest[K Key_Kind, V Value_Kind](
-	c *Expirable[K, V],
-) (key K, value V, ok Status) {
+func Expirable_Remove_Oldest(c Expirable_Handle) (key Key, value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_remove_oldest.ok") }()
-	Expirable_Invariants(c, "expirable_remove_oldest.cache")
+	Expirable_Handle_Invariants(c, "expirable_remove_oldest.cache")
 	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Expirable remove oldest cache is initialized.",
@@ -1581,11 +1882,9 @@ func Expirable_Remove_Oldest[K Key_Kind, V Value_Kind](
 
 // Expirable_Get_Oldest returns the least-recently-used entry without removing it; ok is false
 // when the cache is empty.
-func Expirable_Get_Oldest[K Key_Kind, V Value_Kind](
-	c *Expirable[K, V],
-) (key K, value V, ok Status) {
+func Expirable_Get_Oldest(c Expirable_Handle) (key Key, value Value, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_get_oldest.ok") }()
-	Expirable_Invariants(c, "expirable_get_oldest.cache")
+	Expirable_Handle_Invariants(c, "expirable_get_oldest.cache")
 	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Expirable get oldest cache is initialized.",
@@ -1600,9 +1899,9 @@ func Expirable_Get_Oldest[K Key_Kind, V Value_Kind](
 
 // Expirable_Keys writes the unexpired keys, oldest to newest, into buffer up to len(buffer) and
 // returns how many it wrote. Expired-but-unreaped entries are skipped. Caller bounds output.
-func Expirable_Keys[K Key_Kind, V Value_Kind](c *Expirable[K, V], buffer Keys[K]) (count Count) {
+func Expirable_Keys(c Expirable_Handle, buffer Keys) (count Count) {
 	defer func() { Count_Invariants(count, "expirable_keys.count") }()
-	Expirable_Invariants(c, "expirable_keys.cache")
+	Expirable_Handle_Invariants(c, "expirable_keys.cache")
 	Keys_Invariants(buffer, "expirable_keys.buffer")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable keys cache is initialized.")
 	expirable_reap_due(c)
@@ -1624,11 +1923,9 @@ func Expirable_Keys[K Key_Kind, V Value_Kind](c *Expirable[K, V], buffer Keys[K]
 
 // Expirable_Values writes the unexpired values, oldest to newest, into buffer up to len(buffer)
 // and returns how many it wrote; expired-but-unreaped entries are skipped.
-func Expirable_Values[K Key_Kind, V Value_Kind](
-	c *Expirable[K, V], buffer Values[V],
-) (count Count) {
+func Expirable_Values(c Expirable_Handle, buffer Values) (count Count) {
 	defer func() { Count_Invariants(count, "expirable_values.count") }()
-	Expirable_Invariants(c, "expirable_values.cache")
+	Expirable_Handle_Invariants(c, "expirable_values.cache")
 	Values_Invariants(buffer, "expirable_values.buffer")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable values cache is initialized.")
 	expirable_reap_due(c)
@@ -1650,18 +1947,18 @@ func Expirable_Values[K Key_Kind, V Value_Kind](
 
 // Expirable_Count returns the number of entries held, including any expired but not yet reaped
 // (upstream parity).
-func Expirable_Count[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (count Count) {
+func Expirable_Count(c Expirable_Handle) (count Count) {
 	defer func() { Count_Invariants(count, "expirable_count.count") }()
-	Expirable_Invariants(c, "expirable_count.cache")
+	Expirable_Handle_Invariants(c, "expirable_count.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable count cache is initialized.")
 	expirable_reap_due(c)
 	return Count(c.Evict_List.Count)
 }
 
 // Expirable_Cap returns the fixed capacity.
-func Expirable_Cap[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (capacity Capacity) {
+func Expirable_Cap(c Expirable_Handle) (capacity Capacity) {
 	defer func() { Capacity_Invariants(capacity, "expirable_cap.capacity") }()
-	Expirable_Invariants(c, "expirable_cap.cache")
+	Expirable_Handle_Invariants(c, "expirable_cap.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable cap cache is initialized.")
 	expirable_reap_due(c)
 	return c.Capacity
@@ -1669,8 +1966,8 @@ func Expirable_Cap[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (capacity Capac
 
 // Expirable_Purge empties the cache and every expiry bucket, calling On_Evict for each entry, and
 // returns every node to the pool.
-func Expirable_Purge[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
-	Expirable_Invariants(c, "expirable_purge.cache")
+func Expirable_Purge(c Expirable_Handle) {
+	Expirable_Handle_Invariants(c, "expirable_purge.cache")
 	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable purge cache is initialized.")
 	expirable_reap_due(c)
 	if c.On_Evict != nil {
@@ -1690,8 +1987,8 @@ func Expirable_Purge[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 // Arms one cleanup timeout. Callback cannot capture generic cache without allocation, so it only
 // marks cleanup due. Next cache access does generic sweep and re-arms same completion. Cancelled
 // timeout carries error and leaves cleanup idle.
-func expirable_arm_cleanup[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
-	Expirable_Invariants(c, "expirable_arm_cleanup.cache")
+func expirable_arm_cleanup(c Expirable_Handle) {
+	Expirable_Handle_Invariants(c, "expirable_arm_cleanup.cache")
 	nbio.Timeline_Timeout(
 		nbio.Timeline(c.Timeline),
 		&c.Cleanup.Completion,
@@ -1701,7 +1998,7 @@ func expirable_arm_cleanup[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 }
 
 // Expirable cleanup callback recovers wrapper because Completion is its first field.
-func expirable_cleanup_callback(completion *nbio.Completion) {
+func expirable_cleanup_callback(completion nbio.Completion_Handle) {
 	cleanup := (*Cleanup)(unsafe.Pointer(completion))
 	if completion.Error != nil {
 		return
@@ -1710,8 +2007,8 @@ func expirable_cleanup_callback(completion *nbio.Completion) {
 }
 
 // Expirable reap due performs deferred generic cleanup before cache state becomes observable.
-func expirable_reap_due[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
-	Expirable_Invariants(c, "expirable_reap_due.cache")
+func expirable_reap_due(c Expirable_Handle) {
+	Expirable_Handle_Invariants(c, "expirable_reap_due.cache")
 	if !c.Cleanup.Due {
 		return
 	}
@@ -1729,13 +2026,11 @@ func expirable_reap_due[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 // Returns the delay between cleanup sweeps: one TTL spread across the ring, so a full lap takes
 // about one TTL — the upstream ticker's ttl/numBuckets. Clamped to at least one grain so the
 // repeating timeout always advances the clock and never spins within a single tick.
-func expirable_cleanup_interval[K Key_Kind, V Value_Kind](
-	c *Expirable[K, V],
-) (interval Cleanup_Interval) {
+func expirable_cleanup_interval(c Expirable_Handle) (interval Cleanup_Interval) {
 	defer func() {
 		Cleanup_Interval_Invariants(interval, "expirable_cleanup_interval.interval")
 	}()
-	Expirable_Invariants(c, "expirable_cleanup_interval.cache")
+	Expirable_Handle_Invariants(c, "expirable_cleanup_interval.cache")
 	interval = Cleanup_Interval(c.TTL / BUCKET_COUNT)
 	if interval < CLEANUP_INTERVAL_MINIMUM {
 		interval = CLEANUP_INTERVAL_MINIMUM
@@ -1746,8 +2041,8 @@ func expirable_cleanup_interval[K Key_Kind, V Value_Kind](
 // Reaps the next expiry bucket when it has fully passed, advancing the ring cursor. A bucket is
 // reaped only once the clock is past its newest entry — every entry filed there expires no later
 // than that — so a partially live bucket is left alone and the cursor does not advance past it.
-func expirable_reap_ripe_bucket[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
-	Expirable_Invariants(c, "expirable_reap_ripe_bucket.cache")
+func expirable_reap_ripe_bucket(c Expirable_Handle) {
+	Expirable_Handle_Invariants(c, "expirable_reap_ripe_bucket.cache")
 	bucket := &c.Buckets[c.Next_Cleanup_Bucket]
 	if time.Clock_Now_Monotonic(time.Clock(c.Clock)) <= bucket.Newest_Entry {
 		return
@@ -1766,9 +2061,9 @@ func expirable_reap_ripe_bucket[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 
 // Files ent at bucket head one step behind cleanup cursor, so cursor reaches it only after
 // wrapping whole ring. This gives about one TTL of grace, matching upstream.
-func expirable_add_to_bucket[K Key_Kind, V Value_Kind](c *Expirable[K, V], position Position) {
+func expirable_add_to_bucket(c Expirable_Handle, position Position) {
 	Position_Invariants(position, "expirable_add_to_bucket.position")
-	Expirable_Invariants(c, "expirable_add_to_bucket.cache")
+	Expirable_Handle_Invariants(c, "expirable_add_to_bucket.cache")
 	bucket_identifier := Bucket_Index(
 		(BUCKET_COUNT + int(c.Next_Cleanup_Bucket) - 1) % BUCKET_COUNT,
 	)
@@ -1788,9 +2083,9 @@ func expirable_add_to_bucket[K Key_Kind, V Value_Kind](c *Expirable[K, V], posit
 
 // Unlinks ent from its bucket chain, so a renewed or removed entry does not linger there. It has
 // the node in hand, so no key lookup is needed.
-func expirable_remove_from_bucket[K Key_Kind, V Value_Kind](c *Expirable[K, V], position Position) {
+func expirable_remove_from_bucket(c Expirable_Handle, position Position) {
 	Position_Invariants(position, "expirable_remove_from_bucket.position")
-	Expirable_Invariants(c, "expirable_remove_from_bucket.cache")
+	Expirable_Handle_Invariants(c, "expirable_remove_from_bucket.cache")
 	ent := &c.Evict_List.Nodes[position]
 	bucket := &c.Buckets[ent.Expire_Bucket]
 	if ent.Bucket_Previous != POSITION_NONE {
@@ -1806,8 +2101,8 @@ func expirable_remove_from_bucket[K Key_Kind, V Value_Kind](c *Expirable[K, V], 
 }
 
 // Drops the least-recently-used entry, if any.
-func expirable_remove_oldest[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
-	Expirable_Invariants(c, "expirable_remove_oldest_internal.cache")
+func expirable_remove_oldest(c Expirable_Handle) {
+	Expirable_Handle_Invariants(c, "expirable_remove_oldest_internal.cache")
 	ent := list_back(&c.Evict_List)
 	if ent != POSITION_NONE {
 		expirable_remove_element(c, ent)
@@ -1816,9 +2111,9 @@ func expirable_remove_oldest[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 
 // Unlinks ent from the list, its map entry, and its bucket, then fires On_Evict. It captures the
 // key and value, and unlinks the bucket chain, before list_remove frees (and zeroes) the node.
-func expirable_remove_element[K Key_Kind, V Value_Kind](c *Expirable[K, V], position Position) {
+func expirable_remove_element(c Expirable_Handle, position Position) {
 	Position_Invariants(position, "expirable_remove_element.position")
-	Expirable_Invariants(c, "expirable_remove_element.cache")
+	Expirable_Handle_Invariants(c, "expirable_remove_element.cache")
 	key := c.Evict_List.Nodes[position].Key
 	value := c.Evict_List.Nodes[position].Value
 	expirable_remove_from_bucket(c, position)

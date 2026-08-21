@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"unsafe"
 
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/prng"
@@ -28,12 +27,20 @@ import (
 func new_expirable_loop() (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
 	state := new(nbio.Sim)
 	surface, driver := nbio.New_Simulated_IO(state, 0, time.NANOSECOND, nbio.Sim_Memory{
-		Nodes:       make([]nbio.Sim_Node, EXPIRABLE_LOOP_SLOT_CAPACITY),
-		Descriptors: make([]nbio.Sim_Descriptor, EXPIRABLE_LOOP_SLOT_CAPACITY),
-		Operations:  make([]nbio.Sim_Operation, EXPIRABLE_LOOP_SLOT_CAPACITY),
-		Queue:       make([]*nbio.Completion, EXPIRABLE_LOOP_QUEUE_CAPACITY),
-		Events:      make([]nbio.Virtual_Event, EXPIRABLE_LOOP_SLOT_CAPACITY),
-		Clocks:      make([]nbio.Sim_Clock, EXPIRABLE_LOOP_SLOT_CAPACITY),
+		Nodes: []nbio.Sim_Node{{
+			Name:     make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM),
+			Contents: make([]byte, nbio.SIM_FILE_BYTES_MAXIMUM),
+		}},
+		Descriptors: []nbio.Sim_Descriptor{{
+			Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
+			Peer_IP:    make([]byte, nbio.IPV6_ADDRESS_BYTES),
+		}},
+		Operations: []nbio.Sim_Operation{{
+			Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
+		}},
+		Queue:  make([]*nbio.Completion, EXPIRABLE_LOOP_QUEUE_CAPACITY),
+		Events: make([]nbio.Virtual_Event, EXPIRABLE_LOOP_SLOT_CAPACITY),
+		Clocks: make([]nbio.Sim_Clock, EXPIRABLE_LOOP_SLOT_CAPACITY),
 	})
 	return surface.Timeline, driver, nbio.Sim_Clock_To_Clock(&state.Clocks[0])
 }
@@ -46,65 +53,73 @@ const EXPIRABLE_LOOP_QUEUE_CAPACITY = 64
 const EXPIRABLE_LOOP_SLOT_CAPACITY = 1
 
 // Allocates test ownership outside production initialization.
-func new_simple_cache[K Key_Kind, V Value_Kind](
-	capacity Capacity, on_evict Evict_Callback[K, V],
-) (cache *Simple[K, V]) {
-	cache = new(Simple[K, V])
-	nodes := new(Nodes[K, V])
+func new_simple_cache(capacity Capacity, on_evict Evict_Callback) (cache *Simple) {
+	cache = new(Simple)
+	nodes := make(Nodes, COUNT_MAXIMUM)
 	New_Simple(cache, nodes, capacity, on_evict)
 	return cache
 }
 
 // Allocates test ownership outside production initialization.
-func new_two_queue_cache[K Key_Kind, V Value_Kind](input Two_Queue_Input) (cache *Two_Queue[K, V]) {
-	cache = new(Two_Queue[K, V])
-	nodes := new(Two_Queue_Nodes[K, V])
+func new_two_queue_cache(input Two_Queue_Input) (cache *Two_Queue) {
+	cache = new(Two_Queue)
+	nodes := new_two_queue_nodes()
 	New_Two_Queue(cache, nodes, input)
 	return cache
 }
 
+// Allocates all Two_Queue storage outside production initialization.
+func new_two_queue_nodes() (nodes *Two_Queue_Nodes) {
+	return &Two_Queue_Nodes{
+		Live: Live_Nodes{
+			Recent:   make(Recent_Nodes, COUNT_MAXIMUM),
+			Frequent: make(Frequent_Nodes, COUNT_MAXIMUM),
+		},
+		Ghost: Ghost_Nodes{Cache: make(Ghost_Node_Storage, COUNT_MAXIMUM)},
+	}
+}
+
 // Allocates test ownership outside production initialization.
-func new_expirable_cache[K Key_Kind, V Value_Kind](
-	input Expirable_Input[K, V],
-) (cache *Expirable[K, V]) {
-	cache = new(Expirable[K, V])
-	nodes := new(Nodes[K, V])
+func new_expirable_cache(input Expirable_Input) (cache *Expirable) {
+	cache = new(Expirable)
+	nodes := make(Nodes, COUNT_MAXIMUM)
+	input.Buckets = make(Buckets, BUCKET_COUNT)
 	New_Expirable(cache, nodes, input)
 	return cache
 }
 
 // Collects a Simple's keys into a fresh slice through the caller-buffer API, for comparison.
-func simple_keys_of[K Key_Kind, V Value_Kind](c *Simple[K, V]) (keys []K) {
-	storage := new([COUNT_MAXIMUM]K)
-	buffer := Keys[K]{Storage: storage, Count: Key_Count(Simple_Cap(c))}
+func simple_keys_of(c *Simple) (keys []Key) {
+	storage := make(Key_Storage, COUNT_MAXIMUM)
+	buffer := Keys{Storage: storage, Count: Key_Count(Simple_Cap(c))}
 	return storage[:Simple_Keys(c, buffer)]
 }
 
 // Collects a Simple's values into a fresh slice through the caller-buffer API.
-func simple_values_of[K Key_Kind, V Value_Kind](c *Simple[K, V]) (values []V) {
-	storage := new([COUNT_MAXIMUM]V)
-	buffer := Values[V]{Storage: storage, Count: Value_Count(Simple_Cap(c))}
+func simple_values_of(c *Simple) (values []Value) {
+	storage := make(Value_Storage, COUNT_MAXIMUM)
+	buffer := Values{Storage: storage, Count: Value_Count(Simple_Cap(c))}
 	return storage[:Simple_Values(c, buffer)]
 }
 
 // Collects a Two_Queue's keys into a fresh slice through the caller-buffer API.
-func two_queue_keys_of[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) (keys []K) {
-	storage := new([COUNT_MAXIMUM]K)
-	buffer := Keys[K]{Storage: storage, Count: Key_Count(Two_Queue_Cap(c))}
+func two_queue_keys_of(c *Two_Queue) (keys []Key) {
+	storage := make(Key_Storage, COUNT_MAXIMUM)
+	buffer := Keys{Storage: storage, Count: Key_Count(Two_Queue_Cap(c))}
 	return storage[:Two_Queue_Keys(c, buffer)]
 }
 
 // Collects an Expirable's unexpired keys into a fresh slice through the caller-buffer API.
-func expirable_keys_of[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (keys []K) {
-	storage := new([COUNT_MAXIMUM]K)
-	buffer := Keys[K]{Storage: storage, Count: Key_Count(Expirable_Cap(c))}
+func expirable_keys_of(c *Expirable) (keys []Key) {
+	storage := make(Key_Storage, COUNT_MAXIMUM)
+	buffer := Keys{Storage: storage, Count: Key_Count(Expirable_Cap(c))}
 	return storage[:Expirable_Keys(c, buffer)]
 }
 
 // Collects an Expirable's unexpired values into a fresh slice through the caller-buffer API.
-func expirable_values_of[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (values []V) {
-	storage := new([COUNT_MAXIMUM]V)
-	buffer := Values[V]{Storage: storage, Count: Value_Count(Expirable_Cap(c))}
+func expirable_values_of(c *Expirable) (values []Value) {
+	storage := make(Value_Storage, COUNT_MAXIMUM)
+	buffer := Values{Storage: storage, Count: Value_Count(Expirable_Cap(c))}
 	return storage[:Expirable_Values(c, buffer)]
 }
 
@@ -112,13 +127,13 @@ func expirable_values_of[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (values [
 // the evict callback, and key/value ordering.
 func Test_Simple_LRU_Full(t *testing.T) {
 	evict_count := 0
-	on_evict := func(key int, value int) {
+	on_evict := func(key Key, value Value) {
 		if key != value {
 			t.Fatalf("evict values not equal (%v != %v)", key, value)
 		}
 		evict_count++
 	}
-	c := new_simple_cache[int, int](128, on_evict)
+	c := new_simple_cache(128, on_evict)
 	for i_index := 0; i_index < 256; i_index++ {
 		Simple_Add(c, i_index, i_index)
 	}
@@ -153,7 +168,7 @@ func Test_Simple_LRU_Full(t *testing.T) {
 // Test_Simple_LRU_Order_After_Remove ports the remove-and-purge half of TestLRU: removal, the
 // resulting key ordering after a get renews recency, and purge.
 func Test_Simple_LRU_Order_After_Remove(t *testing.T) {
-	c := new_simple_cache[int, int](128, nil)
+	c := new_simple_cache(128, nil)
 	for i_index := 0; i_index < 256; i_index++ {
 		Simple_Add(c, i_index, i_index)
 	}
@@ -196,7 +211,7 @@ func Test_Simple_LRU_Order_After_Remove(t *testing.T) {
 
 // Test_Simple_Get_Oldest_Remove_Oldest ports TestLRU_GetOldest_RemoveOldest.
 func Test_Simple_Get_Oldest_Remove_Oldest(t *testing.T) {
-	c := new_simple_cache[int, int](128, nil)
+	c := new_simple_cache(128, nil)
 	for i_index := 0; i_index < 256; i_index++ {
 		Simple_Add(c, i_index, i_index)
 	}
@@ -226,8 +241,8 @@ func Test_Simple_Get_Oldest_Remove_Oldest(t *testing.T) {
 // Test_Simple_Add_Reports_Eviction ports TestLRU_Add / TestLRUAdd.
 func Test_Simple_Add_Reports_Eviction(t *testing.T) {
 	evict_count := 0
-	on_evict := func(key int, value int) { evict_count++ }
-	c := new_simple_cache[int, int](1, on_evict)
+	on_evict := func(key Key, value Value) { evict_count++ }
+	c := new_simple_cache(1, on_evict)
 	if Simple_Add(c, 1, 1) {
 		t.Errorf("should not have an eviction")
 	}
@@ -244,7 +259,7 @@ func Test_Simple_Add_Reports_Eviction(t *testing.T) {
 
 // Test_Simple_Contains_Leaves_Recency ports TestLRU_Contains / TestLRUContains.
 func Test_Simple_Contains_Leaves_Recency(t *testing.T) {
-	c := new_simple_cache[int, int](2, nil)
+	c := new_simple_cache(2, nil)
 	Simple_Add(c, 1, 1)
 	Simple_Add(c, 2, 2)
 	if !Simple_Contains(c, 1) {
@@ -258,7 +273,7 @@ func Test_Simple_Contains_Leaves_Recency(t *testing.T) {
 
 // Test_Simple_Peek_Leaves_Recency ports TestLRU_Peek / TestLRUPeek.
 func Test_Simple_Peek_Leaves_Recency(t *testing.T) {
-	c := new_simple_cache[int, int](2, nil)
+	c := new_simple_cache(2, nil)
 	Simple_Add(c, 1, 1)
 	Simple_Add(c, 2, 2)
 	value, ok := Simple_Peek(c, 1)
@@ -276,22 +291,22 @@ func Test_Simple_Peek_Leaves_Recency(t *testing.T) {
 
 // Test_Simple_Contains_Or_Add_Leaves_Recency ports TestLRUContainsOrAdd.
 func Test_Simple_Contains_Or_Add_Leaves_Recency(t *testing.T) {
-	c := new_simple_cache[int, int](2, nil)
+	c := new_simple_cache(2, nil)
 	Simple_Add(c, 1, 1)
 	Simple_Add(c, 2, 2)
-	present, evicted := Simple_Contains_Or_Add(c, 1, 1)
-	if !present {
+	result := Simple_Contains_Or_Add(c, 1, 1)
+	if !result.Present {
 		t.Errorf("1 should be contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Errorf("nothing should be evicted")
 	}
 	Simple_Add(c, 3, 3)
-	present, evicted = Simple_Contains_Or_Add(c, 1, 1)
-	if present {
+	result = Simple_Contains_Or_Add(c, 1, 1)
+	if result.Present {
 		t.Errorf("1 should not be contained")
 	}
-	if !evicted {
+	if !result.Evicted {
 		t.Errorf("an eviction should have occurred")
 	}
 	if !Simple_Contains(c, 1) {
@@ -301,25 +316,25 @@ func Test_Simple_Contains_Or_Add_Leaves_Recency(t *testing.T) {
 
 // Test_Simple_Peek_Or_Add_Leaves_Recency ports TestLRUPeekOrAdd.
 func Test_Simple_Peek_Or_Add_Leaves_Recency(t *testing.T) {
-	c := new_simple_cache[int, int](2, nil)
+	c := new_simple_cache(2, nil)
 	Simple_Add(c, 1, 1)
 	Simple_Add(c, 2, 2)
-	previous, present, evicted := Simple_Peek_Or_Add(c, 1, 1)
-	if !present {
+	result := Simple_Peek_Or_Add(c, 1, 1)
+	if !result.Present {
 		t.Errorf("1 should be contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Errorf("nothing should be evicted")
 	}
-	if previous != 1 {
+	if result.Previous != 1 {
 		t.Errorf("previous should be 1")
 	}
 	Simple_Add(c, 3, 3)
-	present, evicted = Simple_Contains_Or_Add(c, 1, 1)
-	if present {
+	contains_result := Simple_Contains_Or_Add(c, 1, 1)
+	if contains_result.Present {
 		t.Errorf("1 should not be contained")
 	}
-	if !evicted {
+	if !contains_result.Evicted {
 		t.Errorf("an eviction should have occurred")
 	}
 	if !Simple_Contains(c, 1) {
@@ -331,31 +346,31 @@ func Test_Simple_Peek_Or_Add_Leaves_Recency(t *testing.T) {
 // present key renews recency without a spurious eviction.
 func Test_Simple_Eviction_Same_Key_Add(t *testing.T) {
 	var evicted_keys []int
-	c := new_simple_cache[int, struct{}](2, func(key int, value struct{}) {
-		evicted_keys = append(evicted_keys, key)
+	c := new_simple_cache(2, func(key Key, value Value) {
+		evicted_keys = append(evicted_keys, key.(int))
 	})
 	if Simple_Add(c, 1, struct{}{}) {
 		t.Error("first 1: unexpected eviction")
 	}
-	if !reflect.DeepEqual(simple_keys_of(c), []int{1}) {
+	if !reflect.DeepEqual(simple_keys_of(c), []Key{1}) {
 		t.Errorf("keys: %v", simple_keys_of(c))
 	}
 	if Simple_Add(c, 2, struct{}{}) {
 		t.Error("2: unexpected eviction")
 	}
-	if !reflect.DeepEqual(simple_keys_of(c), []int{1, 2}) {
+	if !reflect.DeepEqual(simple_keys_of(c), []Key{1, 2}) {
 		t.Errorf("keys: %v", simple_keys_of(c))
 	}
 	if Simple_Add(c, 1, struct{}{}) {
 		t.Error("second 1: unexpected eviction")
 	}
-	if !reflect.DeepEqual(simple_keys_of(c), []int{2, 1}) {
+	if !reflect.DeepEqual(simple_keys_of(c), []Key{2, 1}) {
 		t.Errorf("keys: %v", simple_keys_of(c))
 	}
 	if !Simple_Add(c, 3, struct{}{}) {
 		t.Error("3: expected eviction")
 	}
-	if !reflect.DeepEqual(simple_keys_of(c), []int{1, 3}) {
+	if !reflect.DeepEqual(simple_keys_of(c), []Key{1, 3}) {
 		t.Errorf("keys: %v", simple_keys_of(c))
 	}
 	if !reflect.DeepEqual(evicted_keys, []int{2}) {
@@ -367,38 +382,38 @@ func Test_Simple_Eviction_Same_Key_Add(t *testing.T) {
 // TestCache_EvictionSameKey.
 func Test_Simple_Eviction_Same_Key_Contains_Or_Add(t *testing.T) {
 	var evicted_keys []int
-	c := new_simple_cache[int, struct{}](2, func(key int, value struct{}) {
-		evicted_keys = append(evicted_keys, key)
+	c := new_simple_cache(2, func(key Key, value Value) {
+		evicted_keys = append(evicted_keys, key.(int))
 	})
-	present, evicted := Simple_Contains_Or_Add(c, 1, struct{}{})
-	if present {
+	result := Simple_Contains_Or_Add(c, 1, struct{}{})
+	if result.Present {
 		t.Error("first 1: unexpected contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Error("first 1: unexpected eviction")
 	}
-	present, evicted = Simple_Contains_Or_Add(c, 2, struct{}{})
-	if present {
+	result = Simple_Contains_Or_Add(c, 2, struct{}{})
+	if result.Present {
 		t.Error("2: unexpected contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Error("2: unexpected eviction")
 	}
-	present, evicted = Simple_Contains_Or_Add(c, 1, struct{}{})
-	if !present {
+	result = Simple_Contains_Or_Add(c, 1, struct{}{})
+	if !result.Present {
 		t.Error("second 1: expected contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Error("second 1: unexpected eviction")
 	}
-	if !reflect.DeepEqual(simple_keys_of(c), []int{1, 2}) {
+	if !reflect.DeepEqual(simple_keys_of(c), []Key{1, 2}) {
 		t.Errorf("keys: %v", simple_keys_of(c))
 	}
-	present, evicted = Simple_Contains_Or_Add(c, 3, struct{}{})
-	if present {
+	result = Simple_Contains_Or_Add(c, 3, struct{}{})
+	if result.Present {
 		t.Error("3: unexpected contained")
 	}
-	if !evicted {
+	if !result.Evicted {
 		t.Error("3: expected eviction")
 	}
 	if !reflect.DeepEqual(evicted_keys, []int{1}) {
@@ -409,38 +424,38 @@ func Test_Simple_Eviction_Same_Key_Contains_Or_Add(t *testing.T) {
 // Test_Simple_Eviction_Same_Key_Peek_Or_Add ports the PeekOrAdd case of TestCache_EvictionSameKey.
 func Test_Simple_Eviction_Same_Key_Peek_Or_Add(t *testing.T) {
 	var evicted_keys []int
-	c := new_simple_cache[int, struct{}](2, func(key int, value struct{}) {
-		evicted_keys = append(evicted_keys, key)
+	c := new_simple_cache(2, func(key Key, value Value) {
+		evicted_keys = append(evicted_keys, key.(int))
 	})
-	_, present, evicted := Simple_Peek_Or_Add(c, 1, struct{}{})
-	if present {
+	result := Simple_Peek_Or_Add(c, 1, struct{}{})
+	if result.Present {
 		t.Error("first 1: unexpected contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Error("first 1: unexpected eviction")
 	}
-	_, present, evicted = Simple_Peek_Or_Add(c, 2, struct{}{})
-	if present {
+	result = Simple_Peek_Or_Add(c, 2, struct{}{})
+	if result.Present {
 		t.Error("2: unexpected contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Error("2: unexpected eviction")
 	}
-	_, present, evicted = Simple_Peek_Or_Add(c, 1, struct{}{})
-	if !present {
+	result = Simple_Peek_Or_Add(c, 1, struct{}{})
+	if !result.Present {
 		t.Error("second 1: expected contained")
 	}
-	if evicted {
+	if result.Evicted {
 		t.Error("second 1: unexpected eviction")
 	}
-	if !reflect.DeepEqual(simple_keys_of(c), []int{1, 2}) {
+	if !reflect.DeepEqual(simple_keys_of(c), []Key{1, 2}) {
 		t.Errorf("keys: %v", simple_keys_of(c))
 	}
-	_, present, evicted = Simple_Peek_Or_Add(c, 3, struct{}{})
-	if present {
+	result = Simple_Peek_Or_Add(c, 3, struct{}{})
+	if result.Present {
 		t.Error("3: unexpected contained")
 	}
-	if !evicted {
+	if !result.Evicted {
 		t.Error("3: expected eviction")
 	}
 	if !reflect.DeepEqual(evicted_keys, []int{1}) {
@@ -453,7 +468,7 @@ func Test_Simple_Eviction_Same_Key_Peek_Or_Add(t *testing.T) {
 func Test_Two_Queue_Random_Ops(t *testing.T) {
 	size := 128
 	generator := prng.New(3)
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: Capacity(size)})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: Capacity(size)})
 	for op_index := 0; op_index < 200000; op_index++ {
 		key := int(prng.Xoshiro_Below(&generator, 512))
 		switch prng.Xoshiro_Below(&generator, 3) {
@@ -473,15 +488,15 @@ func Test_Two_Queue_Random_Ops(t *testing.T) {
 
 // Test_Two_Queue_Get_Recent_To_Frequent ports Test2Q_Get_RecentToFrequent.
 func Test_Two_Queue_Get_Recent_To_Frequent(t *testing.T) {
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 128})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: 128})
 	for i_index := 0; i_index < 128; i_index++ {
 		Two_Queue_Add(c, i_index, i_index)
 	}
-	if Simple_Count(&c.Live[0]) != 128 {
-		t.Fatalf("bad recent: %d", Simple_Count(&c.Live[0]))
+	if c.Live.Recent.Evict_List.Count != 128 {
+		t.Fatalf("bad recent: %d", c.Live.Recent.Evict_List.Count)
 	}
-	if Simple_Count(&c.Live[1]) != 0 {
-		t.Fatalf("bad frequent: %d", Simple_Count(&c.Live[1]))
+	if c.Live.Frequent.Evict_List.Count != 0 {
+		t.Fatalf("bad frequent: %d", c.Live.Frequent.Evict_List.Count)
 	}
 	for i_index := 0; i_index < 128; i_index++ {
 		_, ok := Two_Queue_Get(c, i_index)
@@ -489,70 +504,70 @@ func Test_Two_Queue_Get_Recent_To_Frequent(t *testing.T) {
 			t.Fatalf("missing: %d", i_index)
 		}
 	}
-	if Simple_Count(&c.Live[0]) != 0 {
-		t.Fatalf("bad recent: %d", Simple_Count(&c.Live[0]))
+	if c.Live.Recent.Evict_List.Count != 0 {
+		t.Fatalf("bad recent: %d", c.Live.Recent.Evict_List.Count)
 	}
-	if Simple_Count(&c.Live[1]) != 128 {
-		t.Fatalf("bad frequent: %d", Simple_Count(&c.Live[1]))
+	if c.Live.Frequent.Evict_List.Count != 128 {
+		t.Fatalf("bad frequent: %d", c.Live.Frequent.Evict_List.Count)
 	}
 }
 
 // Test_Two_Queue_Add_Recent_To_Frequent ports Test2Q_Add_RecentToFrequent.
 func Test_Two_Queue_Add_Recent_To_Frequent(t *testing.T) {
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 128})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: 128})
 	Two_Queue_Add(c, 1, 1)
-	if Simple_Count(&c.Live[0]) != 1 {
-		t.Fatalf("bad recent: %d", Simple_Count(&c.Live[0]))
+	if c.Live.Recent.Evict_List.Count != 1 {
+		t.Fatalf("bad recent: %d", c.Live.Recent.Evict_List.Count)
 	}
-	if Simple_Count(&c.Live[1]) != 0 {
-		t.Fatalf("bad frequent: %d", Simple_Count(&c.Live[1]))
-	}
-	Two_Queue_Add(c, 1, 1)
-	if Simple_Count(&c.Live[0]) != 0 {
-		t.Fatalf("bad recent: %d", Simple_Count(&c.Live[0]))
-	}
-	if Simple_Count(&c.Live[1]) != 1 {
-		t.Fatalf("bad frequent: %d", Simple_Count(&c.Live[1]))
+	if c.Live.Frequent.Evict_List.Count != 0 {
+		t.Fatalf("bad frequent: %d", c.Live.Frequent.Evict_List.Count)
 	}
 	Two_Queue_Add(c, 1, 1)
-	if Simple_Count(&c.Live[1]) != 1 {
-		t.Fatalf("bad frequent: %d", Simple_Count(&c.Live[1]))
+	if c.Live.Recent.Evict_List.Count != 0 {
+		t.Fatalf("bad recent: %d", c.Live.Recent.Evict_List.Count)
+	}
+	if c.Live.Frequent.Evict_List.Count != 1 {
+		t.Fatalf("bad frequent: %d", c.Live.Frequent.Evict_List.Count)
+	}
+	Two_Queue_Add(c, 1, 1)
+	if c.Live.Frequent.Evict_List.Count != 1 {
+		t.Fatalf("bad frequent: %d", c.Live.Frequent.Evict_List.Count)
 	}
 }
 
 // Test_Two_Queue_Add_Recent_Evict ports Test2Q_Add_RecentEvict.
 func Test_Two_Queue_Add_Recent_Evict(t *testing.T) {
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 4})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: 4})
 	Two_Queue_Add(c, 1, 1)
 	Two_Queue_Add(c, 2, 2)
 	Two_Queue_Add(c, 3, 3)
 	Two_Queue_Add(c, 4, 4)
 	Two_Queue_Add(c, 5, 5)
-	if Simple_Count(&c.Live[0]) != 4 {
-		t.Fatalf("bad recent: %d", Simple_Count(&c.Live[0]))
+	if c.Live.Recent.Evict_List.Count != 4 {
+		t.Fatalf("bad recent: %d", c.Live.Recent.Evict_List.Count)
 	}
-	if Simple_Count(&c.Ghost[0]) != 1 {
-		t.Fatalf("bad ghost: %d", Simple_Count(&c.Ghost[0]))
+	if c.Ghost.Cache.Evict_List.Count != 1 {
+		t.Fatalf("bad ghost: %d", c.Ghost.Cache.Evict_List.Count)
 	}
 	Two_Queue_Add(c, 1, 1)
-	if Simple_Count(&c.Live[0]) != 3 {
-		t.Fatalf("bad recent: %d", Simple_Count(&c.Live[0]))
+	if c.Live.Recent.Evict_List.Count != 3 {
+		t.Fatalf("bad recent: %d", c.Live.Recent.Evict_List.Count)
 	}
-	if Simple_Count(&c.Live[1]) != 1 {
-		t.Fatalf("bad frequent: %d", Simple_Count(&c.Live[1]))
+	if c.Live.Frequent.Evict_List.Count != 1 {
+		t.Fatalf("bad frequent: %d", c.Live.Frequent.Evict_List.Count)
 	}
 	Two_Queue_Add(c, 6, 6)
-	if Simple_Count(&c.Live[0]) != 3 {
-		t.Fatalf("bad recent: %d", Simple_Count(&c.Live[0]))
+	if c.Live.Recent.Evict_List.Count != 3 {
+		t.Fatalf("bad recent: %d", c.Live.Recent.Evict_List.Count)
 	}
-	if Simple_Count(&c.Ghost[0]) != 2 {
-		t.Fatalf("bad ghost: %d", Simple_Count(&c.Ghost[0]))
+	if c.Ghost.Cache.Evict_List.Count != 2 {
+		t.Fatalf("bad ghost: %d", c.Ghost.Cache.Evict_List.Count)
 	}
 }
 
 // Test_Two_Queue_Full ports Test2Q: a full lifecycle of eviction, ordering, removal, and purge.
 func Test_Two_Queue_Full(t *testing.T) {
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 128})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: 128})
 	for i_index := 0; i_index < 256; i_index++ {
 		Two_Queue_Add(c, i_index, i_index)
 	}
@@ -588,7 +603,7 @@ func Test_Two_Queue_Full(t *testing.T) {
 
 // Test_Two_Queue_Contains ports Test2Q_Contains.
 func Test_Two_Queue_Contains(t *testing.T) {
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 2})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: 2})
 	Two_Queue_Add(c, 1, 1)
 	Two_Queue_Add(c, 2, 2)
 	if !Two_Queue_Contains(c, 1) {
@@ -602,7 +617,7 @@ func Test_Two_Queue_Contains(t *testing.T) {
 
 // Test_Two_Queue_Peek ports Test2Q_Peek.
 func Test_Two_Queue_Peek(t *testing.T) {
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 2})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: 2})
 	Two_Queue_Add(c, 1, 1)
 	Two_Queue_Add(c, 2, 2)
 	value, ok := Two_Queue_Peek(c, 1)
@@ -622,7 +637,7 @@ func Test_Two_Queue_Peek(t *testing.T) {
 // it and reports membership and keys correctly. The upstream ttl=0 and Resize modes were removed.
 func Test_Expirable_No_Purge(t *testing.T) {
 	loop, _, host := new_expirable_loop()
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
@@ -645,7 +660,7 @@ func Test_Expirable_No_Purge(t *testing.T) {
 	if Expirable_Contains(c, "key2") {
 		t.Fatalf("should not contain key2")
 	}
-	if !reflect.DeepEqual(expirable_keys_of(c), []string{"key1"}) {
+	if !reflect.DeepEqual(expirable_keys_of(c), []Key{"key1"}) {
 		t.Fatalf("keys differ from expected")
 	}
 }
@@ -654,7 +669,7 @@ func Test_Expirable_No_Purge(t *testing.T) {
 // overwrite replaces it.
 func Test_Expirable_Edge_Cases(t *testing.T) {
 	loop, _, host := new_expirable_loop()
-	c := new_expirable_cache[string, *string](Expirable_Input[string, *string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 2,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
@@ -682,7 +697,7 @@ func Test_Expirable_Edge_Cases(t *testing.T) {
 // Test_Expirable_Values ports TestLRU_Values.
 func Test_Expirable_Values(t *testing.T) {
 	loop, _, host := new_expirable_loop()
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 3,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
@@ -692,7 +707,7 @@ func Test_Expirable_Values(t *testing.T) {
 	Expirable_Add(c, "key2", "val2")
 	Expirable_Add(c, "key3", "val3")
 	values := expirable_values_of(c)
-	if !reflect.DeepEqual(values, []string{"val1", "val2", "val3"}) {
+	if !reflect.DeepEqual(values, []Value{"val1", "val2", "val3"}) {
 		t.Fatalf("values differ from expected: %v", values)
 	}
 }
@@ -702,12 +717,14 @@ func Test_Expirable_Values(t *testing.T) {
 func Test_Expirable_With_Purge_Expiry(t *testing.T) {
 	loop, driver, host := new_expirable_loop()
 	var evicted []string
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 10,
 		TTL:      TTL(time.MICROSECOND),
 		Clock:    host,
 		Timeline: loop,
-		On_Evict: func(key string, value string) { evicted = append(evicted, key, value) },
+		On_Evict: func(key Key, value Value) {
+			evicted = append(evicted, key.(string), value.(string))
+		},
 	})
 	Expirable_Add(c, "key1", "val1")
 	// A short drive stays under the TTL, so the entry is still live.
@@ -741,14 +758,14 @@ func Test_Expirable_Purge_Fires_Callback(t *testing.T) {
 	loop, _, host := new_expirable_loop()
 	evicted := make(map[string]string)
 	eviction_count := 0
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
 		Timeline: loop,
-		On_Evict: func(key string, value string) {
+		On_Evict: func(key Key, value Value) {
 			eviction_count++
-			evicted[key] = value
+			evicted[key.(string)] = value.(string)
 		},
 	})
 	Expirable_Add(c, "key1", "val1")
@@ -771,7 +788,7 @@ func Test_Expirable_Purge_Fires_Callback(t *testing.T) {
 // Test_Expirable_Purge_Enforced_By_Size ports TestLRUWithPurgeEnforcedBySize.
 func Test_Expirable_Purge_Enforced_By_Size(t *testing.T) {
 	loop, _, host := new_expirable_loop()
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
@@ -802,12 +819,12 @@ func Test_Expirable_Purge_Enforced_By_Size(t *testing.T) {
 func Test_Expirable_Invalidate_And_Evict(t *testing.T) {
 	loop, _, host := new_expirable_loop()
 	evicted := 0
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
 		Timeline: loop,
-		On_Evict: func(key string, value string) { evicted++ },
+		On_Evict: func(key Key, value Value) { evicted++ },
 	})
 	Expirable_Add(c, "key1", "val1")
 	Expirable_Add(c, "key2", "val2")
@@ -835,7 +852,7 @@ func Test_Expirable_Invalidate_And_Evict(t *testing.T) {
 // passed on the virtual clock.
 func Test_Expirable_Loading_Expired(t *testing.T) {
 	loop, driver, host := new_expirable_loop()
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 8,
 		TTL:      TTL(time.MICROSECOND),
 		Clock:    host,
@@ -870,7 +887,7 @@ func Test_Expirable_Loading_Expired(t *testing.T) {
 // Test_Expirable_Remove_Oldest ports TestLRURemoveOldest.
 func Test_Expirable_Remove_Oldest(t *testing.T) {
 	loop, _, host := new_expirable_loop()
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 2,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
@@ -880,7 +897,7 @@ func Test_Expirable_Remove_Oldest(t *testing.T) {
 		t.Fatalf("expected cap 2")
 	}
 	key, _, ok := Expirable_Remove_Oldest(c)
-	if key != "" {
+	if key != nil {
 		t.Fatalf("should be empty")
 	}
 	if ok {
@@ -891,7 +908,7 @@ func Test_Expirable_Remove_Oldest(t *testing.T) {
 	}
 	Expirable_Add(c, "key1", "val1")
 	Expirable_Add(c, "key2", "val2")
-	if !reflect.DeepEqual(expirable_keys_of(c), []string{"key1", "key2"}) {
+	if !reflect.DeepEqual(expirable_keys_of(c), []Key{"key1", "key2"}) {
 		t.Fatalf("keys differ from expected")
 	}
 	key, value, ok := Expirable_Remove_Oldest(c)
@@ -904,7 +921,7 @@ func Test_Expirable_Remove_Oldest(t *testing.T) {
 	if !ok {
 		t.Fatalf("should be true")
 	}
-	if !reflect.DeepEqual(expirable_keys_of(c), []string{"key2"}) {
+	if !reflect.DeepEqual(expirable_keys_of(c), []Key{"key2"}) {
 		t.Fatalf("keys differ from expected")
 	}
 }
@@ -913,8 +930,8 @@ func Test_Expirable_Remove_Oldest(t *testing.T) {
 func Test_Expirable_Eviction_Same_Key(t *testing.T) {
 	loop, _, host := new_expirable_loop()
 	var evicted_keys []int
-	record := func(key int, value struct{}) { evicted_keys = append(evicted_keys, key) }
-	c := new_expirable_cache[int, struct{}](Expirable_Input[int, struct{}]{
+	record := func(key Key, value Value) { evicted_keys = append(evicted_keys, key.(int)) }
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 2,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
@@ -927,13 +944,13 @@ func Test_Expirable_Eviction_Same_Key(t *testing.T) {
 	if Expirable_Add(c, 2, struct{}{}) {
 		t.Error("2: unexpected eviction")
 	}
-	if !reflect.DeepEqual(expirable_keys_of(c), []int{1, 2}) {
+	if !reflect.DeepEqual(expirable_keys_of(c), []Key{1, 2}) {
 		t.Errorf("keys: %v", expirable_keys_of(c))
 	}
 	if Expirable_Add(c, 1, struct{}{}) {
 		t.Error("second 1: unexpected eviction")
 	}
-	if !reflect.DeepEqual(expirable_keys_of(c), []int{2, 1}) {
+	if !reflect.DeepEqual(expirable_keys_of(c), []Key{2, 1}) {
 		t.Errorf("keys: %v", expirable_keys_of(c))
 	}
 	if !Expirable_Add(c, 3, struct{}{}) {
@@ -948,7 +965,7 @@ func Test_Expirable_Eviction_Same_Key(t *testing.T) {
 // count of one once the expired entry is reaped and a fresh key is added.
 func Test_Expirable_Lifecycle(t *testing.T) {
 	loop, driver, host := new_expirable_loop()
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 5,
 		TTL:      TTL(time.MICROSECOND),
 		Clock:    host,
@@ -984,7 +1001,7 @@ func Test_Expirable_Lifecycle(t *testing.T) {
 // interleaving of the same operations, which must still converge to one entry per distinct key.
 func Test_Expirable_Concurrent_Adds(t *testing.T) {
 	loop, _, host := new_expirable_loop()
-	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 100,
 		TTL:      TTL(time.HOUR),
 		Clock:    host,
@@ -1003,13 +1020,13 @@ func Test_Expirable_Concurrent_Adds(t *testing.T) {
 // Test_Simple_Operations_Allocation_Free checks every Simple operation is zero-allocation after
 // construction: with the key/value buffers reused, a churn of every read and write reports zero.
 func Test_Simple_Operations_Allocation_Free(t *testing.T) {
-	c := new_simple_cache[int, int](64, nil)
+	c := new_simple_cache(64, nil)
 	for i_index := 0; i_index < 64; i_index++ {
 		Simple_Add(c, i_index, i_index)
 	}
-	keys := Keys[int]{Storage: new([COUNT_MAXIMUM]int), Count: Key_Count(Simple_Cap(c))}
-	values := Values[int]{
-		Storage: new([COUNT_MAXIMUM]int), Count: Value_Count(Simple_Cap(c)),
+	keys := Keys{Storage: make(Key_Storage, COUNT_MAXIMUM), Count: Key_Count(Simple_Cap(c))}
+	values := Values{
+		Storage: make(Value_Storage, COUNT_MAXIMUM), Count: Value_Count(Simple_Cap(c)),
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
@@ -1033,21 +1050,21 @@ func Test_Simple_Operations_Allocation_Free(t *testing.T) {
 
 // Test_Construction_Allocation_Free proves caller-owned initialization allocates no heap storage.
 func Test_Construction_Allocation_Free(t *testing.T) {
-	var simple Simple[int, int]
-	var simple_nodes Nodes[int, int]
+	var simple Simple
+	simple_nodes := make(Nodes, COUNT_MAXIMUM)
 	simple_allocations := testing.AllocsPerRun(100, func() {
-		New_Simple(&simple, &simple_nodes, 64, nil)
+		New_Simple(&simple, simple_nodes, 64, nil)
 	})
 	if simple_allocations != 0 {
 		t.Fatalf("Simple construction allocated %v, want 0", simple_allocations)
 	}
 
-	var two_queue Two_Queue[int, int]
-	var two_queue_nodes Two_Queue_Nodes[int, int]
+	var two_queue Two_Queue
+	two_queue_nodes := new_two_queue_nodes()
 	two_queue_allocations := testing.AllocsPerRun(100, func() {
 		New_Two_Queue(
 			&two_queue,
-			&two_queue_nodes,
+			two_queue_nodes,
 			Two_Queue_Input{Capacity: 64},
 		)
 	})
@@ -1055,16 +1072,17 @@ func Test_Construction_Allocation_Free(t *testing.T) {
 		t.Fatalf("Two_Queue construction allocated %v, want 0", two_queue_allocations)
 	}
 
-	var expirable Expirable[int, int]
-	var expirable_nodes Nodes[int, int]
-	expirable_input := Expirable_Input[int, int]{
+	var expirable Expirable
+	expirable_nodes := make(Nodes, COUNT_MAXIMUM)
+	expirable_input := Expirable_Input{
 		Capacity: 64,
 		TTL:      TTL(time.HOUR),
 		Clock:    invariant_clock(),
 		Timeline: invariant_timeline(),
+		Buckets:  make(Buckets, BUCKET_COUNT),
 	}
 	expirable_allocations := testing.AllocsPerRun(100, func() {
-		New_Expirable(&expirable, &expirable_nodes, expirable_input)
+		New_Expirable(&expirable, expirable_nodes, expirable_input)
 	})
 	if expirable_allocations != 0 {
 		t.Fatalf("Expirable construction allocated %v, want 0", expirable_allocations)
@@ -1074,13 +1092,13 @@ func Test_Construction_Allocation_Free(t *testing.T) {
 // Test_Two_Queue_Operations_Allocation_Free checks every Two_Queue operation is zero-allocation
 // after construction, including the recent-to-frequent promotion and ghost-list churn.
 func Test_Two_Queue_Operations_Allocation_Free(t *testing.T) {
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 64})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: 64})
 	for i_index := 0; i_index < 64; i_index++ {
 		Two_Queue_Add(c, i_index, i_index)
 	}
-	keys := Keys[int]{Storage: new([COUNT_MAXIMUM]int), Count: Key_Count(Two_Queue_Cap(c))}
-	values := Values[int]{
-		Storage: new([COUNT_MAXIMUM]int), Count: Value_Count(Two_Queue_Cap(c)),
+	keys := Keys{Storage: make(Key_Storage, COUNT_MAXIMUM), Count: Key_Count(Two_Queue_Cap(c))}
+	values := Values{
+		Storage: make(Value_Storage, COUNT_MAXIMUM), Count: Value_Count(Two_Queue_Cap(c)),
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
@@ -1101,7 +1119,7 @@ func Test_Two_Queue_Operations_Allocation_Free(t *testing.T) {
 // Test_Expirable_Operations_Allocation_Free checks every Expirable operation is zero-allocation
 // after construction, including the intrusive expiry-bucket bookkeeping.
 func Test_Expirable_Operations_Allocation_Free(t *testing.T) {
-	c := new_expirable_cache[int, int](Expirable_Input[int, int]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: 64,
 		TTL:      TTL(time.HOUR),
 		Clock:    invariant_clock(),
@@ -1110,9 +1128,9 @@ func Test_Expirable_Operations_Allocation_Free(t *testing.T) {
 	for i_index := 0; i_index < 64; i_index++ {
 		Expirable_Add(c, i_index, i_index)
 	}
-	keys := Keys[int]{Storage: new([COUNT_MAXIMUM]int), Count: Key_Count(Expirable_Cap(c))}
-	values := Values[int]{
-		Storage: new([COUNT_MAXIMUM]int), Count: Value_Count(Expirable_Cap(c)),
+	keys := Keys{Storage: make(Key_Storage, COUNT_MAXIMUM), Count: Key_Count(Expirable_Cap(c))}
+	values := Values{
+		Storage: make(Value_Storage, COUNT_MAXIMUM), Count: Value_Count(Expirable_Cap(c)),
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
@@ -1154,12 +1172,12 @@ func Test_Invariant_Domains(t *testing.T) {
 }
 
 // List factories give fresh state to each mutating operation.
-type list_factory func() (list *List[int, int])
+type list_factory func() (list *List)
 
 // Probe list states name empty, small, and boundary list states.
 func probe_list_states() (states []list_factory) {
 	return []list_factory{
-		func() (list *List[int, int]) { return new(List[int, int]) },
+		func() (list *List) { return new(List) },
 		list_state(1, 0),
 		list_state(1, 1),
 		list_state(2, 0),
@@ -1177,9 +1195,9 @@ func probe_list_states() (states []list_factory) {
 
 // List state makes one structurally live list without lookup cost.
 func list_state(capacity_count Capacity, entry_count Count) (factory list_factory) {
-	return func() (list *List[int, int]) {
-		list = new(List[int, int])
-		nodes := new(Nodes[int, int])
+	return func() (list *List) {
+		list = new(List)
+		nodes := make(Nodes, COUNT_MAXIMUM)
 		list_initialize(list, nodes, Count(capacity_count))
 		for key_index := 0; key_index < int(entry_count); key_index++ {
 			list_push_front(list, key_index, key_index)
@@ -1192,7 +1210,7 @@ func list_state(capacity_count Capacity, entry_count Count) (factory list_factor
 func drive_list_operations(state list_factory) {
 	for _, capacity_count := range probe_capacities() {
 		attempt(func() {
-			list_initialize(state(), new(Nodes[int, int]), Count(capacity_count))
+			list_initialize(state(), make(Nodes, COUNT_MAXIMUM), Count(capacity_count))
 		})
 	}
 	attempt(func() { list_reset(state()) })
@@ -1219,16 +1237,16 @@ func drive_list_operations(state list_factory) {
 }
 
 // Simple factories give fresh cache state to each mutating operation.
-type simple_factory func() (cache *Simple[int, int])
+type simple_factory func() (cache *Simple)
 
 // Probe simple states mirrors every list witness through Simple.
 func probe_simple_states() (states []simple_factory) {
-	states = append(states, func() (cache *Simple[int, int]) { return new(Simple[int, int]) })
+	states = append(states, func() (cache *Simple) { return new(Simple) })
 	for _, state := range probe_list_states()[1:] {
 		list_source := state
-		states = append(states, func() (cache *Simple[int, int]) {
+		states = append(states, func() (cache *Simple) {
 			list := list_source()
-			return &Simple[int, int]{
+			return &Simple{
 				Capacity:   Capacity(list.Capacity),
 				Evict_List: *list,
 			}
@@ -1259,14 +1277,14 @@ func drive_simple_operations(state simple_factory) {
 	}
 	for _, count := range probe_counts() {
 		attempt(func() {
-			Simple_Keys(state(), Keys[int]{
-				Storage: new([COUNT_MAXIMUM]int),
+			Simple_Keys(state(), Keys{
+				Storage: make(Key_Storage, COUNT_MAXIMUM),
 				Count:   Key_Count(count),
 			})
 		})
 		attempt(func() {
-			Simple_Values(state(), Values[int]{
-				Storage: new([COUNT_MAXIMUM]int),
+			Simple_Values(state(), Values{
+				Storage: make(Value_Storage, COUNT_MAXIMUM),
 				Count:   Value_Count(count),
 			})
 		})
@@ -1274,10 +1292,11 @@ func drive_simple_operations(state simple_factory) {
 }
 
 // Two queue factories give fresh aggregate state to each operation.
-type two_queue_factory func() (cache *Two_Queue[int, int])
+type two_queue_factory func() (cache *Two_Queue)
 
 // Probe two queue states names each scalar witness without multiplying axes.
 func probe_two_queue_states() (states []two_queue_factory) {
+	states = append(states, func() (cache *Two_Queue) { return new(Two_Queue) })
 	for _, capacity_count := range probe_capacities() {
 		capacity_probe := capacity_count
 		states = append(states, two_queue_state(
@@ -1285,8 +1304,8 @@ func probe_two_queue_states() (states []two_queue_factory) {
 		))
 	}
 	// Full ratios keep the one-entry ghost non-empty after fixed-point truncation.
-	states = append(states, func() (cache *Two_Queue[int, int]) {
-		return new_two_queue_cache[int, int](Two_Queue_Input{
+	states = append(states, func() (cache *Two_Queue) {
+		return new_two_queue_cache(Two_Queue_Input{
 			Capacity:     CAPACITY_INITIALIZED_MINIMUM,
 			Recent_Ratio: Recent_Ratio_Input(RATIO_MAXIMUM),
 			Ghost_Ratio:  Ghost_Ratio_Input(RATIO_MAXIMUM),
@@ -1307,16 +1326,74 @@ func probe_two_queue_states() (states []two_queue_factory) {
 	for _, count := range probe_counts() {
 		states = append(states, two_queue_entries(count))
 	}
+	for _, state := range probe_list_states() {
+		list_source := state
+		states = append(
+			states,
+			two_queue_recent_list_state(list_source),
+			two_queue_frequent_list_state(list_source),
+			two_queue_ghost_list_state(list_source),
+		)
+	}
 	return states
+}
+
+// Two queue recent list state isolates recent storage witnesses from other lists.
+func two_queue_recent_list_state(list_source list_factory) (factory two_queue_factory) {
+	return func() (cache *Two_Queue) {
+		list := list_source()
+		cache = two_queue_empty_lists()
+		cache.Live.Recent = Recent_Cache{
+			Capacity:   Capacity(list.Capacity),
+			Evict_List: *list,
+		}
+		return cache
+	}
+}
+
+// Two queue frequent list state isolates frequent storage witnesses from other lists.
+func two_queue_frequent_list_state(list_source list_factory) (factory two_queue_factory) {
+	return func() (cache *Two_Queue) {
+		list := list_source()
+		cache = two_queue_empty_lists()
+		cache.Live.Frequent = Frequent_Cache{
+			Capacity:   Capacity(list.Capacity),
+			Evict_List: *list,
+		}
+		return cache
+	}
+}
+
+// Two queue ghost list state isolates ghost storage witnesses from live lists.
+func two_queue_ghost_list_state(list_source list_factory) (factory two_queue_factory) {
+	return func() (cache *Two_Queue) {
+		list := list_source()
+		cache = two_queue_empty_lists()
+		cache.Ghost.Cache = Ghost_Cache{
+			Capacity:   Capacity(list.Capacity),
+			Evict_List: *list,
+		}
+		return cache
+	}
+}
+
+// Two queue empty lists keep aggregate initialization valid while one list supplies witnesses.
+func two_queue_empty_lists() (cache *Two_Queue) {
+	return &Two_Queue{
+		Capacity:     1,
+		Recent_Size:  0,
+		Recent_Ratio: Recent_Ratio(CONFIGURED_RATIO_MINIMUM),
+		Ghost_Ratio:  Ghost_Ratio(CONFIGURED_RATIO_MINIMUM),
+	}
 }
 
 // Two queue entries fill recent storage directly so output counts reach every witness.
 func two_queue_entries(entry_count Count) (factory two_queue_factory) {
-	return func() (cache *Two_Queue[int, int]) {
-		cache = new_two_queue_cache[int, int](Two_Queue_Input{Capacity: COUNT_MAXIMUM})
+	return func() (cache *Two_Queue) {
+		cache = new_two_queue_cache(Two_Queue_Input{Capacity: COUNT_MAXIMUM})
 		cache.Recent_Size = COUNT_MAXIMUM
 		for key_index := 0; key_index < int(entry_count); key_index++ {
-			list_push_front(&cache.Live[0].Evict_List, key_index, key_index)
+			list_push_front(&cache.Live.Recent.Evict_List, key_index, key_index)
 		}
 		return cache
 	}
@@ -1329,8 +1406,8 @@ func two_queue_state(
 	recent_ratio Recent_Ratio,
 	ghost_ratio Ghost_Ratio,
 ) (factory two_queue_factory) {
-	return func() (cache *Two_Queue[int, int]) {
-		cache = new_two_queue_cache[int, int](Two_Queue_Input{Capacity: 2})
+	return func() (cache *Two_Queue) {
+		cache = new_two_queue_cache(Two_Queue_Input{Capacity: 2})
 		cache.Capacity = capacity_count
 		cache.Recent_Size = recent_size
 		cache.Recent_Ratio = recent_ratio
@@ -1355,14 +1432,14 @@ func drive_two_queue_operations(state two_queue_factory) {
 	attempt(func() { two_queue_ensure_space(state(), true) })
 	for _, count := range probe_counts() {
 		attempt(func() {
-			Two_Queue_Keys(state(), Keys[int]{
-				Storage: new([COUNT_MAXIMUM]int),
+			Two_Queue_Keys(state(), Keys{
+				Storage: make(Key_Storage, COUNT_MAXIMUM),
 				Count:   Key_Count(count),
 			})
 		})
 		attempt(func() {
-			Two_Queue_Values(state(), Values[int]{
-				Storage: new([COUNT_MAXIMUM]int),
+			Two_Queue_Values(state(), Values{
+				Storage: make(Value_Storage, COUNT_MAXIMUM),
 				Count:   Value_Count(count),
 			})
 		})
@@ -1370,10 +1447,11 @@ func drive_two_queue_operations(state two_queue_factory) {
 }
 
 // Expirable factories give fresh cache state to each operation.
-type expirable_factory func() (cache *Expirable[int, int])
+type expirable_factory func() (cache *Expirable)
 
 // Probe expirable states names cache, list, TTL, and bucket witnesses.
 func probe_expirable_states() (states []expirable_factory) {
+	states = append(states, func() (cache *Expirable) { return new(Expirable) })
 	for _, capacity_count := range probe_capacities() {
 		capacity_probe := capacity_count
 		states = append(states, expirable_state(capacity_probe, TTL_MINIMUM, nil, 0))
@@ -1404,7 +1482,7 @@ func probe_expirable_states() (states []expirable_factory) {
 
 // Expirable due state names fired cleanup status.
 func expirable_due_state() (factory expirable_factory) {
-	return func() (cache *Expirable[int, int]) {
+	return func() (cache *Expirable) {
 		cache = expirable_state(1, TTL_INITIALIZED_MINIMUM, nil, 0)()
 		cache.Cleanup.Due = true
 		return cache
@@ -1418,8 +1496,8 @@ func expirable_state(
 	list_source list_factory,
 	bucket Bucket_Index,
 ) (factory expirable_factory) {
-	return func() (cache *Expirable[int, int]) {
-		cache = new_expirable_cache[int, int](Expirable_Input[int, int]{
+	return func() (cache *Expirable) {
+		cache = new_expirable_cache(Expirable_Input{
 			Capacity: 1,
 			TTL:      TTL_INITIALIZED_MINIMUM,
 			Clock:    invariant_clock(),
@@ -1462,14 +1540,14 @@ func drive_expirable_operations(state expirable_factory) {
 	}
 	for _, count := range probe_counts() {
 		attempt(func() {
-			Expirable_Keys(state(), Keys[int]{
-				Storage: new([COUNT_MAXIMUM]int),
+			Expirable_Keys(state(), Keys{
+				Storage: make(Key_Storage, COUNT_MAXIMUM),
 				Count:   Key_Count(count),
 			})
 		})
 		attempt(func() {
-			Expirable_Values(state(), Values[int]{
-				Storage: new([COUNT_MAXIMUM]int),
+			Expirable_Values(state(), Values{
+				Storage: make(Value_Storage, COUNT_MAXIMUM),
 				Count:   Value_Count(count),
 			})
 		})
@@ -1478,19 +1556,40 @@ func drive_expirable_operations(state expirable_factory) {
 
 // Drive constructor inputs covers pre-state and each constructor input domain.
 func drive_constructor_inputs() {
+	drive_simple_constructor_inputs()
+	drive_two_queue_constructor_inputs()
+	drive_expirable_constructor_inputs()
+}
+
+// Separate constructor drivers keep each bounded Cartesian probe auditable.
+func drive_simple_constructor_inputs() {
+	attempt(func() {
+		New_Simple(new(Simple), nil, CAPACITY_INITIALIZED_MINIMUM, nil)
+	})
 	for _, state := range probe_simple_states() {
 		for _, capacity_count := range probe_capacities() {
 			attempt(func() {
-				New_Simple(state(), new(Nodes[int, int]), capacity_count, nil)
+				New_Simple(state(), make(Nodes, COUNT_MAXIMUM), capacity_count, nil)
 			})
 		}
 	}
+}
+
+// Separate constructor drivers keep each bounded Cartesian probe auditable.
+func drive_two_queue_constructor_inputs() {
+	attempt(func() {
+		New_Two_Queue(
+			new(Two_Queue),
+			new(Two_Queue_Nodes),
+			Two_Queue_Input{Capacity: CAPACITY_INITIALIZED_MINIMUM},
+		)
+	})
 	for _, state := range probe_two_queue_states() {
 		for _, capacity_count := range probe_capacities() {
 			attempt(func() {
 				New_Two_Queue(
 					state(),
-					new(Two_Queue_Nodes[int, int]),
+					new_two_queue_nodes(),
 					Two_Queue_Input{Capacity: capacity_count},
 				)
 			})
@@ -1499,7 +1598,7 @@ func drive_constructor_inputs() {
 			attempt(func() {
 				New_Two_Queue(
 					state(),
-					new(Two_Queue_Nodes[int, int]),
+					new_two_queue_nodes(),
 					Two_Queue_Input{
 						Capacity:     COUNT_MAXIMUM,
 						Recent_Ratio: Recent_Ratio_Input(ratio),
@@ -1509,17 +1608,47 @@ func drive_constructor_inputs() {
 			})
 		}
 	}
+}
+
+// Separate constructor drivers keep each bounded Cartesian probe auditable.
+func drive_expirable_constructor_inputs() {
+	attempt(func() {
+		New_Expirable(
+			new(Expirable),
+			nil,
+			Expirable_Input{
+				Capacity: CAPACITY_INITIALIZED_MINIMUM,
+				TTL:      TTL_INITIALIZED_MINIMUM,
+				Clock:    invariant_clock(),
+				Timeline: invariant_timeline(),
+				Buckets:  make(Buckets, BUCKET_COUNT),
+			},
+		)
+	})
+	attempt(func() {
+		New_Expirable(
+			new(Expirable),
+			make(Nodes, COUNT_MAXIMUM),
+			Expirable_Input{
+				Capacity: CAPACITY_INITIALIZED_MINIMUM,
+				TTL:      TTL_INITIALIZED_MINIMUM,
+				Clock:    invariant_clock(),
+				Timeline: invariant_timeline(),
+			},
+		)
+	})
 	for _, state := range probe_expirable_states() {
 		for _, capacity_count := range probe_capacities() {
 			attempt(func() {
 				New_Expirable(
 					state(),
-					new(Nodes[int, int]),
-					Expirable_Input[int, int]{
+					make(Nodes, COUNT_MAXIMUM),
+					Expirable_Input{
 						Capacity: capacity_count,
 						TTL:      TTL_INITIALIZED_MINIMUM,
 						Clock:    invariant_clock(),
 						Timeline: invariant_timeline(),
+						Buckets:  make(Buckets, BUCKET_COUNT),
 					},
 				)
 			})
@@ -1528,12 +1657,13 @@ func drive_constructor_inputs() {
 			attempt(func() {
 				New_Expirable(
 					state(),
-					new(Nodes[int, int]),
-					Expirable_Input[int, int]{
+					make(Nodes, COUNT_MAXIMUM),
+					Expirable_Input{
 						Capacity: 1,
 						TTL:      ttl,
 						Clock:    invariant_clock(),
 						Timeline: invariant_timeline(),
+						Buckets:  make(Buckets, BUCKET_COUNT),
 					},
 				)
 			})
@@ -1608,7 +1738,6 @@ func invariant_clock() (host time.Clock) {
 func invariant_timeline() (timeline nbio.Timeline) {
 	return nbio.Timeline{
 		Submit:        invariant_timeout,
-		Timeout:       invariant_timeout,
 		Open_Event:    invariant_open_event,
 		Event_Listen:  invariant_event_listen,
 		Event_Trigger: invariant_event_trigger,
@@ -1617,48 +1746,48 @@ func invariant_timeline() (timeline nbio.Timeline) {
 }
 
 // Invariant monotonic clock returns boot moment.
-func invariant_now_monotonic(_ unsafe.Pointer) (moment time.Monotonic_Moment) {
+func invariant_now_monotonic(_ time.State) (moment time.Monotonic_Moment) {
 	return time.MONOTONIC_MOMENT_MINIMUM
 }
 
 // Invariant realtime clock returns epoch moment.
-func invariant_now_realtime(_ unsafe.Pointer) (moment time.Moment) {
+func invariant_now_realtime(_ time.State) (moment time.Moment) {
 	return 0
 }
 
 // Invariant timeout accepts one timer without retaining it.
 func invariant_timeout(
-	_ unsafe.Pointer, _ *nbio.Completion, _ time.Duration, _ nbio.Callback,
+	_ nbio.State, _ *nbio.Completion, _ time.Duration, _ nbio.Callback,
 ) {
 	return
 }
 
 // Invariant event opener returns one inert event.
-func invariant_open_event(_ unsafe.Pointer) (event nbio.Event, err error) {
+func invariant_open_event(_ nbio.State) (event nbio.Event, err error) {
 	return 0, nil
 }
 
 // Invariant event listener accepts one inert listener.
 func invariant_event_listen(
-	_ unsafe.Pointer, _ nbio.Event, _ *nbio.Completion, _ nbio.Callback,
+	_ nbio.State, _ nbio.Event, _ *nbio.Completion, _ nbio.Callback,
 ) {
 	return
 }
 
 // Invariant event trigger accepts one inert trigger.
-func invariant_event_trigger(_ unsafe.Pointer, _ nbio.Event, _ *nbio.Completion) {
+func invariant_event_trigger(_ nbio.State, _ nbio.Event, _ *nbio.Completion) {
 	return
 }
 
 // Invariant event closer accepts one inert event close.
-func invariant_close_event(_ unsafe.Pointer, _ nbio.Event) {
+func invariant_close_event(_ nbio.State, _ nbio.Event) {
 	return
 }
 
 // Benchmark_Simple_Random ports BenchmarkLRU_Rand with deterministic keys.
 func Benchmark_Simple_Random(b *testing.B) {
 	generator := prng.New(1)
-	c := new_simple_cache[int, int](COUNT_MAXIMUM, nil)
+	c := new_simple_cache(COUNT_MAXIMUM, nil)
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		key := int(prng.Xoshiro_Below(&generator, 32768))
@@ -1673,7 +1802,7 @@ func Benchmark_Simple_Random(b *testing.B) {
 // Benchmark_Simple_Frequent ports BenchmarkLRU_Freq with deterministic keys.
 func Benchmark_Simple_Frequent(b *testing.B) {
 	generator := prng.New(1)
-	c := new_simple_cache[int, int](COUNT_MAXIMUM, nil)
+	c := new_simple_cache(COUNT_MAXIMUM, nil)
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		if op_index%2 == 0 {
@@ -1687,7 +1816,7 @@ func Benchmark_Simple_Frequent(b *testing.B) {
 // Benchmark_Two_Queue_Random ports Benchmark2Q_Rand with deterministic keys.
 func Benchmark_Two_Queue_Random(b *testing.B) {
 	generator := prng.New(1)
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: COUNT_MAXIMUM})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: COUNT_MAXIMUM})
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		key := int(prng.Xoshiro_Below(&generator, 32768))
@@ -1702,7 +1831,7 @@ func Benchmark_Two_Queue_Random(b *testing.B) {
 // Benchmark_Two_Queue_Frequent ports Benchmark2Q_Freq with deterministic keys.
 func Benchmark_Two_Queue_Frequent(b *testing.B) {
 	generator := prng.New(1)
-	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: COUNT_MAXIMUM})
+	c := new_two_queue_cache(Two_Queue_Input{Capacity: COUNT_MAXIMUM})
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		if op_index%2 == 0 {
@@ -1718,7 +1847,7 @@ func Benchmark_Two_Queue_Frequent(b *testing.B) {
 func Benchmark_Expirable_Random(b *testing.B) {
 	loop, _, host := new_expirable_loop()
 	generator := prng.New(1)
-	c := new_expirable_cache[int, int](Expirable_Input[int, int]{
+	c := new_expirable_cache(Expirable_Input{
 		Capacity: COUNT_MAXIMUM,
 		TTL:      TTL(10 * time.MICROSECOND),
 		Clock:    host,
