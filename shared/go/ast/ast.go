@@ -48,6 +48,9 @@ const TOKEN_INDEX_MINIMUM = 0
 // TOKEN_INDEX_MAXIMUM is the final token of the run.
 const TOKEN_INDEX_MAXIMUM = TOKEN_COUNT_MAXIMUM - 1
 
+// TOKEN_RUN_SIZE_MINIMUM is the end token every completed scan writes.
+const TOKEN_RUN_SIZE_MINIMUM = 1
+
 // CURSOR_TOKEN_COUNT holds how many tokens the scan wrote.
 const CURSOR_TOKEN_COUNT = 0
 
@@ -570,6 +573,16 @@ func Token_Index_Invariants(value Token_Index, namespace invariant.Namespace) {
 		Ensure()
 }
 
+// Token_Run is the borrowed token prefix one parse wrote.
+type Token_Run []token.Token
+
+// Token_Run_Invariants bounds the borrowed prefix inside Parse_State storage.
+func Token_Run_Invariants(value Token_Run, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), TOKEN_RUN_SIZE_MINIMUM, TOKEN_COUNT_MAXIMUM).
+		Ensure()
+}
+
 // Ancestor is the slot that holds one node as a child, or INDEX_ABSENT for a root. A parent
 // takes its slot before its children, thus no parent can occupy the final slot of the arena.
 type Ancestor int32
@@ -835,6 +848,13 @@ func Token_At(subject *Parse_State, index Token_Index) (one token.Token) {
 		"A read token lies inside the count the scan wrote.",
 	)
 	return subject.Tokens[index]
+}
+
+// Parse_State_Token_Run borrows only the token prefix the last scan wrote.
+func Parse_State_Token_Run(subject *Parse_State) (run Token_Run) {
+	defer func() { Token_Run_Invariants(run, "parse_state_token_run.run") }()
+	Parse_State_Invariants(subject, "parse_state_token_run.subject")
+	return subject.Tokens[:subject.Token_Cursors[CURSOR_TOKEN_COUNT]]
 }
 
 // Clears the cursors and marks slot zero, which holds no node. Slot zero carries the error kind

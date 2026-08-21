@@ -19,6 +19,17 @@ func Test_Nodes(t *testing.T) {
 	test_nodes(t)
 }
 
+// Test_Token_Run binds the Token Run leaf before fixture declarations.
+func Test_Token_Run(t *testing.T) {
+	state := new(ast.Parse_State)
+	ast.Parse(state, token.Source(TEST_HEAD))
+	run := ast.Parse_State_Token_Run(state)
+	testify.Equal(t, token.KIND_PACKAGE, run[0].Kind,
+		"the borrowed run opens with the parsed package token")
+	testify.Equal(t, token.KIND_END_OF_FILE, run[len(run)-1].Kind,
+		"the borrowed run closes at the parsed end token")
+}
+
 // Test_Package_Clause binds the Package Clause leaf before fixture declarations.
 func Test_Package_Clause(t *testing.T) {
 	test_package_clause(t)
@@ -254,6 +265,7 @@ type allocation_fixture struct {
 	Ok    ast.Boolean
 	Node  ast.Node
 	Token token.Token
+	Run   ast.Token_Run
 }
 
 // Walks the tree in pre-order and reports the kind of every node it meets.
@@ -1161,6 +1173,9 @@ func test_allocation(t *testing.T) {
 		{Name: "Token_At", Call: func() {
 			fixture.Token = ast.Token_At(state, fixture.Node.Token)
 		}},
+		{Name: "Token_Run", Call: func() {
+			fixture.Run = ast.Parse_State_Token_Run(state)
+		}},
 	}
 	for _, check := range checks {
 		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
@@ -1204,6 +1219,12 @@ func filled_token_run() (text string) {
 
 // States the source sizes and the token positions the accessors must see.
 func token_bounds(t *testing.T, state *ast.Parse_State) {
+	ast.Parse(state, nil)
+	testify.Equal(t, ast.TOKEN_RUN_SIZE_MINIMUM,
+		len(ast.Parse_State_Token_Run(state)), "an empty source holds only its end token")
+	ast.Parse(state, token.Source("+"))
+	testify.Equal(t, ast.TOKEN_RUN_SIZE_MINIMUM+1,
+		len(ast.Parse_State_Token_Run(state)), "one sign and its end fill two token slots")
 	ast.Parse(state, token.Source("a"))
 	ast.Parse(state, token.Source("ab"))
 	sweep_tokens(t, state, TEST_HEAD+"var a = b ~ \xff\n")
@@ -1216,6 +1237,8 @@ func token_bounds(t *testing.T, state *ast.Parse_State) {
 	testify.Contains(t, walk_kinds(state, ast.Index(root), nil), ast.NODE_ERROR,
 		"the run that ends with no closing brace holds an error node")
 	last := ast.Token_Index(ast.TOKEN_COUNT_MAXIMUM - 1)
+	testify.Equal(t, ast.TOKEN_COUNT_MAXIMUM,
+		len(ast.Parse_State_Token_Run(state)), "the filled run reaches its declared bound")
 	testify.Equal(t, token.KIND_END_OF_FILE, ast.Token_At(state, last).Kind,
 		"the final run slot holds the end of file")
 	testify.Equal(t, last, ast.Failure_Token(state),

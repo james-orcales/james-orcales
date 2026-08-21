@@ -9,6 +9,12 @@ one Parse_State and the package holds no storage of its own, thus a parse alloca
 A node carries its kind, the token that names it, its parent, and its child chain. Slot zero is
 no node, thus zero names an absent child and a walk needs no separate empty test.
 
+# Token Run
+
+Parse_State_Token_Run borrows the exact token prefix one parse wrote. It contains at least the end
+token and at most 131,072 tokens. Caller owns the Parse_State and the borrowed run allocates
+nothing.
+
 # Package Clause
 
 A file opens with the package keyword and one identifier.
