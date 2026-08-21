@@ -681,13 +681,16 @@ func Test_Invariants_Raw_Types(t *testing.T) {
 			"// Token names fixture type.\ntype Token int\n\n" +
 			"// Holder names fixture owner.\ntype Holder struct {\n" +
 			"\tLocal Token\n\tQualified outside.Token\n\tBuiltin int\n" +
-			"\tPointer *Token\n\tInline struct { Value Token }\n}\n\n" +
+			"\tPointer *Token\n\tInline struct { Value Token }\n" +
+			"\tGeneric Pair[Token, Token]\n}\n\n" +
+			"// Pair names a generic fixture type.\n" +
+			"type Pair[Left any, Right any] func(left Left, right Right) (equal bool)\n\n" +
 			"// Convert exercises type boundaries.\n" +
 			"func Convert(local Token, qualified outside.Token, builtin string, " +
-			"raw *Token) " +
+			"raw *Token, generic Pair[Token, Token], single outside.Box[Token]) " +
 			"(local_result Token, qualified_result outside.Token, raw_result *Token, " +
 			"builtin_result int32, failure error) {\n" +
-			"\tprintln(local, qualified, builtin, raw)\n" +
+			"\tprintln(local, qualified, builtin, raw, generic, single)\n" +
 			"\treturn local, qualified, raw, 0, nil\n}\n",
 	})
 	diags := check_source(parsed)
@@ -720,8 +723,10 @@ func Test_Invariants_Raw_Types(t *testing.T) {
 		t.Fatal("predeclared result type must be flagged")
 	}
 	// An error is an interface with no length and no domain, thus no assertion could state it.
-	for _, accepted := range []string{"Local", "Qualified", "local", "qualified",
-		"local_result", "qualified_result", "failure"} {
+	// An instantiated generic type is still a defined type: the identifier owns the bundle and the
+	// type arguments only fill its slots.
+	for _, accepted := range []string{"Local", "Qualified", "Generic", "local", "qualified",
+		"generic", "single", "local_result", "qualified_result", "failure"} {
 		for _, entry := range diags {
 			if !strings.Contains(entry.Message, "has a raw ") {
 				continue

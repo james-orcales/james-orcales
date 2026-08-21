@@ -3561,6 +3561,14 @@ func field_declaration_names(field *ast.Field) (names []string) {
 // user-defined type. Sole pass: error. An interface has no length and no domain, thus no
 // assertion could state one. Owner allowed error and nothing else.
 func type_is_identifier(expression ast.Expr) (yes bool) {
+	// An instantiated generic type is still a defined type: the identifier owns the bundle and
+	// the type arguments only fill its slots, so judgment falls on the identifier alone.
+	if index, is_index := expression.(*ast.IndexExpr); is_index {
+		return type_is_identifier(index.X)
+	}
+	if index_list, is_index_list := expression.(*ast.IndexListExpr); is_index_list {
+		return type_is_identifier(index_list.X)
+	}
 	if identifier, is_identifier := expression.(*ast.Ident); is_identifier {
 		if identifier.Name == "error" {
 			return true

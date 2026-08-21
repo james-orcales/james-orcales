@@ -132,9 +132,9 @@ ambient sources cannot supply deterministic coverage. A binary component uses it
 
 ### Raw Types
 
-Function parameters, results, and struct fields use user-defined type identifiers, plain or
-package-qualified, or error. Any other type expression is raw and banned, predeclared identifiers
-included; declare a type first. Test files and opted-out packages are exempt.
+Function parameters, results, and struct fields use user-defined type identifiers, plain,
+package-qualified, or instantiated, or error. Any other type expression is raw and banned,
+predeclared identifiers included; declare a type first. Test files and opted-out packages are exempt.
 
 ### Small Slices
 
