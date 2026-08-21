@@ -22,18 +22,18 @@ single clock millisecond, so they sort in creation order.
 
 # Text Marshaling Round Trips
 
-MarshalText then UnmarshalText recovers the original UUID, and the text is the
+UUID_Marshal_Text then UUID_Unmarshal_Text recovers original UUID, and text is
 canonical 36-character form.
 
 # Binary Marshaling Round Trips
 
-MarshalBinary emits the 16 raw bytes and UnmarshalBinary recovers them; a slice of
-any other length is an error.
+UUID_Marshal_Binary emits 16 raw bytes and UUID_Unmarshal_Binary recovers them; a
+slice of any other length is an error.
 
 # JSON Null Round Trips
 
-A valid Null_UUID marshals to its quoted string and back; an invalid one marshals to
-JSON null and unmarshals from null as invalid.
+A valid Null_UUID passes through Null_UUID_Marshal_JSON and Null_UUID_Unmarshal_JSON;
+an invalid one marshals to JSON null and unmarshals from null as invalid.
 
 # Database Scan Reads Value
 
@@ -54,3 +54,8 @@ to the Unix seconds the clock supplied.
 
 A DCE Security UUID carries version 2, the requested domain, and the caller's
 identifier, which UUID_Domain and UUID_Identifier read back.
+
+# Entire Package Is Zero Allocation
+
+Every UUID operation, including rejected input and host construction, allocates zero
+heap memory. Caller owns UUID, encoded output, and host seed scratch storage.

@@ -7,13 +7,14 @@
 // a simulation wires a seeded reader and a virtual clock, and the same seed
 // reproduces the same UUIDs bit-for-bit.
 //
-// The linter also bans methods that do not satisfy a stdlib interface, so an
-// accessor like upstream uuid.Version() is free function UUID_Version(u).
-// Encoding interface methods remain. Database conversion uses shared closed driver
+// The linter also bans package-owned methods, so upstream accessors and encoding
+// methods become free functions. Database conversion uses shared closed driver
 // union instead of reflection-backed standard SQL values.
 package uuid
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/md5"
 	"local/james-orcales/shared/crypto/prng"
@@ -107,12 +108,23 @@ const UUID_URN_PREFIX_BYTE_COUNT = len(UUID_URN_PREFIX)
 // UUID_URN_BYTE_COUNT prevents a URN formatter from allocating a larger buffer.
 const UUID_URN_BYTE_COUNT = UUID_URN_PREFIX_BYTE_COUNT + UUID_TEXT_BYTE_COUNT
 
-// UUID is a 128-bit RFC 9562 Universally Unique IDentifier.
-type UUID [UUID_BYTE_COUNT]byte
+// UUID uses slice storage because fixed arrays hide boundaries from callers.
+type UUID []byte
 
 // UUID_Invariants fixes RFC 9562 storage width.
 func UUID_Invariants(value UUID, _ aver.Namespace) {
 	aver.Always(len(value) == UUID_BYTE_COUNT, "UUID storage has RFC 9562 width.")
+}
+
+// UUID_Pointer names caller-owned decode storage.
+type UUID_Pointer *UUID
+
+// UUID_Pointer_Invariants composes present destination storage.
+func UUID_Pointer_Invariants(value UUID_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	UUID_Invariants(*value, namespace)
 }
 
 // UUIDs is a slice of UUID, given a name so UUIDs_Strings can hang off it.
@@ -184,12 +196,18 @@ func Generated_Time_Invariants(value Generated_Time, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Node is RFC 9562 node identifier.
-type Node [NODE_BYTE_COUNT]byte
+// Node keeps its 48 bits in two visible scalar words.
+type Node struct {
+	// High owns first two wire octets.
+	High bits.Word_16
+	// Low owns final four wire octets.
+	Low bits.Word_32
+}
 
-// Node_Invariants fixes RFC 9562 node storage width.
-func Node_Invariants(value Node, _ aver.Namespace) {
-	aver.Always(len(value) == NODE_BYTE_COUNT, "UUID node has RFC 9562 width.")
+// Node_Invariants composes complete 48-bit node storage.
+func Node_Invariants(value Node, namespace aver.Namespace) {
+	bits.Word_16_Invariants(value.High, namespace)
+	bits.Word_32_Invariants(value.Low, namespace)
 }
 
 // Clock_Sequence separates timestamp collisions within one generator.
@@ -244,6 +262,106 @@ func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace aver.Namespac
 		Ensure()
 }
 
+// Text is canonical UUID text.
+type Text string
+
+// Text_Invariants fixes canonical UUID text width.
+func Text_Invariants(value Text, _ aver.Namespace) {
+	aver.Always(len(value) == UUID_TEXT_BYTE_COUNT, "UUID text has canonical width.")
+}
+
+// Text_Bytes is canonical UUID text in byte storage.
+type Text_Bytes []byte
+
+// Text_Bytes_Invariants fixes canonical UUID text byte width.
+func Text_Bytes_Invariants(value Text_Bytes, _ aver.Namespace) {
+	aver.Always(len(value) == UUID_TEXT_BYTE_COUNT, "UUID text bytes have canonical width.")
+}
+
+// URN_Bytes is caller storage for one UUID URN.
+type URN_Bytes []byte
+
+// URN_Bytes_Invariants fixes complete UUID URN storage.
+func URN_Bytes_Invariants(value URN_Bytes, _ aver.Namespace) {
+	aver.Always(len(value) == UUID_URN_BYTE_COUNT, "UUID URN storage has RFC 2141 width.")
+}
+
+// URN_Input is one complete unvalidated UUID URN.
+type URN_Input []byte
+
+// URN_Input_Invariants fixes the only width reaching prefix matching.
+func URN_Input_Invariants(value URN_Input, _ aver.Namespace) {
+	aver.Always(len(value) == UUID_URN_BYTE_COUNT, "UUID URN input has complete width.")
+}
+
+// Text_Storage holds caller storage for each collection rendering.
+type Text_Storage []Text_Bytes
+
+// Text_Storage_Invariants preserves collection count bound.
+func Text_Storage_Invariants(value Text_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, UUIDS_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Nullable_Text_Storage is caller storage for null or canonical text.
+type Nullable_Text_Storage []byte
+
+// Nullable_Text_Storage_Invariants reserves the larger nullable encoding.
+func Nullable_Text_Storage_Invariants(value Nullable_Text_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == UUID_TEXT_BYTE_COUNT, "Nullable UUID text storage fits UUID text.",
+	)
+}
+
+// JSON_Storage is caller storage for null or quoted canonical text.
+type JSON_Storage []byte
+
+// JSON_Storage_Invariants reserves the larger nullable JSON encoding.
+func JSON_Storage_Invariants(value JSON_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == UUID_BRACED_BYTE_COUNT, "Nullable UUID JSON storage fits UUID text.",
+	)
+}
+
+// Binary is complete UUID wire storage.
+type Binary []byte
+
+// Binary_Invariants fixes UUID wire width.
+func Binary_Invariants(value Binary, _ aver.Namespace) {
+	aver.Always(len(value) == UUID_BYTE_COUNT, "UUID binary data has RFC 9562 width.")
+}
+
+// Nullable_Binary is empty or complete UUID wire storage.
+type Nullable_Binary []byte
+
+// Nullable_Binary_Invariants admits invalid and valid binary encodings.
+func Nullable_Binary_Invariants(value Nullable_Binary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), bytes.SLICE_SIZE_MINIMUM, UUID_BYTE_COUNT).
+		Ensure()
+}
+
+// Nullable_Text is JSON null text or canonical UUID text.
+type Nullable_Text []byte
+
+// Nullable_Text_Invariants admits both nullable text encodings.
+func Nullable_Text_Invariants(value Nullable_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), JSON_NULL_BYTE_COUNT, UUID_TEXT_BYTE_COUNT).
+		Ensure()
+}
+
+// JSON is JSON null or quoted canonical UUID text.
+type JSON []byte
+
+// JSON_Invariants admits both nullable JSON encodings.
+func JSON_Invariants(value JSON, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), JSON_NULL_BYTE_COUNT, UUID_BRACED_BYTE_COUNT).
+		Ensure()
+}
+
 // URN is complete RFC 2141 UUID name.
 type URN string
 
@@ -272,37 +390,27 @@ func Unix_Second_Invariants(value Unix_Second, namespace aver.Namespace) {
 		Ensure()
 }
 
-// NANOSECOND_STORAGE_COUNT keeps exact remainder in one scalar slot.
-const NANOSECOND_STORAGE_COUNT = UUID_BIT_COUNT / UUID_BIT_COUNT
+// Nanosecond_Tick is signed subsecond remainder in exact 100-nanosecond units.
+type Nanosecond_Tick int64
 
-// Nanosecond is subsecond remainder from RFC timestamp conversion. Exact UUID
-// precision makes only multiples of one 100-nanosecond tick representable.
-type Nanosecond [NANOSECOND_STORAGE_COUNT]int64
-
-// Nanosecond_Invariants states bounds and resolution without claiming impossible values.
-func Nanosecond_Invariants(value Nanosecond, _ aver.Namespace) {
-	aver.Always(
-		value[0] >= NANOSECOND_MINIMUM,
-		"UUID Unix nanoseconds stay above signed subsecond minimum.",
-	)
-	aver.Always(
-		value[0] <= NANOSECOND_MAXIMUM,
-		"UUID Unix nanoseconds stay below signed subsecond maximum.",
-	)
-	aver.Always(
-		value[0]%UUID_TICK_NANOSECOND_COUNT == 0,
-		"UUID Unix nanoseconds retain exact RFC tick resolution.",
-	)
+// Nanosecond_Tick_Invariants bounds representable subsecond ticks.
+func Nanosecond_Tick_Invariants(value Nanosecond_Tick, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int64(
+			int64(value), NANOSECOND_TICK_MINIMUM, NANOSECOND_TICK_MAXIMUM,
+		).
+		Ensure()
 }
 
-// Order is normalized lexical UUID comparison.
-type Order int
+// Nanosecond keeps RFC precision explicit instead of admitting impossible values.
+type Nanosecond struct {
+	// Ticks counts signed 100-nanosecond units.
+	Ticks Nanosecond_Tick
+}
 
-// Order_Invariants admits before, equal, and after.
-func Order_Invariants(value Order, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Int(int(value), ORDER_BEFORE, ORDER_EQUAL, ORDER_AFTER).
-		Ensure()
+// Nanosecond_Invariants composes exact subsecond storage.
+func Nanosecond_Invariants(value Nanosecond, namespace aver.Namespace) {
+	Nanosecond_Tick_Invariants(value.Ticks, namespace)
 }
 
 // Unix_Millisecond is Version 7 wall-clock field.
@@ -471,15 +579,6 @@ const V7_VALUE_MINIMUM uint64 = bits.WORD_64_MINIMUM
 const V7_VALUE_MAXIMUM = UNIX_MILLISECOND_MAXIMUM<<V7_SEQUENCE_BIT_COUNT |
 	uint64(V7_SEQUENCE_MAXIMUM)
 
-// ORDER_BEFORE reports first UUID sorts before second.
-const ORDER_BEFORE = -1
-
-// ORDER_EQUAL reports equal UUIDs.
-const ORDER_EQUAL = 0
-
-// ORDER_AFTER reports first UUID sorts after second.
-const ORDER_AFTER = 1
-
 // VERSION_MD5 is name-based UUID version using MD5.
 const VERSION_MD5 = 3
 
@@ -524,8 +623,33 @@ const NANOSECOND_MAXIMUM = (UUID_TICK_COUNT_PER_SECOND - 1) * UUID_TICK_NANOSECO
 // NANOSECOND_MINIMUM mirrors negative Go remainder before Unix epoch.
 const NANOSECOND_MINIMUM = -NANOSECOND_MAXIMUM
 
+// NANOSECOND_TICK_MAXIMUM is final exact tick within one second.
+const NANOSECOND_TICK_MAXIMUM = NANOSECOND_MAXIMUM / UUID_TICK_NANOSECOND_COUNT
+
+// NANOSECOND_TICK_MINIMUM mirrors negative remainder ticks before Unix epoch.
+const NANOSECOND_TICK_MINIMUM = -NANOSECOND_TICK_MAXIMUM
+
 // JSON_NULL is JSON spelling for absent nullable UUID.
 const JSON_NULL = "null"
+
+// JSON_NULL_BYTE_COUNT is JSON null width.
+const JSON_NULL_BYTE_COUNT = len(JSON_NULL)
+
+// ERROR_MESSAGE_SIZE_MINIMUM is shortest UUID diagnostic.
+const ERROR_MESSAGE_SIZE_MINIMUM = len("uuid: no error")
+
+// ERROR_MESSAGE_SIZE_MAXIMUM is longest UUID diagnostic.
+const ERROR_MESSAGE_SIZE_MAXIMUM = len("uuid: version 7 time out of range")
+
+// Error_Message is bounded UUID diagnostic text.
+type Error_Message string
+
+// Error_Message_Invariants bounds static UUID diagnostics.
+func Error_Message_Invariants(value Error_Message, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), ERROR_MESSAGE_SIZE_MINIMUM, ERROR_MESSAGE_SIZE_MAXIMUM).
+		Ensure()
+}
 
 // Error is bounded UUID failure kind. Static text needs no allocated diagnostic wrapper.
 type Error uint8
@@ -534,48 +658,107 @@ type Error uint8
 func Error_Invariants(value Error, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint8(
-			uint8(value), uint8(ERROR_INVALID_FORMAT),
+			uint8(value), uint8(ERROR_NONE),
 			uint8(ERROR_V7_TIME_OUTPUT_OF_RANGE),
 		).
 		Ensure()
 }
 
+// Syntax_Status is success or one accepted-text rejection.
+type Syntax_Status uint8
+
+// Syntax_Status_Invariants closes parser outcomes.
+func Syntax_Status_Invariants(value Syntax_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), ERROR_NONE, ERROR_INVALID_URN_PREFIX).
+		Ensure()
+}
+
+// Binary_Status is success or wrong binary width.
+type Binary_Status uint8
+
+// Binary_Status_Invariants closes binary outcomes.
+func Binary_Status_Invariants(value Binary_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), ERROR_NONE, ERROR_INVALID_SIZE).
+		Ensure()
+}
+
+// JSON_Status is success or malformed nullable JSON.
+type JSON_Status uint8
+
+// JSON_Status_Invariants closes nullable JSON outcomes.
+func JSON_Status_Invariants(value JSON_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), ERROR_NONE, ERROR_INVALID_FORMAT).
+		Ensure()
+}
+
+// Generation_Status is success or one Version 7 boundary failure.
+type Generation_Status uint8
+
+// Generation_Status_Invariants closes Version 7 outcomes.
+func Generation_Status_Invariants(value Generation_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), ERROR_NONE, ERROR_V7_STATE_EXHAUSTED,
+			ERROR_V7_TIME_OUTPUT_OF_RANGE,
+		).
+		Ensure()
+}
+
+// Match records exact byte-pattern equality.
+type Match bool
+
+// Match_Invariants covers equal and distinct input.
+func Match_Invariants(value Match, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Input matches the fixed byte pattern.").
+		Ensure()
+}
+
+// ERROR_NONE reports success without an allocated interface value.
+const ERROR_NONE = 0
+
 // ERROR_INVALID_FORMAT reports text that is not any accepted UUID form.
-const ERROR_INVALID_FORMAT Error = Error(bits.WORD_8_MINIMUM)
+const ERROR_INVALID_FORMAT = ERROR_NONE + 1
 
 // ERROR_INVALID_BRACKETED_FORMAT reports brace text missing one required brace.
-const ERROR_INVALID_BRACKETED_FORMAT Error = ERROR_INVALID_FORMAT + 1
+const ERROR_INVALID_BRACKETED_FORMAT = ERROR_INVALID_FORMAT + 1
 
 // ERROR_INVALID_SIZE reports input whose byte count matches no accepted form.
-const ERROR_INVALID_SIZE Error = ERROR_INVALID_BRACKETED_FORMAT + 1
+const ERROR_INVALID_SIZE = ERROR_INVALID_BRACKETED_FORMAT + 1
 
 // ERROR_INVALID_URN_PREFIX reports 45-byte text without required UUID URN prefix.
-const ERROR_INVALID_URN_PREFIX Error = ERROR_INVALID_SIZE + 1
+const ERROR_INVALID_URN_PREFIX = ERROR_INVALID_SIZE + 1
 
 // ERROR_V7_STATE_EXHAUSTED reports no greater Version 7 value remains.
-const ERROR_V7_STATE_EXHAUSTED Error = ERROR_INVALID_URN_PREFIX + 1
+const ERROR_V7_STATE_EXHAUSTED = ERROR_INVALID_URN_PREFIX + 1
 
 // ERROR_V7_TIME_OUTPUT_OF_RANGE reports clock time RFC Version 7 cannot encode.
-const ERROR_V7_TIME_OUTPUT_OF_RANGE Error = ERROR_V7_STATE_EXHAUSTED + 1
+const ERROR_V7_TIME_OUTPUT_OF_RANGE = ERROR_V7_STATE_EXHAUSTED + 1
 
-// Error implements error with static bounded diagnostics.
-func (value Error) Error() (text string) {
+// Error_Text keeps failure text static without package-owned method sets.
+func Error_Text(value Error) (text Error_Message) {
+	defer func() { Error_Message_Invariants(text, "error_text.text") }()
 	Error_Invariants(value, "error.value")
 	switch value {
+	case ERROR_NONE:
+		return Error_Message("uuid: no error")
 	case ERROR_INVALID_FORMAT:
-		return "uuid: invalid format"
+		return Error_Message("uuid: invalid format")
 	case ERROR_INVALID_BRACKETED_FORMAT:
-		return "uuid: invalid bracketed format"
+		return Error_Message("uuid: invalid bracketed format")
 	case ERROR_INVALID_SIZE:
-		return "uuid: invalid length"
+		return Error_Message("uuid: invalid length")
 	case ERROR_INVALID_URN_PREFIX:
-		return "uuid: invalid urn prefix"
+		return Error_Message("uuid: invalid urn prefix")
 	case ERROR_V7_STATE_EXHAUSTED:
-		return "uuid: version 7 state exhausted"
+		return Error_Message("uuid: version 7 state exhausted")
 	case ERROR_V7_TIME_OUTPUT_OF_RANGE:
-		return "uuid: version 7 time out of range"
+		return Error_Message("uuid: version 7 time out of range")
 	}
-	return "uuid: invalid error"
+	return Error_Message("uuid: invalid error")
 }
 
 // Generator holds the injected sources the upstream package kept as mutable package
@@ -609,6 +792,17 @@ func Generator_Invariants(value Generator, namespace aver.Namespace) {
 	V7_State_Invariants(value.Last_V7, namespace)
 }
 
+// Generator_Pointer names mutable generator state.
+type Generator_Pointer *Generator
+
+// Generator_Pointer_Invariants composes present generator state.
+func Generator_Pointer_Invariants(value Generator_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Generator_Invariants(*value, namespace)
+}
+
 // Null_UUID is a UUID that may be SQL NULL, the scan destination for a nullable column.
 type Null_UUID struct {
 	// UUID is the value, meaningful only when Valid.
@@ -621,6 +815,97 @@ type Null_UUID struct {
 func Null_UUID_Invariants(value Null_UUID, namespace aver.Namespace) {
 	UUID_Invariants(value.UUID, namespace)
 	Valid_Invariants(value.Valid, namespace)
+}
+
+// Text_Value is shared driver union restricted to canonical UUID text.
+type Text_Value driver.Value
+
+// Text_Value_Invariants fixes UUID database representation.
+func Text_Value_Invariants(value Text_Value, _ aver.Namespace) {
+	aver.Always(
+		value.Kind == driver.Value_Kind_Unvalidated(driver.VALUE_TEXT),
+		"UUID database value carries text.",
+	)
+	aver.Always(!bool(value.Boolean), "UUID database value has no Boolean payload.")
+	aver.Always(value.Integer == 0, "UUID database value has no integer payload.")
+	aver.Always(value.Float == 0, "UUID database value has no float payload.")
+	aver.Always(len(value.Bytes) == 0, "UUID database value has no byte payload.")
+	aver.Always(
+		len(value.Text) == UUID_TEXT_BYTE_COUNT,
+		"UUID database text has canonical width.",
+	)
+	aver.Always(value.Moment == 0, "UUID database value has no time payload.")
+}
+
+// Nullable_Value is shared driver union restricted to SQL null or UUID text.
+type Nullable_Value driver.Value
+
+// Nullable_Value_Invariants fixes both nullable database representations.
+func Nullable_Value_Invariants(value Nullable_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value.Kind), uint8(driver.VALUE_NULL), uint8(driver.VALUE_TEXT),
+		).
+		Enum_Int(len(value.Text), bytes.SLICE_SIZE_MINIMUM, UUID_TEXT_BYTE_COUNT).
+		Ensure()
+	aver.Always(
+		(value.Kind == driver.Value_Kind_Unvalidated(driver.VALUE_NULL)) ==
+			(len(value.Text) == bytes.SLICE_SIZE_MINIMUM),
+		"Nullable UUID database kind matches text presence.",
+	)
+	aver.Always(!bool(value.Boolean), "Nullable UUID database value has no Boolean payload.")
+	aver.Always(value.Integer == 0, "Nullable UUID database value has no integer payload.")
+	aver.Always(value.Float == 0, "Nullable UUID database value has no float payload.")
+	aver.Always(len(value.Bytes) == 0, "Nullable UUID database value has no byte payload.")
+	aver.Always(value.Moment == 0, "Nullable UUID database value has no time payload.")
+}
+
+// Null_UUID_Pointer names caller-owned nullable decode storage.
+type Null_UUID_Pointer *Null_UUID
+
+// Null_UUID_Pointer_Invariants composes present nullable storage.
+func Null_UUID_Pointer_Invariants(value Null_UUID_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Null_UUID_Invariants(*value, namespace)
+}
+
+// Clock_Sequence_State_Pointer names mutable Version 1 and 6 sequence storage.
+type Clock_Sequence_State_Pointer *Clock_Sequence_State
+
+// Clock_Sequence_State_Pointer_Invariants composes present sequence storage.
+func Clock_Sequence_State_Pointer_Invariants(
+	value Clock_Sequence_State_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Clock_Sequence_State_Invariants(*value, namespace)
+}
+
+// Timestamp_State_Pointer names mutable Version 1 and 6 timestamp storage.
+type Timestamp_State_Pointer *Timestamp_State
+
+// Timestamp_State_Pointer_Invariants composes present timestamp storage.
+func Timestamp_State_Pointer_Invariants(
+	value Timestamp_State_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Timestamp_State_Invariants(*value, namespace)
+}
+
+// V7_State_Pointer names mutable Version 7 ordering storage.
+type V7_State_Pointer *V7_State
+
+// V7_State_Pointer_Invariants composes present Version 7 storage.
+func V7_State_Pointer_Invariants(value V7_State_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	V7_State_Invariants(*value, namespace)
 }
 
 // New builds Generator from injected dependencies and explicit replay state.
@@ -641,72 +926,85 @@ func New(
 	return generator
 }
 
-// Nil is the zero UUID, all 128 bits clear. It is a function, not a package var,
-// because a UUID is an array literal and the house linter bans mutable package state.
-func Nil() (uuid UUID) {
+// Nil clears caller storage because package-owned UUID storage would allocate.
+func Nil(destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "nil.uuid") }()
-	return UUID{}
+	UUID_Invariants(destination, "nil.destination")
+	for index := range destination {
+		destination[index] = 0
+	}
+	return destination
 }
 
 // Max is the RFC 9562 maximum UUID, all 128 bits set.
-func Max() (uuid UUID) {
+func Max(destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "max.uuid") }()
-	return UUID{
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	UUID_Invariants(destination, "max.destination")
+	for index := range destination {
+		destination[index] = bits.WORD_8_MAXIMUM
 	}
+	return destination
 }
 
 // Name_Space_DNS is the RFC 9562 namespace for domain names, used as the V3/V5 space.
-func Name_Space_DNS() (uuid UUID) {
+func Name_Space_DNS(destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "name_space_dns.uuid") }()
-	return Must_Parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	UUID_Invariants(destination, "name_space_dns.destination")
+	return Must_Parse(destination, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 }
 
 // Name_Space_URL is the RFC 9562 namespace for URLs, used as the V3/V5 space.
-func Name_Space_URL() (uuid UUID) {
+func Name_Space_URL(destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "name_space_url.uuid") }()
-	return Must_Parse("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
+	UUID_Invariants(destination, "name_space_url.destination")
+	return Must_Parse(destination, "6ba7b811-9dad-11d1-80b4-00c04fd430c8")
 }
 
 // Name_Space_OID is the RFC 9562 namespace for ISO OIDs, used as the V3/V5 space.
-func Name_Space_OID() (uuid UUID) {
+func Name_Space_OID(destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "name_space_oid.uuid") }()
-	return Must_Parse("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
+	UUID_Invariants(destination, "name_space_oid.destination")
+	return Must_Parse(destination, "6ba7b812-9dad-11d1-80b4-00c04fd430c8")
 }
 
 // Name_Space_X500 is the RFC 9562 namespace for X.500 DNs, used as the V3/V5 space.
-func Name_Space_X500() (uuid UUID) {
+func Name_Space_X500(destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "name_space_x500.uuid") }()
-	return Must_Parse("6ba7b814-9dad-11d1-80b4-00c04fd430c8")
+	UUID_Invariants(destination, "name_space_x500.destination")
+	return Must_Parse(destination, "6ba7b814-9dad-11d1-80b4-00c04fd430c8")
 }
 
 // Generator_V4 returns a random (Version 4) UUID, 122 bits drawn from Source.
-func Generator_V4(generator *Generator) (uuid UUID, err error) {
+func Generator_V4(generator Generator_Pointer, destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "generator_v4.uuid") }()
-	Generator_Invariants(*generator, "generator_v4.generator")
-	prng.Source_Read(generator.Source, prng.Sink(uuid[:]))
+	Generator_Pointer_Invariants(generator, "generator_v4.generator")
+	UUID_Invariants(destination, "generator_v4.destination")
+	uuid = destination
+	prng.Source_Read(generator.Source, prng.Sink(uuid))
 	uuid[6] = uuid[6]&0x0f | 0x40 // Version 4.
 	uuid[8] = uuid[8]&0x3f | 0x80 // RFC 9562 variant.
-	return uuid, nil
+	return uuid
 }
 
 // Generator_V7 returns a time-ordered (Version 7) UUID: 48 bits of Unix
 // milliseconds, then a sub-millisecond sequence, then random bits. The value is
 // strictly greater than any previous V7 from this Generator, so a burst within one
 // millisecond still sorts in creation order.
-func Generator_V7(generator *Generator) (uuid UUID, err error) {
-	defer func() { UUID_Invariants(uuid, "generator_v7.uuid") }()
-	Generator_Invariants(*generator, "generator_v7.generator")
-	uuid, read_err := Generator_V4(generator)
-	if read_err != nil {
-		return Nil(), read_err
-	}
-	milliseconds, sequence, time_err := generator_v7_time(
+func Generator_V7(
+	generator Generator_Pointer, destination UUID,
+) (uuid UUID, status Generation_Status) {
+	defer func() {
+		UUID_Invariants(uuid, "generator_v7.uuid")
+		Generation_Status_Invariants(status, "generator_v7.status")
+	}()
+	Generator_Pointer_Invariants(generator, "generator_v7.generator")
+	UUID_Invariants(destination, "generator_v7.destination")
+	uuid = Generator_V4(generator, destination)
+	milliseconds, sequence, time_status := generator_v7_time(
 		generator.Clock, &generator.Last_V7,
 	)
-	if time_err != nil {
-		return Nil(), time_err
+	if time_status != ERROR_NONE {
+		return Nil(destination), time_status
 	}
 	uuid[0] = byte(milliseconds >> 40)
 	uuid[1] = byte(milliseconds >> 32)
@@ -716,13 +1014,15 @@ func Generator_V7(generator *Generator) (uuid UUID, err error) {
 	uuid[5] = byte(milliseconds)
 	uuid[6] = 0x70 | 0x0f&byte(sequence>>8) // Version 7 over the high sequence nibble.
 	uuid[7] = byte(sequence)
-	return uuid, nil
+	return uuid, ERROR_NONE
 }
 
 // Generator_V1 returns a time-and-node (Version 1) UUID.
-func Generator_V1(generator *Generator) (uuid UUID, err error) {
+func Generator_V1(generator Generator_Pointer, destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "generator_v1.uuid") }()
-	Generator_Invariants(*generator, "generator_v1.generator")
+	Generator_Pointer_Invariants(generator, "generator_v1.generator")
+	UUID_Invariants(destination, "generator_v1.destination")
+	uuid = destination
 	timestamp, sequence := generator_time(
 		generator.Clock, generator.Source, &generator.Clock_Sequence, &generator.Last_Time,
 	)
@@ -738,15 +1038,18 @@ func Generator_V1(generator *Generator) (uuid UUID, err error) {
 	binary.Put_Uint_16(
 		binary.Bytes(uuid[8:]), binary.Word_16(sequence)|0x8000, binary.BIG_ENDIAN,
 	)
-	copy(uuid[10:], node[:])
-	return uuid, nil
+	binary.Put_Uint_16(binary.Bytes(uuid[10:]), binary.Word_16(node.High), binary.BIG_ENDIAN)
+	binary.Put_Uint_32(binary.Bytes(uuid[12:]), binary.Word_32(node.Low), binary.BIG_ENDIAN)
+	return uuid
 }
 
 // Generator_V6 returns a Version 6 UUID: the V1 fields reordered most-significant
 // first so that lexical order tracks time order, better for database locality.
-func Generator_V6(generator *Generator) (uuid UUID, err error) {
+func Generator_V6(generator Generator_Pointer, destination UUID) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "generator_v6.uuid") }()
-	Generator_Invariants(*generator, "generator_v6.generator")
+	Generator_Pointer_Invariants(generator, "generator_v6.generator")
+	UUID_Invariants(destination, "generator_v6.destination")
+	uuid = destination
 	timestamp, sequence := generator_time(
 		generator.Clock, generator.Source, &generator.Clock_Sequence, &generator.Last_Time,
 	)
@@ -762,8 +1065,9 @@ func Generator_V6(generator *Generator) (uuid UUID, err error) {
 	binary.Put_Uint_16(
 		binary.Bytes(uuid[8:]), binary.Word_16(sequence)|0x8000, binary.BIG_ENDIAN,
 	)
-	copy(uuid[10:], node[:])
-	return uuid, nil
+	binary.Put_Uint_16(binary.Bytes(uuid[10:]), binary.Word_16(node.High), binary.BIG_ENDIAN)
+	binary.Put_Uint_32(binary.Bytes(uuid[12:]), binary.Word_32(node.Low), binary.BIG_ENDIAN)
+	return uuid
 }
 
 // Generator_DCE_Security returns a DCE Security (Version 2) UUID that embeds domain
@@ -771,35 +1075,34 @@ func Generator_V6(generator *Generator) (uuid UUID, err error) {
 // or group id the caller supplies (the host's os.Getuid/os.Getgid), kept out of this
 // pure package so it imports no operating-system state.
 func Generator_DCE_Security(
-	generator *Generator, domain Domain, identifier Identifier,
-) (uuid UUID, err error) {
+	generator Generator_Pointer, destination UUID, domain Domain, identifier Identifier,
+) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "generator_dce_security.uuid") }()
-	Generator_Invariants(*generator, "generator_dce_security.generator")
+	Generator_Pointer_Invariants(generator, "generator_dce_security.generator")
+	UUID_Invariants(destination, "generator_dce_security.destination")
 	Domain_Invariants(domain, "generator_dce_security.domain")
 	Identifier_Invariants(identifier, "generator_dce_security.identifier")
-	uuid, v1_err := Generator_V1(generator)
-	if v1_err != nil {
-		return Nil(), v1_err
-	}
+	uuid = Generator_V1(generator, destination)
 	uuid[6] = uuid[6]&0x0f | 0x20 // Version 2.
 	uuid[9] = byte(domain)
 	binary.Put_Uint_32(binary.Bytes(uuid[0:]), binary.Word_32(identifier), binary.BIG_ENDIAN)
-	return uuid, nil
+	return uuid
 }
 
 // V3 returns a name-based MD5 (Version 3) UUID: the deterministic hash of namespace
 // concatenated with data. The same inputs always yield the same UUID, so V3 needs
 // no Generator.
-func V3(namespace UUID, name Name) (uuid UUID) {
+func V3(destination UUID, namespace UUID, name Name) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "v3.uuid") }()
+	UUID_Invariants(destination, "v3.destination")
 	UUID_Invariants(namespace, "v3.namespace")
 	Name_Invariants(name, "v3.name")
+	uuid = destination
 	var digest md5.Digest
 	md5.Digest_Init(&digest)
 	md5.Digest_Write(&digest, md5.Source(namespace[:]))
 	md5.Digest_Write(&digest, md5.Source(name))
-	value := md5.Digest_Sum(&digest)
-	copy(uuid[:], value[:])
+	md5.Digest_Sum_Into(&digest, md5.Destination(uuid))
 	uuid[6] = uuid[6]&0x0f | VERSION_MD5<<4
 	uuid[8] = uuid[8]&0x3f | 0x80 // RFC 9562 variant.
 	return uuid
@@ -807,16 +1110,19 @@ func V3(namespace UUID, name Name) (uuid UUID) {
 
 // V5 returns a name-based SHA-1 (Version 5) UUID, the SHA-1 counterpart of V3 and
 // the RFC-preferred of the two name-based versions.
-func V5(namespace UUID, name Name) (uuid UUID) {
+func V5(destination UUID, namespace UUID, name Name) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "v5.uuid") }()
+	UUID_Invariants(destination, "v5.destination")
 	UUID_Invariants(namespace, "v5.namespace")
 	Name_Invariants(name, "v5.name")
+	uuid = destination
 	var digest sha1.Digest
 	sha1.Digest_Init(&digest)
 	sha1.Digest_Write(&digest, sha1.Source(namespace[:]))
 	sha1.Digest_Write(&digest, sha1.Source(name))
-	value := sha1.Digest_Sum(&digest)
-	copy(uuid[:], value[:UUID_BYTE_COUNT])
+	var serialized [sha1.DIGEST_SIZE]byte
+	sha1.Digest_Sum_Into(&digest, sha1.Destination(serialized[:]))
+	copy(uuid, serialized[:UUID_BYTE_COUNT])
 	uuid[6] = uuid[6]&0x0f | VERSION_SHA1<<4
 	uuid[8] = uuid[8]&0x3f | 0x80 // RFC 9562 variant.
 	return uuid
@@ -826,8 +1132,8 @@ func V5(namespace UUID, name Name) (uuid UUID) {
 // the clock sequence, advancing the sequence if the clock did not move forward so
 // successive UUIDs stay distinct and ordered.
 func generator_time(
-	host time.Clock, source prng.Source, clock_sequence *Clock_Sequence_State,
-	last_time *Timestamp_State,
+	host time.Clock, source prng.Source, clock_sequence Clock_Sequence_State_Pointer,
+	last_time Timestamp_State_Pointer,
 ) (timestamp Generated_Time, sequence Clock_Sequence) {
 	defer func() {
 		Generated_Time_Invariants(timestamp, "generator_time.timestamp")
@@ -835,8 +1141,8 @@ func generator_time(
 	}()
 	time.Clock_Invariants(host, "generator_time.host")
 	prng.Source_Invariants(source, "generator_time.source")
-	Clock_Sequence_State_Invariants(*clock_sequence, "generator_time.clock_sequence")
-	Timestamp_State_Invariants(*last_time, "generator_time.last_time")
+	Clock_Sequence_State_Pointer_Invariants(clock_sequence, "generator_time.clock_sequence")
+	Timestamp_State_Pointer_Invariants(last_time, "generator_time.last_time")
 	if *clock_sequence == 0 {
 		var raw [CLOCK_SEQUENCE_BYTE_COUNT]byte
 		prng.Source_Read(source, prng.Sink(raw[:]))
@@ -859,16 +1165,20 @@ func generator_time(
 // Returns Unix milliseconds and a sub-millisecond sequence, forced strictly upward
 // past the last V7 draw so a same-millisecond burst still orders by creation.
 func generator_v7_time(
-	host time.Clock, last_v7 *V7_State,
-) (milliseconds Generated_Unix_Millisecond, sequence V7_Sequence, err error) {
+	host time.Clock, last_v7 V7_State_Pointer,
+) (
+	milliseconds Generated_Unix_Millisecond, sequence V7_Sequence,
+	status Generation_Status,
+) {
 	defer func() {
 		Generated_Unix_Millisecond_Invariants(
 			milliseconds, "generator_v7_time.milliseconds",
 		)
 		V7_Sequence_Invariants(sequence, "generator_v7_time.sequence")
+		Generation_Status_Invariants(status, "generator_v7_time.status")
 	}()
 	time.Clock_Invariants(host, "generator_v7_time.host")
-	V7_State_Invariants(*last_v7, "generator_v7_time.last_v7")
+	V7_State_Pointer_Invariants(last_v7, "generator_v7_time.last_v7")
 	nanoseconds := int64(time.Clock_Now_Realtime(host))
 	if nanoseconds < 0 {
 		return 0, 0, ERROR_V7_TIME_OUTPUT_OF_RANGE
@@ -887,7 +1197,7 @@ func generator_v7_time(
 		sequence = V7_Sequence(combined & V7_SEQUENCE_MAXIMUM)
 	}
 	*last_v7 = combined
-	return milliseconds, sequence, nil
+	return milliseconds, sequence, ERROR_NONE
 }
 
 // Resolves the node used for V1 and V6: the injected Node when set, otherwise a
@@ -900,60 +1210,78 @@ func generator_node(source prng.Source, node Node) (resolved Node) {
 	if node != (Node{}) {
 		return node
 	}
-	prng.Source_Read(source, prng.Sink(node[:]))
-	node[0] = node[0] | 0x01 // Multicast bit: not a real MAC.
-	return node
+	var raw [NODE_BYTE_COUNT]byte
+	prng.Source_Read(source, prng.Sink(raw[:]))
+	return Node{
+		High: bits.Word_16(
+			uint16(raw[0]|0x01)<<bits.BIT_COUNT_8_MAXIMUM | uint16(raw[1]),
+		),
+		Low: bits.Word_32(
+			uint32(raw[2])<<(bits.BIT_COUNT_16_MAXIMUM+bits.BIT_COUNT_8_MAXIMUM) |
+				uint32(raw[3])<<bits.BIT_COUNT_16_MAXIMUM |
+				uint32(raw[4])<<bits.BIT_COUNT_8_MAXIMUM | uint32(raw[5]),
+		),
+	}
 }
 
-// Parse decodes s into a UUID. It accepts the canonical hyphenated form, the
+// Parse decodes s into caller storage. It accepts the canonical hyphenated form, the
 // urn:uuid: prefixed form, a single-brace-wrapped form, and the 32-character
 // unhyphenated form; any other length is an error. Parse is lenient by design — use
 // Validate to reject non-canonical encodings.
-func Parse(input Text_Unvalidated) (uuid UUID, err error) {
-	defer func() { UUID_Invariants(uuid, "parse.uuid") }()
+func Parse(destination UUID, input Text_Unvalidated) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "parse.status") }()
+	UUID_Invariants(destination, "parse.destination")
 	Text_Unvalidated_Invariants(input, "parse.input")
+	// Parser only reads this view. Copy would make hostile text allocate before rejection.
+	input_bytes := unsafe.Slice(unsafe.StringData(string(input)), len(input))
+	return parse_bytes(destination, bytes.Slice(input_bytes))
+}
+
+// Shared parsing keeps String and byte entry points on one validation path.
+func parse_bytes(destination UUID, input bytes.Slice) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "parse_bytes_internal.status") }()
+	UUID_Invariants(destination, "parse_bytes_internal.destination")
+	bytes.Slice_Invariants(input, "parse_bytes_internal.input")
 	body := input
 	canonical := false
 	switch len(input) {
 	case UUID_TEXT_BYTE_COUNT:
 		canonical = true
 	case UUID_URN_BYTE_COUNT:
-		prefix := strings.Text(input[:UUID_URN_PREFIX_BYTE_COUNT])
-		if !bool(strings.Equal_Fold(prefix, UUID_URN_PREFIX)) {
-			return uuid, ERROR_INVALID_URN_PREFIX
+		if !urn_prefix_matches(URN_Input(input)) {
+			return ERROR_INVALID_URN_PREFIX
 		}
 		body = input[UUID_URN_PREFIX_BYTE_COUNT:]
 		canonical = true
 	case UUID_BRACED_BYTE_COUNT:
 		if input[bytes.SLICE_SIZE_MINIMUM] != '{' {
-			return uuid, ERROR_INVALID_BRACKETED_FORMAT
+			return ERROR_INVALID_BRACKETED_FORMAT
 		}
 		if input[UUID_BRACED_BYTE_COUNT-1] != '}' {
-			return uuid, ERROR_INVALID_BRACKETED_FORMAT
+			return ERROR_INVALID_BRACKETED_FORMAT
 		}
 		body = input[UUID_BRACE_BYTE_COUNT/2 : UUID_BRACED_BYTE_COUNT-1]
 		canonical = true
 	case UUID_HEXADECIMAL_BYTE_COUNT:
 	default:
-		return uuid, ERROR_INVALID_SIZE
+		return ERROR_INVALID_SIZE
 	}
 	if canonical {
 		if body[UUID_TEXT_FIRST_HYPHEN_INDEX] != '-' {
-			return uuid, ERROR_INVALID_FORMAT
+			return ERROR_INVALID_FORMAT
 		}
 		if body[UUID_TEXT_SECOND_HYPHEN_INDEX] != '-' {
-			return uuid, ERROR_INVALID_FORMAT
+			return ERROR_INVALID_FORMAT
 		}
 		if body[UUID_TEXT_THIRD_HYPHEN_INDEX] != '-' {
-			return uuid, ERROR_INVALID_FORMAT
+			return ERROR_INVALID_FORMAT
 		}
 		if body[UUID_TEXT_FINAL_HYPHEN_INDEX] != '-' {
-			return uuid, ERROR_INVALID_FORMAT
+			return ERROR_INVALID_FORMAT
 		}
 	}
 	var encoded [UUID_HEXADECIMAL_BYTE_COUNT]byte
-	encoded_position := bytes.SLICE_SIZE_MINIMUM
-	source_position := bytes.SLICE_SIZE_MINIMUM
+	encoded_position, source_position := bytes.SLICE_SIZE_MINIMUM, bytes.SLICE_SIZE_MINIMUM
 	for source_position < len(body) {
 		if canonical {
 			if body[source_position] == '-' {
@@ -966,92 +1294,112 @@ func Parse(input Text_Unvalidated) (uuid UUID, err error) {
 		source_position++
 	}
 	if encoded_position != len(encoded) {
-		return uuid, ERROR_INVALID_FORMAT
+		return ERROR_INVALID_FORMAT
 	}
-	count, status := hex.Decode_Into(hex.Decoded(uuid[:]), hex.Encoded(encoded[:]))
+	var decoded [UUID_BYTE_COUNT]byte
+	count, decode_status := hex.Decode_Into(hex.Decoded(decoded[:]), hex.Encoded(encoded[:]))
 	var status_ok hex.Decode_Status
-	if status != status_ok {
-		return UUID{}, ERROR_INVALID_FORMAT
+	if decode_status != status_ok {
+		return ERROR_INVALID_FORMAT
 	}
 	if int(count) != UUID_BYTE_COUNT {
-		return UUID{}, ERROR_INVALID_FORMAT
+		return ERROR_INVALID_FORMAT
 	}
-	return uuid, nil
+	copy(destination, decoded[:])
+	return ERROR_NONE
 }
 
-// Parse_Bytes is Parse over a byte slice. It delegates through a string conversion
-// rather than duplicating the format logic; a UUID is 45 bytes at most, so the copy
-// is negligible.
-func Parse_Bytes(input bytes.Slice) (uuid UUID, err error) {
-	defer func() { UUID_Invariants(uuid, "parse_bytes.uuid") }()
+// URN prefix matching stays byte-native so rejected input cannot allocate.
+func urn_prefix_matches(input URN_Input) (match Match) {
+	defer func() { Match_Invariants(match, "urn_prefix_matches.match") }()
+	URN_Input_Invariants(input, "urn_prefix_matches.input")
+	for index := range UUID_URN_PREFIX_BYTE_COUNT {
+		value := input[index]
+		if value >= 'A' {
+			if value <= 'Z' {
+				value += 'a' - 'A'
+			}
+		}
+		if value != UUID_URN_PREFIX[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// Parse_Bytes is Parse over caller byte storage.
+func Parse_Bytes(destination UUID, input bytes.Slice) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "parse_bytes.status") }()
+	UUID_Invariants(destination, "parse_bytes.destination")
 	bytes.Slice_Invariants(input, "parse_bytes.input")
-	return Parse(Text_Unvalidated(string(input)))
+	return parse_bytes(destination, input)
 }
 
 // Validate reports whether s is a UUID Parse would accept, discarding the value.
-func Validate(input Text_Unvalidated) (err error) {
+func Validate(input Text_Unvalidated) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "validate.status") }()
 	Text_Unvalidated_Invariants(input, "validate.input")
-	_, parse_err := Parse(input)
-	return parse_err
+	var storage [UUID_BYTE_COUNT]byte
+	return Parse(UUID(storage[:]), input)
 }
 
 // Must_Parse is Parse but panics on error, for compile-time-constant UUIDs where a
 // parse failure is a programming error, not a runtime condition.
-func Must_Parse(input Text_Unvalidated) (uuid UUID) {
+func Must_Parse(destination UUID, input Text_Unvalidated) (uuid UUID) {
 	defer func() { UUID_Invariants(uuid, "must_parse.uuid") }()
+	UUID_Invariants(destination, "must_parse.destination")
 	Text_Unvalidated_Invariants(input, "must_parse.input")
-	parsed, err := Parse(input)
-	if err != nil {
-		panic(err)
-	}
-	return parsed
+	failure := Parse(destination, input)
+	aver.Always(failure == ERROR_NONE, "Static UUID text parses.")
+	return destination
 }
 
-// Must unwraps a (UUID, error) pair, panicking on error. It wraps a generator call
-// whose only error is a starved entropy reader — a condition production treats as fatal.
-func Must(uuid UUID, err error) (result UUID) {
+// Must unwraps a UUID status whose failure is a programming error.
+func Must(uuid UUID, status Generation_Status) (result UUID) {
 	defer func() { UUID_Invariants(result, "must.result") }()
 	UUID_Invariants(uuid, "must.uuid")
-	if err != nil {
-		panic(err)
-	}
+	Generation_Status_Invariants(status, "must.status")
+	aver.Always(status == ERROR_NONE, "UUID generation succeeds.")
 	return uuid
 }
 
 // From_Bytes builds a UUID from exactly 16 raw bytes, which it copies.
-func From_Bytes(input bytes.Slice) (uuid UUID, err error) {
-	defer func() { UUID_Invariants(uuid, "from_bytes.uuid") }()
+func From_Bytes(destination UUID, input bytes.Slice) (status Binary_Status) {
+	defer func() { Binary_Status_Invariants(status, "from_bytes.status") }()
+	UUID_Invariants(destination, "from_bytes.destination")
 	bytes.Slice_Invariants(input, "from_bytes.input")
 	if len(input) != UUID_BYTE_COUNT {
-		return uuid, ERROR_INVALID_SIZE
+		return ERROR_INVALID_SIZE
 	}
-	copy(uuid[:], input)
-	return uuid, nil
+	copy(destination, input)
+	return ERROR_NONE
 }
 
-// String returns the canonical 36-character form xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx,
-// satisfying fmt.Stringer.
-func (uuid UUID) String() (text string) {
-	var buffer [UUID_TEXT_BYTE_COUNT]byte
-	encode_hexadecimal(&buffer, uuid)
-	return string(buffer[:])
+// UUID_String borrows caller text storage; a copy would violate zero allocation.
+func UUID_String(uuid UUID, destination Text_Bytes) (text Text) {
+	defer func() { Text_Invariants(text, "uuid_string.text") }()
+	UUID_Invariants(uuid, "uuid_string.uuid")
+	Text_Bytes_Invariants(destination, "uuid_string.destination")
+	UUID_Marshal_Text(uuid, destination)
+	return Text(unsafe.String(unsafe.SliceData(destination), len(destination)))
 }
 
-// UUID_URN returns the RFC 2141 URN form urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.
-func UUID_URN(uuid UUID) (urn URN) {
+// UUID_URN borrows caller storage for the complete RFC 2141 form.
+func UUID_URN(uuid UUID, destination URN_Bytes) (urn URN) {
 	defer func() { URN_Invariants(urn, "uuid_urn.urn") }()
 	UUID_Invariants(uuid, "uuid_urn.uuid")
-	var buffer [UUID_URN_BYTE_COUNT]byte
+	URN_Bytes_Invariants(destination, "uuid_urn.destination")
 	var encoded [UUID_TEXT_BYTE_COUNT]byte
-	copy(buffer[:], UUID_URN_PREFIX)
-	encode_hexadecimal(&encoded, uuid)
-	copy(buffer[UUID_URN_PREFIX_BYTE_COUNT:], encoded[:])
-	return URN(buffer[:])
+	copy(destination, UUID_URN_PREFIX)
+	encode_hexadecimal(Text_Bytes(encoded[:]), uuid)
+	copy(destination[UUID_URN_PREFIX_BYTE_COUNT:], encoded[:])
+	return URN(unsafe.String(unsafe.SliceData(destination), len(destination)))
 }
 
 // Exact storage keeps fixed UUID text from claiming the shared encoder's broader
 // size domain, whose boundaries can never occur here.
-func encode_hexadecimal(destination *[UUID_TEXT_BYTE_COUNT]byte, uuid UUID) {
+func encode_hexadecimal(destination Text_Bytes, uuid UUID) {
+	Text_Bytes_Invariants(destination, "encode_hexadecimal.destination")
 	UUID_Invariants(uuid, "encode_hexadecimal.uuid")
 	destination_position := 0
 	for _, source_byte := range uuid {
@@ -1097,9 +1445,10 @@ func UUID_Variant(uuid UUID) (variant Variant) {
 func UUID_Node_Identifier(uuid UUID) (node Node) {
 	defer func() { Node_Invariants(node, "uuid_node_identifier.node") }()
 	UUID_Invariants(uuid, "uuid_node_identifier.uuid")
-	var copied Node
-	copy(copied[:], uuid[10:])
-	return copied
+	return Node{
+		High: bits.Word_16(binary.Uint_16(binary.Bytes(uuid[10:]), binary.BIG_ENDIAN)),
+		Low:  bits.Word_32(binary.Uint_32(binary.Bytes(uuid[12:]), binary.BIG_ENDIAN)),
+	}
 }
 
 // UUID_Domain returns the domain of a Version 2 UUID.
@@ -1152,13 +1501,23 @@ func UUID_Clock_Sequence(uuid UUID) (sequence Clock_Sequence) {
 		CLOCK_SEQUENCE_MAXIMUM
 }
 
-// UUIDs_Strings returns the canonical string form of each UUID in uuids.
-func UUIDs_Strings(uuids UUIDs) (rendered Strings) {
+// UUIDs_Strings borrows one caller text buffer per returned string.
+func UUIDs_Strings(
+	uuids UUIDs, storage Text_Storage, destination Strings,
+) (rendered Strings) {
 	defer func() { Strings_Invariants(rendered, "uuids_strings.rendered") }()
 	UUIDs_Invariants(uuids, "uuids_strings.uuids")
-	rendered = make(Strings, len(uuids))
+	Text_Storage_Invariants(storage, "uuids_strings.storage")
+	Strings_Invariants(destination, "uuids_strings.destination")
+	aver.Always(len(storage) == len(uuids), "Each UUID owns one text buffer.")
+	aver.Always(len(destination) == len(uuids), "Each UUID owns one string result.")
+	rendered = destination
 	for index, uuid := range uuids {
-		rendered[index] = uuid.String()
+		Text_Bytes_Invariants(storage[index], "uuids_strings.storage.item")
+		UUID_String(uuid, storage[index])
+		rendered[index] = unsafe.String(
+			unsafe.SliceData(storage[index]), len(storage[index]),
+		)
 	}
 	return rendered
 }
@@ -1171,151 +1530,65 @@ func Time_Unix(timestamp Time) (seconds Unix_Second, nanoseconds Nanosecond) {
 	}()
 	Time_Invariants(timestamp, "time_unix.timestamp")
 	ticks := int64(timestamp) - EPOCH_100NS
-	nanoseconds[0] = (ticks % UUID_TICK_COUNT_PER_SECOND) *
-		UUID_TICK_NANOSECOND_COUNT
+	nanoseconds.Ticks = Nanosecond_Tick(ticks % UUID_TICK_COUNT_PER_SECOND)
 	seconds = Unix_Second(ticks / UUID_TICK_COUNT_PER_SECOND)
 	return seconds, nanoseconds
 }
 
-// Compare_Input names the two operands Compare orders; a repeated field type requires
-// the named input struct the house linter mandates.
-type Compare_Input struct {
-	// A is the left operand.
-	A [UUID_BYTE_COUNT]byte
-	// B is the right operand.
-	B [UUID_BYTE_COUNT]byte
+// UUID_Marshal_Text writes canonical hyphenated bytes into caller storage.
+func UUID_Marshal_Text(uuid UUID, destination Text_Bytes) (text Text_Bytes) {
+	defer func() { Text_Bytes_Invariants(text, "uuid_marshal_text.text") }()
+	UUID_Invariants(uuid, "uuid_marshal_text.uuid")
+	Text_Bytes_Invariants(destination, "uuid_marshal_text.destination")
+	var encoded [UUID_TEXT_BYTE_COUNT]byte
+	encode_hexadecimal(Text_Bytes(encoded[:]), uuid)
+	copy(destination, encoded[:])
+	return destination
 }
 
-// Compare_Input_Invariants fixes both RFC 9562 operand widths without repeating UUID type.
-func Compare_Input_Invariants(value Compare_Input, _ aver.Namespace) {
-	aver.Always(
-		len(value.A) == UUID_BYTE_COUNT,
-		"First UUID comparison operand has RFC 9562 width.",
-	)
-	aver.Always(
-		len(value.B) == UUID_BYTE_COUNT,
-		"Second UUID comparison operand has RFC 9562 width.",
-	)
+// UUID_Unmarshal_Text overwrites caller storage after complete validation.
+func UUID_Unmarshal_Text(uuid UUID_Pointer, text bytes.Slice) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "uuid_unmarshal_text.status") }()
+	UUID_Pointer_Invariants(uuid, "uuid_unmarshal_text.uuid")
+	bytes.Slice_Invariants(text, "uuid_unmarshal_text.text")
+	return Parse_Bytes(*uuid, text)
 }
 
-// Compare orders two UUIDs lexicographically by their bytes: -1 if A<B, 0 if equal, +1 if A>B.
-func Compare(input *Compare_Input) (order Order) {
-	defer func() { Order_Invariants(order, "compare.order") }()
-	Compare_Input_Invariants(*input, "compare.input")
-	return Order(bytes.Compare(bytes.Slice(input.A[:]), bytes.Slice(input.B[:])))
+// UUID_Marshal_Binary returns sixteen raw borrowed bytes.
+func UUID_Marshal_Binary(uuid UUID) (data Binary) {
+	defer func() { Binary_Invariants(data, "uuid_marshal_binary.data") }()
+	UUID_Invariants(uuid, "uuid_marshal_binary.uuid")
+	return Binary(uuid)
 }
 
-// String returns static version name without allocating formatted text.
-func (version Version) String() (name string) {
-	switch version {
-	case 0:
-		return "VERSION_0"
-	case 1:
-		return "VERSION_1"
-	case 2:
-		return "VERSION_2"
-	case 3:
-		return "VERSION_3"
-	case 4:
-		return "VERSION_4"
-	case 5:
-		return "VERSION_5"
-	case 6:
-		return "VERSION_6"
-	case 7:
-		return "VERSION_7"
-	case 8:
-		return "VERSION_8"
-	case 9:
-		return "VERSION_9"
-	case 10:
-		return "VERSION_10"
-	case 11:
-		return "VERSION_11"
-	case 12:
-		return "VERSION_12"
-	case 13:
-		return "VERSION_13"
-	case 14:
-		return "VERSION_14"
-	case 15:
-		return "VERSION_15"
-	}
-	return "BAD_VERSION"
-}
-
-// String returns a readable name for the variant, satisfying fmt.Stringer.
-func (variant Variant) String() (name string) {
-	switch variant {
-	case VARIANT_RFC_4122:
-		return "RFC4122"
-	case VARIANT_RESERVED:
-		return "Reserved"
-	case VARIANT_MICROSOFT:
-		return "Microsoft"
-	case VARIANT_FUTURE:
-		return "Future"
-	case VARIANT_INVALID:
-		return "Invalid"
-	}
-	return "BadVariant"
-}
-
-// String returns a readable name for the domain, satisfying fmt.Stringer.
-func (domain Domain) String() (name string) {
-	switch domain {
-	case DOMAIN_PERSON:
-		return "Person"
-	case DOMAIN_GROUP:
-		return "Group"
-	case DOMAIN_ORGANIZATION:
-		return "Org"
-	}
-	return "DomainInvalid"
-}
-
-// MarshalText implements encoding.TextMarshaler, the canonical hyphenated form.
-func (uuid UUID) MarshalText() (text []byte, err error) {
-	var buffer [UUID_TEXT_BYTE_COUNT]byte
-	encode_hexadecimal(&buffer, uuid)
-	return buffer[:], nil
-}
-
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (uuid *UUID) UnmarshalText(text []byte) (err error) {
-	parsed, parse_err := Parse_Bytes(bytes.Slice(text))
-	if parse_err != nil {
-		return parse_err
-	}
-	*uuid = parsed
-	return nil
-}
-
-// MarshalBinary implements encoding.BinaryMarshaler, the 16 raw bytes.
-func (uuid UUID) MarshalBinary() (data []byte, err error) {
-	return uuid[:], nil
-}
-
-// UnmarshalBinary implements encoding.BinaryUnmarshaler.
-func (uuid *UUID) UnmarshalBinary(data []byte) (err error) {
+// UUID_Unmarshal_Binary copies exactly sixteen raw bytes into caller storage.
+func UUID_Unmarshal_Binary(uuid UUID_Pointer, data bytes.Slice) (status Binary_Status) {
+	defer func() { Binary_Status_Invariants(status, "uuid_unmarshal_binary.status") }()
+	UUID_Pointer_Invariants(uuid, "uuid_unmarshal_binary.uuid")
+	bytes.Slice_Invariants(data, "uuid_unmarshal_binary.data")
 	if len(data) != UUID_BYTE_COUNT {
 		return ERROR_INVALID_SIZE
 	}
-	copy(uuid[:], data)
-	return nil
+	copy(*uuid, data)
+	return ERROR_NONE
 }
 
 // UUID_Scan reads shared driver text or bytes without reflection or open unions.
-func UUID_Scan(uuid *UUID, source driver.Value) (status driver.Validation_Status) {
+func UUID_Scan(uuid UUID_Pointer, source driver.Value) (status driver.Validation_Status) {
 	defer func() {
 		driver.Validation_Status_Invariants(status, "uuid_scan.status")
 	}()
-	UUID_Invariants(*uuid, "uuid_scan.uuid")
+	UUID_Pointer_Invariants(uuid, "uuid_scan.uuid")
 	driver.Value_Invariants(source, "uuid_scan.source")
 	status_ok := driver.Validation_Status(driver.STATUS_OK)
 	status_invalid := driver.Validation_Status(driver.STATUS_INPUT_INVALID)
-	switch source.Kinds[driver.VALUE_SLOT] {
+	kind, kind_status := driver.Value_Kind_Of(source)
+	if kind_status != status_ok {
+		return status_invalid
+	}
+	switch kind {
 	case driver.VALUE_NULL:
+		Nil(*uuid)
 		return status_ok
 	case driver.VALUE_TEXT:
 		text, text_status := driver.Value_As_Text(source)
@@ -1323,13 +1596,13 @@ func UUID_Scan(uuid *UUID, source driver.Value) (status driver.Validation_Status
 			return status_invalid
 		}
 		if len(text) == bytes.SLICE_SIZE_MINIMUM {
+			Nil(*uuid)
 			return status_ok
 		}
-		parsed, parse_err := Parse(Text_Unvalidated(text))
-		if parse_err != nil {
+		parse_failure := Parse(*uuid, Text_Unvalidated(text))
+		if parse_failure != ERROR_NONE {
 			return status_invalid
 		}
-		*uuid = parsed
 		return status_ok
 	case driver.VALUE_BYTES:
 		data, data_status := driver.Value_As_Bytes(source)
@@ -1337,52 +1610,63 @@ func UUID_Scan(uuid *UUID, source driver.Value) (status driver.Validation_Status
 			return status_invalid
 		}
 		if len(data) == bytes.SLICE_SIZE_MINIMUM {
+			Nil(*uuid)
 			return status_ok
 		}
 		if len(data) == UUID_BYTE_COUNT {
-			copy(uuid[:], data)
+			copy(*uuid, data)
 			return status_ok
 		}
-		parsed, parse_err := Parse_Bytes(bytes.Slice(data))
-		if parse_err != nil {
+		parse_failure := Parse_Bytes(*uuid, bytes.Slice(data))
+		if parse_failure != ERROR_NONE {
 			return status_invalid
 		}
-		*uuid = parsed
 		return status_ok
 	}
 	return status_invalid
 }
 
-// UUID_Value returns canonical text through shared closed driver union.
-func UUID_Value(uuid UUID) (value driver.Value) {
-	defer func() { driver.Value_Invariants(value, "uuid_value.value") }()
+// UUID_Value borrows caller text storage through shared closed driver union.
+func UUID_Value(uuid UUID, destination Text_Bytes) (value Text_Value) {
+	defer func() { Text_Value_Invariants(value, "uuid_value.value") }()
 	UUID_Invariants(uuid, "uuid_value.uuid")
-	var status driver.Validation_Status
-	value, status = driver.Value_Of_Text(driver.Text_Unvalidated(uuid.String()))
+	Text_Bytes_Invariants(destination, "uuid_value.destination")
+	var driver_value driver.Value
+	status := driver.Value_Of_Text(
+		driver.Value_Pointer(&driver_value),
+		driver.Text_Unvalidated(UUID_String(uuid, destination)),
+	)
 	aver.Always(
 		status == driver.Validation_Status(driver.STATUS_OK),
 		"Canonical UUID text always fits shared driver text bound.",
 	)
-	return value
+	return Text_Value(driver_value)
 }
 
 // Null_UUID_Scan reads shared driver value and clears validity on NULL or rejection.
 func Null_UUID_Scan(
-	null_uuid *Null_UUID, source driver.Value,
+	null_uuid Null_UUID_Pointer, source driver.Value,
 ) (status driver.Validation_Status) {
 	defer func() {
 		driver.Validation_Status_Invariants(status, "null_uuid_scan.status")
 		Null_UUID_Invariants(*null_uuid, "null_uuid_scan.null_uuid.output")
 	}()
-	Null_UUID_Invariants(*null_uuid, "null_uuid_scan.null_uuid.input")
+	Null_UUID_Pointer_Invariants(null_uuid, "null_uuid_scan.null_uuid.input")
 	driver.Value_Invariants(source, "null_uuid_scan.source")
-	if source.Kinds[driver.VALUE_SLOT] == driver.VALUE_NULL {
-		null_uuid.UUID = Nil()
+	kind, kind_status := driver.Value_Kind_Of(source)
+	if kind_status != driver.Validation_Status(driver.STATUS_OK) {
+		Nil(null_uuid.UUID)
+		null_uuid.Valid = false
+		return driver.Validation_Status(driver.STATUS_INPUT_INVALID)
+	}
+	if kind == driver.VALUE_NULL {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
 		return driver.Validation_Status(driver.STATUS_OK)
 	}
 	status = UUID_Scan(&null_uuid.UUID, source)
 	if status != driver.Validation_Status(driver.STATUS_OK) {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
 		return status
 	}
@@ -1390,95 +1674,151 @@ func Null_UUID_Scan(
 	return status
 }
 
-// Null_UUID_Value returns shared SQL NULL or canonical UUID text.
-func Null_UUID_Value(null_uuid Null_UUID) (value driver.Value) {
-	defer func() { driver.Value_Invariants(value, "null_uuid_value.value") }()
+// Null_UUID_Value borrows caller text storage for a valid database value.
+func Null_UUID_Value(null_uuid Null_UUID, destination Text_Bytes) (value Nullable_Value) {
+	defer func() { Nullable_Value_Invariants(value, "null_uuid_value.value") }()
 	Null_UUID_Invariants(null_uuid, "null_uuid_value.null_uuid")
+	Text_Bytes_Invariants(destination, "null_uuid_value.destination")
 	if !null_uuid.Valid {
-		return driver.Value_Null()
+		var driver_value driver.Value
+		driver.Value_Null(driver.Value_Pointer(&driver_value))
+		return Nullable_Value(driver_value)
 	}
-	return UUID_Value(null_uuid.UUID)
+	return Nullable_Value(UUID_Value(null_uuid.UUID, destination))
 }
 
-// MarshalBinary implements encoding.BinaryMarshaler; an invalid value marshals empty.
-func (null_uuid Null_UUID) MarshalBinary() (data []byte, err error) {
+// Null_UUID_Marshal_Binary returns empty bytes for invalid values.
+func Null_UUID_Marshal_Binary(null_uuid Null_UUID) (data Nullable_Binary) {
+	defer func() { Nullable_Binary_Invariants(data, "null_uuid_marshal_binary.data") }()
+	Null_UUID_Invariants(null_uuid, "null_uuid_marshal_binary.null_uuid")
 	if bool(null_uuid.Valid) {
-		return null_uuid.UUID[:], nil
+		return Nullable_Binary(null_uuid.UUID)
 	}
-	return []byte(nil), nil
+	return nil
 }
 
-// UnmarshalBinary implements encoding.BinaryUnmarshaler.
-func (null_uuid *Null_UUID) UnmarshalBinary(data []byte) (err error) {
+// Null_UUID_Unmarshal_Binary validates before marking caller storage valid.
+func Null_UUID_Unmarshal_Binary(
+	null_uuid Null_UUID_Pointer, data bytes.Slice,
+) (status Binary_Status) {
+	defer func() { Binary_Status_Invariants(status, "null_uuid_unmarshal_binary.status") }()
+	Null_UUID_Pointer_Invariants(null_uuid, "null_uuid_unmarshal_binary.null_uuid")
+	bytes.Slice_Invariants(data, "null_uuid_unmarshal_binary.data")
 	if len(data) != UUID_BYTE_COUNT {
+		Nil(null_uuid.UUID)
+		null_uuid.Valid = false
 		return ERROR_INVALID_SIZE
 	}
-	copy(null_uuid.UUID[:], data)
+	copy(null_uuid.UUID, data)
 	null_uuid.Valid = true
-	return nil
+	return ERROR_NONE
 }
 
-// MarshalText implements encoding.TextMarshaler; an invalid value marshals as "null".
-func (null_uuid Null_UUID) MarshalText() (text []byte, err error) {
+// Null_UUID_Marshal_Text returns "null" for invalid values.
+func Null_UUID_Marshal_Text(
+	null_uuid Null_UUID, destination Nullable_Text_Storage,
+) (text Nullable_Text) {
+	defer func() { Nullable_Text_Invariants(text, "null_uuid_marshal_text.text") }()
+	Null_UUID_Invariants(null_uuid, "null_uuid_marshal_text.null_uuid")
+	Nullable_Text_Storage_Invariants(destination, "null_uuid_marshal_text.destination")
 	if bool(null_uuid.Valid) {
-		return null_uuid.UUID.MarshalText()
+		marshaled := UUID_Marshal_Text(null_uuid.UUID, Text_Bytes(destination))
+		return Nullable_Text(marshaled)
 	}
-	return []byte("null"), nil
+	copy(destination[:JSON_NULL_BYTE_COUNT], JSON_NULL)
+	return Nullable_Text(destination[:JSON_NULL_BYTE_COUNT])
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
-func (null_uuid *Null_UUID) UnmarshalText(text []byte) (err error) {
-	parsed, parse_err := Parse_Bytes(bytes.Slice(text))
-	if parse_err != nil {
+// Null_UUID_Unmarshal_Text clears validity when text is rejected.
+func Null_UUID_Unmarshal_Text(
+	null_uuid Null_UUID_Pointer, text bytes.Slice,
+) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "null_uuid_unmarshal_text.status") }()
+	Null_UUID_Pointer_Invariants(null_uuid, "null_uuid_unmarshal_text.null_uuid")
+	bytes.Slice_Invariants(text, "null_uuid_unmarshal_text.text")
+	parse_failure := Parse_Bytes(null_uuid.UUID, text)
+	if parse_failure != ERROR_NONE {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
-		return parse_err
+		return parse_failure
 	}
-	null_uuid.UUID = parsed
 	null_uuid.Valid = true
-	return nil
+	return ERROR_NONE
 }
 
-// MarshalJSON implements json.Marshaler; an invalid value marshals as JSON null.
-func (null_uuid Null_UUID) MarshalJSON() (data []byte, err error) {
+// Null_UUID_Marshal_JSON returns quoted canonical text or JSON null.
+func Null_UUID_Marshal_JSON(null_uuid Null_UUID, destination JSON_Storage) (data JSON) {
+	defer func() { JSON_Invariants(data, "null_uuid_marshal_json.data") }()
+	Null_UUID_Invariants(null_uuid, "null_uuid_marshal_json.null_uuid")
+	JSON_Storage_Invariants(destination, "null_uuid_marshal_json.destination")
 	if bool(null_uuid.Valid) {
-		data = make([]byte, UUID_BRACED_BYTE_COUNT)
-		var encoded [UUID_TEXT_BYTE_COUNT]byte
+		data = JSON(destination)
 		data[bytes.SLICE_SIZE_MINIMUM] = '"'
-		encode_hexadecimal(&encoded, null_uuid.UUID)
-		copy(data[UUID_BRACE_BYTE_COUNT/2:UUID_BRACED_BYTE_COUNT-1], encoded[:])
+		UUID_Marshal_Text(
+			null_uuid.UUID,
+			Text_Bytes(data[UUID_BRACE_BYTE_COUNT/2:UUID_BRACED_BYTE_COUNT-1]),
+		)
 		data[UUID_BRACED_BYTE_COUNT-1] = '"'
-		return data, nil
+		return data
 	}
-	return []byte("null"), nil
+	copy(destination[:JSON_NULL_BYTE_COUNT], JSON_NULL)
+	return JSON(destination[:JSON_NULL_BYTE_COUNT])
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (null_uuid *Null_UUID) UnmarshalJSON(data []byte) (err error) {
-	if string(data) == JSON_NULL {
-		null_uuid.UUID = Nil()
+// Null_UUID_Unmarshal_JSON accepts quoted canonical text or JSON null.
+func Null_UUID_Unmarshal_JSON(
+	null_uuid Null_UUID_Pointer, data bytes.Slice,
+) (status JSON_Status) {
+	defer func() { JSON_Status_Invariants(status, "null_uuid_unmarshal_json.status") }()
+	Null_UUID_Pointer_Invariants(null_uuid, "null_uuid_unmarshal_json.null_uuid")
+	bytes.Slice_Invariants(data, "null_uuid_unmarshal_json.data")
+	if json_is_null(data) {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
-		return nil
+		return ERROR_NONE
 	}
 	if len(data) != UUID_BRACED_BYTE_COUNT {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
 		return ERROR_INVALID_FORMAT
 	}
 	if data[bytes.SLICE_SIZE_MINIMUM] != '"' {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
 		return ERROR_INVALID_FORMAT
 	}
 	if data[UUID_BRACED_BYTE_COUNT-1] != '"' {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
 		return ERROR_INVALID_FORMAT
 	}
-	parsed, unmarshal_err := Parse_Bytes(bytes.Slice(
-		data[UUID_BRACE_BYTE_COUNT/2 : UUID_BRACED_BYTE_COUNT-1],
+	parse_failure := Parse_Bytes(null_uuid.UUID, bytes.Slice(
+		data[UUID_BRACE_BYTE_COUNT/2:UUID_BRACED_BYTE_COUNT-1],
 	))
-	if unmarshal_err != nil {
+	if parse_failure != ERROR_NONE {
+		Nil(null_uuid.UUID)
 		null_uuid.Valid = false
-		return unmarshal_err
+		return JSON_Status(parse_failure)
 	}
-	null_uuid.UUID = parsed
 	null_uuid.Valid = true
-	return nil
+	return ERROR_NONE
+}
+
+// Exact byte comparison avoids allocating a temporary string on hostile JSON.
+func json_is_null(data bytes.Slice) (match Match) {
+	defer func() { Match_Invariants(match, "json_is_null.match") }()
+	bytes.Slice_Invariants(data, "json_is_null.data")
+	if len(data) != JSON_NULL_BYTE_COUNT {
+		return false
+	}
+	if data[0] != JSON_NULL[0] {
+		return false
+	}
+	if data[1] != JSON_NULL[1] {
+		return false
+	}
+	if data[2] != JSON_NULL[2] {
+		return false
+	}
+	return Match(data[3] == JSON_NULL[3])
 }
