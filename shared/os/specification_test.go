@@ -3,7 +3,7 @@ package os_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/simulation/os"
+	"local/james-orcales/shared/os"
 	"local/james-orcales/shared/testify"
 )
 

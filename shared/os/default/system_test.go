@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/simulation/os/default"
+	"local/james-orcales/shared/os/default"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )

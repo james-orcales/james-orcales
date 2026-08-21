@@ -12,7 +12,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/simulation/os"
+	"local/james-orcales/shared/os"
 )
 
 // New_Operating_System returns OS backed by host kernel. Static procedures keep vtable free of
