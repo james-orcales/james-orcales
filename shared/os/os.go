@@ -144,6 +144,50 @@ func Effective_User_Identifier_Invariants(
 		Ensure()
 }
 
+// Arguments_Procedure copies complete process arguments into caller storage.
+type Arguments_Procedure func(
+	state unsafe.Pointer, destination Arguments,
+) (count Entry_Count)
+
+// Environment_Procedure copies complete process environment into caller storage.
+type Environment_Procedure func(
+	state unsafe.Pointer, destination Environment,
+) (count Entry_Count)
+
+// Variable_Procedure reads one environment variable.
+type Variable_Procedure func(
+	state unsafe.Pointer, name Variable_Name,
+) (value Variable_Value, found Variable_Found)
+
+// Executable_Procedure reads process image path.
+type Executable_Procedure func(
+	state unsafe.Pointer,
+) (path Executable_Path, err error)
+
+// Working_Directory_Procedure reads relative-path root.
+type Working_Directory_Procedure func(
+	state unsafe.Pointer,
+) (path Working_Directory_Path, err error)
+
+// Hostname_Procedure reads kernel machine name.
+type Hostname_Procedure func(state unsafe.Pointer) (name Hostname, err error)
+
+// Process_Identifier_Procedure reads kernel process identity.
+type Process_Identifier_Procedure func(
+	state unsafe.Pointer,
+) (identifier Process_Identifier)
+
+// Effective_User_Identifier_Procedure reads kernel permission identity.
+type Effective_User_Identifier_Procedure func(
+	state unsafe.Pointer,
+) (identifier Effective_User_Identifier)
+
+// Self_Exec_Procedure replaces process image.
+type Self_Exec_Procedure func(
+	state unsafe.Pointer, path Executable_Path,
+	arguments Arguments, environment Environment,
+) (err error)
+
 // OS is the operating system as the running process sees it. It is a vtable, so a caller holds
 // it by value and calls through it without knowing the backend, exactly as io.IO is held.
 type OS struct {
@@ -151,33 +195,28 @@ type OS struct {
 	State unsafe.Pointer
 	// Arguments copies process argv into destination and returns populated entry count. First
 	// element names program as invoked, which is not always executable path.
-	Arguments func(state unsafe.Pointer, destination Arguments) (count Entry_Count)
+	Arguments Arguments_Procedure
 	// Environment copies every variable as one "NAME=VALUE" string and returns populated count.
-	Environment func(state unsafe.Pointer, destination Environment) (count Entry_Count)
+	Environment Environment_Procedure
 	// Variable reads one environment variable. found is false when the name is unset, which
 	// a caller must tell apart from a name set to the empty string.
-	Variable func(
-		state unsafe.Pointer, name Variable_Name,
-	) (value Variable_Value, found Variable_Found)
+	Variable Variable_Procedure
 	// Executable returns the path of the running image.
-	Executable func(state unsafe.Pointer) (path Executable_Path, err error)
+	Executable Executable_Procedure
 	// Working_Directory returns the directory that resolves the process's relative paths.
-	Working_Directory func(state unsafe.Pointer) (path Working_Directory_Path, err error)
+	Working_Directory Working_Directory_Procedure
 	// Hostname returns the name the kernel gives this machine.
-	Hostname func(state unsafe.Pointer) (name Hostname, err error)
+	Hostname Hostname_Procedure
 	// Process_Identifier returns the process id.
-	Process_Identifier func(state unsafe.Pointer) (identifier Process_Identifier)
+	Process_Identifier Process_Identifier_Procedure
 	// Effective_User_Identifier returns the user id the kernel checks permission against,
 	// which a setuid image makes different from the user who started the process.
-	Effective_User_Identifier func(state unsafe.Pointer) (identifier Effective_User_Identifier)
+	Effective_User_Identifier Effective_User_Identifier_Procedure
 	// Self_Exec replaces the process image and returns only on failure. Every descriptor is
 	// close-on-exec, so a successful replacement closes listeners and the new image rebinds.
 	// Nil preserves ambient values. Non-nil slice is complete replacement, thus empty inherits
 	// nothing.
-	Self_Exec func(
-		state unsafe.Pointer, path Executable_Path,
-		arguments Arguments, environment Environment,
-	) (err error)
+	Self_Exec Self_Exec_Procedure
 }
 
 // OS_Invariants states that every reader is bound. An OS is a vtable, so its only property is
@@ -306,8 +345,7 @@ type Virtual_OS struct {
 // Virtual_OS_Invariants states the complete simulated domain. A process id is positive on every
 // kernel this repository targets, and pid 1 is init, so a simulation that states zero has left
 // the field unset rather than described a real process.
-func Virtual_OS_Invariants(virtual *Virtual_OS, namespace aver.Namespace) {
-	aver.Always(virtual != nil, "A virtual OS has caller-owned state.")
+func Virtual_OS_Invariants(virtual Virtual_OS, namespace aver.Namespace) {
 	Arguments_Invariants(virtual.Arguments, namespace)
 	Environment_Invariants(virtual.Environment, namespace)
 	Executable_Path_Invariants(virtual.Executable, namespace)
@@ -317,12 +355,24 @@ func Virtual_OS_Invariants(virtual *Virtual_OS, namespace aver.Namespace) {
 	Effective_User_Identifier_Invariants(virtual.Effective_User_Identifier, namespace)
 }
 
+// Virtual_OS_Pointer names caller-owned simulated ambient state.
+type Virtual_OS_Pointer *Virtual_OS
+
+// Virtual_OS_Pointer_Invariants composes state only when present.
+func Virtual_OS_Pointer_Invariants(value Virtual_OS_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Virtual_OS_Invariants(*value, namespace)
+}
+
 // Virtual_OS_To_OS turns simulated ambient state into the vtable every caller holds, the
 // counterpart of time.Virtual_Clock_To_Clock. Each slice reader copies into caller destination,
 // so caller edit cannot change what next read sees and backend owns no result allocation.
-func Virtual_OS_To_OS(virtual *Virtual_OS) (system OS) {
+func Virtual_OS_To_OS(virtual Virtual_OS_Pointer) (system OS) {
 	defer func() { OS_Invariants(system, "virtual_os_to_os.system") }()
-	Virtual_OS_Invariants(virtual, "virtual_os_to_os.virtual")
+	Virtual_OS_Pointer_Invariants(virtual, "virtual_os_to_os.virtual")
+	aver.Always(virtual != nil, "A virtual OS has caller-owned state.")
 	system = OS{
 		State:                     unsafe.Pointer(virtual),
 		Arguments:                 virtual_os_arguments,
@@ -343,7 +393,7 @@ func virtual_os_arguments(
 ) (count Entry_Count) {
 	defer func() { Entry_Count_Invariants(count, "virtual_os_arguments.count") }()
 	Arguments_Invariants(destination, "virtual_os_arguments.destination")
-	return copy_strings(destination, (*Virtual_OS)(state).Arguments)
+	return copy_arguments(destination, (*Virtual_OS)(state).Arguments)
 }
 
 func virtual_os_environment(
@@ -351,7 +401,7 @@ func virtual_os_environment(
 ) (count Entry_Count) {
 	defer func() { Entry_Count_Invariants(count, "virtual_os_environment.count") }()
 	Environment_Invariants(destination, "virtual_os_environment.destination")
-	return copy_strings(destination, (*Virtual_OS)(state).Environment)
+	return copy_environment(destination, (*Virtual_OS)(state).Environment)
 }
 
 func virtual_os_variable(
@@ -438,10 +488,22 @@ func Environment_Lookup(
 	return value, found
 }
 
-// Caller destination prevents result ownership from allocating or reaching backend slice.
-func copy_strings[Strings ~[]string](destination Strings, source Strings) (count Entry_Count) {
-	defer func() { Entry_Count_Invariants(count, "copy_strings.count") }()
+// Caller destination prevents argument ownership from reaching backend slice.
+func copy_arguments(destination Arguments, source Arguments) (count Entry_Count) {
+	defer func() { Entry_Count_Invariants(count, "copy_arguments.count") }()
+	Arguments_Invariants(destination, "copy_arguments.destination")
+	Arguments_Invariants(source, "copy_arguments.source")
 	aver.Always(len(destination) >= len(source),
-		"Caller-owned string storage holds complete OS answer.")
+		"Caller-owned argument storage holds complete OS answer.")
+	return Entry_Count(copy(destination, source))
+}
+
+// Caller destination prevents environment ownership from reaching backend slice.
+func copy_environment(destination Environment, source Environment) (count Entry_Count) {
+	defer func() { Entry_Count_Invariants(count, "copy_environment.count") }()
+	Environment_Invariants(destination, "copy_environment.destination")
+	Environment_Invariants(source, "copy_environment.source")
+	aver.Always(len(destination) >= len(source),
+		"Caller-owned environment storage holds complete OS answer.")
 	return Entry_Count(copy(destination, source))
 }

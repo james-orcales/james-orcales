@@ -7,15 +7,9 @@ import (
 	"local/james-orcales/shared/math/bits"
 	shared_os "local/james-orcales/shared/os"
 	"local/james-orcales/shared/os/default"
-	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )
-
-// TestMain registers the package invariant roots before the smoke test runs.
-func TestMain(m *testing.M) {
-	aver.Run_Test_Main(m)
-}
 
 // Test_Operating_System_Smoke verifies the host answers every ambient reader. The values a
 // machine supplies are not deterministic, so this checks their shape, not their content. The
@@ -264,10 +258,10 @@ func Test_Operating_System_Self_Exec_Environment(t *testing.T) {
 	host := os.New_Operating_System(&state)
 	err := os.OS_Self_Exec(host, "/missing", nil, nil)
 	testify.Error(t, err)
-	testify.True(t, state.Self_Exec.Environment_Pointers[0] != nil)
+	testify.True(t, (*state.Self_Exec.Environment_Pointers)[0] != nil)
 	err = os.OS_Self_Exec(host, "/missing", nil, shared_os.Environment{})
 	testify.Error(t, err)
-	testify.False(t, state.Self_Exec.Environment_Pointers[0] != nil)
+	testify.False(t, (*state.Self_Exec.Environment_Pointers)[0] != nil)
 }
 
 func test_host() (host os.Host) {
@@ -282,21 +276,20 @@ func test_host() (host os.Host) {
 }
 
 func test_self_exec_workspace() (workspace *os.Self_Exec_Workspace) {
+	path := make(os.Self_Exec_Path_Bytes, os.SELF_EXEC_PATH_STORAGE_BYTES)
+	arguments := make(os.Self_Exec_Argument_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
+	environment := make(os.Self_Exec_Environment_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
+	argument_pointers := make(
+		os.Self_Exec_Argument_Pointer_Vector, os.SELF_EXEC_VECTOR_POINTER_COUNT,
+	)
+	environment_pointers := make(
+		os.Self_Exec_Environment_Pointer_Vector, os.SELF_EXEC_VECTOR_POINTER_COUNT,
+	)
 	return &os.Self_Exec_Workspace{
-		Path: os.Self_Exec_Path_Storage(
-			new([os.SELF_EXEC_PATH_STORAGE_BYTES]byte),
-		),
-		Arguments: os.Self_Exec_Argument_Storage(
-			new([os.SELF_EXEC_VECTOR_STORAGE_BYTES]byte),
-		),
-		Environment: os.Self_Exec_Environment_Storage(
-			new([os.SELF_EXEC_VECTOR_STORAGE_BYTES]byte),
-		),
-		Argument_Pointers: os.Self_Exec_Argument_Pointers(
-			new([os.SELF_EXEC_VECTOR_POINTER_COUNT]*byte),
-		),
-		Environment_Pointers: os.Self_Exec_Environment_Pointers(
-			new([os.SELF_EXEC_VECTOR_POINTER_COUNT]*byte),
-		),
+		Path:                 os.Self_Exec_Path_Storage(&path),
+		Arguments:            os.Self_Exec_Argument_Storage(&arguments),
+		Environment:          os.Self_Exec_Environment_Storage(&environment),
+		Argument_Pointers:    os.Self_Exec_Argument_Pointers(&argument_pointers),
+		Environment_Pointers: os.Self_Exec_Environment_Pointers(&environment_pointers),
 	}
 }
