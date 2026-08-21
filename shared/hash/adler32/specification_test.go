@@ -134,9 +134,26 @@ func Test_Clone(t *testing.T) {
 func Test_Bounds(t *testing.T) {
 	var uninitialized adler32.Digest
 	testify.Panics(t, func() { adler32.Digest_Write(&uninitialized, nil) })
+	testify.Panics(t, func() { adler32.Digest_Reset(&uninitialized) })
+	testify.Panics(t, func() { adler32.Digest_Sum_32(&uninitialized) })
+	testify.Panics(t, func() {
+		var destination [adler32.DIGEST_SIZE]byte
+		adler32.Digest_Sum_Into(&uninitialized, destination[:])
+	})
+	testify.Panics(t, func() {
+		var destination [adler32.STATE_SIZE]byte
+		adler32.Digest_Marshal_Into(&uninitialized, destination[:])
+	})
+	testify.Panics(t, func() {
+		var destination adler32.Digest
+		adler32.Digest_Clone_Into(&destination, &uninitialized)
+	})
+	testify.Equal(t, adler32.STATE_INPUT_STATUS_IDENTIFIER_INVALID,
+		adler32.Digest_Unmarshal(&uninitialized, nil))
 
 	var digest adler32.Digest
 	adler32.Digest_Init(&digest)
+	adler32.Digest_Clone_Into(&uninitialized, &digest)
 	var source [adler32.SOURCE_SIZE_MAXIMUM + 1]byte
 	testify.Panics(t, func() { adler32.Digest_Write(&digest, source[:]) })
 	testify.Panics(t, func() { adler32.Checksum(source[:]) })

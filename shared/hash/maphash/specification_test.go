@@ -113,8 +113,26 @@ func Test_Caller_Owned_Output(t *testing.T) {
 // Test_Bounds rejects oversized calls, total overflow, and an unkeyed seed.
 func Test_Bounds(t *testing.T) {
 	seed := test_seed()
+	var uninitialized maphash.Hash
+	testify.Panics(t, func() { maphash.Hash_Write(&uninitialized, nil) })
+	testify.Panics(t, func() { maphash.Hash_Write_Text(&uninitialized, "") })
+	testify.Panics(t, func() { maphash.Hash_Write_Byte(&uninitialized, 0) })
+	testify.Panics(t, func() { maphash.Hash_Sum_64(&uninitialized) })
+	testify.Panics(t, func() {
+		var destination [maphash.DIGEST_SIZE]byte
+		maphash.Hash_Sum_Into(&uninitialized, destination[:])
+	})
+	testify.Panics(t, func() { maphash.Hash_Seed(&uninitialized) })
+	testify.Panics(t, func() { maphash.Hash_Message_Size_Maximum(&uninitialized) })
+	testify.Panics(t, func() { maphash.Hash_Reset(&uninitialized) })
+	testify.Panics(t, func() { maphash.Hash_Set_Seed(&uninitialized, seed) })
+	testify.Panics(t, func() {
+		var destination maphash.Hash
+		maphash.Hash_Clone_Into(&destination, &uninitialized)
+	})
 	var value maphash.Hash
 	maphash.Hash_Init(&value, seed)
+	maphash.Hash_Clone_Into(&uninitialized, &value)
 	var source [maphash.SOURCE_SIZE_MAXIMUM + 1]byte
 	var text [maphash.TEXT_SIZE_MAXIMUM + 1]byte
 	testify.Panics(t, func() { maphash.Bytes(seed, source[:]) })
@@ -140,6 +158,7 @@ func Test_Invariant_Domains(t *testing.T) {
 	var source [maphash.SOURCE_SIZE_MAXIMUM]byte
 	var output [maphash.DESTINATION_SIZE_MAXIMUM]byte
 	maphash_seed_domains(source[:], output[:])
+	maphash_state_domains(t, output[:])
 	seed := test_seed()
 	for _, size := range [...]int{0, 1, 2, maphash.DESTINATION_SIZE_MAXIMUM} {
 		var value maphash.Hash
@@ -236,6 +255,68 @@ func Test_Allocation(t *testing.T) {
 		maphash.Hash_Clone_Into(&fixture.Clone, &fixture.Hash)
 	})
 	testify.True(t, fixture.Value >= 0)
+}
+
+// Full-domain state is caller-owned, so empty writes expose every legal stored bit pattern.
+func maphash_state_domains(t *testing.T, output maphash.Destination) {
+	words := [...]uint64{
+		bits.WORD_64_MINIMUM,
+		bits.WORD_64_MINIMUM + 1,
+		bits.WORD_64_MINIMUM + 1 + 1,
+		bits.WORD_64_MAXIMUM,
+	}
+	counts := [...]uint32{
+		maphash.TOTAL_COUNT_MINIMUM,
+		maphash.TOTAL_COUNT_MINIMUM + 1,
+		maphash.TOTAL_COUNT_MINIMUM + 1 + 1,
+		maphash.TOTAL_COUNT_MAXIMUM,
+	}
+	tails := [...]int{
+		maphash.TAIL_COUNT_MINIMUM,
+		maphash.TAIL_COUNT_MINIMUM + 1,
+		maphash.TAIL_COUNT_MINIMUM + 1 + 1,
+		maphash.TAIL_COUNT_MAXIMUM,
+	}
+	for index, word := range words {
+		value := maphash.Hash{
+			Seed: maphash.Seed{
+				Key_0:       maphash.Key_0(word),
+				Key_1:       maphash.Key_1(word),
+				Output_Mask: maphash.Output_Mask(word),
+			},
+			State_0:              maphash.State_0(word),
+			State_1:              maphash.State_1(word),
+			State_2:              maphash.State_2(word),
+			State_3:              maphash.State_3(word),
+			Tail_Count:           maphash.Tail_Count(tails[index]),
+			Total_Count:          maphash.Total_Count(counts[index]),
+			Message_Size_Maximum: maphash.Message_Size_Maximum(counts[index]),
+			Ready:                maphash.READY_COMPLETE,
+		}
+		maphash.Hash_Write(&value, nil)
+		maphash.Hash_Write_Text(&value, "")
+		byte_value := value
+		maphash.Hash_Write_Byte(&byte_value, maphash.Byte(index))
+		maphash.Hash_Sum_64(&value)
+		maphash.Hash_Sum_Into(&value, output)
+		maphash.Hash_Seed(&value)
+		maphash.Hash_Message_Size_Maximum(&value)
+		clone := value
+		maphash.Hash_Clone_Into(&clone, &value)
+		reset := value
+		if index == 0 {
+			testify.Panics(t, func() { maphash.Hash_Reset(&reset) })
+		} else {
+			maphash.Hash_Reset(&reset)
+		}
+		set_seed := value
+		maphash.Hash_Set_Seed(&set_seed, test_seed())
+		initialized := value
+		maphash.Hash_Init(&initialized, test_seed())
+		maphash.Hash_Init_Bounded(
+			&initialized, test_seed(), maphash.MESSAGE_SIZE_MAXIMUM,
+		)
+	}
 }
 
 func test_seed() (seed maphash.Seed) {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/hash/xxhash"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/testify"
 )
@@ -14,6 +15,7 @@ func Test_Hash_Matches_Reference_Vectors(t *testing.T) {
 		got := xxhash.Hash(xxhash.Source(test_case.Input), test_case.Seed)
 		testify.Equal(t, test_case.Want, got, test_case.Name)
 	}
+	xxhash_hash_domains(t)
 }
 
 // Test_Digest_Matches_Reference_Vectors checks the streaming Digest reproduces those vectors when
@@ -35,6 +37,7 @@ func Test_Digest_Matches_Reference_Vectors(t *testing.T) {
 			testify.Equal(t, test_case.Want, got, test_case.Name, chunk)
 		}
 	}
+	xxhash_digest_domains()
 }
 
 // Test_Digest_Equals_One_Shot checks streaming and one-shot agree on a longer input split at many
@@ -98,10 +101,134 @@ func Test_Reset_Restores_Initial_State(t *testing.T) {
 
 // Test_Hot_Path_Is_Zero_Allocation checks a one-shot Hash of a preallocated slice never allocates.
 func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
-	data := make(xxhash.Source, 64)
+	fixture := xxhash_allocation_fixture{Source: make(xxhash.Source, 64)}
+	fixture.Digest = xxhash.New_Digest(0)
 	testify.Zero_Allocation(t, func() {
-		xxhash.Hash(data, xxhash.Seed(0))
+		fixture.Value = xxhash.Hash(fixture.Source, fixture.Seed)
 	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Digest = xxhash.New_Digest(fixture.Seed)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Count, fixture.Error = fixture.Digest.Write(fixture.Source)
+	})
+	testify.Zero_Allocation(t, func() {
+		fixture.Value = xxhash.Digest_Sum_64(&fixture.Digest)
+	})
+	testify.Zero_Allocation(t, func() {
+		xxhash.Digest_Reset(&fixture.Digest)
+	})
+	testify.No_Error(t, fixture.Error)
+	testify.Equal(t, len(fixture.Source), fixture.Count)
+}
+
+type xxhash_allocation_fixture struct {
+	Source xxhash.Source
+	Digest xxhash.Digest
+	Seed   xxhash.Seed
+	Value  xxhash.Value
+	Count  int
+	Error  error
+}
+
+func xxhash_hash_domains(t *testing.T) {
+	var maximum_source [xxhash.SOURCE_SIZE_MAXIMUM]byte
+	for _, size := range [...]int{0, 1, 2, xxhash.BUFFER_FILL_MAXIMUM} {
+		xxhash.Hash(maximum_source[:size], 0)
+	}
+	xxhash.Hash(maximum_source[:], 0)
+	for _, seed := range xxhash_words() {
+		xxhash.Hash(nil, xxhash.Seed(seed))
+		xxhash.New_Digest(xxhash.Seed(seed))
+	}
+	for _, target := range xxhash_words() {
+		accumulator_seed := xxhash.Seed(target - xxhash.PRIME64_5)
+		accumulator_digest := xxhash.New_Digest(accumulator_seed)
+		xxhash.Digest_Sum_64(&accumulator_digest)
+		seed := xxhash.Seed(xxhash_avalanche_inverse(target) - xxhash.PRIME64_5)
+		testify.Equal(t, xxhash.Value(target), xxhash.Hash(nil, seed))
+		digest := xxhash.New_Digest(seed)
+		testify.Equal(t, xxhash.Value(target), xxhash.Digest_Sum_64(&digest))
+	}
+}
+
+func xxhash_digest_domains() {
+	var maximum_source [xxhash.SOURCE_SIZE_MAXIMUM]byte
+	digest := xxhash.New_Digest(0)
+	digest.Write(nil)
+	digest.Write(maximum_source[:])
+	for _, target := range xxhash_words() {
+		var stripe [xxhash.STRIPE_BYTES]byte
+		for lane_index := range xxhash.STRIPE_LANE_COUNT {
+			for byte_index := range 8 {
+				stripe[lane_index*8+byte_index] = byte(target >> (8 * byte_index))
+			}
+		}
+		xxhash_write_state(target, target, stripe[:])
+		preimage := uint64(bits.Rotate_Left_64(
+			bits.Word_64(target*xxhash_odd_inverse(xxhash.PRIME64_1)), -31,
+		)) - target*xxhash.PRIME64_2
+		xxhash_write_state(preimage, target, stripe[:])
+		xxhash_merge_state(target, 0)
+		merge_input := (target - xxhash.PRIME64_4) *
+			xxhash_odd_inverse(xxhash.PRIME64_1)
+		round_zero := uint64(bits.Rotate_Left_64(
+			bits.Word_64(target*xxhash.PRIME64_2), 31,
+		)) * xxhash.PRIME64_1
+		xxhash_merge_state(merge_input^round_zero, target)
+	}
+}
+
+func xxhash_write_state(accumulator uint64, word uint64, stripe []byte) {
+	value := xxhash.Digest{}
+	for index := range xxhash.STRIPE_LANE_COUNT {
+		value.State[index] = accumulator
+	}
+	for lane_index := range xxhash.STRIPE_LANE_COUNT {
+		for byte_index := range 8 {
+			stripe[lane_index*8+byte_index] = byte(word >> (8 * byte_index))
+		}
+	}
+	value.Write(stripe)
+}
+
+func xxhash_merge_state(accumulator uint64, word uint64) {
+	value := xxhash.Digest{}
+	value.State[xxhash.STATE_TOTAL_BYTES_INDEX] = xxhash.STRIPE_BYTES
+	value.State[xxhash.STATE_ACCUMULATOR_1_INDEX] = word
+	rotated_word := bits.Rotate_Left_64(bits.Word_64(word), 1)
+	value.State[xxhash.STATE_ACCUMULATOR_2_INDEX] = uint64(bits.Rotate_Left_64(
+		bits.Word_64(accumulator-uint64(rotated_word)), -7,
+	))
+	xxhash.Digest_Sum_64(&value)
+}
+
+func xxhash_words() (values [xxhash.STRIPE_LANE_COUNT]uint64) {
+	return [xxhash.STRIPE_LANE_COUNT]uint64{0, 1, 2, ^uint64(0)}
+}
+
+func xxhash_odd_inverse(value uint64) (inverse uint64) {
+	inverse = value
+	for range 6 {
+		inverse *= 2 - value*inverse
+	}
+	return inverse
+}
+
+func xxhash_xor_shift_right_inverse(value uint64, shift int) (inverse uint64) {
+	inverse = value
+	for distance := shift; distance < 64; distance *= 2 {
+		inverse ^= inverse >> distance
+	}
+	return inverse
+}
+
+func xxhash_avalanche_inverse(value uint64) (inverse uint64) {
+	inverse = xxhash_xor_shift_right_inverse(value, 32)
+	inverse *= xxhash_odd_inverse(xxhash.PRIME64_3)
+	inverse = xxhash_xor_shift_right_inverse(inverse, 29)
+	inverse *= xxhash_odd_inverse(xxhash.PRIME64_2)
+	return xxhash_xor_shift_right_inverse(inverse, 33)
 }
 
 // SENTENCE_63 is a 63-byte input: long enough to run one full 32-byte stripe and then a 31-byte

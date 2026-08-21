@@ -50,9 +50,7 @@ const SOURCE_SIZE_MINIMUM = bytes.SLICE_SIZE_MINIMUM
 // SOURCE_SIZE_MAXIMUM shares repository byte-call bound.
 const SOURCE_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
 
-// Lane is a 64-bit word read little-endian from input — unit one round folds into an
-// accumulator. It is its own type so the round and merge helpers' two operands do not share a type
-// (the house input-struct rule), naming the input word for what it is, distinct from state.
+// Lane separates one input word from mutable mixing state.
 type Lane uint64
 
 // Lane_Invariants preserves complete input-word domain.
@@ -92,65 +90,29 @@ func Accumulator_Invariants(value Accumulator, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Accumulator_1 owns first parallel lane state.
-type Accumulator_1 uint64
+// STATE_ACCUMULATOR_1_INDEX starts opaque state with first parallel lane.
+const STATE_ACCUMULATOR_1_INDEX = 0
 
-// Accumulator_1_Invariants preserves complete first-lane domain.
-func Accumulator_1_Invariants(value Accumulator_1, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
-		Ensure()
-}
+// STATE_ACCUMULATOR_2_INDEX follows first parallel lane.
+const STATE_ACCUMULATOR_2_INDEX = STATE_ACCUMULATOR_1_INDEX + 1
 
-// Accumulator_2 owns second parallel lane state.
-type Accumulator_2 uint64
+// STATE_ACCUMULATOR_3_INDEX follows second parallel lane.
+const STATE_ACCUMULATOR_3_INDEX = STATE_ACCUMULATOR_2_INDEX + 1
 
-// Accumulator_2_Invariants preserves complete second-lane domain.
-func Accumulator_2_Invariants(value Accumulator_2, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
-		Ensure()
-}
+// STATE_ACCUMULATOR_4_INDEX follows third parallel lane.
+const STATE_ACCUMULATOR_4_INDEX = STATE_ACCUMULATOR_3_INDEX + 1
 
-// Accumulator_3 owns third parallel lane state.
-type Accumulator_3 uint64
+// STATE_TOTAL_BYTES_INDEX keeps message length after parallel lanes.
+const STATE_TOTAL_BYTES_INDEX = STATE_ACCUMULATOR_4_INDEX + 1
 
-// Accumulator_3_Invariants preserves complete third-lane domain.
-func Accumulator_3_Invariants(value Accumulator_3, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
-		Ensure()
-}
+// STATE_SEED_INDEX keeps reset identity after message length.
+const STATE_SEED_INDEX = STATE_TOTAL_BYTES_INDEX + 1
 
-// Accumulator_4 owns fourth parallel lane state.
-type Accumulator_4 uint64
+// STATE_BUFFER_FILL_INDEX keeps partial-stripe length after seed.
+const STATE_BUFFER_FILL_INDEX = STATE_SEED_INDEX + 1
 
-// Accumulator_4_Invariants preserves complete fourth-lane domain.
-func Accumulator_4_Invariants(value Accumulator_4, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
-		Ensure()
-}
-
-// Total_Bytes counts accepted bytes across bounded writes.
-type Total_Bytes uint64
-
-// Total_Bytes_Invariants preserves complete logical-message domain.
-func Total_Bytes_Invariants(value Total_Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
-		Ensure()
-}
-
-// Buffer_Fill counts live bytes in partial-stripe storage.
-type Buffer_Fill int
-
-// Buffer_Fill_Invariants excludes complete stripes because Write compresses them immediately.
-func Buffer_Fill_Invariants(value Buffer_Fill, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(int(value), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM).
-		Ensure()
-}
+// STATE_WORD_COUNT derives exact caller-owned opaque storage.
+const STATE_WORD_COUNT = STATE_BUFFER_FILL_INDEX + 1
 
 // Source is one bounded input chunk.
 type Source []byte
@@ -162,40 +124,35 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 		Ensure()
 }
 
+// Tail is remainder after every complete stripe leaves one sub-stripe suffix.
+type Tail []byte
+
+// Tail_Invariants binds final mixing to one incomplete stripe.
+func Tail_Invariants(value Tail, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM).
+		Ensure()
+}
+
 // Digest is the streaming XXH64 state. Construct it with New_Digest; the zero value is usable only
 // after a Digest_Reset. Fields are transparent, like prng.Generator's State.
 type Digest struct {
-	// Accumulator1 through Accumulator4 are the four lanes of XXH64 state; a stripe folds one
-	// 8-byte lane into each, so a wide CPU can absorb four lanes at once.
-	Accumulator_1 Accumulator_1
-	// Accumulator2 absorbs the second lane of each stripe.
-	Accumulator_2 Accumulator_2
-	// Accumulator3 absorbs the third lane of each stripe.
-	Accumulator_3 Accumulator_3
-	// Accumulator4 absorbs the fourth lane of each stripe.
-	Accumulator_4 Accumulator_4
-	// Total_Bytes is every byte ever written, added into the hash before the final mix; it also
-	// selects the short-input path at Sum time.
-	Total_Bytes Total_Bytes
-	// Seed is the construction seed, kept for Digest_Reset and the short-input offset.
-	Seed Seed
+	// State keeps opaque machine words in fixed caller storage. Private element meaning keeps
+	// machine-width implementation values from pretending to have narrower semantic domains.
+	State [STATE_WORD_COUNT]uint64
 	// Buffer holds bytes that did not complete a stripe, held until the next Write or Sum.
 	Buffer [STRIPE_BYTES]byte
-	// Buffer_Fill is how many bytes of Buffer are live (zero to STRIPE_BYTES minus one).
-	Buffer_Fill Buffer_Fill
 }
 
 // Digest_Invariants composes caller-owned streaming state.
 func Digest_Invariants(value Digest, namespace invariant.Namespace) {
-	Accumulator_1_Invariants(value.Accumulator_1, namespace)
-	Accumulator_2_Invariants(value.Accumulator_2, namespace)
-	Accumulator_3_Invariants(value.Accumulator_3, namespace)
-	Accumulator_4_Invariants(value.Accumulator_4, namespace)
-	Total_Bytes_Invariants(value.Total_Bytes, namespace)
-	Seed_Invariants(value.Seed, namespace)
-	Buffer_Fill_Invariants(value.Buffer_Fill, namespace)
 	invariant.Always(
-		uint64(value.Buffer_Fill) <= uint64(value.Total_Bytes),
+		value.State[STATE_BUFFER_FILL_INDEX] <= BUFFER_FILL_MAXIMUM,
+		"Partial stripe fill cannot hold one complete stripe.",
+	)
+	invariant.Always(
+		value.State[STATE_BUFFER_FILL_INDEX] <=
+			value.State[STATE_TOTAL_BYTES_INDEX],
 		"Partial stripe cannot contain more bytes than complete message.",
 	)
 }
@@ -205,7 +162,7 @@ func Hash(source Source, seed Seed) (hash Value) {
 	defer func() { Value_Invariants(hash, "Hash.hash") }()
 	Source_Invariants(source, "Hash.source")
 	Seed_Invariants(seed, "Hash.seed")
-	total_bytes := Total_Bytes(len(source))
+	total_bytes := uint64(len(source))
 	var accumulator Accumulator
 	if len(source) >= STRIPE_BYTES {
 		accumulator_1 := Accumulator(uint64(seed) + PRIME64_1 + PRIME64_2)
@@ -214,26 +171,35 @@ func Hash(source Source, seed Seed) (hash Value) {
 		accumulator_4 := Accumulator(uint64(seed) - PRIME64_1)
 		for len(source) >= STRIPE_BYTES {
 			accumulator_1 = xxhash_round(
-				accumulator_1, read_lane(source[0:binary.UINT_64_SIZE]),
+				accumulator_1,
+				read_lane((*[binary.UINT_64_SIZE]byte)(
+					source[0:binary.UINT_64_SIZE],
+				)),
 			)
 			accumulator_2 = xxhash_round(
 				accumulator_2,
-				read_lane(source[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2]),
+				read_lane((*[binary.UINT_64_SIZE]byte)(
+					source[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2],
+				)),
 			)
 			accumulator_3 = xxhash_round(
 				accumulator_3,
-				read_lane(source[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3]),
+				read_lane((*[binary.UINT_64_SIZE]byte)(
+					source[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3],
+				)),
 			)
 			accumulator_4 = xxhash_round(
 				accumulator_4,
-				read_lane(source[binary.UINT_64_SIZE*3:STRIPE_BYTES]),
+				read_lane((*[binary.UINT_64_SIZE]byte)(
+					source[binary.UINT_64_SIZE*3:STRIPE_BYTES],
+				)),
 			)
 			source = source[STRIPE_BYTES:]
 		}
-		accumulator = rotate_left(accumulator_1, 1) +
-			rotate_left(accumulator_2, 7) +
-			rotate_left(accumulator_3, 12) +
-			rotate_left(accumulator_4, 18)
+		accumulator = Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator_1), 1)) +
+			Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator_2), 7)) +
+			Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator_3), 12)) +
+			Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator_4), 18))
 		accumulator = xxhash_merge_accumulator(accumulator, Lane(accumulator_1))
 		accumulator = xxhash_merge_accumulator(accumulator, Lane(accumulator_2))
 		accumulator = xxhash_merge_accumulator(accumulator, Lane(accumulator_3))
@@ -242,7 +208,7 @@ func Hash(source Source, seed Seed) (hash Value) {
 		accumulator = Accumulator(uint64(seed) + PRIME64_5)
 	}
 	accumulator += Accumulator(total_bytes)
-	accumulator = xxhash_consume_tail(accumulator, source)
+	accumulator = xxhash_consume_tail(accumulator, Tail(source))
 	return Value(xxhash_avalanche(accumulator))
 }
 
@@ -250,7 +216,7 @@ func Hash(source Source, seed Seed) (hash Value) {
 func New_Digest(seed Seed) (digest Digest) {
 	defer func() { Digest_Invariants(digest, "New_Digest.digest") }()
 	Seed_Invariants(seed, "New_Digest.seed")
-	digest.Seed = seed
+	digest.State[STATE_SEED_INDEX] = uint64(seed)
 	digest_reset_accumulators(&digest)
 	return digest
 }
@@ -273,36 +239,37 @@ func (digest *Digest) Write(data []byte) (consumed int, err error) {
 	if len(data) > SOURCE_SIZE_MAXIMUM {
 		panic("xxhash: source exceeds bound")
 	}
-	if uint64(digest.Total_Bytes) > bits.WORD_64_MAXIMUM-uint64(len(data)) {
+	if digest.State[STATE_TOTAL_BYTES_INDEX] > bits.WORD_64_MAXIMUM-uint64(len(data)) {
 		panic("xxhash: message exceeds bound")
 	}
 	consumed = len(data)
-	digest.Total_Bytes += Total_Bytes(consumed)
+	digest.State[STATE_TOTAL_BYTES_INDEX] += uint64(consumed)
 
 	// Not enough buffered plus new to complete a stripe: stash it and wait for more.
-	if int(digest.Buffer_Fill)+len(data) < STRIPE_BYTES {
-		copy(digest.Buffer[digest.Buffer_Fill:], data)
-		digest.Buffer_Fill += Buffer_Fill(len(data))
+	buffer_fill := int(digest.State[STATE_BUFFER_FILL_INDEX])
+	if buffer_fill+len(data) < STRIPE_BYTES {
+		copy(digest.Buffer[buffer_fill:], data)
+		digest.State[STATE_BUFFER_FILL_INDEX] += uint64(len(data))
 		return consumed, nil
 	}
 
 	// Finish the buffered partial stripe with the head of data, then fold it.
-	if digest.Buffer_Fill > 0 {
-		filled := copy(digest.Buffer[digest.Buffer_Fill:], data)
+	if buffer_fill > 0 {
+		filled := copy(digest.Buffer[buffer_fill:], data)
 		data = data[filled:]
-		digest_process_stripe(digest, digest.Buffer[:])
-		digest.Buffer_Fill = 0
+		digest_process_stripe(digest, &digest.Buffer)
+		digest.State[STATE_BUFFER_FILL_INDEX] = 0
 	}
 
 	// Fold whole stripes straight from data.
 	for len(data) >= STRIPE_BYTES {
-		digest_process_stripe(digest, data[:STRIPE_BYTES])
+		digest_process_stripe(digest, (*[STRIPE_BYTES]byte)(data[:STRIPE_BYTES]))
 		data = data[STRIPE_BYTES:]
 	}
 
 	// Stash the sub-stripe remainder for the next Write or the final Sum.
 	copy(digest.Buffer[:], data)
-	digest.Buffer_Fill = Buffer_Fill(len(data))
+	digest.State[STATE_BUFFER_FILL_INDEX] = uint64(len(data))
 	return consumed, nil
 }
 
@@ -314,67 +281,82 @@ func Digest_Sum_64(digest *Digest) (hash Value) {
 	var accumulator Accumulator
 	// With no completed stripe the short-input path is used; otherwise the four accumulators
 	// converge. Total_Bytes, not Buffer_Fill, decides, since a long input can leave a tail.
-	if digest.Total_Bytes >= STRIPE_BYTES {
-		accumulator = rotate_left(Accumulator(digest.Accumulator_1), 1) +
-			rotate_left(Accumulator(digest.Accumulator_2), 7) +
-			rotate_left(Accumulator(digest.Accumulator_3), 12) +
-			rotate_left(Accumulator(digest.Accumulator_4), 18)
-		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator_1))
-		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator_2))
-		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator_3))
-		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator_4))
+	if digest.State[STATE_TOTAL_BYTES_INDEX] >= STRIPE_BYTES {
+		accumulator = Accumulator(bits.Rotate_Left_64(
+			bits.Word_64(digest.State[STATE_ACCUMULATOR_1_INDEX]), 1,
+		)) + Accumulator(bits.Rotate_Left_64(
+			bits.Word_64(digest.State[STATE_ACCUMULATOR_2_INDEX]), 7,
+		)) + Accumulator(bits.Rotate_Left_64(
+			bits.Word_64(digest.State[STATE_ACCUMULATOR_3_INDEX]), 12,
+		)) + Accumulator(bits.Rotate_Left_64(
+			bits.Word_64(digest.State[STATE_ACCUMULATOR_4_INDEX]), 18,
+		))
+		accumulator = xxhash_merge_accumulator(
+			accumulator, Lane(digest.State[STATE_ACCUMULATOR_1_INDEX]),
+		)
+		accumulator = xxhash_merge_accumulator(
+			accumulator, Lane(digest.State[STATE_ACCUMULATOR_2_INDEX]),
+		)
+		accumulator = xxhash_merge_accumulator(
+			accumulator, Lane(digest.State[STATE_ACCUMULATOR_3_INDEX]),
+		)
+		accumulator = xxhash_merge_accumulator(
+			accumulator, Lane(digest.State[STATE_ACCUMULATOR_4_INDEX]),
+		)
 	} else {
-		accumulator = Accumulator(uint64(digest.Seed) + PRIME64_5)
+		accumulator = Accumulator(digest.State[STATE_SEED_INDEX] + PRIME64_5)
 	}
-	accumulator += Accumulator(digest.Total_Bytes)
-	accumulator = xxhash_consume_tail(accumulator, digest.Buffer[:digest.Buffer_Fill])
+	accumulator += Accumulator(digest.State[STATE_TOTAL_BYTES_INDEX])
+	buffer_fill := digest.State[STATE_BUFFER_FILL_INDEX]
+	accumulator = xxhash_consume_tail(accumulator, Tail(digest.Buffer[:buffer_fill]))
 	return Value(xxhash_avalanche(accumulator))
 }
 
 // Resets the four accumulators to their seeded values and clears the byte count and buffer.
 func digest_reset_accumulators(digest *Digest) {
 	Digest_Invariants(*digest, "digest_reset_accumulators.digest.input")
-	digest.Accumulator_1 = Accumulator_1(uint64(digest.Seed) + PRIME64_1 + PRIME64_2)
-	digest.Accumulator_2 = Accumulator_2(uint64(digest.Seed) + PRIME64_2)
-	digest.Accumulator_3 = Accumulator_3(digest.Seed)
-	digest.Accumulator_4 = Accumulator_4(uint64(digest.Seed) - PRIME64_1)
-	digest.Total_Bytes = 0
-	digest.Buffer_Fill = 0
+	seed := digest.State[STATE_SEED_INDEX]
+	digest.State[STATE_ACCUMULATOR_1_INDEX] = seed + PRIME64_1 + PRIME64_2
+	digest.State[STATE_ACCUMULATOR_2_INDEX] = seed + PRIME64_2
+	digest.State[STATE_ACCUMULATOR_3_INDEX] = seed
+	digest.State[STATE_ACCUMULATOR_4_INDEX] = seed - PRIME64_1
+	digest.State[STATE_TOTAL_BYTES_INDEX] = 0
+	digest.State[STATE_BUFFER_FILL_INDEX] = 0
 	Digest_Invariants(*digest, "digest_reset_accumulators.digest.output")
 }
 
 // Folds one 32-byte stripe into the four accumulators, one 8-byte lane each.
-func digest_process_stripe(digest *Digest, stripe Source) {
+func digest_process_stripe(digest *Digest, stripe *[STRIPE_BYTES]byte) {
 	Digest_Invariants(*digest, "digest_process_stripe.digest.input")
-	Source_Invariants(stripe, "digest_process_stripe.stripe")
-	invariant.Always(len(stripe) == STRIPE_BYTES, "Stripe has four complete lanes.")
-	digest.Accumulator_1 = Accumulator_1(xxhash_round(
-		Accumulator(digest.Accumulator_1), read_lane(stripe[0:binary.UINT_64_SIZE]),
+	digest.State[STATE_ACCUMULATOR_1_INDEX] = uint64(xxhash_round(
+		Accumulator(digest.State[STATE_ACCUMULATOR_1_INDEX]),
+		read_lane((*[binary.UINT_64_SIZE]byte)(stripe[0:binary.UINT_64_SIZE])),
 	))
-	digest.Accumulator_2 = Accumulator_2(xxhash_round(
-		Accumulator(digest.Accumulator_2),
-		read_lane(stripe[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2]),
+	digest.State[STATE_ACCUMULATOR_2_INDEX] = uint64(xxhash_round(
+		Accumulator(digest.State[STATE_ACCUMULATOR_2_INDEX]),
+		read_lane((*[binary.UINT_64_SIZE]byte)(
+			stripe[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2],
+		)),
 	))
-	digest.Accumulator_3 = Accumulator_3(xxhash_round(
-		Accumulator(digest.Accumulator_3),
-		read_lane(stripe[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3]),
+	digest.State[STATE_ACCUMULATOR_3_INDEX] = uint64(xxhash_round(
+		Accumulator(digest.State[STATE_ACCUMULATOR_3_INDEX]),
+		read_lane((*[binary.UINT_64_SIZE]byte)(
+			stripe[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3],
+		)),
 	))
-	digest.Accumulator_4 = Accumulator_4(xxhash_round(
-		Accumulator(digest.Accumulator_4),
-		read_lane(stripe[binary.UINT_64_SIZE*3:STRIPE_BYTES]),
+	digest.State[STATE_ACCUMULATOR_4_INDEX] = uint64(xxhash_round(
+		Accumulator(digest.State[STATE_ACCUMULATOR_4_INDEX]),
+		read_lane((*[binary.UINT_64_SIZE]byte)(
+			stripe[binary.UINT_64_SIZE*3:STRIPE_BYTES],
+		)),
 	))
 	Digest_Invariants(*digest, "digest_process_stripe.digest.output")
 }
 
 // Reads eight bytes as a little-endian lane.
-func read_lane(source Source) (word Lane) {
+func read_lane(source *[binary.UINT_64_SIZE]byte) (word Lane) {
 	defer func() { Lane_Invariants(word, "read_lane.word") }()
-	Source_Invariants(source, "read_lane.source")
-	invariant.Always(
-		len(source) == binary.UINT_64_SIZE,
-		"Lane source has one complete machine word.",
-	)
-	return Lane(binary.Uint_64(binary.Bytes(source), binary.LITTLE_ENDIAN))
+	return Lane(binary.Uint_64(binary.Bytes(source[:]), binary.LITTLE_ENDIAN))
 }
 
 // Folds one lane into an accumulator: scale by PRIME64_2, rotate left 31, multiply by PRIME64_1.
@@ -383,7 +365,7 @@ func xxhash_round(accumulator Accumulator, word Lane) (mixed Accumulator) {
 	Accumulator_Invariants(accumulator, "xxhash_round.accumulator")
 	Lane_Invariants(word, "xxhash_round.word")
 	accumulator += Accumulator(uint64(word) * PRIME64_2)
-	accumulator = rotate_left(accumulator, 31)
+	accumulator = Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator), 31))
 	return accumulator * PRIME64_1
 }
 
@@ -401,28 +383,31 @@ func xxhash_merge_accumulator(
 
 // Consumes the up-to-31-byte tail: 8-byte lanes, then a 4-byte lane, then single bytes, each with
 // its own rotate and primes (xxHash spec step 5). It runs after the byte count has been added.
-func xxhash_consume_tail(accumulator Accumulator, tail Source) (mixed Accumulator) {
+func xxhash_consume_tail(accumulator Accumulator, tail Tail) (mixed Accumulator) {
 	defer func() { Accumulator_Invariants(mixed, "xxhash_consume_tail.mixed") }()
 	Accumulator_Invariants(accumulator, "xxhash_consume_tail.accumulator")
-	Source_Invariants(tail, "xxhash_consume_tail.tail")
+	Tail_Invariants(tail, "xxhash_consume_tail.tail")
 	for len(tail) >= binary.UINT_64_SIZE {
-		accumulator ^= xxhash_round(0, read_lane(tail[0:binary.UINT_64_SIZE]))
-		accumulator = rotate_left(accumulator, 27)*PRIME64_1 + PRIME64_4
+		accumulator ^= xxhash_round(0, read_lane(
+			(*[binary.UINT_64_SIZE]byte)(tail[0:binary.UINT_64_SIZE]),
+		))
+		accumulator = Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator), 27))*
+			PRIME64_1 + PRIME64_4
 		tail = tail[binary.UINT_64_SIZE:]
 	}
 	if len(tail) >= binary.UINT_32_SIZE {
 		word := binary.Uint_32(
 			binary.Bytes(tail[0:binary.UINT_32_SIZE]), binary.LITTLE_ENDIAN,
 		)
-		accumulator ^= Accumulator(
-			uint64(word) * PRIME64_1,
-		)
-		accumulator = rotate_left(accumulator, 23)*PRIME64_2 + PRIME64_3
+		accumulator ^= Accumulator(uint64(word) * PRIME64_1)
+		accumulator = Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator), 23))*
+			PRIME64_2 + PRIME64_3
 		tail = tail[binary.UINT_32_SIZE:]
 	}
 	for len(tail) >= 1 {
 		accumulator ^= Accumulator(uint64(tail[0]) * PRIME64_5)
-		accumulator = rotate_left(accumulator, 11) * PRIME64_1
+		accumulator = Accumulator(bits.Rotate_Left_64(bits.Word_64(accumulator), 11)) *
+			PRIME64_1
 		tail = tail[1:]
 	}
 	return accumulator
@@ -438,11 +423,4 @@ func xxhash_avalanche(accumulator Accumulator) (mixed Accumulator) {
 	accumulator *= PRIME64_3
 	accumulator ^= accumulator >> 32
 	return accumulator
-}
-
-func rotate_left(value Accumulator, rotation bits.Rotation) (rotated Accumulator) {
-	defer func() { Accumulator_Invariants(rotated, "rotate_left.rotated") }()
-	Accumulator_Invariants(value, "rotate_left.value")
-	bits.Rotation_Invariants(rotation, "rotate_left.rotation")
-	return Accumulator(bits.Rotate_Left_64(bits.Word_64(value), rotation))
 }

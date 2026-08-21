@@ -193,6 +193,51 @@ func Test_Bounds(t *testing.T) {
 	testify.Panics(t, func() { fnv.Digest_32_Write(&uninitialized_32, nil) })
 	testify.Panics(t, func() { fnv.Digest_64_Write(&uninitialized_64, nil) })
 	testify.Panics(t, func() { fnv.Digest_128_Write(&uninitialized_128, nil) })
+	testify.Panics(t, func() { fnv.Digest_32_Reset(&uninitialized_32) })
+	testify.Panics(t, func() { fnv.Digest_64_Reset(&uninitialized_64) })
+	testify.Panics(t, func() { fnv.Digest_128_Reset(&uninitialized_128) })
+	testify.Panics(t, func() { fnv.Digest_32_Sum(&uninitialized_32) })
+	testify.Panics(t, func() { fnv.Digest_64_Sum(&uninitialized_64) })
+	testify.Panics(t, func() { fnv.Digest_128_Sum(&uninitialized_128) })
+	testify.Panics(t, func() {
+		var destination [fnv.DIGEST_128_SIZE]byte
+		fnv.Digest_32_Sum_Into(&uninitialized_32, destination[:])
+	})
+	testify.Panics(t, func() {
+		var destination [fnv.DIGEST_128_SIZE]byte
+		fnv.Digest_64_Sum_Into(&uninitialized_64, destination[:])
+	})
+	testify.Panics(t, func() {
+		var destination [fnv.DIGEST_128_SIZE]byte
+		fnv.Digest_128_Sum_Into(&uninitialized_128, destination[:])
+	})
+	testify.Panics(t, func() {
+		var destination [fnv.STATE_128_SIZE]byte
+		fnv.Digest_32_Marshal_Into(&uninitialized_32, destination[:])
+	})
+	testify.Panics(t, func() {
+		var destination [fnv.STATE_128_SIZE]byte
+		fnv.Digest_64_Marshal_Into(&uninitialized_64, destination[:])
+	})
+	testify.Panics(t, func() {
+		var destination [fnv.STATE_128_SIZE]byte
+		fnv.Digest_128_Marshal_Into(&uninitialized_128, destination[:])
+	})
+	testify.Panics(t, func() { fnv.Digest_32_Unmarshal(&uninitialized_32, nil) })
+	testify.Panics(t, func() { fnv.Digest_64_Unmarshal(&uninitialized_64, nil) })
+	testify.Panics(t, func() { fnv.Digest_128_Unmarshal(&uninitialized_128, nil) })
+	testify.Panics(t, func() {
+		var destination fnv.Digest_32
+		fnv.Digest_32_Clone_Into(&destination, &uninitialized_32)
+	})
+	testify.Panics(t, func() {
+		var destination fnv.Digest_64
+		fnv.Digest_64_Clone_Into(&destination, &uninitialized_64)
+	})
+	testify.Panics(t, func() {
+		var destination fnv.Digest_128
+		fnv.Digest_128_Clone_Into(&destination, &uninitialized_128)
+	})
 	testify.Panics(t, func() {
 		fnv.Digest_32_Init(&uninitialized_32, fnv.Kind(bits.WORD_8_MAXIMUM))
 	})
@@ -200,12 +245,15 @@ func Test_Bounds(t *testing.T) {
 	var source [fnv.SOURCE_SIZE_MAXIMUM + 1]byte
 	var digest_32 fnv.Digest_32
 	fnv.Digest_32_Init(&digest_32, fnv.KIND_1)
+	fnv.Digest_32_Clone_Into(&uninitialized_32, &digest_32)
 	testify.Panics(t, func() { fnv.Digest_32_Write(&digest_32, source[:]) })
 	var digest_64 fnv.Digest_64
 	fnv.Digest_64_Init(&digest_64, fnv.KIND_1)
+	fnv.Digest_64_Clone_Into(&uninitialized_64, &digest_64)
 	testify.Panics(t, func() { fnv.Digest_64_Write(&digest_64, source[:]) })
 	var digest_128 fnv.Digest_128
 	fnv.Digest_128_Init(&digest_128, fnv.KIND_1)
+	fnv.Digest_128_Clone_Into(&uninitialized_128, &digest_128)
 	testify.Panics(t, func() { fnv.Digest_128_Write(&digest_128, source[:]) })
 }
 

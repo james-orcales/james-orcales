@@ -479,6 +479,7 @@ func Digest_32_Write(digest *Digest_32, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_32_Write.count") }()
 	Digest_32_Invariants(*digest, "Digest_32_Write.digest.input")
 	Source_Invariants(source, "Digest_32_Write.source")
+	defer func() { Digest_32_Invariants(*digest, "Digest_32_Write.digest.output") }()
 	digest_32_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -494,7 +495,6 @@ func Digest_32_Write(digest *Digest_32, source Source) (count Count) {
 		}
 	}
 	digest.Value = value
-	Digest_32_Invariants(*digest, "Digest_32_Write.digest.output")
 	return Count(len(source))
 }
 
@@ -535,9 +535,11 @@ func Digest_32_Sum_Into(
 func Digest_32_Clone_Into(destination *Digest_32, source *Digest_32) {
 	Digest_32_Invariants(*destination, "Digest_32_Clone_Into.destination.input")
 	Digest_32_Invariants(*source, "Digest_32_Clone_Into.source")
+	defer func() {
+		Digest_32_Invariants(*destination, "Digest_32_Clone_Into.destination.output")
+	}()
 	digest_32_require(source)
 	*destination = *source
-	Digest_32_Invariants(*destination, "Digest_32_Clone_Into.destination.output")
 }
 
 // Digest_64_Init establishes width-specific offset basis and caller-selected Kind.
@@ -575,6 +577,7 @@ func Digest_64_Write(digest *Digest_64, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_64_Write.count") }()
 	Digest_64_Invariants(*digest, "Digest_64_Write.digest.input")
 	Source_Invariants(source, "Digest_64_Write.source")
+	defer func() { Digest_64_Invariants(*digest, "Digest_64_Write.digest.output") }()
 	digest_64_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -590,7 +593,6 @@ func Digest_64_Write(digest *Digest_64, source Source) (count Count) {
 		}
 	}
 	digest.Value = value
-	Digest_64_Invariants(*digest, "Digest_64_Write.digest.output")
 	return Count(len(source))
 }
 
@@ -631,9 +633,11 @@ func Digest_64_Sum_Into(
 func Digest_64_Clone_Into(destination *Digest_64, source *Digest_64) {
 	Digest_64_Invariants(*destination, "Digest_64_Clone_Into.destination.input")
 	Digest_64_Invariants(*source, "Digest_64_Clone_Into.source")
+	defer func() {
+		Digest_64_Invariants(*destination, "Digest_64_Clone_Into.destination.output")
+	}()
 	digest_64_require(source)
 	*destination = *source
-	Digest_64_Invariants(*destination, "Digest_64_Clone_Into.destination.output")
 }
 
 // Digest_128_Init establishes width-specific offset basis and caller-selected Kind.
@@ -679,6 +683,7 @@ func Digest_128_Write(digest *Digest_128, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_128_Write.count") }()
 	Digest_128_Invariants(*digest, "Digest_128_Write.digest.input")
 	Source_Invariants(source, "Digest_128_Write.source")
+	defer func() { Digest_128_Invariants(*digest, "Digest_128_Write.digest.output") }()
 	digest_128_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -709,7 +714,6 @@ func Digest_128_Write(digest *Digest_128, source Source) (count Count) {
 		}
 	}
 	digest.Value = Value_128{High: High(high), Low: Low(low)}
-	Digest_128_Invariants(*digest, "Digest_128_Write.digest.output")
 	return Count(len(source))
 }
 
@@ -754,9 +758,11 @@ func Digest_128_Sum_Into(
 func Digest_128_Clone_Into(destination *Digest_128, source *Digest_128) {
 	Digest_128_Invariants(*destination, "Digest_128_Clone_Into.destination.input")
 	Digest_128_Invariants(*source, "Digest_128_Clone_Into.source")
+	defer func() {
+		Digest_128_Invariants(*destination, "Digest_128_Clone_Into.destination.output")
+	}()
 	digest_128_require(source)
 	*destination = *source
-	Digest_128_Invariants(*destination, "Digest_128_Clone_Into.destination.output")
 }
 
 // Digest_32_Marshal_Into emits standard width-and-kind state into caller storage.
@@ -794,6 +800,7 @@ func Digest_32_Unmarshal(digest *Digest_32, source Source) (status State_Input_S
 	defer func() { State_Input_Status_Invariants(status, "Digest_32_Unmarshal.status") }()
 	Digest_32_Invariants(*digest, "Digest_32_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_32_Unmarshal.source")
+	defer func() { Digest_32_Invariants(*digest, "Digest_32_Unmarshal.digest.output") }()
 	digest_32_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -813,7 +820,6 @@ func Digest_32_Unmarshal(digest *Digest_32, source Source) (status State_Input_S
 		value |= uint32(source[STATE_VALUE_POSITION+index]) << shift
 	}
 	digest.Value = Value_32(value)
-	Digest_32_Invariants(*digest, "Digest_32_Unmarshal.digest.output")
 	return STATE_INPUT_STATUS_OK
 }
 
@@ -852,6 +858,7 @@ func Digest_64_Unmarshal(digest *Digest_64, source Source) (status State_Input_S
 	defer func() { State_Input_Status_Invariants(status, "Digest_64_Unmarshal.status") }()
 	Digest_64_Invariants(*digest, "Digest_64_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_64_Unmarshal.source")
+	defer func() { Digest_64_Invariants(*digest, "Digest_64_Unmarshal.digest.output") }()
 	digest_64_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -871,7 +878,6 @@ func Digest_64_Unmarshal(digest *Digest_64, source Source) (status State_Input_S
 		value |= uint64(source[STATE_VALUE_POSITION+index]) << shift
 	}
 	digest.Value = Value_64(value)
-	Digest_64_Invariants(*digest, "Digest_64_Unmarshal.digest.output")
 	return STATE_INPUT_STATUS_OK
 }
 
@@ -913,6 +919,7 @@ func Digest_128_Unmarshal(digest *Digest_128, source Source) (status State_Input
 	defer func() { State_Input_Status_Invariants(status, "Digest_128_Unmarshal.status") }()
 	Digest_128_Invariants(*digest, "Digest_128_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_128_Unmarshal.source")
+	defer func() { Digest_128_Invariants(*digest, "Digest_128_Unmarshal.digest.output") }()
 	digest_128_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("fnv: source exceeds bound")
@@ -934,7 +941,6 @@ func Digest_128_Unmarshal(digest *Digest_128, source Source) (status State_Input
 		low |= uint64(source[STATE_128_LOW_POSITION+index]) << shift
 	}
 	digest.Value = Value_128{High: High(high), Low: Low(low)}
-	Digest_128_Invariants(*digest, "Digest_128_Unmarshal.digest.output")
 	return STATE_INPUT_STATUS_OK
 }
 

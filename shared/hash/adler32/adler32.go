@@ -270,6 +270,7 @@ func Digest_Write(digest *Digest, source Source) (count Count) {
 	defer func() { Count_Invariants(count, "Digest_Write.count") }()
 	Digest_Invariants(*digest, "Digest_Write.digest.input")
 	Source_Invariants(source, "Digest_Write.source")
+	defer func() { Digest_Invariants(*digest, "Digest_Write.digest.output") }()
 	digest_require(digest)
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("adler32: source exceeds bound")
@@ -287,7 +288,6 @@ func Digest_Write(digest *Digest, source Source) (count Count) {
 		sum_2 %= MODULUS
 		digest.Value = Digest_Value(sum_2<<COMPONENT_SIZE | sum_1)
 	}
-	Digest_Invariants(*digest, "Digest_Write.digest.output")
 	return Count(len(source))
 }
 
@@ -380,6 +380,7 @@ func Digest_Unmarshal(digest *Digest, source Source) (status State_Input_Status)
 	defer func() { State_Input_Status_Invariants(status, "Digest_Unmarshal.status") }()
 	Digest_Invariants(*digest, "Digest_Unmarshal.digest.input")
 	Source_Invariants(source, "Digest_Unmarshal.source")
+	defer func() { Digest_Invariants(*digest, "Digest_Unmarshal.digest.output") }()
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("adler32: source exceeds bound")
 	}
@@ -411,7 +412,6 @@ func Digest_Unmarshal(digest *Digest, source Source) (status State_Input_Status)
 			uint32(source[STATE_SIZE-1]),
 	)
 	digest.Ready = READY_COMPLETE
-	Digest_Invariants(*digest, "Digest_Unmarshal.digest.output")
 	return STATE_INPUT_STATUS_OK
 }
 
@@ -419,9 +419,11 @@ func Digest_Unmarshal(digest *Digest, source Source) (status State_Input_Status)
 func Digest_Clone_Into(destination *Digest, source *Digest) {
 	Digest_Invariants(*destination, "Digest_Clone_Into.destination.input")
 	Digest_Invariants(*source, "Digest_Clone_Into.source")
+	defer func() {
+		Digest_Invariants(*destination, "Digest_Clone_Into.destination.output")
+	}()
 	digest_require(source)
 	*destination = *source
-	Digest_Invariants(*destination, "Digest_Clone_Into.destination.output")
 }
 
 // Readiness blocks zero caller storage from becoming attacker-selected checksum state.

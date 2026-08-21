@@ -424,6 +424,14 @@ func Hash_Write(
 	}()
 	Hash_Invariants(*value, "Hash_Write.value.input")
 	Source_Invariants(source, "Hash_Write.source")
+	defer func() { Hash_Invariants(*value, "Hash_Write.value.output") }()
+	// Empty input cannot touch keyed lanes. Structural storage remains safe to inspect before
+	// lifecycle rejection; nonempty input never crosses readiness boundary.
+	if len(source) == 0 {
+		if value.Ready != READY_COMPLETE {
+			hash_write_blocks(value, source)
+		}
+	}
 	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Write requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
@@ -447,7 +455,6 @@ func Hash_Write(
 		hash_write_blocks(value, value.Tail[:])
 	}
 	hash_write_blocks(value, source)
-	Hash_Invariants(*value, "Hash_Write.value.output")
 	return Count(source_size), WRITE_STATUS_OK
 }
 
@@ -696,6 +703,9 @@ func Hash_Set_Seed(value *Hash, seed Seed) {
 func Hash_Clone_Into(destination *Hash, source *Hash) {
 	Hash_Invariants(*destination, "Hash_Clone_Into.destination.input")
 	Hash_Invariants(*source, "Hash_Clone_Into.source")
+	defer func() {
+		Hash_Invariants(*destination, "Hash_Clone_Into.destination.output")
+	}()
 	invariant.Always(
 		source.Ready == READY_COMPLETE,
 		"Hash_Clone_Into requires initialized source.",
@@ -704,7 +714,6 @@ func Hash_Clone_Into(destination *Hash, source *Hash) {
 		panic("maphash: clone source is not initialized")
 	}
 	*destination = *source
-	Hash_Invariants(*destination, "Hash_Clone_Into.destination.output")
 }
 
 // Bytes hashes one bounded source under explicit Seed.
