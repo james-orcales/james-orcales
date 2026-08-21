@@ -2537,9 +2537,9 @@ func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 	}
 }
 
-// Test_Type_Invariant_Struct_Predeclared_Field_Exempt verifies predeclared identifier owns no
-// package invariant helper.
-func Test_Type_Invariant_Struct_Predeclared_Field_Exempt(t *testing.T) {
+// Test_Type_Invariant_Struct_Predeclared_Field_Raw verifies predeclared identifier is a raw
+// field type: it owns no package invariant helper and never can, thus it is banned.
+func Test_Type_Invariant_Struct_Predeclared_Field_Raw(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
@@ -2548,11 +2548,8 @@ func Test_Type_Invariant_Struct_Predeclared_Field_Exempt(t *testing.T) {
 		"// Flag_Invariants is a fixture.\n" +
 		"func Flag_Invariants(v Flag, namespace aver.Namespace) {\n" +
 		"\taver.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
-	if specification_flags(t, files, "The declaration Flag has a raw") {
-		t.Fatal("predeclared identifier must not be flagged")
-	}
-	if specification_flags(t, files, "does not call a helper for the field v.On") {
-		t.Fatal("predeclared identifier must not need package helper")
+	if !specification_flags(t, files, "The declaration Flag has a raw type field (On).") {
+		t.Fatal("predeclared identifier must be flagged as raw")
 	}
 }
 

@@ -120,9 +120,9 @@ or no TestMain, is banned.
 
 ### Raw Types
 
-Function parameters, results, and struct fields use plain or package-qualified type identifiers.
-Any other type expression is raw and banned; declare it first. Predeclared identifiers count as
-plain. Test files and opted-out packages are exempt.
+Function parameters, results, and struct fields use user-defined type identifiers, plain or
+package-qualified. Any other type expression is raw and banned, predeclared identifiers included;
+declare a type first. Test files and opted-out packages are exempt.
 
 ### Small Slices
 

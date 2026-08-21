@@ -2964,9 +2964,12 @@ func field_declaration_names(field *ast.Field) (names []string) {
 }
 
 // Selector must start at package identifier; arbitrary selector expression names no type.
+// Predeclared identifier is raw: int, string, error, and kin carry no _Invariants and never
+// can, thus a boundary typed by one has no mandate at all. Every parameter, result, and field
+// is a user-defined type. No exemption exists and none is authorized.
 func type_is_identifier(expression ast.Expr) (yes bool) {
-	if _, is_identifier := expression.(*ast.Ident); is_identifier {
-		return true
+	if identifier, is_identifier := expression.(*ast.Ident); is_identifier {
+		return !struct_is_builtin(identifier.Name)
 	}
 	selector, is_selector := expression.(*ast.SelectorExpr)
 	if !is_selector {

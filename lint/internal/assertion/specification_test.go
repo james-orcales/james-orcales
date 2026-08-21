@@ -727,8 +727,9 @@ func Test_Invariants_Raw_Types(t *testing.T) {
 			"\tPointer *Token\n\tInline struct { Value Token }\n}\n\n" +
 			"// Convert exercises type boundaries.\n" +
 			"func Convert(local Token, qualified outside.Token, builtin string, raw *Token) " +
-			"(local_result Token, qualified_result outside.Token, raw_result *Token) {\n" +
-			"\tprintln(local, qualified, builtin, raw)\n\treturn local, qualified, raw\n}\n",
+			"(local_result Token, qualified_result outside.Token, raw_result *Token, " +
+			"builtin_result int32, failure error) {\n" +
+			"\tprintln(local, qualified, builtin, raw)\n\treturn local, qualified, raw, 0, nil\n}\n",
 	})
 	diags := check_source(parsed)
 	if !diagnosed(diags, "The declaration Convert has a raw type parameter (raw). "+
@@ -746,7 +747,24 @@ func Test_Invariants_Raw_Types(t *testing.T) {
 	if !diagnosed(diags, "The declaration Holder has a raw type field (Inline).") {
 		t.Fatal("inline struct field must be flagged")
 	}
-	for _, accepted := range []string{"Local", "Qualified", "Builtin", "local", "qualified", "builtin",
+	// Predeclared identifier is raw too: int carries no _Invariants and never can.
+	if !diagnosed(diags, "The declaration Holder has a raw type field (Builtin). "+
+		"Declare a defined type for the field.") {
+		t.Fatal("predeclared field type must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Convert has a raw type parameter (builtin). "+
+		"Declare a defined type for the parameter.") {
+		t.Fatal("predeclared parameter type must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Convert has a raw type result (builtin_result). "+
+		"Declare a defined type for the result.") {
+		t.Fatal("predeclared result type must be flagged")
+	}
+	if !diagnosed(diags, "The declaration Convert has a raw type result (failure). "+
+		"Declare a defined type for the result.") {
+		t.Fatal("error result type must be flagged")
+	}
+	for _, accepted := range []string{"Local", "Qualified", "local", "qualified",
 		"local_result", "qualified_result"} {
 		for _, entry := range diags {
 			if !strings.Contains(entry.Message, "has a raw ") {
