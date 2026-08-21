@@ -11,6 +11,7 @@ import (
 // Test_Civil_Calendar converts Unix-relative days across leap-century boundaries and returns each
 // exact input through inverse conversion.
 func Test_Civil_Calendar(t *testing.T) {
+	testify.Zero(t, time.ZONE_OFFSET_SECONDS_UTC)
 	for _, check := range []struct {
 		Days  time.Calendar_Day_Count
 		Year  time.Civil_Year

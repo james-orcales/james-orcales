@@ -203,6 +203,9 @@ const ZONE_OFFSET_SECONDS_MINIMUM int32 = -12 * int32(SECOND_COUNT_PER_HOUR)
 // ZONE_OFFSET_SECONDS_MAXIMUM includes easternmost current civil offset.
 const ZONE_OFFSET_SECONDS_MAXIMUM int32 = 14 * int32(SECOND_COUNT_PER_HOUR)
 
+// ZONE_OFFSET_SECONDS_UTC is the civil origin between west and east offsets.
+const ZONE_OFFSET_SECONDS_UTC = ZONE_OFFSET_SECONDS_MINIMUM - ZONE_OFFSET_SECONDS_MINIMUM
+
 // Nanosecond_Count is normalized fraction shared by calendar timestamps.
 type Nanosecond_Count int32
 
