@@ -1,4 +1,10 @@
 
+# Civil Calendar
+
+Unix_Second_Split floors Unix seconds into Unix-relative Gregorian day and second inside day.
+Civil_From_Days and Days_From_Civil convert between that day and proleptic Gregorian date. Pure
+calendar arithmetic reads no ambient clock or timezone.
+
 # Virtual Clock
 
 Virtual clock is deterministic and tick-driven. Clock is read-only. Time advance only when

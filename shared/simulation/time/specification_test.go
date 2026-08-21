@@ -3,9 +3,52 @@ package time_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
+
+// Test_Civil_Calendar converts Unix-relative days across leap-century boundaries and returns each
+// exact input through inverse conversion.
+func Test_Civil_Calendar(t *testing.T) {
+	for _, check := range []struct {
+		Days  time.Calendar_Day_Count
+		Year  time.Civil_Year
+		Month time.Civil_Month
+		Day   time.Civil_Day
+	}{
+		{Days: -25_508, Year: 1900, Month: 3, Day: 1},
+		{Days: -1, Year: 1969, Month: 12, Day: 31},
+		{Days: 0, Year: 1970, Month: 1, Day: 1},
+		{Days: 3_652, Year: 1980, Month: 1, Day: 1},
+		{Days: 11_016, Year: 2000, Month: 2, Day: 29},
+		{Days: 11_017, Year: 2000, Month: 3, Day: 1},
+		{Days: 47_541, Year: 2100, Month: 3, Day: 1},
+	} {
+		year, month, day := time.Civil_From_Days(check.Days)
+		testify.Equal(t, check.Year, year)
+		testify.Equal(t, check.Month, month)
+		testify.Equal(t, check.Day, day)
+		testify.Equal(t, check.Days, time.Days_From_Civil(year, month, day))
+	}
+	for _, check := range []struct {
+		Seconds     time.Unix_Second_Count
+		Days        time.Calendar_Day_Count
+		Day_Seconds time.Day_Second_Count
+	}{
+		{Seconds: time.Unix_Second_Count(-time.SECOND_COUNT_PER_DAY - 1), Days: -2,
+			Day_Seconds: time.Day_Second_Count(time.SECOND_COUNT_PER_DAY - 1)},
+		{Seconds: -1, Days: -1,
+			Day_Seconds: time.Day_Second_Count(time.SECOND_COUNT_PER_DAY - 1)},
+		{Seconds: 0, Days: 0, Day_Seconds: 0},
+		{Seconds: time.Unix_Second_Count(time.SECOND_COUNT_PER_DAY), Days: 1,
+			Day_Seconds: 0},
+	} {
+		days, day_seconds := time.Unix_Second_Split(check.Seconds)
+		testify.Equal(t, check.Days, days)
+		testify.Equal(t, check.Day_Seconds, day_seconds)
+	}
+}
 
 // Test_Virtual_Clock_Monotonic check deterministic clock advance exactly one resolution per
 // Tick. Also check Now_Realtime is epoch plus elapsed monotonic span, when no skew.
@@ -267,8 +310,8 @@ const SPECIAL_VALUE_COUNT = 6
 // Signed special values every full-width domain in this package state.
 func special_values() (values [SPECIAL_VALUE_COUNT]int64) {
 	return [...]int64{
-		time.INTEGER_64_MINIMUM,
-		time.INTEGER_64_MAXIMUM,
+		bits.INTEGER_64_MINIMUM,
+		bits.INTEGER_64_MAXIMUM,
 		0,
 		1,
 		2,
@@ -337,6 +380,33 @@ func verify_uptime_domains() {
 	time.Clock_Now_Monotonic(timeline)
 }
 
+// Conversion entry points must observe every scalar sentinel the invariant framework expands.
+func verify_civil_calendar_domains() {
+	for _, seconds := range [...]time.Unix_Second_Count{
+		time.Unix_Second_Count(time.UNIX_SECOND_COUNT_MINIMUM),
+		time.Unix_Second_Count(time.UNIX_SECOND_COUNT_MAXIMUM),
+		0,
+		1,
+		2,
+		-1,
+		time.Unix_Second_Count(time.SECOND_COUNT_PER_DAY),
+		time.Unix_Second_Count(2 * time.SECOND_COUNT_PER_DAY),
+	} {
+		time.Unix_Second_Split(seconds)
+	}
+	for _, days := range [...]time.Calendar_Day_Count{
+		time.Calendar_Day_Count(time.CALENDAR_DAY_COUNT_MINIMUM),
+		time.Calendar_Day_Count(time.CALENDAR_DAY_COUNT_MAXIMUM),
+		0,
+		1,
+		2,
+		-1,
+	} {
+		year, month, day := time.Civil_From_Days(days)
+		time.Days_From_Civil(year, month, day)
+	}
+}
+
 // Build deterministic loop plus its driver, for one seed of test.
 func sim_loop(_ uint64) (loop time.Timeline, driver time.Driver, clock time.Clock) {
 	return sim_loop_with_virtual(time.Virtual_Clock{Resolution: time.NANOSECOND})
@@ -359,6 +429,7 @@ func Test_Invariant_Domains(t *testing.T) {
 	verify_virtual_clock_domains()
 	verify_skew_domains()
 	verify_uptime_domains()
+	verify_civil_calendar_domains()
 }
 
 // Escaped results expose heap ownership hidden by stack-only use.
@@ -404,6 +475,37 @@ func verify_time_constructor_allocations(t *testing.T) {
 }
 
 func verify_time_reader_allocations(t *testing.T) {
+	t.Run("Unix_Second_Split", func(t *testing.T) {
+		var days time.Calendar_Day_Count
+		var day_seconds time.Day_Second_Count
+		testify.Zero_Allocation(t, func() {
+			days, day_seconds = time.Unix_Second_Split(0)
+		})
+		testify.Zero(t, days)
+		testify.Zero(t, day_seconds)
+	})
+	t.Run("Civil_From_Days", func(t *testing.T) {
+		var year time.Civil_Year
+		var month time.Civil_Month
+		var day time.Civil_Day
+		testify.Zero_Allocation(t, func() {
+			year, month, day = time.Civil_From_Days(0)
+		})
+		testify.Equal(t, time.Civil_Year(time.CIVIL_UNIX_EPOCH_YEAR), year)
+		testify.Equal(t, time.Civil_Month(time.CIVIL_MONTH_MINIMUM), month)
+		testify.Equal(t, time.Civil_Day(time.CIVIL_DAY_MINIMUM), day)
+	})
+	t.Run("Days_From_Civil", func(t *testing.T) {
+		var days time.Calendar_Day_Count
+		testify.Zero_Allocation(t, func() {
+			days = time.Days_From_Civil(
+				time.Civil_Year(time.CIVIL_UNIX_EPOCH_YEAR),
+				time.Civil_Month(time.CIVIL_MONTH_MINIMUM),
+				time.Civil_Day(time.CIVIL_DAY_MINIMUM),
+			)
+		})
+		testify.Zero(t, days)
+	})
 	t.Run("Offset_Read", func(t *testing.T) {
 		offset := time.Skew(time.SKEW_KIND_LINEAR, 1, 1)
 		var skew time.Duration
