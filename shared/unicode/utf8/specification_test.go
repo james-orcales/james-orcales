@@ -4,11 +4,11 @@
 package utf8_test
 
 import (
+	"strings"
 	"testing"
 	standard_utf8 "unicode/utf8"
 
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/strings"
 	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -104,8 +104,10 @@ func Test_Encoding(t *testing.T) {
 		testify.Equal(t, standard_buffer[:standard_size],
 			[]byte(shared_buffer[:shared_size]),
 			"Encode_Character(%U) bytes", character)
+		var append_storage [utf8.UTF_MAXIMUM + 1]byte
+		append_storage[0] = 'x'
 		testify.Equal(t, standard_utf8.AppendRune([]byte("x"), rune(character)),
-			[]byte(utf8.Append_Character(utf8.Bytes("x"), character)),
+			[]byte(utf8.Append_Character(append_storage[:1], character)),
 			"Append_Character(%U)", character)
 	}
 	utf8.Encode_Character(make(utf8.Bytes, 2), 0x80)
@@ -113,12 +115,14 @@ func Test_Encoding(t *testing.T) {
 		make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM),
 		utf8.RUNE_MAX,
 	)
+	var append_storage [utf8.UTF_MAXIMUM]byte
 	testify.Equal(t, []byte("A"),
-		[]byte(utf8.Append_Character(nil, 'A')))
-	utf8.Append_Character(make(utf8.Bytes, 2), 'A')
+		[]byte(utf8.Append_Character(append_storage[:0], 'A')))
+	utf8.Append_Character(make(utf8.Bytes, 2, 2+utf8.UTF_MAXIMUM), 'A')
 	testify.Equal(t, utf8.SEQUENCE_SIZE_MAXIMUM,
 		len(utf8.Append_Character(
-			make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM-1), 'A',
+			make(utf8.Bytes, utf8.SEQUENCE_SIZE_MAXIMUM-1,
+				utf8.SEQUENCE_SIZE_MAXIMUM), 'A',
 		)))
 }
 
@@ -176,6 +180,20 @@ func Test_Validation(t *testing.T) {
 	}
 }
 
+// Test_Allocation proves each public operation keeps heap allocation at zero.
+func Test_Allocation(t *testing.T) {
+	state := allocation_state{
+		Source: utf8.Bytes("A\xe4\xb8\x96"),
+		Text:   "A世",
+	}
+	for _, one := range allocation_cases(&state) {
+		allocations := testing.AllocsPerRun(100, one.Run)
+		if allocations != 0 {
+			t.Errorf("%s allocated %v times; want 0", one.Name, allocations)
+		}
+	}
+}
+
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -200,6 +218,78 @@ func Test_Domain_Errors(t *testing.T) {
 	testify.Panics(t, func() {
 		utf8.Append_Character(maximum, 'A')
 	}, "oversize append result")
+	testify.Panics(t, func() {
+		utf8.Append_Character(nil, '世')
+	}, "missing append storage")
+}
+
+type allocation_case struct {
+	Name string
+	Run  func()
+}
+
+type allocation_state struct {
+	Bytes          utf8.Nonempty_Bytes
+	Storage        [utf8.UTF_MAXIMUM]byte
+	Boolean        utf8.Boolean
+	Character      utf8.Decoded_Character
+	Size           utf8.Decoded_Size
+	Character_Size utf8.Size
+	Encoded_Size   utf8.Encoded_Size
+	Count          utf8.Count
+	Source         utf8.Bytes
+	Text           utf8.Text
+}
+
+func allocation_cases(state *allocation_state) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Full_Character", Run: func() {
+			state.Boolean = utf8.Full_Character(state.Source)
+		}},
+		{Name: "Full_Character_Text", Run: func() {
+			state.Boolean = utf8.Full_Character_Text(state.Text)
+		}},
+		{Name: "Decode_Character", Run: func() {
+			state.Character, state.Size = utf8.Decode_Character(state.Source[1:])
+		}},
+		{Name: "Decode_Character_Text", Run: func() {
+			state.Character, state.Size = utf8.Decode_Character_Text("世")
+		}},
+		{Name: "Decode_Final_Character", Run: func() {
+			state.Character, state.Size = utf8.Decode_Final_Character(state.Source)
+		}},
+		{Name: "Decode_Final_Character_Text", Run: func() {
+			state.Character, state.Size =
+				utf8.Decode_Final_Character_Text("A世")
+		}},
+		{Name: "Character_Size", Run: func() {
+			state.Character_Size = utf8.Character_Size('世')
+		}},
+		{Name: "Encode_Character", Run: func() {
+			state.Encoded_Size = utf8.Encode_Character(state.Storage[:], '世')
+		}},
+		{Name: "Append_Character", Run: func() {
+			state.Bytes = utf8.Append_Character(state.Storage[:0], '世')
+		}},
+		{Name: "Character_Count", Run: func() {
+			state.Count = utf8.Character_Count(state.Source)
+		}},
+		{Name: "Character_Count_Text", Run: func() {
+			state.Count = utf8.Character_Count_Text(state.Text)
+		}},
+		{Name: "Character_Start", Run: func() {
+			state.Boolean = utf8.Character_Start('A')
+		}},
+		{Name: "Valid", Run: func() {
+			state.Boolean = utf8.Valid(state.Source)
+		}},
+		{Name: "Valid_Text", Run: func() {
+			state.Boolean = utf8.Valid_Text(state.Text)
+		}},
+		{Name: "Valid_Character", Run: func() {
+			state.Boolean = utf8.Valid_Character('世')
+		}},
+	}
 }
 
 // Test_Encoding_Constants verifies the shared facts behind UTF-8 metadata and payloads.
@@ -217,9 +307,7 @@ func Test_Encoding_Constants(t *testing.T) {
 }
 
 func repeat(text string, count int) (repeated string) {
-	return string(strings.Repeat(
-		strings.Text(text), strings.Repeat_Count(count),
-	))
+	return strings.Repeat(text, count)
 }
 
 // Test_Standard_Library_Character_Map preserves the upstream behavior coverage.

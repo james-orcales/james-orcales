@@ -3,7 +3,7 @@
 package ucd
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
 
@@ -88,6 +88,13 @@ const CATEGORY_ALIAS_NAME_SIZE_SINGLE = 1
 
 // CATEGORY_ALIAS_NAME_SIZE_MAXIMUM is the size of a specific category name.
 const CATEGORY_ALIAS_NAME_SIZE_MAXIMUM = 2
+
+// CATEGORY_ALIAS_NAME_DATA owns each canonical alias so returned text remains immutable.
+const CATEGORY_ALIAS_NAME_DATA = "CLMNPSZ" +
+	"CcCfCoCsCnLuLlLtLmLoLCMcMeMnNdNlNoPcPdPePfPiPoPsScSkSmSoZlZpZs"
+
+// CATEGORY_ALIAS_NAME_SINGLE_COUNT separates one-byte and two-byte canonical names.
+const CATEGORY_ALIAS_NAME_SINGLE_COUNT = 7
 
 // RANGE_TABLES_COUNT_MINIMUM permits an empty table collection.
 const RANGE_TABLES_COUNT_MINIMUM = 0
@@ -889,14 +896,18 @@ func Is_Fold_Script(character Character, name Name) (yes Boolean) {
 	return named_table_contains(FOLD_SCRIPT_TABLE_DATA, name, character)
 }
 
-// Named_Table returns a copy of one named Unicode table.
-func Named_Table(kind Table_Kind, name Name) (table Range_Table, found Boolean) {
+// Named_Table decodes one named Unicode table into caller-owned range storage.
+func Named_Table(
+	kind Table_Kind, name Name, ranges_16 Ranges_16, ranges_32 Ranges_32,
+) (table Range_Table, found Boolean) {
 	defer func() {
 		Range_Table_Invariants(table, "named_table.table")
 		Boolean_Invariants(found, "named_table.found")
 	}()
 	Table_Kind_Invariants(kind, "named_table.kind")
 	Name_Invariants(name, "named_table.name")
+	Ranges_16_Invariants(ranges_16, "named_table.ranges_16")
+	Ranges_32_Invariants(ranges_32, "named_table.ranges_32")
 	data := CATEGORY_TABLE_DATA
 	switch kind {
 	case TABLE_KIND_CATEGORY:
@@ -914,7 +925,7 @@ func Named_Table(kind Table_Kind, name Name) (table Range_Table, found Boolean) 
 	if !known {
 		return Range_Table{}, false
 	}
-	return decode_range_table(table_data), true
+	return decode_range_table(table_data, ranges_16, ranges_32), true
 }
 
 // Category_Alias returns the canonical category name for one alias.
@@ -1052,62 +1063,52 @@ func Special_Case_To_Title(
 	return special_case_to(special, TITLE_CASE, character)
 }
 
-// Turkish_Case returns the Turkish language-specific case rules.
-func Turkish_Case() (special Language_Case) {
+// Turkish_Case writes the Turkish language-specific case rules into caller storage.
+func Turkish_Case(storage Special_Case) (special Language_Case) {
 	defer func() { Language_Case_Invariants(special, "turkish_case.special") }()
-	return Language_Case{
-		{Minimum: Case_Range_Minimum(LATIN_CAPITAL_I),
-			Maximum: Case_Range_Maximum(LATIN_CAPITAL_I),
-			Deltas: Case_Delta{
-				0, int32(LATIN_SMALL_DOTLESS_I - LATIN_CAPITAL_I), 0,
-			}},
-		{Minimum: Case_Range_Minimum(LATIN_SMALL_I),
-			Maximum: Case_Range_Maximum(LATIN_SMALL_I),
-			Deltas: Case_Delta{
-				int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I), 0,
-				int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I),
-			}},
-		{Minimum: Case_Range_Minimum(LATIN_CAPITAL_I_WITH_DOT),
-			Maximum: Case_Range_Maximum(LATIN_CAPITAL_I_WITH_DOT),
-			Deltas: Case_Delta{
-				0, int32(LATIN_SMALL_I - LATIN_CAPITAL_I_WITH_DOT), 0,
-			}},
-		{Minimum: Case_Range_Minimum(LATIN_SMALL_DOTLESS_I),
-			Maximum: Case_Range_Maximum(LATIN_SMALL_DOTLESS_I),
-			Deltas: Case_Delta{
-				int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I), 0,
-				int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I),
-			}},
+	Special_Case_Invariants(storage, "turkish_case.storage")
+	invariant.Always(
+		len(storage) == SPECIAL_CASE_COUNT_MAXIMUM,
+		"Caller storage holds every Turkish case rule.",
+	)
+	storage[0] = Case_Range{
+		Minimum: Case_Range_Minimum(LATIN_CAPITAL_I),
+		Maximum: Case_Range_Maximum(LATIN_CAPITAL_I),
+		Deltas: Case_Delta{
+			0, int32(LATIN_SMALL_DOTLESS_I - LATIN_CAPITAL_I), 0,
+		},
 	}
+	storage[1] = Case_Range{
+		Minimum: Case_Range_Minimum(LATIN_SMALL_I),
+		Maximum: Case_Range_Maximum(LATIN_SMALL_I),
+		Deltas: Case_Delta{
+			int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I), 0,
+			int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I),
+		},
+	}
+	storage[2] = Case_Range{
+		Minimum: Case_Range_Minimum(LATIN_CAPITAL_I_WITH_DOT),
+		Maximum: Case_Range_Maximum(LATIN_CAPITAL_I_WITH_DOT),
+		Deltas: Case_Delta{
+			0, int32(LATIN_SMALL_I - LATIN_CAPITAL_I_WITH_DOT), 0,
+		},
+	}
+	storage[3] = Case_Range{
+		Minimum: Case_Range_Minimum(LATIN_SMALL_DOTLESS_I),
+		Maximum: Case_Range_Maximum(LATIN_SMALL_DOTLESS_I),
+		Deltas: Case_Delta{
+			int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I), 0,
+			int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I),
+		},
+	}
+	return Language_Case(storage)
 }
 
-// Azeri_Case returns the Azerbaijani language-specific case rules.
-func Azeri_Case() (special Language_Case) {
+// Azeri_Case writes the Azerbaijani language-specific case rules into caller storage.
+func Azeri_Case(storage Special_Case) (special Language_Case) {
 	defer func() { Language_Case_Invariants(special, "azeri_case.special") }()
-	return Language_Case{
-		{Minimum: Case_Range_Minimum(LATIN_CAPITAL_I),
-			Maximum: Case_Range_Maximum(LATIN_CAPITAL_I),
-			Deltas: Case_Delta{
-				0, int32(LATIN_SMALL_DOTLESS_I - LATIN_CAPITAL_I), 0,
-			}},
-		{Minimum: Case_Range_Minimum(LATIN_SMALL_I),
-			Maximum: Case_Range_Maximum(LATIN_SMALL_I),
-			Deltas: Case_Delta{
-				int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I), 0,
-				int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I),
-			}},
-		{Minimum: Case_Range_Minimum(LATIN_CAPITAL_I_WITH_DOT),
-			Maximum: Case_Range_Maximum(LATIN_CAPITAL_I_WITH_DOT),
-			Deltas: Case_Delta{
-				0, int32(LATIN_SMALL_I - LATIN_CAPITAL_I_WITH_DOT), 0,
-			}},
-		{Minimum: Case_Range_Minimum(LATIN_SMALL_DOTLESS_I),
-			Maximum: Case_Range_Maximum(LATIN_SMALL_DOTLESS_I),
-			Deltas: Case_Delta{
-				int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I), 0,
-				int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I),
-			}},
-	}
+	Special_Case_Invariants(storage, "azeri_case.storage")
+	return Turkish_Case(storage)
 }
 
 // Simple_Fold returns the next character in a simple case-fold orbit.
@@ -1320,28 +1321,66 @@ func category_alias_data(
 			Data_Count(name_size),
 			name,
 		) {
-			content := make([]byte, canonical_size)
-			for index := range content {
-				content[index] = byte(encoded_number(
-					CATEGORY_ALIAS_DATA,
-					Data_Position(canonical_position+index),
-					ENCODED_WIDTH_BYTE,
-				))
+			first := byte(encoded_number(
+				CATEGORY_ALIAS_DATA,
+				Data_Position(canonical_position),
+				ENCODED_WIDTH_BYTE,
+			))
+			name_data := CATEGORY_ALIAS_NAME_DATA
+			if canonical_size == CATEGORY_ALIAS_NAME_SIZE_SINGLE {
+				single_count := CATEGORY_ALIAS_NAME_SINGLE_COUNT
+				position_index := 0
+				for position_index < single_count {
+					if name_data[position_index] == first {
+						name_end := position_index + 1
+						name_text := name_data[position_index:name_end]
+						return Category_Alias_Name(name_text), true
+					}
+					position_index++
+				}
+				return "", false
 			}
-			return Category_Alias_Name(content), true
+			second := byte(encoded_number(
+				CATEGORY_ALIAS_DATA,
+				Data_Position(canonical_position+1),
+				ENCODED_WIDTH_BYTE,
+			))
+			name_count := len(name_data)
+			position_index := CATEGORY_ALIAS_NAME_SINGLE_COUNT
+			for position_index < name_count {
+				if name_data[position_index] == first {
+					if name_data[position_index+1] != second {
+						position_index += 2
+						continue
+					}
+					name_end := position_index + 2
+					name_text := name_data[position_index:name_end]
+					return Category_Alias_Name(name_text), true
+				}
+				position_index += 2
+			}
+			return "", false
 		}
 		position = canonical_position + canonical_size
 	}
 	return "", false
 }
 
-func decode_range_table[Data ~string](data Data) (table Range_Table) {
+func decode_range_table[Data ~string](
+	data Data, ranges_16 Ranges_16, ranges_32 Ranges_32,
+) (table Range_Table) {
 	defer func() { Range_Table_Invariants(table, "decode_range_table.table") }()
+	Ranges_16_Invariants(ranges_16, "decode_range_table.ranges_16")
+	Ranges_32_Invariants(ranges_32, "decode_range_table.ranges_32")
 	range_16_count := int(encoded_number(data, 0, ENCODED_WIDTH_16))
+	invariant.Always(
+		range_16_count <= len(ranges_16),
+		"Caller storage holds every decoded 16-bit Unicode range.",
+	)
 	table.Latin_Offset = Latin_Offset(encoded_number(
 		data, Data_Position(ENCODED_WIDTH_16), ENCODED_WIDTH_16,
 	))
-	table.Ranges_16 = make(Ranges_16, range_16_count)
+	table.Ranges_16 = ranges_16[:range_16_count]
 	position := TABLE_HEADER_BYTE_COUNT
 	for index := range table.Ranges_16 {
 		table.Ranges_16[index] = Range_16{
@@ -1364,8 +1403,12 @@ func decode_range_table[Data ~string](data Data) (table Range_Table) {
 	range_32_count := int(encoded_number(
 		data, Data_Position(position), ENCODED_WIDTH_16,
 	))
+	invariant.Always(
+		range_32_count <= len(ranges_32),
+		"Caller storage holds every decoded 32-bit Unicode range.",
+	)
 	position += TABLE_RANGE_32_COUNT_BYTE_COUNT
-	table.Ranges_32 = make(Ranges_32, range_32_count)
+	table.Ranges_32 = ranges_32[:range_32_count]
 	for index := range table.Ranges_32 {
 		table.Ranges_32[index] = Range_32{
 			Minimum: Range_32_Minimum(encoded_number(

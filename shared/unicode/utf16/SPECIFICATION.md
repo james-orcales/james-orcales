@@ -10,15 +10,20 @@ supplementary character into its pair. Invalid inputs produce REPLACEMENT_CHARAC
 
 # Sequence Conversion
 
-Encode converts characters to UTF-16 words. Decode converts UTF-16 words to characters. Each
-invalid character or unpaired surrogate produces one replacement character.
+Encode converts characters into caller-owned UTF-16 word storage. Decode converts UTF-16 words
+into caller-owned character storage. Each invalid character or unpaired surrogate produces one
+replacement character.
 
 # Append
 
-Append_Character adds the one-word or two-word encoding of a character. An invalid character adds
-REPLACEMENT_CHARACTER.
+Append_Character adds the one-word or two-word encoding of a character into caller capacity. An
+invalid character adds REPLACEMENT_CHARACTER.
+
+# Allocation
+
+Every public operation performs zero heap allocation.
 
 # Domain Errors
 
-Characters and Words contain at most SEQUENCE_SIZE_MAXIMUM items. A result above this limit causes
-a panic.
+Characters and Words contain at most SEQUENCE_SIZE_MAXIMUM items. A result above this limit or
+insufficient caller storage causes a panic.

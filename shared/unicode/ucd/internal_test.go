@@ -5,12 +5,25 @@ import (
 	"os"
 	"runtime"
 	"testing"
-	standard_unicode "unicode"
+	"unicode"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )
+
+func named_table(
+	kind Table_Kind, name Name,
+) (table Range_Table, found Boolean) {
+	var ranges_16 [RANGES_16_COUNT_MAXIMUM]Range_16
+	var ranges_32 [RANGES_32_COUNT_MAXIMUM]Range_32
+	return Named_Table(kind, name, ranges_16[:], ranges_32[:])
+}
+
+func turkish_case() (special Language_Case) {
+	storage := make(Special_Case, SPECIAL_CASE_COUNT_MAXIMUM)
+	return Turkish_Case(storage)
+}
 
 func encoded_ranges_16(count int) (data string) {
 	buffer := make(
@@ -147,7 +160,7 @@ func Test_ASCII_Fold_Data(t *testing.T) {
 				uint16(ASCII_FOLD_DATA[position+1]),
 		)
 		testify.Equal(
-			t, standard_unicode.SimpleFold(rune(character)), rune(folded),
+			t, unicode.SimpleFold(rune(character)), rune(folded),
 			"the ASCII fold for %U", character,
 		)
 	}
@@ -278,9 +291,7 @@ func Test_Digit(t *testing.T) {
 
 // Test_Digit_Optimization preserves the upstream behavior coverage.
 func Test_Digit_Optimization(t *testing.T) {
-	table, found := Named_Table(
-		TABLE_KIND_CATEGORY, "Nd",
-	)
+	table, found := named_table(TABLE_KIND_CATEGORY, "Nd")
 	if !found {
 		t.Fatal("Nd is not a known category")
 	}
@@ -383,7 +394,7 @@ func example_to_upper(output *example_buffer) {
 }
 
 func example_special_case(output *example_buffer) {
-	special := Special_Case(Turkish_Case())
+	special := Special_Case(turkish_case())
 
 	const LCI = 'i'
 	fmt.Fprintf(output, "%#U\n", Special_Case_To_Lower(special, LCI))
@@ -640,10 +651,10 @@ func Test_Is_Graphic_Latin_1(t *testing.T) {
 func Test_Derived_Classification_Tables(t *testing.T) {
 	t.Parallel()
 	print_ranges_16, print_ranges_32 := derived_classification_data(
-		standard_unicode.IsPrint,
+		unicode.IsPrint,
 	)
 	graphic_ranges_16, graphic_ranges_32 := derived_classification_data(
-		standard_unicode.IsGraphic,
+		unicode.IsGraphic,
 	)
 	testify.Equal(t, PRINT_RANGES_16_DATA, print_ranges_16,
 		"the generated 16-bit print ranges")
@@ -655,13 +666,13 @@ func Test_Derived_Classification_Tables(t *testing.T) {
 		"the generated 32-bit graphic ranges")
 	for character := rune(0); character <= rune(RUNE_MAX); character++ {
 		shared_print := bool(Is_Print(Character(character)))
-		if shared_print != standard_unicode.IsPrint(character) {
+		if shared_print != unicode.IsPrint(character) {
 			t.Errorf(
 				"the print ranges contain %U: got %t", character, shared_print,
 			)
 		}
 		shared_graphic := bool(Is_Graphic(Character(character)))
-		if shared_graphic != standard_unicode.IsGraphic(character) {
+		if shared_graphic != unicode.IsGraphic(character) {
 			t.Errorf(
 				"the graphic ranges contain %U: got %t", character, shared_graphic,
 			)
@@ -1166,7 +1177,7 @@ func Test_Letter_Optimizations(t *testing.T) {
 func Test_Turkish_Case(t *testing.T) {
 	lower := []rune("abcçdefgğhıijklmnoöprsştuüvyz")
 	upper := []rune("ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ")
-	special := Special_Case(Turkish_Case())
+	special := Special_Case(turkish_case())
 	for i, l := range lower {
 		u := upper[i]
 		if rune(Special_Case_To_Lower(special, Character(l))) != l {
@@ -1368,19 +1379,19 @@ func binary(ranges []Range_16, r uint16) (found bool) {
 func Test_Latin_Offset(t *testing.T) {
 	families := []struct {
 		Kind   Table_Kind
-		Tables map[string]*standard_unicode.RangeTable
+		Tables map[string]*unicode.RangeTable
 	}{
-		{Kind: TABLE_KIND_CATEGORY, Tables: standard_unicode.Categories},
+		{Kind: TABLE_KIND_CATEGORY, Tables: unicode.Categories},
 		{Kind: TABLE_KIND_FOLD_CATEGORY,
-			Tables: standard_unicode.FoldCategory},
+			Tables: unicode.FoldCategory},
 		{Kind: TABLE_KIND_FOLD_SCRIPT,
-			Tables: standard_unicode.FoldScript},
-		{Kind: TABLE_KIND_PROPERTY, Tables: standard_unicode.Properties},
-		{Kind: TABLE_KIND_SCRIPT, Tables: standard_unicode.Scripts},
+			Tables: unicode.FoldScript},
+		{Kind: TABLE_KIND_PROPERTY, Tables: unicode.Properties},
+		{Kind: TABLE_KIND_SCRIPT, Tables: unicode.Scripts},
 	}
 	for _, family := range families {
 		for name := range family.Tables {
-			table, found := Named_Table(family.Kind, Name(name))
+			table, found := named_table(family.Kind, Name(name))
 			if !found {
 				t.Fatalf("%s is not a known table", name)
 			}
@@ -1399,12 +1410,10 @@ func Test_Latin_Offset(t *testing.T) {
 
 // Test_Special_Case_No_Mapping preserves the upstream behavior coverage.
 func Test_Special_Case_No_Mapping(t *testing.T) {
-	// Issue 25636
-	// no change for rune 'A', zero delta, under upper/lower/title case change.
-	no_change_for_capital_a := Case_Range{
+	// Issue 25636 needs zero delta to win over standard case conversion.
+	special := Special_Case{{
 		Minimum: 'A', Maximum: 'A', Deltas: Case_Delta{0, 0, 0},
-	}
-	special := Special_Case{no_change_for_capital_a}
+	}}
 	mapped := make([]rune, 0, 3)
 	for _, character := range "ABC" {
 		mapped = append(mapped, rune(Special_Case_To_Lower(
@@ -1515,7 +1524,7 @@ func Benchmark_Standard_Is_Print_Letter(b *testing.B) {
 	var result bool
 	b.ReportAllocs()
 	for range b.N {
-		result = standard_unicode.IsPrint('世')
+		result = unicode.IsPrint('世')
 	}
 	runtime.KeepAlive(result)
 }
@@ -1525,7 +1534,7 @@ func Benchmark_Standard_Is_Print_Unassigned(b *testing.B) {
 	var result bool
 	b.ReportAllocs()
 	for range b.N {
-		result = standard_unicode.IsPrint(0x0378)
+		result = unicode.IsPrint(0x0378)
 	}
 	runtime.KeepAlive(result)
 }
@@ -1535,7 +1544,7 @@ func Benchmark_Standard_Is_Graphic_Unassigned(b *testing.B) {
 	var result bool
 	b.ReportAllocs()
 	for range b.N {
-		result = standard_unicode.IsGraphic(0x0378)
+		result = unicode.IsGraphic(0x0378)
 	}
 	runtime.KeepAlive(result)
 }
@@ -1660,9 +1669,7 @@ func in_property_test() (tests []table_fixture) {
 // Test_Categories preserves the upstream behavior coverage.
 func Test_Categories(t *testing.T) {
 	for _, test := range in_category_test() {
-		table, found := Named_Table(
-			TABLE_KIND_CATEGORY, Name(test.Script),
-		)
+		table, found := named_table(TABLE_KIND_CATEGORY, Name(test.Script))
 		if !found {
 			t.Fatal(test.Script, "not a known category")
 		}
@@ -1675,9 +1682,7 @@ func Test_Categories(t *testing.T) {
 // Test_Properties preserves the upstream behavior coverage.
 func Test_Properties(t *testing.T) {
 	for _, test := range in_property_test() {
-		table, found := Named_Table(
-			TABLE_KIND_PROPERTY, Name(test.Script),
-		)
+		table, found := named_table(TABLE_KIND_PROPERTY, Name(test.Script))
 		if !found {
 			t.Fatal(test.Script, "not a known prop")
 		}

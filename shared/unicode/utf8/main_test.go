@@ -3,7 +3,7 @@ package utf8_test
 import (
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 )
 
 // TestMain registers the package invariant roots before the specification runs.

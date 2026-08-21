@@ -4,11 +4,11 @@
 package ucd_test
 
 import (
+	"strings"
 	"testing"
-	standard_unicode "unicode"
+	"unicode"
 
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/strings"
 	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/unicode/ucd"
 )
@@ -50,31 +50,31 @@ func Test_Classification(t *testing.T) {
 		Nonmember ucd.Character
 	}{
 		{Name: "control", Shared: ucd.Is_Control,
-			Standard: standard_unicode.IsControl, Member: '\n', Nonmember: 'A'},
+			Standard: unicode.IsControl, Member: '\n', Nonmember: 'A'},
 		{Name: "digit", Shared: ucd.Is_Digit,
-			Standard: standard_unicode.IsDigit, Member: '١', Nonmember: 'A'},
+			Standard: unicode.IsDigit, Member: '١', Nonmember: 'A'},
 		{Name: "graphic", Shared: ucd.Is_Graphic,
-			Standard: standard_unicode.IsGraphic, Member: ' ', Nonmember: '\n'},
+			Standard: unicode.IsGraphic, Member: ' ', Nonmember: '\n'},
 		{Name: "letter", Shared: ucd.Is_Letter,
-			Standard: standard_unicode.IsLetter, Member: '世', Nonmember: '1'},
+			Standard: unicode.IsLetter, Member: '世', Nonmember: '1'},
 		{Name: "lower", Shared: ucd.Is_Lower,
-			Standard: standard_unicode.IsLower, Member: 'å', Nonmember: 'Å'},
+			Standard: unicode.IsLower, Member: 'å', Nonmember: 'Å'},
 		{Name: "mark", Shared: ucd.Is_Mark,
-			Standard: standard_unicode.IsMark, Member: '\u0300', Nonmember: 'A'},
+			Standard: unicode.IsMark, Member: '\u0300', Nonmember: 'A'},
 		{Name: "number", Shared: ucd.Is_Number,
-			Standard: standard_unicode.IsNumber, Member: '\u2165', Nonmember: 'A'},
+			Standard: unicode.IsNumber, Member: '\u2165', Nonmember: 'A'},
 		{Name: "print", Shared: ucd.Is_Print,
-			Standard: standard_unicode.IsPrint, Member: ' ', Nonmember: '\n'},
+			Standard: unicode.IsPrint, Member: ' ', Nonmember: '\n'},
 		{Name: "punctuation", Shared: ucd.Is_Punctuation,
-			Standard: standard_unicode.IsPunct, Member: '!', Nonmember: 'A'},
+			Standard: unicode.IsPunct, Member: '!', Nonmember: 'A'},
 		{Name: "space", Shared: ucd.Is_Space,
-			Standard: standard_unicode.IsSpace, Member: '\u3000', Nonmember: 'A'},
+			Standard: unicode.IsSpace, Member: '\u3000', Nonmember: 'A'},
 		{Name: "symbol", Shared: ucd.Is_Symbol,
-			Standard: standard_unicode.IsSymbol, Member: '€', Nonmember: 'A'},
+			Standard: unicode.IsSymbol, Member: '€', Nonmember: 'A'},
 		{Name: "title", Shared: ucd.Is_Title,
-			Standard: standard_unicode.IsTitle, Member: '\u01c5', Nonmember: 'a'},
+			Standard: unicode.IsTitle, Member: '\u01c5', Nonmember: 'a'},
 		{Name: "upper", Shared: ucd.Is_Upper,
-			Standard: standard_unicode.IsUpper, Member: 'Å', Nonmember: 'å'},
+			Standard: unicode.IsUpper, Member: 'Å', Nonmember: 'å'},
 	}
 	for _, one := range cases {
 		testify.Equal(
@@ -102,13 +102,13 @@ func Test_Case_Conversion(t *testing.T) {
 		'a', 'A', 'å', 'Å', '\u0131', '\u212a', ucd.Character(bits.INTEGER_32_MINIMUM),
 		-1, 0, 1, 2, ucd.RUNE_MAX, ucd.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, standard_unicode.ToUpper(rune(character)),
+		testify.Equal(t, unicode.ToUpper(rune(character)),
 			rune(ucd.To_Upper(character)), "To_Upper(%U)", character)
-		testify.Equal(t, standard_unicode.ToLower(rune(character)),
+		testify.Equal(t, unicode.ToLower(rune(character)),
 			rune(ucd.To_Lower(character)), "To_Lower(%U)", character)
-		testify.Equal(t, standard_unicode.ToTitle(rune(character)),
+		testify.Equal(t, unicode.ToTitle(rune(character)),
 			rune(ucd.To_Title(character)), "To_Title(%U)", character)
-		testify.Equal(t, standard_unicode.SimpleFold(rune(character)),
+		testify.Equal(t, unicode.SimpleFold(rune(character)),
 			rune(ucd.Simple_Fold(character)), "Simple_Fold(%U)", character)
 	}
 	for _, case_value := range []ucd.Case{
@@ -118,13 +118,13 @@ func Test_Case_Conversion(t *testing.T) {
 			ucd.Character(bits.INTEGER_32_MINIMUM), -1, 0, 1, 2, 'a', 'A', '\u01c5',
 			ucd.RUNE_MAX, ucd.Character(bits.INTEGER_32_MAXIMUM),
 		} {
-			testify.Equal(t, standard_unicode.To(int(case_value), rune(character)),
+			testify.Equal(t, unicode.To(int(case_value), rune(character)),
 				rune(ucd.To(case_value, character)), "To(%d, %U)",
 				case_value, character)
 		}
 	}
-	turkish := ucd.Special_Case(ucd.Turkish_Case())
-	azerbaijani := ucd.Special_Case(ucd.Azeri_Case())
+	turkish := ucd.Special_Case(turkish_case())
+	azerbaijani := ucd.Special_Case(azeri_case())
 	testify.Equal(t, 'İ', rune(ucd.Special_Case_To_Upper(turkish, 'i')))
 	testify.Equal(t, 'ı', rune(ucd.Special_Case_To_Lower(turkish, 'I')))
 	testify.Equal(t, 'İ', rune(ucd.Special_Case_To_Title(azerbaijani, 'i')))
@@ -143,7 +143,7 @@ func Test_Named_Tables(t *testing.T) {
 		"Is_Fold_Category")
 	testify.True(t, bool(ucd.Is_Fold_Script('\u00b5', "Greek")),
 		"Is_Fold_Script")
-	table, found := ucd.Named_Table(ucd.TABLE_KIND_CATEGORY, "L")
+	table, found := named_table(ucd.TABLE_KIND_CATEGORY, "L")
 	testify.True(t, bool(found), "the L category")
 	testify.True(t, bool(ucd.Is(&table, 'A')), "membership in category L")
 	verify_named_query_boundaries(t)
@@ -153,17 +153,15 @@ func Test_Named_Tables(t *testing.T) {
 // Test_Unicode_Data preserves the upstream behavior coverage.
 func Test_Unicode_Data(t *testing.T) {
 	t.Parallel()
-	testify.Equal(t, standard_unicode.Version, ucd.VERSION)
-	testify.Equal(t, standard_unicode.MaxRune, rune(ucd.RUNE_MAX))
-	testify.Equal(t, standard_unicode.ReplacementChar,
+	testify.Equal(t, unicode.Version, ucd.VERSION)
+	testify.Equal(t, unicode.MaxRune, rune(ucd.RUNE_MAX))
+	testify.Equal(t, unicode.ReplacementChar,
 		rune(ucd.REPLACEMENT_CHARACTER))
-	testify.Equal(t, standard_unicode.MaxASCII, rune(ucd.ASCII_MAX))
-	testify.Equal(t, standard_unicode.MaxLatin1, rune(ucd.LATIN_1_MAX))
+	testify.Equal(t, unicode.MaxASCII, rune(ucd.ASCII_MAX))
+	testify.Equal(t, unicode.MaxLatin1, rune(ucd.LATIN_1_MAX))
 	alias, alias_found := ucd.Category_Alias("Cased_Letter")
 	testify.True(t, bool(alias_found), "the Cased_Letter alias")
 	testify.Equal(t, ucd.Category_Alias_Name("LC"), alias)
-	testify.Equal(t, len(standard_unicode.TurkishCase), len(ucd.Turkish_Case()))
-	testify.Equal(t, len(standard_unicode.AzeriCase), len(ucd.Azeri_Case()))
 	for _, one := range []struct {
 		Name      ucd.Name
 		Canonical ucd.Category_Alias_Name
@@ -183,6 +181,20 @@ func Test_Unicode_Data(t *testing.T) {
 	}
 }
 
+// Test_Allocation proves each public operation keeps heap allocation at zero.
+func Test_Allocation(t *testing.T) {
+	state := allocation_state{
+		Range: ucd.Ranges_16{{Minimum: 'A', Maximum: 'Z', Stride: 1}},
+		Special: ucd.Special_Case{{
+			Minimum: 'a', Maximum: 'z', Deltas: ucd.Case_Delta{-32, 0, -32},
+		}},
+	}
+	state.Range_Table = ucd.Range_Table{Ranges_16: state.Range, Latin_Offset: 1}
+	state.Range_Tables = ucd.Range_Tables{&state.Range_Table}
+	assert_zero_allocations(t, membership_allocation_cases(&state))
+	assert_zero_allocations(t, conversion_allocation_cases(&state))
+}
+
 // Test_Domain_Errors preserves the upstream behavior coverage.
 func Test_Domain_Errors(t *testing.T) {
 	t.Parallel()
@@ -193,9 +205,26 @@ func Test_Domain_Errors(t *testing.T) {
 	testify.Panics(t, func() { ucd.Is(&invalid_range, 1) }, "a zero stride")
 	large_name := ucd.Name(repeat("x", ucd.NAME_SIZE_MAXIMUM+1))
 	testify.Panics(t, func() {
-		ucd.Named_Table(ucd.TABLE_KIND_CATEGORY, large_name)
+		ucd.Named_Table(ucd.TABLE_KIND_CATEGORY, large_name, nil, nil)
 	}, "an oversize Name")
-	_, found := ucd.Named_Table(ucd.TABLE_KIND_CATEGORY, "unknown")
+	testify.Panics(t, func() {
+		ucd.Named_Table(ucd.TABLE_KIND_CATEGORY, "L", nil, nil)
+	}, "missing named table storage")
+	short_ranges_16 := make(ucd.Ranges_16, 2)
+	short_ranges_32 := make(ucd.Ranges_32, 2)
+	for _, size := range []int{1, 2} {
+		ucd.Named_Table(
+			ucd.TABLE_KIND_CATEGORY, "unknown",
+			short_ranges_16[:size], short_ranges_32[:size],
+		)
+		testify.Panics(t, func() {
+			ucd.Named_Table(
+				ucd.TABLE_KIND_CATEGORY, "L",
+				short_ranges_16[:size], short_ranges_32[:size],
+			)
+		}, "short named table storage")
+	}
+	_, found := ucd.Named_Table(ucd.TABLE_KIND_CATEGORY, "unknown", nil, nil)
 	testify.False(t, bool(found), "an unknown category")
 	testify.False(t, bool(ucd.Is_Category('A', "unknown")),
 		"an unknown category query")
@@ -207,6 +236,146 @@ func Test_Domain_Errors(t *testing.T) {
 		"an unknown fold category query")
 	testify.False(t, bool(ucd.Is_Fold_Script('A', "unknown")),
 		"an unknown fold script query")
+	for _, size := range []int{0, 1, 2} {
+		storage := make(ucd.Special_Case, size)
+		testify.Panics(t, func() {
+			ucd.Turkish_Case(storage)
+		}, "short Turkish case storage")
+		testify.Panics(t, func() {
+			ucd.Azeri_Case(storage)
+		}, "short Azeri case storage")
+	}
+}
+
+type allocation_case struct {
+	Name string
+	Run  func()
+}
+
+type allocation_state struct {
+	Table            ucd.Range_Table
+	Found            ucd.Boolean
+	Alias            ucd.Category_Alias_Name
+	Language_Case    ucd.Language_Case
+	Language_Storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
+	Ranges_16        [ucd.RANGES_16_COUNT_MAXIMUM]ucd.Range_16
+	Ranges_32        [ucd.RANGES_32_COUNT_MAXIMUM]ucd.Range_32
+	Boolean          ucd.Boolean
+	Character        ucd.Character
+	Range            ucd.Ranges_16
+	Range_Table      ucd.Range_Table
+	Range_Tables     ucd.Range_Tables
+	Special          ucd.Special_Case
+}
+
+func turkish_case() (special ucd.Language_Case) {
+	storage := make(ucd.Special_Case, ucd.SPECIAL_CASE_COUNT_MAXIMUM)
+	return ucd.Turkish_Case(storage)
+}
+
+func azeri_case() (special ucd.Language_Case) {
+	storage := make(ucd.Special_Case, ucd.SPECIAL_CASE_COUNT_MAXIMUM)
+	return ucd.Azeri_Case(storage)
+}
+
+func named_table(
+	kind ucd.Table_Kind, name ucd.Name,
+) (table ucd.Range_Table, found ucd.Boolean) {
+	var ranges_16 [ucd.RANGES_16_COUNT_MAXIMUM]ucd.Range_16
+	var ranges_32 [ucd.RANGES_32_COUNT_MAXIMUM]ucd.Range_32
+	return ucd.Named_Table(kind, name, ranges_16[:], ranges_32[:])
+}
+
+func assert_zero_allocations(t *testing.T, cases []allocation_case) {
+	t.Helper()
+	for _, one := range cases {
+		allocations := testing.AllocsPerRun(100, one.Run)
+		if allocations != 0 {
+			t.Errorf("%s allocated %v times; want 0", one.Name, allocations)
+		}
+	}
+}
+
+func membership_allocation_cases(state *allocation_state) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Is", Run: func() {
+			state.Boolean = ucd.Is(&state.Range_Table, 'A')
+		}},
+		{Name: "Is_One_Of", Run: func() {
+			state.Boolean = ucd.Is_One_Of(state.Range_Tables, 'A')
+		}},
+		{Name: "In", Run: func() {
+			state.Boolean = ucd.In('A', state.Range_Tables)
+		}},
+		{Name: "Is_Control", Run: func() { state.Boolean = ucd.Is_Control('\n') }},
+		{Name: "Is_Digit", Run: func() { state.Boolean = ucd.Is_Digit('1') }},
+		{Name: "Is_Graphic", Run: func() { state.Boolean = ucd.Is_Graphic('世') }},
+		{Name: "Is_Print", Run: func() { state.Boolean = ucd.Is_Print('世') }},
+		{Name: "Is_Letter", Run: func() { state.Boolean = ucd.Is_Letter('世') }},
+		{Name: "Is_Lower", Run: func() { state.Boolean = ucd.Is_Lower('a') }},
+		{Name: "Is_Mark", Run: func() { state.Boolean = ucd.Is_Mark('\u0300') }},
+		{Name: "Is_Number", Run: func() { state.Boolean = ucd.Is_Number('1') }},
+		{Name: "Is_Punctuation", Run: func() {
+			state.Boolean = ucd.Is_Punctuation('.')
+		}},
+		{Name: "Is_Space", Run: func() { state.Boolean = ucd.Is_Space(' ') }},
+		{Name: "Is_Symbol", Run: func() { state.Boolean = ucd.Is_Symbol('$') }},
+		{Name: "Is_Title", Run: func() { state.Boolean = ucd.Is_Title('\u01c5') }},
+		{Name: "Is_Upper", Run: func() { state.Boolean = ucd.Is_Upper('A') }},
+		{Name: "Is_Category", Run: func() {
+			state.Boolean = ucd.Is_Category('A', "L")
+		}},
+		{Name: "Is_Script", Run: func() {
+			state.Boolean = ucd.Is_Script('A', "Latin")
+		}},
+		{Name: "Is_Property", Run: func() {
+			state.Boolean = ucd.Is_Property(' ', "White_Space")
+		}},
+		{Name: "Is_Fold_Category", Run: func() {
+			state.Boolean = ucd.Is_Fold_Category('A', "Ll")
+		}},
+		{Name: "Is_Fold_Script", Run: func() {
+			state.Boolean = ucd.Is_Fold_Script('\u00b5', "Greek")
+		}},
+	}
+}
+
+func conversion_allocation_cases(state *allocation_state) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Named_Table", Run: func() {
+			state.Table, state.Found = ucd.Named_Table(
+				ucd.TABLE_KIND_CATEGORY, "L",
+				state.Ranges_16[:], state.Ranges_32[:],
+			)
+		}},
+		{Name: "Category_Alias", Run: func() {
+			state.Alias, state.Found = ucd.Category_Alias("Cased_Letter")
+		}},
+		{Name: "Turkish_Case", Run: func() {
+			state.Language_Case = ucd.Turkish_Case(state.Language_Storage[:])
+		}},
+		{Name: "Azeri_Case", Run: func() {
+			state.Language_Case = ucd.Azeri_Case(state.Language_Storage[:])
+		}},
+		{Name: "To", Run: func() {
+			state.Character = ucd.To(ucd.UPPER_CASE, 'a')
+		}},
+		{Name: "To_Upper", Run: func() { state.Character = ucd.To_Upper('a') }},
+		{Name: "To_Lower", Run: func() { state.Character = ucd.To_Lower('A') }},
+		{Name: "To_Title", Run: func() { state.Character = ucd.To_Title('a') }},
+		{Name: "Special_Case_To_Upper", Run: func() {
+			state.Character = ucd.Special_Case_To_Upper(state.Special, 'a')
+		}},
+		{Name: "Special_Case_To_Lower", Run: func() {
+			state.Character = ucd.Special_Case_To_Lower(state.Special, 'A')
+		}},
+		{Name: "Special_Case_To_Title", Run: func() {
+			state.Character = ucd.Special_Case_To_Title(state.Special, 'a')
+		}},
+		{Name: "Simple_Fold", Run: func() {
+			state.Character = ucd.Simple_Fold('K')
+		}},
+	}
 }
 
 // Test_Encoding_Constants verifies shared machine limits, widths, and Turkic code points.
@@ -266,20 +435,20 @@ func maximum_range_table() (table ucd.Range_Table) {
 
 func standard_range_table(
 	table ucd.Range_Table,
-) (standard_table *standard_unicode.RangeTable) {
-	standard_table = &standard_unicode.RangeTable{
-		R16:         make([]standard_unicode.Range16, len(table.Ranges_16)),
-		R32:         make([]standard_unicode.Range32, len(table.Ranges_32)),
+) (standard_table *unicode.RangeTable) {
+	standard_table = &unicode.RangeTable{
+		R16:         make([]unicode.Range16, len(table.Ranges_16)),
+		R32:         make([]unicode.Range32, len(table.Ranges_32)),
 		LatinOffset: int(table.Latin_Offset),
 	}
 	for index, one := range table.Ranges_16 {
-		standard_table.R16[index] = standard_unicode.Range16{
+		standard_table.R16[index] = unicode.Range16{
 			Lo: uint16(one.Minimum), Hi: uint16(one.Maximum),
 			Stride: uint16(one.Stride),
 		}
 	}
 	for index, one := range table.Ranges_32 {
-		standard_table.R32[index] = standard_unicode.Range32{
+		standard_table.R32[index] = unicode.Range32{
 			Lo: uint32(one.Minimum), Hi: uint32(one.Maximum),
 			Stride: uint32(one.Stride),
 		}
@@ -299,7 +468,7 @@ func verify_maximum_range_table(t *testing.T) {
 		ucd.Character(ucd.RANGE_32_MAXIMUM),
 		ucd.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, standard_unicode.Is(standard_table, rune(character)),
+		testify.Equal(t, unicode.Is(standard_table, rune(character)),
 			bool(ucd.Is(&maximum_table, character)), "Is(%d)", character)
 	}
 }
@@ -518,7 +687,7 @@ func verify_named_table_boundaries(t *testing.T) {
 		{Kind: ucd.TABLE_KIND_FOLD_SCRIPT, Name: "Inherited"},
 	}
 	for _, one := range table_cases {
-		_, table_found := ucd.Named_Table(one.Kind, one.Name)
+		_, table_found := named_table(one.Kind, one.Name)
 		testify.True(
 			t, bool(table_found), "table kind %d and name %s", one.Kind, one.Name,
 		)
@@ -531,7 +700,7 @@ func verify_named_table_boundaries(t *testing.T) {
 		ucd.TABLE_KIND_FOLD_SCRIPT,
 	} {
 		for _, name := range []ucd.Name{"", "x", "xx", maximum_name} {
-			_, unknown_found := ucd.Named_Table(kind, name)
+			_, unknown_found := ucd.Named_Table(kind, name, nil, nil)
 			testify.False(
 				t, bool(unknown_found),
 				"unknown table kind %d and name size %d", kind, len(name),
@@ -545,20 +714,18 @@ func Test_Standard_Library_Tables(t *testing.T) {
 	t.Parallel()
 	families := []struct {
 		Kind   ucd.Table_Kind
-		Tables map[string]*standard_unicode.RangeTable
+		Tables map[string]*unicode.RangeTable
 	}{
-		{Kind: ucd.TABLE_KIND_CATEGORY, Tables: standard_unicode.Categories},
-		{Kind: ucd.TABLE_KIND_SCRIPT, Tables: standard_unicode.Scripts},
-		{Kind: ucd.TABLE_KIND_PROPERTY, Tables: standard_unicode.Properties},
+		{Kind: ucd.TABLE_KIND_CATEGORY, Tables: unicode.Categories},
+		{Kind: ucd.TABLE_KIND_SCRIPT, Tables: unicode.Scripts},
+		{Kind: ucd.TABLE_KIND_PROPERTY, Tables: unicode.Properties},
 		{Kind: ucd.TABLE_KIND_FOLD_CATEGORY,
-			Tables: standard_unicode.FoldCategory},
-		{Kind: ucd.TABLE_KIND_FOLD_SCRIPT, Tables: standard_unicode.FoldScript},
+			Tables: unicode.FoldCategory},
+		{Kind: ucd.TABLE_KIND_FOLD_SCRIPT, Tables: unicode.FoldScript},
 	}
 	for _, family := range families {
 		for name, standard_table := range family.Tables {
-			shared_table, found := ucd.Named_Table(
-				family.Kind, ucd.Name(name),
-			)
+			shared_table, found := named_table(family.Kind, ucd.Name(name))
 			testify.True(t, bool(found), "table kind %d and name %s", family.Kind, name)
 			testify.Equal(t, standard_table.LatinOffset, int(shared_table.Latin_Offset),
 				"Latin offset for %s", name)
@@ -597,40 +764,40 @@ func Test_Standard_Library_Classification(t *testing.T) {
 		Standard func(rune) (yes bool)
 	}{
 		{Name: "control", Shared: ucd.Is_Control,
-			Standard: standard_unicode.IsControl},
+			Standard: unicode.IsControl},
 		{Name: "digit", Shared: ucd.Is_Digit,
-			Standard: standard_unicode.IsDigit},
+			Standard: unicode.IsDigit},
 		{Name: "graphic", Shared: ucd.Is_Graphic,
-			Standard: standard_unicode.IsGraphic},
+			Standard: unicode.IsGraphic},
 		{Name: "letter", Shared: ucd.Is_Letter,
-			Standard: standard_unicode.IsLetter},
+			Standard: unicode.IsLetter},
 		{Name: "lower", Shared: ucd.Is_Lower,
-			Standard: standard_unicode.IsLower},
+			Standard: unicode.IsLower},
 		{Name: "mark", Shared: ucd.Is_Mark,
-			Standard: standard_unicode.IsMark},
+			Standard: unicode.IsMark},
 		{Name: "number", Shared: ucd.Is_Number,
-			Standard: standard_unicode.IsNumber},
+			Standard: unicode.IsNumber},
 		{Name: "print", Shared: ucd.Is_Print,
-			Standard: standard_unicode.IsPrint},
+			Standard: unicode.IsPrint},
 		{Name: "punctuation", Shared: ucd.Is_Punctuation,
-			Standard: standard_unicode.IsPunct},
+			Standard: unicode.IsPunct},
 		{Name: "space", Shared: ucd.Is_Space,
-			Standard: standard_unicode.IsSpace},
+			Standard: unicode.IsSpace},
 		{Name: "symbol", Shared: ucd.Is_Symbol,
-			Standard: standard_unicode.IsSymbol},
+			Standard: unicode.IsSymbol},
 		{Name: "title", Shared: ucd.Is_Title,
-			Standard: standard_unicode.IsTitle},
+			Standard: unicode.IsTitle},
 		{Name: "upper", Shared: ucd.Is_Upper,
-			Standard: standard_unicode.IsUpper},
+			Standard: unicode.IsUpper},
 	}
-	characters := make([]rune, 0, int(standard_unicode.MaxLatin1)+20)
-	for character := rune(0); character <= standard_unicode.MaxLatin1; character++ {
+	characters := make([]rune, 0, int(unicode.MaxLatin1)+20)
+	for character := rune(0); character <= unicode.MaxLatin1; character++ {
 		characters = append(characters, character)
 	}
 	characters = append(characters,
 		-0x100, -0x101, -0x1c5, -0x300, -0x660, -0x37e, -0x2c2, -0x1680,
 		0x10000, 0x10400, 0x10428, 0x1d7ce, 0x1f1ff, 0x20000, 0x2fa1d,
-		standard_unicode.MaxRune,
+		unicode.MaxRune,
 	)
 	for _, classification := range classifications {
 		for _, character := range characters {
@@ -644,7 +811,7 @@ func Test_Standard_Library_Classification(t *testing.T) {
 // Test_Standard_Library_Case_Data preserves the upstream behavior coverage.
 func Test_Standard_Library_Case_Data(t *testing.T) {
 	t.Parallel()
-	for _, case_range := range standard_unicode.CaseRanges {
+	for _, case_range := range unicode.CaseRanges {
 		for character := case_range.Lo; character <= case_range.Hi; character++ {
 			for _, case_value := range []ucd.Case{
 				ucd.UPPER_CASE,
@@ -652,13 +819,13 @@ func Test_Standard_Library_Case_Data(t *testing.T) {
 				ucd.TITLE_CASE,
 			} {
 				testify.Equal(
-					t, standard_unicode.To(int(case_value), rune(character)),
+					t, unicode.To(int(case_value), rune(character)),
 					rune(ucd.To(
 						case_value, ucd.Character(character),
 					)),
 					"case %d at %U", case_value, character)
 			}
-			testify.Equal(t, standard_unicode.SimpleFold(rune(character)),
+			testify.Equal(t, unicode.SimpleFold(rune(character)),
 				rune(ucd.Simple_Fold(
 					ucd.Character(character),
 				)),
@@ -669,7 +836,7 @@ func Test_Standard_Library_Case_Data(t *testing.T) {
 		"Aa", "δΔ", "KkK", "Ssſ", "ρϱΡ", "ͅΙιι", "İ", "ı", "\u13b0\uab80",
 	} {
 		for _, character := range cycle {
-			testify.Equal(t, standard_unicode.SimpleFold(character),
+			testify.Equal(t, unicode.SimpleFold(character),
 				rune(ucd.Simple_Fold(
 					ucd.Character(character),
 				)),
@@ -681,41 +848,43 @@ func Test_Standard_Library_Case_Data(t *testing.T) {
 // Test_Standard_Library_Remaining_Data preserves the upstream behavior coverage.
 func Test_Standard_Library_Remaining_Data(t *testing.T) {
 	t.Parallel()
-	for alias, standard_name := range standard_unicode.CategoryAliases {
+	for alias, standard_name := range unicode.CategoryAliases {
 		shared_name, found := ucd.Category_Alias(ucd.Name(alias))
 		testify.True(t, bool(found), "category alias %s", alias)
 		testify.Equal(t, standard_name, string(shared_name), "category alias %s", alias)
 	}
-	standard_special_cases := []standard_unicode.SpecialCase{
-		standard_unicode.TurkishCase,
-		standard_unicode.AzeriCase,
+	standard_special_cases := []unicode.SpecialCase{
+		unicode.TurkishCase,
+		unicode.AzeriCase,
 	}
 	shared_special_cases := []ucd.Language_Case{
-		ucd.Turkish_Case(),
-		ucd.Azeri_Case(),
+		turkish_case(),
+		azeri_case(),
 	}
 	for case_index, standard_special := range standard_special_cases {
-		shared_special := shared_special_cases[case_index]
-		testify.Equal(t, len(standard_special), len(shared_special),
-			"special case %d range count", case_index)
+		shared_special := ucd.Special_Case(shared_special_cases[case_index])
 		for range_index, standard_range := range standard_special {
-			shared_range := shared_special[range_index]
-			testify.Equal(t, standard_range.Lo, uint32(shared_range.Minimum),
-				"special case %d minimum at %d", case_index, range_index)
-			testify.Equal(t, standard_range.Hi, uint32(shared_range.Maximum),
-				"special case %d maximum at %d", case_index, range_index)
-			for delta_index, standard_delta := range standard_range.Delta {
-				testify.Equal(
-					t, standard_delta, rune(shared_range.Deltas[delta_index]),
-					"special case %d delta at %d and %d",
-					case_index, range_index, delta_index)
+			characters := []rune{
+				rune(standard_range.Lo), rune(standard_range.Hi),
+			}
+			for _, character := range characters {
+				testify.Equal(t, standard_special.ToUpper(character),
+					rune(ucd.Special_Case_To_Upper(
+						shared_special, ucd.Character(character),
+					)), "special case %d upper at %d", case_index, range_index)
+				testify.Equal(t, standard_special.ToLower(character),
+					rune(ucd.Special_Case_To_Lower(
+						shared_special, ucd.Character(character),
+					)), "special case %d lower at %d", case_index, range_index)
+				testify.Equal(t, standard_special.ToTitle(character),
+					rune(ucd.Special_Case_To_Title(
+						shared_special, ucd.Character(character),
+					)), "special case %d title at %d", case_index, range_index)
 			}
 		}
 	}
 }
 
 func repeat(text string, count int) (repeated string) {
-	return string(strings.Repeat(
-		strings.Text(text), strings.Repeat_Count(count),
-	))
+	return strings.Repeat(text, count)
 }

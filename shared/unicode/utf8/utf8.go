@@ -2,7 +2,7 @@
 package utf8
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
 
@@ -684,48 +684,29 @@ func Encode_Character(buffer Bytes, character Character) (size Encoded_Size) {
 	}
 }
 
-// Append_Character adds one UTF-8 encoding to a byte sequence.
+// Append_Character adds one UTF-8 encoding within caller-owned capacity.
 func Append_Character(buffer Bytes, character Character) (result Nonempty_Bytes) {
 	defer func() {
 		Nonempty_Bytes_Invariants(result, "append_character.result")
 	}()
 	Bytes_Invariants(buffer, "append_character.buffer")
 	Character_Invariants(character, "append_character.character")
-	if uint32(character) <= CHARACTER_ONE_MAXIMUM {
-		return Nonempty_Bytes(append(buffer, byte(character)))
+	encoded_size := int(Character_Size(character))
+	if encoded_size == CHARACTER_SIZE_INVALID {
+		encoded_size = CHARACTER_SIZE_THREE
 	}
-	unsigned := uint32(character)
-	switch {
-	case unsigned <= CHARACTER_TWO_MAXIMUM:
-		return Nonempty_Bytes(append(buffer,
-			FIRST_BYTE_TWO|byte(character>>CONTINUATION_PAYLOAD_BIT_COUNT),
-			CONTINUATION_BYTE|byte(character)&CONTINUATION_MASK,
-		))
-	case unsigned < uint32(SURROGATE_MINIMUM),
-		uint32(SURROGATE_MAXIMUM) < unsigned && unsigned <= CHARACTER_THREE_MAXIMUM:
-		return Nonempty_Bytes(append(buffer,
-			FIRST_BYTE_THREE|
-				byte(character>>(2*CONTINUATION_PAYLOAD_BIT_COUNT)),
-			CONTINUATION_BYTE|
-				byte(character>>CONTINUATION_PAYLOAD_BIT_COUNT)&CONTINUATION_MASK,
-			CONTINUATION_BYTE|byte(character)&CONTINUATION_MASK,
-		))
-	case unsigned > CHARACTER_THREE_MAXIMUM && unsigned <= uint32(RUNE_MAX):
-		return Nonempty_Bytes(append(buffer,
-			FIRST_BYTE_FOUR|
-				byte(character>>(3*CONTINUATION_PAYLOAD_BIT_COUNT)),
-			CONTINUATION_BYTE|
-				byte(character>>(2*CONTINUATION_PAYLOAD_BIT_COUNT))&
-					CONTINUATION_MASK,
-			CONTINUATION_BYTE|
-				byte(character>>CONTINUATION_PAYLOAD_BIT_COUNT)&CONTINUATION_MASK,
-			CONTINUATION_BYTE|byte(character)&CONTINUATION_MASK,
-		))
-	default:
-		return Nonempty_Bytes(append(buffer,
-			REPLACEMENT_BYTE_ZERO, REPLACEMENT_BYTE_ONE, REPLACEMENT_BYTE_TWO,
-		))
-	}
+	result_size := len(buffer) + encoded_size
+	invariant.Always(
+		result_size <= SEQUENCE_SIZE_MAXIMUM,
+		"A UTF-8 append result does not exceed the sequence limit.",
+	)
+	invariant.Always(
+		result_size <= cap(buffer),
+		"Caller storage holds the appended UTF-8 encoding.",
+	)
+	result = Nonempty_Bytes(buffer[:result_size])
+	Encode_Character(Bytes(result[len(buffer):]), character)
+	return result
 }
 
 // Character_Count returns the character count in a byte sequence.

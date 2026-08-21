@@ -20,12 +20,15 @@ func upstream_encode(characters []rune) (words []uint16) {
 	for index, character := range characters {
 		source[index] = Character(character)
 	}
-	return []uint16(Encode(source))
+	storage := make(Words, 0, SEQUENCE_SIZE_MAXIMUM)
+	return []uint16(Encode(storage, source))
 }
 
 func upstream_append_character(words []uint16, character rune) (result []uint16) {
+	storage := make(Words, len(words), len(words)+CHARACTER_SIZE_MAXIMUM)
+	copy(storage, words)
 	return []uint16(Append_Character(
-		Words(words), Character(character),
+		storage, Character(character),
 	))
 }
 
@@ -39,7 +42,8 @@ func upstream_encode_character(
 }
 
 func upstream_decode(words []uint16) (characters []rune) {
-	decoded := Decode(Words(words))
+	storage := make(Decoded_Characters, 0, SEQUENCE_SIZE_MAXIMUM)
+	decoded := Decode(storage, Words(words))
 	characters = make([]rune, len(decoded))
 	for index, character := range decoded {
 		characters[index] = rune(character)
@@ -225,7 +229,8 @@ func decode_tests() (tests []decode_fixture) {
 func Test_Upstream_Decode_Allocations(t *testing.T) {
 	for _, tt := range decode_tests() {
 		allocs := testing.AllocsPerRun(10, func() {
-			output := Decode(Words(tt.Input))
+			var storage [SEQUENCE_SIZE_MAXIMUM]Decoded_Character
+			output := Decode(storage[:0], Words(tt.Input))
 			if output == nil {
 				t.Errorf("upstream_decode(%x) = nil", tt.Input)
 			}
@@ -317,16 +322,18 @@ func Test_Upstream_Is_Surrogate(t *testing.T) {
 // Benchmark_Decode_ASCII measures one-word decoding.
 func Benchmark_Decode_ASCII(b *testing.B) {
 	data := Words{104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100}
+	var storage [SEQUENCE_SIZE_MAXIMUM]Decoded_Character
 	for run_index := 0; run_index < b.N; run_index++ {
-		Decode(data)
+		Decode(storage[:0], data)
 	}
 }
 
 // Benchmark_Decode_Japanese measures non-ASCII one-word decoding.
 func Benchmark_Decode_Japanese(b *testing.B) {
 	data := Words{26085, 26412, 35486, 26085, 26412, 35486, 26085, 26412, 35486}
+	var storage [SEQUENCE_SIZE_MAXIMUM]Decoded_Character
 	for run_index := 0; run_index < b.N; run_index++ {
-		Decode(data)
+		Decode(storage[:0], data)
 	}
 }
 
@@ -356,9 +363,10 @@ func Benchmark_Decode_Character(b *testing.B) {
 // Benchmark_Encode_ASCII measures one-word sequence encoding.
 func Benchmark_Encode_ASCII(b *testing.B) {
 	data := Characters{'h', 'e', 'l', 'l', 'o'}
+	var storage [SEQUENCE_SIZE_MAXIMUM]uint16
 	var result Words
 	for run_index := 0; run_index < b.N; run_index++ {
-		result = Encode(data)
+		result = Encode(storage[:0], data)
 	}
 	runtime.KeepAlive(result)
 }
@@ -366,9 +374,10 @@ func Benchmark_Encode_ASCII(b *testing.B) {
 // Benchmark_Encode_Japanese measures non-ASCII one-word sequence encoding.
 func Benchmark_Encode_Japanese(b *testing.B) {
 	data := Characters{'日', '本', '語'}
+	var storage [SEQUENCE_SIZE_MAXIMUM]uint16
 	var result Words
 	for run_index := 0; run_index < b.N; run_index++ {
-		result = Encode(data)
+		result = Encode(storage[:0], data)
 	}
 	runtime.KeepAlive(result)
 }

@@ -164,8 +164,10 @@ func upstream_encode_character(buffer []byte, character rune) (size int) {
 }
 
 func upstream_append_character(buffer []byte, character rune) (output []byte) {
+	storage := make([]byte, len(buffer), len(buffer)+UTF_MAXIMUM)
+	copy(storage, buffer)
 	return []byte(Append_Character(
-		Bytes(buffer), Character(character),
+		Bytes(storage), Character(character),
 	))
 }
 

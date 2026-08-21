@@ -2,7 +2,7 @@
 package utf16
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
 
@@ -303,84 +303,127 @@ func Character_Size(character Character) (size Size) {
 	}
 }
 
-// Encode converts a character sequence to UTF-16 words.
-func Encode(source Characters) (result Words) {
+// Encode converts a character sequence into caller-owned UTF-16 word storage.
+func Encode(buffer Words, source Characters) (result Words) {
 	defer func() { Words_Invariants(result, "encode.result") }()
+	Words_Invariants(buffer, "encode.buffer")
 	Characters_Invariants(source, "encode.source")
-	count := len(source)
+	result_size := len(buffer) + len(source)
 	for _, character := range source {
 		if character >= SUPPLEMENTARY_FIRST {
 			if character <= RUNE_MAX {
-				count++
+				result_size++
 			}
 		}
 	}
 	invariant.Always(
-		count <= SEQUENCE_SIZE_MAXIMUM,
+		result_size <= SEQUENCE_SIZE_MAXIMUM,
 		"A UTF-16 encoding result does not exceed the sequence limit.",
 	)
-	result = make(Words, count)
-	position := 0
+	invariant.Always(
+		result_size <= cap(buffer),
+		"Caller storage holds the UTF-16 encoding result.",
+	)
+	result = buffer[:result_size]
+	position_count := len(buffer)
 	for _, character := range source {
 		switch {
 		case 0 <= character && character < SURROGATE_FIRST,
 			SURROGATE_LIMIT <= character && character < SUPPLEMENTARY_FIRST:
-			result[position] = uint16(character)
-			position++
+			result[position_count] = uint16(character)
+			position_count++
 		case SUPPLEMENTARY_FIRST <= character && character <= RUNE_MAX:
 			character -= SUPPLEMENTARY_FIRST
-			result[position] = uint16(
+			result[position_count] = uint16(
 				SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
 			)
-			result[position+CHARACTER_SIZE_MINIMUM] = uint16(
+			result[position_count+CHARACTER_SIZE_MINIMUM] = uint16(
 				LOW_SURROGATE_FIRST + character&SURROGATE_MASK,
 			)
-			position += CHARACTER_SIZE_MAXIMUM
+			position_count += CHARACTER_SIZE_MAXIMUM
 		default:
-			result[position] = uint16(REPLACEMENT_CHARACTER)
-			position++
+			result[position_count] = uint16(REPLACEMENT_CHARACTER)
+			position_count++
 		}
 	}
-	return result[:position]
+	result = result[:position_count]
+	return result
 }
 
-// Append_Character adds one UTF-16 encoding to a word sequence.
+// Append_Character adds one UTF-16 encoding within caller-owned capacity.
 func Append_Character(buffer Words, character Character) (result Nonempty_Words) {
 	defer func() {
 		Nonempty_Words_Invariants(result, "append_character.result")
 	}()
 	Words_Invariants(buffer, "append_character.buffer")
 	Character_Invariants(character, "append_character.character")
+	character_size := int(Character_Size(character))
+	if character_size == CHARACTER_SIZE_INVALID {
+		character_size = CHARACTER_SIZE_MINIMUM
+	}
+	result_size := len(buffer) + character_size
+	invariant.Always(
+		result_size <= SEQUENCE_SIZE_MAXIMUM,
+		"A UTF-16 append result does not exceed the sequence limit.",
+	)
+	invariant.Always(
+		result_size <= cap(buffer),
+		"Caller storage holds the appended UTF-16 encoding.",
+	)
+	result = Nonempty_Words(buffer[:result_size])
+	position_count := len(buffer)
 	switch {
 	case 0 <= character && character < SURROGATE_FIRST,
 		SURROGATE_LIMIT <= character && character < SUPPLEMENTARY_FIRST:
-		return Nonempty_Words(append(buffer, uint16(character)))
+		result[position_count] = uint16(character)
 	case SUPPLEMENTARY_FIRST <= character && character <= RUNE_MAX:
 		character -= SUPPLEMENTARY_FIRST
-		first := uint16(
+		result[position_count] = uint16(
 			SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
 		)
-		second := uint16(LOW_SURROGATE_FIRST + character&SURROGATE_MASK)
-		return Nonempty_Words(append(buffer, first, second))
+		result[position_count+CHARACTER_SIZE_MINIMUM] = uint16(
+			LOW_SURROGATE_FIRST + character&SURROGATE_MASK,
+		)
+	default:
+		result[position_count] = uint16(REPLACEMENT_CHARACTER)
 	}
-	return Nonempty_Words(append(buffer, uint16(REPLACEMENT_CHARACTER)))
+	return result
 }
 
-// DECODE_BUFFER_SIZE keeps common decode results on the caller stack.
-const DECODE_BUFFER_SIZE = 64
-
-// Decode converts UTF-16 words to Unicode characters.
-func Decode[Source interface{ Words }](source Source) (_ Decoded_Characters) {
-	var buffer [DECODE_BUFFER_SIZE]Decoded_Character
-	return decode(source, &buffer)
-}
-
-func decode[Source interface{ Words }](
-	source Source, buffer *[DECODE_BUFFER_SIZE]Decoded_Character,
+// Decode converts UTF-16 words into caller-owned character storage.
+func Decode(
+	buffer Decoded_Characters, source Words,
 ) (result Decoded_Characters) {
 	defer func() { Decoded_Characters_Invariants(result, "decode.result") }()
-	Words_Invariants(Words(source), "decode.source")
-	result = buffer[:0]
+	Decoded_Characters_Invariants(buffer, "decode.buffer")
+	Words_Invariants(source, "decode.source")
+	decoded_count := 0
+	for index := 0; index < len(source); index++ {
+		if Character(source[index]) < LOW_SURROGATE_FIRST {
+			if SURROGATE_FIRST <= Character(source[index]) {
+				if index+CHARACTER_SIZE_MINIMUM < len(source) {
+					second := Character(source[index+CHARACTER_SIZE_MINIMUM])
+					if LOW_SURROGATE_FIRST <= second {
+						if second < SURROGATE_LIMIT {
+							index++
+						}
+					}
+				}
+			}
+		}
+		decoded_count++
+	}
+	result_size := len(buffer) + decoded_count
+	invariant.Always(
+		result_size <= SEQUENCE_SIZE_MAXIMUM,
+		"A UTF-16 decoding result does not exceed the sequence limit.",
+	)
+	invariant.Always(
+		result_size <= cap(buffer),
+		"Caller storage holds the UTF-16 decoding result.",
+	)
+	result = buffer[:result_size]
+	position_count := len(buffer)
 	for index := 0; index < len(source); index++ {
 		first := source[index]
 		var character Decoded_Character
@@ -402,7 +445,8 @@ func decode[Source interface{ Words }](
 		default:
 			character = Decoded_Character(REPLACEMENT_CHARACTER)
 		}
-		result = append(result, character)
+		result[position_count] = character
+		position_count++
 	}
 	return result
 }

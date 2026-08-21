@@ -12,8 +12,8 @@ forms have the same behavior. Empty input consumes zero bytes, and invalid input
 # Encoding
 
 Character_Size gives the UTF-8 size of a character. Encode_Character writes one encoding into
-caller storage. Append_Character adds one encoding and substitutes REPLACEMENT_CHARACTER for an
-invalid character.
+caller storage. Append_Character adds one encoding into caller capacity and substitutes
+REPLACEMENT_CHARACTER for an invalid character.
 
 # Character Count
 
@@ -25,7 +25,11 @@ counts as one replacement character.
 Character_Start identifies a possible first byte. Valid and Valid_Text require complete, shortest
 UTF-8 encodings. Valid_Character rejects negative values, surrogates, and values above RUNE_MAX.
 
+# Allocation
+
+Every public operation performs zero heap allocation.
+
 # Domain Errors
 
 Bytes and Text contain at most SEQUENCE_SIZE_MAXIMUM bytes. A result above this limit causes a
-panic. Encode_Character also causes a panic when its caller storage is too short.
+panic. Encode_Character and Append_Character also cause a panic when caller storage is too short.

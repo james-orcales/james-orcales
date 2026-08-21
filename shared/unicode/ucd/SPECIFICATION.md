@@ -16,15 +16,20 @@ language rules first. Simple_Fold advances through one simple-fold orbit.
 
 # Named Tables
 
-Named_Table returns an immutable copy from a table family and a name. The named Is forms query the
-encoded category, script, property, and fold tables without an allocation.
+Named_Table decodes one table into caller-owned 16-bit and 32-bit range storage. The named Is forms
+query encoded category, script, property, and fold tables directly.
 
 # Unicode Data
 
 VERSION identifies the Unicode edition. Category_Alias, Turkish_Case, and Azeri_Case supply the
-remaining public data that has no direct classification function.
+remaining public data that has no direct classification function. Language case functions write
+their rules into caller-owned storage.
+
+# Allocation
+
+Every public operation performs zero heap allocation.
 
 # Domain Errors
 
-An invalid Case, range, collection size, or name size causes a panic. An unknown table name gives
-a false found report.
+An invalid Case, range, collection size, name size, or undersized Named_Table or language-case
+storage causes a panic. An unknown table name gives a false found report.

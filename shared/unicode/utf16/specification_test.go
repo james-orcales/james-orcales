@@ -84,7 +84,7 @@ func Test_Sequence_Conversion(t *testing.T) {
 			shared_characters[index] = utf16.Character(character)
 		}
 		testify.Equal(t, standard_utf16.Encode(characters),
-			[]uint16(utf16.Encode(shared_characters)), "Encode(%x)", characters)
+			[]uint16(encode(shared_characters)), "Encode(%x)", characters)
 	}
 	for _, characters := range []utf16.Characters{
 		{utf16.Character(bits.INTEGER_32_MINIMUM)},
@@ -94,7 +94,7 @@ func Test_Sequence_Conversion(t *testing.T) {
 		},
 		make(utf16.Characters, utf16.SEQUENCE_SIZE_MAXIMUM),
 	} {
-		utf16.Encode(characters)
+		encode(characters)
 	}
 	word_cases := [][]uint16{
 		{},
@@ -103,7 +103,7 @@ func Test_Sequence_Conversion(t *testing.T) {
 		{0xd800, 'a', 0xdfff},
 	}
 	for _, words := range word_cases {
-		decoded := utf16.Decode(utf16.Words(words))
+		decoded := decode(utf16.Words(words))
 		shared_characters := make([]rune, len(decoded))
 		for index, character := range decoded {
 			shared_characters[index] = rune(character)
@@ -113,7 +113,19 @@ func Test_Sequence_Conversion(t *testing.T) {
 	}
 	maximum_words := make(utf16.Words, utf16.SEQUENCE_SIZE_MAXIMUM)
 	testify.Equal(t, utf16.SEQUENCE_SIZE_MAXIMUM,
-		len(utf16.Decode(maximum_words)))
+		len(decode(maximum_words)))
+	word_buffer := make(utf16.Words, utf16.SEQUENCE_SIZE_MAXIMUM)
+	character_buffer := make(
+		utf16.Decoded_Characters, utf16.SEQUENCE_SIZE_MAXIMUM,
+	)
+	for _, size := range []int{0, 1, 2, utf16.SEQUENCE_SIZE_MAXIMUM} {
+		testify.Equal(t, size,
+			len(utf16.Encode(word_buffer[:size], nil)),
+			"Encode preserves a %d-word prefix", size)
+		testify.Equal(t, size,
+			len(utf16.Decode(character_buffer[:size], nil)),
+			"Decode preserves a %d-character prefix", size)
+	}
 }
 
 // Test_Append verifies that repeated append operations equal sequence encoding.
@@ -122,7 +134,8 @@ func Test_Append(t *testing.T) {
 	characters := []utf16.Character{
 		0, 1, 2, '水', 0x10000, utf16.RUNE_MAX, 0xd800, -1,
 	}
-	var shared_words utf16.Words
+	var shared_word_storage [utf16.SEQUENCE_SIZE_MAXIMUM]uint16
+	shared_words := utf16.Words(shared_word_storage[:0])
 	var standard_words []uint16
 	for _, character := range characters {
 		shared_words = utf16.Words(
@@ -131,29 +144,122 @@ func Test_Append(t *testing.T) {
 		standard_words = standard_utf16.AppendRune(standard_words, rune(character))
 	}
 	testify.Equal(t, standard_words, []uint16(shared_words))
-	utf16.Append_Character(nil, utf16.Character(bits.INTEGER_32_MINIMUM))
-	utf16.Append_Character(nil, utf16.Character(bits.INTEGER_32_MAXIMUM))
+	var invalid_storage [utf16.CHARACTER_SIZE_MAXIMUM]uint16
+	utf16.Append_Character(
+		invalid_storage[:0], utf16.Character(bits.INTEGER_32_MINIMUM),
+	)
+	utf16.Append_Character(
+		invalid_storage[:0], utf16.Character(bits.INTEGER_32_MAXIMUM),
+	)
 	testify.Equal(t, utf16.SEQUENCE_SIZE_MAXIMUM,
 		len(utf16.Append_Character(
-			make(utf16.Words, utf16.SEQUENCE_SIZE_MAXIMUM-1), 0,
+			make(utf16.Words, utf16.SEQUENCE_SIZE_MAXIMUM-1,
+				utf16.SEQUENCE_SIZE_MAXIMUM), 0,
 		)))
+}
+
+// Test_Allocation proves each public operation keeps heap allocation at zero.
+func Test_Allocation(t *testing.T) {
+	state := allocation_state{
+		Source_Characters: utf16.Characters{'A', '\U00010000'},
+		Source_Words:      utf16.Words{'A', 0xd800, 0xdc00},
+	}
+	for _, one := range allocation_cases(&state) {
+		allocations := testing.AllocsPerRun(100, one.Run)
+		if allocations != 0 {
+			t.Errorf("%s allocated %v times; want 0", one.Name, allocations)
+		}
+	}
 }
 
 // Test_Domain_Errors verifies input and result sequence limits.
 func Test_Domain_Errors(t *testing.T) {
 	t.Parallel()
 	large_words := make(utf16.Words, utf16.SEQUENCE_SIZE_MAXIMUM+1)
-	testify.Panics(t, func() { utf16.Decode(large_words) }, "oversize Words")
+	testify.Panics(t, func() { utf16.Decode(nil, large_words) }, "oversize Words")
 	large_characters := make(
 		utf16.Characters, utf16.SEQUENCE_SIZE_MAXIMUM+1,
 	)
 	testify.Panics(t, func() {
-		utf16.Encode(large_characters)
+		utf16.Encode(nil, large_characters)
 	}, "oversize Characters")
 	maximum := make(utf16.Words, utf16.SEQUENCE_SIZE_MAXIMUM)
 	testify.Panics(t, func() {
 		utf16.Append_Character(maximum, 0)
 	}, "oversize append result")
+	testify.Panics(t, func() {
+		utf16.Encode(nil, utf16.Characters{'A'})
+	}, "missing encode storage")
+	testify.Panics(t, func() {
+		utf16.Append_Character(nil, 'A')
+	}, "missing append storage")
+	testify.Panics(t, func() {
+		utf16.Decode(nil, utf16.Words{'A'})
+	}, "missing decode storage")
+}
+
+type allocation_case struct {
+	Name string
+	Run  func()
+}
+
+type allocation_state struct {
+	Words             utf16.Words
+	Characters        utf16.Decoded_Characters
+	Word_Storage      [utf16.SEQUENCE_SIZE_MAXIMUM]uint16
+	Character_Storage [utf16.SEQUENCE_SIZE_MAXIMUM]utf16.Decoded_Character
+	Boolean           utf16.Boolean
+	Combined          utf16.Combined_Character
+	First             utf16.First_Encoded_Character
+	Second            utf16.Second_Encoded_Character
+	Size              utf16.Size
+	Source_Characters utf16.Characters
+	Source_Words      utf16.Words
+}
+
+func encode(source utf16.Characters) (result utf16.Words) {
+	buffer := make(utf16.Words, 0, utf16.SEQUENCE_SIZE_MAXIMUM)
+	return utf16.Encode(buffer, source)
+}
+
+func decode(source utf16.Words) (result utf16.Decoded_Characters) {
+	buffer := make(
+		utf16.Decoded_Characters, 0, utf16.SEQUENCE_SIZE_MAXIMUM,
+	)
+	return utf16.Decode(buffer, source)
+}
+
+func allocation_cases(state *allocation_state) (cases []allocation_case) {
+	return []allocation_case{
+		{Name: "Is_Surrogate", Run: func() {
+			state.Boolean = utf16.Is_Surrogate(utf16.SURROGATE_FIRST)
+		}},
+		{Name: "Decode_Character", Run: func() {
+			state.Combined = utf16.Decode_Character(0xd800, 0xdc00)
+		}},
+		{Name: "Encode_Character", Run: func() {
+			state.First, state.Second =
+				utf16.Encode_Character('\U00010000')
+		}},
+		{Name: "Character_Size", Run: func() {
+			state.Size = utf16.Character_Size('\U00010000')
+		}},
+		{Name: "Encode", Run: func() {
+			state.Words = utf16.Encode(
+				state.Word_Storage[:0], state.Source_Characters,
+			)
+		}},
+		{Name: "Append_Character", Run: func() {
+			state.Words = utf16.Words(utf16.Append_Character(
+				state.Word_Storage[:0], '\U00010000',
+			))
+		}},
+		{Name: "Decode", Run: func() {
+			state.Characters = utf16.Decode(
+				state.Character_Storage[:0], state.Source_Words,
+			)
+		}},
+	}
 }
 
 // Test_Encoding_Constants verifies the shared facts behind surrogate conversion.
@@ -220,7 +326,7 @@ func Test_Standard_Library_Sequences(t *testing.T) {
 			shared_characters[index] = utf16.Character(character)
 		}
 		testify.Equal(t, standard_utf16.Encode(characters),
-			[]uint16(utf16.Encode(shared_characters)), "Encode(%x)", characters)
+			[]uint16(encode(shared_characters)), "Encode(%x)", characters)
 	}
 	for _, words := range [][]uint16{
 		{1, 2, 3, 4},
@@ -228,7 +334,7 @@ func Test_Standard_Library_Sequences(t *testing.T) {
 		{0xd800, 'a'},
 		{0xdfff},
 	} {
-		decoded := utf16.Decode(utf16.Words(words))
+		decoded := decode(utf16.Words(words))
 		shared_characters := make([]rune, len(decoded))
 		for index, character := range decoded {
 			shared_characters[index] = rune(character)
