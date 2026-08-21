@@ -1762,7 +1762,7 @@ func sim_submit(
 	// Borrow end where completion retire. Loop own drain and know nothing of descriptors,
 	// thus release ride callback loop run — else retired operation still read as borrowing
 	// its file, and Close assert.
-	state.Timeline.Submit(completion, latency, func(completed *time.Completion) {
+	time.Timeline_Submit(state.Timeline, completion, latency, func(completed *time.Completion) {
 		delete(state.Operation_Files, completion)
 		callback(completed)
 	})

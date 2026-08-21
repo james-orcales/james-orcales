@@ -18,8 +18,30 @@ func TestMain(m *testing.M) {
 // snapshot.
 func Test_Operating_System_Smoke(t *testing.T) {
 	host := time.New_Operating_System_Clock()
-	first := host.Now_Monotonic()
-	second := host.Now_Monotonic()
+	first := time.Clock_Now_Monotonic(host)
+	second := time.Clock_Now_Monotonic(host)
 	testify.True(t, second >= first, first, second)
-	testify.Positive(t, host.Now_Realtime())
+	testify.Positive(t, time.Clock_Now_Realtime(host))
+}
+
+// Host-backed readers need the same heap proof as deterministic readers.
+func Test_Operating_System_API_Heap_Allocation(t *testing.T) {
+	host := time.New_Operating_System_Clock()
+	t.Run("New_Operating_System_Clock", func(t *testing.T) {
+		testify.Zero_Allocation(t, func() { host = time.New_Operating_System_Clock() })
+	})
+	t.Run("Now_Monotonic", func(t *testing.T) {
+		var moment int64
+		testify.Zero_Allocation(t, func() {
+			moment = int64(time.Clock_Now_Monotonic(host))
+		})
+		testify.Positive(t, moment)
+	})
+	t.Run("Now_Realtime", func(t *testing.T) {
+		var moment int64
+		testify.Zero_Allocation(t, func() {
+			moment = int64(time.Clock_Now_Realtime(host))
+		})
+		testify.Positive(t, moment)
+	})
 }

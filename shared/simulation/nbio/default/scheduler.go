@@ -242,7 +242,7 @@ func operating_system_operation_complete(
 	operating_system_operation_account(state, operation, result, err)
 	operation.Completion.Data = result
 	operation.Completion.Error = err
-	operation.Completion.Callback = func() { operation.Deliver(operation.Completion) }
+	operation.Completion.Callback = operation.Deliver
 	state.Completed = append(state.Completed, operation.Completion)
 }
 

@@ -562,7 +562,7 @@ func platform_uses_kernel_timeouts() (uses bool) { return true }
 func platform_storage_deadline(
 	state *Operating_System, timeout time.Duration,
 ) (deadline time.Monotonic_Moment) {
-	return state.Host.Now_Monotonic() + time.Monotonic_Moment(timeout)
+	return time.Clock_Now_Monotonic(state.Host) + time.Monotonic_Moment(timeout)
 }
 
 // Platform submit pin operation memory and enqueue matching SQE.
@@ -584,7 +584,7 @@ func platform_submit(
 func platform_submit_bounded_operation(
 	state *Operating_System, operation *Operating_System_Operation,
 ) (err error) {
-	budget := operation.Deadline - state.Host.Now_Monotonic()
+	budget := operation.Deadline - time.Clock_Now_Monotonic(state.Host)
 	if budget <= 0 {
 		return time.Deadline_Exceeded
 	}
@@ -612,7 +612,7 @@ func platform_submit_bounded_operation(
 		operation.Bounded = nil
 		return entry_err
 	}
-	budget = operation.Deadline - state.Host.Now_Monotonic()
+	budget = operation.Deadline - time.Clock_Now_Monotonic(state.Host)
 	if budget <= 0 {
 		state.Platform.Submission_Tail -= uint32(len(entries))
 		delete(state.Operations, deadline.Identifier)
@@ -1246,7 +1246,7 @@ func platform_retry_operations(state *Operating_System) (err error) {
 		operation := state.Platform.Retry_Backlog[0]
 		var submit_err error
 		if operation.Deadline != 0 {
-			budget := operation.Deadline - state.Host.Now_Monotonic()
+			budget := operation.Deadline - time.Clock_Now_Monotonic(state.Host)
 			if budget <= 0 {
 				state.Platform.Retry_Backlog = state.Platform.Retry_Backlog[1:]
 				timeout_result := operating_system_timeout_result(operation)

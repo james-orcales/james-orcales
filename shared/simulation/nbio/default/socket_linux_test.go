@@ -107,7 +107,7 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	t.Helper()
 	clock := new_operating_system_clock()
 	loop, _, driver, _, loop_err := New_Operating_System_IO(
-		clock, 32, 0, os.Virtual_OS_To_OS(os.Virtual_OS{Process_Identifier: 1}))
+		clock, 32, 0, operating_system_ambient())
 	if !testify.No_Error(t, loop_err) {
 		return 0
 	}
@@ -124,7 +124,8 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 			file = nbio.File(completed.Data)
 			open_done = true
 		})
-	driver.Run_Until(SYSCTL_READ_DEADLINE, func() (finished bool) { return open_done })
+	time.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
+		func() (finished bool) { return open_done })
 	read_done := false
 	var read_completion time.Completion
 	loop.Storage.Read(&read_completion, file, content, 0, SYSCTL_READ_DEADLINE,
@@ -133,7 +134,8 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 			count = completed.Data
 			read_done = true
 		})
-	driver.Run_Until(SYSCTL_READ_DEADLINE, func() (finished bool) { return read_done })
+	time.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
+		func() (finished bool) { return read_done })
 	testify.True(t, read_done, path)
 	close_done := false
 	var close_completion time.Completion
@@ -141,8 +143,9 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 		testify.No_Error(t, completed.Error, path)
 		close_done = true
 	})
-	driver.Run_Until(SYSCTL_READ_DEADLINE, func() (finished bool) { return close_done })
-	driver.Deinit()
+	time.Driver_Run_Until(driver, SYSCTL_READ_DEADLINE,
+		func() (finished bool) { return close_done })
+	time.Driver_Deinit(driver)
 	return count
 }
 

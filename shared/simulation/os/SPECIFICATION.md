@@ -6,13 +6,14 @@ It takes no seed and no clock, and every read is repeatable within one run.
 
 ### Arguments
 
-Arguments returns the stated argv. Each call returns a copy, so a caller that edits the
-result does not change what a later call reads.
+Arguments copies stated argv into caller-owned storage. Caller must provide enough entries for
+whole answer. Returned count identifies populated prefix. Editing destination does not change what
+later call reads.
 
 ### Environment
 
-Environment returns the stated variables, each one a "NAME=VALUE" string. Each call returns
-a copy.
+Environment copies stated variables into caller-owned storage, each one a "NAME=VALUE" string.
+Caller must provide enough entries for whole answer. Returned count identifies populated prefix.
 
 ### Variable
 
@@ -47,8 +48,9 @@ process, so it reports the failure rather than destroying the run.
 
 # OS
 
-The seeded backend draws the signal grain and the exit code from its seed and retires both
-operations on the injected loop, so a run reproduces and nothing is scriptable.
+Seeded backend draws signal grain and exit code from seed, then retires both on injected loop.
+Caller owns backend state and bounded operation storage; constructor rejects empty or oversized
+storage, and callback frees entry before running so it may submit immediately.
 
 ### Self Exec
 

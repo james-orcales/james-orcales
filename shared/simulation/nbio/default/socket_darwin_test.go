@@ -99,9 +99,7 @@ func Test_Platform_Expire_Operation_Deletes_Kernel_Registration(t *testing.T) {
 // the eager file syscall.
 func Test_Platform_Storage_Deadline_Darwin_Is_Disabled(t *testing.T) {
 	state := &Operating_System{
-		Host: time.Clock{
-			Now_Monotonic: func() (moment time.Monotonic_Moment) { return 7 },
-		},
+		Host: clock_value_to_clock(&clock_value{Moment: 7}),
 	}
 	deadline := platform_storage_deadline(state, time.NANOSECOND)
 	testify.Zero(t, deadline)

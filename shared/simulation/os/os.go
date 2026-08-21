@@ -1,6 +1,6 @@
-// Package os is a dependency-injected operating system, built the same way as shared/time: the
-// backend is a struct of closures (a vtable), production wires the host kernel (os/default), and
-// a simulation wires a Virtual_OS. The code between never knows which it holds.
+// Package os is dependency-injected operating system built same way as shared/time: backend
+// vtable holds static procedures over explicit caller-owned state. Production wires host kernel
+// while simulation wires Virtual_OS. Code between never knows which it holds.
 //
 // What the OS answers here is ambient state: what the kernel handed the process at exec and what
 // it says about the process now — argv, the environment, the executable path, the working
@@ -15,45 +15,52 @@ package os
 
 import (
 	"errors"
+	"unsafe"
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/slices"
 )
 
 // OS is the operating system as the running process sees it. It is a vtable, so a caller holds
 // it by value and calls through it without knowing the backend, exactly as io.IO is held.
 type OS struct {
-	// Arguments returns the process argv. The first element names the program as it was
-	// invoked, which is not always the executable path.
-	Arguments func() (arguments []string)
-	// Environment returns every variable as one "NAME=VALUE" string.
-	Environment func() (variables []string)
+	// State stays caller-owned because captured backend state would allocate.
+	State unsafe.Pointer
+	// Arguments copies process argv into destination and returns populated entry count. First
+	// element names program as invoked, which is not always executable path.
+	Arguments func(state unsafe.Pointer, destination []string) (count int)
+	// Environment copies every variable as one "NAME=VALUE" string and returns populated count.
+	Environment func(state unsafe.Pointer, destination []string) (count int)
 	// Variable reads one environment variable. found is false when the name is unset, which
 	// a caller must tell apart from a name set to the empty string.
-	Variable func(name string) (value string, found bool)
+	Variable func(state unsafe.Pointer, name string) (value string, found bool)
 	// Executable returns the path of the running image.
-	Executable func() (path string, err error)
+	Executable func(state unsafe.Pointer) (path string, err error)
 	// Working_Directory returns the directory that resolves the process's relative paths.
-	Working_Directory func() (path string, err error)
+	Working_Directory func(state unsafe.Pointer) (path string, err error)
 	// Hostname returns the name the kernel gives this machine.
-	Hostname func() (name string, err error)
+	Hostname func(state unsafe.Pointer) (name string, err error)
 	// Process_Identifier returns the process id.
-	Process_Identifier func() (identifier int)
+	Process_Identifier func(state unsafe.Pointer) (identifier int)
 	// Effective_User_Identifier returns the user id the kernel checks permission against,
 	// which a setuid image makes different from the user who started the process.
-	Effective_User_Identifier func() (identifier int)
+	Effective_User_Identifier func(state unsafe.Pointer) (identifier int)
 	// Self_Exec replaces the process image and returns only on failure. Every descriptor is
 	// close-on-exec, so a successful replacement closes listeners and the new image rebinds.
 	// Nil preserves ambient values. Non-nil slice is complete replacement, thus empty inherits
 	// nothing.
-	Self_Exec func(path string, arguments []string, environment []string) (err error)
+	Self_Exec func(
+		state unsafe.Pointer, path string, arguments []string, environment []string,
+	) (err error)
 	// Watch_Signal fires callback when the process receives signal before the finite
 	// deadline, or with time.Deadline_Exceeded. The lifetime is finite deliberately: a
 	// permanent waiter is a process that cannot state when it is done.
 	Watch_Signal func(
-		completion *time.Completion, signal Signal, deadline time.Duration,
+		state unsafe.Pointer, completion *time.Completion, signal Signal,
+		deadline time.Duration,
 		callback Signal_Callback,
 	)
 	// Spawn runs request until it finishes or the deadline expires. Expiry kills the
@@ -61,9 +68,73 @@ type OS struct {
 	// simulated backend draws the exit code from its seed and returns no output, since
 	// scripted output is disallowed.
 	Spawn func(
-		completion *time.Completion, request Process_Request, deadline time.Duration,
+		state unsafe.Pointer, completion *time.Completion, request Process_Request,
+		deadline time.Duration,
 		callback Process_Callback,
 	)
+}
+
+// OS_Arguments keeps backend state explicit so reader needs no captured environment.
+func OS_Arguments(system OS, destination []string) (count int) {
+	return system.Arguments(system.State, destination)
+}
+
+// OS_Environment keeps backend state explicit so reader needs no captured environment.
+func OS_Environment(system OS, destination []string) (count int) {
+	return system.Environment(system.State, destination)
+}
+
+// OS_Variable keeps backend state explicit so reader needs no captured environment.
+func OS_Variable(system OS, name string) (value string, found bool) {
+	return system.Variable(system.State, name)
+}
+
+// OS_Executable keeps backend state explicit so reader needs no captured environment.
+func OS_Executable(system OS) (path string, err error) {
+	return system.Executable(system.State)
+}
+
+// OS_Working_Directory keeps backend state explicit so reader needs no captured environment.
+func OS_Working_Directory(system OS) (path string, err error) {
+	return system.Working_Directory(system.State)
+}
+
+// OS_Hostname keeps backend state explicit so reader needs no captured environment.
+func OS_Hostname(system OS) (name string, err error) {
+	return system.Hostname(system.State)
+}
+
+// OS_Process_Identifier keeps backend state explicit so reader needs no captured environment.
+func OS_Process_Identifier(system OS) (identifier int) {
+	return system.Process_Identifier(system.State)
+}
+
+// OS_Effective_User_Identifier keeps state explicit so reader needs no captured environment.
+func OS_Effective_User_Identifier(system OS) (identifier int) {
+	return system.Effective_User_Identifier(system.State)
+}
+
+// OS_Self_Exec keeps backend state explicit so operation needs no captured environment.
+func OS_Self_Exec(
+	system OS, path string, arguments []string, environment []string,
+) (err error) {
+	return system.Self_Exec(system.State, path, arguments, environment)
+}
+
+// OS_Watch_Signal keeps backend state explicit so operation needs no captured environment.
+func OS_Watch_Signal(
+	system OS, completion *time.Completion, signal Signal, deadline time.Duration,
+	callback Signal_Callback,
+) {
+	system.Watch_Signal(system.State, completion, signal, deadline, callback)
+}
+
+// OS_Spawn keeps backend state explicit so operation needs no captured environment.
+func OS_Spawn(
+	system OS, completion *time.Completion, request Process_Request, deadline time.Duration,
+	callback Process_Callback,
+) {
+	system.Spawn(system.State, completion, request, deadline, callback)
 }
 
 // OS_Invariants states that every reader is bound. An OS is a vtable, so its only property is
@@ -118,43 +189,70 @@ func Virtual_OS_Invariants(virtual Virtual_OS, namespace invariant.Namespace) {
 }
 
 // Virtual_OS_To_OS turns simulated ambient state into the vtable every caller holds, the
-// counterpart of time.Virtual_Clock_To_Clock. Each reader copies before it answers, so a caller
-// that keeps or edits a returned slice cannot change what the next read sees.
+// counterpart of time.Virtual_Clock_To_Clock. Each slice reader copies into caller destination,
+// so caller edit cannot change what next read sees and backend owns no result allocation.
 // It fills the ambient readers alone, so the OS it returns is not yet whole: the signal watch
 // and the spawn retire a completion, which is a backend's queue and not plain data.
 // New_Simulated_OS adds those two, and it is what asserts OS_Invariants.
-func Virtual_OS_To_OS(virtual Virtual_OS) (system OS) {
-	Virtual_OS_Invariants(virtual, "virtual_os_to_os.virtual")
-	system = OS{
-		Arguments: func() (arguments []string) {
-			return copy_strings(virtual.Arguments)
-		},
-		Environment: func() (variables []string) {
-			return copy_strings(virtual.Environment)
-		},
-		Variable: func(name string) (value string, found bool) {
-			return Environment_Lookup(virtual.Environment, name)
-		},
-		Executable: func() (path string, err error) {
-			return virtual.Executable, nil
-		},
-		Working_Directory: func() (path string, err error) {
-			return virtual.Working_Directory, nil
-		},
-		Hostname: func() (name string, err error) {
-			return virtual.Hostname, nil
-		},
-		Process_Identifier: func() (identifier int) {
-			return virtual.Process_Identifier
-		},
-		Effective_User_Identifier: func() (identifier int) {
-			return virtual.Effective_User_Identifier
-		},
-		Self_Exec: func(_ string, _ []string, _ []string) (err error) {
-			return Self_Exec_Unsupported
-		},
+func Virtual_OS_To_OS(virtual *Virtual_OS) (system OS) {
+	invariant.Always(virtual != nil, "A virtual OS has caller-owned state.")
+	Virtual_OS_Invariants(*virtual, "virtual_os_to_os.virtual")
+	return OS{
+		State:                     unsafe.Pointer(virtual),
+		Arguments:                 virtual_os_arguments,
+		Environment:               virtual_os_environment,
+		Variable:                  virtual_os_variable,
+		Executable:                virtual_os_executable,
+		Working_Directory:         virtual_os_working_directory,
+		Hostname:                  virtual_os_hostname,
+		Process_Identifier:        virtual_os_process_identifier,
+		Effective_User_Identifier: virtual_os_effective_user_identifier,
+		Self_Exec:                 virtual_os_self_exec,
 	}
-	return system
+}
+
+func virtual_os_arguments(
+	state unsafe.Pointer, destination []string,
+) (count int) {
+	return copy_strings(destination, (*Virtual_OS)(state).Arguments)
+}
+
+func virtual_os_environment(
+	state unsafe.Pointer, destination []string,
+) (count int) {
+	return copy_strings(destination, (*Virtual_OS)(state).Environment)
+}
+
+func virtual_os_variable(
+	state unsafe.Pointer, name string,
+) (value string, found bool) {
+	return Environment_Lookup((*Virtual_OS)(state).Environment, name)
+}
+
+func virtual_os_executable(state unsafe.Pointer) (path string, err error) {
+	return (*Virtual_OS)(state).Executable, nil
+}
+
+func virtual_os_working_directory(state unsafe.Pointer) (path string, err error) {
+	return (*Virtual_OS)(state).Working_Directory, nil
+}
+
+func virtual_os_hostname(state unsafe.Pointer) (name string, err error) {
+	return (*Virtual_OS)(state).Hostname, nil
+}
+
+func virtual_os_process_identifier(state unsafe.Pointer) (identifier int) {
+	return (*Virtual_OS)(state).Process_Identifier
+}
+
+func virtual_os_effective_user_identifier(state unsafe.Pointer) (identifier int) {
+	return (*Virtual_OS)(state).Effective_User_Identifier
+}
+
+func virtual_os_self_exec(
+	_ unsafe.Pointer, _ string, _ []string, _ []string,
+) (err error) {
+	return Self_Exec_Unsupported
 }
 
 // Environment_Lookup finds name in an environment holding "NAME=VALUE" entries. It is exported
@@ -177,11 +275,11 @@ func Environment_Lookup(variables []string, name string) (value string, found bo
 	return value, found
 }
 
-// Returns a copy, so a caller that edits the result cannot reach the backend's own slice.
-func copy_strings(source []string) (copied []string) {
-	copied = make([]string, len(source))
-	copy(copied, source)
-	return copied
+// Caller destination prevents result ownership from allocating or reaching backend slice.
+func copy_strings(destination []string, source []string) (count int) {
+	invariant.Always(len(destination) >= len(source),
+		"Caller-owned string storage holds complete OS answer.")
+	return copy(destination, source)
 }
 
 // Signal identifies an operating-system signal in backend-independent form, so the
@@ -257,15 +355,52 @@ type Process_Result struct {
 // could not be started at all.
 type Process_Callback func(completion *time.Completion, result Process_Result, err error)
 
-// Sim is the simulated backend for the two operations an OS retires a completion for. It holds
-// no queue: shared/time owns the order, and the seed owns every outcome, so a run reproduces
-// and nothing is scriptable.
+// Sim is caller-owned simulated OS state. Shared/time owns retirement order, while Operations
+// hold specialized callback results until that retirement.
 type Sim struct {
+	// Virtual stays beside completion state so one explicit pointer backs vtable.
+	Virtual Virtual_OS
 	// Timeline is the control plane both operations arm through.
 	Timeline time.Timeline
 	// Generator draws every latency and every exit code from the seed.
 	Generator prng.Generator
+	// Operations is bounded caller-owned state for simultaneous signal and process operations.
+	Operations []Sim_Operation
 }
+
+// Sim_Memory gives simulated OS bounded operation storage without owning an allocation.
+type Sim_Memory struct {
+	// Operations holds one entry for each simultaneously armed OS operation.
+	Operations []Sim_Operation
+}
+
+// Sim_Operation is caller-owned storage for one specialized callback and its result.
+type Sim_Operation struct {
+	// Kind prevents one completion path from decoding other callback type.
+	Kind Sim_Operation_Kind
+	// Signal preserves seed outcome until timeline reaches retirement grain.
+	Signal Signal
+	// Result preserves seed outcome until timeline reaches retirement grain.
+	Result Process_Result
+	// Error preserves deadline result until timeline reaches retirement grain.
+	Error error
+	// Signal_Callback avoids captured adapter state between arm and retirement.
+	Signal_Callback Signal_Callback
+	// Process_Callback avoids captured adapter state between arm and retirement.
+	Process_Callback Process_Callback
+}
+
+// Sim_Operation_Kind prevents static retirement callback from decoding wrong state.
+type Sim_Operation_Kind uint8
+
+// SIM_OPERATION_KIND_FREE lets bounded storage expose unused entry without side index.
+const SIM_OPERATION_KIND_FREE Sim_Operation_Kind = 0
+
+// SIM_OPERATION_KIND_SIGNAL makes static signal callback reject process state.
+const SIM_OPERATION_KIND_SIGNAL Sim_Operation_Kind = 1
+
+// SIM_OPERATION_KIND_PROCESS makes static process callback reject signal state.
+const SIM_OPERATION_KIND_PROCESS Sim_Operation_Kind = 2
 
 // The number of virtual grains a simulated operation may take, drawn from the seed so the
 // retirement order varies per run while staying reproducible.
@@ -275,30 +410,99 @@ const SIM_LATENCY_GRAINS = 8
 // and the failure path without a scripted outcome.
 const SIM_SPAWN_FAIL_GRAINS = 4
 
-// New_Simulated_OS returns the simulated operating system: the ambient values virtual
-// states, plus the
-// signal watch and the spawn drawn from seed. Both retire on pump, so a simulated spawn and a
-// simulated read hold one order. The caller owns the loop and its driver, so this backend
-// submits and never pumps.
-func New_Simulated_OS(seed uint64, virtual Virtual_OS, pump time.Timeline) (system OS) {
-	state := &Sim{Timeline: pump, Generator: prng.New(seed)}
-	system = Virtual_OS_To_OS(virtual)
-	system.Watch_Signal = func(
-		completion *time.Completion, signal Signal, deadline time.Duration,
-		callback Signal_Callback,
-	) {
-		invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
-		sim_watch_signal(state, completion, signal, deadline, callback)
+// New_Simulated_OS returns simulated operating system from caller-owned state and memory. Signal
+// watch and spawn retire on pump, so simulated spawn and read hold one order. Caller owns loop
+// and driver, so backend submits and never pumps.
+func New_Simulated_OS(
+	state *Sim, seed uint64, virtual Virtual_OS, pump time.Timeline, memory Sim_Memory,
+) (system OS) {
+	invariant.Always(state != nil, "A simulated OS has caller-owned state.")
+	invariant.Always(len(memory.Operations) > 0,
+		"A simulated OS has operation capacity.")
+	invariant.Always(len(memory.Operations) <= slices.SLICE_COUNT_MAXIMUM,
+		"Simulated OS operations stay within repository slice boundary.")
+	Virtual_OS_Invariants(virtual, "new_simulated_os.virtual")
+	for index := range memory.Operations {
+		memory.Operations[index] = Sim_Operation{}
 	}
-	system.Spawn = func(
-		completion *time.Completion, request Process_Request, deadline time.Duration,
-		callback Process_Callback,
-	) {
-		invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
-		sim_spawn(state, completion, deadline, callback)
-	}
+	state.Virtual = virtual
+	state.Timeline = pump
+	state.Generator = prng.New(seed)
+	state.Operations = memory.Operations
+	system = simulated_os_to_os(state)
 	OS_Invariants(system, "new_sim.system")
 	return system
+}
+
+func simulated_os_to_os(state *Sim) (system OS) {
+	return OS{
+		State:                     unsafe.Pointer(state),
+		Arguments:                 simulated_os_arguments,
+		Environment:               simulated_os_environment,
+		Variable:                  simulated_os_variable,
+		Executable:                simulated_os_executable,
+		Working_Directory:         simulated_os_working_directory,
+		Hostname:                  simulated_os_hostname,
+		Process_Identifier:        simulated_os_process_identifier,
+		Effective_User_Identifier: simulated_os_effective_user_identifier,
+		Self_Exec:                 virtual_os_self_exec,
+		Watch_Signal:              simulated_os_watch_signal,
+		Spawn:                     simulated_os_spawn,
+	}
+}
+
+func simulated_os_arguments(
+	state unsafe.Pointer, destination []string,
+) (count int) {
+	return copy_strings(destination, (*Sim)(state).Virtual.Arguments)
+}
+
+func simulated_os_environment(
+	state unsafe.Pointer, destination []string,
+) (count int) {
+	return copy_strings(destination, (*Sim)(state).Virtual.Environment)
+}
+
+func simulated_os_variable(
+	state unsafe.Pointer, name string,
+) (value string, found bool) {
+	return Environment_Lookup((*Sim)(state).Virtual.Environment, name)
+}
+
+func simulated_os_executable(state unsafe.Pointer) (path string, err error) {
+	return (*Sim)(state).Virtual.Executable, nil
+}
+
+func simulated_os_working_directory(state unsafe.Pointer) (path string, err error) {
+	return (*Sim)(state).Virtual.Working_Directory, nil
+}
+
+func simulated_os_hostname(state unsafe.Pointer) (name string, err error) {
+	return (*Sim)(state).Virtual.Hostname, nil
+}
+
+func simulated_os_process_identifier(state unsafe.Pointer) (identifier int) {
+	return (*Sim)(state).Virtual.Process_Identifier
+}
+
+func simulated_os_effective_user_identifier(state unsafe.Pointer) (identifier int) {
+	return (*Sim)(state).Virtual.Effective_User_Identifier
+}
+
+func simulated_os_watch_signal(
+	state unsafe.Pointer, completion *time.Completion, signal Signal, deadline time.Duration,
+	callback Signal_Callback,
+) {
+	invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
+	sim_watch_signal((*Sim)(state), completion, signal, deadline, callback)
+}
+
+func simulated_os_spawn(
+	state unsafe.Pointer, completion *time.Completion, _ Process_Request,
+	deadline time.Duration, callback Process_Callback,
+) {
+	invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
+	sim_spawn((*Sim)(state), completion, deadline, callback)
 }
 
 // Watches for a signal that, in the simulation, arrives at a seed-drawn grain — the operating
@@ -307,16 +511,33 @@ func sim_watch_signal(
 	state *Sim, completion *time.Completion, signal Signal, deadline time.Duration,
 	callback Signal_Callback,
 ) {
+	operation := sim_operation_acquire(state, SIM_OPERATION_KIND_SIGNAL)
+	operation.Signal_Callback = callback
 	latency := sim_latency(state)
 	if latency >= deadline {
-		state.Timeline.Submit(completion, deadline, func(_ *time.Completion) {
-			callback(completion, SIGNAL_EXPIRED, time.Deadline_Exceeded)
-		})
+		operation.Signal = SIGNAL_EXPIRED
+		operation.Error = time.Deadline_Exceeded
+		completion.Backend = unsafe.Pointer(operation)
+		time.Timeline_Submit(state.Timeline, completion, deadline, sim_signal_complete)
 	} else {
-		state.Timeline.Submit(completion, latency, func(_ *time.Completion) {
-			callback(completion, signal, nil)
-		})
+		operation.Signal = signal
+		completion.Backend = unsafe.Pointer(operation)
+		time.Timeline_Submit(state.Timeline, completion, latency, sim_signal_complete)
 	}
+}
+
+func sim_signal_complete(completion *time.Completion) {
+	operation := (*Sim_Operation)(completion.Backend)
+	invariant.Always(operation != nil,
+		"A simulated signal completion owns specialized operation state.")
+	invariant.Always(operation.Kind == SIM_OPERATION_KIND_SIGNAL,
+		"A simulated signal completion owns signal state.")
+	callback := operation.Signal_Callback
+	signal := operation.Signal
+	err := operation.Error
+	*operation = Sim_Operation{}
+	completion.Backend = nil
+	callback(completion, signal, err)
 }
 
 // Delivers a subprocess result drawn from the seed: the exit code varies (usually zero,
@@ -326,20 +547,51 @@ func sim_spawn(
 	state *Sim, completion *time.Completion, deadline time.Duration,
 	callback Process_Callback,
 ) {
+	operation := sim_operation_acquire(state, SIM_OPERATION_KIND_PROCESS)
+	operation.Process_Callback = callback
 	exit := 0
 	if prng.Generator_Below(&state.Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
 		exit = 1
 	}
 	latency := sim_latency(state)
 	if latency >= deadline {
-		state.Timeline.Submit(completion, deadline, func(_ *time.Completion) {
-			callback(completion, Process_Result{}, time.Deadline_Exceeded)
-		})
+		operation.Error = time.Deadline_Exceeded
+		completion.Backend = unsafe.Pointer(operation)
+		time.Timeline_Submit(state.Timeline, completion, deadline, sim_process_complete)
 		return
 	}
-	state.Timeline.Submit(completion, latency, func(_ *time.Completion) {
-		callback(completion, Process_Result{Exit: exit}, nil)
-	})
+	operation.Result.Exit = exit
+	completion.Backend = unsafe.Pointer(operation)
+	time.Timeline_Submit(state.Timeline, completion, latency, sim_process_complete)
+}
+
+func sim_process_complete(completion *time.Completion) {
+	operation := (*Sim_Operation)(completion.Backend)
+	invariant.Always(operation != nil,
+		"A simulated process completion owns specialized operation state.")
+	invariant.Always(operation.Kind == SIM_OPERATION_KIND_PROCESS,
+		"A simulated process completion owns process state.")
+	callback := operation.Process_Callback
+	result := operation.Result
+	err := operation.Error
+	*operation = Sim_Operation{}
+	completion.Backend = nil
+	callback(completion, result, err)
+}
+
+func sim_operation_acquire(
+	state *Sim, kind Sim_Operation_Kind,
+) (operation *Sim_Operation) {
+	for index := range state.Operations {
+		if state.Operations[index].Kind == SIM_OPERATION_KIND_FREE {
+			operation = &state.Operations[index]
+			break
+		}
+	}
+	invariant.Always(operation != nil,
+		"A simulated OS never exceed caller-owned operation capacity.")
+	operation.Kind = kind
+	return operation
 }
 
 // Draws one simulated operation's virtual latency from the seed.

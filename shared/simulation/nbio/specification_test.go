@@ -27,7 +27,7 @@ func Test_Sim_Read(t *testing.T) {
 			testify.No_Error(t, completed.Error)
 			wrote = true
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return wrote })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return wrote })
 
 	reader, open_err := sim_open(t, loop, driver, "file")
 	if !testify.No_Error(t, open_err) {
@@ -40,7 +40,7 @@ func Test_Sim_Read(t *testing.T) {
 		func(completed *time.Completion) {
 			count = completed.Data
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return count >= 0 })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return count >= 0 })
 
 	testify.Equal(t, 5, count)
 	testify.Equal(t, "hello", string(buffer[:count]))
@@ -76,7 +76,7 @@ func Test_Sim_Write(t *testing.T) {
 			testify.No_Error(t, completed.Error)
 			count = completed.Data
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return count >= 0 })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return count >= 0 })
 	testify.Equal(t, len("hello"), count)
 	sim_close(t, loop, driver, file)
 	loop.Deinit()
@@ -96,7 +96,7 @@ func Test_Sim_Fsync(t *testing.T) {
 		testify.No_Error(t, completed.Error)
 		fired = true
 	})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return fired })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return fired })
 	testify.True(t, sim_descriptor_open(loop))
 	sim_close(t, loop, driver, file)
 	loop.Deinit()
@@ -114,7 +114,7 @@ func Test_Sim_Open_At(t *testing.T) {
 		testify.No_Error(t, completed.Error)
 		opened = nbio.File(completed.Data)
 	})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return opened >= 0 })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return opened >= 0 })
 	testify.Positive(t, opened)
 	testify.True(t, sim_descriptor_open(loop))
 	sim_close(t, loop, driver, opened)
@@ -234,7 +234,7 @@ func Test_Sim_Receive(t *testing.T) {
 			count = completed.Data
 		})
 
-	driver.Run_For(10 * time.NANOSECOND)
+	time.Driver_Run_For(driver, 10*time.NANOSECOND)
 
 	testify.Equal(t, 64, count)
 	sim_close(t, loop, driver, socket)
@@ -256,7 +256,7 @@ func Test_Sim_Send(t *testing.T) {
 			count = completed.Data
 		})
 
-	driver.Run_For(10 * time.NANOSECOND)
+	time.Driver_Run_For(driver, 10*time.NANOSECOND)
 
 	testify.Equal(t, 32, count)
 	sim_close(t, loop, driver, socket)
@@ -279,7 +279,7 @@ func Test_Sim_Shutdown(t *testing.T) {
 			testify.No_Error(t, completed.Error)
 			connected = true
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return connected })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
 	var receive_completion time.Completion
 	var send_completion time.Completion
 	receive_count := -1
@@ -294,7 +294,7 @@ func Test_Sim_Shutdown(t *testing.T) {
 			send_err = completed.Error
 		})
 	testify.No_Error(t, loop.Network.Shutdown(socket, nbio.SHUTDOWN_BOTH))
-	driver.Run_For(10 * time.NANOSECOND)
+	time.Driver_Run_For(driver, 10*time.NANOSECOND)
 	testify.Zero(t, receive_count)
 	testify.Error_Is(t, send_err, nbio.Broken_Pipe)
 	testify.True(t, sim_descriptor_open(loop))
@@ -319,7 +319,7 @@ func Test_Sim_Close(t *testing.T) {
 			testify.No_Error(t, completed.Error)
 			connected = true
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return connected })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
 	received := false
 	var receive_completion time.Completion
 	loop.Network.Receive(&receive_completion, socket, make([]byte, 8), SIM_DEADLINE,
@@ -332,7 +332,7 @@ func Test_Sim_Close(t *testing.T) {
 		loop.Close(&completion, socket, func(_ *time.Completion) {})
 	})
 	testify.No_Error(t, loop.Network.Shutdown(socket, nbio.SHUTDOWN_BOTH))
-	driver.Run_For(10 * time.NANOSECOND)
+	time.Driver_Run_For(driver, 10*time.NANOSECOND)
 	testify.True(t, received)
 
 	sim_close(t, loop, driver, socket)
@@ -388,7 +388,7 @@ func Test_Sim_Peer_Address(t *testing.T) {
 			connected = true
 		},
 	)
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return connected })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return connected })
 	address, err := loop.Network.Peer_Address(socket)
 	testify.No_Error(t, err)
 	testify.Equal(t, "127.0.0.1", address)
@@ -411,7 +411,7 @@ func Test_Sim_Status(t *testing.T) {
 			testify.No_Error(t, completed.Error)
 			made = true
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return made })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return made })
 	file, create_err := sim_create(t, loop, driver, "/dir/file")
 	if !testify.No_Error(t, create_err) {
 		return
@@ -423,7 +423,7 @@ func Test_Sim_Status(t *testing.T) {
 	loop.Storage.Write(&write, file, content, 0, SIM_DEADLINE, func(_ *time.Completion) {
 		written = true
 	})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return written })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return written })
 	directory, _ := loop.Storage.Status("/dir")
 	testify.True(t, directory.Exists)
 	testify.True(t, directory.Is_Directory)
@@ -479,9 +479,7 @@ func Test_Address_Parse(t *testing.T) {
 // The Stream function owns callback time because only it knows if the concrete operation is
 // immediate, simulated, or kernel-backed.
 func Test_Stream_Callback(t *testing.T) {
-	timeline, driver, _ := time.New_Virtual_Timeline(
-		time.Virtual_Clock{Resolution: time.NANOSECOND},
-	)
+	timeline, driver, _ := sim_timeline()
 	buffer := make([]byte, 3)
 	called := false
 	stream := nbio.Stream(
@@ -489,7 +487,7 @@ func Test_Stream_Callback(t *testing.T) {
 			completion *time.Completion, _ nbio.Stream_Mode, _ []byte, _ int64,
 			_ nbio.Seek_From, callback time.Callback,
 		) {
-			timeline.Submit(
+			time.Timeline_Submit(timeline,
 				completion, time.NANOSECOND, func(completed *time.Completion) {
 					completed.Data = len(buffer)
 					callback(completed)
@@ -504,7 +502,7 @@ func Test_Stream_Callback(t *testing.T) {
 		testify.No_Error(t, completed.Error)
 	})
 	testify.False(t, called)
-	completed, drive_err := driver.Run_Until(
+	completed, drive_err := time.Driver_Run_Until(driver,
 		10*time.NANOSECOND, func() (finished bool) { return called },
 	)
 	testify.No_Error(t, drive_err)
@@ -1060,11 +1058,11 @@ func sim_accept_once(
 			accepted = nbio.File(completed.Data)
 			operation_err = completed.Error
 		})
-	completed, drive_err := driver.Run_Until(
+	completed, drive_err := time.Driver_Run_Until(driver,
 		16*time.NANOSECOND, func() (finished bool) { return callback_count > 0 })
 	testify.No_Error(t, drive_err, seed)
 	testify.True(t, completed, seed)
-	driver.Run_For(16 * time.NANOSECOND)
+	time.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count, seed)
 	testify.Not_Equal(t, listener, accepted, seed)
 	if accepted > 0 {
@@ -1091,7 +1089,7 @@ func sim_connect_lifecycle(t *testing.T, seed uint64) (snapshot string) {
 			called = true
 			connect_err = completed.Error
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return called })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return called })
 	testify.True(t, called)
 	open_before_close := sim_descriptor_open(loop)
 	sim_close(t, loop, driver, socket)
@@ -1120,8 +1118,9 @@ func sim_connect_with_timeout(
 			callback_count++
 			connect_err = completed.Error
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return callback_count > 0 })
-	driver.Run_For(16 * time.NANOSECOND)
+	time.Driver_Run_Until(driver, SIM_DEADLINE,
+		func() (finished bool) { return callback_count > 0 })
+	time.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count, seed)
 	testify.True(t, sim_descriptor_open(loop), seed)
 	sim_close(t, loop, driver, socket)
@@ -1159,15 +1158,16 @@ func sim_transfer_once(
 		callback_count++
 		count = completed.Data
 		operation_err = completed.Error
-		completed_at = clock.Now_Monotonic()
+		completed_at = time.Clock_Now_Monotonic(clock)
 	}
 	if send {
 		loop.Network.Send(&completion, socket, []byte("data"), timeout, callback)
 	} else {
 		loop.Network.Receive(&completion, socket, make([]byte, 4), timeout, callback)
 	}
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return callback_count > 0 })
-	driver.Run_For(16 * time.NANOSECOND)
+	time.Driver_Run_Until(driver, SIM_DEADLINE,
+		func() (finished bool) { return callback_count > 0 })
+	time.Driver_Run_For(driver, 16*time.NANOSECOND)
 	testify.Equal(t, 1, callback_count, seed)
 	testify.True(t, sim_descriptor_open(loop), seed)
 	sim_close(t, loop, driver, socket)
@@ -1214,13 +1214,13 @@ func sim_storage_once(
 	}
 	sim_storage_write(t, loop, driver, file, []byte("base"))
 	read_buffer := []byte("keep")
-	start := clock.Now_Monotonic()
+	start := time.Clock_Now_Monotonic(clock)
 	called := false
 	var completion time.Completion
 	callback := func(completed *time.Completion) {
 		data = completed.Data
 		operation_err = completed.Error
-		elapsed = clock.Now_Monotonic() - start
+		elapsed = time.Clock_Now_Monotonic(clock) - start
 		called = true
 	}
 	if operation == "read" {
@@ -1230,9 +1230,9 @@ func sim_storage_once(
 	} else {
 		loop.Storage.Fsync(&completion, file, timeout, callback)
 	}
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return called })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return called })
 	testify.True(t, called, seed, operation)
-	driver.Run_For(16 * time.NANOSECOND)
+	time.Driver_Run_For(driver, 16*time.NANOSECOND)
 	if operation_err == time.Deadline_Exceeded {
 		if operation == "read" {
 			testify.Equal(t, "keep", string(read_buffer), seed)
@@ -1259,7 +1259,7 @@ func sim_storage_write(
 			testify.No_Error(t, completed.Error)
 			done = true
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return done })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
 	testify.True(t, done)
 }
 
@@ -1277,7 +1277,7 @@ func sim_storage_read(
 			buffer = buffer[:completed.Data]
 			done = true
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return done })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
 	testify.True(t, done)
 	return string(buffer)
 }
@@ -1314,9 +1314,26 @@ func sim_storage_timeout_rejected(
 // driver, and clock — never sim, which New_Simulated_IO keep to itself, thus run stay pure
 // function of seed.
 func sim_loop(seed uint64) (loop nbio.IO, driver time.Driver, clock time.Clock) {
-	pump, driver, clock := time.New_Virtual_Timeline(
-		time.Virtual_Clock{Resolution: time.NANOSECOND})
+	pump, driver, clock := sim_timeline()
 	return nbio.New_Simulated_IO(seed, pump), driver, clock
+}
+
+// Two concurrent network operations each arm work and a competing timeout.
+const SIM_CONCURRENT_OPERATION_CAPACITY = 2
+const SIM_COMPLETION_PER_OPERATION = 2
+const SIM_TIMELINE_CAPACITY = SIM_CONCURRENT_OPERATION_CAPACITY * SIM_COMPLETION_PER_OPERATION
+
+// Tests use no cross-thread event, but the timeline requires bounded event ownership.
+const SIM_EVENT_CAPACITY = 1
+
+func sim_timeline() (loop time.Timeline, driver time.Driver, clock time.Clock) {
+	state := time.Virtual_Timeline{}
+	queue := [SIM_TIMELINE_CAPACITY]*time.Completion{}
+	events := [SIM_EVENT_CAPACITY]time.Virtual_Event{}
+	return time.New_Virtual_Timeline(&state,
+		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
+			Queue: queue[:], Events: events[:],
+		})
 }
 
 // Open path for read through Open_At. Drive loop until descriptor arrive.
@@ -1352,7 +1369,7 @@ func sim_open_options(
 			err = completed.Error
 			done = true
 		})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return done })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return done })
 	testify.True(t, done, path)
 	return file, err
 }
@@ -1367,7 +1384,7 @@ func sim_close(t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File) {
 		testify.No_Error(t, completed.Error)
 		closed = true
 	})
-	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return closed })
+	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return closed })
 	testify.True(t, closed, file)
 }
 
@@ -1515,7 +1532,7 @@ func Test_Storage_Empty_Transfer_Completes_On_First_Grain_Sim(t *testing.T) {
 		if !testify.No_Error(t, create_err, operation) {
 			continue
 		}
-		start := clock.Now_Monotonic()
+		start := time.Clock_Now_Monotonic(clock)
 		called := false
 		var completion time.Completion
 		callback := func(completed *time.Completion) {
@@ -1529,10 +1546,11 @@ func Test_Storage_Empty_Transfer_Completes_On_First_Grain_Sim(t *testing.T) {
 			loop.Storage.Write(&completion, file, nil, 0, time.NANOSECOND, callback)
 		}
 		testify.False(t, called, operation)
-		driver.Run_Until(time.NANOSECOND, func() (finished bool) { return called })
+		time.Driver_Run_Until(driver, time.NANOSECOND,
+			func() (finished bool) { return called })
 		testify.True(t, called, operation)
 		want := start + time.Monotonic_Moment(time.NANOSECOND)
-		testify.Equal(t, want, clock.Now_Monotonic(), operation)
+		testify.Equal(t, want, time.Clock_Now_Monotonic(clock), operation)
 		sim_close(t, loop, driver, file)
 		loop.Deinit()
 	}
@@ -1596,11 +1614,9 @@ type stream_harness_state struct {
 // One virtual Timeline tests delayed Stream functions without a production Driver.
 func stream_harness(t *testing.T) (harness *stream_harness_state) {
 	t.Helper()
-	timeline, driver, _ := time.New_Virtual_Timeline(
-		time.Virtual_Clock{Resolution: time.NANOSECOND},
-	)
+	timeline, driver, _ := sim_timeline()
 	harness = &stream_harness_state{Timeline: timeline, Driver: driver}
-	t.Cleanup(harness.Driver.Deinit)
+	t.Cleanup(func() { time.Driver_Deinit(harness.Driver) })
 	return harness
 }
 
@@ -1620,7 +1636,7 @@ func stream_result(
 	if called {
 		return data, err
 	}
-	completed, drive_err := harness.Driver.Run_Until(
+	completed, drive_err := time.Driver_Run_Until(harness.Driver,
 		10*time.NANOSECOND, func() (finished bool) { return called },
 	)
 	testify.No_Error(t, drive_err)

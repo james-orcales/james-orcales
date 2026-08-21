@@ -117,9 +117,7 @@ func Test_Platform_Retry_Uses_Remaining_Deadline(t *testing.T) {
 		Deliver:    func(_ *time.Completion) {},
 	}
 	state := &Operating_System{
-		Host: time.Clock{
-			Now_Monotonic: func() (moment time.Monotonic_Moment) { return 10 },
-		},
+		Host:       clock_value_to_clock(&clock_value{Moment: 10}),
 		Operations: map[uint64]*Operating_System_Operation{1: operation},
 		Platform: Platform_Scheduler{
 			Retry_Backlog: []*Operating_System_Operation{operation},
@@ -176,9 +174,7 @@ func Test_Platform_Bounded_Storage_Submissions(t *testing.T) {
 // The platform derives one absolute moment before scheduler backlog can consume the budget.
 func Test_Platform_Storage_Deadline_Linux_Starts_At_Submission(t *testing.T) {
 	state := &Operating_System{
-		Host: time.Clock{
-			Now_Monotonic: func() (moment time.Monotonic_Moment) { return 7 },
-		},
+		Host: clock_value_to_clock(&clock_value{Moment: 7}),
 	}
 	deadline := platform_storage_deadline(state, 3*time.NANOSECOND)
 	testify.Equal(t, time.Monotonic_Moment(10), deadline)
@@ -191,9 +187,7 @@ func platform_bounded_test_state() (state *Operating_System) {
 	*platform_uint32(submission, 8) = ENTRIES - 1
 	return &Operating_System{
 		Operations: make(map[uint64]*Operating_System_Operation),
-		Host: time.Clock{
-			Now_Monotonic: func() (moment time.Monotonic_Moment) { return 1 },
-		},
+		Host:       clock_value_to_clock(&clock_value{Moment: 1}),
 		Platform: Platform_Scheduler{
 			Parameters: Kernel_Ring_Parameters{
 				Submission_Entries: ENTRIES,
@@ -221,9 +215,7 @@ func Test_Platform_Expired_Accept_Submission_Yields_No_Descriptor(t *testing.T) 
 		},
 	}
 	state := &Operating_System{
-		Host: time.Clock{
-			Now_Monotonic: func() (moment time.Monotonic_Moment) { return 10 },
-		},
+		Host:       clock_value_to_clock(&clock_value{Moment: 10}),
 		Operations: map[uint64]*Operating_System_Operation{},
 	}
 	operating_system_operation_submit(state, operation)
@@ -248,9 +240,7 @@ func Test_Platform_Expired_Storage_Submission_Yields_Zero(t *testing.T) {
 			Deadline:   9,
 		}
 		state := &Operating_System{
-			Host: time.Clock{
-				Now_Monotonic: func() (moment time.Monotonic_Moment) { return 10 },
-			},
+			Host:       clock_value_to_clock(&clock_value{Moment: 10}),
 			Operations: map[uint64]*Operating_System_Operation{},
 		}
 		operating_system_operation_submit(state, operation)
@@ -265,15 +255,9 @@ func Test_Platform_Bounded_Operation_Internal_Completion(t *testing.T) {
 	const ENTRIES = uint32(2)
 	submission := make([]byte, 128)
 	*platform_uint32(submission, 8) = ENTRIES - 1
-	now := time.Monotonic_Moment(3)
 	state := &Operating_System{
 		Operations: make(map[uint64]*Operating_System_Operation),
-		Host: time.Clock{
-			Now_Monotonic: func() (moment time.Monotonic_Moment) {
-				now++
-				return now
-			},
-		},
+		Host:       clock_value_to_clock(&clock_value{Moment: 3, Step: time.NANOSECOND}),
 		Platform: Platform_Scheduler{
 			Parameters: Kernel_Ring_Parameters{
 				Submission_Entries: ENTRIES,

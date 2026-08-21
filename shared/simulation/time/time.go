@@ -1,4 +1,5 @@
-// Package time gives time as an injected dependency. The backend is a vtable of closures.
+// Package time gives time as an injected dependency. The backend is a vtable of procedures
+// over explicit caller-owned state.
 // Production wires an OS clock (time/default). A simulation wires a Virtual one. The code
 // between never knows which one it holds. The Virtual backend lives here because it is pure
 // arithmetic. It makes no operating-system call.
@@ -6,9 +7,11 @@ package time
 
 import (
 	"errors"
+	"unsafe"
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/slices"
 )
 
 // INTEGER_64_MINIMUM is the smallest signed 64-bit integer. A Moment, a Duration, and a
@@ -90,16 +93,26 @@ func Monotonic_Moment_Invariants(moment Monotonic_Moment, namespace invariant.Na
 		Ensure()
 }
 
-// Clock: injected time source. Vtable of closures. Caller pick backend by value.
-// Read-only. Driver move time, with tick returned beside clock. Holder read current Moment.
-// Holder never move time.
+// Clock: injected time source. Backend state stays explicit so the vtable never capture it.
 type Clock struct {
+	// State stays caller-owned because captured backend state would escape with this vtable.
+	State unsafe.Pointer
 	// Now_Monotonic read monotonic clock. Never go backward. Use for elapsed time, timeout,
 	// latency.
-	Now_Monotonic func() (moment Monotonic_Moment)
+	Now_Monotonic func(state unsafe.Pointer) (moment Monotonic_Moment)
 	// Now_Realtime read wall clock as nanoseconds from Unix epoch. Can jump. Use for calendar
 	// timestamp only, never for elapsed time.
-	Now_Realtime func() (moment Moment)
+	Now_Realtime func(state unsafe.Pointer) (moment Moment)
+}
+
+// Clock_Now_Monotonic passes state explicitly because a bound reader would allocate.
+func Clock_Now_Monotonic(clock Clock) (moment Monotonic_Moment) {
+	return clock.Now_Monotonic(clock.State)
+}
+
+// Clock_Now_Realtime passes state explicitly because a bound reader would allocate.
+func Clock_Now_Realtime(clock Clock) (moment Moment) {
+	return clock.Now_Realtime(clock.State)
 }
 
 // Clock_Invariants state both readers bound. Clock is vtable. One property only:
@@ -124,9 +137,15 @@ func Tick_Count_Invariants(ticks Tick_Count, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Offset model how simulated wall clock drift from true elapsed time. Offset make
-// Now_Realtime differ from Now_Monotonic. Nil Offset mean perfect clock.
-type Offset func(ticks Tick_Count) (skew Duration)
+// Offset keeps coefficients by value so a skew reader needs no separately owned state.
+type Offset struct {
+	// Kind permits static evaluator dispatch, avoiding captured procedure state.
+	Kind Skew_Kind
+	// A shares the lifetime of the model that owns it.
+	A Duration
+	// B shares the lifetime of the model that owns it.
+	B Tick_Count
+}
 
 // Virtual_Clock configure deterministic clock that Virtual_Clock_To_Clock build. Time
 // advance only when Tick run. Simulation reach future Moment by tick, never by wait.
@@ -136,40 +155,49 @@ type Virtual_Clock struct {
 	Resolution Duration
 	// Epoch: wall-clock origin. Now_Realtime at tick zero, before skew.
 	Epoch Moment
-	// Skew bend Now_Realtime away from true elapsed time. Nil Skew mean perfect clock.
+	// Skew bend Now_Realtime away from true elapsed time. Zero Skew mean perfect clock.
 	Skew Offset
+	// Ticks stays caller-owned because both readers and the root advance the same counter.
+	Ticks Tick_Count
 }
 
-// Virtual_Clock_Invariants state two scalars of virtual clock. Skew is closure. Closure
-// arithmetic have no domain to state here. Skew state own coefficients where Skew build them.
+// Virtual_Clock_Invariants leaves skew coefficients to their own typed invariant chain.
 func Virtual_Clock_Invariants(virtual Virtual_Clock, namespace invariant.Namespace) {
 	Duration_Invariants(virtual.Resolution, namespace)
 	Moment_Invariants(virtual.Epoch, namespace)
 }
 
-// Virtual_Clock_To_Clock return read-only Clock plus tick that advance it. Clock
-// behind is deterministic. Make no operating-system call. Closures and tick share one counter,
-// thus tick move what next Now_Monotonic read. Only driver hold tick: package main, or test
-// harness. Pure code hold Clock alone. Pure code read time, never move it.
-func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock, tick func()) {
-	defer func() { Clock_Invariants(clock, "virtual_clock_to_clock.clock") }()
-	Virtual_Clock_Invariants(virtual, "virtual_clock_to_clock.virtual")
-	ticks := Tick_Count(0)
+// Virtual_Clock_To_Clock binds caller-owned state without a captured function environment.
+func Virtual_Clock_To_Clock(virtual *Virtual_Clock) (clock Clock) {
+	invariant.Always(virtual != nil, "A virtual clock has caller-owned state.")
+	Virtual_Clock_Invariants(*virtual, "virtual_clock_to_clock.virtual")
+	virtual.Ticks = 0
 	clock = Clock{
-		Now_Monotonic: func() (moment Monotonic_Moment) {
-			uptime := Monotonic_Moment(int64(ticks) * int64(virtual.Resolution))
-			Monotonic_Moment_Invariants(uptime, "virtual_clock_to_clock.uptime")
-			return uptime
-		},
-		Now_Realtime: func() (moment Moment) {
-			now := virtual.Epoch + Moment(int64(ticks)*int64(virtual.Resolution))
-			if virtual.Skew == nil {
-				return now
-			}
-			return now - Moment(virtual.Skew(ticks))
-		},
+		State:         unsafe.Pointer(virtual),
+		Now_Monotonic: virtual_clock_now_monotonic,
+		Now_Realtime:  virtual_clock_now_realtime,
 	}
-	return clock, func() { ticks++ }
+	Clock_Invariants(clock, "virtual_clock_to_clock.clock")
+	return clock
+}
+
+// Virtual_Clock_Tick keeps advancement with the root that owns mutable clock state.
+func Virtual_Clock_Tick(virtual *Virtual_Clock) {
+	invariant.Always(virtual != nil, "A tick advances caller-owned virtual-clock state.")
+	virtual.Ticks++
+}
+
+func virtual_clock_now_monotonic(state unsafe.Pointer) (moment Monotonic_Moment) {
+	virtual := (*Virtual_Clock)(state)
+	uptime := Monotonic_Moment(int64(virtual.Ticks) * int64(virtual.Resolution))
+	Monotonic_Moment_Invariants(uptime, "virtual_clock_to_clock.uptime")
+	return uptime
+}
+
+func virtual_clock_now_realtime(state unsafe.Pointer) (moment Moment) {
+	virtual := (*Virtual_Clock)(state)
+	now := virtual.Epoch + Moment(int64(virtual.Ticks)*int64(virtual.Resolution))
+	return now - Moment(Offset_Read(virtual.Skew, virtual.Ticks))
 }
 
 // SKEW_KIND_LINEAR model constant drift. A nanoseconds of skew per tick, plus initial B
@@ -206,41 +234,38 @@ func Skew(kind Skew_Kind, a Duration, b Tick_Count) (offset Offset) {
 	Skew_Kind_Invariants(kind, "skew.kind")
 	Duration_Invariants(a, "skew.a")
 	Tick_Count_Invariants(b, "skew.b")
-	switch kind {
+	return Offset{Kind: kind, A: a, B: b}
+}
+
+// Offset_Read evaluates stored coefficients without closure state.
+func Offset_Read(offset Offset, ticks Tick_Count) (skew Duration) {
+	switch offset.Kind {
 	case SKEW_KIND_PERIODIC:
-		return func(ticks Tick_Count) (skew Duration) {
-			// Zero period mean degenerate sinusoid. Report no skew. Division or
-			// remainder by zero panic.
-			if b == 0 {
-				return 0
-			}
-			// Cut phase to one period before lift into fixed-point. Long run else
-			// overflow scaled numerator.
-			phase := ticks % b
-			turns := fixedpoint.From_Ratio(
-				fixedpoint.Numerator(phase),
-				fixedpoint.Denominator(b),
-			)
-			amplitude := fixedpoint.Number(fixedpoint.From_Integer(
-				fixedpoint.Whole_Integer(a),
-			))
-			wobble := fixedpoint.Multiply(
-				fixedpoint.Multiplicand(amplitude),
-				fixedpoint.Multiplier(fixedpoint.Sine_Turns(turns)),
-			)
-			return Duration(fixedpoint.Whole(wobble))
-		}
-	case SKEW_KIND_STEP:
-		return func(ticks Tick_Count) (skew Duration) {
-			if ticks > b {
-				return a
-			}
+		// Zero period reports no skew because division would panic.
+		if offset.B == 0 {
 			return 0
 		}
-	default:
-		return func(ticks Tick_Count) (skew Duration) {
-			return Duration(ticks)*a + Duration(b)
+		// Phase reduction prevents scaled numerator overflow during long runs.
+		phase := ticks % offset.B
+		turns := fixedpoint.From_Ratio(
+			fixedpoint.Numerator(phase),
+			fixedpoint.Denominator(offset.B),
+		)
+		amplitude := fixedpoint.Number(fixedpoint.From_Integer(
+			fixedpoint.Whole_Integer(offset.A),
+		))
+		wobble := fixedpoint.Multiply(
+			fixedpoint.Multiplicand(amplitude),
+			fixedpoint.Multiplier(fixedpoint.Sine_Turns(turns)),
+		)
+		return Duration(fixedpoint.Whole(wobble))
+	case SKEW_KIND_STEP:
+		if ticks > offset.B {
+			return offset.A
 		}
+		return 0
+	default:
+		return Duration(ticks)*offset.A + Duration(offset.B)
 	}
 }
 
@@ -254,6 +279,9 @@ var Retired_Twice = errors.New("time: the completion retired more than once")
 // Deadline_Exceeded come back when finite operation retire without its external event.
 var Deadline_Exceeded = errors.New("time: deadline exceeded")
 
+// Virtual_Event_Capacity_Exceeded reports no free entry in caller-owned event storage.
+var Virtual_Event_Capacity_Exceeded = errors.New("time: virtual event capacity exceeded")
+
 // Completion: caller-owned storage for one in-flight operation. Caller allocate it, thus loop
 // never allocate. Caller keep it alive until callback fire.
 type Completion struct {
@@ -262,8 +290,8 @@ type Completion struct {
 	Data int
 	// Error is nil on success and otherwise stores the operation failure.
 	Error error
-	// Callback closes over backend retirement work that must run before the public callback.
-	Callback func()
+	// Callback stays specialized so retirement needs no captured adapter closure.
+	Callback Callback
 	// Ready_At: uptime this operation complete at. Sit on monotonic timeline. Realtime jump
 	// must not retire operation early, or hold it late.
 	Ready_At Monotonic_Moment
@@ -279,6 +307,11 @@ type Completion struct {
 	// Kernel_Identifier: generation token in kqueue udata or io_uring user_data. Backend own
 	// it. Event_Trigger read it only after Event_Listen arm completion.
 	Kernel_Identifier uint64
+	// Event lets simulated retirement clear listener state without a captured callback.
+	Event Event
+	// Backend lets an outer backend correlate specialized result state without a captured
+	// adapter. Backend clears it before delivering callback.
+	Backend unsafe.Pointer
 }
 
 // Event: cross-thread wakeup handle of backend. kqueue EVFILT_USER ident, or eventfd
@@ -294,24 +327,66 @@ type Event uintptr
 // Backend fill this vtable and return Driver beside it: deterministic simulator, kqueue, or
 // io_uring. Code that hold Timeline arm work, never advance it.
 type Timeline struct {
+	// State stays caller-owned because every backend operation shares one loop.
+	State unsafe.Pointer
 	// Submit arm completion to retire one delay from now, in Ready_At order. Every other
 	// backend surface schedule through it: read, socket accept, spawn. One queue thus hold
 	// full order.
-	Submit func(completion *Completion, delay Duration, callback Callback)
+	Submit func(
+		state unsafe.Pointer, completion *Completion, delay Duration, callback Callback,
+	)
 	// Timeout fire callback after duration on clock, off same queue every other completion
 	// use. Duration must be positive.
-	Timeout func(completion *Completion, duration Duration, callback Callback)
+	Timeout func(
+		state unsafe.Pointer, completion *Completion, duration Duration, callback Callback,
+	)
 	// Open_Event make platform Event primitive.
-	Open_Event func() (event Event, err error)
+	Open_Event func(state unsafe.Pointer) (event Event, err error)
 	// Event_Listen arm completion for one Event notification.
 	Event_Listen func(
-		event Event, completion *Completion, callback Callback,
+		state unsafe.Pointer, event Event, completion *Completion, callback Callback,
 	)
 	// Event_Trigger make armed Event completion ready. Only operation safe to call from other
 	// thread.
-	Event_Trigger func(event Event, completion *Completion)
+	Event_Trigger func(state unsafe.Pointer, event Event, completion *Completion)
 	// Close_Event release Event after listener drain.
-	Close_Event func(event Event)
+	Close_Event func(state unsafe.Pointer, event Event)
+}
+
+// Timeline_Submit passes loop state explicitly because a bound submitter would allocate.
+func Timeline_Submit(
+	loop Timeline, completion *Completion, delay Duration, callback Callback,
+) {
+	loop.Submit(loop.State, completion, delay, callback)
+}
+
+// Timeline_Timeout passes loop state explicitly because a bound timer would allocate.
+func Timeline_Timeout(
+	loop Timeline, completion *Completion, duration Duration, callback Callback,
+) {
+	loop.Timeout(loop.State, completion, duration, callback)
+}
+
+// Timeline_Open_Event keeps event ownership with the backend state that opened it.
+func Timeline_Open_Event(loop Timeline) (event Event, err error) {
+	return loop.Open_Event(loop.State)
+}
+
+// Timeline_Event_Listen keeps listener state on its owning backend.
+func Timeline_Event_Listen(
+	loop Timeline, event Event, completion *Completion, callback Callback,
+) {
+	loop.Event_Listen(loop.State, event, completion, callback)
+}
+
+// Timeline_Event_Trigger keeps trigger state on its owning backend.
+func Timeline_Event_Trigger(loop Timeline, event Event, completion *Completion) {
+	loop.Event_Trigger(loop.State, event, completion)
+}
+
+// Timeline_Close_Event keeps release on the backend that opened the event.
+func Timeline_Close_Event(loop Timeline, event Event) {
+	loop.Close_Event(loop.State, event)
 }
 
 // Timeline_Invariants state every slot full. Timeline is vtable. Zero Timeline read as
@@ -339,14 +414,16 @@ func Timeline_Invariants(loop Timeline, namespace invariant.Namespace) {
 // it compose. Put together with others, it deliver completions of every other application
 // from inside own call stack. That destroy absolute order assembly exist to hold.
 type Driver struct {
+	// State stays caller-owned because binding it into each drive operation would allocate.
+	State unsafe.Pointer
 	// Run drain every ready completion without block, then advance clock one tick. ROOT ONLY:
 	// never hand to library, never call from library.
-	Run func() (err error)
+	Run func(state unsafe.Pointer) (err error)
 	// Run_For drive loop until duration elapse on clock. Deliver each completion as it come
 	// due. Time is GOAL here. Advance exactly duration, drain as it go, whatever complete.
 	// Use to let span of time pass, not to wait for one operation.
 	// ROOT ONLY: never hand to library, never call from library.
-	Run_For func(duration Duration) (err error)
+	Run_For func(state unsafe.Pointer, duration Duration) (err error)
 	// Run_Until drive loop until done report true. Run-until-complete pump. Straight-line
 	// code wait for own operation inline with it. Completion is GOAL here. Time is GUARD.
 	// Stop instant done hold. Timeout only cap wait, thus stalled operation cannot hang
@@ -361,10 +438,40 @@ type Driver struct {
 	// ROOT ONLY: never inject it into library, and never inject func value of its shape.
 	// Library that write done predicate and timeout is driving loop.
 	Run_Until func(
-		timeout Duration, done func() (finished bool),
+		state unsafe.Pointer, timeout Duration, done func() (finished bool),
 	) (completed bool, err error)
 	// Deinit release kernel resources of backend, after every submitted operation join.
-	Deinit func()
+	Deinit func(state unsafe.Pointer)
+}
+
+// Driver_Run passes loop state explicitly because a bound driver would allocate.
+func Driver_Run(driver Driver) (err error) {
+	return driver.Run(driver.State)
+}
+
+// Driver_Run_For passes loop state explicitly because a bound driver would allocate.
+func Driver_Run_For(driver Driver, duration Duration) (err error) {
+	return driver.Run_For(driver.State, duration)
+}
+
+// Driver_Run_Until passes loop state explicitly because a bound driver would allocate.
+func Driver_Run_Until(
+	driver Driver, timeout Duration, done func() (finished bool),
+) (completed bool, err error) {
+	return driver.Run_Until(driver.State, timeout, done)
+}
+
+// Driver_Deinit releases resources through their owning backend state.
+func Driver_Deinit(driver Driver) {
+	driver.Deinit(driver.State)
+}
+
+// Virtual_Timeline_Memory gives the simulator bounded storage without owning an allocation.
+type Virtual_Timeline_Memory struct {
+	// Queue is caller-owned capacity for simultaneously queued completions.
+	Queue []*Completion
+	// Events is caller-owned capacity for simultaneously open events.
+	Events []Virtual_Event
 }
 
 // Virtual_Timeline: deterministic loop backend. One ready-time queue, one virtual clock, no
@@ -375,44 +482,55 @@ type Virtual_Timeline struct {
 	// Timeline own clock state direct, hold no injected Clock. That indirection is for
 	// code outside this package. Timeline is source injected readers build over.
 	Virtual Virtual_Clock
-	// Ticks count how many grains driver advance. Now is Ticks times resolution. Live here,
-	// on driver side, thus code that hold Timeline never advance time.
-	Ticks Tick_Count
 	// Queue hold armed completions in Ready_At order, earliest first.
 	Queue []*Completion
-	// Events hold cross-thread event entries, keyed by handle.
-	Events map[Event]*Virtual_Event
-	// Listeners hold completion armed for each event, keyed by handle. Map, not field on
-	// entry: completion belong to submitter, entry describe event.
-	Listeners map[Event]*Completion
-	// Next_Event count handles handed out, thus each Open_Event return different handle,
-	// never zero.
-	Next_Event uint64
+	// Queue_Count separates occupied entries from caller-owned capacity.
+	Queue_Count int
+	// Events hold cross-thread event entries indexed by handle minus one.
+	Events []Virtual_Event
 	// Drive_Active true while Run drive. Run called from inside completion callback thus
 	// panic, never re-enter driver.
 	Drive_Active bool
 }
 
-// Virtual_Event: one simulated cross-thread event. Hold whether listener armed, plus triggers
-// that arrive before one attach. Armed completion live in Listeners map of loop, not here:
-// entry describe event, completion belong to submitter.
+// Virtual_Event: one simulated cross-thread event.
 type Virtual_Event struct {
+	// Open prevents a closed slot from accepting listener or trigger operations.
+	Open bool
 	// Armed report listener attached and wait for next trigger.
 	Armed bool
-	// Triggered count notifications piled up before listener attach.
-	Triggered int
+	// Triggered coalesces pending wakeups because one listener retirement is one notification.
+	Triggered bool
+	// Ready prevents repeated trigger from enqueueing one completion more than once.
+	Ready bool
+	// Listener keeps ownership direct so no listener map or captured callback is needed.
+	Listener *Completion
 }
 
-// New_Virtual_Timeline return three thing: deterministic loop, driver that advance it, clock
-// its completions measure against. Driver stay with root that build it. Program under test
-// get loop and clock, NEVER pump.
-func New_Virtual_Timeline(virtual Virtual_Clock) (loop Timeline, driver Driver, clock Clock) {
+// New_Virtual_Timeline binds caller-owned state and capacity so construction cannot allocate.
+func New_Virtual_Timeline(
+	state *Virtual_Timeline, virtual Virtual_Clock, memory Virtual_Timeline_Memory,
+) (loop Timeline, driver Driver, clock Clock) {
+	invariant.Always(state != nil, "A virtual timeline has caller-owned state.")
+	invariant.Always(len(memory.Queue) > 0, "A virtual timeline has queue capacity.")
+	invariant.Always(len(memory.Events) > 0, "A virtual timeline has event capacity.")
+	invariant.Always(len(memory.Queue) <= slices.SLICE_COUNT_MAXIMUM,
+		"A virtual timeline queue stays within the repository slice boundary.")
+	invariant.Always(len(memory.Events) <= slices.SLICE_COUNT_MAXIMUM,
+		"Virtual timeline events stay within the repository slice boundary.")
 	Virtual_Clock_Invariants(virtual, "new_virtual_timeline.virtual")
-	state := &Virtual_Timeline{
-		Virtual:   virtual,
-		Events:    map[Event]*Virtual_Event{},
-		Listeners: map[Event]*Completion{},
+	for index := range memory.Queue {
+		memory.Queue[index] = nil
 	}
+	for index := range memory.Events {
+		memory.Events[index] = Virtual_Event{}
+	}
+	state.Virtual = virtual
+	state.Virtual.Ticks = 0
+	state.Queue = memory.Queue
+	state.Queue_Count = 0
+	state.Events = memory.Events
+	state.Drive_Active = false
 	loop = virtual_timeline_to_timeline(state)
 	Timeline_Invariants(loop, "new_virtual_timeline.loop")
 	return loop, virtual_timeline_to_driver(state), virtual_timeline_to_clock(state)
@@ -421,55 +539,78 @@ func New_Virtual_Timeline(virtual Virtual_Clock) (loop Timeline, driver Driver, 
 // Build read-only Clock over own counter of timeline. Holder thus read exactly what driver
 // advance. One counter, not second one that drift beside it.
 func virtual_timeline_to_clock(state *Virtual_Timeline) (clock Clock) {
-	defer func() { Clock_Invariants(clock, "virtual_timeline_to_clock.clock") }()
-	return Clock{
-		Now_Monotonic: func() (moment Monotonic_Moment) {
-			return virtual_now(state)
-		},
-		Now_Realtime: func() (moment Moment) {
-			now := state.Virtual.Epoch + Moment(virtual_now(state))
-			if state.Virtual.Skew == nil {
-				return now
-			}
-			return now - Moment(state.Virtual.Skew(state.Ticks))
-		},
+	clock = Clock{
+		State:         unsafe.Pointer(state),
+		Now_Monotonic: virtual_timeline_now_monotonic,
+		Now_Realtime:  virtual_timeline_now_realtime,
 	}
+	Clock_Invariants(clock, "virtual_timeline_to_clock.clock")
+	return clock
+}
+
+func virtual_timeline_now_monotonic(state unsafe.Pointer) (moment Monotonic_Moment) {
+	return virtual_now((*Virtual_Timeline)(state))
+}
+
+func virtual_timeline_now_realtime(state unsafe.Pointer) (moment Moment) {
+	timeline := (*Virtual_Timeline)(state)
+	now := timeline.Virtual.Epoch + Moment(virtual_now(timeline))
+	return now - Moment(Offset_Read(timeline.Virtual.Skew, timeline.Virtual.Ticks))
 }
 
 // Wire control plane onto vtable every backend and every caller hold.
 func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 	return Timeline{
-		Submit: func(completion *Completion, delay Duration, callback Callback) {
-			virtual_submit(state, completion, delay, callback)
-		},
-		Timeout: func(
-			completion *Completion, duration Duration, callback Callback,
-		) {
-			virtual_timeout(state, completion, duration, callback)
-		},
-		Open_Event: func() (event Event, err error) {
-			state.Next_Event++
-			handle := Event(state.Next_Event)
-			state.Events[handle] = &Virtual_Event{}
-			return handle, nil
-		},
-		Event_Listen: func(
-			event Event, completion *Completion, callback Callback,
-		) {
-			virtual_event_listen(state, event, completion, callback)
-		},
-		Event_Trigger: func(event Event, completion *Completion) {
-			virtual_event_trigger(state, event, completion)
-		},
-		Close_Event: func(event Event) {
-			entry := state.Events[event]
-			invariant.Always(entry != nil, "A closed event was opened by this loop.")
-			invariant.Always(
-				!entry.Armed, "An event listener is drained before close.",
-			)
-			delete(state.Events, event)
-		},
+		State:         unsafe.Pointer(state),
+		Submit:        virtual_timeline_submit,
+		Timeout:       virtual_timeline_timeout,
+		Open_Event:    virtual_timeline_open_event,
+		Event_Listen:  virtual_timeline_event_listen,
+		Event_Trigger: virtual_timeline_event_trigger,
+		Close_Event:   virtual_timeline_close_event,
 	}
+}
+
+func virtual_timeline_submit(
+	state unsafe.Pointer, completion *Completion, delay Duration, callback Callback,
+) {
+	virtual_submit((*Virtual_Timeline)(state), completion, delay, callback)
+}
+
+func virtual_timeline_timeout(
+	state unsafe.Pointer, completion *Completion, duration Duration, callback Callback,
+) {
+	virtual_timeout((*Virtual_Timeline)(state), completion, duration, callback)
+}
+
+func virtual_timeline_open_event(state unsafe.Pointer) (event Event, err error) {
+	timeline := (*Virtual_Timeline)(state)
+	for index := range timeline.Events {
+		if !timeline.Events[index].Open {
+			timeline.Events[index] = Virtual_Event{Open: true}
+			return Event(index + 1), nil
+		}
+	}
+	return 0, Virtual_Event_Capacity_Exceeded
+}
+
+func virtual_timeline_event_listen(
+	state unsafe.Pointer, event Event, completion *Completion, callback Callback,
+) {
+	virtual_event_listen((*Virtual_Timeline)(state), event, completion, callback)
+}
+
+func virtual_timeline_event_trigger(
+	state unsafe.Pointer, event Event, completion *Completion,
+) {
+	virtual_event_trigger((*Virtual_Timeline)(state), event, completion)
+}
+
+func virtual_timeline_close_event(state unsafe.Pointer, event Event) {
+	timeline := (*Virtual_Timeline)(state)
+	entry := virtual_event_entry(timeline, event)
+	invariant.Always(!entry.Armed, "An event listener is drained before close.")
+	*entry = Virtual_Event{}
 }
 
 // Arm one simulated timer. Live beside vtable, not inside it: vtable literal is map of
@@ -487,38 +628,52 @@ func virtual_event_listen(
 	state *Virtual_Timeline, event Event, completion *Completion,
 	callback Callback,
 ) {
-	entry := state.Events[event]
-	invariant.Always(entry != nil, "A listened event was opened by this loop.")
+	entry := virtual_event_entry(state, event)
 	invariant.Always(!entry.Armed, "An event has at most one armed listener.")
-	virtual_arm(state, completion, func(completion *Completion) {
-		entry.Armed = false
-		delete(state.Listeners, event)
-		callback(completion)
-	})
+	if entry.Triggered {
+		virtual_queue_has_capacity(state)
+	}
+	virtual_arm(completion, callback)
+	completion.Event = event
 	entry.Armed = true
-	state.Listeners[event] = completion
-	if entry.Triggered > 0 {
-		entry.Triggered--
+	entry.Listener = completion
+	if entry.Triggered {
+		entry.Triggered = false
+		entry.Ready = true
 		virtual_enqueue_now(state, completion)
 	}
 }
 
 // Make armed event listener ready, or record trigger for later listener.
 func virtual_event_trigger(state *Virtual_Timeline, event Event, completion *Completion) {
-	entry := state.Events[event]
-	invariant.Always(entry != nil, "A triggered event was opened by this loop.")
+	entry := virtual_event_entry(state, event)
 	if !entry.Armed {
-		entry.Triggered++
+		entry.Triggered = true
 		return
 	}
-	invariant.Always(state.Listeners[event] == completion,
+	invariant.Always(entry.Listener == completion,
 		"A trigger names the completion its event armed.")
+	if entry.Ready {
+		entry.Triggered = true
+		return
+	}
+	virtual_queue_has_capacity(state)
+	entry.Ready = true
 	virtual_enqueue_now(state, completion)
+}
+
+func virtual_event_entry(state *Virtual_Timeline, event Event) (entry *Virtual_Event) {
+	invariant.Always(event > 0, "A virtual event handle is never zero.")
+	invariant.Always(event <= Event(len(state.Events)),
+		"A virtual event handle names caller-owned storage.")
+	entry = &state.Events[int(event)-1]
+	invariant.Always(entry.Open, "A virtual event operation names an open event.")
+	return entry
 }
 
 // Read simulated moment every Ready_At measure against.
 func virtual_now(state *Virtual_Timeline) (now Monotonic_Moment) {
-	now = Monotonic_Moment(int64(state.Ticks) * int64(state.Virtual.Resolution))
+	now = Monotonic_Moment(int64(state.Virtual.Ticks) * int64(state.Virtual.Resolution))
 	Monotonic_Moment_Invariants(now, "virtual_now.now")
 	return now
 }
@@ -527,7 +682,8 @@ func virtual_now(state *Virtual_Timeline) (now Monotonic_Moment) {
 func virtual_submit(
 	state *Virtual_Timeline, completion *Completion, delay Duration, callback Callback,
 ) {
-	virtual_arm(state, completion, callback)
+	virtual_queue_has_capacity(state)
+	virtual_arm(completion, callback)
 	completion.Ready_At = virtual_now(state) + Monotonic_Moment(delay)
 	virtual_enqueue(state, completion)
 }
@@ -535,7 +691,7 @@ func virtual_submit(
 // Arm completion, but never put it on ready-time queue. Event listener use this. Assert
 // completion is own original, not by-value copy. Then move it along lifecycle machine.
 // Completion armed while armed panic on armed-to-armed edge.
-func virtual_arm(state *Virtual_Timeline, completion *Completion, callback Callback) {
+func virtual_arm(completion *Completion, callback Callback) {
 	original := completion.Self == nil || completion.Self == completion
 	invariant.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
@@ -544,7 +700,8 @@ func virtual_arm(state *Virtual_Timeline, completion *Completion, callback Callb
 	completion.Data = 0
 	completion.Error = nil
 	completion.Armed = true
-	completion.Callback = func() { callback(completion) }
+	completion.Callback = callback
+	completion.Event = 0
 }
 
 // Put already armed completion on queue as due now.
@@ -556,31 +713,48 @@ func virtual_enqueue_now(state *Virtual_Timeline, completion *Completion) {
 // Insert completion into queue in Ready_At order, earliest first.
 func virtual_enqueue(state *Virtual_Timeline, completion *Completion) {
 	index := 0
-	for index < len(state.Queue) && state.Queue[index].Ready_At <= completion.Ready_At {
+	for index < state.Queue_Count && state.Queue[index].Ready_At <= completion.Ready_At {
 		index++
 	}
-	state.Queue = append(state.Queue, nil)
-	copy(state.Queue[index+1:], state.Queue[index:])
+	copy(state.Queue[index+1:state.Queue_Count+1], state.Queue[index:state.Queue_Count])
 	state.Queue[index] = completion
+	state.Queue_Count++
+}
+
+// Capacity rejects new ownership before any caller or event state changes.
+func virtual_queue_has_capacity(state *Virtual_Timeline) {
+	invariant.Always(state.Queue_Count < len(state.Queue),
+		"A virtual timeline never exceed caller-owned queue capacity.")
 }
 
 // Fire earliest completion when due as of now. Report whether it fire.
 func virtual_step(state *Virtual_Timeline) (advanced bool) {
-	if len(state.Queue) == 0 {
+	if state.Queue_Count == 0 {
 		return false
 	}
 	if state.Queue[0].Ready_At > virtual_now(state) {
 		return false
 	}
 	completion := state.Queue[0]
-	state.Queue = state.Queue[1:]
+	last := state.Queue_Count - 1
+	copy(state.Queue[:last], state.Queue[1:state.Queue_Count])
+	state.Queue[last] = nil
+	state.Queue_Count--
 	// Go back to idle before callback run. Callback can then submit own completion again.
 	// Repeating-timer pattern.
 	invariant.Always(completion.Armed, "A delivered completion was armed.")
 	completion.Armed = false
 	callback := completion.Callback
 	completion.Callback = nil
-	callback()
+	event := completion.Event
+	completion.Event = 0
+	if event != 0 {
+		entry := virtual_event_entry(state, event)
+		entry.Armed = false
+		entry.Ready = false
+		entry.Listener = nil
+	}
+	callback(completion)
 	return true
 }
 
@@ -598,7 +772,7 @@ func virtual_drain(state *Virtual_Timeline) {
 // crash or partition quiet node. They matter most: they strike while nothing scheduled.
 func virtual_run(state *Virtual_Timeline) {
 	virtual_drain(state)
-	state.Ticks++
+	state.Virtual.Ticks++
 }
 
 // Drive until duration elapse. Deliver completions as they come due.
@@ -626,35 +800,54 @@ func virtual_run_until(
 	return true
 }
 
-// Run pump as top-level drive. Assert no drive already in progress. Run called from inside
-// completion callback thus panic, never re-enter driver.
-func virtual_drive(state *Virtual_Timeline, pump func()) {
+// Drive begin rejects reentrancy before any queue state can change.
+func virtual_drive_begin(state *Virtual_Timeline) {
 	invariant.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
-	defer func() { state.Drive_Active = false }()
-	pump()
+}
+
+// Drive end remains deferred so callback panic cannot leave the driver permanently active.
+func virtual_drive_end(state *Virtual_Timeline) {
+	state.Drive_Active = false
 }
 
 // Build driver over state. Capability that advance time. Only main or test hold it.
 func virtual_timeline_to_driver(state *Virtual_Timeline) (driver Driver) {
 	return Driver{
-		Run: func() (err error) {
-			virtual_drive(state, func() { virtual_run(state) })
-			return nil
-		},
-		Run_For: func(duration Duration) (err error) {
-			virtual_drive(state, func() { virtual_run_for(state, duration) })
-			return nil
-		},
-		Run_Until: func(
-			timeout Duration, done func() (finished bool),
-		) (completed bool, err error) {
-			virtual_drive(state, func() {
-				completed = virtual_run_until(state, timeout, done)
-			})
-			return completed, nil
-		},
-		Deinit: func() {},
+		State:     unsafe.Pointer(state),
+		Run:       virtual_driver_run,
+		Run_For:   virtual_driver_run_for,
+		Run_Until: virtual_driver_run_until,
+		Deinit:    virtual_driver_deinit,
 	}
+}
+
+func virtual_driver_run(state unsafe.Pointer) (err error) {
+	timeline := (*Virtual_Timeline)(state)
+	virtual_drive_begin(timeline)
+	defer virtual_drive_end(timeline)
+	virtual_run(timeline)
+	return nil
+}
+
+func virtual_driver_run_for(state unsafe.Pointer, duration Duration) (err error) {
+	timeline := (*Virtual_Timeline)(state)
+	virtual_drive_begin(timeline)
+	defer virtual_drive_end(timeline)
+	virtual_run_for(timeline, duration)
+	return nil
+}
+
+func virtual_driver_run_until(
+	state unsafe.Pointer, timeout Duration, done func() (finished bool),
+) (completed bool, err error) {
+	timeline := (*Virtual_Timeline)(state)
+	virtual_drive_begin(timeline)
+	defer virtual_drive_end(timeline)
+	return virtual_run_until(timeline, timeout, done), nil
+}
+
+func virtual_driver_deinit(state unsafe.Pointer) {
+	invariant.Always(state != nil, "A virtual driver deinitializes caller-owned state.")
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"runtime"
 	"syscall"
+	"unsafe"
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/nbio"
@@ -132,7 +133,8 @@ func operating_system_submit(completion *time.Completion) {
 // every IO operation use, thus one timeline hold whole run.
 func operating_system_wire_effects(state *Operating_System, system *os.OS) {
 	system.Watch_Signal = func(
-		completion *time.Completion, signal os.Signal, deadline time.Duration,
+		_ unsafe.Pointer, completion *time.Completion, signal os.Signal,
+		deadline time.Duration,
 		callback os.Signal_Callback,
 	) {
 		invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
@@ -146,7 +148,8 @@ func operating_system_wire_effects(state *Operating_System, system *os.OS) {
 		})
 	}
 	system.Spawn = func(
-		completion *time.Completion, request os.Process_Request, deadline time.Duration,
+		_ unsafe.Pointer, completion *time.Completion, request os.Process_Request,
+		deadline time.Duration,
 		callback os.Process_Callback,
 	) {
 		invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
@@ -240,7 +243,7 @@ func operating_system_spawn(
 ) {
 	spawn, start_err := process_start(state, request)
 	if start_err != nil {
-		completion.Callback = func() {
+		completion.Callback = func(_ *time.Completion) {
 			callback(completion, os.Process_Result{}, start_err)
 		}
 		state.Completed = append(state.Completed, completion)
@@ -249,7 +252,7 @@ func operating_system_spawn(
 	spawn.Completion = completion
 	spawn.Callback = callback
 	spawn.Request = request
-	spawn.Started = state.Host.Now_Monotonic()
+	spawn.Started = time.Clock_Now_Monotonic(state.Host)
 	state.Spawns[spawn.Identifier] = spawn
 	process_arm_pipes(state)
 	process_watch_exit(state, spawn)
@@ -682,7 +685,7 @@ func process_finish(state *Operating_System, spawn *Spawn) {
 	delete(state.Spawns, spawn.Identifier)
 	process_close_pipes(spawn)
 	spawn.Result.Usage.Wall = time.Duration(
-		int64(state.Host.Now_Monotonic()) - int64(spawn.Started))
+		int64(time.Clock_Now_Monotonic(state.Host)) - int64(spawn.Started))
 	result := spawn.Result
 	err := error(nil)
 	if spawn.Expired {
@@ -692,7 +695,7 @@ func process_finish(state *Operating_System, spawn *Spawn) {
 	}
 	completion := spawn.Completion
 	callback := spawn.Callback
-	completion.Callback = func() { callback(completion, result, err) }
+	completion.Callback = func(_ *time.Completion) { callback(completion, result, err) }
 	state.Completed = append(state.Completed, completion)
 }
 
@@ -814,36 +817,61 @@ func operating_system_wire_file(state *Operating_System, loop *nbio.Storage) {
 // Close primitives are not here: they name descriptor, which is business of IO surface, not of
 // timeline.
 func operating_system_wire_timer(state *Operating_System, pump *time.Timeline) {
-	pump.Submit = func(
-		completion *time.Completion, delay time.Duration, callback time.Callback,
-	) {
-		operating_system_submit(completion)
-		operating_system_timeout(state, state.Host, completion, delay, callback)
-	}
-	pump.Timeout = func(
-		completion *time.Completion, duration time.Duration, callback time.Callback,
-	) {
-		invariant.Always(duration > 0, "A timeout duration is positive.")
-		operating_system_submit(completion)
-		operating_system_timeout(state, state.Host, completion, duration, callback)
-	}
-	pump.Open_Event = func() (event time.Event, err error) {
-		return platform_event_open(state)
-	}
-	pump.Event_Listen = func(
-		event time.Event, completion *time.Completion,
-		callback time.Callback,
-	) {
-		operating_system_submit(completion)
-		operating_system_event_listen(state, event, completion, callback)
-	}
-	pump.Event_Trigger = func(event time.Event, completion *time.Completion) {
-		platform_event_trigger(state, event, completion.Kernel_Identifier)
-	}
-	pump.Close_Event = func(event time.Event) {
-		operating_system_assert_event_drained(state, event)
-		platform_event_close(state, event)
-	}
+	pump.State = unsafe.Pointer(state)
+	pump.Submit = operating_system_timeline_submit
+	pump.Timeout = operating_system_timeline_timeout
+	pump.Open_Event = operating_system_timeline_open_event
+	pump.Event_Listen = operating_system_timeline_event_listen
+	pump.Event_Trigger = operating_system_timeline_event_trigger
+	pump.Close_Event = operating_system_timeline_close_event
+}
+
+func operating_system_timeline_submit(
+	state unsafe.Pointer, completion *time.Completion, delay time.Duration,
+	callback time.Callback,
+) {
+	system := (*Operating_System)(state)
+	operating_system_submit(completion)
+	operating_system_timeout(system, system.Host, completion, delay, callback)
+}
+
+func operating_system_timeline_timeout(
+	state unsafe.Pointer, completion *time.Completion, duration time.Duration,
+	callback time.Callback,
+) {
+	invariant.Always(duration > 0, "A timeout duration is positive.")
+	system := (*Operating_System)(state)
+	operating_system_submit(completion)
+	operating_system_timeout(system, system.Host, completion, duration, callback)
+}
+
+func operating_system_timeline_open_event(
+	state unsafe.Pointer,
+) (event time.Event, err error) {
+	return platform_event_open((*Operating_System)(state))
+}
+
+func operating_system_timeline_event_listen(
+	state unsafe.Pointer, event time.Event, completion *time.Completion,
+	callback time.Callback,
+) {
+	system := (*Operating_System)(state)
+	operating_system_submit(completion)
+	operating_system_event_listen(system, event, completion, callback)
+}
+
+func operating_system_timeline_event_trigger(
+	state unsafe.Pointer, event time.Event, completion *time.Completion,
+) {
+	platform_event_trigger(
+		(*Operating_System)(state), event, completion.Kernel_Identifier,
+	)
+}
+
+func operating_system_timeline_close_event(state unsafe.Pointer, event time.Event) {
+	system := (*Operating_System)(state)
+	operating_system_assert_event_drained(system, event)
+	platform_event_close(system, event)
 }
 
 // Wire two members both halves share: asynchronous close of any descriptor, and leak check that
@@ -1046,7 +1074,7 @@ func operating_system_empty_transfer_complete(
 ) {
 	completion.Data = 0
 	completion.Error = nil
-	completion.Callback = func() { callback(completion) }
+	completion.Callback = callback
 	state.Completed = append(state.Completed, completion)
 }
 
@@ -1079,7 +1107,7 @@ func operating_system_directory_pass(
 	callback nbio.Directory_Callback,
 ) {
 	entries, pass_err := file_directory_pass(int(directory), buffer)
-	completion.Callback = func() { callback(completion, entries, pass_err) }
+	completion.Callback = func(_ *time.Completion) { callback(completion, entries, pass_err) }
 	state.Completed = append(state.Completed, completion)
 }
 
@@ -1119,8 +1147,8 @@ func operating_system_timeout(
 		operating_system_operation_submit(state, operation)
 		return
 	}
-	completion.Ready_At = host.Now_Monotonic() + time.Monotonic_Moment(duration)
-	completion.Callback = func() { callback(completion) }
+	completion.Ready_At = time.Clock_Now_Monotonic(host) + time.Monotonic_Moment(duration)
+	completion.Callback = callback
 	operating_system_insert(state, completion)
 }
 
@@ -1131,8 +1159,9 @@ func operating_system_internal_timeout(
 	state *Operating_System, completion *time.Completion, duration time.Duration,
 	callback time.Callback,
 ) {
-	completion.Ready_At = state.Host.Now_Monotonic() + time.Monotonic_Moment(duration)
-	completion.Callback = func() { callback(completion) }
+	completion.Ready_At = time.Clock_Now_Monotonic(state.Host) +
+		time.Monotonic_Moment(duration)
+	completion.Callback = callback
 	operating_system_insert(state, completion)
 }
 
@@ -1167,38 +1196,48 @@ func operating_system_completion_remove(
 // never code that only submit IO.
 func operating_system_to_driver(state *Operating_System) (driver time.Driver) {
 	return time.Driver{
-		Run: func() (err error) {
-			return operating_system_drive(state, func() (err error) {
-				return operating_system_run(state)
-			})
-		},
-		Run_For: func(duration time.Duration) (err error) {
-			return operating_system_drive(state, func() (err error) {
-				return operating_system_run_for(state, duration)
-			})
-		},
-		Run_Until: func(
-			timeout time.Duration, done func() (finished bool),
-		) (completed bool, err error) {
-			err = operating_system_drive(state, func() (drive_err error) {
-				completed, drive_err = operating_system_drive_until(
-					state, timeout, done,
-				)
-				return drive_err
-			})
-			return completed, err
-		},
-		Deinit: func() {
-			operating_system_deinitialize(state)
-		},
+		State:     unsafe.Pointer(state),
+		Run:       operating_system_driver_run,
+		Run_For:   operating_system_driver_run_for,
+		Run_Until: operating_system_driver_run_until,
+		Deinit:    operating_system_driver_deinit,
 	}
+}
+
+func operating_system_driver_run(state unsafe.Pointer) (err error) {
+	system := (*Operating_System)(state)
+	operating_system_drive_begin(system)
+	defer operating_system_drive_end(system)
+	return operating_system_run(system)
+}
+
+func operating_system_driver_run_for(
+	state unsafe.Pointer, duration time.Duration,
+) (err error) {
+	system := (*Operating_System)(state)
+	operating_system_drive_begin(system)
+	defer operating_system_drive_end(system)
+	return operating_system_run_for(system, duration)
+}
+
+func operating_system_driver_run_until(
+	state unsafe.Pointer, timeout time.Duration, done func() (finished bool),
+) (completed bool, err error) {
+	system := (*Operating_System)(state)
+	operating_system_drive_begin(system)
+	defer operating_system_drive_end(system)
+	return operating_system_drive_until(system, timeout, done)
+}
+
+func operating_system_driver_deinit(state unsafe.Pointer) {
+	operating_system_deinitialize((*Operating_System)(state))
 }
 
 // Drive until done, or until host deadline. Propagate every scheduler error.
 func operating_system_drive_until(
 	state *Operating_System, timeout time.Duration, done func() (finished bool),
 ) (completed bool, err error) {
-	deadline := state.Host.Now_Monotonic() + time.Monotonic_Moment(timeout)
+	deadline := time.Clock_Now_Monotonic(state.Host) + time.Monotonic_Moment(timeout)
 	for !done() {
 		wait, expired := operating_system_run_until_wait(state, deadline, timeout)
 		if expired {
@@ -1219,7 +1258,7 @@ func operating_system_run_until_wait(
 	if len(state.Completed) > 0 {
 		return 0, false
 	}
-	now := state.Host.Now_Monotonic()
+	now := time.Clock_Now_Monotonic(state.Host)
 	if timeout >= 0 {
 		if now >= deadline {
 			return 0, true
@@ -1249,12 +1288,14 @@ func operating_system_in_flight(state *Operating_System) (in_flight bool) {
 // Run pump as top-level drive. Panic when drive is already in progress, thus Run* called from
 // inside completion callback fail loud instead of re-enter driver. Internal run functions call
 // one another direct, not through here, thus own iteration of drive does not trip it.
-func operating_system_drive(state *Operating_System, pump func() (err error)) (err error) {
+func operating_system_drive_begin(state *Operating_System) {
 	invariant.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
-	defer func() { state.Drive_Active = false }()
-	return pump()
+}
+
+func operating_system_drive_end(state *Operating_System) {
+	state.Drive_Active = false
 }
 
 // Run one nonblocking flush.
@@ -1264,9 +1305,9 @@ func operating_system_run(state *Operating_System) (err error) {
 
 // Run flush passes until duration elapse, with deadline passed direct to platform.
 func operating_system_run_for(state *Operating_System, duration time.Duration) (err error) {
-	deadline := state.Host.Now_Monotonic() + time.Monotonic_Moment(duration)
-	for state.Host.Now_Monotonic() < deadline {
-		now := state.Host.Now_Monotonic()
+	deadline := time.Clock_Now_Monotonic(state.Host) + time.Monotonic_Moment(duration)
+	for time.Clock_Now_Monotonic(state.Host) < deadline {
+		now := time.Clock_Now_Monotonic(state.Host)
 		if now >= deadline {
 			return nil
 		}
@@ -1306,7 +1347,7 @@ func operating_system_wait_cap(
 ) (capped time.Monotonic_Moment) {
 	capped = wait
 	if len(state.Timeouts) > 0 {
-		until_timeout := state.Timeouts[0].Ready_At - state.Host.Now_Monotonic()
+		until_timeout := state.Timeouts[0].Ready_At - time.Clock_Now_Monotonic(state.Host)
 		if capped < 0 {
 			capped = until_timeout
 		} else if until_timeout < capped {
@@ -1320,10 +1361,11 @@ func operating_system_wait_cap(
 		} else if interval < capped {
 			capped = interval
 		}
-		until_signal := state.Signal_Waiters[0].Deadline - state.Host.Now_Monotonic()
+		until_signal := state.Signal_Waiters[0].Deadline -
+			time.Clock_Now_Monotonic(state.Host)
 		for index := 1; index < len(state.Signal_Waiters); index++ {
 			candidate := state.Signal_Waiters[index].Deadline -
-				state.Host.Now_Monotonic()
+				time.Clock_Now_Monotonic(state.Host)
 			if candidate < until_signal {
 				until_signal = candidate
 			}
@@ -1339,7 +1381,7 @@ func operating_system_wait_cap(
 			if operation.Deadline == 0 {
 				continue
 			}
-			until_operation := operation.Deadline - state.Host.Now_Monotonic()
+			until_operation := operation.Deadline - time.Clock_Now_Monotonic(state.Host)
 			if capped < 0 {
 				capped = until_operation
 			} else if until_operation < capped {
@@ -1356,7 +1398,7 @@ func operating_system_wait_cap(
 
 // Move every elapsed timeout and finite extension waiter into completed queue.
 func operating_system_expire(state *Operating_System) (err error) {
-	now := state.Host.Now_Monotonic()
+	now := time.Clock_Now_Monotonic(state.Host)
 	for len(state.Timeouts) > 0 && state.Timeouts[0].Ready_At <= now {
 		expired := state.Timeouts[0]
 		state.Timeouts = state.Timeouts[1:]
@@ -1371,7 +1413,7 @@ func operating_system_expire_operations(state *Operating_System) (err error) {
 	if platform_uses_kernel_timeouts() {
 		return nil
 	}
-	now := state.Host.Now_Monotonic()
+	now := time.Clock_Now_Monotonic(state.Host)
 	expired_operations := []*Operating_System_Operation{}
 	for _, operation := range state.Operations {
 		if operation.Deadline == 0 {
@@ -1404,7 +1446,7 @@ func operating_system_flush_completed(state *Operating_System) {
 		completion.Armed = false
 		callback := completion.Callback
 		completion.Callback = nil
-		callback()
+		callback(completion)
 	}
 }
 
@@ -1425,10 +1467,11 @@ func operating_system_accept(
 	timeout time.Duration, callback time.Callback,
 ) {
 	operation := &Operating_System_Operation{
-		Completion:    completion,
-		Kind:          OPERATING_SYSTEM_OPERATION_ACCEPT,
-		Descriptor:    int(listener),
-		Deadline:      state.Host.Now_Monotonic() + time.Monotonic_Moment(timeout),
+		Completion: completion,
+		Kind:       OPERATING_SYSTEM_OPERATION_ACCEPT,
+		Descriptor: int(listener),
+		Deadline: time.Clock_Now_Monotonic(state.Host) +
+			time.Monotonic_Moment(timeout),
 		Deadline_Span: operating_system_timeout_span(timeout),
 		Deliver:       callback,
 	}
@@ -1443,11 +1486,12 @@ func operating_system_connect(
 	address nbio.Address, timeout time.Duration, callback time.Callback,
 ) {
 	operation := &Operating_System_Operation{
-		Completion:    completion,
-		Kind:          OPERATING_SYSTEM_OPERATION_CONNECT,
-		Descriptor:    int(socket),
-		Address:       address,
-		Deadline:      state.Host.Now_Monotonic() + time.Monotonic_Moment(timeout),
+		Completion: completion,
+		Kind:       OPERATING_SYSTEM_OPERATION_CONNECT,
+		Descriptor: int(socket),
+		Address:    address,
+		Deadline: time.Clock_Now_Monotonic(state.Host) +
+			time.Monotonic_Moment(timeout),
 		Deadline_Span: operating_system_timeout_span(timeout),
 		Deliver:       callback,
 	}
@@ -1464,7 +1508,8 @@ func operating_system_receive(
 		Completion: completion,
 		Kind:       OPERATING_SYSTEM_OPERATION_RECEIVE,
 		Descriptor: int(socket), Buffer: platform_buffer_limit(buffer),
-		Deadline:      state.Host.Now_Monotonic() + time.Monotonic_Moment(timeout),
+		Deadline: time.Clock_Now_Monotonic(state.Host) +
+			time.Monotonic_Moment(timeout),
 		Deadline_Span: operating_system_timeout_span(timeout),
 		Deliver:       callback,
 	}
@@ -1481,7 +1526,8 @@ func operating_system_send(
 		Completion: completion,
 		Kind:       OPERATING_SYSTEM_OPERATION_SEND,
 		Descriptor: int(socket), Buffer: platform_buffer_limit(buffer),
-		Deadline:      state.Host.Now_Monotonic() + time.Monotonic_Moment(timeout),
+		Deadline: time.Clock_Now_Monotonic(state.Host) +
+			time.Monotonic_Moment(timeout),
 		Deadline_Span: operating_system_timeout_span(timeout),
 		Deliver:       callback,
 	}
@@ -1529,7 +1575,7 @@ func operating_system_watch_signal(
 	system := signal_to_operating_system(kind)
 	state.Signal_Waiters = append(state.Signal_Waiters, Signal_Waiter{
 		System: system, Kind: kind, Completion: completion, Callback: callback,
-		Deadline: state.Host.Now_Monotonic() + time.Monotonic_Moment(deadline),
+		Deadline: time.Clock_Now_Monotonic(state.Host) + time.Monotonic_Moment(deadline),
 	})
 	operating_system_signal_notify(state.Signals, system)
 }
@@ -1573,7 +1619,7 @@ func operating_system_signal_deliver(
 			continue
 		}
 		delivered := waiter
-		delivered.Completion.Callback = func() {
+		delivered.Completion.Callback = func(_ *time.Completion) {
 			delivered.Callback(delivered.Completion, delivered.Kind, nil)
 		}
 		state.Completed = append(state.Completed, delivered.Completion)
@@ -1592,7 +1638,7 @@ func operating_system_expire_signals(state *Operating_System, now time.Monotonic
 			continue
 		}
 		expired := waiter
-		expired.Completion.Callback = func() {
+		expired.Completion.Callback = func(_ *time.Completion) {
 			expired.Callback(
 				expired.Completion, os.SIGNAL_EXPIRED, time.Deadline_Exceeded,
 			)

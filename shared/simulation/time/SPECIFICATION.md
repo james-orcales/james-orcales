@@ -35,6 +35,12 @@ collectable. Clear-before-call lets callback arm same completion again without e
 Open_Event make cross-thread event primitive. Event_Listen arm one completion. Event_Trigger
 make that completion ready. Close_Event release event only after its listener drain.
 
+### Capacity
+
+New_Virtual_Timeline receives caller-owned state, completion storage, and event storage. This
+keeps construction allocation-free and gives one hard bound to every run. A full store rejects
+new work before it changes completion or event lifecycle state.
+
 ### Run Until
 
 Run_Until drive loop until its predicate report true. Deliver completions each step, thus

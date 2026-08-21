@@ -12,10 +12,12 @@ func system_executable() (path string, err error) {
 }
 
 // The runtime owns Args, so a caller must not receive its slice.
-func system_arguments() (arguments []string) {
-	arguments = make([]string, len(os.Args))
-	copy(arguments, os.Args)
-	return arguments
+func system_arguments(destination []string) (count int) {
+	return copy(destination, os.Args)
+}
+
+func system_argument_count() (count int) {
+	return len(os.Args)
 }
 
 // Reads the machine name from uname. Go exports no Gethostname, and Linux has no gethostname

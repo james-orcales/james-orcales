@@ -9,38 +9,128 @@ package os
 
 import (
 	"syscall"
+	"unsafe"
 
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/os"
 )
 
-// New_Operating_System returns an OS backed by the host kernel. Every reading stays inside a
-// closure and crosses no function of this package, because a value the machine supplies carries
-// no domain a bundle could state.
+// New_Operating_System returns OS backed by host kernel. Static procedures keep vtable free of
+// captured state while values supplied by machine need no separate domain bundle.
 // It fills the ambient readers alone. The signal watch and the spawn retire a completion on a
 // loop's queue, so the backend that owns that queue completes this OS — see
 // nbio/default.New_Operating_System_IO, which takes what this returns and hands back the whole
 // vtable.
 func New_Operating_System() (host os.OS) {
 	host = os.OS{
-		// The runtime captured argv at startup and os.Args is that slice itself, so the
-		// copy stops a caller from editing what every later reader sees.
-		Arguments:   func() (arguments []string) { return system_arguments() },
-		Environment: func() (variables []string) { return syscall.Environ() },
-		Variable: func(name string) (value string, found bool) {
-			return syscall.Getenv(name)
-		},
-		Executable:         system_executable,
-		Working_Directory:  syscall.Getwd,
-		Hostname:           system_hostname,
-		Process_Identifier: syscall.Getpid,
-
-		Effective_User_Identifier: syscall.Geteuid,
-		Self_Exec: func(path string, arguments []string, environment []string) (err error) {
-			if environment == nil {
-				environment = syscall.Environ()
-			}
-			return syscall.Exec(path, arguments, environment)
-		},
+		Arguments:                 system_arguments_from_state,
+		Environment:               system_environment,
+		Variable:                  system_variable,
+		Executable:                system_executable_from_state,
+		Working_Directory:         system_working_directory,
+		Hostname:                  system_hostname_from_state,
+		Process_Identifier:        system_process_identifier,
+		Effective_User_Identifier: system_effective_user_identifier,
+		Self_Exec:                 system_self_exec,
 	}
 	return host
+}
+
+// OS_Arguments keeps default-package callers on pure OS operation.
+func OS_Arguments(host os.OS, destination []string) (count int) {
+	return os.OS_Arguments(host, destination)
+}
+
+// OS_Environment keeps default-package callers on pure OS operation.
+func OS_Environment(host os.OS, destination []string) (count int) {
+	return os.OS_Environment(host, destination)
+}
+
+// OS_Variable keeps default-package callers on pure OS operation.
+func OS_Variable(host os.OS, name string) (value string, found bool) {
+	return os.OS_Variable(host, name)
+}
+
+// OS_Executable keeps default-package callers on pure OS operation.
+func OS_Executable(host os.OS) (path string, err error) {
+	return os.OS_Executable(host)
+}
+
+// OS_Working_Directory keeps default-package callers on pure OS operation.
+func OS_Working_Directory(host os.OS) (path string, err error) {
+	return os.OS_Working_Directory(host)
+}
+
+// OS_Hostname keeps default-package callers on pure OS operation.
+func OS_Hostname(host os.OS) (name string, err error) {
+	return os.OS_Hostname(host)
+}
+
+// OS_Process_Identifier keeps default-package callers on pure OS operation.
+func OS_Process_Identifier(host os.OS) (identifier int) {
+	return os.OS_Process_Identifier(host)
+}
+
+// OS_Effective_User_Identifier keeps default-package callers on pure OS operation.
+func OS_Effective_User_Identifier(host os.OS) (identifier int) {
+	return os.OS_Effective_User_Identifier(host)
+}
+
+// OS_Self_Exec keeps default-package callers on pure OS operation.
+func OS_Self_Exec(
+	host os.OS, path string, arguments []string, environment []string,
+) (err error) {
+	return os.OS_Self_Exec(host, path, arguments, environment)
+}
+
+func system_arguments_from_state(
+	_ unsafe.Pointer, destination []string,
+) (count int) {
+	invariant.Always(len(destination) >= system_argument_count(),
+		"Caller-owned string storage holds complete host arguments.")
+	return system_arguments(destination)
+}
+
+func system_environment(
+	_ unsafe.Pointer, destination []string,
+) (count int) {
+	variables := syscall.Environ()
+	invariant.Always(len(destination) >= len(variables),
+		"Caller-owned string storage holds complete host environment.")
+	return copy(destination, variables)
+}
+
+func system_variable(
+	_ unsafe.Pointer, name string,
+) (value string, found bool) {
+	return syscall.Getenv(name)
+}
+
+func system_executable_from_state(_ unsafe.Pointer) (path string, err error) {
+	return system_executable()
+}
+
+func system_working_directory(_ unsafe.Pointer) (path string, err error) {
+	return syscall.Getwd()
+}
+
+func system_hostname_from_state(_ unsafe.Pointer) (name string, err error) {
+	return system_hostname()
+}
+
+func system_process_identifier(_ unsafe.Pointer) (identifier int) {
+	return syscall.Getpid()
+}
+
+func system_effective_user_identifier(_ unsafe.Pointer) (identifier int) {
+	return syscall.Geteuid()
+}
+
+func system_self_exec(
+	_ unsafe.Pointer, path string, arguments []string, environment []string,
+) (err error) {
+	if environment == nil {
+		environment = syscall.Environ()
+	}
+	return syscall.Exec(path, arguments, environment)
 }

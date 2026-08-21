@@ -7,6 +7,7 @@ import (
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/os/default"
+	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )
 
@@ -20,15 +21,16 @@ func TestMain(m *testing.M) {
 // constructor asserts every slot is filled, so reaching the end proves the vtable is whole.
 func Test_Operating_System_Smoke(t *testing.T) {
 	host := os.New_Operating_System()
-	testify.Not_Empty(t, host.Arguments())
-	testify.Positive(t, host.Process_Identifier())
-	directory, directory_err := host.Working_Directory()
+	arguments := [slices.SLICE_COUNT_MAXIMUM]string{}
+	testify.Positive(t, os.OS_Arguments(host, arguments[:]))
+	testify.Positive(t, os.OS_Process_Identifier(host))
+	directory, directory_err := os.OS_Working_Directory(host)
 	testify.No_Error(t, directory_err)
 	testify.True(t, len(directory) > 0 && directory[0] == '/', directory)
-	executable, executable_err := host.Executable()
+	executable, executable_err := os.OS_Executable(host)
 	testify.No_Error(t, executable_err)
 	testify.Not_Empty(t, executable)
-	name, name_err := host.Hostname()
+	name, name_err := os.OS_Hostname(host)
 	testify.No_Error(t, name_err)
 	testify.Not_Empty(t, name)
 }
@@ -37,10 +39,12 @@ func Test_Operating_System_Smoke(t *testing.T) {
 // the kernel by different calls: Environment reads the whole block and Variable reads one name.
 func Test_Operating_System_Environment(t *testing.T) {
 	host := os.New_Operating_System()
-	variables := host.Environment()
-	if !testify.Not_Empty(t, variables) {
+	storage := [slices.SLICE_COUNT_MAXIMUM]string{}
+	count := os.OS_Environment(host, storage[:])
+	if !testify.Positive(t, count) {
 		return
 	}
+	variables := storage[:count]
 	for _, variable := range variables {
 		separator := -1
 		for index := range variable {
@@ -54,7 +58,7 @@ func Test_Operating_System_Environment(t *testing.T) {
 		}
 		name := variable[:separator]
 		expected := variable[separator+1:]
-		value, single := host.Variable(name)
+		value, single := os.OS_Variable(host, name)
 		if !testify.True(t, single, name) {
 			continue
 		}
@@ -62,15 +66,27 @@ func Test_Operating_System_Environment(t *testing.T) {
 	}
 }
 
-// Test_Operating_System_Arguments_Copy verifies a caller editing the returned argv cannot reach
-// the runtime's own slice, which every later reader shares.
+// Test_Operating_System_Arguments_Copy verifies caller storage cannot reach runtime-owned argv.
 func Test_Operating_System_Arguments_Copy(t *testing.T) {
 	host := os.New_Operating_System()
-	first := host.Arguments()
-	original := first[0]
-	first[0] = "edited"
-	second := host.Arguments()
-	testify.Equal(t, original, second[0])
+	storage := [slices.SLICE_COUNT_MAXIMUM]string{}
+	first_count := os.OS_Arguments(host, storage[:])
+	original := storage[0]
+	storage[0] = "edited"
+	second_count := os.OS_Arguments(host, storage[:])
+	testify.Equal(t, first_count, second_count)
+	testify.Equal(t, original, storage[0])
+}
+
+// Host readers reject partial caller storage because truncating ambient state hides input.
+func Test_Operating_System_Destination_Capacity(t *testing.T) {
+	host := os.New_Operating_System()
+	testify.Panics(t, func() {
+		os.OS_Arguments(host, nil)
+	})
+	testify.Panics(t, func() {
+		os.OS_Environment(host, nil)
+	})
 }
 
 // Nil preserves root-provided ambient environment; explicit empty slice prevents secret leak.
@@ -85,12 +101,14 @@ func Test_Operating_System_Self_Exec_Environment(t *testing.T) {
 			environment = []string{}
 			check = "test -z \"${" + MARKER + "+x}\""
 		}
-		err := host.Self_Exec("/bin/sh", []string{"sh", "-c", check}, environment)
+		err := os.OS_Self_Exec(
+			host, "/bin/sh", []string{"sh", "-c", check}, environment,
+		)
 		t.Fatal(err)
 	}
 
 	host := os.New_Operating_System()
-	executable, executable_err := host.Executable()
+	executable, executable_err := os.OS_Executable(host)
 	if !testify.No_Error(t, executable_err) {
 		return
 	}
