@@ -161,3 +161,19 @@ a JSON object, since it suppresses by level alone and never swallows output it c
 
 New_Console_Logger renders info and up to the console sink and tees every level as raw JSON to the
 capture sink, so one logger drives a quiet console and a full capture from injected writers.
+
+# Transforms Are Zero Allocation
+
+A Console render and a Level_Filter pass over a ready inner stream perform zero heap
+allocations: each works in caller-owned storage.
+
+# Oversized Payload Retires Buffer Full
+
+A Write whose transform outgrows its caller-owned storage retires with nbio.Stream_Buffer_Full
+and passes nothing to the inner stream.
+
+# Transform Busy Drops Second Write
+
+A Write that arrives while an earlier Write still holds the transform's storage, as two loggers
+sharing one Console produce, retires with nbio.Stream_Buffer_Full and leaves the in-flight bytes
+untouched.

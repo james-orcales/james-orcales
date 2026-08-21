@@ -105,5 +105,6 @@ inside this repo.)
 
 `shared/jlog/default`'s `Default` is one `jlog.Logger` the package-level functions (`Info`,
 `Error`, ...) write through, with one owner like any other. It is the zero Logger until the
-root assigns `jlog.Default = jlog.New_Default_Logger(loop.Storage, stderr)`; from then on
+root assigns `jlog.Default = jlog.New_Default_Logger(&state, loop.Storage, stderr)` over a
+`jlog.Default_Logger` state it owns, with its `Line` storage filled; from then on
 each line goes to that descriptor with `nbio.Storage_Write`, and the root's loop retires it.

@@ -16,7 +16,7 @@ import (
 // debug noise stays out of the stderr stream unless a caller raises verbosity explicitly.
 func Test_Default_Floor_Is_Info(t *testing.T) {
 	writes := &storage_writes{}
-	logger := jlog.New_Default_Logger(recording_storage(writes), TEST_STDERR)
+	logger := jlog.New_Default_Logger(new_state(), recording_storage(writes), TEST_STDERR)
 	if logger.Floor != jlog.LEVEL_INFO {
 		t.Fatalf("New_Default_Logger Floor = %v, want LEVEL_INFO", logger.Floor)
 	}
@@ -29,7 +29,7 @@ func Test_Default_Writes_Stderr_Through_Storage(t *testing.T) {
 	writes := &storage_writes{}
 	saved := jlog.Default
 	t.Cleanup(func() { jlog.Default = saved })
-	jlog.Default = jlog.New_Default_Logger(recording_storage(writes), TEST_STDERR)
+	jlog.Default = jlog.New_Default_Logger(new_state(), recording_storage(writes), TEST_STDERR)
 	jlog.Default.Auto_Timestamp = false
 	jlog.Info("hello")
 	if len(writes.Queue) != 1 {
@@ -77,7 +77,7 @@ func Test_Default_Writes_To_A_Pipe(t *testing.T) {
 
 	saved := jlog.Default
 	t.Cleanup(func() { jlog.Default = saved })
-	jlog.Default = jlog.New_Default_Logger(loop.Storage, write_end)
+	jlog.Default = jlog.New_Default_Logger(new_state(), loop.Storage, write_end)
 	jlog.Default.Auto_Timestamp = false
 	jlog.Info("through a pipe")
 
@@ -115,6 +115,11 @@ func Test_Default_Writes_To_A_Pipe(t *testing.T) {
 // TEST_STDERR stands in for the descriptor a root would name; the test only checks it is
 // passed through untouched.
 const TEST_STDERR nbio.File = 2
+
+// Fresh default-logger state with its own line storage, as a root would keep.
+func new_state() (state *jlog.Default_Logger) {
+	return &jlog.Default_Logger{Line: make([]byte, jlog.LINE_BYTES)}
+}
 
 // One submitted Storage write, held until the test retires it.
 type storage_write struct {
@@ -231,7 +236,7 @@ func Test_Default_Caller_Uses_Runtime(t *testing.T) {
 	writes := &storage_writes{}
 	saved := jlog.Default
 	t.Cleanup(func() { jlog.Default = saved })
-	jlog.Default = jlog.New_Default_Logger(recording_storage(writes), TEST_STDERR)
+	jlog.Default = jlog.New_Default_Logger(new_state(), recording_storage(writes), TEST_STDERR)
 	jlog.Info("runtime caller coverage", jlog.Caller())
 	if len(writes.Queue) != 1 {
 		t.Fatalf("submitted %d writes, want 1", len(writes.Queue))
@@ -267,7 +272,7 @@ func Test_Default_Cover_API(t *testing.T) {
 	jlog.Logger_Log(&logger, "")
 	jlog.Logger_At_Level(&logger, jlog.LEVEL_WARN, "")
 	child := jlog.Logger_With(
-		&logger, make([]byte, jlog.LINE_BYTES), make(jlog.Buffer, 64),
+		&logger, make([]byte, jlog.LINE_BYTES), jlog.Buffer{Bytes: make([]byte, 64)},
 		jlog.String("x", "y"),
 	)
 	jlog.Logger_Info(&child, "with")
@@ -351,6 +356,10 @@ type Memory struct {
 	Signal_Waiters      []system_io.Signal_Waiter
 	Spawns              []system_io.Spawn
 	Spawn_Registry      []*system_io.Spawn
+	Spawn_Pipe_Buffers  []byte
+	Spawn_Paths         []byte
+	Spawn_Arguments     []string
+	Spawn_Child_Files   []uintptr
 	Platform_Operations []*system_io.Operating_System_Operation
 	Platform_Changes    []system_io.Kernel_Event
 	Platform_Events     []system_io.Kernel_Event
@@ -373,6 +382,12 @@ func memory_view(memory *Memory) (view system_io.Operating_System_Memory) {
 	memory.Signal_Waiters = make([]system_io.Signal_Waiter, 1)
 	memory.Spawns = make([]system_io.Spawn, 1)
 	memory.Spawn_Registry = make([]*system_io.Spawn, 1)
+	memory.Spawn_Pipe_Buffers = make(
+		[]byte, system_io.PROCESS_PIPE_BUFFER_COUNT*system_io.PROCESS_PIPE_BYTES,
+	)
+	memory.Spawn_Paths = make([]byte, system_io.PROCESS_PATH_BYTES)
+	memory.Spawn_Arguments = make([]string, system_io.PROCESS_ARGUMENT_COUNT_MAXIMUM)
+	memory.Spawn_Child_Files = make([]uintptr, system_io.PROCESS_CHILD_DESCRIPTOR_COUNT)
 	memory.Platform_Operations = make(
 		[]*system_io.Operating_System_Operation, OPERATION_CAPACITY,
 	)
@@ -389,6 +404,10 @@ func memory_view(memory *Memory) (view system_io.Operating_System_Memory) {
 		Signal_Waiters:             memory.Signal_Waiters,
 		Spawns:                     memory.Spawns,
 		Spawn_Registry:             memory.Spawn_Registry,
+		Spawn_Pipe_Buffers:         memory.Spawn_Pipe_Buffers,
+		Spawn_Paths:                memory.Spawn_Paths,
+		Spawn_Arguments:            memory.Spawn_Arguments,
+		Spawn_Child_Files:          memory.Spawn_Child_Files,
 		Platform_Operations:        memory.Platform_Operations,
 		Platform_Changes:           memory.Platform_Changes,
 		Platform_Events:            memory.Platform_Events,

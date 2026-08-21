@@ -129,7 +129,7 @@ func Test_Caller_Uses_Injected_Function(t *testing.T) {
 	logger := build(jlog.Logger_Configuration{
 		Stream: recording_stream(buffer),
 		Clock:  frozen_clock(),
-		Caller: func(skip int) (location string) { return "file.go:10" },
+		Caller: func(skip int) (file string, line int) { return "file.go", 10 },
 	}, jlog.LEVEL_TRACE)
 	jlog.Logger_Info(logger, "", jlog.Caller())
 	assert_output(t, buffer, "{\"level\":\"info\",\"caller\":\"file.go:10\"}\n")
@@ -181,7 +181,7 @@ func Test_Construction_Is_Zero_Allocation(t *testing.T) {
 	var logger, child jlog.Logger
 	storage := make([]byte, TEST_LINE_BYTES)
 	child_storage := make([]byte, TEST_LINE_BYTES)
-	prefix := make(jlog.Buffer, TEST_PREFIX_BYTES)
+	prefix := jlog.Buffer{Bytes: make([]byte, TEST_PREFIX_BYTES)}
 	testify.Zero_Allocation(t, func() {
 		logger = jlog.New(&configuration, storage, jlog.LEVEL_TRACE)
 		child = jlog.Logger_With(&logger, child_storage, prefix, jlog.String("a", "1"))
@@ -374,9 +374,11 @@ func Test_Console_Logger_Tees_To_Capture(t *testing.T) {
 	var console, capture recording_buffer
 	state := jlog.Console_Logger{
 		Configuration: jlog.Logger_Configuration{Clock: frozen_clock()},
-		Console:       jlog.Console{Stream: recording_stream(&console)},
+		Console:       new_console(recording_stream(&console), false),
 		Capture:       recording_stream(&capture),
 	}
+	state.Filter.Kept = make([]byte, TEST_TRANSFORM_BYTES)
+	state.Filter.Object = new_object()
 	logger := jlog.New_Console_Logger(
 		&state, make([]byte, TEST_LINE_BYTES), jlog.LEVEL_INFO,
 	)
@@ -395,6 +397,87 @@ func Test_Console_Logger_Tees_To_Capture(t *testing.T) {
 	}
 	if !contains([]byte(buffer_text(&capture)), []byte("\"message\":\"loud\"")) {
 		t.Fatalf("capture must keep the info line: %q", buffer_text(&capture))
+	}
+}
+
+// Test_Transforms_Are_Zero_Allocation covers a Console render and a Level_Filter pass over a
+// ready inner stream performing zero heap allocations: both work in caller-owned storage.
+func Test_Transforms_Are_Zero_Allocation(t *testing.T) {
+	line := []byte("{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20.5Z\",\"a\":\"x y\"," +
+		"\"n\":1,\"error\":\"e\\n\",\"message\":\"m\"}\n")
+	console := new_console(discard_stream(), true)
+	console_stream := jlog.Console_To_Stream(&console)
+	level_filter := new_level_filter(discard_stream(), jlog.LEVEL_INFO)
+	filter_stream := jlog.Level_Filter_To_Stream(level_filter)
+	var completion nbio.Completion
+	testify.Zero_Allocation(t, func() {
+		nbio.Write(console_stream, &completion, line, disarm)
+		nbio.Write(filter_stream, &completion, line, disarm)
+	})
+	if completion.Error != nil {
+		t.Fatalf("transform write: %v", completion.Error)
+	}
+}
+
+// Test_Oversized_Payload_Retires_Buffer_Full covers a Write whose transform outgrows its
+// caller-owned storage retiring with nbio.Stream_Buffer_Full and passing nothing to the inner
+// stream.
+func Test_Oversized_Payload_Retires_Buffer_Full(t *testing.T) {
+	big := make([]byte, TEST_TRANSFORM_BYTES+1)
+	for index := range big {
+		big[index] = 'a'
+	}
+	big[len(big)-1] = '\n'
+	passed := &recording_buffer{}
+	level_filter := new_level_filter(recording_stream(passed), jlog.LEVEL_TRACE)
+	var completion nbio.Completion
+	nbio.Write(jlog.Level_Filter_To_Stream(level_filter), &completion, big, disarm)
+	if completion.Error != nbio.Stream_Buffer_Full {
+		t.Fatalf("filter error = %v, want Stream_Buffer_Full", completion.Error)
+	}
+	assert_output(t, passed, "")
+	rendered := &recording_buffer{}
+	console := new_console(recording_stream(rendered), false)
+	nbio.Write(jlog.Console_To_Stream(&console), &completion, big, disarm)
+	if completion.Error != nbio.Stream_Buffer_Full {
+		t.Fatalf("console error = %v, want Stream_Buffer_Full", completion.Error)
+	}
+	assert_output(t, rendered, "")
+}
+
+// Test_Transform_Busy_Drops_Second_Write covers a Write arriving while an earlier Write still
+// holds the transform's storage, as a parent and a child logger sharing one Console produce: the
+// second retires Stream_Buffer_Full and the in-flight bytes stay intact.
+func Test_Transform_Busy_Drops_Second_Write(t *testing.T) {
+	console_inner := &deferred_state{}
+	console := new_console(
+		nbio.Stream{State: console_inner, Procedure: deferred_procedure}, false,
+	)
+	test_transform_busy(t, jlog.Console_To_Stream(&console), console_inner)
+	filter_inner := &deferred_state{}
+	level_filter := new_level_filter(
+		nbio.Stream{State: filter_inner, Procedure: deferred_procedure}, jlog.LEVEL_TRACE,
+	)
+	test_transform_busy(t, jlog.Level_Filter_To_Stream(level_filter), filter_inner)
+}
+
+func test_transform_busy(t *testing.T, stream nbio.Stream, inner *deferred_state) {
+	t.Helper()
+	var first, second nbio.Completion
+	nbio.Write(stream, &first, []byte("{\"message\":\"one\"}\n"), disarm)
+	nbio.Write(stream, &second, []byte("{\"message\":\"two\"}\n"), disarm)
+	if second.Error != nbio.Stream_Buffer_Full {
+		t.Fatalf("second write error = %v, want Stream_Buffer_Full", second.Error)
+	}
+	if contains(inner.Buffer, []byte("two")) {
+		t.Fatalf("busy transform forwarded the second line: %q", string(inner.Buffer))
+	}
+	deferred_retire(inner)
+	if first.Error != nil {
+		t.Fatalf("first write error = %v, want nil", first.Error)
+	}
+	if !contains(inner.Buffer, []byte("one")) {
+		t.Fatalf("first line must reach the inner stream: %q", string(inner.Buffer))
 	}
 }
 
@@ -531,7 +614,7 @@ func build(configuration jlog.Logger_Configuration, floor jlog.Level) (logger *j
 // Builds a child of parent over fresh line and prefix storage.
 func with(parent *jlog.Logger, fields ...jlog.Field) (child jlog.Logger) {
 	storage := make([]byte, TEST_LINE_BYTES)
-	prefix := make(jlog.Buffer, TEST_PREFIX_BYTES)
+	prefix := jlog.Buffer{Bytes: make([]byte, TEST_PREFIX_BYTES)}
 	return jlog.Logger_With(parent, storage, prefix, fields...)
 }
 
@@ -557,8 +640,8 @@ func assert_output(t *testing.T, buffer *recording_buffer, want string) {
 func render(t *testing.T, color bool, line string) (rendered *recording_buffer) {
 	t.Helper()
 	rendered = &recording_buffer{}
-	console := &jlog.Console{Stream: recording_stream(rendered), Color: color}
-	write_stream(t, jlog.Console_To_Stream(console), line)
+	console := new_console(recording_stream(rendered), color)
+	write_stream(t, jlog.Console_To_Stream(&console), line)
 	return rendered
 }
 
@@ -568,9 +651,47 @@ func render(t *testing.T, color bool, line string) (rendered *recording_buffer) 
 func filter(t *testing.T, floor jlog.Level, line string) (passed *recording_buffer) {
 	t.Helper()
 	passed = &recording_buffer{}
-	level_filter := jlog.New_Level_Filter(recording_stream(passed), floor, "")
-	write_stream(t, jlog.Level_Filter_To_Stream(&level_filter), line)
+	level_filter := new_level_filter(recording_stream(passed), floor)
+	write_stream(t, jlog.Level_Filter_To_Stream(level_filter), line)
 	return passed
+}
+
+// TEST_TRANSFORM_BYTES is the render, kept, and decoded storage a test transform gets.
+const TEST_TRANSFORM_BYTES = 4096
+
+// TEST_MEMBER_COUNT is the member storage a test transform gets.
+const TEST_MEMBER_COUNT = 32
+
+func new_object() (object jlog.Object) {
+	return jlog.Object{
+		Members: make([]jlog.Member, TEST_MEMBER_COUNT),
+		Decoded: make([]byte, TEST_TRANSFORM_BYTES),
+	}
+}
+
+// A Console over stream with fresh storage.
+func new_console(stream nbio.Stream, color bool) (console jlog.Console) {
+	return jlog.Console{
+		Stream:   stream,
+		Color:    color,
+		Object:   new_object(),
+		Rendered: make([]byte, TEST_TRANSFORM_BYTES),
+	}
+}
+
+// A Level_Filter over stream at floor with fresh storage and the default level field.
+func new_level_filter(stream nbio.Stream, floor jlog.Level) (filter *jlog.Level_Filter) {
+	filter = &jlog.Level_Filter{
+		Object: new_object(),
+		Kept:   make([]byte, TEST_TRANSFORM_BYTES),
+	}
+	jlog.New_Level_Filter(filter, stream, floor, "")
+	return filter
+}
+
+// The retirement a transform test's own submission takes; the test reads the completion after.
+func disarm(completion nbio.Completion_Handle) {
+	completion.Armed = false
 }
 
 // Every test clock returns this fixed reading so timestamp output is deterministic
@@ -719,7 +840,7 @@ func Test_Cover_Auto_Caller(t *testing.T) {
 	logger := build(jlog.Logger_Configuration{
 		Stream: recording_stream(buffer),
 		Clock:  frozen_clock(),
-		Caller: func(skip int) (location string) { return "x.go:1" },
+		Caller: func(skip int) (file string, line int) { return "x.go", 1 },
 	}, jlog.LEVEL_TRACE)
 	logger.Auto_Caller = true
 	jlog.Logger_Info(logger, "")

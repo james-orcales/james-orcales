@@ -128,10 +128,28 @@ const DEFAULT_CALLER_FIELD_NAME Default_String = "caller"
 // DEFAULT_STACK_FIELD_NAME keys the rendered stack trace Err writes beside the error.
 const DEFAULT_STACK_FIELD_NAME Default_String = "stack"
 
-// Buffer is the byte accumulator the encoders append into. It is a named slice so
-// the encoder helpers' (Buffer, []byte) signatures present two distinct types and
-// do not trip the input-struct rule.
-type Buffer []byte
+// Buffer is a bounded writer over caller storage. Encoders write by index and never grow
+// Bytes: a write that does not fit sets Overflow and stops, so the caller drops or reports the
+// content instead of holding a fresh heap allocation.
+type Buffer struct {
+	// Bytes is the caller-owned storage; len(Bytes) is the write limit.
+	Bytes []byte
+	// Count is the bytes written so far.
+	Count int
+	// Overflow marks content cut short by the limit; Bytes[:Count] is then not a whole value.
+	Overflow bool
+}
+
+// CALLER_FILE_SIZE_MAXIMUM bounds the file half of a caller location; a longer path is cut.
+const CALLER_FILE_SIZE_MAXIMUM = 1 << 10
+
+// TRANSFORM_SIZE_MAXIMUM bounds one Write through a Console or a Level_Filter; a transform
+// that outgrows it retires with nbio.Stream_Buffer_Full.
+const TRANSFORM_SIZE_MAXIMUM = LINE_BYTES_MAXIMUM
+
+// MEMBER_COUNT_MAXIMUM bounds the members a Console or Level_Filter reads from one line; a
+// line with more passes through unrendered.
+const MEMBER_COUNT_MAXIMUM = 256
 
 // Data is one complete encoded line passed to an injected sink.
 type Data []byte
@@ -235,8 +253,9 @@ type Logger_Configuration struct {
 	// Clock supplies wall-clock readings; injected so tests are deterministic and
 	// the library tier never imports stdlib time.
 	Clock time.Clock
-	// Caller maps a frame-skip count to a "file:line" string; nil disables Caller.
-	Caller func(skip int) (location string)
+	// Caller maps a frame-skip count to a file and line; nil disables Caller. The two halves
+	// come back apart so the encoder joins them in the line, never in a fresh string.
+	Caller func(skip int) (file string, line int)
 	// Stack_Marshaler renders an error's stack; nil disables Err stacks.
 	Stack_Marshaler func(value error) (stack string)
 	// Timestamp_Field_Name is the key used by Timestamp and Auto_Timestamp.
@@ -260,8 +279,8 @@ type Logger_Configuration struct {
 type Line struct {
 	// Completion is the nbio storage for this line's Write.
 	Completion nbio.Completion
-	// Storage is the caller-owned byte budget; a line that outgrows it is dropped, never kept.
-	Storage []byte
+	// Buffer is the caller-owned byte budget; a line that outgrows it is dropped, never kept.
+	Buffer Buffer
 	// Borrowed marks Storage as held by the Stream until it retires the Write. A plain bool,
 	// because one goroutine owns the Logger and the root delivers the retirement.
 	Borrowed bool
@@ -281,7 +300,7 @@ type Logger struct {
 	// Prefix is the pre-encoded fixed fields ({... fragment) added to every line, in
 	// caller-owned storage.
 	Prefix Buffer
-	// Dropped counts lines that outgrew Line.Storage or arrived while it was still borrowed.
+	// Dropped counts lines that outgrew Line.Buffer or arrived while it was still borrowed.
 	Dropped int
 	// Auto_Timestamp stamps every line with the realtime clock when set.
 	Auto_Timestamp bool
@@ -359,7 +378,7 @@ func New(configuration *Logger_Configuration, storage []byte, floor Level) (logg
 	configuration.Stack_Field_Name = string_or(
 		configuration.Stack_Field_Name, DEFAULT_STACK_FIELD_NAME)
 	logger.Configuration = configuration
-	logger.Line.Storage = storage[:0]
+	logger.Line.Buffer = Buffer{Bytes: storage[:cap(storage)]}
 	logger.Floor = floor
 	return logger
 }
@@ -420,39 +439,41 @@ func logger_emit(logger *Logger, level Level, message string, fields []Field) {
 		logger.Dropped++
 		return
 	}
-	buffer := Buffer(line.Storage[:0])
-	buffer = buffer_append_begin_marker(buffer)
-	buffer = buffer_append_level(buffer, level, configuration)
+	buffer := &line.Buffer
+	buffer.Count = 0
+	buffer.Overflow = false
+	buffer_write_begin_marker(buffer)
+	buffer_write_level(buffer, level, configuration)
 	if logger.Auto_Timestamp {
-		buffer = buffer_append_realtime(buffer, configuration)
+		buffer_write_realtime(buffer, configuration)
 	}
 	if logger.Auto_Caller {
 		seed := Field{Kind: KIND_CALLER, Number: DEFAULT_CALLER_SKIP}
-		buffer = buffer_append_caller(buffer, &seed, configuration)
+		buffer_write_caller(buffer, &seed, configuration)
 	}
-	if len(logger.Prefix) > 1 {
-		buffer = buffer_append_object_data(buffer, logger.Prefix)
+	if logger.Prefix.Count > 1 {
+		buffer_write_object_data(buffer, logger.Prefix.Bytes[:logger.Prefix.Count])
 	}
 	for index := 0; index < len(fields); index++ {
-		buffer = buffer_encode_field(buffer, &fields[index], configuration)
+		buffer_encode_field(buffer, &fields[index], configuration)
 	}
 	if message != "" {
-		buffer = buffer_append_key(buffer, Key(configuration.Message_Field_Name))
-		buffer = buffer_append_string(buffer, message)
+		buffer_write_key(buffer, Key(configuration.Message_Field_Name))
+		buffer_write_string(buffer, message)
 	}
-	buffer = buffer_append_end_marker(buffer)
-	buffer = append(buffer, '\n')
-	aver.Always(buffer[0] == '{', "jlog: line must open with a brace")
-	aver.Always(buffer[len(buffer)-2] == '}', "jlog: line must close with a brace")
-	aver.Always(buffer[len(buffer)-1] == '\n', "jlog: line must end with a newline")
-	// The append grew past Storage: the line is complete but lives in a fresh allocation, so
-	// it is dropped rather than retained.
-	if cap(buffer) != cap(line.Storage) {
+	buffer_write_end_marker(buffer)
+	buffer_write_byte(buffer, '\n')
+	// The line outgrew its storage: what was written is a torn line, so it is dropped whole.
+	if buffer.Overflow {
 		logger.Dropped++
 		return
 	}
+	written := buffer.Bytes[:buffer.Count]
+	aver.Always(written[0] == '{', "jlog: line must open with a brace")
+	aver.Always(written[len(written)-2] == '}', "jlog: line must close with a brace")
+	aver.Always(written[len(written)-1] == '\n', "jlog: line must end with a newline")
 	line.Borrowed = true
-	nbio.Write(configuration.Stream, &line.Completion, buffer, line_retire)
+	nbio.Write(configuration.Stream, &line.Completion, written, line_retire)
 }
 
 // Stream failures have no reporting channel above a logger, so retirement only returns the
@@ -485,25 +506,52 @@ func Logger_With(parent *Logger, storage []byte, prefix Buffer, fields ...Field)
 	}
 	aver.Always(cap(storage) > 0, "jlog: line storage is required")
 	aver.Always(cap(storage) <= LINE_BYTES_MAXIMUM, "jlog: line storage exceeds bound")
-	aver.Always(cap(prefix) <= PREFIX_BYTES_MAXIMUM, "jlog: prefix storage exceeds bound")
+	aver.Always(len(prefix.Bytes) <= PREFIX_BYTES_MAXIMUM, "jlog: prefix storage exceeds bound")
 	child.Configuration = parent.Configuration
-	child.Line.Storage = storage[:0]
+	child.Line.Buffer = Buffer{Bytes: storage[:cap(storage)]}
 	child.Floor = parent.Floor
 	child.Auto_Timestamp = parent.Auto_Timestamp
 	child.Auto_Caller = parent.Auto_Caller
-	budget_size := cap(prefix)
-	prefix = prefix[:0]
-	if len(parent.Prefix) > 0 {
-		prefix = append(prefix, parent.Prefix...)
+	child.Prefix = Buffer{Bytes: prefix.Bytes}
+	if parent.Prefix.Count > 0 {
+		buffer_write_bytes(&child.Prefix, parent.Prefix.Bytes[:parent.Prefix.Count])
 	} else {
-		prefix = buffer_append_begin_marker(prefix)
+		buffer_write_begin_marker(&child.Prefix)
 	}
 	for index := 0; index < len(fields); index++ {
-		prefix = buffer_encode_field(prefix, &fields[index], parent.Configuration)
+		buffer_encode_field(&child.Prefix, &fields[index], parent.Configuration)
 	}
-	aver.Always(cap(prefix) == budget_size, "jlog: prefix exceeds its storage")
-	child.Prefix = prefix
+	aver.Always(!child.Prefix.Overflow, "jlog: prefix exceeds its storage")
 	return child
+}
+
+// The primitive writers below are the only place bytes reach storage; every encoder goes
+// through them so the bound is checked once, here.
+func buffer_write_byte(buffer *Buffer, value byte) {
+	if buffer.Count >= len(buffer.Bytes) {
+		buffer.Overflow = true
+		return
+	}
+	buffer.Bytes[buffer.Count] = value
+	buffer.Count++
+}
+
+func buffer_write_text(buffer *Buffer, value string) {
+	if len(value) > len(buffer.Bytes)-buffer.Count {
+		buffer.Overflow = true
+		return
+	}
+	copy(buffer.Bytes[buffer.Count:], value)
+	buffer.Count += len(value)
+}
+
+func buffer_write_bytes(buffer *Buffer, value []byte) {
+	if len(value) > len(buffer.Bytes)-buffer.Count {
+		buffer.Overflow = true
+		return
+	}
+	copy(buffer.Bytes[buffer.Count:], value)
+	buffer.Count += len(value)
 }
 
 // String builds a string field.
@@ -1001,229 +1049,210 @@ func decimal_round_between(
 
 // The config-keyed kinds (timestamp, caller, error) supply their own key; every
 // other kind writes field.Key then its value.
-func buffer_encode_field(
-	destination Buffer, field *Field, configuration *Logger_Configuration,
-) (output Buffer) {
+func buffer_encode_field(buffer *Buffer, field *Field, configuration *Logger_Configuration) {
 	if field.Kind >= KIND_ERROR {
 		switch field.Kind {
 		case KIND_ERROR:
-			return buffer_append_error(destination, field, configuration)
+			buffer_write_error(buffer, field, configuration)
 		case KIND_TIMESTAMP:
-			return buffer_append_realtime(destination, configuration)
+			buffer_write_realtime(buffer, configuration)
 		case KIND_CALLER:
-			return buffer_append_caller(destination, field, configuration)
+			buffer_write_caller(buffer, field, configuration)
 		}
-		return destination
+		return
 	}
-	destination = buffer_append_key(destination, field.Key)
+	buffer_write_key(buffer, field.Key)
 	count := int(field.Number)
 	switch field.Kind {
 	case KIND_STRING:
-		return buffer_append_string(destination, unsafe.String((*byte)(field.Data), count))
+		buffer_write_string(buffer, unsafe.String((*byte)(field.Data), count))
 	case KIND_INTEGER:
-		return buffer_append_int64(destination, field.Number)
+		buffer_write_int64(buffer, field.Number)
 	case KIND_UNSIGNED:
-		return buffer_append_uint64(destination, uint64(field.Number))
+		buffer_write_uint64(buffer, uint64(field.Number))
 	case KIND_FLOAT32:
-		bits := float64_from_bits(uint64(field.Number))
-		return buffer_append_float(destination, bits, FLOAT_BITS_32)
+		buffer_write_float(buffer, float64_from_bits(uint64(field.Number)), FLOAT_BITS_32)
 	case KIND_FLOAT64:
-		bits := float64_from_bits(uint64(field.Number))
-		return buffer_append_float(destination, bits, FLOAT_BITS_64)
+		buffer_write_float(buffer, float64_from_bits(uint64(field.Number)), FLOAT_BITS_64)
 	case KIND_BOOLEAN:
-		return buffer_append_boolean(destination, field.Number == 1)
+		buffer_write_boolean(buffer, field.Number == 1)
 	case KIND_BYTES:
-		return buffer_append_bytes(destination, unsafe.Slice((*byte)(field.Data), count))
+		buffer_write_quoted_bytes(buffer, unsafe.Slice((*byte)(field.Data), count))
 	case KIND_HEXADECIMAL:
-		raw := unsafe.Slice((*byte)(field.Data), count)
-		return buffer_append_hexadecimal(destination, raw)
+		buffer_write_hexadecimal(buffer, unsafe.Slice((*byte)(field.Data), count))
 	case KIND_RAW_JSON:
-		return append(destination, unsafe.Slice((*byte)(field.Data), count)...)
+		buffer_write_bytes(buffer, unsafe.Slice((*byte)(field.Data), count))
 	case KIND_TIME:
-		return buffer_append_rfc3339(destination, field.Number)
+		buffer_write_rfc3339(buffer, field.Number)
 	case KIND_DURATION:
-		divided := field.Number / int64(configuration.Duration_Unit)
-		return buffer_append_int64(destination, divided)
+		buffer_write_int64(buffer, field.Number/int64(configuration.Duration_Unit))
 	case KIND_STRINGS:
-		values := unsafe.Slice((*string)(field.Data), count)
-		return buffer_append_strings(destination, values)
+		buffer_write_strings(buffer, unsafe.Slice((*string)(field.Data), count))
 	case KIND_INTEGERS:
-		return buffer_append_integers(destination, unsafe.Slice((*int)(field.Data), count))
+		buffer_write_integers(buffer, unsafe.Slice((*int)(field.Data), count))
 	case KIND_FLOATS:
-		values := unsafe.Slice((*float64)(field.Data), count)
-		return buffer_append_floats(destination, values)
+		buffer_write_floats(buffer, unsafe.Slice((*float64)(field.Data), count))
 	case KIND_BOOLEANS:
-		return buffer_append_booleans(destination, unsafe.Slice((*bool)(field.Data), count))
+		buffer_write_booleans(buffer, unsafe.Slice((*bool)(field.Data), count))
 	case KIND_DURATIONS:
 		values := unsafe.Slice((*time.Duration)(field.Data), count)
-		return buffer_append_durations(destination, values, configuration.Duration_Unit)
+		buffer_write_durations(buffer, values, configuration.Duration_Unit)
 	}
-	return destination
 }
 
-func buffer_append_realtime(
-	destination Buffer, configuration *Logger_Configuration,
-) (output Buffer) {
-	destination = buffer_append_key(destination, Key(configuration.Timestamp_Field_Name))
+func buffer_write_realtime(buffer *Buffer, configuration *Logger_Configuration) {
+	buffer_write_key(buffer, Key(configuration.Timestamp_Field_Name))
 	moment := time.Clock_Now_Realtime(configuration.Clock)
-	return buffer_append_rfc3339(destination, int64(moment))
+	buffer_write_rfc3339(buffer, int64(moment))
 }
 
-func buffer_append_caller(
-	destination Buffer, field *Field, configuration *Logger_Configuration,
-) (output Buffer) {
+// The location is joined as "file:line" inside the value, so a file with a quote or a
+// backslash is escaped like any other string.
+func buffer_write_caller(buffer *Buffer, field *Field, configuration *Logger_Configuration) {
 	if configuration.Caller == nil {
-		return destination
+		return
 	}
-	location := configuration.Caller(int(field.Number))
-	destination = buffer_append_key(destination, Key(configuration.Caller_Field_Name))
-	return buffer_append_string(destination, location)
+	file, line := configuration.Caller(int(field.Number))
+	if len(file) > CALLER_FILE_SIZE_MAXIMUM {
+		file = file[:CALLER_FILE_SIZE_MAXIMUM]
+	}
+	buffer_write_key(buffer, Key(configuration.Caller_Field_Name))
+	buffer_write_byte(buffer, '"')
+	buffer_write_string_body(buffer, file)
+	buffer_write_byte(buffer, ':')
+	buffer_write_int64(buffer, int64(line))
+	buffer_write_byte(buffer, '"')
 }
 
 // The stack field precedes the error field, matching the convention that context
 // comes before the value it explains.
-func buffer_append_error(
-	destination Buffer, field *Field, configuration *Logger_Configuration,
-) (output Buffer) {
+func buffer_write_error(buffer *Buffer, field *Field, configuration *Logger_Configuration) {
 	error_value, _ := field.Boxed.(error)
 	if configuration.Stack_Marshaler != nil {
 		if error_value != nil {
 			stack := configuration.Stack_Marshaler(error_value)
-			stack_key := Key(configuration.Stack_Field_Name)
-			destination = buffer_append_key(destination, stack_key)
-			destination = buffer_append_string(destination, stack)
+			buffer_write_key(buffer, Key(configuration.Stack_Field_Name))
+			buffer_write_string(buffer, stack)
 		}
 	}
-	destination = buffer_append_key(destination, Key(configuration.Error_Field_Name))
+	buffer_write_key(buffer, Key(configuration.Error_Field_Name))
 	if error_value == nil {
-		return buffer_append_nil(destination)
+		buffer_write_text(buffer, "null")
+		return
 	}
-	return buffer_append_string(destination, error_value.Error())
+	buffer_write_string(buffer, error_value.Error())
 }
 
-func buffer_append_strings(destination Buffer, values []string) (output Buffer) {
-	destination = append(destination, '[')
+func buffer_write_strings(buffer *Buffer, values []string) {
+	buffer_write_byte(buffer, '[')
 	for index := 0; index < len(values); index++ {
 		if index > 0 {
-			destination = append(destination, ',')
+			buffer_write_byte(buffer, ',')
 		}
-		destination = buffer_append_string(destination, values[index])
+		buffer_write_string(buffer, values[index])
 	}
-	return append(destination, ']')
+	buffer_write_byte(buffer, ']')
 }
 
-func buffer_append_integers(destination Buffer, values []int) (output Buffer) {
-	destination = append(destination, '[')
+func buffer_write_integers(buffer *Buffer, values []int) {
+	buffer_write_byte(buffer, '[')
 	for index := 0; index < len(values); index++ {
 		if index > 0 {
-			destination = append(destination, ',')
+			buffer_write_byte(buffer, ',')
 		}
-		destination = buffer_append_int64(destination, int64(values[index]))
+		buffer_write_int64(buffer, int64(values[index]))
 	}
-	return append(destination, ']')
+	buffer_write_byte(buffer, ']')
 }
 
-func buffer_append_floats(destination Buffer, values []float64) (output Buffer) {
-	destination = append(destination, '[')
+func buffer_write_floats(buffer *Buffer, values []float64) {
+	buffer_write_byte(buffer, '[')
 	for index := 0; index < len(values); index++ {
 		if index > 0 {
-			destination = append(destination, ',')
+			buffer_write_byte(buffer, ',')
 		}
-		destination = buffer_append_float(destination, values[index], FLOAT_BITS_64)
+		buffer_write_float(buffer, values[index], FLOAT_BITS_64)
 	}
-	return append(destination, ']')
+	buffer_write_byte(buffer, ']')
 }
 
-func buffer_append_booleans(destination Buffer, values []bool) (output Buffer) {
-	destination = append(destination, '[')
+func buffer_write_booleans(buffer *Buffer, values []bool) {
+	buffer_write_byte(buffer, '[')
 	for index := 0; index < len(values); index++ {
 		if index > 0 {
-			destination = append(destination, ',')
+			buffer_write_byte(buffer, ',')
 		}
-		destination = buffer_append_boolean(destination, values[index])
+		buffer_write_boolean(buffer, values[index])
 	}
-	return append(destination, ']')
+	buffer_write_byte(buffer, ']')
 }
 
-func buffer_append_durations(
-	destination Buffer, values []time.Duration, unit time.Duration,
-) (output Buffer) {
-	destination = append(destination, '[')
+func buffer_write_durations(buffer *Buffer, values []time.Duration, unit time.Duration) {
+	buffer_write_byte(buffer, '[')
 	for index := 0; index < len(values); index++ {
 		if index > 0 {
-			destination = append(destination, ',')
+			buffer_write_byte(buffer, ',')
 		}
-		destination = buffer_append_int64(destination, int64(values[index])/int64(unit))
+		buffer_write_int64(buffer, int64(values[index])/int64(unit))
 	}
-	return append(destination, ']')
+	buffer_write_byte(buffer, ']')
 }
 
-func buffer_append_begin_marker(destination Buffer) (output Buffer) {
-	return append(destination, '{')
+func buffer_write_begin_marker(buffer *Buffer) {
+	buffer_write_byte(buffer, '{')
 }
 
-func buffer_append_end_marker(destination Buffer) (output Buffer) {
-	return append(destination, '}')
+func buffer_write_end_marker(buffer *Buffer) {
+	buffer_write_byte(buffer, '}')
 }
 
-func buffer_append_nil(destination Buffer) (output Buffer) {
-	return append(destination, 'n', 'u', 'l', 'l')
-}
-
-func buffer_append_key(destination Buffer, key Key) (output Buffer) {
-	if len(destination) > 0 {
-		if destination[len(destination)-1] != '{' {
-			destination = append(destination, ',')
+func buffer_write_key(buffer *Buffer, key Key) {
+	if buffer.Count > 0 {
+		if buffer.Bytes[buffer.Count-1] != '{' {
+			buffer_write_byte(buffer, ',')
 		}
 	}
-	destination = buffer_append_string(destination, string(key))
-	return append(destination, ':')
+	buffer_write_string(buffer, string(key))
+	buffer_write_byte(buffer, ':')
 }
 
 // The fragment's leading brace is dropped and a separating comma added so a
 // sub-logger's pre-encoded fields splice into the open object.
-func buffer_append_object_data(destination Buffer, prefix []byte) (output Buffer) {
+func buffer_write_object_data(buffer *Buffer, prefix []byte) {
 	body := prefix
-	leading_brace := false
 	if len(body) > 0 {
 		if body[0] == '{' {
-			leading_brace = true
+			body = body[1:]
 		}
 	}
-	if leading_brace {
-		if len(destination) > 1 {
-			destination = append(destination, ',')
-		}
-		body = body[1:]
-		return append(destination, body...)
+	if buffer.Count > 1 {
+		buffer_write_byte(buffer, ',')
 	}
-	if len(destination) > 1 {
-		destination = append(destination, ',')
-	}
-	return append(destination, body...)
+	buffer_write_bytes(buffer, body)
 }
 
-func buffer_append_int64(destination Buffer, value int64) (output Buffer) {
+func buffer_write_int64(buffer *Buffer, value int64) {
 	var storage [strconv.INTEGER_TEXT_SIZE_MAXIMUM]byte
 	count := strconv.Format_Integer_Into(
 		storage[:], strconv.Signed_Integer(value), strconv.DECIMAL_BASE,
 	)
-	return append(destination, storage[:int(count)]...)
+	buffer_write_bytes(buffer, storage[:int(count)])
 }
 
-func buffer_append_uint64(destination Buffer, value uint64) (output Buffer) {
+func buffer_write_uint64(buffer *Buffer, value uint64) {
 	var storage [strconv.DIGIT_TEXT_SIZE_MAXIMUM]byte
 	count := strconv.Format_Unsigned_Integer_Into(
 		storage[:], strconv.Unsigned_Integer(value), strconv.DECIMAL_BASE,
 	)
-	return append(destination, storage[:int(count)]...)
+	buffer_write_bytes(buffer, storage[:int(count)])
 }
 
-func buffer_append_boolean(destination Buffer, value bool) (output Buffer) {
+func buffer_write_boolean(buffer *Buffer, value bool) {
 	if value {
-		return append(destination, 't', 'r', 'u', 'e')
+		buffer_write_text(buffer, "true")
+		return
 	}
-	return append(destination, 'f', 'a', 'l', 's', 'e')
+	buffer_write_text(buffer, "false")
 }
 
 // Timestamps render as an RFC 3339 UTC string rather than a raw nanosecond integer:
@@ -1231,7 +1260,7 @@ func buffer_append_boolean(destination Buffer, value bool) (output Buffer) {
 // double-precision consumers (jq, JavaScript). A fractional part is emitted only
 // when the sub-second nanoseconds are nonzero. See the package doc's referenced
 // article ("Don't Use Very Large Numbers").
-func buffer_append_rfc3339(destination Buffer, nanos int64) (output Buffer) {
+func buffer_write_rfc3339(buffer *Buffer, nanos int64) {
 	const NS_PER_SECOND = 1_000_000_000
 	const SECONDS_PER_DAY = 86400
 	const SECONDS_PER_HOUR = 3600
@@ -1253,49 +1282,48 @@ func buffer_append_rfc3339(destination Buffer, nanos int64) (output Buffer) {
 	aver.Always(month >= 1 && month <= 12, "jlog: civil month out of range")
 	aver.Always(day >= 1 && day <= 31, "jlog: civil day out of range")
 	within_hour := day_seconds % SECONDS_PER_HOUR
-	destination = append(destination, '"')
-	destination = buffer_append_four_digits(destination, year)
-	destination = append(destination, '-')
-	destination = buffer_append_two_digits(destination, int64(month))
-	destination = append(destination, '-')
-	destination = buffer_append_two_digits(destination, int64(day))
-	destination = append(destination, 'T')
-	destination = buffer_append_two_digits(destination, day_seconds/SECONDS_PER_HOUR)
-	destination = append(destination, ':')
-	destination = buffer_append_two_digits(destination, within_hour/SECONDS_PER_MINUTE)
-	destination = append(destination, ':')
-	destination = buffer_append_two_digits(destination, within_hour%SECONDS_PER_MINUTE)
+	buffer_write_byte(buffer, '"')
+	buffer_write_four_digits(buffer, year)
+	buffer_write_byte(buffer, '-')
+	buffer_write_two_digits(buffer, int64(month))
+	buffer_write_byte(buffer, '-')
+	buffer_write_two_digits(buffer, int64(day))
+	buffer_write_byte(buffer, 'T')
+	buffer_write_two_digits(buffer, day_seconds/SECONDS_PER_HOUR)
+	buffer_write_byte(buffer, ':')
+	buffer_write_two_digits(buffer, within_hour/SECONDS_PER_MINUTE)
+	buffer_write_byte(buffer, ':')
+	buffer_write_two_digits(buffer, within_hour%SECONDS_PER_MINUTE)
 	if fraction != 0 {
-		destination = append(destination, '.')
-		destination = buffer_append_nanoseconds(destination, fraction)
+		buffer_write_byte(buffer, '.')
+		buffer_write_nanoseconds(buffer, fraction)
 	}
-	return append(destination, 'Z', '"')
+	buffer_write_text(buffer, "Z\"")
 }
 
 // Two zero-padded decimal digits (00-99).
-func buffer_append_two_digits(destination Buffer, value int64) (output Buffer) {
-	return append(destination, byte('0'+value/10), byte('0'+value%10))
+func buffer_write_two_digits(buffer *Buffer, value int64) {
+	buffer_write_byte(buffer, byte('0'+value/10))
+	buffer_write_byte(buffer, byte('0'+value%10))
 }
 
 // Four zero-padded decimal digits (0000-9999). A year past 9999 drops its top
 // digit, which no realistic log timestamp reaches.
-func buffer_append_four_digits(destination Buffer, value int64) (output Buffer) {
-	return append(destination,
-		byte('0'+value/1000%10),
-		byte('0'+value/100%10),
-		byte('0'+value/10%10),
-		byte('0'+value%10))
+func buffer_write_four_digits(buffer *Buffer, value int64) {
+	buffer_write_byte(buffer, byte('0'+value/1000%10))
+	buffer_write_byte(buffer, byte('0'+value/100%10))
+	buffer_write_byte(buffer, byte('0'+value/10%10))
+	buffer_write_byte(buffer, byte('0'+value%10))
 }
 
 // Nine zero-padded decimal digits, most significant first, for the nanosecond
 // fraction of a second.
-func buffer_append_nanoseconds(destination Buffer, value int64) (output Buffer) {
+func buffer_write_nanoseconds(buffer *Buffer, value int64) {
 	divisor := int64(100_000_000)
 	for divisor > 0 {
-		destination = append(destination, byte('0'+value/divisor%10))
+		buffer_write_byte(buffer, byte('0'+value/divisor%10))
 		divisor /= 10
 	}
-	return destination
 }
 
 // Howard Hinnant's days-from-civil inverse: maps days since 1970-01-01 to the
@@ -1325,46 +1353,44 @@ func civil_from_days(days int64) (year int64, month int, day int) {
 	return computed_year, int(computed_month), int(computed_day)
 }
 
-func buffer_append_level(
-	destination Buffer, level Level, configuration *Logger_Configuration,
-) (output Buffer) {
+func buffer_write_level(buffer *Buffer, level Level, configuration *Logger_Configuration) {
 	if level == LEVEL_NONE {
-		return destination
+		return
 	}
 	if configuration.Level_Field_Name == "" {
-		return destination
+		return
 	}
-	destination = buffer_append_key(destination, Key(configuration.Level_Field_Name))
-	return buffer_append_string(destination, Level_String(level))
+	buffer_write_key(buffer, Key(configuration.Level_Field_Name))
+	buffer_write_string(buffer, Level_String(level))
 }
 
 // JSON has no NaN/Inf, so those render as strings; a leading exponent zero is
 // trimmed to match es6 number output.
-func buffer_append_float(destination Buffer, value float64, bit_size int) (output Buffer) {
+func buffer_write_float(buffer *Buffer, value float64, bit_size int) {
 	bits := float64_bits(value)
 	if float64_is_nan(bits) {
-		return append(destination, '"', 'N', 'a', 'N', '"')
+		buffer_write_text(buffer, "\"NaN\"")
+		return
 	}
 	if bits == FLOAT64_POSITIVE_INFINITY_BITS {
-		return append(destination, '"', '+', 'I', 'n', 'f', '"')
+		buffer_write_text(buffer, "\"+Inf\"")
+		return
 	}
 	if bits == FLOAT64_NEGATIVE_INFINITY_BITS {
-		return append(destination, '"', '-', 'I', 'n', 'f', '"')
+		buffer_write_text(buffer, "\"-Inf\"")
+		return
 	}
 	format := byte('f')
 	if float_needs_exponent(value, bit_size) {
 		format = 'e'
 	}
-	destination = buffer_append_finite_float(destination, value, bit_size, format)
+	buffer_write_finite_float(buffer, value, bit_size, format)
 	if format == 'e' {
-		destination = buffer_clean_exponent(destination)
+		buffer_clean_exponent(buffer)
 	}
-	return destination
 }
 
-func buffer_append_finite_float(
-	destination Buffer, value float64, bit_size int, format byte,
-) (output Buffer) {
+func buffer_write_finite_float(buffer *Buffer, value float64, bit_size int, format byte) {
 	information := Float_Information{
 		Mantissa_Bit_Count: FLOAT64_MANTISSA_BIT_COUNT,
 		Exponent_Bit_Count: FLOAT64_EXPONENT_BIT_COUNT,
@@ -1403,84 +1429,75 @@ func buffer_append_finite_float(
 		if precision < 0 {
 			precision = 0
 		}
-		return buffer_append_float_exponent(
-			destination, negative, &decimal, precision,
-		)
+		buffer_write_float_exponent(buffer, negative, &decimal, precision)
+		return
 	}
-	return buffer_append_float_fixed(destination, negative, &decimal, precision)
+	buffer_write_float_fixed(buffer, negative, &decimal, precision)
 }
 
-func buffer_append_float_exponent(
-	destination Buffer, negative bool, decimal *Decimal, precision int,
-) (output Buffer) {
+func buffer_write_float_exponent(buffer *Buffer, negative bool, decimal *Decimal, precision int) {
 	if negative {
-		destination = append(destination, '-')
+		buffer_write_byte(buffer, '-')
 	}
 	first := byte('0')
 	if decimal.Count != 0 {
 		first = decimal.Digits[0]
 	}
-	destination = append(destination, first)
+	buffer_write_byte(buffer, first)
 	if precision > 0 {
-		destination = append(destination, '.')
+		buffer_write_byte(buffer, '.')
 		index := 1
 		end_index := decimal.Count
 		if end_index > precision+1 {
 			end_index = precision + 1
 		}
 		if index < end_index {
-			destination = append(destination, decimal.Digits[index:end_index]...)
+			buffer_write_bytes(buffer, decimal.Digits[index:end_index])
 			index = end_index
 		}
 		for index <= precision {
-			destination = append(destination, '0')
+			buffer_write_byte(buffer, '0')
 			index++
 		}
 	}
-	destination = append(destination, 'e')
+	buffer_write_byte(buffer, 'e')
 	exponent := decimal.Point - 1
 	if decimal.Count == 0 {
 		exponent = 0
 	}
 	if exponent < 0 {
-		destination = append(destination, '-')
+		buffer_write_byte(buffer, '-')
 		exponent = -exponent
 	} else {
-		destination = append(destination, '+')
+		buffer_write_byte(buffer, '+')
 	}
-	if exponent < 10 {
-		return append(destination, '0', byte(exponent)+'0')
+	if exponent >= 100 {
+		buffer_write_byte(buffer, byte(exponent/100)+'0')
 	}
-	if exponent < 100 {
-		return append(destination, byte(exponent/10)+'0', byte(exponent%10)+'0')
-	}
-	return append(destination,
-		byte(exponent/100)+'0', byte(exponent/10%10)+'0', byte(exponent%10)+'0',
-	)
+	buffer_write_byte(buffer, byte(exponent/10%10)+'0')
+	buffer_write_byte(buffer, byte(exponent%10)+'0')
 }
 
-func buffer_append_float_fixed(
-	destination Buffer, negative bool, decimal *Decimal, precision int,
-) (output Buffer) {
+func buffer_write_float_fixed(buffer *Buffer, negative bool, decimal *Decimal, precision int) {
 	if negative {
-		destination = append(destination, '-')
+		buffer_write_byte(buffer, '-')
 	}
 	if decimal.Point > 0 {
 		end_index := decimal.Count
 		if end_index > decimal.Point {
 			end_index = decimal.Point
 		}
-		destination = append(destination, decimal.Digits[:end_index]...)
+		buffer_write_bytes(buffer, decimal.Digits[:end_index])
 		for index := end_index; index < decimal.Point; index++ {
-			destination = append(destination, '0')
+			buffer_write_byte(buffer, '0')
 		}
 	} else {
-		destination = append(destination, '0')
+		buffer_write_byte(buffer, '0')
 	}
 	if precision <= 0 {
-		return destination
+		return
 	}
-	destination = append(destination, '.')
+	buffer_write_byte(buffer, '.')
 	for index := 0; index < precision; index++ {
 		digit := byte('0')
 		digit_index := decimal.Point + index
@@ -1489,9 +1506,8 @@ func buffer_append_float_fixed(
 				digit = decimal.Digits[digit_index]
 			}
 		}
-		destination = append(destination, digit)
+		buffer_write_byte(buffer, digit)
 	}
-	return destination
 }
 
 func float_needs_exponent(value float64, bit_size int) (needs bool) {
@@ -1517,40 +1533,44 @@ func float_needs_exponent(value float64, bit_size int) (needs bool) {
 	return false
 }
 
-func buffer_clean_exponent(destination Buffer) (output Buffer) {
-	count := len(destination)
+func buffer_clean_exponent(buffer *Buffer) {
+	count := buffer.Count
 	if count < 4 {
-		return destination
+		return
 	}
-	if destination[count-4] != 'e' {
-		return destination
+	if buffer.Bytes[count-4] != 'e' {
+		return
 	}
-	if destination[count-3] != '-' {
-		return destination
+	if buffer.Bytes[count-3] != '-' {
+		return
 	}
-	if destination[count-2] != '0' {
-		return destination
+	if buffer.Bytes[count-2] != '0' {
+		return
 	}
-	destination[count-2] = destination[count-1]
-	return destination[:count-1]
+	buffer.Bytes[count-2] = buffer.Bytes[count-1]
+	buffer.Count = count - 1
 }
 
-// The all-plain common case is appended in one shot; the escape path runs only
+func buffer_write_string(buffer *Buffer, value string) {
+	buffer_write_byte(buffer, '"')
+	buffer_write_string_body(buffer, value)
+	buffer_write_byte(buffer, '"')
+}
+
+// The all-plain common case is copied in one shot; the escape path runs only
 // once a byte needs it.
-func buffer_append_string(destination Buffer, value string) (output Buffer) {
-	destination = append(destination, '"')
+func buffer_write_string_body(buffer *Buffer, value string) {
 	for index := 0; index < len(value); index++ {
 		if byte_is_plain(value[index]) {
 			continue
 		}
-		destination = buffer_append_string_complex(destination, value, index)
-		return append(destination, '"')
+		buffer_write_string_complex(buffer, value, index)
+		return
 	}
-	destination = append(destination, value...)
-	return append(destination, '"')
+	buffer_write_text(buffer, value)
 }
 
-func buffer_append_string_complex(destination Buffer, value string, scan int) (output Buffer) {
+func buffer_write_string_complex(buffer *Buffer, value string, scan int) {
 	run_start := 0
 	index := scan
 	for index < len(value) {
@@ -1559,8 +1579,8 @@ func buffer_append_string_complex(destination Buffer, value string, scan int) (o
 			decoded, width := utf8.Decode_Character_Text(utf8.Text(value[index:]))
 			if decoded == utf8.REPLACEMENT_CHARACTER {
 				if width == utf8.CHARACTER_SIZE_MINIMUM {
-					destination = append(destination, value[run_start:index]...)
-					destination = buffer_append_replacement(destination)
+					buffer_write_text(buffer, value[run_start:index])
+					buffer_write_replacement(buffer)
 					index += int(width)
 					run_start = index
 					continue
@@ -1573,39 +1593,42 @@ func buffer_append_string_complex(destination Buffer, value string, scan int) (o
 			index++
 			continue
 		}
-		destination = append(destination, value[run_start:index]...)
-		destination = buffer_append_escaped_byte(destination, current)
+		buffer_write_text(buffer, value[run_start:index])
+		buffer_write_escaped_byte(buffer, current)
 		index++
 		run_start = index
 	}
-	return append(destination, value[run_start:]...)
+	buffer_write_text(buffer, value[run_start:])
 }
 
-func buffer_append_hexadecimal(destination Buffer, value []byte) (output Buffer) {
-	destination = append(destination, '"')
+func buffer_write_hexadecimal(buffer *Buffer, value []byte) {
+	buffer_write_byte(buffer, '"')
 	for index := 0; index < len(value); index++ {
 		current := value[index]
-		high := hexadecimal_digit(current >> 4)
-		low := hexadecimal_digit(current & 0x0f)
-		destination = append(destination, high, low)
+		buffer_write_byte(buffer, hexadecimal_digit(current>>4))
+		buffer_write_byte(buffer, hexadecimal_digit(current&0x0f))
 	}
-	return append(destination, '"')
+	buffer_write_byte(buffer, '"')
 }
 
-func buffer_append_bytes(destination Buffer, value []byte) (output Buffer) {
-	destination = append(destination, '"')
+func buffer_write_quoted_bytes(buffer *Buffer, value []byte) {
+	buffer_write_byte(buffer, '"')
+	buffer_write_bytes_body(buffer, value)
+	buffer_write_byte(buffer, '"')
+}
+
+func buffer_write_bytes_body(buffer *Buffer, value []byte) {
 	for index := 0; index < len(value); index++ {
 		if byte_is_plain(value[index]) {
 			continue
 		}
-		destination = buffer_append_bytes_complex(destination, value, index)
-		return append(destination, '"')
+		buffer_write_bytes_complex(buffer, value, index)
+		return
 	}
-	destination = append(destination, value...)
-	return append(destination, '"')
+	buffer_write_bytes(buffer, value)
 }
 
-func buffer_append_bytes_complex(destination Buffer, value []byte, scan int) (output Buffer) {
+func buffer_write_bytes_complex(buffer *Buffer, value []byte, scan int) {
 	run_start := 0
 	index := scan
 	for index < len(value) {
@@ -1614,8 +1637,8 @@ func buffer_append_bytes_complex(destination Buffer, value []byte, scan int) (ou
 			decoded, width := utf8.Decode_Character(utf8.Bytes(value[index:]))
 			if decoded == utf8.REPLACEMENT_CHARACTER {
 				if width == utf8.CHARACTER_SIZE_MINIMUM {
-					destination = append(destination, value[run_start:index]...)
-					destination = buffer_append_replacement(destination)
+					buffer_write_bytes(buffer, value[run_start:index])
+					buffer_write_replacement(buffer)
 					index += int(width)
 					run_start = index
 					continue
@@ -1628,39 +1651,41 @@ func buffer_append_bytes_complex(destination Buffer, value []byte, scan int) (ou
 			index++
 			continue
 		}
-		destination = append(destination, value[run_start:index]...)
-		destination = buffer_append_escaped_byte(destination, current)
+		buffer_write_bytes(buffer, value[run_start:index])
+		buffer_write_escaped_byte(buffer, current)
 		index++
 		run_start = index
 	}
-	return append(destination, value[run_start:]...)
+	buffer_write_bytes(buffer, value[run_start:])
 }
 
-func buffer_append_escaped_byte(destination Buffer, value byte) (output Buffer) {
+func buffer_write_escaped_byte(buffer *Buffer, value byte) {
 	switch value {
 	case '"', '\\':
-		return append(destination, '\\', value)
+		buffer_write_byte(buffer, '\\')
+		buffer_write_byte(buffer, value)
 	case '\b':
-		return append(destination, '\\', 'b')
+		buffer_write_text(buffer, "\\b")
 	case '\f':
-		return append(destination, '\\', 'f')
+		buffer_write_text(buffer, "\\f")
 	case '\n':
-		return append(destination, '\\', 'n')
+		buffer_write_text(buffer, "\\n")
 	case '\r':
-		return append(destination, '\\', 'r')
+		buffer_write_text(buffer, "\\r")
 	case '\t':
-		return append(destination, '\\', 't')
+		buffer_write_text(buffer, "\\t")
+	default:
+		buffer_write_text(buffer, "\\u00")
+		buffer_write_byte(buffer, hexadecimal_digit(value>>4))
+		buffer_write_byte(buffer, hexadecimal_digit(value&0x0f))
 	}
-	high := hexadecimal_digit(value >> 4)
-	low := hexadecimal_digit(value & 0x0f)
-	return append(destination, '\\', 'u', '0', '0', high, low)
 }
 
-// Appends the JSON escape for the U+FFFD replacement character. zerolog emits this
+// Writes the JSON escape for the U+FFFD replacement character. zerolog emits this
 // six-byte escape (not the raw rune) for a malformed UTF-8 byte; jlog matches it so
 // the wire bytes are identical on bad input.
-func buffer_append_replacement(destination Buffer) (output Buffer) {
-	return append(destination, '\\', 'u', 'f', 'f', 'f', 'd')
+func buffer_write_replacement(buffer *Buffer) {
+	buffer_write_text(buffer, "\\ufffd")
 }
 
 // A plain byte is printable ASCII that is neither a quote nor a backslash and so
@@ -1682,11 +1707,11 @@ func hexadecimal_digit(nibble byte) (digit byte) {
 // The rest of this file is the pretty printer: the human-facing inverse of the encoder above. jlog
 // emits flat JSON for machines; a Console reads those lines back and renders them for a human at a
 // terminal. It plugs into the encoder only through the Write procedure: each emit sends one whole
-// flat-JSON object. Being off the hot path, it may allocate freely. It is pure — it reaches for no
-// OS, clock, or global state; every dependency arrives through a Console field — so it belongs
-// here, not in the composition tier.
+// flat-JSON object. It is pure — it reaches for no OS, clock, or global state; every dependency
+// arrives through a Console field — so it belongs here, not in the composition tier. It works in
+// its own fixed storage and allocates nothing.
 
-// An ANSI SGR sequence. A distinct type so buffer_paint takes it without colliding with its
+// An ANSI SGR sequence. A distinct type so buffer_paint_begin takes it without colliding with its
 // plain-text argument under the same-type-parameter rule, mirroring maddox's ansi_code.
 type Ansi_Code string
 
@@ -1713,13 +1738,22 @@ const ANSI_CYAN Ansi_Code = "\x1b[36m"
 
 // Console renders each flat-JSON jlog line as a human-readable console line.
 // It reads jlog's default field names (time, level, message, error); a logger built with custom
-// field names is not matched, which no caller needs. It is passed by value and never mutated, so a
-// copy is a faithful, independent Console. Build one directly with a struct literal.
+// field names is not matched, which no caller needs. It is used by pointer: one Write is in
+// flight at a time over its caller-owned Rendered storage. Build one directly with a struct
+// literal, filling Rendered and Object.
 type Console struct {
 	// Stream receives the rendered text.
 	Stream nbio.Stream
 	// Color enables ANSI color in the rendered output.
 	Color bool
+	// Forward holds the one in-flight write toward Stream.
+	Forward Forward
+	// Object is the scan of the line being rendered; the caller fills its storage.
+	Object Object
+	// Rendered is the caller-owned render storage for one Write, at most
+	// TRANSFORM_SIZE_MAXIMUM bytes; a Write whose render outgrows it retires
+	// Stream_Buffer_Full.
+	Rendered []byte
 }
 
 // TRANSFORM_MODES excludes reads and cursor modes because a transformed byte count names no
@@ -1732,7 +1766,17 @@ const TRANSFORM_MODES nbio.Stream_Mode_Set = 1<<nbio.STREAM_MODE_CLOSE |
 // human-readable form to the inner Stream once.
 func Console_To_Stream(console *Console) (stream nbio.Stream) {
 	aver.Always(console != nil, "jlog: console must not be nil")
+	aver.Always(len(console.Rendered) > 0, "jlog: console render storage is required")
+	aver.Always(len(console.Rendered) <= TRANSFORM_SIZE_MAXIMUM, "jlog: render exceeds bound")
+	object_check(&console.Object)
 	return nbio.Stream{State: console, Procedure: console_procedure}
+}
+
+func object_check(object *Object) {
+	aver.Always(len(object.Members) > 0, "jlog: object member storage is required")
+	aver.Always(len(object.Members) <= MEMBER_COUNT_MAXIMUM, "jlog: members exceed bound")
+	aver.Always(len(object.Decoded) > 0, "jlog: object decoded storage is required")
+	aver.Always(len(object.Decoded) <= TRANSFORM_SIZE_MAXIMUM, "jlog: decoded exceeds bound")
 }
 
 func console_procedure(
@@ -1741,47 +1785,84 @@ func console_procedure(
 ) {
 	console := state.(*Console)
 	if mode == nbio.STREAM_MODE_WRITE {
-		rendered := console_render(*console, payload)
-		transform_write(console.Stream, completion, payload, rendered, callback)
+		if transform_busy(&console.Forward, completion, callback) {
+			return
+		}
+		rendered := Buffer{Bytes: console.Rendered}
+		console_render(console, &rendered, payload)
+		transform_write(
+			console.Stream, &console.Forward, completion, len(payload), &rendered,
+			callback,
+		)
 		return
 	}
 	transform_submit(console.Stream, completion, mode, offset, whence, callback)
 }
 
-// Forward keeps the outer retirement and the transformed buffer alive until the inner Stream
-// retires, since a kernel-backed Stream may retain only the Completion.
+// Forward keeps the outer retirement alive until the inner Stream retires, since a kernel-backed
+// Stream may retain only the Completion. It lives in the transform's state, so one write is in
+// flight per transform.
 type Forward struct {
 	// Callback is the outer retirement.
 	Callback nbio.Stream_Callback
-	// Buffer is the transformed bytes the inner Stream borrows.
-	Buffer Buffer
 	// Count is the outer payload length reported on success.
 	Count int
+	// Busy marks the inner write as still in flight; a second submission is a caller defect.
+	Busy bool
 }
 
-// A transforming Stream reports len(payload) consumed on success because it emits a different
-// byte count than it takes. Forward allocates per write; transforms are off the hot path.
+// A transform owns one storage run, so a Write arriving while an earlier one is still in flight,
+// as a parent and a child logger sharing one Console produce, would overwrite bytes the inner
+// Stream borrows. The new Write retires Stream_Buffer_Full before touching storage: the same drop
+// a logger makes when its own line is still borrowed.
+func transform_busy(
+	forward *Forward, completion *nbio.Completion, callback nbio.Stream_Callback,
+) (busy bool) {
+	if !forward.Busy {
+		return false
+	}
+	completion.Data = 0
+	completion.Error = nbio.Stream_Buffer_Full
+	nbio.Stream_Callback_Call(callback, completion)
+	return true
+}
+
+// A transforming Stream reports the payload count consumed on success because it emits a
+// different byte count than it takes. A transform that outgrew its storage retires as
+// Stream_Buffer_Full and reaches the inner Stream with nothing, never with a torn tail.
 func transform_write(
-	inner nbio.Stream, completion *nbio.Completion, payload []byte, transformed Buffer,
-	callback nbio.Stream_Callback,
+	inner nbio.Stream, forward *Forward, completion *nbio.Completion, payload_count int,
+	transformed *Buffer, callback nbio.Stream_Callback,
 ) {
-	if len(transformed) == 0 {
-		completion.Data = len(payload)
-		completion.Error = nil
+	completion.Data = 0
+	completion.Error = nil
+	if transformed.Overflow {
+		completion.Error = nbio.Stream_Buffer_Full
+		nbio.Stream_Callback_Call(callback, completion)
+		return
+	}
+	if transformed.Count == 0 {
+		completion.Data = payload_count
 		nbio.Stream_Callback_Call(callback, completion)
 		return
 	}
 	if inner.Procedure == nil {
-		completion.Data = 0
 		completion.Error = nbio.Stream_Empty
 		nbio.Stream_Callback_Call(callback, completion)
 		return
 	}
-	forward := &Forward{Callback: callback, Buffer: transformed, Count: len(payload)}
-	inner.Procedure(inner.State, completion, nbio.STREAM_MODE_WRITE, transformed, 0,
-		nbio.SEEK_FROM_START, nbio.Stream_Callback{
-			State: forward, Data: len(transformed), Procedure: transform_retire,
-		})
+	aver.Always(!forward.Busy, "jlog: a transform has one write in flight")
+	forward.Busy = true
+	forward.Callback = callback
+	forward.Count = payload_count
+	written := transformed.Bytes[:transformed.Count]
+	retire := nbio.Stream_Callback{
+		State: forward, Data: len(written), Procedure: transform_retire,
+	}
+	inner.Procedure(
+		inner.State, completion, nbio.STREAM_MODE_WRITE, written, 0, nbio.SEEK_FROM_START,
+		retire,
+	)
 }
 
 func transform_retire(
@@ -1789,6 +1870,7 @@ func transform_retire(
 	completion nbio.Completion_Handle,
 ) {
 	forward := state.(*Forward)
+	forward.Busy = false
 	if completion.Error == nil {
 		if completion.Data != int(transformed_count) {
 			completion.Error = nbio.Stream_Short_Write
@@ -1825,23 +1907,25 @@ func transform_submit(
 	nbio.Stream_Callback_Call(callback, completion)
 }
 
-func console_render(console Console, payload []byte) (rendered Buffer) {
-	rendered = make(Buffer, 0, len(payload)*2)
+func console_render(console *Console, rendered *Buffer, payload []byte) {
 	line_start := 0
 	for index := 0; index < len(payload); index++ {
 		if payload[index] != '\n' {
 			continue
 		}
-		rendered = buffer_append_pretty_line(rendered, payload[line_start:index], console)
-		rendered = append(rendered, '\n')
+		buffer_write_pretty_line(
+			rendered, &console.Object, payload[line_start:index], console.Color,
+		)
+		buffer_write_byte(rendered, '\n')
 		line_start = index + 1
 	}
 	// A trailing chunk with no newline is not something jlog produces (every line ends in \n),
 	// but a Console used on a raw pipe might see one; render it without inventing a newline.
 	if line_start < len(payload) {
-		rendered = buffer_append_pretty_line(rendered, payload[line_start:], console)
+		buffer_write_pretty_line(
+			rendered, &console.Object, payload[line_start:], console.Color,
+		)
 	}
-	return rendered
 }
 
 // How a JSON value is displayed: a string is unquoted (and logfmt-requoted only if needed), a
@@ -1858,83 +1942,111 @@ const VALUE_IS_LITERAL Value_Kind = 1
 // VALUE_IS_COMPOUND tags an array/object copied as one compact JSON token.
 const VALUE_IS_COMPOUND Value_Kind = 2
 
-// One key/value member of a rendered line, holding the value already reduced to its display text
+// Span locates one run of bytes inside an Object's Decoded storage.
+type Span struct {
+	// Offset is the index of the first byte.
+	Offset int
+	// Size is the byte count.
+	Size int
+}
+
+// One key/value member of a scanned line, holding the value already reduced to its display text
 // and kind so rendering never re-parses.
 type Member struct {
-	// Key is the JSON object key.
-	Key string
-	// Text is the value's display form, already unescaped or compacted.
-	Text string
+	// Key locates the JSON object key in Decoded.
+	Key Span
+	// Text locates the value's display form, already unescaped or compacted, in Decoded.
+	Text Span
 	// Kind selects how Text is quoted when rendered.
 	Kind Value_Kind
 }
 
-// Appends line rendered as one console line (no trailing newline; Write adds that). A line that is
-// not a JSON object is appended verbatim, so interleaved non-JSON output is never lost.
-func buffer_append_pretty_line(
-	destination Buffer, line []byte, console Console,
-) (output Buffer) {
-	members, parsed := scan_object(line)
-	if !parsed {
-		return append(destination, line...)
-	}
-	return buffer_append_members(destination, members, console)
+// Object is the scan of one flat-JSON line in caller-owned storage: the members in wire order
+// and the decoded text they point into. A line past either bound does not parse and passes
+// through unrendered.
+type Object struct {
+	// Members holds the scanned members in wire order, at most MEMBER_COUNT_MAXIMUM.
+	Members []Member
+	// Count is the members scanned.
+	Count int
+	// Decoded holds every key and value text, at most TRANSFORM_SIZE_MAXIMUM bytes.
+	Decoded []byte
 }
 
-// Scans one flat-JSON object into its members in wire order. It is hand-rolled rather than built
-// on json.NewDecoder because the house style bans that unbounded streaming API, and json.Unmarshal
+func object_span(object *Object, span Span) (text []byte) {
+	return object.Decoded[span.Offset : span.Offset+span.Size]
+}
+
+// Writes line rendered as one console line (no trailing newline; Write adds that). A line that is
+// not a JSON object is written verbatim, so interleaved non-JSON output is never lost.
+func buffer_write_pretty_line(buffer *Buffer, object *Object, line []byte, color bool) {
+	if !scan_object(object, line) {
+		buffer_write_bytes(buffer, line)
+		return
+	}
+	buffer_write_members(buffer, object, color)
+}
+
+// Scans one flat-JSON object into object in wire order. It is hand-rolled rather than built on
+// json.NewDecoder because the house style bans that unbounded streaming API, and json.Unmarshal
 // into a map would scramble jlog's deliberate field order and round a large uint64 through float64.
 // Each value's exact source bytes are captured (numbers stay exact, an embedded Raw_JSON blob
-// survives). Any deviation from a lone, well-formed object returns parsed=false, and the caller
-// passes the line through untouched.
-func scan_object(line []byte) (members []Member, parsed bool) {
+// survives). Any deviation from a lone, well-formed object, or a line past the member or text
+// bound, returns parsed=false, and the caller passes the line through untouched.
+func scan_object(object *Object, line []byte) (parsed bool) {
+	object.Count = 0
+	decoded := Buffer{Bytes: object.Decoded}
 	index := scan_space(line, 0)
 	if index >= len(line) {
-		return nil, false
+		return false
 	}
 	if line[index] != '{' {
-		return nil, false
+		return false
 	}
 	index = scan_space(line, index+1)
 	if index < len(line) {
 		if line[index] == '}' {
-			return nil, scan_space(line, index+1) == len(line)
+			return scan_space(line, index+1) == len(line)
 		}
 	}
 	// Each member is at least one byte, so len(line) bounds the count and keeps the loop
 	// bounded; a well-formed object returns through '}' before that ceiling is reached.
 	for guard_index := 0; guard_index < len(line); guard_index++ {
-		key, key_next, key_ok := scan_string(line, index)
+		if object.Count == len(object.Members) {
+			return false
+		}
+		key, key_next, key_ok := scan_string(&decoded, line, index)
 		if !key_ok {
-			return nil, false
+			return false
 		}
 		index = scan_space(line, key_next)
 		if index >= len(line) {
-			return nil, false
+			return false
 		}
 		if line[index] != ':' {
-			return nil, false
+			return false
 		}
 		index = scan_space(line, index+1)
-		text, kind, value_next, value_ok := scan_value(line, index)
+		text, kind, value_next, value_ok := scan_value(&decoded, line, index)
 		if !value_ok {
-			return nil, false
+			return false
 		}
-		members = append(members, Member{Key: key, Text: text, Kind: kind})
+		object.Members[object.Count] = Member{Key: key, Text: text, Kind: kind}
+		object.Count++
 		index = scan_space(line, value_next)
 		if index >= len(line) {
-			return nil, false
+			return false
 		}
 		if line[index] == ',' {
 			index = scan_space(line, index+1)
 			continue
 		}
 		if line[index] == '}' {
-			return members, scan_space(line, index+1) == len(line)
+			return scan_space(line, index+1) == len(line)
 		}
-		return nil, false
+		return false
 	}
-	return nil, false
+	return false
 }
 
 // Skips JSON insignificant whitespace from start and returns the next index. jlog output carries
@@ -1958,16 +2070,15 @@ func byte_is_space(value byte) (space bool) {
 	return false
 }
 
-// Reads a JSON string beginning at start, returning its unescaped value and the index past the
-// closing quote. The raw span (quotes included) is handed to json.Unmarshal — a bounded []byte, the
-// API the house style prefers — so escapes decode exactly; the scan only has to find the real close
-// quote, which means skipping a backslash-escaped byte so an escaped quote does not end it early.
-func scan_string(line []byte, start int) (value string, next int, ok bool) {
+// Reads a JSON string beginning at start, decoding its escapes into decoded and returning the
+// index past the closing quote. The scan only has to find the real close quote, which means
+// skipping a backslash-escaped byte so an escaped quote does not end it early.
+func scan_string(decoded *Buffer, line []byte, start int) (text Span, next int, ok bool) {
 	if start >= len(line) {
-		return "", start, false
+		return Span{}, start, false
 	}
 	if line[start] != '"' {
-		return "", start, false
+		return Span{}, start, false
 	}
 	index := start + 1
 	for index < len(line) {
@@ -1976,54 +2087,55 @@ func scan_string(line []byte, start int) (value string, next int, ok bool) {
 			continue
 		}
 		if line[index] == '"' {
-			decoded, valid := json_string_decode(line[start+1 : index])
-			return decoded, index + 1, valid
+			text.Offset = decoded.Count
+			valid := json_string_decode(decoded, line[start+1:index])
+			text.Size = decoded.Count - text.Offset
+			return text, index + 1, valid
 		}
 		index++
 	}
-	return "", start, false
+	return Span{}, start, false
 }
 
-func json_string_decode(encoded []byte) (decoded string, valid bool) {
-	storage := make(Buffer, 0, len(encoded))
+func json_string_decode(decoded *Buffer, encoded []byte) (valid bool) {
 	for index := 0; index < len(encoded); index++ {
 		current := encoded[index]
 		if current < 0x20 {
-			return "", false
+			return false
 		}
 		if current != '\\' {
-			storage = append(storage, current)
+			buffer_write_byte(decoded, current)
 			continue
 		}
 		index++
 		if index >= len(encoded) {
-			return "", false
+			return false
 		}
 		switch encoded[index] {
 		case '"', '\\', '/':
-			storage = append(storage, encoded[index])
+			buffer_write_byte(decoded, encoded[index])
 		case 'b':
-			storage = append(storage, '\b')
+			buffer_write_byte(decoded, '\b')
 		case 'f':
-			storage = append(storage, '\f')
+			buffer_write_byte(decoded, '\f')
 		case 'n':
-			storage = append(storage, '\n')
+			buffer_write_byte(decoded, '\n')
 		case 'r':
-			storage = append(storage, '\r')
+			buffer_write_byte(decoded, '\r')
 		case 't':
-			storage = append(storage, '\t')
+			buffer_write_byte(decoded, '\t')
 		case 'u':
 			code, tail_index, known := json_hexadecimal_character(encoded, index+1)
 			if !known {
-				return "", false
+				return false
 			}
 			index = tail_index
-			storage = json_append_character(storage, code)
+			buffer_write_character(decoded, code)
 		default:
-			return "", false
+			return false
 		}
 	}
-	return string(storage), true
+	return !decoded.Overflow
 }
 
 func json_hexadecimal_character(
@@ -2061,52 +2173,59 @@ func hexadecimal_value(value byte) (digit byte, known bool) {
 	return 0, false
 }
 
-func json_append_character(destination Buffer, character rune) (output Buffer) {
+func buffer_write_character(buffer *Buffer, character rune) {
 	if character < 0x80 {
-		return append(destination, byte(character))
+		buffer_write_byte(buffer, byte(character))
+		return
 	}
 	if character < 0x800 {
-		return append(destination,
-			byte(0xc0|character>>6),
-			byte(0x80|character&0x3f),
-		)
+		buffer_write_byte(buffer, byte(0xc0|character>>6))
+		buffer_write_byte(buffer, byte(0x80|character&0x3f))
+		return
 	}
-	return append(destination,
-		byte(0xe0|character>>12),
-		byte(0x80|character>>6&0x3f),
-		byte(0x80|character&0x3f),
-	)
+	buffer_write_byte(buffer, byte(0xe0|character>>12))
+	buffer_write_byte(buffer, byte(0x80|character>>6&0x3f))
+	buffer_write_byte(buffer, byte(0x80|character&0x3f))
 }
 
 // Reads one JSON value beginning at start, classifying it: a string is unescaped, an array or
 // object is captured as its verbatim (already-compact) source bytes, and anything else is a scalar
-// literal whose digits are kept exactly.
-func scan_value(line []byte, start int) (text string, kind Value_Kind, next int, ok bool) {
+// literal whose digits are kept exactly. Every form lands in decoded so a member points one way.
+func scan_value(
+	decoded *Buffer, line []byte, start int,
+) (text Span, kind Value_Kind, next int, ok bool) {
 	if start >= len(line) {
-		return "", VALUE_IS_LITERAL, start, false
+		return Span{}, VALUE_IS_LITERAL, start, false
 	}
 	if line[start] == '"' {
-		value, value_next, value_ok := scan_string(line, start)
-		if !value_ok {
-			return "", VALUE_IS_LITERAL, start, false
-		}
-		return value, VALUE_IS_STRING, value_next, true
+		text, next, ok = scan_string(decoded, line, start)
+		return text, VALUE_IS_STRING, next, ok
 	}
+	kind = VALUE_IS_LITERAL
 	if line[start] == '{' {
-		return scan_compound(line, start)
+		kind = VALUE_IS_COMPOUND
+		next, ok = scan_compound(line, start)
+	} else if line[start] == '[' {
+		kind = VALUE_IS_COMPOUND
+		next, ok = scan_compound(line, start)
+	} else {
+		next, ok = scan_literal(line, start)
 	}
-	if line[start] == '[' {
-		return scan_compound(line, start)
+	if !ok {
+		return Span{}, kind, start, false
 	}
-	return scan_literal(line, start)
+	text.Offset = decoded.Count
+	buffer_write_bytes(decoded, line[start:next])
+	text.Size = decoded.Count - text.Offset
+	return text, kind, next, !decoded.Overflow
 }
 
-// Reads a brace- or bracket-delimited value beginning at start, returning its verbatim source
-// bytes. A depth counter over the matching delimiter finds the close; strings are skipped whole so
+// Reads a brace- or bracket-delimited value beginning at start, returning the index past its
+// close. A depth counter over the matching delimiter finds the close; strings are skipped whole so
 // a delimiter inside a string does not miscount. Cross-type nesting (an array inside an object) is
 // transparent — the other delimiter is an ordinary byte — and any real imbalance surfaces as a
 // parse failure at the enclosing object, which passes the line through.
-func scan_compound(line []byte, start int) (text string, kind Value_Kind, next int, ok bool) {
+func scan_compound(line []byte, start int) (next int, ok bool) {
 	opener := line[start]
 	closer := byte('}')
 	if opener == '[' {
@@ -2116,9 +2235,9 @@ func scan_compound(line []byte, start int) (text string, kind Value_Kind, next i
 	index := start
 	for index < len(line) {
 		if line[index] == '"' {
-			_, string_next, string_ok := scan_string(line, index)
+			string_next, string_ok := scan_string_end(line, index)
 			if !string_ok {
-				return "", VALUE_IS_COMPOUND, start, false
+				return start, false
 			}
 			index = string_next
 			continue
@@ -2132,18 +2251,35 @@ func scan_compound(line []byte, start int) (text string, kind Value_Kind, next i
 			depth--
 			index++
 			if depth == 0 {
-				return string(line[start:index]), VALUE_IS_COMPOUND, index, true
+				return index, true
 			}
 			continue
 		}
 		index++
 	}
-	return "", VALUE_IS_COMPOUND, start, false
+	return start, false
+}
+
+// Finds the index past the close quote of the string at start without decoding it, for the
+// compound scan that copies its source bytes verbatim.
+func scan_string_end(line []byte, start int) (next int, ok bool) {
+	index := start + 1
+	for index < len(line) {
+		if line[index] == '\\' {
+			index += 2
+			continue
+		}
+		if line[index] == '"' {
+			return index + 1, true
+		}
+		index++
+	}
+	return start, false
 }
 
 // Reads a scalar literal (number, true, false, or null) beginning at start, ending it at the first
 // value terminator so its exact source digits are captured.
-func scan_literal(line []byte, start int) (text string, kind Value_Kind, next int, ok bool) {
+func scan_literal(line []byte, start int) (next int, ok bool) {
 	index := start
 	for index < len(line) {
 		if byte_ends_literal(line[index]) {
@@ -2152,9 +2288,9 @@ func scan_literal(line []byte, start int) (text string, kind Value_Kind, next in
 		index++
 	}
 	if index == start {
-		return "", VALUE_IS_LITERAL, start, false
+		return start, false
 	}
-	return string(line[start:index]), VALUE_IS_LITERAL, index, true
+	return index, true
 }
 
 // Reports whether value terminates a scalar literal: a member separator, a container close, or
@@ -2169,129 +2305,140 @@ func byte_ends_literal(value byte) (ends bool) {
 
 // Renders the header (timestamp, level, message — in that order, whatever their wire order) then
 // every remaining member as a logfmt pair, each part separated from the last by a single space.
-func buffer_append_members(
-	destination Buffer, members []Member, console Console,
-) (output Buffer) {
+func buffer_write_members(buffer *Buffer, object *Object, color bool) {
 	// An absent header key and an empty one render the same — nothing — so a plain non-empty
 	// check covers both, and jlog never emits an empty timestamp, level, or message anyway. The
 	// timestamp is coarsened to the second here; the tail keeps any Time field's precision.
-	time_text := timestamp_seconds(member_text(members, string(DEFAULT_TIMESTAMP_FIELD_NAME)))
-	level_text := member_text(members, string(DEFAULT_LEVEL_FIELD_NAME))
-	message_text := member_text(members, string(DEFAULT_MESSAGE_FIELD_NAME))
+	time_text := member_text(object, string(DEFAULT_TIMESTAMP_FIELD_NAME))
+	level_text := member_text(object, string(DEFAULT_LEVEL_FIELD_NAME))
+	message_text := member_text(object, string(DEFAULT_MESSAGE_FIELD_NAME))
 	wrote := false
-	if time_text != "" {
-		destination = buffer_append_separated(destination, wrote)
-		destination = buffer_paint(destination, ANSI_FAINT, console.Color, time_text)
+	if len(time_text) > 0 {
+		buffer_write_separated(buffer, wrote)
+		buffer_paint_begin(buffer, ANSI_FAINT, color)
+		buffer_write_timestamp_seconds(buffer, time_text)
+		buffer_paint_end(buffer, ANSI_FAINT, color)
 		wrote = true
 	}
-	if level_text != "" {
-		destination = buffer_append_separated(destination, wrote)
-		destination = buffer_append_level_tag(destination, level_text, console.Color)
+	if len(level_text) > 0 {
+		buffer_write_separated(buffer, wrote)
+		buffer_write_level_tag(buffer, level_text, color)
 		wrote = true
 	}
-	if message_text != "" {
-		destination = buffer_append_separated(destination, wrote)
-		destination = buffer_paint(destination, ANSI_BOLD, console.Color, message_text)
+	if len(message_text) > 0 {
+		buffer_write_separated(buffer, wrote)
+		buffer_paint_begin(buffer, ANSI_BOLD, color)
+		buffer_write_bytes(buffer, message_text)
+		buffer_paint_end(buffer, ANSI_BOLD, color)
 		wrote = true
 	}
-	for index := 0; index < len(members); index++ {
-		current := members[index]
-		if member_is_header(current.Key) {
+	for index := 0; index < object.Count; index++ {
+		member := &object.Members[index]
+		if member_is_header(object_span(object, member.Key)) {
 			continue
 		}
-		destination = buffer_append_separated(destination, wrote)
-		destination = buffer_append_field(destination, current, console)
+		buffer_write_separated(buffer, wrote)
+		buffer_write_field(buffer, object, member, color)
 		wrote = true
 	}
-	return destination
 }
 
 // Reports whether key is one of the three header keys, which render in the header rather than
 // repeat in the logfmt tail.
-func member_is_header(key string) (header bool) {
-	if key == string(DEFAULT_TIMESTAMP_FIELD_NAME) {
+func member_is_header(key []byte) (header bool) {
+	if string(key) == string(DEFAULT_TIMESTAMP_FIELD_NAME) {
 		return true
 	}
-	if key == string(DEFAULT_LEVEL_FIELD_NAME) {
+	if string(key) == string(DEFAULT_LEVEL_FIELD_NAME) {
 		return true
 	}
-	if key == string(DEFAULT_MESSAGE_FIELD_NAME) {
+	if string(key) == string(DEFAULT_MESSAGE_FIELD_NAME) {
 		return true
 	}
 	return false
 }
 
-// Returns the display text of the first member with key, or "" when no member has it.
-func member_text(members []Member, key string) (text string) {
-	for index := 0; index < len(members); index++ {
-		if members[index].Key == key {
-			return members[index].Text
+// Returns the display text of the first member with key, or nothing when no member has it.
+func member_text(object *Object, key string) (text []byte) {
+	for index := 0; index < object.Count; index++ {
+		member := &object.Members[index]
+		if string(object_span(object, member.Key)) == key {
+			return object_span(object, member.Text)
 		}
 	}
-	return ""
+	return nil
 }
 
-// Appends a single space before a part when a previous part was already written, so the line
+// Writes a single space before a part when a previous part was already written, so the line
 // never opens with or doubles a separator.
-func buffer_append_separated(destination Buffer, wrote bool) (output Buffer) {
+func buffer_write_separated(buffer *Buffer, wrote bool) {
 	if wrote {
-		return append(destination, ' ')
+		buffer_write_byte(buffer, ' ')
 	}
-	return destination
 }
 
-// Appends one logfmt "key=value" pair: the key in cyan so it reads as a label yet stays legible
+// Writes one logfmt "key=value" pair: the key in cyan so it reads as a label yet stays legible
 // (unlike a dim gray), the value logfmt-quoted, and — for the error field — the value painted red
 // so a failure stands out.
-func buffer_append_field(destination Buffer, field Member, console Console) (output Buffer) {
-	destination = buffer_paint(destination, ANSI_CYAN, console.Color, field.Key)
-	destination = append(destination, '=')
+func buffer_write_field(buffer *Buffer, object *Object, member *Member, color bool) {
+	key := object_span(object, member.Key)
+	text := object_span(object, member.Text)
+	buffer_paint_begin(buffer, ANSI_CYAN, color)
+	buffer_write_bytes(buffer, key)
+	buffer_paint_end(buffer, ANSI_CYAN, color)
+	buffer_write_byte(buffer, '=')
 	value_color := Ansi_Code("")
-	if field.Key == string(DEFAULT_ERROR_FIELD_NAME) {
+	if string(key) == string(DEFAULT_ERROR_FIELD_NAME) {
 		value_color = ANSI_RED
 	}
-	if field.Kind == VALUE_IS_STRING {
-		if logfmt_needs_quote(field.Text) {
-			if console.Color {
-				destination = append(destination, value_color...)
-			}
-			destination = buffer_append_string(destination, field.Text)
-			if console.Color {
-				return append(destination, ANSI_RESET...)
-			}
-			return destination
+	buffer_paint_begin(buffer, value_color, color)
+	if member.Kind == VALUE_IS_STRING {
+		if logfmt_needs_quote(text) {
+			buffer_write_quoted_bytes(buffer, text)
+			buffer_paint_end(buffer, value_color, color)
+			return
 		}
 	}
-	return buffer_paint(destination, value_color, console.Color, field.Text)
+	buffer_write_bytes(buffer, text)
+	buffer_paint_end(buffer, value_color, color)
 }
 
-// Appends the level as its three-letter tag, painted by severity. Named apart from the encoder's
-// buffer_append_level (which writes the level as a JSON field) since both share this package.
-func buffer_append_level_tag(destination Buffer, wire string, color bool) (output Buffer) {
-	return buffer_paint(destination, level_color(wire), color, level_label(wire))
+// Writes the level as its three-letter tag, painted by severity. Named apart from the encoder's
+// buffer_write_level (which writes the level as a JSON field) since both share this package.
+func buffer_write_level_tag(buffer *Buffer, wire []byte, color bool) {
+	code := level_color(wire)
+	buffer_paint_begin(buffer, code, color)
+	buffer_write_level_label(buffer, wire)
+	buffer_paint_end(buffer, code, color)
 }
 
-// Appends text wrapped in code and a reset when color is on and code is a real color; otherwise
-// appends text bare. An empty code means "no color for this part", so an unknown level or a
-// non-error value stays uncolored even under color.
-func buffer_paint(destination Buffer, code Ansi_Code, color bool, text string) (output Buffer) {
+// Opens a painted span when color is on and code is a real color. An empty code means "no color
+// for this part", so an unknown level or a non-error value stays uncolored even under color.
+func buffer_paint_begin(buffer *Buffer, code Ansi_Code, color bool) {
 	if !color {
-		return append(destination, text...)
+		return
 	}
 	if code == "" {
-		return append(destination, text...)
+		return
 	}
-	destination = append(destination, code...)
-	destination = append(destination, text...)
-	return append(destination, ANSI_RESET...)
+	buffer_write_text(buffer, string(code))
 }
 
-// Returns the display token for a field value: a string is bare unless logfmt requires quoting; a
-// literal or compound value is already a safe bare token.
+// Closes the span buffer_paint_begin opened under the same code and color.
+func buffer_paint_end(buffer *Buffer, code Ansi_Code, color bool) {
+	if !color {
+		return
+	}
+	if code == "" {
+		return
+	}
+	buffer_write_text(buffer, string(ANSI_RESET))
+}
+
 // Reports whether a logfmt value must be double-quoted: an empty value, or one carrying a space,
 // an equals, a quote, or a control byte, is ambiguous or unreadable bare.
-func logfmt_needs_quote(value string) (needs bool) {
-	if value == "" {
+func logfmt_needs_quote(value []byte) (needs bool) {
+	if len(value) == 0 {
 		return true
 	}
 	for index := 0; index < len(value); index++ {
@@ -2307,26 +2454,30 @@ func logfmt_needs_quote(value string) (needs bool) {
 	return false
 }
 
-// Maps a level's wire name to its three-letter tag. An unknown level (a custom numeric level, or
-// "disabled") falls back to its first three characters uppercased, so nothing renders blank.
-func level_label(wire string) (label string) {
-	switch wire {
+// Writes a level's three-letter tag from its wire name. An unknown level (a custom numeric level,
+// or "disabled") falls back to its first three characters uppercased, so nothing renders blank.
+func buffer_write_level_label(buffer *Buffer, wire []byte) {
+	switch string(wire) {
 	case "trace":
-		return "TRC"
+		buffer_write_text(buffer, "TRC")
+		return
 	case "debug":
-		return "DBG"
+		buffer_write_text(buffer, "DBG")
+		return
 	case "info":
-		return "INF"
+		buffer_write_text(buffer, "INF")
+		return
 	case "warn":
-		return "WRN"
+		buffer_write_text(buffer, "WRN")
+		return
 	case "error":
-		return "ERR"
+		buffer_write_text(buffer, "ERR")
+		return
 	}
 	count := len(wire)
-	if count > 3 {
-		count = 3
+	if count > LEVEL_LABEL_SIZE_MAXIMUM {
+		count = LEVEL_LABEL_SIZE_MAXIMUM
 	}
-	var storage [LEVEL_LABEL_SIZE_MAXIMUM]byte
 	for index := 0; index < count; index++ {
 		current := wire[index]
 		if current >= 'a' {
@@ -2334,15 +2485,14 @@ func level_label(wire string) (label string) {
 				current -= 'a' - 'A'
 			}
 		}
-		storage[index] = current
+		buffer_write_byte(buffer, current)
 	}
-	return string(storage[:count])
 }
 
 // Maps a level's wire name to its color; an unknown level returns the empty code, meaning no
-// color, so buffer_paint leaves it plain.
-func level_color(wire string) (code Ansi_Code) {
-	switch wire {
+// color, so buffer_paint_begin leaves it plain.
+func level_color(wire []byte) (code Ansi_Code) {
+	switch string(wire) {
 	case "trace":
 		return ANSI_FAINT
 	case "debug":
@@ -2357,25 +2507,27 @@ func level_color(wire string) (code Ansi_Code) {
 	return ""
 }
 
-// Trims an RFC 3339 header timestamp to second precision by dropping its sub-second fraction and
-// keeping the trailing zone, so "…:20.123456789Z" becomes "…:20Z" — a human reading the console
-// needs no nanosecond granularity. A value with no fraction is returned unchanged; only the
-// console display coarsens, never the JSON line.
-func timestamp_seconds(value string) (seconds string) {
-	fraction_offset := string_byte_index(value, '.')
+// Writes an RFC 3339 header timestamp trimmed to second precision by dropping its sub-second
+// fraction and keeping the trailing zone, so "…:20.123456789Z" becomes "…:20Z" — a human reading
+// the console needs no nanosecond granularity. A value with no fraction is written unchanged; only
+// the console display coarsens, never the JSON line.
+func buffer_write_timestamp_seconds(buffer *Buffer, value []byte) {
+	fraction_offset := bytes_index(value, '.')
 	if fraction_offset < 0 {
-		return value
+		buffer_write_bytes(buffer, value)
+		return
 	}
+	buffer_write_bytes(buffer, value[:fraction_offset])
 	// The zone is searched absolutely, not relative to the fraction, so the two offsets are
 	// never added: an RFC 3339 UTC value carries exactly one 'Z', the terminal zone marker.
-	zone_offset := string_byte_index(value, 'Z')
+	zone_offset := bytes_index(value, 'Z')
 	if zone_offset < 0 {
-		return value[:fraction_offset]
+		return
 	}
-	return value[:fraction_offset] + value[zone_offset:]
+	buffer_write_bytes(buffer, value[zone_offset:])
 }
 
-func string_byte_index(value string, sought byte) (index int) {
+func bytes_index(value []byte, sought byte) (index int) {
 	for index = 0; index < len(value); index++ {
 		if value[index] == sought {
 			return index
@@ -2387,8 +2539,8 @@ func string_byte_index(value string, sought byte) (index int) {
 // Level_Filter forwards only the jlog lines whose level is at or above
 // its Floor and drops the rest — a floor at the writer seam, not at the emit gate. A terminal
 // logger emits every level so a file sink keeps all of them; a Level_Filter is what still holds
-// trace and debug off the console. It is passed by value; New_Level_Filter sets its fields and
-// nothing mutates them, so a copy is a faithful, independent filter.
+// trace and debug off the console. It is used by pointer: one Write is in flight at a time over
+// its caller-owned Kept storage.
 type Level_Filter struct {
 	// Stream receives the lines that clear the floor.
 	Stream nbio.Stream
@@ -2396,18 +2548,29 @@ type Level_Filter struct {
 	Floor Level
 	// Level_Field is the key whose value names each line's level.
 	Level_Field string
+	// Forward holds the one in-flight write toward Stream.
+	Forward Forward
+	// Object is the scan of the line being classified; the caller fills its storage.
+	Object Object
+	// Kept is the caller-owned storage for the lines of one Write that clear the floor, at
+	// most TRANSFORM_SIZE_MAXIMUM bytes; a Write that outgrows it retires Stream_Buffer_Full.
+	Kept []byte
 }
 
-// New_Level_Filter builds a Level_Filter over stream, resolving an empty level field name to
-// jlog's default so it matches a default logger.
+// New_Level_Filter fills filter over stream in place, resolving an empty level field name to
+// jlog's default so it matches a default logger. The caller filled Kept and Object first.
 func New_Level_Filter(
-	stream nbio.Stream, floor Level, level_field_name string,
-) (filter Level_Filter) {
+	filter *Level_Filter, stream nbio.Stream, floor Level, level_field_name string,
+) {
+	aver.Always(filter != nil, "jlog: level filter storage is required")
+	aver.Always(len(filter.Kept) > 0, "jlog: level filter kept storage is required")
+	aver.Always(len(filter.Kept) <= TRANSFORM_SIZE_MAXIMUM, "jlog: kept exceeds bound")
+	object_check(&filter.Object)
 	filter.Stream = stream
 	filter.Floor = floor
 	filter.Level_Field = string_or(level_field_name, DEFAULT_LEVEL_FIELD_NAME)
+	filter.Forward = Forward{}
 	aver.Always(filter.Level_Field != "", "jlog: level field name is non-empty")
-	return filter
 }
 
 // Level_Filter_To_Stream forwards each written line whose level clears the Floor and drops the
@@ -2423,22 +2586,27 @@ func level_filter_procedure(
 ) {
 	filter := state.(*Level_Filter)
 	if mode == nbio.STREAM_MODE_WRITE {
-		kept := level_filter_keep(*filter, payload)
-		transform_write(filter.Stream, completion, payload, kept, callback)
+		if transform_busy(&filter.Forward, completion, callback) {
+			return
+		}
+		kept := Buffer{Bytes: filter.Kept}
+		level_filter_keep(filter, &kept, payload)
+		transform_write(
+			filter.Stream, &filter.Forward, completion, len(payload), &kept, callback,
+		)
 		return
 	}
 	transform_submit(filter.Stream, completion, mode, offset, whence, callback)
 }
 
-func level_filter_keep(filter Level_Filter, payload []byte) (kept Buffer) {
-	kept = make(Buffer, 0, len(payload))
+func level_filter_keep(filter *Level_Filter, kept *Buffer, payload []byte) {
 	line_start := 0
 	for index := 0; index < len(payload); index++ {
 		if payload[index] != '\n' {
 			continue
 		}
 		if filter_admits(filter, payload[line_start:index+1]) {
-			kept = append(kept, payload[line_start:index+1]...)
+			buffer_write_bytes(kept, payload[line_start:index+1])
 		}
 		line_start = index + 1
 	}
@@ -2446,28 +2614,26 @@ func level_filter_keep(filter Level_Filter, payload []byte) (kept Buffer) {
 	// but a filter on a raw pipe might see one; classify it the same, rather than dropping it.
 	if line_start < len(payload) {
 		if filter_admits(filter, payload[line_start:]) {
-			kept = append(kept, payload[line_start:]...)
+			buffer_write_bytes(kept, payload[line_start:])
 		}
 	}
-	return kept
 }
 
 // Reports whether line clears the filter's floor. A line that is not a JSON object, or one with
 // no level field, is admitted: the filter suppresses by level and never swallows output it
 // cannot classify.
-func filter_admits(filter Level_Filter, line []byte) (admit bool) {
-	members, parsed := scan_object(line)
-	if !parsed {
+func filter_admits(filter *Level_Filter, line []byte) (admit bool) {
+	if !scan_object(&filter.Object, line) {
 		return true
 	}
-	return level_from_wire(member_text(members, filter.Level_Field)) >= filter.Floor
+	return level_from_wire(member_text(&filter.Object, filter.Level_Field)) >= filter.Floor
 }
 
-// Maps a level's wire name back to its Level, the inverse of Level.String, so a writer can
+// Maps a level's wire name back to its Level, the inverse of Level_String, so a writer can
 // compare a rendered line's level to a floor. An unrecognized or absent name maps to LEVEL_NONE,
 // which clears any real floor, so a level-less or custom line is never taken for noise.
-func level_from_wire(wire string) (level Level) {
-	switch wire {
+func level_from_wire(wire []byte) (level Level) {
+	switch string(wire) {
 	case "trace":
 		return LEVEL_TRACE
 	case "debug":
@@ -2483,7 +2649,8 @@ func level_from_wire(wire string) (level Level) {
 }
 
 // New_Console_Logger builds a console logger over state, which the caller filled: Console
-// (its Stream and Color), Capture, and Configuration (Clock, Caller). It renders human-readable
+// (its Stream, Color, Rendered, and Object storage), Filter (its Kept and Object storage),
+// Capture, and Configuration (Clock, Caller). It renders human-readable
 // lines to the Console at floor and above and, when Capture is set, tees every level as raw
 // JSON to Capture, so one logger drives a quiet console and a full capture at once. It is pure:
 // every sink, the clock, and the caller lookup are injected, so the composition root decides
@@ -2491,11 +2658,10 @@ func level_from_wire(wire string) (level Level) {
 // only a Trace floor lets every level reach Capture; floor gates the console branch alone.
 func New_Console_Logger(state *Console_Logger, storage []byte, floor Level) (logger Logger) {
 	aver.Always(state != nil, "jlog: console logger storage is required")
-	state.Filter = Level_Filter{
-		Stream:      Console_To_Stream(&state.Console),
-		Floor:       floor,
-		Level_Field: string(DEFAULT_LEVEL_FIELD_NAME),
-	}
+	New_Level_Filter(
+		&state.Filter, Console_To_Stream(&state.Console), floor,
+		string(DEFAULT_LEVEL_FIELD_NAME),
+	)
 	stream := Level_Filter_To_Stream(&state.Filter)
 	if state.Capture.Procedure != nil {
 		state.Tee = nbio.Stream_Tee{First: state.Capture, Second: stream}
@@ -2512,11 +2678,11 @@ func New_Console_Logger(state *Console_Logger, storage []byte, floor Level) (log
 type Console_Logger struct {
 	// Configuration is the logger's shared dependency set; the caller sets Clock and Caller.
 	Configuration Logger_Configuration
-	// Console renders lines for a human; the caller sets its Stream and Color.
+	// Console renders lines for a human; the caller sets its Stream, Color, and storage.
 	Console Console
 	// Capture receives every raw JSON level; the caller leaves it zero to disable capture.
 	Capture nbio.Stream
-	// Filter gates the console branch by level.
+	// Filter gates the console branch by level; the caller sets its storage.
 	Filter Level_Filter
 	// Tee fans out to Capture when one is set.
 	Tee nbio.Stream_Tee

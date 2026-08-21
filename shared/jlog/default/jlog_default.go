@@ -21,7 +21,6 @@ import (
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 	system_time "local/james-orcales/shared/sim/time/default"
-	"local/james-orcales/shared/strconv"
 )
 
 // Logger re-exports jlog.Logger.
@@ -90,6 +89,10 @@ const FILE_MODES nbio.Stream_Mode_Set = 1<<nbio.STREAM_MODE_CLOSE |
 //
 //	jlog.Default = jlog.New_Default_Logger(loop.Storage, stderr)
 //
+//	var line [jlog.LINE_BYTES]byte
+//	state := jlog.Default_Logger{Line: line[:]}
+//	jlog.Default = jlog.New_Default_Logger(&state, loop.Storage, stderr)
+//
 // Like every jlog.Logger it has one owner: a program whose goroutines all log builds one Logger
 // per goroutine with New or Logger_With instead of sharing Default.
 var Default Logger
@@ -97,18 +100,33 @@ var Default Logger
 // LINE_BYTES holds a typical stderr line with room for a few long strings.
 const LINE_BYTES = 4096
 
-// New_Default_Logger builds the OS-bound logger over the root's Storage and the descriptor it
-// names, typically stderr: lines go out through nbio.Storage_Write, stamped by the OS clock,
-// with a runtime-backed caller lookup. This is the one place in the jlog tree where ambient
-// binding is permitted, and the one place that allocates: the state behind Default lives on the
-// heap so Default is the package's only variable.
-func New_Default_Logger(storage nbio.Storage, file nbio.File) (logger Logger) {
-	configuration := &jlog.Logger_Configuration{
-		Stream: File_To_Stream(&Stream_File{Storage: storage, File: file}),
+// Default_Logger is the caller-owned state behind the OS-bound logger: the root keeps one so
+// New_Default_Logger allocates nothing and Default stays the package's only variable.
+type Default_Logger struct {
+	// Configuration is the logger's dependency set, bound to the OS by New_Default_Logger.
+	Configuration jlog.Logger_Configuration
+	// File is the Stream over the borrowed descriptor.
+	File Stream_File
+	// Line is the caller-owned line storage, LINE_BYTES for a typical stderr line.
+	Line []byte
+}
+
+// New_Default_Logger fills state in place and builds the OS-bound logger over the root's
+// Storage and the descriptor it names, typically stderr: lines go out through
+// nbio.Storage_Write, stamped by the OS clock, with a runtime-backed caller lookup. This is the
+// one place in the jlog tree where ambient binding is permitted. The caller filled Line first.
+func New_Default_Logger(
+	state *Default_Logger, storage nbio.Storage, file nbio.File,
+) (logger Logger) {
+	aver.Always(state != nil, "jlog: default logger storage is required")
+	aver.Always(len(state.Line) > 0, "jlog: default logger line storage is required")
+	state.File = Stream_File{Storage: storage, File: file}
+	state.Configuration = jlog.Logger_Configuration{
+		Stream: File_To_Stream(&state.File),
 		Clock:  system_time.New_Operating_System_Clock(),
 		Caller: operating_system_caller,
 	}
-	logger = jlog.New(configuration, make([]byte, LINE_BYTES), jlog.LEVEL_INFO)
+	logger = jlog.New(&state.Configuration, state.Line, jlog.LEVEL_INFO)
 	logger.Auto_Timestamp = true
 	return logger
 }
@@ -190,16 +208,15 @@ func stream_file_retire(completion nbio.Completion_Handle) {
 	nbio.Stream_Callback_Call(callback, caller)
 }
 
-// Resolves a frame-skip count to a "file:line" location via runtime.Caller, the
-// composition tier's one sanctioned reach into the runtime.
-func operating_system_caller(skip int) (location string) {
+// Resolves a frame-skip count to a file and line via runtime.Caller, the composition tier's one
+// sanctioned reach into the runtime. The file string points into the binary's line table, so
+// nothing is copied. An unknown frame reports an empty file at line 0.
+func operating_system_caller(skip int) (file string, line int) {
 	_, file, line, ok := runtime.Caller(skip + CALLER_BASE_FRAMES)
 	if !ok {
-		return ""
+		return "", 0
 	}
-	var storage [strconv.DECIMAL_TEXT_SIZE_MAXIMUM]byte
-	count := strconv.Format_Decimal_Into(storage[:], strconv.Machine_Integer(line))
-	return file + ":" + string(storage[:int(count)])
+	return file, line
 }
 
 // Trace logs a trace-level line through Default.
@@ -426,7 +443,7 @@ type Level_Filter = jlog.Level_Filter
 
 // New_Level_Filter re-exports jlog.New_Level_Filter.
 func New_Level_Filter(
-	stream nbio.Stream, floor Level, level_field_name string,
-) (filter Level_Filter) {
-	return jlog.New_Level_Filter(stream, floor, level_field_name)
+	filter *Level_Filter, stream nbio.Stream, floor Level, level_field_name string,
+) {
+	jlog.New_Level_Filter(filter, stream, floor, level_field_name)
 }
