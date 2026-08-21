@@ -121,8 +121,8 @@ or no TestMain, is banned.
 ### Raw Types
 
 Function parameters, results, and struct fields use user-defined type identifiers, plain or
-package-qualified. Any other type expression is raw and banned, predeclared identifiers included;
-declare a type first. Test files and opted-out packages are exempt.
+package-qualified, or error. Any other type expression is raw and banned, predeclared identifiers
+included; declare a type first. Test files and opted-out packages are exempt.
 
 ### Small Slices
 

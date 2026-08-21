@@ -760,12 +760,9 @@ func Test_Invariants_Raw_Types(t *testing.T) {
 		"Declare a defined type for the result.") {
 		t.Fatal("predeclared result type must be flagged")
 	}
-	if !diagnosed(diags, "The declaration Convert has a raw type result (failure). "+
-		"Declare a defined type for the result.") {
-		t.Fatal("error result type must be flagged")
-	}
+	// error is an interface with no length and no domain, thus no assertion could state it.
 	for _, accepted := range []string{"Local", "Qualified", "local", "qualified",
-		"local_result", "qualified_result"} {
+		"local_result", "qualified_result", "failure"} {
 		for _, entry := range diags {
 			if !strings.Contains(entry.Message, "has a raw ") {
 				continue
