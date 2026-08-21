@@ -7,7 +7,6 @@ import (
 
 	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/net"
-	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 )
@@ -19,6 +18,7 @@ func Test_Invariants(t *testing.T) {
 	resolver_state_boundaries(t, false)
 	resolver_state_boundaries(t, true)
 	resolver_dependency_boundaries(t)
+	resolver_control_flow_boundaries(t)
 }
 
 func resolver_public_boundaries(t *testing.T) {
@@ -60,7 +60,7 @@ func resolver_boundary_success(
 	if name_error != nil {
 		t.Fatal(name_error)
 	}
-	results := make([]nbio.Address, result_capacity_count)
+	results := address_storage(result_capacity_count)
 	network.Resolve(
 		&fixture.Resolver, &fixture.Resolver.Completion, name, network.RECORD_TYPE_A,
 		port, results, network.Timeout(timeout), resolver_allocation_complete,
@@ -82,9 +82,9 @@ func resolver_state_boundary(t *testing.T, boundary uint16, resolve bool) {
 	t.Helper()
 	var fixture resolver_fixture
 	resolver_fixture_init(&fixture, nbio.FAMILY_IPV4)
-	results := make([]nbio.Address, int(boundary))
+	results := address_storage(int(boundary))
 	if boundary == uint16(network.TRANSACTION_IDENTIFIER_MAXIMUM) {
-		results = make([]nbio.Address, network.DNS_ADDRESS_COUNT_MAXIMUM)
+		results = address_storage(network.DNS_ADDRESS_COUNT_MAXIMUM)
 	}
 	resolver_state_seed(&fixture.Resolver, results, boundary)
 	died := did_die(func() {
@@ -180,9 +180,32 @@ func resolver_dependency_boundaries(t *testing.T) {
 	}
 }
 
+func resolver_control_flow_boundaries(t *testing.T) {
+	t.Helper()
+	for _, fault := range [...]fake_dns_fault{
+		FAKE_DNS_FAULT_ACTIVE_IDLE,
+		FAKE_DNS_FAULT_COMPLETION_STAGE,
+	} {
+		var fixture resolver_fixture
+		resolver_fixture_init(&fixture, nbio.FAMILY_IPV4)
+		fixture.DNS.Fault = fault
+		died := did_die(func() {
+			network.Resolve(
+				&fixture.Resolver, &fixture.Resolver.Completion, "example.com",
+				network.RECORD_TYPE_A, network.PORT_MINIMUM, fixture.Addresses,
+				network.Timeout(time.SECOND), resolver_allocation_complete,
+			)
+		})
+		if !died {
+			t.Fatalf("Resolver accepted control-flow fault %d", fault)
+		}
+	}
+}
+
 func resolver_fixture_init(fixture *resolver_fixture, family nbio.Address_Family) {
+	resolver_fixture_storage_init(fixture)
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
+	resolver_generator_init(&fixture.Generator, 1)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
@@ -191,26 +214,9 @@ func resolver_fixture_init(fixture *resolver_fixture, family nbio.Address_Family
 	)
 }
 
-// The recorder exits on failure. Replacing Exit exposes the boundary without a subprocess and
-// restores global state before another invariant runs.
+// Enforcement panics at callsite, so recovery observes failure without changing global state.
 func did_die(action func()) (died bool) {
-	exit, output := aver.Default.Exit, aver.Default.Output
-	aver.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	aver.Default.Output = discard_writer{}
-	defer func() {
-		aver.Default.Exit, aver.Default.Output = exit, output
-		if recover() != nil {
-			died = true
-		}
-	}()
+	defer func() { died = recover() != nil }()
 	action()
 	return died
-}
-
-type tripped_invariant struct{}
-
-type discard_writer struct{}
-
-func (discard_writer) Write(buffer []byte) (count int, err error) {
-	return len(buffer), nil
 }

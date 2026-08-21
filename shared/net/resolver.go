@@ -396,40 +396,95 @@ func Resolver_Configuration_Invariants(
 		Ensure()
 }
 
+// Query_Storage keeps maximum query memory with caller while exposing slice boundary.
+type Query_Storage []byte
+
+// Query_Storage_Invariants fixes query storage to protocol capacity.
+func Query_Storage_Invariants(value Query_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == DNS_TCP_QUERY_BYTES_MAXIMUM,
+		"Resolver query workspace has protocol capacity.",
+	)
+}
+
+// Response_Storage keeps maximum response memory with caller while exposing slice boundary.
+type Response_Storage []byte
+
+// Response_Storage_Invariants fixes response storage to protocol capacity.
+func Response_Storage_Invariants(value Response_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == DNS_MESSAGE_BYTES_MAXIMUM,
+		"Resolver response workspace has protocol capacity.",
+	)
+}
+
+// Canonical_Name_Storage separates query ownership from response parsing scratch.
+type Canonical_Name_Storage []byte
+
+// Canonical_Name_Storage_Invariants fixes canonical-name storage to protocol capacity.
+func Canonical_Name_Storage_Invariants(value Canonical_Name_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == DNS_NAME_WIRE_BYTES_MAXIMUM,
+		"Resolver canonical-name workspace has expanded-name capacity.",
+	)
+}
+
+// Decoded_Name_Storage prevents hostile compression from growing parser memory.
+type Decoded_Name_Storage []byte
+
+// Decoded_Name_Storage_Invariants fixes decoded-name storage to protocol capacity.
+func Decoded_Name_Storage_Invariants(value Decoded_Name_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == DNS_NAME_WIRE_BYTES_MAXIMUM,
+		"Resolver decoded-name workspace has expanded-name capacity.",
+	)
+}
+
+// Alias_Name_Storage preserves one target without hiding allocation in parser state.
+type Alias_Name_Storage []byte
+
+// Alias_Name_Storage_Invariants fixes alias-name storage to protocol capacity.
+func Alias_Name_Storage_Invariants(value Alias_Name_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == DNS_NAME_WIRE_BYTES_MAXIMUM,
+		"Resolver alias workspace has expanded-name capacity.",
+	)
+}
+
 // Resolver_Workspace is complete caller-owned DNS message storage.
 type Resolver_Workspace struct {
 	// Query includes TCP prefix before maximum DNS question.
-	Query [DNS_TCP_QUERY_BYTES_MAXIMUM]byte
+	Query Query_Storage
 	// Response holds any message named by TCP size prefix.
-	Response [DNS_MESSAGE_BYTES_MAXIMUM]byte
+	Response Response_Storage
 	// Canonical_Name stores lowercase expanded query owner.
-	Canonical_Name [DNS_NAME_WIRE_BYTES_MAXIMUM]byte
+	Canonical_Name Canonical_Name_Storage
 	// Decoded_Name stores one expanded response owner.
-	Decoded_Name [DNS_NAME_WIRE_BYTES_MAXIMUM]byte
+	Decoded_Name Decoded_Name_Storage
 	// Alias_Name preserves one decoded target while answer scan continues.
-	Alias_Name [DNS_NAME_WIRE_BYTES_MAXIMUM]byte
+	Alias_Name Alias_Name_Storage
 }
 
-// Resolver_Workspace_Invariants fixes both protocol arrays to formulas.
-func Resolver_Workspace_Invariants(value *Resolver_Workspace, _ aver.Namespace) {
-	aver.Always(len(value.Query) == DNS_TCP_QUERY_BYTES_MAXIMUM,
-		"Resolver query workspace has protocol capacity.")
-	aver.Always(len(value.Response) == DNS_MESSAGE_BYTES_MAXIMUM,
-		"Resolver response workspace has protocol capacity.")
-	aver.Always(len(value.Alias_Name) == DNS_NAME_WIRE_BYTES_MAXIMUM,
-		"Resolver alias workspace has expanded-name capacity.")
+// Resolver_Workspace_Invariants composes caller-owned protocol storage.
+func Resolver_Workspace_Invariants(value Resolver_Workspace, namespace aver.Namespace) {
+	Query_Storage_Invariants(value.Query, namespace)
+	Response_Storage_Invariants(value.Response, namespace)
+	Canonical_Name_Storage_Invariants(value.Canonical_Name, namespace)
+	Decoded_Name_Storage_Invariants(value.Decoded_Name, namespace)
+	Alias_Name_Storage_Invariants(value.Alias_Name, namespace)
 }
 
 // Resolver_Workspace_Pointer keeps large scratch caller-owned and optional before init.
 type Resolver_Workspace_Pointer *Resolver_Workspace
 
-// Resolver_Workspace_Pointer_Invariants covers zero state and initialized workspace.
+// Resolver_Workspace_Pointer_Invariants composes present workspace storage.
 func Resolver_Workspace_Pointer_Invariants(
 	value Resolver_Workspace_Pointer, namespace aver.Namespace,
 ) {
-	aver.Tree(value, namespace).
-		Sometimes(value != nil, "Resolver workspace is bound.").
-		Ensure()
+	if value == nil {
+		return
+	}
+	Resolver_Workspace_Invariants(*value, namespace)
 }
 
 // Resolver_Stage is one bounded protocol state.
@@ -807,13 +862,24 @@ func Resolver_Invariants(value Resolver, namespace aver.Namespace) {
 	)
 }
 
+// Resolver_Pointer gives mutation boundary concrete identity instead of raw pointer.
+type Resolver_Pointer *Resolver
+
+// Resolver_Pointer_Invariants composes present resolver state.
+func Resolver_Pointer_Invariants(value Resolver_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Resolver_Invariants(*value, namespace)
+}
+
 // Resolver_Init binds dependencies and caller workspace without opening socket.
 func Resolver_Init(
-	resolver *Resolver,
+	resolver Resolver_Pointer,
 	loop nbio.IO, host time.Clock, entropy prng.Source,
 	workspace Resolver_Workspace_Pointer, configuration Resolver_Configuration,
 ) {
-	Resolver_Invariants(*resolver, "Resolver_Init.resolver")
+	Resolver_Pointer_Invariants(resolver, "Resolver_Init.resolver")
 	nbio.IO_Invariants(loop, "Resolver_Init.loop")
 	time.Clock_Invariants(host, "Resolver_Init.host")
 	prng.Source_Invariants(entropy, "Resolver_Init.entropy")
@@ -824,9 +890,7 @@ func Resolver_Init(
 		"Resolver_Init owns inactive Resolver.",
 	)
 	aver.Always(workspace != nil, "Resolver_Init has caller-owned workspace.")
-	Resolver_Workspace_Invariants(
-		(*Resolver_Workspace)(workspace), "Resolver_Init.workspace_value",
-	)
+	Resolver_Workspace_Invariants(*workspace, "Resolver_Init.workspace_value")
 	aver.Always(configuration.Server.Port > 0, "Resolver server port is positive.")
 	aver.Always(loop.Close_Procedure != nil, "Resolver has close procedure.")
 	aver.Always(loop.Network.Socket_TCP_Procedure != nil,
@@ -848,10 +912,11 @@ func Resolver_Init(
 
 // Resolve starts one bounded asynchronous address query.
 func Resolve(
-	resolver *Resolver, completion *nbio.Completion, name Name, record_type Record_Type,
+	resolver Resolver_Pointer, completion nbio.Completion_Handle, name Name,
+	record_type Record_Type,
 	port Port, results Address_Storage, timeout Timeout, callback nbio.Callback,
 ) {
-	Resolver_Invariants(*resolver, "Resolve.resolver")
+	Resolver_Pointer_Invariants(resolver, "Resolve.resolver")
 	Name_Invariants(name, "Resolve.name")
 	Record_Type_Invariants(record_type, "Resolve.record_type")
 	Port_Invariants(port, "Resolve.port")
@@ -903,7 +968,7 @@ func Resolve(
 }
 
 // Query uses lowercase canonical copy so response owner comparison ignores presentation case.
-func resolver_query_build(completion *nbio.Completion) {
+func resolver_query_build(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	query := resolver.Workspace.Query[:]
 	for index := range query {
@@ -965,13 +1030,17 @@ func resolver_query_build(completion *nbio.Completion) {
 }
 
 // Progress submits one operation at time and absorbs inline callback retirement without recursion.
-func resolver_progress(completion *nbio.Completion) {
+func resolver_progress(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	for resolver.Flags&RESOLVER_FLAG_ACTIVE != 0 {
 		if resolver.Flags&RESOLVER_FLAG_WAIT_ACTIVE != 0 {
 			return
 		}
 		resolver.Flags &^= RESOLVER_FLAG_CONTINUE
+		aver.Always(
+			resolver.Stage != RESOLVER_STAGE_IDLE,
+			"Active Resolver does not enter idle stage.",
+		)
 		switch resolver.Stage {
 		case RESOLVER_STAGE_OPEN_UDP:
 			resolver_udp_open(completion)
@@ -991,8 +1060,6 @@ func resolver_progress(completion *nbio.Completion) {
 			resolver_tcp_size_receive(completion)
 		case RESOLVER_STAGE_RECEIVE_TCP_MESSAGE:
 			resolver_tcp_message_receive(completion)
-		case RESOLVER_STAGE_IDLE:
-			panic("net: active Resolver is idle")
 		}
 		if resolver.Flags&RESOLVER_FLAG_WAIT_ACTIVE != 0 {
 			return
@@ -1000,7 +1067,7 @@ func resolver_progress(completion *nbio.Completion) {
 	}
 }
 
-func resolver_udp_open(completion *nbio.Completion) {
+func resolver_udp_open(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	socket, socket_error := nbio.Network_Socket_UDP(
 		resolver.IO.Network, resolver.Configuration.Server.Family,
@@ -1015,7 +1082,7 @@ func resolver_udp_open(completion *nbio.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CONNECT_UDP
 }
 
-func resolver_tcp_open(completion *nbio.Completion) {
+func resolver_tcp_open(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	socket, socket_error := nbio.Network_Socket_TCP(
 		resolver.IO.Network, resolver.Configuration.Server.Family,
@@ -1031,7 +1098,7 @@ func resolver_tcp_open(completion *nbio.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CONNECT_TCP
 }
 
-func resolver_connect(completion *nbio.Completion) {
+func resolver_connect(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1045,7 +1112,7 @@ func resolver_connect(completion *nbio.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_udp_send(completion *nbio.Completion) {
+func resolver_udp_send(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1061,7 +1128,7 @@ func resolver_udp_send(completion *nbio.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_udp_receive(completion *nbio.Completion) {
+func resolver_udp_receive(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1075,14 +1142,14 @@ func resolver_udp_receive(completion *nbio.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_close(completion *nbio.Completion) {
+func resolver_close(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	resolver.Flags |= RESOLVER_FLAG_WAIT_ACTIVE | RESOLVER_FLAG_SUBMISSION_ACTIVE
 	nbio.IO_Close(resolver.IO, completion, resolver.Socket, resolver_operation_complete)
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_tcp_send(completion *nbio.Completion) {
+func resolver_tcp_send(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1097,7 +1164,7 @@ func resolver_tcp_send(completion *nbio.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_tcp_size_receive(completion *nbio.Completion) {
+func resolver_tcp_size_receive(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1111,7 +1178,7 @@ func resolver_tcp_size_receive(completion *nbio.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_tcp_message_receive(completion *nbio.Completion) {
+func resolver_tcp_message_receive(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver_deadline_expired(completion) {
 		return
@@ -1125,14 +1192,14 @@ func resolver_tcp_message_receive(completion *nbio.Completion) {
 	resolver.Flags &^= RESOLVER_FLAG_SUBMISSION_ACTIVE
 }
 
-func resolver_timeout(completion *nbio.Completion) (timeout Resolver_Timeout) {
+func resolver_timeout(completion nbio.Completion_Handle) (timeout Resolver_Timeout) {
 	defer func() { Resolver_Timeout_Invariants(timeout, "resolver_timeout.timeout") }()
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	now := time.Clock_Now_Monotonic(time.Clock(resolver.Clock))
 	return Resolver_Timeout(time.Monotonic_Moment(resolver.Deadline) - now)
 }
 
-func resolver_deadline_expired(completion *nbio.Completion) (expired bytes.Boolean) {
+func resolver_deadline_expired(completion nbio.Completion_Handle) (expired bytes.Boolean) {
 	defer func() { bytes.Boolean_Invariants(expired, "resolver_deadline_expired.expired") }()
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if time.Clock_Now_Monotonic(time.Clock(resolver.Clock)) <
@@ -1144,7 +1211,7 @@ func resolver_deadline_expired(completion *nbio.Completion) (expired bytes.Boole
 	return true
 }
 
-func resolver_close_or_finish(completion *nbio.Completion) {
+func resolver_close_or_finish(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	if resolver.Socket == DNS_SOCKET_INVALID {
 		resolver_finish(completion)
@@ -1157,7 +1224,7 @@ func resolver_close_or_finish(completion *nbio.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CLOSE_TCP
 }
 
-func resolver_operation_complete(completion *nbio.Completion) {
+func resolver_operation_complete(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	aver.Always(
 		resolver.Flags&RESOLVER_FLAG_ACTIVE != 0,
@@ -1193,8 +1260,20 @@ func resolver_operation_complete(completion *nbio.Completion) {
 	resolver_progress(completion)
 }
 
-func resolver_operation_succeeded(completion *nbio.Completion) {
+func resolver_operation_succeeded(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
+	aver.Always(
+		resolver.Stage >= RESOLVER_STAGE_CONNECT_UDP,
+		"Resolver completion stage starts at connect.",
+	)
+	aver.Always(
+		resolver.Stage != RESOLVER_STAGE_OPEN_TCP,
+		"Resolver TCP open stage has no completion.",
+	)
+	aver.Always(
+		resolver.Stage <= RESOLVER_STAGE_CLOSE_TCP,
+		"Resolver completion stage stays bounded.",
+	)
 	switch resolver.Stage {
 	case RESOLVER_STAGE_CONNECT_UDP:
 		resolver.Stage = RESOLVER_STAGE_SEND_UDP
@@ -1238,12 +1317,10 @@ func resolver_operation_succeeded(completion *nbio.Completion) {
 	case RESOLVER_STAGE_CLOSE_TCP:
 		resolver.Socket = DNS_SOCKET_INVALID
 		resolver_finish(completion)
-	default:
-		panic("net: unknown Resolver completion stage")
 	}
 }
 
-func resolver_receive_udp_complete(completion *nbio.Completion) {
+func resolver_receive_udp_complete(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	if count <= 0 {
@@ -1284,7 +1361,7 @@ func resolver_receive_udp_complete(completion *nbio.Completion) {
 
 // TCP costs another descriptor and stream handshake, so an untrusted datagram must prove it owns
 // this question before it can force fallback.
-func response_truncated_validate(completion *nbio.Completion) {
+func response_truncated_validate(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	message := resolver.Workspace.Response[:resolver.Response_Bytes]
 	transaction := uint16(message[0])<<8 | uint16(message[1])
@@ -1310,7 +1387,7 @@ func response_truncated_validate(completion *nbio.Completion) {
 	response_question_parse(completion)
 }
 
-func resolver_send_tcp_complete(completion *nbio.Completion) {
+func resolver_send_tcp_complete(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	remaining_count := DNS_TCP_SIZE_BYTES + int(resolver.Query_Bytes) -
@@ -1336,7 +1413,7 @@ func resolver_send_tcp_complete(completion *nbio.Completion) {
 	}
 }
 
-func resolver_receive_tcp_size_complete(completion *nbio.Completion) {
+func resolver_receive_tcp_size_complete(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	remaining_count := DNS_TCP_SIZE_BYTES - int(resolver.Transfer_Bytes)
@@ -1370,7 +1447,7 @@ func resolver_receive_tcp_size_complete(completion *nbio.Completion) {
 	resolver.Stage = RESOLVER_STAGE_RECEIVE_TCP_MESSAGE
 }
 
-func resolver_receive_tcp_message_complete(completion *nbio.Completion) {
+func resolver_receive_tcp_message_complete(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	count := resolver.Completion.Data
 	remaining_count := int(resolver.Response_Bytes) - int(resolver.Transfer_Bytes)
@@ -1396,7 +1473,7 @@ func resolver_receive_tcp_message_complete(completion *nbio.Completion) {
 	resolver.Stage = RESOLVER_STAGE_CLOSE_TCP
 }
 
-func resolver_finish(completion *nbio.Completion) {
+func resolver_finish(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	callback := resolver.Callback
 	result_count := resolver.Result_Count
@@ -1761,7 +1838,7 @@ const RESPONSE_ALIAS_NAME_BYTE_COUNT_MAXIMUM = Response_Alias_Name_Byte_Count(
 	DNS_NAME_WIRE_BYTES_MAXIMUM,
 )
 
-func resolver_response_parse(completion *nbio.Completion) {
+func resolver_response_parse(completion nbio.Completion_Handle) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	answer_count := response_header_parse(completion)
 	if resolver.Error != nil {
@@ -1775,7 +1852,7 @@ func resolver_response_parse(completion *nbio.Completion) {
 }
 
 func response_header_parse(
-	completion *nbio.Completion,
+	completion nbio.Completion_Handle,
 ) (answer_count Response_Answer_Count) {
 	defer func() {
 		Response_Answer_Count_Invariants(answer_count, "response_header_parse.answer_count")
@@ -1833,7 +1910,7 @@ func response_header_parse(
 }
 
 func response_question_parse(
-	completion *nbio.Completion,
+	completion nbio.Completion_Handle,
 ) (answer_start Response_Answer_Start) {
 	defer func() {
 		Response_Answer_Start_Invariants(
@@ -1842,7 +1919,7 @@ func response_question_parse(
 	}()
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	message := resolver.Workspace.Response[:resolver.Response_Bytes]
-	next, decoded_bytes := response_name_decode(completion, DNS_HEADER_BYTES)
+	decoded := response_name_decode(completion, DNS_HEADER_BYTES)
 	if resolver.Error != nil {
 		return RESPONSE_ANSWER_START_MINIMUM
 	}
@@ -1850,12 +1927,12 @@ func response_question_parse(
 		int(resolver.Query_Bytes) - DNS_HEADER_BYTES - DNS_QUESTION_FIXED_BYTES,
 	)
 	if !bool(response_decoded_match(
-		completion, Response_Name_Byte_Count(decoded_bytes), canonical_bytes,
+		completion, Response_Name_Byte_Count(decoded.Bytes), canonical_bytes,
 	)) {
 		resolver.Error = Error_Response_Mismatch
 		return RESPONSE_ANSWER_START_MINIMUM
 	}
-	offset := Response_Offset(next)
+	offset := Response_Offset(decoded.Next)
 	if int(offset)+DNS_QUESTION_FIXED_BYTES > len(message) {
 		resolver.Error = Error_Response_Malformed
 		return RESPONSE_ANSWER_START_MINIMUM
@@ -1876,7 +1953,7 @@ func response_question_parse(
 }
 
 func response_answers_parse(
-	completion *nbio.Completion, answer_start Response_Answer_Start,
+	completion nbio.Completion_Handle, answer_start Response_Answer_Start,
 	answer_count Response_Answer_Count,
 ) {
 	Response_Answer_Start_Invariants(answer_start, "response_answers_parse.answer_start")
@@ -1890,9 +1967,11 @@ func response_answers_parse(
 		offset := Response_Answer_Offset(answer_start)
 		answer_index := RESPONSE_ANSWER_COUNT_MINIMUM
 		for answer_index < answer_count {
-			offset, alias_bytes = response_resource_parse(
+			resource := response_resource_parse(
 				completion, offset, canonical_bytes, alias_bytes,
 			)
+			offset = resource.Next
+			alias_bytes = resource.Alias
 			if resolver.Error != nil {
 				return
 			}
@@ -1920,16 +1999,29 @@ func response_answers_parse(
 	resolver.Error = Error_Response_Malformed
 }
 
+// Response_Resource_Result keeps answer boundary paired with discovered alias size.
+type Response_Resource_Result struct {
+	// Next prevents later answers from rescanning consumed wire bytes.
+	Next Response_Answer_Offset
+	// Alias carries target size without borrowing parser-local state.
+	Alias Response_Alias_Byte_Count
+}
+
+// Response_Resource_Result_Invariants preserves both parser output domains.
+func Response_Resource_Result_Invariants(
+	value Response_Resource_Result, namespace aver.Namespace,
+) {
+	Response_Answer_Offset_Invariants(value.Next, namespace)
+	Response_Alias_Byte_Count_Invariants(value.Alias, namespace)
+}
+
 func response_resource_parse(
-	completion *nbio.Completion, offset Response_Answer_Offset,
+	completion nbio.Completion_Handle, offset Response_Answer_Offset,
 	canonical_bytes Response_Canonical_Byte_Count,
 	alias_bytes Response_Alias_Byte_Count,
-) (next Response_Answer_Offset, next_alias Response_Alias_Byte_Count) {
+) (result Response_Resource_Result) {
 	defer func() {
-		Response_Answer_Offset_Invariants(next, "response_resource_parse.next")
-		Response_Alias_Byte_Count_Invariants(
-			next_alias, "response_resource_parse.next_alias",
-		)
+		Response_Resource_Result_Invariants(result, "response_resource_parse.result")
 	}()
 	Response_Answer_Offset_Invariants(offset, "response_resource_parse.offset")
 	Response_Canonical_Byte_Count_Invariants(
@@ -1938,17 +2030,21 @@ func response_resource_parse(
 	Response_Alias_Byte_Count_Invariants(alias_bytes, "response_resource_parse.alias_bytes")
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	message := resolver.Workspace.Response[:resolver.Response_Bytes]
-	owner_next, owner_bytes := response_name_decode(completion, Response_Offset(offset))
+	owner := response_name_decode(completion, Response_Offset(offset))
 	if resolver.Error != nil {
-		return RESPONSE_ANSWER_OFFSET_MINIMUM, alias_bytes
+		return Response_Resource_Result{
+			Next: RESPONSE_ANSWER_OFFSET_MINIMUM, Alias: alias_bytes,
+		}
 	}
 	owner_matches := response_decoded_match(
-		completion, Response_Name_Byte_Count(owner_bytes), canonical_bytes,
+		completion, Response_Name_Byte_Count(owner.Bytes), canonical_bytes,
 	)
-	offset = Response_Answer_Offset(owner_next)
+	offset = Response_Answer_Offset(owner.Next)
 	if int(offset)+DNS_RESOURCE_FIXED_BYTES > len(message) {
 		resolver.Error = Error_Response_Malformed
-		return RESPONSE_ANSWER_OFFSET_MINIMUM, alias_bytes
+		return Response_Resource_Result{
+			Next: RESPONSE_ANSWER_OFFSET_MINIMUM, Alias: alias_bytes,
+		}
 	}
 	record_type := uint16(message[offset])<<8 | uint16(message[offset+1])
 	class_offset := offset + DNS_RECORD_TYPE_BYTES
@@ -1959,14 +2055,16 @@ func response_resource_parse(
 	end_offset := int(resource_offset) + int(resource_size)
 	if end_offset > len(message) {
 		resolver.Error = Error_Response_Malformed
-		return RESPONSE_ANSWER_OFFSET_MINIMUM, alias_bytes
+		return Response_Resource_Result{
+			Next: RESPONSE_ANSWER_OFFSET_MINIMUM, Alias: alias_bytes,
+		}
 	}
-	next = Response_Answer_Offset(end_offset)
+	next := Response_Answer_Offset(end_offset)
 	if !bool(owner_matches) {
-		return next, alias_bytes
+		return Response_Resource_Result{Next: next, Alias: alias_bytes}
 	}
 	if record_class != DNS_CLASS_IN {
-		return next, alias_bytes
+		return Response_Resource_Result{Next: next, Alias: alias_bytes}
 	}
 	if record_type == uint16(resolver.Record_Type) {
 		expected_size := nbio.IPV4_ADDRESS_BYTES
@@ -1975,22 +2073,22 @@ func response_resource_parse(
 		}
 		if int(resource_size) != expected_size {
 			resolver.Error = Error_Response_Malformed
-			return next, alias_bytes
+			return Response_Resource_Result{Next: next, Alias: alias_bytes}
 		}
 		response_address_append(completion, Response_Address_Offset(resource_offset))
-		return next, alias_bytes
+		return Response_Resource_Result{Next: next, Alias: alias_bytes}
 	}
 	if record_type == DNS_RECORD_TYPE_CNAME {
-		next_alias = response_alias_parse(
+		next_alias := response_alias_parse(
 			completion, resource_offset, Response_Resource_End(next), alias_bytes,
 		)
-		return next, next_alias
+		return Response_Resource_Result{Next: next, Alias: next_alias}
 	}
-	return next, alias_bytes
+	return Response_Resource_Result{Next: next, Alias: alias_bytes}
 }
 
 func response_alias_parse(
-	completion *nbio.Completion, resource_offset Response_Resource_Offset,
+	completion nbio.Completion_Handle, resource_offset Response_Resource_Offset,
 	end_offset Response_Resource_End, alias_bytes Response_Alias_Byte_Count,
 ) (next_alias Response_Alias_Byte_Count) {
 	defer func() {
@@ -2000,18 +2098,18 @@ func response_alias_parse(
 	Response_Resource_End_Invariants(end_offset, "response_alias_parse.end_offset")
 	Response_Alias_Byte_Count_Invariants(alias_bytes, "response_alias_parse.alias_bytes")
 	resolver := (*Resolver)(unsafe.Pointer(completion))
-	alias_next, decoded_bytes := response_name_decode(
+	decoded := response_name_decode(
 		completion, Response_Offset(resource_offset),
 	)
 	if resolver.Error != nil {
 		return alias_bytes
 	}
-	if alias_next != Response_Encoded_Next(end_offset) {
+	if decoded.Next != Response_Encoded_Next(end_offset) {
 		resolver.Error = Error_Response_Malformed
 		return alias_bytes
 	}
 	if alias_bytes == 0 {
-		next_alias = Response_Alias_Byte_Count(decoded_bytes)
+		next_alias = Response_Alias_Byte_Count(decoded.Bytes)
 		copy(
 			resolver.Workspace.Alias_Name[:int(next_alias)],
 			resolver.Workspace.Decoded_Name[:int(next_alias)],
@@ -2020,13 +2118,13 @@ func response_alias_parse(
 	}
 	response_alias_match(
 		completion, Response_Alias_Name_Byte_Count(alias_bytes),
-		Response_Name_Byte_Count(decoded_bytes),
+		Response_Name_Byte_Count(decoded.Bytes),
 	)
 	return alias_bytes
 }
 
 func response_alias_match(
-	completion *nbio.Completion, alias_bytes Response_Alias_Name_Byte_Count,
+	completion nbio.Completion_Handle, alias_bytes Response_Alias_Name_Byte_Count,
 	decoded_bytes Response_Name_Byte_Count,
 ) {
 	Response_Alias_Name_Byte_Count_Invariants(
@@ -2049,13 +2147,26 @@ func response_alias_match(
 	}
 }
 
+// Response_Name_Result keeps encoded continuation paired with expanded name size.
+type Response_Name_Result struct {
+	// Next preserves first unconsumed wire byte across compression jumps.
+	Next Response_Encoded_Next
+	// Bytes bounds later access to caller-owned decoded storage.
+	Bytes Response_Decoded_Byte_Count
+}
+
+// Response_Name_Result_Invariants preserves both decoder output domains.
+func Response_Name_Result_Invariants(
+	value Response_Name_Result, namespace aver.Namespace,
+) {
+	Response_Encoded_Next_Invariants(value.Next, namespace)
+	Response_Decoded_Byte_Count_Invariants(value.Bytes, namespace)
+}
+
 func response_name_decode(
-	completion *nbio.Completion, start Response_Offset,
-) (next Response_Encoded_Next, decoded Response_Decoded_Byte_Count) {
-	defer func() {
-		Response_Encoded_Next_Invariants(next, "response_name_decode.next")
-		Response_Decoded_Byte_Count_Invariants(decoded, "response_name_decode.decoded")
-	}()
+	completion nbio.Completion_Handle, start Response_Offset,
+) (result Response_Name_Result) {
+	defer func() { Response_Name_Result_Invariants(result, "response_name_decode.result") }()
 	Response_Offset_Invariants(start, "response_name_decode.start")
 	resolver := (*Resolver)(unsafe.Pointer(completion))
 	message := resolver.Workspace.Response[:resolver.Response_Bytes]
@@ -2066,19 +2177,19 @@ func response_name_decode(
 	for step_count := 0; step_count <= DNS_NAME_DECODE_STEPS_MAXIMUM; step_count++ {
 		if offset >= len(message) {
 			resolver.Error = Error_Response_Malformed
-			return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+			return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
 		}
 		octet := message[offset]
 		if octet&DNS_COMPRESSION_TAG_MASK == DNS_COMPRESSION_TAG {
 			if offset+DNS_COMPRESSION_POINTER_BYTES > len(message) {
 				resolver.Error = Error_Response_Malformed
-				return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+				return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
 			}
 			pointer := int(octet&byte(DNS_COMPRESSION_OFFSET_MASK>>8))<<8 |
 				int(message[offset+1])
 			if pointer >= offset {
 				resolver.Error = Error_Response_Malformed
-				return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+				return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
 			}
 			if next_offset == 0 {
 				next_offset = offset + DNS_COMPRESSION_POINTER_BYTES
@@ -2087,51 +2198,64 @@ func response_name_decode(
 			pointer_hops++
 			if pointer_hops > DNS_NAME_COMPRESSION_HOPS_MAXIMUM {
 				resolver.Error = Error_Response_Malformed
-				return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+				return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
 			}
 			continue
 		}
 		if octet&DNS_COMPRESSION_TAG_MASK != 0 {
 			resolver.Error = Error_Response_Malformed
-			return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+			return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
 		}
 		if octet == 0 {
 			if decoded_bytes >= DNS_NAME_WIRE_BYTES_MAXIMUM {
 				resolver.Error = Error_Response_Malformed
-				return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+				return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
 			}
 			resolver.Workspace.Decoded_Name[decoded_bytes] = 0
 			decoded_bytes++
 			if next_offset == 0 {
 				next_offset = offset + DNS_NAME_ROOT_BYTES
 			}
-			return Response_Encoded_Next(next_offset),
-				Response_Decoded_Byte_Count(decoded_bytes)
+			return Response_Name_Result{
+				Next:  Response_Encoded_Next(next_offset),
+				Bytes: Response_Decoded_Byte_Count(decoded_bytes),
+			}
 		}
-		offset_value, decoded_value := response_label_decode(
+		label := response_label_decode(
 			completion, Response_Label_Offset(offset),
 			Response_Decoded_Prefix_Byte_Count(decoded_bytes),
 		)
 		if resolver.Error != nil {
-			return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+			return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
 		}
-		offset = int(offset_value)
-		decoded_bytes = int(decoded_value)
+		offset = int(label.Next)
+		decoded_bytes = int(label.Decoded)
 	}
 	resolver.Error = Error_Response_Malformed
-	return RESPONSE_ENCODED_NEXT_MINIMUM, 0
+	return Response_Name_Result{Next: RESPONSE_ENCODED_NEXT_MINIMUM}
+}
+
+// Response_Label_Result keeps encoded continuation paired with expanded prefix size.
+type Response_Label_Result struct {
+	// Next keeps encoded cursor synchronized with consumed label bytes.
+	Next Response_Offset
+	// Decoded keeps expanded cursor inside caller-owned name storage.
+	Decoded Response_Decoded_Prefix_Byte_Count
+}
+
+// Response_Label_Result_Invariants preserves both label output domains.
+func Response_Label_Result_Invariants(
+	value Response_Label_Result, namespace aver.Namespace,
+) {
+	Response_Offset_Invariants(value.Next, namespace)
+	Response_Decoded_Prefix_Byte_Count_Invariants(value.Decoded, namespace)
 }
 
 func response_label_decode(
-	completion *nbio.Completion, offset Response_Label_Offset,
+	completion nbio.Completion_Handle, offset Response_Label_Offset,
 	decoded Response_Decoded_Prefix_Byte_Count,
-) (next Response_Offset, next_decoded Response_Decoded_Prefix_Byte_Count) {
-	defer func() {
-		Response_Offset_Invariants(next, "response_label_decode.next")
-		Response_Decoded_Prefix_Byte_Count_Invariants(
-			next_decoded, "response_label_decode.next_decoded",
-		)
-	}()
+) (result Response_Label_Result) {
+	defer func() { Response_Label_Result_Invariants(result, "response_label_decode.result") }()
 	Response_Label_Offset_Invariants(offset, "response_label_decode.offset")
 	Response_Decoded_Prefix_Byte_Count_Invariants(
 		decoded, "response_label_decode.decoded",
@@ -2141,15 +2265,15 @@ func response_label_decode(
 	label_bytes := int(message[offset])
 	if label_bytes > DNS_LABEL_BYTES_MAXIMUM {
 		resolver.Error = Error_Response_Malformed
-		return RESPONSE_OFFSET_MINIMUM, 0
+		return Response_Label_Result{Next: RESPONSE_OFFSET_MINIMUM}
 	}
 	if int(offset)+DNS_LABEL_SIZE_BYTES+label_bytes > len(message) {
 		resolver.Error = Error_Response_Malformed
-		return RESPONSE_OFFSET_MINIMUM, 0
+		return Response_Label_Result{Next: RESPONSE_OFFSET_MINIMUM}
 	}
 	if int(decoded)+DNS_LABEL_SIZE_BYTES+label_bytes > DNS_NAME_WIRE_BYTES_MAXIMUM {
 		resolver.Error = Error_Response_Malformed
-		return RESPONSE_OFFSET_MINIMUM, 0
+		return Response_Label_Result{Next: RESPONSE_OFFSET_MINIMUM}
 	}
 	resolver.Workspace.Decoded_Name[decoded] = byte(label_bytes)
 	source_offset := int(offset) + DNS_LABEL_SIZE_BYTES
@@ -2164,12 +2288,14 @@ func response_label_decode(
 		}
 		target[label_index] = value
 	}
-	return Response_Offset(source_offset + label_bytes),
-		Response_Decoded_Prefix_Byte_Count(target_offset + label_bytes)
+	return Response_Label_Result{
+		Next:    Response_Offset(source_offset + label_bytes),
+		Decoded: Response_Decoded_Prefix_Byte_Count(target_offset + label_bytes),
+	}
 }
 
 func response_decoded_match(
-	completion *nbio.Completion, decoded_bytes Response_Name_Byte_Count,
+	completion nbio.Completion_Handle, decoded_bytes Response_Name_Byte_Count,
 	canonical_bytes Response_Canonical_Byte_Count,
 ) (same bytes.Boolean) {
 	defer func() { bytes.Boolean_Invariants(same, "response_decoded_match.same") }()
@@ -2193,7 +2319,7 @@ func response_decoded_match(
 }
 
 func response_alias_is_canonical(
-	completion *nbio.Completion, alias_bytes Response_Alias_Name_Byte_Count,
+	completion nbio.Completion_Handle, alias_bytes Response_Alias_Name_Byte_Count,
 	canonical_bytes Response_Canonical_Byte_Count,
 ) (same bytes.Boolean) {
 	defer func() {
@@ -2219,7 +2345,7 @@ func response_alias_is_canonical(
 }
 
 func response_address_append(
-	completion *nbio.Completion, resource_offset Response_Address_Offset,
+	completion nbio.Completion_Handle, resource_offset Response_Address_Offset,
 ) {
 	Response_Address_Offset_Invariants(
 		resource_offset, "response_address_append.resource_offset",
@@ -2231,22 +2357,33 @@ func response_address_append(
 		expected_size = nbio.IPV6_ADDRESS_BYTES
 	}
 	resource_end := int(resource_offset) + expected_size
-	address := nbio.Address{Port: uint16(resolver.Port)}
+	family := nbio.FAMILY_IPV4
 	if Record_Type(resolver.Record_Type) == RECORD_TYPE_A {
-		address.Family = nbio.FAMILY_IPV4
+		family = nbio.FAMILY_IPV4
 	} else {
-		address.Family = nbio.FAMILY_IPV6
+		family = nbio.FAMILY_IPV6
 	}
-	copy(address.IP[:expected_size], message[resource_offset:resource_end])
+	resource := message[resource_offset:resource_end]
 	for index := 0; index < int(resolver.Result_Count); index++ {
-		if resolver.Results[index] == address {
-			return
+		address := resolver.Results[index]
+		if address.Family == family {
+			if address.Port == uint16(resolver.Port) {
+				if bool(bytes.Equal(
+					bytes.Slice(address.IP), bytes.Slice(resource),
+				)) {
+					return
+				}
+			}
 		}
 	}
 	if int(resolver.Result_Count) == len(resolver.Results) {
 		resolver.Error = Error_Result_Too_Small
 		return
 	}
-	resolver.Results[resolver.Result_Count] = address
+	address := &resolver.Results[resolver.Result_Count]
+	address.Family = family
+	address.Port = uint16(resolver.Port)
+	address.IP = address.IP[:expected_size]
+	copy(address.IP, resource)
 	resolver.Result_Count++
 }

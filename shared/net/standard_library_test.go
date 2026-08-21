@@ -32,11 +32,11 @@ func Test_Standard_Library_Resolver_Injected_IO(t *testing.T) {
 func standard_library_resolve_two(t *testing.T, record_type network.Record_Type) {
 	t.Helper()
 	var fixture resolver_fixture
+	resolver_fixture_storage_init(&fixture)
 	fixture.DNS.Response_Kind = FAKE_DNS_RESPONSE_TWO_ADDRESSES
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = prng.New(
-		[prng.KEY_BYTES]byte{byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM)},
-		prng.CURSOR_MIN,
+	resolver_generator_init(
+		&fixture.Generator, byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM),
 	)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
@@ -98,12 +98,12 @@ func Test_Standard_Library_DNS_Transport_No_Fallback_On_TCP(t *testing.T) {
 }
 
 func standard_library_tcp_truncated_init(fixture *resolver_fixture) {
+	resolver_fixture_storage_init(fixture)
 	fixture.DNS.Mode = FAKE_DNS_TCP
 	fixture.DNS.TCP_Response_Truncated = true
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = prng.New(
-		[prng.KEY_BYTES]byte{byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM)},
-		prng.CURSOR_MIN,
+	resolver_generator_init(
+		&fixture.Generator, byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM),
 	)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
