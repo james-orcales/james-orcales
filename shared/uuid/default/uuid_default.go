@@ -9,19 +9,24 @@
 package uuid
 
 import (
-	"crypto/rand"
-
-	timeos "local/james-orcales/shared/time/default"
+	"local/james-orcales/shared/random/csprng"
+	system_csprng "local/james-orcales/shared/random/csprng/default"
+	"local/james-orcales/shared/simulation/time/default"
 	"local/james-orcales/shared/uuid"
 )
-
-// NODE_BYTE_COUNT supplies the zero node that defers selection to operating-system entropy.
-const NODE_BYTE_COUNT = 6
 
 // New_Operating_System_Generator returns a Generator wired to the host: crypto/rand
 // for entropy and the operating-system clock for the version 1, 6, and 7
 // timestamps. The node is random, drawn from crypto/rand when first needed.
-func New_Operating_System_Generator() (generator uuid.Generator) {
-	clock, _ := timeos.New_Operating_System_Clock()
-	return uuid.New(rand.Reader, clock, [NODE_BYTE_COUNT]byte{})
+func New_Operating_System_Generator(
+	source *csprng.Generator, state uuid.Generator_State,
+) (generator uuid.Generator) {
+	defer func() {
+		uuid.Generator_Invariants(generator, "new_operating_system_generator.generator")
+	}()
+	csprng.Generator_Invariants(*source, "new_operating_system_generator.source")
+	uuid.Generator_State_Invariants(state, "new_operating_system_generator.state")
+	*source = system_csprng.New_Operating_System_Generator(csprng.CURSOR_MIN)
+	clock := time.New_Operating_System_Clock()
+	return uuid.New(uuid.Source(source), clock, uuid.Node{}, state)
 }

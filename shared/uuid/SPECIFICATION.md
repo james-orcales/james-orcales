@@ -35,10 +35,10 @@ any other length is an error.
 A valid Null_UUID marshals to its quoted string and back; an invalid one marshals to
 JSON null and unmarshals from null as invalid.
 
-# SQL Scan Reads Value
+# Database Scan Reads Value
 
-Scan reads a UUID from its string form and from 16 raw bytes, and UUID_Value emits
-the canonical string a driver stores.
+UUID_Scan reads UUID from shared driver text and 16 raw bytes. UUID_Value emits
+canonical text through shared closed driver union.
 
 # Name Based Is Deterministic
 

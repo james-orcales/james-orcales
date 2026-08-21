@@ -1,50 +1,47 @@
 package uuid_test
 
 import (
-	"local/james-orcales/shared/random/prng"
-	"local/james-orcales/shared/time"
+	"testing"
+
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/random/csprng"
+	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/uuid"
 )
+
+// TestMain register UUID invariant roots before specification run.
+func TestMain(m *testing.M) {
+	invariant.Run_Test_Main(m)
+}
 
 // FIXED_EPOCH_SECONDS is the Unix second the fixed generator's virtual clock reads,
 // so a Version 7 timestamp round-trips to a known value.
 const FIXED_EPOCH_SECONDS = 1_700_000_000
 
-// NODE_BYTE_COUNT fixes the deterministic generator to one RFC 9562 node field.
-const NODE_BYTE_COUNT = 6
-
-// Deterministic_Reader is an io.Reader whose bytes come from a seeded prng, standing
-// in for crypto/rand so a test's UUIDs are a pure function of the seed.
-type Deterministic_Reader struct {
-	// Generator is the seeded xoshiro stream the bytes are drawn from.
-	Generator prng.Generator
-	// Word is the current 64-bit draw being dispensed one byte at a time.
-	Word uint64
-	// Available is how many bytes of Word remain undispensed.
-	Available int
-}
-
-// Read fills buffer from the prng, satisfying io.Reader; it never returns an error.
-func (reader *Deterministic_Reader) Read(buffer []byte) (count int, err error) {
-	for index := range buffer {
-		if reader.Available == 0 {
-			reader.Word = prng.Generator_Next(&reader.Generator)
-			reader.Available = 8
-		}
-		buffer[index] = byte(reader.Word)
-		reader.Word >>= 8
-		reader.Available--
-	}
-	return len(buffer), nil
-}
-
-// Builds a Generator whose entropy is a seeded prng and whose clock is a frozen
+// Builds a Generator whose entropy is a seeded CSPRNG and whose clock is a frozen
 // virtual clock at FIXED_EPOCH_SECONDS, so every draw is reproducible.
 func fixed_generator(seed uint64) (generator uuid.Generator) {
-	reader := &Deterministic_Reader{Generator: prng.New(seed)}
-	clock, _ := time.Virtual_Clock_To_Clock(time.Virtual_Clock{
+	return generator_at(
+		seed, time.Moment(FIXED_EPOCH_SECONDS*int64(time.SECOND)),
+		uuid.Node{1, 2, 3, 4, 5, 6}, uuid.Generator_State{},
+	)
+}
+
+// Boundary clocks and replay state need the same deterministic entropy wiring as
+// ordinary examples, or invariant witnesses would accidentally test another root.
+func generator_at(
+	seed uint64, moment time.Moment, node uuid.Node, state uuid.Generator_State,
+) (generator uuid.Generator) {
+	var seed_bytes [csprng.KEY_BYTES]byte
+	for index := range csprng.WORD_BYTE_COUNT {
+		seed_bytes[index] = byte(seed >> (index * csprng.WORD_BYTE_COUNT))
+	}
+	source := new(csprng.Generator)
+	*source = csprng.New(seed_bytes, csprng.CURSOR_MIN)
+	virtual := time.Virtual_Clock{
 		Resolution: time.MILLISECOND,
-		Epoch:      time.Moment(FIXED_EPOCH_SECONDS * int64(time.SECOND)),
-	})
-	return uuid.New(reader, clock, [NODE_BYTE_COUNT]byte{1, 2, 3, 4, 5, 6})
+		Epoch:      moment,
+	}
+	clock := time.Virtual_Clock_To_Clock(&virtual)
+	return uuid.New(uuid.Source(source), clock, node, state)
 }
