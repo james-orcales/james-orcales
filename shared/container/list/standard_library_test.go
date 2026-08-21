@@ -107,7 +107,7 @@ func Test_Standard_Library_Remove(t *testing.T) {
 	subject := ready_list()
 	first := Position(Push_Back(subject, 1))
 	Push_Back(subject, 2)
-	testify.Equal(t, 1, Remove(subject, first), "Remove must return the value")
+	testify.Equal(t, Value(1), Remove(subject, first), "Remove must return the value")
 	check_values(t, subject, []int{2})
 	testify.True(t, raises(func() { Remove(subject, first) }),
 		"a second Remove of one handle must cause a panic")
@@ -122,7 +122,7 @@ func Test_Standard_Library_Removed_Handle(t *testing.T) {
 	Push_Back(subject, 1)
 	Push_Back(subject, 2)
 	front := Front(subject)
-	testify.Equal(t, 1, Remove(subject, front), "Remove must return the value")
+	testify.Equal(t, Value(1), Remove(subject, front), "Remove must return the value")
 	testify.True(t, raises(func() { Next(subject, front) }),
 		"Next must reject a handle that Remove took")
 	testify.True(t, raises(func() { Previous(subject, front) }),
@@ -156,24 +156,6 @@ func Test_Standard_Library_Move(t *testing.T) {
 	check_values(t, subject, []int{1, 4, 2, 3})
 }
 
-// Test_Standard_Library_Zero_List ports the upstream TestZeroList. Each insertion readies a
-// zero List value.
-func Test_Standard_Library_Zero_List(t *testing.T) {
-	t.Parallel()
-	front := &List[int]{}
-	Push_Front(front, 1)
-	check_values(t, front, []int{1})
-	back := &List[int]{}
-	Push_Back(back, 1)
-	check_values(t, back, []int{1})
-	copied_front := &List[int]{}
-	Push_Front_List(copied_front, front)
-	check_values(t, copied_front, []int{1})
-	copied_back := &List[int]{}
-	Push_Back_List(copied_back, back)
-	check_values(t, copied_back, []int{1})
-}
-
 // Test_Standard_Library_Unknown_Mark ports the upstream TestInsertBeforeUnknownMark,
 // TestInsertAfterUnknownMark, and TestMoveUnknownMark. Each unknown mark causes a panic,
 // where the standard library changes nothing, and the list keeps its elements.
@@ -197,29 +179,29 @@ func Test_Standard_Library_Unknown_Mark(t *testing.T) {
 }
 
 // Makes an empty list, which the standard library makes with its New constructor.
-func ready_list() (subject *List[int]) {
-	subject = &List[int]{}
+func ready_list() (subject *List) {
+	subject = &List{Nodes: make(Nodes, NODE_COUNT_MAXIMUM)}
 	Initialize(subject)
 	return subject
 }
 
 // Fails when a list does not hold exactly the wanted values in both walk directions. The
 // upstream checkListPointers reads the neighbor fields, which the walk states here.
-func check_values(t *testing.T, subject *List[int], wanted []int) {
+func check_values(t *testing.T, subject *List, wanted []int) {
 	t.Helper()
 	testify.Equal(t, Count(len(wanted)), Element_Count(subject),
 		"the element count is wrong")
 	forward := []int{}
 	position := Front(subject)
 	for position != POSITION_NONE {
-		forward = append(forward, Value_At(subject, position))
+		forward = append(forward, int(Value_At(subject, position)))
 		position = Next(subject, position)
 	}
 	testify.Equal(t, wanted, forward, "the walk toward the back is wrong")
 	backward := []int{}
 	position = Back(subject)
 	for position != POSITION_NONE {
-		backward = append(backward, Value_At(subject, position))
+		backward = append(backward, int(Value_At(subject, position)))
 		position = Previous(subject, position)
 	}
 	testify.Equal(t, backward_values(wanted), backward,

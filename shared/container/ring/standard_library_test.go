@@ -10,7 +10,7 @@ import (
 // to an empty ring, and an Unlink of zero nodes each change nothing.
 func Test_Standard_Library_Corner_Cases(t *testing.T) {
 	t.Parallel()
-	subject := &Pool[int]{}
+	subject := ready_pool()
 	verify_ring(t, subject, POSITION_NONE, 0, 0)
 	single := New(subject, 1)
 	verify_ring(t, subject, single, 1, 0)
@@ -27,7 +27,7 @@ func Test_Standard_Library_Corner_Cases(t *testing.T) {
 func Test_Standard_Library_New(t *testing.T) {
 	t.Parallel()
 	for element_count := range 10 {
-		subject := &Pool[int]{}
+		subject := ready_pool()
 		position := New(subject, Count(element_count))
 		verify_ring(t, subject, position, Count(element_count), 0)
 	}
@@ -62,7 +62,7 @@ func Test_Standard_Library_Link(t *testing.T) {
 // count, and a link to an empty ring changes nothing.
 func Test_Standard_Library_Link_Rings(t *testing.T) {
 	t.Parallel()
-	subject := &Pool[int]{}
+	subject := ready_pool()
 	first := node(New(subject, 1))
 	Set_Value(subject, first, 42)
 	second := New(subject, 1)
@@ -80,7 +80,7 @@ func Test_Standard_Library_Link_Rings(t *testing.T) {
 // count of the other ring.
 func Test_Standard_Library_Link_Growth(t *testing.T) {
 	t.Parallel()
-	subject := &Pool[int]{}
+	subject := ready_pool()
 	position := node(New(subject, 1))
 	total_count := Count(1)
 	for added_index := 1; added_index < 10; added_index++ {
@@ -115,7 +115,7 @@ func Test_Standard_Library_Link_Unlink(t *testing.T) {
 	t.Parallel()
 	for element_index := 1; element_index < 4; element_index++ {
 		element_count := Count(element_index)
-		subject := &Pool[int]{}
+		subject := ready_pool()
 		position := node(New(subject, element_count))
 		for taken_index := range element_index {
 			taken_count := Count(taken_index)
@@ -132,7 +132,7 @@ func Test_Standard_Library_Link_Unlink(t *testing.T) {
 // empty ring causes a panic, where the standard library readies the ring instead.
 func Test_Standard_Library_Move_Empty_Ring(t *testing.T) {
 	t.Parallel()
-	subject := &Pool[int]{}
+	subject := ready_pool()
 	testify.True(t, raises(func() { Move(subject, node(POSITION_NONE), 1) }),
 		"Move must reject the handle of an empty ring")
 }
@@ -140,7 +140,7 @@ func Test_Standard_Library_Move_Empty_Ring(t *testing.T) {
 // Fails when a ring does not hold one count of nodes and one sum of values. The upstream
 // verify reads the neighbor fields, which the walks state here.
 func verify_ring(
-	t *testing.T, subject *Pool[int], position Position,
+	t *testing.T, subject *Pool, position Position,
 	wanted_count Count, wanted_sum int,
 ) {
 	t.Helper()
@@ -148,9 +148,9 @@ func verify_ring(
 		"the node count is wrong")
 	seen_count := 0
 	seen_sum := 0
-	For_Each(subject, position, func(value int) {
+	For_Each(subject, position, func(value Value) {
 		seen_count++
-		seen_sum += value
+		seen_sum += int(value)
 	})
 	testify.Equal(t, int(wanted_count), seen_count, "the forward walk count is wrong")
 	testify.Equal(t, wanted_sum, seen_sum, "the forward walk sum is wrong")
@@ -163,7 +163,7 @@ func verify_ring(
 // Fails when a backward walk does not undo a forward walk, or when Move does not wrap at the
 // ring count.
 func verify_connections(
-	t *testing.T, subject *Pool[int], position Element_Position, wanted_count Count,
+	t *testing.T, subject *Pool, position Element_Position, wanted_count Count,
 ) {
 	t.Helper()
 	testify.Equal(t, position, Previous(subject, Next(subject, position)),
@@ -189,18 +189,25 @@ func verify_connections(
 }
 
 // Makes a ring of one count whose values run from one to that count.
-func numbered_ring(element_count int) (subject *Pool[int], position Position) {
-	subject = &Pool[int]{}
+func numbered_ring(element_count int) (subject *Pool, position Position) {
+	subject = ready_pool()
 	position = New(subject, Count(element_count))
 	if position == POSITION_NONE {
 		return subject, position
 	}
 	walk := node(position)
 	for value := 1; value <= element_count; value++ {
-		Set_Value(subject, walk, value)
+		Set_Value(subject, walk, Value(value))
 		walk = Next(subject, walk)
 	}
 	return subject, position
+}
+
+// Makes empty ring pool over caller-owned storage.
+func ready_pool() (subject *Pool) {
+	subject = &Pool{Nodes: make(Nodes, NODE_COUNT_MAXIMUM)}
+	Initialize(subject)
+	return subject
 }
 
 // Returns the sum of one to one count.

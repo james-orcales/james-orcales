@@ -1,8 +1,8 @@
 
 # Construction
 
-New makes an empty list, and the zero List value is an empty list that is ready to use.
-Initialize empties a list that already holds elements.
+List holds caller-owned Nodes with exactly NODE_COUNT_MAXIMUM positions. Initialize empties List and
+readies storage. Zero List has no storage and is not ready.
 
 # Handles
 
@@ -43,8 +43,8 @@ panic.
 
 # Allocation
 
-Every operation allocates zero heap storage. List owns fixed node pool, and removed nodes return to
-that pool for later insertion.
+Every operation allocates zero heap storage. Caller owns fixed node pool. Removed nodes return to
+pool for later insertion.
 
 # Domain Errors
 
@@ -53,5 +53,5 @@ positions, a position outside the pool, and a position that Remove already took.
 
 # Invariant Domains
 
-The tests drive each operation over an empty list, a small list, and the largest admitted list,
-and over both ends of the handle domain.
+Tests drive each operation over empty list, small list, largest admitted list, both ends of handle
+domain, and every concrete value sentinel.

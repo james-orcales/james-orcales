@@ -46,5 +46,6 @@ limit causes a panic.
 
 # Invariant Domains
 
-The tests reach both position ends, both interior position sentinels, and both report branches
-through public operations.
+Tests reach both position ends, both interior position sentinels, and both report branches through
+public operations. Concrete values reach VALUE_MINIMUM, VALUE_MAXIMUM, and each interior sentinel
+through Push, Pop, and Remove.

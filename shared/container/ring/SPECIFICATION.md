@@ -1,8 +1,9 @@
 
 # Construction
 
-Initialize readies a pool, and the zero Pool value is a ready pool. New takes one count of nodes
-from the pool and closes them into one ring.
+Pool holds caller-owned Nodes with exactly NODE_COUNT_MAXIMUM positions. Initialize readies storage.
+New takes node count from pool and closes nodes into one ring. Zero Pool has no storage and is not
+ready.
 
 # Handles
 
@@ -48,8 +49,8 @@ holds free causes a panic.
 
 # Allocation
 
-Every operation allocates zero heap storage. Pool owns fixed node storage, and Release returns nodes
-to that storage for later New calls.
+Every operation allocates zero heap storage. Caller owns fixed node storage. Release returns nodes
+to storage for later New calls.
 
 # Domain Errors
 
@@ -59,5 +60,5 @@ ring count also causes a panic, where the standard library folds that count into
 
 # Invariant Domains
 
-The tests drive each operation over an empty pool, a small ring, and the largest admitted ring,
-and over both ends of the handle domain and the offset domain.
+Tests drive each operation over empty pool, small ring, largest admitted ring, both ends of handle
+domain and offset domain, and every concrete value sentinel.

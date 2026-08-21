@@ -7,10 +7,10 @@ import (
 	"local/james-orcales/shared/testify"
 )
 
-// Test_Construction verifies Initialize, the zero Pool value, and each New count.
+// Test_Construction verifies caller-owned storage, Initialize, and each New count.
 func Test_Construction(t *testing.T) {
 	t.Parallel()
-	subject := &ring.Pool[int]{}
+	subject, _ := ready_pool()
 	testify.Equal(t, ring.POSITION_NONE, ring.New(subject, 0),
 		"New must return POSITION_NONE for a count of zero")
 	single := node(ring.New(subject, 1))
@@ -18,8 +18,7 @@ func Test_Construction(t *testing.T) {
 		"New must make a ring of its count")
 	testify.Equal(t, single, ring.Next(subject, single),
 		"a ring of one node follows itself")
-	ready := &ring.Pool[int]{}
-	ring.Initialize(ready)
+	ready, _ := ready_pool()
 	testify.Equal(t, ring.Count(5), ring.Element_Count(ready, ring.New(ready, 5)),
 		"Initialize must ready a pool")
 }
@@ -28,10 +27,10 @@ func Test_Construction(t *testing.T) {
 func Test_Handles(t *testing.T) {
 	t.Parallel()
 	subject, position := filled_ring(3)
-	testify.Equal(t, 0, ring.Value_At(subject, node(position)),
+	testify.Equal(t, ring.Value(0), ring.Value_At(subject, node(position)),
 		"Value_At must return the stored value")
 	ring.Set_Value(subject, node(position), 9)
-	testify.Equal(t, 9, ring.Value_At(subject, node(position)),
+	testify.Equal(t, ring.Value(9), ring.Value_At(subject, node(position)),
 		"Set_Value must write the stored value")
 	testify.Equal(t, ring.Count(0), ring.Element_Count(subject, ring.POSITION_NONE),
 		"an empty ring holds no node")
@@ -42,7 +41,8 @@ func Test_Traversal(t *testing.T) {
 	t.Parallel()
 	subject, position := filled_ring(3)
 	second := ring.Next(subject, node(position))
-	testify.Equal(t, 1, ring.Value_At(subject, second), "Next must walk forward")
+	testify.Equal(t, ring.Value(1), ring.Value_At(subject, second),
+		"Next must walk forward")
 	testify.Equal(t, node(position), ring.Previous(subject, second),
 		"Previous must walk backward")
 	third := ring.Next(subject, second)
@@ -58,9 +58,11 @@ func Test_Movement(t *testing.T) {
 	subject, position := filled_ring(4)
 	testify.Equal(t, node(position), ring.Move(subject, node(position), 0),
 		"an offset of zero must return its own handle")
-	testify.Equal(t, 2, ring.Value_At(subject, ring.Move(subject, node(position), 2)),
+	testify.Equal(t, ring.Value(2),
+		ring.Value_At(subject, ring.Move(subject, node(position), 2)),
 		"a positive offset must walk forward")
-	testify.Equal(t, 3, ring.Value_At(subject, ring.Move(subject, node(position), -1)),
+	testify.Equal(t, ring.Value(3),
+		ring.Value_At(subject, ring.Move(subject, node(position), -1)),
 		"a negative offset must walk backward")
 	testify.Equal(t, node(position), ring.Move(subject, node(position), 4),
 		"one full lap must return its own handle")
@@ -76,7 +78,7 @@ func Test_Link(t *testing.T) {
 	followed := ring.Link(subject, node(first), handle(second))
 	testify.Equal(t, []int{0, 8, 9, 1}, ring_values(subject, first),
 		"Link must join the other ring after the handle")
-	testify.Equal(t, 1, ring.Value_At(subject, followed),
+	testify.Equal(t, ring.Value(1), ring.Value_At(subject, followed),
 		"Link must return the handle that followed the first one")
 	divided_subject, whole := filled_ring(4)
 	third := ring.Move(divided_subject, node(whole), 2)
@@ -126,7 +128,7 @@ func Test_Release(t *testing.T) {
 // Test_Size_Limits verifies the largest admitted ring and the rejection of one more node.
 func Test_Size_Limits(t *testing.T) {
 	t.Parallel()
-	subject := &ring.Pool[int]{}
+	subject, _ := ready_pool()
 	position := ring.New(subject, ring.COUNT_MAXIMUM)
 	testify.Equal(t, ring.Count(ring.COUNT_MAXIMUM),
 		ring.Element_Count(subject, position),
@@ -148,7 +150,7 @@ func Test_Allocation(t *testing.T) {
 		"element position allocation probes did not run")
 	testify.Equal(t, ring.Count(3), state.Count_Result,
 		"Element_Count allocation probe did not run")
-	testify.Equal(t, 1, state.Value_Result,
+	testify.Equal(t, ring.Value(1), state.Value_Result,
 		"Value_At allocation probe did not run")
 	testify.Equal(t, 6, state.Visited, "For_Each allocation probe did not run")
 }
@@ -181,25 +183,39 @@ func Test_Invariant_Domains(t *testing.T) {
 	for _, state := range probe_states() {
 		drive_every_operation(state)
 	}
+	cover_value_domains()
+}
+
+// Reaches every sentinel required by concrete stored-value boundaries through public calls.
+func cover_value_domains() {
+	values := []ring.Value{
+		ring.VALUE_MINIMUM, -1, 0, 1, 2, ring.VALUE_MAXIMUM,
+	}
+	for _, value := range values {
+		subject, position := filled_ring(1)
+		target := node(position)
+		ring.Set_Value(subject, target, value)
+		ring.Value_At(subject, target)
+	}
 }
 
 // Makes one fresh pool and one handle of one state, so a driven operation never reads a pool
 // that an earlier operation changed.
-type pool_factory func() (subject *ring.Pool[int], position ring.Position)
+type pool_factory func() (subject *ring.Pool, position ring.Position)
 
-// Names each pool state that the declared domains need, from a zero value to a pool whose
-// free chain runs from its final node.
+// Names each pool state declared domains need, from uninitialized storage to pool whose free chain
+// runs from final node.
 func probe_states() (states []pool_factory) {
 	return []pool_factory{
-		zero_pool,
+		uninitialized_pool,
 		ready_pool,
-		func() (subject *ring.Pool[int], position ring.Position) {
+		func() (subject *ring.Pool, position ring.Position) {
 			return filled_ring(1)
 		},
-		func() (subject *ring.Pool[int], position ring.Position) {
+		func() (subject *ring.Pool, position ring.Position) {
 			return filled_ring(2)
 		},
-		func() (subject *ring.Pool[int], position ring.Position) {
+		func() (subject *ring.Pool, position ring.Position) {
 			return filled_ring(3)
 		},
 		one_free_pool,
@@ -323,51 +339,51 @@ func probe_counts() (counts []ring.Count) {
 	return []ring.Count{0, 1, 2, ring.COUNT_MAXIMUM}
 }
 
-// Makes a zero Pool value, which threads no free chain.
-func zero_pool() (subject *ring.Pool[int], position ring.Position) {
-	return &ring.Pool[int]{}, ring.POSITION_NONE
+// Makes uninitialized Pool over caller storage, which threads no free chain.
+func uninitialized_pool() (subject *ring.Pool, position ring.Position) {
+	return &ring.Pool{Nodes: make(ring.Nodes, ring.NODE_COUNT_MAXIMUM)}, ring.POSITION_NONE
 }
 
 // Makes a ready pool that holds no ring.
-func ready_pool() (subject *ring.Pool[int], position ring.Position) {
-	subject = &ring.Pool[int]{}
+func ready_pool() (subject *ring.Pool, position ring.Position) {
+	subject, _ = uninitialized_pool()
 	ring.Initialize(subject)
 	return subject, ring.POSITION_NONE
 }
 
 // Makes a pool whose free chain holds one node.
-func one_free_pool() (subject *ring.Pool[int], position ring.Position) {
-	subject = &ring.Pool[int]{}
+func one_free_pool() (subject *ring.Pool, position ring.Position) {
+	subject, _ = ready_pool()
 	return subject, ring.New(subject, ring.COUNT_MAXIMUM-1)
 }
 
 // Makes a pool whose free chain holds two nodes.
-func two_free_pool() (subject *ring.Pool[int], position ring.Position) {
-	subject = &ring.Pool[int]{}
+func two_free_pool() (subject *ring.Pool, position ring.Position) {
+	subject, _ = ready_pool()
 	return subject, ring.New(subject, ring.COUNT_MAXIMUM-2)
 }
 
 // Makes a pool whose one ring holds every node.
-func full_ring() (subject *ring.Pool[int], position ring.Position) {
-	subject = &ring.Pool[int]{}
+func full_ring() (subject *ring.Pool, position ring.Position) {
+	subject, _ = ready_pool()
 	return subject, ring.New(subject, ring.COUNT_MAXIMUM)
 }
 
 // Makes a pool whose free chain runs from the final node of the pool, so a later New reaches
 // the highest handle.
-func released_pool() (subject *ring.Pool[int], position ring.Position) {
+func released_pool() (subject *ring.Pool, position ring.Position) {
 	subject, whole := full_ring()
 	ring.Release(subject, whole)
 	return subject, ring.New(subject, 2)
 }
 
 // Makes a pool and one ring of increasing values.
-func filled_ring(element_count int) (subject *ring.Pool[int], position ring.Position) {
-	subject = &ring.Pool[int]{}
+func filled_ring(element_count int) (subject *ring.Pool, position ring.Position) {
+	subject, _ = ready_pool()
 	position = ring.New(subject, ring.Count(element_count))
 	walk := node(position)
 	for value := range element_count {
-		ring.Set_Value(subject, walk, value)
+		ring.Set_Value(subject, walk, ring.Value(value))
 		walk = ring.Next(subject, walk)
 	}
 	return subject, position
@@ -384,19 +400,19 @@ func handle(target ring.Element_Position) (position ring.Position) {
 }
 
 // Reads every value of one ring in forward order.
-func ring_values(subject *ring.Pool[int], position ring.Position) (values []int) {
+func ring_values(subject *ring.Pool, position ring.Position) (values []int) {
 	values = []int{}
-	ring.For_Each(subject, position, func(value int) {
-		values = append(values, value)
+	ring.For_Each(subject, position, func(value ring.Value) {
+		values = append(values, int(value))
 	})
 	return values
 }
 
 // Reads every value of one ring and keeps none, so a driven For_Each states its assertions.
-func read_every_value(subject *ring.Pool[int], position ring.Position) {
+func read_every_value(subject *ring.Pool, position ring.Position) {
 	seen := 0
-	ring.For_Each(subject, position, func(value int) {
-		seen += value
+	ring.For_Each(subject, position, func(value ring.Value) {
+		seen += int(value)
 	})
 }
 
@@ -425,12 +441,11 @@ type allocation_case struct {
 }
 
 type ring_allocation_state struct {
-	Zero                    ring.Pool[int]
-	Empty                   ring.Pool[int]
-	Single                  ring.Pool[int]
-	Triple                  ring.Pool[int]
-	Linked                  ring.Pool[int]
-	Subject                 ring.Pool[int]
+	Empty                   ring.Pool
+	Single                  ring.Pool
+	Triple                  ring.Pool
+	Linked                  ring.Pool
+	Subject                 ring.Pool
 	First                   ring.Position
 	Triple_First            ring.Position
 	Linked_First            ring.Position
@@ -438,31 +453,44 @@ type ring_allocation_state struct {
 	Position_Result         ring.Position
 	Element_Position_Result ring.Element_Position
 	Count_Result            ring.Count
-	Value_Result            int
+	Value_Result            ring.Value
 	Visited                 int
-	Visitor                 ring.Visitor_Function[int]
+	Visitor                 ring.Visitor_Function
 }
 
 // Snapshots restore each destructive probe without asking pool API for fresh state.
 func prepare_ring_allocation_state() (state *ring_allocation_state) {
 	state = &ring_allocation_state{}
-	ring.Initialize(&state.Empty)
-	state.Single = state.Empty
+	state.Empty = pool_value()
+	state.Single = pool_value()
 	state.First = ring.New(&state.Single, 1)
-	state.Triple = state.Empty
+	state.Triple = pool_value()
 	state.Triple_First = ring.New(&state.Triple, 3)
 	walk := ring.Element_Position(state.Triple_First)
 	for value := 1; value <= 3; value++ {
-		ring.Set_Value(&state.Triple, walk, value)
+		ring.Set_Value(&state.Triple, walk, ring.Value(value))
 		walk = ring.Next(&state.Triple, walk)
 	}
-	state.Linked = state.Empty
+	state.Linked = pool_value()
 	state.Linked_First = ring.New(&state.Linked, 2)
 	state.Linked_Other = ring.New(&state.Linked, 2)
-	state.Visitor = func(value int) {
-		state.Visited += value
+	state.Subject = pool_value()
+	state.Visitor = func(value ring.Value) {
+		state.Visited += int(value)
 	}
 	return state
+}
+
+// Makes initialized pool value with distinct caller storage.
+func pool_value() (subject ring.Pool) {
+	allocated, _ := ready_pool()
+	return *allocated
+}
+
+// Copies pool into distinct caller storage so allocation probes keep snapshots stable.
+func restore_pool(destination *ring.Pool, source *ring.Pool) {
+	copy(destination.Nodes, source.Nodes)
+	destination.Free_Count = source.Free_Count
 }
 
 // Each callback stays named so one failure identifies one regressed construction operation.
@@ -471,15 +499,11 @@ func ring_construction_allocation_cases(
 ) (cases []allocation_case) {
 	return []allocation_case{
 		{Name: "Initialize", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			ring.Initialize(&state.Subject)
 		}},
-		{Name: "New_Zero_Value", Run: func() {
-			state.Subject = state.Zero
-			state.Position_Result = ring.New(&state.Subject, 2)
-		}},
 		{Name: "New", Run: func() {
-			state.Subject = state.Empty
+			restore_pool(&state.Subject, &state.Empty)
 			state.Position_Result = ring.New(&state.Subject, 2)
 		}},
 	}
@@ -491,41 +515,41 @@ func ring_access_allocation_cases(
 ) (cases []allocation_case) {
 	return []allocation_case{
 		{Name: "Next", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			state.Element_Position_Result = ring.Next(
 				&state.Subject, ring.Element_Position(state.Triple_First),
 			)
 		}},
 		{Name: "Previous", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			state.Element_Position_Result = ring.Previous(
 				&state.Subject, ring.Element_Position(state.Triple_First),
 			)
 		}},
 		{Name: "Value_At", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			state.Value_Result = ring.Value_At(
 				&state.Subject, ring.Element_Position(state.Triple_First),
 			)
 		}},
 		{Name: "Set_Value", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			ring.Set_Value(
 				&state.Subject, ring.Element_Position(state.Triple_First), 4,
 			)
 		}},
 		{Name: "Move", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			state.Element_Position_Result = ring.Move(
 				&state.Subject, ring.Element_Position(state.Triple_First), 1,
 			)
 		}},
 		{Name: "Element_Count", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			state.Count_Result = ring.Element_Count(&state.Subject, state.Triple_First)
 		}},
 		{Name: "For_Each", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			state.Visited = 0
 			ring.For_Each(&state.Subject, state.Triple_First, state.Visitor)
 		}},
@@ -538,7 +562,7 @@ func ring_link_allocation_cases(
 ) (cases []allocation_case) {
 	return []allocation_case{
 		{Name: "Link", Run: func() {
-			state.Subject = state.Linked
+			restore_pool(&state.Subject, &state.Linked)
 			state.Element_Position_Result = ring.Link(
 				&state.Subject,
 				ring.Element_Position(state.Linked_First),
@@ -546,13 +570,13 @@ func ring_link_allocation_cases(
 			)
 		}},
 		{Name: "Unlink", Run: func() {
-			state.Subject = state.Triple
+			restore_pool(&state.Subject, &state.Triple)
 			state.Position_Result = ring.Unlink(
 				&state.Subject, ring.Element_Position(state.Triple_First), 1,
 			)
 		}},
 		{Name: "Release", Run: func() {
-			state.Subject = state.Single
+			restore_pool(&state.Subject, &state.Single)
 			ring.Release(&state.Subject, state.First)
 		}},
 	}

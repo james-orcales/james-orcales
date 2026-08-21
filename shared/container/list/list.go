@@ -1,11 +1,9 @@
-// Package list supplies the Go standard-library doubly linked list through the repository
-// naming and assertion boundaries. A list owns a node pool and joins its nodes by position,
-// not by pointer, because a pointer node states itself as its own neighbor and no assertion
-// tree can hold that cycle. Each operation is a free function, thus a list carries no method
-// set.
+// Package list supplies Go standard-library doubly linked list through repository naming and
+// assertion boundaries. List borrows node pool and joins nodes by position, not pointer. Pointer
+// node states itself as own neighbor, so no assertion tree can hold cycle. Free functions leave
+// List without method set.
 //
-// A list holds its whole pool in one array, thus its size is the same for an empty list and
-// for a full one. Make a list behind a pointer and do not copy the value.
+// Caller supplies fixed-size node slice. Keep List behind pointer. Copies share storage.
 package list
 
 import (
@@ -126,8 +124,24 @@ func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 		Ensure()
 }
 
+// VALUE_MINIMUM keeps stored values inside repository collection scale.
+const VALUE_MINIMUM = -ELEMENT_COUNT_MAXIMUM
+
+// VALUE_MAXIMUM keeps stored values inside repository collection scale.
+const VALUE_MAXIMUM = ELEMENT_COUNT_MAXIMUM
+
+// Value is concrete list value.
+type Value int
+
+// Value_Invariants keeps payload inside finite assertion domain.
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), VALUE_MINIMUM, VALUE_MAXIMUM).
+		Ensure()
+}
+
 // Element is one node of the pool of a list.
-type Element[Value any] struct {
+type Element struct {
 	// Next is the following node of the element ring, or the following node of the free
 	// chain while the element ring does not hold this node.
 	Next Successor
@@ -141,37 +155,54 @@ type Element[Value any] struct {
 }
 
 // Element_Invariants composes both neighbors and the use report of one node.
-func Element_Invariants[Value any](
-	element Element[Value], namespace aver.Namespace,
-) {
+func Element_Invariants(element Element, namespace aver.Namespace) {
 	Successor_Invariants(element.Next, namespace)
 	Predecessor_Invariants(element.Previous, namespace)
 	Boolean_Invariants(element.Used, namespace)
+	Value_Invariants(element.Value, namespace)
 }
 
-// List is a doubly linked list. Its zero value is an empty list that is ready to use.
-type List[Value any] struct {
+// Nodes is caller-owned fixed node storage.
+type Nodes []Element
+
+// Nodes_Invariants requires storage for both sentinels and every admitted element.
+func Nodes_Invariants(nodes Nodes, _ aver.Namespace) {
+	aver.Always(
+		len(nodes) == NODE_COUNT_MAXIMUM,
+		"List node storage has NODE_COUNT_MAXIMUM members.",
+	)
+}
+
+// List is doubly linked list over caller-owned storage.
+type List struct {
 	// Nodes holds the ring sentinel at ROOT_POSITION, the free-chain sentinel at
-	// FREE_POSITION, and every caller node after them. The pool is one array, because a
-	// slice field carries no defined type that an assertion tree can own.
-	Nodes [NODE_COUNT_MAXIMUM]Element[Value]
+	// FREE_POSITION, and every caller node after them.
+	Nodes Nodes
 	// Element_Count excludes both sentinels and every free node.
 	Element_Count Count
 }
 
-// List_Invariants states the element count of one list. The subject is a pointer, because a
-// list holds its whole pool and a value parameter would copy that pool at each assertion.
-func List_Invariants[Value any](
-	subject *List[Value], namespace aver.Namespace,
-) {
+// List_Invariants composes caller storage and element count.
+func List_Invariants(subject List, namespace aver.Namespace) {
+	Nodes_Invariants(subject.Nodes, namespace)
 	Count_Invariants(subject.Element_Count, namespace)
 }
 
-// Initialize empties a list and closes its element ring. The zero List value is already an
-// empty list, thus this package states one entry point where the standard library also has a
-// New constructor.
-func Initialize[Value any](subject *List[Value]) {
-	List_Invariants(subject, "initialize.subject")
+// List_Handle borrows mutable list state.
+type List_Handle *List
+
+// List_Handle_Invariants composes borrowed list state.
+func List_Handle_Invariants(subject List_Handle, namespace aver.Namespace) {
+	if subject == nil {
+		return
+	}
+	List_Invariants(*subject, namespace)
+}
+
+// Initialize empties list and closes element ring over supplied storage.
+func Initialize(subject List_Handle) {
+	List_Handle_Invariants(subject, "initialize.subject")
+	clear(subject.Nodes)
 	subject.Nodes[ROOT_POSITION].Next = ROOT_POSITION
 	subject.Nodes[ROOT_POSITION].Previous = ROOT_POSITION
 	subject.Nodes[POSITION_MAXIMUM].Next = Successor(POSITION_NONE)
@@ -185,20 +216,10 @@ func Initialize[Value any](subject *List[Value]) {
 	subject.Element_Count = COUNT_MINIMUM
 }
 
-// Readies a zero List value at its first use. A zero pool threads no free chain, and the free
-// sentinel of a ready list never points at the ring sentinel, thus that link states the
-// difference.
-func lazy_initialize[Value any](subject *List[Value]) {
-	List_Invariants(subject, "lazy_initialize.subject")
-	if subject.Nodes[FREE_POSITION].Next == ROOT_POSITION {
-		Initialize(subject)
-	}
-}
-
 // Enforces that a handle names a node that the element ring holds.
-func enforce_live[Value any](subject *List[Value], position Position) {
+func enforce_live(subject List_Handle, position Position) {
 	Position_Invariants(position, "enforce_live.position")
-	List_Invariants(subject, "enforce_live.subject")
+	List_Handle_Invariants(subject, "enforce_live.subject")
 	aver.Always(
 		int(position) < len(subject.Nodes),
 		"A live handle names a node of the pool.",
@@ -210,16 +231,16 @@ func enforce_live[Value any](subject *List[Value], position Position) {
 }
 
 // Element_Count returns the element count of a list.
-func Element_Count[Value any](subject *List[Value]) (count Count) {
+func Element_Count(subject List_Handle) (count Count) {
 	defer func() { Count_Invariants(count, "element_count.count") }()
-	List_Invariants(subject, "element_count.subject")
+	List_Handle_Invariants(subject, "element_count.subject")
 	return subject.Element_Count
 }
 
 // Front returns the first handle of a list, or POSITION_NONE for an empty list.
-func Front[Value any](subject *List[Value]) (position Position) {
+func Front(subject List_Handle) (position Position) {
 	defer func() { Position_Invariants(position, "front.position") }()
-	List_Invariants(subject, "front.subject")
+	List_Handle_Invariants(subject, "front.subject")
 	if subject.Element_Count == COUNT_MINIMUM {
 		return POSITION_NONE
 	}
@@ -227,9 +248,9 @@ func Front[Value any](subject *List[Value]) (position Position) {
 }
 
 // Back returns the final handle of a list, or POSITION_NONE for an empty list.
-func Back[Value any](subject *List[Value]) (position Position) {
+func Back(subject List_Handle) (position Position) {
 	defer func() { Position_Invariants(position, "back.position") }()
-	List_Invariants(subject, "back.subject")
+	List_Handle_Invariants(subject, "back.subject")
 	if subject.Element_Count == COUNT_MINIMUM {
 		return POSITION_NONE
 	}
@@ -237,10 +258,10 @@ func Back[Value any](subject *List[Value]) (position Position) {
 }
 
 // Next returns the following handle, or POSITION_NONE at the back of the list.
-func Next[Value any](subject *List[Value], position Position) (successor Position) {
+func Next(subject List_Handle, position Position) (successor Position) {
 	defer func() { Position_Invariants(successor, "next.successor") }()
 	Position_Invariants(position, "next.position")
-	List_Invariants(subject, "next.subject")
+	List_Handle_Invariants(subject, "next.subject")
 	enforce_live(subject, position)
 	successor = Position(subject.Nodes[position].Next)
 	if successor == ROOT_POSITION {
@@ -250,10 +271,10 @@ func Next[Value any](subject *List[Value], position Position) (successor Positio
 }
 
 // Previous returns the preceding handle, or POSITION_NONE at the front of the list.
-func Previous[Value any](subject *List[Value], position Position) (predecessor Position) {
+func Previous(subject List_Handle, position Position) (predecessor Position) {
 	defer func() { Position_Invariants(predecessor, "previous.predecessor") }()
 	Position_Invariants(position, "previous.position")
-	List_Invariants(subject, "previous.subject")
+	List_Handle_Invariants(subject, "previous.subject")
 	enforce_live(subject, position)
 	predecessor = Position(subject.Nodes[position].Previous)
 	if predecessor == ROOT_POSITION {
@@ -263,17 +284,18 @@ func Previous[Value any](subject *List[Value], position Position) (predecessor P
 }
 
 // Value_At returns the value that one handle holds.
-func Value_At[Value any](subject *List[Value], position Position) (value Value) {
+func Value_At(subject List_Handle, position Position) (value Value) {
+	defer func() { Value_Invariants(value, "value_at.value") }()
 	Position_Invariants(position, "value_at.position")
-	List_Invariants(subject, "value_at.subject")
+	List_Handle_Invariants(subject, "value_at.subject")
 	enforce_live(subject, position)
 	return subject.Nodes[position].Value
 }
 
 // Takes one node from the free chain, or grows the pool by one node.
-func allocate[Value any](subject *List[Value]) (position Element_Position) {
+func allocate(subject List_Handle) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "allocate.position") }()
-	List_Invariants(subject, "allocate.subject")
+	List_Handle_Invariants(subject, "allocate.subject")
 	aver.Always(
 		subject.Element_Count < COUNT_MAXIMUM,
 		"A list insertion keeps room for the new element.",
@@ -286,9 +308,8 @@ func allocate[Value any](subject *List[Value]) (position Element_Position) {
 // Puts one node on the free chain, so a later insertion reuses its storage. The pool is the
 // whole input, because a released node leaves the element ring and states nothing about the
 // count that the ring keeps.
-func release[Value any](
-	nodes *[NODE_COUNT_MAXIMUM]Element[Value], position Element_Position,
-) {
+func release(nodes Nodes, position Element_Position) {
+	Nodes_Invariants(nodes, "release.nodes")
 	Element_Position_Invariants(position, "release.position")
 	nodes[position].Used = false
 	nodes[position].Previous = Predecessor(POSITION_NONE)
@@ -297,12 +318,10 @@ func release[Value any](
 }
 
 // Joins one node into the element ring after a mark.
-func link[Value any](
-	subject *List[Value], position Element_Position, mark Mark_Position,
-) {
+func link(subject List_Handle, position Element_Position, mark Mark_Position) {
 	Element_Position_Invariants(position, "link.position")
 	Mark_Position_Invariants(mark, "link.mark")
-	List_Invariants(subject, "link.subject")
+	List_Handle_Invariants(subject, "link.subject")
 	successor := subject.Nodes[mark].Next
 	subject.Nodes[position].Previous = Predecessor(mark)
 	subject.Nodes[position].Next = successor
@@ -311,9 +330,9 @@ func link[Value any](
 }
 
 // Takes one node out of the element ring and closes the gap.
-func unlink[Value any](subject *List[Value], position Element_Position) {
+func unlink(subject List_Handle, position Element_Position) {
 	Element_Position_Invariants(position, "unlink.position")
-	List_Invariants(subject, "unlink.subject")
+	List_Handle_Invariants(subject, "unlink.subject")
 	predecessor := subject.Nodes[position].Previous
 	successor := subject.Nodes[position].Next
 	subject.Nodes[predecessor].Next = successor
@@ -321,12 +340,11 @@ func unlink[Value any](subject *List[Value], position Element_Position) {
 }
 
 // Adds one value after a mark of the element ring and returns its new handle.
-func insert[Value any](
-	subject *List[Value], value Value, mark Mark_Position,
-) (position Element_Position) {
+func insert(subject List_Handle, value Value, mark Mark_Position) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "insert.position") }()
+	Value_Invariants(value, "insert.value")
 	Mark_Position_Invariants(mark, "insert.mark")
-	List_Invariants(subject, "insert.subject")
+	List_Handle_Invariants(subject, "insert.subject")
 	position = allocate(subject)
 	subject.Nodes[position].Value = value
 	subject.Nodes[position].Used = true
@@ -336,72 +354,75 @@ func insert[Value any](
 }
 
 // Push_Front adds one value at the front of a list and returns its new handle.
-func Push_Front[Value any](subject *List[Value], value Value) (position Element_Position) {
+func Push_Front(subject List_Handle, value Value) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "push_front.position") }()
-	List_Invariants(subject, "push_front.subject")
-	lazy_initialize(subject)
+	List_Handle_Invariants(subject, "push_front.subject")
+	Value_Invariants(value, "push_front.value")
 	return insert(subject, value, ROOT_POSITION)
 }
 
 // Push_Back adds one value at the back of a list and returns its new handle.
-func Push_Back[Value any](subject *List[Value], value Value) (position Element_Position) {
+func Push_Back(subject List_Handle, value Value) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "push_back.position") }()
-	List_Invariants(subject, "push_back.subject")
-	lazy_initialize(subject)
+	List_Handle_Invariants(subject, "push_back.subject")
+	Value_Invariants(value, "push_back.value")
 	mark := Mark_Position(subject.Nodes[ROOT_POSITION].Previous)
 	return insert(subject, value, mark)
 }
 
 // Insert_Before adds one value before a mark and returns its new handle.
-func Insert_Before[Value any](
-	subject *List[Value], value Value, mark Position,
+func Insert_Before(
+	subject List_Handle, value Value, mark Position,
 ) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "insert_before.position") }()
+	Value_Invariants(value, "insert_before.value")
 	Position_Invariants(mark, "insert_before.mark")
-	List_Invariants(subject, "insert_before.subject")
+	List_Handle_Invariants(subject, "insert_before.subject")
 	enforce_live(subject, mark)
 	before := Mark_Position(subject.Nodes[mark].Previous)
 	return insert(subject, value, before)
 }
 
 // Insert_After adds one value after a mark and returns its new handle.
-func Insert_After[Value any](
-	subject *List[Value], value Value, mark Position,
+func Insert_After(
+	subject List_Handle, value Value, mark Position,
 ) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "insert_after.position") }()
+	Value_Invariants(value, "insert_after.value")
 	Position_Invariants(mark, "insert_after.mark")
-	List_Invariants(subject, "insert_after.subject")
+	List_Handle_Invariants(subject, "insert_after.subject")
 	enforce_live(subject, mark)
 	return insert(subject, value, Mark_Position(mark))
 }
 
 // Remove takes one handle out of its list and returns the value that the handle held.
-func Remove[Value any](subject *List[Value], position Position) (value Value) {
+func Remove(subject List_Handle, position Position) (value Value) {
+	defer func() { Value_Invariants(value, "remove.value") }()
 	Position_Invariants(position, "remove.position")
-	List_Invariants(subject, "remove.subject")
+	List_Handle_Invariants(subject, "remove.subject")
 	enforce_live(subject, position)
 	value = subject.Nodes[position].Value
 	// The count drops before the two node operations, so each one states the count of the
 	// list that it leaves, and an empty result reaches their declared count minimum.
 	subject.Element_Count--
 	unlink(subject, Element_Position(position))
-	release(&subject.Nodes, Element_Position(position))
+	release(subject.Nodes, Element_Position(position))
 	return value
 }
 
 // Move_To_Front moves one handle to the front of its list.
-func Move_To_Front[Value any](subject *List[Value], position Position) {
+func Move_To_Front(subject List_Handle, position Position) {
 	Position_Invariants(position, "move_to_front.position")
-	List_Invariants(subject, "move_to_front.subject")
+	List_Handle_Invariants(subject, "move_to_front.subject")
 	enforce_live(subject, position)
 	unlink(subject, Element_Position(position))
 	link(subject, Element_Position(position), ROOT_POSITION)
 }
 
 // Move_To_Back moves one handle to the back of its list.
-func Move_To_Back[Value any](subject *List[Value], position Position) {
+func Move_To_Back(subject List_Handle, position Position) {
 	Position_Invariants(position, "move_to_back.position")
-	List_Invariants(subject, "move_to_back.subject")
+	List_Handle_Invariants(subject, "move_to_back.subject")
 	enforce_live(subject, position)
 	mark := Mark_Position(subject.Nodes[ROOT_POSITION].Previous)
 	// A node cannot follow itself, thus the node that is already at the back stays there.
@@ -413,10 +434,10 @@ func Move_To_Back[Value any](subject *List[Value], position Position) {
 }
 
 // Move_Before moves one handle to the place before a mark.
-func Move_Before[Value any](subject *List[Value], position Position, mark Position) {
+func Move_Before(subject List_Handle, position Position, mark Position) {
 	Position_Invariants(position, "move_before.position")
 	Position_Invariants(mark, "move_before.mark")
-	List_Invariants(subject, "move_before.subject")
+	List_Handle_Invariants(subject, "move_before.subject")
 	enforce_live(subject, position)
 	enforce_live(subject, mark)
 	before := Mark_Position(subject.Nodes[mark].Previous)
@@ -428,10 +449,10 @@ func Move_Before[Value any](subject *List[Value], position Position, mark Positi
 }
 
 // Move_After moves one handle to the place after a mark.
-func Move_After[Value any](subject *List[Value], position Position, mark Position) {
+func Move_After(subject List_Handle, position Position, mark Position) {
 	Position_Invariants(position, "move_after.position")
 	Position_Invariants(mark, "move_after.mark")
-	List_Invariants(subject, "move_after.subject")
+	List_Handle_Invariants(subject, "move_after.subject")
 	enforce_live(subject, position)
 	enforce_live(subject, mark)
 	if mark == position {
@@ -442,10 +463,9 @@ func Move_After[Value any](subject *List[Value], position Position, mark Positio
 }
 
 // Push_Back_List adds a copy of another list at the back. The other list can be this list.
-func Push_Back_List[Value any](subject *List[Value], other *List[Value]) {
-	List_Invariants(subject, "push_back_list.subject")
-	List_Invariants(other, "push_back_list.other")
-	lazy_initialize(subject)
+func Push_Back_List(subject List_Handle, other List_Handle) {
+	List_Handle_Invariants(subject, "push_back_list.subject")
+	List_Handle_Invariants(other, "push_back_list.other")
 	enforce_copy(subject.Element_Count, other.Element_Count)
 	remainder_count := int(other.Element_Count)
 	position := Front(other)
@@ -457,10 +477,9 @@ func Push_Back_List[Value any](subject *List[Value], other *List[Value]) {
 }
 
 // Push_Front_List adds a copy of another list at the front. The other list can be this list.
-func Push_Front_List[Value any](subject *List[Value], other *List[Value]) {
-	List_Invariants(subject, "push_front_list.subject")
-	List_Invariants(other, "push_front_list.other")
-	lazy_initialize(subject)
+func Push_Front_List(subject List_Handle, other List_Handle) {
+	List_Handle_Invariants(subject, "push_front_list.subject")
+	List_Handle_Invariants(other, "push_front_list.other")
 	enforce_copy(subject.Element_Count, other.Element_Count)
 	remainder_count := int(other.Element_Count)
 	position := Back(other)
