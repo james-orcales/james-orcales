@@ -15,13 +15,15 @@ func Test_Package_Owned_State(t *testing.T) {
 	testify.True(t, bool(maphash.READY_COMPLETE))
 	var value maphash.Hash
 	maphash.Hash_Init(&value, test_seed())
-	count, write_status := maphash.Hash_Write(&value, maphash.Source("abc"))
-	testify.Equal(t, maphash.Count(len("abc")), count)
-	testify.Equal(t, maphash.WRITE_STATUS_OK, write_status)
+	write_output := maphash.Hash_Write(&value, maphash.Source("abc"))
+	testify.Equal(t, maphash.Write_Output{
+		Count: maphash.Count(len("abc")), Status: maphash.WRITE_STATUS_OK,
+	}, write_output)
 	var output [maphash.DIGEST_SIZE]byte
-	output_count, output_status := maphash.Hash_Sum_Into(&value, output[:])
-	testify.Equal(t, maphash.OUTPUT_COUNT_COMPLETE, output_count)
-	testify.Equal(t, maphash.OUTPUT_STATUS_OK, output_status)
+	sum_output := maphash.Hash_Sum_Into(&value, output[:])
+	testify.Equal(t, maphash.Output{
+		Count: maphash.OUTPUT_COUNT_COMPLETE, Status: maphash.OUTPUT_STATUS_OK,
+	}, sum_output)
 }
 
 // Test_Reference_Values keeps the injected-key algorithm tied to SipHash-2-4 vectors.
@@ -101,13 +103,15 @@ func Test_Caller_Owned_Output(t *testing.T) {
 	maphash.Hash_Write(&value, maphash.Source("output"))
 	want := maphash.Hash_Sum_64(&value)
 	var short [maphash.DIGEST_SIZE - 1]byte
-	count, status := maphash.Hash_Sum_Into(&value, short[:])
-	testify.Equal(t, maphash.OUTPUT_COUNT_EMPTY, count)
-	testify.Equal(t, maphash.OUTPUT_STATUS_TOO_SMALL, status)
+	sum_output := maphash.Hash_Sum_Into(&value, short[:])
+	testify.Equal(t, maphash.Output{
+		Count: maphash.OUTPUT_COUNT_EMPTY, Status: maphash.OUTPUT_STATUS_TOO_SMALL,
+	}, sum_output)
 	var output [maphash.DIGEST_SIZE]byte
-	count, status = maphash.Hash_Sum_Into(&value, output[:])
-	testify.Equal(t, maphash.OUTPUT_COUNT_COMPLETE, count)
-	testify.Equal(t, maphash.OUTPUT_STATUS_OK, status)
+	sum_output = maphash.Hash_Sum_Into(&value, output[:])
+	testify.Equal(t, maphash.Output{
+		Count: maphash.OUTPUT_COUNT_COMPLETE, Status: maphash.OUTPUT_STATUS_OK,
+	}, sum_output)
 	for index := range output {
 		testify.Equal(t, byte(uint64(want)>>(index*maphash.BITS_PER_BYTE)), output[index])
 	}
@@ -146,14 +150,17 @@ func Test_Bounds(t *testing.T) {
 
 	maphash.Hash_Init_Bounded(&value, seed, 0)
 	before := value
-	count, status := maphash.Hash_Write(&value, maphash.Source{1})
-	testify.Equal(t, maphash.Count(0), count)
-	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, status)
+	write_output := maphash.Hash_Write(&value, maphash.Source{1})
+	testify.Equal(t, maphash.Write_Output{
+		Count: maphash.Count(0), Status: maphash.WRITE_STATUS_MESSAGE_TOO_LARGE,
+	}, write_output)
 	testify.Equal(t, before, value)
-	_, status = maphash.Hash_Write_Text(&value, "x")
-	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, status)
-	status = maphash.Hash_Write_Byte(&value, 'x')
-	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, status)
+	write_output = maphash.Hash_Write_Text(&value, "x")
+	testify.Equal(t, maphash.Write_Output{
+		Count: maphash.Count(0), Status: maphash.WRITE_STATUS_MESSAGE_TOO_LARGE,
+	}, write_output)
+	write_status := maphash.Hash_Write_Byte(&value, 'x')
+	testify.Equal(t, maphash.WRITE_STATUS_MESSAGE_TOO_LARGE, write_status)
 }
 
 // Test_Invariant_Domains reaches seed, state, count, tail position, and caller-byte sentinels.
@@ -225,12 +232,12 @@ func Test_Allocation(t *testing.T) {
 		maphash.Hash_Init_Bounded(&fixture.Hash, fixture.Seed, fixture.Message_Size_Maximum)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Count, fixture.Write_Status = maphash.Hash_Write(
+		fixture.Write_Output = maphash.Hash_Write(
 			&fixture.Hash, fixture.Source,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Count, fixture.Write_Status = maphash.Hash_Write_Text(
+		fixture.Write_Output = maphash.Hash_Write_Text(
 			&fixture.Hash, fixture.Text,
 		)
 	})
@@ -241,7 +248,7 @@ func Test_Allocation(t *testing.T) {
 		fixture.Value = maphash.Hash_Sum_64(&fixture.Hash)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Output_Count, fixture.Output_Status = maphash.Hash_Sum_Into(
+		fixture.Output_Result = maphash.Hash_Sum_Into(
 			&fixture.Hash, fixture.Output,
 		)
 	})
@@ -441,10 +448,9 @@ type allocation_fixture struct {
 	Text                          maphash.Text
 	Output                        maphash.Destination
 	Value                         maphash.Value
-	Count                         maphash.Count
+	Write_Output                  maphash.Write_Output
 	Write_Status                  maphash.Write_Status
-	Output_Count                  maphash.Output_Count
-	Output_Status                 maphash.Output_Status
+	Output_Result                 maphash.Output
 	Message_Size_Maximum          maphash.Message_Size_Maximum
 	Observed_Message_Size_Maximum maphash.Message_Size_Maximum
 }

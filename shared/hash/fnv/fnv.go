@@ -260,6 +260,48 @@ func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Output_32 keeps returned count and status in one invariant chain.
+type Output_32 struct {
+	// Count reports initialized destination bytes.
+	Count Output_32_Count
+	// Status classifies same destination write.
+	Status Output_Status
+}
+
+// Output_32_Invariants composes matching count and status domains.
+func Output_32_Invariants(value Output_32, namespace aver.Namespace) {
+	Output_32_Count_Invariants(value.Count, namespace)
+	Output_Status_Invariants(value.Status, namespace)
+}
+
+// Output_64 keeps returned count and status in one invariant chain.
+type Output_64 struct {
+	// Count reports initialized destination bytes.
+	Count Output_64_Count
+	// Status classifies same destination write.
+	Status Output_Status
+}
+
+// Output_64_Invariants composes matching count and status domains.
+func Output_64_Invariants(value Output_64, namespace aver.Namespace) {
+	Output_64_Count_Invariants(value.Count, namespace)
+	Output_Status_Invariants(value.Status, namespace)
+}
+
+// Output_128 keeps returned count and status in one invariant chain.
+type Output_128 struct {
+	// Count reports initialized destination bytes.
+	Count Output_128_Count
+	// Status classifies same destination write.
+	Status Output_Status
+}
+
+// Output_128_Invariants composes matching count and status domains.
+func Output_128_Invariants(value Output_128, namespace aver.Namespace) {
+	Output_128_Count_Invariants(value.Count, namespace)
+	Output_Status_Invariants(value.Status, namespace)
+}
+
 // Value_32 is complete 32-bit FNV state.
 type Value_32 uint32
 
@@ -463,6 +505,48 @@ func State_Output_Status_Invariants(value State_Output_Status, namespace aver.Na
 		Ensure()
 }
 
+// State_32_Output keeps serialized count and status in one invariant chain.
+type State_32_Output struct {
+	// Count reports initialized state bytes.
+	Count State_32_Count
+	// Status classifies same state write.
+	Status State_Output_Status
+}
+
+// State_32_Output_Invariants composes matching state count and status domains.
+func State_32_Output_Invariants(value State_32_Output, namespace aver.Namespace) {
+	State_32_Count_Invariants(value.Count, namespace)
+	State_Output_Status_Invariants(value.Status, namespace)
+}
+
+// State_64_Output keeps serialized count and status in one invariant chain.
+type State_64_Output struct {
+	// Count reports initialized state bytes.
+	Count State_64_Count
+	// Status classifies same state write.
+	Status State_Output_Status
+}
+
+// State_64_Output_Invariants composes matching state count and status domains.
+func State_64_Output_Invariants(value State_64_Output, namespace aver.Namespace) {
+	State_64_Count_Invariants(value.Count, namespace)
+	State_Output_Status_Invariants(value.Status, namespace)
+}
+
+// State_128_Output keeps serialized count and status in one invariant chain.
+type State_128_Output struct {
+	// Count reports initialized state bytes.
+	Count State_128_Count
+	// Status classifies same state write.
+	Status State_Output_Status
+}
+
+// State_128_Output_Invariants composes matching state count and status domains.
+func State_128_Output_Invariants(value State_128_Output, namespace aver.Namespace) {
+	State_128_Count_Invariants(value.Count, namespace)
+	State_Output_Status_Invariants(value.Status, namespace)
+}
+
 // State_Input_Status reports hostile state validation.
 type State_Input_Status uint8
 
@@ -545,11 +629,8 @@ func Digest_32_Sum(digest Digest_32_Handle) (value Value_32) {
 // Digest_32_Sum_Into writes a complete big-endian value or leaves short storage untouched.
 func Digest_32_Sum_Into(
 	digest Digest_32_Handle, destination Destination,
-) (count Output_32_Count, status Output_Status) {
-	defer func() {
-		Output_32_Count_Invariants(count, "Digest_32_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_32_Sum_Into.status")
-	}()
+) (output Output_32) {
+	defer func() { Output_32_Invariants(output, "Digest_32_Sum_Into.output") }()
 	Digest_32_Handle_Invariants(digest, "Digest_32_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_32_Sum_Into.destination")
 	digest_32_require(digest)
@@ -558,14 +639,14 @@ func Digest_32_Sum_Into(
 		"Digest_32_Sum_Into destination stays within destination bound.",
 	)
 	if len(destination) < DIGEST_32_SIZE {
-		return OUTPUT_32_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
+		return Output_32{Count: OUTPUT_32_COUNT_EMPTY, Status: OUTPUT_STATUS_TOO_SMALL}
 	}
 	value := uint32(digest.Value)
 	for index := range DIGEST_32_SIZE {
 		shift := bits.BIT_COUNT_32_MAXIMUM - binary.BITS_PER_BYTE*(index+1)
 		destination[index] = byte(value >> shift)
 	}
-	return OUTPUT_32_COUNT_COMPLETE, OUTPUT_STATUS_OK
+	return Output_32{Count: OUTPUT_32_COUNT_COMPLETE, Status: OUTPUT_STATUS_OK}
 }
 
 // Digest_32_Clone_Into keeps source and result in caller storage.
@@ -647,11 +728,8 @@ func Digest_64_Sum(digest Digest_64_Handle) (value Value_64) {
 // Digest_64_Sum_Into writes a complete big-endian value or leaves short storage untouched.
 func Digest_64_Sum_Into(
 	digest Digest_64_Handle, destination Destination,
-) (count Output_64_Count, status Output_Status) {
-	defer func() {
-		Output_64_Count_Invariants(count, "Digest_64_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_64_Sum_Into.status")
-	}()
+) (output Output_64) {
+	defer func() { Output_64_Invariants(output, "Digest_64_Sum_Into.output") }()
 	Digest_64_Handle_Invariants(digest, "Digest_64_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_64_Sum_Into.destination")
 	digest_64_require(digest)
@@ -660,14 +738,14 @@ func Digest_64_Sum_Into(
 		"Digest_64_Sum_Into destination stays within destination bound.",
 	)
 	if len(destination) < DIGEST_64_SIZE {
-		return OUTPUT_64_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
+		return Output_64{Count: OUTPUT_64_COUNT_EMPTY, Status: OUTPUT_STATUS_TOO_SMALL}
 	}
 	value := uint64(digest.Value)
 	for index := range DIGEST_64_SIZE {
 		shift := bits.BIT_COUNT_64_MAXIMUM - binary.BITS_PER_BYTE*(index+1)
 		destination[index] = byte(value >> shift)
 	}
-	return OUTPUT_64_COUNT_COMPLETE, OUTPUT_STATUS_OK
+	return Output_64{Count: OUTPUT_64_COUNT_COMPLETE, Status: OUTPUT_STATUS_OK}
 }
 
 // Digest_64_Clone_Into keeps source and result in caller storage.
@@ -772,11 +850,8 @@ func Digest_128_Sum(digest Digest_128_Handle) (value Value_128) {
 // Digest_128_Sum_Into writes a complete big-endian value or leaves short storage untouched.
 func Digest_128_Sum_Into(
 	digest Digest_128_Handle, destination Destination,
-) (count Output_128_Count, status Output_Status) {
-	defer func() {
-		Output_128_Count_Invariants(count, "Digest_128_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_128_Sum_Into.status")
-	}()
+) (output Output_128) {
+	defer func() { Output_128_Invariants(output, "Digest_128_Sum_Into.output") }()
 	Digest_128_Handle_Invariants(digest, "Digest_128_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_128_Sum_Into.destination")
 	digest_128_require(digest)
@@ -785,7 +860,9 @@ func Digest_128_Sum_Into(
 		"Digest_128_Sum_Into destination stays within destination bound.",
 	)
 	if len(destination) < DIGEST_128_SIZE {
-		return OUTPUT_128_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
+		return Output_128{
+			Count: OUTPUT_128_COUNT_EMPTY, Status: OUTPUT_STATUS_TOO_SMALL,
+		}
 	}
 	high := uint64(digest.Value.High)
 	low := uint64(digest.Value.Low)
@@ -796,7 +873,7 @@ func Digest_128_Sum_Into(
 		destination[low_position] = byte(low >> shift)
 		low_position++
 	}
-	return OUTPUT_128_COUNT_COMPLETE, OUTPUT_STATUS_OK
+	return Output_128{Count: OUTPUT_128_COUNT_COMPLETE, Status: OUTPUT_STATUS_OK}
 }
 
 // Digest_128_Clone_Into keeps source and result in caller storage.
@@ -815,10 +892,9 @@ func Digest_128_Clone_Into(destination Digest_128_Handle, source Digest_128_Hand
 // Digest_32_Marshal_Into emits standard width-and-kind state into caller storage.
 func Digest_32_Marshal_Into(
 	digest Digest_32_Handle, destination Destination,
-) (count State_32_Count, status State_Output_Status) {
+) (output State_32_Output) {
 	defer func() {
-		State_32_Count_Invariants(count, "Digest_32_Marshal_Into.count")
-		State_Output_Status_Invariants(status, "Digest_32_Marshal_Into.status")
+		State_32_Output_Invariants(output, "Digest_32_Marshal_Into.output")
 	}()
 	Digest_32_Handle_Invariants(digest, "Digest_32_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_32_Marshal_Into.destination")
@@ -828,7 +904,9 @@ func Digest_32_Marshal_Into(
 		"Digest_32_Marshal_Into destination stays within destination bound.",
 	)
 	if len(destination) < STATE_32_SIZE {
-		return STATE_32_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
+		return State_32_Output{
+			Count: STATE_32_COUNT_EMPTY, Status: STATE_OUTPUT_STATUS_TOO_SMALL,
+		}
 	}
 	copy(
 		destination[:STATE_IDENTITY_SIZE],
@@ -840,7 +918,9 @@ func Digest_32_Marshal_Into(
 			uint32(digest.Value) >> shift,
 		)
 	}
-	return STATE_32_COUNT_COMPLETE, STATE_OUTPUT_STATUS_OK
+	return State_32_Output{
+		Count: STATE_32_COUNT_COMPLETE, Status: STATE_OUTPUT_STATUS_OK,
+	}
 }
 
 // Digest_32_Unmarshal changes state only after exact width-and-kind validation.
@@ -877,10 +957,9 @@ func Digest_32_Unmarshal(digest Digest_32_Handle, source Source) (status State_I
 // Digest_64_Marshal_Into emits standard width-and-kind state into caller storage.
 func Digest_64_Marshal_Into(
 	digest Digest_64_Handle, destination Destination,
-) (count State_64_Count, status State_Output_Status) {
+) (output State_64_Output) {
 	defer func() {
-		State_64_Count_Invariants(count, "Digest_64_Marshal_Into.count")
-		State_Output_Status_Invariants(status, "Digest_64_Marshal_Into.status")
+		State_64_Output_Invariants(output, "Digest_64_Marshal_Into.output")
 	}()
 	Digest_64_Handle_Invariants(digest, "Digest_64_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_64_Marshal_Into.destination")
@@ -890,7 +969,9 @@ func Digest_64_Marshal_Into(
 		"Digest_64_Marshal_Into destination stays within destination bound.",
 	)
 	if len(destination) < STATE_64_SIZE {
-		return STATE_64_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
+		return State_64_Output{
+			Count: STATE_64_COUNT_EMPTY, Status: STATE_OUTPUT_STATUS_TOO_SMALL,
+		}
 	}
 	copy(
 		destination[:STATE_IDENTITY_SIZE],
@@ -902,7 +983,9 @@ func Digest_64_Marshal_Into(
 			uint64(digest.Value) >> shift,
 		)
 	}
-	return STATE_64_COUNT_COMPLETE, STATE_OUTPUT_STATUS_OK
+	return State_64_Output{
+		Count: STATE_64_COUNT_COMPLETE, Status: STATE_OUTPUT_STATUS_OK,
+	}
 }
 
 // Digest_64_Unmarshal changes state only after exact width-and-kind validation.
@@ -939,10 +1022,9 @@ func Digest_64_Unmarshal(digest Digest_64_Handle, source Source) (status State_I
 // Digest_128_Marshal_Into emits standard width-and-kind state into caller storage.
 func Digest_128_Marshal_Into(
 	digest Digest_128_Handle, destination Destination,
-) (count State_128_Count, status State_Output_Status) {
+) (output State_128_Output) {
 	defer func() {
-		State_128_Count_Invariants(count, "Digest_128_Marshal_Into.count")
-		State_Output_Status_Invariants(status, "Digest_128_Marshal_Into.status")
+		State_128_Output_Invariants(output, "Digest_128_Marshal_Into.output")
 	}()
 	Digest_128_Handle_Invariants(digest, "Digest_128_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_128_Marshal_Into.destination")
@@ -952,7 +1034,9 @@ func Digest_128_Marshal_Into(
 		"Digest_128_Marshal_Into destination stays within destination bound.",
 	)
 	if len(destination) < STATE_128_SIZE {
-		return STATE_128_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
+		return State_128_Output{
+			Count: STATE_128_COUNT_EMPTY, Status: STATE_OUTPUT_STATUS_TOO_SMALL,
+		}
 	}
 	copy(
 		destination[:STATE_IDENTITY_SIZE],
@@ -967,7 +1051,9 @@ func Digest_128_Marshal_Into(
 			uint64(digest.Value.Low) >> shift,
 		)
 	}
-	return STATE_128_COUNT_COMPLETE, STATE_OUTPUT_STATUS_OK
+	return State_128_Output{
+		Count: STATE_128_COUNT_COMPLETE, Status: STATE_OUTPUT_STATUS_OK,
+	}
 }
 
 // Digest_128_Unmarshal changes state only after exact width-and-kind validation.

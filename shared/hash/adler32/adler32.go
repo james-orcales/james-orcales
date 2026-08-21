@@ -151,6 +151,20 @@ func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Output keeps returned count and status in one invariant chain.
+type Output struct {
+	// Count reports initialized destination bytes.
+	Count Output_Count
+	// Status classifies same destination write.
+	Status Output_Status
+}
+
+// Output_Invariants composes matching count and status domains.
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	Output_Count_Invariants(value.Count, namespace)
+	Output_Status_Invariants(value.Status, namespace)
+}
+
 // Digest is caller-owned initialized Adler-32 streaming state.
 type Digest struct {
 	// Value is standard checksum state.
@@ -245,6 +259,20 @@ func State_Output_Status_Invariants(value State_Output_Status, namespace aver.Na
 		Ensure()
 }
 
+// State_Output keeps serialized count and status in one invariant chain.
+type State_Output struct {
+	// Count reports initialized state bytes.
+	Count State_Count
+	// Status classifies same state write.
+	Status State_Output_Status
+}
+
+// State_Output_Invariants composes matching state count and status domains.
+func State_Output_Invariants(value State_Output, namespace aver.Namespace) {
+	State_Count_Invariants(value.Count, namespace)
+	State_Output_Status_Invariants(value.Status, namespace)
+}
+
 // State_Input_Status reports hostile state-input validation.
 type State_Input_Status uint8
 
@@ -314,11 +342,8 @@ func Digest_Sum_32(digest Digest_Handle) (checksum Digest_Value) {
 // Digest_Sum_Into writes a complete big-endian checksum or leaves short storage untouched.
 func Digest_Sum_Into(
 	digest Digest_Handle, destination Destination,
-) (count Output_Count, status Output_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Digest_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_Sum_Into.status")
-	}()
+) (output Output) {
+	defer func() { Output_Invariants(output, "Digest_Sum_Into.output") }()
 	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
 	digest_require(digest)
@@ -327,14 +352,14 @@ func Digest_Sum_Into(
 		"Digest_Sum_Into destination stays within destination bound.",
 	)
 	if len(destination) < DIGEST_SIZE {
-		return OUTPUT_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
+		return Output{Count: OUTPUT_COUNT_EMPTY, Status: OUTPUT_STATUS_TOO_SMALL}
 	}
 	value := uint32(digest.Value)
 	destination[0] = byte(value >> (bits.BIT_COUNT_32_MAXIMUM - binary.BITS_PER_BYTE))
 	destination[1] = byte(value >> (bits.BIT_COUNT_32_MAXIMUM - binary.BITS_PER_BYTE*2))
 	destination[2] = byte(value >> (bits.BIT_COUNT_32_MAXIMUM - binary.BITS_PER_BYTE*3))
 	destination[DIGEST_SIZE-1] = byte(value)
-	return OUTPUT_COUNT_COMPLETE, OUTPUT_STATUS_OK
+	return Output{Count: OUTPUT_COUNT_COMPLETE, Status: OUTPUT_STATUS_OK}
 }
 
 // Checksum computes one bounded source without owning state or result storage.
@@ -357,11 +382,8 @@ func Checksum(source Source) (checksum Value) {
 // Digest_Marshal_Into emits exactly the state understood by the standard library.
 func Digest_Marshal_Into(
 	digest Digest_Handle, destination Destination,
-) (count State_Count, status State_Output_Status) {
-	defer func() {
-		State_Count_Invariants(count, "Digest_Marshal_Into.count")
-		State_Output_Status_Invariants(status, "Digest_Marshal_Into.status")
-	}()
+) (output State_Output) {
+	defer func() { State_Output_Invariants(output, "Digest_Marshal_Into.output") }()
 	Digest_Handle_Invariants(digest, "Digest_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_Marshal_Into.destination")
 	digest_require(digest)
@@ -370,7 +392,9 @@ func Digest_Marshal_Into(
 		"Digest_Marshal_Into destination stays within destination bound.",
 	)
 	if len(destination) < STATE_SIZE {
-		return STATE_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
+		return State_Output{
+			Count: STATE_COUNT_EMPTY, Status: STATE_OUTPUT_STATUS_TOO_SMALL,
+		}
 	}
 	destination[0] = 'a'
 	destination[1] = 'd'
@@ -387,7 +411,7 @@ func Digest_Marshal_Into(
 		value >> (bits.BIT_COUNT_32_MAXIMUM - binary.BITS_PER_BYTE*3),
 	)
 	destination[STATE_SIZE-1] = byte(value)
-	return STATE_COUNT_COMPLETE, STATE_OUTPUT_STATUS_OK
+	return State_Output{Count: STATE_COUNT_COMPLETE, Status: STATE_OUTPUT_STATUS_OK}
 }
 
 // Digest_Unmarshal validates hostile bytes before replacing caller state.

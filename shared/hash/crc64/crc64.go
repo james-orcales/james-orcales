@@ -177,6 +177,20 @@ func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Output keeps returned count and status in one invariant chain.
+type Output struct {
+	// Count reports initialized destination bytes.
+	Count Output_Count
+	// Status classifies same destination write.
+	Status Output_Status
+}
+
+// Output_Invariants composes matching count and status domains.
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	Output_Count_Invariants(value.Count, namespace)
+	Output_Status_Invariants(value.Status, namespace)
+}
+
 // Digest_Value is the complete CRC-64 result domain.
 type Digest_Value uint64
 
@@ -255,6 +269,20 @@ func State_Output_Status_Invariants(value State_Output_Status, namespace aver.Na
 			uint8(STATE_OUTPUT_STATUS_TOO_SMALL),
 		).
 		Ensure()
+}
+
+// State_Output keeps serialized count and status in one invariant chain.
+type State_Output struct {
+	// Count reports initialized state bytes.
+	Count State_Count
+	// Status classifies same state write.
+	Status State_Output_Status
+}
+
+// State_Output_Invariants composes matching state count and status domains.
+func State_Output_Invariants(value State_Output, namespace aver.Namespace) {
+	State_Count_Invariants(value.Count, namespace)
+	State_Output_Status_Invariants(value.Status, namespace)
 }
 
 // State_Input_Status reports hostile state validation.
@@ -376,11 +404,8 @@ func Digest_Sum_64(digest Digest_Handle) (checksum Digest_Value) {
 // Digest_Sum_Into writes a complete big-endian checksum or leaves short storage untouched.
 func Digest_Sum_Into(
 	digest Digest_Handle, destination Destination,
-) (count Output_Count, status Output_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Digest_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_Sum_Into.status")
-	}()
+) (output Output) {
+	defer func() { Output_Invariants(output, "Digest_Sum_Into.output") }()
 	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
 	digest_require(digest)
@@ -389,14 +414,14 @@ func Digest_Sum_Into(
 		"Digest_Sum_Into destination stays within destination bound.",
 	)
 	if len(destination) < DIGEST_SIZE {
-		return OUTPUT_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
+		return Output{Count: OUTPUT_COUNT_EMPTY, Status: OUTPUT_STATUS_TOO_SMALL}
 	}
 	value := uint64(digest.Checksum)
 	for index := range DIGEST_SIZE {
 		shift := bits.BIT_COUNT_64_MAXIMUM - binary.BITS_PER_BYTE*(index+1)
 		destination[index] = byte(value >> shift)
 	}
-	return OUTPUT_COUNT_COMPLETE, OUTPUT_STATUS_OK
+	return Output{Count: OUTPUT_COUNT_COMPLETE, Status: OUTPUT_STATUS_OK}
 }
 
 // Digest_Clone_Into keeps table and checksum state in caller storage.
@@ -413,11 +438,8 @@ func Digest_Clone_Into(destination Digest_Handle, source Digest_Handle) {
 // Digest_Marshal_Into emits standard state into caller storage.
 func Digest_Marshal_Into(
 	digest Digest_Handle, destination Destination,
-) (count State_Count, status State_Output_Status) {
-	defer func() {
-		State_Count_Invariants(count, "Digest_Marshal_Into.count")
-		State_Output_Status_Invariants(status, "Digest_Marshal_Into.status")
-	}()
+) (output State_Output) {
+	defer func() { State_Output_Invariants(output, "Digest_Marshal_Into.output") }()
 	Digest_Handle_Invariants(digest, "Digest_Marshal_Into.digest")
 	Destination_Invariants(destination, "Digest_Marshal_Into.destination")
 	digest_require(digest)
@@ -426,7 +448,9 @@ func Digest_Marshal_Into(
 		"Digest_Marshal_Into destination stays within destination bound.",
 	)
 	if len(destination) < STATE_SIZE {
-		return STATE_COUNT_EMPTY, STATE_OUTPUT_STATUS_TOO_SMALL
+		return State_Output{
+			Count: STATE_COUNT_EMPTY, Status: STATE_OUTPUT_STATUS_TOO_SMALL,
+		}
 	}
 	copy(destination[:STATE_IDENTITY_SIZE], STATE_IDENTITY)
 	var identity_table_storage [TABLE_WORD_COUNT]uint64
@@ -451,7 +475,7 @@ func Digest_Marshal_Into(
 		destination[STATE_TABLE_POSITION+index] = byte(table_identity >> shift)
 		destination[STATE_DIGEST_POSITION+index] = byte(uint64(digest.Checksum) >> shift)
 	}
-	return STATE_COUNT_COMPLETE, STATE_OUTPUT_STATUS_OK
+	return State_Output{Count: STATE_COUNT_COMPLETE, Status: STATE_OUTPUT_STATUS_OK}
 }
 
 // Digest_Unmarshal changes checksum only after identity, size, and table validation.

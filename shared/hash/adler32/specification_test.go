@@ -19,9 +19,10 @@ func Test_Package_Owned_State(t *testing.T) {
 	testify.Equal(t, adler32.Count(len("abc")), count)
 
 	var output [adler32.DIGEST_SIZE]byte
-	output_count, status := adler32.Digest_Sum_Into(&digest, output[:])
-	testify.Equal(t, adler32.OUTPUT_COUNT_COMPLETE, output_count)
-	testify.Equal(t, adler32.OUTPUT_STATUS_OK, status)
+	sum_output := adler32.Digest_Sum_Into(&digest, output[:])
+	testify.Equal(t, adler32.Output{
+		Count: adler32.OUTPUT_COUNT_COMPLETE, Status: adler32.OUTPUT_STATUS_OK,
+	}, sum_output)
 	adler32.Digest_Reset(&digest)
 	testify.Equal(t, adler32.Digest_Value(1), adler32.Digest_Sum_32(&digest))
 }
@@ -74,13 +75,15 @@ func Test_Caller_Owned_Output(t *testing.T) {
 	adler32.Digest_Write(&digest, adler32.Source("abc"))
 	before := digest
 	var short [adler32.DIGEST_SIZE - 1]byte
-	count, status := adler32.Digest_Sum_Into(&digest, short[:])
-	testify.Equal(t, adler32.OUTPUT_COUNT_EMPTY, count)
-	testify.Equal(t, adler32.OUTPUT_STATUS_TOO_SMALL, status)
+	sum_output := adler32.Digest_Sum_Into(&digest, short[:])
+	testify.Equal(t, adler32.Output{
+		Count: adler32.OUTPUT_COUNT_EMPTY, Status: adler32.OUTPUT_STATUS_TOO_SMALL,
+	}, sum_output)
 	var output [adler32.DIGEST_SIZE]byte
-	count, status = adler32.Digest_Sum_Into(&digest, output[:])
-	testify.Equal(t, adler32.OUTPUT_COUNT_COMPLETE, count)
-	testify.Equal(t, adler32.OUTPUT_STATUS_OK, status)
+	sum_output = adler32.Digest_Sum_Into(&digest, output[:])
+	testify.Equal(t, adler32.Output{
+		Count: adler32.OUTPUT_COUNT_COMPLETE, Status: adler32.OUTPUT_STATUS_OK,
+	}, sum_output)
 	testify.Equal(t, [adler32.DIGEST_SIZE]byte{0x02, 0x4d, 0x01, 0x27}, output)
 	testify.Equal(t, before, digest)
 }
@@ -91,9 +94,11 @@ func Test_State_Compatibility(t *testing.T) {
 	adler32.Digest_Init(&digest)
 	adler32.Digest_Write(&digest, adler32.Source("ab"))
 	var state [adler32.STATE_SIZE]byte
-	count, status := adler32.Digest_Marshal_Into(&digest, state[:])
-	testify.Equal(t, adler32.State_Count(adler32.STATE_SIZE), count)
-	testify.Equal(t, adler32.STATE_OUTPUT_STATUS_OK, status)
+	state_output := adler32.Digest_Marshal_Into(&digest, state[:])
+	testify.Equal(t, adler32.State_Output{
+		Count:  adler32.State_Count(adler32.STATE_SIZE),
+		Status: adler32.STATE_OUTPUT_STATUS_OK,
+	}, state_output)
 	testify.Equal(t, [adler32.STATE_SIZE]byte{'a', 'd', 'l', 1, 0x01, 0x26, 0x00, 0xc4}, state)
 
 	var restored adler32.Digest
@@ -112,9 +117,10 @@ func Test_State_Compatibility(t *testing.T) {
 		adler32.Digest_Unmarshal(&restored, state[:]))
 	testify.Equal(t, previous, restored)
 	var short [adler32.STATE_SIZE - 1]byte
-	count, status = adler32.Digest_Marshal_Into(&digest, short[:])
-	testify.Equal(t, adler32.State_Count(0), count)
-	testify.Equal(t, adler32.STATE_OUTPUT_STATUS_TOO_SMALL, status)
+	state_output = adler32.Digest_Marshal_Into(&digest, short[:])
+	testify.Equal(t, adler32.State_Output{
+		Count: adler32.State_Count(0), Status: adler32.STATE_OUTPUT_STATUS_TOO_SMALL,
+	}, state_output)
 }
 
 // Test_Clone preserves independent caller-owned state.
@@ -237,7 +243,7 @@ func Test_Allocation(t *testing.T) {
 		fixture.Digest_32 = adler32.Digest_Sum_32(&fixture.Digest)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Output_Count, fixture.Output_Status = adler32.Digest_Sum_Into(
+		fixture.Sum_Output = adler32.Digest_Sum_Into(
 			&fixture.Digest, fixture.Output,
 		)
 	})
@@ -245,7 +251,7 @@ func Test_Allocation(t *testing.T) {
 		fixture.Value = adler32.Checksum(fixture.Source)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.State_Count, fixture.State_Output_Status = adler32.Digest_Marshal_Into(
+		fixture.State_Output = adler32.Digest_Marshal_Into(
 			&fixture.Digest, fixture.State,
 		)
 	})
@@ -261,19 +267,17 @@ func Test_Allocation(t *testing.T) {
 }
 
 type allocation_fixture struct {
-	Digest              adler32.Digest
-	Clone_Digest        adler32.Digest
-	Source              adler32.Source
-	Output              adler32.Destination
-	State               adler32.Destination
-	Count               adler32.Count
-	Output_Count        adler32.Output_Count
-	Output_Status       adler32.Output_Status
-	State_Count         adler32.State_Count
-	State_Output_Status adler32.State_Output_Status
-	State_Input_Status  adler32.State_Input_Status
-	Digest_32           adler32.Digest_Value
-	Value               adler32.Value
+	Digest             adler32.Digest
+	Clone_Digest       adler32.Digest
+	Source             adler32.Source
+	Output             adler32.Destination
+	State              adler32.Destination
+	Count              adler32.Count
+	Sum_Output         adler32.Output
+	State_Output       adler32.State_Output
+	State_Input_Status adler32.State_Input_Status
+	Digest_32          adler32.Digest_Value
+	Value              adler32.Value
 }
 
 // Reference checksum reduces every byte, unlike bounded production loop.

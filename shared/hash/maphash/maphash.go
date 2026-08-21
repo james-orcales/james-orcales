@@ -177,6 +177,20 @@ func Write_Status_Invariants(value Write_Status, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Write_Output keeps accepted count and status in one invariant chain.
+type Write_Output struct {
+	// Count reports consumed source bytes.
+	Count Count
+	// Status classifies same write.
+	Status Write_Status
+}
+
+// Write_Output_Invariants composes matching count and status domains.
+func Write_Output_Invariants(value Write_Output, namespace aver.Namespace) {
+	Count_Invariants(value.Count, namespace)
+	Write_Status_Invariants(value.Status, namespace)
+}
+
 // Output_Count is bytes populated by Hash_Sum_Into.
 type Output_Count uint8
 
@@ -197,6 +211,20 @@ func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(OUTPUT_STATUS_OK), uint8(OUTPUT_STATUS_TOO_SMALL)).
 		Ensure()
+}
+
+// Output keeps returned count and status in one invariant chain.
+type Output struct {
+	// Count reports initialized destination bytes.
+	Count Output_Count
+	// Status classifies same destination write.
+	Status Output_Status
+}
+
+// Output_Invariants composes matching count and status domains.
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	Output_Count_Invariants(value.Count, namespace)
+	Output_Status_Invariants(value.Status, namespace)
 }
 
 // Byte is one explicit single-byte write.
@@ -569,11 +597,8 @@ func Hash_Init_Bounded(value Hash_Handle, seed Seed, maximum Message_Size_Maximu
 // Hash_Write absorbs one bounded source or leaves state unchanged at the logical-message bound.
 func Hash_Write(
 	value Hash_Handle, source Source,
-) (count Count, status Write_Status) {
-	defer func() {
-		Count_Invariants(count, "Hash_Write.count")
-		Write_Status_Invariants(status, "Hash_Write.status")
-	}()
+) (output Write_Output) {
+	defer func() { Write_Output_Invariants(output, "Hash_Write.output") }()
 	Hash_Handle_Invariants(value, "Hash_Write.value.input")
 	Source_Invariants(source, "Hash_Write.source")
 	defer func() { Hash_Handle_Invariants(value, "Hash_Write.value.output") }()
@@ -592,11 +617,11 @@ func Hash_Write(
 	source_size := len(source)
 	capacity := uint32(value.Message_Size_Maximum) - uint32(value.Total_Count)
 	if uint64(len(source)) > uint64(capacity) {
-		return 0, WRITE_STATUS_MESSAGE_TOO_LARGE
+		return Write_Output{Count: 0, Status: WRITE_STATUS_MESSAGE_TOO_LARGE}
 	}
 	value.Total_Count += Total_Count(len(source))
 	hash_write_blocks(value, source)
-	return Count(source_size), WRITE_STATUS_OK
+	return Write_Output{Count: Count(source_size), Status: WRITE_STATUS_OK}
 }
 
 // Complete words move through one helper so Write keeps validation and bound policy visible.
@@ -720,11 +745,8 @@ func set_tail_byte(value Tail_Handle, index Tail_Index, item Byte) {
 // Hash_Write_Text uses bounded stack conversion so string support does not allocate.
 func Hash_Write_Text(
 	value Hash_Handle, text Text,
-) (count Count, status Write_Status) {
-	defer func() {
-		Count_Invariants(count, "Hash_Write_Text.count")
-		Write_Status_Invariants(status, "Hash_Write_Text.status")
-	}()
+) (output Write_Output) {
+	defer func() { Write_Output_Invariants(output, "Hash_Write_Text.output") }()
 	Hash_Handle_Invariants(value, "Hash_Write_Text.value")
 	Text_Invariants(text, "Hash_Write_Text.text")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Text requires Hash_Init.")
@@ -744,8 +766,7 @@ func Hash_Write_Byte(value Hash_Handle, item Byte) (status Write_Status) {
 	Byte_Invariants(item, "Hash_Write_Byte.item")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Byte requires Hash_Init.")
 	source := [binary.UINT_8_SIZE]byte{byte(item)}
-	_, status = Hash_Write(value, source[:])
-	return status
+	return Hash_Write(value, source[:]).Status
 }
 
 // Hash_Sum_64 finalizes a copy of state so more bytes may follow.
@@ -815,11 +836,8 @@ func Hash_Sum_64(value Hash_Handle) (result Value) {
 // Hash_Sum_Into writes the standard little-endian maphash value.
 func Hash_Sum_Into(
 	value Hash_Handle, destination Destination,
-) (count Output_Count, status Output_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Hash_Sum_Into.count")
-		Output_Status_Invariants(status, "Hash_Sum_Into.status")
-	}()
+) (output Output) {
+	defer func() { Output_Invariants(output, "Hash_Sum_Into.output") }()
 	Hash_Handle_Invariants(value, "Hash_Sum_Into.value")
 	Destination_Invariants(destination, "Hash_Sum_Into.destination")
 	aver.Always(value.Ready == READY_COMPLETE, "Hash_Sum_Into requires Hash_Init.")
@@ -828,13 +846,13 @@ func Hash_Sum_Into(
 		"Hash_Sum_Into destination stays within destination bound.",
 	)
 	if len(destination) < DIGEST_SIZE {
-		return OUTPUT_COUNT_EMPTY, OUTPUT_STATUS_TOO_SMALL
+		return Output{Count: OUTPUT_COUNT_EMPTY, Status: OUTPUT_STATUS_TOO_SMALL}
 	}
 	result := Hash_Sum_64(value)
 	for index := range DIGEST_SIZE {
 		destination[index] = byte(uint64(result) >> (BITS_PER_BYTE * index))
 	}
-	return OUTPUT_COUNT_COMPLETE, OUTPUT_STATUS_OK
+	return Output{Count: OUTPUT_COUNT_COMPLETE, Status: OUTPUT_STATUS_OK}
 }
 
 // Hash_Seed returns explicit function identity without exposing ambient process state.
@@ -904,11 +922,13 @@ func Bytes(seed Seed, source Source) (result Value) {
 	)
 	var value Hash
 	Hash_Init(&value, seed)
-	count, status := Hash_Write(&value, source)
+	output := Hash_Write(&value, source)
 	aver.Always(
-		count == Count(len(source)), "Bytes consumes complete bounded source.",
+		output.Count == Count(len(source)), "Bytes consumes complete bounded source.",
 	)
-	aver.Always(status == WRITE_STATUS_OK, "Bytes stays inside fresh message bound.")
+	aver.Always(
+		output.Status == WRITE_STATUS_OK, "Bytes stays inside fresh message bound.",
+	)
 	return Hash_Sum_64(&value)
 }
 
@@ -925,10 +945,12 @@ func String(seed Seed, text Text) (result Value) {
 	)
 	var value Hash
 	Hash_Init(&value, seed)
-	count, status := Hash_Write_Text(&value, text)
+	output := Hash_Write_Text(&value, text)
 	aver.Always(
-		count == Count(len(text)), "String consumes complete bounded text.",
+		output.Count == Count(len(text)), "String consumes complete bounded text.",
 	)
-	aver.Always(status == WRITE_STATUS_OK, "String stays inside fresh message bound.")
+	aver.Always(
+		output.Status == WRITE_STATUS_OK, "String stays inside fresh message bound.",
+	)
 	return Hash_Sum_64(&value)
 }

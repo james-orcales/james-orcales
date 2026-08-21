@@ -19,9 +19,10 @@ func Test_Package_Owned_State(t *testing.T) {
 	count := fnv.Digest_32_Write(&digest, fnv.Source("abc"))
 	testify.Equal(t, fnv.Count(len("abc")), count)
 	var output [fnv.DIGEST_32_SIZE]byte
-	output_count, status := fnv.Digest_32_Sum_Into(&digest, output[:])
-	testify.Equal(t, fnv.OUTPUT_32_COUNT_COMPLETE, output_count)
-	testify.Equal(t, fnv.OUTPUT_STATUS_OK, status)
+	sum_output := fnv.Digest_32_Sum_Into(&digest, output[:])
+	testify.Equal(t, fnv.Output_32{
+		Count: fnv.OUTPUT_32_COUNT_COMPLETE, Status: fnv.OUTPUT_STATUS_OK,
+	}, sum_output)
 }
 
 // Test_Reference_Values keeps all six standard algorithms tied to known answers.
@@ -98,22 +99,25 @@ func Test_Caller_Owned_Output(t *testing.T) {
 	fnv.Digest_32_Init(&digest_32, fnv.KIND_1A)
 	fnv.Digest_32_Write(&digest_32, fnv.Source("abc"))
 	var short_32 [fnv.DIGEST_32_SIZE - 1]byte
-	count_32, status := fnv.Digest_32_Sum_Into(&digest_32, short_32[:])
-	testify.Equal(t, fnv.OUTPUT_32_COUNT_EMPTY, count_32)
-	testify.Equal(t, fnv.OUTPUT_STATUS_TOO_SMALL, status)
+	sum_output_32 := fnv.Digest_32_Sum_Into(&digest_32, short_32[:])
+	testify.Equal(t, fnv.Output_32{
+		Count: fnv.OUTPUT_32_COUNT_EMPTY, Status: fnv.OUTPUT_STATUS_TOO_SMALL,
+	}, sum_output_32)
 	var output_32 [fnv.DIGEST_32_SIZE]byte
-	count_32, status = fnv.Digest_32_Sum_Into(&digest_32, output_32[:])
-	testify.Equal(t, fnv.OUTPUT_32_COUNT_COMPLETE, count_32)
-	testify.Equal(t, fnv.OUTPUT_STATUS_OK, status)
+	sum_output_32 = fnv.Digest_32_Sum_Into(&digest_32, output_32[:])
+	testify.Equal(t, fnv.Output_32{
+		Count: fnv.OUTPUT_32_COUNT_COMPLETE, Status: fnv.OUTPUT_STATUS_OK,
+	}, sum_output_32)
 	testify.Equal(t, [fnv.DIGEST_32_SIZE]byte{0x1a, 0x47, 0xe9, 0x0b}, output_32)
 
 	var digest_64 fnv.Digest_64
 	fnv.Digest_64_Init(&digest_64, fnv.KIND_1A)
 	fnv.Digest_64_Write(&digest_64, fnv.Source("abc"))
 	var output_64 [fnv.DIGEST_64_SIZE]byte
-	count_64, status := fnv.Digest_64_Sum_Into(&digest_64, output_64[:])
-	testify.Equal(t, fnv.OUTPUT_64_COUNT_COMPLETE, count_64)
-	testify.Equal(t, fnv.OUTPUT_STATUS_OK, status)
+	sum_output_64 := fnv.Digest_64_Sum_Into(&digest_64, output_64[:])
+	testify.Equal(t, fnv.Output_64{
+		Count: fnv.OUTPUT_64_COUNT_COMPLETE, Status: fnv.OUTPUT_STATUS_OK,
+	}, sum_output_64)
 	testify.Equal(t,
 		[fnv.DIGEST_64_SIZE]byte{0xe7, 0x1f, 0xa2, 0x19, 0x05, 0x41, 0x57, 0x4b}, output_64)
 
@@ -121,9 +125,10 @@ func Test_Caller_Owned_Output(t *testing.T) {
 	fnv.Digest_128_Init(&digest_128, fnv.KIND_1A)
 	fnv.Digest_128_Write(&digest_128, fnv.Source("abc"))
 	var output_128 [fnv.DIGEST_128_SIZE]byte
-	count_128, status := fnv.Digest_128_Sum_Into(&digest_128, output_128[:])
-	testify.Equal(t, fnv.OUTPUT_128_COUNT_COMPLETE, count_128)
-	testify.Equal(t, fnv.OUTPUT_STATUS_OK, status)
+	sum_output_128 := fnv.Digest_128_Sum_Into(&digest_128, output_128[:])
+	testify.Equal(t, fnv.Output_128{
+		Count: fnv.OUTPUT_128_COUNT_COMPLETE, Status: fnv.OUTPUT_STATUS_OK,
+	}, sum_output_128)
 	testify.Equal(t, [fnv.DIGEST_128_SIZE]byte{
 		0xa6, 0x8d, 0x62, 0x2c, 0xec, 0x8b, 0x58, 0x22,
 		0x83, 0x6d, 0xbc, 0x79, 0x77, 0xaf, 0x7f, 0x3b,
@@ -293,12 +298,12 @@ func Test_Allocation(t *testing.T) {
 		fixture.Value_32 = fnv.Digest_32_Sum(&fixture.Digest_32)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Count_32, fixture.Status = fnv.Digest_32_Sum_Into(
+		fixture.Output_32 = fnv.Digest_32_Sum_Into(
 			&fixture.Digest_32, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.State_Count_32, fixture.State_Output_Status = fnv.Digest_32_Marshal_Into(
+		fixture.State_32_Output = fnv.Digest_32_Marshal_Into(
 			&fixture.Digest_32, fixture.State_32,
 		)
 	})
@@ -327,12 +332,12 @@ func fnv_64_allocation(t *testing.T, fixture *allocation_fixture) {
 		fixture.Value_64 = fnv.Digest_64_Sum(&fixture.Digest_64)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Count_64, fixture.Status = fnv.Digest_64_Sum_Into(
+		fixture.Output_64 = fnv.Digest_64_Sum_Into(
 			&fixture.Digest_64, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.State_Count_64, fixture.State_Output_Status = fnv.Digest_64_Marshal_Into(
+		fixture.State_64_Output = fnv.Digest_64_Marshal_Into(
 			&fixture.Digest_64, fixture.State_64,
 		)
 	})
@@ -358,12 +363,12 @@ func fnv_128_allocation(t *testing.T, fixture *allocation_fixture) {
 		fixture.Value_128 = fnv.Digest_128_Sum(&fixture.Digest_128)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Count_128, fixture.Status = fnv.Digest_128_Sum_Into(
+		fixture.Output_128 = fnv.Digest_128_Sum_Into(
 			&fixture.Digest_128, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.State_Count_128, fixture.State_Output_Status = fnv.Digest_128_Marshal_Into(
+		fixture.State_128_Output = fnv.Digest_128_Marshal_Into(
 			&fixture.Digest_128, fixture.State_128,
 		)
 	})
@@ -379,30 +384,28 @@ func fnv_128_allocation(t *testing.T, fixture *allocation_fixture) {
 }
 
 type allocation_fixture struct {
-	Digest_32           fnv.Digest_32
-	Digest_64           fnv.Digest_64
-	Digest_128          fnv.Digest_128
-	Clone_32            fnv.Digest_32
-	Clone_64            fnv.Digest_64
-	Clone_128           fnv.Digest_128
-	Source              fnv.Source
-	Output              fnv.Destination
-	State_32            fnv.Destination
-	State_64            fnv.Destination
-	State_128           fnv.Destination
-	Count               fnv.Count
-	Value_32            fnv.Value_32
-	Value_64            fnv.Value_64
-	Value_128           fnv.Value_128
-	Count_32            fnv.Output_32_Count
-	Count_64            fnv.Output_64_Count
-	Count_128           fnv.Output_128_Count
-	Status              fnv.Output_Status
-	State_Count_32      fnv.State_32_Count
-	State_Count_64      fnv.State_64_Count
-	State_Count_128     fnv.State_128_Count
-	State_Output_Status fnv.State_Output_Status
-	State_Input_Status  fnv.State_Input_Status
+	Digest_32          fnv.Digest_32
+	Digest_64          fnv.Digest_64
+	Digest_128         fnv.Digest_128
+	Clone_32           fnv.Digest_32
+	Clone_64           fnv.Digest_64
+	Clone_128          fnv.Digest_128
+	Source             fnv.Source
+	Output             fnv.Destination
+	State_32           fnv.Destination
+	State_64           fnv.Destination
+	State_128          fnv.Destination
+	Count              fnv.Count
+	Value_32           fnv.Value_32
+	Value_64           fnv.Value_64
+	Value_128          fnv.Value_128
+	Output_32          fnv.Output_32
+	Output_64          fnv.Output_64
+	Output_128         fnv.Output_128
+	State_32_Output    fnv.State_32_Output
+	State_64_Output    fnv.State_64_Output
+	State_128_Output   fnv.State_128_Output
+	State_Input_Status fnv.State_Input_Status
 }
 
 func state_32_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
@@ -410,9 +413,10 @@ func state_32_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 	fnv.Digest_32_Init(&digest, kind)
 	fnv.Digest_32_Write(&digest, fnv.Source("a"))
 	var state [fnv.STATE_32_SIZE]byte
-	count, status := fnv.Digest_32_Marshal_Into(&digest, state[:])
-	testify.Equal(t, fnv.STATE_32_COUNT_COMPLETE, count)
-	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_OK, status)
+	state_output := fnv.Digest_32_Marshal_Into(&digest, state[:])
+	testify.Equal(t, fnv.State_32_Output{
+		Count: fnv.STATE_32_COUNT_COMPLETE, Status: fnv.STATE_OUTPUT_STATUS_OK,
+	}, state_output)
 	testify.Equal(t, want, fnv.Source(state[:]))
 
 	var restored fnv.Digest_32
@@ -428,9 +432,10 @@ func state_32_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 		fnv.Digest_32_Unmarshal(&restored, state[:]))
 	testify.Equal(t, previous, restored)
 	var short [fnv.STATE_32_SIZE - 1]byte
-	count, status = fnv.Digest_32_Marshal_Into(&digest, short[:])
-	testify.Equal(t, fnv.STATE_32_COUNT_EMPTY, count)
-	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_TOO_SMALL, status)
+	state_output = fnv.Digest_32_Marshal_Into(&digest, short[:])
+	testify.Equal(t, fnv.State_32_Output{
+		Count: fnv.STATE_32_COUNT_EMPTY, Status: fnv.STATE_OUTPUT_STATUS_TOO_SMALL,
+	}, state_output)
 }
 
 func state_64_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
@@ -438,9 +443,10 @@ func state_64_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 	fnv.Digest_64_Init(&digest, kind)
 	fnv.Digest_64_Write(&digest, fnv.Source("a"))
 	var state [fnv.STATE_64_SIZE]byte
-	count, status := fnv.Digest_64_Marshal_Into(&digest, state[:])
-	testify.Equal(t, fnv.STATE_64_COUNT_COMPLETE, count)
-	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_OK, status)
+	state_output := fnv.Digest_64_Marshal_Into(&digest, state[:])
+	testify.Equal(t, fnv.State_64_Output{
+		Count: fnv.STATE_64_COUNT_COMPLETE, Status: fnv.STATE_OUTPUT_STATUS_OK,
+	}, state_output)
 	testify.Equal(t, want, fnv.Source(state[:]))
 
 	var restored fnv.Digest_64
@@ -456,9 +462,10 @@ func state_64_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 		fnv.Digest_64_Unmarshal(&restored, state[:]))
 	testify.Equal(t, previous, restored)
 	var short [fnv.STATE_64_SIZE - 1]byte
-	count, status = fnv.Digest_64_Marshal_Into(&digest, short[:])
-	testify.Equal(t, fnv.STATE_64_COUNT_EMPTY, count)
-	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_TOO_SMALL, status)
+	state_output = fnv.Digest_64_Marshal_Into(&digest, short[:])
+	testify.Equal(t, fnv.State_64_Output{
+		Count: fnv.STATE_64_COUNT_EMPTY, Status: fnv.STATE_OUTPUT_STATUS_TOO_SMALL,
+	}, state_output)
 }
 
 func state_128_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
@@ -466,9 +473,10 @@ func state_128_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 	fnv.Digest_128_Init(&digest, kind)
 	fnv.Digest_128_Write(&digest, fnv.Source("a"))
 	var state [fnv.STATE_128_SIZE]byte
-	count, status := fnv.Digest_128_Marshal_Into(&digest, state[:])
-	testify.Equal(t, fnv.STATE_128_COUNT_COMPLETE, count)
-	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_OK, status)
+	state_output := fnv.Digest_128_Marshal_Into(&digest, state[:])
+	testify.Equal(t, fnv.State_128_Output{
+		Count: fnv.STATE_128_COUNT_COMPLETE, Status: fnv.STATE_OUTPUT_STATUS_OK,
+	}, state_output)
 	testify.Equal(t, want, fnv.Source(state[:]))
 
 	var restored fnv.Digest_128
@@ -484,9 +492,10 @@ func state_128_test(t *testing.T, kind fnv.Kind, want fnv.Source) {
 		fnv.Digest_128_Unmarshal(&restored, state[:]))
 	testify.Equal(t, previous, restored)
 	var short [fnv.STATE_128_SIZE - 1]byte
-	count, status = fnv.Digest_128_Marshal_Into(&digest, short[:])
-	testify.Equal(t, fnv.STATE_128_COUNT_EMPTY, count)
-	testify.Equal(t, fnv.STATE_OUTPUT_STATUS_TOO_SMALL, status)
+	state_output = fnv.Digest_128_Marshal_Into(&digest, short[:])
+	testify.Equal(t, fnv.State_128_Output{
+		Count: fnv.STATE_128_COUNT_EMPTY, Status: fnv.STATE_OUTPUT_STATUS_TOO_SMALL,
+	}, state_output)
 }
 
 func state_32_make(kind fnv.Kind, value fnv.Value_32) (state fnv.Source) {

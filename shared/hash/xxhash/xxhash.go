@@ -129,6 +129,26 @@ func Accumulator_4_Invariants(value Accumulator_4, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Accumulators separates lane mutation from unrelated digest state.
+type Accumulators struct {
+	// Accumulator_1 keeps first-lane swaps type-visible.
+	Accumulator_1 Accumulator_1
+	// Accumulator_2 keeps second-lane swaps type-visible.
+	Accumulator_2 Accumulator_2
+	// Accumulator_3 keeps third-lane swaps type-visible.
+	Accumulator_3 Accumulator_3
+	// Accumulator_4 keeps fourth-lane swaps type-visible.
+	Accumulator_4 Accumulator_4
+}
+
+// Accumulators_Invariants keeps lane coverage independent from unrelated digest state.
+func Accumulators_Invariants(value Accumulators, namespace aver.Namespace) {
+	Accumulator_1_Invariants(value.Accumulator_1, namespace)
+	Accumulator_2_Invariants(value.Accumulator_2, namespace)
+	Accumulator_3_Invariants(value.Accumulator_3, namespace)
+	Accumulator_4_Invariants(value.Accumulator_4, namespace)
+}
+
 // Source is one bounded input chunk.
 type Source []byte
 
@@ -187,6 +207,14 @@ func Buffer_Source_Invariants(value Buffer_Source, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(len(value), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM).
 		Ensure()
+}
+
+// Stripe prevents lane decoding from receiving a partial block.
+type Stripe []byte
+
+// Stripe_Invariants keeps decoding within one complete block.
+func Stripe_Invariants(value Stripe, _ aver.Namespace) {
+	aver.Always(len(value) == STRIPE_BYTES, "XXH64 lane decoding requires one complete stripe.")
 }
 
 // Buffer_Lane_1 packs first eight partial bytes.
@@ -276,6 +304,28 @@ func buffer_write(
 		position++
 	}
 	return updated
+}
+
+func buffer_decode(source Stripe) (buffer Buffer) {
+	defer func() { Buffer_Invariants(buffer, "buffer_decode.buffer") }()
+	Stripe_Invariants(source, "buffer_decode.source")
+	return Buffer{
+		Lane_1: Buffer_Lane_1(binary.Uint_64(
+			binary.Bytes(source[0:binary.UINT_64_SIZE]), binary.LITTLE_ENDIAN,
+		)),
+		Lane_2: Buffer_Lane_2(binary.Uint_64(
+			binary.Bytes(source[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2]),
+			binary.LITTLE_ENDIAN,
+		)),
+		Lane_3: Buffer_Lane_3(binary.Uint_64(
+			binary.Bytes(source[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3]),
+			binary.LITTLE_ENDIAN,
+		)),
+		Lane_4: Buffer_Lane_4(binary.Uint_64(
+			binary.Bytes(source[binary.UINT_64_SIZE*3:STRIPE_BYTES]),
+			binary.LITTLE_ENDIAN,
+		)),
+	}
 }
 
 // Digest is caller-owned streaming XXH64 state.
@@ -407,6 +457,24 @@ func Digest_Reset(digest Digest_Handle) {
 	Digest_Init(digest, digest.Seed)
 }
 
+func digest_process_lanes(
+	accumulators Accumulators, buffer Buffer,
+) (processed Accumulators) {
+	defer func() { Accumulators_Invariants(processed, "digest_process_lanes.processed") }()
+	Accumulators_Invariants(accumulators, "digest_process_lanes.accumulators")
+	Buffer_Invariants(buffer, "digest_process_lanes.buffer")
+	return Accumulators{
+		Accumulator_1: Accumulator_1(xxhash_round(
+			Accumulator(accumulators.Accumulator_1), Lane(buffer.Lane_1))),
+		Accumulator_2: Accumulator_2(xxhash_round(
+			Accumulator(accumulators.Accumulator_2), Lane(buffer.Lane_2))),
+		Accumulator_3: Accumulator_3(xxhash_round(
+			Accumulator(accumulators.Accumulator_3), Lane(buffer.Lane_3))),
+		Accumulator_4: Accumulator_4(xxhash_round(
+			Accumulator(accumulators.Accumulator_4), Lane(buffer.Lane_4))),
+	}
+}
+
 // Digest_Write consumes one bounded source completely.
 func Digest_Write(digest Digest_Handle, source Source) (consumed Count) {
 	defer func() { Count_Invariants(consumed, "Digest_Write.consumed") }()
@@ -420,17 +488,6 @@ func Digest_Write(digest Digest_Handle, source Source) (consumed Count) {
 	)
 	consumed = Count(len(source))
 	digest.Total_Bytes += Message_Size(len(source))
-
-	process_lanes := func(lane_1 Lane, lane_2 Lane, lane_3 Lane, lane_4 Lane) {
-		digest.Accumulator_1 = Accumulator_1(xxhash_round(
-			Accumulator(digest.Accumulator_1), lane_1))
-		digest.Accumulator_2 = Accumulator_2(xxhash_round(
-			Accumulator(digest.Accumulator_2), lane_2))
-		digest.Accumulator_3 = Accumulator_3(xxhash_round(
-			Accumulator(digest.Accumulator_3), lane_3))
-		digest.Accumulator_4 = Accumulator_4(xxhash_round(
-			Accumulator(digest.Accumulator_4), lane_4))
-	}
 
 	buffer_fill := int(digest.Buffer_Fill)
 	if buffer_fill+len(source) < STRIPE_BYTES {
@@ -446,30 +503,31 @@ func Digest_Write(digest Digest_Handle, source Source) (consumed Count) {
 		digest.Buffer = buffer_write(
 			digest.Buffer, digest.Buffer_Fill, Buffer_Source(source[:head_size]),
 		)
-		process_lanes(Lane(digest.Buffer.Lane_1), Lane(digest.Buffer.Lane_2),
-			Lane(digest.Buffer.Lane_3), Lane(digest.Buffer.Lane_4))
+		processed := digest_process_lanes(Accumulators{
+			Accumulator_1: digest.Accumulator_1,
+			Accumulator_2: digest.Accumulator_2,
+			Accumulator_3: digest.Accumulator_3,
+			Accumulator_4: digest.Accumulator_4,
+		}, digest.Buffer)
+		digest.Accumulator_1, digest.Accumulator_2,
+			digest.Accumulator_3, digest.Accumulator_4 =
+			processed.Accumulator_1, processed.Accumulator_2,
+			processed.Accumulator_3, processed.Accumulator_4
 		source = source[head_size:]
 		digest.Buffer_Fill = 0
 	}
 
 	for len(source) >= STRIPE_BYTES {
-		process_lanes(
-			Lane(binary.Uint_64(
-				binary.Bytes(source[0:binary.UINT_64_SIZE]), binary.LITTLE_ENDIAN,
-			)),
-			Lane(binary.Uint_64(
-				binary.Bytes(source[binary.UINT_64_SIZE:binary.UINT_64_SIZE*2]),
-				binary.LITTLE_ENDIAN,
-			)),
-			Lane(binary.Uint_64(
-				binary.Bytes(source[binary.UINT_64_SIZE*2:binary.UINT_64_SIZE*3]),
-				binary.LITTLE_ENDIAN,
-			)),
-			Lane(binary.Uint_64(
-				binary.Bytes(source[binary.UINT_64_SIZE*3:STRIPE_BYTES]),
-				binary.LITTLE_ENDIAN,
-			)),
-		)
+		processed := digest_process_lanes(Accumulators{
+			Accumulator_1: digest.Accumulator_1,
+			Accumulator_2: digest.Accumulator_2,
+			Accumulator_3: digest.Accumulator_3,
+			Accumulator_4: digest.Accumulator_4,
+		}, buffer_decode(Stripe(source[:STRIPE_BYTES])))
+		digest.Accumulator_1, digest.Accumulator_2,
+			digest.Accumulator_3, digest.Accumulator_4 =
+			processed.Accumulator_1, processed.Accumulator_2,
+			processed.Accumulator_3, processed.Accumulator_4
 		source = source[STRIPE_BYTES:]
 	}
 

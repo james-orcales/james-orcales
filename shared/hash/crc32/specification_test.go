@@ -20,9 +20,10 @@ func Test_Package_Owned_State(t *testing.T) {
 	count := crc32.Digest_Write(&digest, crc32.Source("abc"))
 	testify.Equal(t, crc32.Count(len("abc")), count)
 	var output [crc32.DIGEST_SIZE]byte
-	output_count, status := crc32.Digest_Sum_Into(&digest, output[:])
-	testify.Equal(t, crc32.OUTPUT_COUNT_COMPLETE, output_count)
-	testify.Equal(t, crc32.OUTPUT_STATUS_OK, status)
+	sum_output := crc32.Digest_Sum_Into(&digest, output[:])
+	testify.Equal(t, crc32.Output{
+		Count: crc32.OUTPUT_COUNT_COMPLETE, Status: crc32.OUTPUT_STATUS_OK,
+	}, sum_output)
 	crc32.Digest_Reset(&digest)
 	testify.Equal(t, crc32.Digest_Value(0), crc32.Digest_Sum_32(&digest))
 }
@@ -92,13 +93,15 @@ func Test_Caller_Owned_Output(t *testing.T) {
 	crc32.Digest_Init(&digest, table)
 	crc32.Digest_Write(&digest, crc32.Source("abc"))
 	var short [crc32.DIGEST_SIZE - 1]byte
-	count, status := crc32.Digest_Sum_Into(&digest, short[:])
-	testify.Equal(t, crc32.OUTPUT_COUNT_EMPTY, count)
-	testify.Equal(t, crc32.OUTPUT_STATUS_TOO_SMALL, status)
+	sum_output := crc32.Digest_Sum_Into(&digest, short[:])
+	testify.Equal(t, crc32.Output{
+		Count: crc32.OUTPUT_COUNT_EMPTY, Status: crc32.OUTPUT_STATUS_TOO_SMALL,
+	}, sum_output)
 	var output [crc32.DIGEST_SIZE]byte
-	count, status = crc32.Digest_Sum_Into(&digest, output[:])
-	testify.Equal(t, crc32.OUTPUT_COUNT_COMPLETE, count)
-	testify.Equal(t, crc32.OUTPUT_STATUS_OK, status)
+	sum_output = crc32.Digest_Sum_Into(&digest, output[:])
+	testify.Equal(t, crc32.Output{
+		Count: crc32.OUTPUT_COUNT_COMPLETE, Status: crc32.OUTPUT_STATUS_OK,
+	}, sum_output)
 	testify.Equal(t, [crc32.DIGEST_SIZE]byte{0x35, 0x24, 0x41, 0xc2}, output)
 }
 
@@ -111,9 +114,10 @@ func Test_State_Compatibility(t *testing.T) {
 	crc32.Digest_Write(&digest, crc32.Source("ab"))
 
 	var state [crc32.STATE_SIZE]byte
-	count, status := crc32.Digest_Marshal_Into(&digest, state[:])
-	testify.Equal(t, crc32.STATE_COUNT_COMPLETE, count)
-	testify.Equal(t, crc32.STATE_OUTPUT_STATUS_OK, status)
+	state_output := crc32.Digest_Marshal_Into(&digest, state[:])
+	testify.Equal(t, crc32.State_Output{
+		Count: crc32.STATE_COUNT_COMPLETE, Status: crc32.STATE_OUTPUT_STATUS_OK,
+	}, state_output)
 	testify.Equal(t, [crc32.STATE_SIZE]byte{
 		'c', 'r', 'c', 1, 0xca, 0x87, 0x91, 0x4d, 0x9e, 0x83, 0x48, 0x6d,
 	}, state)
@@ -144,9 +148,10 @@ func Test_State_Compatibility(t *testing.T) {
 	testify.Equal(t, other_before, other)
 
 	var short [crc32.STATE_SIZE - 1]byte
-	count, status = crc32.Digest_Marshal_Into(&digest, short[:])
-	testify.Equal(t, crc32.STATE_COUNT_EMPTY, count)
-	testify.Equal(t, crc32.STATE_OUTPUT_STATUS_TOO_SMALL, status)
+	state_output = crc32.Digest_Marshal_Into(&digest, short[:])
+	testify.Equal(t, crc32.State_Output{
+		Count: crc32.STATE_COUNT_EMPTY, Status: crc32.STATE_OUTPUT_STATUS_TOO_SMALL,
+	}, state_output)
 }
 
 // Test_Clone keeps table and checksum state caller-owned and independent.
@@ -290,12 +295,12 @@ func Test_Allocation(t *testing.T) {
 		fixture.Value = crc32.Digest_Sum_32(&fixture.Digest)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.Output_Count, fixture.Output_Status = crc32.Digest_Sum_Into(
+		fixture.Sum_Output = crc32.Digest_Sum_Into(
 			&fixture.Digest, fixture.Output,
 		)
 	})
 	testify.Zero_Allocation(t, func() {
-		fixture.State_Count, fixture.State_Output_Status = crc32.Digest_Marshal_Into(
+		fixture.State_Output = crc32.Digest_Marshal_Into(
 			&fixture.Digest, fixture.State,
 		)
 	})
@@ -312,19 +317,17 @@ func Test_Allocation(t *testing.T) {
 }
 
 type allocation_fixture struct {
-	Table               crc32.Table
-	Digest              crc32.Digest
-	Clone               crc32.Digest
-	Source              crc32.Source
-	Output              crc32.Destination
-	State               crc32.Destination
-	Count               crc32.Count
-	Value               crc32.Digest_Value
-	Output_Count        crc32.Output_Count
-	Output_Status       crc32.Output_Status
-	State_Count         crc32.State_Count
-	State_Output_Status crc32.State_Output_Status
-	State_Input_Status  crc32.State_Input_Status
+	Table              crc32.Table
+	Digest             crc32.Digest
+	Clone              crc32.Digest
+	Source             crc32.Source
+	Output             crc32.Destination
+	State              crc32.Destination
+	Count              crc32.Count
+	Value              crc32.Digest_Value
+	Sum_Output         crc32.Output
+	State_Output       crc32.State_Output
+	State_Input_Status crc32.State_Input_Status
 }
 
 func reference_checksum(
