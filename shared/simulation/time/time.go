@@ -1,8 +1,7 @@
-// Package time is a dependency-injected time source modeled on TigerBeetle's
-// vsr.Time, whose backend is a struct of function pointers (a vtable). Here that is
-// a struct of closures: production wires an OS clock (time/default), a simulation
-// wires a Virtual one, and the code between never knows which it holds. The Virtual
-// backend lives here because it is pure arithmetic with no operating-system call.
+// Package time gives time as an injected dependency. The backend is a vtable of closures.
+// Production wires an OS clock (time/default). A simulation wires a Virtual one. The code
+// between never knows which one it holds. The Virtual backend lives here because it is pure
+// arithmetic. It makes no operating-system call.
 package time
 
 import (
@@ -12,139 +11,155 @@ import (
 	"local/james-orcales/shared/math/fixedpoint"
 )
 
-// INTEGER_64_MINIMUM is the smallest signed 64-bit integer. A Moment, a Duration, and
-// a Tick_Count each occupy the whole signed 64-bit range: a virtual clock reads its
-// epoch, its skew, and its tick count as the caller sets them, and none of the three
-// carries a narrower bound than its storage.
+// INTEGER_64_MINIMUM is the smallest signed 64-bit integer. A Moment, a Duration, and a
+// Tick_Count each fill the whole signed 64-bit range. A virtual clock reads its epoch, its
+// skew, and its tick count as the caller sets them. No one of the three has a bound more
+// narrow than its storage.
 const INTEGER_64_MINIMUM int64 = -9223372036854775808
 
 // INTEGER_64_MAXIMUM is the largest signed 64-bit integer.
 const INTEGER_64_MAXIMUM int64 = 9223372036854775807
 
-// Moment is a clock reading in nanoseconds since an arbitrary, clock-specific epoch
-// (TigerBeetle's stdx.Instant). Only the difference between two Moments from the
-// SAME clock is meaningful; a monotonic Moment and a realtime Moment are not
-// comparable.
+// Moment is a clock reading in nanoseconds. Its epoch is arbitrary and belongs to one clock.
+// Only the difference between two Moments from the SAME clock has a meaning. A monotonic
+// Moment and a realtime Moment do not compare.
 type Moment int64
 
-// Moment_Invariants states the complete clock-reading domain.
+// Moment_Invariants state complete clock-reading domain.
 func Moment_Invariants(moment Moment, namespace invariant.Namespace) {
 	invariant.Tree(moment, namespace).
 		Range_Int64(int64(moment), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
-// Duration is a span of nanoseconds (TigerBeetle's stdx.Duration).
+// Duration: span of nanoseconds.
 type Duration int64
 
-// Duration_Invariants states the complete nanosecond-span domain.
+// Duration_Invariants state complete nanosecond-span domain.
 func Duration_Invariants(duration Duration, namespace invariant.Namespace) {
 	invariant.Tree(duration, namespace).
 		Range_Int64(int64(duration), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
-// NANOSECOND is the unit a Duration counts in.
+// NANOSECOND: unit Duration count in.
 const NANOSECOND Duration = 1
 
-// MICROSECOND is a thousand nanoseconds.
+// MICROSECOND: thousand nanoseconds.
 const MICROSECOND = NANOSECOND * 1000
 
-// MILLISECOND is a thousand microseconds.
+// MILLISECOND: thousand microseconds.
 const MILLISECOND = MICROSECOND * 1000
 
-// SECOND is a thousand milliseconds.
+// SECOND: thousand milliseconds.
 const SECOND = MILLISECOND * 1000
 
-// MINUTE is sixty seconds.
+// MINUTE: sixty seconds.
 const MINUTE = SECOND * 60
 
-// HOUR is sixty minutes.
+// HOUR: sixty minutes.
 const HOUR = MINUTE * 60
 
-// DAY is twenty-four hours.
+// DAY: twenty-four hours.
 const DAY = HOUR * 24
 
-// WEEK is seven days.
+// WEEK: seven days.
 const WEEK = DAY * 7
 
-// Any_Clock is the injected time source — the Go translation of TigerBeetle's `Time`
-// vtable, expressed as closures so the backend is chosen by value. It is read-only:
-// advancing time is the driver's job (the tick returned beside the clock at
-// construction), so a holder can only read the current Moment, never move time.
-type Any_Clock struct {
-	// Now_Monotonic reads the monotonic clock, which never regresses; use it to
-	// measure elapsed time, timeouts, and latency.
-	Now_Monotonic func() (moment Moment)
-	// Now_Realtime reads wall-clock time as nanoseconds since the Unix epoch; it can
-	// jump, so use it only for calendar timestamps, never for elapsed time.
+// Monotonic_Moment: clock reading in nanoseconds. Count from machine boot (Linux
+// CLOCK_BOOTTIME). Zero mean boot. Reading mean uptime. Bound can hold uptime. Plain Moment
+// have no origin. Plain Moment take full signed range.
+type Monotonic_Moment int64
+
+// MONOTONIC_MOMENT_MINIMUM: zero. Clock restart at zero on each boot. Reading below zero mean
+// clock go backward.
+const MONOTONIC_MOMENT_MINIMUM Monotonic_Moment = 0
+
+// MONOTONIC_MOMENT_MAXIMUM: one year of uptime. Many thing stop machine before one year.
+// Chaos engineering kill it on purpose. Operating system update reboot it. More uptime than
+// this mean defect, not data point.
+const MONOTONIC_MOMENT_MAXIMUM Monotonic_Moment = Monotonic_Moment(DAY * 365)
+
+// Monotonic_Moment_Invariants state complete uptime domain.
+func Monotonic_Moment_Invariants(moment Monotonic_Moment, namespace invariant.Namespace) {
+	invariant.Tree(moment, namespace).
+		Range_Int64(
+			int64(moment),
+			int64(MONOTONIC_MOMENT_MINIMUM),
+			int64(MONOTONIC_MOMENT_MAXIMUM)).
+		Ensure()
+}
+
+// Clock: injected time source. Vtable of closures. Caller pick backend by value.
+// Read-only. Driver move time, with tick returned beside clock. Holder read current Moment.
+// Holder never move time.
+type Clock struct {
+	// Now_Monotonic read monotonic clock. Never go backward. Use for elapsed time, timeout,
+	// latency.
+	Now_Monotonic func() (moment Monotonic_Moment)
+	// Now_Realtime read wall clock as nanoseconds from Unix epoch. Can jump. Use for calendar
+	// timestamp only, never for elapsed time.
 	Now_Realtime func() (moment Moment)
 }
 
-// Any_Clock_Invariants states that both readers are bound. A Any_Clock is a vtable, so its
-// only property is that every slot is filled: the zero Any_Clock reads as a Any_Clock but
-// panics on first use, and a backend that fills one slot and forgets the other is the
-// same failure one call later.
-func Any_Clock_Invariants(clock Any_Clock, namespace invariant.Namespace) {
+// Clock_Invariants state both readers bound. Clock is vtable. One property only:
+// every slot full. Zero Clock read as Clock, then panic on first use. Backend that
+// fill one slot and forget other fail one call later.
+func Clock_Invariants(clock Clock, namespace invariant.Namespace) {
 	invariant.Always(
-		clock.Now_Monotonic != nil, "A Any_Clock has a monotonic reader.",
+		clock.Now_Monotonic != nil, "A Clock has a monotonic reader.",
 	)
 	invariant.Always(
-		clock.Now_Realtime != nil, "A Any_Clock has a realtime reader.",
+		clock.Now_Realtime != nil, "A Clock has a realtime reader.",
 	)
 }
 
-// Tick_Count is how many times a virtual clock advanced — the abscissa every skew
-// model reads (TimeSim's x).
+// Tick_Count: how many time virtual clock advance. It is x in each skew formula.
 type Tick_Count int64
 
-// Tick_Count_Invariants states the complete tick-count domain.
+// Tick_Count_Invariants state complete tick-count domain.
 func Tick_Count_Invariants(ticks Tick_Count, namespace invariant.Namespace) {
 	invariant.Tree(ticks, namespace).
 		Range_Int64(int64(ticks), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
 		Ensure()
 }
 
-// Offset models how a simulated wall clock deviates from true elapsed time —
-// TigerBeetle's TimeSim.offset. It is what makes Now_Realtime diverge from
-// Now_Monotonic. A nil Offset is a perfect clock.
+// Offset model how simulated wall clock drift from true elapsed time. Offset make
+// Now_Realtime differ from Now_Monotonic. Nil Offset mean perfect clock.
 type Offset func(ticks Tick_Count) (skew Duration)
 
-// Virtual_Clock configures the deterministic clock Virtual_Clock_To_Any_Clock builds —
-// TigerBeetle's TimeSim. Time advances only when Tick is called, so a simulation
-// reaches a future Moment by ticking rather than by waiting.
+// Virtual_Clock configure deterministic clock that Virtual_Clock_To_Clock build. Time
+// advance only when Tick run. Simulation reach future Moment by tick, never by wait.
 type Virtual_Clock struct {
-	// Resolution is how far the monotonic clock advances on each Tick — the grain of
-	// a simulated oscillator (TimeSim.resolution).
+	// Resolution: how far monotonic clock advance on each Tick. Grain of simulated
+	// oscillator.
 	Resolution Duration
-	// Epoch is the wall-clock origin: Now_Realtime at tick zero, before any skew
-	// (TimeSim.epoch).
+	// Epoch: wall-clock origin. Now_Realtime at tick zero, before skew.
 	Epoch Moment
-	// Skew bends Now_Realtime away from true elapsed time; nil is a perfect clock
-	// (TimeSim.offset).
+	// Skew bend Now_Realtime away from true elapsed time. Nil Skew mean perfect clock.
 	Skew Offset
 }
 
-// Virtual_Clock_Invariants states the two scalars a virtual clock is configured with.
-// Skew is a closure, so the arithmetic it stands for has no domain to state here; its
-// coefficients are stated where Skew builds it.
+// Virtual_Clock_Invariants state two scalars of virtual clock. Skew is closure. Closure
+// arithmetic have no domain to state here. Skew state own coefficients where Skew build them.
 func Virtual_Clock_Invariants(virtual Virtual_Clock, namespace invariant.Namespace) {
 	Duration_Invariants(virtual.Resolution, namespace)
 	Moment_Invariants(virtual.Epoch, namespace)
 }
 
-// Virtual_Clock_To_Any_Clock returns a read-only Any_Clock backed by a deterministic, OS-free
-// virtual clock, plus the tick that advances it. The clock's closures and tick share
-// one counter, so tick advances what the next Now_Monotonic reads. Only the driver —
-// package main or a test harness — holds tick; pure code holds only the Any_Clock and so
-// can read time but never move it.
-func Virtual_Clock_To_Any_Clock(virtual Virtual_Clock) (clock Any_Clock, tick func()) {
-	defer func() { Any_Clock_Invariants(clock, "virtual_clock_to_clock.clock") }()
+// Virtual_Clock_To_Clock return read-only Clock plus tick that advance it. Clock
+// behind is deterministic. Make no operating-system call. Closures and tick share one counter,
+// thus tick move what next Now_Monotonic read. Only driver hold tick: package main, or test
+// harness. Pure code hold Clock alone. Pure code read time, never move it.
+func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock, tick func()) {
+	defer func() { Clock_Invariants(clock, "virtual_clock_to_clock.clock") }()
 	Virtual_Clock_Invariants(virtual, "virtual_clock_to_clock.virtual")
 	ticks := Tick_Count(0)
-	clock = Any_Clock{
-		Now_Monotonic: func() (moment Moment) {
-			return Moment(int64(ticks) * int64(virtual.Resolution))
+	clock = Clock{
+		Now_Monotonic: func() (moment Monotonic_Moment) {
+			uptime := Monotonic_Moment(int64(ticks) * int64(virtual.Resolution))
+			Monotonic_Moment_Invariants(uptime, "virtual_clock_to_clock.uptime")
+			return uptime
 		},
 		Now_Realtime: func() (moment Moment) {
 			now := virtual.Epoch + Moment(int64(ticks)*int64(virtual.Resolution))
@@ -157,24 +172,22 @@ func Virtual_Clock_To_Any_Clock(virtual Virtual_Clock) (clock Any_Clock, tick fu
 	return clock, func() { ticks++ }
 }
 
-// SKEW_KIND_LINEAR models constant drift: A nanoseconds of skew per tick plus an
-// initial B (TimeSim OffsetType.linear, A*x + B).
+// SKEW_KIND_LINEAR model constant drift. A nanoseconds of skew per tick, plus initial B
+// (A*x + B, x is tick count).
 const SKEW_KIND_LINEAR Skew_Kind = 0
 
-// SKEW_KIND_PERIODIC models a sinusoidal wobble of amplitude A over a period of B
-// ticks (TimeSim OffsetType.periodic, A*sin(x*2pi/B)).
+// SKEW_KIND_PERIODIC model sinusoidal wobble. Amplitude A over period of B ticks
+// (A*sin(x*2pi/B)).
 const SKEW_KIND_PERIODIC Skew_Kind = 1
 
-// SKEW_KIND_STEP models a discontinuous jump of A after B ticks — an NTP correction
-// or operator clock change (TimeSim OffsetType.step).
+// SKEW_KIND_STEP model jump of A after B ticks. NTP correction, or operator change clock.
 const SKEW_KIND_STEP Skew_Kind = 2
 
-// Skew_Kind selects which clock-deviation model Skew builds.
+// Skew_Kind pick which clock-deviation model Skew build.
 type Skew_Kind uint8
 
-// Skew_Kind_Invariants holds a kind to the three models Skew builds. The default arm
-// of that switch is the linear model, so an unlisted kind would drift silently rather
-// than fail.
+// Skew_Kind_Invariants hold kind to three models that Skew build. Default arm of that switch
+// is linear model. Unlisted kind would drift in silence, not fail.
 func Skew_Kind_Invariants(kind Skew_Kind, namespace invariant.Namespace) {
 	invariant.Tree(kind, namespace).
 		Enum_3_Uint8(
@@ -186,45 +199,30 @@ func Skew_Kind_Invariants(kind Skew_Kind, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Skew_Input is the model and its coefficients, mirroring TimeSim's offset_type plus
-// offset_coefficient_A and offset_coefficient_B.
-type Skew_Input struct {
-	// Kind selects the deviation model.
-	Kind Skew_Kind
-	// A is the magnitude coefficient: drift-per-tick, amplitude, or step size.
-	A Duration
-	// B is the tick coefficient: the linear initial offset, the periodic period, or
-	// the step's onset tick.
-	B Tick_Count
-}
-
-// Skew_Input_Invariants states the model and each of its two coefficients.
-func Skew_Input_Invariants(input Skew_Input, namespace invariant.Namespace) {
-	Skew_Kind_Invariants(input.Kind, namespace)
-	Duration_Invariants(input.A, namespace)
-	Tick_Count_Invariants(input.B, namespace)
-}
-
-// Skew builds the Offset described by input.
-func Skew(input Skew_Input) (offset Offset) {
-	Skew_Input_Invariants(input, "skew.input")
-	switch input.Kind {
+// Skew build Offset for one deviation model. Take kind plus two coefficients. Coefficient a
+// is magnitude: drift-per-tick, amplitude, or step size. Coefficient b count ticks: linear
+// initial offset, periodic period, or onset tick of step.
+func Skew(kind Skew_Kind, a Duration, b Tick_Count) (offset Offset) {
+	Skew_Kind_Invariants(kind, "skew.kind")
+	Duration_Invariants(a, "skew.a")
+	Tick_Count_Invariants(b, "skew.b")
+	switch kind {
 	case SKEW_KIND_PERIODIC:
 		return func(ticks Tick_Count) (skew Duration) {
-			// A zero period is a degenerate sinusoid; report no skew rather than divide
-			// (or take a remainder) by zero.
-			if input.B == 0 {
+			// Zero period mean degenerate sinusoid. Report no skew. Division or
+			// remainder by zero panic.
+			if b == 0 {
 				return 0
 			}
-			// Reduce the phase to one period before lifting it into fixed-point, so a
-			// long-running tick count cannot overflow the scaled numerator.
-			phase := ticks % input.B
+			// Cut phase to one period before lift into fixed-point. Long run else
+			// overflow scaled numerator.
+			phase := ticks % b
 			turns := fixedpoint.From_Ratio(
 				fixedpoint.Numerator(phase),
-				fixedpoint.Denominator(input.B),
+				fixedpoint.Denominator(b),
 			)
 			amplitude := fixedpoint.Number(fixedpoint.From_Integer(
-				fixedpoint.Whole_Integer(input.A),
+				fixedpoint.Whole_Integer(a),
 			))
 			wobble := fixedpoint.Multiply(
 				fixedpoint.Multiplicand(amplitude),
@@ -234,217 +232,97 @@ func Skew(input Skew_Input) (offset Offset) {
 		}
 	case SKEW_KIND_STEP:
 		return func(ticks Tick_Count) (skew Duration) {
-			if ticks > input.B {
-				return input.A
+			if ticks > b {
+				return a
 			}
 			return 0
 		}
 	default:
 		return func(ticks Tick_Count) (skew Duration) {
-			return Duration(ticks)*input.A + Duration(input.B)
+			return Duration(ticks)*a + Duration(b)
 		}
 	}
 }
 
-// Next_Tick_Source groups deferred callbacks so Reset_Next_Tick can remove a whole source.
-type Next_Tick_Source int
-
-// NEXT_TICK_LSM is TigerBeetle's storage-origin next-tick source.
-const NEXT_TICK_LSM Next_Tick_Source = 0
-
-// NEXT_TICK_VSR is TigerBeetle's replication-origin next-tick source.
-const NEXT_TICK_VSR Next_Tick_Source = 1
-
-// Next_Tick_Callback receives a deferred next-tick completion.
-type Next_Tick_Callback func(completion *Completion)
-
-// Timeout_Callback receives a status-only result from a timeout, connect, close, or
-// another operation that returns no value beyond its error.
+// Timeout_Callback take status, no other result. Timeout, connect, close each use it.
 type Timeout_Callback func(completion *Completion, err error)
 
-// Retired_Twice reports that a backend retired one completion more than one time. A derived
-// function delivers it rather than hiding it, because the caller owns the completion and must
-// learn that its lifecycle broke.
+// Retired_Twice report backend retire one completion more than one time. Derived function
+// deliver it, never hide it. Caller own completion. Caller must learn lifecycle broke.
 var Retired_Twice = errors.New("time: the completion retired more than once")
 
-// Deadline_Exceeded is returned after a finite operation retires without its external event.
+// Deadline_Exceeded come back when finite operation retire without its external event.
 var Deadline_Exceeded = errors.New("time: deadline exceeded")
 
-// FOREVER is the Run_Until timeout that never expires: the loop pumps until done reports
-// true, however long that takes — for a caller (a server) that runs until an event, not a
-// clock.
-const FOREVER Duration = -1
-
-// IMMEDIATE is the Run_Until timeout that expires at once: done is evaluated a single time
-// and the loop is not driven — a non-blocking poll of the predicate.
-const IMMEDIATE Duration = 0
-
-// Completion is the caller-owned storage for one in-flight operation —
-// TigerBeetle's IO.Completion. The caller allocates it, so the loop never does, and
-// must keep it alive until the callback fires.
+// Completion: caller-owned storage for one in-flight operation. Caller allocate it, thus loop
+// never allocate. Caller keep it alive until callback fire.
 type Completion struct {
-	// Callback is the closure the backend runs on completion; it closes over the
-	// typed callback and the computed result.
+	// Callback: closure backend run on completion. Close over typed callback and computed
+	// result.
 	Callback func()
-	// Ready_At is the virtual Moment this operation completes, mirroring
-	// TigerBeetle's Storage.Read.ready_at.
-	Ready_At Moment
-	// Next_Tick_Source identifies next-tick completions for Reset_Next_Tick. Other operations
-	// leave it untouched; it is backend-owned metadata.
-	Next_Tick_Source Next_Tick_Source
-	// Next_Tick reports whether this armed completion is a next-tick operation.
-	Next_Tick bool
-	// State is the completion's position in its lifecycle machine, mutated only through
-	// Completion_Transition. It is backend-owned: applications never read or write it —
-	// expose your own state, not the completion's.
-	State Completion_State
-	// Self is the completion's own address, stamped on its first submit and never cleared.
-	// The timeline tracks an in-flight op by pointer, so a by-value copy carries this
-	// original address; submitting the copy trips the backend's assert instead of silently
-	// splitting the timeline's view from the caller's. Only the backends touch it.
+	// Ready_At: uptime this operation complete at. Sit on monotonic timeline. Realtime jump
+	// must not retire operation early, or hold it late.
+	Ready_At Monotonic_Moment
+	// Armed: completion is in flight. False mean never submitted, or delivered and free
+	// again. Backend own it: it flip true on submit, false before delivery. Application never
+	// read it, never write it. Show own state, not state of completion.
+	Armed bool
+	// Self: address of completion. First submit stamp it. Nothing clear it. Timeline track
+	// in-flight operation by pointer, thus by-value copy carry this original address. Submit
+	// of copy trip backend assertion. Without it, view of timeline and view of caller split
+	// in silence. Only backend touch it.
 	Self *Completion
-	// Kernel_Identifier is the generation token stored in kqueue udata or io_uring user_data.
-	// Backends own it; Event_Trigger reads it only after Event_Listen has armed the completion.
+	// Kernel_Identifier: generation token in kqueue udata or io_uring user_data. Backend own
+	// it. Event_Trigger read it only after Event_Listen arm completion.
 	Kernel_Identifier uint64
 }
 
-// Completion_State is one position in a completion's lifecycle machine. The machine has
-// exactly two legal edges: idle to armed on submit and armed to idle before delivery.
-type Completion_State int
-
-// COMPLETION_IDLE is the zero value: never submitted, or delivered and reusable. A
-// delivery resets to idle before the callback runs, so a callback may resubmit its own
-// completion — the repeating-timer pattern.
-const COMPLETION_IDLE Completion_State = 0
-
-// COMPLETION_ARMED marks an in-flight operation: submitted and owned until delivery.
-const COMPLETION_ARMED Completion_State = 1
-
-// Completion_Transition_Legal is the machine's transition table: it reports whether the
-// edge from one state to another exists. A function rather than a table value because Go
-// has no const maps and a package var is banned; the flat one-clause-per-edge shape is
-// the point — the whole graph, readable in one place.
-func Completion_Transition_Legal(from Completion_State, to Completion_State) (legal bool) {
-	if from == COMPLETION_IDLE {
-		return to == COMPLETION_ARMED
-	}
-	if from == COMPLETION_ARMED {
-		return to == COMPLETION_IDLE
-	}
-	return false
-}
-
-// Completion_Transition moves a completion along one edge of its lifecycle machine. Its
-// two Always guards fail loudly on a caller whose belief about the current state is
-// stale — a reused or double-armed completion — and on an edge the machine does not
-// have, so a lifecycle bug dies at the mutation instead of corrupting a queue.
-// Each transition records both ends of its edge. Thus, the suite must use each legal edge.
-// Backend code only. Applications never transition a completion.
-func Completion_Transition(completion *Completion, from Completion_State, to Completion_State) {
-	invariant.Always(completion.State == from,
-		"A completion transitions from the state its caller expects.")
-	invariant.Always(Completion_Transition_Legal(from, to),
-		"A completion transitions along an edge its machine has.")
-	completion.State = to
-	invariant.Sometimes(from == COMPLETION_IDLE, "the edge leaves idle")
-	invariant.Sometimes(to == COMPLETION_IDLE, "the edge enters idle")
-}
-
-// Event is the backend's cross-thread wakeup handle — TigerBeetle's kqueue EVFILT_USER ident
-// or eventfd descriptor. It is the loop's own primitive: it carries no bytes and names no
-// endpoint, and its only purpose is to make an armed completion ready from another thread.
+// Event: cross-thread wakeup handle of backend. kqueue EVFILT_USER ident, or eventfd
+// descriptor. Primitive of loop. Carry no bytes. Name no endpoint. One purpose: make armed
+// completion ready from other thread.
 type Event uintptr
 
-// Operation classifies one armed completion for the census Introspect reports. The classes
-// name what a completion is waiting for, not which backend armed it, so one queue reports a
-// stall the same way whichever surface submitted the work.
-type Operation int
-
-// OPERATION_COMPLETED keeps a delivered-or-ready callback in one class.
-const OPERATION_COMPLETED Operation = 0
-
-// OPERATION_TIMEOUT is a pending timer.
-const OPERATION_TIMEOUT Operation = 1
-
-// OPERATION_READ_WAITER is a completion waiting for readability.
-const OPERATION_READ_WAITER Operation = 2
-
-// OPERATION_WRITE_WAITER is a completion waiting for writability.
-const OPERATION_WRITE_WAITER Operation = 3
-
-// OPERATION_SIGNAL is a registered signal watch.
-const OPERATION_SIGNAL Operation = 4
-
-// OPERATION_SPAWN is a started child the backend has not yet reaped.
-const OPERATION_SPAWN Operation = 5
-
-// OPERATION_NEXT_TICK is a deferred callback carrying no kernel work.
-const OPERATION_NEXT_TICK Operation = 6
-
-// OPERATION_EVENT is an armed cross-thread event listener.
-const OPERATION_EVENT Operation = 7
-
-// Timeline is the event loop's own submit surface — the control plane every backend fills and
-// every operation retires through. Timers, deferred callbacks, and the cross-thread wakeup
-// live here rather than on an IO or an OS surface, because none of the three transfers bytes
-// with an endpoint: each one only decides WHEN a completion runs, and when is this package's
-// subject.
+// Timeline: submit surface of event loop. Control plane every backend fill, every operation
+// retire through. Timer and cross-thread wakeup live here, not on IO or OS surface. Neither
+// one move bytes with endpoint. Each one decide WHEN completion run. When is subject of this
+// package.
 //
-// A backend — the deterministic simulator, kqueue, io_uring — fills this vtable and returns a
-// Driver beside it. Code that holds a Timeline can arm work and can never advance it.
+// Backend fill this vtable and return Driver beside it: deterministic simulator, kqueue, or
+// io_uring. Code that hold Timeline arm work, never advance it.
 type Timeline struct {
-	// Submit arms completion to retire delay from now, in Ready_At order. It is what every
-	// other backend surface — a read, a socket accept, a spawn — schedules through, so one
-	// queue holds the whole order.
+	// Submit arm completion to retire one delay from now, in Ready_At order. Every other
+	// backend surface schedule through it: read, socket accept, spawn. One queue thus hold
+	// full order.
 	Submit func(completion *Completion, delay Duration, callback func())
-	// Classify records what an armed completion waits for, so Introspect can report a stall
-	// by class. A backend that submits through this vtable states its own class; a submit
-	// that states none counts as ready work.
-	Classify func(completion *Completion, operation Operation)
-	// Report_Descriptors registers the reader of how many raw descriptors a submitter holds
-	// open. The census is one struct, and a descriptor count is knowledge the loop does not
-	// have, so the code that holds descriptors hands the loop a reader for them.
-	Report_Descriptors func(reader func() (count int))
-	// Timeout fires callback after the duration on the clock, off the same queue every other
-	// completion uses. The duration must be positive; a caller that wants to yield uses
-	// Next_Tick.
+	// Timeout fire callback after duration on clock, off same queue every other completion
+	// use. Duration must be positive.
 	Timeout func(completion *Completion, callback Timeout_Callback, duration Duration)
-	// Next_Tick defers a callback without kernel IO, matching io/linux.zig:332-352 and
-	// io/darwin.zig:757-781.
-	Next_Tick func(
-		completion *Completion, callback Next_Tick_Callback, source Next_Tick_Source,
-	)
-	// Reset_Next_Tick removes every queued next-tick completion for source without delivery.
-	Reset_Next_Tick func(source Next_Tick_Source)
-	// Open_Event creates TigerBeetle's platform Event primitive.
+	// Open_Event make platform Event primitive.
 	Open_Event func() (event Event, err error)
-	// Event_Listen arms completion for one Event notification.
-	Event_Listen func(event Event, completion *Completion, callback Next_Tick_Callback)
-	// Event_Trigger makes an armed Event completion ready. It is the only operation safe to
-	// call from another thread.
+	// Event_Listen arm completion for one Event notification.
+	Event_Listen func(
+		event Event, completion *Completion, callback func(completion *Completion),
+	)
+	// Event_Trigger make armed Event completion ready. Only operation safe to call from other
+	// thread.
 	Event_Trigger func(event Event, completion *Completion)
-	// Close_Event releases an Event after its listener has drained.
+	// Close_Event release Event after listener drain.
 	Close_Event func(event Event)
 }
 
-// Timeline_Invariants states that every slot is filled. A Timeline is a vtable, so the zero
-// Timeline reads as a Timeline and panics on first use, and a backend that fills nine slots
-// and forgets the tenth is the same failure one call later.
+// Timeline_Invariants state every slot full. Timeline is vtable. Zero Timeline read as
+// Timeline, then panic on first use. Backend that fill five slots and forget sixth fail one
+// call later.
 func Timeline_Invariants(loop Timeline, namespace invariant.Namespace) {
 	invariant.Always(loop.Submit != nil, "A Timeline arms a completion.")
-	invariant.Always(loop.Classify != nil, "A Timeline classifies an armed completion.")
-	invariant.Always(
-		loop.Report_Descriptors != nil, "A Timeline takes a descriptor-count reader.")
 	invariant.Always(loop.Timeout != nil, "A Timeline fires a timer.")
-	invariant.Always(loop.Next_Tick != nil, "A Timeline defers a callback.")
-	invariant.Always(loop.Reset_Next_Tick != nil, "A Timeline drops a next-tick source.")
 	invariant.Always(loop.Open_Event != nil, "A Timeline opens a cross-thread event.")
 	invariant.Always(loop.Event_Listen != nil, "A Timeline listens for that event.")
 	invariant.Always(loop.Event_Trigger != nil, "A Timeline triggers that event.")
 	invariant.Always(loop.Close_Event != nil, "A Timeline closes that event.")
 }
 
-// Driver advances the loop — the only capability that moves time and delivers completions.
+// Driver advance loop. Only capability that move time and deliver completions.
 //
 // ===========================================================================
 // ONLY PACKAGE MAIN OR A TEST MAY DRIVE, RUN, OR TICK THE EVENT LOOP.
@@ -452,143 +330,100 @@ func Timeline_Invariants(loop Timeline, namespace invariant.Namespace) {
 // A VIOLATION IS AN ARCHITECTURAL BUG EVEN IF EVERY TEST PASSES.
 // ===========================================================================
 //
-// Only the code that constructed the Driver may hold or call it: a binary's package main in
-// production, a test harness in simulation. A library that pumps works while its binary owns
-// the whole process, and it fails where it composes: assembled with others, it delivers every
-// other application's completions from inside its own call stack, destroying the absolute
-// order the assembly exists to hold.
+// Only code that build Driver hold it or call it: package main in production, or test harness
+// in simulation. Library that pump work while its binary own full process. Library fail where
+// it compose. Put together with others, it deliver completions of every other application
+// from inside own call stack. That destroy absolute order assembly exist to hold.
 type Driver struct {
-	// Run drains every ready completion without blocking, then advances the clock one
-	// tick (TigerBeetle IO.run). ROOT ONLY: never handed to, or called from, a library.
+	// Run drain every ready completion without block, then advance clock one tick. ROOT ONLY:
+	// never hand to library, never call from library.
 	Run func() (err error)
-	// Run_For drives the loop until the duration has elapsed on the clock, delivering
-	// completions as they come due (TigerBeetle IO.run_for_ns). Here time is the GOAL: it
-	// advances exactly duration, draining as it goes, regardless of what completes — reach
-	// for it to let a span of time pass, not to wait for a particular op.
-	// ROOT ONLY: never handed to, or called from, a library.
+	// Run_For drive loop until duration elapse on clock. Deliver each completion as it come
+	// due. Time is GOAL here. Advance exactly duration, drain as it go, whatever complete.
+	// Use to let span of time pass, not to wait for one operation.
+	// ROOT ONLY: never hand to library, never call from library.
 	Run_For func(duration Duration) (err error)
-	// Run_Until drives the loop until done reports true — the run-until-complete pump that
-	// lets straight-line code wait for its own op inline. Here completion is the GOAL and
-	// time is the GUARD: it stops the instant done holds, and timeout only caps the wait so
-	// a stalled op can't hang the caller. This opposite emphasis — completion-first with a
-	// time bound, versus Run_For's time-first — is why the two stay separate ops.
+	// Run_Until drive loop until done report true. Run-until-complete pump. Straight-line
+	// code wait for own operation inline with it. Completion is GOAL here. Time is GUARD.
+	// Stop instant done hold. Timeout only cap wait, thus stalled operation cannot hang
+	// caller. Run_For put time first, thus two stay separate operations.
 	//
-	// timeout < 0 (FOREVER) waits unbounded — a server pumping until a shutdown signal.
-	// timeout == 0 (IMMEDIATE) evaluates done once and returns without driving — a poll.
-	// timeout > 0 pumps until done or the clock passes now+timeout. completed reports which
-	// won: done (true) or the timeout (false).
+	// timeout < 0 panic: unbounded pump put no cap on stalled operation.
+	// timeout == 0 check done one time, return without drive. Poll.
+	// timeout > 0 pump until done, or until clock pass now+timeout. completed report which
+	// win: done (true), or timeout (false).
 	//
-	// Top-level and single-loop only: never call it from within a completion callback.
-	// ROOT ONLY: never inject it — or a func value of its shape — into a library; a
-	// library that authors done predicates and timeouts is driving the loop.
+	// Top-level and single-loop only: never call from inside completion callback.
+	// ROOT ONLY: never inject it into library, and never inject func value of its shape.
+	// Library that write done predicate and timeout is driving loop.
 	Run_Until func(
 		done func() (finished bool), timeout Duration,
 	) (completed bool, err error)
-	// Deinit releases the backend's kernel resources after every submitted operation is joined.
+	// Deinit release kernel resources of backend, after every submitted operation join.
 	Deinit func()
-	// Introspect returns a point-in-time census of the loop's internal queues — the depths a
-	// stall shows up in. Read-only, safe only on the loop thread, so like the rest of Driver
-	// it is ROOT ONLY: the root may sample it (for an admin snapshot); a library may not.
-	Introspect func() (counts Timeline_Counts)
 }
 
-// Timeline_Counts is a census of a loop backend's internal queues at one instant — how many
-// completions are ready to run, how many sockets await readability or writability, how many
-// timers and signal watchers are pending, how much cross-thread work is posted back, and how
-// many raw descriptors are held open. It is the loop-internals view of an admin state
-// snapshot: a stall is usually visible here as a queue that will not drain (a backed-up
-// accept, a write that never completes).
-type Timeline_Counts struct {
-	// Completed is the number of completions whose callbacks are ready to run next drain.
-	Completed int
-	// Timeouts is the number of pending timer completions.
-	Timeouts int
-	// IO_Backlog is the number of Darwin operations waiting to enter kqueue.
-	IO_Backlog int
-	// IO_Inflight is the number of Darwin operations registered with kqueue.
-	IO_Inflight int
-	// IO_Queued is the number of Linux submissions not yet flushed to the kernel.
-	IO_Queued int
-	// IO_In_Kernel is the number of Linux submissions awaiting completion.
-	IO_In_Kernel int
-	// Signal_Waiters is the number of registered signal watchers.
-	Signal_Waiters int
-	// Spawns is the number of started children the backend has not yet reaped.
-	Spawns int
-	// Raw_Open is the number of raw descriptors the backend holds open.
-	Raw_Open int
-}
-
-// Virtual_Timeline is the deterministic loop backend: one ready-time queue, a virtual clock,
-// and no kernel at all. New_Virtual_Timeline builds it and never hands it out, so a run
-// reproduces from its clock alone and nothing can be scripted into the order.
+// Virtual_Timeline: deterministic loop backend. One ready-time queue, one virtual clock, no
+// kernel. New_Virtual_Timeline build it, never hand it out. Run thus reproduce from clock
+// alone. Nothing can script order.
 type Virtual_Timeline struct {
-	// Virtual is the clock configuration: the grain each tick advances, the wall-clock
-	// origin, and the modeled skew. The timeline owns its clock state directly rather than
-	// holding an injected Any_Clock — that indirection is for code outside this package, and
-	// the timeline is the source the injected readers are built over.
+	// Virtual: clock configuration. Grain each tick advance, wall-clock origin, modeled skew.
+	// Timeline own clock state direct, hold no injected Clock. That indirection is for
+	// code outside this package. Timeline is source injected readers build over.
 	Virtual Virtual_Clock
-	// Ticks counts how many grains the driver has advanced; "now" is Ticks times the
-	// resolution. It lives here, on the driver side, so code holding a Timeline can never
-	// advance time.
+	// Ticks count how many grains driver advance. Now is Ticks times resolution. Live here,
+	// on driver side, thus code that hold Timeline never advance time.
 	Ticks Tick_Count
-	// Queue holds the armed completions in Ready_At order, earliest first.
+	// Queue hold armed completions in Ready_At order, earliest first.
 	Queue []*Completion
-	// Operations classifies each armed completion for Introspect.
-	Operations map[*Completion]Operation
-	// Events holds the cross-thread event entries, keyed by handle.
+	// Events hold cross-thread event entries, keyed by handle.
 	Events map[Event]*Virtual_Event
-	// Listeners holds the completion armed for each event, keyed by handle. It is a map
-	// rather than a field on the entry, because the completion is the submitter's and the
-	// entry describes the event.
+	// Listeners hold completion armed for each event, keyed by handle. Map, not field on
+	// entry: completion belong to submitter, entry describe event.
 	Listeners map[Event]*Completion
-	// Next_Event counts the handles handed out, so each Open_Event returns a distinct
-	// nonzero one.
+	// Next_Event count handles handed out, thus each Open_Event return different handle,
+	// never zero.
 	Next_Event uint64
-	// Drive_Active is set while a Run is driving, so a Run called from within a completion
-	// callback panics rather than re-entering the driver.
+	// Drive_Active true while Run drive. Run called from inside completion callback thus
+	// panic, never re-enter driver.
 	Drive_Active bool
-	// Raw_Open reads how many descriptors a submitter reports holding, for Introspect alone.
-	Raw_Open func() (count int)
 }
 
-// Virtual_Event is one simulated cross-thread event: whether a listener is armed, and the
-// triggers that arrived before one attached. The armed completion itself lives in the loop's
-// Listeners map rather than here, because an entry describes the event and the completion
-// belongs to whoever submitted it.
+// Virtual_Event: one simulated cross-thread event. Hold whether listener armed, plus triggers
+// that arrive before one attach. Armed completion live in Listeners map of loop, not here:
+// entry describe event, completion belong to submitter.
 type Virtual_Event struct {
-	// Armed reports that a listener is attached and waiting for the next trigger.
+	// Armed report listener attached and wait for next trigger.
 	Armed bool
-	// Triggered counts notifications accumulated before a listener attaches.
+	// Triggered count notifications piled up before listener attach.
 	Triggered int
 }
 
-// New_Virtual_Timeline returns the deterministic loop, the driver that advances it, and the clock
-// its completions are measured against. The driver stays with the root that built it: the
-// program under test receives the loop and the clock, NEVER a pump.
-func New_Virtual_Timeline(virtual Virtual_Clock) (loop Timeline, driver Driver, clock Any_Clock) {
+// New_Virtual_Timeline return three thing: deterministic loop, driver that advance it, clock
+// its completions measure against. Driver stay with root that build it. Program under test
+// get loop and clock, NEVER pump.
+func New_Virtual_Timeline(virtual Virtual_Clock) (loop Timeline, driver Driver, clock Clock) {
 	Virtual_Clock_Invariants(virtual, "new_virtual_timeline.virtual")
 	state := &Virtual_Timeline{
-		Virtual:    virtual,
-		Operations: map[*Completion]Operation{},
-		Events:     map[Event]*Virtual_Event{},
-		Listeners:  map[Event]*Completion{},
+		Virtual:   virtual,
+		Events:    map[Event]*Virtual_Event{},
+		Listeners: map[Event]*Completion{},
 	}
 	loop = virtual_timeline_to_timeline(state)
 	Timeline_Invariants(loop, "new_virtual_timeline.loop")
-	return loop, virtual_timeline_to_driver(state), virtual_timeline_to_any_clock(state)
+	return loop, virtual_timeline_to_driver(state), virtual_timeline_to_clock(state)
 }
 
-// Builds the read-only Any_Clock over the timeline's own counter, so what a holder reads is
-// exactly what the driver has advanced — one counter, not a second one drifting beside it.
-func virtual_timeline_to_any_clock(state *Virtual_Timeline) (clock Any_Clock) {
-	defer func() { Any_Clock_Invariants(clock, "virtual_timeline_to_any_clock.clock") }()
-	return Any_Clock{
-		Now_Monotonic: func() (moment Moment) {
+// Build read-only Clock over own counter of timeline. Holder thus read exactly what driver
+// advance. One counter, not second one that drift beside it.
+func virtual_timeline_to_clock(state *Virtual_Timeline) (clock Clock) {
+	defer func() { Clock_Invariants(clock, "virtual_timeline_to_clock.clock") }()
+	return Clock{
+		Now_Monotonic: func() (moment Monotonic_Moment) {
 			return virtual_now(state)
 		},
 		Now_Realtime: func() (moment Moment) {
-			now := state.Virtual.Epoch + virtual_now(state)
+			now := state.Virtual.Epoch + Moment(virtual_now(state))
 			if state.Virtual.Skew == nil {
 				return now
 			}
@@ -597,34 +432,16 @@ func virtual_timeline_to_any_clock(state *Virtual_Timeline) (clock Any_Clock) {
 	}
 }
 
-// Wires the control plane onto the vtable every backend and every caller holds.
+// Wire control plane onto vtable every backend and every caller hold.
 func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 	return Timeline{
 		Submit: func(completion *Completion, delay Duration, callback func()) {
 			virtual_submit(state, completion, delay, callback)
 		},
-		Classify: func(completion *Completion, operation Operation) {
-			state.Operations[completion] = operation
-		},
-		Report_Descriptors: func(reader func() (count int)) {
-			state.Raw_Open = reader
-		},
 		Timeout: func(
 			completion *Completion, callback Timeout_Callback, duration Duration,
 		) {
 			virtual_timeout(state, completion, callback, duration)
-		},
-		Next_Tick: func(
-			completion *Completion, callback Next_Tick_Callback,
-			source Next_Tick_Source,
-		) {
-			virtual_submit(state, completion, 0, func() { callback(completion) })
-			completion.Next_Tick_Source = source
-			completion.Next_Tick = true
-			state.Operations[completion] = OPERATION_NEXT_TICK
-		},
-		Reset_Next_Tick: func(source Next_Tick_Source) {
-			virtual_reset_next_tick(state, source)
 		},
 		Open_Event: func() (event Event, err error) {
 			state.Next_Event++
@@ -633,7 +450,7 @@ func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 			return handle, nil
 		},
 		Event_Listen: func(
-			event Event, completion *Completion, callback Next_Tick_Callback,
+			event Event, completion *Completion, callback func(completion *Completion),
 		) {
 			virtual_event_listen(state, event, completion, callback)
 		},
@@ -651,20 +468,20 @@ func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 	}
 }
 
-// Arms one simulated timer. It lives beside the vtable rather than inside it, because the
-// vtable literal is the map of the control plane and a body there hides the shape.
+// Arm one simulated timer. Live beside vtable, not inside it: vtable literal is map of
+// control plane, and body there hide that shape.
 func virtual_timeout(
 	state *Virtual_Timeline, completion *Completion, callback Timeout_Callback,
 	duration Duration,
 ) {
-	invariant.Always(duration > 0, "A timeout duration is positive; yields use Next_Tick.")
+	invariant.Always(duration > 0, "A timeout duration is positive.")
 	virtual_submit(state, completion, duration, func() { callback(completion, nil) })
-	state.Operations[completion] = OPERATION_TIMEOUT
 }
 
-// Arms an event listener, delivering at once when a trigger already arrived.
+// Arm event listener. Deliver at once when trigger already arrive.
 func virtual_event_listen(
-	state *Virtual_Timeline, event Event, completion *Completion, callback Next_Tick_Callback,
+	state *Virtual_Timeline, event Event, completion *Completion,
+	callback func(completion *Completion),
 ) {
 	entry := state.Events[event]
 	invariant.Always(entry != nil, "A listened event was opened by this loop.")
@@ -676,14 +493,13 @@ func virtual_event_listen(
 	})
 	entry.Armed = true
 	state.Listeners[event] = completion
-	state.Operations[completion] = OPERATION_EVENT
 	if entry.Triggered > 0 {
 		entry.Triggered--
 		virtual_enqueue_now(state, completion)
 	}
 }
 
-// Makes an armed event listener ready, or records the trigger for a later listener.
+// Make armed event listener ready, or record trigger for later listener.
 func virtual_event_trigger(state *Virtual_Timeline, event Event, completion *Completion) {
 	entry := state.Events[event]
 	invariant.Always(entry != nil, "A triggered event was opened by this loop.")
@@ -696,41 +512,42 @@ func virtual_event_trigger(state *Virtual_Timeline, event Event, completion *Com
 	virtual_enqueue_now(state, completion)
 }
 
-// Reads the simulated moment every Ready_At is measured against.
-func virtual_now(state *Virtual_Timeline) (now Moment) {
-	return Moment(int64(state.Ticks) * int64(state.Virtual.Resolution))
+// Read simulated moment every Ready_At measure against.
+func virtual_now(state *Virtual_Timeline) (now Monotonic_Moment) {
+	now = Monotonic_Moment(int64(state.Ticks) * int64(state.Virtual.Resolution))
+	Monotonic_Moment_Invariants(now, "virtual_now.now")
+	return now
 }
 
-// Schedules completion to fire at now plus delay and inserts it in Ready_At order.
+// Schedule completion to fire at now plus delay. Insert it in Ready_At order.
 func virtual_submit(
 	state *Virtual_Timeline, completion *Completion, delay Duration, callback func(),
 ) {
 	virtual_arm(state, completion, callback)
-	completion.Ready_At = virtual_now(state) + Moment(delay)
+	completion.Ready_At = virtual_now(state) + Monotonic_Moment(delay)
 	virtual_enqueue(state, completion)
 }
 
-// Arms completion without placing it on the ready-time queue, for an event listener. It
-// asserts the completion is its own original, not a by-value copy, then moves it along the
-// lifecycle machine — a completion armed while armed panics on the armed-to-armed edge.
+// Arm completion, but never put it on ready-time queue. Event listener use this. Assert
+// completion is own original, not by-value copy. Then move it along lifecycle machine.
+// Completion armed while armed panic on armed-to-armed edge.
 func virtual_arm(state *Virtual_Timeline, completion *Completion, callback func()) {
 	original := completion.Self == nil || completion.Self == completion
 	invariant.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
 	completion.Self = completion
-	Completion_Transition(completion, COMPLETION_IDLE, COMPLETION_ARMED)
+	invariant.Always(!completion.Armed, "An armed completion is never armed a second time.")
+	completion.Armed = true
 	completion.Callback = callback
-	completion.Next_Tick = false
-	state.Operations[completion] = OPERATION_COMPLETED
 }
 
-// Places an already armed completion on the queue as due now.
+// Put already armed completion on queue as due now.
 func virtual_enqueue_now(state *Virtual_Timeline, completion *Completion) {
 	completion.Ready_At = virtual_now(state)
 	virtual_enqueue(state, completion)
 }
 
-// Inserts completion into the queue in Ready_At order, earliest first.
+// Insert completion into queue in Ready_At order, earliest first.
 func virtual_enqueue(state *Virtual_Timeline, completion *Completion) {
 	index := 0
 	for index < len(state.Queue) && state.Queue[index].Ready_At <= completion.Ready_At {
@@ -741,27 +558,7 @@ func virtual_enqueue(state *Virtual_Timeline, completion *Completion) {
 	state.Queue[index] = completion
 }
 
-// Removes every queued next-tick completion for source and retires it without delivery,
-// matching io/linux.zig:354-367 and io/darwin.zig:783-796.
-func virtual_reset_next_tick(state *Virtual_Timeline, source Next_Tick_Source) {
-	kept := state.Queue[:0]
-	for _, completion := range state.Queue {
-		if state.Operations[completion] != OPERATION_NEXT_TICK {
-			kept = append(kept, completion)
-			continue
-		}
-		if completion.Next_Tick_Source != source {
-			kept = append(kept, completion)
-			continue
-		}
-		delete(state.Operations, completion)
-		Completion_Transition(completion, COMPLETION_ARMED, COMPLETION_IDLE)
-	}
-	state.Queue = kept
-}
-
-// Fires the earliest completion if it is due as of now, reporting whether it did, mirroring
-// TigerBeetle's Storage.step.
+// Fire earliest completion when due as of now. Report whether it fire.
 func virtual_step(state *Virtual_Timeline) (advanced bool) {
 	if len(state.Queue) == 0 {
 		return false
@@ -771,60 +568,58 @@ func virtual_step(state *Virtual_Timeline) (advanced bool) {
 	}
 	completion := state.Queue[0]
 	state.Queue = state.Queue[1:]
-	delete(state.Operations, completion)
-	// Return to idle before the callback runs — TigerBeetle's ordering — so a callback may
-	// legally resubmit its own completion, the repeating-timer pattern.
-	Completion_Transition(completion, COMPLETION_ARMED, COMPLETION_IDLE)
+	// Go back to idle before callback run. Callback can then submit own completion again.
+	// Repeating-timer pattern.
+	invariant.Always(completion.Armed, "A delivered completion was armed.")
+	completion.Armed = false
 	completion.Callback()
 	return true
 }
 
-// Drains every completion due as of now, in Ready_At order. It never advances time —
-// advancing is the driver's job, so the queue itself stays passive.
+// Drain every completion due as of now, in Ready_At order. Never advance time. That is job of
+// driver, thus queue stay passive.
 func virtual_drain(state *Virtual_Timeline) {
 	for virtual_step(state) {
 	}
 }
 
-// The driver's step: drain what is due, then advance the clock one grain, mirroring
-// TigerBeetle's Storage.run.
+// Step of driver: drain what is due, then advance clock one grain.
 //
-// The driver advances one grain per tick and never jumps ahead to the next Ready_At, even
-// when the queue is idle until then. A jump would skip the grains where a time-triggered
-// fault adversary — crash or partition a quiescent node, the faults that matter most because
-// they strike while nothing is scheduled — would act.
+// Driver advance one grain per tick. Never jump ahead to next Ready_At, even when queue idle
+// until then. Jump would skip grains where time-triggered fault adversary act. Those faults
+// crash or partition quiet node. They matter most: they strike while nothing scheduled.
 func virtual_run(state *Virtual_Timeline) {
 	virtual_drain(state)
 	state.Ticks++
 }
 
-// Drives until the duration has elapsed, delivering completions as they come due.
+// Drive until duration elapse. Deliver completions as they come due.
 func virtual_run_for(state *Virtual_Timeline, duration Duration) {
-	deadline := virtual_now(state) + Moment(duration)
+	deadline := virtual_now(state) + Monotonic_Moment(duration)
 	for virtual_now(state) < deadline {
 		virtual_run(state)
 	}
 }
 
-// Drives until done reports true, or until timeout of virtual time has elapsed — the
-// run-until-complete pump, capped so a stalled operation cannot spin the loop forever.
+// Drive until done report true, or until timeout of virtual time elapse. Run-until-complete
+// pump. Cap stop stalled operation from spin without end. Negative timeout is that uncapped
+// pump, thus it panic. Never hand caller drive with no bound.
 func virtual_run_until(
 	state *Virtual_Timeline, done func() (finished bool), timeout Duration,
 ) (completed bool) {
-	deadline := virtual_now(state) + Moment(timeout)
+	invariant.Always(timeout >= 0, "A Run_Until timeout is never negative.")
+	deadline := virtual_now(state) + Monotonic_Moment(timeout)
 	for !done() {
-		if timeout >= 0 {
-			if virtual_now(state) >= deadline {
-				return false
-			}
+		if virtual_now(state) >= deadline {
+			return false
 		}
 		virtual_run(state)
 	}
 	return true
 }
 
-// Runs pump as the top-level drive, asserting no drive is already in progress, so a Run
-// called from within a completion callback panics instead of re-entering the driver.
+// Run pump as top-level drive. Assert no drive already in progress. Run called from inside
+// completion callback thus panic, never re-enter driver.
 func virtual_drive(state *Virtual_Timeline, pump func()) {
 	invariant.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
@@ -833,35 +628,7 @@ func virtual_drive(state *Virtual_Timeline, pump func()) {
 	pump()
 }
 
-// Samples every queue class without exposing loop state.
-func virtual_introspect(state *Virtual_Timeline) (counts Timeline_Counts) {
-	for _, operation := range state.Operations {
-		if operation == OPERATION_COMPLETED {
-			counts.Completed++
-		}
-		if operation == OPERATION_TIMEOUT {
-			counts.Timeouts++
-		}
-		if operation == OPERATION_READ_WAITER {
-			counts.IO_Backlog++
-		}
-		if operation == OPERATION_WRITE_WAITER {
-			counts.IO_Backlog++
-		}
-		if operation == OPERATION_SIGNAL {
-			counts.Signal_Waiters++
-		}
-		if operation == OPERATION_SPAWN {
-			counts.Spawns++
-		}
-	}
-	if state.Raw_Open != nil {
-		counts.Raw_Open = state.Raw_Open()
-	}
-	return counts
-}
-
-// Builds the driver over state — the advancing capability, held only by main or a test.
+// Build driver over state. Capability that advance time. Only main or test hold it.
 func virtual_timeline_to_driver(state *Virtual_Timeline) (driver Driver) {
 	return Driver{
 		Run: func() (err error) {
@@ -880,7 +647,6 @@ func virtual_timeline_to_driver(state *Virtual_Timeline) (driver Driver) {
 			})
 			return completed, nil
 		},
-		Deinit:     func() {},
-		Introspect: func() (counts Timeline_Counts) { return virtual_introspect(state) },
+		Deinit: func() {},
 	}
 }

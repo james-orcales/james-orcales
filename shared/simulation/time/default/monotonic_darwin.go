@@ -9,17 +9,17 @@ import "C"
 
 import "local/james-orcales/shared/simulation/time"
 
-// Returns the reader for mach_continuous_time — the monotonic clock that, unlike
-// mach_absolute_time, keeps counting across system suspend. The timebase converts mach
-// ticks to nanoseconds; mach_timebase_info is cached inside libc, so querying it per
-// call is cheap and avoids a forbidden package-level cache.
+// Return reader for mach_continuous_time. That is monotonic clock that keep counting across
+// system suspend. mach_absolute_time do not. Timebase turn mach ticks into nanoseconds. libc
+// cache mach_timebase_info, thus per-call query is cheap and need no package-level cache,
+// which is banned.
 //
-// The reading leaves through a closure, never through a function result, for the reason
-// csprng gives its raw entropy draw: a host counter holds whatever it holds at the
-// instant it is read, so it carries no domain a bundle could state and no bound a test
-// could put a value on. Only the caller-set values of the pure tier carry one.
-func new_monotonic_reader() (read func() (moment time.Moment)) {
-	return func() (moment time.Moment) {
+// Reading leave through closure, never through function result. Same reason csprng give raw
+// entropy draw that way: host counter hold whatever it hold at instant of read, thus carry no
+// domain bundle could state, and no bound test could put value on. Only caller-set values of
+// pure tier carry one.
+func new_monotonic_reader() (read func() (moment time.Monotonic_Moment)) {
+	return func() (moment time.Monotonic_Moment) {
 		var timebase C.mach_timebase_info_data_t
 		if C.mach_timebase_info(&timebase) != 0 {
 			panic("time: mach_timebase_info failed")
@@ -28,6 +28,7 @@ func new_monotonic_reader() (read func() (moment time.Moment)) {
 			panic("time: mach_timebase_info returned a zero denominator")
 		}
 		ticks := uint64(C.mach_continuous_time())
-		return time.Moment(ticks * uint64(timebase.numer) / uint64(timebase.denom))
+		return time.Monotonic_Moment(
+			ticks * uint64(timebase.numer) / uint64(timebase.denom))
 	}
 }

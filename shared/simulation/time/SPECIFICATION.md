@@ -1,63 +1,52 @@
 
 # Virtual Clock
 
-A virtual clock is deterministic and tick-driven, modeled on TigerBeetle's TimeSim:
-the clock is read-only and time advances only when the tick returned beside it is
-called, so a simulation reaches a future Moment by ticking rather than by waiting.
+Virtual clock is deterministic and tick-driven. Clock is read-only. Time advance only when
+tick returned beside it run. Simulation thus reach future Moment by tick, never by wait.
 
 ### Monotonic
 
-Now_Monotonic is exactly the tick count times the resolution and never regresses;
-Now_Realtime is the epoch plus that elapsed span when no skew is modeled.
+Now_Monotonic is exactly tick count times resolution. Never go backward. Now_Realtime is epoch
+plus that elapsed span, when no skew modeled.
 
 ### Skew
 
-A modeled skew bends Now_Realtime away from true elapsed time — linear drift, a
-periodic wobble, or a step jump — while leaving Now_Monotonic untouched.
+Modeled skew bend Now_Realtime away from true elapsed time: linear drift, periodic wobble, or
+step jump. Now_Monotonic stay untouched.
 
 # Timeline
 
-The timeline is the one queue every completion retires on, ordered by Ready_At. A backend
-fills the Timeline vtable and returns a Driver beside it, so one order holds every event.
-New_Virtual_Timeline builds the deterministic backend and never hands out its queue.
+Timeline is one queue every completion retire on, ordered by Ready_At. Backend fill Timeline
+vtable and return Driver beside it, thus one order hold every event. New_Virtual_Timeline build
+deterministic backend, never hand out its queue.
 
 ### Timeout
 
-A timeout fires exactly when the virtual clock reaches its deadline, off the same
-Ready_At queue the IO completions use, so every wait rides one timeline. The duration
-must be positive; a caller that needs a deferred callback uses Next_Tick.
-
-### Next Tick
-
-Next_Tick appends a deferred callback to the completed queue without submitting kernel IO.
-Reset_Next_Tick removes every queued next-tick completion for the selected source and returns
-those completions to idle without invoking their callbacks.
+Timeout fire exactly when virtual clock reach its deadline. Off same Ready_At queue IO
+completions use, thus every wait ride one timeline. Duration must be positive.
 
 ### Event
 
-Open_Event creates the TigerBeetle cross-thread event primitive. Event_Listen arms one
-completion, Event_Trigger makes that completion ready, and Close_Event releases the event only
-after its listener has drained.
+Open_Event make cross-thread event primitive. Event_Listen arm one completion. Event_Trigger
+make that completion ready. Close_Event release event only after its listener drain.
 
 ### Run Until
 
-Run_Until drives the loop until its predicate reports true, delivering completions each
-step, so a straight-line caller can wait for its own operation inline.
+Run_Until drive loop until its predicate report true. Deliver completions each step, thus
+straight-line caller wait for own operation inline.
 
 ### Reuse
 
-Submitting a completion that is still armed panics as an illegal lifecycle transition:
-only an idle completion may be armed. Delivery returns it to idle before the callback
-runs, so reuse after — or from within — the callback is legal.
+Submit of completion still armed panic as illegal lifecycle transition. Only idle completion
+can be armed. Delivery return it to idle before callback run, thus reuse after callback, or
+from inside callback, is legal.
 
 ### Copy
 
-Submitting a by-value copy of a completion panics: the loop tracks a completion by its own
-address, so a copy carries the original's identity and fails loudly rather than splitting
-the loop's view from the caller's.
+Submit of by-value copy panic. Loop track completion by own address, thus copy carry identity
+of original. Fail loud, never split view of loop from view of caller.
 
 ### Reentrancy
 
-Driving the loop from within a completion callback panics: Run, Run_For, and Run_Until are
-top-level only, so a re-entrant drive fails loudly rather than corrupting the queue
-mid-drain.
+Drive of loop from inside completion callback panic. Run, Run_For, Run_Until are top-level
+only. Re-entrant drive thus fail loud, never corrupt queue mid-drain.

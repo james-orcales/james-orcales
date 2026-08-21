@@ -1,6 +1,5 @@
-// Package time is the composition tier: the operating-system-backed clock, the Go
-// translation of TigerBeetle's TimeOS. It declares package time so callers import
-// ".../time/default" and read it as the library with no alias.
+// Package time is composition tier: operating-system-backed clock. Declare package time, thus
+// caller import ".../time/default" and read it as library with no alias.
 package time
 
 import (
@@ -10,32 +9,30 @@ import (
 	"local/james-orcales/shared/simulation/time"
 )
 
-// New_Operating_System_Any_Clock returns a read-only Any_Clock backed by the host operating
-// system — TigerBeetle's TimeOS — plus the driver's tick. Now_Monotonic reads the OS
-// monotonic clock behind a guard that panics on regression; Now_Realtime reads the wall
-// clock. The OS clock advances on its own, so tick is a no-op. Every host reading stays
-// inside a closure and crosses no function of this package, because a value the machine
-// supplies carries no domain a bundle could state.
-func New_Operating_System_Any_Clock() (host time.Any_Clock, tick func()) {
-	defer func() { time.Any_Clock_Invariants(host, "new_operating_system_clock.host") }()
+// New_Operating_System_Clock return read-only Clock backed by host operating system.
+// Now_Monotonic read OS monotonic clock behind guard that panic when clock go backward.
+// Now_Realtime read wall clock. Host clock advance on its own, thus constructor hand back no
+// tick: only virtual clock need one. Every host reading stay inside closure, cross no function
+// of this package: value machine supply carry no domain bundle could state.
+func New_Operating_System_Clock() (host time.Clock) {
+	defer func() { time.Clock_Invariants(host, "new_operating_system_clock.host") }()
 	read := new_monotonic_reader()
-	// The guard holds the highest monotonic read handed out, so a real regression is caught
-	// even when the IO backend's off-loop goroutines read the clock alongside the loop.
+	// Guard hold highest monotonic read handed out. Real backward step thus caught, even when
+	// off-loop goroutines of IO backend read clock beside loop.
 	guard := &atomic.Int64{}
-	host = time.Any_Clock{
-		// Panics if the monotonic clock genuinely ran backwards, staying correct when
-		// several goroutines read at once (the IO backend times a spawn off the loop
-		// thread). A read below the guard is either a reorder (a concurrent reader recorded
-		// a later time) or a real regression; the re-read tells them apart. Because the
-		// re-read happens after this goroutine observed previous, it is causally after the
-		// read that set previous, so on a healthy clock it returns at least previous — only
-		// a clock that is truly behind stays below it. A false ordering from a racing store
-		// resolves itself; a regressing clock does not.
-		Now_Monotonic: func() (moment time.Moment) {
+	host = time.Clock{
+		// Panic when monotonic clock truly go backward. Stay correct when many goroutines
+		// read at once (IO backend time spawn off loop thread). Read below guard is either
+		// reorder, or real backward step. Reorder mean concurrent reader record later time.
+		// Re-read tell two apart. Re-read happen after this goroutine see previous, thus it
+		// is causally after read that set previous. Healthy clock thus return at least
+		// previous. Only clock truly behind stay below it. False order from racing store
+		// fix itself. Clock that go backward do not.
+		Now_Monotonic: func() (moment time.Monotonic_Moment) {
 			raw := read()
-			previous := time.Moment(guard.Load())
+			previous := time.Monotonic_Moment(guard.Load())
 			for raw >= previous && !guard.CompareAndSwap(int64(previous), int64(raw)) {
-				previous = time.Moment(guard.Load())
+				previous = time.Monotonic_Moment(guard.Load())
 			}
 			if raw < previous {
 				if read() < previous {
@@ -49,25 +46,5 @@ func New_Operating_System_Any_Clock() (host time.Any_Clock, tick func()) {
 			return time.Moment(wallclock.Now().UnixNano())
 		},
 	}
-	return host, func() {}
-}
-
-// New_Sleep returns the host sleeper: a closure that parks the calling goroutine for a
-// span of the wall clock. It is the real counterpart of a virtual clock's tick, held by
-// the composition root and injected into code that must wait (a diode drain, say) so
-// the pure tier still touches no wall clock.
-//
-// !!! THIS IS A STOPGAP. THE WAIT BELONGS IN io.IO.Timeout. !!!
-//
-// A goroutine parked in wallclock.Sleep is a thread the completion loop cannot drive,
-// cannot cancel, and cannot advance against a simulated timeline, so every seed that
-// reaches this call stops reproducing. That is also why the span carries no assertion:
-// its domain runs to the largest int64, and a test that put a value on that bound would
-// have to wait out the sleep it names. io.IO.Timeout submits the wait as an operation
-// the loop owns, where the simulator supplies the bound instead of the wall clock.
-// Delete this constructor the moment the drain takes an io.IO.
-func New_Sleep() (sleep func(duration time.Duration)) {
-	return func(duration time.Duration) {
-		wallclock.Sleep(wallclock.Duration(int64(duration)))
-	}
+	return host
 }

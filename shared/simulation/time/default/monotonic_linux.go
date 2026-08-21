@@ -9,24 +9,23 @@ import (
 	"local/james-orcales/shared/simulation/time"
 )
 
-// CLOCK_BOOTTIME differs from CLOCK_MONOTONIC by counting time spent in system
-// suspend (a VM migration or a laptop sleep), which is what a monotonic clock
-// measuring real elapsed time must do.
+// CLOCK_BOOTTIME differ from CLOCK_MONOTONIC: it count time spent in system suspend (VM
+// migration, or laptop sleep). Monotonic clock that measure real elapsed time must do that.
 const CLOCK_BOOTTIME = 7
 
-// Converts the timespec seconds field to nanoseconds.
+// Turn timespec seconds field into nanoseconds.
 const NANOSECONDS_PER_SECOND = 1_000_000_000
 
-// Returns the reader for CLOCK_BOOTTIME. The Go syscall package ships no ClockGettime
-// wrapper, so the raw clock_gettime syscall is issued directly — x/sys/unix would add a
-// dependency this module does not carry.
+// Return reader for CLOCK_BOOTTIME. Go syscall package ship no ClockGettime wrapper, thus
+// raw clock_gettime syscall go direct. x/sys/unix would add dependency this module do not
+// carry.
 //
-// The reading leaves through a closure, never through a function result, for the reason
-// csprng gives its raw entropy draw: a host counter holds whatever it holds at the
-// instant it is read, so it carries no domain a bundle could state and no bound a test
-// could put a value on. Only the caller-set values of the pure tier carry one.
-func new_monotonic_reader() (read func() (moment time.Moment)) {
-	return func() (moment time.Moment) {
+// Reading leave through closure, never through function result. Same reason csprng give raw
+// entropy draw that way: host counter hold whatever it hold at instant of read, thus carry no
+// domain bundle could state, and no bound test could put value on. Only caller-set values of
+// pure tier carry one.
+func new_monotonic_reader() (read func() (moment time.Monotonic_Moment)) {
+	return func() (moment time.Monotonic_Moment) {
 		var timestamp syscall.Timespec
 		pointer := uintptr(unsafe.Pointer(&timestamp))
 		_, _, errno := syscall.Syscall(
@@ -36,6 +35,6 @@ func new_monotonic_reader() (read func() (moment time.Moment)) {
 			panic("time: CLOCK_BOOTTIME is required but clock_gettime failed")
 		}
 		seconds := int64(timestamp.Sec) * NANOSECONDS_PER_SECOND
-		return time.Moment(seconds + int64(timestamp.Nsec))
+		return time.Monotonic_Moment(seconds + int64(timestamp.Nsec))
 	}
 }

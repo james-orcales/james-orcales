@@ -4,11 +4,11 @@ package time
 
 import "local/james-orcales/shared/simulation/time"
 
-// Panics: the system clock is not yet supported on Windows. The faithful backend
-// is QueryPerformanceCounter (it counts across suspend); this stub keeps the
-// package building on Windows until that lands.
-func new_monotonic_reader() (read func() (moment time.Moment)) {
-	return func() (moment time.Moment) {
+// Panic: system clock not yet supported on Windows. Faithful backend is
+// QueryPerformanceCounter, which count across suspend. This stub keep package building on
+// Windows until that land.
+func new_monotonic_reader() (read func() (moment time.Monotonic_Moment)) {
+	return func() (moment time.Monotonic_Moment) {
 		panic("time: the system clock is not yet supported on Windows")
 	}
 }
