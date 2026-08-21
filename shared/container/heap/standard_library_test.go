@@ -170,7 +170,7 @@ func Test_Standard_Library_Fix(t *testing.T) {
 	verify_heap(t, elements)
 	generator := prng.New(1)
 	for round := 100; round > 0; round-- {
-		changed_index := prng.Generator_Below(&generator, len(elements))
+		changed_index := prng.Generator_Below(&generator, prng.Bound(len(elements)))
 		if round%2 == 0 {
 			elements[changed_index] *= 2
 		} else {
