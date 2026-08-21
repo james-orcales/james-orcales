@@ -366,6 +366,12 @@ func test_buffer_writes(t *testing.T) {
 	if string(bytes.Buffer_Bytes(&buffer)) != "ab" {
 		t.Fatal("Buffer_Truncate retained wrong prefix")
 	}
+	bytes.Buffer_Init(&buffer, storage[:4:4], []byte("abc"))
+	bytes.Buffer_Next(&buffer, 2)
+	bytes.Buffer_Grow(&buffer, 2)
+	if string(bytes.Buffer_Bytes(&buffer)) != "c" {
+		t.Fatal("Buffer_Grow changed unread content during compaction")
+	}
 }
 
 const TEST_STORAGE_COUNT = 64

@@ -396,22 +396,9 @@ type Buffer_Handle *Buffer
 
 // Buffer_Handle_Invariants composes the buffer behind a required handle.
 func Buffer_Handle_Invariants(value Buffer_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Byte Buffer handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Content), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
-		Range_Int(int(value.Position), SLICE_SIZE_MINIMUM, BOUNDARY_INDEX_MAXIMUM).
-		Range_Int8(
-			int8(value.Operation), READ_OPERATION_MINIMUM, READ_OPERATION_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		int(value.Position) <= len(value.Content),
-		"Buffer handle position does not exceed content size.",
-	)
-	aver.Always(
-		cap(value.Content) <= SLICE_SIZE_MAXIMUM,
-		"Buffer handle capacity does not exceed Slice limit.",
-	)
+	if value == nil {
+		return
+	}
 	Buffer_Invariants(*value, namespace)
 }
 
@@ -441,18 +428,9 @@ type Reader_Handle *Reader
 
 // Reader_Handle_Invariants composes the reader behind a required handle.
 func Reader_Handle_Invariants(value Reader_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Byte Reader handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
-		Range_Int64(
-			int64(value.Position), READER_POSITION_MINIMUM, READER_POSITION_MAXIMUM,
-		).
-		Range_Int(int(value.Previous), INDEX_ABSENT, INDEX_MAXIMUM).
-		Ensure()
-	aver.Always(
-		int(value.Position) <= len(value.Source),
-		"Reader handle position does not exceed source size.",
-	)
+	if value == nil {
+		return
+	}
 	Reader_Invariants(*value, namespace)
 }
 
@@ -551,9 +529,7 @@ func Buffer_Truncate(buffer Buffer_Handle, size Boundary) {
 		return
 	}
 	buffer.Operation = READ_OPERATION_ABSENT
-	if size > Buffer_Size(buffer) {
-		panic("bytes: truncation out of range")
-	}
+	aver.Always(size <= Buffer_Size(buffer), "bytes: truncation out of range")
 	buffer.Content = buffer.Content[:buffer.Position+size]
 }
 
@@ -664,9 +640,7 @@ func Buffer_Read_Byte(buffer Buffer_Handle) (value Byte, found Boolean) {
 // Buffer_Unread_Byte moves before the last byte from a successful read.
 func Buffer_Unread_Byte(buffer Buffer_Handle) {
 	Buffer_Handle_Invariants(buffer, "buffer_unread_byte.buffer")
-	if buffer.Operation == READ_OPERATION_ABSENT {
-		panic("bytes: no byte to unread")
-	}
+	aver.Always(buffer.Operation != READ_OPERATION_ABSENT, "bytes: no byte to unread")
 	buffer.Operation = READ_OPERATION_ABSENT
 	if buffer.Position > 0 {
 		buffer.Position--
@@ -739,13 +713,12 @@ func Reader_Read_At_Into(
 	Reader_Handle_Invariants(reader, "reader_read_at.reader")
 	Slice_Invariants(destination, "reader_read_at.destination")
 	Reader_Offset_Invariants(offset, "reader_read_at.offset")
-	if offset < 0 {
-		panic("bytes: invalid Reader offset")
-	}
+	aver.Always(offset >= 0, "Reader read offset is not before source.")
 	position := Reader_Position(offset)
-	if position > Reader_Position(len(reader.Source)) {
-		panic("bytes: invalid Reader offset")
-	}
+	aver.Always(
+		position <= Reader_Position(len(reader.Source)),
+		"Reader read offset does not exceed source size.",
+	)
 	if position == Reader_Position(len(reader.Source)) {
 		return 0
 	}
@@ -771,9 +744,7 @@ func Reader_Read_Byte(reader Reader_Handle) (value Byte, found Boolean) {
 // Reader_Unread_Byte moves Reader back by one byte.
 func Reader_Unread_Byte(reader Reader_Handle) {
 	Reader_Handle_Invariants(reader, "reader_unread_byte.reader")
-	if reader.Position <= 0 {
-		panic("bytes: no Reader byte to unread")
-	}
+	aver.Always(reader.Position > 0, "bytes: no Reader byte to unread")
 	reader.Previous = INDEX_ABSENT
 	reader.Position--
 }
@@ -795,12 +766,11 @@ func Reader_Seek(
 	} else if origin == SEEK_FROM_END {
 		target = int64(len(reader.Source)) + int64(offset)
 	}
-	if target < 0 {
-		panic("bytes: invalid Reader offset")
-	}
-	if target > int64(len(reader.Source)) {
-		panic("bytes: invalid Reader offset")
-	}
+	aver.Always(target >= 0, "Reader seek target is not before source.")
+	aver.Always(
+		target <= int64(len(reader.Source)),
+		"Reader seek target does not exceed source size.",
+	)
 	position = Reader_Position(target)
 	reader.Position = position
 	return position
@@ -819,22 +789,23 @@ func buffer_reserve(buffer Buffer_Handle, count Growth_Count) {
 	Buffer_Handle_Invariants(buffer, "buffer_grow.buffer")
 	Growth_Count_Invariants(count, "buffer_grow.count")
 	unread_size := int(Buffer_Size(buffer))
-	if int(count) > SLICE_SIZE_MAXIMUM-unread_size {
-		panic("bytes: result too large")
-	}
+	aver.Always(
+		int(count) <= SLICE_SIZE_MAXIMUM-unread_size,
+		"Buffer growth result does not exceed Slice limit.",
+	)
 	if unread_size == 0 {
 		Buffer_Reset(buffer)
 	}
 	if int(count) <= cap(buffer.Content)-len(buffer.Content) {
 		return
 	}
-	if unread_size+int(count) <= cap(buffer.Content) {
-		copy(buffer.Content, buffer.Content[buffer.Position:])
-		buffer.Position = 0
-		buffer.Content = buffer.Content[:unread_size]
-		return
-	}
-	panic("bytes: destination too small")
+	aver.Always(
+		unread_size+int(count) <= cap(buffer.Content),
+		"Buffer storage holds growth result.",
+	)
+	copy(buffer.Content, buffer.Content[buffer.Position:])
+	buffer.Position = 0
+	buffer.Content = buffer.Content[:unread_size]
 }
 
 // Equal reports whether two Slices have the same bytes. Nil and empty are equal.
@@ -1023,16 +994,18 @@ func split_into(
 		if after {
 			end += len(separator)
 		}
-		if int(count) == len(destination) {
-			panic("bytes: destination too small")
-		}
+		aver.Always(
+			int(count) != len(destination),
+			"Split destination has next separator result slot.",
+		)
 		destination[int(count)] = tail[:end:end]
 		count++
 		tail = tail[int(separator_index)+len(separator):]
 	}
-	if int(count) == len(destination) {
-		panic("bytes: destination too small")
-	}
+	aver.Always(
+		int(count) != len(destination),
+		"Split destination has final result slot.",
+	)
 	destination[int(count)] = tail
 	return count + 1
 }
@@ -1057,9 +1030,10 @@ func split_empty_into(
 				break
 			}
 		}
-		if int(count) == len(destination) {
-			panic("bytes: destination too small")
-		}
+		aver.Always(
+			int(count) != len(destination),
+			"Empty-separator split destination has next byte result slot.",
+		)
 		destination[int(count)] = tail[:1:1]
 		count++
 		tail = tail[1:]
@@ -1067,9 +1041,10 @@ func split_empty_into(
 	if len(tail) == 0 {
 		return count
 	}
-	if int(count) == len(destination) {
-		panic("bytes: destination too small")
-	}
+	aver.Always(
+		int(count) != len(destination),
+		"Empty-separator split destination has final result slot.",
+	)
 	destination[int(count)] = tail
 	return count + 1
 }
@@ -1085,17 +1060,19 @@ func Join_Into(
 	result_size := 0
 	for _, part := range parts {
 		Slice_Invariants(part, "join_into.part")
-		if len(part) > SLICE_SIZE_MAXIMUM-result_size {
-			panic("bytes: result too large")
-		}
+		aver.Always(
+			len(part) <= SLICE_SIZE_MAXIMUM-result_size,
+			"Join part total does not exceed Slice limit.",
+		)
 		result_size += len(part)
 	}
 	if len(parts) > 1 {
 		if len(separator) > 0 {
 			separator_count := len(parts) - 1
-			if separator_count > (SLICE_SIZE_MAXIMUM-result_size)/len(separator) {
-				panic("bytes: result too large")
-			}
+			aver.Always(
+				separator_count <= (SLICE_SIZE_MAXIMUM-result_size)/len(separator),
+				"Join separator total does not exceed Slice limit.",
+			)
 			result_size += len(separator) * separator_count
 		}
 	}
@@ -1171,12 +1148,14 @@ func Repeat_Into(
 	Slice_Invariants(source, "repeat_into.source")
 	Repeat_Count_Invariants(count, "repeat_into.count")
 	if len(source) > 0 {
-		if int(count) > SLICE_SIZE_MAXIMUM/len(source) {
-			panic("bytes: result too large")
-		}
-		if int(count) > len(destination)/len(source) {
-			panic("bytes: destination too small")
-		}
+		aver.Always(
+			int(count) <= SLICE_SIZE_MAXIMUM/len(source),
+			"Repeat result does not exceed Slice limit.",
+		)
+		aver.Always(
+			int(count) <= len(destination)/len(source),
+			"Repeat destination holds complete result.",
+		)
 	}
 	written := len(source) * int(count)
 	if written == 0 {
@@ -1253,21 +1232,24 @@ func Replace_Into(
 		} else {
 			prefix_count = int(Index(source[source_count:], old))
 		}
-		if prefix_count > len(destination)-written {
-			panic("bytes: destination too small")
-		}
+		aver.Always(
+			prefix_count <= len(destination)-written,
+			"Replace destination holds source prefix.",
+		)
 		boundary_count := source_count + prefix_count
 		written += copy(destination[written:], source[source_count:boundary_count])
-		if len(replacement) > len(destination)-written {
-			panic("bytes: destination too small")
-		}
+		aver.Always(
+			len(replacement) <= len(destination)-written,
+			"Replace destination holds replacement.",
+		)
 		written += copy(destination[written:], replacement)
 		source_count = boundary_count + len(old)
 		replacement_index++
 	}
-	if len(source)-source_count > len(destination)-written {
-		panic("bytes: destination too small")
-	}
+	aver.Always(
+		len(source)-source_count <= len(destination)-written,
+		"Replace destination holds source suffix.",
+	)
 	written += copy(destination[written:], source[source_count:])
 	return Boundary(written)
 }
