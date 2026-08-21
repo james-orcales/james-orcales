@@ -9,7 +9,7 @@ import (
 	"syscall"
 
 	"local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/path"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -123,8 +123,8 @@ type Kernel_Timespec struct {
 	Nanoseconds int64
 }
 
-// Linux accepts the larger supported path bound; Darwin rejects its smaller platform excess.
-const OPERATING_SYSTEM_PATH_BYTES_MAXIMUM = 4 * bits.KIBIBYTE_BYTES
+// Kernel path buffer includes terminating NUL excluded from caller pathname bound.
+const OPERATING_SYSTEM_PATH_BYTES_MAXIMUM = path.PATH_SIZE_MAXIMUM + path.PATH_TERMINATOR_BYTES
 
 // Operating system operation is Go counterpart of one in-flight kernel operation.
 // Identifier is written to kernel user_data instead of Go pointer: registry own operation until

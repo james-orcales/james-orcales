@@ -3,11 +3,11 @@
 package nbio
 
 import (
-	"encoding/binary"
 	"path/filepath"
 	"syscall"
 	"unsafe"
 
+	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
@@ -24,13 +24,8 @@ const PROCESS_REAP_RETRIES_MAX = 16
 // EXECUTABLE_SEARCH_TEXT_BYTES_MAXIMUM bounds the environment text one spawn scans.
 const EXECUTABLE_SEARCH_TEXT_BYTES_MAXIMUM = 4 * bits.KIBIBYTE_BYTES
 
-// Bound one readdir pass into fixed buffer, thus large directory is read in repeated passes,
-// not one unbounded allocation.
-const DIRECTORY_READ_BYTES = 8192
-
-// Cap number of readdir passes, thus pathological directory error, not loop unbounded. 4096
-// passes of directory_read_bytes cover hundreds of thousands of entries.
-const DIRECTORY_READ_PASSES_MAX = 4096
+// DIRECTORY_RECORD_SIZE_MINIMUM is shortest record on both supported 64-bit Unix ABIs.
+const DIRECTORY_RECORD_SIZE_MINIMUM = 3 * bits.BIT_COUNT_8_MAXIMUM
 
 // Read up to len(buffer) bytes from file at offset through pread syscall — raw positioned read.
 func read_at(file nbio.File, buffer []byte, offset int64) (count int, err error) {
@@ -47,16 +42,22 @@ func file_open(path string) (descriptor int, err error) {
 	return syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
 }
 
+// FILE_PERMISSIONS is what a made file take: readable by all, writable by owner. Kernel may
+// still reduce it through process umask.
+const FILE_PERMISSIONS nbio.File_Permissions = 0o644
+
 // Make or truncate path for write through open syscall. Return its descriptor.
 func file_create(path string) (descriptor int, err error) {
 	return syscall.Open(
-		path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC|syscall.O_CLOEXEC, 0o644,
+		path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC|syscall.O_CLOEXEC,
+		uint32(nbio.File_Permissions_To_POSIX(FILE_PERMISSIONS)),
 	)
 }
 
-// Report whether path exist, whether it is directory, and its byte size, through lstat. Absent
-// path is Exists false with nil error, thus caller tell "not there" apart from real stat
-// failure.
+// Report whether path exist, its portable mode, and its byte size, through lstat. Absent path is
+// Exists false with nil error, thus caller tell "not there" apart from real stat failure. Whole
+// kernel mode word is decoded, not three booleans: discarding permissions here is what left
+// callers with no portable metadata to forward.
 func file_status(path string) (status nbio.File_Status, err error) {
 	metadata, stat_err := file_metadata_at(platform_current_directory(), path)
 	if stat_err == syscall.ENOENT {
@@ -66,11 +67,9 @@ func file_status(path string) (status nbio.File_Status, err error) {
 		return nbio.File_Status{}, stat_err
 	}
 	return nbio.File_Status{
-		Exists:           true,
-		Is_Directory:     metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
-		Is_Regular:       metadata.Mode&syscall.S_IFMT == syscall.S_IFREG,
-		Is_Symbolic_Link: metadata.Mode&syscall.S_IFMT == syscall.S_IFLNK,
-		Size:             metadata.Size,
+		Exists: true,
+		Mode:   nbio.File_Mode(nbio.File_Mode_From_POSIX(uint16(metadata.Mode))),
+		Size:   metadata.Size,
 	}, nil
 }
 
@@ -94,8 +93,9 @@ func file_read_link(path string, destination []byte) (count int, err error) {
 	return int(read_count), nil
 }
 
-// Mode a made directory take: readable and traversable by all, writable by owner.
-const DIRECTORY_MODE = 0o755
+// DIRECTORY_PERMISSIONS is what a made directory take: readable and traversable by all, writable
+// by owner. Kernel may still reduce it through process umask.
+const DIRECTORY_PERMISSIONS nbio.File_Permissions = 0o755
 
 // Make path and every missing parent. Each component is made in turn, and existing directory
 // converge, not fail, thus repeated call is not error. Walk is bounded by path length, and
@@ -111,7 +111,9 @@ func directory_make(path string) (err error) {
 				continue
 			}
 		}
-		mkdir_err := syscall.Mkdir(path[:index], DIRECTORY_MODE)
+		mkdir_err := syscall.Mkdir(
+			path[:index], uint32(nbio.File_Permissions_To_POSIX(DIRECTORY_PERMISSIONS)),
+		)
 		if mkdir_err == nil {
 			continue
 		}
@@ -123,7 +125,7 @@ func directory_make(path string) (err error) {
 	if status_err != nil {
 		return status_err
 	}
-	if !status.Is_Directory {
+	if !nbio.File_Mode_Is_Directory(status.Mode) {
 		return syscall.ENOTDIR
 	}
 	return nil
@@ -136,6 +138,10 @@ func directory_make(path string) (err error) {
 func file_directory_pass(
 	descriptor int, buffer []byte, entries []nbio.Directory_Entry,
 ) (entry_count int, err error) {
+	buffer_size_maximum := len(entries) * DIRECTORY_RECORD_SIZE_MINIMUM
+	if len(buffer) > buffer_size_maximum {
+		buffer = buffer[:buffer_size_maximum]
+	}
 	count, read_err := platform_directory_read(descriptor, buffer)
 	if read_err != nil {
 		return 0, read_err
@@ -444,13 +450,17 @@ func socket_address_encode(
 	}
 	if address.Family == nbio.FAMILY_IPV4 {
 		platform_address_header(storage, syscall.AF_INET, SOCKET_ADDRESS_IPV4_BYTES)
-		binary.BigEndian.PutUint16(storage[2:4], address.Port)
+		binary.Put_Uint_16(
+			binary.Bytes(storage[2:4]), binary.Word_16(address.Port), binary.BIG_ENDIAN,
+		)
 		copy(storage[4:8], address.IP[:nbio.IPV4_ADDRESS_BYTES])
 		return SOCKET_ADDRESS_IPV4_BYTES, nil
 	}
 	if address.Family == nbio.FAMILY_IPV6 {
 		platform_address_header(storage, syscall.AF_INET6, SOCKET_ADDRESS_IPV6_BYTES)
-		binary.BigEndian.PutUint16(storage[2:4], address.Port)
+		binary.Put_Uint_16(
+			binary.Bytes(storage[2:4]), binary.Word_16(address.Port), binary.BIG_ENDIAN,
+		)
 		copy(storage[8:24], address.IP[:])
 		return SOCKET_ADDRESS_IPV6_BYTES, nil
 	}
@@ -463,7 +473,7 @@ func socket_address_decode(
 	storage *[SOCKET_ADDRESS_BYTES]byte, size uint32,
 ) (address nbio.Address, err error) {
 	family := platform_address_family(storage)
-	port := binary.BigEndian.Uint16(storage[2:4])
+	port := uint16(binary.Uint_16(binary.Bytes(storage[2:4]), binary.BIG_ENDIAN))
 	if family == syscall.AF_INET {
 		if size < SOCKET_ADDRESS_IPV4_BYTES {
 			return nbio.Address{}, syscall.EINVAL

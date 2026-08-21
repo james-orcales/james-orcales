@@ -91,9 +91,9 @@ completion. Unknown descriptor yield empty address.
 
 ### Status
 
-Status reports path kind and size synchronously without following a final symbolic link.
-Absent path reports not-exists with nil error. Read_Link writes target into caller storage.
-Read_Link rejects other kinds with Not_Symbolic_Link.
+Status reports path kind and size without following final symbolic link. Absent path is not-exists.
+Read_Link writes target and rejects other kinds with Not_Symbolic_Link. Directory pass accepts
+1 byte through Go Unix 8 KiB block budget and positive bounded entry storage.
 
 ### Watch Signal
 
@@ -111,6 +111,35 @@ pipe cleanup to one second, and returns partial output; simulator captures none.
 
 Deinit assert every descriptor run open is closed. Run that still hold one panic. Surface own
 leak check, thus caller need no census.
+
+# File Mode
+
+File_Mode is portable permission and entry-kind metadata. Layout follows Go io/fs.FileMode.
+Platform mode words never leave a backend raw; each one decodes into this domain.
+
+### Portable
+
+File_Mode_From_POSIX and File_Mode_To_POSIX convert one 16-bit platform word both ways, and Linux
+and Darwin share the one decoder. Every representable kind round trips. An unsupported kind nibble
+decodes to no kind bit, and a mode naming no kind encodes as regular.
+
+### Permissions
+
+File_Permissions is creation operand Open_At and Mkdir_At take: permission, setuid, setgid, and
+sticky bits, never a kind bit. Storage_Open_At and Storage_Mkdir_At reject a kind bit before
+submit, and File_Permissions_To_POSIX emits no kind nibble.
+
+### Status
+
+Status report one File_Mode and never follow final symbolic link. Absent path report zero status,
+mode included, thus Exists is only guard caller may branch on. Simulated creation store stated
+permissions less SIM_UMASK; real kernel apply its own process umask.
+
+### Symbolic Link
+
+Seeded generation make symbolic link pointing at earlier sibling, drawn from own stream.
+Read_Link return target, and report Not_Symbolic_Link for another kind. Resolution follow link in
+earlier component, bound hops, and OPEN_AT_NO_FOLLOW report Symbolic_Link_Not_Followed.
 
 # Address
 

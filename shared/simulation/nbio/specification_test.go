@@ -114,7 +114,8 @@ func Test_Sim_Open_At(t *testing.T) {
 	var completion time.Completion
 	nbio.Storage_Open_At(loop.Storage, &completion, nbio.DIRECTORY_CURRENT, "file",
 		nbio.Open_At_Options{
-			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true,
+			Permissions: 0o600,
 		}, func(completed *time.Completion) {
 			testify.No_Error(t, completed.Error)
 			opened = nbio.File(completed.Data)
@@ -449,8 +450,11 @@ func Test_Sim_Status(t *testing.T) {
 	time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return written })
 	directory, _ := nbio.Storage_Status(loop.Storage, "/dir")
 	testify.True(t, directory.Exists)
-	testify.True(t, directory.Is_Directory)
-	testify.False(t, directory.Is_Regular)
+	testify.True(t, nbio.File_Mode_Is_Directory(directory.Mode))
+	testify.False(t, nbio.File_Mode_Is_Regular(directory.Mode))
+	// Stated 0o755 minus the modeled umask, thus Status reports stored mode, not requested one.
+	testify.Equal(t,
+		nbio.File_Mode(0o755&^nbio.SIM_UMASK), directory.Mode&nbio.FILE_MODE_PERMISSIONS)
 	testify.Zero(t, directory.Size)
 	sim_status_regular(t, loop, content)
 	var link_target [nbio.SIM_PATH_TEXT_BYTES_MAXIMUM]byte
@@ -533,6 +537,101 @@ func Test_Sim_Deinit(t *testing.T) {
 	testify.True(t, sim_descriptor_open(loop))
 	sim_close(t, loop, driver, file)
 	nbio.IO_Deinit(loop)
+}
+
+// Test_File_Mode_Portable verify platform-word conversion round trip every representable kind
+// across every non-kind bit, and verify unsupported kind nibble decode to no kind at all.
+func Test_File_Mode_Portable(t *testing.T) {
+	for _, kind := range posix_file_mode_kinds() {
+		for high := uint16(0); high <= POSIX_FILE_MODE_HIGH_MAXIMUM; high++ {
+			raw := kind | high
+			decoded := nbio.File_Mode(nbio.File_Mode_From_POSIX(raw))
+			if !testify.Equal(t, raw, nbio.File_Mode_To_POSIX(decoded)) {
+				return
+			}
+		}
+	}
+	// Kind nibble outside the supported set carries no kind through, thus a hostile stat word
+	// cannot smuggle one in, and re-encoding names a regular file.
+	unsupported := nbio.File_Mode(nbio.File_Mode_From_POSIX(
+		3<<nbio.POSIX_FILE_TYPE_SHIFT | 0o644,
+	))
+	testify.True(t, nbio.File_Mode_Is_Regular(unsupported))
+	testify.Equal(t, nbio.POSIX_FILE_MODE_REGULAR|0o644,
+		nbio.File_Mode_To_POSIX(unsupported))
+	// Every portable bit at once names no single kind, thus encode falls back to regular while
+	// keeping each permission bit the platform word can hold.
+	testify.Equal(t, nbio.POSIX_FILE_MODE_REGULAR|POSIX_FILE_MODE_HIGH_MAXIMUM,
+		nbio.File_Mode_To_POSIX(nbio.FILE_MODE_VALID))
+}
+
+// Test_File_Mode_Permissions verify creation operand carry no kind nibble, and verify open and
+// directory make accept every value of the permission domain and store it less the umask.
+func Test_File_Mode_Permissions(t *testing.T) {
+	// Encoded operand must never name a kind: openat and mkdirat derive kind themselves.
+	for _, permissions := range file_permissions_domain() {
+		raw := nbio.File_Permissions_To_POSIX(permissions)
+		testify.Zero(t, raw&nbio.POSIX_FILE_TYPE_MASK)
+	}
+	loop, driver, _ := sim_loop(0)
+	for index, permissions := range file_permissions_domain() {
+		path := "/permission" + string(rune('0'+index))
+		file, create_err := sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
+			Access: nbio.OPEN_WRITE_ONLY, Create: true, Permissions: permissions,
+		})
+		if !testify.No_Error(t, create_err) {
+			return
+		}
+		sim_close(t, loop, driver, file)
+		status, _ := nbio.Storage_Status(loop.Storage, path)
+		testify.True(t, status.Exists)
+		testify.True(t, nbio.File_Mode_Is_Regular(status.Mode))
+		testify.Equal(t, nbio.File_Mode(permissions&^nbio.SIM_UMASK), status.Mode)
+	}
+	sim_mkdir_permissions(t, loop, driver)
+	nbio.IO_Deinit(loop)
+}
+
+// Test_File_Mode_Status verify Status report stored mode for every seed, and report absent path
+// as the zero status rather than a kind a caller could read out of a zero mode.
+func Test_File_Mode_Status(t *testing.T) {
+	for seed := uint64(0); seed < 16; seed++ {
+		loop, driver, _ := sim_loop(seed)
+		file, create_err := sim_open_options(t, loop, driver, "/stored",
+			nbio.Open_At_Options{
+				Access: nbio.OPEN_WRITE_ONLY, Create: true, Permissions: 0o777,
+			})
+		if !testify.No_Error(t, create_err) {
+			return
+		}
+		sim_close(t, loop, driver, file)
+		status, status_err := nbio.Storage_Status(loop.Storage, "/stored")
+		testify.No_Error(t, status_err)
+		testify.Equal(t, nbio.File_Mode(0o777&^nbio.SIM_UMASK), status.Mode)
+		absent, absent_err := nbio.Storage_Status(loop.Storage, "/absent")
+		testify.No_Error(t, absent_err)
+		testify.Equal(t, nbio.File_Status{}, absent)
+		nbio.IO_Deinit(loop)
+	}
+}
+
+// Test_File_Mode_Symbolic_Link verify seeded generation make links, Status report link kind
+// without following it, Read_Link return the stored target, and no-follow open refuse one.
+func Test_File_Mode_Symbolic_Link(t *testing.T) {
+	seen := false
+	for seed := uint64(0); seed < 64; seed++ {
+		loop, driver, nodes := sim_loop_nodes(seed)
+		path, found := sim_first_link_path(nodes)
+		if found {
+			seen = true
+			t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
+				sim_assert_link(t, loop, driver, nodes, path)
+			})
+		}
+		nbio.IO_Deinit(loop)
+	}
+	// A sweep that produced no link would prove nothing, thus absence is itself a failure.
+	testify.True(t, seen)
 }
 
 // Test_Address_Parse verify hand-written literal parse: IPv4, IPv6 in every accepted shape, and
@@ -1198,7 +1297,7 @@ func sim_allocation_storage_run(
 			harness.Loop.Storage, &harness.Completion, nbio.DIRECTORY_CURRENT,
 			"allocation",
 			nbio.Open_At_Options{
-				Access: nbio.OPEN_READ_WRITE, Create: true, Mode: 0o600,
+				Access: nbio.OPEN_READ_WRITE, Create: true, Permissions: 0o600,
 			},
 			sim_allocation_callback,
 		)
@@ -1274,7 +1373,9 @@ func sim_allocation_accept(harness *sim_allocation_harness) {
 func sim_allocation_open_file(harness *sim_allocation_harness) {
 	nbio.Storage_Open_At(
 		harness.Loop.Storage, &harness.Completion, nbio.DIRECTORY_CURRENT, "allocation",
-		nbio.Open_At_Options{Access: nbio.OPEN_READ_WRITE, Create: true, Mode: 0o600},
+		nbio.Open_At_Options{
+			Access: nbio.OPEN_READ_WRITE, Create: true, Permissions: 0o600,
+		},
 		sim_allocation_callback,
 	)
 	sim_allocation_drive(harness)
@@ -1925,12 +2026,13 @@ func sim_udp_options() (options nbio.UDP_Options) {
 func sim_status_regular(t *testing.T, loop nbio.IO, content []byte) {
 	t.Helper()
 	regular, _ := nbio.Storage_Status(loop.Storage, "/dir/file")
-	testify.False(t, regular.Is_Directory)
-	testify.True(t, regular.Is_Regular)
+	testify.False(t, nbio.File_Mode_Is_Directory(regular.Mode))
+	testify.True(t, nbio.File_Mode_Is_Regular(regular.Mode))
 	testify.Equal(t, int64(len(content)), regular.Size)
 	absent, _ := nbio.Storage_Status(loop.Storage, "/nope")
-	testify.False(t, absent.Exists)
-	testify.False(t, absent.Is_Regular)
+	// Absent path is the zero status whole. A zero mode reads as a regular file with no
+	// permission, thus Exists is the only guard a caller may branch on.
+	testify.Equal(t, nbio.File_Status{}, absent)
 }
 
 func connect_outcome(err error) (outcome string) {
@@ -2290,7 +2392,7 @@ func sim_create(
 ) (file nbio.File, err error) {
 	t.Helper()
 	return sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
-		Access: nbio.OPEN_WRITE_ONLY, Create: true, Truncate: true, Mode: 0o644,
+		Access: nbio.OPEN_WRITE_ONLY, Create: true, Truncate: true, Permissions: 0o644,
 	})
 }
 
@@ -2984,4 +3086,128 @@ func stream_memory_fuzz_read(
 	testify.Equal(t, expected_count, count)
 	testify.No_Error(t, err)
 	testify.Equal(t, memory[int(offset):int(offset)+count], buffer[:count])
+}
+
+// POSIX_FILE_MODE_HIGH_MAXIMUM is every non-kind bit one platform word carries: setuid, setgid,
+// sticky, and the nine permission bits.
+const POSIX_FILE_MODE_HIGH_MAXIMUM uint16 = 0o7777
+
+// Every POSIX kind nibble this repository decodes.
+func posix_file_mode_kinds() (kinds []uint16) {
+	return []uint16{
+		nbio.POSIX_FILE_MODE_NAMED_PIPE, nbio.POSIX_FILE_MODE_CHARACTER_DEVICE,
+		nbio.POSIX_FILE_MODE_DIRECTORY, nbio.POSIX_FILE_MODE_DEVICE,
+		nbio.POSIX_FILE_MODE_REGULAR, nbio.POSIX_FILE_MODE_SYMBOLIC_LINK,
+		nbio.POSIX_FILE_MODE_SOCKET,
+	}
+}
+
+// Directory half of the permission proof, thus each test function stay inside the length cap.
+func sim_mkdir_permissions(t *testing.T, loop nbio.IO, driver time.Driver) {
+	t.Helper()
+	for index, permissions := range file_permissions_domain() {
+		path := "/directory" + string(rune('0'+index))
+		made := false
+		var completion time.Completion
+		nbio.Storage_Mkdir_At(
+			loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path, permissions,
+			func(completed *time.Completion) {
+				testify.No_Error(t, completed.Error)
+				made = true
+			})
+		time.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return made })
+		status, _ := nbio.Storage_Status(loop.Storage, path)
+		testify.True(t, nbio.File_Mode_Is_Directory(status.Mode))
+		testify.Equal(t, nbio.File_Mode(permissions&^nbio.SIM_UMASK),
+			status.Mode&^nbio.FILE_MODE_DIRECTORY)
+	}
+}
+
+// Boundary values of the creation permission domain: both ends and the two lowest bits.
+func file_permissions_domain() (domain []nbio.File_Permissions) {
+	return []nbio.File_Permissions{
+		nbio.File_Permissions(nbio.FILE_PERMISSIONS_MINIMUM), 1, 2,
+		nbio.FILE_PERMISSIONS_VALID,
+	}
+}
+
+// Assert every link-facing contract for one generated link path.
+func sim_assert_link(
+	t *testing.T, loop nbio.IO, driver time.Driver, nodes []nbio.Sim_Node, path string,
+) {
+	t.Helper()
+	status, status_err := nbio.Storage_Status(loop.Storage, path)
+	testify.No_Error(t, status_err)
+	testify.True(t, nbio.File_Mode_Is_Symbolic_Link(status.Mode))
+	target := [nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM]byte{}
+	count, read_err := nbio.Storage_Read_Link(loop.Storage, path, target[:])
+	testify.No_Error(t, read_err)
+	testify.True(t, count > 0)
+	testify.Equal(t, int64(count), status.Size)
+	// Following the link reaches the sibling it names, thus resolution is not a no-op.
+	followed, followed_err := nbio.Storage_Status(
+		loop.Storage, sim_node_directory(nodes, path)+string(target[:count]),
+	)
+	testify.No_Error(t, followed_err)
+	testify.True(t, followed.Exists)
+	_, follow_err := sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_ONLY, Flags: nbio.OPEN_AT_NO_FOLLOW,
+	})
+	testify.Error_Is(t, follow_err, nbio.Symbolic_Link_Not_Followed)
+	// Opening the link itself proves the resolver follows the stored target.
+	opened, open_err := sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_ONLY,
+	})
+	if testify.No_Error(t, open_err, path, string(target[:count])) {
+		sim_close(t, loop, driver, opened)
+	}
+}
+
+// First generated symbolic link in node storage, as an absolute path.
+func sim_first_link_path(nodes []nbio.Sim_Node) (path string, found bool) {
+	for index := 1; index < len(nodes); index++ {
+		if !nodes[index].Used {
+			continue
+		}
+		if !nbio.File_Mode_Is_Symbolic_Link(nodes[index].Mode) {
+			continue
+		}
+		return sim_node_path(nodes, index), true
+	}
+	return "", false
+}
+
+// Absolute path of one node, built by walking its parent chain.
+func sim_node_path(nodes []nbio.Sim_Node, index int) (path string) {
+	for index > 0 {
+		node := nodes[index]
+		path = "/" + string(node.Name[:node.Name_Count]) + path
+		index = node.Parent
+	}
+	return path
+}
+
+// Directory prefix of one absolute path, trailing separator kept.
+func sim_node_directory(nodes []nbio.Sim_Node, path string) (directory string) {
+	for position := len(path) - 1; position >= 0; position-- {
+		if path[position] == '/' {
+			return path[:position+1]
+		}
+	}
+	return "/"
+}
+
+// Build one simulated loop and keep its node storage visible, thus a test can assert what the
+// seeded generator actually made rather than guess at generated names.
+func sim_loop_nodes(
+	seed uint64,
+) (loop nbio.IO, driver time.Driver, nodes []nbio.Sim_Node) {
+	pump, driver, _ := sim_timeline()
+	state := &nbio.Sim{}
+	node_storage := make([]nbio.Sim_Node, SIM_NODE_CAPACITY)
+	descriptors := make([]nbio.Sim_Descriptor, SIM_DESCRIPTOR_CAPACITY)
+	operations := make([]nbio.Sim_Operation, SIM_CONCURRENT_OPERATION_CAPACITY)
+	return nbio.New_Simulated_IO(state, seed, pump, nbio.Sim_Memory{
+		Nodes: node_storage, Descriptors: descriptors, Operations: operations,
+	}), driver, node_storage
 }

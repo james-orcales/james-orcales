@@ -355,7 +355,7 @@ type Storage struct {
 	// primitive above surface, thus both backend run same composition.
 	Mkdir_At_Procedure func(
 		state unsafe.Pointer, completion *time.Completion, directory File, file_path string,
-		mode uint32,
+		permissions File_Permissions,
 		callback time.Callback,
 	)
 	// Get_Directory_Entries read one pass of directory raw entries into buffer and return
@@ -366,9 +366,8 @@ type Storage struct {
 		state unsafe.Pointer, completion *time.Completion, directory File, buffer []byte,
 		entries []Directory_Entry, callback time.Callback,
 	)
-	// Status report whether path exist, whether it is directory, and its byte size,
-	// synchronously. Absent path is Exists false with nil error, thus caller branch on status,
-	// not on error.
+	// Status report whether path exist, its portable mode, and its byte size, synchronously.
+	// Absent path is Exists false with nil error, thus caller branch on status, not on error.
 	Status_Procedure func(
 		state unsafe.Pointer, path string,
 	) (status File_Status, err error)
@@ -416,6 +415,7 @@ func Storage_Open_At(
 	completion *time.Completion, directory File, file_path string,
 	options Open_At_Options, callback time.Callback,
 ) {
+	File_Permissions_Invariants(options.Permissions, "Storage_Open_At.options.Permissions")
 	storage.Open_At_Procedure(
 		storage.State, completion, directory, file_path, options, callback,
 	)
@@ -424,11 +424,12 @@ func Storage_Open_At(
 // Storage_Mkdir_At preserves callback-last submit shape while state remains explicit.
 func Storage_Mkdir_At(
 	storage Storage,
-	completion *time.Completion, directory File, file_path string, mode uint32,
-	callback time.Callback,
+	completion *time.Completion, directory File, file_path string,
+	permissions File_Permissions, callback time.Callback,
 ) {
+	File_Permissions_Invariants(permissions, "Storage_Mkdir_At.permissions")
 	storage.Mkdir_At_Procedure(
-		storage.State, completion, directory, file_path, mode, callback,
+		storage.State, completion, directory, file_path, permissions, callback,
 	)
 }
 
@@ -438,6 +439,13 @@ func Storage_Get_Directory_Entries(
 	completion *time.Completion, directory File, buffer []byte, entries []Directory_Entry,
 	callback time.Callback,
 ) {
+	invariant.Always(len(buffer) >= DIRECTORY_BUFFER_SIZE_MINIMUM,
+		"Directory entry buffer holds at least one byte.")
+	invariant.Always(len(buffer) <= DIRECTORY_BUFFER_SIZE_MAXIMUM,
+		"Directory entry buffer stays inside seam block budget.")
+	invariant.Always(len(entries) > 0, "Directory entry storage holds at least one result.")
+	invariant.Always(len(entries) <= DIRECTORY_BUFFER_SIZE_MAXIMUM,
+		"Directory entry storage cannot exceed one result per record byte.")
 	storage.Get_Directory_Entries_Procedure(
 		storage.State, completion, directory, buffer, entries, callback,
 	)
@@ -489,8 +497,9 @@ type Open_At_Options struct {
 	Create bool
 	// Truncate clear existing file before callback receive it.
 	Truncate bool
-	// Mode is permission mode, used only when Create is true.
-	Mode uint32
+	// Permissions is creation permission operand, used only when Create is true. Kernel may
+	// still reduce it through process umask, thus stored mode is not always what caller state.
+	Permissions File_Permissions
 	// Flags hold independent Open_At control.
 	Flags Open_At_Flags
 }
@@ -956,18 +965,331 @@ type Directory_Entry struct {
 	Is_Directory bool
 }
 
-// File_Status is what stat report: whether path exist, and if so whether it is directory and its
-// byte length — metadata mirror consult before it read or write.
+// DIRECTORY_BUFFER_SIZE_MINIMUM lets one raw directory record enter backend storage.
+const DIRECTORY_BUFFER_SIZE_MINIMUM = 1
+
+// DIRECTORY_BUFFER_SIZE_MAXIMUM matches Go os Unix directory block budget.
+const DIRECTORY_BUFFER_SIZE_MAXIMUM = 8 * bits.KIBIBYTE_BYTES
+
+// File_Mode keeps portable permission and entry-kind metadata scalar. Layout follows Go
+// io/fs.FileMode, thus a caller crosses any standard-library boundary with one cast and no
+// translation table. Platform mode words are decoded into this domain, never handed out raw.
+type File_Mode uint32
+
+// FILE_MODE_MINIMUM begins portable mode domain.
+const FILE_MODE_MINIMUM uint32 = 0
+
+// FILE_MODE_MAXIMUM closes portable mode domain.
+const FILE_MODE_MAXIMUM uint32 = uint32(FILE_MODE_VALID)
+
+// FILE_MODE_PERMISSION_MINIMUM begins permission bits.
+const FILE_MODE_PERMISSION_MINIMUM uint32 = 0
+
+// FILE_MODE_PERMISSION_MAXIMUM closes permission bits.
+const FILE_MODE_PERMISSION_MAXIMUM uint32 = uint32(FILE_MODE_PERMISSIONS)
+
+// FILE_MODE_OTHER_EXECUTE is the lowest portable permission bit.
+const FILE_MODE_OTHER_EXECUTE File_Mode = 1
+
+// FILE_MODE_OTHER_WRITE follows other-execute permission.
+const FILE_MODE_OTHER_WRITE File_Mode = FILE_MODE_OTHER_EXECUTE << 1
+
+// FILE_MODE_OTHER_READ follows other-write permission.
+const FILE_MODE_OTHER_READ File_Mode = FILE_MODE_OTHER_WRITE << 1
+
+// FILE_MODE_PERMISSION_CLASS_BIT_COUNT is one rwx permission group.
+const FILE_MODE_PERMISSION_CLASS_BIT_COUNT = 3
+
+// FILE_MODE_EXECUTE_PERMISSIONS repeats execute across all permission classes.
+const FILE_MODE_EXECUTE_PERMISSIONS File_Mode = FILE_MODE_OTHER_EXECUTE |
+	FILE_MODE_OTHER_EXECUTE<<FILE_MODE_PERMISSION_CLASS_BIT_COUNT |
+	FILE_MODE_OTHER_EXECUTE<<(2*FILE_MODE_PERMISSION_CLASS_BIT_COUNT)
+
+// FILE_MODE_WRITE_PERMISSIONS repeats write across all permission classes.
+const FILE_MODE_WRITE_PERMISSIONS File_Mode = FILE_MODE_OTHER_WRITE |
+	FILE_MODE_OTHER_WRITE<<FILE_MODE_PERMISSION_CLASS_BIT_COUNT |
+	FILE_MODE_OTHER_WRITE<<(2*FILE_MODE_PERMISSION_CLASS_BIT_COUNT)
+
+// FILE_MODE_READ_PERMISSIONS repeats read across all permission classes.
+const FILE_MODE_READ_PERMISSIONS File_Mode = FILE_MODE_OTHER_READ |
+	FILE_MODE_OTHER_READ<<FILE_MODE_PERMISSION_CLASS_BIT_COUNT |
+	FILE_MODE_OTHER_READ<<(2*FILE_MODE_PERMISSION_CLASS_BIT_COUNT)
+
+// FILE_MODE_OWNER_WRITE locates owner mutation permission.
+const FILE_MODE_OWNER_WRITE = FILE_MODE_OTHER_WRITE <<
+	(2 * FILE_MODE_PERMISSION_CLASS_BIT_COUNT)
+
+// FILE_MODE_PERMISSIONS keeps portable permission bits.
+const FILE_MODE_PERMISSIONS File_Mode = FILE_MODE_EXECUTE_PERMISSIONS |
+	FILE_MODE_WRITE_PERMISSIONS | FILE_MODE_READ_PERMISSIONS
+
+// FILE_MODE_DIRECTORY identifies directory entry.
+const FILE_MODE_DIRECTORY File_Mode = 1 << (bits.BIT_COUNT_32_MAXIMUM - 1)
+
+// FILE_MODE_APPEND identifies append-only entry.
+const FILE_MODE_APPEND File_Mode = FILE_MODE_DIRECTORY >> 1
+
+// FILE_MODE_EXCLUSIVE identifies exclusive-use entry.
+const FILE_MODE_EXCLUSIVE File_Mode = FILE_MODE_APPEND >> 1
+
+// FILE_MODE_TEMPORARY identifies temporary entry.
+const FILE_MODE_TEMPORARY File_Mode = FILE_MODE_EXCLUSIVE >> 1
+
+// FILE_MODE_SYMBOLIC_LINK identifies symbolic link entry.
+const FILE_MODE_SYMBOLIC_LINK File_Mode = FILE_MODE_TEMPORARY >> 1
+
+// FILE_MODE_DEVICE identifies device entry.
+const FILE_MODE_DEVICE File_Mode = FILE_MODE_SYMBOLIC_LINK >> 1
+
+// FILE_MODE_NAMED_PIPE identifies FIFO entry.
+const FILE_MODE_NAMED_PIPE File_Mode = FILE_MODE_DEVICE >> 1
+
+// FILE_MODE_SOCKET identifies socket entry.
+const FILE_MODE_SOCKET File_Mode = FILE_MODE_NAMED_PIPE >> 1
+
+// FILE_MODE_SET_USER_IDENTIFIER identifies setuid entry.
+const FILE_MODE_SET_USER_IDENTIFIER File_Mode = FILE_MODE_SOCKET >> 1
+
+// FILE_MODE_SET_GROUP_IDENTIFIER identifies setgid entry.
+const FILE_MODE_SET_GROUP_IDENTIFIER File_Mode = FILE_MODE_SET_USER_IDENTIFIER >> 1
+
+// FILE_MODE_CHARACTER_DEVICE refines device entry.
+const FILE_MODE_CHARACTER_DEVICE File_Mode = FILE_MODE_SET_GROUP_IDENTIFIER >> 1
+
+// FILE_MODE_STICKY identifies sticky entry.
+const FILE_MODE_STICKY File_Mode = FILE_MODE_CHARACTER_DEVICE >> 1
+
+// FILE_MODE_IRREGULAR identifies unknown entry kind.
+const FILE_MODE_IRREGULAR File_Mode = FILE_MODE_STICKY >> 1
+
+// FILE_MODE_TYPE combines portable entry-kind bits. Regular file is absence of every one of
+// them, thus a zero mode word reads as a regular file with no permission.
+const FILE_MODE_TYPE = FILE_MODE_DIRECTORY | FILE_MODE_SYMBOLIC_LINK |
+	FILE_MODE_NAMED_PIPE | FILE_MODE_SOCKET | FILE_MODE_DEVICE |
+	FILE_MODE_CHARACTER_DEVICE | FILE_MODE_IRREGULAR
+
+// FILE_MODE_VALID combines all representable mode bits.
+const FILE_MODE_VALID = FILE_MODE_PERMISSIONS | FILE_MODE_DIRECTORY |
+	FILE_MODE_APPEND | FILE_MODE_EXCLUSIVE | FILE_MODE_TEMPORARY |
+	FILE_MODE_SYMBOLIC_LINK | FILE_MODE_DEVICE | FILE_MODE_NAMED_PIPE |
+	FILE_MODE_SOCKET | FILE_MODE_SET_USER_IDENTIFIER |
+	FILE_MODE_SET_GROUP_IDENTIFIER | FILE_MODE_CHARACTER_DEVICE |
+	FILE_MODE_STICKY | FILE_MODE_IRREGULAR
+
+// File_Mode_Invariants rejects bits without repository meaning.
+func File_Mode_Invariants(value File_Mode, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint32(uint32(value), FILE_MODE_MINIMUM, FILE_MODE_MAXIMUM).
+		Ensure()
+	invariant.Always(value&^FILE_MODE_VALID == 0,
+		"A portable file mode carries only representable bits.")
+}
+
+// File_Permissions is creation permission subset one open or one directory make may request.
+// Kind is not requestable: the operation names the kind, thus a creation operand that carried
+// one would be describing state the kernel derives, not state the caller supplies.
+type File_Permissions uint32
+
+// FILE_PERMISSIONS_VALID combines every requestable creation bit.
+const FILE_PERMISSIONS_VALID File_Permissions = File_Permissions(
+	FILE_MODE_PERMISSIONS | FILE_MODE_SET_USER_IDENTIFIER |
+		FILE_MODE_SET_GROUP_IDENTIFIER | FILE_MODE_STICKY,
+)
+
+// FILE_PERMISSIONS_MINIMUM begins creation permission domain.
+const FILE_PERMISSIONS_MINIMUM uint32 = 0
+
+// FILE_PERMISSIONS_MAXIMUM closes creation permission domain.
+const FILE_PERMISSIONS_MAXIMUM uint32 = uint32(FILE_PERMISSIONS_VALID)
+
+// File_Permissions_Invariants rejects kind bits inside one creation operand.
+func File_Permissions_Invariants(value File_Permissions, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint32(
+			uint32(value), FILE_PERMISSIONS_MINIMUM, FILE_PERMISSIONS_MAXIMUM,
+		).
+		Ensure()
+	invariant.Always(value&^FILE_PERMISSIONS_VALID == 0,
+		"A creation permission operand carries no entry-kind bit.")
+}
+
+// POSIX_FILE_MODE_MINIMUM begins the hostile 16-bit platform mode domain.
+const POSIX_FILE_MODE_MINIMUM uint16 = 0
+
+// POSIX_FILE_MODE_MAXIMUM closes the hostile 16-bit platform mode domain.
+const POSIX_FILE_MODE_MAXIMUM uint16 = 1<<bits.BIT_COUNT_16_MAXIMUM - 1
+
+// POSIX_FILE_TYPE_BIT_COUNT is one half-byte kind field, thus kind occupies the top nibble.
+const POSIX_FILE_TYPE_BIT_COUNT = bits.BIT_COUNT_8_MAXIMUM / 2
+
+// POSIX_FILE_TYPE_SHIFT locates the POSIX kind nibble.
+const POSIX_FILE_TYPE_SHIFT = bits.BIT_COUNT_16_MAXIMUM - POSIX_FILE_TYPE_BIT_COUNT
+
+// POSIX_FILE_TYPE_MASK selects the POSIX kind nibble.
+const POSIX_FILE_TYPE_MASK = ((1 << POSIX_FILE_TYPE_BIT_COUNT) - 1) <<
+	POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_NAMED_PIPE encodes the POSIX FIFO kind.
+const POSIX_FILE_MODE_NAMED_PIPE uint16 = 1 << POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_CHARACTER_DEVICE encodes the POSIX character-device kind.
+const POSIX_FILE_MODE_CHARACTER_DEVICE uint16 = 2 << POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_DIRECTORY encodes the POSIX directory kind.
+const POSIX_FILE_MODE_DIRECTORY uint16 = 4 << POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_DEVICE encodes the POSIX block-device kind.
+const POSIX_FILE_MODE_DEVICE uint16 = 6 << POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_REGULAR encodes the POSIX regular-file kind.
+const POSIX_FILE_MODE_REGULAR uint16 = 8 << POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_SYMBOLIC_LINK encodes the POSIX symbolic-link kind.
+const POSIX_FILE_MODE_SYMBOLIC_LINK uint16 = 10 << POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_SOCKET encodes the POSIX socket kind.
+const POSIX_FILE_MODE_SOCKET uint16 = 12 << POSIX_FILE_TYPE_SHIFT
+
+// POSIX_FILE_MODE_SET_USER_IDENTIFIER encodes the POSIX set-user-ID bit.
+const POSIX_FILE_MODE_SET_USER_IDENTIFIER uint16 = 1 << (POSIX_FILE_TYPE_SHIFT - 1)
+
+// POSIX_FILE_MODE_SET_GROUP_IDENTIFIER encodes the POSIX set-group-ID bit.
+const POSIX_FILE_MODE_SET_GROUP_IDENTIFIER uint16 = 1 << (POSIX_FILE_TYPE_SHIFT - 2)
+
+// POSIX_FILE_MODE_STICKY encodes the POSIX sticky bit.
+const POSIX_FILE_MODE_STICKY uint16 = 1 << (POSIX_FILE_TYPE_SHIFT - 3)
+
+// Decoded_File_Mode is one portable mode reconstructed from a platform mode word. Its kind comes
+// from a single POSIX nibble, thus it can never carry two kinds the way the portable domain
+// permits, and its own maximum is a value a real stat can actually report.
+type Decoded_File_Mode File_Mode
+
+// FILE_MODE_DECODED_MINIMUM begins the decoded domain.
+const FILE_MODE_DECODED_MINIMUM uint32 = 0
+
+// FILE_MODE_DECODED_MAXIMUM closes it: directory is the numerically largest POSIX kind.
+const FILE_MODE_DECODED_MAXIMUM uint32 = uint32(
+	FILE_MODE_DIRECTORY | FILE_MODE_SET_USER_IDENTIFIER |
+		FILE_MODE_SET_GROUP_IDENTIFIER | FILE_MODE_STICKY | FILE_MODE_PERMISSIONS,
+)
+
+// Decoded_File_Mode_Invariants bounds one mode a platform word can produce.
+func Decoded_File_Mode_Invariants(value Decoded_File_Mode, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint32(
+			uint32(value), FILE_MODE_DECODED_MINIMUM, FILE_MODE_DECODED_MAXIMUM,
+		).
+		Ensure()
+}
+
+// File_Mode_From_POSIX decodes one platform mode word. Linux and Darwin agree on every kind
+// nibble and every high bit here, thus one decoder serves both and no platform file repeats it.
+func File_Mode_From_POSIX(raw uint16) (mode Decoded_File_Mode) {
+	mode = Decoded_File_Mode(File_Mode(raw) & FILE_MODE_PERMISSIONS)
+	mode |= Decoded_File_Mode(file_mode_kind_from_posix(raw & POSIX_FILE_TYPE_MASK))
+	if raw&POSIX_FILE_MODE_SET_USER_IDENTIFIER != 0 {
+		mode |= Decoded_File_Mode(FILE_MODE_SET_USER_IDENTIFIER)
+	}
+	if raw&POSIX_FILE_MODE_SET_GROUP_IDENTIFIER != 0 {
+		mode |= Decoded_File_Mode(FILE_MODE_SET_GROUP_IDENTIFIER)
+	}
+	if raw&POSIX_FILE_MODE_STICKY != 0 {
+		mode |= Decoded_File_Mode(FILE_MODE_STICKY)
+	}
+	Decoded_File_Mode_Invariants(mode, "File_Mode_From_POSIX.mode")
+	return mode
+}
+
+// Kind decode is its own function because the switch plus the flag decode would otherwise put
+// one operand conversion past the function length cap.
+func file_mode_kind_from_posix(kind uint16) (mode File_Mode) {
+	switch kind {
+	case POSIX_FILE_MODE_DEVICE:
+		return FILE_MODE_DEVICE
+	case POSIX_FILE_MODE_CHARACTER_DEVICE:
+		return FILE_MODE_DEVICE | FILE_MODE_CHARACTER_DEVICE
+	case POSIX_FILE_MODE_DIRECTORY:
+		return FILE_MODE_DIRECTORY
+	case POSIX_FILE_MODE_NAMED_PIPE:
+		return FILE_MODE_NAMED_PIPE
+	case POSIX_FILE_MODE_SYMBOLIC_LINK:
+		return FILE_MODE_SYMBOLIC_LINK
+	case POSIX_FILE_MODE_SOCKET:
+		return FILE_MODE_SOCKET
+	}
+	return 0
+}
+
+// File_Mode_To_POSIX encodes one portable mode into the platform word. A mode naming no kind
+// encodes as regular, because POSIX has no "kind absent" nibble.
+func File_Mode_To_POSIX(mode File_Mode) (raw uint16) {
+	File_Mode_Invariants(mode, "File_Mode_To_POSIX.mode")
+	raw = file_mode_kind_to_posix(mode & FILE_MODE_TYPE)
+	return raw | File_Permissions_To_POSIX(File_Permissions(mode)&FILE_PERMISSIONS_VALID)
+}
+
+// Kind encode is its own function so the caller stays one expression per concern.
+func file_mode_kind_to_posix(kind File_Mode) (raw uint16) {
+	switch kind {
+	case FILE_MODE_DIRECTORY:
+		return POSIX_FILE_MODE_DIRECTORY
+	case FILE_MODE_SYMBOLIC_LINK:
+		return POSIX_FILE_MODE_SYMBOLIC_LINK
+	case FILE_MODE_NAMED_PIPE:
+		return POSIX_FILE_MODE_NAMED_PIPE
+	case FILE_MODE_SOCKET:
+		return POSIX_FILE_MODE_SOCKET
+	case FILE_MODE_DEVICE:
+		return POSIX_FILE_MODE_DEVICE
+	case FILE_MODE_DEVICE | FILE_MODE_CHARACTER_DEVICE:
+		return POSIX_FILE_MODE_CHARACTER_DEVICE
+	}
+	return POSIX_FILE_MODE_REGULAR
+}
+
+// File_Permissions_To_POSIX encodes one creation operand. It emits no kind nibble: openat and
+// mkdirat take permission bits only, and a kind bit there would be a mode the caller invented.
+func File_Permissions_To_POSIX(permissions File_Permissions) (raw uint16) {
+	File_Permissions_Invariants(permissions, "File_Permissions_To_POSIX.permissions")
+	raw = uint16(permissions) & uint16(FILE_MODE_PERMISSIONS)
+	if permissions&File_Permissions(FILE_MODE_SET_USER_IDENTIFIER) != 0 {
+		raw |= POSIX_FILE_MODE_SET_USER_IDENTIFIER
+	}
+	if permissions&File_Permissions(FILE_MODE_SET_GROUP_IDENTIFIER) != 0 {
+		raw |= POSIX_FILE_MODE_SET_GROUP_IDENTIFIER
+	}
+	if permissions&File_Permissions(FILE_MODE_STICKY) != 0 {
+		raw |= POSIX_FILE_MODE_STICKY
+	}
+	return raw
+}
+
+// File_Mode_Is_Directory reports directory kind. Meaningful only where the mode came from an
+// existing entry: a zero mode names a regular file with no permission, not an absent path.
+func File_Mode_Is_Directory(mode File_Mode) (directory bool) {
+	return mode&FILE_MODE_DIRECTORY != 0
+}
+
+// File_Mode_Is_Regular reports plain-file kind, which POSIX spells as no kind bit at all.
+func File_Mode_Is_Regular(mode File_Mode) (regular bool) {
+	return mode&FILE_MODE_TYPE == 0
+}
+
+// File_Mode_Is_Symbolic_Link reports link kind. Status never follows a final link, thus a
+// walker sees this bit rather than the target metadata.
+func File_Mode_Is_Symbolic_Link(mode File_Mode) (link bool) {
+	return mode&FILE_MODE_SYMBOLIC_LINK != 0
+}
+
+// File_Status is what stat report: whether path exist, and if so its portable mode and byte
+// length — metadata mirror consult before it read or write.
 type File_Status struct {
 	// Exists report whether path is present. Absent path is not error.
 	Exists bool
-	// Is_Directory report whether existing path is directory, not file.
-	Is_Directory bool
-	// Is_Regular report whether existing path is regular file.
-	Is_Regular bool
-	// Is_Symbolic_Link reports whether final path component is symbolic link. Status never
-	// follows final link, so walkers cannot cross it by accident.
-	Is_Symbolic_Link bool
+	// Mode is portable permission and entry-kind metadata. Absent path leave it zero, thus
+	// every kind question is meaningful only after Exists is true. Status never follows final
+	// symbolic link, so walkers cannot cross it by accident.
+	Mode File_Mode
 	// Size is file length in bytes. Zero for directory or absent path.
 	Size int64
 }
@@ -991,6 +1313,10 @@ var Path_Exists = errors.New("io: file exists")
 
 // Not_Symbolic_Link reports Read_Link target path names another filesystem kind.
 var Not_Symbolic_Link = errors.New("io: not a symbolic link")
+
+// Symbolic_Link_Not_Followed is portable Open_At result when OPEN_AT_NO_FOLLOW name symbolic
+// link in final path part. Kernel report ELOOP there, thus refusal is result, not silent follow.
+var Symbolic_Link_Not_Followed = errors.New("io: symbolic link not followed")
 
 // Number of virtual grains one simulated operation may take to complete, drawn from seed, thus
 // completion order vary per run and still reproduce.
@@ -1019,19 +1345,44 @@ const SIM_PATH_COMPONENT_BYTES_MAXIMUM = int(bits.WORD_8_MAXIMUM)
 // SIM_FILE_BYTES_MAXIMUM bounds one simulated file at generated distribution maximum.
 const SIM_FILE_BYTES_MAXIMUM = SIM_SIZE_P100
 
+// SIM_UMASK is permission mask simulated kernel apply at creation. Real kernel consult process
+// umask, which this surface cannot read and must not. Simulator therefore state one value, thus
+// run stay pure function of its seed rather than of ambient process state.
+const SIM_UMASK File_Permissions = 0o022
+
+// SIM_PERMISSION_DRAW_COUNT is every permission word one generated node may draw. Simulator
+// store permissions but never enforce them: no simulated operation is refused for permission,
+// because the modeled kernel has no user identity to check one against.
+const SIM_PERMISSION_DRAW_COUNT = int(FILE_MODE_PERMISSIONS) + 1
+
+// SIM_LINK_RESOLVE_MAXIMUM bounds symbolic-link hops in one path resolve, thus a link cycle
+// reports an error rather than spins the loop thread.
+const SIM_LINK_RESOLVE_MAXIMUM = 8
+
+// SIM_ROOT_PERMISSIONS is what simulated root directory carry. Root predate every draw, thus it
+// takes a stated value rather than a seeded one.
+const SIM_ROOT_PERMISSIONS File_Permissions = 0o755
+
+// SIM_LINK_CHANCE_DENOMINATOR sets how often one generated non-directory child is symbolic link
+// instead of regular file. Kept low, thus most generated bytes still reach file contents.
+const SIM_LINK_CHANCE_DENOMINATOR = 8
+
 // Sim_Node is caller-owned storage for one generated or created filesystem node.
 type Sim_Node struct {
 	// Used separates free caller slots from seeded filesystem nodes.
 	Used bool
-	// Directory keeps node kind inline so lookup needs no interface value.
-	Directory bool
+	// Mode keeps node kind and stored permissions inline so lookup needs no interface value.
+	// It is the one kind representation: no separate directory flag can disagree with it.
+	Mode File_Mode
 	// Parent names another caller slot so tree edges need no pointer allocation.
 	Parent int
 	// Name keeps component bytes inline so generated paths need no string allocation.
 	Name [SIM_PATH_COMPONENT_BYTES_MAXIMUM]byte
 	// Name_Count bounds valid bytes without making a slice escape.
 	Name_Count int
-	// Contents keeps file bytes inline so writes cannot grow heap storage.
+	// Contents keeps file bytes inline so writes cannot grow heap storage. A symbolic link
+	// stores its target here, the way POSIX filesystems already do, thus link needs no second
+	// buffer and lstat size stays target length.
 	Contents [SIM_FILE_BYTES_MAXIMUM]byte
 	// Contents_Count bounds valid bytes without reslicing stored state.
 	Contents_Count int
@@ -1223,6 +1574,11 @@ type Sim struct {
 	Signal_Generator prng.Generator
 	// Process_Generator isolates exit code and child latency the same way.
 	Process_Generator prng.Generator
+	// Link_Generator isolates whether a generated node is a symbolic link, thus adding links
+	// leaves the tree shape every banked seed already produces.
+	Link_Generator prng.Generator
+	// Permission_Generator isolates generated permission bits from every other axis.
+	Permission_Generator prng.Generator
 	// Next_File is synthetic descriptor counter. Listen, Accept, Open_Socket, Open, and Create
 	// hand out next value, thus every descriptor is distinct.
 	Next_File File
@@ -1265,11 +1621,16 @@ func New_Simulated_IO(
 	// older stream draws for a given seed unchanged.
 	state.Signal_Generator = prng.Generator_Split(&root_generator)
 	state.Process_Generator = prng.Generator_Split(&root_generator)
+	state.Link_Generator = prng.Generator_Split(&root_generator)
+	state.Permission_Generator = prng.Generator_Split(&root_generator)
 	state.Next_File = 0
 	state.Nodes = memory.Nodes
 	state.Descriptors = memory.Descriptors
 	state.Operations = memory.Operations
-	state.Nodes[0] = Sim_Node{Used: true, Directory: true, Parent: -1}
+	state.Nodes[0] = Sim_Node{
+		Used: true, Mode: FILE_MODE_DIRECTORY | File_Mode(SIM_ROOT_PERMISSIONS),
+		Parent: -1,
+	}
 	sim_generate(state)
 	loop.State = unsafe.Pointer(state)
 	sim_wire_network(state, &loop.Network)
@@ -1760,12 +2121,15 @@ func sim_open_at_procedure(
 
 func sim_mkdir_at_procedure(
 	state_pointer unsafe.Pointer, completion *time.Completion, directory File,
-	file_path string, _ uint32, callback time.Callback,
+	file_path string, permissions File_Permissions, callback time.Callback,
 ) {
 	state := (*Sim)(state_pointer)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_MKDIR_AT, callback)
 	operation.Directory = directory
 	operation.File_Path = file_path
+	// Mkdir has no other options, thus it borrows the open operand slot rather than making the
+	// operation record carry a second permission field only one kind would ever fill.
+	operation.Open_Options = Open_At_Options{Permissions: permissions}
 	sim_operation_submit(operation, completion, sim_latency(state))
 }
 
@@ -1881,11 +2245,18 @@ func sim_status_procedure(
 }
 
 func sim_read_link_procedure(
-	_ unsafe.Pointer, _ string, _ []byte,
+	state_pointer unsafe.Pointer, path string, destination []byte,
 ) (count int, err error) {
-	// Seeded simulator currently generates directories and regular files only. Explicit error
-	// preserves storage contract until link becomes generated feature.
-	return 0, Not_Symbolic_Link
+	state := (*Sim)(state_pointer)
+	node_index, found := sim_resolve_no_follow(state, path)
+	if !found {
+		return 0, sim_file_absent
+	}
+	node := &state.Nodes[node_index]
+	if !File_Mode_Is_Symbolic_Link(node.Mode) {
+		return 0, Not_Symbolic_Link
+	}
+	return copy(destination, node.Contents[:node.Contents_Count]), nil
 }
 
 // Close cannot release descriptor while any submitted operation still holds it.
@@ -1949,11 +2320,141 @@ func sim_open_socket(
 // SIM_PATH_TEXT_BYTES_MAXIMUM keeps one simulated path within repository text budget.
 const SIM_PATH_TEXT_BYTES_MAXIMUM = 4 * bits.KIBIBYTE_BYTES
 
-// Resolve path by scanning input views directly; component collection would allocate.
+// Resolve path, following every symbolic link including the final one, the way open does.
 func sim_resolve(state *Sim, path string) (node_index int, found bool) {
+	return sim_walk(state, 0, path, true, 0)
+}
+
+// Resolve path without following a final symbolic link, the way lstat does. Links in earlier
+// components still resolve, because a kernel has no way to name a path through an unfollowed one.
+func sim_resolve_no_follow(state *Sim, path string) (node_index int, found bool) {
+	return sim_walk(state, 0, path, false, 0)
+}
+
+// Walk path by scanning input views directly; component collection would allocate. Fixed
+// continuation stack turns nested links into bounded iteration.
+func sim_walk(
+	state *Sim, start_node int, path string, follow_final bool, hops int,
+) (node_index int, found bool) {
 	invariant.Always(len(path) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
 		"A simulated path stays inside the repository text budget.")
-	node_index = 0
+	type walk_frame struct {
+		Path         string
+		Follow_Final bool
+	}
+	frames := [SIM_LINK_RESOLVE_MAXIMUM]walk_frame{}
+	frame_count := 0
+	node_index = start_node
+Path:
+	for frame_count <= len(frames) {
+		leaf_start := sim_path_leaf_start(path)
+		start := 0
+		for position := 0; position <= len(path); position++ {
+			if position < len(path) {
+				if path[position] != '/' {
+					continue
+				}
+			}
+			if position > start {
+				step, link, step_found := sim_walk_step(
+					state, node_index, path[start:position],
+					start == leaf_start, follow_final,
+				)
+				if !step_found {
+					return 0, false
+				}
+				if link {
+					hops++
+					if hops > SIM_LINK_RESOLVE_MAXIMUM {
+						return 0, false
+					}
+					if position < len(path) {
+						if frame_count == len(frames) {
+							return 0, false
+						}
+						frames[frame_count] = walk_frame{
+							Path:         path[position+1:],
+							Follow_Final: follow_final,
+						}
+						frame_count++
+					}
+					node := &state.Nodes[step]
+					var path_found bool
+					path, path_found = sim_symbolic_link_target(node)
+					if !path_found {
+						return 0, false
+					}
+					follow_final = true
+					if path[0] == '/' {
+						node_index = 0
+					} else {
+						node_index = node.Parent
+					}
+					continue Path
+				}
+				node_index = step
+			}
+			start = position + 1
+		}
+		if frame_count == 0 {
+			return node_index, true
+		}
+		frame_count--
+		path = frames[frame_count].Path
+		follow_final = frames[frame_count].Follow_Final
+	}
+	return 0, false
+}
+
+// Keep the target as a view because allocation changes simulation behavior.
+func sim_symbolic_link_target(node *Sim_Node) (target string, found bool) {
+	if node.Contents_Count == 0 {
+		return "", false
+	}
+	target = unsafe.String(&node.Contents[0], node.Contents_Count)
+	invariant.Always(
+		len(target) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
+		"A simulated symbolic-link target stays inside path budget.",
+	)
+	return target, true
+}
+
+// Take one path component. Dot forms move inside the tree without a lookup, and a link resolves
+// unless it is the final component under a no-follow policy.
+func sim_walk_step(
+	state *Sim, node_index int, component string, final bool, follow_final bool,
+) (step int, link bool, found bool) {
+	if component == "." {
+		return node_index, false, true
+	}
+	if component == ".." {
+		if node_index == 0 {
+			return node_index, false, true
+		}
+		return state.Nodes[node_index].Parent, false, true
+	}
+	if !File_Mode_Is_Directory(state.Nodes[node_index].Mode) {
+		return 0, false, false
+	}
+	child, child_found := sim_node_find_child(state, node_index, component)
+	if !child_found {
+		return 0, false, false
+	}
+	if !File_Mode_Is_Symbolic_Link(state.Nodes[child].Mode) {
+		return child, false, true
+	}
+	if final {
+		if !follow_final {
+			return child, false, true
+		}
+	}
+	return child, true, true
+}
+
+// Locate final component start, thus one walk applies the no-follow policy to exactly that
+// component and follows every earlier link.
+func sim_path_leaf_start(path string) (leaf_start int) {
+	leaf_start = -1
 	start := 0
 	for position := 0; position <= len(path); position++ {
 		if position < len(path) {
@@ -1962,33 +2463,11 @@ func sim_resolve(state *Sim, path string) (node_index int, found bool) {
 			}
 		}
 		if position > start {
-			component := path[start:position]
-			if component == "." {
-				start = position + 1
-				continue
-			}
-			if component == ".." {
-				if node_index != 0 {
-					node_index = state.Nodes[node_index].Parent
-				}
-				start = position + 1
-				continue
-			}
-			node := &state.Nodes[node_index]
-			if !node.Directory {
-				return 0, false
-			}
-			child, child_found := sim_node_find_child(
-				state, node_index, component,
-			)
-			if !child_found {
-				return 0, false
-			}
-			node_index = child
+			leaf_start = start
 		}
 		start = position + 1
 	}
-	return node_index, true
+	return leaf_start
 }
 
 // Resolve parent and retain leaf as input view so create and mkdir need no temporary list.
@@ -2047,8 +2526,10 @@ func sim_node_find_child(
 	return 0, false
 }
 
+// Mode reaches here already bounded by Storage_Open_At or Storage_Mkdir_At, thus repeating that
+// assertion would only register a domain no simulated node can span.
 func sim_node_acquire(
-	state *Sim, parent int, name string, directory bool,
+	state *Sim, parent int, name string, mode File_Mode,
 ) (node_index int, err error) {
 	if len(name) > SIM_PATH_COMPONENT_BYTES_MAXIMUM {
 		return 0, sim_path_component_too_large
@@ -2058,7 +2539,7 @@ func sim_node_acquire(
 			continue
 		}
 		state.Nodes[index] = Sim_Node{
-			Used: true, Directory: directory, Parent: parent, Name_Count: len(name),
+			Used: true, Mode: mode, Parent: parent, Name_Count: len(name),
 		}
 		copy(state.Nodes[index].Name[:], name)
 		return index, nil
@@ -2067,7 +2548,7 @@ func sim_node_acquire(
 }
 
 // Make exactly one directory; parent creation belongs to higher composition.
-func sim_mkdir(state *Sim, path string) (err error) {
+func sim_mkdir(state *Sim, path string, permissions File_Permissions) (err error) {
 	parent, leaf, found := sim_path_parent(state, path)
 	if leaf == "" {
 		return Path_Exists
@@ -2075,26 +2556,27 @@ func sim_mkdir(state *Sim, path string) (err error) {
 	if !found {
 		return sim_file_absent
 	}
-	if !state.Nodes[parent].Directory {
+	if !File_Mode_Is_Directory(state.Nodes[parent].Mode) {
 		return sim_not_a_directory
 	}
 	if _, present := sim_node_find_child(state, parent, leaf); present {
 		return Path_Exists
 	}
-	_, err = sim_node_acquire(state, parent, leaf, true)
+	mode := FILE_MODE_DIRECTORY | File_Mode(permissions&^SIM_UMASK)
+	_, err = sim_node_acquire(state, parent, leaf, mode)
 	return err
 }
 
-// Status reads fixed node storage and returns no collection.
+// Status reads fixed node storage and returns no collection. It never follows a final symbolic
+// link, thus a walker sees the link itself the way lstat reports one.
 func sim_status(state *Sim, path string) (status File_Status) {
-	node_index, found := sim_resolve(state, path)
+	node_index, found := sim_resolve_no_follow(state, path)
 	if !found {
 		return File_Status{}
 	}
 	node := &state.Nodes[node_index]
 	return File_Status{
-		Exists: true, Is_Directory: node.Directory, Is_Regular: !node.Directory,
-		Size: int64(node.Contents_Count),
+		Exists: true, Mode: node.Mode, Size: int64(node.Contents_Count),
 	}
 }
 
@@ -2115,7 +2597,7 @@ func sim_directory_pass(
 		return 0, sim_not_a_directory
 	}
 	node := &state.Nodes[descriptor.Node]
-	if !node.Directory {
+	if !File_Mode_Is_Directory(node.Mode) {
 		return 0, sim_not_a_directory
 	}
 	if descriptor.Directory_Drained {
@@ -2134,7 +2616,8 @@ func sim_directory_pass(
 			return 0, sim_directory_full
 		}
 		entries[entry_count] = Directory_Entry{
-			Name: sim_node_name(child), Is_Directory: child.Directory,
+			Name:         sim_node_name(child),
+			Is_Directory: File_Mode_Is_Directory(child.Mode),
 		}
 		entry_count++
 	}
@@ -2151,7 +2634,10 @@ func sim_directory_pass(
 }
 
 // Open existing node and bind one caller-owned descriptor slot.
-func sim_open(state *Sim, path string) (file File, err error) {
+func sim_open(state *Sim, path string, flags Open_At_Flags) (file File, err error) {
+	if flags&OPEN_AT_NO_FOLLOW != 0 {
+		return sim_open_no_follow(state, path)
+	}
 	node, found := sim_resolve(state, path)
 	if !found {
 		return File(-1), sim_file_absent
@@ -2163,9 +2649,27 @@ func sim_open(state *Sim, path string) (file File, err error) {
 	return descriptor.File, nil
 }
 
+// Refuse final symbolic link the way a kernel refuses O_NOFOLLOW, rather than opening target.
+func sim_open_no_follow(state *Sim, path string) (file File, err error) {
+	node, found := sim_resolve_no_follow(state, path)
+	if !found {
+		return File(-1), sim_file_absent
+	}
+	if File_Mode_Is_Symbolic_Link(state.Nodes[node].Mode) {
+		return File(-1), Symbolic_Link_Not_Followed
+	}
+	descriptor, acquire_err := sim_descriptor_acquire(state, node, false, Sim_Socket{})
+	if acquire_err != nil {
+		return File(-1), acquire_err
+	}
+	return descriptor.File, nil
+}
+
 // Create or truncate file inside fixed node storage, then bind descriptor slot.
-func sim_create(state *Sim, path string) (file File, err error) {
-	node, create_err := sim_create_file(state, path)
+func sim_create(
+	state *Sim, path string, permissions File_Permissions,
+) (file File, err error) {
+	node, create_err := sim_create_file(state, path, permissions)
 	if create_err != nil {
 		return File(-1), create_err
 	}
@@ -2176,7 +2680,9 @@ func sim_create(state *Sim, path string) (file File, err error) {
 	return descriptor.File, nil
 }
 
-func sim_create_file(state *Sim, path string) (node_index int, err error) {
+func sim_create_file(
+	state *Sim, path string, permissions File_Permissions,
+) (node_index int, err error) {
 	parent, leaf, found := sim_path_parent(state, path)
 	if leaf == "" {
 		return 0, sim_is_a_directory
@@ -2184,17 +2690,19 @@ func sim_create_file(state *Sim, path string) (node_index int, err error) {
 	if !found {
 		return 0, sim_file_absent
 	}
-	if !state.Nodes[parent].Directory {
+	if !File_Mode_Is_Directory(state.Nodes[parent].Mode) {
 		return 0, sim_not_a_directory
 	}
 	if child, present := sim_node_find_child(state, parent, leaf); present {
-		if state.Nodes[child].Directory {
+		if File_Mode_Is_Directory(state.Nodes[child].Mode) {
 			return 0, sim_is_a_directory
 		}
+		// Truncate keeps the mode an existing node already carries, because creation
+		// permissions describe a node being made, not one being reopened.
 		state.Nodes[child].Contents_Count = 0
 		return child, nil
 	}
-	return sim_node_acquire(state, parent, leaf, false)
+	return sim_node_acquire(state, parent, leaf, File_Mode(permissions&^SIM_UMASK))
 }
 
 func sim_node_write(node *Sim_Node, buffer []byte, offset int64) (err error) {
@@ -2257,7 +2765,7 @@ func sim_generate(state *Sim) {
 		if !state.Nodes[directory_index].Used {
 			continue
 		}
-		if !state.Nodes[directory_index].Directory {
+		if !File_Mode_Is_Directory(state.Nodes[directory_index].Mode) {
 			continue
 		}
 		entry_index := 0
@@ -2268,47 +2776,84 @@ func sim_generate(state *Sim) {
 			directory := prng.Generator_Chance(
 				&state.Generator, sim_subdirectory_chance(),
 			)
-			child, acquire_err := sim_generated_node_acquire(
-				state, directory_index, entry_index, directory,
-			)
-			invariant.Always(acquire_err == nil,
-				"Generated nodes fit reserved caller-owned node storage.")
+			sim_generate_child(state, directory_index, entry_index, directory)
 			generated_count++
 			entry_index++
-			if !directory {
-				sim_generate_bytes(&state.Generator, &state.Nodes[child])
-			}
 		}
 	}
+}
+
+// Make one generated child and fill whatever its kind stores. Kind shape, permissions, and link
+// choice each draw from their own stream, thus adding either later axis leaves the tree every
+// banked seed already produces unchanged.
+func sim_generate_child(state *Sim, parent int, entry_index int, directory bool) {
+	child, acquire_err := sim_generated_node_acquire(
+		state, parent, entry_index, sim_generate_mode(state, directory, entry_index),
+	)
+	invariant.Always(acquire_err == nil,
+		"Generated nodes fit reserved caller-owned node storage.")
+	node := &state.Nodes[child]
+	if File_Mode_Is_Symbolic_Link(node.Mode) {
+		node.Contents_Count = sim_generated_name(entry_index-1, node.Contents[:])
+		return
+	}
+	if directory {
+		return
+	}
+	sim_generate_bytes(&state.Generator, node)
+}
+
+// Draw one generated node mode. A link points at an earlier sibling, thus the first entry of any
+// directory is never one and no generated link can dangle.
+func sim_generate_mode(state *Sim, directory bool, entry_index int) (mode File_Mode) {
+	mode = File_Mode(prng.Generator_Below(
+		&state.Permission_Generator, SIM_PERMISSION_DRAW_COUNT,
+	))
+	if directory {
+		return mode | FILE_MODE_DIRECTORY
+	}
+	if entry_index == 0 {
+		return mode
+	}
+	if prng.Generator_Below(&state.Link_Generator, SIM_LINK_CHANCE_DENOMINATOR) != 0 {
+		return mode
+	}
+	return mode | FILE_MODE_SYMBOLIC_LINK
 }
 
 // DECIMAL_RADIX selects base ten for generated entry names.
 const DECIMAL_RADIX = 10
 
 func sim_generated_node_acquire(
-	state *Sim, parent int, value int, directory bool,
+	state *Sim, parent int, value int, mode File_Mode,
 ) (node_index int, err error) {
-	invariant.Always(value >= 0, "A generated entry index is nonnegative.")
 	for index := 1; index < len(state.Nodes); index++ {
 		if state.Nodes[index].Used {
 			continue
 		}
 		node := &state.Nodes[index]
-		*node = Sim_Node{Used: true, Directory: directory, Parent: parent}
-		buffer := [bits.WORD_SIZE]byte{}
-		position_count := len(buffer) - 1
-		buffer[position_count] = byte(value%DECIMAL_RADIX) + '0'
-		value /= DECIMAL_RADIX
-		for value > 0 {
-			position_count--
-			buffer[position_count] = byte(value%DECIMAL_RADIX) + '0'
-			value /= DECIMAL_RADIX
-		}
-		node.Name[0] = 'e'
-		node.Name_Count = 1 + copy(node.Name[1:], buffer[position_count:])
+		*node = Sim_Node{Used: true, Mode: mode, Parent: parent}
+		node.Name_Count = sim_generated_name(value, node.Name[:])
 		return index, nil
 	}
 	return 0, sim_node_capacity_exceeded
+}
+
+// Write one generated entry name into caller storage. Node naming and link targets share this
+// formatter, thus a generated link cannot name a sibling that naming never produces.
+func sim_generated_name(value int, storage []byte) (count int) {
+	invariant.Always(value >= 0, "A generated entry index is nonnegative.")
+	buffer := [bits.WORD_SIZE]byte{}
+	position_count := len(buffer) - 1
+	buffer[position_count] = byte(value%DECIMAL_RADIX) + '0'
+	value /= DECIMAL_RADIX
+	for value > 0 {
+		position_count--
+		buffer[position_count] = byte(value%DECIMAL_RADIX) + '0'
+		value /= DECIMAL_RADIX
+	}
+	storage[0] = 'e'
+	return 1 + copy(storage[1:], buffer[position_count:])
 }
 
 // Draw file contents from seed: size Sampled from heavy-tailed distribution, filled with
@@ -2452,7 +2997,10 @@ func sim_operation_complete(completion *time.Completion) {
 			if operation.Directory != DIRECTORY_CURRENT {
 				err = sim_not_a_directory
 			} else {
-				err = sim_mkdir(operation.State, operation.File_Path)
+				err = sim_mkdir(
+					operation.State, operation.File_Path,
+					operation.Open_Options.Permissions,
+				)
 			}
 		case SIM_OPERATION_KIND_READ:
 			data, err = sim_operation_read(operation)
@@ -2537,9 +3085,13 @@ func sim_operation_open_at(operation *Sim_Operation) (data int, err error) {
 	}
 	file := File(-1)
 	if operation.Open_Options.Create {
-		file, err = sim_create(operation.State, operation.File_Path)
+		file, err = sim_create(
+			operation.State, operation.File_Path, operation.Open_Options.Permissions,
+		)
 	} else {
-		file, err = sim_open(operation.State, operation.File_Path)
+		file, err = sim_open(
+			operation.State, operation.File_Path, operation.Open_Options.Flags,
+		)
 	}
 	return int(file), err
 }
@@ -2549,7 +3101,7 @@ func sim_operation_read(operation *Sim_Operation) (data int, err error) {
 		return 0, operation.Operation_Err
 	}
 	node := &operation.State.Nodes[operation.Node]
-	if node.Directory {
+	if File_Mode_Is_Directory(node.Mode) {
 		return 0, sim_is_a_directory
 	}
 	if operation.Offset < 0 {
@@ -2565,7 +3117,7 @@ func sim_operation_read(operation *Sim_Operation) (data int, err error) {
 
 func sim_operation_write(operation *Sim_Operation) (data int, err error) {
 	node := &operation.State.Nodes[operation.Node]
-	if node.Directory {
+	if File_Mode_Is_Directory(node.Mode) {
 		return 0, sim_is_a_directory
 	}
 	write_err := sim_node_write(node, operation.Buffer, operation.Offset)

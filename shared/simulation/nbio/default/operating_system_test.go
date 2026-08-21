@@ -51,7 +51,7 @@ const OPERATING_SYSTEM_TEST_PLATFORM_CAPACITY = OPERATING_SYSTEM_TEST_OPERATION_
 const OPERATING_SYSTEM_ALLOCATION_FILE_COUNT = PIPE_ENDS
 
 // OPERATING_SYSTEM_ALLOCATION_BUFFER_BYTES lets both measured directory passes return names.
-const OPERATING_SYSTEM_ALLOCATION_BUFFER_BYTES = DIRECTORY_READ_BYTES
+const OPERATING_SYSTEM_ALLOCATION_BUFFER_BYTES = nbio.DIRECTORY_BUFFER_SIZE_MAXIMUM
 
 // OPERATING_SYSTEM_ALLOCATION_ENTRY_CAPACITY matches one IPv4-width directory batch.
 const OPERATING_SYSTEM_ALLOCATION_ENTRY_CAPACITY = nbio.IPV4_ADDRESS_BYTES
@@ -355,7 +355,7 @@ func create_file(
 ) (file nbio.File, err error) {
 	t.Helper()
 	return open_file_options(t, loop, driver, path, nbio.Open_At_Options{
-		Access: nbio.OPEN_WRITE_ONLY, Create: true, Truncate: true, Mode: 0o644,
+		Access: nbio.OPEN_WRITE_ONLY, Create: true, Truncate: true, Permissions: 0o644,
 	})
 }
 
@@ -380,10 +380,10 @@ func open_file_options(
 
 // Bound one listing pass, thus wide directory is drained in repeated passes, not into one
 // unbounded allocation.
-const DIRECTORY_PASS_BYTES = 8192
+const DIRECTORY_PASS_BYTES = nbio.DIRECTORY_BUFFER_SIZE_MAXIMUM
 
 // Cap passes one listing take, thus backend that never report empty pass fail test, not spin it.
-const DIRECTORY_PASSES_MAX = 4096
+const DIRECTORY_PASSES_MAX = 1 << 12
 
 // List path children by composition of primitives caller now hold: Open_At, repeated
 // Get_Directory_Entries passes until one report none, and Close.
@@ -2117,7 +2117,8 @@ func Test_Operating_System_IO_File_Chain(t *testing.T) {
 	var open_completion time.Completion
 	nbio.Storage_Open_At(
 		loop.Storage, &open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
-			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true,
+			Permissions: 0o600,
 		}, func(completed *time.Completion) {
 			if !testify.No_Error(t, completed.Error) {
 				return
@@ -2187,7 +2188,7 @@ func Test_Operating_System_IO_Open_At_No_Follow(t *testing.T) {
 	loop, _, driver := operating_system_loop(t, clock)
 	link_status, status_err := nbio.Storage_Status(loop.Storage, link)
 	testify.No_Error(t, status_err)
-	testify.True(t, link_status.Is_Symbolic_Link)
+	testify.True(t, nbio.File_Mode_Is_Symbolic_Link(link_status.Mode))
 	target_buffer := make([]byte, nbio.SIM_PATH_TEXT_BYTES_MAXIMUM)
 	target_count, read_link_err := nbio.Storage_Read_Link(
 		loop.Storage, link, target_buffer,
@@ -2794,7 +2795,7 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 	}
 	for _, path := range parents {
 		status, _ := nbio.Storage_Status(loop.Storage, path)
-		testify.True(t, status.Is_Directory, path)
+		testify.True(t, nbio.File_Mode_Is_Directory(status.Mode), path)
 	}
 
 	slashed := filepath.Join(root, "four", "five") + "/"
@@ -2802,7 +2803,7 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 	slashed_status, _ := nbio.Storage_Status(
 		loop.Storage, filepath.Join(root, "four", "five"),
 	)
-	testify.True(t, slashed_status.Is_Directory)
+	testify.True(t, nbio.File_Mode_Is_Directory(slashed_status.Mode))
 
 	// Final component that already exist as file must report error, not converge, because
 	// caller asked for directory and does not have one.
@@ -2812,7 +2813,7 @@ func Test_Operating_System_IO_Make_Directory(t *testing.T) {
 	// thus learn difference from Status, not from create.
 	testify.No_Error(t, make_directory(t, loop, driver, occupied))
 	status, _ := nbio.Storage_Status(loop.Storage, occupied)
-	testify.False(t, status.Is_Directory)
+	testify.False(t, nbio.File_Mode_Is_Directory(status.Mode))
 	time.Driver_Deinit(driver)
 }
 
@@ -2833,15 +2834,16 @@ func Test_Operating_System_IO_Directory(t *testing.T) {
 
 	directory_status, _ := nbio.Storage_Status(loop.Storage, nested)
 	testify.True(t, directory_status.Exists)
-	testify.True(t, directory_status.Is_Directory)
-	testify.False(t, directory_status.Is_Regular)
+	testify.True(t, nbio.File_Mode_Is_Directory(directory_status.Mode))
+	testify.False(t, nbio.File_Mode_Is_Regular(directory_status.Mode))
 	regular_status, _ := nbio.Storage_Status(loop.Storage, file_path)
 	testify.True(t, regular_status.Exists)
-	testify.False(t, regular_status.Is_Directory)
-	testify.True(t, regular_status.Is_Regular)
+	testify.False(t, nbio.File_Mode_Is_Directory(regular_status.Mode))
+	testify.True(t, nbio.File_Mode_Is_Regular(regular_status.Mode))
 	absent_status, _ := nbio.Storage_Status(loop.Storage, filepath.Join(root, "nope"))
-	testify.False(t, absent_status.Exists)
-	testify.False(t, absent_status.Is_Regular)
+	// Absent path is the zero status whole. Mode kind questions answer nothing here, because a
+	// zero mode reads as a regular file with no permission, thus Exists is the only guard.
+	testify.Equal(t, nbio.File_Status{}, absent_status)
 
 	entries, read_err := read_directory(t, loop, driver, nested)
 	testify.No_Error(t, read_err)

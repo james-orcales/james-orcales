@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -221,7 +222,7 @@ func operating_system_spawn_procedure(
 
 // Bound one pipe read, thus chatty child is drained in repeated passes, not into one unbounded
 // allocation.
-const PROCESS_PIPE_BYTES = 8192
+const PROCESS_PIPE_BYTES = 8 * bits.KIBIBYTE_BYTES
 
 // Cap wait for pipes of killed child to close. Grandchild that inherited write end keep pipe
 // open after its parent die, thus drain need its own bound.
@@ -887,11 +888,11 @@ func operating_system_storage_open_at(
 
 func operating_system_storage_mkdir_at(
 	state_pointer unsafe.Pointer, completion *time.Completion, directory nbio.File,
-	file_path string, mode uint32, callback time.Callback,
+	file_path string, permissions nbio.File_Permissions, callback time.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
 	operating_system_submit(completion)
-	operating_system_mkdir_at(state, completion, directory, file_path, mode, callback)
+	operating_system_mkdir_at(state, completion, directory, file_path, permissions, callback)
 }
 
 func operating_system_storage_directory_entries(
@@ -1254,11 +1255,11 @@ func operating_system_directory_pass(
 	operating_system_completion_add(state, completion)
 }
 
-// Submit one mkdirat through platform scheduler. Mode travel in Open_Options because both
-// operations carry path and creation mode, and scheduler already hold that field.
+// Submit one mkdirat through platform scheduler. Permissions travel in Open_Options because both
+// operations carry path and creation permissions, and scheduler already hold that field.
 func operating_system_mkdir_at(
 	state *Operating_System, completion *time.Completion, directory nbio.File,
-	file_path string, mode uint32, callback time.Callback,
+	file_path string, permissions nbio.File_Permissions, callback time.Callback,
 ) {
 	descriptor := int(directory)
 	if directory == nbio.DIRECTORY_CURRENT {
@@ -1268,7 +1269,7 @@ func operating_system_mkdir_at(
 		Completion:   completion,
 		Kind:         OPERATING_SYSTEM_OPERATION_MKDIR_AT,
 		Descriptor:   descriptor,
-		Open_Options: nbio.Open_At_Options{Mode: mode},
+		Open_Options: nbio.Open_At_Options{Permissions: permissions},
 		Deliver:      callback,
 	})
 	operating_system_operation_submit_path(state, operation, file_path)

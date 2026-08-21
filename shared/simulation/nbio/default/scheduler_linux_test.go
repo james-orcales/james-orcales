@@ -45,7 +45,8 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 	var open_completion time.Completion
 	nbio.Storage_Open_At(loop.Storage, &open_completion, nbio.DIRECTORY_CURRENT, path,
 		nbio.Open_At_Options{
-			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true,
+			Permissions: 0o600,
 		}, func(completed *time.Completion) {
 			if !testify.No_Error(t, completed.Error) {
 				return

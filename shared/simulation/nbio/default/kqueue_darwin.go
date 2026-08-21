@@ -362,7 +362,8 @@ func platform_open_at(operation *Operating_System_Operation) (descriptor int, er
 		result, _, errno := syscall.Syscall6(
 			DARWIN_OPEN_AT_CALL,
 			uintptr(operation.Descriptor), uintptr(path), uintptr(flags),
-			uintptr(operation.Open_Options.Mode), 0, 0,
+			uintptr(nbio.File_Permissions_To_POSIX(operation.Open_Options.Permissions)),
+			0, 0,
 		)
 		if errno == syscall.EINTR {
 			continue
@@ -383,7 +384,7 @@ func platform_mkdir_at(operation *Operating_System_Operation) (err error) {
 		_, _, errno := syscall.Syscall(
 			DARWIN_MKDIR_AT_CALL,
 			uintptr(operation.Descriptor), uintptr(path),
-			uintptr(operation.Open_Options.Mode),
+			uintptr(nbio.File_Permissions_To_POSIX(operation.Open_Options.Permissions)),
 		)
 		if errno == syscall.EINTR {
 			continue

@@ -3,12 +3,12 @@
 package nbio
 
 import (
-	"encoding/binary"
 	"errors"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
 
+	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
@@ -723,12 +723,14 @@ func platform_address(operation *Operating_System_Operation) {
 func platform_address_header(
 	storage *[SOCKET_ADDRESS_BYTES]byte, family int, size uint32,
 ) {
-	binary.LittleEndian.PutUint16(storage[0:2], uint16(family))
+	binary.Put_Uint_16(
+		binary.Bytes(storage[0:2]), binary.Word_16(family), binary.LITTLE_ENDIAN,
+	)
 }
 
 // Read family from sockaddr kernel wrote.
 func platform_address_family(storage *[SOCKET_ADDRESS_BYTES]byte) (family int) {
-	return int(binary.LittleEndian.Uint16(storage[0:2]))
+	return int(binary.Uint_16(binary.Bytes(storage[0:2]), binary.LITTLE_ENDIAN))
 }
 
 // Platform get entry reserve one SQE. It flush full submission queue before retry.
@@ -858,7 +860,9 @@ func platform_prepare_entry(
 	case OPERATING_SYSTEM_OPERATION_MKDIR_AT:
 		entry.Opcode = KERNEL_RING_OPERATION_MKDIR_AT
 		entry.Address = uint64(uintptr(unsafe.Pointer(&operation.File_Path[0])))
-		entry.Count = operation.Open_Options.Mode
+		entry.Count = uint32(
+			nbio.File_Permissions_To_POSIX(operation.Open_Options.Permissions),
+		)
 	case OPERATING_SYSTEM_OPERATION_PROCESS_EXIT:
 		entry.Opcode = KERNEL_RING_OPERATION_POLL_ADD
 		entry.Descriptor = int32(operation.Descriptor)
@@ -882,7 +886,9 @@ func platform_prepare_entry(
 	case OPERATING_SYSTEM_OPERATION_OPEN_AT:
 		entry.Opcode = KERNEL_RING_OPERATION_OPEN_AT
 		entry.Address = uint64(uintptr(unsafe.Pointer(&operation.File_Path[0])))
-		entry.Count = operation.Open_Options.Mode
+		entry.Count = uint32(
+			nbio.File_Permissions_To_POSIX(operation.Open_Options.Permissions),
+		)
 		entry.Operation_Flags = uint32(platform_open_flags(operation.Open_Options))
 	case OPERATING_SYSTEM_OPERATION_EVENT:
 		entry.Opcode = KERNEL_RING_OPERATION_READ
@@ -970,7 +976,7 @@ func platform_event_trigger(
 	state *Operating_System, event time.Event, _ uint64,
 ) {
 	buffer := [EVENTFD_VALUE_BYTES]byte{}
-	binary.LittleEndian.PutUint64(buffer[:], 1)
+	binary.Put_Uint_64(binary.Bytes(buffer[:]), 1, binary.LITTLE_ENDIAN)
 	count, write_err := syscall.Write(int(event), buffer[:])
 	for write_err == syscall.EINTR {
 		count, write_err = syscall.Write(int(event), buffer[:])
