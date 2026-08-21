@@ -343,10 +343,6 @@ utilities, len, length). Use sites go unchecked, so the len and cap builtins sta
 
 These forms are required in source and test files alike.
 
-### Goimports
-
-Imports are grouped and ordered as goimports writes them.
-
 ### Type Resolution
 
 Every bare type in a package declaration or function signature resolves to a predeclared type or a

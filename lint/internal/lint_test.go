@@ -10,10 +10,6 @@ import (
 	"local/james-orcales/lint/internal"
 )
 
-// Gofmt_must formats test sources so fixtures don't need to be hand-perfect
-// gofmt-clean. Required because check_gofmt runs as part of the tier-1
-// pipeline against every test source. TestGofmt builds MapFS inline so it
-// can submit deliberately un-formatted sources.
 const DOCTRINE_SHARED_LIBRARY_MODULE_PATH = "github.com/james-orcales/" +
 	"james-orcales/shared"
 const DOCTRINE_SHARED_LIBRARY_GO_MODULE = "module " +
@@ -1512,76 +1508,6 @@ func make_v() (result Foo) {
 			Want_Diag: "",
 		},
 	})
-}
-
-// Test_Gofmt verifies that gofmt-dirty sources are flagged. Bypasses
-// gofmt_must so the deliberate formatting violations survive.
-func Test_Gofmt(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "indented top-level decl flagged",
-			Files: map[string]string{
-				"test.go": "package main\n\n\tfunc f() (result int) { return 1 }\n",
-			},
-			Want_Diag: "gofmt",
-		},
-		{
-			Name: "clean source allowed",
-			Files: map[string]string{
-				"test.go": "package main\n\n" +
-					"import \"" +
-					"github.com/james-orcales/james-orcales/" +
-					"shared/sim/aver/v2\"\n\n" +
-					"const FIXTURE_HI = 100\n\n" +
-					"func f() (result int) {\n" +
-					"\tdefer func() {\n" +
-					"\t\tinvariant.Cross_Product(\n" +
-					"\t\t\tinvariant.Distinct_Boundary(" +
-					"&aver.Boundary_Input[int]{\n" +
-					"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI,\n" +
-					"\t\t\t}),\n" +
-					"\t\t\tinvariant.Always(" +
-					"result == 0, \"result is zero\"),\n" +
-					"\t\t)\n" +
-					"\t}()\n" +
-					"\treturn 1\n" +
-					"}\n",
-			},
-			Want_Diag: "",
-		},
-	}
-	// TestGofmt bypasses run_diag_table's gofmt_must preprocessing —
-	// reformatting the fixture source would defeat the check under test.
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{
-					Data: []byte(v)}
-			}
-			stdout := &strings.Builder{}
-			code := lint_main(t, &lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: &strings.Builder{},
-			})
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-				return
-			}
-			if !strings.Contains(stdout.String(), tt.Want_Diag) {
-				t.Errorf("expected output containing %q, got: %s",
-					tt.Want_Diag, output)
-			}
-		})
-	}
 }
 
 // Test_No_Dot_Import verifies that dot imports (`import . "pkg"`) are flagged

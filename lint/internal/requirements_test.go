@@ -976,16 +976,6 @@ func Test_Source_And_Test_Bans_Banned_Words(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Requirements_Goimports verifies non-goimports formatting is flagged.
-func Test_Source_And_Test_Requirements_Goimports(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\nimport  \"strings\"\n\n" +
-		"// F does.\nfunc F() (s string) { return strings.TrimSpace(\"x\") }\n")
-	if !requirements_flags(t, files, "gofmt") {
-		t.Fatal("non-goimports formatting must be flagged")
-	}
-}
-
 // Test_Source_And_Test_Requirements_Type_Resolution keeps plain syntax from hiding deleted types.
 func Test_Source_And_Test_Requirements_Type_Resolution(t *testing.T) {
 	t.Parallel()

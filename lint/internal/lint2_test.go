@@ -1727,15 +1727,6 @@ func F() {
 `)},
 		{Snapshot: snap.Init(`a.go:5:1: The function has 73 lines. The maximum is 70.`), Files: snapshot_package("// F does.\nfunc F() {\n" +
 			strings.Repeat("\tprintln(0)\n", 71) + "}\n")},
-		{Snapshot: snap.Init(`a.go:1:1: The file is not gofmt-clean. Run gofmt on the file.`), Verbatim: true, Files: map[string]string{
-			"a.go": `// Package fixture is a fixture.
-package fixture
-
-import  "fmt"
-
-// F does.
-func F() (s string) { return fmt.Sprint("x") }
-`}},
 	})
 }
 

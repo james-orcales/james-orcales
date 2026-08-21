@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
-	"go/format"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -1633,7 +1632,6 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_no_banned_stdlib_import,
 		check_no_grouped_declaration,
 		make_check_keyed_struct_init(input.Declarations),
-		check_gofmt,
 		check_no_dot_import,
 		check_import_alias_no_default,
 		make_check_import_alias_unnecessary(input.Declarations),
@@ -5880,33 +5878,6 @@ func check_keyed_struct_init_type_ident(
 		return "", ""
 	}
 	return "", identifier.Name
-}
-
-// The gofmt tool is the canonical Go formatter; deviating from it creates
-// noise in diffs and pulls editor cursors around. We emit one diagnostic per
-// file — localizing hunks would re-implement gofmt's diff logic for no real
-// gain over `gofmt -w`.
-func check_gofmt(file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic) {
-
-	if len(source) == 0 {
-		return nil
-	}
-	formatted, err := format.Source(source)
-	if err != nil {
-		return nil
-	}
-	if string(formatted) == string(source) {
-		return nil
-	}
-	filename := ""
-	tok_file := file_set.File(file.Pos())
-	if tok_file != nil {
-		filename = tok_file.Name()
-	}
-	return []Diagnostic{{
-		Position: token.Position{Filename: filename, Line: 1, Column: 1},
-		Message:  "The file is not gofmt-clean. Run gofmt on the file.",
-	}}
 }
 
 // Dot imports inject names into the file scope, breaking grep-for-origin and
