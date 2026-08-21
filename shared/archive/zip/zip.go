@@ -2,12 +2,12 @@
 package zip
 
 import (
-	"hash/crc32"
 	"unsafe"
 
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/compress/flate"
 	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/hash/crc32"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/nbio"
@@ -1924,6 +1924,17 @@ func Header_Invariants(value Header, namespace aver.Namespace) {
 	Header_Non_UTF8_Invariants(value.Non_UTF8, namespace)
 }
 
+// Header_Handle keeps caller-owned header storage explicit.
+type Header_Handle *Header
+
+// Header_Handle_Invariants composes a present header value.
+func Header_Handle_Invariants(value Header_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Header_Invariants(*value, namespace)
+}
+
 // Header_Name_Unvalidated admits the first rejected path byte.
 type Header_Name_Unvalidated []byte
 
@@ -2035,9 +2046,8 @@ type Header_Unvalidated struct {
 
 // Header_Unvalidated_Invariants admits exactly one rejected metadata boundary.
 func Header_Unvalidated_Invariants(
-	value *Header_Unvalidated, namespace aver.Namespace,
+	value Header_Unvalidated, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Unvalidated ZIP Header state exists.")
 	Header_Name_Unvalidated_Invariants(value.Name, namespace)
 	Header_Comment_Unvalidated_Invariants(value.Comment, namespace)
 	Header_Extra_Unvalidated_Invariants(value.Extra, namespace)
@@ -2056,9 +2066,22 @@ func Header_Unvalidated_Invariants(
 	Header_Non_UTF8_Invariants(value.Non_UTF8, namespace)
 }
 
+// Header_Unvalidated_Handle keeps hostile caller fields in caller-owned storage.
+type Header_Unvalidated_Handle *Header_Unvalidated
+
+// Header_Unvalidated_Handle_Invariants composes a present hostile header value.
+func Header_Unvalidated_Handle_Invariants(
+	value Header_Unvalidated_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Header_Unvalidated_Invariants(*value, namespace)
+}
+
 // Header_Validate is the one boundary where hostile lengths enter ZIP state.
 func Header_Validate(
-	value *Header_Unvalidated,
+	value Header_Unvalidated_Handle,
 ) (header Header, status Validation_Status) {
 	defer func() {
 		Header_Invariants(header, "Header_Validate.header")
@@ -2066,7 +2089,7 @@ func Header_Validate(
 			status, "Header_Validate.status",
 		)
 	}()
-	Header_Unvalidated_Invariants(value, "Header_Validate.value")
+	Header_Unvalidated_Handle_Invariants(value, "Header_Validate.value")
 	if len(value.Name) == 0 {
 		return Header{}, Validation_Status(STATUS_INPUT_INVALID)
 	}
@@ -2107,14 +2130,14 @@ func Header_Validate(
 
 // Header_Set_Modification_Time stores extended instant and compatible DOS fields.
 func Header_Set_Modification_Time(
-	header *Header_Unvalidated, modified Timestamp,
+	header Header_Unvalidated_Handle, modified Timestamp,
 ) (status Validation_Status) {
 	defer func() {
 		Validation_Status_Invariants(
 			status, "Header_Set_Modification_Time.status",
 		)
 	}()
-	Header_Unvalidated_Invariants(header, "Header_Set_Modification_Time.header")
+	Header_Unvalidated_Handle_Invariants(header, "Header_Set_Modification_Time.header")
 	Timestamp_Invariants(modified, "Header_Set_Modification_Time.modified")
 	encoding, valid := timestamp_to_dos(modified)
 	if !valid {
@@ -2127,11 +2150,11 @@ func Header_Set_Modification_Time(
 }
 
 // Header_Modification_Time returns extended instant or legacy DOS value in UTC.
-func Header_Modification_Time(header *Header) (modified Timestamp) {
+func Header_Modification_Time(header Header_Handle) (modified Timestamp) {
 	defer func() {
 		Timestamp_Invariants(modified, "Header_Modification_Time.modified")
 	}()
-	Header_Invariants(*header, "Header_Modification_Time.header")
+	Header_Handle_Invariants(header, "Header_Modification_Time.header")
 	if header.Modified.Set {
 		return header.Modified
 	}
@@ -2150,8 +2173,8 @@ func Header_Modification_Time(header *Header) (modified Timestamp) {
 }
 
 // Header_Set_Mode stores portable mode through standard Unix ZIP attributes.
-func Header_Set_Mode(header *Header_Unvalidated, mode nbio.File_Mode) {
-	Header_Unvalidated_Invariants(header, "Header_Set_Mode.header")
+func Header_Set_Mode(header Header_Unvalidated_Handle, mode nbio.File_Mode) {
+	Header_Unvalidated_Handle_Invariants(header, "Header_Set_Mode.header")
 	nbio.File_Mode_Invariants(mode, "Header_Set_Mode.mode")
 	header.Creator_Version = header.Creator_Version&CREATOR_SYSTEM_MASK |
 		CREATOR_UNIX<<CREATOR_SYSTEM_SHIFT
@@ -2167,9 +2190,9 @@ func Header_Set_Mode(header *Header_Unvalidated, mode nbio.File_Mode) {
 }
 
 // Header_Mode restores portable mode from central external attributes.
-func Header_Mode(header *Header) (mode Archive_File_Mode) {
+func Header_Mode(header Header_Handle) (mode Archive_File_Mode) {
 	defer func() { Archive_File_Mode_Invariants(mode, "Header_Mode.mode") }()
-	Header_Invariants(*header, "Header_Mode.header")
+	Header_Handle_Invariants(header, "Header_Mode.header")
 	creator := header.Creator_Version >> CREATOR_SYSTEM_SHIFT
 	unix_creator := creator == CREATOR_UNIX
 	if creator == CREATOR_MAC_OS_X {
@@ -2581,8 +2604,7 @@ type Reader struct {
 }
 
 // Reader_Invariants keeps retained archive inside caller storage.
-func Reader_Invariants(value *Reader, namespace aver.Namespace) {
-	aver.Always(value != nil, "ZIP Reader state exists.")
+func Reader_Invariants(value Reader, namespace aver.Namespace) {
 	Reader_Storage_Invariants(value.Storage, namespace)
 	Reader_Archive_Invariants(value.Archive, namespace)
 	Status_Invariants(value.Status, namespace)
@@ -2598,6 +2620,17 @@ func Reader_Invariants(value *Reader, namespace aver.Namespace) {
 		len(value.Archive) <= len(value.Storage.Archive),
 		"ZIP Reader archive stays inside caller storage.",
 	)
+}
+
+// Reader_Handle keeps injected Stream state in caller-owned storage.
+type Reader_Handle *Reader
+
+// Reader_Handle_Invariants composes a present Reader value.
+func Reader_Handle_Invariants(value Reader_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Reader_Invariants(*value, namespace)
 }
 
 // File_Info_Name is one normalized filesystem path view.
@@ -2688,6 +2721,17 @@ func File_Info_Invariants(value File_Info, namespace aver.Namespace) {
 	File_Info_Header_Index_Invariants(value.Header_Index, namespace)
 	File_Info_Is_Directory_Invariants(value.Is_Directory, namespace)
 	File_Info_Explicit_Invariants(value.Explicit, namespace)
+}
+
+// File_Info_Handle keeps metadata output in caller-owned storage.
+type File_Info_Handle *File_Info
+
+// File_Info_Handle_Invariants composes a present metadata value.
+func File_Info_Handle_Invariants(value File_Info_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	File_Info_Invariants(*value, namespace)
 }
 
 // File_Info_Addition_Name is one nonempty normalized archive path.
@@ -2891,10 +2935,22 @@ type File_System struct {
 }
 
 // File_System_Invariants requires bound Reader after successful initialization.
-func File_System_Invariants(value *File_System, namespace aver.Namespace) {
-	aver.Always(value != nil, "ZIP File_System state exists.")
+func File_System_Invariants(value File_System, namespace aver.Namespace) {
 	File_System_Reader_Invariants(value.Reader, namespace)
 	File_System_Valid_Invariants(value.Valid, namespace)
+}
+
+// File_System_Handle keeps path state in caller-owned storage.
+type File_System_Handle *File_System
+
+// File_System_Handle_Invariants composes a present filesystem value.
+func File_System_Handle_Invariants(
+	value File_System_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	File_System_Invariants(*value, namespace)
 }
 
 // File_System_Archive is one archive after filesystem readiness validation.
@@ -3559,9 +3615,8 @@ type Writer_Directory_State struct {
 
 // Writer_Directory_State_Invariants excludes unrelated mutable Writer state.
 func Writer_Directory_State_Invariants(
-	value *Writer_Directory_State, namespace aver.Namespace,
+	value Writer_Directory_State, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "ZIP Writer directory state exists.")
 	Writer_Archive_Storage_Invariants(value.Archive, namespace)
 	Writer_Central_Storage_Invariants(value.Central, namespace)
 	Writer_Comment_Storage_Invariants(value.Comment, namespace)
@@ -3569,6 +3624,19 @@ func Writer_Directory_State_Invariants(
 	Writer_Central_Position_Invariants(value.Central_Position, namespace)
 	Entry_Count_Invariants(value.Entry_Count, namespace)
 	Writer_Comment_Count_Invariants(value.Comment_Count, namespace)
+}
+
+// Writer_Directory_State_Handle keeps final directory output caller-owned.
+type Writer_Directory_State_Handle *Writer_Directory_State
+
+// Writer_Directory_State_Handle_Invariants composes present directory state.
+func Writer_Directory_State_Handle_Invariants(
+	value Writer_Directory_State_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Writer_Directory_State_Invariants(*value, namespace)
 }
 
 // Writer_Active distinguishes an open member from idle state.
@@ -3666,8 +3734,7 @@ type Writer struct {
 }
 
 // Writer_Invariants keeps every cursor inside caller storage.
-func Writer_Invariants(value *Writer, namespace aver.Namespace) {
-	aver.Always(value != nil, "ZIP Writer state exists.")
+func Writer_Invariants(value Writer, namespace aver.Namespace) {
 	Writer_Storage_Invariants(value.Storage, namespace)
 	Header_Invariants(value.Header, namespace)
 	Status_Invariants(value.Status, namespace)
@@ -3700,12 +3767,23 @@ func Writer_Invariants(value *Writer, namespace aver.Namespace) {
 	)
 }
 
+// Writer_Handle keeps archive assembly in caller-owned storage.
+type Writer_Handle *Writer
+
+// Writer_Handle_Invariants composes a present Writer value.
+func Writer_Handle_Invariants(value Writer_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Writer_Invariants(*value, namespace)
+}
+
 // Reader_Init loads one bounded archive through injected Stream.
 func Reader_Init(
-	reader *Reader, stream nbio.Stream, storage Reader_Storage,
-	completion *nbio.Completion, callback nbio.Callback,
+	reader Reader_Handle, stream nbio.Stream, storage Reader_Storage,
+	completion nbio.Completion_Handle, callback nbio.Callback,
 ) {
-	Reader_Invariants(reader, "Reader_Init.reader")
+	Reader_Handle_Invariants(reader, "Reader_Init.reader")
 	Reader_Storage_Invariants(storage, "Reader_Init.storage")
 	aver.Always(completion != nil, "ZIP Reader initialization has completion storage.")
 	aver.Always(callback != nil, "ZIP Reader initialization has callback.")
@@ -3720,13 +3798,13 @@ func Reader_Init(
 
 // Reader_Decode decodes one validated central member into caller storage.
 func Reader_Decode(
-	reader *Reader, index Entry_Count, destination bytes.Slice,
+	reader Reader_Handle, index Entry_Count, destination bytes.Slice,
 ) (count bytes.Boundary, status Status) {
 	defer func() {
 		bytes.Boundary_Invariants(count, "Reader_Decode.count")
 		Status_Invariants(status, "Reader_Decode.status")
 	}()
-	Reader_Invariants(reader, "Reader_Decode.reader")
+	Reader_Handle_Invariants(reader, "Reader_Decode.reader")
 	Entry_Count_Invariants(index, "Reader_Decode.index")
 	bytes.Slice_Invariants(destination, "Reader_Decode.destination")
 	if reader.Active {
@@ -3759,14 +3837,14 @@ func Reader_Decode(
 
 // Reader_Header returns one validated member header borrowing Reader archive bytes.
 func Reader_Header(
-	reader *Reader, index Entry_Count, header *Header,
+	reader Reader_Handle, index Entry_Count, header Header_Handle,
 ) (status Found_Status) {
 	defer func() {
 		Found_Status_Invariants(status, "Reader_Header.status")
 	}()
-	Reader_Invariants(reader, "Reader_Header.reader")
+	Reader_Handle_Invariants(reader, "Reader_Header.reader")
 	Entry_Count_Invariants(index, "Reader_Header.index")
-	Header_Invariants(*header, "Reader_Header.header")
+	Header_Handle_Invariants(header, "Reader_Header.header")
 	if reader.Active {
 		return Found_Status(STATUS_INPUT_INVALID)
 	}
@@ -3781,15 +3859,15 @@ func Reader_Header(
 
 // Reader_Raw returns one member compressed payload borrowing Reader archive bytes.
 func Reader_Raw(
-	reader *Reader, index Entry_Count, header *Header,
+	reader Reader_Handle, index Entry_Count, header Header_Handle,
 ) (raw Reader_Raw_Content, status Found_Status) {
 	defer func() {
 		Reader_Raw_Content_Invariants(raw, "Reader_Raw.raw")
 		Found_Status_Invariants(status, "Reader_Raw.status")
 	}()
-	Reader_Invariants(reader, "Reader_Raw.reader")
+	Reader_Handle_Invariants(reader, "Reader_Raw.reader")
 	Entry_Count_Invariants(index, "Reader_Raw.index")
-	Header_Invariants(*header, "Reader_Raw.header")
+	Header_Handle_Invariants(header, "Reader_Raw.header")
 	if reader.Active {
 		return nil, Found_Status(STATUS_INPUT_INVALID)
 	}
@@ -3835,15 +3913,15 @@ func Reader_Raw(
 
 // File_System_Init binds initialized Reader and reports insecure member paths.
 func File_System_Init(
-	file_system *File_System, reader *Reader,
+	file_system File_System_Handle, reader Reader_Handle,
 ) (status Validation_Status) {
 	defer func() {
 		Validation_Status_Invariants(
 			status, "File_System_Init.status",
 		)
 	}()
-	File_System_Invariants(file_system, "File_System_Init.file_system")
-	Reader_Invariants(reader, "File_System_Init.reader")
+	File_System_Handle_Invariants(file_system, "File_System_Init.file_system")
+	Reader_Handle_Invariants(reader, "File_System_Init.reader")
 	if reader.Active {
 		return Validation_Status(STATUS_INPUT_INVALID)
 	}
@@ -3872,12 +3950,12 @@ func File_System_Init(
 
 // File_System_Status returns exact member or synthesized directory metadata.
 func File_System_Status(
-	file_system *File_System, path bytes.Slice, info *File_Info,
+	file_system File_System_Handle, path bytes.Slice, info File_Info_Handle,
 ) (status Found_Status) {
 	defer func() { Found_Status_Invariants(status, "File_System_Status.status") }()
-	File_System_Invariants(file_system, "File_System_Status.file_system")
+	File_System_Handle_Invariants(file_system, "File_System_Status.file_system")
 	bytes.Slice_Invariants(path, "File_System_Status.path")
-	File_Info_Invariants(*info, "File_System_Status.info")
+	File_Info_Handle_Invariants(info, "File_System_Status.info")
 	if !file_system_ready(file_system) {
 		return Found_Status(STATUS_INPUT_INVALID)
 	}
@@ -3946,13 +4024,13 @@ func File_System_Status(
 
 // File_System_Open decodes one exact regular member through bound Reader.
 func File_System_Open(
-	file_system *File_System, path bytes.Slice, destination bytes.Slice,
+	file_system File_System_Handle, path bytes.Slice, destination bytes.Slice,
 ) (count bytes.Boundary, status Status) {
 	defer func() {
 		bytes.Boundary_Invariants(count, "File_System_Open.count")
 		Status_Invariants(status, "File_System_Open.status")
 	}()
-	File_System_Invariants(file_system, "File_System_Open.file_system")
+	File_System_Handle_Invariants(file_system, "File_System_Open.file_system")
 	bytes.Slice_Invariants(path, "File_System_Open.path")
 	bytes.Slice_Invariants(destination, "File_System_Open.destination")
 	if !file_system_ready(file_system) {
@@ -3984,7 +4062,7 @@ func File_System_Open(
 
 // File_System_Read_Directory returns sorted unique immediate children.
 func File_System_Read_Directory(
-	file_system *File_System, path bytes.Slice, entries Directory_Entries,
+	file_system File_System_Handle, path bytes.Slice, entries Directory_Entries,
 ) (count Directory_Output_Count, status Directory_Status) {
 	defer func() {
 		Directory_Output_Count_Invariants(
@@ -3994,7 +4072,7 @@ func File_System_Read_Directory(
 			status, "File_System_Read_Directory.status",
 		)
 	}()
-	File_System_Invariants(file_system, "File_System_Read_Directory.file_system")
+	File_System_Handle_Invariants(file_system, "File_System_Read_Directory.file_system")
 	bytes.Slice_Invariants(path, "File_System_Read_Directory.path")
 	Directory_Entries_Invariants(entries, "File_System_Read_Directory.entries")
 	if !file_system_ready(file_system) {
@@ -4046,7 +4124,7 @@ func File_System_Read_Directory(
 
 // File_System_Walk visits root and descendants in lexical order using caller node storage.
 func File_System_Walk(
-	file_system *File_System, root bytes.Slice, nodes File_Infos,
+	file_system File_System_Handle, root bytes.Slice, nodes File_Infos,
 	callback File_System_Walk_Callback,
 ) (count File_System_Walk_Count, status Directory_Status) {
 	defer func() {
@@ -4055,7 +4133,7 @@ func File_System_Walk(
 			status, "File_System_Walk.status",
 		)
 	}()
-	File_System_Invariants(file_system, "File_System_Walk.file_system")
+	File_System_Handle_Invariants(file_system, "File_System_Walk.file_system")
 	bytes.Slice_Invariants(root, "File_System_Walk.root")
 	File_Infos_Invariants(nodes, "File_System_Walk.nodes")
 	aver.Always(callback != nil, "ZIP File_System walk has callback.")
@@ -4086,12 +4164,12 @@ func File_System_Walk(
 
 // Writer_Init binds bounded assembly storage and injected output Stream.
 func Writer_Init(
-	writer *Writer, stream nbio.Stream, storage Writer_Storage,
+	writer Writer_Handle, stream nbio.Stream, storage Writer_Storage,
 ) (status Capacity_Status) {
 	defer func() {
 		Capacity_Status_Invariants(status, "Writer_Init.status")
 	}()
-	Writer_Invariants(writer, "Writer_Init.writer")
+	Writer_Handle_Invariants(writer, "Writer_Init.writer")
 	Writer_Storage_Invariants(storage, "Writer_Init.storage")
 	if !writer_storage_valid(storage) {
 		return Capacity_Status(STATUS_OUTPUT_TOO_SMALL)
@@ -4102,35 +4180,35 @@ func Writer_Init(
 
 // Writer_Create starts one logical member after finalizing previous content.
 func Writer_Create(
-	writer *Writer, header *Header_Unvalidated,
+	writer Writer_Handle, header Header_Unvalidated_Handle,
 ) (status Creation_Status) {
 	defer func() {
 		Creation_Status_Invariants(status, "Writer_Create.status")
 	}()
-	Writer_Invariants(writer, "Writer_Create.writer")
-	Header_Unvalidated_Invariants(header, "Writer_Create.header")
+	Writer_Handle_Invariants(writer, "Writer_Create.writer")
+	Header_Unvalidated_Handle_Invariants(header, "Writer_Create.header")
 	return writer_create(writer, header, false)
 }
 
 // Writer_Create_Raw starts one precompressed member with caller checksum and sizes.
 func Writer_Create_Raw(
-	writer *Writer, header *Header_Unvalidated,
+	writer Writer_Handle, header Header_Unvalidated_Handle,
 ) (status Creation_Status) {
 	defer func() {
 		Creation_Status_Invariants(
 			status, "Writer_Create_Raw.status",
 		)
 	}()
-	Writer_Invariants(writer, "Writer_Create_Raw.writer")
-	Header_Unvalidated_Invariants(header, "Writer_Create_Raw.header")
+	Writer_Handle_Invariants(writer, "Writer_Create_Raw.writer")
+	Header_Unvalidated_Handle_Invariants(header, "Writer_Create_Raw.header")
 	return writer_create(writer, header, true)
 }
 
 // Writer_Copy copies one validated member without decompressing payload.
-func Writer_Copy(writer *Writer, reader *Reader, index Entry_Count) (status Status) {
+func Writer_Copy(writer Writer_Handle, reader Reader_Handle, index Entry_Count) (status Status) {
 	defer func() { Status_Invariants(status, "Writer_Copy.status") }()
-	Writer_Invariants(writer, "Writer_Copy.writer")
-	Reader_Invariants(reader, "Writer_Copy.reader")
+	Writer_Handle_Invariants(writer, "Writer_Copy.writer")
+	Reader_Handle_Invariants(reader, "Writer_Copy.reader")
 	Entry_Count_Invariants(index, "Writer_Copy.index")
 	var header Header
 	raw, raw_status := Reader_Raw(reader, index, &header)
@@ -4174,11 +4252,12 @@ func Writer_Copy(writer *Writer, reader *Reader, index Entry_Count) (status Stat
 }
 
 // Writer_Add_File_System writes sorted regular files and synthesized directories.
-func Writer_Add_File_System(writer *Writer, file_system *File_System, nodes File_Infos,
+func Writer_Add_File_System(
+	writer Writer_Handle, file_system File_System_Handle, nodes File_Infos,
 ) (status Creation_Status) {
 	defer func() { Creation_Status_Invariants(status, "Writer_Add_File_System.status") }()
-	Writer_Invariants(writer, "Writer_Add_File_System.writer")
-	File_System_Invariants(file_system, "Writer_Add_File_System.file_system")
+	Writer_Handle_Invariants(writer, "Writer_Add_File_System.writer")
+	File_System_Handle_Invariants(file_system, "Writer_Add_File_System.file_system")
 	File_Infos_Invariants(nodes, "Writer_Add_File_System.nodes")
 	if !file_system_ready(file_system) {
 		return Creation_Status(STATUS_INPUT_INVALID)
@@ -4247,12 +4326,12 @@ func Writer_Add_File_System(writer *Writer, file_system *File_System, nodes File
 
 // Writer_Set_Comment copies bounded EOCD comment into caller storage.
 func Writer_Set_Comment(
-	writer *Writer, comment bytes.Slice,
+	writer Writer_Handle, comment bytes.Slice,
 ) (status Bounded_Status) {
 	defer func() {
 		Bounded_Status_Invariants(status, "Writer_Set_Comment.status")
 	}()
-	Writer_Invariants(writer, "Writer_Set_Comment.writer")
+	Writer_Handle_Invariants(writer, "Writer_Set_Comment.writer")
 	bytes.Slice_Invariants(comment, "Writer_Set_Comment.comment")
 	if writer.Closed {
 		return Bounded_Status(STATUS_INPUT_INVALID)
@@ -4270,14 +4349,14 @@ func Writer_Set_Comment(
 
 // Writer_Set_Offset starts ZIP segment after caller-owned Stream prefix.
 func Writer_Set_Offset(
-	writer *Writer, offset bytes.Boundary,
+	writer Writer_Handle, offset bytes.Boundary,
 ) (status Validation_Status) {
 	defer func() {
 		Validation_Status_Invariants(
 			status, "Writer_Set_Offset.status",
 		)
 	}()
-	Writer_Invariants(writer, "Writer_Set_Offset.writer")
+	Writer_Handle_Invariants(writer, "Writer_Set_Offset.writer")
 	bytes.Boundary_Invariants(offset, "Writer_Set_Offset.offset")
 	if writer.Closed {
 		return Validation_Status(STATUS_INPUT_INVALID)
@@ -4294,13 +4373,13 @@ func Writer_Set_Offset(
 
 // Writer_Write retains current payload until bounded compression and record finalization.
 func Writer_Write(
-	writer *Writer, source bytes.Slice,
+	writer Writer_Handle, source bytes.Slice,
 ) (count bytes.Boundary, status Bounded_Status) {
 	defer func() {
 		bytes.Boundary_Invariants(count, "Writer_Write.count")
 		Bounded_Status_Invariants(status, "Writer_Write.status")
 	}()
-	Writer_Invariants(writer, "Writer_Write.writer")
+	Writer_Handle_Invariants(writer, "Writer_Write.writer")
 	bytes.Slice_Invariants(source, "Writer_Write.source")
 	if writer.Closed {
 		return 0, Bounded_Status(STATUS_INPUT_INVALID)
@@ -4327,9 +4406,9 @@ func Writer_Write(
 
 // Writer_Close emits central directory, then submits complete archive through Stream.
 func Writer_Close(
-	writer *Writer, completion *nbio.Completion, callback nbio.Callback,
+	writer Writer_Handle, completion nbio.Completion_Handle, callback nbio.Callback,
 ) {
-	Writer_Invariants(writer, "Writer_Close.writer")
+	Writer_Handle_Invariants(writer, "Writer_Close.writer")
 	aver.Always(completion != nil, "ZIP Writer close has completion storage.")
 	aver.Always(callback != nil, "ZIP Writer close has callback.")
 	writer.Status = Status(writer_finalize(writer))
@@ -4357,9 +4436,9 @@ func Writer_Close(
 
 // Writer_Flush finalizes current member and submits current local records.
 func Writer_Flush(
-	writer *Writer, completion *nbio.Completion, callback nbio.Callback,
+	writer Writer_Handle, completion nbio.Completion_Handle, callback nbio.Callback,
 ) {
-	Writer_Invariants(writer, "Writer_Flush.writer")
+	Writer_Handle_Invariants(writer, "Writer_Flush.writer")
 	aver.Always(completion != nil, "ZIP Writer flush has completion storage.")
 	aver.Always(callback != nil, "ZIP Writer flush has callback.")
 	writer.Status = Status(writer_finalize(writer))
@@ -4374,7 +4453,7 @@ func Writer_Flush(
 }
 
 func reader_stream_submit(
-	state unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
+	state unsafe.Pointer, completion nbio.Completion_Handle, mode nbio.Stream_Mode,
 ) {
 	reader := (*Reader)(state)
 	reader.Transfer_Buffer = nil
@@ -4393,7 +4472,7 @@ func reader_stream_submit(
 		reader.Continue = false
 		callback := nbio.Stream_Callback{
 			State: unsafe.Pointer(reader), Data: int(reader.Stage),
-			Procedure: reader_stream_callback[int],
+			Procedure: reader_stream_callback,
 		}
 		if reader.Stream.Procedure == nil {
 			completion.Data = 0
@@ -4410,16 +4489,16 @@ func reader_stream_submit(
 	reader.Submission_Active = false
 }
 
-func reader_stream_callback[Data ~int](
-	state unsafe.Pointer, data Data, callback nbio.Callback,
-	completion *nbio.Completion,
+func reader_stream_callback(
+	state unsafe.Pointer, data nbio.Stream_Callback_Data, callback nbio.Callback,
+	completion nbio.Completion_Handle,
 ) {
 	reader_stream_complete(state, Reader_Stream_Stage(data), callback, completion)
 }
 
 func reader_stream_complete(
 	state unsafe.Pointer, stage Reader_Stream_Stage, _ nbio.Callback,
-	completion *nbio.Completion,
+	completion nbio.Completion_Handle,
 ) {
 	Reader_Stream_Stage_Invariants(stage, "reader_stream_complete.stage")
 	reader := (*Reader)(state)
@@ -4440,7 +4519,7 @@ func reader_stream_complete(
 	reader_finish(state, completion)
 }
 
-func reader_size_complete(state unsafe.Pointer, completion *nbio.Completion) {
+func reader_size_complete(state unsafe.Pointer, completion nbio.Completion_Handle) {
 	reader := (*Reader)(state)
 	if completion.Error != nil {
 		reader_finish(state, completion)
@@ -4469,7 +4548,7 @@ func reader_size_complete(state unsafe.Pointer, completion *nbio.Completion) {
 	)
 }
 
-func reader_read_complete(state unsafe.Pointer, completion *nbio.Completion) {
+func reader_read_complete(state unsafe.Pointer, completion nbio.Completion_Handle) {
 	reader := (*Reader)(state)
 	if completion.Error != nil {
 		reader_finish(state, completion)
@@ -4509,7 +4588,7 @@ func reader_read_complete(state unsafe.Pointer, completion *nbio.Completion) {
 	reader_finish(state, completion)
 }
 
-func reader_finish(state unsafe.Pointer, completion *nbio.Completion) {
+func reader_finish(state unsafe.Pointer, completion nbio.Completion_Handle) {
 	reader := (*Reader)(state)
 	callback := reader.Callback
 	reader.Callback = nil
@@ -4608,14 +4687,14 @@ func reader_central_entry(
 }
 
 func reader_header(
-	archive Archive, selected_index Entry_Count, header *Header,
+	archive Archive, selected_index Entry_Count, header Header_Handle,
 ) (status Found_Status) {
 	defer func() {
 		Found_Status_Invariants(status, "reader_header.status")
 	}()
 	Archive_Invariants(archive, "reader_header.archive")
 	Entry_Count_Invariants(selected_index, "reader_header.selected_index")
-	Header_Invariants(*header, "reader_header.header")
+	Header_Handle_Invariants(header, "reader_header.header")
 	end_position, entry_count, central_size, _, found :=
 		directory_end(Archive(archive))
 	if !bool(found) {
@@ -4650,12 +4729,12 @@ func reader_header(
 
 func reader_header_value(
 	archive Central_Archive, entry Central_Entry_Parsed, position Central_Position,
-	header *Header,
+	header Header_Handle,
 ) {
 	Central_Archive_Invariants(archive, "reader_header_value.archive")
 	Central_Entry_Parsed_Invariants(entry, "reader_header_value.entry")
 	Central_Position_Invariants(position, "reader_header_value.position")
-	Header_Invariants(*header, "reader_header_value.header")
+	Header_Handle_Invariants(header, "reader_header_value.header")
 	fixed := binary.Bytes(entry.Header)
 	order := binary.LITTLE_ENDIAN
 	extra_size := int(binary.Uint_16(fixed[WRITER_CENTRAL_EXTRA_SIZE_POSITION:], order))
@@ -4718,9 +4797,9 @@ func reader_header_value(
 	}
 }
 
-func file_system_ready(file_system *File_System) (ready binary.Boolean) {
+func file_system_ready(file_system File_System_Handle) (ready binary.Boolean) {
 	defer func() { binary.Boolean_Invariants(ready, "file_system_ready.ready") }()
-	File_System_Invariants(file_system, "file_system_ready.file_system")
+	File_System_Handle_Invariants(file_system, "file_system_ready.file_system")
 	if !file_system.Valid {
 		return false
 	}
@@ -5129,11 +5208,11 @@ func writer_storage_valid(storage Writer_Storage) (valid binary.Boolean) {
 }
 
 func writer_create(
-	writer *Writer, header_unvalidated *Header_Unvalidated, raw Writer_Raw,
+	writer Writer_Handle, header_unvalidated Header_Unvalidated_Handle, raw Writer_Raw,
 ) (status Creation_Status) {
 	defer func() { Creation_Status_Invariants(status, "writer_create.status") }()
-	Writer_Invariants(writer, "writer_create.writer")
-	Header_Unvalidated_Invariants(header_unvalidated, "writer_create.header_unvalidated")
+	Writer_Handle_Invariants(writer, "writer_create.writer")
+	Header_Unvalidated_Handle_Invariants(header_unvalidated, "writer_create.header_unvalidated")
 	Writer_Raw_Invariants(raw, "writer_create.raw")
 	if bool(writer.Closed) {
 		return Creation_Status(STATUS_INPUT_INVALID)
@@ -5202,7 +5281,7 @@ func writer_create(
 }
 
 func writer_header_prepare(
-	value *Header_Unvalidated, raw Writer_Raw,
+	value Header_Unvalidated_Handle, raw Writer_Raw,
 ) (header Header, extra_size Writer_Record_Extra_Size, status Preparation_Status) {
 	defer func() {
 		Header_Invariants(header, "writer_header_prepare.header")
@@ -5213,7 +5292,7 @@ func writer_header_prepare(
 			status, "writer_header_prepare.status",
 		)
 	}()
-	Header_Unvalidated_Invariants(value, "writer_header_prepare.value")
+	Header_Unvalidated_Handle_Invariants(value, "writer_header_prepare.value")
 	Writer_Raw_Invariants(raw, "writer_header_prepare.raw")
 	header, validation_status := Header_Validate(value)
 	if validation_status != Validation_Status(STATUS_OK) {
@@ -5462,9 +5541,9 @@ func writer_central_record_tail_write(
 	copy(destination[position:], record.Comment)
 }
 
-func writer_finalize(writer *Writer) (status Bounded_Status) {
+func writer_finalize(writer Writer_Handle) (status Bounded_Status) {
 	defer func() { Bounded_Status_Invariants(status, "writer_finalize.status") }()
-	Writer_Invariants(writer, "writer_finalize.writer")
+	Writer_Handle_Invariants(writer, "writer_finalize.writer")
 	switch {
 	case bool(writer.Closed):
 		return Bounded_Status(STATUS_INPUT_INVALID)
@@ -5475,7 +5554,7 @@ func writer_finalize(writer *Writer) (status Bounded_Status) {
 	}
 	content := writer.Storage.Content[:writer.Content_Position]
 	compressed := bytes.Slice(content)
-	checksum := binary.Word_32(crc32.ChecksumIEEE(content))
+	checksum := binary.Word_32(crc32.Checksum_IEEE(crc32.Source(content)))
 	uncompressed_size := binary.Word_64(len(content))
 	compressed_size := uncompressed_size
 	if writer.Raw {
@@ -5560,12 +5639,12 @@ func writer_central_sizes_write(
 }
 
 func writer_directory_end(
-	writer *Writer_Directory_State,
+	writer Writer_Directory_State_Handle,
 ) (status Capacity_Status) {
 	defer func() {
 		Capacity_Status_Invariants(status, "writer_directory_end.status")
 	}()
-	Writer_Directory_State_Invariants(writer, "writer_directory_end.writer")
+	Writer_Directory_State_Handle_Invariants(writer, "writer_directory_end.writer")
 	central_size := int(writer.Central_Position)
 	comment_size := int(writer.Comment_Count)
 	required := central_size + WRITER_DIRECTORY_END_SIZE + comment_size
@@ -5608,11 +5687,11 @@ func writer_directory_end(
 	return Capacity_Status(STATUS_OK)
 }
 
-func writer_stream_submit(state unsafe.Pointer, completion *nbio.Completion) {
+func writer_stream_submit(state unsafe.Pointer, completion nbio.Completion_Handle) {
 	writer := (*Writer)(state)
 	callback := nbio.Stream_Callback{
 		State: unsafe.Pointer(writer), Data: int(writer.Count),
-		Procedure: writer_stream_callback[int],
+		Procedure: writer_stream_callback,
 	}
 	if writer.Stream.Procedure == nil {
 		completion.Data = 0
@@ -5627,16 +5706,16 @@ func writer_stream_submit(state unsafe.Pointer, completion *nbio.Completion) {
 	)
 }
 
-func writer_stream_callback[Data ~int](
-	state unsafe.Pointer, data Data, callback nbio.Callback,
-	completion *nbio.Completion,
+func writer_stream_callback(
+	state unsafe.Pointer, data nbio.Stream_Callback_Data, callback nbio.Callback,
+	completion nbio.Completion_Handle,
 ) {
 	writer_stream_complete(state, Writer_Count(data), callback, completion)
 }
 
 func writer_stream_complete(
 	state unsafe.Pointer, requested_count Writer_Count, _ nbio.Callback,
-	completion *nbio.Completion,
+	completion nbio.Completion_Handle,
 ) {
 	Writer_Count_Invariants(requested_count, "writer_stream_complete.requested_count")
 	writer := (*Writer)(state)
@@ -5654,7 +5733,7 @@ func writer_stream_complete(
 	callback(completion)
 }
 
-func writer_callback(completion *nbio.Completion, callback nbio.Callback) {
+func writer_callback(completion nbio.Completion_Handle, callback nbio.Callback) {
 	completion.Data = 0
 	callback(completion)
 }
@@ -6125,7 +6204,7 @@ func decode_payload(
 			return false
 		}
 	}
-	return binary.Word_32(crc32.ChecksumIEEE(output)) == checksum
+	return binary.Word_32(crc32.Checksum_IEEE(crc32.Source(output))) == checksum
 }
 
 func local_data_position(

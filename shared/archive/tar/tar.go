@@ -2389,11 +2389,8 @@ type Header_Unvalidated struct {
 	PAX_Records PAX_Records_Unvalidated
 }
 
-// Header_Unvalidated_Invariants composes the complete caller domain.
-func Header_Unvalidated_Invariants(
-	value *Header_Unvalidated, namespace aver.Namespace,
-) {
-	aver.Always(value != nil, "Unvalidated TAR Header state exists.")
+// Header_Unvalidated_Invariants composes complete caller domain.
+func Header_Unvalidated_Invariants(value Header_Unvalidated, namespace aver.Namespace) {
 	Format_Unvalidated_Invariants(value.Format, namespace)
 	Type_Flag_Invariants(value.Type_Flag, namespace)
 	Header_Name_Unvalidated_Invariants(value.Name, namespace)
@@ -2412,15 +2409,28 @@ func Header_Unvalidated_Invariants(
 	PAX_Records_Unvalidated_Invariants(value.PAX_Records, namespace)
 }
 
+// Header_Unvalidated_Handle keeps hostile caller fields nonnil during validation.
+type Header_Unvalidated_Handle *Header_Unvalidated
+
+// Header_Unvalidated_Handle_Invariants composes hostile header behind required handle.
+func Header_Unvalidated_Handle_Invariants(
+	value Header_Unvalidated_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Header_Unvalidated_Invariants(*value, namespace)
+}
+
 // Header_Validate is the only boundary where hostile Writer fields enter TAR state.
 func Header_Validate(
-	value *Header_Unvalidated,
+	value Header_Unvalidated_Handle,
 ) (header Header, status Header_Validation_Status) {
 	defer func() {
 		Header_Invariants(header, "Header_Validate.header")
 		Header_Validation_Status_Invariants(status, "Header_Validate.status")
 	}()
-	Header_Unvalidated_Invariants(value, "Header_Validate.value")
+	Header_Unvalidated_Handle_Invariants(value, "Header_Validate.value")
 	bounds_status := header_bounds_status(value)
 	if bounds_status != Header_Validation_Status(STATUS_OK) {
 		return Header{}, bounds_status
@@ -2479,12 +2489,12 @@ func Header_Validate(
 }
 
 func header_bounds_status(
-	value *Header_Unvalidated,
+	value Header_Unvalidated_Handle,
 ) (status Header_Validation_Status) {
 	defer func() {
 		Header_Validation_Status_Invariants(status, "header_bounds_status.status")
 	}()
-	Header_Unvalidated_Invariants(value, "header_bounds_status.value")
+	Header_Unvalidated_Handle_Invariants(value, "header_bounds_status.value")
 	if uint8(value.Format) > FORMAT_MAXIMUM {
 		return Header_Validation_Status(STATUS_FORMAT_UNSUPPORTED)
 	}
@@ -3138,12 +3148,7 @@ type Reader struct {
 }
 
 // Reader_Invariants keeps every cursor within caller archive.
-func Reader_Invariants(value *Reader, namespace aver.Namespace) {
-	aver.Always(value != nil, "Reader state exists.")
-	aver.Always(
-		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
-		"Reader completion stays first so a static Stream callback recovers its owner.",
-	)
+func Reader_Invariants(value Reader, namespace aver.Namespace) {
 	Reader_Archive_Invariants(value.Archive, namespace)
 	Reader_Transfer_Invariants(value.Transfer, namespace)
 	Reader_Skip_Debt_Invariants(value.Skip_Debt, namespace)
@@ -3151,6 +3156,21 @@ func Reader_Invariants(value *Reader, namespace aver.Namespace) {
 	Count_Invariants(value.Count, namespace)
 	Reader_Active_Invariants(value.Active, namespace)
 	Reader_Initialized_Invariants(value.Initialized, namespace)
+	aver.Always(
+		unsafe.Offsetof(value.Completion) == 0,
+		"Reader completion stays first so static Stream callback recovers owner.",
+	)
+}
+
+// Reader_Handle prevents copied state from splitting callback ownership.
+type Reader_Handle *Reader
+
+// Reader_Handle_Invariants preserves static callback recovery from first field.
+func Reader_Handle_Invariants(value Reader_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Reader_Invariants(*value, namespace)
 }
 
 // Destination_Position is one encoded archive coordinate.
@@ -3569,12 +3589,7 @@ type Writer struct {
 }
 
 // Writer_Invariants keeps output cursor inside caller destination.
-func Writer_Invariants(value *Writer, namespace aver.Namespace) {
-	aver.Always(value != nil, "Writer state exists.")
-	aver.Always(
-		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
-		"Writer completion stays first so a static Stream callback recovers its owner.",
-	)
+func Writer_Invariants(value Writer, namespace aver.Namespace) {
 	Source_Invariants(value.Source, namespace)
 	Pending_Content_Count_Invariants(value.Pending_Content, namespace)
 	Pending_Padding_Count_Invariants(value.Pending_Padding, namespace)
@@ -3596,6 +3611,21 @@ func Writer_Invariants(value *Writer, namespace aver.Namespace) {
 		int(value.Position) <= len(value.Destination),
 		"Writer cursor stays inside destination.",
 	)
+	aver.Always(
+		unsafe.Offsetof(value.Completion) == 0,
+		"Writer completion stays first so static Stream callback recovers owner.",
+	)
+}
+
+// Writer_Handle prevents copied state from splitting callback ownership.
+type Writer_Handle *Writer
+
+// Writer_Handle_Invariants preserves static callback recovery from first field.
+func Writer_Handle_Invariants(value Writer_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Writer_Invariants(*value, namespace)
 }
 
 // Regular file type.
@@ -4960,12 +4990,12 @@ func PAX_Timestamp_Input_Invariants(
 
 // Reader_Init binds transport and caller parser storage without starting work.
 func Reader_Init(
-	reader *Reader, stream nbio.Stream, storage Reader_Storage,
+	reader Reader_Handle, stream nbio.Stream, storage Reader_Storage,
 ) (status Initialization_Status) {
 	defer func() {
 		Initialization_Status_Invariants(status, "Reader_Init.status")
 	}()
-	Reader_Invariants(reader, "Reader_Init.reader")
+	Reader_Handle_Invariants(reader, "Reader_Init.reader")
 	Reader_Storage_Invariants(storage, "Reader_Init.storage")
 	if stream.Procedure == nil {
 		return STATUS_STORAGE_INVALID
@@ -4991,10 +5021,10 @@ func Reader_Init(
 
 // Reader_Next resolves the next logical header after Stream retires required bytes.
 func Reader_Next(
-	reader *Reader, completion *nbio.Completion, storage Header_Storage,
+	reader Reader_Handle, completion nbio.Completion_Handle, storage Header_Storage,
 	callback nbio.Callback,
 ) {
-	Reader_Invariants(reader, "Reader_Next.reader")
+	Reader_Handle_Invariants(reader, "Reader_Next.reader")
 	Header_Storage_Invariants(storage, "Reader_Next.storage")
 	aver.Always(completion != nil, "Reader_Next has a completion.")
 	aver.Always(
@@ -5042,10 +5072,10 @@ func Reader_Next(
 
 // Reader_Read fills one bounded caller destination from current entry content.
 func Reader_Read(
-	reader *Reader, completion *nbio.Completion, destination Destination,
+	reader Reader_Handle, completion nbio.Completion_Handle, destination Destination,
 	callback nbio.Callback,
 ) {
-	Reader_Invariants(reader, "Reader_Read.reader")
+	Reader_Handle_Invariants(reader, "Reader_Read.reader")
 	Destination_Invariants(destination, "Reader_Read.destination")
 	aver.Always(completion != nil, "Reader_Read has a completion.")
 	aver.Always(
@@ -5094,7 +5124,7 @@ func Reader_Read(
 }
 
 // Reader progress needs a trampoline because Memory Stream may retire inline.
-func reader_progress(completion *nbio.Completion) {
+func reader_progress(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	for bool(reader.Active) && !bool(reader.Transfer.Wait_Active) {
 		if int(reader.Transfer.Offset) < int(reader.Transfer.Needed) {
@@ -5163,7 +5193,7 @@ func reader_progress(completion *nbio.Completion) {
 	}
 }
 
-func reader_stream_complete(completion *nbio.Completion) {
+func reader_stream_complete(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	aver.Always(reader.Active, "Reader callback belongs to one active operation.")
 	aver.Always(
@@ -5233,7 +5263,7 @@ func reader_stream_complete(completion *nbio.Completion) {
 	reader_progress(completion)
 }
 
-func reader_transfer_complete(completion *nbio.Completion) {
+func reader_transfer_complete(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	amount := reader.Transfer.Needed
 	reader.Transfer.Buffer = nil
@@ -5280,7 +5310,7 @@ func reader_transfer_complete(completion *nbio.Completion) {
 	}
 }
 
-func reader_metadata_complete(completion *nbio.Completion) {
+func reader_metadata_complete(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	start := Count(reader.Archive.Metadata_Position)
 	physical_size := Count(reader.Archive.Extension_Size)
@@ -5326,7 +5356,7 @@ func reader_metadata_complete(completion *nbio.Completion) {
 }
 
 func reader_header_complete(
-	completion *nbio.Completion,
+	completion nbio.Completion_Handle,
 ) (complete Reader_Header_Complete, status Reader_Header_Status) {
 	defer func() {
 		Reader_Header_Complete_Invariants(complete, "reader_header_complete.complete")
@@ -5366,7 +5396,7 @@ func reader_header_complete(
 }
 
 func reader_header_resolve(
-	completion *nbio.Completion, header Wire_Header,
+	completion nbio.Completion_Handle, header Wire_Header,
 ) (failure Reader_Resolve_Failure, successful Reader_Resolve_Success) {
 	defer func() {
 		Reader_Resolve_Failure_Invariants(failure, "reader_header_resolve.failure")
@@ -5515,7 +5545,7 @@ func reader_header_numeric_valid(value PAX_Numeric_Fields) (valid bytes.Boolean)
 }
 
 func reader_header_commit(
-	completion *nbio.Completion, raw Raw_Header,
+	completion nbio.Completion_Handle, raw Raw_Header,
 ) (committed bytes.Boolean) {
 	defer func() {
 		bytes.Boolean_Invariants(committed, "reader_header_commit.committed")
@@ -5581,7 +5611,7 @@ func reader_header_store_text(
 	return text
 }
 
-func reader_finish(completion *nbio.Completion) {
+func reader_finish(completion nbio.Completion_Handle) {
 	reader := (*Reader)(unsafe.Pointer(completion))
 	callback := reader.Callback
 	completion.Data = int(reader.Count)
@@ -5632,12 +5662,12 @@ func reader_storage_overlaps(
 
 // Writer_Init binds transport and caller header staging without submitting work.
 func Writer_Init(
-	writer *Writer, stream nbio.Stream, storage Writer_Header_Storage,
+	writer Writer_Handle, stream nbio.Stream, storage Writer_Header_Storage,
 ) (status Initialization_Status) {
 	defer func() {
 		Initialization_Status_Invariants(status, "Writer_Init.status")
 	}()
-	Writer_Invariants(writer, "Writer_Init.writer")
+	Writer_Handle_Invariants(writer, "Writer_Init.writer")
 	Writer_Header_Storage_Invariants(storage, "Writer_Init.storage")
 	if stream.Procedure == nil {
 		return STATUS_STORAGE_INVALID
@@ -5656,11 +5686,12 @@ func Writer_Init(
 
 // Writer_Write_Header stages and submits one complete header sequence.
 func Writer_Write_Header(
-	writer *Writer, completion *nbio.Completion, header *Header_Unvalidated,
+	writer Writer_Handle, completion nbio.Completion_Handle,
+	header Header_Unvalidated_Handle,
 	callback nbio.Callback,
 ) {
-	Writer_Invariants(writer, "Writer_Write_Header.writer")
-	Header_Unvalidated_Invariants(header, "Writer_Write_Header.header")
+	Writer_Handle_Invariants(writer, "Writer_Write_Header.writer")
+	Header_Unvalidated_Handle_Invariants(header, "Writer_Write_Header.header")
 	aver.Always(completion != nil, "Writer_Write_Header has a completion.")
 	aver.Always(
 		completion == &writer.Completion,
@@ -5724,7 +5755,7 @@ func Writer_Write_Header(
 }
 
 func writer_stage_header(
-	completion *nbio.Completion,
+	completion nbio.Completion_Handle,
 	format Format,
 	type_flag Type_Flag,
 	name Writer_Name,
@@ -5811,7 +5842,7 @@ func writer_stage_header(
 }
 
 func writer_header_destination(
-	completion *nbio.Completion, header_size Encoded_Header_Size,
+	completion nbio.Completion_Handle, header_size Encoded_Header_Size,
 ) (valid bytes.Boolean) {
 	defer func() { bytes.Boolean_Invariants(valid, "writer_header_destination.valid") }()
 	Encoded_Header_Size_Invariants(header_size, "writer_header_destination.header_size")
@@ -5878,7 +5909,7 @@ func writer_header_preflight(
 }
 
 func writer_stage_header_records(
-	completion *nbio.Completion, format Format, type_flag Type_Flag,
+	completion nbio.Completion_Handle, format Format, type_flag Type_Flag,
 	name Writer_Name, link_name Header_Link_Name, size Entry_Size, mode File_Mode,
 	user_identifier User_Identifier, group_identifier Group_Identifier,
 	user_name Header_User_Name, group_name Header_Group_Name,
@@ -5954,7 +5985,7 @@ func writer_stage_header_records(
 }
 
 func writer_stage_content(
-	completion *nbio.Completion, type_flag Type_Flag, size Entry_Size,
+	completion nbio.Completion_Handle, type_flag Type_Flag, size Entry_Size,
 ) {
 	Type_Flag_Invariants(type_flag, "writer_stage_content.type_flag")
 	Entry_Size_Invariants(size, "writer_stage_content.size")
@@ -6087,7 +6118,7 @@ func writer_gnu_header(
 }
 
 func writer_stage_basic(
-	completion *nbio.Completion, format Basic_Fit_Format,
+	completion nbio.Completion_Handle, format Basic_Fit_Format,
 	type_flag Type_Flag, name USTAR_Name, link_name Basic_Link_Name,
 	size Entry_Size, mode Basic_File_Mode,
 	user_identifier Basic_User_Identifier,
@@ -6123,7 +6154,7 @@ func writer_stage_basic(
 }
 
 func writer_stage_pax(
-	completion *nbio.Completion, header PAX_Header, payload_size PAX_Payload_Size,
+	completion nbio.Completion_Handle, header PAX_Header, payload_size PAX_Payload_Size,
 ) {
 	PAX_Header_Invariants(header, "writer_stage_pax.header")
 	PAX_Payload_Size_Invariants(payload_size, "writer_stage_pax.payload_size")
@@ -6135,7 +6166,7 @@ func writer_stage_pax(
 }
 
 func writer_stage_pax_records(
-	completion *nbio.Completion, header PAX_Header,
+	completion nbio.Completion_Handle, header PAX_Header,
 	payload_size PAX_Records_Payload_Size, records PAX_Header_Records,
 ) {
 	PAX_Header_Invariants(header, "writer_stage_pax_records.header")
@@ -6150,7 +6181,7 @@ func writer_stage_pax_records(
 	))
 }
 
-func writer_stage_gnu(completion *nbio.Completion, header GNU_Header) {
+func writer_stage_gnu(completion nbio.Completion_Handle, header GNU_Header) {
 	GNU_Header_Invariants(header, "writer_stage_gnu.header")
 	writer := (*Writer)(unsafe.Pointer(completion))
 	writer.Position = Destination_Position(write_gnu_headers(
@@ -6159,7 +6190,7 @@ func writer_stage_gnu(completion *nbio.Completion, header GNU_Header) {
 	))
 }
 
-func writer_header_state_valid(completion *nbio.Completion) (valid bytes.Boolean) {
+func writer_header_state_valid(completion nbio.Completion_Handle) (valid bytes.Boolean) {
 	defer func() {
 		bytes.Boolean_Invariants(valid, "writer_header_state_valid.valid")
 	}()
@@ -6180,7 +6211,7 @@ func writer_header_state_valid(completion *nbio.Completion) (valid bytes.Boolean
 }
 
 func writer_header_capacity_valid(
-	completion *nbio.Completion, required Header_Required_Size,
+	completion nbio.Completion_Handle, required Header_Required_Size,
 ) (valid bytes.Boolean) {
 	defer func() {
 		bytes.Boolean_Invariants(valid, "writer_header_capacity_valid.valid")
@@ -6195,10 +6226,10 @@ func writer_header_capacity_valid(
 
 // Writer_Write submits current entry content without exceeding declared Size.
 func Writer_Write(
-	writer *Writer, completion *nbio.Completion, source Source,
+	writer Writer_Handle, completion nbio.Completion_Handle, source Source,
 	callback nbio.Callback,
 ) {
-	Writer_Invariants(writer, "Writer_Write.writer")
+	Writer_Handle_Invariants(writer, "Writer_Write.writer")
 	Source_Invariants(source, "Writer_Write.source")
 	aver.Always(completion != nil, "Writer_Write has a completion.")
 	aver.Always(
@@ -6246,9 +6277,9 @@ func Writer_Write(
 
 // Writer_Close submits final padding and two zero records.
 func Writer_Close(
-	writer *Writer, completion *nbio.Completion, callback nbio.Callback,
+	writer Writer_Handle, completion nbio.Completion_Handle, callback nbio.Callback,
 ) {
-	Writer_Invariants(writer, "Writer_Close.writer")
+	Writer_Handle_Invariants(writer, "Writer_Close.writer")
 	aver.Always(completion != nil, "Writer_Close has a completion.")
 	aver.Always(
 		completion == &writer.Completion,
@@ -6302,7 +6333,7 @@ func Writer_Close(
 }
 
 // Writer submission needs a trampoline for partial inline Stream writes.
-func writer_submit_progress(completion *nbio.Completion) {
+func writer_submit_progress(completion nbio.Completion_Handle) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	for bool(writer.Active) && !bool(writer.Wait_Active) {
 		if int(writer.Count) == len(writer.Source) {
@@ -6322,7 +6353,7 @@ func writer_submit_progress(completion *nbio.Completion) {
 	}
 }
 
-func writer_stream_complete(completion *nbio.Completion) {
+func writer_stream_complete(completion nbio.Completion_Handle) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	aver.Always(writer.Wait_Active, "Writer callback retires one submitted transfer.")
 	writer.Wait_Active = false
@@ -6358,7 +6389,7 @@ func writer_stream_complete(completion *nbio.Completion) {
 	writer_submit_progress(completion)
 }
 
-func writer_transfer_failed(completion *nbio.Completion) {
+func writer_transfer_failed(completion nbio.Completion_Handle) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	writer.Archive_Count += Archive_Count(writer.Count)
 	if writer.Operation == WRITER_OPERATION_CONTENT {
@@ -6369,7 +6400,7 @@ func writer_transfer_failed(completion *nbio.Completion) {
 	writer_finish(completion)
 }
 
-func writer_transfer_complete(completion *nbio.Completion) {
+func writer_transfer_complete(completion nbio.Completion_Handle) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	writer.Archive_Count += Archive_Count(writer.Count)
 	switch writer.Operation {
@@ -6388,7 +6419,7 @@ func writer_transfer_complete(completion *nbio.Completion) {
 	writer_finish(completion)
 }
 
-func writer_finish(completion *nbio.Completion) {
+func writer_finish(completion nbio.Completion_Handle) {
 	writer := (*Writer)(unsafe.Pointer(completion))
 	callback := writer.Callback
 	completion.Data = int(writer.Count)

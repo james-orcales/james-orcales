@@ -1,13 +1,13 @@
 package zip_test
 
 import (
-	"hash/crc32"
 	"testing"
 
 	"local/james-orcales/shared/archive/zip"
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/compress/flate"
 	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/hash/crc32"
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 	"local/james-orcales/shared/testify"
@@ -221,7 +221,7 @@ func standard_library_writer_flush_directory(t *testing.T) {
 	var completion nbio.Completion
 	flushed := false
 	zip.Writer_Flush(
-		&harness.Writer, &completion, func(_ *nbio.Completion) { flushed = true },
+		&harness.Writer, &completion, func(_ nbio.Completion_Handle) { flushed = true },
 	)
 	testify.True(t, flushed)
 	testify.No_Error(t, completion.Error)
@@ -261,7 +261,7 @@ func standard_library_writer_raw(t *testing.T) {
 	header := zip.Header_Unvalidated{
 		Name: []byte("raw"), Method: zip.METHOD_DEFLATE,
 		Flags:    zip.FLAG_DATA_DESCRIPTOR,
-		Checksum: zip.Header_Checksum(crc32.ChecksumIEEE(content)),
+		Checksum: zip.Header_Checksum(crc32.Checksum_IEEE(crc32.Source(content))),
 		Compressed_Size: zip.Header_Compressed_Size_Unvalidated(
 			len(compressed),
 		),
@@ -666,7 +666,7 @@ func allocation_reader(t *testing.T, archive []byte) {
 	var storage [bytes.SLICE_SIZE_MAXIMUM]byte
 	var reader zip.Reader
 	var completion nbio.Completion
-	callback := func(_ *nbio.Completion) {}
+	callback := func(_ nbio.Completion_Handle) {}
 	testify.Zero_Allocation(t, func() {
 		reader = zip.Reader{}
 		completion = nbio.Completion{}
@@ -751,7 +751,7 @@ func allocation_writer(t *testing.T, archive []byte) {
 	var harness standard_library_stream_harness
 	standard_library_stream_harness_init(t, &harness)
 	base := harness.Writer
-	header := zip.Header_Unvalidated{Name: []byte("x"), Method: zip.METHOD_STORE}
+	header := zip.Header_Unvalidated{Name: []byte("x"), Method: zip.METHOD_DEFLATE}
 	active := base
 	zip.Writer_Create(&active, &header)
 	var writer zip.Writer
@@ -808,7 +808,7 @@ func allocation_writer_metadata(t *testing.T, base zip.Writer, active zip.Writer
 	var validation zip.Validation_Status
 	var completion nbio.Completion
 	comment := []byte("x")
-	callback := func(_ *nbio.Completion) {}
+	callback := func(_ nbio.Completion_Handle) {}
 	testify.Zero_Allocation(t, func() {
 		writer = base
 		status = zip.Writer_Set_Comment(&writer, comment)
@@ -1016,7 +1016,7 @@ func standard_library_finalize_domains(t *testing.T) {
 	_, status := zip.Writer_Write(&harness.Writer, []byte("x"))
 	testify.Equal_Values(t, zip.STATUS_OK, status)
 	var completion nbio.Completion
-	zip.Writer_Flush(&harness.Writer, &completion, func(_ *nbio.Completion) {})
+	zip.Writer_Flush(&harness.Writer, &completion, func(_ nbio.Completion_Handle) {})
 	testify.Equal(t, zip.STATUS_INPUT_INVALID, harness.Writer.Status)
 	standard_library_stream_harness_init(t, &harness)
 	harness.Writer.Storage.Archive = harness.Archive[:31]
@@ -1024,7 +1024,7 @@ func standard_library_finalize_domains(t *testing.T) {
 	testify.Equal_Values(t, zip.STATUS_OK, zip.Writer_Create(&harness.Writer, &header))
 	_, status = zip.Writer_Write(&harness.Writer, []byte("x"))
 	testify.Equal_Values(t, zip.STATUS_OK, status)
-	zip.Writer_Flush(&harness.Writer, &completion, func(_ *nbio.Completion) {})
+	zip.Writer_Flush(&harness.Writer, &completion, func(_ nbio.Completion_Handle) {})
 	testify.Equal(t, zip.STATUS_OUTPUT_TOO_SMALL, harness.Writer.Status)
 }
 
@@ -2211,7 +2211,7 @@ func standard_library_reader_domain_archive(archive []byte) (reader zip.Reader) 
 	zip.Reader_Init(
 		&reader, nbio.Memory_To_Stream(&memory),
 		zip.Reader_Storage{Archive: storage}, &completion,
-		func(_ *nbio.Completion) {},
+		func(_ nbio.Completion_Handle) {},
 	)
 	return reader
 }
@@ -2276,7 +2276,7 @@ func standard_library_writer_field_operations(
 	reader := standard_library_reader_domain_value(0)
 	file_system := standard_library_file_system_domain_value(0)
 	var completion nbio.Completion
-	callback := func(_ *nbio.Completion) {}
+	callback := func(_ nbio.Completion_Handle) {}
 	writer := base
 	standard_library_writer_field_domain(&writer, field_index, marker)
 	zip.Writer_Init(&writer, nbio.Stream{}, base.Storage)
@@ -2621,7 +2621,7 @@ func standard_library_writer_domain(marker int) {
 	file_system := standard_library_file_system_domain_value(marker)
 	buffer := make([]byte, standard_library_domain_size(marker))
 	var completion nbio.Completion
-	callback := func(_ *nbio.Completion) {}
+	callback := func(_ nbio.Completion_Handle) {}
 	writer := base
 	zip.Writer_Init(&writer, nbio.Stream{}, writer.Storage)
 	writer = base
@@ -2650,7 +2650,7 @@ func standard_library_reader_domain(marker int) {
 	reader := base
 	zip.Reader_Init(
 		&reader, nbio.Stream{}, reader.Storage, &completion,
-		func(_ *nbio.Completion) {},
+		func(_ nbio.Completion_Handle) {},
 	)
 	reader = base
 	zip.Reader_Decode(
@@ -2763,7 +2763,7 @@ func standard_library_negative_one_writer_domains() {
 	reader := standard_library_reader_domain_value(0)
 	file_system := standard_library_file_system_domain_value(0)
 	var completion nbio.Completion
-	callback := func(_ *nbio.Completion) {}
+	callback := func(_ nbio.Completion_Handle) {}
 	writer := base
 	zip.Writer_Init(&writer, nbio.Stream{}, writer.Storage)
 	writer = base
@@ -3298,7 +3298,7 @@ func standard_library_stream_harness_close_and_read(
 	var completion nbio.Completion
 	closed := false
 	zip.Writer_Close(
-		&harness.Writer, &completion, func(_ *nbio.Completion) { closed = true },
+		&harness.Writer, &completion, func(_ nbio.Completion_Handle) { closed = true },
 	)
 	testify.True(t, closed)
 	testify.No_Error(t, completion.Error)
@@ -3309,7 +3309,7 @@ func standard_library_stream_harness_close_and_read(
 	zip.Reader_Init(
 		&reader, nbio.Memory_To_Stream(&input),
 		zip.Reader_Storage{Archive: harness.Reader_Archive[:]},
-		&completion, func(_ *nbio.Completion) { initialized = true },
+		&completion, func(_ nbio.Completion_Handle) { initialized = true },
 	)
 	testify.True(t, initialized)
 	testify.No_Error(t, completion.Error)
@@ -3407,7 +3407,7 @@ func archive_data(
 	const LOCAL_HEADER_SIZE = STANDARD_LIBRARY_LOCAL_HEADER_SIZE
 	const CENTRAL_HEADER_SIZE = STANDARD_LIBRARY_CENTRAL_HEADER_SIZE
 	const END_SIZE = STANDARD_LIBRARY_DIRECTORY_END_SIZE
-	checksum := crc32.ChecksumIEEE(uncompressed)
+	checksum := uint32(crc32.Checksum_IEEE(crc32.Source(uncompressed)))
 	local := storage[:LOCAL_HEADER_SIZE]
 	put_word_32(local[0:], 0x04034b50)
 	put_word_16(local[4:], 20)
@@ -3617,7 +3617,9 @@ func descriptor_archive_data(
 	put_word_32(storage[22:], 0)
 	descriptor := storage[central_position : central_position+DESCRIPTOR_SIZE]
 	put_word_32(descriptor[0:], 0x08074b50)
-	put_word_32(descriptor[4:], crc32.ChecksumIEEE(uncompressed))
+	put_word_32(
+		descriptor[4:], uint32(crc32.Checksum_IEEE(crc32.Source(uncompressed))),
+	)
 	put_word_32(descriptor[8:], uint32(len(compressed)))
 	put_word_32(descriptor[12:], uint32(len(uncompressed)))
 	central_position += DESCRIPTOR_SIZE

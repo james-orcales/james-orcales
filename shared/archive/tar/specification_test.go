@@ -116,6 +116,9 @@ const TEST_HEADER_FIELD_COUNT = TEST_HEADER_PAX_RECORDS + 1
 // TEST_ALLOCATION_RUN_COUNT needs no averaging because any allocation fails.
 const TEST_ALLOCATION_RUN_COUNT = 1
 
+// TEST_ALLOCATION_CONTENT_SIZE keeps Reader and Writer proof on same complete entry.
+const TEST_ALLOCATION_CONTENT_SIZE = 1
+
 func test_invariant_domains(t *testing.T) {
 	t.Helper()
 	test_stream_boundary(t)
@@ -145,7 +148,9 @@ func test_invariant_domains(t *testing.T) {
 		}
 		test_reader_domain(marker)
 		test_reader_wire_domain(marker)
-		test_reader_storage_domain(marker)
+		if status := test_reader_storage_domain(marker); status != tar.STATUS_OK {
+			t.Fatalf("reader storage domain %d: %d", marker, status)
+		}
 		test_reader_fixed_text_domain(marker)
 		test_writer_domain(marker)
 		test_writer_basic_domain(t, marker)
@@ -381,7 +386,7 @@ func reader_archive_header(
 			Name: name, Link_Name: link_name,
 			User_Name: user_name[:], Group_Name: group_name[:],
 		},
-		func(_ *nbio.Completion) {
+		func(_ nbio.Completion_Handle) {
 			header = reader.Archive.Header
 			called = true
 		},
@@ -907,7 +912,7 @@ func test_storage_overlap_domains(t *testing.T) {
 	tar.Reader_Next(
 		&reader, &reader.Completion,
 		tar.Header_Storage{Name: metadata[:tar.HEADER_TEXT_SIZE_MAXIMUM]},
-		func(_ *nbio.Completion) { called = true },
+		func(_ nbio.Completion_Handle) { called = true },
 	)
 	if !called {
 		t.Fatal("overlap Reader_Next did not retire")
@@ -920,7 +925,7 @@ func test_storage_overlap_domains(t *testing.T) {
 	tar.Reader_Next(
 		&reader, &reader.Completion,
 		tar.Header_Storage{Name: shared, Link_Name: shared},
-		func(_ *nbio.Completion) { called = true },
+		func(_ nbio.Completion_Handle) { called = true },
 	)
 	if !called {
 		t.Fatal("field overlap Reader_Next did not retire")
@@ -1287,7 +1292,7 @@ func test_checksum_block(block []byte) {
 	test_reader_archive(block, nil, tar.Header_Storage{})
 }
 
-func test_reader_storage_domain(marker int) {
+func test_reader_storage_domain(marker int) (status tar.Status) {
 	var archive_storage [TEST_ARCHIVE_SIZE]byte
 	archive := tar_entry(
 		archive_storage[:], 0, tar.FORMAT_USTAR, tar.TYPE_REGULAR, nil, nil,
@@ -1306,14 +1311,11 @@ func test_reader_storage_domain(marker int) {
 	name_size := test_domain_size(marker, tar.HEADER_TEXT_SIZE_MAXIMUM)
 	user_size := test_domain_size(marker, tar.HEADER_USER_NAME_SIZE_MAXIMUM)
 	group_size := test_domain_size(marker, tar.HEADER_GROUP_NAME_SIZE_MAXIMUM)
-	status := test_reader_archive(archive, nil, tar.Header_Storage{
+	return test_reader_archive(archive, nil, tar.Header_Storage{
 		Name: make([]byte, name_size), Link_Name: make([]byte, name_size),
 		User_Name:  make([]byte, user_size),
 		Group_Name: make([]byte, group_size),
 	})
-	if status != tar.STATUS_OK {
-		panic(status)
-	}
 }
 
 func test_reader_fixed_text_domain(marker int) {
@@ -1843,7 +1845,7 @@ func test_pax_records_domain(marker int, maximum int) (records []byte) {
 		value_size = size - tar.PAX_RECORD_SIZE_MINIMUM
 	}
 	if pax_record_into(records, []byte{'k'}, make([]byte, value_size)) != len(records) {
-		panic("PAX domain record size mismatch")
+		return nil
 	}
 	return records
 }
@@ -2332,11 +2334,7 @@ func test_domain_change_time_unvalidated(
 	}
 }
 
-func test_domain_callback(completion *nbio.Completion) {
-	if completion == nil {
-		panic("missing domain completion")
-	}
-}
+func test_domain_callback(_ nbio.Completion_Handle) { return }
 
 func test_domain_header(marker int) (header tar.Header) {
 	field_size := test_domain_size(marker, tar.HEADER_TEXT_SIZE_MAXIMUM)
@@ -2888,7 +2886,7 @@ func test_stream_boundary(t *testing.T) {
 		t.Fatalf("Writer_Init status = %v", writer_status)
 	}
 	callback_called := false
-	tar.Writer_Close(&writer, &writer.Completion, func(_ *nbio.Completion) {
+	tar.Writer_Close(&writer, &writer.Completion, func(_ nbio.Completion_Handle) {
 		callback_called = true
 	})
 	if !callback_called {
@@ -2947,7 +2945,7 @@ func reader_fixture_next(fixture *reader_fixture) {
 	fixture.Called = false
 	tar.Reader_Next(
 		&fixture.Reader, &fixture.Reader.Completion, reader_fixture_storage(fixture),
-		func(_ *nbio.Completion) {
+		func(_ nbio.Completion_Handle) {
 			fixture.Header = fixture.Reader.Archive.Header
 			fixture.Called = true
 		},
@@ -2958,7 +2956,7 @@ func reader_fixture_read(fixture *reader_fixture, destination []byte) {
 	fixture.Called = false
 	tar.Reader_Read(
 		&fixture.Reader, &fixture.Reader.Completion, destination,
-		func(_ *nbio.Completion) { fixture.Called = true },
+		func(_ nbio.Completion_Handle) { fixture.Called = true },
 	)
 }
 
@@ -2992,7 +2990,7 @@ func writer_fixture_write_header(
 	fixture.Called = false
 	tar.Writer_Write_Header(
 		&fixture.Writer, &fixture.Writer.Completion, header,
-		func(_ *nbio.Completion) { fixture.Called = true },
+		func(_ nbio.Completion_Handle) { fixture.Called = true },
 	)
 }
 
@@ -3000,7 +2998,7 @@ func writer_fixture_write(fixture *writer_fixture, source []byte) {
 	fixture.Called = false
 	tar.Writer_Write(
 		&fixture.Writer, &fixture.Writer.Completion, source,
-		func(_ *nbio.Completion) { fixture.Called = true },
+		func(_ nbio.Completion_Handle) { fixture.Called = true },
 	)
 }
 
@@ -3008,7 +3006,7 @@ func writer_fixture_close(fixture *writer_fixture) {
 	fixture.Called = false
 	tar.Writer_Close(
 		&fixture.Writer, &fixture.Writer.Completion,
-		func(_ *nbio.Completion) { fixture.Called = true },
+		func(_ nbio.Completion_Handle) { fixture.Called = true },
 	)
 }
 
@@ -3500,7 +3498,7 @@ func test_deferred_stream(t *testing.T) {
 		&reader, &reader.Completion, tar.Header_Storage{
 			Name: name[:], User_Name: user_name[:], Group_Name: group_name[:],
 		},
-		func(_ *nbio.Completion) { called = true },
+		func(_ nbio.Completion_Handle) { called = true },
 	)
 	if called {
 		t.Fatal("Reader_Next retired before deferred Stream")
@@ -3531,7 +3529,7 @@ func test_defective_stream_count(t *testing.T) {
 	called := false
 	tar.Reader_Next(
 		&reader, &reader.Completion, tar.Header_Storage{},
-		func(_ *nbio.Completion) { called = true },
+		func(_ nbio.Completion_Handle) { called = true },
 	)
 	if !called {
 		t.Fatal("defective Reader_Next did not retire")
@@ -3587,7 +3585,7 @@ func test_large_pax_payload(t *testing.T) {
 	called := false
 	tar.Writer_Write_Header(
 		&writer, &writer.Completion, &header,
-		func(_ *nbio.Completion) { called = true },
+		func(_ nbio.Completion_Handle) { called = true },
 	)
 	if !called {
 		t.Fatal("large PAX Writer_Write_Header did not retire")
@@ -3640,7 +3638,7 @@ func test_largest_pax_record(t *testing.T) {
 			Name: name[:], Link_Name: link_name[:],
 			User_Name: user_name[:], Group_Name: group_name[:],
 		},
-		func(_ *nbio.Completion) { called = true },
+		func(_ nbio.Completion_Handle) { called = true },
 	)
 	if !called {
 		t.Fatal("largest PAX Reader_Next did not retire")
@@ -3661,23 +3659,104 @@ func defective_read_procedure(
 
 // Test_Allocation measures the injected boundaries in steady state.
 func test_allocation(t *testing.T) {
+	test_header_allocation(t)
+	test_format_allocation(
+		t, tar.Format_Unvalidated(tar.FORMAT_USTAR), []byte("entry.txt"), nil,
+	)
+	var name [TEST_LONG_NAME_SIZE]byte
+	var link_name [TEST_LONG_NAME_SIZE]byte
+	for index := range name {
+		name[index] = 'n'
+		link_name[index] = 'l'
+	}
+	test_format_allocation(
+		t, tar.Format_Unvalidated(tar.FORMAT_PAX), name[:], link_name[:],
+	)
+	test_format_allocation(
+		t, tar.Format_Unvalidated(tar.FORMAT_GNU), name[:], link_name[:],
+	)
+	test_gnu_reader_allocation(t, name[:], link_name[:])
+}
+
+func test_header_allocation(t *testing.T) {
+	t.Helper()
+	header := tar.Header_Unvalidated{
+		Format:    tar.Format_Unvalidated(tar.FORMAT_USTAR),
+		Type_Flag: tar.TYPE_REGULAR,
+		Name:      []byte("entry.txt"), Size: TEST_ALLOCATION_CONTENT_SIZE,
+	}
+	var validated tar.Header
+	var validation_status tar.Header_Validation_Status
+	header_allocations := testing.AllocsPerRun(TEST_ALLOCATION_RUN_COUNT, func() {
+		validated, validation_status = tar.Header_Validate(&header)
+	})
+	if header_allocations != 0 {
+		t.Fatalf("Header_Validate allocated %v times; want 0", header_allocations)
+	}
+	if validation_status != tar.STATUS_OK {
+		t.Fatalf("allocation Header_Validate status = %v", validation_status)
+	}
+	if len(validated.Name) != len(header.Name) {
+		t.Fatalf("allocation Header_Validate name size = %d", len(validated.Name))
+	}
+}
+
+func test_format_allocation(
+	t *testing.T, format tar.Format_Unvalidated, name []byte, link_name []byte,
+) {
+	t.Helper()
 	var archive [TEST_ARCHIVE_SIZE]byte
-	encoded := ustar_archive(archive[:], []byte("entry.txt"), []byte("x"))
+	archive_count := test_writer_allocation(t, archive[:], format, name, link_name)
+	if format == tar.Format_Unvalidated(tar.FORMAT_GNU) {
+		return
+	}
+	test_reader_allocation(t, archive[:archive_count], tar.Format(format))
+}
+
+func test_gnu_reader_allocation(t *testing.T, name []byte, link_name []byte) {
+	t.Helper()
+	var payload [TEST_FIELD_SIZE]byte
+	var archive_storage [TEST_ARCHIVE_SIZE]byte
+	archive := tar_entry(
+		archive_storage[:], 0, tar.FORMAT_GNU, tar.TYPE_GNU_LONG_NAME,
+		[]byte("././@LongLink"), append_nul(payload[:], name),
+	)
+	archive = tar_entry(
+		archive_storage[:], len(archive), tar.FORMAT_GNU, tar.TYPE_GNU_LONG_LINK,
+		[]byte("././@LongLink"), append_nul(payload[:], link_name),
+	)
+	archive = tar_entry(
+		archive_storage[:], len(archive), tar.FORMAT_GNU, tar.TYPE_REGULAR,
+		[]byte("placeholder"), []byte{'x'},
+	)
+	archive = archive_footer(archive_storage[:], len(archive))
+	test_reader_allocation(t, archive, tar.FORMAT_GNU)
+}
+
+func test_reader_allocation(t *testing.T, archive []byte, format tar.Format) {
+	t.Helper()
 	var block [tar.BLOCK_SIZE]byte
-	var metadata [TEST_FIELD_SIZE]byte
+	metadata := make([]byte, tar.READER_METADATA_SIZE_MAXIMUM)
 	var name [TEST_FIELD_SIZE]byte
+	var link_name [TEST_FIELD_SIZE]byte
+	var destination [TEST_ALLOCATION_CONTENT_SIZE]byte
 	var reader tar.Reader
 	var reader_memory nbio.Stream_Memory
 	var reader_status tar.Initialization_Status
 	reader_allocations := testing.AllocsPerRun(TEST_ALLOCATION_RUN_COUNT, func() {
-		reader_memory = nbio.Stream_Memory{Memory: encoded}
+		reader_memory = nbio.Stream_Memory{Memory: archive}
 		reader_status = tar.Reader_Init(
 			&reader, nbio.Memory_To_Stream(&reader_memory),
-			tar.Reader_Storage{Block: block[:], Metadata: metadata[:]},
+			tar.Reader_Storage{Block: block[:], Metadata: metadata},
 		)
 		tar.Reader_Next(
-			&reader, &reader.Completion, tar.Header_Storage{Name: name[:]},
+			&reader, &reader.Completion, tar.Header_Storage{
+				Name: name[:], Link_Name: link_name[:],
+			},
 			allocation_callback,
+		)
+		tar.Reader_Read(
+			&reader, &reader.Completion, destination[:], allocation_callback,
 		)
 	})
 	if reader_allocations != 0 {
@@ -3686,19 +3765,30 @@ func test_allocation(t *testing.T) {
 	if reader_status != tar.STATUS_OK {
 		t.Fatalf("allocation Reader_Init status = %v", reader_status)
 	}
+	if reader.Status != tar.STATUS_OK {
+		t.Fatalf("allocation Reader status = %v", reader.Status)
+	}
+	if reader.Archive.Header.Format != format {
+		t.Fatalf("allocation Reader format = %v", reader.Archive.Header.Format)
+	}
+}
 
-	var output [TEST_ARCHIVE_SIZE]byte
+func test_writer_allocation(
+	t *testing.T, archive []byte, format tar.Format_Unvalidated,
+	name []byte, link_name []byte,
+) (archive_count int) {
+	t.Helper()
 	var workspace [TEST_WRITER_WORKSPACE_BLOCK_COUNT * tar.BLOCK_SIZE]byte
 	var writer tar.Writer
 	var writer_memory nbio.Stream_Memory
+	source := []byte{'x'}
 	header := tar.Header_Unvalidated{
-		Format:    tar.Format_Unvalidated(tar.FORMAT_USTAR),
-		Type_Flag: tar.TYPE_REGULAR,
-		Name:      []byte("entry.txt"), Size: 0,
+		Format: format, Type_Flag: tar.TYPE_REGULAR,
+		Name: name, Link_Name: link_name, Size: TEST_ALLOCATION_CONTENT_SIZE,
 	}
 	var writer_status tar.Initialization_Status
 	writer_allocations := testing.AllocsPerRun(TEST_ALLOCATION_RUN_COUNT, func() {
-		writer_memory = nbio.Stream_Memory{Memory: output[:]}
+		writer_memory = nbio.Stream_Memory{Memory: archive}
 		writer_status = tar.Writer_Init(
 			&writer, nbio.Memory_To_Stream(&writer_memory),
 			workspace[:],
@@ -3706,6 +3796,10 @@ func test_allocation(t *testing.T) {
 		tar.Writer_Write_Header(
 			&writer, &writer.Completion, &header, allocation_callback,
 		)
+		tar.Writer_Write(
+			&writer, &writer.Completion, source, allocation_callback,
+		)
+		tar.Writer_Close(&writer, &writer.Completion, allocation_callback)
 	})
 	if writer_allocations != 0 {
 		t.Fatalf("Writer allocated %v times; want 0", writer_allocations)
@@ -3713,13 +3807,13 @@ func test_allocation(t *testing.T) {
 	if writer_status != tar.STATUS_OK {
 		t.Fatalf("allocation Writer_Init status = %v", writer_status)
 	}
+	if writer.Status != tar.STATUS_OK {
+		t.Fatalf("allocation Writer status = %v", writer.Status)
+	}
+	return int(writer.Count)
 }
 
-func allocation_callback(completion *nbio.Completion) {
-	if completion == nil {
-		panic("missing completion")
-	}
-}
+func allocation_callback(_ nbio.Completion_Handle) { return }
 
 func ustar_archive(storage []byte, name []byte, content []byte) (archive []byte) {
 	archive = ustar_entry(storage, 0, name, content)
