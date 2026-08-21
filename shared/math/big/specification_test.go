@@ -44,6 +44,7 @@ func Test_Addition(t *testing.T) {
 // Test_Multiplication keeps wide products and transactional overflow under one leaf.
 func Test_Multiplication(t *testing.T) {
 	test_multiplication(t)
+	test_multiplication_double_word_square(t)
 }
 
 // Test_Division keeps signed quotient, remainder, aliasing, and failure atomicity under one leaf.
@@ -109,12 +110,28 @@ func test_float(t *testing.T) {
 	testify.False(t, bool(big.Float_Sign_Bit(&zero)))
 	testify.False(t, bool(big.Float_Is_Infinite(&zero)))
 	testify.True(t, bool(big.Float_Is_Integer(&zero)))
+	test_float_validation(t)
 	test_float_sign_comparison(t)
 	test_float_binary_32(t)
 	test_float_binary_64(t)
 	test_float_integer_conversion(t)
 	test_float_round_policy(t)
 	test_float_arithmetic(t)
+}
+
+func test_float_validation(t *testing.T) {
+	precision, status := big.Float_Precision_Validate(big.FLOAT_PRECISION_MAXIMUM)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, big.Float_Precision(big.FLOAT_PRECISION_MAXIMUM), precision)
+	_, status = big.Float_Precision_Validate(
+		big.Float_Precision_Unvalidated(bits.WORD_MAXIMUM),
+	)
+	testify.Equal_Values(t, big.STATUS_INPUT_INVALID, status)
+	mode, status := big.Rounding_Mode_Validate(big.ROUND_TO_NEAREST_EVEN)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, big.Rounding_Mode(big.ROUND_TO_NEAREST_EVEN), mode)
+	_, status = big.Rounding_Mode_Validate(big.ROUNDING_MODE_UNVALIDATED_MAXIMUM)
+	testify.Equal_Values(t, big.STATUS_INPUT_INVALID, status)
 }
 
 func test_float_binary_32(t *testing.T) {
@@ -244,6 +261,19 @@ func test_float_sign_comparison(t *testing.T) {
 	two.Exponent = one.Exponent
 	testify.Equal(t, big.ORDER_SAME, big.Float_Compare(&one, &two))
 	testify.Equal(t, big.ORDER_SAME, big.Float_Compare(&two, &one))
+	wide_words := [TWO_WORD_COUNT]big.Word{0, 1}
+	var wide_integer big.Int
+	one = big.Float{}
+	two = big.Float{}
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&wide_integer, wide_words[:]))
+	big.Float_Set_Int(&one, &wide_integer)
+	wide_words[1] += big.Word(INDEX_STEP)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&wide_integer, wide_words[:]))
+	big.Float_Set_Int(&two, &wide_integer)
+	two.Exponent = one.Exponent
+	testify.Equal(t, big.ORDER_SAME, big.Float_Compare(&one, &two))
 	big.Float_Set_Infinity(&one, false)
 	big.Float_Set_Infinity(&two, true)
 	testify.Equal(t, big.ORDER_AFTER, big.Float_Compare(&one, &two))
@@ -281,6 +311,15 @@ func test_float_binary_64(t *testing.T) {
 	)
 	_, accuracy := big.Float_Float_64_Bits(&value)
 	testify.Equal(t, big.ACCURACY_BELOW, accuracy)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Set_Float_64_Bits(&value, FLOAT_64_MAXIMUM_FINITE_BITS))
+	value.Precision = big.Float_Precision(big.FLOAT_64_VALUE_MANTISSA_BIT_COUNT + 1)
+	value.Mantissa.Words[ZERO_INDEX] = big.Word(
+		big.FLOAT_64_VALUE_MANTISSA_LIMIT*2 - 1,
+	)
+	encoding, accuracy := big.Float_Float_64_Bits(&value)
+	testify.Equal(t, big.Float_64_Value_Bits(FLOAT_64_POSITIVE_INFINITY_BITS), encoding)
+	testify.Equal(t, big.ACCURACY_ABOVE, accuracy)
 }
 
 func test_float_round_policy(t *testing.T) {
@@ -323,8 +362,7 @@ func test_float_arithmetic(t *testing.T) {
 	var multiplication_workspace big.Float_Multiplication_Workspace
 	var division_workspace big.Float_Division_Workspace
 	var square_root_workspace big.Float_Square_Root_Workspace
-	var one big.Float
-	var half big.Float
+	var one, half big.Float
 	big.Float_Set_Int_64(&one, 1)
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Float_Set_Float_64_Bits(&half, FLOAT_64_HALF_BITS))
@@ -334,6 +372,7 @@ func test_float_arithmetic(t *testing.T) {
 	encoding, accuracy := big.Float_Float_64_Bits(&result)
 	testify.Equal(t, big.Float_64_Value_Bits(FLOAT_64_THREE_HALVES_BITS), encoding)
 	testify.Equal(t, big.ACCURACY_EXACT, accuracy)
+	test_float_add_exact_word_boundaries(t, &workspace)
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Float_Subtract(&result, &one, &half, &workspace))
 	encoding, accuracy = big.Float_Float_64_Bits(&result)
@@ -387,6 +426,86 @@ func test_float_arithmetic(t *testing.T) {
 	testify.Equal_Values(t, big.STATUS_INPUT_INVALID,
 		big.Float_Square_Root(&result, &one, &square_root_workspace))
 	testify.Equal(t, result_before, result)
+}
+
+func test_float_subtract_exact_double_word(
+	t *testing.T, workspace *big.Float_Addition_Workspace,
+) {
+	left_words := [...]big.Word{3, 1}
+	right_words := [...]big.Word{1, 1}
+	var left_integer, right_integer big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&left_integer, left_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&right_integer, right_words[:]))
+	var left, right, result big.Float
+	testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(&left, 128))
+	testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(&right, 128))
+	testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(&result, 128))
+	big.Float_Set_Int(&left, &left_integer)
+	big.Float_Set_Int(&right, &right_integer)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Subtract(&result, &left, &right, workspace))
+	encoding, accuracy := big.Float_Float_64_Bits(&result)
+	testify.Equal(t, big.Float_64_Value_Bits(FLOAT_64_TWO_BITS), encoding)
+	testify.Equal(t, big.ACCURACY_EXACT, accuracy)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Add(&result, &left, &right, workspace))
+	var sum big.Int
+	accuracy, status := big.Float_Int_Into(&sum, &result)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, big.ACCURACY_EXACT, accuracy)
+	want_words := [...]big.Word{4, 2}
+	var want big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&want, want_words[:]))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&sum, &want))
+}
+
+func test_float_multiply_aligned_double_word(t *testing.T) {
+	high := big.Word(bits.CARRY_MAXIMUM) << (big.WORD_BIT_COUNT - 2)
+	words := [...]big.Word{big.Word(bits.CARRY_MAXIMUM), high}
+	var integer big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&integer, words[:]))
+	var integer_product big.Int
+	var integer_workspace big.Int_Multiplication_Workspace
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Multiply(&integer_product, &integer, &integer, &integer_workspace))
+	var left, right, result, expected big.Float
+	for _, value := range []*big.Float{&left, &right} {
+		testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(value, 128))
+		big.Float_Set_Int(value, &integer)
+	}
+	for _, value := range []*big.Float{&result, &expected} {
+		testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(value, 192))
+	}
+	big.Float_Set_Int(&expected, &integer_product)
+	var workspace big.Float_Multiplication_Workspace
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Multiply(&result, &left, &right, &workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Float_Compare(&result, &expected))
+	testify.Equal(t, big.Float_Accuracy(&expected), big.Float_Accuracy(&result))
+}
+
+func test_float_add_exact_word_boundaries(
+	t *testing.T, workspace *big.Float_Addition_Workspace,
+) {
+	var maximum, unit big.Float
+	big.Float_Set_Uint_64(&maximum, big.Word_64(bits.WORD_64_MAXIMUM))
+	big.Float_Set_Uint_64(&unit, big.Word_64(bits.CARRY_MAXIMUM))
+	var result big.Float
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Add(&result, &maximum, &unit, workspace))
+	big.Float_Set_Uint_64(
+		&maximum, big.Word_64(bits.WORD_64_MAXIMUM-bits.CARRY_MAXIMUM),
+	)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Add(&result, &maximum, &unit, workspace))
+	converted, accuracy, status := big.Float_Uint_64(&result)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, big.Word_64(bits.WORD_64_MAXIMUM), converted)
+	testify.Equal(t, big.ACCURACY_EXACT, accuracy)
+	test_float_subtract_exact_double_word(t, workspace)
+	test_float_multiply_aligned_double_word(t)
 }
 
 func test_conversion(t *testing.T) {
@@ -759,6 +878,7 @@ func test_multiplication(t *testing.T) {
 		testify.Equal_Values(t, big.STATUS_OK, conversion_status)
 		testify.Equal(t, one.Product, int64(converted))
 	}
+	test_multiplication_single_word_maximum(t, &workspace)
 
 	var factor_bytes [big.WORD_BYTE_COUNT + 1]byte
 	factor_bytes[0] = 1
@@ -805,13 +925,80 @@ func test_multiplication(t *testing.T) {
 	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&maximum, &unchanged))
 }
 
+func test_multiplication_double_word_square(t *testing.T) {
+	var workspace big.Int_Multiplication_Workspace
+	maximum_word := big.Word(bits.WORD_64_MAXIMUM)
+	factor_words := [TWO_WORD_COUNT]big.Word{maximum_word, maximum_word}
+	var factor big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&factor, factor_words[:]))
+	expected_words := [TWO_WORD_COUNT * TWO_WORD_COUNT]big.Word{
+		big.Word(bits.CARRY_MAXIMUM), 0,
+		maximum_word - big.Word(bits.CARRY_MAXIMUM), maximum_word,
+	}
+	var expected big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&expected, expected_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Multiply(&factor, &factor, &factor, &workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&factor, &expected))
+}
+
+func test_multiplication_single_word_maximum(
+	t *testing.T, workspace *big.Int_Multiplication_Workspace,
+) {
+	maximum_word := big.Word(bits.WORD_64_MAXIMUM)
+	var maximum_factor big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&maximum_factor, big.Words_Unvalidated{maximum_word}))
+	var maximum_product big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Multiply(&maximum_product, &maximum_factor, &maximum_factor, workspace))
+	expected_words := [TWO_WORD_COUNT]big.Word{
+		big.Word(bits.CARRY_MAXIMUM), maximum_word - big.Word(bits.CARRY_MAXIMUM),
+	}
+	var expected_product big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&expected_product, expected_words[:]))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&maximum_product, &expected_product))
+}
+
 func test_division(t *testing.T) {
 	var workspace big.Int_Division_Workspace
 	test_division_machine(t, &workspace)
 	test_division_single(t, &workspace)
 	test_euclidean_division(t, &workspace)
 	test_division_wide(t, &workspace)
+	test_division_word_domains(t, &workspace)
+	test_division_small_estimate_domain(t, &workspace)
+	test_division_general_domains(t, &workspace)
 	test_division_failure(t, &workspace)
+}
+
+func test_division_small_estimate_domain(
+	t *testing.T, workspace *big.Int_Division_Workspace,
+) {
+	high_bit := big.Word(bits.CARRY_MAXIMUM) << big.WORD_BIT_INDEX_MAXIMUM
+	dividend_words := [TWO_WORD_COUNT + big.WORD_COUNT_INCREMENT]big.Word{
+		0, 0, big.Word(bits.CARRY_MAXIMUM),
+	}
+	divisor_words := [TWO_WORD_COUNT]big.Word{0, high_bit}
+	var dividend, divisor, quotient, remainder big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&dividend, dividend_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&divisor, divisor_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	converted, status := big.Int_Uint_64(&quotient)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, uint64(big.BASE_BINARY), uint64(converted))
+	testify.Equal(t, big.SIGN_ZERO, big.Int_Sign(&remainder))
+	big.Int_Negate(&divisor, &divisor)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	signed, status := big.Int_Int_64(&quotient)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, -int64(big.BASE_BINARY), int64(signed))
+	testify.Equal(t, big.SIGN_ZERO, big.Int_Sign(&remainder))
 }
 
 func test_division_machine(t *testing.T, workspace *big.Int_Division_Workspace) {
@@ -940,6 +1127,181 @@ func test_division_wide(t *testing.T, workspace *big.Int_Division_Workspace) {
 	converted, conversion_status = big.Int_Int_64(&divisor)
 	testify.Equal_Values(t, big.STATUS_OK, conversion_status)
 	testify.Equal(t, int64(2), int64(converted))
+}
+
+func test_division_word_domains(t *testing.T, workspace *big.Int_Division_Workspace) {
+	maximum := big.Word(bits.WORD_64_MAXIMUM)
+	for _, negative := range []bool{false, true} {
+		dividend_words := [TWO_WORD_COUNT]big.Word{2, 2}
+		divisor_words := [TWO_WORD_COUNT]big.Word{1, 1}
+		var dividend, divisor, quotient, remainder big.Int
+		testify.Equal_Values(t, big.STATUS_OK,
+			big.Int_Set_Words(&dividend, dividend_words[:]))
+		testify.Equal_Values(t, big.STATUS_OK,
+			big.Int_Set_Words(&divisor, divisor_words[:]))
+		if negative {
+			big.Int_Negate(&dividend, &dividend)
+		} else {
+			big.Int_Negate(&divisor, &divisor)
+		}
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+			&quotient, &remainder, &dividend, &divisor, workspace,
+		))
+		converted, status := big.Int_Int_64(&quotient)
+		testify.Equal_Values(t, big.STATUS_OK, status)
+		testify.Equal(t, int64(-2), int64(converted))
+		testify.Equal(t, big.SIGN_ZERO, big.Int_Sign(&remainder))
+	}
+	dividend_words := [TWO_WORD_COUNT]big.Word{maximum, maximum}
+	divisor_words := [TWO_WORD_COUNT]big.Word{0, 1}
+	var dividend, divisor, quotient, remainder big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&dividend, dividend_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&divisor, divisor_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	converted, status := big.Int_Uint_64(&quotient)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, uint64(maximum), uint64(converted))
+	converted, status = big.Int_Uint_64(&remainder)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, uint64(maximum), uint64(converted))
+	big.Int_Set_Uint_64(&divisor, big.Word_64(maximum))
+	dividend_words = [TWO_WORD_COUNT]big.Word{0, 1}
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&dividend, dividend_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	converted, status = big.Int_Uint_64(&quotient)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, uint64(1), uint64(converted))
+	converted, status = big.Int_Uint_64(&remainder)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, uint64(1), uint64(converted))
+}
+
+func test_division_general_domains(t *testing.T, workspace *big.Int_Division_Workspace) {
+	maximum := big.Word(bits.WORD_64_MAXIMUM)
+	dividend_words := [TWO_WORD_COUNT + big.WORD_COUNT_INCREMENT]big.Word{0, 0, 1}
+	divisor_words := [TWO_WORD_COUNT]big.Word{1, 1}
+	var dividend, divisor, quotient, remainder big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&dividend, dividend_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&divisor, divisor_words[:]))
+	big.Int_Negate(&dividend, &dividend)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	var expected big.Int
+	big.Int_Set_Uint_64(&expected, big.Word_64(maximum))
+	big.Int_Negate(&expected, &expected)
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&quotient, &expected))
+	converted, status := big.Int_Int_64(&remainder)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, int64(-1), int64(converted))
+	test_division_general_minimum_domain(t, workspace)
+	test_division_general_maximum_domains(t, workspace)
+}
+
+func test_division_general_minimum_domain(
+	t *testing.T, workspace *big.Int_Division_Workspace,
+) {
+	const DIVIDEND_COUNT = big.BASE_BINARY*big.BASE_BINARY + big.WORD_COUNT_INCREMENT
+	var dividend_words [DIVIDEND_COUNT]big.Word
+	dividend_words[len(dividend_words)-big.WORD_COUNT_INCREMENT] =
+		big.Word(bits.CARRY_MAXIMUM)
+	divisor_words := [TWO_WORD_COUNT]big.Word{0, big.Word(bits.CARRY_MAXIMUM)}
+	var expected_words [DIVIDEND_COUNT - big.WORD_COUNT_INCREMENT]big.Word
+	expected_words[len(expected_words)-big.WORD_COUNT_INCREMENT] =
+		big.Word(bits.CARRY_MAXIMUM)
+	var dividend, divisor, quotient, remainder, expected big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&dividend, dividend_words[:]))
+	big.Int_Negate(&dividend, &dividend)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&divisor, divisor_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&expected, expected_words[:]))
+	big.Int_Negate(&expected, &expected)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&quotient, &expected))
+	testify.Equal(t, big.SIGN_ZERO, big.Int_Sign(&remainder))
+}
+
+func test_division_general_maximum_domains(
+	t *testing.T, workspace *big.Int_Division_Workspace,
+) {
+	maximum := big.Word(bits.WORD_64_MAXIMUM)
+	var dividend_words [big.WORD_COUNT_MAXIMUM]big.Word
+	var divisor_words [big.WORD_COUNT_MAXIMUM - 1]big.Word
+	for index := range dividend_words {
+		dividend_words[index] = maximum
+	}
+	for index := range divisor_words {
+		divisor_words[index] = maximum
+	}
+	var dividend, divisor, quotient, remainder big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&dividend, dividend_words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&divisor, divisor_words[:]))
+	big.Int_Negate(&divisor, &divisor)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	expected_words := [TWO_WORD_COUNT]big.Word{0, 1}
+	var expected big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&expected, expected_words[:]))
+	big.Int_Negate(&expected, &expected)
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&quotient, &expected))
+	converted, status := big.Int_Uint_64(&remainder)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, uint64(maximum), uint64(converted))
+	for index := range dividend_words {
+		dividend_words[index] = 0
+	}
+	dividend_words[len(dividend_words)-1] = maximum
+	expected_words_maximum := make([]big.Word, big.WORD_COUNT_MAXIMUM-1)
+	expected_words_maximum[len(expected_words_maximum)-1] = maximum
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&dividend, dividend_words[:]))
+	expected = big.Int{}
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&expected, expected_words_maximum))
+	divisor_words_minimum := [TWO_WORD_COUNT]big.Word{0, 1}
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Set_Words(&divisor, divisor_words_minimum[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&quotient, &expected))
+	testify.Equal(t, big.SIGN_ZERO, big.Int_Sign(&remainder))
+	test_division_shifted_remainder_domain(t, workspace)
+}
+
+func test_division_shifted_remainder_domain(
+	t *testing.T, workspace *big.Int_Division_Workspace,
+) {
+	maximum := big.Word(bits.WORD_64_MAXIMUM)
+	var divisor_words [big.WORD_COUNT_MAXIMUM - big.WORD_COUNT_INCREMENT]big.Word
+	for index := range divisor_words {
+		divisor_words[index] = maximum
+	}
+	var divisor, dividend, factor, offset big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&divisor, divisor_words[:]))
+	big.Int_Set_Uint_64(&factor, big.BASE_BINARY*big.BASE_BINARY)
+	var multiplication big.Int_Multiplication_Workspace
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Multiply(&dividend, &divisor, &factor, &multiplication))
+	big.Int_Set_Uint_64(&offset, big.BASE_BINARY)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Subtract(&dividend, &dividend, &offset))
+	var quotient, remainder big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Quotient_Remainder(
+		&quotient, &remainder, &dividend, &divisor, workspace,
+	))
+	converted, status := big.Int_Uint_64(&quotient)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, uint64(big.BASE_BINARY+big.WORD_COUNT_INCREMENT), uint64(converted))
+	var expected big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Subtract(&expected, &divisor, &offset))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&remainder, &expected))
 }
 
 func test_division_failure(t *testing.T, workspace *big.Int_Division_Workspace) {
@@ -1215,6 +1577,10 @@ func test_number_theory(t *testing.T) {
 	test_random(t)
 	test_jacobi(t)
 	test_primality(t)
+	test_greatest_common_divisor(t)
+}
+
+func test_greatest_common_divisor(t *testing.T) {
 	var workspace big.Int_Greatest_Common_Divisor_Workspace
 	for _, one := range []struct {
 		Left  int64
@@ -1235,6 +1601,7 @@ func test_number_theory(t *testing.T) {
 		big.Int_Greatest_Common_Divisor(&result, &left, &right, &workspace)
 		test_bitwise_result(t, &result, one.Want)
 	}
+	test_greatest_common_divisor_wide(t, &workspace)
 	var left big.Int
 	var right big.Int
 	big.Int_Set_Int_64(&left, 21)
@@ -1256,6 +1623,73 @@ func test_number_theory(t *testing.T) {
 	exercise_greatest_common_workspace_domains(
 		&left, &values[ZERO_INDEX], &workspace,
 	)
+}
+
+func test_greatest_common_divisor_wide(
+	t *testing.T, workspace *big.Int_Greatest_Common_Divisor_Workspace,
+) {
+	var left big.Int
+	var right big.Int
+	var want big.Int
+	var result big.Int
+	half_word := big.WORD_BIT_COUNT / RAT_TEST_COMPONENT_COUNT
+	quarter_word := half_word / RAT_TEST_COMPONENT_COUNT
+	left_factor := big.Word(RAT_TEST_COMPONENT_COUNT + INDEX_STEP)
+	right_factor := big.Word(
+		RAT_TEST_COMPONENT_COUNT*RAT_TEST_COMPONENT_COUNT + INDEX_STEP,
+	)
+	for _, zero_words := range []int{INDEX_STEP, RAT_TEST_COMPONENT_COUNT} {
+		var left_storage [RAT_TEST_COMPONENT_COUNT + INDEX_STEP]big.Word
+		var right_storage [RAT_TEST_COMPONENT_COUNT + INDEX_STEP]big.Word
+		var want_storage [RAT_TEST_COMPONENT_COUNT + INDEX_STEP]big.Word
+		left_words := left_storage[:zero_words+INDEX_STEP]
+		right_words := right_storage[:zero_words+INDEX_STEP]
+		want_words := want_storage[:zero_words+INDEX_STEP]
+		left_words[zero_words] = left_factor << uint(half_word)
+		right_words[zero_words] = right_factor << uint(quarter_word)
+		want_words[zero_words] = big.Word(INDEX_STEP) << uint(quarter_word)
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&left, left_words))
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&right, right_words))
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&want, want_words))
+		big.Int_Greatest_Common_Divisor(&result, &left, &right, workspace)
+		testify.Equal_Values(t, big.ORDER_SAME, big.Int_Compare(&result, &want))
+	}
+	test_greatest_common_divisor_double_word_domains(t, workspace)
+	test_greatest_common_divisor_scale_domains(t, workspace)
+}
+
+func test_greatest_common_divisor_double_word_domains(
+	t *testing.T, workspace *big.Int_Greatest_Common_Divisor_Workspace,
+) {
+	for _, words := range [][RAT_TEST_COMPONENT_COUNT]big.Word{
+		{big.Word(INDEX_STEP), big.Word(INDEX_STEP)},
+		{big.Word(RAT_TEST_COMPONENT_COUNT), big.Word(INDEX_STEP)},
+		{0, big.Word(INDEX_STEP) << uint(big.WORD_BIT_COUNT-INDEX_STEP)},
+	} {
+		var left big.Int
+		var right big.Int
+		var result big.Int
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&left, words[:]))
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&right, words[:]))
+		big.Int_Greatest_Common_Divisor(&result, &left, &right, workspace)
+		testify.Equal_Values(t, big.ORDER_SAME, big.Int_Compare(&result, &left))
+	}
+}
+
+func test_greatest_common_divisor_scale_domains(
+	t *testing.T, workspace *big.Int_Greatest_Common_Divisor_Workspace,
+) {
+	var words [big.WORD_COUNT_MAXIMUM]big.Word
+	for index := range words {
+		words[index] = big.Word(bits.WORD_64_MAXIMUM)
+	}
+	var left big.Int
+	var right big.Int
+	var result big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&left, words[:]))
+	big.Int_Set_Uint_64(&right, big.Word_64(INDEX_STEP))
+	big.Int_Greatest_Common_Divisor(&result, &left, &right, workspace)
+	test_bitwise_result(t, &result, INDEX_STEP)
 }
 
 func test_jacobi(t *testing.T) {
@@ -1345,7 +1779,7 @@ func test_primality(t *testing.T) {
 		prime, consumed, status := big.Int_Probably_Prime(
 			&value, test_primality_options(0), nil, &workspace,
 		)
-		testify.Equal(t, test.Prime, prime)
+		testify.Equal(t, test.Prime, prime, "value = %d", test.Value)
 		testify.Equal(t, big.Random_Word_Count(0), consumed)
 		testify.Equal_Values(t, big.STATUS_OK, status)
 	}
@@ -1362,6 +1796,7 @@ func test_primality_standard_vectors(t *testing.T) {
 		"10953742525620032441",
 		"17908251027575790097",
 		"18699199384836356663",
+		"170141183460469231731687303715884105727",
 	} {
 		test_primality_text(t, text, true)
 	}
@@ -1669,6 +2104,19 @@ func test_modular_multiply_bounds(
 	maximum := values[POSITIVE_MAXIMUM_WORD_INDEX]
 	var one big.Int
 	big.Int_Set_Uint_64(&one, 1)
+	var three big.Int
+	big.Int_Set_Uint_64(&three, big.BASE_BINARY+big.WORD_COUNT_INCREMENT)
+	var left big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Subtract(&left, &maximum, &one))
+	var expected big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Subtract(&expected, &maximum, &three))
+	var result big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Modular_Multiply(
+		&result, &left, &three, &maximum, workspace,
+	))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &expected))
 	var modulus big.Int
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Int_Subtract(&modulus, &maximum, &one))
@@ -1705,7 +2153,61 @@ func test_modular_inverse(t *testing.T) {
 			big.Int_Modular_Inverse(&result, &value, &modulus, &workspace))
 		test_bitwise_result(t, &result, one.Want)
 	}
+	var value, modulus, result, want, one big.Int
+	big.Int_Set_Uint_64(&value, 2)
+	big.Int_Set_Uint_64(&one, 1)
+	big.Int_Set_Uint_64(&modulus, 1)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Shift_Left(
+		&modulus, &modulus, big.Shift_Count(big.WORD_BIT_COUNT),
+	))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Add(&modulus, &modulus, &one))
+	big.Int_Set_Uint_64(&want, 1)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Shift_Left(
+		&want, &want, big.Shift_Count(big.WORD_BIT_COUNT-bits.CARRY_MAXIMUM),
+	))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Add(&want, &want, &one))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Modular_Inverse(&result, &value, &modulus, &workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &want))
+	test_modular_inverse_double_word(t, &workspace)
 	test_modular_inverse_failures(t, &workspace)
+}
+
+func test_modular_inverse_double_word(
+	t *testing.T, workspace *big.Int_Modular_Workspace,
+) {
+	workspace.Division.Quotient_Count = big.Quotient_Count(big.WORD_COUNT_MAXIMUM)
+	workspace.Division.Remainder_Count = big.Remainder_Count(big.WORD_COUNT_MAXIMUM)
+	value_bytes := [...]byte{
+		0x91, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+		0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+	}
+	modulus_bytes := [...]byte{
+		0xf1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2d,
+	}
+	expected_bytes := [...]byte{
+		0x0b, 0x7a, 0xfd, 0xc3, 0x3e, 0xc2, 0x21, 0x86,
+		0xd9, 0x92, 0xe7, 0x5c, 0xe2, 0xbd, 0xa4, 0x75,
+	}
+	var value, modulus, expected, result big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&value, value_bytes[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&modulus, modulus_bytes[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&expected, expected_bytes[:]))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Modular_Inverse(&result, &value, &modulus, workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &expected))
+	var maximum_bytes [TWO_WORD_COUNT * big.WORD_BYTE_COUNT]byte
+	for index := range maximum_bytes {
+		maximum_bytes[index] = byte(bits.WORD_8_MAXIMUM)
+	}
+	var radix_bytes [big.WORD_BYTE_COUNT + INDEX_STEP]byte
+	radix_bytes[ZERO_INDEX] = byte(INDEX_STEP)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&value, radix_bytes[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&modulus, maximum_bytes[:]))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Modular_Inverse(&result, &value, &modulus, workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &value))
 }
 
 func test_modular_inverse_failures(
@@ -1723,6 +2225,15 @@ func test_modular_inverse_failures(
 	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &unchanged))
 	modulus = big.Int{}
 	testify.Equal_Values(t, big.STATUS_DIVISOR_ZERO,
+		big.Int_Modular_Inverse(&result, &value, &modulus, workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &unchanged))
+	big.Int_Set_Uint_64(&value, 1)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Shift_Left(
+		&value, &value, big.Shift_Count(big.WORD_BIT_COUNT),
+	))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Shift_Left(&modulus, &value, big.Shift_Count(bits.CARRY_MAXIMUM)))
+	testify.Equal_Values(t, big.STATUS_RESULT_ABSENT,
 		big.Int_Modular_Inverse(&result, &value, &modulus, workspace))
 	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &unchanged))
 }
@@ -1753,7 +2264,34 @@ func test_modular_exponent(t *testing.T) {
 		))
 		test_bitwise_result(t, &result, one.Want)
 	}
+	test_modular_exponent_double_word(t, &workspace)
 	test_modular_exponent_failures(t, &workspace)
+}
+
+func test_modular_exponent_double_word(
+	t *testing.T, workspace *big.Int_Modular_Workspace,
+) {
+	base_bytes := [...]byte{
+		0x91, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+		0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+	}
+	modulus_bytes := [...]byte{
+		0xf1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2d,
+	}
+	expected_bytes := [...]byte{
+		0x36, 0x32, 0x0d, 0xfa, 0x03, 0xba, 0xc1, 0xf6,
+		0x30, 0xef, 0x41, 0x92, 0xd5, 0xbc, 0xa7, 0xde,
+	}
+	var base, exponent, modulus, expected, result big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&base, base_bytes[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&modulus, modulus_bytes[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&expected, expected_bytes[:]))
+	big.Int_Set_Uint_64(&exponent, big.BASE_BINARY+INDEX_STEP)
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Modular_Exponent(
+		&result, &base, &exponent, &modulus, workspace,
+	))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &expected))
 }
 
 func test_modular_exponent_failures(
@@ -1783,6 +2321,7 @@ func test_modular_square_root(t *testing.T) {
 		Root_1     int64
 		Root_2     int64
 	}{
+		{Value: 2, Modulus: 7, Nonresidue: 3, Root_1: 3, Root_2: 4},
 		{Value: 10, Modulus: 13, Nonresidue: 2, Root_1: 6, Root_2: 7},
 		{Value: -3, Modulus: 13, Nonresidue: 2, Root_1: 6, Root_2: 7},
 		{Value: 4, Modulus: 17, Nonresidue: 3, Root_1: 2, Root_2: 15},
@@ -1827,6 +2366,14 @@ func test_modular_square_root_failures(t *testing.T) {
 	big.Int_Set_Int_64(&value, 2)
 	big.Int_Set_Int_64(&modulus, 15)
 	big.Int_Set_Int_64(&nonresidue, 7)
+	status = big.Int_Modular_Square_Root(
+		&result, &value, &modulus, &nonresidue, &workspace,
+	)
+	testify.Equal_Values(t, big.STATUS_RESULT_ABSENT, status)
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &unchanged))
+	big.Int_Set_Int_64(&value, 5)
+	big.Int_Set_Int_64(&modulus, 21)
+	big.Int_Set_Int_64(&nonresidue, 2)
 	status = big.Int_Modular_Square_Root(
 		&result, &value, &modulus, &nonresidue, &workspace,
 	)
@@ -1934,6 +2481,34 @@ func test_modular_square_root_domains(
 			&destination, &source, &modulus, &nonresidue, &workspace,
 		))
 	}
+	test_modular_square_root_order_one_domains(t, values)
+}
+
+func test_modular_square_root_order_one_domains(
+	t *testing.T, values *[INT_DOMAIN_COUNT]big.Int,
+) {
+	var modulus, nonresidue, source big.Int
+	big.Int_Set_Uint_64(&modulus, 7)
+	big.Int_Set_Uint_64(&nonresidue, 3)
+	big.Int_Set_Uint_64(&source, 2)
+	var workspace big.Int_Modular_Square_Root_Workspace
+	for index := range values {
+		destination := values[index]
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Modular_Square_Root(
+			&destination, &source, &modulus, &nonresidue, &workspace,
+		))
+	}
+	for _, count := range []int{
+		big.WORD_COUNT_MINIMUM, big.WORD_COUNT_INCREMENT,
+		TWO_WORD_COUNT, big.WORD_COUNT_MAXIMUM,
+	} {
+		workspace.Modular.Division.Quotient_Count = big.Quotient_Count(count)
+		workspace.Modular.Division.Remainder_Count = big.Remainder_Count(count)
+		var destination big.Int
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Modular_Square_Root(
+			&destination, &source, &modulus, &nonresidue, &workspace,
+		))
+	}
 }
 
 func test_modular_multiply_domains(
@@ -1978,7 +2553,53 @@ func test_modular_bound_domains(
 		))
 		test_bitwise_result(t, &result, 1)
 	}
+	workspace.Division.Quotient_Count = big.Quotient_Count(big.WORD_COUNT_INCREMENT)
+	workspace.Division.Remainder_Count = big.Remainder_Count(big.WORD_COUNT_INCREMENT)
+	for _, index := range []int{POSITIVE_TWO_WORD_INDEX, NEGATIVE_TWO_WORD_INDEX} {
+		var result big.Int
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Modular_Inverse(
+			&result, &one, &values[index], workspace,
+		))
+		test_bitwise_result(t, &result, 1)
+	}
 	test_modular_remainder_domains(t, values, workspace, &one)
+	test_modular_inverse_general_domains(t, values, workspace, &one)
+}
+
+func test_modular_inverse_general_domains(
+	t *testing.T,
+	values *[INT_DOMAIN_COUNT]big.Int,
+	workspace *big.Int_Modular_Workspace,
+	one *big.Int,
+) {
+	modulus := values[POSITIVE_THREE_WORD_INDEX]
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Add(&modulus, &modulus, one))
+	for _, count := range []int{
+		big.WORD_COUNT_MINIMUM, big.WORD_COUNT_INCREMENT,
+		TWO_WORD_COUNT, big.WORD_COUNT_MAXIMUM,
+	} {
+		workspace.Division.Quotient_Count = big.Quotient_Count(count)
+		workspace.Division.Remainder_Count = big.Remainder_Count(count)
+		var result big.Int
+		testify.Equal_Values(t, big.STATUS_OK,
+			big.Int_Modular_Inverse(&result, one, &modulus, workspace))
+		test_bitwise_result(t, &result, 1)
+	}
+	var two big.Int
+	big.Int_Set_Uint_64(&two, TWO_WORD_COUNT)
+	value := modulus
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Subtract(&value, &value, &two))
+	expected := values[POSITIVE_THREE_WORD_INDEX]
+	big.Int_Shift_Right(
+		&expected, &expected, big.Shift_Count(big.WORD_COUNT_INCREMENT),
+	)
+	var result big.Int
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Modular_Inverse(&result, &value, &modulus, workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &expected))
+	modulus = values[POSITIVE_THREE_WORD_INDEX]
+	testify.Equal_Values(t, big.STATUS_RESULT_ABSENT,
+		big.Int_Modular_Inverse(&result, &two, &modulus, workspace))
 }
 
 func test_modular_remainder_domains(
@@ -2126,6 +2747,17 @@ func test_exponent(t *testing.T) {
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Int_Exponent(&exponent, &base, &exponent, &workspace))
 	test_bitwise_result(t, &exponent, -8)
+	base_words := [TWO_WORD_COUNT]big.Word{
+		big.Word(bits.CARRY_MAXIMUM), big.Word(bits.CARRY_MAXIMUM),
+	}
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&base, base_words[:]))
+	big.Int_Set_Uint_64(&exponent, 3)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Exponent(&exponent, &base, &exponent, &workspace))
+	expected_words := [TWO_WORD_COUNT * TWO_WORD_COUNT]big.Word{1, 3, 3, 1}
+	var expected big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&expected, expected_words[:]))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&exponent, &expected))
 	test_exponent_bounds(t, &workspace)
 }
 
@@ -2144,6 +2776,19 @@ func test_exponent_bounds(t *testing.T, workspace *big.Int_Exponent_Workspace) {
 	unchanged := result
 	testify.Equal_Values(t, big.STATUS_VALUE_OVERFLOW,
 		big.Int_Exponent(&result, &base, &exponent, workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &unchanged))
+	degree := RAT_TEST_COMPONENT_COUNT + INDEX_STEP
+	base_word_count := big.WORD_COUNT_MAXIMUM/degree + INDEX_STEP
+	var base_words [big.WORD_COUNT_MAXIMUM]big.Word
+	base_words[base_word_count-INDEX_STEP] = big.Word(bits.WORD_64_MAXIMUM)
+	testify.Equal_Values(
+		t, big.STATUS_OK, big.Int_Set_Words(&base, base_words[:base_word_count]),
+	)
+	big.Int_Set_Uint_64(&exponent, big.Word_64(degree))
+	testify.Equal_Values(
+		t, big.STATUS_VALUE_OVERFLOW,
+		big.Int_Exponent(&result, &base, &exponent, workspace),
+	)
 	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, &unchanged))
 
 	values := int_domain_values(t)
@@ -2187,11 +2832,28 @@ func test_square_root(t *testing.T) {
 	two_word_bytes[0] = 1
 	var two_word big.Int
 	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&two_word, two_word_bytes[:]))
+	two_word_source := two_word
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Int_Square_Root(&two_word, &two_word, &workspace))
 	test_bitwise_result(
 		t, &two_word, int64(1)<<(big.WORD_BIT_COUNT/SQUARE_ROOT_TEST_DEGREE),
 	)
+	test_square_root_double_word_destinations(t, &two_word_source, &two_word, &workspace)
+	var maximum_root big.Int
+	big.Int_Set_Uint_64(&maximum_root, big.Word_64(bits.WORD_64_MAXIMUM))
+	for _, words := range [...][SQUARE_ROOT_TEST_DEGREE]big.Word{
+		{
+			big.Word(bits.CARRY_MAXIMUM),
+			big.Word(bits.WORD_64_MAXIMUM) - big.Word(bits.CARRY_MAXIMUM),
+		},
+		{big.Word(bits.WORD_64_MAXIMUM), big.Word(bits.WORD_64_MAXIMUM)},
+	} {
+		var source big.Int
+		testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&source, words[:]))
+		testify.Equal_Values(t, big.STATUS_OK,
+			big.Int_Square_Root(&source, &source, &workspace))
+		testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&source, &maximum_root))
+	}
 
 	var maximum_bytes [bytes.SLICE_SIZE_MAXIMUM]byte
 	for index := range maximum_bytes {
@@ -2209,6 +2871,18 @@ func test_square_root(t *testing.T) {
 			big.Int_Square_Root(&negative, &negative, &workspace))
 	}
 	testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&negative, &unchanged))
+}
+
+func test_square_root_double_word_destinations(
+	t *testing.T, source *big.Int, expected *big.Int,
+	workspace *big.Int_Square_Root_Workspace,
+) {
+	for _, initial := range int_domain_values(t) {
+		result := initial
+		testify.Equal_Values(t, big.STATUS_OK,
+			big.Int_Square_Root(&result, source, workspace))
+		testify.Equal(t, big.ORDER_SAME, big.Int_Compare(&result, expected))
+	}
 }
 
 func test_rational(t *testing.T) {
@@ -3165,7 +3839,7 @@ func test_rat_fraction_64_inverse(t *testing.T, workspace *big.Rat_Workspace) {
 		denominator := numbers[(index+INDEX_STEP)%len(numbers)]
 		big.Rat_Set_Fraction_64(&value, numbers[index], denominator, workspace)
 	}
-	source := rat_set_pair(t, 2, 3, workspace)
+	source, _ := rat_maximum_component(t, workspace)
 	for _, count := range []int{0, 1, 2, big.WORD_COUNT_MAXIMUM} {
 		rat_workspace_count_set(workspace, count)
 		big.Rat_Set_Fraction_64(&value, 1, 2, workspace)
@@ -3195,6 +3869,47 @@ func test_rat_arithmetic(t *testing.T, workspace *big.Rat_Workspace) {
 	testify.Equal_Values(t, big.STATUS_DIVISOR_ZERO,
 		big.Rat_Quotient(&result, &left, &zero, workspace))
 	testify.Equal(t, big.ORDER_SAME, big.Rat_Compare(&result, &unchanged, workspace))
+	exercise_rat_add_word_domains(t, workspace)
+}
+
+func exercise_rat_add_word_domains(t *testing.T, workspace *big.Rat_Workspace) {
+	one := int64(INDEX_STEP)
+	two := int64(RAT_TEST_COMPONENT_COUNT)
+	four := two * two
+	word_maximum := int64(bits.WORD_32_MAXIMUM)
+	values := [...][RAT_TEST_COMPONENT_COUNT * RAT_TEST_COMPONENT_COUNT]int64{
+		{0, one, 0, one},
+		{one, one, 0, one},
+		{two, one, 0, one},
+		{0, one, one, one},
+		{0, one, two, one},
+		{-one, one, 0, one},
+		{0, one, -one, one},
+		{word_maximum, word_maximum - one, one, word_maximum},
+		{one, word_maximum, word_maximum, word_maximum - one},
+		{word_maximum - two, word_maximum, four, word_maximum},
+		{word_maximum, word_maximum - one, word_maximum, word_maximum - one},
+	}
+	for _, value := range values {
+		left := rat_set_pair(t, value[0], value[1], workspace)
+		right := rat_set_pair(t, value[2], value[3], workspace)
+		var result big.Rat
+		testify.Equal_Values(t, big.STATUS_OK,
+			big.Rat_Add(&result, &left, &right, workspace))
+	}
+	three := two + one
+	five := four + one
+	left_numerator := word_maximum + one
+	right_numerator := left_numerator + one
+	left := rat_set_pair(t, left_numerator, three, workspace)
+	right := rat_set_pair(t, right_numerator, five, workspace)
+	var result big.Rat
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Rat_Add(&result, &left, &right, workspace))
+	rat_expect(
+		t, &result,
+		left_numerator*five+right_numerator*three, three*five,
+	)
 }
 
 func rat_set_pair(
@@ -3291,13 +4006,18 @@ func rat_maximum_component(
 func exercise_rat_workspace_domains(t *testing.T, workspace *big.Rat_Workspace) {
 	left := rat_set_pair(t, 2, 3, workspace)
 	right := rat_set_pair(t, 3, 5, workspace)
+	word_maximum := int64(bits.WORD_32_MAXIMUM)
+	add_left := rat_set_pair(
+		t, word_maximum+int64(INDEX_STEP),
+		int64(RAT_TEST_COMPONENT_COUNT+INDEX_STEP), workspace,
+	)
 	var result big.Rat
 	counts := [...]int{0, 1, 2, big.WORD_COUNT_MAXIMUM}
 	for _, count := range counts {
 		rat_workspace_count_set(workspace, count)
 		big.Rat_Compare(&left, &right, workspace)
 		rat_workspace_count_set(workspace, count)
-		big.Rat_Add(&result, &left, &right, workspace)
+		big.Rat_Add(&result, &add_left, &right, workspace)
 		rat_workspace_count_set(workspace, count)
 		big.Rat_Subtract(&result, &left, &right, workspace)
 		rat_workspace_count_set(workspace, count)
@@ -3366,7 +4086,9 @@ func test_text(t *testing.T) {
 	text_expect(t, 61, 62, "Z", &workspace)
 	test_text_destination_failure(t, &workspace)
 	test_text_maximum(t, &workspace)
+	test_text_multiword_decimal(t, &workspace)
 	test_float_text_power_formats(t)
+	test_float_text_multiword_integer_general(t)
 	test_float_text_validation(t)
 	test_float_text_maximum(t)
 	test_parse(t)
@@ -3394,6 +4116,21 @@ func test_float_text_power_formats(t *testing.T) {
 	float_text_expect(t, &value, 'x', 2, "-0x0.00p+00")
 	test_float_text_failure(t, &value)
 	test_float_text_decimal_formats(t)
+}
+
+func test_float_text_multiword_integer_general(t *testing.T) {
+	encoded := [...]byte{
+		0x91, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+		0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+	}
+	var integer big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&integer, encoded[:]))
+	var value big.Float
+	testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(&value, 192))
+	big.Float_Set_Int(&value, &integer)
+	float_text_expect(t, &value, 'g', 24, "1.92921197468232056628283e+38")
+	big.Float_Negate(&value, &value)
+	float_text_expect(t, &value, 'G', 24, "-1.92921197468232056628283E+38")
 }
 
 func test_float_text_decimal_formats(t *testing.T) {
@@ -3583,6 +4320,23 @@ func test_float_serialization(t *testing.T) {
 	testify.Equal(t, value.Mode, decoded.Mode)
 	testify.Equal(t, value.Accuracy, decoded.Accuracy)
 	test_float_serialization_bounds(t, &value, &workspace, storage[:size])
+	words := [...]big.Word{
+		big.Word(bits.CARRY_MAXIMUM),
+		big.Word(bits.CARRY_MAXIMUM) <<
+			(big.WORD_BIT_COUNT - INDEX_STEP - INDEX_STEP),
+	}
+	var integer big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(&integer, words[:]))
+	testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(&value, 128))
+	big.Float_Set_Int(&value, &integer)
+	mantissa_count, status = big.Float_Gob_Encode_Into(storage[:], &value, &workspace)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, big.Word_Count(INDEX_STEP+INDEX_STEP), mantissa_count)
+	size = big.FLOAT_GOB_FINITE_PREFIX_SIZE + int(mantissa_count)*big.WORD_BYTE_COUNT
+	decoded = big.Float{}
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Gob_Decode(&decoded, storage[:size], &workspace))
+	testify.Equal(t, big.ORDER_SAME, big.Float_Compare(&value, &decoded))
 }
 
 func test_float_serialization_bounds(
@@ -3923,6 +4677,22 @@ func text_expect(
 	testify.Equal(t, want, string(destination[:count]))
 }
 
+func test_text_multiword_decimal(t *testing.T, workspace *big.Int_Text_Workspace) {
+	encoded := [...]byte{
+		0x91, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+		0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+	}
+	var value big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&value, encoded[:]))
+	var destination [big.INT_TEXT_SIZE_MAXIMUM]byte
+	base, validation := big.Base_Validate(big.BASE_DECIMAL)
+	testify.Equal_Values(t, big.STATUS_OK, validation)
+	count, status := big.Int_Text_Into(destination[:], &value, base, workspace)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal(t, "192921197468232056628282901627347328254",
+		string(destination[:count]))
+}
+
 func test_text_destination_failure(t *testing.T, workspace *big.Int_Text_Workspace) {
 	base, status := big.Base_Validate(10)
 	testify.Equal_Values(t, big.STATUS_OK, status)
@@ -3971,6 +4741,15 @@ func test_text_maximum(t *testing.T, workspace *big.Int_Text_Workspace) {
 	testify.Equal(t, byte('-'), destination[0])
 	testify.Equal(t, byte('1'), destination[1])
 	testify.Equal(t, byte('1'), destination[int(count)-1])
+	base, status = big.Base_Validate(big.BASE_DECIMAL)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	count, destination_status = big.Int_Text_Into(
+		destination[:], &maximum, base, workspace,
+	)
+	testify.Equal_Values(t, big.STATUS_OK, destination_status)
+	testify.Equal(t,
+		big.Text_Count(big.DECIMAL_TEXT_DIGIT_COUNT_MAXIMUM+big.SIGN_BYTE_COUNT_MAXIMUM),
+		count)
 }
 
 func test_parse(t *testing.T) {
@@ -4692,6 +5471,41 @@ func exercise_float_domains(t *testing.T, integers *[INT_DOMAIN_COUNT]big.Int) {
 	exercise_float_validation_domains(t, &values[0])
 }
 
+func test_float_square_root_triple_word(
+	t *testing.T, workspace *big.Float_Square_Root_Workspace,
+) {
+	encoded := [...]byte{
+		0x91, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+		0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+	}
+	var integer big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Bytes(&integer, encoded[:]))
+	var source big.Float
+	testify.Equal_Values(t, big.STATUS_OK, big.Float_Set_Precision(
+		&source, (big.BASE_BINARY+INDEX_STEP)*big.WORD_BIT_COUNT,
+	))
+	big.Float_Set_Int(&source, &integer)
+	var result big.Float
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Set_Precision(&result, big.Float_Precision_Unvalidated(source.Precision)))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Square_Root(&result, &source, workspace))
+	var scaled big.Int
+	scale := big.Shift_Count(big.BASE_BINARY*(int(source.Precision)+
+		big.FLOAT_SQUARE_ROOT_GUARD_BIT_COUNT) - int(source.Exponent))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Shift_Left(&scaled, &integer, scale))
+	var root big.Int
+	var integer_workspace big.Int_Square_Root_Workspace
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Square_Root(&root, &scaled, &integer_workspace))
+	var expected big.Int
+	big.Int_Shift_Right(&expected, &root, big.FLOAT_SQUARE_ROOT_GUARD_BIT_COUNT)
+	testify.Equal(t, expected, big.Int(result.Mantissa))
+	testify.Equal(t, source.Exponent/big.BASE_BINARY, result.Exponent)
+	testify.Equal(t, big.ACCURACY_BELOW, result.Accuracy)
+}
+
 func exercise_float_representation_domains(values *[FLOAT_DOMAIN_COUNT]big.Float) {
 	exercise_float_text_domains(values)
 	exercise_float_parse_domains(values)
@@ -4732,6 +5546,37 @@ func exercise_float_gob_domains(values *[FLOAT_DOMAIN_COUNT]big.Float) {
 		next := &values[(index+INDEX_STEP)%len(values)]
 		destination := *next
 		exercise_float_gob_domain(value, &destination, next, &workspace, storage[:])
+	}
+	finite := &values[FLOAT_DOMAIN_MINIMUM_EXPONENT_INDEX]
+	for index := range values {
+		destination := values[index]
+		exercise_float_gob_domain(
+			finite, &destination, &values[index], &workspace, storage[:],
+		)
+	}
+	accuracies := [...]big.Accuracy{
+		big.ACCURACY_BELOW, big.ACCURACY_EXACT, big.ACCURACY_ABOVE,
+	}
+	precisions := [...]big.Float_Precision{
+		big.FLOAT_PRECISION_MINIMUM, 1, 2, big.FLOAT_PRECISION_MAXIMUM,
+	}
+	for index := range values {
+		source := big.Float{
+			Precision: precisions[index%len(precisions)],
+			Mode: big.Rounding_Mode(index %
+				(int(big.ROUND_TO_POSITIVE_INFINITY) + INDEX_STEP)),
+			Accuracy: accuracies[index%len(accuracies)],
+			Form: big.Float_Form(index %
+				(int(big.FLOAT_FORM_INFINITY) + INDEX_STEP)),
+			Negative: big.Polarity(index % (int(big.POLARITY_NEGATIVE) + INDEX_STEP)),
+		}
+		if source.Form == big.FLOAT_FORM_FINITE {
+			source.Form = big.FLOAT_FORM_INFINITY
+		}
+		destination := values[index]
+		exercise_float_gob_domain(
+			&source, &destination, &values[index], &workspace, storage[:],
+		)
 	}
 }
 
@@ -4967,9 +5812,22 @@ func exercise_float_square_root_boundaries(
 	values *[FLOAT_DOMAIN_COUNT]big.Float,
 	workspace *big.Float_Square_Root_Workspace,
 ) {
+	var zero big.Float
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Square_Root(&zero, &zero, workspace))
+	var eight big.Float
+	big.Float_Set_Int_64(&eight, 8)
+	var infinity big.Float
+	big.Float_Set_Infinity(&infinity, false)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Square_Root(&infinity, &eight, workspace))
 	var two big.Float
 	big.Float_Set_Int_64(&two, 2)
 	var result big.Float
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Set_Precision(&result, big.FLOAT_PRECISION_MAXIMUM))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Square_Root(&result, &two, workspace))
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Float_Set_Precision(&result, big.WORD_BIT_COUNT+INDEX_STEP))
 	testify.Equal_Values(t, big.STATUS_OK,
@@ -4992,6 +5850,7 @@ func exercise_float_square_root_boundaries(
 	two.Exponent = -big.Float_Exponent(big.BASE_BINARY)
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Float_Square_Root(&result, &two, workspace))
+	test_float_square_root_triple_word(t, workspace)
 }
 
 func exercise_float_division_boundaries(
@@ -4999,6 +5858,9 @@ func exercise_float_division_boundaries(
 	values *[FLOAT_DOMAIN_COUNT]big.Float,
 	workspace *big.Float_Division_Workspace,
 ) {
+	var zero big.Float
+	testify.Equal_Values(t, big.STATUS_INPUT_INVALID,
+		big.Float_Quotient(&zero, &zero, &zero, workspace))
 	var one big.Float
 	big.Float_Set_Int_64(&one, 1)
 	var two big.Float
@@ -5030,6 +5892,26 @@ func exercise_float_division_boundaries(
 		big.Float_Quotient(&result, &smaller, &maximum, workspace))
 	testify.Equal_Values(t, big.STATUS_OK,
 		big.Float_Quotient(&result, &one, &one, workspace))
+	unit := big.Word(bits.CARRY_MAXIMUM)
+	triple := big.Word(big.BASE_BINARY + INDEX_STEP)
+	var wide_divisor_integer, wide_dividend_integer big.Int
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(
+		&wide_divisor_integer, big.Words_Unvalidated{unit, 0, unit},
+	))
+	testify.Equal_Values(t, big.STATUS_OK, big.Int_Set_Words(
+		&wide_dividend_integer, big.Words_Unvalidated{triple, 0, triple},
+	))
+	var wide_divisor, wide_dividend big.Float
+	big.Float_Set_Int(&wide_divisor, &wide_divisor_integer)
+	big.Float_Set_Int(&wide_dividend, &wide_dividend_integer)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Set_Precision(&result, big.BASE_BINARY))
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Float_Quotient(&result, &wide_dividend, &wide_divisor, workspace))
+	integer, accuracy, status := big.Float_Int_64(&result)
+	testify.Equal_Values(t, big.STATUS_OK, status)
+	testify.Equal_Values(t, triple, integer)
+	testify.Equal(t, big.ACCURACY_EXACT, accuracy)
 }
 
 func exercise_float_round_boundaries(
@@ -5260,6 +6142,12 @@ func exercise_int_division_workspace_domains(
 		big.Int_Quotient_Remainder(&quotient, &remainder, one, one, workspace))
 	two_words := &values[POSITIVE_TWO_WORD_INDEX]
 	three_words := &values[POSITIVE_THREE_WORD_INDEX]
+	negative_two_words := *two_words
+	big.Int_Negate(&negative_two_words, &negative_two_words)
+	testify.Equal_Values(t, big.STATUS_OK,
+		big.Int_Divide_Modulus(
+			&quotient, &remainder, &negative_two_words, three_words, workspace,
+		))
 	exercise_division_remainder_count(
 		t, &below_maximum, maximum, one, workspace,
 	)

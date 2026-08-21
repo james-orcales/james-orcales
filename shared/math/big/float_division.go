@@ -8,6 +8,3074 @@ import (
 	"local/james-orcales/shared/math/bits"
 )
 
+// INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM leaves one higher dividend word.
+const INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM = WORD_COUNT_MAXIMUM -
+	WORD_COUNT_INCREMENT
+
+// Result construction reuses preparation fields after quotient extraction consumes them.
+const FLOAT_DIVISION_RESULT_PRECISION_INDEX = FLOAT_DIVISION_SHIFT_INDEX
+
+// FLOAT_DIVISION_RESULT_PREVIOUS_COUNT_INDEX reuses the consumed quotient offset.
+const FLOAT_DIVISION_RESULT_PREVIOUS_COUNT_INDEX = FLOAT_DIVISION_OFFSET_INDEX
+
+// Float_Division_Destination holds one finite output while guarded bits occupy it.
+type Float_Division_Destination [WORD_COUNT_INCREMENT]*Float
+
+// Float_Division_Destination_Invariants requires the one writable result.
+func Float_Division_Destination_Invariants(
+	value Float_Division_Destination, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == WORD_COUNT_INCREMENT,
+		"Float division owns one destination.",
+	)
+	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "Float division output exists.")
+}
+
+// Int_Division_Empty_Workspace is the reset state required by word division.
+type Int_Division_Empty_Workspace Int_Division_Workspace
+
+// Int_Division_Empty_Workspace_Invariants excludes stale scratch from word algorithms.
+func Int_Division_Empty_Workspace_Invariants(
+	value *Int_Division_Empty_Workspace, _ invariant.Namespace,
+) {
+	invariant.Always(
+		value.Quotient_Count == Quotient_Count(WORD_COUNT_MINIMUM),
+		"Word division starts with an empty quotient.",
+	)
+	invariant.Always(
+		value.Remainder_Count == Remainder_Count(WORD_COUNT_MINIMUM),
+		"Word division starts with an empty remainder.",
+	)
+}
+
+// Int_Division_Multiword_Magnitude excludes scalar paths handled before word division.
+type Int_Division_Multiword_Magnitude Int
+
+// Int_Division_Multiword_Magnitude_Invariants keeps normalized inline multiword storage.
+func Int_Division_Multiword_Magnitude_Invariants(
+	value *Int_Division_Multiword_Magnitude, namespace invariant.Namespace,
+) {
+	invariant.Tree(Polarity(value.Negative), namespace).
+		Enum_Uint8(
+			uint8(value.Negative),
+			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
+		).
+		Ensure()
+	invariant.Tree(Word_Count(value.Count), namespace).
+		Range_Int(
+			int(value.Count),
+			WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
+			WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+	high_index := (value.Count - Word_Count(WORD_COUNT_INCREMENT)) &
+		Word_Count(WORD_INDEX_MAXIMUM)
+	invariant.Always(
+		value.Words[high_index] != 0,
+		"A multiword division magnitude omits high zero words.",
+	)
+}
+
+// Int_Division_Nonzero_Word is the exact divisor domain of word division.
+type Int_Division_Nonzero_Word Word
+
+// Int_Division_Nonzero_Word_Invariants rejects the zero divisor handled by the caller.
+func Int_Division_Nonzero_Word_Invariants(
+	value Int_Division_Nonzero_Word, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), uint64(bits.CARRY_MAXIMUM), uint64(bits.WORD_64_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Int_Division_Quotient_Word excludes zero after an equal-width dividend wins comparison.
+type Int_Division_Quotient_Word Word
+
+// Int_Division_Quotient_Word_Invariants covers one complete nonzero quotient word.
+func Int_Division_Quotient_Word_Invariants(
+	value Int_Division_Quotient_Word, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), uint64(bits.CARRY_MAXIMUM), uint64(bits.WORD_64_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Int_Division_General_Dividend has at least one word above its multiword divisor.
+type Int_Division_General_Dividend Int
+
+// Int_Division_General_Dividend_Invariants states the restoring-path dividend domain.
+func Int_Division_General_Dividend_Invariants(
+	value *Int_Division_General_Dividend, namespace invariant.Namespace,
+) {
+	invariant.Tree(Polarity(value.Negative), namespace).
+		Enum_Uint8(
+			uint8(value.Negative),
+			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
+		).
+		Ensure()
+	invariant.Tree(Word_Count(value.Count), namespace).
+		Range_Int(
+			int(value.Count),
+			BASE_BINARY*BASE_BINARY+WORD_COUNT_INCREMENT,
+			WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+	high_index := (value.Count - Word_Count(WORD_COUNT_INCREMENT)) &
+		Word_Count(WORD_INDEX_MAXIMUM)
+	invariant.Always(
+		value.Words[high_index] != 0,
+		"A general division dividend omits high zero words.",
+	)
+}
+
+// Int_Division_General_Divisor leaves at least one higher dividend word.
+type Int_Division_General_Divisor Int
+
+// Int_Division_General_Divisor_Invariants states the restoring-path divisor domain.
+func Int_Division_General_Divisor_Invariants(
+	value *Int_Division_General_Divisor, namespace invariant.Namespace,
+) {
+	invariant.Tree(Polarity(value.Negative), namespace).
+		Enum_Uint8(
+			uint8(value.Negative),
+			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
+		).
+		Ensure()
+	invariant.Tree(Word_Count(value.Count), namespace).
+		Range_Int(
+			int(value.Count),
+			WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
+			INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+	high_index := (value.Count - Word_Count(WORD_COUNT_INCREMENT)) &
+		Word_Count(WORD_INDEX_MAXIMUM)
+	invariant.Always(
+		value.Words[high_index] != 0,
+		"A general division divisor omits high zero words.",
+	)
+}
+
+// Int_Division_Small_Dividend is the bounded Knuth path above equal-width division.
+type Int_Division_Small_Dividend Int
+
+// Int_Division_Small_Dividend_Invariants states every reachable small dividend width.
+func Int_Division_Small_Dividend_Invariants(
+	value *Int_Division_Small_Dividend, namespace invariant.Namespace,
+) {
+	invariant.Tree(Polarity(value.Negative), namespace).
+		Enum_Uint8(
+			uint8(value.Negative),
+			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
+		).
+		Ensure()
+	invariant.Tree(Word_Count(value.Count), namespace).
+		Enum_Int(
+			int(value.Count),
+			WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
+			BASE_BINARY*BASE_BINARY,
+		).
+		Ensure()
+	high_index := value.Count - Word_Count(WORD_COUNT_INCREMENT)
+	invariant.Always(
+		value.Words[high_index] != 0,
+		"A small division dividend omits high zero words.",
+	)
+}
+
+// Int_Division_Small_Divisor is the multiword divisor below a small dividend.
+type Int_Division_Small_Divisor Int
+
+// Int_Division_Small_Divisor_Invariants states every reachable small divisor width.
+func Int_Division_Small_Divisor_Invariants(
+	value *Int_Division_Small_Divisor, namespace invariant.Namespace,
+) {
+	invariant.Tree(Polarity(value.Negative), namespace).
+		Enum_Uint8(
+			uint8(value.Negative),
+			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
+		).
+		Ensure()
+	invariant.Tree(Word_Count(value.Count), namespace).
+		Enum_Int(
+			int(value.Count), WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
+			BASE_BINARY*BASE_BINARY-WORD_COUNT_INCREMENT,
+		).
+		Ensure()
+	high_index := value.Count - Word_Count(WORD_COUNT_INCREMENT)
+	invariant.Always(
+		value.Words[high_index] != 0,
+		"A small division divisor omits high zero words.",
+	)
+}
+
+// Int_Division_Restoring_Workspace is state before one quotient bit enters.
+type Int_Division_Restoring_Workspace Int_Division_Workspace
+
+// Int_Division_Restoring_Workspace_Invariants excludes an impossible full-width quotient.
+func Int_Division_Restoring_Workspace_Invariants(
+	value *Int_Division_Restoring_Workspace, namespace invariant.Namespace,
+) {
+	invariant.Tree(Quotient_Count(value.Quotient_Count), namespace).
+		Range_Int(
+			int(value.Quotient_Count), WORD_COUNT_MINIMUM,
+			INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+	invariant.Tree(Remainder_Count(value.Remainder_Count), namespace).
+		Range_Int(
+			int(value.Remainder_Count), WORD_COUNT_MINIMUM,
+			INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Int_Division_Shifted_Workspace permits one carry word before divisor comparison.
+type Int_Division_Shifted_Workspace Int_Division_Workspace
+
+// Int_Division_Shifted_Workspace_Invariants keeps only the transient shifted remainder wider.
+func Int_Division_Shifted_Workspace_Invariants(
+	value *Int_Division_Shifted_Workspace, namespace invariant.Namespace,
+) {
+	invariant.Tree(Quotient_Count(value.Quotient_Count), namespace).
+		Range_Int(
+			int(value.Quotient_Count), WORD_COUNT_MINIMUM,
+			INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+	invariant.Tree(Remainder_Count(value.Remainder_Count), namespace).
+		Range_Int(
+			int(value.Remainder_Count), WORD_COUNT_MINIMUM, WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+func int_divide_by_word(
+	workspace *Int_Division_Empty_Workspace,
+	dividend *Int_Division_Multiword_Magnitude,
+	divisor Int_Division_Nonzero_Word,
+) {
+	Int_Division_Empty_Workspace_Invariants(workspace, "int_divide_by_word.workspace")
+	Int_Division_Multiword_Magnitude_Invariants(
+		dividend, "int_divide_by_word.dividend",
+	)
+	Int_Division_Nonzero_Word_Invariants(divisor, "int_divide_by_word.divisor")
+	remainder := Word(0)
+	high_index := int(dividend.Count) - WORD_COUNT_INCREMENT
+	for index := high_index; index >= WORD_COUNT_MINIMUM; index-- {
+		quotient, rest := bits.Divide_64(
+			bits.Dividend_High_64(remainder),
+			bits.Dividend_Low_64(dividend.Words[index]),
+			bits.Divisor_64(divisor),
+		)
+		workspace.Quotient[index] = Word(quotient)
+		remainder = Word(rest)
+	}
+	workspace.Quotient_Count = Quotient_Count(dividend.Count)
+	for workspace.Quotient_Count > Quotient_Count(WORD_COUNT_MINIMUM) {
+		high := int(workspace.Quotient_Count) - WORD_COUNT_INCREMENT
+		if workspace.Quotient[high] != 0 {
+			break
+		}
+		workspace.Quotient_Count--
+	}
+	if remainder != 0 {
+		workspace.Remainder[WORD_COUNT_MINIMUM] = remainder
+		workspace.Remainder_Count = Remainder_Count(WORD_COUNT_INCREMENT)
+	}
+}
+
+func int_divide_equal_word_count(
+	workspace *Int_Division_Empty_Workspace,
+	dividend *Int_Division_Multiword_Magnitude,
+	divisor *Int_Division_Multiword_Magnitude,
+) {
+	Int_Division_Empty_Workspace_Invariants(
+		workspace, "int_divide_equal_word_count.workspace",
+	)
+	Int_Division_Multiword_Magnitude_Invariants(
+		dividend, "int_divide_equal_word_count.dividend",
+	)
+	Int_Division_Multiword_Magnitude_Invariants(
+		divisor, "int_divide_equal_word_count.divisor",
+	)
+	invariant.Always(
+		dividend.Count == divisor.Count,
+		"Equal-width division receives equal normalized word counts.",
+	)
+	order := int_compare_absolute((*Int)(dividend), (*Int)(divisor))
+	if order != ORDER_AFTER {
+		if order == ORDER_SAME {
+			workspace.Quotient[WORD_COUNT_MINIMUM] = Word(bits.CARRY_MAXIMUM)
+			workspace.Quotient_Count = Quotient_Count(WORD_COUNT_INCREMENT)
+			return
+		}
+		for index := Word_Count(WORD_COUNT_MINIMUM); index < dividend.Count; index++ {
+			workspace.Remainder[index] = dividend.Words[index]
+		}
+		workspace.Remainder_Count = Remainder_Count(dividend.Count)
+		return
+	}
+	quotient := int_divide_equal_word_count_quotient(dividend, divisor)
+	int_divide_equal_word_count_commit(workspace, dividend, divisor, quotient)
+}
+
+func int_divide_equal_word_count_quotient(
+	dividend *Int_Division_Multiword_Magnitude,
+	divisor *Int_Division_Multiword_Magnitude,
+) (quotient Int_Division_Quotient_Word) {
+	defer func() {
+		Int_Division_Quotient_Word_Invariants(
+			quotient, "int_divide_equal_word_count_quotient.quotient",
+		)
+	}()
+	Int_Division_Multiword_Magnitude_Invariants(
+		dividend, "int_divide_equal_word_count_quotient.dividend",
+	)
+	Int_Division_Multiword_Magnitude_Invariants(
+		divisor, "int_divide_equal_word_count_quotient.divisor",
+	)
+	order := int_compare_absolute((*Int)(dividend), (*Int)(divisor))
+	invariant.Always(order == ORDER_AFTER, "A quotient estimate receives a larger dividend.")
+	high_index := int(divisor.Count) - WORD_COUNT_INCREMENT
+	next_index := high_index - WORD_COUNT_INCREMENT
+	shift := uint(bits.Leading_Zeros_64(bits.Word_64(divisor.Words[high_index])))
+	divisor_high := divisor.Words[high_index]
+	dividend_high := Word(0)
+	dividend_next := dividend.Words[high_index]
+	if shift != 0 {
+		divisor_high = divisor_high<<shift |
+			divisor.Words[next_index]>>(WORD_BIT_COUNT-shift)
+		dividend_high = dividend.Words[high_index] >> (WORD_BIT_COUNT - shift)
+		dividend_next = dividend.Words[high_index]<<shift |
+			dividend.Words[next_index]>>(WORD_BIT_COUNT-shift)
+	}
+	estimate, rest := bits.Divide_64(
+		bits.Dividend_High_64(dividend_high), bits.Dividend_Low_64(dividend_next),
+		bits.Divisor_64(divisor_high),
+	)
+	divisor_next := divisor.Words[next_index] << shift
+	trial_next := dividend.Words[next_index] << shift
+	if shift != 0 {
+		if next_index > WORD_COUNT_MINIMUM {
+			divisor_next |= divisor.Words[next_index-WORD_COUNT_INCREMENT] >>
+				(WORD_BIT_COUNT - shift)
+			trial_next |= dividend.Words[next_index-WORD_COUNT_INCREMENT] >>
+				(WORD_BIT_COUNT - shift)
+		}
+	}
+	for correction := WORD_COUNT_MINIMUM; correction < BASE_BINARY; correction++ {
+		left, right := uint64(estimate), uint64(divisor_next)
+		left_low, right_low := left&TEXT_DIVISION_LIMB_MASK,
+			right&TEXT_DIVISION_LIMB_MASK
+		left_high, right_high := left>>TEXT_DIVISION_LIMB_BIT_COUNT,
+			right>>TEXT_DIVISION_LIMB_BIT_COUNT
+		partial, product_low := left_low*right_low, left*right
+		middle_first := left_high*right_low + partial>>TEXT_DIVISION_LIMB_BIT_COUNT
+		middle_second := left_low*right_high + middle_first&TEXT_DIVISION_LIMB_MASK
+		product_high := left_high*right_high +
+			middle_first>>TEXT_DIVISION_LIMB_BIT_COUNT +
+			middle_second>>TEXT_DIVISION_LIMB_BIT_COUNT
+		if product_high < uint64(rest) {
+			break
+		}
+		if product_high == uint64(rest) {
+			if product_low <= uint64(trial_next) {
+				break
+			}
+		}
+		estimate--
+		previous := uint64(rest)
+		rest = bits.Division_Remainder_64(previous + uint64(divisor_high))
+		if uint64(rest) < previous {
+			break
+		}
+	}
+	return Int_Division_Quotient_Word(estimate)
+}
+
+func int_divide_equal_word_count_commit(
+	workspace *Int_Division_Empty_Workspace,
+	dividend *Int_Division_Multiword_Magnitude,
+	divisor *Int_Division_Multiword_Magnitude,
+	quotient Int_Division_Quotient_Word,
+) {
+	Int_Division_Empty_Workspace_Invariants(
+		workspace, "int_divide_equal_word_count_commit.workspace",
+	)
+	Int_Division_Multiword_Magnitude_Invariants(
+		dividend, "int_divide_equal_word_count_commit.dividend",
+	)
+	Int_Division_Multiword_Magnitude_Invariants(
+		divisor, "int_divide_equal_word_count_commit.divisor",
+	)
+	Int_Division_Quotient_Word_Invariants(
+		quotient, "int_divide_equal_word_count_commit.quotient",
+	)
+	carry, borrow := uint64(0), uint64(0)
+	for index := WORD_COUNT_MINIMUM; index < int(divisor.Count); index++ {
+		left, right := uint64(quotient), uint64(divisor.Words[index])
+		left_low := left & TEXT_DIVISION_LIMB_MASK
+		right_low := right & TEXT_DIVISION_LIMB_MASK
+		left_high := left >> TEXT_DIVISION_LIMB_BIT_COUNT
+		right_high := right >> TEXT_DIVISION_LIMB_BIT_COUNT
+		partial := left_low * right_low
+		middle_first := left_high*right_low + partial>>TEXT_DIVISION_LIMB_BIT_COUNT
+		middle_second := left_low*right_high + middle_first&TEXT_DIVISION_LIMB_MASK
+		product_high := left_high*right_high +
+			middle_first>>TEXT_DIVISION_LIMB_BIT_COUNT +
+			middle_second>>TEXT_DIVISION_LIMB_BIT_COUNT
+		product_low := left*right + carry
+		if product_low < carry {
+			product_high++
+		}
+		minuend := uint64(dividend.Words[index])
+		difference := minuend - product_low - borrow
+		workspace.Remainder[index] = Word(difference)
+		borrow = ((^minuend & product_low) |
+			(^(minuend ^ product_low) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+		carry = product_high
+	}
+	invariant.Always(
+		carry+borrow == 0,
+		"Normalized quotient estimate cannot exceed equal-width dividend.",
+	)
+	workspace.Remainder_Count = Remainder_Count(dividend.Count)
+	for workspace.Remainder_Count > Remainder_Count(WORD_COUNT_MINIMUM) {
+		high := int(workspace.Remainder_Count) - WORD_COUNT_INCREMENT
+		if workspace.Remainder[high] != 0 {
+			break
+		}
+		workspace.Remainder_Count--
+	}
+	workspace.Quotient[WORD_COUNT_MINIMUM] = Word(quotient)
+	workspace.Quotient_Count = Quotient_Count(WORD_COUNT_INCREMENT)
+}
+
+// INT_DIVISION_SMALL_TRIAL_HIGH_INDEX keeps normalized words in comparison order.
+const INT_DIVISION_SMALL_TRIAL_HIGH_INDEX = WORD_COUNT_MINIMUM
+
+// INT_DIVISION_SMALL_TRIAL_NEXT_INDEX supplies the one-word quotient numerator.
+const INT_DIVISION_SMALL_TRIAL_NEXT_INDEX = INT_DIVISION_SMALL_TRIAL_HIGH_INDEX +
+	WORD_COUNT_INCREMENT
+
+// INT_DIVISION_SMALL_TRIAL_THIRD_INDEX supplies the correction comparison low word.
+const INT_DIVISION_SMALL_TRIAL_THIRD_INDEX = INT_DIVISION_SMALL_TRIAL_NEXT_INDEX +
+	WORD_COUNT_INCREMENT
+
+// INT_DIVISION_SMALL_TRIAL_DIVIDEND_COUNT excludes every unused normalized dividend word.
+const INT_DIVISION_SMALL_TRIAL_DIVIDEND_COUNT = INT_DIVISION_SMALL_TRIAL_THIRD_INDEX +
+	WORD_COUNT_INCREMENT
+
+// INT_DIVISION_SMALL_TRIAL_DIVISOR_COUNT excludes every unused normalized divisor word.
+const INT_DIVISION_SMALL_TRIAL_DIVISOR_COUNT = INT_DIVISION_SMALL_TRIAL_NEXT_INDEX +
+	WORD_COUNT_INCREMENT
+
+// Int_Division_Small_Trial_Dividend groups the three normalized estimate words.
+type Int_Division_Small_Trial_Dividend [INT_DIVISION_SMALL_TRIAL_DIVIDEND_COUNT]Word
+
+// Int_Division_Small_Trial_Dividend_Invariants fixes the complete estimate numerator.
+func Int_Division_Small_Trial_Dividend_Invariants(
+	value Int_Division_Small_Trial_Dividend, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INT_DIVISION_SMALL_TRIAL_DIVIDEND_COUNT,
+		"A small division estimate owns its three leading dividend words.",
+	)
+}
+
+// Int_Division_Small_Trial_Divisor groups the two normalized correction words.
+type Int_Division_Small_Trial_Divisor [INT_DIVISION_SMALL_TRIAL_DIVISOR_COUNT]Word
+
+// Int_Division_Small_Trial_Divisor_Invariants fixes and normalizes the divisor prefix.
+func Int_Division_Small_Trial_Divisor_Invariants(
+	value Int_Division_Small_Trial_Divisor, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INT_DIVISION_SMALL_TRIAL_DIVISOR_COUNT,
+		"A small division correction owns its two leading divisor words.",
+	)
+	invariant.Always(
+		value[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX]>>WORD_BIT_INDEX_MAXIMUM ==
+			Word(bits.CARRY_MAXIMUM),
+		"A small division trial normalizes the divisor high bit.",
+	)
+}
+
+// Int_Division_Small_Trial holds normalized leading words for one quotient estimate.
+type Int_Division_Small_Trial struct {
+	// Dividend keeps normalization outside caller storage.
+	Dividend Int_Division_Small_Trial_Dividend
+	// Divisor keeps correction below one full normalized copy.
+	Divisor Int_Division_Small_Trial_Divisor
+}
+
+// Int_Division_Small_Trial_Invariants binds every trial field to one machine word.
+func Int_Division_Small_Trial_Invariants(
+	value Int_Division_Small_Trial, namespace invariant.Namespace,
+) {
+	Int_Division_Small_Trial_Dividend_Invariants(value.Dividend, namespace)
+	Int_Division_Small_Trial_Divisor_Invariants(value.Divisor, namespace)
+}
+
+// Int_Division_Small_Offset is a quotient word offset inside four dividend words.
+type Int_Division_Small_Offset int
+
+// Int_Division_Small_Offset_Invariants states every reachable small quotient offset.
+func Int_Division_Small_Offset_Invariants(
+	value Int_Division_Small_Offset, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_3_Int(
+			int(value), WORD_COUNT_MINIMUM, WORD_COUNT_INCREMENT, BASE_BINARY,
+		).
+		Ensure()
+}
+
+func int_divide_small_trial(
+	workspace *Int_Division_Empty_Workspace,
+	divisor *Int_Division_Small_Divisor,
+	offset Int_Division_Small_Offset,
+) (trial Int_Division_Small_Trial) {
+	defer func() {
+		Int_Division_Small_Trial_Invariants(trial, "int_divide_small_trial.trial")
+	}()
+	Int_Division_Empty_Workspace_Invariants(
+		workspace, "int_divide_small_trial.workspace",
+	)
+	Int_Division_Small_Divisor_Invariants(divisor, "int_divide_small_trial.divisor")
+	Int_Division_Small_Offset_Invariants(offset, "int_divide_small_trial.offset")
+	divisor_count := int(divisor.Count)
+	high_index := int(offset) + divisor_count
+	next_index, third_index := high_index-WORD_COUNT_INCREMENT,
+		high_index-WORD_COUNT_INCREMENT-WORD_COUNT_INCREMENT
+	trial.Dividend[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX] = workspace.Remainder[high_index]
+	trial.Dividend[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX] = workspace.Remainder[next_index]
+	trial.Dividend[INT_DIVISION_SMALL_TRIAL_THIRD_INDEX] = workspace.Remainder[third_index]
+	trial.Divisor[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX] =
+		divisor.Words[divisor_count-WORD_COUNT_INCREMENT]
+	trial.Divisor[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX] =
+		divisor.Words[divisor_count-BASE_BINARY]
+	shift := uint(bits.Leading_Zeros_64(bits.Word_64(
+		trial.Divisor[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX],
+	)))
+	if shift == 0 {
+		return trial
+	}
+	trial.Dividend[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX] =
+		trial.Dividend[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX]<<shift |
+			trial.Dividend[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX]>>
+				(WORD_BIT_COUNT-shift)
+	trial.Dividend[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX] =
+		trial.Dividend[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX]<<shift |
+			trial.Dividend[INT_DIVISION_SMALL_TRIAL_THIRD_INDEX]>>
+				(WORD_BIT_COUNT-shift)
+	trial.Dividend[INT_DIVISION_SMALL_TRIAL_THIRD_INDEX] <<= shift
+	lower_index := third_index - WORD_COUNT_INCREMENT
+	if lower_index >= WORD_COUNT_MINIMUM {
+		trial.Dividend[INT_DIVISION_SMALL_TRIAL_THIRD_INDEX] |=
+			workspace.Remainder[lower_index] >>
+				(WORD_BIT_COUNT - shift)
+	}
+	trial.Divisor[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX] =
+		trial.Divisor[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX]<<shift |
+			trial.Divisor[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX]>>
+				(WORD_BIT_COUNT-shift)
+	trial.Divisor[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX] <<= shift
+	lower_index = divisor_count - BASE_BINARY - WORD_COUNT_INCREMENT
+	if lower_index >= WORD_COUNT_MINIMUM {
+		trial.Divisor[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX] |=
+			divisor.Words[lower_index] >> (WORD_BIT_COUNT - shift)
+	}
+	return trial
+}
+
+func int_divide_small_estimate(trial Int_Division_Small_Trial) (estimate Word) {
+	defer func() { Word_Invariants(estimate, "int_divide_small_estimate.estimate") }()
+	Int_Division_Small_Trial_Invariants(trial, "int_divide_small_estimate.trial")
+	var output Int_Division_Estimate
+	int_divide_small_estimate_into(&output, &trial)
+	return output[INT_DIVISION_ESTIMATE_INDEX]
+}
+
+// INT_DIVISION_ESTIMATE_INDEX selects caller-owned quotient estimate output.
+const INT_DIVISION_ESTIMATE_INDEX = WORD_COUNT_MINIMUM
+
+// INT_DIVISION_ESTIMATE_COUNT keeps one estimate without a returned assertion boundary.
+const INT_DIVISION_ESTIMATE_COUNT = INT_DIVISION_ESTIMATE_INDEX + WORD_COUNT_INCREMENT
+
+// Int_Division_Estimate owns one quotient estimate output.
+type Int_Division_Estimate [INT_DIVISION_ESTIMATE_COUNT]Word
+
+// Int_Division_Estimate_Invariants fixes exact scalar output storage.
+func Int_Division_Estimate_Invariants(value *Int_Division_Estimate, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == INT_DIVISION_ESTIMATE_COUNT,
+		"A small division estimate owns one output word.",
+	)
+}
+
+// INT_DIVISION_WORD_QUOTIENT_INDEX selects normalized word quotient output.
+const INT_DIVISION_WORD_QUOTIENT_INDEX = WORD_COUNT_MINIMUM
+
+// INT_DIVISION_WORD_REMAINDER_INDEX selects normalized word remainder output.
+const INT_DIVISION_WORD_REMAINDER_INDEX = INT_DIVISION_WORD_QUOTIENT_INDEX +
+	WORD_COUNT_INCREMENT
+
+// INT_DIVISION_WORD_RESULT_COUNT keeps both scalar division outputs.
+const INT_DIVISION_WORD_RESULT_COUNT = INT_DIVISION_WORD_REMAINDER_INDEX +
+	WORD_COUNT_INCREMENT
+
+// Int_Division_Word_Result owns one quotient and remainder pair.
+type Int_Division_Word_Result [INT_DIVISION_WORD_RESULT_COUNT]Word
+
+// Int_Division_Word_Result_Invariants fixes exact scalar output storage.
+func Int_Division_Word_Result_Invariants(
+	value *Int_Division_Word_Result, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INT_DIVISION_WORD_RESULT_COUNT,
+		"Normalized word division owns quotient and remainder output.",
+	)
+}
+
+func int_divide_small_estimate_into(
+	output *Int_Division_Estimate, trial *Int_Division_Small_Trial,
+) {
+	Int_Division_Estimate_Invariants(output, "int_divide_small_estimate_into.output")
+	Int_Division_Small_Trial_Invariants(*trial, "int_divide_small_estimate_into.trial")
+	trial_word := uint64(bits.WORD_64_MAXIMUM)
+	dividend_high := trial.Dividend[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX]
+	dividend_next := trial.Dividend[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX]
+	divisor_high := trial.Divisor[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX]
+	remainder := uint64(dividend_next + divisor_high)
+	remainder_overflow := remainder < uint64(dividend_next)
+	if dividend_high < divisor_high {
+		var division Int_Division_Word_Result
+		int_divide_small_word_quotient(&division, trial)
+		trial_word = uint64(division[INT_DIVISION_WORD_QUOTIENT_INDEX])
+		remainder = uint64(division[INT_DIVISION_WORD_REMAINDER_INDEX])
+		remainder_overflow = false
+	}
+	correction := WORD_COUNT_MINIMUM
+	for correction < BASE_BINARY {
+		if remainder_overflow {
+			break
+		}
+		left := trial_word
+		right := uint64(trial.Divisor[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX])
+		left_low, right_low := left&TEXT_DIVISION_LIMB_MASK,
+			right&TEXT_DIVISION_LIMB_MASK
+		left_high, right_high := left>>TEXT_DIVISION_LIMB_BIT_COUNT,
+			right>>TEXT_DIVISION_LIMB_BIT_COUNT
+		partial, product_low := left_low*right_low, left*right
+		middle_first := left_high*right_low + partial>>TEXT_DIVISION_LIMB_BIT_COUNT
+		middle_second := left_low*right_high + middle_first&TEXT_DIVISION_LIMB_MASK
+		product_high := left_high*right_high +
+			middle_first>>TEXT_DIVISION_LIMB_BIT_COUNT +
+			middle_second>>TEXT_DIVISION_LIMB_BIT_COUNT
+		if product_high < remainder {
+			break
+		}
+		if product_high == remainder {
+			if product_low <= uint64(
+				trial.Dividend[INT_DIVISION_SMALL_TRIAL_THIRD_INDEX],
+			) {
+				break
+			}
+		}
+		trial_word--
+		previous := remainder
+		remainder += uint64(divisor_high)
+		remainder_overflow = remainder < previous
+		correction++
+	}
+	output[INT_DIVISION_ESTIMATE_INDEX] = Word(trial_word)
+}
+
+func int_divide_small_word_quotient(
+	output *Int_Division_Word_Result, trial *Int_Division_Small_Trial,
+) {
+	Int_Division_Word_Result_Invariants(output, "int_divide_small_word_quotient.output")
+	Int_Division_Small_Trial_Invariants(*trial, "int_divide_small_word_quotient.trial")
+	high := uint64(trial.Dividend[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX])
+	low := uint64(trial.Dividend[INT_DIVISION_SMALL_TRIAL_NEXT_INDEX])
+	divisor := uint64(trial.Divisor[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX])
+	if high == uint64(WORD_COUNT_MINIMUM) {
+		output[INT_DIVISION_WORD_QUOTIENT_INDEX] = Word(low / divisor)
+		output[INT_DIVISION_WORD_REMAINDER_INDEX] = Word(low % divisor)
+		return
+	}
+	limb_base := uint64(bits.CARRY_MAXIMUM) << TEXT_DIVISION_LIMB_BIT_COUNT
+	limb_mask := uint64(TEXT_DIVISION_LIMB_MASK)
+	divisor_high, divisor_low := divisor>>TEXT_DIVISION_LIMB_BIT_COUNT,
+		divisor&limb_mask
+	middle, bottom := low>>TEXT_DIVISION_LIMB_BIT_COUNT, low&limb_mask
+	first := high / divisor_high
+	partial := high - first*divisor_high
+	for correction := WORD_COUNT_MINIMUM; correction < BASE_BINARY; correction++ {
+		too_large := first >= limb_base
+		if first*divisor_low > limb_base*partial+middle {
+			too_large = true
+		}
+		if !too_large {
+			break
+		}
+		first--
+		partial += divisor_high
+		if partial >= limb_base {
+			break
+		}
+	}
+	joined := high*limb_base + middle - first*divisor
+	second := joined / divisor_high
+	partial = joined - second*divisor_high
+	for correction := WORD_COUNT_MINIMUM; correction < BASE_BINARY; correction++ {
+		too_large := second >= limb_base
+		if second*divisor_low > limb_base*partial+bottom {
+			too_large = true
+		}
+		if !too_large {
+			break
+		}
+		second--
+		partial += divisor_high
+		if partial >= limb_base {
+			break
+		}
+	}
+	remainder := joined*limb_base + bottom - second*divisor
+	output[INT_DIVISION_WORD_QUOTIENT_INDEX] = Word(first*limb_base + second)
+	output[INT_DIVISION_WORD_REMAINDER_INDEX] = Word(remainder)
+}
+
+func int_divide_small_subtract(
+	workspace *Int_Division_Empty_Workspace,
+	divisor *Int_Division_Small_Divisor,
+	offset Int_Division_Small_Offset,
+	estimate Word,
+) (adjusted Word) {
+	defer func() { Word_Invariants(adjusted, "int_divide_small_subtract.adjusted") }()
+	Int_Division_Empty_Workspace_Invariants(
+		workspace, "int_divide_small_subtract.workspace",
+	)
+	Int_Division_Small_Divisor_Invariants(
+		divisor, "int_divide_small_subtract.divisor",
+	)
+	Int_Division_Small_Offset_Invariants(offset, "int_divide_small_subtract.offset")
+	Word_Invariants(estimate, "int_divide_small_subtract.estimate")
+	carry, borrow := uint64(0), uint64(0)
+	divisor_index := WORD_COUNT_MINIMUM
+	for divisor_index < int(divisor.Count) {
+		left, right := uint64(estimate), uint64(divisor.Words[divisor_index])
+		left_low, right_low := left&TEXT_DIVISION_LIMB_MASK,
+			right&TEXT_DIVISION_LIMB_MASK
+		left_high, right_high := left>>TEXT_DIVISION_LIMB_BIT_COUNT,
+			right>>TEXT_DIVISION_LIMB_BIT_COUNT
+		partial, product_low := left_low*right_low, left*right
+		middle_first := left_high*right_low + partial>>TEXT_DIVISION_LIMB_BIT_COUNT
+		middle_second := left_low*right_high + middle_first&TEXT_DIVISION_LIMB_MASK
+		product_high := left_high*right_high +
+			middle_first>>TEXT_DIVISION_LIMB_BIT_COUNT +
+			middle_second>>TEXT_DIVISION_LIMB_BIT_COUNT
+		product_low += carry
+		if product_low < carry {
+			product_high++
+		}
+		position := int(offset)
+		position += divisor_index
+		minuend := uint64(workspace.Remainder[position])
+		difference := minuend - product_low - borrow
+		workspace.Remainder[position] = Word(difference)
+		borrow = ((^minuend & product_low) |
+			(^(minuend ^ product_low) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+		carry = product_high
+		divisor_index++
+	}
+	high_position := int(offset)
+	high_position += int(divisor.Count)
+	minuend := uint64(workspace.Remainder[high_position])
+	difference := minuend - carry - borrow
+	workspace.Remainder[high_position] = Word(difference)
+	borrow = ((^minuend & carry) |
+		(^(minuend ^ carry) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+	if borrow == 0 {
+		return estimate
+	}
+	adjusted = estimate - Word(bits.CARRY_MAXIMUM)
+	carry = 0
+	divisor_index = WORD_COUNT_MINIMUM
+	for divisor_index < int(divisor.Count) {
+		position := int(offset)
+		position += divisor_index
+		left := uint64(workspace.Remainder[position])
+		right := uint64(divisor.Words[divisor_index])
+		sum := left + right + carry
+		workspace.Remainder[position] = Word(sum)
+		carry = ((left & right) | ((left | right) &^ sum)) >>
+			WORD_BIT_INDEX_MAXIMUM
+		divisor_index++
+	}
+	workspace.Remainder[high_position] += Word(carry)
+	return adjusted
+}
+
+func int_divide_small(
+	workspace *Int_Division_Empty_Workspace,
+	dividend *Int_Division_Small_Dividend,
+	divisor *Int_Division_Small_Divisor,
+) {
+	Int_Division_Empty_Workspace_Invariants(workspace, "int_divide_small.workspace")
+	Int_Division_Small_Dividend_Invariants(dividend, "int_divide_small.dividend")
+	Int_Division_Small_Divisor_Invariants(divisor, "int_divide_small.divisor")
+	invariant.Always(
+		dividend.Count > divisor.Count,
+		"Small division receives at least one quotient position.",
+	)
+	dividend_count := int(dividend.Count)
+	divisor_count := int(divisor.Count)
+	for index := WORD_COUNT_MINIMUM; index < dividend_count; index++ {
+		workspace.Remainder[index] = dividend.Words[index]
+	}
+	workspace.Remainder[dividend_count] = 0
+	quotient_count := dividend_count - divisor_count + WORD_COUNT_INCREMENT
+	quotient_offset := quotient_count - WORD_COUNT_INCREMENT
+	for quotient_offset >= 0 {
+		word_offset := Int_Division_Small_Offset(quotient_offset)
+		trial := int_divide_small_trial(workspace, divisor, word_offset)
+		estimate := int_divide_small_estimate(trial)
+		workspace.Quotient[quotient_offset] = int_divide_small_subtract(
+			workspace, divisor, word_offset, estimate,
+		)
+		quotient_offset--
+	}
+	workspace.Quotient_Count = Quotient_Count(quotient_count)
+	for workspace.Quotient_Count > Quotient_Count(WORD_COUNT_MINIMUM) {
+		high := int(workspace.Quotient_Count) - WORD_COUNT_INCREMENT
+		if workspace.Quotient[high] != 0 {
+			break
+		}
+		workspace.Quotient_Count--
+	}
+	workspace.Remainder_Count = Remainder_Count(divisor_count)
+	for workspace.Remainder_Count > Remainder_Count(WORD_COUNT_MINIMUM) {
+		high := int(workspace.Remainder_Count) - WORD_COUNT_INCREMENT
+		if workspace.Remainder[high] != 0 {
+			break
+		}
+		workspace.Remainder_Count--
+	}
+}
+
+func int_binomial_word(destination *Int, n Int_64, k Int_64) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_binomial_word.matched") }()
+	Int_Invariants(destination, "int_binomial_word.destination")
+	Int_64_Invariants(n, "int_binomial_word.n")
+	Int_64_Invariants(k, "int_binomial_word.k")
+	if n < 0 {
+		return false
+	}
+	if k < 0 {
+		int_set_word(destination, Word(bits.CARRY_MAXIMUM), POLARITY_NONNEGATIVE)
+		return true
+	}
+	if k > n {
+		int_zero(destination, destination.Count)
+		return true
+	}
+	if k > n-k {
+		k = n - k
+	}
+	result := uint64(bits.CARRY_MAXIMUM)
+	for index := int64(WORD_COUNT_INCREMENT); index <= int64(k); index++ {
+		factor := uint64(int64(n) - int64(k) + index)
+		if result != 0 {
+			if factor > uint64(bits.WORD_64_MAXIMUM)/result {
+				return false
+			}
+		}
+		result = result * factor / uint64(index)
+	}
+	int_set_word(destination, Word(result), POLARITY_NONNEGATIVE)
+	return true
+}
+
+func int_multiply_range_word(
+	destination *Int, minimum Int_64, maximum Int_64,
+) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_multiply_range_word.matched") }()
+	Int_Invariants(destination, "int_multiply_range_word.destination")
+	Int_64_Invariants(minimum, "int_multiply_range_word.minimum")
+	Int_64_Invariants(maximum, "int_multiply_range_word.maximum")
+	if minimum < WORD_COUNT_INCREMENT {
+		return false
+	}
+	if maximum < minimum {
+		int_set_word(destination, Word(bits.CARRY_MAXIMUM), POLARITY_NONNEGATIVE)
+		return true
+	}
+	result := uint64(bits.CARRY_MAXIMUM)
+	for value := int64(minimum); value <= int64(maximum); value++ {
+		if result != 0 {
+			if uint64(value) > uint64(bits.WORD_64_MAXIMUM)/result {
+				return false
+			}
+		}
+		result *= uint64(value)
+	}
+	int_set_word(destination, Word(result), POLARITY_NONNEGATIVE)
+	return true
+}
+
+func int_exponent_word(references *Int_References) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_exponent_word.matched") }()
+	Int_References_Invariants(references, "int_exponent_word.references")
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	base := references[INT_REFERENCE_LEFT_INDEX]
+	exponent := references[INT_REFERENCE_RIGHT_INDEX]
+	if base.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if exponent.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if exponent.Negative == POLARITY_NEGATIVE {
+		return false
+	}
+	base_word := uint64(0)
+	if base.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		base_word = uint64(base.Words[WORD_COUNT_MINIMUM])
+	}
+	exponent_word := uint64(0)
+	if exponent.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		exponent_word = uint64(exponent.Words[WORD_COUNT_MINIMUM])
+	}
+	result, factor := uint64(bits.CARRY_MAXIMUM), base_word
+	for exponent_word != 0 {
+		if exponent_word&uint64(bits.CARRY_MAXIMUM) != 0 {
+			if result != 0 {
+				if factor > uint64(bits.WORD_64_MAXIMUM)/result {
+					return false
+				}
+			}
+			result *= factor
+		}
+		exponent_word >>= WORD_COUNT_INCREMENT
+		if exponent_word != 0 {
+			if factor != 0 {
+				if factor > uint64(bits.WORD_64_MAXIMUM)/factor {
+					return false
+				}
+			}
+			factor *= factor
+		}
+	}
+	negative := POLARITY_NONNEGATIVE
+	if exponent.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		if exponent.Words[WORD_COUNT_MINIMUM]&Word(bits.CARRY_MAXIMUM) != 0 {
+			negative = base.Negative
+		}
+	}
+	int_set_word(destination, Word(result), negative)
+	return true
+}
+
+func int_modular_exponent_word(
+	references *Int_References, modulus_references *Int_References,
+) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_modular_exponent_word.matched") }()
+	Int_References_Invariants(references, "int_modular_exponent_word.references")
+	Int_References_Invariants(
+		modulus_references, "int_modular_exponent_word.modulus_references",
+	)
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	base := references[INT_REFERENCE_LEFT_INDEX]
+	exponent := references[INT_REFERENCE_RIGHT_INDEX]
+	modulus := modulus_references[INT_REFERENCE_DESTINATION_INDEX]
+	if base.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if exponent.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if modulus.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if base.Negative == POLARITY_NEGATIVE {
+		return false
+	}
+	if exponent.Negative == POLARITY_NEGATIVE {
+		return false
+	}
+	modulus_word := uint64(modulus.Words[WORD_COUNT_MINIMUM])
+	base_word := uint64(0)
+	if base.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		base_word = uint64(base.Words[WORD_COUNT_MINIMUM])
+	}
+	exponent_word := uint64(0)
+	if exponent.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		exponent_word = uint64(exponent.Words[WORD_COUNT_MINIMUM])
+	}
+	result, factor := uint64(bits.CARRY_MAXIMUM)%modulus_word, base_word%modulus_word
+	for exponent_word != 0 {
+		if exponent_word&uint64(bits.CARRY_MAXIMUM) != 0 {
+			if result != 0 {
+				if factor > uint64(bits.WORD_64_MAXIMUM)/result {
+					return false
+				}
+			}
+			result = result * factor % modulus_word
+		}
+		exponent_word >>= WORD_COUNT_INCREMENT
+		if exponent_word != 0 {
+			if factor != 0 {
+				if factor > uint64(bits.WORD_64_MAXIMUM)/factor {
+					return false
+				}
+			}
+			factor = factor * factor % modulus_word
+		}
+	}
+	int_set_word(destination, Word(result), POLARITY_NONNEGATIVE)
+	return true
+}
+
+func int_modular_inverse_word(
+	destination *Int, value *Int, modulus *Int,
+) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_modular_inverse_word.matched") }()
+	Int_Invariants(destination, "int_modular_inverse_word.destination")
+	Int_Invariants(value, "int_modular_inverse_word.value")
+	Int_Invariants(modulus, "int_modular_inverse_word.modulus")
+	if value.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if modulus.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	modulus_word := modulus.Words[WORD_COUNT_MINIMUM]
+	if modulus_word > Word(bits.INTEGER_32_MAXIMUM) {
+		return false
+	}
+	value_word := int64(value.Words[WORD_COUNT_MINIMUM])
+	if value.Negative == POLARITY_NEGATIVE {
+		value_word = -value_word
+	}
+	modulus_signed := int64(modulus_word)
+	old_remainder, remainder := modulus_signed, value_word%modulus_signed
+	if remainder < 0 {
+		remainder += modulus_signed
+	}
+	old_coefficient, coefficient := int64(0), int64(1)
+	for remainder != 0 {
+		quotient := old_remainder / remainder
+		old_remainder, remainder = remainder, old_remainder-quotient*remainder
+		old_coefficient, coefficient =
+			coefficient, old_coefficient-quotient*coefficient
+	}
+	if old_remainder != int64(bits.CARRY_MAXIMUM) {
+		return false
+	}
+	if old_coefficient < 0 {
+		old_coefficient += modulus_signed
+	}
+	int_set_word(destination, Word(old_coefficient), POLARITY_NONNEGATIVE)
+	return true
+}
+
+// Modular_Inverse_Result_Status excludes the zero modulus rejected by its caller.
+type Modular_Inverse_Result_Status uint8
+
+// Modular_Inverse_Result_Status_Invariants admits a result or mathematical absence.
+func Modular_Inverse_Result_Status_Invariants(
+	value Modular_Inverse_Result_Status, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_RESULT_ABSENT)).
+		Ensure()
+}
+
+func int_modular_inverse_coefficient_bounded(
+	multiplication *Int_Multiplication_Workspace,
+	result_references *Int_References,
+	coefficient_references *Int_References,
+) {
+	Int_Multiplication_Workspace_Invariants(
+		multiplication, "int_modular_inverse_coefficient_bounded.multiplication",
+	)
+	Int_References_Invariants(
+		result_references, "int_modular_inverse_coefficient_bounded.result",
+	)
+	Int_References_Invariants(
+		coefficient_references, "int_modular_inverse_coefficient_bounded.coefficient",
+	)
+	quotient := result_references[INT_REFERENCE_RIGHT_INDEX]
+	coefficient_remainder := coefficient_references[INT_REFERENCE_DESTINATION_INDEX]
+	coefficient_dividend := coefficient_references[INT_REFERENCE_LEFT_INDEX]
+	coefficient_divisor := coefficient_references[INT_REFERENCE_RIGHT_INDEX]
+	if quotient.Count == Word_Count(WORD_COUNT_INCREMENT) {
+		int_modular_inverse_coefficient_word(result_references, coefficient_references)
+		return
+	}
+	multiplication_status := Int_Multiply(
+		coefficient_remainder, quotient, coefficient_divisor, multiplication,
+	)
+	invariant.Always(
+		multiplication_status == Arithmetic_Status(STATUS_OK),
+		"The bounded coefficient product reserves one subtraction carry word.",
+	)
+	subtraction_status := Int_Subtract(
+		coefficient_remainder, coefficient_dividend, coefficient_remainder,
+	)
+	invariant.Always(
+		subtraction_status == Arithmetic_Status(STATUS_OK),
+		"Extended Euclid keeps every bounded coefficient below its modulus.",
+	)
+}
+
+func int_modular_inverse_coefficient_word(
+	result_references *Int_References, coefficient_references *Int_References,
+) {
+	Int_References_Invariants(
+		result_references, "int_modular_inverse_coefficient_word.result",
+	)
+	Int_References_Invariants(
+		coefficient_references, "int_modular_inverse_coefficient_word.coefficient",
+	)
+	quotient := result_references[INT_REFERENCE_RIGHT_INDEX]
+	invariant.Always(
+		quotient.Count == Word_Count(WORD_COUNT_INCREMENT),
+		"The scalar coefficient path receives one complete quotient word.",
+	)
+	modulus := result_references[INT_REFERENCE_LEFT_INDEX]
+	if modulus.Count <= Word_Count(BASE_BINARY) {
+		int_modular_inverse_coefficient_double_word(
+			result_references, coefficient_references,
+		)
+		return
+	}
+	destination := coefficient_references[INT_REFERENCE_DESTINATION_INDEX]
+	dividend := coefficient_references[INT_REFERENCE_LEFT_INDEX]
+	coefficient := coefficient_references[INT_REFERENCE_RIGHT_INDEX]
+	previous_count := destination.Count
+	factor := quotient.Words[WORD_COUNT_MINIMUM]
+	carry := Word(0)
+	count := max(coefficient.Count, dividend.Count)
+	for index := Word_Count(WORD_COUNT_MINIMUM); index < count; index++ {
+		left := uint64(0)
+		if index < coefficient.Count {
+			left = uint64(coefficient.Words[index])
+		}
+		right := uint64(factor)
+		word_mask := uint64(bits.WORD_32_MAXIMUM)
+		partial := (left & word_mask) * (right & word_mask)
+		middle_first := (left>>bits.BIT_COUNT_32_MAXIMUM)*(right&word_mask) +
+			partial>>bits.BIT_COUNT_32_MAXIMUM
+		middle_second := (left&word_mask)*(right>>bits.BIT_COUNT_32_MAXIMUM) +
+			middle_first&word_mask
+		high := (left>>bits.BIT_COUNT_32_MAXIMUM)*
+			(right>>bits.BIT_COUNT_32_MAXIMUM) +
+			middle_first>>bits.BIT_COUNT_32_MAXIMUM +
+			middle_second>>bits.BIT_COUNT_32_MAXIMUM
+		low := left * right
+		sum_product := low + uint64(carry)
+		carry_output := Word(bits.CARRY_MINIMUM)
+		if sum_product < low {
+			carry_output = Word(bits.CARRY_MAXIMUM)
+		}
+		addend := uint64(0)
+		if index < dividend.Count {
+			addend = uint64(dividend.Words[index])
+		}
+		sum := sum_product + addend
+		if sum < sum_product {
+			carry_output++
+		}
+		destination.Words[index] = Word(sum)
+		carry = Word(high) + carry_output
+	}
+	if carry != 0 {
+		destination.Words[count] = carry
+		count++
+	}
+	destination.Count = count
+	destination.Negative = POLARITY_NEGATIVE
+	if coefficient.Negative == POLARITY_NEGATIVE {
+		destination.Negative = POLARITY_NONNEGATIVE
+	}
+	int_clear(destination, count, previous_count)
+}
+
+func int_modular_inverse_commit(
+	bounded Boolean,
+	result_references *Int_References,
+	coefficient_references *Int_References,
+) (status Modular_Inverse_Result_Status) {
+	defer func() {
+		Modular_Inverse_Result_Status_Invariants(
+			status, "int_modular_inverse_commit.status",
+		)
+	}()
+	Boolean_Invariants(bounded, "int_modular_inverse_commit.bounded")
+	Int_References_Invariants(
+		result_references, "int_modular_inverse_commit.result",
+	)
+	Int_References_Invariants(
+		coefficient_references, "int_modular_inverse_commit.coefficient",
+	)
+	destination := result_references[INT_REFERENCE_DESTINATION_INDEX]
+	modulus := result_references[INT_REFERENCE_LEFT_INDEX]
+	dividend := result_references[INT_REFERENCE_RIGHT_INDEX]
+	coefficient := coefficient_references[INT_REFERENCE_LEFT_INDEX]
+	if dividend.Count != WORD_COUNT_INCREMENT {
+		return STATUS_RESULT_ABSENT
+	}
+	if dividend.Words[WORD_COUNT_MINIMUM] != Word(bits.CARRY_MAXIMUM) {
+		return STATUS_RESULT_ABSENT
+	}
+	if bounded {
+		if coefficient.Negative == POLARITY_NEGATIVE {
+			addition := Int_Add(coefficient, coefficient, modulus)
+			invariant.Always(
+				addition == Arithmetic_Status(STATUS_OK),
+				"A bounded Bezout coefficient magnitude is below its modulus.",
+			)
+		}
+	}
+	Int_Set(destination, coefficient)
+	return STATUS_OK
+}
+
+func int_modular_inverse_euclidean_general(
+	workspace *Int_Modular_Workspace,
+	bounded Boolean,
+	result_references *Int_References,
+	remainder_references *Int_References,
+	coefficient_references *Int_References,
+) (status Modular_Inverse_Result_Status) {
+	defer func() {
+		Modular_Inverse_Result_Status_Invariants(
+			status, "int_modular_inverse_euclidean_general.status",
+		)
+	}()
+	Int_Modular_Workspace_Invariants(
+		workspace, "int_modular_inverse_euclidean_general.workspace",
+	)
+	Boolean_Invariants(bounded, "int_modular_inverse_euclidean_general.bounded")
+	Int_References_Invariants(
+		result_references, "int_modular_inverse_euclidean_general.result",
+	)
+	Int_References_Invariants(
+		remainder_references, "int_modular_inverse_euclidean_general.remainders",
+	)
+	Int_References_Invariants(
+		coefficient_references, "int_modular_inverse_euclidean_general.coefficient",
+	)
+	destination := result_references[INT_REFERENCE_DESTINATION_INDEX]
+	modulus := result_references[INT_REFERENCE_LEFT_INDEX]
+	remainder := remainder_references[INT_REFERENCE_DESTINATION_INDEX]
+	dividend := remainder_references[INT_REFERENCE_LEFT_INDEX]
+	divisor := remainder_references[INT_REFERENCE_RIGHT_INDEX]
+	coefficient_remainder := coefficient_references[INT_REFERENCE_DESTINATION_INDEX]
+	coefficient_dividend := coefficient_references[INT_REFERENCE_LEFT_INDEX]
+	coefficient_divisor := coefficient_references[INT_REFERENCE_RIGHT_INDEX]
+	multiplication := (*Int_Multiplication_Workspace)(&workspace.Multiplication)
+	for divisor.Count > WORD_COUNT_MINIMUM {
+		int_modular_inverse_divide(
+			(*Int_Division_Workspace)(&workspace.Division), result_references,
+			remainder_references,
+		)
+		if !bounded {
+			int_modular_multiply(workspace, MODULAR_MULTIPLICATION_COEFFICIENT)
+			int_modular_subtract(&workspace.Integers)
+		} else {
+			int_modular_inverse_coefficient_bounded(
+				multiplication, result_references, coefficient_references,
+			)
+		}
+		if bounded {
+			dividend, divisor, remainder = divisor, remainder, dividend
+			*remainder_references = Int_References{remainder, dividend, divisor}
+			coefficient_dividend, coefficient_divisor, coefficient_remainder =
+				coefficient_divisor, coefficient_remainder, coefficient_dividend
+			*coefficient_references = Int_References{
+				coefficient_remainder, coefficient_dividend, coefficient_divisor,
+			}
+		} else {
+			Int_Set(dividend, divisor)
+			Int_Set(divisor, remainder)
+			int_zero(remainder, remainder.Count)
+			Int_Set(coefficient_dividend, coefficient_divisor)
+			Int_Set(coefficient_divisor, coefficient_remainder)
+			int_zero(coefficient_remainder, coefficient_remainder.Count)
+		}
+	}
+	commit_references := Int_References{destination, modulus, dividend}
+	return int_modular_inverse_commit(
+		bounded, &commit_references, coefficient_references,
+	)
+}
+
+func int_jacobi_word(
+	numerator *Int, denominator *Int,
+) (symbol Jacobi_Symbol, matched Boolean) {
+	defer func() {
+		Jacobi_Symbol_Invariants(symbol, "int_jacobi_word.symbol")
+		Boolean_Invariants(matched, "int_jacobi_word.matched")
+	}()
+	Int_Invariants(numerator, "int_jacobi_word.numerator")
+	Int_Invariants(denominator, "int_jacobi_word.denominator")
+	if numerator.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		return 0, false
+	}
+	if denominator.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return 0, false
+	}
+	if numerator.Negative == POLARITY_NEGATIVE {
+		return 0, false
+	}
+	if denominator.Negative == POLARITY_NEGATIVE {
+		return 0, false
+	}
+	denominator_word := uint64(denominator.Words[WORD_COUNT_MINIMUM])
+	if denominator_word&uint64(bits.CARRY_MAXIMUM) == 0 {
+		return 0, false
+	}
+	numerator_word := uint64(0)
+	if numerator.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		numerator_word = uint64(numerator.Words[WORD_COUNT_MINIMUM])
+	}
+	result := int(bits.CARRY_MAXIMUM)
+	numerator_word %= denominator_word
+	for numerator_word != 0 {
+		for numerator_word&uint64(bits.CARRY_MAXIMUM) == 0 {
+			numerator_word >>= WORD_COUNT_INCREMENT
+			residue := denominator_word & 7
+			if residue == 3 {
+				result = -result
+			} else if residue == 5 {
+				result = -result
+			}
+		}
+		numerator_word, denominator_word = denominator_word, numerator_word
+		if numerator_word&3 == 3 {
+			if denominator_word&3 == 3 {
+				result = -result
+			}
+		}
+		numerator_word %= denominator_word
+	}
+	if denominator_word != uint64(bits.CARRY_MAXIMUM) {
+		return JACOBI_SYMBOL_ZERO, true
+	}
+	return Jacobi_Symbol(result), true
+}
+
+// Bytes_Validate centralizes hostile byte rejection before arithmetic reads input.
+func Bytes_Validate(value Bytes_Unvalidated) (validated Bytes, status Validation_Status) {
+	defer func() {
+		Bytes_Invariants(validated, "bytes_validate.validated")
+		Validation_Status_Invariants(status, "bytes_validate.status")
+	}()
+	Bytes_Unvalidated_Invariants(value, "bytes_validate.value")
+	if len(value) > bytes.SLICE_SIZE_MAXIMUM {
+		return nil, STATUS_INPUT_INVALID
+	}
+	return Bytes(value), STATUS_OK
+}
+
+// Shift_Count_Validate rejects a distance larger than every bounded Int magnitude.
+func Shift_Count_Validate(
+	value Shift_Count_Unvalidated,
+) (validated Shift_Count, status Validation_Status) {
+	defer func() {
+		Shift_Count_Invariants(validated, "shift_count_validate.validated")
+		Validation_Status_Invariants(status, "shift_count_validate.status")
+	}()
+	Shift_Count_Unvalidated_Invariants(value, "shift_count_validate.value")
+	if value > BIT_COUNT_MAXIMUM {
+		return 0, STATUS_INPUT_INVALID
+	}
+	return Shift_Count(value), STATUS_OK
+}
+
+// Bit_Index_Validate rejects coordinates outside one bounded signed value.
+func Bit_Index_Validate(
+	value Bit_Index_Unvalidated,
+) (validated Bit_Index, status Validation_Status) {
+	defer func() {
+		Bit_Index_Invariants(validated, "bit_index_validate.validated")
+		Validation_Status_Invariants(status, "bit_index_validate.status")
+	}()
+	Bit_Index_Unvalidated_Invariants(value, "bit_index_validate.value")
+	if value < BIT_COUNT_MINIMUM {
+		return 0, STATUS_INPUT_INVALID
+	}
+	if value > BIT_INDEX_MAXIMUM {
+		return 0, STATUS_INPUT_INVALID
+	}
+	return Bit_Index(value), STATUS_OK
+}
+
+// Base_Validate rejects unsupported alphabets before text conversion.
+func Base_Validate(value Base_Unvalidated) (base Base, status Validation_Status) {
+	defer func() {
+		Base_Invariants(base, "base_validate.base")
+		Validation_Status_Invariants(status, "base_validate.status")
+	}()
+	Base_Unvalidated_Invariants(value, "base_validate.value")
+	if value < BASE_MINIMUM {
+		return BASE_MINIMUM, STATUS_INPUT_INVALID
+	}
+	if value > BASE_MAXIMUM {
+		return BASE_MINIMUM, STATUS_INPUT_INVALID
+	}
+	return Base(value), STATUS_OK
+}
+
+// Primality_Options_Validate rejects work limits before any arithmetic begins.
+func Primality_Options_Validate(
+	value Primality_Options_Unvalidated,
+) (validated Primality_Options, status Validation_Status) {
+	defer func() {
+		Primality_Options_Invariants(validated, "primality_options_validate.validated")
+		Validation_Status_Invariants(status, "primality_options_validate.status")
+	}()
+	Primality_Options_Unvalidated_Invariants(value, "primality_options_validate.value")
+	validated.Parameter_Count = PRIMALITY_PARAMETER_COUNT_MINIMUM
+	if value.Repetitions < PRIMALITY_REPETITION_COUNT_MINIMUM {
+		return validated, STATUS_INPUT_INVALID
+	}
+	if value.Repetitions > PRIMALITY_REPETITION_COUNT_MAXIMUM {
+		return validated, STATUS_INPUT_INVALID
+	}
+	if value.Parameter_Count < PRIMALITY_PARAMETER_COUNT_MINIMUM {
+		return validated, STATUS_INPUT_INVALID
+	}
+	if value.Parameter_Count > PRIMALITY_PARAMETER_COUNT_MAXIMUM {
+		return validated, STATUS_INPUT_INVALID
+	}
+	validated.Repetitions = Primality_Repetition_Count(value.Repetitions)
+	validated.Parameter_Count = Primality_Parameter_Count(value.Parameter_Count)
+	return validated, STATUS_OK
+}
+
+// Float_Precision_Validate rejects mantissas wider than inline Int storage.
+func Float_Precision_Validate(
+	value Float_Precision_Unvalidated,
+) (precision Float_Precision, status Validation_Status) {
+	defer func() {
+		Float_Precision_Invariants(precision, "float_precision_validate.precision")
+		Validation_Status_Invariants(status, "float_precision_validate.status")
+	}()
+	Float_Precision_Unvalidated_Invariants(value, "float_precision_validate.value")
+	if value > FLOAT_PRECISION_UNVALIDATED_MAXIMUM-WORD_COUNT_INCREMENT {
+		return FLOAT_PRECISION_MINIMUM, STATUS_INPUT_INVALID
+	}
+	return Float_Precision(value), STATUS_OK
+}
+
+// Rounding_Mode_Validate rejects enum values before a float policy changes.
+func Rounding_Mode_Validate(
+	value Rounding_Mode_Unvalidated,
+) (mode Rounding_Mode, status Validation_Status) {
+	defer func() {
+		Rounding_Mode_Invariants(mode, "rounding_mode_validate.mode")
+		Validation_Status_Invariants(status, "rounding_mode_validate.status")
+	}()
+	Rounding_Mode_Unvalidated_Invariants(value, "rounding_mode_validate.value")
+	if value > ROUND_TO_POSITIVE_INFINITY {
+		return Rounding_Mode(ROUND_TO_NEAREST_EVEN), STATUS_INPUT_INVALID
+	}
+	return Rounding_Mode(value), STATUS_OK
+}
+
+// Float_Exponent_Validate rejects scale work outside explicit finite range.
+func Float_Exponent_Validate(
+	value Float_Exponent_Unvalidated,
+) (exponent Float_Exponent, status Validation_Status) {
+	defer func() {
+		Float_Exponent_Invariants(exponent, "float_exponent_validate.exponent")
+		Validation_Status_Invariants(status, "float_exponent_validate.status")
+	}()
+	Float_Exponent_Unvalidated_Invariants(value, "float_exponent_validate.value")
+	if value < FLOAT_EXPONENT_MINIMUM {
+		return 0, STATUS_INPUT_INVALID
+	}
+	if value > FLOAT_EXPONENT_MAXIMUM {
+		return 0, STATUS_INPUT_INVALID
+	}
+	return Float_Exponent(value), STATUS_OK
+}
+
+// Rat_Precision_Validate rejects decimal work beyond one bounded rational component.
+func Rat_Precision_Validate(
+	value Rat_Precision_Unvalidated,
+) (precision Rat_Precision, status Validation_Status) {
+	defer func() {
+		Rat_Precision_Invariants(precision, "rat_precision_validate.precision")
+		Validation_Status_Invariants(status, "rat_precision_validate.status")
+	}()
+	Rat_Precision_Unvalidated_Invariants(value, "rat_precision_validate.value")
+	if value < RAT_PRECISION_MINIMUM {
+		return RAT_PRECISION_MINIMUM, STATUS_INPUT_INVALID
+	}
+	if value > RAT_PRECISION_MAXIMUM {
+		return RAT_PRECISION_MINIMUM, STATUS_INPUT_INVALID
+	}
+	return Rat_Precision(value), STATUS_OK
+}
+
+func float_copy_exact(destination *Float, source *Float) {
+	Float_Invariants(destination, "float_copy_exact.destination_initial")
+	Float_Invariants(source, "float_copy_exact.source")
+	if destination == source {
+		return
+	}
+	previous_count := destination.Mantissa.Count
+	destination.Precision = source.Precision
+	destination.Mode = source.Mode
+	destination.Accuracy = source.Accuracy
+	destination.Form = source.Form
+	destination.Negative = source.Negative
+	destination.Exponent = source.Exponent
+	for index := Word_Count(WORD_COUNT_MINIMUM); index < source.Mantissa.Count; index++ {
+		destination.Mantissa.Words[index] = source.Mantissa.Words[index]
+	}
+	destination.Mantissa.Count = source.Mantissa.Count
+	destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+	if previous_count > destination.Mantissa.Count {
+		int_clear(
+			(*Int)(&destination.Mantissa), destination.Mantissa.Count, previous_count,
+		)
+	}
+}
+
+// Float_Set copies numeric value through destination precision and rounding mode.
+func Float_Set(destination *Float, source *Float) {
+	Float_Invariants(destination, "float_set.destination_initial")
+	Float_Invariants(source, "float_set.source")
+	if destination == source {
+		destination.Accuracy = ACCURACY_EXACT
+		return
+	}
+	precision := destination.Precision
+	if precision == FLOAT_PRECISION_MINIMUM {
+		precision = source.Precision
+	}
+	mode := destination.Mode
+	if source.Form != FLOAT_FORM_FINITE {
+		float_set_nonfinite(
+			destination, Float_Nonfinite_Form(source.Form), source.Negative, precision,
+		)
+		destination.Mode = mode
+		return
+	}
+	if source.Precision <= precision {
+		float_copy_exact(destination, source)
+		destination.Precision = precision
+		destination.Mode = mode
+		destination.Accuracy = ACCURACY_EXACT
+		return
+	}
+	float_set_magnitude(
+		destination, &source.Mantissa, source.Exponent,
+		source.Negative, Float_Active_Precision(precision), mode,
+	)
+}
+
+// Rat_Inverse swaps normalized components through caller workspace so exact aliasing is safe.
+func Rat_Inverse(
+	destination *Rat, source *Rat, workspace *Rat_Workspace,
+) (status Divisor_Status) {
+	defer func() { Divisor_Status_Invariants(status, "rat_inverse.status") }()
+	Rat_Invariants(destination, "rat_inverse.destination")
+	Rat_Invariants(source, "rat_inverse.source")
+	Rat_Workspace_Invariants(workspace, "rat_inverse.workspace")
+	source_numerator := &source.Integers[RAT_NUMERATOR_INDEX]
+	if source_numerator.Count == WORD_COUNT_MINIMUM {
+		return STATUS_DIVISOR_ZERO
+	}
+	source_denominator := &source.Integers[RAT_DENOMINATOR_INDEX]
+	if source_numerator.Count == Word_Count(BASE_BINARY) {
+		if source_denominator.Count == Word_Count(BASE_BINARY) {
+			rat_inverse_double_words(destination, source)
+			return STATUS_OK
+		}
+	}
+	if source_numerator.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		rat_inverse_many(destination, source, workspace)
+		return STATUS_OK
+	}
+	if source_denominator.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		rat_inverse_many(destination, source, workspace)
+		return STATUS_OK
+	}
+	numerator_word := Word(bits.CARRY_MAXIMUM)
+	if source_denominator.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		numerator_word = source_denominator.Words[WORD_COUNT_MINIMUM]
+	}
+	denominator_word := source_numerator.Words[WORD_COUNT_MINIMUM]
+	destination_numerator := &destination.Integers[RAT_NUMERATOR_INDEX]
+	destination_denominator := &destination.Integers[RAT_DENOMINATOR_INDEX]
+	previous_numerator_count := destination_numerator.Count
+	previous_denominator_count := destination_denominator.Count
+	destination_numerator.Words[WORD_COUNT_MINIMUM] = numerator_word
+	destination_numerator.Count = Word_Count(WORD_COUNT_INCREMENT)
+	destination_numerator.Negative = source_numerator.Negative
+	if denominator_word == Word(bits.CARRY_MAXIMUM) {
+		destination_denominator.Count = Word_Count(WORD_COUNT_MINIMUM)
+		destination_denominator.Negative = POLARITY_NONNEGATIVE
+	} else {
+		destination_denominator.Words[WORD_COUNT_MINIMUM] = denominator_word
+		destination_denominator.Count = Word_Count(WORD_COUNT_INCREMENT)
+		destination_denominator.Negative = POLARITY_NONNEGATIVE
+	}
+	int_clear(destination_numerator, destination_numerator.Count, previous_numerator_count)
+	int_clear(
+		destination_denominator, destination_denominator.Count,
+		previous_denominator_count,
+	)
+	return STATUS_OK
+}
+
+func rat_inverse_many(
+	destination *Rat, source *Rat, workspace *Rat_Workspace,
+) {
+	Rat_Invariants(destination, "rat_inverse_many.destination")
+	Rat_Invariants(source, "rat_inverse_many.source")
+	Rat_Workspace_Invariants(workspace, "rat_inverse_many.workspace")
+	source_numerator := &source.Integers[RAT_NUMERATOR_INDEX]
+	source_denominator := &source.Integers[RAT_DENOMINATOR_INDEX]
+	if destination != source {
+		result_numerator := &destination.Integers[RAT_NUMERATOR_INDEX]
+		if source_denominator.Count == WORD_COUNT_MINIMUM {
+			int_set_word(
+				result_numerator, Word(bits.CARRY_MAXIMUM),
+				source_numerator.Negative,
+			)
+		} else {
+			Int_Set(result_numerator, source_denominator)
+			result_numerator.Negative = source_numerator.Negative
+		}
+		result_denominator := &destination.Integers[RAT_DENOMINATOR_INDEX]
+		if source_numerator.Count == Word_Count(WORD_COUNT_INCREMENT) {
+			if source_numerator.Words[WORD_COUNT_MINIMUM] == Word(bits.CARRY_MAXIMUM) {
+				int_zero(result_denominator, result_denominator.Count)
+				return
+			}
+		}
+		Int_Set(result_denominator, source_numerator)
+		result_denominator.Negative = POLARITY_NONNEGATIVE
+		return
+	}
+	result_numerator := &workspace.Integers[RAT_RESULT_NUMERATOR_INDEX]
+	result_denominator := &workspace.Integers[RAT_RESULT_DENOMINATOR_INDEX]
+	Int_Set(result_numerator, &source.Integers[RAT_DENOMINATOR_INDEX])
+	if result_numerator.Count == WORD_COUNT_MINIMUM {
+		Int_Set_Uint_64(result_numerator, Word_64(bits.CARRY_MAXIMUM))
+	}
+	result_numerator.Negative = source_numerator.Negative
+	Int_Set(result_denominator, source_numerator)
+	result_denominator.Negative = POLARITY_NONNEGATIVE
+	if result_denominator.Count == WORD_COUNT_INCREMENT {
+		if result_denominator.Words[WORD_COUNT_MINIMUM] == Word(bits.CARRY_MAXIMUM) {
+			int_zero(result_denominator, result_denominator.Count)
+		}
+	}
+	Int_Set(&destination.Integers[RAT_NUMERATOR_INDEX], result_numerator)
+	Int_Set(&destination.Integers[RAT_DENOMINATOR_INDEX], result_denominator)
+	return
+}
+
+// Int_Absolute writes a distinct value so callers choose whether aliasing destroys source sign.
+func Int_Absolute(destination *Int, source *Int) {
+	Int_Invariants(destination, "int_absolute.destination")
+	Int_Invariants(source, "int_absolute.source")
+	if destination != source {
+		previous_count := destination.Count
+		if source.Count == Word_Count(BASE_BINARY) {
+			destination.Words[WORD_COUNT_MINIMUM] = source.Words[WORD_COUNT_MINIMUM]
+			destination.Words[WORD_COUNT_INCREMENT] = source.Words[WORD_COUNT_INCREMENT]
+		} else {
+			for index := Word_Count(WORD_COUNT_MINIMUM); index < source.Count; index++ {
+				destination.Words[index] = source.Words[index]
+			}
+		}
+		destination.Count = source.Count
+		destination.Negative = POLARITY_NONNEGATIVE
+		if previous_count > destination.Count {
+			int_clear(destination, destination.Count, previous_count)
+		}
+	}
+	destination.Negative = POLARITY_NONNEGATIVE
+}
+
+// Int_Negate toggles sign only for nonzero magnitude so zero retains one representation.
+func Int_Negate(destination *Int, source *Int) {
+	Int_Invariants(destination, "int_negate.destination")
+	Int_Invariants(source, "int_negate.source")
+	negative := POLARITY_NONNEGATIVE
+	if source.Count != WORD_COUNT_MINIMUM {
+		negative = POLARITY_NEGATIVE - source.Negative
+	}
+	if destination != source {
+		if source.Count == Word_Count(WORD_COUNT_INCREMENT) {
+			previous_count := destination.Count
+			destination.Words[WORD_COUNT_MINIMUM] = source.Words[WORD_COUNT_MINIMUM]
+			destination.Count = source.Count
+			destination.Negative = negative
+			if previous_count > destination.Count {
+				int_clear(destination, destination.Count, previous_count)
+			}
+			return
+		}
+		if source.Count == Word_Count(BASE_BINARY) {
+			low := source.Words[WORD_COUNT_MINIMUM]
+			high := source.Words[WORD_COUNT_INCREMENT]
+			previous_count := destination.Count
+			destination.Words[WORD_COUNT_MINIMUM] = low
+			destination.Words[WORD_COUNT_INCREMENT] = high
+			destination.Count = Word_Count(BASE_BINARY)
+			destination.Negative = negative
+			if previous_count > destination.Count {
+				int_clear(destination, destination.Count, previous_count)
+			}
+			return
+		}
+	}
+	if destination != source {
+		previous_count := destination.Count
+		for index := Word_Count(WORD_COUNT_MINIMUM); index < source.Count; index++ {
+			destination.Words[index] = source.Words[index]
+		}
+		destination.Count = source.Count
+		destination.Negative = negative
+		if previous_count > destination.Count {
+			int_clear(destination, destination.Count, previous_count)
+		}
+	}
+	destination.Negative = negative
+}
+
+// Int_Subtract reuses sign-magnitude addition without constructing a full negated temporary.
+func Int_Subtract(destination *Int, left *Int, right *Int) (status Arithmetic_Status) {
+	defer func() { Arithmetic_Status_Invariants(status, "int_subtract.status") }()
+	Int_Invariants(destination, "int_subtract.destination")
+	Int_Invariants(left, "int_subtract.left")
+	Int_Invariants(right, "int_subtract.right")
+	if int_subtract_positive_double_word(&Int_References{destination, left, right}) {
+		return STATUS_OK
+	}
+	if left.Negative == POLARITY_NONNEGATIVE {
+		if right.Negative == POLARITY_NONNEGATIVE {
+			if left.Count == Word_Count(WORD_COUNT_INCREMENT) {
+				if right.Count == Word_Count(WORD_COUNT_INCREMENT) {
+					left_word := Word(0)
+					if left.Count != Word_Count(WORD_COUNT_MINIMUM) {
+						left_word = left.Words[WORD_COUNT_MINIMUM]
+					}
+					right_word := Word(0)
+					if right.Count != Word_Count(WORD_COUNT_MINIMUM) {
+						right_word = right.Words[WORD_COUNT_MINIMUM]
+					}
+					word := left_word - right_word
+					negative := POLARITY_NONNEGATIVE
+					if left_word < right_word {
+						word = right_word - left_word
+						negative = POLARITY_NEGATIVE
+					}
+					previous_count := destination.Count
+					destination.Count = Word_Count(WORD_COUNT_MINIMUM)
+					destination.Negative = POLARITY_NONNEGATIVE
+					if word != 0 {
+						destination.Words[WORD_COUNT_MINIMUM] = word
+						destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+						destination.Negative = negative
+					}
+					if previous_count > destination.Count {
+						int_clear(
+							destination, destination.Count,
+							previous_count,
+						)
+					}
+					return STATUS_OK
+				}
+			}
+		}
+	}
+	return int_sum(
+		destination, left, left.Negative, right, POLARITY_NEGATIVE-right.Negative,
+	)
+}
+
+func int_shift_left_small(destination *Int, source *Int, count Shift_Count) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_shift_left_small.matched") }()
+	Int_Invariants(destination, "int_shift_left_small.destination")
+	Int_Invariants(source, "int_shift_left_small.source")
+	Shift_Count_Invariants(count, "int_shift_left_small.count")
+	if source.Count == Word_Count(BASE_BINARY) {
+		if count == 0 {
+			return false
+		}
+		if count >= Shift_Count(WORD_BIT_COUNT) {
+			return false
+		}
+		shift := uint(count)
+		low := source.Words[WORD_COUNT_MINIMUM]
+		high := source.Words[WORD_COUNT_INCREMENT]
+		negative := source.Negative
+		previous_count := destination.Count
+		carry := high >> (WORD_BIT_COUNT - shift)
+		destination.Words[BASE_BINARY] = carry
+		destination.Words[WORD_COUNT_INCREMENT] =
+			high<<shift | low>>(WORD_BIT_COUNT-shift)
+		destination.Words[WORD_COUNT_MINIMUM] = low << shift
+		destination.Count = Word_Count(BASE_BINARY + WORD_COUNT_INCREMENT)
+		if carry == 0 {
+			destination.Count = Word_Count(BASE_BINARY)
+		}
+		destination.Negative = negative
+		int_clear(destination, destination.Count, previous_count)
+		return true
+	}
+	if source.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if count >= Shift_Count(WORD_BIT_COUNT) {
+		return false
+	}
+	source_word := source.Words[WORD_COUNT_MINIMUM]
+	if source_word > Word(bits.WORD_64_MAXIMUM)>>uint(count) {
+		return false
+	}
+	previous_count := destination.Count
+	destination.Words[WORD_COUNT_MINIMUM] = source_word << uint(count)
+	destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+	destination.Negative = source.Negative
+	if previous_count > destination.Count {
+		int_clear(destination, destination.Count, previous_count)
+	}
+	return true
+}
+
+func int_shift_right_small(destination *Int, source *Int, count Shift_Count) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_shift_right_small.matched") }()
+	Int_Invariants(destination, "int_shift_right_small.destination")
+	Int_Invariants(source, "int_shift_right_small.source")
+	Shift_Count_Invariants(count, "int_shift_right_small.count")
+	if source.Count == Word_Count(BASE_BINARY) {
+		if count == 0 {
+			return false
+		}
+		if count >= Shift_Count(WORD_BIT_COUNT) {
+			return false
+		}
+		shift := uint(count)
+		low, high := source.Words[WORD_COUNT_MINIMUM], source.Words[WORD_COUNT_INCREMENT]
+		negative, previous_count := source.Negative, destination.Count
+		result_low := low>>shift | high<<(WORD_BIT_COUNT-shift)
+		result_high := high >> shift
+		mask := Word((bits.CARRY_MAXIMUM << shift) - bits.CARRY_MAXIMUM)
+		if negative == POLARITY_NEGATIVE {
+			if low&mask != 0 {
+				result_low++
+				if result_low == 0 {
+					result_high++
+				}
+			}
+		}
+		destination.Words[WORD_COUNT_MINIMUM] = result_low
+		destination.Words[WORD_COUNT_INCREMENT] = result_high
+		destination.Count = Word_Count(BASE_BINARY)
+		if result_high == 0 {
+			destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+		}
+		destination.Negative = negative
+		int_clear(destination, destination.Count, previous_count)
+		return true
+	}
+	if source.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	previous_count := destination.Count
+	if source.Count == Word_Count(WORD_COUNT_MINIMUM) {
+		int_zero(destination, previous_count)
+		return true
+	}
+	word := Word(0)
+	if count < Shift_Count(WORD_BIT_COUNT) {
+		source_word := source.Words[WORD_COUNT_MINIMUM]
+		word = source_word >> uint(count)
+		if source.Negative == POLARITY_NEGATIVE {
+			if source_word != word<<uint(count) {
+				word++
+			}
+		}
+	}
+	if word == 0 {
+		if source.Negative == POLARITY_NEGATIVE {
+			word = Word(bits.CARRY_MAXIMUM)
+		} else {
+			int_zero(destination, previous_count)
+			return true
+		}
+	}
+	destination.Words[WORD_COUNT_MINIMUM] = word
+	destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+	destination.Negative = source.Negative
+	if previous_count > destination.Count {
+		int_clear(destination, destination.Count, previous_count)
+	}
+	return true
+}
+
+func int_not_word(destination *Int, source *Int) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "int_not_word.matched") }()
+	Int_Invariants(destination, "int_not_word.destination")
+	Int_Invariants(source, "int_not_word.source")
+	if source.Count > Word_Count(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	// Zero and negative words retain the generic sign-extension boundary witnesses.
+	if source.Count == Word_Count(WORD_COUNT_MINIMUM) {
+		return false
+	}
+	if source.Negative == POLARITY_NEGATIVE {
+		return false
+	}
+	word := Word(0)
+	if source.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		word = source.Words[WORD_COUNT_MINIMUM]
+	}
+	negative := POLARITY_NONNEGATIVE
+	if source.Negative == POLARITY_NONNEGATIVE {
+		if word == Word(bits.WORD_64_MAXIMUM) {
+			previous_count := destination.Count
+			destination.Words[WORD_COUNT_MINIMUM] = Word(bits.WORD_64_MINIMUM)
+			destination.Words[WORD_COUNT_INCREMENT] = Word(bits.CARRY_MAXIMUM)
+			destination.Count = Word_Count(WORD_COUNT_INCREMENT + WORD_COUNT_INCREMENT)
+			destination.Negative = POLARITY_NEGATIVE
+			if previous_count > destination.Count {
+				int_clear(destination, destination.Count, previous_count)
+			}
+			return true
+		}
+		word++
+		negative = POLARITY_NEGATIVE
+	} else {
+		word--
+	}
+	previous_count := destination.Count
+	destination.Count = Word_Count(WORD_COUNT_MINIMUM)
+	destination.Negative = POLARITY_NONNEGATIVE
+	if word != 0 {
+		destination.Words[WORD_COUNT_MINIMUM] = word
+		destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+		destination.Negative = negative
+	}
+	if previous_count > destination.Count {
+		int_clear(destination, destination.Count, previous_count)
+	}
+	return true
+}
+
+// Float_Absolute writes separately so exact receiver aliasing needs no special path.
+func Float_Absolute(destination *Float, source *Float) {
+	Float_Invariants(destination, "float_absolute.destination_initial")
+	Float_Invariants(source, "float_absolute.source")
+	if destination != source {
+		previous_count := destination.Mantissa.Count
+		source_count := source.Mantissa.Count
+		destination.Precision = source.Precision
+		destination.Mode = source.Mode
+		destination.Form = source.Form
+		destination.Exponent = source.Exponent
+		if source_count == Word_Count(BASE_BINARY) {
+			destination.Mantissa.Words[WORD_COUNT_MINIMUM] =
+				source.Mantissa.Words[WORD_COUNT_MINIMUM]
+			destination.Mantissa.Words[WORD_COUNT_INCREMENT] =
+				source.Mantissa.Words[WORD_COUNT_INCREMENT]
+		} else {
+			for index := Word_Count(WORD_COUNT_MINIMUM); index < source_count; index++ {
+				destination.Mantissa.Words[index] = source.Mantissa.Words[index]
+			}
+		}
+		destination.Mantissa.Count = source.Mantissa.Count
+		destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+		if previous_count > destination.Mantissa.Count {
+			int_clear(
+				(*Int)(&destination.Mantissa), destination.Mantissa.Count,
+				previous_count,
+			)
+		}
+	}
+	destination.Negative = POLARITY_NONNEGATIVE
+	destination.Accuracy = ACCURACY_EXACT
+}
+
+// Float_Set_Uint_64 stores one exact machine magnitude before destination rounding.
+func Float_Set_Uint_64(destination *Float, value Word_64) {
+	Float_Invariants(destination, "float_set_uint_64.destination_initial")
+	Word_64_Invariants(value, "float_set_uint_64.value")
+	precision := destination.Precision
+	if precision == FLOAT_PRECISION_MINIMUM {
+		precision = WORD_BIT_COUNT
+	}
+	word := Word(value)
+	bit_count := Float_Precision(bits.Bit_Size_64(bits.Word_64(word)))
+	if word == 0 {
+		float_set_nonfinite(
+			destination, Float_Nonfinite_Form(FLOAT_FORM_ZERO),
+			POLARITY_NONNEGATIVE, precision,
+		)
+		return
+	}
+	if bit_count > precision {
+		var magnitude Float_Mantissa
+		magnitude.Words[WORD_COUNT_MINIMUM] = word
+		magnitude.Count = Word_Count(WORD_COUNT_INCREMENT)
+		float_set_magnitude(
+			destination, &magnitude, Float_Exponent(bit_count),
+			POLARITY_NONNEGATIVE, Float_Active_Precision(precision), destination.Mode,
+		)
+		return
+	}
+	previous_count := destination.Mantissa.Count
+	destination.Precision, destination.Accuracy = precision, ACCURACY_EXACT
+	destination.Form, destination.Negative = FLOAT_FORM_FINITE, POLARITY_NONNEGATIVE
+	destination.Mantissa.Words[WORD_COUNT_MINIMUM] = word
+	destination.Mantissa.Count = Word_Count(WORD_COUNT_INCREMENT)
+	destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+	destination.Exponent = Float_Exponent(bit_count)
+	if previous_count > Word_Count(WORD_COUNT_INCREMENT) {
+		int_clear(
+			(*Int)(&destination.Mantissa), Word_Count(WORD_COUNT_INCREMENT),
+			previous_count,
+		)
+	}
+}
+
+// Float_Set_Int_64 stores one exact signed machine value before destination rounding.
+func Float_Set_Int_64(destination *Float, value Int_64) {
+	Float_Invariants(destination, "float_set_int_64.destination_initial")
+	Int_64_Invariants(value, "float_set_int_64.value")
+	negative := POLARITY_NONNEGATIVE
+	magnitude := Word(value)
+	if value < 0 {
+		negative = POLARITY_NEGATIVE
+		magnitude = Word(-(value + Int_64(bits.CARRY_MAXIMUM))) +
+			Word(bits.CARRY_MAXIMUM)
+	}
+	precision := destination.Precision
+	if precision == FLOAT_PRECISION_MINIMUM {
+		precision = WORD_BIT_COUNT
+	}
+	bit_count := Float_Precision(bits.Bit_Size_64(bits.Word_64(magnitude)))
+	if magnitude == 0 {
+		float_set_nonfinite(
+			destination, Float_Nonfinite_Form(FLOAT_FORM_ZERO), negative, precision,
+		)
+		return
+	}
+	if bit_count > precision {
+		var float_magnitude Float_Mantissa
+		float_magnitude.Words[WORD_COUNT_MINIMUM] = magnitude
+		float_magnitude.Count = Word_Count(WORD_COUNT_INCREMENT)
+		float_set_magnitude(
+			destination, &float_magnitude, Float_Exponent(bit_count), negative,
+			Float_Active_Precision(precision), destination.Mode,
+		)
+		return
+	}
+	previous_count := destination.Mantissa.Count
+	destination.Precision, destination.Accuracy = precision, ACCURACY_EXACT
+	destination.Form, destination.Negative = FLOAT_FORM_FINITE, negative
+	destination.Mantissa.Words[WORD_COUNT_MINIMUM] = magnitude
+	destination.Mantissa.Count = Word_Count(WORD_COUNT_INCREMENT)
+	destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+	destination.Exponent = Float_Exponent(bit_count)
+	if previous_count > Word_Count(WORD_COUNT_INCREMENT) {
+		int_clear(
+			(*Int)(&destination.Mantissa), Word_Count(WORD_COUNT_INCREMENT),
+			previous_count,
+		)
+	}
+}
+
+// Float_Negate preserves the IEEE distinction between positive and negative zero.
+func Float_Negate(destination *Float, source *Float) {
+	Float_Invariants(destination, "float_negate.destination_initial")
+	Float_Invariants(source, "float_negate.source")
+	if destination != source {
+		previous_count := destination.Mantissa.Count
+		source_count := source.Mantissa.Count
+		destination.Precision = source.Precision
+		destination.Mode = source.Mode
+		destination.Form = source.Form
+		destination.Exponent = source.Exponent
+		if source_count == Word_Count(BASE_BINARY) {
+			destination.Mantissa.Words[WORD_COUNT_MINIMUM] =
+				source.Mantissa.Words[WORD_COUNT_MINIMUM]
+			destination.Mantissa.Words[WORD_COUNT_INCREMENT] =
+				source.Mantissa.Words[WORD_COUNT_INCREMENT]
+		} else {
+			for index := Word_Count(WORD_COUNT_MINIMUM); index < source_count; index++ {
+				destination.Mantissa.Words[index] = source.Mantissa.Words[index]
+			}
+		}
+		destination.Mantissa.Count = source.Mantissa.Count
+		destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+		if previous_count > destination.Mantissa.Count {
+			int_clear(
+				(*Int)(&destination.Mantissa), destination.Mantissa.Count,
+				previous_count,
+			)
+		}
+	}
+	destination.Negative = POLARITY_NEGATIVE - source.Negative
+	destination.Accuracy = ACCURACY_EXACT
+}
+
+// Float_Compare orders numeric values while treating both signed zeros as equal.
+func Float_Compare(left *Float, right *Float) (order Order) {
+	defer func() { Order_Invariants(order, "float_compare.order") }()
+	Float_Invariants(left, "float_compare.left")
+	Float_Invariants(right, "float_compare.right")
+	if left.Form != FLOAT_FORM_FINITE {
+		return float_compare_general(left, right)
+	}
+	if right.Form != FLOAT_FORM_FINITE {
+		return float_compare_general(left, right)
+	}
+	if left.Negative != right.Negative {
+		return float_compare_general(left, right)
+	}
+	if left.Exponent > right.Exponent {
+		if left.Negative == POLARITY_NEGATIVE {
+			return ORDER_BEFORE
+		}
+		return ORDER_AFTER
+	}
+	if left.Exponent < right.Exponent {
+		if left.Negative == POLARITY_NEGATIVE {
+			return ORDER_AFTER
+		}
+		return ORDER_BEFORE
+	}
+	if left.Mantissa.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return float_compare_general(left, right)
+	}
+	if right.Mantissa.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return float_compare_general(left, right)
+	}
+	left_word := left.Mantissa.Words[WORD_COUNT_MINIMUM]
+	right_word := right.Mantissa.Words[WORD_COUNT_MINIMUM]
+	exponent := int(left.Exponent)
+	if uint(exponent-WORD_COUNT_INCREMENT) < uint(WORD_BIT_INDEX_MAXIMUM) {
+		minimum := Word(bits.CARRY_MAXIMUM) << uint(exponent-WORD_COUNT_INCREMENT)
+		if left_word&right_word&minimum == 0 {
+			return float_compare_general(left, right)
+		}
+		if left_word|right_word >= minimum<<WORD_COUNT_INCREMENT {
+			return float_compare_general(left, right)
+		}
+	} else if exponent != WORD_BIT_COUNT {
+		return float_compare_general(left, right)
+	}
+	if left_word < right_word {
+		order = ORDER_BEFORE
+	} else if left_word > right_word {
+		order = ORDER_AFTER
+	}
+	if left.Negative == POLARITY_NEGATIVE {
+		order = -order
+	}
+	return order
+}
+
+func float_compare_general(left *Float, right *Float) (order Order) {
+	defer func() { Order_Invariants(order, "float_compare_general.order") }()
+	Float_Invariants(left, "float_compare_general.left")
+	Float_Invariants(right, "float_compare_general.right")
+	left_sign := SIGN_ZERO
+	if left.Form != FLOAT_FORM_ZERO {
+		left_sign = SIGN_POSITIVE
+		if left.Negative == POLARITY_NEGATIVE {
+			left_sign = SIGN_NEGATIVE
+		}
+	}
+	right_sign := SIGN_ZERO
+	if right.Form != FLOAT_FORM_ZERO {
+		right_sign = SIGN_POSITIVE
+		if right.Negative == POLARITY_NEGATIVE {
+			right_sign = SIGN_NEGATIVE
+		}
+	}
+	if left_sign < right_sign {
+		return ORDER_BEFORE
+	}
+	if left_sign > right_sign {
+		return ORDER_AFTER
+	}
+	if left_sign == SIGN_ZERO {
+		return ORDER_SAME
+	}
+	if left.Form == FLOAT_FORM_INFINITY {
+		if right.Form == FLOAT_FORM_INFINITY {
+			return ORDER_SAME
+		}
+		order = ORDER_AFTER
+	} else if right.Form == FLOAT_FORM_INFINITY {
+		order = ORDER_BEFORE
+	} else {
+		order = float_compare_magnitude((*Float_Finite)(left), (*Float_Finite)(right))
+	}
+	if left_sign == SIGN_NEGATIVE {
+		order = -order
+	}
+	return order
+}
+
+func float_multiply_exact_word(references *Float_References) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "float_multiply_exact_word.matched") }()
+	Float_References_Invariants(references, "float_multiply_exact_word.references")
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	left := references[INT_REFERENCE_LEFT_INDEX]
+	right := references[INT_REFERENCE_RIGHT_INDEX]
+	left_exponent := int(left.Exponent)
+	right_exponent := int(right.Exponent)
+	if uint(left_exponent-WORD_COUNT_INCREMENT) >= uint(WORD_BIT_INDEX_MAXIMUM) {
+		return false
+	}
+	if uint(right_exponent-WORD_COUNT_INCREMENT) >= uint(WORD_BIT_INDEX_MAXIMUM) {
+		return false
+	}
+	left_minimum := Word(bits.CARRY_MAXIMUM) << uint(left_exponent-WORD_COUNT_INCREMENT)
+	right_minimum := Word(bits.CARRY_MAXIMUM) << uint(right_exponent-WORD_COUNT_INCREMENT)
+	left_word := left.Mantissa.Words[WORD_COUNT_MINIMUM]
+	right_word := right.Mantissa.Words[WORD_COUNT_MINIMUM]
+	if left_word&left_minimum == 0 {
+		return false
+	}
+	if left_word >= left_minimum<<WORD_COUNT_INCREMENT {
+		return false
+	}
+	if right_word&right_minimum == 0 {
+		return false
+	}
+	if right_word >= right_minimum<<WORD_COUNT_INCREMENT {
+		return false
+	}
+	high, low := bits.Multiply_64(
+		bits.Word_64(left_word), bits.Multiplier_64(right_word),
+	)
+	if high != 0 {
+		return false
+	}
+	bit_count := Float_Precision(bits.Bit_Size_64(bits.Word_64(low)))
+	precision := destination.Precision
+	if precision == FLOAT_PRECISION_MINIMUM {
+		precision = max(left.Precision, right.Precision)
+	}
+	if bit_count > precision {
+		return false
+	}
+	mantissa := &destination.Mantissa
+	previous_count := mantissa.Count
+	destination.Precision, destination.Accuracy = precision, ACCURACY_EXACT
+	destination.Form = FLOAT_FORM_FINITE
+	destination.Negative = Polarity(uint8(left.Negative) ^ uint8(right.Negative))
+	mantissa.Words[WORD_COUNT_MINIMUM] = Word(low)
+	mantissa.Count, mantissa.Negative = Word_Count(WORD_COUNT_INCREMENT), POLARITY_NONNEGATIVE
+	destination.Exponent = Float_Exponent(bit_count)
+	int_clear((*Int)(mantissa), mantissa.Count, previous_count)
+	return true
+}
+
+func float_multiply_general(
+	destination *Float, left *Float, right *Float,
+	workspace *Float_Multiplication_Workspace, precision Float_Precision,
+) (status Validation_Status) {
+	defer func() { Validation_Status_Invariants(status, "float_multiply_general.status") }()
+	Float_Invariants(destination, "float_multiply_general.destination_initial")
+	Float_Invariants(left, "float_multiply_general.left")
+	Float_Invariants(right, "float_multiply_general.right")
+	Float_Multiplication_Workspace_Invariants(workspace, "float_multiply_general.workspace")
+	Float_Precision_Invariants(precision, "float_multiply_general.precision")
+	mode := destination.Mode
+	negative := POLARITY_NONNEGATIVE
+	if left.Negative != right.Negative {
+		negative = POLARITY_NEGATIVE
+	}
+	if left.Form == FLOAT_FORM_ZERO {
+		if right.Form == FLOAT_FORM_INFINITY {
+			return STATUS_INPUT_INVALID
+		}
+		zero := *left
+		zero.Negative = negative
+		float_set_operation_operand(destination, &zero, precision, mode)
+		return STATUS_OK
+	}
+	if right.Form == FLOAT_FORM_ZERO {
+		if left.Form == FLOAT_FORM_INFINITY {
+			return STATUS_INPUT_INVALID
+		}
+		zero := *right
+		zero.Negative = negative
+		float_set_operation_operand(destination, &zero, precision, mode)
+		return STATUS_OK
+	}
+	if left.Form == FLOAT_FORM_INFINITY {
+		float_set_operation_infinity(destination, negative, precision, mode)
+		return STATUS_OK
+	}
+	if right.Form == FLOAT_FORM_INFINITY {
+		float_set_operation_infinity(destination, negative, precision, mode)
+		return STATUS_OK
+	}
+	float_multiply_finite(
+		destination, (*Float_Finite)(left), (*Float_Finite)(right), workspace,
+		Float_Active_Precision(precision), mode, negative,
+	)
+	return STATUS_OK
+}
+
+// Float_Active_Word_Count excludes zero after finite validation proves a mantissa.
+type Float_Active_Word_Count int
+
+// Float_Active_Word_Count_Invariants preserves the finite mantissa count proof.
+func Float_Active_Word_Count_Invariants(
+	value Float_Active_Word_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), WORD_COUNT_INCREMENT, WORD_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Float_Active_Word excludes zero after one-word normalization is proven.
+type Float_Active_Word Word
+
+// Float_Active_Word_Invariants preserves the normalized one-word proof.
+func Float_Active_Word_Invariants(value Float_Active_Word, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), uint64(bits.CARRY_MAXIMUM),
+			uint64(bits.WORD_64_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Float_Add_Exact_Sum excludes one because two active magnitudes cannot produce it.
+type Float_Add_Exact_Sum Word
+
+// Float_Add_Exact_Sum_Invariants excludes the sole unreachable native sum.
+func Float_Add_Exact_Sum_Invariants(
+	value Float_Add_Exact_Sum, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Uint64(
+			uint64(value), uint64(bits.CARRY_MINIMUM), uint64(bits.WORD_64_MAXIMUM),
+			uint64(bits.CARRY_MAXIMUM), uint64(bits.CARRY_MAXIMUM),
+			uint64(bits.CARRY_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Float_Add_Exact_Exponent is zero on no match or one native-word bit width.
+type Float_Add_Exact_Exponent int
+
+// Float_Add_Exact_Exponent_Invariants bounds no-match and native exact results.
+func Float_Add_Exact_Exponent_Invariants(
+	value Float_Add_Exact_Exponent, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			int(value), BIT_COUNT_MINIMUM, WORD_BIT_COUNT,
+			WORD_COUNT_INCREMENT, WORD_COUNT_INCREMENT,
+			WORD_COUNT_INCREMENT, WORD_COUNT_INCREMENT,
+		).
+		Ensure()
+}
+
+func float_add_precision(
+	destination Float_Precision, left Float_Precision, right Float_Precision,
+) (precision Float_Precision) {
+	defer func() { Float_Precision_Invariants(precision, "float_add_precision.precision") }()
+	Float_Precision_Invariants(destination, "float_add_precision.destination")
+	Float_Precision_Invariants(left, "float_add_precision.left")
+	Float_Precision_Invariants(right, "float_add_precision.right")
+	precision = destination
+	if precision != FLOAT_PRECISION_MINIMUM {
+		return precision
+	}
+	precision = left
+	if right > precision {
+		precision = right
+	}
+	return precision
+}
+
+// Float_Add keeps the exact alignment span in caller storage so aliases cannot destroy operands.
+func Float_Add(
+	destination, left, right *Float, workspace *Float_Addition_Workspace,
+) (status Validation_Status) {
+	defer func() { Validation_Status_Invariants(status, "float_add.status") }()
+	Float_Invariants(destination, "float_add.destination_initial")
+	Float_Invariants(left, "float_add.left")
+	Float_Invariants(right, "float_add.right")
+	Float_Addition_Workspace_Invariants(workspace, "float_add.workspace")
+	if left.Form == FLOAT_FORM_FINITE {
+		if right.Form == FLOAT_FORM_FINITE {
+			if left.Mantissa.Count == Word_Count(BASE_BINARY) {
+				if right.Mantissa.Count == Word_Count(BASE_BINARY) {
+					if left.Negative == right.Negative {
+						references := Float_References{
+							destination, left, right,
+						}
+						if float_add_exact_double_word(&references) {
+							return STATUS_OK
+						}
+					}
+				}
+			}
+		}
+	}
+	precision := float_add_precision(
+		destination.Precision, left.Precision, right.Precision,
+	)
+	if left.Form == FLOAT_FORM_FINITE {
+		if right.Form == FLOAT_FORM_FINITE {
+			sum, exponent, exact := float_add_exact_words(
+				Float_Active_Word_Count(left.Mantissa.Count),
+				left.Mantissa.Words[WORD_COUNT_MINIMUM], left.Exponent,
+				left.Negative,
+				Float_Active_Word_Count(right.Mantissa.Count),
+				right.Mantissa.Words[WORD_COUNT_MINIMUM], right.Exponent,
+				right.Negative, Float_Active_Precision(precision),
+			)
+			if exact {
+				previous_count := destination.Mantissa.Count
+				destination.Precision = precision
+				destination.Accuracy = ACCURACY_EXACT
+				destination.Form = FLOAT_FORM_FINITE
+				destination.Negative = left.Negative
+				destination.Mantissa.Words[WORD_COUNT_MINIMUM] = Word(sum)
+				destination.Mantissa.Count = Word_Count(WORD_COUNT_INCREMENT)
+				destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+				destination.Exponent = Float_Exponent(exponent)
+				if previous_count > Word_Count(WORD_COUNT_INCREMENT) {
+					int_clear(
+						(*Int)(&destination.Mantissa),
+						Word_Count(WORD_COUNT_INCREMENT), previous_count,
+					)
+				}
+				return STATUS_OK
+			}
+		}
+	}
+	return float_add_with_right_polarity(
+		destination, left, right, right.Negative, workspace,
+	)
+}
+
+func float_add_exact_double_word(
+	references *Float_References,
+) (matched Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "float_add_exact_double_word.matched")
+	}()
+	Float_References_Invariants(references, "float_add_exact_double_word.references")
+	if !float_exact_double_word_inputs(references) {
+		return false
+	}
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	left := references[INT_REFERENCE_LEFT_INDEX]
+	right := references[INT_REFERENCE_RIGHT_INDEX]
+	left_low := left.Mantissa.Words[WORD_COUNT_MINIMUM]
+	right_low := right.Mantissa.Words[WORD_COUNT_MINIMUM]
+	low := left_low + right_low
+	carry := Word(0)
+	if low < left_low {
+		carry = Word(bits.CARRY_MAXIMUM)
+	}
+	left_high := left.Mantissa.Words[WORD_COUNT_INCREMENT]
+	right_high := right.Mantissa.Words[WORD_COUNT_INCREMENT]
+	high := left_high + right_high + carry
+	carry = ((left_high & right_high) | ((left_high | right_high) &^ high)) >>
+		WORD_BIT_INDEX_MAXIMUM
+	count := Word_Count(BASE_BINARY)
+	exponent := WORD_BIT_COUNT + int(bits.Bit_Size_64(bits.Word_64(high)))
+	if carry != 0 {
+		count++
+		exponent = BASE_BINARY*WORD_BIT_COUNT + WORD_COUNT_INCREMENT
+	}
+	precision := destination.Precision
+	if precision == FLOAT_PRECISION_MINIMUM {
+		precision = max(left.Precision, right.Precision)
+	}
+	if int(precision) < exponent {
+		return false
+	}
+	mantissa := &destination.Mantissa
+	previous_count := mantissa.Count
+	mantissa.Words[WORD_COUNT_MINIMUM] = low
+	mantissa.Words[WORD_COUNT_INCREMENT] = high
+	if carry != 0 {
+		mantissa.Words[BASE_BINARY] = carry
+	}
+	mantissa.Count, mantissa.Negative = count, POLARITY_NONNEGATIVE
+	destination.Precision, destination.Accuracy = precision, ACCURACY_EXACT
+	destination.Form, destination.Negative = FLOAT_FORM_FINITE, left.Negative
+	destination.Exponent = Float_Exponent(exponent)
+	if previous_count > count {
+		int_clear((*Int)(mantissa), count, previous_count)
+	}
+	return true
+}
+
+func float_subtract_exact_double_word(
+	references *Float_References,
+) (matched Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "float_subtract_exact_double_word.matched")
+	}()
+	Float_References_Invariants(references, "float_subtract_exact_double_word.references")
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	left := references[INT_REFERENCE_LEFT_INDEX]
+	right := references[INT_REFERENCE_RIGHT_INDEX]
+	if !float_exact_double_word_inputs(references) {
+		return false
+	}
+	precision := destination.Precision
+	if precision == FLOAT_PRECISION_MINIMUM {
+		precision = max(left.Precision, right.Precision)
+	}
+	maximum_exponent := max(left.Exponent, right.Exponent)
+	if precision < Float_Precision(maximum_exponent) {
+		return false
+	}
+	left_high := left.Mantissa.Words[WORD_COUNT_INCREMENT]
+	right_high := right.Mantissa.Words[WORD_COUNT_INCREMENT]
+	left_low := left.Mantissa.Words[WORD_COUNT_MINIMUM]
+	right_low := right.Mantissa.Words[WORD_COUNT_MINIMUM]
+	if left_high < right_high {
+		return false
+	}
+	if left_high == right_high {
+		if left_low <= right_low {
+			return false
+		}
+	}
+	low := left_low - right_low
+	borrow := Word(0)
+	if low > left_low {
+		borrow = Word(bits.CARRY_MAXIMUM)
+	}
+	high := left_high - right_high - borrow
+	mantissa := &destination.Mantissa
+	previous_count := mantissa.Count
+	mantissa.Words[WORD_COUNT_MINIMUM] = low
+	mantissa.Words[WORD_COUNT_INCREMENT] = high
+	mantissa.Count = Word_Count(WORD_COUNT_INCREMENT + WORD_COUNT_INCREMENT)
+	if high == 0 {
+		mantissa.Count = Word_Count(WORD_COUNT_INCREMENT)
+	}
+	mantissa.Negative = POLARITY_NONNEGATIVE
+	destination.Precision, destination.Accuracy = precision, ACCURACY_EXACT
+	destination.Form, destination.Negative = FLOAT_FORM_FINITE, POLARITY_NONNEGATIVE
+	result_high := mantissa.Words[mantissa.Count-Word_Count(WORD_COUNT_INCREMENT)]
+	destination.Exponent = Float_Exponent(
+		(int(mantissa.Count)-WORD_COUNT_INCREMENT)*WORD_BIT_COUNT +
+			int(bits.Bit_Size_64(bits.Word_64(result_high))),
+	)
+	if previous_count > mantissa.Count {
+		int_clear((*Int)(mantissa), mantissa.Count, previous_count)
+	}
+	return true
+}
+
+func float_exact_double_word_inputs(
+	references *Float_References,
+) (matched Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "float_exact_double_word_inputs.matched")
+	}()
+	Float_References_Invariants(
+		references, "float_exact_double_word_inputs.references",
+	)
+	left := references[INT_REFERENCE_LEFT_INDEX]
+	right := references[INT_REFERENCE_RIGHT_INDEX]
+	left_bit_index := int(left.Exponent) - WORD_BIT_COUNT - WORD_COUNT_INCREMENT
+	right_bit_index := int(right.Exponent) - WORD_BIT_COUNT - WORD_COUNT_INCREMENT
+	if uint(left_bit_index) >= uint(WORD_BIT_COUNT) {
+		return false
+	}
+	if uint(right_bit_index) >= uint(WORD_BIT_COUNT) {
+		return false
+	}
+	left_minimum := Word(bits.CARRY_MAXIMUM) << uint(left_bit_index)
+	right_minimum := Word(bits.CARRY_MAXIMUM) << uint(right_bit_index)
+	left_high := left.Mantissa.Words[WORD_COUNT_INCREMENT]
+	right_high := right.Mantissa.Words[WORD_COUNT_INCREMENT]
+	if left_high&left_minimum == 0 {
+		return false
+	}
+	if right_high&right_minimum == 0 {
+		return false
+	}
+	if left_bit_index < WORD_BIT_INDEX_MAXIMUM {
+		if left_high >= left_minimum<<WORD_COUNT_INCREMENT {
+			return false
+		}
+	}
+	if right_bit_index < WORD_BIT_INDEX_MAXIMUM {
+		if right_high >= right_minimum<<WORD_COUNT_INCREMENT {
+			return false
+		}
+	}
+	return true
+}
+
+func float_accuracy(increment Boolean, negative Polarity) (accuracy Inexact_Accuracy) {
+	defer func() {
+		Inexact_Accuracy_Invariants(accuracy, "float_accuracy_internal.accuracy")
+	}()
+	Boolean_Invariants(increment, "float_accuracy_internal.increment")
+	Polarity_Invariants(negative, "float_accuracy_internal.negative")
+	if increment == Boolean(negative == POLARITY_NEGATIVE) {
+		return Inexact_Accuracy(ACCURACY_BELOW)
+	}
+	return Inexact_Accuracy(ACCURACY_ABOVE)
+}
+
+func float_multiply_exact_double_word(
+	references *Float_References, workspace *Float_Multiplication_Workspace,
+) (matched Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "float_multiply_exact_double_word.matched")
+	}()
+	Float_References_Invariants(references, "float_multiply_exact_double_word.references")
+	Float_Multiplication_Workspace_Invariants(
+		workspace, "float_multiply_exact_double_word.workspace",
+	)
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	left := (*Float_Finite)(references[INT_REFERENCE_LEFT_INDEX])
+	right := (*Float_Finite)(references[INT_REFERENCE_RIGHT_INDEX])
+	left_bit_index := int(left.Exponent) - WORD_BIT_COUNT - WORD_COUNT_INCREMENT
+	right_bit_index := int(right.Exponent) - WORD_BIT_COUNT - WORD_COUNT_INCREMENT
+	if uint(left_bit_index) >= uint(WORD_BIT_COUNT) {
+		return false
+	}
+	if uint(right_bit_index) >= uint(WORD_BIT_COUNT) {
+		return false
+	}
+	left_minimum := Word(bits.CARRY_MAXIMUM) << uint(left_bit_index)
+	right_minimum := Word(bits.CARRY_MAXIMUM) << uint(right_bit_index)
+	left_high := left.Mantissa.Words[WORD_COUNT_INCREMENT]
+	right_high := right.Mantissa.Words[WORD_COUNT_INCREMENT]
+	if left_high&left_minimum == 0 {
+		return false
+	}
+	if right_high&right_minimum == 0 {
+		return false
+	}
+	if left_bit_index < WORD_BIT_INDEX_MAXIMUM {
+		if left_high >= left_minimum<<WORD_COUNT_INCREMENT {
+			return false
+		}
+	}
+	if right_bit_index < WORD_BIT_INDEX_MAXIMUM {
+		if right_high >= right_minimum<<WORD_COUNT_INCREMENT {
+			return false
+		}
+	}
+	float_multiply_double_words(references, workspace)
+	bit_count := int(left.Exponent) + int(right.Exponent) - WORD_COUNT_INCREMENT
+	upper_bit_index := bit_count
+	upper_word := workspace.Result[upper_bit_index/WORD_BIT_COUNT]
+	if upper_word>>uint(upper_bit_index%WORD_BIT_COUNT)&1 != 0 {
+		bit_count++
+	}
+	precision := Float_Active_Precision(destination.Precision)
+	if bit_count > int(precision) {
+		if int(precision)%WORD_BIT_COUNT == BIT_COUNT_MINIMUM {
+			// No failure remains. Staging avoids repeated scalar validation.
+			destination.Exponent = Float_Exponent(bit_count)
+			destination.Negative = Polarity(
+				uint8(left.Negative) ^ uint8(right.Negative),
+			)
+			float_set_aligned_double_word_product(references, workspace)
+			return true
+		}
+	}
+	negative := Polarity(uint8(left.Negative) ^ uint8(right.Negative))
+	float_set_addition_mantissa(
+		destination, (*Float_Addition_Workspace)(workspace),
+		Float_Addition_Bit_Count(bit_count), Float_Exponent(bit_count),
+		negative, precision, destination.Mode,
+	)
+	return true
+}
+
+func float_multiply_double_words(
+	references *Float_References, workspace *Float_Multiplication_Workspace,
+) {
+	Float_References_Invariants(references, "float_multiply_double_words.references")
+	Float_Multiplication_Workspace_Invariants(
+		workspace, "float_multiply_double_words.workspace",
+	)
+	left := references[INT_REFERENCE_LEFT_INDEX]
+	right := references[INT_REFERENCE_RIGHT_INDEX]
+	result_count := BASE_BINARY * BASE_BINARY
+	for index := WORD_COUNT_MINIMUM; index < result_count; index++ {
+		workspace.Result[index] = 0
+	}
+	word_mask := uint64(bits.WORD_32_MAXIMUM)
+	for right_offset := WORD_COUNT_MINIMUM; right_offset < BASE_BINARY; right_offset++ {
+		right_word := uint64(right.Mantissa.Words[right_offset])
+		carry := Word(0)
+		for left_offset := WORD_COUNT_MINIMUM; left_offset < BASE_BINARY; left_offset++ {
+			position := right_offset
+			position += left_offset
+			left_word := uint64(left.Mantissa.Words[left_offset])
+			partial := (left_word & word_mask) * (right_word & word_mask)
+			middle_first := (left_word>>bits.BIT_COUNT_32_MAXIMUM)*
+				(right_word&word_mask) + partial>>bits.BIT_COUNT_32_MAXIMUM
+			middle_second := (left_word & word_mask) *
+				(right_word >> bits.BIT_COUNT_32_MAXIMUM)
+			middle_second += middle_first & word_mask
+			high := Word(
+				(left_word>>bits.BIT_COUNT_32_MAXIMUM)*
+					(right_word>>bits.BIT_COUNT_32_MAXIMUM) +
+					middle_first>>bits.BIT_COUNT_32_MAXIMUM +
+					middle_second>>bits.BIT_COUNT_32_MAXIMUM,
+			)
+			low := Word(left_word * right_word)
+			low_sum := low + workspace.Result[position]
+			stored_carry := Word(0)
+			if low_sum < low {
+				stored_carry = Word(bits.CARRY_MAXIMUM)
+			}
+			word := low_sum + carry
+			carry_output := Word(0)
+			if word < low_sum {
+				carry_output = Word(bits.CARRY_MAXIMUM)
+			}
+			workspace.Result[position] = word
+			carry = high + stored_carry + carry_output
+		}
+		if carry != 0 {
+			position := right_offset
+			position += BASE_BINARY
+			workspace.Result[position] = carry
+		}
+	}
+}
+
+func float_set_aligned_double_word_product(
+	references *Float_References, workspace *Float_Multiplication_Workspace,
+) {
+	Float_References_Invariants(references, "float_set_aligned_double_word_product.references")
+	Float_Multiplication_Workspace_Invariants(
+		workspace, "float_set_aligned_double_word_product.workspace",
+	)
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	precision := Float_Active_Precision(destination.Precision)
+	discard_count := int(destination.Exponent) - int(precision)
+	mantissa_count := int(precision) / WORD_BIT_COUNT
+	previous_count := destination.Mantissa.Count
+	for index := WORD_COUNT_MINIMUM; index < mantissa_count; index++ {
+		source_bit := discard_count + index*WORD_BIT_COUNT
+		source_index := source_bit / WORD_BIT_COUNT
+		source_shift := uint(source_bit % WORD_BIT_COUNT)
+		word := workspace.Result[source_index] >> source_shift
+		if source_shift != 0 {
+			word |= workspace.Result[source_index+WORD_COUNT_INCREMENT] <<
+				(WORD_BIT_COUNT - source_shift)
+		}
+		destination.Mantissa.Words[index] = word
+	}
+	rounding_index := discard_count - WORD_COUNT_INCREMENT
+	rounding_word := rounding_index / WORD_BIT_COUNT
+	rounding_shift := uint(rounding_index % WORD_BIT_COUNT)
+	rounding_bit := Bit_Value(workspace.Result[rounding_word] >> rounding_shift & 1)
+	sticky_bit := BIT_CLEAR
+	for index := WORD_COUNT_MINIMUM; index < rounding_word; index++ {
+		if workspace.Result[index] != 0 {
+			sticky_bit = BIT_SET
+		}
+	}
+	if rounding_shift != 0 {
+		mask := Word(bits.WORD_64_MAXIMUM) >> (WORD_BIT_COUNT - rounding_shift)
+		if workspace.Result[rounding_word]&mask != 0 {
+			sticky_bit = BIT_SET
+		}
+	}
+	mantissa := (*Float_Active_Mantissa)(&destination.Mantissa)
+	mantissa.Count, mantissa.Negative = Word_Count(mantissa_count), POLARITY_NONNEGATIVE
+	increment := Boolean(false)
+	if destination.Mode == Rounding_Mode(ROUND_TO_NEAREST_EVEN) {
+		if rounding_bit != BIT_CLEAR {
+			if sticky_bit != BIT_CLEAR {
+				increment = true
+			} else if mantissa.Words[WORD_COUNT_MINIMUM]&1 != 0 {
+				increment = true
+			}
+		}
+	} else {
+		increment = float_rounding_increment(
+			destination.Mode, destination.Negative, rounding_bit, sticky_bit,
+			Bit_Value(mantissa.Words[WORD_COUNT_MINIMUM]&1),
+		)
+	}
+	accuracy := ACCURACY_EXACT
+	if rounding_bit|sticky_bit != BIT_CLEAR {
+		accuracy = ACCURACY_ABOVE
+		if increment == Boolean(destination.Negative == POLARITY_NEGATIVE) {
+			accuracy = ACCURACY_BELOW
+		}
+	}
+	if increment {
+		float_increment_mantissa(mantissa, precision, &destination.Exponent)
+	}
+	destination.Accuracy, destination.Form = accuracy, FLOAT_FORM_FINITE
+	if previous_count > mantissa.Count {
+		int_clear((*Int)(&destination.Mantissa), mantissa.Count, previous_count)
+	}
+}
+
+func float_subtract_general(
+	destination *Float, left *Float, right *Float, workspace *Float_Addition_Workspace,
+) (status Validation_Status) {
+	defer func() { Validation_Status_Invariants(status, "float_subtract_general.status") }()
+	Float_Invariants(destination, "float_subtract_general.destination_initial")
+	Float_Invariants(left, "float_subtract_general.left")
+	Float_Invariants(right, "float_subtract_general.right")
+	Float_Addition_Workspace_Invariants(workspace, "float_subtract_general.workspace")
+	return float_add_with_right_polarity(
+		destination, left, right, POLARITY_NEGATIVE-right.Negative, workspace,
+	)
+}
+
+func float_add_with_right_polarity(
+	destination *Float, left *Float, right *Float, right_negative Polarity,
+	workspace *Float_Addition_Workspace,
+) (status Validation_Status) {
+	defer func() {
+		Validation_Status_Invariants(status, "float_add_with_right_polarity.status")
+	}()
+	Float_Invariants(destination, "float_add_with_right_polarity.destination_initial")
+	Float_Invariants(left, "float_add_with_right_polarity.left")
+	Float_Invariants(right, "float_add_with_right_polarity.right")
+	Polarity_Invariants(right_negative, "float_add_with_right_polarity.right_negative")
+	Float_Addition_Workspace_Invariants(
+		workspace, "float_add_with_right_polarity.workspace",
+	)
+	precision := float_add_precision(
+		destination.Precision, left.Precision, right.Precision,
+	)
+	mode := destination.Mode
+	if left.Form == FLOAT_FORM_FINITE {
+		if right.Form == FLOAT_FORM_FINITE {
+			float_add_finite_polarity(
+				destination, (*Float_Finite)(left), (*Float_Finite)(right),
+				workspace,
+				Float_Active_Precision(precision), mode, right_negative,
+			)
+			return STATUS_OK
+		}
+	}
+	return float_add_nonfinite(
+		destination, left, right, right_negative, precision, mode,
+	)
+}
+
+func float_add_nonfinite(
+	destination *Float, left *Float, right *Float, right_negative Polarity,
+	precision Float_Precision, mode Rounding_Mode,
+) (status Validation_Status) {
+	defer func() { Validation_Status_Invariants(status, "float_add_nonfinite.status") }()
+	Float_Invariants(destination, "float_add_nonfinite.destination_initial")
+	Float_Invariants(left, "float_add_nonfinite.left")
+	Float_Invariants(right, "float_add_nonfinite.right")
+	Polarity_Invariants(right_negative, "float_add_nonfinite.right_negative")
+	Float_Precision_Invariants(precision, "float_add_nonfinite.precision")
+	Rounding_Mode_Invariants(mode, "float_add_nonfinite.mode")
+	if left.Form == FLOAT_FORM_ZERO {
+		if right.Form == FLOAT_FORM_ZERO {
+			negative := left.Negative
+			if negative != right_negative {
+				negative = float_zero_polarity(mode)
+			}
+			float_set_nonfinite(
+				destination, Float_Nonfinite_Form(FLOAT_FORM_ZERO), negative,
+				precision,
+			)
+			return STATUS_OK
+		}
+		if right.Form == FLOAT_FORM_INFINITY {
+			float_set_nonfinite(
+				destination, Float_Nonfinite_Form(FLOAT_FORM_INFINITY),
+				right_negative, precision,
+			)
+			return STATUS_OK
+		}
+		float_set_magnitude(
+			destination, &right.Mantissa, right.Exponent, right_negative,
+			Float_Active_Precision(precision), mode,
+		)
+		return STATUS_OK
+	}
+	if right.Form == FLOAT_FORM_ZERO {
+		float_set_operation_operand(destination, left, precision, mode)
+		return STATUS_OK
+	}
+	if left.Form == FLOAT_FORM_INFINITY {
+		if right.Form == FLOAT_FORM_INFINITY {
+			if left.Negative != right_negative {
+				return STATUS_INPUT_INVALID
+			}
+		}
+		float_set_nonfinite(
+			destination, Float_Nonfinite_Form(FLOAT_FORM_INFINITY), left.Negative,
+			precision,
+		)
+		return STATUS_OK
+	}
+	float_set_nonfinite(
+		destination, Float_Nonfinite_Form(FLOAT_FORM_INFINITY), right_negative,
+		precision,
+	)
+	return STATUS_OK
+}
+
+func float_add_finite_polarity(
+	destination *Float, left *Float_Finite, right *Float_Finite,
+	workspace *Float_Addition_Workspace, precision Float_Active_Precision,
+	mode Rounding_Mode, right_negative Polarity,
+) {
+	Float_Invariants(destination, "float_add_finite_polarity.destination_initial")
+	Float_Finite_Invariants(left, "float_add_finite_polarity.left")
+	Float_Finite_Invariants(right, "float_add_finite_polarity.right")
+	Float_Addition_Workspace_Invariants(
+		workspace, "float_add_finite_polarity.workspace",
+	)
+	Float_Active_Precision_Invariants(precision, "float_add_finite_polarity.precision")
+	Rounding_Mode_Invariants(mode, "float_add_finite_polarity.mode")
+	Polarity_Invariants(right_negative, "float_add_finite_polarity.right_negative")
+	sum_word, result_exponent, exact := float_add_exact_words(
+		Float_Active_Word_Count(left.Mantissa.Count),
+		left.Mantissa.Words[WORD_COUNT_MINIMUM], left.Exponent, left.Negative,
+		Float_Active_Word_Count(right.Mantissa.Count),
+		right.Mantissa.Words[WORD_COUNT_MINIMUM], right.Exponent, right_negative,
+		Float_Active_Precision(precision),
+	)
+	if exact {
+		previous_count := destination.Mantissa.Count
+		destination.Precision = Float_Precision(precision)
+		destination.Accuracy = ACCURACY_EXACT
+		destination.Form = FLOAT_FORM_FINITE
+		destination.Negative = left.Negative
+		destination.Mantissa.Negative, destination.Mantissa.Count =
+			POLARITY_NONNEGATIVE, Word_Count(WORD_COUNT_INCREMENT)
+		destination.Mantissa.Words[WORD_COUNT_MINIMUM] = Word(sum_word)
+		destination.Exponent = Float_Exponent(result_exponent)
+		if previous_count > destination.Mantissa.Count {
+			int_clear(
+				(*Int)(&destination.Mantissa), destination.Mantissa.Count,
+				previous_count,
+			)
+		}
+		return
+	}
+	float_add_finite(
+		destination, left, right, workspace, precision, mode, right_negative,
+	)
+}
+
+func float_add_exact_words(
+	left_count Float_Active_Word_Count, left_word Word,
+	left_exponent Float_Exponent, left_negative Polarity,
+	right_count Float_Active_Word_Count, right_word Word,
+	right_exponent Float_Exponent, right_negative Polarity,
+	precision Float_Active_Precision,
+) (sum Float_Add_Exact_Sum, exponent Float_Add_Exact_Exponent, matched Boolean) {
+	defer func() {
+		Float_Add_Exact_Sum_Invariants(sum, "float_add_exact_words.sum")
+		Float_Add_Exact_Exponent_Invariants(exponent, "float_add_exact_words.exponent")
+		Boolean_Invariants(matched, "float_add_exact_words.matched")
+	}()
+	Float_Active_Word_Count_Invariants(left_count, "float_add_exact_words.left_count")
+	Word_Invariants(left_word, "float_add_exact_words.left_word")
+	Float_Exponent_Invariants(left_exponent, "float_add_exact_words.left_exponent")
+	Polarity_Invariants(left_negative, "float_add_exact_words.left_negative")
+	Float_Active_Word_Count_Invariants(right_count, "float_add_exact_words.right_count")
+	Word_Invariants(right_word, "float_add_exact_words.right_word")
+	Float_Exponent_Invariants(right_exponent, "float_add_exact_words.right_exponent")
+	Polarity_Invariants(right_negative, "float_add_exact_words.right_negative")
+	Float_Active_Precision_Invariants(precision, "float_add_exact_words.precision")
+	if left_negative != right_negative {
+		return 0, 0, false
+	}
+	if left_count != Float_Active_Word_Count(WORD_COUNT_INCREMENT) {
+		return 0, 0, false
+	}
+	if right_count != Float_Active_Word_Count(WORD_COUNT_INCREMENT) {
+		return 0, 0, false
+	}
+	if !float_exact_word(Float_Active_Word(left_word), left_exponent) {
+		return 0, 0, false
+	}
+	if !float_exact_word(Float_Active_Word(right_word), right_exponent) {
+		return 0, 0, false
+	}
+	word_sum := left_word + right_word
+	if word_sum < left_word {
+		return 0, 0, false
+	}
+	result_exponent := left_exponent
+	if right_exponent > result_exponent {
+		result_exponent = right_exponent
+	}
+	if result_exponent < Float_Exponent(WORD_BIT_COUNT) {
+		if word_sum >= Word(bits.CARRY_MAXIMUM)<<uint(result_exponent) {
+			result_exponent++
+		}
+	}
+	if result_exponent > Float_Exponent(precision) {
+		return 0, 0, false
+	}
+	return Float_Add_Exact_Sum(word_sum), Float_Add_Exact_Exponent(result_exponent), true
+}
+
+func float_exact_word(word Float_Active_Word, exponent Float_Exponent) (exact Boolean) {
+	defer func() { Boolean_Invariants(exact, "float_exact_word.exact") }()
+	Float_Active_Word_Invariants(word, "float_exact_word.word")
+	Float_Exponent_Invariants(exponent, "float_exact_word.exponent")
+	if exponent < Float_Exponent(WORD_COUNT_INCREMENT) {
+		return false
+	}
+	if exponent > Float_Exponent(WORD_BIT_COUNT) {
+		return false
+	}
+	minimum := Float_Active_Word(bits.CARRY_MAXIMUM) << uint(
+		int(exponent)-WORD_COUNT_INCREMENT,
+	)
+	if word < minimum {
+		return false
+	}
+	if exponent == Float_Exponent(WORD_BIT_COUNT) {
+		return true
+	}
+	return Boolean(word < minimum<<WORD_COUNT_INCREMENT)
+}
+
 // FLOAT_RAT_NUMERATOR_INDEX stores the signed rational component as one float operand.
 const FLOAT_RAT_NUMERATOR_INDEX = RAT_NUMERATOR_INDEX
 
@@ -28,6 +3096,12 @@ const FLOAT_SQUARE_ROOT_GUARD_BIT_COUNT = WORD_COUNT_INCREMENT
 
 // FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT consumes one radix-four digit per root bit.
 const FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT = BASE_BINARY
+
+// FLOAT_SQUARE_ROOT_PAIR_COUNT follows every pattern in one radix-four digit.
+const FLOAT_SQUARE_ROOT_PAIR_COUNT = WORD_COUNT_INCREMENT << FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT
+
+// FLOAT_SQUARE_ROOT_PAIR_MAXIMUM is one complete radix-four source digit.
+const FLOAT_SQUARE_ROOT_PAIR_MAXIMUM = FLOAT_SQUARE_ROOT_PAIR_COUNT - WORD_COUNT_INCREMENT
 
 // FLOAT_SQUARE_ROOT_EXPONENT_MINIMUM halves the least finite source exponent.
 const FLOAT_SQUARE_ROOT_EXPONENT_MINIMUM = FLOAT_EXPONENT_MINIMUM / BASE_BINARY
@@ -560,6 +3634,10 @@ const FLOAT_GOB_EXPONENT_OFFSET = FLOAT_GOB_HEADER_SIZE
 // FLOAT_GOB_FINITE_PREFIX_SIZE includes finite exponent.
 const FLOAT_GOB_FINITE_PREFIX_SIZE = FLOAT_GOB_EXPONENT_OFFSET + FLOAT_GOB_FIELD_SIZE
 
+// FLOAT_GOB_FINITE_ENCODING_SIZE_MINIMUM includes one complete mantissa word.
+const FLOAT_GOB_FINITE_ENCODING_SIZE_MINIMUM = FLOAT_GOB_FINITE_PREFIX_SIZE +
+	BASE_BINARY*FLOAT_GOB_FIELD_SIZE
+
 // FLOAT_GOB_MANTISSA_OFFSET follows finite prefix.
 const FLOAT_GOB_MANTISSA_OFFSET = FLOAT_GOB_FINITE_PREFIX_SIZE
 
@@ -613,6 +3691,30 @@ func Float_Gob_Encoding_Unvalidated_Invariants(
 		Ensure()
 }
 
+// Float_Gob_Finite_Encoding holds one structurally complete finite payload.
+type Float_Gob_Finite_Encoding []byte
+
+// Float_Gob_Finite_Encoding_Invariants binds payload length and alignment after validation.
+func Float_Gob_Finite_Encoding_Invariants(
+	value Float_Gob_Finite_Encoding, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			len(value), FLOAT_GOB_FINITE_ENCODING_SIZE_MINIMUM,
+			FLOAT_GOB_SIZE_MAXIMUM,
+		).
+		Ensure()
+	invariant.Always(
+		(len(value)-FLOAT_GOB_MANTISSA_OFFSET)%WORD_BYTE_COUNT == WORD_COUNT_MINIMUM,
+		"A finite float gob payload holds complete mantissa words.",
+	)
+	high_bit_shift := bits.BIT_COUNT_8_MAXIMUM - WORD_COUNT_INCREMENT
+	invariant.Always(
+		value[FLOAT_GOB_MANTISSA_OFFSET]>>high_bit_shift == byte(bits.CARRY_MAXIMUM),
+		"A finite float gob payload has a normalized mantissa.",
+	)
+}
+
 // Float_Gob_Header_Encoding prevents short source reads after common header validation.
 type Float_Gob_Header_Encoding [FLOAT_GOB_HEADER_SIZE]byte
 
@@ -641,16 +3743,19 @@ func Float_Gob_Mantissa_Size_Invariants(
 		Ensure()
 }
 
-// Float_Gob_Exponent_Encoding prevents partial finite exponent reads.
-type Float_Gob_Exponent_Encoding [FLOAT_GOB_FIELD_SIZE]byte
+// Float_Gob_Aligned_Mantissa_Size excludes incomplete and absent mantissa words.
+type Float_Gob_Aligned_Mantissa_Size int
 
-// Float_Gob_Exponent_Encoding_Invariants fixes finite exponent field width.
-func Float_Gob_Exponent_Encoding_Invariants(
-	value Float_Gob_Exponent_Encoding, _ invariant.Namespace,
+// Float_Gob_Aligned_Mantissa_Size_Invariants binds one complete word-aligned payload.
+func Float_Gob_Aligned_Mantissa_Size_Invariants(
+	value Float_Gob_Aligned_Mantissa_Size, namespace invariant.Namespace,
 ) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), WORD_BYTE_COUNT, FLOAT_GOB_MANTISSA_SIZE_MAXIMUM).
+		Ensure()
 	invariant.Always(
-		len(value) == FLOAT_GOB_FIELD_SIZE,
-		"Float gob exponent has fixed wire width.",
+		int(value)%WORD_BYTE_COUNT == WORD_COUNT_MINIMUM,
+		"A validated float gob mantissa holds complete words.",
 	)
 }
 
@@ -677,6 +3782,80 @@ func Float_Gob_Header_Invariants(
 	Accuracy_Invariants(value.Accuracy, namespace)
 	Float_Form_Invariants(value.Form, namespace)
 	Polarity_Invariants(value.Negative, namespace)
+}
+
+// Float_Gob_Finite_Header excludes policy-free finite encodings before payload work.
+type Float_Gob_Finite_Header Float_Gob_Header
+
+// Float_Gob_Finite_Header_Invariants states the finite payload policy domain.
+func Float_Gob_Finite_Header_Invariants(
+	value Float_Gob_Finite_Header, namespace invariant.Namespace,
+) {
+	invariant.Tree(Float_Active_Precision(value.Precision), namespace).
+		Range_Uint(
+			uint(value.Precision), WORD_COUNT_INCREMENT, FLOAT_PRECISION_MAXIMUM,
+		).
+		Ensure()
+	invariant.Tree(Rounding_Mode(value.Mode), namespace).
+		Range_Uint8(
+			uint8(value.Mode), uint8(ROUND_TO_NEAREST_EVEN),
+			uint8(ROUND_TO_POSITIVE_INFINITY),
+		).
+		Ensure()
+	invariant.Tree(Accuracy(value.Accuracy), namespace).
+		Enum_3_Int8(
+			int8(value.Accuracy), int8(ACCURACY_BELOW), int8(ACCURACY_EXACT),
+			int8(ACCURACY_ABOVE),
+		).
+		Ensure()
+	invariant.Always(
+		value.Form == FLOAT_FORM_FINITE,
+		"A finite gob header owns a mantissa payload.",
+	)
+	invariant.Tree(Polarity(value.Negative), namespace).
+		Enum_Uint8(
+			uint8(value.Negative), uint8(POLARITY_NONNEGATIVE),
+			uint8(POLARITY_NEGATIVE),
+		).
+		Ensure()
+}
+
+// Float_Gob_Nonfinite_Header excludes the mantissa fields absent from zero and infinity.
+type Float_Gob_Nonfinite_Header Float_Gob_Header
+
+// Float_Gob_Nonfinite_Header_Invariants states complete zero and infinity wire policy.
+func Float_Gob_Nonfinite_Header_Invariants(
+	value Float_Gob_Nonfinite_Header, namespace invariant.Namespace,
+) {
+	invariant.Tree(Float_Precision(value.Precision), namespace).
+		Range_Uint(
+			uint(value.Precision), FLOAT_PRECISION_MINIMUM,
+			FLOAT_PRECISION_MAXIMUM,
+		).
+		Ensure()
+	invariant.Tree(Rounding_Mode(value.Mode), namespace).
+		Range_Uint8(
+			uint8(value.Mode), uint8(ROUND_TO_NEAREST_EVEN),
+			uint8(ROUND_TO_POSITIVE_INFINITY),
+		).
+		Ensure()
+	invariant.Tree(Accuracy(value.Accuracy), namespace).
+		Enum_3_Int8(
+			int8(value.Accuracy), int8(ACCURACY_BELOW), int8(ACCURACY_EXACT),
+			int8(ACCURACY_ABOVE),
+		).
+		Ensure()
+	invariant.Tree(Float_Form(value.Form), namespace).
+		Enum_Uint8(
+			uint8(value.Form), uint8(FLOAT_FORM_ZERO), uint8(FLOAT_FORM_INFINITY),
+		).
+		Ensure()
+	invariant.Tree(Polarity(value.Negative), namespace).
+		Enum_Uint8(
+			uint8(value.Negative), uint8(POLARITY_NONNEGATIVE),
+			uint8(POLARITY_NEGATIVE),
+		).
+		Ensure()
 }
 
 // Float_Gob_Mantissas keeps one Int without duplicating Int invariant chains.
@@ -1001,6 +4180,7 @@ func Modular_Square_Root_Modular_Memory_Invariants(
 		len(value.Integers) == MODULAR_INTEGER_COUNT,
 		"Modular square-root arithmetic owns complete modular integer state.",
 	)
+	Multiplication_Memory_Invariants(value.Multiplication, namespace)
 	Division_Memory_Invariants(value.Division, namespace)
 }
 
@@ -1297,6 +4477,119 @@ func Float_Square_Root_Source_Bit_Index_Invariants(
 		Ensure()
 }
 
+// Float_Square_Root_Active_Word_Count bounds precision-plus-guard scratch access.
+type Float_Square_Root_Active_Word_Count int
+
+// Float_Square_Root_Active_Word_Count_Invariants keeps one nonempty active prefix.
+func Float_Square_Root_Active_Word_Count_Invariants(
+	value Float_Square_Root_Active_Word_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), WORD_COUNT_INCREMENT, FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Float_Square_Root_Pair is one radix-four source digit.
+type Float_Square_Root_Pair Word
+
+// Float_Square_Root_Pair_Invariants admits every two-bit digit.
+func Float_Square_Root_Pair_Invariants(
+	value Float_Square_Root_Pair, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_4_Uint64(
+			uint64(value), uint64(BIT_CLEAR), uint64(BIT_SET),
+			uint64(BASE_BINARY),
+			uint64(FLOAT_SQUARE_ROOT_PAIR_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Float_Binary_Precision is one IEEE destination significand width.
+type Float_Binary_Precision uint
+
+// Float_Binary_Precision_Invariants admits binary32 through binary64 precision.
+func Float_Binary_Precision_Invariants(
+	value Float_Binary_Precision, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint(
+			uint(value), WORD_COUNT_INCREMENT, FLOAT_64_VALUE_MANTISSA_BIT_COUNT,
+		).
+		Ensure()
+}
+
+// Float_Binary_Source holds one finite value after IEEE range handling.
+type Float_Binary_Source [WORD_COUNT_INCREMENT]*Float_Finite
+
+// Float_Binary_Source_Invariants requires the one conversion source.
+func Float_Binary_Source_Invariants(value Float_Binary_Source, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == WORD_COUNT_INCREMENT,
+		"IEEE rounding owns one finite source.",
+	)
+	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "IEEE rounding source exists.")
+}
+
+// Float_Binary_Mantissa is one nonzero binary32-or-binary64 significand.
+type Float_Binary_Mantissa Word
+
+// Float_Binary_Mantissa_Invariants keeps reduction inside the wider IEEE significand.
+func Float_Binary_Mantissa_Invariants(
+	value Float_Binary_Mantissa, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), uint64(bits.CARRY_MAXIMUM),
+			FLOAT_64_VALUE_MANTISSA_MAXIMUM,
+		).
+		Ensure()
+}
+
+// FLOAT_BINARY_EXPONENT_MINIMUM follows the first value above handled tie underflow.
+const FLOAT_BINARY_EXPONENT_MINIMUM = FLOAT_64_SUBNORMAL_EXPONENT_MINIMUM +
+	WORD_COUNT_INCREMENT
+
+// FLOAT_BINARY_EXPONENT_MAXIMUM admits the one carry that rounds to infinity.
+const FLOAT_BINARY_EXPONENT_MAXIMUM = FLOAT_64_VALUE_BIT_COUNT_MAXIMUM +
+	WORD_COUNT_INCREMENT
+
+// Float_Binary_Exponent is one exponent after IEEE rounding can carry once.
+type Float_Binary_Exponent int
+
+// Float_Binary_Exponent_Invariants keeps handled underflow and one overflow carry.
+func Float_Binary_Exponent_Invariants(
+	value Float_Binary_Exponent, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), FLOAT_BINARY_EXPONENT_MINIMUM,
+			FLOAT_BINARY_EXPONENT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Float_Binary_Result is one scalar significand after IEEE nearest-even reduction.
+type Float_Binary_Result struct {
+	// Mantissa holds the normalized IEEE significand before field packing.
+	Mantissa Float_Binary_Mantissa
+	// Exponent holds the Float exponent paired with Mantissa.
+	Exponent Float_Binary_Exponent
+	// Accuracy reports which side of the source the packed value occupies.
+	Accuracy Accuracy
+}
+
+// Float_Binary_Result_Invariants keeps the scalar finite result normalized.
+func Float_Binary_Result_Invariants(
+	value Float_Binary_Result, namespace invariant.Namespace,
+) {
+	Float_Binary_Mantissa_Invariants(value.Mantissa, namespace)
+	Float_Binary_Exponent_Invariants(value.Exponent, namespace)
+	Accuracy_Invariants(value.Accuracy, namespace)
+}
+
 // Float_Square_Root_Exponent is the normalized exact root exponent before rounding.
 type Float_Square_Root_Exponent int
 
@@ -1510,8 +4803,13 @@ func Float_Gob_Encode_Into(
 		binary.Bytes(destination[FLOAT_GOB_EXPONENT_OFFSET:exponent_end_offset]),
 		binary.Word_32(uint32(int32(value.Exponent))), binary.BIG_ENDIAN,
 	)
+	destination_reference := Float_Gob_Encoding_Reference{&destination}
+	value_reference := Float_Reference{value}
+	if float_gob_encode_exact_double_word(&destination_reference, &value_reference) {
+		return mantissa_count, STATUS_OK
+	}
 	mantissa := &workspace.Mantissas[FLOAT_GOB_MANTISSA_INDEX]
-	*mantissa = Int(value.Mantissa)
+	Int_Set(mantissa, (*Int)(&value.Mantissa))
 	bit_count := int(Int_Bit_Count(mantissa))
 	aligned_bit_count := int(mantissa_count) * WORD_BIT_COUNT
 	shift := Shift_Count(aligned_bit_count - bit_count)
@@ -1554,98 +4852,197 @@ func Float_Gob_Decode(
 	if source[FLOAT_GOB_VERSION_OFFSET] != byte(FLOAT_GOB_VERSION) {
 		return STATUS_INPUT_INVALID
 	}
+	attributes := source[FLOAT_GOB_ATTRIBUTES_OFFSET]
+	form := Float_Form(attributes >> FLOAT_GOB_FORM_SHIFT & FLOAT_GOB_FORM_MASK)
+	if form == FLOAT_FORM_FINITE {
+		if len(source) < FLOAT_GOB_FINITE_ENCODING_SIZE_MINIMUM {
+			return STATUS_INPUT_INVALID
+		}
+		mantissa_size := Float_Gob_Mantissa_Size(len(source) - FLOAT_GOB_MANTISSA_OFFSET)
+		if int(mantissa_size)%WORD_BYTE_COUNT != WORD_COUNT_MINIMUM {
+			return STATUS_INPUT_INVALID
+		}
+		high_bit_shift := bits.BIT_COUNT_8_MAXIMUM - WORD_COUNT_INCREMENT
+		if source[FLOAT_GOB_MANTISSA_OFFSET]>>high_bit_shift != byte(bits.CARRY_MAXIMUM) {
+			return STATUS_INPUT_INVALID
+		}
+		return float_gob_decode_finite_encoding(
+			destination, Float_Gob_Finite_Encoding(source), workspace,
+			Float_Gob_Aligned_Mantissa_Size(mantissa_size),
+		)
+	}
 	var encoded_header Float_Gob_Header_Encoding
 	copy(encoded_header[:], source[:FLOAT_GOB_HEADER_SIZE])
 	header, validation := float_gob_decode_header(encoded_header)
 	if validation != STATUS_OK {
 		return STATUS_INPUT_INVALID
 	}
-	result := *destination
-	if float_gob_result_set(&result, header) != STATUS_OK {
-		return STATUS_INPUT_INVALID
-	}
-	if header.Form == FLOAT_FORM_FINITE {
-		mantissa_size := Float_Gob_Mantissa_Size(
-			len(source) - FLOAT_GOB_MANTISSA_OFFSET,
-		)
-		high_bit_shift := bits.BIT_COUNT_8_MAXIMUM - WORD_COUNT_INCREMENT
-		high_bit_set := Boolean(false)
-		if mantissa_size > Float_Gob_Mantissa_Size(WORD_COUNT_MINIMUM) {
-			high_bit_set = Boolean(
-				source[FLOAT_GOB_MANTISSA_OFFSET]>>high_bit_shift ==
-					byte(bits.CARRY_MAXIMUM),
-			)
-		}
-		structure_status := float_gob_mantissa_validate(mantissa_size, high_bit_set)
-		if structure_status != STATUS_OK {
-			return STATUS_INPUT_INVALID
-		}
-		var encoded_exponent Float_Gob_Exponent_Encoding
-		copy(encoded_exponent[:], source[FLOAT_GOB_EXPONENT_OFFSET:])
-		exponent, exponent_status := float_gob_decode_exponent(encoded_exponent)
-		if exponent_status != STATUS_OK {
-			return STATUS_INPUT_INVALID
-		}
-		mantissa := &workspace.Mantissas[FLOAT_GOB_MANTISSA_INDEX]
-		mantissa_status := Int_Set_Bytes(
-			mantissa, Bytes_Unvalidated(source[FLOAT_GOB_MANTISSA_OFFSET:]),
-		)
-		invariant.Always(
-			mantissa_status == Validation_Status(STATUS_OK),
-			"Validated wire bound leaves one complete mantissa.",
-		)
-		precision := Float_Active_Precision(result.Precision)
-		status = float_gob_decode_finite((*Float_Active_Mantissa)(mantissa), precision)
-		if status != STATUS_OK {
-			return status
-		}
-		result.Mantissa = Float_Mantissa(*mantissa)
-		result.Exponent = exponent
-	}
-	Float_Invariants(&result, "float_gob_decode.result")
-	float_gob_decode_commit(destination, &result)
+	float_gob_decode_nonfinite_commit(
+		destination, header,
+	)
 	return STATUS_OK
 }
 
-func float_gob_mantissa_validate(
-	size Float_Gob_Mantissa_Size, high_bit_set Boolean,
+func float_gob_decode_finite_encoding(
+	destination *Float,
+	source Float_Gob_Finite_Encoding,
+	workspace *Float_Gob_Workspace,
+	mantissa_size Float_Gob_Aligned_Mantissa_Size,
 ) (status Validation_Status) {
 	defer func() {
-		Validation_Status_Invariants(status, "float_gob_mantissa_validate.status")
+		Validation_Status_Invariants(status, "float_gob_decode_finite_encoding.status")
 	}()
-	Float_Gob_Mantissa_Size_Invariants(size, "float_gob_mantissa_validate.size")
-	Boolean_Invariants(high_bit_set, "float_gob_mantissa_validate.high_bit_set")
-	if int(size) < WORD_BYTE_COUNT {
+	Float_Invariants(destination, "float_gob_decode_finite_encoding.destination_initial")
+	Float_Gob_Finite_Encoding_Invariants(
+		source, "float_gob_decode_finite_encoding.source",
+	)
+	Float_Gob_Workspace_Invariants(
+		workspace, "float_gob_decode_finite_encoding.workspace",
+	)
+	Float_Gob_Aligned_Mantissa_Size_Invariants(
+		mantissa_size, "float_gob_decode_finite_encoding.size",
+	)
+	header, exponent, header_status := float_gob_decode_finite_header(source)
+	if header_status != STATUS_OK {
 		return STATUS_INPUT_INVALID
 	}
-	if int(size)%WORD_BYTE_COUNT != WORD_COUNT_MINIMUM {
-		return STATUS_INPUT_INVALID
+	mantissa_count := int(mantissa_size) / WORD_BYTE_COUNT
+	precision := Float_Active_Precision(header.Precision)
+	aligned_bit_count := Bit_Count(mantissa_count * WORD_BIT_COUNT)
+	if destination.Precision != header.Precision {
+		return float_gob_decode_finite_general(
+			destination, source, workspace, header, exponent, mantissa_size,
+		)
 	}
-	if !high_bit_set {
-		return STATUS_INPUT_INVALID
+	if aligned_bit_count > Bit_Count(precision) {
+		return float_gob_decode_finite_general(
+			destination, source, workspace, header, exponent, mantissa_size,
+		)
 	}
+	previous_count := destination.Mantissa.Count
+	for index := WORD_COUNT_MINIMUM; index < mantissa_count; index++ {
+		source_end := len(source) - index*WORD_BYTE_COUNT
+		source_start := source_end - WORD_BYTE_COUNT
+		word := Word(0)
+		for source_index := source_start; source_index < source_end; source_index++ {
+			word = word<<bits.BIT_COUNT_8_MAXIMUM | Word(source[source_index])
+		}
+		destination.Mantissa.Words[index] = word
+	}
+	destination.Accuracy, destination.Form = ACCURACY_EXACT, FLOAT_FORM_FINITE
+	destination.Negative, destination.Exponent = header.Negative, exponent
+	destination.Mantissa.Count = Word_Count(mantissa_count)
+	destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+	int_clear((*Int)(&destination.Mantissa), destination.Mantissa.Count, previous_count)
 	return STATUS_OK
 }
 
-func float_gob_decode_exponent(
-	encoded Float_Gob_Exponent_Encoding,
-) (exponent Float_Exponent, status Validation_Status) {
+func float_gob_decode_finite_general(
+	destination *Float,
+	source Float_Gob_Finite_Encoding,
+	workspace *Float_Gob_Workspace,
+	header Float_Gob_Finite_Header,
+	exponent Float_Exponent,
+	mantissa_size Float_Gob_Aligned_Mantissa_Size,
+) (status Validation_Status) {
 	defer func() {
-		Float_Exponent_Invariants(exponent, "float_gob_decode_exponent.exponent")
-		Validation_Status_Invariants(status, "float_gob_decode_exponent.status")
+		Validation_Status_Invariants(status, "float_gob_decode_finite_general.status")
 	}()
-	Float_Gob_Exponent_Encoding_Invariants(
-		encoded, "float_gob_decode_exponent.encoded",
+	Float_Invariants(destination, "float_gob_decode_finite_general.destination_initial")
+	Float_Gob_Finite_Encoding_Invariants(source, "float_gob_decode_finite_general.source")
+	Float_Gob_Workspace_Invariants(workspace, "float_gob_decode_finite_general.workspace")
+	Float_Gob_Finite_Header_Invariants(header, "float_gob_decode_finite_general.header")
+	Float_Exponent_Invariants(exponent, "float_gob_decode_finite_general.exponent")
+	Float_Gob_Aligned_Mantissa_Size_Invariants(
+		mantissa_size, "float_gob_decode_finite_general.size",
 	)
-	value := binary.Uint_32(binary.Bytes(encoded[:]), binary.BIG_ENDIAN)
-	return Float_Exponent_Validate(Float_Exponent_Unvalidated(int32(value)))
+	mantissa := &workspace.Mantissas[FLOAT_GOB_MANTISSA_INDEX]
+	mantissa_count := int(mantissa_size) / WORD_BYTE_COUNT
+	previous_count := mantissa.Count
+	for index := WORD_COUNT_MINIMUM; index < mantissa_count; index++ {
+		source_end := len(source) - index*WORD_BYTE_COUNT
+		source_start := source_end - WORD_BYTE_COUNT
+		word := Word(0)
+		for source_index := source_start; source_index < source_end; source_index++ {
+			word = word<<bits.BIT_COUNT_8_MAXIMUM | Word(source[source_index])
+		}
+		mantissa.Words[index] = word
+	}
+	mantissa.Count = Word_Count(mantissa_count)
+	mantissa.Negative = POLARITY_NONNEGATIVE
+	int_clear(mantissa, mantissa.Count, previous_count)
+	precision := Float_Active_Precision(header.Precision)
+	status = float_gob_decode_finite((*Float_Active_Mantissa)(mantissa), precision)
+	if status != STATUS_OK {
+		return status
+	}
+	float_gob_decode_finite_commit(
+		destination, header, exponent, (*Float_Active_Mantissa)(mantissa),
+	)
+	return STATUS_OK
+}
+
+func float_gob_decode_finite_header(
+	source Float_Gob_Finite_Encoding,
+) (header Float_Gob_Finite_Header, exponent Float_Exponent, status Validation_Status) {
+	defer func() {
+		Float_Gob_Finite_Header_Invariants(header, "float_gob_decode_finite_header.header")
+		Float_Exponent_Invariants(exponent, "float_gob_decode_finite_header.exponent")
+		Validation_Status_Invariants(status, "float_gob_decode_finite_header.status")
+	}()
+	Float_Gob_Finite_Encoding_Invariants(source, "float_gob_decode_finite_header.source")
+	header.Precision = Float_Precision(WORD_COUNT_INCREMENT)
+	header.Form = FLOAT_FORM_FINITE
+	attributes := source[FLOAT_GOB_ATTRIBUTES_OFFSET]
+	mode := Rounding_Mode(attributes >> FLOAT_GOB_MODE_SHIFT & FLOAT_GOB_MODE_MASK)
+	if mode > Rounding_Mode(ROUND_TO_POSITIVE_INFINITY) {
+		return header, exponent, STATUS_INPUT_INVALID
+	}
+	accuracy := Accuracy(int8(attributes>>FLOAT_GOB_ACCURACY_SHIFT&
+		FLOAT_GOB_ACCURACY_MASK) - int8(WORD_COUNT_INCREMENT))
+	if accuracy < ACCURACY_BELOW {
+		return header, exponent, STATUS_INPUT_INVALID
+	}
+	if accuracy > ACCURACY_ABOVE {
+		return header, exponent, STATUS_INPUT_INVALID
+	}
+	precision_end_offset := FLOAT_GOB_PRECISION_OFFSET + FLOAT_GOB_FIELD_SIZE
+	precision_value := binary.Word_32(0)
+	for index := FLOAT_GOB_PRECISION_OFFSET; index < precision_end_offset; index++ {
+		precision_value = precision_value<<bits.BIT_COUNT_8_MAXIMUM |
+			binary.Word_32(source[index])
+	}
+	if precision_value == binary.Word_32(FLOAT_PRECISION_MINIMUM) {
+		return header, exponent, STATUS_INPUT_INVALID
+	}
+	if precision_value > binary.Word_32(FLOAT_PRECISION_MAXIMUM) {
+		return header, exponent, STATUS_INPUT_INVALID
+	}
+	exponent_end_offset := FLOAT_GOB_EXPONENT_OFFSET + FLOAT_GOB_FIELD_SIZE
+	encoded_exponent := binary.Word_32(0)
+	for index := FLOAT_GOB_EXPONENT_OFFSET; index < exponent_end_offset; index++ {
+		encoded_exponent = encoded_exponent<<bits.BIT_COUNT_8_MAXIMUM |
+			binary.Word_32(source[index])
+	}
+	exponent_value := int32(encoded_exponent)
+	if int(exponent_value) < FLOAT_EXPONENT_MINIMUM {
+		return header, exponent, STATUS_INPUT_INVALID
+	}
+	if int(exponent_value) > FLOAT_EXPONENT_MAXIMUM {
+		return header, exponent, STATUS_INPUT_INVALID
+	}
+	header = Float_Gob_Finite_Header{
+		Precision: Float_Precision(precision_value), Mode: mode, Accuracy: accuracy,
+		Form: FLOAT_FORM_FINITE, Negative: Polarity(attributes & FLOAT_GOB_NEGATIVE_MASK),
+	}
+	return header, Float_Exponent(exponent_value), STATUS_OK
 }
 
 func float_gob_decode_header(
 	encoded Float_Gob_Header_Encoding,
-) (header Float_Gob_Header, status Validation_Status) {
+) (header Float_Gob_Nonfinite_Header, status Validation_Status) {
 	defer func() {
-		Float_Gob_Header_Invariants(header, "float_gob_decode_header.header")
+		Float_Gob_Nonfinite_Header_Invariants(header, "float_gob_decode_header.header")
 		Validation_Status_Invariants(status, "float_gob_decode_header.status")
 	}()
 	Float_Gob_Header_Encoding_Invariants(
@@ -1655,19 +5052,22 @@ func float_gob_decode_header(
 	mode_value := attributes >> FLOAT_GOB_MODE_SHIFT & FLOAT_GOB_MODE_MASK
 	mode, validation := Rounding_Mode_Validate(Rounding_Mode_Unvalidated(mode_value))
 	if validation != STATUS_OK {
-		return Float_Gob_Header{}, STATUS_INPUT_INVALID
+		return Float_Gob_Nonfinite_Header{}, STATUS_INPUT_INVALID
 	}
 	accuracy_value := int8(attributes>>FLOAT_GOB_ACCURACY_SHIFT&
 		FLOAT_GOB_ACCURACY_MASK) - int8(WORD_COUNT_INCREMENT)
 	if accuracy_value < int8(ACCURACY_BELOW) {
-		return Float_Gob_Header{}, STATUS_INPUT_INVALID
+		return Float_Gob_Nonfinite_Header{}, STATUS_INPUT_INVALID
 	}
 	if accuracy_value > int8(ACCURACY_ABOVE) {
-		return Float_Gob_Header{}, STATUS_INPUT_INVALID
+		return Float_Gob_Nonfinite_Header{}, STATUS_INPUT_INVALID
 	}
 	form := Float_Form(attributes >> FLOAT_GOB_FORM_SHIFT & FLOAT_GOB_FORM_MASK)
+	if form == FLOAT_FORM_FINITE {
+		return Float_Gob_Nonfinite_Header{}, STATUS_INPUT_INVALID
+	}
 	if form > FLOAT_FORM_INFINITY {
-		return Float_Gob_Header{}, STATUS_INPUT_INVALID
+		return Float_Gob_Nonfinite_Header{}, STATUS_INPUT_INVALID
 	}
 	precision_end_offset := FLOAT_GOB_PRECISION_OFFSET + FLOAT_GOB_FIELD_SIZE
 	precision_value := binary.Uint_32(
@@ -1675,15 +5075,15 @@ func float_gob_decode_header(
 		binary.BIG_ENDIAN,
 	)
 	if uint32(precision_value) > uint32(FLOAT_PRECISION_UNVALIDATED_MAXIMUM) {
-		return Float_Gob_Header{}, STATUS_INPUT_INVALID
+		return Float_Gob_Nonfinite_Header{}, STATUS_INPUT_INVALID
 	}
 	precision, validation := Float_Precision_Validate(
 		Float_Precision_Unvalidated(precision_value),
 	)
 	if validation != STATUS_OK {
-		return Float_Gob_Header{}, STATUS_INPUT_INVALID
+		return Float_Gob_Nonfinite_Header{}, STATUS_INPUT_INVALID
 	}
-	return Float_Gob_Header{
+	return Float_Gob_Nonfinite_Header{
 		Precision: precision,
 		Mode:      mode,
 		Accuracy:  Accuracy(accuracy_value),
@@ -1692,47 +5092,70 @@ func float_gob_decode_header(
 	}, STATUS_OK
 }
 
-func float_gob_result_set(
-	result *Float, header Float_Gob_Header,
-) (status Validation_Status) {
-	defer func() {
-		Validation_Status_Invariants(status, "float_gob_result_set.status")
-	}()
-	Float_Invariants(result, "float_gob_result_set.result_initial")
-	Float_Gob_Header_Invariants(header, "float_gob_result_set.header")
-	if header.Form == FLOAT_FORM_FINITE {
-		if header.Precision == FLOAT_PRECISION_MINIMUM {
-			return STATUS_INPUT_INVALID
-		}
+func float_gob_decode_nonfinite_commit(
+	destination *Float, header Float_Gob_Nonfinite_Header,
+) {
+	Float_Invariants(destination, "float_gob_decode_nonfinite_commit.destination_initial")
+	Float_Gob_Nonfinite_Header_Invariants(
+		header, "float_gob_decode_nonfinite_commit.header",
+	)
+	precision, mode, accuracy := header.Precision, header.Mode, header.Accuracy
+	if destination.Precision != FLOAT_PRECISION_MINIMUM {
+		precision, mode, accuracy = destination.Precision, destination.Mode, ACCURACY_EXACT
 	}
-	next := Float{
-		Precision: header.Precision,
-		Mode:      header.Mode,
-		Accuracy:  header.Accuracy,
-		Form:      header.Form,
-		Negative:  header.Negative,
-	}
-	if header.Form == FLOAT_FORM_FINITE {
-		Int_Set_Uint_64((*Int)(&next.Mantissa), Word_64(WORD_COUNT_INCREMENT))
-	}
-	*result = next
-	return STATUS_OK
+	previous_count := destination.Mantissa.Count
+	destination.Precision, destination.Mode = precision, mode
+	destination.Accuracy, destination.Form = accuracy, header.Form
+	destination.Negative, destination.Exponent = header.Negative, FLOAT_EXPONENT_ZERO
+	int_zero((*Int)(&destination.Mantissa), previous_count)
 }
 
-func float_gob_decode_commit(destination *Float, result *Float) {
-	Float_Invariants(destination, "float_gob_decode_commit.destination_initial")
-	Float_Invariants(result, "float_gob_decode_commit.result")
+func float_gob_decode_finite_commit(
+	destination *Float,
+	header Float_Gob_Finite_Header,
+	exponent Float_Exponent,
+	mantissa *Float_Active_Mantissa,
+) {
+	Float_Invariants(destination, "float_gob_decode_finite_commit.destination_initial")
+	Float_Gob_Finite_Header_Invariants(
+		header, "float_gob_decode_finite_commit.header",
+	)
+	Float_Exponent_Invariants(exponent, "float_gob_decode_finite_commit.exponent")
+	Float_Active_Mantissa_Invariants(
+		*mantissa, "float_gob_decode_finite_commit.mantissa",
+	)
+	precision, mode, accuracy := header.Precision, header.Mode, header.Accuracy
 	if destination.Precision != FLOAT_PRECISION_MINIMUM {
-		result.Mode = destination.Mode
-		validation := Float_Set_Precision(
-			result, Float_Precision_Unvalidated(destination.Precision),
-		)
-		invariant.Always(
-			validation == Validation_Status(STATUS_OK),
-			"Stored destination precision is already validated.",
-		)
+		precision, mode, accuracy = destination.Precision, destination.Mode, ACCURACY_EXACT
+		if Float_Precision(Int_Bit_Count((*Int)(mantissa))) > precision {
+			result := Float{
+				Precision: header.Precision, Mode: mode, Accuracy: header.Accuracy,
+				Form: FLOAT_FORM_FINITE, Negative: header.Negative,
+				Mantissa: Float_Mantissa(*mantissa), Exponent: exponent,
+			}
+			validation := Float_Set_Precision(
+				&result, Float_Precision_Unvalidated(precision),
+			)
+			invariant.Always(
+				validation == Validation_Status(STATUS_OK),
+				"Decoded precision came from validated receiver policy.",
+			)
+			float_copy_exact(destination, &result)
+			return
+		}
 	}
-	*destination = *result
+	previous_count := destination.Mantissa.Count
+	destination.Precision, destination.Mode = precision, mode
+	destination.Accuracy, destination.Form = accuracy, FLOAT_FORM_FINITE
+	destination.Negative, destination.Exponent = header.Negative, exponent
+	for index := Word_Count(WORD_COUNT_MINIMUM); index < mantissa.Count; index++ {
+		destination.Mantissa.Words[index] = mantissa.Words[index]
+	}
+	destination.Mantissa.Count = mantissa.Count
+	destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+	if previous_count > mantissa.Count {
+		int_clear((*Int)(&destination.Mantissa), mantissa.Count, previous_count)
+	}
 }
 
 func float_gob_decode_finite(
@@ -1747,6 +5170,10 @@ func float_gob_decode_finite(
 	Float_Active_Mantissa_Invariants(*mantissa, "float_gob_decode_finite.mantissa")
 	Float_Active_Precision_Invariants(precision, "float_gob_decode_finite.precision")
 	integer := (*Int)(mantissa)
+	aligned_bit_count := Bit_Count(int(integer.Count) * WORD_BIT_COUNT)
+	if aligned_bit_count <= Bit_Count(precision) {
+		return STATUS_OK
+	}
 	zero_count := Int_Trailing_Zero_Bit_Count(integer)
 	Int_Shift_Right(integer, integer, Shift_Count(zero_count))
 	if Int_Bit_Count(integer) > Bit_Count(precision) {
@@ -1834,8 +5261,8 @@ func Int_Modular_Square_Root(
 	integers := &workspace.Integers
 	modulus_copy := &integers[MODULAR_SQUARE_ROOT_MODULUS_INDEX]
 	nonresidue_copy := &integers[MODULAR_SQUARE_ROOT_NONRESIDUE_INDEX]
-	*modulus_copy = *modulus
-	*nonresidue_copy = *nonresidue
+	Int_Set(modulus_copy, modulus)
+	Int_Set(nonresidue_copy, nonresidue)
 	if !int_modular_square_root_modulus_valid(modulus_copy) {
 		return STATUS_INPUT_INVALID
 	}
@@ -1920,7 +5347,7 @@ func int_modular_square_root_reduce(
 		return STATUS_RESULT_ABSENT
 	}
 	if symbol == JACOBI_SYMBOL_ZERO {
-		*destination = Int{}
+		int_zero(destination, destination.Count)
 		return STATUS_OK
 	}
 	return int_modular_square_root_start(destination, workspace)
@@ -1956,8 +5383,43 @@ func int_modular_square_root_start(
 		"Odd factor plus one cannot exceed validated modulus.",
 	)
 	Int_Shift_Right(exponent, exponent, Shift_Count(WORD_COUNT_INCREMENT))
+	if order == Trailing_Zero_Bit_Count(WORD_COUNT_INCREMENT) {
+		return int_modular_square_root_order_one(destination, workspace)
+	}
 	int_modular_square_root_powers(workspace)
 	return int_modular_square_root_iterate(destination, workspace)
+}
+
+func int_modular_square_root_order_one(
+	destination *Int, workspace *Int_Modular_Square_Root_Workspace,
+) (status Modular_Square_Root_Result_Status) {
+	defer func() {
+		Modular_Square_Root_Result_Status_Invariants(
+			status, "int_modular_square_root_order_one.status",
+		)
+	}()
+	Int_Invariants(destination, "int_modular_square_root_order_one.destination")
+	Int_Modular_Square_Root_Workspace_Invariants(
+		workspace, "int_modular_square_root_order_one.workspace",
+	)
+	integers := &workspace.Integers
+	modulus := &integers[MODULAR_SQUARE_ROOT_MODULUS_INDEX]
+	residue := &integers[MODULAR_SQUARE_ROOT_RESIDUE_INDEX]
+	exponent := &integers[MODULAR_SQUARE_ROOT_EXPONENT_INDEX]
+	result := &integers[MODULAR_SQUARE_ROOT_RESULT_INDEX]
+	initial_quotient_count := workspace.Modular.Division.Quotient_Count
+	initial_remainder_count := workspace.Modular.Division.Remainder_Count
+	exponentiation := Int_Modular_Exponent(
+		result, residue, exponent, modulus,
+		(*Int_Modular_Workspace)(&workspace.Modular),
+	)
+	workspace.Modular.Division.Quotient_Count = initial_quotient_count
+	workspace.Modular.Division.Remainder_Count = initial_remainder_count
+	invariant.Always(
+		exponentiation == Modular_Status(STATUS_OK),
+		"A positive root exponent and nonzero modulus make exponentiation defined.",
+	)
+	return int_modular_square_root_commit(destination, workspace)
 }
 
 func int_modular_square_root_powers(workspace *Int_Modular_Square_Root_Workspace) {
@@ -2073,7 +5535,6 @@ func int_modular_square_root_iterate(
 	integers := &workspace.Integers
 	modulus := &integers[MODULAR_SQUARE_ROOT_MODULUS_INDEX]
 	exponent := &integers[MODULAR_SQUARE_ROOT_EXPONENT_INDEX]
-	result := &integers[MODULAR_SQUARE_ROOT_RESULT_INDEX]
 	power := &integers[MODULAR_SQUARE_ROOT_POWER_INDEX]
 	factor := &integers[MODULAR_SQUARE_ROOT_FACTOR_INDEX]
 	one := &integers[MODULAR_SQUARE_ROOT_ONE_INDEX]
@@ -2085,7 +5546,7 @@ func int_modular_square_root_iterate(
 	limit := Int_Trailing_Zero_Bit_Count(exponent)
 	order := int(limit)
 	for attempt := BIT_COUNT_MINIMUM; attempt < int(limit); attempt++ {
-		*factor = *power
+		Int_Set(factor, power)
 		distance := BIT_COUNT_MINIMUM
 		for distance < order && Int_Compare(factor, one) != ORDER_SAME {
 			int_modular_square_root_square_factor(workspace)
@@ -2095,23 +5556,7 @@ func int_modular_square_root_iterate(
 			return STATUS_RESULT_ABSENT
 		}
 		if distance == BIT_COUNT_MINIMUM {
-			residue := &integers[MODULAR_SQUARE_ROOT_RESIDUE_INDEX]
-			check := &integers[MODULAR_SQUARE_ROOT_CHECK_INDEX]
-			initial_quotient_count := workspace.Modular.Division.Quotient_Count
-			initial_remainder_count := workspace.Modular.Division.Remainder_Count
-			product_status := Int_Modular_Multiply(
-				check, result, result, modulus,
-				(*Int_Modular_Workspace)(&workspace.Modular),
-			)
-			workspace.Modular.Division.Quotient_Count = initial_quotient_count
-			workspace.Modular.Division.Remainder_Count = initial_remainder_count
-			invariant.Always(product_status == Divisor_Status(STATUS_OK),
-				"Tonelli-Shanks root check uses nonzero modulus.")
-			if Int_Compare(check, residue) != ORDER_SAME {
-				return STATUS_RESULT_ABSENT
-			}
-			*destination = *result
-			return STATUS_OK
+			return int_modular_square_root_commit(destination, workspace)
 		}
 		if distance >= order {
 			return STATUS_RESULT_ABSENT
@@ -2127,6 +5572,42 @@ func int_modular_square_root_iterate(
 		order = distance
 	}
 	return STATUS_RESULT_ABSENT
+}
+
+func int_modular_square_root_commit(
+	destination *Int, workspace *Int_Modular_Square_Root_Workspace,
+) (status Modular_Square_Root_Result_Status) {
+	defer func() {
+		Modular_Square_Root_Result_Status_Invariants(
+			status, "int_modular_square_root_commit.status",
+		)
+	}()
+	Int_Invariants(destination, "int_modular_square_root_commit.destination")
+	Int_Modular_Square_Root_Workspace_Invariants(
+		workspace, "int_modular_square_root_commit.workspace",
+	)
+	integers := &workspace.Integers
+	modulus := &integers[MODULAR_SQUARE_ROOT_MODULUS_INDEX]
+	residue := &integers[MODULAR_SQUARE_ROOT_RESIDUE_INDEX]
+	result := &integers[MODULAR_SQUARE_ROOT_RESULT_INDEX]
+	check := &integers[MODULAR_SQUARE_ROOT_CHECK_INDEX]
+	initial_quotient_count := workspace.Modular.Division.Quotient_Count
+	initial_remainder_count := workspace.Modular.Division.Remainder_Count
+	product_status := Int_Modular_Multiply(
+		check, result, result, modulus,
+		(*Int_Modular_Workspace)(&workspace.Modular),
+	)
+	workspace.Modular.Division.Quotient_Count = initial_quotient_count
+	workspace.Modular.Division.Remainder_Count = initial_remainder_count
+	invariant.Always(
+		product_status == Divisor_Status(STATUS_OK),
+		"A modular square-root check uses one validated nonzero modulus.",
+	)
+	if Int_Compare(check, residue) != ORDER_SAME {
+		return STATUS_RESULT_ABSENT
+	}
+	Int_Set(destination, result)
+	return STATUS_OK
 }
 
 // Float_Text_Format_Validate rejects unsupported formatting work before conversion.
@@ -2183,58 +5664,6 @@ func Float_Text_Precision_Validate(
 		return FLOAT_TEXT_PRECISION_MINIMUM, STATUS_INPUT_INVALID
 	}
 	return Float_Text_Precision(value), STATUS_OK
-}
-
-// Float_Text_Into writes one complete bounded stdlib representation transactionally.
-func Float_Text_Into(
-	destination Text,
-	value *Float,
-	format_unvalidated Float_Text_Format_Unvalidated,
-	precision_unvalidated Float_Text_Precision_Unvalidated,
-	workspace *Float_Text_Workspace,
-) (count Float_Text_Count, status Float_Text_Status) {
-	defer func() {
-		Float_Text_Count_Invariants(count, "float_text_into.count")
-		Float_Text_Status_Invariants(status, "float_text_into.status")
-	}()
-	Text_Invariants(destination, "float_text_into.destination")
-	Float_Invariants(value, "float_text_into.value")
-	Float_Text_Format_Unvalidated_Invariants(
-		format_unvalidated, "float_text_into.format",
-	)
-	Float_Text_Precision_Unvalidated_Invariants(
-		precision_unvalidated, "float_text_into.precision",
-	)
-	Float_Text_Workspace_Invariants(workspace, "float_text_into.workspace")
-	format, validation := Float_Text_Format_Validate(format_unvalidated)
-	if validation != Validation_Status(STATUS_OK) {
-		return 0, STATUS_INPUT_INVALID
-	}
-	precision, validation := Float_Text_Precision_Validate(precision_unvalidated)
-	if validation != Validation_Status(STATUS_OK) {
-		return 0, STATUS_INPUT_INVALID
-	}
-	workspace.Values[FLOAT_TEXT_SOURCE_INDEX] = *value
-	workspace.Control[FLOAT_TEXT_PRECISION_INDEX] = int(precision)
-	workspace.Control[FLOAT_TEXT_FORMAT_INDEX] = int(format)
-	if format == FLOAT_TEXT_KIND_BINARY {
-		float_text_binary(workspace)
-	}
-	if format == FLOAT_TEXT_KIND_HEXADECIMAL_FRACTION {
-		float_text_hexadecimal_fraction(workspace)
-	}
-	if format == FLOAT_TEXT_KIND_HEXADECIMAL {
-		float_text_hexadecimal(workspace)
-	}
-	if format >= FLOAT_TEXT_KIND_DECIMAL_EXPONENT {
-		float_text_decimal(workspace)
-	}
-	count = Float_Text_Count(workspace.Control[FLOAT_TEXT_OUTPUT_COUNT_INDEX])
-	if len(destination) < int(count) {
-		return count, STATUS_DESTINATION_TOO_SMALL
-	}
-	copy(destination[:count], workspace.Output[:count])
-	return count, STATUS_OK
 }
 
 func float_text_binary(workspace *Float_Text_Workspace) {
@@ -3160,9 +6589,13 @@ func Float_Parse(
 		precision = WORD_BIT_COUNT
 	}
 	result := &workspace.Values[FLOAT_RAT_RESULT_INDEX]
-	*result = Float{Precision: precision, Mode: destination.Mode}
+	result.Mode = destination.Mode
+	float_set_nonfinite(
+		result, Float_Nonfinite_Form(FLOAT_FORM_ZERO), POLARITY_NONNEGATIVE,
+		precision,
+	)
 	if float_parse_infinity(workspace) {
-		*destination = *result
+		float_copy_exact(destination, result)
 		return FLOAT_PARSE_BASE_AUTOMATIC, STATUS_OK
 	}
 	scan_status := float_parse_scan(workspace)
@@ -3182,7 +6615,7 @@ func Float_Parse(
 	if arithmetic != Arithmetic_Status(STATUS_OK) {
 		return base, STATUS_VALUE_OVERFLOW
 	}
-	*destination = *result
+	float_copy_exact(destination, result)
 	return base, STATUS_OK
 }
 
@@ -3245,14 +6678,16 @@ func float_parse_quotient(
 ) (status Arithmetic_Status) {
 	defer func() { Arithmetic_Status_Invariants(status, "float_parse_quotient.status") }()
 	Float_Parse_Workspace_Invariants(workspace, "float_parse_quotient.workspace")
-	workspace.Integers = Rat_Parse_Fraction_Integers{}
 	numerator := &workspace.Integers[RAT_PARSE_FRACTION_NUMERATOR_INDEX]
 	denominator := &workspace.Integers[RAT_PARSE_FRACTION_DENOMINATOR_INDEX]
 	mantissa_count := int(workspace.Control[FLOAT_PARSE_MANTISSA_COUNT_INDEX])
+	previous_count := numerator.Count
 	for index := WORD_COUNT_MINIMUM; index < mantissa_count; index++ {
 		numerator.Words[index] = workspace.Parse.Words[index]
 	}
 	numerator.Count = Word_Count(mantissa_count)
+	numerator.Negative = POLARITY_NONNEGATIVE
+	int_clear(numerator, numerator.Count, previous_count)
 	if workspace.Control[FLOAT_PARSE_NEGATIVE_INDEX] != 0 {
 		numerator.Negative = POLARITY_NEGATIVE
 	}
@@ -3586,6 +7021,24 @@ func float_parse_scan_exponent(
 	return STATUS_OK
 }
 
+// Carry reservation makes two words the smallest addition normalization span.
+const FLOAT_ADDITION_RESULT_WORD_COUNT_MINIMUM = WORD_COUNT_INCREMENT + WORD_COUNT_INCREMENT
+
+// Float_Addition_Result_Word_Count includes carry storage before high zeros are removed.
+type Float_Addition_Result_Word_Count int
+
+// Float_Addition_Result_Word_Count_Invariants preserves that reserved carry word.
+func Float_Addition_Result_Word_Count_Invariants(
+	value Float_Addition_Result_Word_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), FLOAT_ADDITION_RESULT_WORD_COUNT_MINIMUM,
+			FLOAT_ADDITION_WORD_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
 // Rat_Set_Float_32_Bits stores exact finite binary32 and rejects nonfinite input.
 func Rat_Set_Float_32_Bits(
 	destination *Rat, encoding Float_32_Bits,
@@ -3784,7 +7237,6 @@ func rat_float_32_encode(
 func rat_float_32_divide(value *Rat, workspace *Rat_Float_32_Workspace) {
 	Rat_Invariants(value, "rat_float_32_divide.value")
 	Rat_Float_32_Workspace_Invariants(workspace, "rat_float_32_divide.workspace")
-	workspace.Integers = Rat_Float_32_Integers{}
 	numerator := &workspace.Integers[RAT_FLOAT_32_NUMERATOR_INDEX]
 	denominator := &workspace.Integers[RAT_FLOAT_32_DENOMINATOR_INDEX]
 	quotient := &workspace.Integers[RAT_FLOAT_32_QUOTIENT_INDEX]
@@ -3883,6 +7335,74 @@ func Float_Float_32_Bits(value *Float) (
 	return float_finite_float_32_bits((*Float_Finite)(value), Float_32_Sign(sign))
 }
 
+func float_binary_round(
+	value Float_Binary_Source, precision Float_Binary_Precision,
+) (result Float_Binary_Result) {
+	defer func() {
+		Float_Binary_Result_Invariants(result, "float_binary_round.result")
+	}()
+	Float_Binary_Source_Invariants(value, "float_binary_round.value")
+	Float_Binary_Precision_Invariants(precision, "float_binary_round.precision")
+	source := value[WORD_COUNT_MINIMUM]
+	result.Exponent = Float_Binary_Exponent(source.Exponent)
+	result.Accuracy = ACCURACY_EXACT
+	source_count := int(source.Mantissa.Count)
+	high := source.Mantissa.Words[source_count-WORD_COUNT_INCREMENT]
+	bit_count := (source_count-WORD_COUNT_INCREMENT)*WORD_BIT_COUNT +
+		int(bits.Bit_Size_64(bits.Word_64(high)))
+	discard_count := bit_count - int(precision)
+	if discard_count <= BIT_COUNT_MINIMUM {
+		result.Mantissa = Float_Binary_Mantissa(
+			source.Mantissa.Words[WORD_COUNT_MINIMUM],
+		)
+		return result
+	}
+	word_shift := discard_count / WORD_BIT_COUNT
+	bit_shift := uint(discard_count % WORD_BIT_COUNT)
+	result.Mantissa = Float_Binary_Mantissa(
+		source.Mantissa.Words[word_shift] >> bit_shift,
+	)
+	next_index := word_shift + WORD_COUNT_INCREMENT
+	if bit_shift != BIT_COUNT_MINIMUM {
+		if next_index < int(source.Mantissa.Count) {
+			result.Mantissa |= Float_Binary_Mantissa(
+				source.Mantissa.Words[next_index] << (WORD_BIT_COUNT - bit_shift),
+			)
+		}
+	}
+	rounding_index := discard_count - WORD_COUNT_INCREMENT
+	rounding_word := source.Mantissa.Words[rounding_index/WORD_BIT_COUNT]
+	rounding_bit := Bit_Value(
+		rounding_word >> uint(rounding_index%WORD_BIT_COUNT) & Word(BIT_SET),
+	)
+	sticky_bit := BIT_CLEAR
+	if float_low_bits_nonzero(
+		(*Float_Active_Mantissa)(&source.Mantissa),
+		Float_Discarded_Bit_Count(rounding_index),
+	) {
+		sticky_bit = BIT_SET
+	}
+	increment := Boolean(false)
+	if rounding_bit != BIT_CLEAR {
+		if sticky_bit != BIT_CLEAR {
+			increment = true
+		} else if result.Mantissa&Float_Binary_Mantissa(BIT_SET) != 0 {
+			increment = true
+		}
+		result.Accuracy = Accuracy(float_accuracy(increment, source.Negative))
+	} else if sticky_bit != BIT_CLEAR {
+		result.Accuracy = Accuracy(float_accuracy(increment, source.Negative))
+	}
+	if increment {
+		result.Mantissa++
+	}
+	if int(bits.Bit_Size_64(bits.Word_64(result.Mantissa))) > int(precision) {
+		result.Mantissa >>= WORD_COUNT_INCREMENT
+		result.Exponent++
+	}
+	return result
+}
+
 func float_set_float_32_finite(
 	destination *Float,
 	exponent_field Float_32_Finite_Exponent_Field,
@@ -3912,13 +7432,90 @@ func float_set_float_32_finite(
 			int(bits.Leading_Zeros_32(bits.Word_32(mantissa)))
 		exponent += mantissa_bit_count
 	}
-	var magnitude Int
-	Int_Set_Uint_64(&magnitude, Word_64(mantissa))
-	float_magnitude := Float_Mantissa(magnitude)
+	bit_count := Float_Precision(bits.Bit_Size_32(bits.Word_32(mantissa)))
+	if bit_count <= Float_Precision(precision) {
+		previous_count := destination.Mantissa.Count
+		destination.Precision = Float_Precision(precision)
+		destination.Accuracy, destination.Form = ACCURACY_EXACT, FLOAT_FORM_FINITE
+		destination.Negative = negative
+		destination.Mantissa.Words[WORD_COUNT_MINIMUM] = Word(mantissa)
+		destination.Mantissa.Count = Word_Count(WORD_COUNT_INCREMENT)
+		destination.Mantissa.Negative = POLARITY_NONNEGATIVE
+		destination.Exponent = Float_Exponent(exponent)
+		if previous_count > Word_Count(WORD_COUNT_INCREMENT) {
+			int_clear(
+				(*Int)(&destination.Mantissa), Word_Count(WORD_COUNT_INCREMENT),
+				previous_count,
+			)
+		}
+		return
+	}
+	var float_magnitude Float_Mantissa
+	float_magnitude.Words[WORD_COUNT_MINIMUM] = Word(mantissa)
+	float_magnitude.Count = Word_Count(WORD_COUNT_INCREMENT)
 	float_set_magnitude(
 		destination, &float_magnitude, Float_Exponent(exponent), negative,
 		precision, destination.Mode,
 	)
+}
+
+func float_finite_float_64_bits(
+	value *Float_Finite, sign Float_64_Sign,
+) (encoding Float_64_Value_Bits, accuracy Accuracy) {
+	defer func() {
+		Float_64_Value_Bits_Invariants(encoding, "float_finite_float_64_bits.encoding")
+		Accuracy_Invariants(accuracy, "float_finite_float_64_bits.accuracy")
+	}()
+	Float_Finite_Invariants(value, "float_finite_float_64_bits.value")
+	Float_64_Sign_Invariants(sign, "float_finite_float_64_bits.sign")
+	if value.Exponent > FLOAT_64_VALUE_BIT_COUNT_MAXIMUM {
+		return Float_64_Value_Bits(uint64(sign) | FLOAT_64_POSITIVE_INFINITY_BITS),
+			Accuracy(float_accuracy(true, value.Negative))
+	}
+	normal_minimum := FLOAT_64_SUBNORMAL_EXPONENT + WORD_COUNT_INCREMENT
+	precision := FLOAT_64_VALUE_MANTISSA_BIT_COUNT
+	if int(value.Exponent) < normal_minimum {
+		precision = int(value.Exponent) + FLOAT_64_SUBNORMAL_DENOMINATOR_SHIFT_MAXIMUM
+		if precision <= FLOAT_PRECISION_MINIMUM {
+			if precision == FLOAT_PRECISION_MINIMUM {
+				minimum_precision := Float_Minimum_Precision((*Float)(value))
+				if minimum_precision != WORD_COUNT_INCREMENT {
+					return Float_64_Value_Bits(
+							uint64(sign) | bits.CARRY_MAXIMUM,
+						),
+						Accuracy(float_accuracy(true, value.Negative))
+				}
+			}
+			return Float_64_Value_Bits(sign),
+				Accuracy(float_accuracy(false, value.Negative))
+		}
+	}
+	rounded := float_binary_round(
+		Float_Binary_Source{value}, Float_Binary_Precision(precision),
+	)
+	if rounded.Exponent > FLOAT_64_VALUE_BIT_COUNT_MAXIMUM {
+		return Float_64_Value_Bits(uint64(sign) | FLOAT_64_POSITIVE_INFINITY_BITS),
+			rounded.Accuracy
+	}
+	invariant.Always(rounded.Exponent > FLOAT_64_SUBNORMAL_EXPONENT-
+		FLOAT_64_MANTISSA_BIT_COUNT,
+		"Rounded binary64 exponent stays above tie-underflow handling.")
+	invariant.Always(rounded.Exponent <= FLOAT_64_VALUE_BIT_COUNT_MAXIMUM,
+		"Rounded binary64 exponent stays below overflow handling.")
+	bit_count := int(bits.Bit_Size_64(bits.Word_64(rounded.Mantissa)))
+	mantissa := uint64(rounded.Mantissa)
+	if int(rounded.Exponent) < normal_minimum {
+		precision = int(rounded.Exponent) + FLOAT_64_SUBNORMAL_DENOMINATOR_SHIFT_MAXIMUM
+		mantissa <<= uint(precision - bit_count)
+		return Float_64_Value_Bits(uint64(sign) | mantissa), rounded.Accuracy
+	}
+	mantissa <<= uint(FLOAT_64_VALUE_MANTISSA_BIT_COUNT - bit_count)
+	exponent_field := uint64(
+		int(rounded.Exponent) - WORD_COUNT_INCREMENT + FLOAT_64_EXPONENT_BIAS,
+	)
+	encoded := uint64(sign) | exponent_field<<FLOAT_64_EXPONENT_SHIFT |
+		mantissa&FLOAT_64_MANTISSA_MASK
+	return Float_64_Value_Bits(encoded), rounded.Accuracy
 }
 
 func float_finite_float_32_bits(
@@ -3954,28 +7551,25 @@ func float_finite_float_32_bits(
 				Accuracy(float_accuracy(false, value.Negative))
 		}
 	}
-	rounded := Float(*value)
-	rounded.Mode = Rounding_Mode(ROUND_TO_NEAREST_EVEN)
-	float_round(&rounded, Float_Precision(precision))
-	if rounded.Form == FLOAT_FORM_INFINITY {
+	rounded := float_binary_round(
+		Float_Binary_Source{value}, Float_Binary_Precision(precision),
+	)
+	if rounded.Exponent > FLOAT_32_VALUE_BIT_COUNT_MAXIMUM {
 		return Float_32_Value_Bits(
 			uint32(sign) | FLOAT_32_POSITIVE_INFINITY_BITS,
 		), rounded.Accuracy
 	}
 	invariant.Always(
-		rounded.Mantissa.Count == WORD_COUNT_INCREMENT,
-		"Rounded binary32 mantissa fits one machine word.",
-	)
-	invariant.Always(
-		rounded.Exponent > FLOAT_32_SUBNORMAL_EXPONENT-FLOAT_32_MANTISSA_BIT_COUNT,
+		rounded.Exponent > FLOAT_32_SUBNORMAL_EXPONENT-
+			FLOAT_32_MANTISSA_BIT_COUNT,
 		"Rounded binary32 exponent stays above tie underflow handling.",
 	)
 	invariant.Always(
 		rounded.Exponent <= FLOAT_32_VALUE_BIT_COUNT_MAXIMUM,
 		"Rounded binary32 exponent stays below overflow handling.",
 	)
-	bit_count := int(Int_Bit_Count((*Int)(&rounded.Mantissa)))
-	mantissa := uint32(rounded.Mantissa.Words[WORD_COUNT_MINIMUM])
+	bit_count := int(bits.Bit_Size_64(bits.Word_64(rounded.Mantissa)))
+	mantissa := uint32(rounded.Mantissa)
 	if int(rounded.Exponent) < normal_minimum {
 		precision = int(rounded.Exponent) + FLOAT_32_SUBNORMAL_DENOMINATOR_SHIFT_MAXIMUM
 		mantissa <<= uint(precision - bit_count)
@@ -4009,6 +7603,74 @@ func Float_Quotient(
 			precision = divisor.Precision
 		}
 	}
+	if dividend.Form != FLOAT_FORM_FINITE {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	if divisor.Form != FLOAT_FORM_FINITE {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	if dividend.Mantissa.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	if divisor.Mantissa.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	dividend_exponent := int(dividend.Exponent)
+	divisor_exponent := int(divisor.Exponent)
+	if uint(dividend_exponent-WORD_COUNT_INCREMENT) >= uint(WORD_BIT_INDEX_MAXIMUM) {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	if uint(divisor_exponent-WORD_COUNT_INCREMENT) >= uint(WORD_BIT_INDEX_MAXIMUM) {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	dividend_minimum := Word(bits.CARRY_MAXIMUM) <<
+		uint(dividend_exponent-WORD_COUNT_INCREMENT)
+	divisor_minimum := Word(bits.CARRY_MAXIMUM) <<
+		uint(divisor_exponent-WORD_COUNT_INCREMENT)
+	dividend_word := dividend.Mantissa.Words[WORD_COUNT_MINIMUM]
+	divisor_word := divisor.Mantissa.Words[WORD_COUNT_MINIMUM]
+	if dividend_word&dividend_minimum == 0 {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	if dividend_word >= dividend_minimum<<WORD_COUNT_INCREMENT {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	if divisor_word&divisor_minimum == 0 {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	if divisor_word >= divisor_minimum<<WORD_COUNT_INCREMENT {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	quotient := dividend_word / divisor_word
+	if dividend_word%divisor_word != 0 {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	bit_count := Float_Precision(bits.Bit_Size_64(bits.Word_64(quotient)))
+	if bit_count > precision {
+		return float_quotient_general(destination, dividend, divisor, workspace, precision)
+	}
+	mantissa := &destination.Mantissa
+	previous_count := mantissa.Count
+	destination.Precision, destination.Accuracy = precision, ACCURACY_EXACT
+	destination.Form = FLOAT_FORM_FINITE
+	destination.Negative = Polarity(uint8(dividend.Negative) ^ uint8(divisor.Negative))
+	mantissa.Words[WORD_COUNT_MINIMUM] = quotient
+	mantissa.Count, mantissa.Negative = Word_Count(WORD_COUNT_INCREMENT), POLARITY_NONNEGATIVE
+	destination.Exponent = Float_Exponent(bit_count)
+	int_clear((*Int)(mantissa), mantissa.Count, previous_count)
+	return STATUS_OK
+}
+
+func float_quotient_general(
+	destination *Float, dividend *Float, divisor *Float,
+	workspace *Float_Division_Workspace, precision Float_Precision,
+) (status Validation_Status) {
+	defer func() { Validation_Status_Invariants(status, "float_quotient_general.status") }()
+	Float_Invariants(destination, "float_quotient_general.destination_initial")
+	Float_Invariants(dividend, "float_quotient_general.dividend")
+	Float_Invariants(divisor, "float_quotient_general.divisor")
+	Float_Division_Workspace_Invariants(workspace, "float_quotient_general.workspace")
+	Float_Precision_Invariants(precision, "float_quotient_general.precision")
 	mode := destination.Mode
 	negative := POLARITY_NONNEGATIVE
 	if dividend.Negative != divisor.Negative {
@@ -4062,11 +7724,11 @@ func Float_Int_Into(
 		return ACCURACY_EXACT, STATUS_VALUE_OVERFLOW
 	}
 	if value.Form == FLOAT_FORM_ZERO {
-		*destination = Int{}
+		int_zero(destination, destination.Count)
 		return ACCURACY_EXACT, STATUS_OK
 	}
 	if value.Exponent <= FLOAT_EXPONENT_ZERO {
-		*destination = Int{}
+		int_zero(destination, destination.Count)
 		return Accuracy(float_accuracy(false, value.Negative)), STATUS_OK
 	}
 	if value.Exponent > BIT_COUNT_MAXIMUM {
@@ -4074,6 +7736,17 @@ func Float_Int_Into(
 	}
 	bit_count := int(Int_Bit_Count((*Int)(&value.Mantissa)))
 	shift := int(value.Exponent) - bit_count
+	if shift == BIT_COUNT_MINIMUM {
+		previous_count := destination.Count
+		for index := Word_Count(WORD_COUNT_MINIMUM); index < value.Mantissa.Count; index++ {
+			destination.Words[index] = value.Mantissa.Words[index]
+		}
+		destination.Count, destination.Negative = value.Mantissa.Count, value.Negative
+		if previous_count > destination.Count {
+			int_clear(destination, destination.Count, previous_count)
+		}
+		return ACCURACY_EXACT, STATUS_OK
+	}
 	result := Int(value.Mantissa)
 	if shift < 0 {
 		discard_count := -shift
@@ -4118,6 +7791,28 @@ func Float_Int_64(
 		Conversion_Status_Invariants(status, "float_int_64.status")
 	}()
 	Float_Invariants(value, "float_int_64.value")
+	if value.Form == FLOAT_FORM_FINITE {
+		if value.Mantissa.Count == Word_Count(WORD_COUNT_INCREMENT) {
+			magnitude := uint64(value.Mantissa.Words[WORD_COUNT_MINIMUM])
+			bit_count := Float_Exponent(bits.Bit_Size_64(bits.Word_64(magnitude)))
+			if value.Exponent == bit_count {
+				if value.Negative == POLARITY_NEGATIVE {
+					if magnitude > INT_64_NEGATIVE_MAGNITUDE_MAXIMUM {
+						return 0, ACCURACY_EXACT, STATUS_VALUE_OVERFLOW
+					}
+					if magnitude == INT_64_NEGATIVE_MAGNITUDE_MAXIMUM {
+						result = Int_64(bits.INTEGER_64_MINIMUM)
+						return result, ACCURACY_EXACT, STATUS_OK
+					}
+					return Int_64(-int64(magnitude)), ACCURACY_EXACT, STATUS_OK
+				}
+				if magnitude > uint64(bits.INTEGER_64_MAXIMUM) {
+					return 0, ACCURACY_EXACT, STATUS_VALUE_OVERFLOW
+				}
+				return Int_64(magnitude), ACCURACY_EXACT, STATUS_OK
+			}
+		}
+	}
 	var integer Int
 	accuracy, status = Float_Int_Into(&integer, value)
 	if status != STATUS_OK {
@@ -4137,6 +7832,18 @@ func Float_Uint_64(
 		Conversion_Status_Invariants(status, "float_uint_64.status")
 	}()
 	Float_Invariants(value, "float_uint_64.value")
+	if value.Form == FLOAT_FORM_FINITE {
+		if value.Mantissa.Count == Word_Count(WORD_COUNT_INCREMENT) {
+			magnitude := value.Mantissa.Words[WORD_COUNT_MINIMUM]
+			bit_count := Float_Exponent(bits.Bit_Size_64(bits.Word_64(magnitude)))
+			if value.Exponent == bit_count {
+				if value.Negative == POLARITY_NEGATIVE {
+					return 0, ACCURACY_EXACT, STATUS_VALUE_OVERFLOW
+				}
+				return Word_64(magnitude), ACCURACY_EXACT, STATUS_OK
+			}
+		}
+	}
 	var integer Int
 	accuracy, status = Float_Int_Into(&integer, value)
 	if status != STATUS_OK {
@@ -4153,7 +7860,6 @@ func Float_Set_Rat(destination *Float, source *Rat, workspace *Float_Rat_Workspa
 	Float_Rat_Workspace_Invariants(workspace, "float_set_rat.workspace")
 	precision := destination.Precision
 	mode := destination.Mode
-	workspace.Values = Float_Rat_Values{}
 	numerator := &workspace.Values[FLOAT_RAT_NUMERATOR_INDEX]
 	denominator := &workspace.Values[FLOAT_RAT_DENOMINATOR_INDEX]
 	result := &workspace.Values[FLOAT_RAT_RESULT_INDEX]
@@ -4164,13 +7870,16 @@ func Float_Set_Rat(destination *Float, source *Rat, workspace *Float_Rat_Workspa
 	} else {
 		Float_Set_Int(denominator, stored_denominator)
 	}
-	result.Precision = precision
 	result.Mode = mode
+	float_set_nonfinite(
+		result, Float_Nonfinite_Form(FLOAT_FORM_ZERO), POLARITY_NONNEGATIVE,
+		precision,
+	)
 	Float_Quotient(
 		result, numerator, denominator,
 		(*Float_Division_Workspace)(&workspace.Division),
 	)
-	*destination = *result
+	float_copy_exact(destination, result)
 }
 
 // Float_Rat_Into writes one exact binary rational or leaves the destination unchanged.
@@ -4185,17 +7894,76 @@ func Float_Rat_Into(
 		return STATUS_INPUT_INVALID
 	}
 	if value.Form == FLOAT_FORM_ZERO {
-		*destination = Rat{}
+		float_rat_set_zero(destination)
 		return STATUS_OK
 	}
-	workspace.Integers = Rat_Integers{}
+	bit_count := BIT_COUNT_MINIMUM
+	if value.Mantissa.Count == Word_Count(BASE_BINARY) {
+		bit_index := int(value.Exponent) - WORD_BIT_COUNT - WORD_COUNT_INCREMENT
+		if uint(bit_index) < uint(WORD_BIT_COUNT) {
+			minimum := Word(bits.CARRY_MAXIMUM) << uint(bit_index)
+			high := value.Mantissa.Words[WORD_COUNT_INCREMENT]
+			if high&minimum != 0 {
+				if bit_index == WORD_BIT_INDEX_MAXIMUM {
+					bit_count = int(value.Exponent)
+				} else if high < minimum<<WORD_COUNT_INCREMENT {
+					bit_count = int(value.Exponent)
+				}
+			}
+		}
+	}
+	if bit_count == BIT_COUNT_MINIMUM {
+		bit_count = int(Int_Bit_Count((*Int)(&value.Mantissa)))
+	}
+	if int(value.Exponent) == bit_count {
+		if value.Mantissa.Count > RAT_WORD_COUNT_MAXIMUM {
+			return STATUS_VALUE_OVERFLOW
+		}
+		numerator := &destination.Integers[RAT_NUMERATOR_INDEX]
+		previous_count := numerator.Count
+		for index := Word_Count(WORD_COUNT_MINIMUM); index < value.Mantissa.Count; index++ {
+			numerator.Words[index] = value.Mantissa.Words[index]
+		}
+		numerator.Count, numerator.Negative = value.Mantissa.Count, value.Negative
+		if previous_count > numerator.Count {
+			int_clear(numerator, numerator.Count, previous_count)
+		}
+		denominator := &destination.Integers[RAT_DENOMINATOR_INDEX]
+		int_zero(denominator, denominator.Count)
+		return STATUS_OK
+	}
+	general_status := float_rat_general(
+		destination, (*Float_Active_Mantissa)(&value.Mantissa), value.Exponent,
+		value.Negative, workspace,
+	)
+	return Float_Rat_Status(general_status)
+}
+
+func float_rat_set_zero(destination *Rat) {
+	Rat_Invariants(destination, "float_rat_set_zero.destination_initial")
+	numerator := &destination.Integers[RAT_NUMERATOR_INDEX]
+	denominator := &destination.Integers[RAT_DENOMINATOR_INDEX]
+	int_zero(numerator, numerator.Count)
+	int_zero(denominator, denominator.Count)
+}
+
+func float_rat_general(
+	destination *Rat, mantissa *Float_Active_Mantissa, exponent Float_Exponent,
+	negative Polarity, workspace *Float_Rat_Workspace,
+) (status Arithmetic_Status) {
+	defer func() { Arithmetic_Status_Invariants(status, "float_rat_general.status") }()
+	Rat_Invariants(destination, "float_rat_general.destination_initial")
+	Float_Active_Mantissa_Invariants(*mantissa, "float_rat_general.mantissa")
+	Float_Exponent_Invariants(exponent, "float_rat_general.exponent")
+	Polarity_Invariants(negative, "float_rat_general.negative")
+	Float_Rat_Workspace_Invariants(workspace, "float_rat_general.workspace")
 	numerator := &workspace.Integers[RAT_NUMERATOR_INDEX]
 	denominator := &workspace.Integers[RAT_DENOMINATOR_INDEX]
-	*numerator = Int(value.Mantissa)
+	Int_Set(numerator, (*Int)(mantissa))
 	bit_count := int(Int_Bit_Count(numerator))
 	zero_count := int(Int_Trailing_Zero_Bit_Count(numerator))
 	reduced_bit_count := bit_count - zero_count
-	power := int(value.Exponent) - bit_count + zero_count
+	power := int(exponent) - bit_count + zero_count
 	numerator_bit_count := reduced_bit_count
 	if power > 0 {
 		numerator_bit_count += power
@@ -4235,7 +8003,7 @@ func Float_Rat_Into(
 			return STATUS_VALUE_OVERFLOW
 		}
 	}
-	numerator.Negative = value.Negative
+	numerator.Negative = negative
 	result := Rat{}
 	result.Integers[RAT_NUMERATOR_INDEX] = *numerator
 	result.Integers[RAT_DENOMINATOR_INDEX] = *denominator
@@ -4260,22 +8028,75 @@ func Float_Square_Root(
 	if precision == FLOAT_PRECISION_MINIMUM {
 		precision = source.Precision
 	}
+	if source.Form != FLOAT_FORM_FINITE {
+		float_square_root_general(destination, source, workspace, precision)
+		return STATUS_OK
+	}
+	if source.Mantissa.Count != Word_Count(WORD_COUNT_INCREMENT) {
+		float_square_root_general(destination, source, workspace, precision)
+		return STATUS_OK
+	}
+	exponent := int(source.Exponent)
+	if uint(exponent-WORD_COUNT_INCREMENT) >= uint(WORD_BIT_INDEX_MAXIMUM) {
+		float_square_root_general(destination, source, workspace, precision)
+		return STATUS_OK
+	}
+	minimum := Word(bits.CARRY_MAXIMUM) << uint(exponent-WORD_COUNT_INCREMENT)
+	word := source.Mantissa.Words[WORD_COUNT_MINIMUM]
+	if word&minimum == 0 {
+		float_square_root_general(destination, source, workspace, precision)
+		return STATUS_OK
+	}
+	if word >= minimum<<WORD_COUNT_INCREMENT {
+		float_square_root_general(destination, source, workspace, precision)
+		return STATUS_OK
+	}
+	root_bit_count := (exponent + SQUARE_ROOT_DEGREE - WORD_COUNT_INCREMENT) /
+		SQUARE_ROOT_DEGREE
+	root := Word(bits.CARRY_MAXIMUM) << uint(root_bit_count)
+	next := (root + word/root) / SQUARE_ROOT_DEGREE
+	for next < root {
+		root = next
+		next = (root + word/root) / SQUARE_ROOT_DEGREE
+	}
+	if root*root != word {
+		float_square_root_general(destination, source, workspace, precision)
+		return STATUS_OK
+	}
+	mantissa := &destination.Mantissa
+	previous_count := mantissa.Count
+	destination.Precision, destination.Accuracy = precision, ACCURACY_EXACT
+	destination.Form, destination.Negative = FLOAT_FORM_FINITE, POLARITY_NONNEGATIVE
+	mantissa.Words[WORD_COUNT_MINIMUM] = root
+	mantissa.Count, mantissa.Negative = Word_Count(WORD_COUNT_INCREMENT), POLARITY_NONNEGATIVE
+	destination.Exponent = Float_Exponent(bits.Bit_Size_64(bits.Word_64(root)))
+	int_clear((*Int)(mantissa), mantissa.Count, previous_count)
+	return STATUS_OK
+}
+
+func float_square_root_general(
+	destination *Float, source *Float, workspace *Float_Square_Root_Workspace,
+	precision Float_Precision,
+) {
+	Float_Invariants(destination, "float_square_root_general.destination_initial")
+	Float_Invariants(source, "float_square_root_general.source")
+	Float_Square_Root_Workspace_Invariants(workspace, "float_square_root_general.workspace")
+	Float_Precision_Invariants(precision, "float_square_root_general.precision")
 	mode := destination.Mode
 	if source.Form == FLOAT_FORM_ZERO {
 		float_set_operation_operand(destination, source, precision, mode)
-		return STATUS_OK
+		return
 	}
 	if source.Form == FLOAT_FORM_INFINITY {
 		float_set_operation_infinity(
 			destination, POLARITY_NONNEGATIVE, precision, mode,
 		)
-		return STATUS_OK
+		return
 	}
 	float_square_root_finite(
 		destination, (*Float_Nonnegative_Finite)(source), workspace,
 		Float_Active_Precision(precision), mode,
 	)
-	return STATUS_OK
 }
 
 func float_square_root_finite(
@@ -4337,9 +8158,13 @@ func float_square_root_extract(
 		workspace, "float_square_root_extract.workspace",
 	)
 	Float_Active_Precision_Invariants(precision, "float_square_root_extract.precision")
-	source_index := float_square_root_digits(source, workspace, precision)
+	active_count := Float_Square_Root_Active_Word_Count(
+		(int(precision) + FLOAT_SQUARE_ROOT_GUARD_BIT_COUNT +
+			WORD_BIT_INDEX_MAXIMUM) / WORD_BIT_COUNT,
+	)
+	source_index := float_square_root_digits(source, workspace, precision, active_count)
 	rounding_bit = Bit_Value(workspace.Root[WORD_COUNT_MINIMUM] & Word(BIT_SET))
-	sticky = float_square_root_sticky(source, workspace, source_index)
+	sticky = float_square_root_sticky(source, workspace, source_index, active_count)
 	float_square_root_remove_guard(workspace, precision)
 	return rounding_bit, sticky
 }
@@ -4348,6 +8173,7 @@ func float_square_root_digits(
 	source *Float_Nonnegative_Finite,
 	workspace *Float_Square_Root_Workspace,
 	precision Float_Active_Precision,
+	workspace_count Float_Square_Root_Active_Word_Count,
 ) (source_index Float_Square_Root_Source_Bit_Index) {
 	defer func() {
 		Float_Square_Root_Source_Bit_Index_Invariants(
@@ -4359,12 +8185,18 @@ func float_square_root_digits(
 		workspace, "float_square_root_digits.workspace",
 	)
 	Float_Active_Precision_Invariants(precision, "float_square_root_digits.precision")
-	float_square_root_clear(workspace)
+	Float_Square_Root_Active_Word_Count_Invariants(
+		workspace_count, "float_square_root_digits.workspace_count",
+	)
+	float_square_root_clear(workspace, workspace_count)
+	if float_square_root_triple_word_match(source, workspace, precision) {
+		return BIT_INDEX_UNVALIDATED_MINIMUM
+	}
 	cursor := int(Int_Bit_Count((*Int)(&source.Mantissa))) - WORD_COUNT_INCREMENT
 	prefix_clear := int(source.Exponent)%BASE_BINARY != BIT_COUNT_MINIMUM
 	digit_count := int(precision) + FLOAT_SQUARE_ROOT_GUARD_BIT_COUNT
 	for digit_index := WORD_COUNT_MINIMUM; digit_index < digit_count; digit_index++ {
-		pair := Word(BIT_CLEAR)
+		pair := Float_Square_Root_Pair(BIT_CLEAR)
 		pair_limit := FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT
 		source_exhausted := false
 		for pair_index := WORD_COUNT_MINIMUM; pair_index < pair_limit; pair_index++ {
@@ -4376,40 +8208,26 @@ func float_square_root_digits(
 			if cursor >= BIT_COUNT_MINIMUM {
 				word_index := cursor / WORD_BIT_COUNT
 				bit_index := uint(cursor % WORD_BIT_COUNT)
-				pair |= source.Mantissa.Words[word_index] >> bit_index &
-					Word(BIT_SET)
+				bit := source.Mantissa.Words[word_index] >> bit_index
+				pair |= Float_Square_Root_Pair(bit & Word(BIT_SET))
 				cursor--
 				if cursor == BIT_INDEX_UNVALIDATED_MINIMUM {
 					source_exhausted = true
 				}
 			}
 		}
-		active_count := (digit_index + FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT +
-			WORD_BIT_INDEX_MAXIMUM) / WORD_BIT_COUNT
-		remainder_carry := Word(BIT_CLEAR)
-		candidate_carry := Word(BIT_CLEAR)
-		for index := WORD_COUNT_MINIMUM; index < active_count; index++ {
-			next := workspace.Remainder[index] >>
-				(WORD_BIT_COUNT - FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT)
-			workspace.Remainder[index] =
-				workspace.Remainder[index]<<FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT |
-					remainder_carry
-			remainder_carry = next
-			workspace.Candidate[index] =
-				workspace.Root[index]<<FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT |
-					candidate_carry
-			candidate_carry = workspace.Root[index] >>
-				(WORD_BIT_COUNT - FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT)
-		}
-		workspace.Remainder[WORD_COUNT_MINIMUM] |= pair
-		workspace.Candidate[WORD_COUNT_MINIMUM] |= Word(BIT_SET)
-		float_square_root_restore(workspace)
+		active_count := Float_Square_Root_Active_Word_Count(
+			(digit_index + FLOAT_SQUARE_ROOT_PAIR_BIT_COUNT +
+				WORD_COUNT_INCREMENT + WORD_BIT_INDEX_MAXIMUM) / WORD_BIT_COUNT,
+		)
+		float_square_root_digit(workspace, active_count, pair)
 		if source_exhausted {
 			last_digit_index := digit_count - WORD_COUNT_INCREMENT
 			suffix_count := last_digit_index - digit_index
 			if suffix_count > BIT_COUNT_MINIMUM {
 				if float_square_root_complete(
 					workspace, Float_Active_Precision(suffix_count),
+					workspace_count,
 				) {
 					break
 				}
@@ -4419,58 +8237,40 @@ func float_square_root_digits(
 	return Float_Square_Root_Source_Bit_Index(cursor)
 }
 
-func float_square_root_restore(workspace *Float_Square_Root_Workspace) {
-	Float_Square_Root_Workspace_Invariants(
-		workspace, "float_square_root_restore.workspace",
+func float_square_root_digit(
+	workspace *Float_Square_Root_Workspace,
+	active_count Float_Square_Root_Active_Word_Count,
+	pair Float_Square_Root_Pair,
+) {
+	Float_Square_Root_Workspace_Invariants(workspace, "float_square_root_digit.workspace")
+	Float_Square_Root_Active_Word_Count_Invariants(
+		active_count, "float_square_root_digit.active_count",
 	)
-	active_last_index := WORD_COUNT_MINIMUM
-	last_index := len(workspace.Root) - WORD_COUNT_INCREMENT
-	for index := last_index; index > WORD_COUNT_MINIMUM; index-- {
-		if workspace.Root[index] != 0 {
-			active_last_index = index
-			break
-		}
-		if workspace.Remainder[index] != 0 {
-			active_last_index = index
-			break
-		}
-		if workspace.Candidate[index] != 0 {
-			active_last_index = index
-			break
-		}
+	Float_Square_Root_Pair_Invariants(pair, "float_square_root_digit.pair")
+	workspace_reference := Float_Square_Root_Workspace_Reference{workspace}
+	pair_reference := Float_Square_Root_Pair_Reference{&pair}
+	if active_count == WORD_COUNT_INCREMENT {
+		float_square_root_digit_one(&workspace_reference, &pair_reference)
+		return
 	}
-	subtract := true
-	for index := active_last_index; index >= WORD_COUNT_MINIMUM; index-- {
-		if workspace.Remainder[index] != workspace.Candidate[index] {
-			subtract = workspace.Remainder[index] > workspace.Candidate[index]
-			break
-		}
+	if active_count == BASE_BINARY {
+		float_square_root_digit_two(&workspace_reference, &pair_reference)
+		return
 	}
-	if subtract {
-		borrow := bits.Borrow_In(bits.CARRY_MINIMUM)
-		for index := WORD_COUNT_MINIMUM; index <= active_last_index; index++ {
-			difference, next := bits.Subtract_Word(
-				bits.Word(workspace.Remainder[index]),
-				bits.Subtrahend_Word(workspace.Candidate[index]), borrow,
-			)
-			workspace.Remainder[index] = Word(difference)
-			borrow = bits.Borrow_In(next)
-		}
+	if active_count == BASE_BINARY+WORD_COUNT_INCREMENT {
+		float_square_root_digit_three(&workspace_reference, &pair_reference)
+		return
 	}
-	carry := Word(BIT_CLEAR)
-	for index := WORD_COUNT_MINIMUM; index <= active_last_index; index++ {
-		next := workspace.Root[index] >> WORD_BIT_INDEX_MAXIMUM
-		workspace.Root[index] =
-			workspace.Root[index]<<WORD_COUNT_INCREMENT | carry
-		carry = next
-	}
-	if subtract {
-		workspace.Root[WORD_COUNT_MINIMUM] |= Word(BIT_SET)
-	}
+	count_reference := Float_Square_Root_Count_Reference{&active_count}
+	float_square_root_digit_many(
+		&workspace_reference, &count_reference, &pair_reference,
+	)
 }
 
 func float_square_root_complete(
-	workspace *Float_Square_Root_Workspace, count Float_Active_Precision,
+	workspace *Float_Square_Root_Workspace,
+	count Float_Active_Precision,
+	active_count Float_Square_Root_Active_Word_Count,
 ) (complete Boolean) {
 	defer func() {
 		Boolean_Invariants(complete, "float_square_root_complete.complete")
@@ -4479,7 +8279,10 @@ func float_square_root_complete(
 		workspace, "float_square_root_complete.workspace",
 	)
 	Float_Active_Precision_Invariants(count, "float_square_root_complete.count")
-	for index := WORD_COUNT_MINIMUM; index < len(workspace.Remainder); index++ {
+	Float_Square_Root_Active_Word_Count_Invariants(
+		active_count, "float_square_root_complete.active_count",
+	)
+	for index := WORD_COUNT_MINIMUM; index < int(active_count); index++ {
 		if workspace.Remainder[index] != 0 {
 			return false
 		}
@@ -4487,7 +8290,7 @@ func float_square_root_complete(
 	word_shift := int(count) / WORD_BIT_COUNT
 	bit_shift := uint(int(count) % WORD_BIT_COUNT)
 	minimum := WORD_COUNT_MINIMUM
-	last_index := len(workspace.Root) - WORD_COUNT_INCREMENT
+	last_index := int(active_count) - WORD_COUNT_INCREMENT
 	for destination_index := last_index; destination_index >= minimum; destination_index-- {
 		source_index := destination_index - word_shift
 		word := Word(BIT_CLEAR)
@@ -4505,19 +8308,28 @@ func float_square_root_complete(
 	return true
 }
 
-func float_square_root_clear(workspace *Float_Square_Root_Workspace) {
+func float_square_root_clear(
+	workspace *Float_Square_Root_Workspace,
+	active_count Float_Square_Root_Active_Word_Count,
+) {
 	Float_Square_Root_Workspace_Invariants(
 		workspace, "float_square_root_clear.workspace",
 	)
-	workspace.Root = Float_Square_Root_Root{}
-	workspace.Remainder = Float_Square_Root_Remainder{}
-	workspace.Candidate = Float_Square_Root_Candidate{}
+	Float_Square_Root_Active_Word_Count_Invariants(
+		active_count, "float_square_root_clear.active_count",
+	)
+	for index := WORD_COUNT_MINIMUM; index < int(active_count); index++ {
+		workspace.Root[index] = 0
+		workspace.Remainder[index] = 0
+		workspace.Candidate[index] = 0
+	}
 }
 
 func float_square_root_sticky(
 	source *Float_Nonnegative_Finite,
 	workspace *Float_Square_Root_Workspace,
 	source_index Float_Square_Root_Source_Bit_Index,
+	active_count Float_Square_Root_Active_Word_Count,
 ) (sticky Bit_Value) {
 	defer func() { Bit_Value_Invariants(sticky, "float_square_root_sticky.sticky") }()
 	Float_Nonnegative_Finite_Invariants(source, "float_square_root_sticky.source")
@@ -4526,6 +8338,9 @@ func float_square_root_sticky(
 	)
 	Float_Square_Root_Source_Bit_Index_Invariants(
 		source_index, "float_square_root_sticky.source_index",
+	)
+	Float_Square_Root_Active_Word_Count_Invariants(
+		active_count, "float_square_root_sticky.active_count",
 	)
 	if source_index >= BIT_COUNT_MINIMUM {
 		if float_low_bits_nonzero(
@@ -4537,8 +8352,8 @@ func float_square_root_sticky(
 			return BIT_SET
 		}
 	}
-	for _, word := range workspace.Remainder {
-		if word != 0 {
+	for index := WORD_COUNT_MINIMUM; index < int(active_count); index++ {
+		if workspace.Remainder[index] != 0 {
 			return BIT_SET
 		}
 	}
@@ -4607,8 +8422,14 @@ func float_divide_finite(
 	Float_Active_Precision_Invariants(precision, "float_divide_finite.precision")
 	Rounding_Mode_Invariants(mode, "float_divide_finite.mode")
 	Polarity_Invariants(negative, "float_divide_finite.negative")
-	dividend_bits := int(Int_Bit_Count((*Int)(&dividend.Mantissa)))
-	divisor_bits := int(Int_Bit_Count((*Int)(&divisor.Mantissa)))
+	dividend_count := int(dividend.Mantissa.Count)
+	dividend_high := dividend.Mantissa.Words[dividend_count-WORD_COUNT_INCREMENT]
+	dividend_bits := (dividend_count-WORD_COUNT_INCREMENT)*WORD_BIT_COUNT +
+		int(bits.Bit_Size_64(bits.Word_64(dividend_high)))
+	divisor_count := int(divisor.Mantissa.Count)
+	divisor_high := divisor.Mantissa.Words[divisor_count-WORD_COUNT_INCREMENT]
+	divisor_bits := (divisor_count-WORD_COUNT_INCREMENT)*WORD_BIT_COUNT +
+		int(bits.Bit_Size_64(bits.Word_64(divisor_high)))
 	aligned_bits := dividend_bits
 	if divisor_bits > aligned_bits {
 		aligned_bits = divisor_bits
@@ -4617,7 +8438,7 @@ func float_divide_finite(
 		(aligned_bits+WORD_BIT_COUNT-WORD_COUNT_INCREMENT)/WORD_BIT_COUNT +
 			WORD_COUNT_INCREMENT,
 	)
-	for index := range workspace.Remainder {
+	for index := WORD_COUNT_MINIMUM; index < int(count); index++ {
 		workspace.Remainder[index] = 0
 		workspace.Divisor[index] = 0
 	}
@@ -4673,30 +8494,36 @@ func float_division_load(
 	Float_Division_Aligned_Bit_Count_Invariants(
 		aligned_bits, "float_division_load.aligned_bits",
 	)
-	dividend_bits := int(Int_Bit_Count((*Int)(&dividend.Mantissa)))
-	divisor_bits := int(Int_Bit_Count((*Int)(&divisor.Mantissa)))
+	dividend_count := int(dividend.Mantissa.Count)
+	dividend_high := dividend.Mantissa.Words[dividend_count-WORD_COUNT_INCREMENT]
+	dividend_bits := (dividend_count-WORD_COUNT_INCREMENT)*WORD_BIT_COUNT +
+		int(bits.Bit_Size_64(bits.Word_64(dividend_high)))
+	divisor_count := int(divisor.Mantissa.Count)
+	divisor_high := divisor.Mantissa.Words[divisor_count-WORD_COUNT_INCREMENT]
+	divisor_bits := (divisor_count-WORD_COUNT_INCREMENT)*WORD_BIT_COUNT +
+		int(bits.Bit_Size_64(bits.Word_64(divisor_high)))
 	dividend_shift := int(aligned_bits) - dividend_bits
 	divisor_shift := int(aligned_bits) - divisor_bits
+	dividend_word_shift := dividend_shift / WORD_BIT_COUNT
+	dividend_bit_shift := uint(dividend_shift % WORD_BIT_COUNT)
 	for index := WORD_COUNT_MINIMUM; index < int(dividend.Mantissa.Count); index++ {
-		word_shift := dividend_shift / WORD_BIT_COUNT
-		bit_shift := uint(dividend_shift % WORD_BIT_COUNT)
-		destination_index := word_shift + index
+		destination_index := dividend_word_shift + index
 		word := dividend.Mantissa.Words[index]
-		workspace.Remainder[destination_index] |= word << bit_shift
-		if bit_shift != 0 {
+		workspace.Remainder[destination_index] |= word << dividend_bit_shift
+		if dividend_bit_shift != 0 {
 			workspace.Remainder[destination_index+WORD_COUNT_INCREMENT] |=
-				word >> (WORD_BIT_COUNT - bit_shift)
+				word >> (WORD_BIT_COUNT - dividend_bit_shift)
 		}
 	}
+	divisor_word_shift := divisor_shift / WORD_BIT_COUNT
+	divisor_bit_shift := uint(divisor_shift % WORD_BIT_COUNT)
 	for index := WORD_COUNT_MINIMUM; index < int(divisor.Mantissa.Count); index++ {
-		word_shift := divisor_shift / WORD_BIT_COUNT
-		bit_shift := uint(divisor_shift % WORD_BIT_COUNT)
-		destination_index := word_shift + index
+		destination_index := divisor_word_shift + index
 		word := divisor.Mantissa.Words[index]
-		workspace.Divisor[destination_index] |= word << bit_shift
-		if bit_shift != 0 {
+		workspace.Divisor[destination_index] |= word << divisor_bit_shift
+		if divisor_bit_shift != 0 {
 			workspace.Divisor[destination_index+WORD_COUNT_INCREMENT] |=
-				word >> (WORD_BIT_COUNT - bit_shift)
+				word >> (WORD_BIT_COUNT - divisor_bit_shift)
 		}
 	}
 }
@@ -4795,6 +8622,14 @@ func float_set_quotient_mantissa(
 	Polarity_Invariants(negative, "float_set_quotient_mantissa.negative")
 	Float_Active_Precision_Invariants(precision, "float_set_quotient_mantissa.precision")
 	Rounding_Mode_Invariants(mode, "float_set_quotient_mantissa.mode")
+	var control Float_Division_Word_Control
+	float_set_quotient_words(
+		destination, workspace, &control, count, order, exponent, negative, precision,
+		mode,
+	)
+	if control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX] != WORD_COUNT_MINIMUM {
+		return
+	}
 	mantissa_count := (int(precision) + WORD_BIT_COUNT - WORD_COUNT_INCREMENT) /
 		WORD_BIT_COUNT
 	var mantissa Float_Mantissa
@@ -4849,6 +8684,451 @@ func float_set_quotient_mantissa(
 	}
 }
 
+func float_set_quotient_words(
+	destination *Float,
+	workspace *Float_Division_Workspace,
+	control *Float_Division_Word_Control,
+	count Float_Division_Active_Word_Count,
+	order Float_Unequal_Order,
+	exponent Float_Exponent,
+	negative Polarity,
+	precision Float_Active_Precision,
+	mode Rounding_Mode,
+) {
+	Float_Invariants(destination, "float_set_quotient_words.destination_initial")
+	Float_Division_Workspace_Invariants(workspace, "float_set_quotient_words.workspace")
+	Float_Division_Word_Control_Invariants(*control, "float_set_quotient_words.control")
+	Float_Division_Active_Word_Count_Invariants(count, "float_set_quotient_words.count")
+	Float_Unequal_Order_Invariants(order, "float_set_quotient_words.order")
+	Float_Exponent_Invariants(exponent, "float_set_quotient_words.exponent")
+	Polarity_Invariants(negative, "float_set_quotient_words.negative")
+	Float_Active_Precision_Invariants(precision, "float_set_quotient_words.precision")
+	Rounding_Mode_Invariants(mode, "float_set_quotient_words.mode")
+	float_division_word_prepare(workspace, control, count, order, precision)
+	if control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX] == WORD_COUNT_MINIMUM {
+		return
+	}
+	result := Float_Division_Destination{destination}
+	previous_count := destination.Mantissa.Count
+	quotient := (*Float_Division_Quotient_Words)(&destination.Mantissa.Words)
+	float_division_word_quotient(workspace, quotient, control)
+	control[FLOAT_DIVISION_RESULT_PRECISION_INDEX] = int(precision)
+	control[FLOAT_DIVISION_RESULT_PREVIOUS_COUNT_INDEX] = int(previous_count)
+	float_set_quotient_words_commit(
+		result, workspace, quotient, *control, exponent, negative, mode,
+	)
+}
+
+func float_division_word_prepare(
+	workspace *Float_Division_Workspace,
+	control *Float_Division_Word_Control,
+	count Float_Division_Active_Word_Count,
+	order Float_Unequal_Order,
+	precision Float_Active_Precision,
+) {
+	Float_Division_Workspace_Invariants(workspace, "float_division_word_prepare.workspace")
+	Float_Division_Word_Control_Invariants(*control, "float_division_word_prepare.control")
+	Float_Division_Active_Word_Count_Invariants(
+		count, "float_division_word_prepare.count",
+	)
+	Float_Unequal_Order_Invariants(order, "float_division_word_prepare.order")
+	Float_Active_Precision_Invariants(precision, "float_division_word_prepare.precision")
+	divisor_count := int(count) - WORD_COUNT_INCREMENT
+	for divisor_count > WORD_COUNT_MINIMUM {
+		if workspace.Divisor[divisor_count-WORD_COUNT_INCREMENT] != 0 {
+			break
+		}
+		divisor_count--
+	}
+	if divisor_count > BASE_BINARY {
+		return
+	}
+	aligned_bits := (divisor_count-WORD_COUNT_INCREMENT)*WORD_BIT_COUNT +
+		int(bits.Bit_Size_64(bits.Word_64(
+			workspace.Divisor[divisor_count-WORD_COUNT_INCREMENT],
+		)))
+	shift := int(precision)
+	if order == Float_Unequal_Order(ORDER_BEFORE) {
+		shift++
+	}
+	if aligned_bits+shift > BIT_COUNT_MAXIMUM {
+		return
+	}
+	dividend_count := (aligned_bits + shift + WORD_BIT_INDEX_MAXIMUM) / WORD_BIT_COUNT
+	control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX] = divisor_count
+	control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX] = dividend_count
+	control[FLOAT_DIVISION_SHIFT_INDEX] = shift
+	float_division_word_scale(workspace, *control)
+}
+
+func float_division_word_scale(
+	workspace *Float_Division_Workspace, control Float_Division_Word_Control,
+) {
+	Float_Division_Workspace_Invariants(workspace, "float_division_word_scale.workspace")
+	Float_Division_Word_Control_Invariants(control, "float_division_word_scale.control")
+	divisor_count := control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX]
+	dividend_count := control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX]
+	shift := control[FLOAT_DIVISION_SHIFT_INDEX]
+	word_shift, bit_shift := shift/WORD_BIT_COUNT, uint(shift%WORD_BIT_COUNT)
+	destination_index := dividend_count - WORD_COUNT_INCREMENT
+	for destination_index >= WORD_COUNT_MINIMUM {
+		source_index := destination_index - word_shift
+		word := Word(0)
+		if source_index >= WORD_COUNT_MINIMUM {
+			if source_index < divisor_count {
+				word = workspace.Remainder[source_index] << bit_shift
+			}
+			if bit_shift != 0 {
+				if source_index > WORD_COUNT_MINIMUM {
+					if source_index <= divisor_count {
+						lower_index := source_index - WORD_COUNT_INCREMENT
+						word |= workspace.Remainder[lower_index] >>
+							(WORD_BIT_COUNT - bit_shift)
+					}
+				}
+			}
+		}
+		workspace.Remainder[destination_index] = word
+		destination_index--
+	}
+	workspace.Remainder[dividend_count] = 0
+}
+
+func float_set_quotient_words_commit(
+	destination Float_Division_Destination,
+	workspace *Float_Division_Workspace,
+	quotient_words *Float_Division_Quotient_Words,
+	control Float_Division_Word_Control,
+	exponent Float_Exponent,
+	negative Polarity,
+	mode Rounding_Mode,
+) {
+	Float_Division_Destination_Invariants(
+		destination, "float_set_quotient_words_commit.destination",
+	)
+	Float_Division_Workspace_Invariants(
+		workspace, "float_set_quotient_words_commit.workspace",
+	)
+	Float_Division_Quotient_Words_Invariants(
+		quotient_words, "float_set_quotient_words_commit.quotient",
+	)
+	Float_Division_Word_Control_Invariants(
+		control, "float_set_quotient_words_commit.control",
+	)
+	Float_Exponent_Invariants(exponent, "float_set_quotient_words_commit.exponent")
+	Polarity_Invariants(negative, "float_set_quotient_words_commit.negative")
+	Rounding_Mode_Invariants(mode, "float_set_quotient_words_commit.mode")
+	result := destination[WORD_COUNT_MINIMUM]
+	precision := Float_Active_Precision(
+		control[FLOAT_DIVISION_RESULT_PRECISION_INDEX],
+	)
+	previous_count := Word_Count(
+		control[FLOAT_DIVISION_RESULT_PREVIOUS_COUNT_INDEX],
+	)
+	float_division_word_round(
+		destination, workspace, quotient_words, &control, negative, mode,
+	)
+	quotient_count := control[FLOAT_DIVISION_QUOTIENT_COUNT_INDEX]
+	result.Precision, result.Mode = Float_Precision(precision), mode
+	result.Form, result.Negative = FLOAT_FORM_FINITE, negative
+	result.Exponent = exponent
+	result.Mantissa.Count = Word_Count(quotient_count)
+	result.Mantissa.Negative = POLARITY_NONNEGATIVE
+	if control[FLOAT_DIVISION_INCREMENT_INDEX] != WORD_COUNT_MINIMUM {
+		float_increment_mantissa(
+			(*Float_Active_Mantissa)(&result.Mantissa), precision,
+			&result.Exponent,
+		)
+	}
+	if result.Exponent > FLOAT_EXPONENT_MAXIMUM {
+		float_set_division_bound(
+			result, Float_Nonfinite_Form(FLOAT_FORM_INFINITY), negative,
+			precision, mode, true,
+		)
+		return
+	}
+	if previous_count > result.Mantissa.Count {
+		int_clear(
+			(*Int)(&result.Mantissa), result.Mantissa.Count, previous_count,
+		)
+	}
+}
+
+func float_division_word_round(
+	destination Float_Division_Destination,
+	workspace *Float_Division_Workspace,
+	quotient_words *Float_Division_Quotient_Words,
+	control *Float_Division_Word_Control,
+	negative Polarity,
+	mode Rounding_Mode,
+) {
+	Float_Division_Destination_Invariants(
+		destination, "float_division_word_round.destination",
+	)
+	Float_Division_Workspace_Invariants(workspace, "float_division_word_round.workspace")
+	Float_Division_Quotient_Words_Invariants(
+		quotient_words, "float_division_word_round.quotient",
+	)
+	Float_Division_Word_Control_Invariants(*control, "float_division_word_round.control")
+	Polarity_Invariants(negative, "float_division_word_round.negative")
+	Rounding_Mode_Invariants(mode, "float_division_word_round.mode")
+	dividend_count := control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX]
+	divisor_count := control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX]
+	quotient_count := dividend_count - divisor_count + WORD_COUNT_INCREMENT
+	for quotient_count > WORD_COUNT_MINIMUM {
+		if quotient_words[quotient_count-WORD_COUNT_INCREMENT] != 0 {
+			break
+		}
+		quotient_count--
+	}
+	invariant.Always(
+		quotient_count > WORD_COUNT_MINIMUM,
+		"Normalized finite division retains one guarded quotient bit.",
+	)
+	rounding_bit := Bit_Value(quotient_words[WORD_COUNT_MINIMUM] & Word(BIT_SET))
+	for index := WORD_COUNT_MINIMUM; index < quotient_count; index++ {
+		word := quotient_words[index] >> WORD_COUNT_INCREMENT
+		if index+WORD_COUNT_INCREMENT < quotient_count {
+			word |= quotient_words[index+WORD_COUNT_INCREMENT] << WORD_BIT_INDEX_MAXIMUM
+		}
+		quotient_words[index] = word
+	}
+	for quotient_count > WORD_COUNT_MINIMUM {
+		if quotient_words[quotient_count-WORD_COUNT_INCREMENT] != 0 {
+			break
+		}
+		quotient_count--
+	}
+	sticky_bit := BIT_CLEAR
+	for index := WORD_COUNT_MINIMUM; index < divisor_count; index++ {
+		if workspace.Remainder[index] != 0 {
+			sticky_bit = BIT_SET
+			break
+		}
+	}
+	increment := float_rounding_increment(
+		mode, negative, rounding_bit, sticky_bit,
+		Bit_Value(quotient_words[WORD_COUNT_MINIMUM]&Word(BIT_SET)),
+	)
+	accuracy := ACCURACY_EXACT
+	if rounding_bit != BIT_CLEAR {
+		accuracy = Accuracy(float_accuracy(increment, negative))
+	} else if sticky_bit != BIT_CLEAR {
+		accuracy = Accuracy(float_accuracy(increment, negative))
+	}
+	destination[WORD_COUNT_MINIMUM].Accuracy = accuracy
+	control[FLOAT_DIVISION_QUOTIENT_COUNT_INDEX] = quotient_count
+	control[FLOAT_DIVISION_INCREMENT_INDEX] = WORD_COUNT_MINIMUM
+	if increment {
+		control[FLOAT_DIVISION_INCREMENT_INDEX] = WORD_COUNT_INCREMENT
+	}
+}
+
+func float_division_word_quotient(
+	workspace *Float_Division_Workspace,
+	quotient *Float_Division_Quotient_Words,
+	control *Float_Division_Word_Control,
+) {
+	Float_Division_Workspace_Invariants(workspace, "float_division_word_quotient.workspace")
+	Float_Division_Quotient_Words_Invariants(
+		quotient, "float_division_word_quotient.quotient",
+	)
+	Float_Division_Word_Control_Invariants(
+		*control, "float_division_word_quotient.control",
+	)
+	divisor_count := control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX]
+	dividend_count := control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX]
+	invariant.Always(
+		divisor_count > WORD_COUNT_MINIMUM,
+		"Float word division receives one nonzero divisor.",
+	)
+	invariant.Always(
+		divisor_count <= BASE_BINARY,
+		"Float word division keeps quotient estimation to two divisor words.",
+	)
+	invariant.Always(
+		dividend_count >= divisor_count,
+		"Guard scaling leaves at least one quotient word.",
+	)
+	quotient_count := dividend_count - divisor_count + WORD_COUNT_INCREMENT
+	for index := WORD_COUNT_MINIMUM; index < quotient_count; index++ {
+		quotient[index] = 0
+	}
+	if divisor_count == WORD_COUNT_INCREMENT {
+		float_division_one_word_quotient(workspace, quotient, control)
+		return
+	}
+	float_division_two_word_quotient(workspace, quotient, control)
+}
+
+func float_division_one_word_quotient(
+	workspace *Float_Division_Workspace,
+	quotient *Float_Division_Quotient_Words,
+	control *Float_Division_Word_Control,
+) {
+	Float_Division_Workspace_Invariants(
+		workspace, "float_division_one_word_quotient.workspace",
+	)
+	Float_Division_Quotient_Words_Invariants(
+		quotient, "float_division_one_word_quotient.quotient",
+	)
+	Float_Division_Word_Control_Invariants(
+		*control, "float_division_one_word_quotient.control",
+	)
+	remainder := Word(0)
+	index := control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX] - WORD_COUNT_INCREMENT
+	for index >= WORD_COUNT_MINIMUM {
+		word, rest := bits.Divide_64(
+			bits.Dividend_High_64(remainder),
+			bits.Dividend_Low_64(workspace.Remainder[index]),
+			bits.Divisor_64(workspace.Divisor[WORD_COUNT_MINIMUM]),
+		)
+		quotient[index] = Word(word)
+		remainder = Word(rest)
+		index--
+	}
+	workspace.Remainder[WORD_COUNT_MINIMUM] = remainder
+}
+
+func float_division_two_word_quotient(
+	workspace *Float_Division_Workspace,
+	quotient *Float_Division_Quotient_Words,
+	control *Float_Division_Word_Control,
+) {
+	Float_Division_Workspace_Invariants(
+		workspace, "float_division_two_word_quotient.workspace",
+	)
+	Float_Division_Quotient_Words_Invariants(
+		quotient, "float_division_two_word_quotient.quotient",
+	)
+	Float_Division_Word_Control_Invariants(
+		*control, "float_division_two_word_quotient.control",
+	)
+	float_division_two_word_normalize(workspace, control)
+	quotient_count := control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX] -
+		control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX] + WORD_COUNT_INCREMENT
+	offset := quotient_count - WORD_COUNT_INCREMENT
+	for offset >= WORD_COUNT_MINIMUM {
+		control[FLOAT_DIVISION_OFFSET_INDEX] = offset
+		high_index := offset
+		high_index += BASE_BINARY
+		next_index := high_index - WORD_COUNT_INCREMENT
+		third_index := next_index - WORD_COUNT_INCREMENT
+		trial := Int_Division_Small_Trial{
+			Dividend: Int_Division_Small_Trial_Dividend{
+				workspace.Remainder[high_index],
+				workspace.Remainder[next_index],
+				workspace.Remainder[third_index],
+			},
+			Divisor: Int_Division_Small_Trial_Divisor{
+				workspace.Divisor[WORD_COUNT_INCREMENT],
+				workspace.Divisor[WORD_COUNT_MINIMUM],
+			},
+		}
+		float_division_word_subtract(workspace, quotient, control, &trial)
+		offset--
+	}
+}
+
+func float_division_two_word_normalize(
+	workspace *Float_Division_Workspace, control *Float_Division_Word_Control,
+) {
+	Float_Division_Workspace_Invariants(
+		workspace, "float_division_two_word_normalize.workspace",
+	)
+	Float_Division_Word_Control_Invariants(
+		*control, "float_division_two_word_normalize.control",
+	)
+	shift := uint(bits.Leading_Zeros_64(bits.Word_64(
+		workspace.Divisor[WORD_COUNT_INCREMENT],
+	)))
+	if shift == 0 {
+		return
+	}
+	carry := Word(0)
+	dividend_count := control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX]
+	for index := WORD_COUNT_MINIMUM; index < dividend_count; index++ {
+		word := workspace.Remainder[index]
+		workspace.Remainder[index] = word<<shift | carry
+		carry = word >> (WORD_BIT_COUNT - shift)
+	}
+	workspace.Remainder[dividend_count] = carry
+	low := workspace.Divisor[WORD_COUNT_MINIMUM]
+	workspace.Divisor[WORD_COUNT_INCREMENT] =
+		workspace.Divisor[WORD_COUNT_INCREMENT]<<shift |
+			low>>(WORD_BIT_COUNT-shift)
+	workspace.Divisor[WORD_COUNT_MINIMUM] = low << shift
+}
+
+func float_division_word_subtract(
+	workspace *Float_Division_Workspace,
+	quotient *Float_Division_Quotient_Words,
+	control *Float_Division_Word_Control,
+	trial *Int_Division_Small_Trial,
+) {
+	Float_Division_Workspace_Invariants(workspace, "float_division_word_subtract.workspace")
+	Float_Division_Quotient_Words_Invariants(
+		quotient, "float_division_word_subtract.quotient",
+	)
+	Float_Division_Word_Control_Invariants(
+		*control, "float_division_word_subtract.control",
+	)
+	Int_Division_Small_Trial_Invariants(*trial, "float_division_word_subtract.trial")
+	offset := control[FLOAT_DIVISION_OFFSET_INDEX]
+	var estimate_output Int_Division_Estimate
+	int_divide_small_estimate_into(&estimate_output, trial)
+	estimate := estimate_output[INT_DIVISION_ESTIMATE_INDEX]
+	carry, borrow := uint64(0), uint64(0)
+	for divisor_index := WORD_COUNT_MINIMUM; divisor_index < BASE_BINARY; divisor_index++ {
+		left, right := uint64(estimate), uint64(workspace.Divisor[divisor_index])
+		left_low, right_low := left&TEXT_DIVISION_LIMB_MASK,
+			right&TEXT_DIVISION_LIMB_MASK
+		left_high, right_high := left>>TEXT_DIVISION_LIMB_BIT_COUNT,
+			right>>TEXT_DIVISION_LIMB_BIT_COUNT
+		partial, product_low := left_low*right_low, left*right
+		middle_first := left_high*right_low + partial>>TEXT_DIVISION_LIMB_BIT_COUNT
+		middle_second := left_low*right_high + middle_first&TEXT_DIVISION_LIMB_MASK
+		product_high := left_high*right_high +
+			middle_first>>TEXT_DIVISION_LIMB_BIT_COUNT +
+			middle_second>>TEXT_DIVISION_LIMB_BIT_COUNT
+		product_low += carry
+		if product_low < carry {
+			product_high++
+		}
+		position := offset
+		position += divisor_index
+		minuend := uint64(workspace.Remainder[position])
+		difference := minuend - product_low - borrow
+		workspace.Remainder[position] = Word(difference)
+		borrow = ((^minuend & product_low) |
+			(^(minuend ^ product_low) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+		carry = product_high
+	}
+	high_position := offset
+	high_position += BASE_BINARY
+	minuend := uint64(workspace.Remainder[high_position])
+	difference := minuend - carry - borrow
+	workspace.Remainder[high_position] = Word(difference)
+	borrow = ((^minuend & carry) |
+		(^(minuend ^ carry) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+	if borrow == 0 {
+		quotient[offset] = estimate
+		return
+	}
+	quotient[offset] = estimate - Word(bits.CARRY_MAXIMUM)
+	carry = 0
+	for divisor_index := WORD_COUNT_MINIMUM; divisor_index < BASE_BINARY; divisor_index++ {
+		position := offset
+		position += divisor_index
+		left := uint64(workspace.Remainder[position])
+		right := uint64(workspace.Divisor[divisor_index])
+		sum := left + right + carry
+		workspace.Remainder[position] = Word(sum)
+		carry = ((left & right) | ((left | right) &^ sum)) >> WORD_BIT_INDEX_MAXIMUM
+	}
+	workspace.Remainder[high_position] += Word(carry)
+}
+
 func float_division_remainder_nonzero(
 	workspace *Float_Division_Workspace, count Float_Division_Active_Word_Count,
 ) (nonzero Boolean) {
@@ -4867,4 +9147,845 @@ func float_division_remainder_nonzero(
 		}
 	}
 	return false
+}
+
+// Int_Quotient_Remainder implements truncated division without exposing partial results.
+func Int_Quotient_Remainder(
+	quotient *Int,
+	remainder *Int,
+	dividend *Int,
+	divisor *Int,
+	workspace *Int_Division_Workspace,
+) (status Division_Status) {
+	defer func() {
+		Division_Status_Invariants(status, "int_quotient_remainder.status")
+	}()
+	Int_Invariants(quotient, "int_quotient_remainder.quotient")
+	Int_Invariants(remainder, "int_quotient_remainder.remainder")
+	Int_Invariants(dividend, "int_quotient_remainder.dividend")
+	Int_Invariants(divisor, "int_quotient_remainder.divisor")
+	Int_Division_Workspace_Invariants(workspace, "int_quotient_remainder.workspace")
+	if quotient == remainder {
+		return STATUS_DESTINATIONS_OVERLAP
+	}
+	quotient_negative := POLARITY_NONNEGATIVE
+	if dividend.Negative != divisor.Negative {
+		quotient_negative = POLARITY_NEGATIVE
+	}
+	remainder_negative := dividend.Negative
+	// One-word division produces both outputs atomically without restoring-division scratch.
+	if dividend.Count <= Word_Count(WORD_COUNT_INCREMENT) {
+		if divisor.Count == Word_Count(WORD_COUNT_INCREMENT) {
+			dividend_word := Word(0)
+			if dividend.Count != Word_Count(WORD_COUNT_MINIMUM) {
+				dividend_word = dividend.Words[WORD_COUNT_MINIMUM]
+			}
+			divisor_word := divisor.Words[WORD_COUNT_MINIMUM]
+			quotient_word := dividend_word / divisor_word
+			remainder_word := dividend_word % divisor_word
+			workspace.Quotient[WORD_COUNT_MINIMUM] = quotient_word
+			workspace.Remainder[WORD_COUNT_MINIMUM] = remainder_word
+			workspace.Quotient_Count = Quotient_Count(WORD_COUNT_INCREMENT)
+			workspace.Remainder_Count = Remainder_Count(WORD_COUNT_INCREMENT)
+			if quotient_word == 0 {
+				workspace.Quotient_Count = Quotient_Count(WORD_COUNT_MINIMUM)
+			}
+			if remainder_word == 0 {
+				workspace.Remainder_Count = Remainder_Count(WORD_COUNT_MINIMUM)
+			}
+			int_set_word(quotient, quotient_word, quotient_negative)
+			int_set_word(remainder, remainder_word, remainder_negative)
+			return STATUS_OK
+		}
+	}
+	int_divide_magnitudes(workspace, dividend, divisor)
+	if divisor.Count == WORD_COUNT_MINIMUM {
+		return STATUS_DIVISOR_ZERO
+	}
+	int_set_division_quotient(quotient, workspace, quotient_negative)
+	int_set_division_remainder(remainder, workspace, remainder_negative)
+	return STATUS_OK
+}
+
+// Int_Quotient writes truncated quotient without manufacturing an unused remainder Int.
+func Int_Quotient(
+	destination *Int, dividend *Int, divisor *Int, workspace *Int_Division_Workspace,
+) (status Divisor_Status) {
+	defer func() { Divisor_Status_Invariants(status, "int_quotient.status") }()
+	Int_Invariants(destination, "int_quotient.destination")
+	Int_Invariants(dividend, "int_quotient.dividend")
+	Int_Invariants(divisor, "int_quotient.divisor")
+	Int_Division_Workspace_Invariants(workspace, "int_quotient.workspace")
+	if divisor.Count == Word_Count(WORD_COUNT_MINIMUM) {
+		return STATUS_DIVISOR_ZERO
+	}
+	// One-word division is already atomic, so restoring-division scratch adds no safety.
+	if dividend.Count <= Word_Count(WORD_COUNT_INCREMENT) {
+		if divisor.Count == Word_Count(WORD_COUNT_INCREMENT) {
+			dividend_word := Word(0)
+			if dividend.Count != Word_Count(WORD_COUNT_MINIMUM) {
+				dividend_word = dividend.Words[WORD_COUNT_MINIMUM]
+			}
+			divisor_word := divisor.Words[WORD_COUNT_MINIMUM]
+			negative := POLARITY_NONNEGATIVE
+			if dividend.Negative != divisor.Negative {
+				negative = POLARITY_NEGATIVE
+			}
+			word := dividend_word / divisor_word
+			previous_count := destination.Count
+			destination.Count = Word_Count(WORD_COUNT_MINIMUM)
+			destination.Negative = POLARITY_NONNEGATIVE
+			if word != 0 {
+				destination.Words[WORD_COUNT_MINIMUM] = word
+				destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+				destination.Negative = negative
+			}
+			if previous_count > destination.Count {
+				int_clear(destination, destination.Count, previous_count)
+			}
+			return STATUS_OK
+		}
+	}
+	negative := POLARITY_NONNEGATIVE
+	if dividend.Negative != divisor.Negative {
+		negative = POLARITY_NEGATIVE
+	}
+	int_divide_magnitudes(workspace, dividend, divisor)
+	if divisor.Count == WORD_COUNT_MINIMUM {
+		return STATUS_DIVISOR_ZERO
+	}
+	int_set_division_quotient(destination, workspace, negative)
+	return STATUS_OK
+}
+
+// Int_Remainder writes truncated remainder with dividend sign.
+func Int_Remainder(
+	destination *Int, dividend *Int, divisor *Int, workspace *Int_Division_Workspace,
+) (status Divisor_Status) {
+	defer func() { Divisor_Status_Invariants(status, "int_remainder.status") }()
+	Int_Invariants(destination, "int_remainder.destination")
+	Int_Invariants(dividend, "int_remainder.dividend")
+	Int_Invariants(divisor, "int_remainder.divisor")
+	Int_Division_Workspace_Invariants(workspace, "int_remainder.workspace")
+	if divisor.Count == Word_Count(WORD_COUNT_MINIMUM) {
+		return STATUS_DIVISOR_ZERO
+	}
+	// One-word remainder is atomic and does not need restoring-division scratch.
+	if dividend.Count <= Word_Count(WORD_COUNT_INCREMENT) {
+		if divisor.Count == Word_Count(WORD_COUNT_INCREMENT) {
+			dividend_word := Word(0)
+			if dividend.Count != Word_Count(WORD_COUNT_MINIMUM) {
+				dividend_word = dividend.Words[WORD_COUNT_MINIMUM]
+			}
+			negative := dividend.Negative
+			word := dividend_word % divisor.Words[WORD_COUNT_MINIMUM]
+			previous_count := destination.Count
+			destination.Count = Word_Count(WORD_COUNT_MINIMUM)
+			destination.Negative = POLARITY_NONNEGATIVE
+			if word != 0 {
+				destination.Words[WORD_COUNT_MINIMUM] = word
+				destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+				destination.Negative = negative
+			}
+			if previous_count > destination.Count {
+				int_clear(destination, destination.Count, previous_count)
+			}
+			return STATUS_OK
+		}
+	}
+	int_divide_magnitudes(workspace, dividend, divisor)
+	if divisor.Count == WORD_COUNT_MINIMUM {
+		return STATUS_DIVISOR_ZERO
+	}
+	int_set_division_remainder(destination, workspace, dividend.Negative)
+	return STATUS_OK
+}
+
+// DOUBLE_WORD_MAGNITUDE_LOW_INDEX preserves the least-significant-first Int layout.
+const DOUBLE_WORD_MAGNITUDE_LOW_INDEX = 0
+
+// DOUBLE_WORD_MAGNITUDE_HIGH_INDEX follows Low so scalar and Int shifts share direction.
+const DOUBLE_WORD_MAGNITUDE_HIGH_INDEX = DOUBLE_WORD_MAGNITUDE_LOW_INDEX + 1
+
+// DOUBLE_WORD_MAGNITUDE_WORD_COUNT binds the scalar path to its exact capacity.
+const DOUBLE_WORD_MAGNITUDE_WORD_COUNT = DOUBLE_WORD_MAGNITUDE_HIGH_INDEX + 1
+
+// DOUBLE_WORD_ZERO_COUNT_MAXIMUM stops at the highest writable double-word bit.
+const DOUBLE_WORD_ZERO_COUNT_MAXIMUM = DOUBLE_WORD_MAGNITUDE_WORD_COUNT*WORD_BIT_COUNT -
+	WORD_COUNT_INCREMENT
+
+// INT_REFERENCE_DESTINATION_INDEX keeps the mutable result separate from both inputs.
+const INT_REFERENCE_DESTINATION_INDEX = 0
+
+// INT_REFERENCE_LEFT_INDEX preserves the public operand order inside helper boundaries.
+const INT_REFERENCE_LEFT_INDEX = INT_REFERENCE_DESTINATION_INDEX + 1
+
+// INT_REFERENCE_RIGHT_INDEX preserves the second public operand without another parameter type.
+const INT_REFERENCE_RIGHT_INDEX = INT_REFERENCE_LEFT_INDEX + 1
+
+// INT_REFERENCE_COUNT binds the complete validated boundary crossing.
+const INT_REFERENCE_COUNT = INT_REFERENCE_RIGHT_INDEX + 1
+
+// Active_Double_Word_Magnitude holds one nonzero magnitude without repeated field types.
+type Active_Double_Word_Magnitude [DOUBLE_WORD_MAGNITUDE_WORD_COUNT]Word
+
+// Active_Double_Word_Magnitude_Invariants fixes both words and excludes zero.
+func Active_Double_Word_Magnitude_Invariants(
+	value *Active_Double_Word_Magnitude, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == DOUBLE_WORD_MAGNITUDE_WORD_COUNT,
+		"A double-word magnitude owns its exact scalar capacity.",
+	)
+	invariant.Always(
+		value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]|
+			value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] != 0,
+		"An active double word is nonzero.",
+	)
+}
+
+// Int_References carries validated Int addresses through internal helper boundaries.
+type Int_References [INT_REFERENCE_COUNT]*Int
+
+// Int_References_Invariants rejects absent addresses without repeating Int in one chain.
+func Int_References_Invariants(value *Int_References, _ invariant.Namespace) {
+	invariant.Always(len(value) == INT_REFERENCE_COUNT, "The Int references are complete.")
+	invariant.Always(
+		value[INT_REFERENCE_DESTINATION_INDEX] != nil,
+		"The Int destination exists.",
+	)
+	invariant.Always(value[INT_REFERENCE_LEFT_INDEX] != nil, "The left Int exists.")
+	invariant.Always(value[INT_REFERENCE_RIGHT_INDEX] != nil, "The right Int exists.")
+}
+
+// Float_References carries validated Float addresses through internal helper boundaries.
+type Float_References [INT_REFERENCE_COUNT]*Float
+
+// Float_References_Invariants rejects absent addresses without repeating Float validation.
+func Float_References_Invariants(value *Float_References, _ invariant.Namespace) {
+	invariant.Always(len(value) == INT_REFERENCE_COUNT, "The Float references are complete.")
+	invariant.Always(
+		value[INT_REFERENCE_DESTINATION_INDEX] != nil,
+		"The Float destination exists.",
+	)
+	invariant.Always(value[INT_REFERENCE_LEFT_INDEX] != nil, "The left Float exists.")
+	invariant.Always(value[INT_REFERENCE_RIGHT_INDEX] != nil, "The right Float exists.")
+}
+
+// Double_Word_Zero_Count cannot exceed the highest bit in two active words.
+type Double_Word_Zero_Count int
+
+// Double_Word_Zero_Count_Invariants derives its bound from scalar capacity.
+func Double_Word_Zero_Count_Invariants(
+	value Double_Word_Zero_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), BIT_COUNT_MINIMUM, DOUBLE_WORD_ZERO_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Euclidean_Index selects one of the two live magnitudes; the third slot remains spare.
+type Euclidean_Index int
+
+// Euclidean_Index_Invariants excludes the inactive remainder slot from binary reduction.
+func Euclidean_Index_Invariants(value Euclidean_Index, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_Int(int(value), EUCLIDEAN_DIVIDEND_INDEX, EUCLIDEAN_DIVISOR_INDEX).
+		Ensure()
+}
+
+// Word_Shift counts complete-word alignment without admitting the absent end index.
+type Word_Shift Word_Count
+
+// Word_Shift_Invariants derives its maximum from the last writable word.
+func Word_Shift_Invariants(value Word_Shift, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), WORD_COUNT_MINIMUM, WORD_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Word_Factor is one nonzero scalar quotient approximation.
+type Word_Factor Word
+
+// Word_Factor_Invariants excludes the no-progress factor.
+func Word_Factor_Invariants(value Word_Factor, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), uint64(bits.CARRY_MAXIMUM), uint64(bits.WORD_64_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Word_Scale is one word factor shifted by complete words.
+type Word_Scale struct {
+	// Shift carries whole-word alignment so Factor remains one machine word.
+	Shift Word_Shift
+	// Factor skips repeated subtraction without retaining a full quotient.
+	Factor Word_Factor
+}
+
+// Word_Scale_Invariants fixes the bounded shift and scalar factor.
+func Word_Scale_Invariants(value *Word_Scale, namespace invariant.Namespace) {
+	Word_Shift_Invariants(value.Shift, namespace)
+	Word_Factor_Invariants(value.Factor, namespace)
+}
+
+// Int_Greatest_Common_Divisor removes powers of two before subtraction because bit-at-a-time
+// division spends work producing a quotient that normalization never consumes.
+func Int_Greatest_Common_Divisor(
+	destination *Int,
+	left *Int,
+	right *Int,
+	workspace *Int_Greatest_Common_Divisor_Workspace,
+) {
+	Int_Invariants(destination, "int_greatest_common_divisor.destination")
+	Int_Invariants(left, "int_greatest_common_divisor.left")
+	Int_Invariants(right, "int_greatest_common_divisor.right")
+	Int_Greatest_Common_Divisor_Workspace_Invariants(
+		workspace, "int_greatest_common_divisor.workspace",
+	)
+	references := Int_References{destination, left, right}
+	if left.Count == WORD_COUNT_MINIMUM {
+		Int_Set(destination, right)
+		destination.Negative = POLARITY_NONNEGATIVE
+		return
+	}
+	if right.Count == WORD_COUNT_MINIMUM {
+		Int_Set(destination, left)
+		destination.Negative = POLARITY_NONNEGATIVE
+		return
+	}
+	if left.Count <= Word_Count(WORD_COUNT_INCREMENT) {
+		if right.Count <= Word_Count(WORD_COUNT_INCREMENT) {
+			dividend_word := Word(0)
+			if left.Count != Word_Count(WORD_COUNT_MINIMUM) {
+				dividend_word = left.Words[WORD_COUNT_MINIMUM]
+			}
+			divisor_word := Word(0)
+			if right.Count != Word_Count(WORD_COUNT_MINIMUM) {
+				divisor_word = right.Words[WORD_COUNT_MINIMUM]
+			}
+			for divisor_word != 0 {
+				remainder := dividend_word % divisor_word
+				dividend_word, divisor_word = divisor_word, remainder
+			}
+			int_set_word(destination, dividend_word, POLARITY_NONNEGATIVE)
+			return
+		}
+	}
+	two_word_count := Word_Count(WORD_COUNT_INCREMENT + WORD_COUNT_INCREMENT)
+	if left.Count <= two_word_count {
+		if right.Count <= two_word_count {
+			int_greatest_common_divisor_double_word(&references)
+			return
+		}
+	}
+	int_greatest_common_divisor_multiword(&references, &workspace.Integers)
+}
+
+func int_greatest_common_divisor_double_word(references *Int_References) {
+	Int_References_Invariants(references, "int_gcd_double_word.references")
+	left := references[INT_REFERENCE_LEFT_INDEX]
+	right := references[INT_REFERENCE_RIGHT_INDEX]
+	two_word_count := Word_Count(WORD_COUNT_INCREMENT + WORD_COUNT_INCREMENT)
+	left_value := Active_Double_Word_Magnitude{
+		DOUBLE_WORD_MAGNITUDE_LOW_INDEX: left.Words[WORD_COUNT_MINIMUM],
+	}
+	if left.Count == two_word_count {
+		left_value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] = left.Words[WORD_COUNT_INCREMENT]
+	}
+	right_value := Active_Double_Word_Magnitude{
+		DOUBLE_WORD_MAGNITUDE_LOW_INDEX: right.Words[WORD_COUNT_MINIMUM],
+	}
+	if right.Count == two_word_count {
+		right_value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] = right.Words[WORD_COUNT_INCREMENT]
+	}
+	left_zero_count := double_word_magnitude_make_odd(&left_value)
+	right_zero_count := double_word_magnitude_make_odd(&right_value)
+	common_zero_count := min(left_zero_count, right_zero_count)
+	for left_value != right_value {
+		double_word_magnitude_reduce(&left_value, &right_value)
+	}
+	double_word_magnitude_commit(references, &left_value, common_zero_count)
+}
+
+func double_word_magnitude_make_odd(
+	value *Active_Double_Word_Magnitude,
+) (zero_count Double_Word_Zero_Count) {
+	defer func() {
+		Double_Word_Zero_Count_Invariants(zero_count, "double_word_make_odd.zero_count")
+	}()
+	Active_Double_Word_Magnitude_Invariants(value, "double_word_make_odd.value")
+	count := BIT_COUNT_MINIMUM
+	residue := value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]
+	if residue == 0 {
+		count = WORD_BIT_COUNT
+		residue = value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX]
+	}
+	for residue&Word(bits.CARRY_MAXIMUM) == 0 {
+		count++
+		residue >>= uint(bits.CARRY_MAXIMUM)
+	}
+	if count >= WORD_BIT_COUNT {
+		value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] =
+			value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] >> uint(count-WORD_BIT_COUNT)
+		value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] = 0
+		return Double_Word_Zero_Count(count)
+	}
+	if count != BIT_COUNT_MINIMUM {
+		value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] =
+			value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]>>uint(count) |
+				value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX]<<uint(WORD_BIT_COUNT-count)
+		value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] >>= uint(count)
+	}
+	return Double_Word_Zero_Count(count)
+}
+
+func double_word_magnitude_reduce(
+	left *Active_Double_Word_Magnitude, right *Active_Double_Word_Magnitude,
+) {
+	Active_Double_Word_Magnitude_Invariants(left, "double_word_reduce.left")
+	Active_Double_Word_Magnitude_Invariants(right, "double_word_reduce.right")
+	larger, smaller := left, right
+	if left[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] < right[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] {
+		larger, smaller = right, left
+	} else if left[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] ==
+		right[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] {
+		if left[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] < right[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] {
+			larger, smaller = right, left
+		}
+	}
+	double_word_magnitude_remainder(larger, smaller)
+	if *larger == *smaller {
+		return
+	}
+	double_word_magnitude_make_odd(larger)
+}
+
+func double_word_magnitude_remainder(
+	larger *Active_Double_Word_Magnitude, smaller *Active_Double_Word_Magnitude,
+) {
+	Active_Double_Word_Magnitude_Invariants(larger, "double_word_remainder.larger")
+	Active_Double_Word_Magnitude_Invariants(smaller, "double_word_remainder.smaller")
+	if smaller[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] == 0 {
+		high_remainder := larger[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] %
+			smaller[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]
+		_, remainder := bits.Divide_64(
+			bits.Dividend_High_64(high_remainder),
+			bits.Dividend_Low_64(larger[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]),
+			bits.Divisor_64(smaller[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]),
+		)
+		larger[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] = Word(remainder)
+		larger[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] = 0
+		if larger[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] == 0 {
+			*larger = *smaller
+		}
+		return
+	}
+	quotient := Word(WORD_COUNT_INCREMENT)
+	if smaller[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] != Word(bits.WORD_64_MAXIMUM) {
+		quotient = larger[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] /
+			(smaller[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] + Word(WORD_COUNT_INCREMENT))
+		quotient = max(quotient, Word(WORD_COUNT_INCREMENT))
+	}
+	word_32_mask := Word(bits.WORD_32_MAXIMUM)
+	smaller_low := smaller[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] & word_32_mask
+	smaller_high := smaller[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] >> bits.BIT_COUNT_32_MAXIMUM
+	quotient_low := quotient & word_32_mask
+	quotient_high := quotient >> bits.BIT_COUNT_32_MAXIMUM
+	product_low_part := smaller_low * quotient_low
+	middle := smaller_high*quotient_low +
+		product_low_part>>bits.BIT_COUNT_32_MAXIMUM
+	middle_low := middle & word_32_mask
+	middle_high := middle >> bits.BIT_COUNT_32_MAXIMUM
+	middle_low += smaller_low * quotient_high
+	product_low_high := smaller_high*quotient_high +
+		middle_high + middle_low>>bits.BIT_COUNT_32_MAXIMUM
+	product_low := smaller[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] * quotient
+	product_high := product_low_high + smaller[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX]*quotient
+	minuend := larger[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]
+	difference := minuend - product_low
+	borrow := ((^minuend & product_low) |
+		(^(minuend ^ product_low) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+	larger[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] = difference
+	larger[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] =
+		larger[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] - product_high - borrow
+}
+
+func double_word_magnitude_commit(
+	references *Int_References,
+	value *Active_Double_Word_Magnitude,
+	common_zero_count Double_Word_Zero_Count,
+) {
+	Int_References_Invariants(references, "double_word_commit.references")
+	Active_Double_Word_Magnitude_Invariants(value, "double_word_commit.value")
+	Double_Word_Zero_Count_Invariants(
+		common_zero_count, "double_word_commit.common_zero_count",
+	)
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	count := int(common_zero_count)
+	if count >= WORD_BIT_COUNT {
+		value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] =
+			value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] << uint(count-WORD_BIT_COUNT)
+		value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] = 0
+	} else if count != BIT_COUNT_MINIMUM {
+		value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] =
+			value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX]<<uint(count) |
+				value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]>>uint(WORD_BIT_COUNT-count)
+		value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX] <<= uint(count)
+	}
+	previous_count := destination.Count
+	destination.Words[WORD_COUNT_MINIMUM] =
+		value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]
+	destination.Count = Word_Count(WORD_COUNT_INCREMENT)
+	if value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] != 0 {
+		destination.Words[WORD_COUNT_INCREMENT] =
+			value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX]
+		destination.Count += Word_Count(WORD_COUNT_INCREMENT)
+	}
+	destination.Negative = POLARITY_NONNEGATIVE
+	if previous_count > destination.Count {
+		int_clear(destination, destination.Count, previous_count)
+	}
+}
+
+func int_greatest_common_divisor_multiword(
+	references *Int_References, integers *Euclidean_Integers,
+) {
+	Int_References_Invariants(references, "int_gcd_multiword.references")
+	Euclidean_Integers_Invariants(*integers, "int_gcd_multiword.integers")
+	destination := references[INT_REFERENCE_DESTINATION_INDEX]
+	left := references[INT_REFERENCE_LEFT_INDEX]
+	right := references[INT_REFERENCE_RIGHT_INDEX]
+	dividend := &integers[EUCLIDEAN_DIVIDEND_INDEX]
+	divisor := &integers[EUCLIDEAN_DIVISOR_INDEX]
+	Int_Set(dividend, left)
+	dividend.Negative = POLARITY_NONNEGATIVE
+	Int_Set(divisor, right)
+	divisor.Negative = POLARITY_NONNEGATIVE
+	dividend_zero_count := Int_Trailing_Zero_Bit_Count(dividend)
+	divisor_zero_count := Int_Trailing_Zero_Bit_Count(divisor)
+	common_zero_count := min(dividend_zero_count, divisor_zero_count)
+	Int_Shift_Right(dividend, dividend, Shift_Count(dividend_zero_count))
+	Int_Shift_Right(divisor, divisor, Shift_Count(divisor_zero_count))
+	scale := Word_Scale{Factor: Word_Factor(WORD_COUNT_INCREMENT)}
+	order := ORDER_BEFORE
+	for order != ORDER_SAME {
+		order = ORDER_SAME
+		if dividend.Count < divisor.Count {
+			order = ORDER_BEFORE
+		} else if dividend.Count > divisor.Count {
+			order = ORDER_AFTER
+		} else {
+			index := int(dividend.Count) - WORD_COUNT_INCREMENT
+			for ; index >= 0; index-- {
+				if dividend.Words[index] < divisor.Words[index] {
+					order = ORDER_BEFORE
+					break
+				}
+				if dividend.Words[index] > divisor.Words[index] {
+					order = ORDER_AFTER
+					break
+				}
+			}
+		}
+		if order == ORDER_SAME {
+			break
+		}
+		larger_index := Euclidean_Index(EUCLIDEAN_DIVIDEND_INDEX)
+		smaller_index := Euclidean_Index(EUCLIDEAN_DIVISOR_INDEX)
+		if order == ORDER_BEFORE {
+			larger_index, smaller_index = smaller_index, larger_index
+		}
+		int_greatest_common_divisor_scale(
+			integers, larger_index, smaller_index, &scale,
+		)
+		int_greatest_common_divisor_subtract(
+			integers, larger_index, smaller_index, &scale,
+		)
+		larger := &integers[larger_index]
+		if larger.Count == WORD_COUNT_MINIMUM {
+			Int_Set(larger, &integers[smaller_index])
+			break
+		}
+		int_greatest_common_divisor_make_odd(integers, larger_index)
+	}
+	if common_zero_count == BIT_COUNT_MINIMUM {
+		Int_Set(destination, dividend)
+		return
+	}
+	status := Int_Shift_Left(destination, dividend, Shift_Count(common_zero_count))
+	invariant.Always(
+		status == Arithmetic_Status(STATUS_OK),
+		"Restoring a common input factor cannot exceed either input magnitude.",
+	)
+}
+
+func int_greatest_common_divisor_scale(
+	integers *Euclidean_Integers,
+	larger_index Euclidean_Index,
+	smaller_index Euclidean_Index,
+	scale *Word_Scale,
+) {
+	Euclidean_Integers_Invariants(*integers, "int_gcd_scale.integers")
+	Euclidean_Index_Invariants(larger_index, "int_gcd_scale.larger_index")
+	Euclidean_Index_Invariants(smaller_index, "int_gcd_scale.smaller_index")
+	Word_Scale_Invariants(scale, "int_gcd_scale.scale")
+	larger := &integers[larger_index]
+	smaller := &integers[smaller_index]
+	scale.Shift = Word_Shift(WORD_COUNT_MINIMUM)
+	scale.Factor = Word_Factor(WORD_COUNT_INCREMENT)
+	larger_high_index := int(larger.Count) - WORD_COUNT_INCREMENT
+	larger_high := larger.Words[larger_high_index]
+	smaller_high := smaller.Words[int(smaller.Count)-WORD_COUNT_INCREMENT]
+	if larger.Count == smaller.Count {
+		if smaller_high != Word(bits.WORD_64_MAXIMUM) {
+			scale.Factor = Word_Factor(larger_high /
+				(smaller_high + Word(WORD_COUNT_INCREMENT)))
+			scale.Factor = max(scale.Factor, Word_Factor(WORD_COUNT_INCREMENT))
+		}
+		return
+	}
+	scale.Shift = Word_Shift(larger.Count - smaller.Count)
+	scale.Factor = 0
+	if smaller_high != Word(bits.WORD_64_MAXIMUM) {
+		denominator := smaller_high + Word(WORD_COUNT_INCREMENT)
+		scale.Factor = Word_Factor(larger_high / denominator)
+	}
+	if scale.Factor != 0 {
+		return
+	}
+	scale.Shift--
+	larger_low := larger.Words[larger_high_index-WORD_COUNT_INCREMENT]
+	if smaller_high == Word(bits.WORD_64_MAXIMUM) {
+		scale.Factor = Word_Factor(larger_high)
+		return
+	}
+	denominator := smaller_high + Word(WORD_COUNT_INCREMENT)
+	quotient, _ := bits.Divide_64(
+		bits.Dividend_High_64(larger_high),
+		bits.Dividend_Low_64(larger_low),
+		bits.Divisor_64(denominator),
+	)
+	scale.Factor = max(Word_Factor(quotient), Word_Factor(WORD_COUNT_INCREMENT))
+}
+
+func int_greatest_common_divisor_subtract(
+	integers *Euclidean_Integers,
+	larger_index Euclidean_Index,
+	smaller_index Euclidean_Index,
+	scale *Word_Scale,
+) {
+	Euclidean_Integers_Invariants(*integers, "int_gcd_subtract.integers")
+	Euclidean_Index_Invariants(larger_index, "int_gcd_subtract.larger_index")
+	Euclidean_Index_Invariants(smaller_index, "int_gcd_subtract.smaller_index")
+	Word_Scale_Invariants(scale, "int_gcd_subtract.scale")
+	larger := &integers[larger_index]
+	smaller := &integers[smaller_index]
+	borrow := Word(0)
+	carry := Word(0)
+	for index := WORD_COUNT_MINIMUM; index < int(smaller.Count); index++ {
+		subtrahend := smaller.Words[index]
+		if scale.Factor != Word_Factor(WORD_COUNT_INCREMENT) {
+			word_32_mask := Word(bits.WORD_32_MAXIMUM)
+			multiplicand_low := smaller.Words[index] & word_32_mask
+			multiplicand_high := smaller.Words[index] >> bits.BIT_COUNT_32_MAXIMUM
+			factor_low := Word(scale.Factor) & word_32_mask
+			factor_high := Word(scale.Factor) >> bits.BIT_COUNT_32_MAXIMUM
+			product_low_part := multiplicand_low * factor_low
+			middle := multiplicand_high*factor_low +
+				product_low_part>>bits.BIT_COUNT_32_MAXIMUM
+			middle_low := middle & word_32_mask
+			middle_high := middle >> bits.BIT_COUNT_32_MAXIMUM
+			middle_low += multiplicand_low * factor_high
+			product_high := multiplicand_high*factor_high +
+				middle_high + middle_low>>bits.BIT_COUNT_32_MAXIMUM
+			product_low := smaller.Words[index] * Word(scale.Factor)
+			subtrahend = product_low + carry
+			carry_overflow := Word(0)
+			if subtrahend < product_low {
+				carry_overflow = Word(WORD_COUNT_INCREMENT)
+			}
+			carry = product_high + carry_overflow
+		}
+		destination_index := index + int(scale.Shift)
+		minuend := larger.Words[destination_index]
+		difference := minuend - subtrahend - borrow
+		larger.Words[destination_index] = difference
+		borrow = ((^minuend & subtrahend) |
+			(^(minuend ^ subtrahend) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+	}
+	carry_index := int(smaller.Count) + int(scale.Shift)
+	if carry_index < int(larger.Count) {
+		minuend := larger.Words[carry_index]
+		difference := minuend - carry - borrow
+		larger.Words[carry_index] = difference
+		borrow = ((^minuend & carry) |
+			(^(minuend ^ carry) & difference)) >> WORD_BIT_INDEX_MAXIMUM
+	}
+	invariant.Always(
+		borrow == 0,
+		"A conservative quotient keeps the scaled divisor below the dividend.",
+	)
+	for larger.Count > WORD_COUNT_MINIMUM {
+		if larger.Words[int(larger.Count)-WORD_COUNT_INCREMENT] != 0 {
+			break
+		}
+		larger.Count--
+	}
+}
+
+func int_greatest_common_divisor_make_odd(
+	integers *Euclidean_Integers, larger_index Euclidean_Index,
+) {
+	Euclidean_Integers_Invariants(*integers, "int_gcd_make_odd.integers")
+	Euclidean_Index_Invariants(larger_index, "int_gcd_make_odd.larger_index")
+	larger := &integers[larger_index]
+	zero_word_count := WORD_COUNT_MINIMUM
+	for larger.Words[zero_word_count] == 0 {
+		zero_word_count++
+	}
+	zero_bit_count := BIT_COUNT_MINIMUM
+	residue := larger.Words[zero_word_count]
+	for residue&Word(bits.CARRY_MAXIMUM) == 0 {
+		zero_bit_count++
+		residue >>= uint(bits.CARRY_MAXIMUM)
+	}
+	shifted_count := larger.Count - Word_Count(zero_word_count)
+	for index := WORD_COUNT_MINIMUM; index < int(shifted_count); index++ {
+		source_index := index + zero_word_count
+		word := larger.Words[source_index] >> uint(zero_bit_count)
+		if zero_bit_count != BIT_COUNT_MINIMUM {
+			next_index := source_index + WORD_COUNT_INCREMENT
+			if next_index < int(larger.Count) {
+				word |= larger.Words[next_index] <<
+					uint(WORD_BIT_COUNT-zero_bit_count)
+			}
+		}
+		larger.Words[index] = word
+	}
+	for shifted_count > WORD_COUNT_MINIMUM {
+		if larger.Words[int(shifted_count)-WORD_COUNT_INCREMENT] != 0 {
+			break
+		}
+		shifted_count--
+	}
+	larger.Count = shifted_count
+}
+
+func rat_add_single_words(destination *Rat, left *Rat, right *Rat) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "rat_add_single_words.matched") }()
+	Rat_Invariants(destination, "rat_add_single_words.destination")
+	Rat_Invariants(left, "rat_add_single_words.left")
+	Rat_Invariants(right, "rat_add_single_words.right")
+	left_numerator, right_numerator :=
+		&left.Integers[RAT_NUMERATOR_INDEX], &right.Integers[RAT_NUMERATOR_INDEX]
+	left_denominator, right_denominator :=
+		&left.Integers[RAT_DENOMINATOR_INDEX], &right.Integers[RAT_DENOMINATOR_INDEX]
+	switch {
+	case left_numerator.Count > Word_Count(WORD_COUNT_INCREMENT):
+		return false
+	case right_numerator.Count > Word_Count(WORD_COUNT_INCREMENT):
+		return false
+	case left_denominator.Count > Word_Count(WORD_COUNT_INCREMENT):
+		return false
+	case right_denominator.Count > Word_Count(WORD_COUNT_INCREMENT):
+		return false
+	}
+	left_numerator_word := Word(0)
+	if left_numerator.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		left_numerator_word = left_numerator.Words[WORD_COUNT_MINIMUM]
+	}
+	right_numerator_word := Word(0)
+	if right_numerator.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		right_numerator_word = right_numerator.Words[WORD_COUNT_MINIMUM]
+	}
+	left_denominator_word := Word(bits.CARRY_MAXIMUM)
+	if left_denominator.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		left_denominator_word = left_denominator.Words[WORD_COUNT_MINIMUM]
+	}
+	right_denominator_word := Word(bits.CARRY_MAXIMUM)
+	if right_denominator.Count != Word_Count(WORD_COUNT_MINIMUM) {
+		right_denominator_word = right_denominator.Words[WORD_COUNT_MINIMUM]
+	}
+	switch {
+	case left_numerator_word > Word(bits.WORD_32_MAXIMUM):
+		return false
+	case right_numerator_word > Word(bits.WORD_32_MAXIMUM):
+		return false
+	case left_denominator_word > Word(bits.WORD_32_MAXIMUM):
+		return false
+	case right_denominator_word > Word(bits.WORD_32_MAXIMUM):
+		return false
+	}
+	left_scaled := left_numerator_word * right_denominator_word
+	right_scaled := right_numerator_word * left_denominator_word
+	numerator, negative, valid := rat_add_signed_words(
+		Half_Word_Product(left_scaled), left_numerator.Negative,
+		Half_Word_Product(right_scaled), right_numerator.Negative,
+	)
+	if !valid {
+		return false
+	}
+	denominator := left_denominator_word * right_denominator_word
+	common_divisor := denominator
+	for remainder := numerator; remainder != 0; {
+		common_divisor, remainder = remainder, common_divisor%remainder
+	}
+	numerator /= common_divisor
+	denominator /= common_divisor
+	int_set_word(&destination.Integers[RAT_NUMERATOR_INDEX], numerator, negative)
+	denominator_destination := &destination.Integers[RAT_DENOMINATOR_INDEX]
+	if denominator == Word(bits.CARRY_MAXIMUM) {
+		int_zero(denominator_destination, denominator_destination.Count)
+	} else {
+		int_set_word(denominator_destination, denominator, POLARITY_NONNEGATIVE)
+	}
+	return true
+}
+
+// Two half words form the widest native product accepted by the rational fast path.
+const HALF_WORD_PRODUCT_MAXIMUM = Word(bits.WORD_32_MAXIMUM) * Word(bits.WORD_32_MAXIMUM)
+
+// Half_Word_Product is one native product of two bounded half words.
+type Half_Word_Product Word
+
+// Half_Word_Product_Invariants narrows a machine word to its reachable product interval.
+func Half_Word_Product_Invariants(
+	value Half_Word_Product, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value), uint64(bits.CARRY_MINIMUM),
+			uint64(HALF_WORD_PRODUCT_MAXIMUM),
+		).
+		Ensure()
+}
+
+func rat_add_signed_words(
+	left Half_Word_Product, left_negative Polarity,
+	right Half_Word_Product, right_negative Polarity,
+) (sum Word, negative Polarity, valid Boolean) {
+	defer func() {
+		Word_Invariants(sum, "rat_add_signed_words.sum")
+		Polarity_Invariants(negative, "rat_add_signed_words.negative")
+		Boolean_Invariants(valid, "rat_add_signed_words.valid")
+	}()
+	Half_Word_Product_Invariants(left, "rat_add_signed_words.left")
+	Polarity_Invariants(left_negative, "rat_add_signed_words.left_negative")
+	Half_Word_Product_Invariants(right, "rat_add_signed_words.right")
+	Polarity_Invariants(right_negative, "rat_add_signed_words.right_negative")
+	left_word := Word(left)
+	right_word := Word(right)
+	if left_negative == right_negative {
+		sum = left_word + right_word
+		if sum < left_word {
+			return 0, POLARITY_NONNEGATIVE, false
+		}
+		return sum, left_negative, true
+	}
+	if left_word >= right_word {
+		return left_word - right_word, left_negative, true
+	}
+	return right_word - left_word, right_negative, true
 }
