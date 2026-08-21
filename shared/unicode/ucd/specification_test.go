@@ -24,11 +24,16 @@ func Test_Range_Tables(t *testing.T) {
 		},
 		Latin_Offset: 2,
 	}
-	testify.True(t, bool(ucd.Is(&table, 'A')), "the first 16-bit range")
-	testify.True(t, bool(ucd.Is(&table, 'c')), "the 16-bit stride")
-	testify.False(t, bool(ucd.Is(&table, 'b')), "a 16-bit stride gap")
-	testify.True(t, bool(ucd.Is(&table, 0x10010)), "the 32-bit range")
-	testify.False(t, bool(ucd.Is(&table, 0x1000f)), "a 32-bit stride gap")
+	testify.True(t, bool(ucd.Is(ucd.Range_Table_Handle(&table), 'A')),
+		"the first 16-bit range")
+	testify.True(t, bool(ucd.Is(ucd.Range_Table_Handle(&table), 'c')),
+		"the 16-bit stride")
+	testify.False(t, bool(ucd.Is(ucd.Range_Table_Handle(&table), 'b')),
+		"a 16-bit stride gap")
+	testify.True(t, bool(ucd.Is(ucd.Range_Table_Handle(&table), 0x10010)),
+		"the 32-bit range")
+	testify.False(t, bool(ucd.Is(ucd.Range_Table_Handle(&table), 0x1000f)),
+		"a 32-bit stride gap")
 	tables := ucd.Range_Tables{&table}
 	testify.True(t, bool(ucd.Is_One_Of(tables, 'A')), "Is_One_Of")
 	testify.True(t, bool(ucd.In('A', tables)), "In")
@@ -136,8 +141,8 @@ func Test_Case_Conversion(t *testing.T) {
 		testify.Equal(t, one.Lower, ucd.To(ucd.LOWER_CASE, one.Character))
 		testify.Equal(t, one.Title, ucd.To(ucd.TITLE_CASE, one.Character))
 	}
-	turkish := ucd.Special_Case(turkish_case())
-	azerbaijani := ucd.Special_Case(azeri_case())
+	turkish := turkish_case()
+	azerbaijani := azeri_case()
 	testify.Equal(t, 'İ', rune(ucd.Special_Case_To_Upper(turkish, 'i')))
 	testify.Equal(t, 'ı', rune(ucd.Special_Case_To_Lower(turkish, 'I')))
 	testify.Equal(t, 'İ', rune(ucd.Special_Case_To_Title(azerbaijani, 'i')))
@@ -158,7 +163,8 @@ func Test_Named_Tables(t *testing.T) {
 		"Is_Fold_Script")
 	table, found := named_table(ucd.TABLE_KIND_CATEGORY, "L")
 	testify.True(t, bool(found), "the L category")
-	testify.True(t, bool(ucd.Is(&table, 'A')), "membership in category L")
+	testify.True(t, bool(ucd.Is(ucd.Range_Table_Handle(&table), 'A')),
+		"membership in category L")
 	verify_named_query_boundaries(t)
 	verify_named_table_boundaries(t)
 }
@@ -196,11 +202,20 @@ func Test_Unicode_Data(t *testing.T) {
 
 // Test_Allocation proves each public operation keeps heap allocation at zero.
 func Test_Allocation(t *testing.T) {
+	var ranges_16 [ucd.RANGES_16_COUNT_MAXIMUM]ucd.Range_16
+	var ranges_32 [ucd.RANGES_32_COUNT_MAXIMUM]ucd.Range_32
 	state := allocation_state{
-		Range: ucd.Ranges_16{{Minimum: 'A', Maximum: 'Z', Stride: 1}},
-		Special: ucd.Special_Case{{
-			Minimum: 'a', Maximum: 'z', Deltas: ucd.Case_Delta{-32, 0, -32},
-		}},
+		Ranges_16: ranges_16[:],
+		Ranges_32: ranges_32[:],
+		Range:     ucd.Ranges_16{{Minimum: 'A', Maximum: 'Z', Stride: 1}},
+		Special: special_case(
+			1,
+			ucd.Case_Range{
+				Minimum: 'a', Maximum: 'z',
+				Deltas: case_delta(-32, 0, -32),
+			},
+			ucd.Case_Range{}, ucd.Case_Range{}, ucd.Case_Range{},
+		),
 	}
 	state.Range_Table = ucd.Range_Table{Ranges_16: state.Range, Latin_Offset: 1}
 	state.Range_Tables = ucd.Range_Tables{&state.Range_Table}
@@ -215,7 +230,9 @@ func Test_Domain_Errors(t *testing.T) {
 	invalid_range := ucd.Range_Table{Ranges_16: ucd.Ranges_16{
 		{Minimum: 1, Maximum: 2, Stride: 0},
 	}}
-	testify.Panics(t, func() { ucd.Is(&invalid_range, 1) }, "a zero stride")
+	testify.Panics(t, func() {
+		ucd.Is(ucd.Range_Table_Handle(&invalid_range), 1)
+	}, "a zero stride")
 	large_name := ucd.Name(repeat("x", ucd.NAME_SIZE_MAXIMUM+1))
 	testify.Panics(t, func() {
 		ucd.Named_Table(ucd.TABLE_KIND_CATEGORY, large_name, nil, nil)
@@ -249,15 +266,14 @@ func Test_Domain_Errors(t *testing.T) {
 		"an unknown fold category query")
 	testify.False(t, bool(ucd.Is_Fold_Script('A', "unknown")),
 		"an unknown fold script query")
-	for _, size := range []int{0, 1, 2} {
-		storage := make(ucd.Special_Case, size)
-		testify.Panics(t, func() {
-			ucd.Turkish_Case(storage)
-		}, "short Turkish case storage")
-		testify.Panics(t, func() {
-			ucd.Azeri_Case(storage)
-		}, "short Azeri case storage")
+	testify.Panics(t, func() { ucd.Turkish_Case(nil) }, "missing Turkish case storage")
+	testify.Panics(t, func() { ucd.Azeri_Case(nil) }, "missing Azeri case storage")
+	invalid_special := ucd.Special_Case{
+		Count: ucd.SPECIAL_CASE_COUNT_MAXIMUM + 1,
 	}
+	testify.Panics(t, func() {
+		ucd.Special_Case_To_Upper(invalid_special, 'i')
+	}, "oversize special case count")
 }
 
 type allocation_case struct {
@@ -266,29 +282,46 @@ type allocation_case struct {
 }
 
 type allocation_state struct {
-	Table            ucd.Range_Table
-	Found            ucd.Boolean
-	Alias            ucd.Category_Alias_Name
-	Language_Case    ucd.Language_Case
-	Language_Storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
-	Ranges_16        [ucd.RANGES_16_COUNT_MAXIMUM]ucd.Range_16
-	Ranges_32        [ucd.RANGES_32_COUNT_MAXIMUM]ucd.Range_32
-	Boolean          ucd.Boolean
-	Character        ucd.Character
-	Range            ucd.Ranges_16
-	Range_Table      ucd.Range_Table
-	Range_Tables     ucd.Range_Tables
-	Special          ucd.Special_Case
+	Table         ucd.Range_Table
+	Found         ucd.Boolean
+	Alias         ucd.Category_Alias_Name
+	Language_Case ucd.Special_Case
+	Ranges_16     ucd.Ranges_16
+	Ranges_32     ucd.Ranges_32
+	Boolean       ucd.Boolean
+	Character     ucd.Character
+	Range         ucd.Ranges_16
+	Range_Table   ucd.Range_Table
+	Range_Tables  ucd.Range_Tables
+	Special       ucd.Special_Case
 }
 
-func turkish_case() (special ucd.Language_Case) {
-	storage := make(ucd.Special_Case, ucd.SPECIAL_CASE_COUNT_MAXIMUM)
-	return ucd.Turkish_Case(storage)
+func turkish_case() (special ucd.Special_Case) {
+	ucd.Turkish_Case(ucd.Special_Case_Destination(&special))
+	return special
 }
 
-func azeri_case() (special ucd.Language_Case) {
-	storage := make(ucd.Special_Case, ucd.SPECIAL_CASE_COUNT_MAXIMUM)
-	return ucd.Azeri_Case(storage)
+func azeri_case() (special ucd.Special_Case) {
+	ucd.Azeri_Case(ucd.Special_Case_Destination(&special))
+	return special
+}
+
+func case_delta(
+	upper ucd.Upper_Case_Delta,
+	lower ucd.Lower_Case_Delta,
+	title ucd.Title_Case_Delta,
+) (delta ucd.Case_Delta) {
+	return ucd.Case_Delta{Upper: upper, Lower: lower, Title: title}
+}
+
+func special_case(
+	count ucd.Special_Case_Count,
+	first ucd.Case_Range,
+	second ucd.Case_Range,
+	third ucd.Case_Range,
+	fourth ucd.Case_Range,
+) (special ucd.Special_Case) {
+	return ucd.Special_Case_Of(count, first, second, third, fourth)
 }
 
 func named_table(
@@ -309,7 +342,7 @@ func assert_zero_allocations(t *testing.T, cases []allocation_case) {
 func membership_allocation_cases(state *allocation_state) (cases []allocation_case) {
 	return []allocation_case{
 		{Name: "Is", Run: func() {
-			state.Boolean = ucd.Is(&state.Range_Table, 'A')
+			state.Boolean = ucd.Is(ucd.Range_Table_Handle(&state.Range_Table), 'A')
 		}},
 		{Name: "Is_One_Of", Run: func() {
 			state.Boolean = ucd.Is_One_Of(state.Range_Tables, 'A')
@@ -355,17 +388,17 @@ func conversion_allocation_cases(state *allocation_state) (cases []allocation_ca
 		{Name: "Named_Table", Run: func() {
 			state.Table, state.Found = ucd.Named_Table(
 				ucd.TABLE_KIND_CATEGORY, "L",
-				state.Ranges_16[:], state.Ranges_32[:],
+				state.Ranges_16, state.Ranges_32,
 			)
 		}},
 		{Name: "Category_Alias", Run: func() {
 			state.Alias, state.Found = ucd.Category_Alias("Cased_Letter")
 		}},
 		{Name: "Turkish_Case", Run: func() {
-			state.Language_Case = ucd.Turkish_Case(state.Language_Storage[:])
+			ucd.Turkish_Case(ucd.Special_Case_Destination(&state.Language_Case))
 		}},
 		{Name: "Azeri_Case", Run: func() {
-			state.Language_Case = ucd.Azeri_Case(state.Language_Storage[:])
+			ucd.Azeri_Case(ucd.Special_Case_Destination(&state.Language_Case))
 		}},
 		{Name: "To", Run: func() {
 			state.Character = ucd.To(ucd.UPPER_CASE, 'a')
@@ -455,7 +488,8 @@ func verify_maximum_range_table(t *testing.T) {
 		ucd.Character(bits.INTEGER_32_MAXIMUM),
 	} {
 		testify.Equal(t, reference_range_table_contains(maximum_table, character),
-			bool(ucd.Is(&maximum_table, character)), "Is(%d)", character)
+			bool(ucd.Is(ucd.Range_Table_Handle(&maximum_table), character)),
+			"Is(%d)", character)
 	}
 }
 
@@ -495,7 +529,8 @@ func verify_range_table_collections(t *testing.T) {
 		},
 		Latin_Offset: 1,
 	}
-	testify.True(t, bool(ucd.Is(&one_latin_range, 0)), "one Latin range")
+	testify.True(t, bool(ucd.Is(ucd.Range_Table_Handle(&one_latin_range), 0)),
+		"one Latin range")
 	two_high_ranges := ucd.Range_Table{Ranges_32: ucd.Ranges_32{
 		{Minimum: ucd.Range_32_Minimum(ucd.RANGE_32_MINIMUM),
 			Maximum: ucd.Range_32_Maximum(ucd.RANGE_32_MINIMUM),
@@ -507,7 +542,8 @@ func verify_range_table_collections(t *testing.T) {
 			Stride: 1},
 	}}
 	testify.True(t, bool(ucd.Is(
-		&two_high_ranges, ucd.Character(ucd.RANGE_32_MINIMUM+1),
+		ucd.Range_Table_Handle(&two_high_ranges),
+		ucd.Character(ucd.RANGE_32_MINIMUM+1),
 	)), "two 32-bit ranges without a 16-bit range")
 	maximum_tables := make(
 		ucd.Range_Tables, ucd.RANGE_TABLES_COUNT_MAXIMUM,
@@ -520,10 +556,12 @@ func verify_range_table_collections(t *testing.T) {
 		-1, 0, 1, 2,
 		ucd.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, bool(ucd.Is(&maximum_table, character)),
+		testify.Equal(t,
+			bool(ucd.Is(ucd.Range_Table_Handle(&maximum_table), character)),
 			bool(ucd.Is_One_Of(maximum_tables, character)),
 			"Is_One_Of(%d)", character)
-		testify.Equal(t, bool(ucd.Is(&maximum_table, character)),
+		testify.Equal(t,
+			bool(ucd.Is(ucd.Range_Table_Handle(&maximum_table), character)),
 			bool(ucd.In(character, maximum_tables)), "In(%d)", character)
 	}
 	testify.False(t, bool(ucd.Is_One_Of(nil, 0)), "an empty Is_One_Of")
@@ -555,7 +593,7 @@ func verify_empty_special_cases(t *testing.T) {
 			ucd.Character(bits.INTEGER_32_MAXIMUM),
 		} {
 			testify.Equal(t, rune(ucd.To(one.Case_Value, character)),
-				rune(one.Shared(nil, character)),
+				rune(one.Shared(ucd.Special_Case{}, character)),
 				"%s empty override at %d", one.Name, character)
 		}
 	}
@@ -563,13 +601,38 @@ func verify_empty_special_cases(t *testing.T) {
 
 func verify_zero_delta_special_cases(t *testing.T) {
 	t.Helper()
-	zero_ranges := ucd.Special_Case{
-		{Minimum: 0, Maximum: 0, Deltas: ucd.Case_Delta{0, 0, 0}},
-		{Minimum: 1, Maximum: 1, Deltas: ucd.Case_Delta{0, 0, 0}},
-		{Minimum: 2, Maximum: 2, Deltas: ucd.Case_Delta{0, 0, 0}},
-		{Minimum: ucd.Case_Range_Minimum(ucd.RUNE_MAX),
+	zero_ranges := special_case(
+		ucd.SPECIAL_CASE_COUNT_MAXIMUM,
+		ucd.Case_Range{Minimum: 0, Maximum: 0, Deltas: case_delta(0, 0, 0)},
+		ucd.Case_Range{Minimum: 1, Maximum: 1, Deltas: case_delta(0, 0, 0)},
+		ucd.Case_Range{Minimum: 2, Maximum: 2, Deltas: case_delta(0, 0, 0)},
+		ucd.Case_Range{Minimum: ucd.Case_Range_Minimum(ucd.RUNE_MAX),
 			Maximum: ucd.Case_Range_Maximum(ucd.RUNE_MAX),
-			Deltas:  ucd.Case_Delta{0, 0, 0}},
+			Deltas:  case_delta(0, 0, 0)},
+	)
+	empty_ranges := special_case(
+		ucd.SPECIAL_CASE_COUNT_MINIMUM,
+		ucd.Case_Range{}, ucd.Case_Range{}, ucd.Case_Range{}, ucd.Case_Range{},
+	)
+	testify.Equal_Values(t, ucd.SPECIAL_CASE_COUNT_MINIMUM, empty_ranges.Count)
+	two_ranges := special_case(
+		2,
+		ucd.Case_Range{Minimum: 0, Maximum: 0, Deltas: case_delta(0, 0, 0)},
+		ucd.Case_Range{Minimum: 1, Maximum: 1, Deltas: case_delta(0, 0, 0)},
+		ucd.Case_Range{}, ucd.Case_Range{},
+	)
+	one_range := special_case(
+		1,
+		ucd.Case_Range{Minimum: 0, Maximum: 0, Deltas: case_delta(0, 0, 0)},
+		ucd.Case_Range{}, ucd.Case_Range{}, ucd.Case_Range{},
+	)
+	for _, special := range []ucd.Special_Case{one_range, two_ranges} {
+		turkish := special
+		ucd.Turkish_Case(ucd.Special_Case_Destination(&turkish))
+		testify.Equal_Values(t, ucd.SPECIAL_CASE_COUNT_MAXIMUM, turkish.Count)
+		azeri := special
+		ucd.Azeri_Case(ucd.Special_Case_Destination(&azeri))
+		testify.Equal_Values(t, ucd.SPECIAL_CASE_COUNT_MAXIMUM, azeri.Count)
 	}
 	case_functions := []struct {
 		Name   string
@@ -588,7 +651,7 @@ func verify_zero_delta_special_cases(t *testing.T) {
 			testify.Equal(t, rune(character), rune(one.Shared(zero_ranges, character)),
 				"%s zero delta at %d", one.Name, character)
 		}
-		testify.Equal(t, 0, int(one.Shared(zero_ranges[:2], 0)),
+		testify.Equal(t, 0, int(one.Shared(two_ranges, 0)),
 			"%s two override rules", one.Name)
 	}
 }
@@ -602,29 +665,32 @@ func verify_delta_special_cases(t *testing.T) {
 		{Range: ucd.Case_Range{
 			Minimum: ucd.Case_Range_Minimum(ucd.RUNE_MAX),
 			Maximum: ucd.Case_Range_Maximum(ucd.RUNE_MAX),
-			Deltas: ucd.Case_Delta{
-				ucd.CASE_DELTA_MINIMUM,
-				ucd.CASE_DELTA_MINIMUM,
-				ucd.CASE_DELTA_MINIMUM,
-			},
+			Deltas: case_delta(
+				ucd.Upper_Case_Delta(ucd.CASE_DELTA_MINIMUM),
+				ucd.Lower_Case_Delta(ucd.CASE_DELTA_MINIMUM),
+				ucd.Title_Case_Delta(ucd.CASE_DELTA_MINIMUM),
+			),
 		}, Character: ucd.RUNE_MAX},
 		{Range: ucd.Case_Range{
 			Minimum: 0, Maximum: 1,
-			Deltas: ucd.Case_Delta{
-				ucd.CASE_DELTA_MAXIMUM,
-				ucd.CASE_DELTA_MAXIMUM,
-				ucd.CASE_DELTA_MAXIMUM,
-			},
+			Deltas: case_delta(
+				ucd.Upper_Case_Delta(ucd.CASE_DELTA_MAXIMUM),
+				ucd.Lower_Case_Delta(ucd.CASE_DELTA_MAXIMUM),
+				ucd.Title_Case_Delta(ucd.CASE_DELTA_MAXIMUM),
+			),
 		}, Character: 0},
 		{Range: ucd.Case_Range{
-			Minimum: 1, Maximum: 1, Deltas: ucd.Case_Delta{-1, -1, -1},
+			Minimum: 1, Maximum: 1, Deltas: case_delta(-1, -1, -1),
 		}, Character: 1},
 		{Range: ucd.Case_Range{
-			Minimum: 0, Maximum: 0, Deltas: ucd.Case_Delta{1, 1, 1},
+			Minimum: 0, Maximum: 0, Deltas: case_delta(1, 1, 1),
 		}, Character: 0},
 		{Range: ucd.Case_Range{
-			Minimum: 0, Maximum: 0, Deltas: ucd.Case_Delta{2, 2, 2},
+			Minimum: 0, Maximum: 0, Deltas: case_delta(2, 2, 2),
 		}, Character: 0},
+		{Range: ucd.Case_Range{
+			Minimum: 2, Maximum: 2, Deltas: case_delta(0, 0, 0),
+		}, Character: 2},
 	}
 	case_functions := []struct {
 		Name   string
@@ -638,11 +704,23 @@ func verify_delta_special_cases(t *testing.T) {
 	}
 	for _, one := range case_functions {
 		for _, delta_case := range delta_cases {
+			special := special_case(
+				ucd.SPECIAL_CASE_COUNT_MAXIMUM,
+				delta_case.Range, delta_case.Range,
+				delta_case.Range, delta_case.Range,
+			)
 			mapped := one.Shared(
-				ucd.Special_Case{delta_case.Range}, delta_case.Character,
+				special,
+				delta_case.Character,
 			)
 			testify.True(t, mapped >= 0 && mapped <= ucd.RUNE_MAX,
 				"%s mapped code point", one.Name)
+			turkish := special
+			ucd.Turkish_Case(ucd.Special_Case_Destination(&turkish))
+			testify.Equal_Values(t, ucd.SPECIAL_CASE_COUNT_MAXIMUM, turkish.Count)
+			azeri := special
+			ucd.Azeri_Case(ucd.Special_Case_Destination(&azeri))
+			testify.Equal_Values(t, ucd.SPECIAL_CASE_COUNT_MAXIMUM, azeri.Count)
 		}
 	}
 }

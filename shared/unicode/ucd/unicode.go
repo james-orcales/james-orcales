@@ -144,9 +144,6 @@ const LATIN_OFFSET_MAXIMUM = 11
 // CASE_DELTA_COUNT is the upper, lower, and title mapping count.
 const CASE_DELTA_COUNT = 3
 
-// NATIVE_CASE_RANGE_COUNT is the single range that one lookup decodes.
-const NATIVE_CASE_RANGE_COUNT = 1
-
 // CASE_DELTA_MINIMUM is the most negative delta between two Unicode code points.
 const CASE_DELTA_MINIMUM int32 = -int32(RUNE_MAX)
 
@@ -238,14 +235,34 @@ const ALIAS_NAME_SIZE_BYTE_COUNT = int(ENCODED_WIDTH_BYTE)
 // DATA_POSITION_MINIMUM is the first byte in encoded data.
 const DATA_POSITION_MINIMUM = 0
 
-// DATA_POSITION_MAXIMUM is the boundary after the largest encoded data block.
-const DATA_POSITION_MAXIMUM = 1 << 20
+// DATA_POSITION_MAXIMUM admits a final 32-bit value in the largest encoded table.
+const DATA_POSITION_MAXIMUM = len(CATEGORY_TABLE_DATA)/HEXADECIMAL_BYTE_CHARACTER_COUNT -
+	int(ENCODED_WIDTH_32)
 
 // DATA_COUNT_MINIMUM permits an empty encoded range collection.
 const DATA_COUNT_MINIMUM = 0
 
-// DATA_COUNT_MAXIMUM bounds an encoded range collection.
-const DATA_COUNT_MAXIMUM = 4096
+// DATA_COUNT_MAXIMUM is the largest generated range collection.
+const DATA_COUNT_MAXIMUM = RANGES_16_COUNT_MAXIMUM
+
+// ENCODED_DATA_SIZE_MINIMUM permits an empty encoded table.
+const ENCODED_DATA_SIZE_MINIMUM = 0
+
+// ENCODED_DATA_SIZE_MAXIMUM is the largest generated encoded table.
+const ENCODED_DATA_SIZE_MAXIMUM = len(CATEGORY_TABLE_DATA)
+
+// TABLE_DATA_BYTE_COUNT_MAXIMUM is the largest generated named table.
+const TABLE_DATA_BYTE_COUNT_MAXIMUM = 5580
+
+// TABLE_DATA_SIZE_MINIMUM permits an empty named table.
+const TABLE_DATA_SIZE_MINIMUM = 0
+
+// TABLE_DATA_SIZE_MAXIMUM is the encoded size of the largest generated named table.
+const TABLE_DATA_SIZE_MAXIMUM = TABLE_DATA_BYTE_COUNT_MAXIMUM *
+	HEXADECIMAL_BYTE_CHARACTER_COUNT
+
+// TABLE_DATA_SIZE_HOLE excludes an incomplete encoded byte.
+const TABLE_DATA_SIZE_HOLE = 1
 
 // ENCODED_NUMBER_MINIMUM is the smallest decoded unsigned value.
 const ENCODED_NUMBER_MINIMUM uint64 = uint64(bits.WORD_32_MINIMUM)
@@ -372,6 +389,34 @@ func Data_Count_Invariants(value Data_Count, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value), DATA_COUNT_MINIMUM, DATA_COUNT_MAXIMUM).
 		Ensure()
+}
+
+// Encoded_Data distinguishes immutable hexadecimal Unicode tables from user text.
+type Encoded_Data string
+
+// Encoded_Data_Invariants prevents internal table scans from exceeding data budget.
+func Encoded_Data_Invariants(value Encoded_Data, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), ENCODED_DATA_SIZE_MINIMUM, ENCODED_DATA_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Table_Data is one hexadecimal range table selected from a named directory.
+type Table_Data string
+
+// Table_Data_Invariants bounds decoded bytes by the largest generated named table.
+func Table_Data_Invariants(value Table_Data, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Holed_Int(
+			len(value), TABLE_DATA_SIZE_MINIMUM, TABLE_DATA_SIZE_MAXIMUM,
+			TABLE_DATA_SIZE_HOLE, TABLE_DATA_SIZE_HOLE,
+			TABLE_DATA_SIZE_HOLE, TABLE_DATA_SIZE_HOLE,
+		).
+		Ensure()
+	aver.Always(
+		len(value)%HEXADECIMAL_BYTE_CHARACTER_COUNT == 0,
+		"A hexadecimal range table contains complete encoded bytes.",
+	)
 }
 
 // Encoded_Width selects the byte width of one encoded unsigned number.
@@ -592,6 +637,31 @@ func Range_Table_Invariants(value Range_Table, namespace aver.Namespace) {
 	)
 }
 
+// Range_Table_Handle is nonnil caller-owned table storage.
+type Range_Table_Handle *Range_Table
+
+// Range_Table_Handle_Invariants rejects missing table storage before reading it.
+func Range_Table_Handle_Invariants(value Range_Table_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "Unicode range table handle exists.")
+	aver.Tree(Ranges_16(value.Ranges_16), namespace).
+		Range_Int(
+			len(value.Ranges_16), RANGES_16_COUNT_MINIMUM, RANGES_16_COUNT_MAXIMUM,
+		).
+		Ensure()
+	aver.Tree(Ranges_32(value.Ranges_32), namespace).
+		Range_Int(
+			len(value.Ranges_32), RANGES_32_COUNT_MINIMUM, RANGES_32_COUNT_MAXIMUM,
+		).
+		Ensure()
+	aver.Tree(Latin_Offset(value.Latin_Offset), namespace).
+		Range_Int(int(value.Latin_Offset), LATIN_OFFSET_MINIMUM, LATIN_OFFSET_MAXIMUM).
+		Ensure()
+	aver.Always(
+		int(value.Latin_Offset) <= len(value.Ranges_16),
+		"Unicode range table handle has valid Latin offset.",
+	)
+}
+
 // Range_Tables is a bounded collection for a union query.
 type Range_Tables []*Range_Table
 
@@ -602,16 +672,51 @@ func Range_Tables_Invariants(value Range_Tables, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Case_Delta holds the uppercase, lowercase, and title-case deltas.
-type Case_Delta [CASE_DELTA_COUNT]int32
+// Upper_Case_Delta keeps uppercase mapping separate from other case axes.
+type Upper_Case_Delta int32
 
-// Case_Delta_Invariants bounds each mapping delta and its sentinel.
-func Case_Delta_Invariants(value Case_Delta, namespace aver.Namespace) {
+// Upper_Case_Delta_Invariants bounds code-point movement and alternating sentinel.
+func Upper_Case_Delta_Invariants(value Upper_Case_Delta, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int32(value[UPPER_CASE], CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
-		Range_Int32(value[LOWER_CASE], CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
-		Range_Int32(value[TITLE_CASE], CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
 		Ensure()
+}
+
+// Lower_Case_Delta keeps lowercase mapping separate from other case axes.
+type Lower_Case_Delta int32
+
+// Lower_Case_Delta_Invariants bounds code-point movement and alternating sentinel.
+func Lower_Case_Delta_Invariants(value Lower_Case_Delta, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Title_Case_Delta keeps title mapping separate from other case axes.
+type Title_Case_Delta int32
+
+// Title_Case_Delta_Invariants bounds code-point movement and alternating sentinel.
+func Title_Case_Delta_Invariants(value Title_Case_Delta, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Case_Delta names each mapping because three positions form semantic shape.
+type Case_Delta struct {
+	// Upper separates uppercase mapping from selector order.
+	Upper Upper_Case_Delta
+	// Lower separates lowercase mapping from selector order.
+	Lower Lower_Case_Delta
+	// Title separates title mapping from selector order.
+	Title Title_Case_Delta
+}
+
+// Case_Delta_Invariants composes all three mapping domains.
+func Case_Delta_Invariants(value Case_Delta, namespace aver.Namespace) {
+	Upper_Case_Delta_Invariants(value.Upper, namespace)
+	Lower_Case_Delta_Invariants(value.Lower, namespace)
+	Title_Case_Delta_Invariants(value.Title, namespace)
 }
 
 // Case_Range_Minimum is the first code point in a case range.
@@ -663,43 +768,526 @@ func Case_Range_Invariants(value Case_Range, namespace aver.Namespace) {
 	)
 }
 
-// Native_Case_Range contains the single range that one native-data lookup decodes.
-type Native_Case_Range [NATIVE_CASE_RANGE_COUNT]Case_Range
+// First_Special_Case_Minimum gives first rule minimum separate invariant identity.
+type First_Special_Case_Minimum uint32
 
-// Native_Case_Range_Invariants preserves the decoder result shape.
-func Native_Case_Range_Invariants(value Native_Case_Range, _ aver.Namespace) {
-	aver.Always(
-		len(value) == NATIVE_CASE_RANGE_COUNT,
-		"A native Unicode case range contains one decoded range.",
-	)
-}
-
-// Special_Case is one bounded language-specific case override.
-type Special_Case []Case_Range
-
-// Special_Case_Invariants applies the language-rule count limit.
-func Special_Case_Invariants(value Special_Case, namespace aver.Namespace) {
+// First_Special_Case_Minimum_Invariants bounds first rule start to Unicode.
+func First_Special_Case_Minimum_Invariants(
+	value First_Special_Case_Minimum, namespace aver.Namespace,
+) {
 	aver.Tree(value, namespace).
-		Range_Int(len(value), SPECIAL_CASE_COUNT_MINIMUM, SPECIAL_CASE_COUNT_MAXIMUM).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
 		Ensure()
 }
 
-// Language_Case is one complete four-rule language override.
-type Language_Case []Case_Range
+// First_Special_Case_Maximum gives first rule maximum separate invariant identity.
+type First_Special_Case_Maximum uint32
 
-// Language_Case_Invariants fixes the language override rule count.
-func Language_Case_Invariants(value Language_Case, _ aver.Namespace) {
+// First_Special_Case_Maximum_Invariants bounds first rule end to Unicode.
+func First_Special_Case_Maximum_Invariants(
+	value First_Special_Case_Maximum, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
+		Ensure()
+}
+
+// First_Special_Case_Upper_Delta separates first upper mapping axis.
+type First_Special_Case_Upper_Delta int32
+
+// First_Special_Case_Upper_Delta_Invariants bounds first upper movement.
+func First_Special_Case_Upper_Delta_Invariants(
+	value First_Special_Case_Upper_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// First_Special_Case_Lower_Delta separates first lower mapping axis.
+type First_Special_Case_Lower_Delta int32
+
+// First_Special_Case_Lower_Delta_Invariants bounds first lower movement.
+func First_Special_Case_Lower_Delta_Invariants(
+	value First_Special_Case_Lower_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// First_Special_Case_Title_Delta separates first title mapping axis.
+type First_Special_Case_Title_Delta int32
+
+// First_Special_Case_Title_Delta_Invariants bounds first title movement.
+func First_Special_Case_Title_Delta_Invariants(
+	value First_Special_Case_Title_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// First_Special_Case_Deltas names first rule mapping axes.
+type First_Special_Case_Deltas struct {
+	// Upper prevents selector position from implying meaning.
+	Upper First_Special_Case_Upper_Delta
+	// Lower prevents selector position from implying meaning.
+	Lower First_Special_Case_Lower_Delta
+	// Title prevents selector position from implying meaning.
+	Title First_Special_Case_Title_Delta
+}
+
+// First_Special_Case_Deltas_Invariants composes first rule mappings.
+func First_Special_Case_Deltas_Invariants(
+	value First_Special_Case_Deltas, namespace aver.Namespace,
+) {
+	First_Special_Case_Upper_Delta_Invariants(value.Upper, namespace)
+	First_Special_Case_Lower_Delta_Invariants(value.Lower, namespace)
+	First_Special_Case_Title_Delta_Invariants(value.Title, namespace)
+}
+
+// First_Special_Case_Range gives first ordered rule structural identity.
+type First_Special_Case_Range struct {
+	// Minimum prevents range order from hiding behind collection position.
+	Minimum First_Special_Case_Minimum
+	// Maximum prevents range order from hiding behind collection position.
+	Maximum First_Special_Case_Maximum
+	// Deltas keep all mapping axes beside range bounds.
+	Deltas First_Special_Case_Deltas
+}
+
+// First_Special_Case_Range_Invariants composes first ordered rule.
+func First_Special_Case_Range_Invariants(
+	value First_Special_Case_Range, namespace aver.Namespace,
+) {
+	First_Special_Case_Minimum_Invariants(value.Minimum, namespace)
+	First_Special_Case_Maximum_Invariants(value.Maximum, namespace)
+	First_Special_Case_Deltas_Invariants(value.Deltas, namespace)
 	aver.Always(
-		len(value) == SPECIAL_CASE_COUNT_MAXIMUM,
-		"A Unicode language case contains four rules.",
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"First special case range minimum does not exceed maximum.",
 	)
 }
 
+// Second_Special_Case_Minimum gives second rule minimum separate invariant identity.
+type Second_Special_Case_Minimum uint32
+
+// Second_Special_Case_Minimum_Invariants bounds second rule start to Unicode.
+func Second_Special_Case_Minimum_Invariants(
+	value Second_Special_Case_Minimum, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
+		Ensure()
+}
+
+// Second_Special_Case_Maximum gives second rule maximum separate invariant identity.
+type Second_Special_Case_Maximum uint32
+
+// Second_Special_Case_Maximum_Invariants bounds second rule end to Unicode.
+func Second_Special_Case_Maximum_Invariants(
+	value Second_Special_Case_Maximum, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
+		Ensure()
+}
+
+// Second_Special_Case_Upper_Delta separates second upper mapping axis.
+type Second_Special_Case_Upper_Delta int32
+
+// Second_Special_Case_Upper_Delta_Invariants bounds second upper movement.
+func Second_Special_Case_Upper_Delta_Invariants(
+	value Second_Special_Case_Upper_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Second_Special_Case_Lower_Delta separates second lower mapping axis.
+type Second_Special_Case_Lower_Delta int32
+
+// Second_Special_Case_Lower_Delta_Invariants bounds second lower movement.
+func Second_Special_Case_Lower_Delta_Invariants(
+	value Second_Special_Case_Lower_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Second_Special_Case_Title_Delta separates second title mapping axis.
+type Second_Special_Case_Title_Delta int32
+
+// Second_Special_Case_Title_Delta_Invariants bounds second title movement.
+func Second_Special_Case_Title_Delta_Invariants(
+	value Second_Special_Case_Title_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Second_Special_Case_Deltas names second rule mapping axes.
+type Second_Special_Case_Deltas struct {
+	// Upper prevents selector position from implying meaning.
+	Upper Second_Special_Case_Upper_Delta
+	// Lower prevents selector position from implying meaning.
+	Lower Second_Special_Case_Lower_Delta
+	// Title prevents selector position from implying meaning.
+	Title Second_Special_Case_Title_Delta
+}
+
+// Second_Special_Case_Deltas_Invariants composes second rule mappings.
+func Second_Special_Case_Deltas_Invariants(
+	value Second_Special_Case_Deltas, namespace aver.Namespace,
+) {
+	Second_Special_Case_Upper_Delta_Invariants(value.Upper, namespace)
+	Second_Special_Case_Lower_Delta_Invariants(value.Lower, namespace)
+	Second_Special_Case_Title_Delta_Invariants(value.Title, namespace)
+}
+
+// Second_Special_Case_Range gives second ordered rule structural identity.
+type Second_Special_Case_Range struct {
+	// Minimum prevents range order from hiding behind collection position.
+	Minimum Second_Special_Case_Minimum
+	// Maximum prevents range order from hiding behind collection position.
+	Maximum Second_Special_Case_Maximum
+	// Deltas keep all mapping axes beside range bounds.
+	Deltas Second_Special_Case_Deltas
+}
+
+// Second_Special_Case_Range_Invariants composes second ordered rule.
+func Second_Special_Case_Range_Invariants(
+	value Second_Special_Case_Range, namespace aver.Namespace,
+) {
+	Second_Special_Case_Minimum_Invariants(value.Minimum, namespace)
+	Second_Special_Case_Maximum_Invariants(value.Maximum, namespace)
+	Second_Special_Case_Deltas_Invariants(value.Deltas, namespace)
+	aver.Always(
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"Second special case range minimum does not exceed maximum.",
+	)
+}
+
+// Third_Special_Case_Minimum gives third rule minimum separate invariant identity.
+type Third_Special_Case_Minimum uint32
+
+// Third_Special_Case_Minimum_Invariants bounds third rule start to Unicode.
+func Third_Special_Case_Minimum_Invariants(
+	value Third_Special_Case_Minimum, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
+		Ensure()
+}
+
+// Third_Special_Case_Maximum gives third rule maximum separate invariant identity.
+type Third_Special_Case_Maximum uint32
+
+// Third_Special_Case_Maximum_Invariants bounds third rule end to Unicode.
+func Third_Special_Case_Maximum_Invariants(
+	value Third_Special_Case_Maximum, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
+		Ensure()
+}
+
+// Third_Special_Case_Upper_Delta separates third upper mapping axis.
+type Third_Special_Case_Upper_Delta int32
+
+// Third_Special_Case_Upper_Delta_Invariants bounds third upper movement.
+func Third_Special_Case_Upper_Delta_Invariants(
+	value Third_Special_Case_Upper_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Third_Special_Case_Lower_Delta separates third lower mapping axis.
+type Third_Special_Case_Lower_Delta int32
+
+// Third_Special_Case_Lower_Delta_Invariants bounds third lower movement.
+func Third_Special_Case_Lower_Delta_Invariants(
+	value Third_Special_Case_Lower_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Third_Special_Case_Title_Delta separates third title mapping axis.
+type Third_Special_Case_Title_Delta int32
+
+// Third_Special_Case_Title_Delta_Invariants bounds third title movement.
+func Third_Special_Case_Title_Delta_Invariants(
+	value Third_Special_Case_Title_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Third_Special_Case_Deltas names third rule mapping axes.
+type Third_Special_Case_Deltas struct {
+	// Upper prevents selector position from implying meaning.
+	Upper Third_Special_Case_Upper_Delta
+	// Lower prevents selector position from implying meaning.
+	Lower Third_Special_Case_Lower_Delta
+	// Title prevents selector position from implying meaning.
+	Title Third_Special_Case_Title_Delta
+}
+
+// Third_Special_Case_Deltas_Invariants composes third rule mappings.
+func Third_Special_Case_Deltas_Invariants(
+	value Third_Special_Case_Deltas, namespace aver.Namespace,
+) {
+	Third_Special_Case_Upper_Delta_Invariants(value.Upper, namespace)
+	Third_Special_Case_Lower_Delta_Invariants(value.Lower, namespace)
+	Third_Special_Case_Title_Delta_Invariants(value.Title, namespace)
+}
+
+// Third_Special_Case_Range gives third ordered rule structural identity.
+type Third_Special_Case_Range struct {
+	// Minimum prevents range order from hiding behind collection position.
+	Minimum Third_Special_Case_Minimum
+	// Maximum prevents range order from hiding behind collection position.
+	Maximum Third_Special_Case_Maximum
+	// Deltas keep all mapping axes beside range bounds.
+	Deltas Third_Special_Case_Deltas
+}
+
+// Third_Special_Case_Range_Invariants composes third ordered rule.
+func Third_Special_Case_Range_Invariants(
+	value Third_Special_Case_Range, namespace aver.Namespace,
+) {
+	Third_Special_Case_Minimum_Invariants(value.Minimum, namespace)
+	Third_Special_Case_Maximum_Invariants(value.Maximum, namespace)
+	Third_Special_Case_Deltas_Invariants(value.Deltas, namespace)
+	aver.Always(
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"Third special case range minimum does not exceed maximum.",
+	)
+}
+
+// Fourth_Special_Case_Minimum gives fourth rule minimum separate invariant identity.
+type Fourth_Special_Case_Minimum uint32
+
+// Fourth_Special_Case_Minimum_Invariants bounds fourth rule start to Unicode.
+func Fourth_Special_Case_Minimum_Invariants(
+	value Fourth_Special_Case_Minimum, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
+		Ensure()
+}
+
+// Fourth_Special_Case_Maximum gives fourth rule maximum separate invariant identity.
+type Fourth_Special_Case_Maximum uint32
+
+// Fourth_Special_Case_Maximum_Invariants bounds fourth rule end to Unicode.
+func Fourth_Special_Case_Maximum_Invariants(
+	value Fourth_Special_Case_Maximum, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM).
+		Ensure()
+}
+
+// Fourth_Special_Case_Upper_Delta separates fourth upper mapping axis.
+type Fourth_Special_Case_Upper_Delta int32
+
+// Fourth_Special_Case_Upper_Delta_Invariants bounds fourth upper movement.
+func Fourth_Special_Case_Upper_Delta_Invariants(
+	value Fourth_Special_Case_Upper_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Fourth_Special_Case_Lower_Delta separates fourth lower mapping axis.
+type Fourth_Special_Case_Lower_Delta int32
+
+// Fourth_Special_Case_Lower_Delta_Invariants bounds fourth lower movement.
+func Fourth_Special_Case_Lower_Delta_Invariants(
+	value Fourth_Special_Case_Lower_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Fourth_Special_Case_Title_Delta separates fourth title mapping axis.
+type Fourth_Special_Case_Title_Delta int32
+
+// Fourth_Special_Case_Title_Delta_Invariants bounds fourth title movement.
+func Fourth_Special_Case_Title_Delta_Invariants(
+	value Fourth_Special_Case_Title_Delta, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
+		Ensure()
+}
+
+// Fourth_Special_Case_Deltas names fourth rule mapping axes.
+type Fourth_Special_Case_Deltas struct {
+	// Upper prevents selector position from implying meaning.
+	Upper Fourth_Special_Case_Upper_Delta
+	// Lower prevents selector position from implying meaning.
+	Lower Fourth_Special_Case_Lower_Delta
+	// Title prevents selector position from implying meaning.
+	Title Fourth_Special_Case_Title_Delta
+}
+
+// Fourth_Special_Case_Deltas_Invariants composes fourth rule mappings.
+func Fourth_Special_Case_Deltas_Invariants(
+	value Fourth_Special_Case_Deltas, namespace aver.Namespace,
+) {
+	Fourth_Special_Case_Upper_Delta_Invariants(value.Upper, namespace)
+	Fourth_Special_Case_Lower_Delta_Invariants(value.Lower, namespace)
+	Fourth_Special_Case_Title_Delta_Invariants(value.Title, namespace)
+}
+
+// Fourth_Special_Case_Range gives fourth ordered rule structural identity.
+type Fourth_Special_Case_Range struct {
+	// Minimum prevents range order from hiding behind collection position.
+	Minimum Fourth_Special_Case_Minimum
+	// Maximum prevents range order from hiding behind collection position.
+	Maximum Fourth_Special_Case_Maximum
+	// Deltas keep all mapping axes beside range bounds.
+	Deltas Fourth_Special_Case_Deltas
+}
+
+// Fourth_Special_Case_Range_Invariants composes fourth ordered rule.
+func Fourth_Special_Case_Range_Invariants(
+	value Fourth_Special_Case_Range, namespace aver.Namespace,
+) {
+	Fourth_Special_Case_Minimum_Invariants(value.Minimum, namespace)
+	Fourth_Special_Case_Maximum_Invariants(value.Maximum, namespace)
+	Fourth_Special_Case_Deltas_Invariants(value.Deltas, namespace)
+	aver.Always(
+		uint32(value.Minimum) <= uint32(value.Maximum),
+		"Fourth special case range minimum does not exceed maximum.",
+	)
+}
+
+// Special_Case_Count selects active prefix from four named rules.
+type Special_Case_Count int
+
+// Special_Case_Count_Invariants bounds work to complete language override.
+func Special_Case_Count_Invariants(value Special_Case_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), SPECIAL_CASE_COUNT_MINIMUM, SPECIAL_CASE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Special_Case names bounded rules because four positions form fixed shape.
+type Special_Case struct {
+	// Count keeps zero value on standard mapping.
+	Count Special_Case_Count
+	// First retains first ordered override rule.
+	First First_Special_Case_Range
+	// Second retains second ordered override rule.
+	Second Second_Special_Case_Range
+	// Third retains third ordered override rule.
+	Third Third_Special_Case_Range
+	// Fourth retains fourth ordered override rule.
+	Fourth Fourth_Special_Case_Range
+}
+
+// Special_Case_Invariants composes active count and every fixed rule.
+func Special_Case_Invariants(value Special_Case, namespace aver.Namespace) {
+	Special_Case_Count_Invariants(value.Count, namespace)
+	First_Special_Case_Range_Invariants(value.First, namespace)
+	Second_Special_Case_Range_Invariants(value.Second, namespace)
+	Third_Special_Case_Range_Invariants(value.Third, namespace)
+	Fourth_Special_Case_Range_Invariants(value.Fourth, namespace)
+}
+
+// Special_Case_Destination is nonnil caller-owned override storage.
+type Special_Case_Destination *Special_Case
+
+// Special_Case_Destination_Invariants rejects missing storage before writing it.
+func Special_Case_Destination_Invariants(
+	value Special_Case_Destination, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Unicode special case destination exists.")
+	aver.Tree(Special_Case_Count(value.Count), namespace).
+		Range_Int(
+			int(value.Count), SPECIAL_CASE_COUNT_MINIMUM, SPECIAL_CASE_COUNT_MAXIMUM,
+		).
+		Ensure()
+	First_Special_Case_Range_Invariants(value.First, namespace)
+	Second_Special_Case_Range_Invariants(value.Second, namespace)
+	Third_Special_Case_Range_Invariants(value.Third, namespace)
+	Fourth_Special_Case_Range_Invariants(value.Fourth, namespace)
+}
+
+// Special_Case_Of copies bounded rules so no caller collection can escape.
+func Special_Case_Of(
+	count Special_Case_Count,
+	first Case_Range,
+	second Case_Range,
+	third Case_Range,
+	fourth Case_Range,
+) (special Special_Case) {
+	defer func() { Special_Case_Invariants(special, "special_case_of.special") }()
+	Special_Case_Count_Invariants(count, "special_case_of.count")
+	Case_Range_Invariants(first, "special_case_of.first")
+	Case_Range_Invariants(second, "special_case_of.second")
+	Case_Range_Invariants(third, "special_case_of.third")
+	Case_Range_Invariants(fourth, "special_case_of.fourth")
+	return Special_Case{
+		Count: count,
+		First: First_Special_Case_Range{
+			Minimum: First_Special_Case_Minimum(first.Minimum),
+			Maximum: First_Special_Case_Maximum(first.Maximum),
+			Deltas: First_Special_Case_Deltas{
+				Upper: First_Special_Case_Upper_Delta(first.Deltas.Upper),
+				Lower: First_Special_Case_Lower_Delta(first.Deltas.Lower),
+				Title: First_Special_Case_Title_Delta(first.Deltas.Title),
+			},
+		},
+		Second: Second_Special_Case_Range{
+			Minimum: Second_Special_Case_Minimum(second.Minimum),
+			Maximum: Second_Special_Case_Maximum(second.Maximum),
+			Deltas: Second_Special_Case_Deltas{
+				Upper: Second_Special_Case_Upper_Delta(second.Deltas.Upper),
+				Lower: Second_Special_Case_Lower_Delta(second.Deltas.Lower),
+				Title: Second_Special_Case_Title_Delta(second.Deltas.Title),
+			},
+		},
+		Third: Third_Special_Case_Range{
+			Minimum: Third_Special_Case_Minimum(third.Minimum),
+			Maximum: Third_Special_Case_Maximum(third.Maximum),
+			Deltas: Third_Special_Case_Deltas{
+				Upper: Third_Special_Case_Upper_Delta(third.Deltas.Upper),
+				Lower: Third_Special_Case_Lower_Delta(third.Deltas.Lower),
+				Title: Third_Special_Case_Title_Delta(third.Deltas.Title),
+			},
+		},
+		Fourth: Fourth_Special_Case_Range{
+			Minimum: Fourth_Special_Case_Minimum(fourth.Minimum),
+			Maximum: Fourth_Special_Case_Maximum(fourth.Maximum),
+			Deltas: Fourth_Special_Case_Deltas{
+				Upper: Fourth_Special_Case_Upper_Delta(fourth.Deltas.Upper),
+				Lower: Fourth_Special_Case_Lower_Delta(fourth.Deltas.Lower),
+				Title: Fourth_Special_Case_Title_Delta(fourth.Deltas.Title),
+			},
+		},
+	}
+}
+
 // Is reports whether a character is in a range table.
-func Is(table *Range_Table, character Character) (yes Boolean) {
+func Is(table Range_Table_Handle, character Character) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "is.yes") }()
 	Character_Invariants(character, "is.character")
-	Range_Table_Invariants(*table, "is.table")
+	Range_Table_Handle_Invariants(table, "is.table")
 	if character >= 0 {
 		if uint32(character) <= uint32(RANGE_16_MAXIMUM) {
 			for _, one := range table.Ranges_16 {
@@ -731,7 +1319,7 @@ func Is_One_Of(tables Range_Tables, character Character) (yes Boolean) {
 	Range_Tables_Invariants(tables, "is_one_of.tables")
 	Character_Invariants(character, "is_one_of.character")
 	for _, table := range tables {
-		if Is(table, character) {
+		if Is(Range_Table_Handle(table), character) {
 			return true
 		}
 	}
@@ -744,7 +1332,7 @@ func In(character Character, tables Range_Tables) (yes Boolean) {
 	Character_Invariants(character, "in.character")
 	Range_Tables_Invariants(tables, "in.tables")
 	for _, table := range tables {
-		if Is(table, character) {
+		if Is(Range_Table_Handle(table), character) {
 			return true
 		}
 	}
@@ -950,7 +1538,7 @@ func To(case_value Case, character Character) (mapped Character) {
 		return character
 	}
 	return Character(convert_case_range(
-		case_value, Case_Character(character), case_range[0],
+		case_value, Case_Character(character), case_range,
 	))
 }
 
@@ -970,8 +1558,8 @@ func To_Upper(character Character) (mapped Character) {
 	if !found {
 		return character
 	}
-	one := case_range[0]
-	delta := one.Deltas[UPPER_CASE]
+	one := case_range
+	delta := int32(one.Deltas.Upper)
 	if delta > int32(RUNE_MAX) {
 		offset := character - Character(one.Minimum)
 		offset = offset &^ 1
@@ -996,8 +1584,8 @@ func To_Lower(character Character) (mapped Character) {
 	if !found {
 		return character
 	}
-	one := case_range[0]
-	delta := one.Deltas[LOWER_CASE]
+	one := case_range
+	delta := int32(one.Deltas.Lower)
 	if delta > int32(RUNE_MAX) {
 		offset := character - Character(one.Minimum)
 		offset = offset &^ 1
@@ -1023,8 +1611,8 @@ func To_Title(character Character) (mapped Character) {
 	if !found {
 		return character
 	}
-	one := case_range[0]
-	delta := one.Deltas[TITLE_CASE]
+	one := case_range
+	delta := int32(one.Deltas.Title)
 	if delta > int32(RUNE_MAX) {
 		offset := character - Character(one.Minimum)
 		offset = offset &^ 1
@@ -1063,52 +1651,54 @@ func Special_Case_To_Title(
 	return special_case_to(special, TITLE_CASE, character)
 }
 
-// Turkish_Case writes the Turkish language-specific case rules into caller storage.
-func Turkish_Case(storage Special_Case) (special Language_Case) {
-	defer func() { Language_Case_Invariants(special, "turkish_case.special") }()
-	Special_Case_Invariants(storage, "turkish_case.storage")
-	aver.Always(
-		len(storage) == SPECIAL_CASE_COUNT_MAXIMUM,
-		"Caller storage holds every Turkish case rule.",
+// Turkish_Case writes complete Turkish rules into caller-owned structural storage.
+func Turkish_Case(special Special_Case_Destination) {
+	Special_Case_Destination_Invariants(special, "turkish_case.special")
+	*special = Special_Case_Of(
+		SPECIAL_CASE_COUNT_MAXIMUM,
+		Case_Range{
+			Minimum: Case_Range_Minimum(LATIN_CAPITAL_I),
+			Maximum: Case_Range_Maximum(LATIN_CAPITAL_I),
+			Deltas: Case_Delta{
+				Upper: 0,
+				Lower: Lower_Case_Delta(LATIN_SMALL_DOTLESS_I - LATIN_CAPITAL_I),
+				Title: 0,
+			},
+		},
+		Case_Range{
+			Minimum: Case_Range_Minimum(LATIN_SMALL_I),
+			Maximum: Case_Range_Maximum(LATIN_SMALL_I),
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I),
+				Lower: 0,
+				Title: Title_Case_Delta(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I),
+			},
+		},
+		Case_Range{
+			Minimum: Case_Range_Minimum(LATIN_CAPITAL_I_WITH_DOT),
+			Maximum: Case_Range_Maximum(LATIN_CAPITAL_I_WITH_DOT),
+			Deltas: Case_Delta{
+				Upper: 0,
+				Lower: Lower_Case_Delta(LATIN_SMALL_I - LATIN_CAPITAL_I_WITH_DOT),
+				Title: 0,
+			},
+		},
+		Case_Range{
+			Minimum: Case_Range_Minimum(LATIN_SMALL_DOTLESS_I),
+			Maximum: Case_Range_Maximum(LATIN_SMALL_DOTLESS_I),
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I),
+				Lower: 0,
+				Title: Title_Case_Delta(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I),
+			},
+		},
 	)
-	storage[0] = Case_Range{
-		Minimum: Case_Range_Minimum(LATIN_CAPITAL_I),
-		Maximum: Case_Range_Maximum(LATIN_CAPITAL_I),
-		Deltas: Case_Delta{
-			0, int32(LATIN_SMALL_DOTLESS_I - LATIN_CAPITAL_I), 0,
-		},
-	}
-	storage[1] = Case_Range{
-		Minimum: Case_Range_Minimum(LATIN_SMALL_I),
-		Maximum: Case_Range_Maximum(LATIN_SMALL_I),
-		Deltas: Case_Delta{
-			int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I), 0,
-			int32(LATIN_CAPITAL_I_WITH_DOT - LATIN_SMALL_I),
-		},
-	}
-	storage[2] = Case_Range{
-		Minimum: Case_Range_Minimum(LATIN_CAPITAL_I_WITH_DOT),
-		Maximum: Case_Range_Maximum(LATIN_CAPITAL_I_WITH_DOT),
-		Deltas: Case_Delta{
-			0, int32(LATIN_SMALL_I - LATIN_CAPITAL_I_WITH_DOT), 0,
-		},
-	}
-	storage[3] = Case_Range{
-		Minimum: Case_Range_Minimum(LATIN_SMALL_DOTLESS_I),
-		Maximum: Case_Range_Maximum(LATIN_SMALL_DOTLESS_I),
-		Deltas: Case_Delta{
-			int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I), 0,
-			int32(LATIN_CAPITAL_I - LATIN_SMALL_DOTLESS_I),
-		},
-	}
-	return Language_Case(storage)
 }
 
 // Azeri_Case writes the Azerbaijani language-specific case rules into caller storage.
-func Azeri_Case(storage Special_Case) (special Language_Case) {
-	defer func() { Language_Case_Invariants(special, "azeri_case.special") }()
-	Special_Case_Invariants(storage, "azeri_case.storage")
-	return Turkish_Case(storage)
+func Azeri_Case(special Special_Case_Destination) {
+	Special_Case_Destination_Invariants(special, "azeri_case.special")
+	Turkish_Case(special)
 }
 
 // Simple_Fold returns the next character in a simple case-fold orbit.
@@ -1161,8 +1751,8 @@ func Simple_Fold(character Character) (folded Character) {
 	if !range_found {
 		return character
 	}
-	one := case_range[0]
-	lower_delta := one.Deltas[LOWER_CASE]
+	one := case_range
+	lower_delta := int32(one.Deltas.Lower)
 	lower := character + Character(lower_delta)
 	if lower_delta > int32(RUNE_MAX) {
 		offset := character - Character(one.Minimum)
@@ -1173,7 +1763,7 @@ func Simple_Fold(character Character) (folded Character) {
 	if lower != character {
 		return lower
 	}
-	upper_delta := one.Deltas[UPPER_CASE]
+	upper_delta := int32(one.Deltas.Upper)
 	if upper_delta > int32(RUNE_MAX) {
 		offset := character - Character(one.Minimum)
 		offset = offset &^ 1
@@ -1217,7 +1807,45 @@ func special_case_to(
 	Special_Case_Invariants(special, "special_case_to.special")
 	Case_Invariants(case_value, "special_case_to.case")
 	Character_Invariants(character, "special_case_to.character")
-	for _, one := range special {
+	ranges := [...]Case_Range{
+		{
+			Minimum: Case_Range_Minimum(special.First.Minimum),
+			Maximum: Case_Range_Maximum(special.First.Maximum),
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(special.First.Deltas.Upper),
+				Lower: Lower_Case_Delta(special.First.Deltas.Lower),
+				Title: Title_Case_Delta(special.First.Deltas.Title),
+			},
+		},
+		{
+			Minimum: Case_Range_Minimum(special.Second.Minimum),
+			Maximum: Case_Range_Maximum(special.Second.Maximum),
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(special.Second.Deltas.Upper),
+				Lower: Lower_Case_Delta(special.Second.Deltas.Lower),
+				Title: Title_Case_Delta(special.Second.Deltas.Title),
+			},
+		},
+		{
+			Minimum: Case_Range_Minimum(special.Third.Minimum),
+			Maximum: Case_Range_Maximum(special.Third.Maximum),
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(special.Third.Deltas.Upper),
+				Lower: Lower_Case_Delta(special.Third.Deltas.Lower),
+				Title: Title_Case_Delta(special.Third.Deltas.Title),
+			},
+		},
+		{
+			Minimum: Case_Range_Minimum(special.Fourth.Minimum),
+			Maximum: Case_Range_Maximum(special.Fourth.Maximum),
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(special.Fourth.Deltas.Upper),
+				Lower: Lower_Case_Delta(special.Fourth.Deltas.Lower),
+				Title: Title_Case_Delta(special.Fourth.Deltas.Title),
+			},
+		},
+	}
+	for _, one := range ranges[:int(special.Count)] {
 		Case_Range_Invariants(one, "special_case_to.range")
 		if character < Character(one.Minimum) {
 			continue
@@ -1241,7 +1869,13 @@ func convert_case_range(
 	Case_Invariants(case_value, "convert_case_range.case")
 	Case_Character_Invariants(character, "convert_case_range.character")
 	Case_Range_Invariants(case_range, "convert_case_range.range")
-	delta := case_range.Deltas[case_value]
+	delta := int32(case_range.Deltas.Upper)
+	switch case_value {
+	case LOWER_CASE:
+		delta = int32(case_range.Deltas.Lower)
+	case TITLE_CASE:
+		delta = int32(case_range.Deltas.Title)
+	}
 	if delta > int32(RUNE_MAX) {
 		offset := character - Case_Character(case_range.Minimum)
 		offset = offset &^ 1
@@ -1251,10 +1885,11 @@ func convert_case_range(
 	return character + Case_Character(delta)
 }
 
-func named_table_contains[Data ~string](
-	data Data, name Name, character Character,
+func named_table_contains(
+	data Encoded_Data, name Name, character Character,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "named_table_contains.yes") }()
+	Encoded_Data_Invariants(data, "named_table_contains.data")
 	Name_Invariants(name, "named_table_contains.name")
 	Character_Invariants(character, "named_table_contains.character")
 	table_data, found := named_table_data(data, name)
@@ -1264,12 +1899,14 @@ func named_table_contains[Data ~string](
 	return encoded_range_table_contains(table_data, character)
 }
 
-func named_table_data[Data ~string](
-	data Data, name Name,
-) (table_data Data, found Boolean) {
+func named_table_data(
+	data Encoded_Data, name Name,
+) (table_data Table_Data, found Boolean) {
 	defer func() {
+		Table_Data_Invariants(table_data, "named_table_data.table_data")
 		Boolean_Invariants(found, "named_table_data.found")
 	}()
+	Encoded_Data_Invariants(data, "named_table_data.data")
 	Name_Invariants(name, "named_table_data.name")
 	byte_count := len(data) / HEXADECIMAL_BYTE_CHARACTER_COUNT
 	for position := 0; position < byte_count; {
@@ -1287,7 +1924,7 @@ func named_table_data[Data ~string](
 		) {
 			start := table_position * HEXADECIMAL_BYTE_CHARACTER_COUNT
 			end := (table_position + table_size) * HEXADECIMAL_BYTE_CHARACTER_COUNT
-			return data[start:end], true
+			return Table_Data(data[start:end]), true
 		}
 		position = table_position + table_size
 	}
@@ -1366,34 +2003,35 @@ func category_alias_data(
 	return "", false
 }
 
-func decode_range_table[Data ~string](
-	data Data, ranges_16 Ranges_16, ranges_32 Ranges_32,
+func decode_range_table(
+	data Table_Data, ranges_16 Ranges_16, ranges_32 Ranges_32,
 ) (table Range_Table) {
 	defer func() { Range_Table_Invariants(table, "decode_range_table.table") }()
+	Table_Data_Invariants(data, "decode_range_table.data")
 	Ranges_16_Invariants(ranges_16, "decode_range_table.ranges_16")
 	Ranges_32_Invariants(ranges_32, "decode_range_table.ranges_32")
-	range_16_count := int(encoded_number(data, 0, ENCODED_WIDTH_16))
+	range_16_count := int(encoded_number(Encoded_Data(data), 0, ENCODED_WIDTH_16))
 	aver.Always(
 		range_16_count <= len(ranges_16),
 		"Caller storage holds every decoded 16-bit Unicode range.",
 	)
 	table.Latin_Offset = Latin_Offset(encoded_number(
-		data, Data_Position(ENCODED_WIDTH_16), ENCODED_WIDTH_16,
+		Encoded_Data(data), Data_Position(ENCODED_WIDTH_16), ENCODED_WIDTH_16,
 	))
 	table.Ranges_16 = ranges_16[:range_16_count]
 	position := TABLE_HEADER_BYTE_COUNT
 	for index := range table.Ranges_16 {
 		table.Ranges_16[index] = Range_16{
 			Minimum: Range_16_Minimum(encoded_number(
-				data, Data_Position(position), ENCODED_WIDTH_16,
+				Encoded_Data(data), Data_Position(position), ENCODED_WIDTH_16,
 			)),
 			Maximum: Range_16_Maximum(encoded_number(
-				data,
+				Encoded_Data(data),
 				Data_Position(position+int(ENCODED_WIDTH_16)),
 				ENCODED_WIDTH_16,
 			)),
 			Stride: Range_16_Stride(encoded_number(
-				data,
+				Encoded_Data(data),
 				Data_Position(position+RANGE_BOUND_COUNT*int(ENCODED_WIDTH_16)),
 				ENCODED_WIDTH_16,
 			)),
@@ -1401,7 +2039,7 @@ func decode_range_table[Data ~string](
 		position += RANGE_16_BYTE_COUNT
 	}
 	range_32_count := int(encoded_number(
-		data, Data_Position(position), ENCODED_WIDTH_16,
+		Encoded_Data(data), Data_Position(position), ENCODED_WIDTH_16,
 	))
 	aver.Always(
 		range_32_count <= len(ranges_32),
@@ -1412,15 +2050,15 @@ func decode_range_table[Data ~string](
 	for index := range table.Ranges_32 {
 		table.Ranges_32[index] = Range_32{
 			Minimum: Range_32_Minimum(encoded_number(
-				data, Data_Position(position), ENCODED_WIDTH_32,
+				Encoded_Data(data), Data_Position(position), ENCODED_WIDTH_32,
 			)),
 			Maximum: Range_32_Maximum(encoded_number(
-				data,
+				Encoded_Data(data),
 				Data_Position(position+int(ENCODED_WIDTH_32)),
 				ENCODED_WIDTH_32,
 			)),
 			Stride: Range_32_Stride(encoded_number(
-				data,
+				Encoded_Data(data),
 				Data_Position(position+RANGE_BOUND_COUNT*int(ENCODED_WIDTH_32)),
 				ENCODED_WIDTH_32,
 			)),
@@ -1430,17 +2068,18 @@ func decode_range_table[Data ~string](
 	return table
 }
 
-func encoded_range_table_contains[Data ~string](
-	data Data, character Character,
+func encoded_range_table_contains(
+	data Table_Data, character Character,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "encoded_range_table_contains.yes") }()
+	Table_Data_Invariants(data, "encoded_range_table_contains.data")
 	Character_Invariants(character, "encoded_range_table_contains.character")
-	range_16_count := int(encoded_number(data, 0, ENCODED_WIDTH_16))
+	range_16_count := int(encoded_number(Encoded_Data(data), 0, ENCODED_WIDTH_16))
 	range_16_position := TABLE_HEADER_BYTE_COUNT
 	if character >= 0 {
 		if uint32(character) <= uint32(RANGE_16_MAXIMUM) {
 			if encoded_ranges_16_contain(
-				data,
+				Encoded_Data(data),
 				Data_Position(range_16_position),
 				Data_Count(range_16_count),
 				Code_Point_16(character),
@@ -1451,7 +2090,7 @@ func encoded_range_table_contains[Data ~string](
 	}
 	range_32_count_position := range_16_position + range_16_count*RANGE_16_BYTE_COUNT
 	range_32_count := int(encoded_number(
-		data, Data_Position(range_32_count_position), ENCODED_WIDTH_16,
+		Encoded_Data(data), Data_Position(range_32_count_position), ENCODED_WIDTH_16,
 	))
 	range_32_position := range_32_count_position + TABLE_RANGE_32_COUNT_BYTE_COUNT
 	if character < Character(RANGE_32_MINIMUM) {
@@ -1461,22 +2100,22 @@ func encoded_range_table_contains[Data ~string](
 		return false
 	}
 	return encoded_ranges_32_contain(
-		data,
+		Encoded_Data(data),
 		Data_Position(range_32_position),
 		Data_Count(range_32_count),
 		Code_Point_32(character),
 	)
 }
 
-func binary_range_table_contains[Data_16 ~string, Data_32 ~string](
-	ranges_16 Data_16, ranges_32 Data_32, character Character,
+func binary_range_table_contains(
+	ranges_16 Encoded_Data, ranges_32 Encoded_Data, character Character,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "binary_range_table_contains.yes") }()
+	Encoded_Data_Invariants(ranges_16, "binary_range_table_contains.ranges_16")
+	Encoded_Data_Invariants(ranges_32, "binary_range_table_contains.ranges_32")
 	Character_Invariants(character, "binary_range_table_contains.character")
 	if uint32(character) <= uint32(RANGE_16_MAXIMUM) {
-		value := uint16(character)
-		lower := 0
-		upper := len(ranges_16) / RANGE_16_BYTE_COUNT
+		value, lower, upper := uint16(character), 0, len(ranges_16)/RANGE_16_BYTE_COUNT
 		for lower < upper {
 			middle := int(uint(lower+upper) >> 1)
 			position := middle * RANGE_16_BYTE_COUNT
@@ -1541,13 +2180,14 @@ func binary_range_table_contains[Data_16 ~string, Data_32 ~string](
 	return false
 }
 
-func encoded_ranges_16_contain[Data ~string](
-	data Data,
+func encoded_ranges_16_contain(
+	data Encoded_Data,
 	start Data_Position,
 	count Data_Count,
 	character Code_Point_16,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "encoded_ranges_16_contain.yes") }()
+	Encoded_Data_Invariants(data, "encoded_ranges_16_contain.data")
 	Data_Position_Invariants(start, "encoded_ranges_16_contain.start")
 	Data_Count_Invariants(count, "encoded_ranges_16_contain.count")
 	Code_Point_16_Invariants(character, "encoded_ranges_16_contain.character")
@@ -1580,13 +2220,14 @@ func encoded_ranges_16_contain[Data ~string](
 	return false
 }
 
-func encoded_ranges_32_contain[Data ~string](
-	data Data,
+func encoded_ranges_32_contain(
+	data Encoded_Data,
 	start Data_Position,
 	count Data_Count,
 	character Code_Point_32,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "encoded_ranges_32_contain.yes") }()
+	Encoded_Data_Invariants(data, "encoded_ranges_32_contain.data")
 	Data_Position_Invariants(start, "encoded_ranges_32_contain.start")
 	Data_Count_Invariants(count, "encoded_ranges_32_contain.count")
 	Code_Point_32_Invariants(character, "encoded_ranges_32_contain.character")
@@ -1619,16 +2260,17 @@ func encoded_ranges_32_contain[Data ~string](
 	return false
 }
 
-func encoded_case_range[Data ~string](
-	data Data, character Character,
-) (case_range Native_Case_Range, found Boolean) {
+func encoded_case_range(
+	data Encoded_Data, character Character,
+) (case_range Case_Range, found Boolean) {
 	defer func() {
-		Native_Case_Range_Invariants(case_range, "encoded_case_range.range")
+		Case_Range_Invariants(case_range, "encoded_case_range.range")
 		Boolean_Invariants(found, "encoded_case_range.found")
 	}()
+	Encoded_Data_Invariants(data, "encoded_case_range.data")
 	Character_Invariants(character, "encoded_case_range.character")
 	if len(data) == 0 {
-		return Native_Case_Range{}, false
+		return Case_Range{}, false
 	}
 	lower := 0
 	upper := len(data) / CASE_RANGE_BYTE_COUNT
@@ -1656,36 +2298,46 @@ func encoded_case_range[Data ~string](
 		upper_position := delta_position + int(UPPER_CASE)*int(ENCODED_WIDTH_32)
 		lower_position := delta_position + int(LOWER_CASE)*int(ENCODED_WIDTH_32)
 		title_position := delta_position + int(TITLE_CASE)*int(ENCODED_WIDTH_32)
-		case_range[0] = Case_Range{
+		case_range = Case_Range{
 			Minimum: Case_Range_Minimum(minimum),
 			Maximum: Case_Range_Maximum(maximum),
 			Deltas: Case_Delta{
-				int32(uint32(data[upper_position])<<ENCODED_32_FIRST_BYTE_SHIFT |
-					uint32(data[upper_position+1])<<
-						ENCODED_32_SECOND_BYTE_SHIFT |
-					uint32(data[upper_position+2])<<bits.BIT_COUNT_8_MAXIMUM |
-					uint32(data[upper_position+3])),
-				int32(uint32(data[lower_position])<<ENCODED_32_FIRST_BYTE_SHIFT |
-					uint32(data[lower_position+1])<<
-						ENCODED_32_SECOND_BYTE_SHIFT |
-					uint32(data[lower_position+2])<<bits.BIT_COUNT_8_MAXIMUM |
-					uint32(data[lower_position+3])),
-				int32(uint32(data[title_position])<<ENCODED_32_FIRST_BYTE_SHIFT |
-					uint32(data[title_position+1])<<
-						ENCODED_32_SECOND_BYTE_SHIFT |
-					uint32(data[title_position+2])<<bits.BIT_COUNT_8_MAXIMUM |
-					uint32(data[title_position+3])),
+				Upper: Upper_Case_Delta(
+					uint32(data[upper_position])<<ENCODED_32_FIRST_BYTE_SHIFT |
+						uint32(data[upper_position+1])<<
+							ENCODED_32_SECOND_BYTE_SHIFT |
+						uint32(data[upper_position+2])<<
+							bits.BIT_COUNT_8_MAXIMUM |
+						uint32(data[upper_position+3]),
+				),
+				Lower: Lower_Case_Delta(
+					uint32(data[lower_position])<<ENCODED_32_FIRST_BYTE_SHIFT |
+						uint32(data[lower_position+1])<<
+							ENCODED_32_SECOND_BYTE_SHIFT |
+						uint32(data[lower_position+2])<<
+							bits.BIT_COUNT_8_MAXIMUM |
+						uint32(data[lower_position+3]),
+				),
+				Title: Title_Case_Delta(
+					uint32(data[title_position])<<ENCODED_32_FIRST_BYTE_SHIFT |
+						uint32(data[title_position+1])<<
+							ENCODED_32_SECOND_BYTE_SHIFT |
+						uint32(data[title_position+2])<<
+							bits.BIT_COUNT_8_MAXIMUM |
+						uint32(data[title_position+3]),
+				),
 			},
 		}
 		return case_range, true
 	}
-	return Native_Case_Range{}, false
+	return Case_Range{}, false
 }
 
-func encoded_name_equal[Data ~string](
-	data Data, position Data_Position, size Data_Count, name Name,
+func encoded_name_equal(
+	data Encoded_Data, position Data_Position, size Data_Count, name Name,
 ) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "encoded_name_equal.yes") }()
+	Encoded_Data_Invariants(data, "encoded_name_equal.data")
 	Data_Position_Invariants(position, "encoded_name_equal.position")
 	Data_Count_Invariants(size, "encoded_name_equal.size")
 	Name_Invariants(name, "encoded_name_equal.name")
@@ -1703,10 +2355,11 @@ func encoded_name_equal[Data ~string](
 	return true
 }
 
-func encoded_number[Data ~string](
-	data Data, position Data_Position, width Encoded_Width,
+func encoded_number(
+	data Encoded_Data, position Data_Position, width Encoded_Width,
 ) (value Encoded_Number) {
 	defer func() { Encoded_Number_Invariants(value, "encoded_number.value") }()
+	Encoded_Data_Invariants(data, "encoded_number.data")
 	Data_Position_Invariants(position, "encoded_number.position")
 	Encoded_Width_Invariants(width, "encoded_number.width")
 	for byte_index := 0; byte_index < int(width); byte_index++ {
@@ -1737,7 +2390,7 @@ const RANGES_16_COUNT_MAXIMUM = 359
 const RANGES_32_COUNT_MAXIMUM = 322
 
 // PRINT_RANGES_16_DATA avoids hexadecimal decoding for 16-bit print searches.
-const PRINT_RANGES_16_DATA = "" +
+const PRINT_RANGES_16_DATA Encoded_Data = "" +
 	"\x00\x20\x00\x7e\x00\x01\x00\xa1\x00\xac\x00\x01\x00\xae\x03\x77\x00\x01\x03\x7a\x03\x7f" +
 	"\x00\x01\x03\x84\x03\x8a\x00\x01\x03\x8c\x03\x8e\x00\x02\x03\x8f\x03\xa1\x00\x01\x03\xa3" +
 	"\x05\x2f\x00\x01\x05\x31\x05\x56\x00\x01\x05\x59\x05\x8a\x00\x01\x05\x8d\x05\x8f\x00\x01" +
@@ -1833,7 +2486,7 @@ const PRINT_RANGES_16_DATA = "" +
 	"\xff\xe6\x00\x01\xff\xe8\xff\xee\x00\x01\xff\xfc\xff\xfd\x00\x01"
 
 // PRINT_RANGES_32_DATA avoids hexadecimal decoding for 32-bit print searches.
-const PRINT_RANGES_32_DATA = "" +
+const PRINT_RANGES_32_DATA Encoded_Data = "" +
 	"\x00\x01\x00\x00\x00\x01\x00\x0b\x00\x00\x00\x01\x00\x01\x00\x0d\x00\x01\x00\x26\x00\x00" +
 	"\x00\x01\x00\x01\x00\x28\x00\x01\x00\x3a\x00\x00\x00\x01\x00\x01\x00\x3c\x00\x01\x00\x3d" +
 	"\x00\x00\x00\x01\x00\x01\x00\x3f\x00\x01\x00\x4d\x00\x00\x00\x01\x00\x01\x00\x50\x00\x01" +
@@ -2031,7 +2684,7 @@ const PRINT_RANGES_32_DATA = "" +
 	"\x00\x00\x00\x01"
 
 // GRAPHIC_RANGES_16_DATA avoids hexadecimal decoding for 16-bit graphic searches.
-const GRAPHIC_RANGES_16_DATA = "" +
+const GRAPHIC_RANGES_16_DATA Encoded_Data = "" +
 	"\x00\x20\x00\x7e\x00\x01\x00\xa0\x00\xac\x00\x01\x00\xae\x03\x77\x00\x01\x03\x7a\x03\x7f" +
 	"\x00\x01\x03\x84\x03\x8a\x00\x01\x03\x8c\x03\x8e\x00\x02\x03\x8f\x03\xa1\x00\x01\x03\xa3" +
 	"\x05\x2f\x00\x01\x05\x31\x05\x56\x00\x01\x05\x59\x05\x8a\x00\x01\x05\x8d\x05\x8f\x00\x01" +
@@ -2127,10 +2780,11 @@ const GRAPHIC_RANGES_16_DATA = "" +
 	"\xff\xe6\x00\x01\xff\xe8\xff\xee\x00\x01\xff\xfc\xff\xfd\x00\x01"
 
 // GRAPHIC_RANGES_32_DATA reuses the identical 32-bit print ranges.
-const GRAPHIC_RANGES_32_DATA = PRINT_RANGES_32_DATA
+const GRAPHIC_RANGES_32_DATA Encoded_Data = PRINT_RANGES_32_DATA
 
 // CATEGORY_TABLE_DATA stores the Unicode category tables.
-const CATEGORY_TABLE_DATA = "0143000015cc012100020000001f0001007f009f000100ad037802cb03790380" +
+const CATEGORY_TABLE_DATA Encoded_Data = "" +
+	"0143000015cc012100020000001f0001007f009f000100ad037802cb03790380" +
 	"0007038103830001038b038d000203a20530018e055705580001058b058c0001" +
 	"059005c8003805c905cf000105eb05ee000105f506050001061c06dd00c1070e" +
 	"070f0001074b074c000107b207bf000107fb07fc0001082e082f0001083f085c" +
@@ -3411,7 +4065,8 @@ const CATEGORY_TABLE_DATA = "0143000015cc012100020000001f0001007f009f000100ad037
 	"2000a000801680200009802001200a0001202f205f00303000300000010000"
 
 // SCRIPT_TABLE_DATA stores the Unicode script tables.
-const SCRIPT_TABLE_DATA = "0541646c616d0000002a0000000000030001e9000001e94b000000010001e950" +
+const SCRIPT_TABLE_DATA Encoded_Data = "" +
+	"0541646c616d0000002a0000000000030001e9000001e94b000000010001e950" +
 	"0001e959000000010001e95e0001e95f000000010441686f6d0000002a000000" +
 	"000003000117000001171a000000010001171d0001172b000000010001173000" +
 	"0117460000000115416e61746f6c69616e5f486965726f676c79706873000000" +
@@ -3760,7 +4415,8 @@ const SCRIPT_TABLE_DATA = "0541646c616d0000002a0000000000030001e9000001e94b00000
 	"00011a4700000001"
 
 // PROPERTY_TABLE_DATA stores the Unicode property tables.
-const PROPERTY_TABLE_DATA = "0f41534349495f4865785f446967697400000018000300030030003900010041" +
+const PROPERTY_TABLE_DATA Encoded_Data = "" +
+	"0f41534349495f4865785f446967697400000018000300030030003900010041" +
 	"0046000100610066000100000c426964695f436f6e74726f6c0000001e000400" +
 	"00061c200e19f2200f202a001b202b202e000120662069000100000444617368" +
 	"00000060000d0000002d058a055d05be14000e4218062010080a201120150001" +
@@ -4047,7 +4703,7 @@ const PROPERTY_TABLE_DATA = "0f41534349495f4865785f44696769740000001800030003003
 	"303000300000010000"
 
 // FOLD_CATEGORY_TABLE_DATA stores the Unicode category fold tables.
-const FOLD_CATEGORY_TABLE_DATA = "" +
+const FOLD_CATEGORY_TABLE_DATA Encoded_Data = "" +
 	"014c0000000c000100000345034500010000024c6c00000306006c0003004100" +
 	"5a000100c000d6000100d800de00010100012e00020132013600020139014700" +
 	"02014a017800020179017d000201810182000101840186000201870189000201" +
@@ -4104,12 +4760,14 @@ const FOLD_CATEGORY_TABLE_DATA = "" +
 	"1fbe00010000"
 
 // FOLD_SCRIPT_TABLE_DATA stores the Unicode script fold tables.
-const FOLD_SCRIPT_TABLE_DATA = "06436f6d6d6f6e0000000c00010000039c03bc0020000005477265656b000000" +
+const FOLD_SCRIPT_TABLE_DATA Encoded_Data = "" +
+	"06436f6d6d6f6e0000000c00010000039c03bc0020000005477265656b000000" +
 	"0c0001000000b503450290000009496e68657269746564000000120002000003" +
 	"9903b900201fbe1fbe00010000"
 
 // CATEGORY_ALIAS_DATA stores the category aliases and canonical names.
-const CATEGORY_ALIAS_DATA = "0c43617365645f4c6574746572024c4311436c6f73655f50756e637475617469" +
+const CATEGORY_ALIAS_DATA Encoded_Data = "" +
+	"0c43617365645f4c6574746572024c4311436c6f73655f50756e637475617469" +
 	"6f6e0250650e436f6d62696e696e675f4d61726b014d15436f6e6e6563746f72" +
 	"5f50756e6374756174696f6e02506307436f6e74726f6c0243630f4375727265" +
 	"6e63795f53796d626f6c02536310446173685f50756e6374756174696f6e0250" +
@@ -4132,7 +4790,7 @@ const CATEGORY_ALIAS_DATA = "0c43617365645f4c6574746572024c4311436c6f73655f50756
 	"024c7505636e74726c024363056469676974024e640570756e63740150"
 
 // CASE_RANGE_DATA stores the simple case mapping ranges.
-const CASE_RANGE_DATA = "" +
+const CASE_RANGE_DATA Encoded_Data = "" +
 	"\x00\x00\x00\x41\x00\x00\x00\x5a\x00\x00\x00\x00\x00\x00\x00\x20\x00\x00\x00\x00" +
 	"\x00\x00\x00\x61\x00\x00\x00\x7a\xff\xff\xff\xe0\x00\x00\x00\x00\xff\xff\xff\xe0" +
 	"\x00\x00\x00\xb5\x00\x00\x00\xb5\x00\x00\x02\xe7\x00\x00\x00\x00\x00\x00\x02\xe7" +

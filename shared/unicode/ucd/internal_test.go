@@ -8,10 +8,16 @@ import (
 	"local/james-orcales/shared/math/bits"
 )
 
-func test_equal[Value comparable](
-	t *testing.T, expected Value, actual Value, message_and_arguments ...any,
+func test_equal(
+	t *testing.T, expected any, actual any, message_and_arguments ...any,
 ) {
 	t.Helper()
+	if encoded, ok := expected.(Encoded_Data); ok {
+		expected = string(encoded)
+	}
+	if encoded, ok := actual.(Encoded_Data); ok {
+		actual = string(encoded)
+	}
 	if expected != actual {
 		message := "values differ"
 		if len(message_and_arguments) > 0 {
@@ -55,9 +61,9 @@ func named_table(
 	return Named_Table(kind, name, ranges_16[:], ranges_32[:])
 }
 
-func turkish_case() (special Language_Case) {
-	storage := make(Special_Case, SPECIAL_CASE_COUNT_MAXIMUM)
-	return Turkish_Case(storage)
+func turkish_case() (special Special_Case) {
+	Turkish_Case(Special_Case_Destination(&special))
+	return special
 }
 
 func encoded_ranges_16(count int) (data string) {
@@ -100,42 +106,196 @@ func append_fixed_hexadecimal(
 	return buffer
 }
 
+func binary_case_range(one Case_Range) (data string) {
+	buffer := make([]byte, 0, CASE_RANGE_BYTE_COUNT)
+	values := [...]uint32{
+		uint32(one.Minimum), uint32(one.Maximum),
+		uint32(one.Deltas.Upper), uint32(one.Deltas.Lower), uint32(one.Deltas.Title),
+	}
+	for _, value := range values {
+		buffer = append(
+			buffer,
+			byte(value>>ENCODED_32_FIRST_BYTE_SHIFT),
+			byte(value>>ENCODED_32_SECOND_BYTE_SHIFT),
+			byte(value>>bits.BIT_COUNT_8_MAXIMUM),
+			byte(value),
+		)
+	}
+	return string(buffer)
+}
+
 // Test_Encoded_Range_Boundaries verifies each private binary-search boundary.
 func Test_Encoded_Range_Boundaries(t *testing.T) {
 	t.Parallel()
 	test_false(t, bool(encoded_ranges_16_contain(
-		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MINIMUM, Code_Point_16(RANGE_16_MAXIMUM),
+		"", Data_Position(DATA_POSITION_MAXIMUM),
+		DATA_COUNT_MINIMUM, Code_Point_16(RANGE_16_MAXIMUM),
 	)), "an empty 16-bit range collection")
 	test_true(t, bool(encoded_ranges_16_contain(
-		encoded_ranges_16(1), DATA_POSITION_MINIMUM, 1, 0,
+		Encoded_Data(encoded_ranges_16(1)), DATA_POSITION_MINIMUM, 1, 0,
 	)), "one 16-bit range")
 	test_true(t, bool(encoded_ranges_16_contain(
-		"00"+encoded_ranges_16(2), 1, 2, 1,
+		Encoded_Data("00"+encoded_ranges_16(2)), 1, 2, 1,
 	)), "two 16-bit ranges after one byte")
 	test_true(t, bool(encoded_ranges_16_contain(
-		"0000"+encoded_ranges_16(DATA_COUNT_MAXIMUM),
+		Encoded_Data("0000"+encoded_ranges_16(DATA_COUNT_MAXIMUM)),
 		2, DATA_COUNT_MAXIMUM, 2,
 	)), "the maximum 16-bit range collection after two bytes")
 
 	test_false(t, bool(encoded_ranges_32_contain(
-		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MINIMUM, Code_Point_32(RANGE_32_MAXIMUM),
+		"", Data_Position(DATA_POSITION_MAXIMUM),
+		DATA_COUNT_MINIMUM, Code_Point_32(RANGE_32_MAXIMUM),
 	)), "an empty 32-bit range collection")
 	test_true(t, bool(encoded_ranges_32_contain(
-		encoded_ranges_32(1), DATA_POSITION_MINIMUM, 1, Code_Point_32(RANGE_32_MINIMUM),
+		Encoded_Data(encoded_ranges_32(1)),
+		DATA_POSITION_MINIMUM, 1, Code_Point_32(RANGE_32_MINIMUM),
 	)), "one 32-bit range")
 	test_true(t, bool(encoded_ranges_32_contain(
-		"00"+encoded_ranges_32(2), 1, 2, Code_Point_32(RANGE_32_MINIMUM+1),
+		Encoded_Data("00"+encoded_ranges_32(2)),
+		1, 2, Code_Point_32(RANGE_32_MINIMUM+1),
 	)), "two 32-bit ranges after one byte")
 	test_true(t, bool(encoded_ranges_32_contain(
-		"0000"+encoded_ranges_32(DATA_COUNT_MAXIMUM),
+		Encoded_Data("0000"+encoded_ranges_32(DATA_COUNT_MAXIMUM)),
 		2, DATA_COUNT_MAXIMUM, Code_Point_32(RANGE_32_MINIMUM+2),
 	)), "the maximum 32-bit range collection after two bytes")
 	maximum_range := fmt.Sprintf(
 		"%08x%08x%08x", RANGE_32_MAXIMUM, RANGE_32_MAXIMUM, RANGE_32_STRIDE_MINIMUM,
 	)
 	test_true(t, bool(encoded_ranges_32_contain(
-		maximum_range, DATA_POSITION_MINIMUM, 1, Code_Point_32(RANGE_32_MAXIMUM),
+		Encoded_Data(maximum_range),
+		DATA_POSITION_MINIMUM, 1, Code_Point_32(RANGE_32_MAXIMUM),
 	)), "the maximum 32-bit code point")
+}
+
+// Test_Encoded_Data_Boundaries verifies every encoded storage boundary.
+func Test_Encoded_Data_Boundaries(t *testing.T) {
+	t.Parallel()
+	maximum_text := Encoded_Data(repeat("0", ENCODED_DATA_SIZE_MAXIMUM))
+	maximum_binary := Encoded_Data(repeat("\x00", ENCODED_DATA_SIZE_MAXIMUM))
+
+	test_false(t, bool(binary_range_table_contains("", "", 1)), "empty binary ranges")
+	test_false(t, bool(binary_range_table_contains("0", "", 1)), "one 16-bit byte")
+	test_false(t, bool(binary_range_table_contains("00", "", 1)), "two 16-bit bytes")
+	test_false(t, bool(binary_range_table_contains(maximum_binary, "", 1)),
+		"maximum 16-bit data")
+	test_false(t, bool(binary_range_table_contains("", "0", RUNE_MAX)),
+		"one 32-bit byte")
+	test_false(t, bool(binary_range_table_contains("", "00", RUNE_MAX)),
+		"two 32-bit bytes")
+	test_false(t, bool(binary_range_table_contains("", maximum_binary, RUNE_MAX)),
+		"maximum 32-bit data")
+
+	for _, data := range []Encoded_Data{"", "0", "00", maximum_binary} {
+		_, found := encoded_case_range(data, RUNE_MAX)
+		test_false(t, bool(found), "case range in boundary data")
+	}
+	for _, data := range []Encoded_Data{"0", "00", maximum_text} {
+		test_false(t, bool(encoded_ranges_16_contain(data, 0, 0, 0)),
+			"16-bit range in boundary data")
+		test_false(t, bool(encoded_ranges_32_contain(
+			data, 0, 0, Code_Point_32(RANGE_32_MINIMUM),
+		)), "32-bit range in boundary data")
+	}
+
+	test_true(t, bool(encoded_name_equal("0", 0, 0, "")), "one name data byte")
+	test_true(t, bool(encoded_name_equal("00", 0, 0, "")), "two name data bytes")
+	test_true(t, bool(encoded_name_equal(maximum_text, 0, 0, "")),
+		"maximum name data")
+	test_panics(t, func() { encoded_number("", 0, ENCODED_WIDTH_BYTE) },
+		"an empty encoded number")
+	test_panics(t, func() { encoded_number("0", 0, ENCODED_WIDTH_BYTE) },
+		"a partial encoded number")
+	test_equal(t, Encoded_Number(0), encoded_number("00", 0, ENCODED_WIDTH_BYTE))
+}
+
+// Test_Encoded_Directory_Data_Boundaries verifies named table storage boundaries.
+func Test_Encoded_Directory_Data_Boundaries(t *testing.T) {
+	t.Parallel()
+	test_false(t, bool(named_table_contains("", "x", 0)), "empty named data")
+	test_false(t, bool(named_table_contains("0", "x", 0)), "one named data byte")
+	test_panics(t, func() { named_table_contains("00", "x", 0) },
+		"partial named data")
+	maximum_named_data := Encoded_Data(
+		"00000fffff" + repeat("0", ENCODED_DATA_SIZE_MAXIMUM-10),
+	)
+	test_false(t, bool(named_table_contains(maximum_named_data, "x", 0)),
+		"maximum named data")
+	_, found := named_table_data("", "x")
+	test_false(t, bool(found), "empty named table data")
+	_, found = named_table_data("0", "x")
+	test_false(t, bool(found), "one named table data byte")
+	test_panics(t, func() { named_table_data("00", "x") }, "partial named table data")
+	_, found = named_table_data(maximum_named_data, "x")
+	test_false(t, bool(found), "maximum named table data")
+	one_byte_table, found := named_table_data("000000000100", "")
+	test_true(t, bool(found), "one-byte named table")
+	test_equal(t, 2, len(one_byte_table))
+	two_byte_table, found := named_table_data("00000000020000", "")
+	test_true(t, bool(found), "two-byte named table")
+	test_equal(t, 4, len(two_byte_table))
+
+	var ranges_16 [RANGES_16_COUNT_MAXIMUM]Range_16
+	var ranges_32 [RANGES_32_COUNT_MAXIMUM]Range_32
+	test_panics(t, func() { decode_range_table("", ranges_16[:], ranges_32[:]) },
+		"empty decoded table data")
+	test_panics(t, func() { decode_range_table("00", ranges_16[:], ranges_32[:]) },
+		"one decoded table byte")
+	test_panics(t, func() { decode_range_table("0000", ranges_16[:], ranges_32[:]) },
+		"two decoded table bytes")
+	test_panics(t, func() { encoded_range_table_contains("", 0) },
+		"empty searched table data")
+	test_panics(t, func() { encoded_range_table_contains("00", 0) },
+		"one searched table byte")
+	test_panics(t, func() { encoded_range_table_contains("0000", 0) },
+		"two searched table bytes")
+	maximum_table_data := Table_Data(repeat(
+		"0", TABLE_DATA_BYTE_COUNT_MAXIMUM*HEXADECIMAL_BYTE_CHARACTER_COUNT,
+	))
+	test_false(t, bool(encoded_range_table_contains(maximum_table_data, 0)),
+		"maximum searched table data")
+}
+
+// Test_Encoded_Case_Range_Boundaries verifies every decoded case field boundary.
+func Test_Encoded_Case_Range_Boundaries(t *testing.T) {
+	t.Parallel()
+	cases := [...]struct {
+		Range     Case_Range
+		Character Character
+	}{
+		{Case_Range{
+			Minimum: Case_Range_Minimum(RUNE_MAX),
+			Maximum: Case_Range_Maximum(RUNE_MAX),
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(CASE_DELTA_MINIMUM),
+				Lower: Lower_Case_Delta(CASE_DELTA_MINIMUM),
+				Title: Title_Case_Delta(CASE_DELTA_MINIMUM),
+			},
+		}, RUNE_MAX},
+		{Case_Range{Minimum: 1, Maximum: 1, Deltas: Case_Delta{
+			Upper: 1, Lower: 1, Title: 1,
+		}}, 1},
+		{Case_Range{Minimum: 2, Maximum: 2, Deltas: Case_Delta{
+			Upper: 2, Lower: 2, Title: 2,
+		}}, 2},
+		{Case_Range{Minimum: 1, Maximum: 1, Deltas: Case_Delta{
+			Upper: -1, Lower: -1, Title: -1,
+		}}, 1},
+		{Case_Range{
+			Minimum: 0, Maximum: 1,
+			Deltas: Case_Delta{
+				Upper: Upper_Case_Delta(CASE_DELTA_MAXIMUM),
+				Lower: Lower_Case_Delta(CASE_DELTA_MAXIMUM),
+				Title: Title_Case_Delta(CASE_DELTA_MAXIMUM),
+			},
+		}, 0},
+	}
+	for _, one := range cases {
+		actual, found := encoded_case_range(
+			Encoded_Data(binary_case_range(one.Range)), one.Character,
+		)
+		test_true(t, bool(found), "encoded case range")
+		test_equal(t, one.Range, actual, "decoded case range")
+	}
 }
 
 // Test_Encoded_Primitive_Boundaries verifies primitive decoder positions, sizes, and values.
@@ -149,22 +309,24 @@ func Test_Encoded_Primitive_Boundaries(t *testing.T) {
 	test_true(t, bool(encoded_name_equal("", 2, 0, "")),
 		"an empty name at position_count two")
 	test_true(t, bool(encoded_name_equal(
-		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MINIMUM, "",
+		"", Data_Position(DATA_POSITION_MAXIMUM), DATA_COUNT_MINIMUM, "",
 	)), "an empty name at the maximum position_count")
 	maximum_name := Name(repeat("x", NAME_SIZE_MAXIMUM))
 	test_false(t, bool(encoded_name_equal(
-		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MAXIMUM, maximum_name,
+		"", Data_Position(DATA_POSITION_MAXIMUM), DATA_COUNT_MAXIMUM, maximum_name,
 	)), "a maximum count cannot equal a bounded name")
 
-	maximum_position_buffer := make([]byte, DATA_POSITION_MAXIMUM*2+2)
-	for index := range maximum_position_buffer[:len(maximum_position_buffer)-2] {
+	maximum_position_buffer := make([]byte, ENCODED_DATA_SIZE_MAXIMUM)
+	for index := range maximum_position_buffer {
 		maximum_position_buffer[index] = '0'
 	}
-	maximum_position_buffer[len(maximum_position_buffer)-2] = 'f'
-	maximum_position_buffer[len(maximum_position_buffer)-1] = 'f'
+	maximum_position := DATA_POSITION_MAXIMUM * HEXADECIMAL_BYTE_CHARACTER_COUNT
+	maximum_position_buffer[maximum_position] = 'f'
+	maximum_position_buffer[maximum_position+1] = 'f'
 	maximum_position_data := string(maximum_position_buffer)
 	test_equal(t, Encoded_Number(0xff), encoded_number(
-		maximum_position_data, DATA_POSITION_MAXIMUM, ENCODED_WIDTH_BYTE,
+		Encoded_Data(maximum_position_data),
+		Data_Position(DATA_POSITION_MAXIMUM), ENCODED_WIDTH_BYTE,
 	))
 	test_equal(t, Encoded_Number(ENCODED_NUMBER_MAXIMUM), encoded_number(
 		"ffffffff", DATA_POSITION_MINIMUM, ENCODED_WIDTH_32,
@@ -351,7 +513,7 @@ func Test_Digit_Optimization(t *testing.T) {
 		t.Fatal("Nd is not a known category")
 	}
 	for i := rune(0); i <= rune(LATIN_1_MAX); i++ {
-		from_table := Is(&table, Character(i))
+		from_table := Is(Range_Table_Handle(&table), Character(i))
 		if bool(from_table) != bool(
 			Is_Digit(Character(i)),
 		) {
@@ -449,7 +611,7 @@ func example_to_upper(output *example_buffer) {
 }
 
 func example_special_case(output *example_buffer) {
-	special := Special_Case(turkish_case())
+	special := turkish_case()
 
 	const LCI = 'i'
 	fmt.Fprintf(output, "%#U\n", Special_Case_To_Lower(special, LCI))
@@ -1309,7 +1471,7 @@ func Test_Letter_Optimizations(t *testing.T) {
 func Test_Turkish_Case(t *testing.T) {
 	lower := []rune("abcçdefgğhıijklmnoöprsştuüvyz")
 	upper := []rune("ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ")
-	special := Special_Case(turkish_case())
+	special := turkish_case()
 	for i, l := range lower {
 		u := upper[i]
 		if rune(Special_Case_To_Lower(special, Character(l))) != l {
@@ -1391,9 +1553,16 @@ func repeat(text string, count int) (repeated string) {
 // Test_Special_Case_No_Mapping preserves the upstream behavior coverage.
 func Test_Special_Case_No_Mapping(t *testing.T) {
 	// Issue 25636 needs zero delta to win over standard case conversion.
-	special := Special_Case{{
-		Minimum: 'A', Maximum: 'A', Deltas: Case_Delta{0, 0, 0},
-	}}
+	special := Special_Case_Of(
+		1,
+		Case_Range{
+			Minimum: 'A', Maximum: 'A',
+			Deltas: Case_Delta{Upper: 0, Lower: 0, Title: 0},
+		},
+		Case_Range{},
+		Case_Range{},
+		Case_Range{},
+	)
 	mapped := make([]rune, 0, 3)
 	for _, character := range "ABC" {
 		mapped = append(mapped, rune(Special_Case_To_Lower(
@@ -1623,7 +1792,7 @@ func Test_Categories(t *testing.T) {
 		if !found {
 			t.Fatal(test.Script, "not a known category")
 		}
-		if !Is(&table, Character(test.Rune)) {
+		if !Is(Range_Table_Handle(&table), Character(test.Rune)) {
 			t.Errorf("IsCategory(%U, %s) = false, want true", test.Rune, test.Script)
 		}
 	}
@@ -1636,7 +1805,7 @@ func Test_Properties(t *testing.T) {
 		if !found {
 			t.Fatal(test.Script, "not a known prop")
 		}
-		if !Is(&table, Character(test.Rune)) {
+		if !Is(Range_Table_Handle(&table), Character(test.Rune)) {
 			t.Errorf("IsCategory(%U, %s) = false, want true", test.Rune, test.Script)
 		}
 	}

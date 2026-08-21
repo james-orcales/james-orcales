@@ -181,8 +181,9 @@ func Test_Validation(t *testing.T) {
 // Test_Allocation proves each public operation keeps heap allocation at zero.
 func Test_Allocation(t *testing.T) {
 	state := allocation_state{
-		Source: utf8.Bytes("A\xe4\xb8\x96"),
-		Text:   "A世",
+		Source:  utf8.Bytes("A\xe4\xb8\x96"),
+		Text:    "A世",
+		Storage: make(utf8.Bytes, utf8.UTF_MAXIMUM),
 	}
 	for _, one := range allocation_cases(&state) {
 		t.Run(one.Name, func(t *testing.T) { testify.Zero_Allocation(t, one.Run) })
@@ -223,9 +224,11 @@ type allocation_case struct {
 	Run  func()
 }
 
+// Storage is utf8.Bytes made once in Test_Allocation: lint bans fixed array fields, and a
+// make inside Run would count as an allocation.
 type allocation_state struct {
 	Bytes          utf8.Nonempty_Bytes
-	Storage        [utf8.UTF_MAXIMUM]byte
+	Storage        utf8.Bytes
 	Boolean        utf8.Boolean
 	Character      utf8.Decoded_Character
 	Size           utf8.Decoded_Size
@@ -261,7 +264,7 @@ func allocation_cases(state *allocation_state) (cases []allocation_case) {
 			state.Character_Size = utf8.Character_Size('世')
 		}},
 		{Name: "Encode_Character", Run: func() {
-			state.Encoded_Size = utf8.Encode_Character(state.Storage[:], '世')
+			state.Encoded_Size = utf8.Encode_Character(state.Storage, '世')
 		}},
 		{Name: "Append_Character", Run: func() {
 			state.Bytes = utf8.Append_Character(state.Storage[:0], '世')

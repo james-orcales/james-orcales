@@ -195,23 +195,6 @@ const POINTER_SIZE = bits.WORD_SIZE / bits.BIT_COUNT_8_MAXIMUM
 const HIGH_BITS = 0x8080808080808080 >>
 	(bits.BIT_COUNT_64_MAXIMUM - bits.BIT_COUNT_8_MAXIMUM*POINTER_SIZE)
 
-func machine_word[Data ~string | ~[]byte](source Data) (value uintptr) {
-	if POINTER_SIZE == bits.BIT_COUNT_32_MAXIMUM/bits.BIT_COUNT_8_MAXIMUM {
-		return uintptr(source[0]) |
-			uintptr(source[1])<<bits.BIT_COUNT_8_MAXIMUM |
-			uintptr(source[2])<<(2*bits.BIT_COUNT_8_MAXIMUM) |
-			uintptr(source[3])<<(3*bits.BIT_COUNT_8_MAXIMUM)
-	}
-	return uintptr(uint64(source[0]) |
-		uint64(source[1])<<bits.BIT_COUNT_8_MAXIMUM |
-		uint64(source[2])<<(2*bits.BIT_COUNT_8_MAXIMUM) |
-		uint64(source[3])<<(3*bits.BIT_COUNT_8_MAXIMUM) |
-		uint64(source[4])<<(4*bits.BIT_COUNT_8_MAXIMUM) |
-		uint64(source[5])<<(5*bits.BIT_COUNT_8_MAXIMUM) |
-		uint64(source[6])<<(6*bits.BIT_COUNT_8_MAXIMUM) |
-		uint64(source[7])<<(7*bits.BIT_COUNT_8_MAXIMUM))
-}
-
 // REPLACEMENT_BYTE_ZERO is the first byte of REPLACEMENT_CHARACTER.
 const REPLACEMENT_BYTE_ZERO byte = FIRST_BYTE_THREE |
 	byte(rune(REPLACEMENT_CHARACTER)>>(2*CONTINUATION_PAYLOAD_BIT_COUNT))
@@ -748,65 +731,28 @@ func Valid(source Bytes) (yes Boolean) {
 		if first_byte < byte(CHARACTER_SELF) {
 			source = source[CHARACTER_SIZE_MINIMUM:]
 			for len(source) > POINTER_SIZE {
-				if machine_word(source)&HIGH_BITS != 0 {
+				word := uintptr(source[0]) |
+					uintptr(source[1])<<bits.BIT_COUNT_8_MAXIMUM |
+					uintptr(source[2])<<(2*bits.BIT_COUNT_8_MAXIMUM) |
+					uintptr(source[3])<<(3*bits.BIT_COUNT_8_MAXIMUM)
+				if bits.WORD_SIZE != bits.BIT_COUNT_32_MAXIMUM {
+					word |= uintptr(source[4]) << (4 * bits.BIT_COUNT_8_MAXIMUM)
+					word |= uintptr(source[5]) << (5 * bits.BIT_COUNT_8_MAXIMUM)
+					word |= uintptr(source[6]) << (6 * bits.BIT_COUNT_8_MAXIMUM)
+					word |= uintptr(source[7]) << (7 * bits.BIT_COUNT_8_MAXIMUM)
+				}
+				if word&HIGH_BITS != 0 {
 					break
 				}
 				source = source[POINTER_SIZE:]
 			}
 			continue
 		}
-		first := FIRST_DATA[first_byte]
-		size := int(first & FIRST_SIZE_MASK)
-		acceptance := first >> FIRST_ACCEPTANCE_SHIFT
-		switch size {
-		case CHARACTER_SIZE_TWO:
-			if len(source) < CHARACTER_SIZE_TWO {
-				return false
-			}
-			second_valid := ACCEPTANCE_MINIMUM_DATA[acceptance] <= source[1] &&
-				source[1] <= ACCEPTANCE_MAXIMUM_DATA[acceptance]
-			if !second_valid {
-				return false
-			}
-			source = source[CHARACTER_SIZE_TWO:]
-		case CHARACTER_SIZE_THREE:
-			if len(source) < CHARACTER_SIZE_THREE {
-				return false
-			}
-			second_valid := ACCEPTANCE_MINIMUM_DATA[acceptance] <= source[1] &&
-				source[1] <= ACCEPTANCE_MAXIMUM_DATA[acceptance]
-			if !second_valid {
-				return false
-			}
-			third_valid := CONTINUATION_MINIMUM <= source[2] &&
-				source[2] <= CONTINUATION_MAXIMUM
-			if !third_valid {
-				return false
-			}
-			source = source[CHARACTER_SIZE_THREE:]
-		case CHARACTER_SIZE_MAXIMUM:
-			if len(source) < CHARACTER_SIZE_MAXIMUM {
-				return false
-			}
-			second_valid := ACCEPTANCE_MINIMUM_DATA[acceptance] <= source[1] &&
-				source[1] <= ACCEPTANCE_MAXIMUM_DATA[acceptance]
-			if !second_valid {
-				return false
-			}
-			third_valid := CONTINUATION_MINIMUM <= source[2] &&
-				source[2] <= CONTINUATION_MAXIMUM
-			if !third_valid {
-				return false
-			}
-			fourth_valid := CONTINUATION_MINIMUM <= source[3] &&
-				source[3] <= CONTINUATION_MAXIMUM
-			if !fourth_valid {
-				return false
-			}
-			source = source[CHARACTER_SIZE_MAXIMUM:]
-		default:
+		_, size := Decode_Character(source)
+		if size == CHARACTER_SIZE_MINIMUM {
 			return false
 		}
+		source = source[size:]
 	}
 	return true
 }
@@ -820,65 +766,28 @@ func Valid_Text(source Text) (yes Boolean) {
 		if first_byte < byte(CHARACTER_SELF) {
 			source = source[CHARACTER_SIZE_MINIMUM:]
 			for len(source) > POINTER_SIZE {
-				if machine_word(source)&HIGH_BITS != 0 {
+				word := uintptr(source[0]) |
+					uintptr(source[1])<<bits.BIT_COUNT_8_MAXIMUM |
+					uintptr(source[2])<<(2*bits.BIT_COUNT_8_MAXIMUM) |
+					uintptr(source[3])<<(3*bits.BIT_COUNT_8_MAXIMUM)
+				if bits.WORD_SIZE != bits.BIT_COUNT_32_MAXIMUM {
+					word |= uintptr(source[4]) << (4 * bits.BIT_COUNT_8_MAXIMUM)
+					word |= uintptr(source[5]) << (5 * bits.BIT_COUNT_8_MAXIMUM)
+					word |= uintptr(source[6]) << (6 * bits.BIT_COUNT_8_MAXIMUM)
+					word |= uintptr(source[7]) << (7 * bits.BIT_COUNT_8_MAXIMUM)
+				}
+				if word&HIGH_BITS != 0 {
 					break
 				}
 				source = source[POINTER_SIZE:]
 			}
 			continue
 		}
-		first := FIRST_DATA[first_byte]
-		size := int(first & FIRST_SIZE_MASK)
-		acceptance := first >> FIRST_ACCEPTANCE_SHIFT
-		switch size {
-		case CHARACTER_SIZE_TWO:
-			if len(source) < CHARACTER_SIZE_TWO {
-				return false
-			}
-			second_valid := ACCEPTANCE_MINIMUM_DATA[acceptance] <= source[1] &&
-				source[1] <= ACCEPTANCE_MAXIMUM_DATA[acceptance]
-			if !second_valid {
-				return false
-			}
-			source = source[CHARACTER_SIZE_TWO:]
-		case CHARACTER_SIZE_THREE:
-			if len(source) < CHARACTER_SIZE_THREE {
-				return false
-			}
-			second_valid := ACCEPTANCE_MINIMUM_DATA[acceptance] <= source[1] &&
-				source[1] <= ACCEPTANCE_MAXIMUM_DATA[acceptance]
-			if !second_valid {
-				return false
-			}
-			third_valid := CONTINUATION_MINIMUM <= source[2] &&
-				source[2] <= CONTINUATION_MAXIMUM
-			if !third_valid {
-				return false
-			}
-			source = source[CHARACTER_SIZE_THREE:]
-		case CHARACTER_SIZE_MAXIMUM:
-			if len(source) < CHARACTER_SIZE_MAXIMUM {
-				return false
-			}
-			second_valid := ACCEPTANCE_MINIMUM_DATA[acceptance] <= source[1] &&
-				source[1] <= ACCEPTANCE_MAXIMUM_DATA[acceptance]
-			if !second_valid {
-				return false
-			}
-			third_valid := CONTINUATION_MINIMUM <= source[2] &&
-				source[2] <= CONTINUATION_MAXIMUM
-			if !third_valid {
-				return false
-			}
-			fourth_valid := CONTINUATION_MINIMUM <= source[3] &&
-				source[3] <= CONTINUATION_MAXIMUM
-			if !fourth_valid {
-				return false
-			}
-			source = source[CHARACTER_SIZE_MAXIMUM:]
-		default:
+		_, size := Decode_Character_Text(source)
+		if size == CHARACTER_SIZE_MINIMUM {
 			return false
 		}
+		source = source[size:]
 	}
 	return true
 }

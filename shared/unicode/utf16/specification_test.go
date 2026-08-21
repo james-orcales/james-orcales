@@ -159,9 +159,13 @@ func Test_Append(t *testing.T) {
 
 // Test_Allocation proves each public operation keeps heap allocation at zero.
 func Test_Allocation(t *testing.T) {
+	var word_storage [utf16.SEQUENCE_SIZE_MAXIMUM]uint16
+	var character_storage [utf16.SEQUENCE_SIZE_MAXIMUM]utf16.Decoded_Character
 	state := allocation_state{
 		Source_Characters: utf16.Characters{'A', '\U00010000'},
 		Source_Words:      utf16.Words{'A', 0xd800, 0xdc00},
+		Word_Storage:      word_storage[:],
+		Character_Storage: character_storage[:],
 	}
 	for _, one := range allocation_cases(&state) {
 		t.Run(one.Name, func(t *testing.T) { testify.Zero_Allocation(t, one.Run) })
@@ -200,10 +204,12 @@ type allocation_case struct {
 }
 
 type allocation_state struct {
-	Words             utf16.Words
-	Characters        utf16.Decoded_Characters
-	Word_Storage      [utf16.SEQUENCE_SIZE_MAXIMUM]uint16
-	Character_Storage [utf16.SEQUENCE_SIZE_MAXIMUM]utf16.Decoded_Character
+	Words      utf16.Words
+	Characters utf16.Decoded_Characters
+	// Word_Storage and Character_Storage view fixed arrays owned by Test_Allocation: lint
+	// bans fixed array fields, and a make inside Run would count as an allocation.
+	Word_Storage      utf16.Words
+	Character_Storage utf16.Decoded_Characters
 	Boolean           utf16.Boolean
 	Combined          utf16.Combined_Character
 	First             utf16.First_Encoded_Character
