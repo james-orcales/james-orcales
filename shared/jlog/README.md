@@ -4,7 +4,7 @@ A zero-allocation, dependency-injected, flat JSON logger written in the house
 free-function style (no methods, no fluent builder). One call per line:
 
 ```go
-logger := jlog.New(jlog.New_Input{Writer: os.Stderr, Floor: jlog.LEVEL_INFO})
+logger := jlog.New(jlog.New_Input{Write: sink_write, Floor: jlog.LEVEL_INFO})
 
 jlog.Logger_Info(logger, "request done",
     jlog.String("method", method),
@@ -31,10 +31,10 @@ narrow buys:
 
 - **Barebones.** Roughly 6× less code — ≈1.1k lines of Go source against zerolog's
   ≈6.5k — and zero third-party dependencies, only the standard library and
-  `shared/time`. No hooks, sampling, or CBOR, and the zero-allocation core is just the
+  `shared/simulation/time`. No hooks, sampling, or CBOR, and the zero-allocation core is just the
   encoder and the diode. A pretty console writer does exist — `Console` in the
   composition tier — but it is opt-in and reads *finished* JSON lines back through the
-  `io.Writer` seam, so the hot path never carries it.
+  explicit `Write` procedure, so the hot path never carries console work.
 
 - **Faster, and faster under stress.** jlog wins most of the formatting benchmarks
   above, and its diode is ~2× quicker than zerolog's *and* allocation-free even while
@@ -50,8 +50,8 @@ narrow buys:
   caller's hot path. The default logger is non-blocking; the syscall lives on the
   diode's drain.
 
-- **Pure, separable core.** The library tier (`shared/jlog`, `shared/diode`) is pure —
-  the clock, caller lookup, and sink all arrive as fields, so it is trivially testable
+- **Pure, separable core.** The library tier (`shared/jlog`, `shared/sync/diode`) is pure —
+  the clock, caller lookup, and sink all arrive as fields, so it is directly testable
   and holds no globals. The one ambient binding — the `os.Stderr` default logger — lives
   in the composition tier (`shared/jlog/default`); a console logger takes whatever sink it
   is given, and conventionally that is `os.Stderr` too, so stdout stays clean for program
@@ -100,7 +100,7 @@ inside this repo.)
 
 ## Non-blocking default
 
-`shared/jlog/default`'s `Default` logger writes through a `shared/diode` — a lock-free
+`shared/jlog/default`'s `Default` logger writes through a `shared/sync/diode` — a lock-free
 ring that hands finished lines to a background drain, so a producer never waits on the
 sink. The table above writes to `io.Discard` (zero sink cost); the one below writes to
 `/dev/null`, a *real* sink whose `write` syscall the caller would otherwise pay on its

@@ -1,30 +1,28 @@
 package jlog_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
-	"math"
 	"net"
-	"strings"
 	"testing"
+	"unsafe"
 
+	"local/james-orcales/shared/encoding/json"
 	"local/james-orcales/shared/jlog"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/testify"
 )
 
 // Test_Message_Renders_Level_And_Message covers the minimal line: a level field
 // then the trailing message field, terminated by a newline.
 func Test_Message_Renders_Level_And_Message(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "hello")
 	assert_output(t, buffer, "{\"level\":\"info\",\"message\":\"hello\"}\n")
 }
 
 // Test_Empty_Message_Is_Omitted covers an empty message producing no message field.
 func Test_Empty_Message_Is_Omitted(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Integer("n", 42))
 	assert_output(t, buffer, "{\"level\":\"info\",\"n\":42}\n")
 }
@@ -32,7 +30,7 @@ func Test_Empty_Message_Is_Omitted(t *testing.T) {
 // Test_Scalar_Fields covers the scalar encoders and that the message is rendered
 // after the fields.
 func Test_Scalar_Fields(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "done",
 		jlog.String("s", "v"),
 		jlog.Boolean("b", true),
@@ -47,14 +45,14 @@ func Test_Scalar_Fields(t *testing.T) {
 
 // Test_String_Escape_Sequences covers JSON escaping of control and quote characters.
 func Test_String_Escape_Sequences(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.String("s", "a\"b\nc"))
 	assert_output(t, buffer, "{\"level\":\"info\",\"s\":\"a\\\"b\\nc\"}\n")
 }
 
 // Test_Bytes_Hexadecimal_Raw_JSON covers the []byte-valued field encoders.
 func Test_Bytes_Hexadecimal_Raw_JSON(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
 		jlog.Bytes("by", []byte("ab")),
 		jlog.Hexadecimal("hx", []byte{0xab, 0xcd}),
@@ -67,16 +65,17 @@ func Test_Bytes_Hexadecimal_Raw_JSON(t *testing.T) {
 // Test_Timestamp_Uses_Injected_Clock covers the Timestamp field reading the
 // injected clock and rendering it as integer nanoseconds since the epoch.
 func Test_Timestamp_Uses_Injected_Clock(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Timestamp())
 	assert_output(t, buffer, "{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\"}\n")
 }
 
 // Test_Auto_Timestamp covers New_Input.Auto_Timestamp stamping every line.
 func Test_Auto_Timestamp(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer:         buffer,
+		Writer_State:   unsafe.Pointer(buffer),
+		Write:          buffer_write,
 		Clock:          frozen_clock(),
 		Floor:          jlog.LEVEL_TRACE,
 		Auto_Timestamp: true,
@@ -85,9 +84,9 @@ func Test_Auto_Timestamp(t *testing.T) {
 	assert_output(t, buffer, "{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\"}\n")
 }
 
-// Test_Time_And_Duration covers the shared/time value encoders.
+// Test_Time_And_Duration covers the shared/simulation/time value encoders.
 func Test_Time_And_Duration(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
 		jlog.Time("t", time.Moment(5)),
 		jlog.Duration("d", time.SECOND),
@@ -98,7 +97,7 @@ func Test_Time_And_Duration(t *testing.T) {
 
 // Test_Network_Fields covers the net.IP and net.HardwareAddr encoders.
 func Test_Network_Fields(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
 		jlog.IP_Address("ip", net.IPv4(127, 0, 0, 1)),
 		jlog.MAC_Address("mac", net.HardwareAddr{0xde, 0xad, 0xbe, 0xef, 0x00, 0x01}),
@@ -109,7 +108,7 @@ func Test_Network_Fields(t *testing.T) {
 
 // Test_Scalar_Arrays covers typed slice fields rendering as flat JSON arrays.
 func Test_Scalar_Arrays(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
 		jlog.Strings("tags", []string{"a", "b"}),
 		jlog.Integers("ids", []int{1, 2, 3}),
@@ -121,9 +120,10 @@ func Test_Scalar_Arrays(t *testing.T) {
 // Test_Err_With_Stack covers Err appending the injected stack rendering before the
 // error string when a stack marshaler is configured.
 func Test_Err_With_Stack(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer:          buffer,
+		Writer_State:    unsafe.Pointer(buffer),
+		Write:           buffer_write,
 		Clock:           frozen_clock(),
 		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "TRACE" },
@@ -135,7 +135,7 @@ func Test_Err_With_Stack(t *testing.T) {
 
 // Test_Err_Without_Stack covers Err omitting the stack when no marshaler is set.
 func Test_Err_Without_Stack(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Error(new_logger(buffer), "", jlog.Err(errors.New("boom")))
 	assert_output(t, buffer, "{\"level\":\"error\",\"error\":\"boom\"}\n")
 }
@@ -143,12 +143,13 @@ func Test_Err_Without_Stack(t *testing.T) {
 // Test_Caller_Uses_Injected_Function covers the Caller field appending the injected
 // location.
 func Test_Caller_Uses_Injected_Function(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer: buffer,
-		Clock:  frozen_clock(),
-		Floor:  jlog.LEVEL_TRACE,
-		Caller: func(skip int) (location string) { return "file.go:10" },
+		Writer_State: unsafe.Pointer(buffer),
+		Write:        buffer_write,
+		Clock:        frozen_clock(),
+		Floor:        jlog.LEVEL_TRACE,
+		Caller:       func(skip int) (location string) { return "file.go:10" },
 	})
 	jlog.Logger_Info(logger, "", jlog.Caller())
 	assert_output(t, buffer, "{\"level\":\"info\",\"caller\":\"file.go:10\"}\n")
@@ -157,7 +158,7 @@ func Test_Caller_Uses_Injected_Function(t *testing.T) {
 // Test_Child_Logger_Carries_Context covers Logger_With building a child whose fixed
 // fields precede each line's own fields.
 func Test_Child_Logger_Carries_Context(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	child := jlog.Logger_With(new_logger(buffer), jlog.String("component", "auth"))
 	jlog.Logger_Info(child, "in", jlog.String("user", "bob"))
 	assert_output(t, buffer,
@@ -166,11 +167,12 @@ func Test_Child_Logger_Carries_Context(t *testing.T) {
 
 // Test_Level_Floor_Filters covers a line below the floor producing no output.
 func Test_Level_Floor_Filters(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer: buffer,
-		Clock:  frozen_clock(),
-		Floor:  jlog.LEVEL_INFO,
+		Writer_State: unsafe.Pointer(buffer),
+		Write:        buffer_write,
+		Clock:        frozen_clock(),
+		Floor:        jlog.LEVEL_INFO,
 	})
 	jlog.Logger_Debug(logger, "dropped", jlog.String("k", "v"))
 	assert_output(t, buffer, "")
@@ -179,7 +181,7 @@ func Test_Level_Floor_Filters(t *testing.T) {
 // Test_From_Context_Round_Trips covers carrying a logger through a context.Context
 // and recovering it.
 func Test_From_Context_Round_Trips(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	carrier := jlog.Logger_With_Context(new_logger(buffer), t.Context())
 	jlog.Logger_Info(jlog.From_Context(carrier), "via ctx")
 	assert_output(t, buffer, "{\"level\":\"info\",\"message\":\"via ctx\"}\n")
@@ -188,7 +190,7 @@ func Test_From_Context_Round_Trips(t *testing.T) {
 // Test_From_Context_Missing_Is_Disabled covers the empty-context path returning a
 // no-op logger rather than panicking.
 func Test_From_Context_Missing_Is_Disabled(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(jlog.From_Context(t.Context()), "nope", jlog.String("k", "v"))
 	assert_output(t, buffer, "")
 }
@@ -197,20 +199,18 @@ func Test_From_Context_Missing_Is_Disabled(t *testing.T) {
 // log call to a discarding writer must not allocate.
 func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
-		Writer: io.Discard,
-		Clock:  frozen_clock(),
-		Floor:  jlog.LEVEL_TRACE,
+		Write: discard_write,
+		Clock: frozen_clock(),
+		Floor: jlog.LEVEL_TRACE,
 	})
-	allocations := testing.AllocsPerRun(1000, func() {
+	testify.Zero_Allocation(t, func() {
 		jlog.Logger_Info(logger, "done",
 			jlog.String("user", "bob"),
 			jlog.Integer("count", 7),
 			jlog.Boolean("ok", true),
+			jlog.Float64("ratio", 1.5),
 		)
 	})
-	if allocations != 0 {
-		t.Fatalf("hot path allocated %.1f times per call; want 0", allocations)
-	}
 }
 
 // Test_Header_Renders_Time_Level_Message covers the header order — timestamp, level, message —
@@ -309,7 +309,7 @@ func Test_Message_Is_Bold_When_Colored(t *testing.T) {
 // Test_No_Color_When_Disabled covers a color-off Console emitting no ANSI escape byte.
 func Test_No_Color_When_Disabled(t *testing.T) {
 	got := render(t, false, "{\"level\":\"error\",\"error\":\"boom\",\"message\":\"m\"}\n")
-	if strings.Contains(got.String(), "\x1b[") {
+	if contains([]byte(got.String()), []byte("\x1b[")) {
 		t.Fatalf("plain output must carry no ANSI escape: %q", got.String())
 	}
 }
@@ -356,48 +356,110 @@ func Test_Level_Filter_Passes_Level_Less_And_Non_JSON(t *testing.T) {
 // console sink while teeing every level as raw JSON to the capture sink — the print-to-file,
 // pure and driven by injected writers, with no OS in sight.
 func Test_Console_Logger_Tees_To_Capture(t *testing.T) {
-	var console, capture bytes.Buffer
+	var console, capture recording_buffer
 	logger := jlog.New_Console_Logger(jlog.New_Console_Logger_Input{
-		Console: &console,
-		Capture: &capture,
-		Floor:   jlog.LEVEL_INFO,
-		Clock:   frozen_clock(),
+		Console_State: unsafe.Pointer(&console),
+		Console_Write: buffer_write,
+		Capture_State: unsafe.Pointer(&capture),
+		Capture_Write: buffer_write,
+		Floor:         jlog.LEVEL_INFO,
+		Clock:         frozen_clock(),
 	})
 	jlog.Logger_Trace(logger, "quiet")
 	jlog.Logger_Info(logger, "loud")
 	// The console shows info and up, never the trace line.
-	if strings.Contains(console.String(), "quiet") {
+	if contains([]byte(console.String()), []byte("quiet")) {
 		t.Fatalf("console must drop the trace line: %q", console.String())
 	}
-	if !strings.Contains(console.String(), "INF loud") {
+	if !contains([]byte(console.String()), []byte("INF loud")) {
 		t.Fatalf("console must show the info line: %q", console.String())
 	}
 	// The capture keeps every level as raw JSON, including the trace line the console dropped.
-	if !strings.Contains(capture.String(), "\"message\":\"quiet\"") {
+	if !contains([]byte(capture.String()), []byte("\"message\":\"quiet\"")) {
 		t.Fatalf("capture must keep the trace line: %q", capture.String())
 	}
-	if !strings.Contains(capture.String(), "\"message\":\"loud\"") {
+	if !contains([]byte(capture.String()), []byte("\"message\":\"loud\"")) {
 		t.Fatalf("capture must keep the info line: %q", capture.String())
 	}
 }
 
+type recording_buffer []byte
+
+func (buffer recording_buffer) String() (text string) { return string(buffer) }
+
 // A clock whose realtime reading is always FIXED_MOMENT.
 func frozen_clock() (clock time.Clock) {
-	return time.Clock{Now_Realtime: func() (moment time.Moment) { return FIXED_MOMENT }}
+	return time.Clock{Now_Realtime: frozen_realtime}
+}
+
+func frozen_realtime(_ unsafe.Pointer) (moment time.Moment) { return FIXED_MOMENT }
+
+func pointer_realtime(state unsafe.Pointer) (moment time.Moment) {
+	return time.Moment(*(*int64)(state))
+}
+
+func buffer_write(
+	state unsafe.Pointer, data jlog.Data,
+) (written jlog.Data_Size, err error) {
+	buffer := (*recording_buffer)(state)
+	*buffer = append(*buffer, data...)
+	count := len(data)
+	var write_error error
+	return jlog.Data_Size(count), write_error
+}
+
+func discard_write(
+	_ unsafe.Pointer, data jlog.Data,
+) (written jlog.Data_Size, err error) {
+	return jlog.Data_Size(len(data)), nil
+}
+
+func contains(source []byte, sought []byte) (present bool) {
+	if len(sought) == 0 {
+		return true
+	}
+	if len(sought) > len(source) {
+		return false
+	}
+	last_start := len(source) - len(sought)
+	for start_index := 0; start_index <= last_start; start_index++ {
+		match := true
+		source_index := start_index
+		for sought_index := 0; sought_index < len(sought); sought_index++ {
+			if source[source_index] != sought[sought_index] {
+				match = false
+				break
+			}
+			source_index++
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+func float64_bits(value float64) (bits uint64) {
+	return *(*uint64)(unsafe.Pointer(&value))
+}
+
+func float64_from_bits(bits uint64) (value float64) {
+	return *(*float64)(unsafe.Pointer(&bits))
 }
 
 // A logger writing JSON lines to buffer with the frozen clock and the lowest level
 // floor, so every test line is emitted and timestamps are fixed.
-func new_logger(buffer io.Writer) (logger jlog.Logger) {
+func new_logger(buffer *recording_buffer) (logger jlog.Logger) {
 	return jlog.New(jlog.New_Input{
-		Writer: buffer,
-		Clock:  frozen_clock(),
-		Floor:  jlog.LEVEL_TRACE,
+		Writer_State: unsafe.Pointer(buffer),
+		Write:        buffer_write,
+		Clock:        frozen_clock(),
+		Floor:        jlog.LEVEL_TRACE,
 	})
 }
 
 // Fails the test unless buffer holds exactly want.
-func assert_output(t *testing.T, buffer *bytes.Buffer, want string) {
+func assert_output(t *testing.T, buffer *recording_buffer, want string) {
 	t.Helper()
 	got := buffer.String()
 	if got != want {
@@ -407,11 +469,13 @@ func assert_output(t *testing.T, buffer *bytes.Buffer, want string) {
 
 // Renders line through a Console with the given color setting and returns what the Console wrote,
 // so a behaviour test is a single byte-for-byte comparison.
-func render(t *testing.T, color bool, line string) (rendered *bytes.Buffer) {
+func render(t *testing.T, color bool, line string) (rendered *recording_buffer) {
 	t.Helper()
-	rendered = &bytes.Buffer{}
-	console := jlog.Console{Writer: rendered, Color: color}
-	if _, err := console.Write([]byte(line)); err != nil {
+	rendered = &recording_buffer{}
+	console := jlog.Console{
+		Writer_State: unsafe.Pointer(rendered), Write: buffer_write, Color: color,
+	}
+	if _, err := jlog.Console_Write(console, jlog.Data(line)); err != nil {
 		t.Fatalf("console write: %v", err)
 	}
 	return rendered
@@ -420,11 +484,13 @@ func render(t *testing.T, color bool, line string) (rendered *bytes.Buffer) {
 // Runs line through a Level_Filter at floor and returns what passed, so a behaviour test is a
 // single byte comparison. The inner writer is a plain buffer, so the test sees exactly which lines
 // cleared the floor, unrendered.
-func filter(t *testing.T, floor jlog.Level, line string) (passed *bytes.Buffer) {
+func filter(t *testing.T, floor jlog.Level, line string) (passed *recording_buffer) {
 	t.Helper()
-	passed = &bytes.Buffer{}
-	writer := jlog.New_Level_Filter(jlog.New_Level_Filter_Input{Writer: passed, Floor: floor})
-	if _, err := writer.Write([]byte(line)); err != nil {
+	passed = &recording_buffer{}
+	writer := jlog.New_Level_Filter(jlog.New_Level_Filter_Input{
+		Writer_State: unsafe.Pointer(passed), Write: buffer_write, Floor: floor,
+	})
+	if _, err := jlog.Level_Filter_Write(writer, jlog.Data(line)); err != nil {
 		t.Fatalf("level filter write: %v", err)
 	}
 	return passed
@@ -441,9 +507,9 @@ const FAKE_MESSAGE = "Test logging, but use a somewhat realistic message length.
 // A logger discarding output with the frozen clock, for benchmarks.
 func discard_logger() (logger jlog.Logger) {
 	return jlog.New(jlog.New_Input{
-		Writer: io.Discard,
-		Clock:  frozen_clock(),
-		Floor:  jlog.LEVEL_TRACE,
+		Write: discard_write,
+		Clock: frozen_clock(),
+		Floor: jlog.LEVEL_TRACE,
 	})
 }
 
@@ -474,9 +540,9 @@ func Benchmark_Info(b *testing.B) {
 // Benchmark_Disabled mirrors zerolog's BenchmarkDisabled.
 func Benchmark_Disabled(b *testing.B) {
 	logger := jlog.New(jlog.New_Input{
-		Writer: io.Discard,
-		Clock:  frozen_clock(),
-		Floor:  jlog.LEVEL_DISABLED,
+		Write: discard_write,
+		Clock: frozen_clock(),
+		Floor: jlog.LEVEL_DISABLED,
 	})
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -524,7 +590,7 @@ func Benchmark_Context_Fields(b *testing.B) {
 
 // Test_Cover_Levels exercises every level function and the level wire names.
 func Test_Cover_Levels(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := new_logger(buffer)
 	jlog.Logger_Trace(logger, "")
 	jlog.Logger_Debug(logger, "")
@@ -543,14 +609,12 @@ func Test_Cover_Level_String(t *testing.T) {
 	if jlog.LEVEL_NONE.String() != "" {
 		t.Fatalf("none = %q, want empty", jlog.LEVEL_NONE.String())
 	}
-	if jlog.Level(50).String() != "50" {
-		t.Fatalf("custom = %q, want 50", jlog.Level(50).String())
-	}
+	testify.Panics(t, func() { jlog.Level(50).String() })
 }
 
 // Test_Cover_Numeric_And_Slice_Fields covers the remaining scalar and array kinds.
 func Test_Cover_Numeric_And_Slice_Fields(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
 		jlog.Int64("a", int64(-5)),
 		jlog.Uint("b", uint(6)),
@@ -565,22 +629,12 @@ func Test_Cover_Numeric_And_Slice_Fields(t *testing.T) {
 	assert_output(t, buffer, want)
 }
 
-// Test_Cover_Any covers reflection marshaling and its failure path.
-func Test_Cover_Any(t *testing.T) {
-	buffer := &bytes.Buffer{}
-	jlog.Logger_Info(new_logger(buffer), "",
-		jlog.Any("a", map[string]int{"x": 1}),
-		jlog.Any("b", make(chan int)),
-	)
-	want := "{\"level\":\"info\",\"a\":{\"x\":1},\"b\":\"json marshal error\"}\n"
-	assert_output(t, buffer, want)
-}
-
 // Test_Cover_Err_Nil covers Err with a nil error and the skipped stack.
 func Test_Cover_Err_Nil(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer:          buffer,
+		Writer_State:    unsafe.Pointer(buffer),
+		Write:           buffer_write,
 		Clock:           frozen_clock(),
 		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "S" },
@@ -591,20 +645,21 @@ func Test_Cover_Err_Nil(t *testing.T) {
 
 // Test_Cover_Caller_Without_Function covers Caller when no lookup is injected.
 func Test_Cover_Caller_Without_Function(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Caller())
 	assert_output(t, buffer, "{\"level\":\"info\"}\n")
 }
 
 // Test_Cover_Auto_Caller covers the per-line automatic caller.
 func Test_Cover_Auto_Caller(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer:      buffer,
-		Clock:       frozen_clock(),
-		Floor:       jlog.LEVEL_TRACE,
-		Auto_Caller: true,
-		Caller:      func(skip int) (location string) { return "x.go:1" },
+		Writer_State: unsafe.Pointer(buffer),
+		Write:        buffer_write,
+		Clock:        frozen_clock(),
+		Floor:        jlog.LEVEL_TRACE,
+		Auto_Caller:  true,
+		Caller:       func(skip int) (location string) { return "x.go:1" },
 	})
 	jlog.Logger_Info(logger, "")
 	assert_output(t, buffer, "{\"level\":\"info\",\"caller\":\"x.go:1\"}\n")
@@ -612,11 +667,12 @@ func Test_Cover_Auto_Caller(t *testing.T) {
 
 // Test_Cover_Disabled_Floor covers a logger whose floor disables all output.
 func Test_Cover_Disabled_Floor(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer: buffer,
-		Clock:  frozen_clock(),
-		Floor:  jlog.LEVEL_DISABLED,
+		Writer_State: unsafe.Pointer(buffer),
+		Write:        buffer_write,
+		Clock:        frozen_clock(),
+		Floor:        jlog.LEVEL_DISABLED,
 	})
 	jlog.Logger_Info(logger, "x")
 	assert_output(t, buffer, "")
@@ -624,7 +680,7 @@ func Test_Cover_Disabled_Floor(t *testing.T) {
 
 // Test_Cover_Nested_With covers Logger_With on a logger that already has a prefix.
 func Test_Cover_Nested_With(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	parent := jlog.Logger_With(new_logger(buffer), jlog.String("a", "1"))
 	child := jlog.Logger_With(parent, jlog.String("b", "2"))
 	jlog.Logger_Info(child, "")
@@ -633,9 +689,10 @@ func Test_Cover_Nested_With(t *testing.T) {
 
 // Test_Cover_Custom_Field_Names covers configured (non-default) key names.
 func Test_Cover_Custom_Field_Names(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := jlog.New(jlog.New_Input{
-		Writer:             buffer,
+		Writer_State:       unsafe.Pointer(buffer),
+		Write:              buffer_write,
 		Clock:              frozen_clock(),
 		Floor:              jlog.LEVEL_TRACE,
 		Level_Field_Name:   "lvl",
@@ -651,72 +708,53 @@ func Test_Cover_Nil_Writer(t *testing.T) {
 	jlog.Logger_Info(logger, "to nowhere")
 }
 
-// Parses the single JSON line written to buffer into a field map.
-func decode_line(t *testing.T, buffer *bytes.Buffer) (fields map[string]any) {
-	t.Helper()
-	line := buffer.Bytes()
-	fields = map[string]any{}
-	if err := json.Unmarshal(line[:len(line)-1], &fields); err != nil {
-		t.Fatalf("output is not valid JSON: %v (%q)", err, buffer.String())
-	}
-	return fields
-}
-
 // Test_Cover_String_Escape covers the escape path by round-tripping a value with
 // control characters, a quote, a backslash, and a multibyte rune through the logger
 // and back via JSON.
 func Test_Cover_String_Escape(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	value := "\b\f\n\r\t\"\\\x01世"
 	jlog.Logger_Info(new_logger(buffer), "", jlog.String("a", value))
-	if decode_line(t, buffer)["a"] != value {
-		t.Fatalf("string did not round-trip: %q", buffer.String())
-	}
+	assert_output(t, buffer,
+		"{\"level\":\"info\",\"a\":\"\\b\\f\\n\\r\\t\\\"\\\\\\u0001世\"}\n")
 }
 
 // Test_Cover_Bytes_Escape covers the []byte escape path the same way.
 func Test_Cover_Bytes_Escape(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	value := "\t\"\\世"
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Bytes("a", []byte(value)))
-	if decode_line(t, buffer)["a"] != value {
-		t.Fatalf("bytes did not round-trip: %q", buffer.String())
-	}
+	assert_output(t, buffer, "{\"level\":\"info\",\"a\":\"\\t\\\"\\\\世\"}\n")
 }
 
 // Test_Cover_Invalid_UTF8 covers the replacement-character path for an invalid byte
 // in both a string and a []byte value, and pins the wire form to the escaped
 // replacement sequence so it stays byte-for-byte identical to zerolog on malformed input.
 func Test_Cover_Invalid_UTF8(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
 		jlog.String("s", "\xff"),
 		jlog.Bytes("b", []byte("ok\xff")),
 	)
-	wire := buffer.Bytes()
-	if !bytes.Contains(wire, []byte{'\\', 'u', 'f', 'f', 'f', 'd'}) {
+	wire := []byte(*buffer)
+	if !contains(wire, []byte{'\\', 'u', 'f', 'f', 'f', 'd'}) {
 		t.Fatalf("invalid byte must escape, got %q", buffer.String())
 	}
-	if bytes.ContainsRune(wire, '�') {
+	if contains(wire, []byte("�")) {
 		t.Fatalf("output must not carry the raw replacement rune: %q", buffer.String())
 	}
-	fields := decode_line(t, buffer)
-	if fields["s"] != "�" {
-		t.Fatalf("invalid string byte not replaced: %v", fields["s"])
-	}
-	if fields["b"] != "ok�" {
-		t.Fatalf("invalid byte not replaced: %v", fields["b"])
-	}
+	assert_output(t, buffer,
+		"{\"level\":\"info\",\"s\":\"\\ufffd\",\"b\":\"ok\\ufffd\"}\n")
 }
 
 // Test_Cover_Floats covers NaN, both infinities, zero, and exponent formatting at
 // float32 and float64 precision.
 func Test_Cover_Floats(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
-		jlog.Float64("nan", math.NaN()),
-		jlog.Float64("pinf", math.Inf(1)),
-		jlog.Float64("ninf", math.Inf(-1)),
+		jlog.Float64("nan", float64_from_bits(0x7ff8000000000001)),
+		jlog.Float64("pinf", float64_from_bits(0x7ff0000000000000)),
+		jlog.Float64("ninf", float64_from_bits(0xfff0000000000000)),
 		jlog.Float64("zero", float64(0)),
 		jlog.Float64("small", float64(1e-7)),
 		jlog.Float64("big", float64(1e21)),
@@ -731,7 +769,7 @@ func Test_Cover_Floats(t *testing.T) {
 // Test_Cover_Pre_Epoch_Time covers a timestamp before the Unix epoch, exercising
 // the negative-fraction and negative-day paths of the RFC 3339 conversion.
 func Test_Cover_Pre_Epoch_Time(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Time("t", time.Moment(-1)))
 	want := "{\"level\":\"info\",\"t\":\"1969-12-31T23:59:59.999999999Z\"}\n"
 	assert_output(t, buffer, want)
@@ -739,21 +777,21 @@ func Test_Cover_Pre_Epoch_Time(t *testing.T) {
 
 // Test_Cover_Oversized_Line covers dropping a buffer that grew past the pool cap.
 func Test_Cover_Oversized_Line(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	logger := new_logger(buffer)
 	big := make([]byte, 70000)
 	for index := range big {
 		big[index] = 'a'
 	}
 	jlog.Logger_Info(logger, "", jlog.String("x", string(big)))
-	if buffer.Len() < 70000 {
-		t.Fatalf("output was %d bytes; want a large line", buffer.Len())
+	if len(*buffer) < 70000 {
+		t.Fatalf("output was %d bytes; want a large line", len(*buffer))
 	}
 }
 
 // Test_Cover_Unknown_Kind covers the defensive path for an unrecognized field kind.
 func Test_Cover_Unknown_Kind(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Field{Key: "x", Kind: 100})
 	assert_output(t, buffer, "{\"level\":\"info\"}\n")
 }
@@ -761,7 +799,7 @@ func Test_Cover_Unknown_Kind(t *testing.T) {
 // Test_Cover_Prefix_Without_Level covers merging a sub-logger prefix into a line
 // that carries no level field, the no-separator branch of the object-data merge.
 func Test_Cover_Prefix_Without_Level(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	child := jlog.Logger_With(new_logger(buffer), jlog.String("a", "1"))
 	jlog.Logger_Log(child, "")
 	assert_output(t, buffer, "{\"a\":\"1\"}\n")
@@ -770,7 +808,7 @@ func Test_Cover_Prefix_Without_Level(t *testing.T) {
 // Test_Cover_Float_Exponent_No_Trim covers an exponent whose second digit is not a
 // zero, so the leading-zero trim is skipped.
 func Test_Cover_Float_Exponent_No_Trim(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Float64("x", 1e-17))
 	assert_output(t, buffer, "{\"level\":\"info\",\"x\":1e-17}\n")
 }
@@ -781,14 +819,16 @@ func Test_Cover_Float_Exponent_No_Trim(t *testing.T) {
 // Time field — civil_from_days across the int64 epoch range, so the internal asserts that
 // guard the civil-date math are proven; any regression panics with the named invariant.
 func Fuzz_Encode(f *testing.F) {
-	f.Add([]byte("hello"), int64(1700000000000000000), int64(42), math.Float64bits(3.14))
+	f.Add([]byte("hello"), int64(1700000000000000000), int64(42), float64_bits(3.14))
 	f.Fuzz(func(t *testing.T, raw []byte, moment int64, number int64, float_bits uint64) {
-		buffer := &bytes.Buffer{}
+		buffer := &recording_buffer{}
 		clock := time.Clock{
-			Now_Realtime: func() (now time.Moment) { return time.Moment(moment) },
+			State:        unsafe.Pointer(&moment),
+			Now_Realtime: pointer_realtime,
 		}
 		logger := jlog.New(jlog.New_Input{
-			Writer:         buffer,
+			Writer_State:   unsafe.Pointer(buffer),
+			Write:          buffer_write,
 			Clock:          clock,
 			Floor:          jlog.LEVEL_TRACE,
 			Auto_Timestamp: true,
@@ -797,14 +837,14 @@ func Fuzz_Encode(f *testing.F) {
 			jlog.String("s", string(raw)),
 			jlog.Bytes("b", raw),
 			jlog.Int64("n", number),
-			jlog.Float64("f", math.Float64frombits(float_bits)),
+			jlog.Float64("f", float64_from_bits(float_bits)),
 			jlog.Time("t", time.Moment(moment)),
 			jlog.Duration("d", time.Duration(number)),
 		)
-		line := buffer.Bytes()
-		var decoded map[string]any
-		if err := json.Unmarshal(line[:len(line)-1], &decoded); err != nil {
-			t.Fatalf("invalid JSON %q: %v", line, err)
+		line := []byte(*buffer)
+		position, status := json.Validate(json.Encoded(line[:len(line)-1]))
+		if status != json.STATUS_OK {
+			t.Fatalf("invalid JSON %q at %d", line, position)
 		}
 	})
 }

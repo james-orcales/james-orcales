@@ -1,16 +1,13 @@
 package jlog_test
 
 import (
-	"bytes"
 	"errors"
 	"net"
-	"os"
 	"testing"
+	"unsafe"
 
-	jlog "local/james-orcales/shared/jlog/default"
-	"local/james-orcales/shared/sync/diode"
-	"local/james-orcales/shared/time"
-	system_time "local/james-orcales/shared/time/default"
+	"local/james-orcales/shared/jlog/default"
+	"local/james-orcales/shared/simulation/time"
 )
 
 // Test_Default_Floor_Is_Info covers New_Default_Logger building with an Info floor, so trace and
@@ -21,16 +18,21 @@ func Test_Default_Floor_Is_Info(t *testing.T) {
 	}
 }
 
+type recording_buffer []byte
+
+func (buffer recording_buffer) String() (text string) { return string(buffer) }
+
 // Test_Default_Global_Info covers the package-level convenience API writing an info-level line to
 // Default through a re-exported field constructor.
 func Test_Default_Global_Info(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	saved := jlog.Default
 	defer func() { jlog.Default = saved }()
 	jlog.Default = jlog.New(jlog.New_Input{
-		Writer: buffer,
-		Clock:  time.Clock{Now_Realtime: func() (moment time.Moment) { return 0 }},
-		Floor:  jlog.LEVEL_TRACE,
+		Writer_State: unsafe.Pointer(buffer),
+		Write:        buffer_write,
+		Clock:        frozen(),
+		Floor:        jlog.LEVEL_TRACE,
 	})
 	jlog.Info("hello", jlog.String("user", "bob"))
 	got := buffer.String()
@@ -42,7 +44,17 @@ func Test_Default_Global_Info(t *testing.T) {
 
 // A clock whose realtime reading is always zero.
 func frozen() (clock time.Clock) {
-	return time.Clock{Now_Realtime: func() (moment time.Moment) { return 0 }}
+	return time.Clock{Now_Realtime: zero_realtime}
+}
+
+func zero_realtime(_ unsafe.Pointer) (moment time.Moment) { return 0 }
+
+func buffer_write(
+	state unsafe.Pointer, data jlog.Data,
+) (written jlog.Data_Size, err error) {
+	buffer := (*recording_buffer)(state)
+	*buffer = append(*buffer, data...)
+	return jlog.Data_Size(len(data)), nil
 }
 
 // Test_Default_Caller_Uses_Runtime exercises the OS-backed caller lookup wired into Default; its
@@ -54,13 +66,14 @@ func Test_Default_Caller_Uses_Runtime(t *testing.T) {
 // Test_Default_Cover_API calls every re-exported wrapper and convenience function so the
 // composition tier is fully exercised.
 func Test_Default_Cover_API(t *testing.T) {
-	buffer := &bytes.Buffer{}
+	buffer := &recording_buffer{}
 	saved := jlog.Default
 	defer func() { jlog.Default = saved }()
 	jlog.Default = jlog.New(jlog.New_Input{
-		Writer: buffer,
-		Clock:  frozen(),
-		Floor:  jlog.LEVEL_TRACE,
+		Writer_State: unsafe.Pointer(buffer),
+		Write:        buffer_write,
+		Clock:        frozen(),
+		Floor:        jlog.LEVEL_TRACE,
 	})
 
 	jlog.Trace("a")
@@ -72,7 +85,8 @@ func Test_Default_Cover_API(t *testing.T) {
 	jlog.Logger_Info(jlog.With(jlog.String("k", "v")), "g")
 
 	logger := jlog.New(jlog.New_Input{
-		Writer:          buffer,
+		Writer_State:    unsafe.Pointer(buffer),
+		Write:           buffer_write,
 		Clock:           frozen(),
 		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "S" },
@@ -100,7 +114,6 @@ func Test_Default_Cover_API(t *testing.T) {
 		jlog.Duration("m", time.SECOND),
 		jlog.IP_Address("n", net.IPv4(1, 2, 3, 4)),
 		jlog.MAC_Address("o", net.HardwareAddr{1, 2, 3, 4, 5, 6}),
-		jlog.Any("p", 1),
 		jlog.Strings("q", []string{"a"}),
 		jlog.Integers("r", []int{1}),
 		jlog.Floats64("s", []float64{1}),
@@ -114,57 +127,7 @@ func Test_Default_Cover_API(t *testing.T) {
 	carrier := jlog.Logger_With_Context(logger, t.Context())
 	jlog.Logger_Info(jlog.From_Context(carrier), "ctx")
 
-	if buffer.Len() == 0 {
+	if len(*buffer) == 0 {
 		t.Fatal("expected output from the default wrappers")
 	}
-}
-
-// Opens the OS bit bucket as a real sink: writing to it still costs a write syscall (unlike
-// io.Discard), so benchmarks against it reflect a real backend.
-func null_sink(b *testing.B) (sink *os.File) {
-	b.Helper()
-	handle, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		b.Fatal(err)
-	}
-	return handle
-}
-
-// Benchmark_Caller_Synchronous measures what a caller pays to log one line straight to a real
-// sink: formatting plus the write syscall, on the caller's goroutine.
-func Benchmark_Caller_Synchronous(b *testing.B) {
-	sink := null_sink(b)
-	defer sink.Close()
-	logger := jlog.New(jlog.New_Input{Writer: sink, Clock: frozen(), Floor: jlog.LEVEL_TRACE})
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			jlog.Logger_Info(logger, "request done", jlog.String("method", "GET"))
-		}
-	})
-}
-
-// Benchmark_Caller_Diode measures the same line through the default's non-blocking diode: the
-// caller pays formatting plus a ring handoff; the write syscall is moved to the drain goroutine,
-// which sleeps the real ten-millisecond poll interval.
-func Benchmark_Caller_Diode(b *testing.B) {
-	sink := null_sink(b)
-	defer sink.Close()
-	clock, _ := system_time.New_Operating_System_Clock()
-	writer := diode.New(diode.New_Input{
-		Writer: sink,
-		Clock:  clock,
-		Sleep:  system_time.New_Sleep(),
-		Count:  1024,
-	})
-	defer writer.Close()
-	logger := jlog.New(jlog.New_Input{Writer: writer, Clock: frozen(), Floor: jlog.LEVEL_TRACE})
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			jlog.Logger_Info(logger, "request done", jlog.String("method", "GET"))
-		}
-	})
 }

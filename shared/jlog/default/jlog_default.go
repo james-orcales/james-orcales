@@ -13,16 +13,16 @@ package jlog
 
 import (
 	"context"
-	"fmt"
 	"net"
-	"os"
 	"runtime"
-	"strconv"
+	"syscall"
+	"unsafe"
 
 	"local/james-orcales/shared/jlog"
+	"local/james-orcales/shared/simulation/time"
+	system_time "local/james-orcales/shared/simulation/time/default"
+	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/sync/diode"
-	"local/james-orcales/shared/time"
-	system_time "local/james-orcales/shared/time/default"
 )
 
 // Logger re-exports jlog.Logger.
@@ -48,6 +48,15 @@ type Level = jlog.Level
 
 // Buffer re-exports jlog.Buffer.
 type Buffer = jlog.Buffer
+
+// Data re-exports jlog.Data.
+type Data = jlog.Data
+
+// Data_Size re-exports jlog.Data_Size.
+type Data_Size = jlog.Data_Size
+
+// Write re-exports jlog.Write.
+type Write = jlog.Write
 
 // LEVEL_TRACE re-exports jlog.LEVEL_TRACE.
 const LEVEL_TRACE = jlog.LEVEL_TRACE
@@ -81,7 +90,14 @@ const CALLER_BASE_FRAMES = 6
 // occupancy: an idle logger (or one whose sink keeps up) holds just the ~800 KB slot
 // array, and it tops out near 55 MB (~512 B per line plus its bucket) only if the ring
 // ever completely fills.
-const DEFAULT_DIODE_COUNT = 100_000
+const DEFAULT_DIODE_COUNT = diode.SLOT_COUNT_MAXIMUM
+
+// STDERR_DESCRIPTOR is the process standard error stream owned by this composition root.
+const STDERR_DESCRIPTOR = 2
+
+// DROP_REPORT_SIZE_MAXIMUM holds static text plus the widest bounded missed count.
+const DROP_REPORT_SIZE_MAXIMUM = len("jlog: dropped  log lines (sink too slow)\n") +
+	strconv.DECIMAL_TEXT_SIZE_MAXIMUM
 
 // Default is the OS-bound logger the package-level convenience functions write to.
 // It writes JSON lines to stderr through a non-blocking diode, stamps every line from
@@ -100,17 +116,18 @@ var Default = New_Default_Logger()
 // timestamps, and a runtime-backed caller lookup. This is the one place in the jlog
 // tree where ambient binding is permitted.
 func New_Default_Logger() (logger Logger) {
-	clock, _ := system_time.New_Operating_System_Clock()
+	clock := system_time.New_Operating_System_Clock()
 	writer := diode.New(diode.New_Input{
-		Writer:        os.Stderr,
+		Write:         diode_stderr_write,
 		Clock:         clock,
-		Sleep:         system_time.New_Sleep(),
+		Sleep:         system_time.Sleep,
 		Count:         DEFAULT_DIODE_COUNT,
-		Poll_Interval: 100 * time.MILLISECOND,
+		Poll_Interval: diode.Stored_Poll_Interval(100 * time.MILLISECOND),
 		Alerter:       report_dropped,
 	})
 	return jlog.New(jlog.New_Input{
-		Writer:         writer,
+		Writer_State:   unsafe.Pointer(writer),
+		Write:          jlog_diode_write,
 		Clock:          clock,
 		Floor:          jlog.LEVEL_INFO,
 		Auto_Timestamp: true,
@@ -121,11 +138,34 @@ func New_Default_Logger() (logger Logger) {
 // Surfaces diode drops on stderr so they never vanish silently, naming the cause so a slow
 // sink and a rate limit are told apart.
 func report_dropped(missed int, cause diode.Drop_Cause) {
-	reason := "sink too slow"
+	reason := []byte("sink too slow")
 	if cause == diode.DROP_RATE_LIMIT {
-		reason = "rate limited"
+		reason = []byte("rate limited")
 	}
-	fmt.Fprintf(os.Stderr, "jlog: dropped %d log lines (%s)\n", missed, reason)
+	var storage [DROP_REPORT_SIZE_MAXIMUM]byte
+	report := storage[:0]
+	report = append(report, "jlog: dropped "...)
+	var digits [strconv.DECIMAL_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Format_Decimal_Into(digits[:], strconv.Machine_Integer(missed))
+	report = append(report, digits[:int(count)]...)
+	report = append(report, " log lines ("...)
+	report = append(report, reason...)
+	report = append(report, ')', '\n')
+	syscall.Write(STDERR_DESCRIPTOR, report)
+}
+
+func diode_stderr_write(
+	_ unsafe.Pointer, data diode.Data,
+) (written diode.Data_Size, err error) {
+	count, write_error := syscall.Write(STDERR_DESCRIPTOR, data)
+	return diode.Data_Size(count), write_error
+}
+
+func jlog_diode_write(
+	state unsafe.Pointer, data jlog.Data,
+) (written jlog.Data_Size, err error) {
+	count, write_error := (*diode.Writer)(state).Write(data)
+	return jlog.Data_Size(count), write_error
 }
 
 // Resolves a frame-skip count to a "file:line" location via runtime.Caller, the
@@ -135,7 +175,9 @@ func operating_system_caller(skip int) (location string) {
 	if !ok {
 		return ""
 	}
-	return file + ":" + strconv.Itoa(line)
+	var storage [strconv.DECIMAL_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Format_Decimal_Into(storage[:], strconv.Machine_Integer(line))
+	return file + ":" + string(storage[:int(count)])
 }
 
 // Trace logs a trace-level line to Default.
@@ -336,11 +378,6 @@ func IP_Address(key Key, value net.IP) (field Field) {
 // MAC_Address re-exports jlog.MAC_Address.
 func MAC_Address(key Key, value net.HardwareAddr) (field Field) {
 	return jlog.MAC_Address(key, value)
-}
-
-// Any re-exports jlog.Any.
-func Any(key Key, value any) (field Field) {
-	return jlog.Any(key, value)
 }
 
 // Strings re-exports jlog.Strings.
