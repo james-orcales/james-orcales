@@ -182,8 +182,8 @@ a library is being imported solely for it's global side-effects, an implicit con
 ### Banned Imports
 
 Outside `shared/invariant/**`, banned stdlib families are archive, bytes, compress, container,
-encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid.
-`simulation/os/**` imports os. Only its default imports os/signal; invariant gets no exemption.
+encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid. `os/**` and
+simulation/nbio/default import os; only the latter imports os/signal. Invariant gets no exemption.
 
 ### Import Aliases
 
@@ -527,8 +527,8 @@ Internal code takes time.Timeline, and the harness drives it.
 ### Gateway
 
 Raw IO stdlib lives only in simulation/nbio/default and simulation/time/default. Instrumentation,
-tests, generated files, and package main are exempt. simulation/os/default may import syscall and
-alone may import os/signal. Route other raw IO through shared/simulation/nbio.
+tests, generated files, and package main are exempt. os/default may import syscall alone. Route
+other raw IO through shared/simulation/nbio.
 
 ### Seed
 

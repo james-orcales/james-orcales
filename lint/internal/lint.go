@@ -5139,13 +5139,12 @@ func check_no_banned_stdlib_import(
 		if family == "" {
 			continue
 		}
-		// Signal registration mutates process-global notifier state, so only OS
-		// composition tier owns it. Invariant's cycle exemption cannot widen ownership.
+		// Signal registration mutates process-global notifier state, so only the tier
+		// that drains the notifier owns it: os/signal delivers on a channel no kernel
+		// poll wakes for, thus the loop backend has to read that channel between polls.
+		// Invariant's cycle exemption cannot widen ownership.
 		if import_path == "os/signal" {
-			if directory == "shared/simulation/os/default" {
-				continue
-			}
-			if strings.Has_Prefix(directory, "shared/simulation/os/default/") {
+			if directory_within(directory, SIGNAL_GATEWAY_DIRECTORY) {
 				continue
 			}
 		} else {
@@ -5155,11 +5154,16 @@ func check_no_banned_stdlib_import(
 			// Simulation backend implements shared OS boundary, so replacement needs
 			// family it wraps.
 			if family == "os" {
-				if directory == "shared/simulation/os" {
+				if directory_within(directory, "shared/os") {
 					continue
 				}
-				if strings.Has_Prefix(directory, "shared/simulation/os/") {
-					continue
+				// Signal gateway earns the bare package for one type alone: the
+				// chan os.Signal that os/signal writes to. The family around it —
+				// os/exec above all — stays banned there like everywhere else.
+				if import_path == "os" {
+					if directory_within(directory, SIGNAL_GATEWAY_DIRECTORY) {
+						continue
+					}
 				}
 			}
 		}
@@ -5171,6 +5175,19 @@ func check_no_banned_stdlib_import(
 		})
 	}
 	return diags
+}
+
+// SIGNAL_GATEWAY_DIRECTORY is the loop backend, which owns signal registration because it
+// owns the poll pass that has to drain the notifier channel.
+const SIGNAL_GATEWAY_DIRECTORY = "shared/simulation/nbio/default"
+
+// Reports whether directory is root itself or sits below it. The trailing separator keeps a
+// directory merely named like root from inheriting root's exemption.
+func directory_within(directory string, root string) (within bool) {
+	if directory == root {
+		return true
+	}
+	return strings.Has_Prefix(directory, root+"/")
 }
 
 func banned_stdlib_import_family(import_path string) (family string) {

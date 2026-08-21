@@ -713,7 +713,7 @@ func IO_Gateway(components *Component_Index) (gateway string) {
 // Syscall_Gateways permits the process bindings that simulation/nbio cannot supply.
 // The raw-IO ban stays active for all other imports in these directories.
 func Syscall_Gateways(components *Component_Index) (gateways []string) {
-	directory := shared_library_directory(components, "simulation/os/default")
+	directory := shared_library_directory(components, "os/default")
 	if directory == "" {
 		return nil
 	}

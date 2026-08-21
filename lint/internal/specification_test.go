@@ -1843,22 +1843,21 @@ func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 }
 
 // Test_IO_Gateway_Operating_System_Exempt verifies the os/default gateway may import
-// syscall and os/signal because both bind process state owned by that gateway.
+// syscall, because every ambient reader it owns is one syscall.
 func Test_IO_Gateway_Operating_System_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/os/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/os/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package os is a fixture.\npackage os\n\n" +
-				"import (\n\t\"os/signal\"\n\t\"syscall\"\n)\n\n" +
+				"import \"syscall\"\n\n" +
 				"// Identifier reads the process identifier.\n" +
 				"func Identifier() (identifier int) {\n" +
-				"\tsignal.Ignore(syscall.SIGPIPE)\n" +
 				"\treturn syscall.Getpid()\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/simulation/os/default",
+		Scope:            "shared/os/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
@@ -1926,7 +1925,7 @@ func Test_IO_Gateway_Operating_System_Network_Flagged(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"shared/simulation/os/default/system.go": &fstest.MapFile{Data: []byte(
+		"shared/os/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package os is a fixture.\npackage os\n\nimport \"net/http\"\n\n" +
 				"// Client makes a client.\n" +
 				"func Client() (client *http.Client) {\n" +
@@ -1934,7 +1933,7 @@ func Test_IO_Gateway_Operating_System_Network_Flagged(t *testing.T) {
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
-		Scope:            "shared/simulation/os/default",
+		Scope:            "shared/os/default",
 		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
@@ -2133,8 +2132,8 @@ func specification_os_import_boundary(t *testing.T) {
 		t.Error("third-party OS path must stay allowed")
 	}
 	for _, filename := range []string{
-		"shared/simulation/os/rule.go",
-		"shared/simulation/os/default/rule.go",
+		"shared/os/rule.go",
+		"shared/os/default/rule.go",
 	} {
 		files := map[string][]byte{
 			filename: []byte("package os\n\nimport \"os/exec\"\n"),
@@ -2144,32 +2143,56 @@ func specification_os_import_boundary(t *testing.T) {
 		}
 	}
 	named_like := map[string][]byte{
-		"shared/simulation/os_extra/rule.go": []byte(
+		"shared/os_extra/rule.go": []byte(
 			"package os_extra\n\nimport \"os/exec\"\n"),
 	}
 	if !specification_flags(t, named_like, "Banned import") {
 		t.Fatal("directory named like simulation OS must stay banned")
 	}
-	signal_gateway := map[string][]byte{
-		"shared/simulation/os/default/rule.go": []byte(
-			"package os\n\nimport \"os/signal\"\n"),
-	}
-	if specification_flags(t, signal_gateway, "Banned import") {
-		t.Fatal("simulation OS default gateway must allow os/signal")
+	specification_signal_gateway_boundary(t)
+}
+
+// The tier that drains the notifier between polls owns signal registration, and no other.
+func specification_signal_gateway_boundary(t *testing.T) {
+	t.Helper()
+	for _, import_path := range []string{"os", "os/signal"} {
+		files := map[string][]byte{
+			"shared/simulation/nbio/default/rule.go": []byte(
+				"package nbio\n\nimport \"" + import_path + "\"\n"),
+		}
+		if specification_flags(t, files, "Banned import") {
+			t.Errorf("loop backend must allow %q", import_path)
+		}
 	}
 	for _, filename := range []string{
 		"shared/invariant/rule.go",
-		"shared/simulation/nbio/default/rule.go",
-		"shared/simulation/os/rule.go",
+		"shared/simulation/nbio/rule.go",
+		"shared/os/rule.go",
+		"shared/os/default/rule.go",
 	} {
 		files := map[string][]byte{
 			filename: []byte("package fixture\n\nimport \"os/signal\"\n"),
 		}
 		if !specification_flags(t, files, "Banned import") {
 			t.Errorf(
-				"os/signal outside OS gateway %q must be flagged", filename,
+				"os/signal outside signal gateway %q must be flagged", filename,
 			)
 		}
+	}
+	pure_tier := map[string][]byte{
+		"shared/simulation/nbio/rule.go": []byte(
+			"package nbio\n\nimport \"os\"\n"),
+	}
+	if !specification_flags(t, pure_tier, "Banned import") {
+		t.Fatal("os outside the signal gateway and shared/os must be flagged")
+	}
+	// The gateway earns the bare package for chan os.Signal, never the family around it.
+	wider_family := map[string][]byte{
+		"shared/simulation/nbio/default/rule.go": []byte(
+			"package nbio\n\nimport \"os/exec\"\n"),
+	}
+	if !specification_flags(t, wider_family, "Banned import") {
+		t.Fatal("os/exec in the signal gateway must stay flagged")
 	}
 }
 
