@@ -15,7 +15,7 @@ import (
 // Test_Initialization protects fixed caller capacity and injected driver.
 func Test_Initialization(t *testing.T) {
 	state := fake_state{}
-	data_source, validation := driver.Data_Source_Validate("memory")
+	data_source, validation := data_source_validate("memory")
 	testify.Equal_Values(t, driver.STATUS_OK, validation, "data source")
 	var pool sql.Pool
 	var slots [POOL_CAPACITY]sql.Slot
@@ -38,16 +38,16 @@ func Test_Initialization(t *testing.T) {
 func Test_Pool(t *testing.T) {
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	first, status := sql.Pool_Connection_Acquire(&pool)
+	first, status := pool_connection_acquire(&pool)
 	testify.Equal_Values(t, sql.STATUS_OK, status, "first")
 	stale := first
-	second, status := sql.Pool_Connection_Acquire(&pool)
+	second, status := pool_connection_acquire(&pool)
 	testify.Equal_Values(t, sql.STATUS_OK, status, "second")
-	_, status = sql.Pool_Connection_Acquire(&pool)
+	_, status = pool_connection_acquire(&pool)
 	testify.Equal_Values(t, sql.STATUS_EXHAUSTED, status, "bounded exhaustion")
 	testify.Equal_Values(t, sql.STATUS_BUSY, sql.Pool_Close(&pool), "busy close")
 	testify.Equal_Values(t, sql.STATUS_OK, sql.Connection_Close(&first), "release first")
-	reused, status := sql.Pool_Connection_Acquire(&pool)
+	reused, status := pool_connection_acquire(&pool)
 	testify.Equal_Values(t, sql.STATUS_OK, status, "reuse")
 	testify.Equal_Values(t, sql.STATUS_HANDLE_INVALID, sql.Connection_Probe(&stale), "stale")
 	testify.Equal_Values(t, sql.STATUS_OK, sql.Connection_Close(&reused), "release reused")
@@ -60,14 +60,14 @@ func Test_Pool(t *testing.T) {
 func Test_Connections(t *testing.T) {
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	connection, status := sql.Pool_Connection_Acquire(&pool)
+	connection, status := pool_connection_acquire(&pool)
 	testify.Equal_Values(t, sql.STATUS_OK, status, "acquire")
 	testify.Equal_Values(t, sql.STATUS_OK, sql.Connection_Probe(&connection), "probe")
 	request := test_request(t)
 	var result sql.Result
 	status = sql.Status(sql.Connection_Exec(&connection, request, &result))
 	testify.Equal_Values(t, sql.STATUS_OK, status, "execute")
-	_, result_status := sql.Result_Rows_Affected(result)
+	_, result_status := result_rows_affected(result)
 	testify.Equal_Values(t, driver.STATUS_OK, result_status, "affected")
 	var rows sql.Rows
 	status = sql.Status(sql.Connection_Query(&connection, request, &rows))
@@ -97,7 +97,7 @@ func Test_Rows(t *testing.T) {
 func Test_Statements(t *testing.T) {
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	query, _ := driver.Query_Validate("select value")
+	query, _ := query_validate("select value")
 	var statement sql.Statement
 	status := sql.Pool_Prepare(&pool, query, &statement)
 	testify.Equal_Values(t, sql.STATUS_OK, status, "prepare")
@@ -143,7 +143,7 @@ func Test_Transactions(t *testing.T) {
 
 // Test_Allocation protects every public operation without hidden ownership.
 func Test_Allocation(t *testing.T) {
-	data_source, validation := driver.Data_Source_Validate("memory")
+	data_source, validation := data_source_validate("memory")
 	testify.Equal_Values(t, driver.STATUS_OK, validation, "data source")
 	request := test_request(t)
 	options := driver.Transaction_Options_Of(driver.ISOLATION_SERIALIZABLE, false)
@@ -156,6 +156,7 @@ func Test_Allocation(t *testing.T) {
 // Test_Invariant_Domains reaches every registered pool boundary and state branch.
 func Test_Invariant_Domains(t *testing.T) {
 	test_pool_domains(t)
+	test_status_storage_domains(t)
 	test_connection_domains(t)
 	test_transaction_option_domains(t)
 	test_busy_domains(t)
@@ -175,6 +176,27 @@ func Test_Invariant_Domains(t *testing.T) {
 	test_initialization_connection_domains()
 }
 
+func test_status_storage_domains(t *testing.T) {
+	state := fake_state{}
+	pool := test_pool(t, &state)
+	status := sql.STATUS_GENERATION_EXHAUSTED
+	connection := sql.Pool_Connection_Acquire(&pool, &status)
+	sql.Connection_Close(&connection)
+	status = sql.STATUS_DONE
+	connection = sql.Pool_Connection_Acquire(&pool, &status)
+	sql.Connection_Close(&connection)
+	status = sql.STATUS_INPUT_INVALID
+	connection = sql.Pool_Connection_Acquire(&pool, &status)
+	sql.Connection_Close(&connection)
+	sql.Pool_Close(&pool)
+
+	var result sql.Result
+	optional := driver.Optional_Status(driver.STATUS_UNSUPPORTED)
+	sql.Result_Rows_Affected(result, &optional)
+	optional = driver.Optional_Status(driver.STATUS_UNSUPPORTED)
+	sql.Result_Last_Insert_Identifier(result, &optional)
+}
+
 func test_transaction_option_domains(t *testing.T) {
 	state := fake_state{}
 	pool := test_pool(t, &state)
@@ -189,7 +211,7 @@ func test_transaction_option_domains(t *testing.T) {
 		testify.Equal_Values(
 			t, sql.STATUS_OK, sql.Transaction_Rollback(&transaction), "pool rollback",
 		)
-		connection, status := sql.Pool_Connection_Acquire(&pool)
+		connection, status := pool_connection_acquire(&pool)
 		testify.Equal_Values(t, sql.STATUS_OK, status, "acquire")
 		connection_status := sql.Connection_Begin(&connection, options, &transaction)
 		testify.Equal_Values(t, sql.STATUS_OK, connection_status, "connection begin")
@@ -245,8 +267,8 @@ func test_allocation_pool(
 		)
 		status = sql.Pool_Probe(&pool)
 		status = sql.Pool_Exec(&pool, request, &result)
-		sql.Result_Rows_Affected(result)
-		sql.Result_Last_Insert_Identifier(result)
+		result_rows_affected(result)
+		result_last_insert_identifier(result)
 		statistics := sql.Pool_Statistics(&pool)
 		sql.Statistics_Capacity(statistics)
 		sql.Statistics_Open(statistics)
@@ -303,7 +325,7 @@ func test_allocation_connection(
 			&pool, fake_driver(&state), data_source, slots[:],
 		)
 		var acquired sql.Status
-		connection, acquired = sql.Pool_Connection_Acquire(&pool)
+		connection, acquired = pool_connection_acquire(&pool)
 		status = acquired
 		status = sql.Status(sql.Connection_Probe(&connection))
 		status = sql.Status(sql.Connection_Exec(&connection, request, &result))
@@ -352,11 +374,11 @@ func test_allocation_rejection(
 			&pool, fake_driver(&state), data_source, slots[:],
 		)
 		var acquired sql.Status
-		first, acquired = sql.Pool_Connection_Acquire(&pool)
+		first, acquired = pool_connection_acquire(&pool)
 		status = acquired
-		second, acquired = sql.Pool_Connection_Acquire(&pool)
+		second, acquired = pool_connection_acquire(&pool)
 		status = acquired
-		_, status = sql.Pool_Connection_Acquire(&pool)
+		_, status = pool_connection_acquire(&pool)
 		status = sql.Status(sql.Connection_Probe(&zero_connection))
 		status = sql.Status(sql.Connection_Exec(&zero_connection, request, &result))
 		status = sql.Status(sql.Connection_Query(&zero_connection, request, &rows))
@@ -391,7 +413,7 @@ func test_pool_domains(t *testing.T) {
 		var rows sql.Rows
 		var statement sql.Statement
 		var transaction sql.Transaction
-		sql.Pool_Connection_Acquire(&pool)
+		pool_connection_acquire(&pool)
 		sql.Pool_Probe(&pool)
 		sql.Pool_Exec(&pool, request, &result)
 		sql.Pool_Query(&pool, request, &rows)
@@ -408,7 +430,7 @@ func test_pool_domains(t *testing.T) {
 	var rows sql.Rows
 	var statement sql.Statement
 	var transaction sql.Transaction
-	sql.Pool_Connection_Acquire(&pool)
+	pool_connection_acquire(&pool)
 	sql.Pool_Probe(&pool)
 	sql.Pool_Exec(&pool, request, &result)
 	sql.Pool_Query(&pool, request, &rows)
@@ -457,7 +479,7 @@ func test_query_domains(t *testing.T) {
 		var statement sql.Statement
 		sql.Pool_Prepare(&pool, query, &statement)
 		sql.Statement_Close(&statement)
-		connection, _ := sql.Pool_Connection_Acquire(&pool)
+		connection, _ := pool_connection_acquire(&pool)
 		sql.Connection_Prepare(&connection, query, &statement)
 		sql.Statement_Close(&statement)
 		sql.Connection_Close(&connection)
@@ -474,7 +496,7 @@ func test_connection_domains(t *testing.T) {
 	} {
 		state := fake_state{}
 		pool := test_pool(t, &state)
-		connection, _ := sql.Pool_Connection_Acquire(&pool)
+		connection, _ := pool_connection_acquire(&pool)
 		state.Return_Status = driver_status
 		var result sql.Result
 		var rows sql.Rows
@@ -551,7 +573,7 @@ func test_transaction_status(
 func test_pool_close_status(t *testing.T, status driver.Status) {
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	connection, _ := sql.Pool_Connection_Acquire(&pool)
+	connection, _ := pool_connection_acquire(&pool)
 	sql.Connection_Close(&connection)
 	state.Return_Status = status
 	sql.Pool_Close(&pool)
@@ -563,7 +585,7 @@ func test_busy_domains(t *testing.T) {
 	options := driver.Transaction_Options_Of(driver.ISOLATION_SERIALIZABLE, false)
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	connection, _ := sql.Pool_Connection_Acquire(&pool)
+	connection, _ := pool_connection_acquire(&pool)
 	var rows sql.Rows
 	sql.Connection_Query(&connection, request, &rows)
 	var result sql.Result
@@ -616,7 +638,7 @@ func test_bad_connection_domains(t *testing.T) {
 
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	connection, _ := sql.Pool_Connection_Acquire(&pool)
+	connection, _ := pool_connection_acquire(&pool)
 	var rows sql.Rows
 	sql.Connection_Query(&connection, request, &rows)
 	state.Return_Status = driver.STATUS_BAD_CONNECTION
@@ -625,7 +647,7 @@ func test_bad_connection_domains(t *testing.T) {
 
 	state = fake_state{}
 	pool = test_pool(t, &state)
-	connection, _ = sql.Pool_Connection_Acquire(&pool)
+	connection, _ = pool_connection_acquire(&pool)
 	var closing_rows sql.Rows
 	sql.Connection_Query(&connection, request, &closing_rows)
 	state.Return_Status = driver.STATUS_BAD_CONNECTION
@@ -633,7 +655,7 @@ func test_bad_connection_domains(t *testing.T) {
 
 	state = fake_state{}
 	pool = test_pool(t, &state)
-	connection, _ = sql.Pool_Connection_Acquire(&pool)
+	connection, _ = pool_connection_acquire(&pool)
 	var statement sql.Statement
 	sql.Connection_Prepare(&connection, query, &statement)
 	state.Return_Status = driver.STATUS_BAD_CONNECTION
@@ -642,7 +664,7 @@ func test_bad_connection_domains(t *testing.T) {
 
 	state = fake_state{}
 	pool = test_pool(t, &state)
-	connection, _ = sql.Pool_Connection_Acquire(&pool)
+	connection, _ = pool_connection_acquire(&pool)
 	var transaction sql.Transaction
 	sql.Connection_Begin(&connection, options, &transaction)
 	state.Return_Status = driver.STATUS_BAD_CONNECTION
@@ -654,7 +676,7 @@ func test_bad_connection_state(
 ) {
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	connection, _ := sql.Pool_Connection_Acquire(&pool)
+	connection, _ := pool_connection_acquire(&pool)
 	state.Slots = pool.Slots
 	state.Mutate_Generation = mutate_generation
 	state.Mutate_State = mutate_state
@@ -667,7 +689,7 @@ func test_handle_domains(t *testing.T) {
 	var zero sql.Connection
 	sql.Connection_Close(&zero)
 	pool := test_pool(t, &state)
-	closed, _ := sql.Pool_Connection_Acquire(&pool)
+	closed, _ := pool_connection_acquire(&pool)
 	pool.Closed = sql.POOL_CLOSED
 	sql.Connection_Close(&closed)
 	test_transition_domains(t)
@@ -682,7 +704,7 @@ func test_transition_domains(t *testing.T) {
 	}{{Generation: true}, {State: true}} {
 		state := fake_state{}
 		pool := test_pool(t, &state)
-		connection, _ := sql.Pool_Connection_Acquire(&pool)
+		connection, _ := pool_connection_acquire(&pool)
 		state.Slots = pool.Slots
 		state.Mutate_Generation = mutation.Generation
 		state.Mutate_State = mutation.State
@@ -739,7 +761,7 @@ func test_connection_of_domains(t *testing.T) {
 	for index := NUMBER_ZERO; index < len(storage)-NUMBER_ONE; index++ {
 		storage[index].State = sql.SLOT_CONNECTION
 	}
-	sql.Pool_Connection_Acquire(&pool)
+	pool_connection_acquire(&pool)
 
 	pool = sql.Pool{}
 	sql.Pool_Init(
@@ -751,7 +773,7 @@ func test_connection_of_domains(t *testing.T) {
 			storage[index].State = sql.SLOT_CONNECTION
 		}
 	}
-	sql.Pool_Connection_Acquire(&pool)
+	pool_connection_acquire(&pool)
 
 	var single [sql.INITIALIZED_CONNECTION_COUNT_MINIMUM]sql.Slot
 	pool = sql.Pool{}
@@ -767,13 +789,13 @@ func test_connection_of_domains(t *testing.T) {
 	single[NUMBER_ZERO].Generation = sql.Generation(
 		bits.WORD_64_MAXIMUM - NUMBER_ONE,
 	)
-	sql.Pool_Connection_Acquire(&pool)
+	pool_connection_acquire(&pool)
 }
 
 func test_collection_domains(t *testing.T) {
 	state := fake_state{}
 	pool := test_pool(t, &state)
-	connection, _ := sql.Pool_Connection_Acquire(&pool)
+	connection, _ := pool_connection_acquire(&pool)
 	request := test_request(t)
 	var rows sql.Rows
 	sql.Connection_Query(&connection, request, &rows)
@@ -808,16 +830,16 @@ func test_result_domains() {
 			&result.Driver_Result,
 			driver.Last_Insert_Identifier(value),
 		)
-		sql.Result_Last_Insert_Identifier(result)
+		result_last_insert_identifier(result)
 		driver.Result_Set_Rows_Affected(
 			&result.Driver_Result, driver.Rows_Affected(value),
 		)
-		sql.Result_Last_Insert_Identifier(result)
-		sql.Result_Rows_Affected(result)
+		result_last_insert_identifier(result)
+		result_rows_affected(result)
 	}
 	var result sql.Result
-	sql.Result_Last_Insert_Identifier(result)
-	sql.Result_Rows_Affected(result)
+	result_last_insert_identifier(result)
+	result_rows_affected(result)
 }
 
 func test_statistics_domains() {
@@ -1048,7 +1070,7 @@ func test_pool_pointer_domains() {
 func test_zero_pool_pointer_domains(t *testing.T) {
 	testify.Panics(t, func() {
 		var pool sql.Pool
-		sql.Pool_Connection_Acquire(&pool)
+		pool_connection_acquire(&pool)
 	}, "zero pool acquire")
 	testify.Panics(t, func() {
 		var pool sql.Pool
@@ -1093,7 +1115,7 @@ func exercise_pool_pointer_domain(
 	options := driver.Transaction_Options_Of(driver.ISOLATION_DEFAULT, false)
 
 	pool := domain_pool(data_size, slot_count, closed)
-	sql.Pool_Connection_Acquire(&pool)
+	pool_connection_acquire(&pool)
 	pool = domain_pool(data_size, slot_count, closed)
 	sql.Pool_Probe(&pool)
 	pool = domain_pool(data_size, slot_count, closed)
@@ -1369,7 +1391,7 @@ func test_discard_pool_domains() {
 			&pool, fake_driver(&state), driver.Data_Source(text_of(data_sizes[index])),
 			storage,
 		)
-		connection, _ := sql.Pool_Connection_Acquire(&pool)
+		connection, _ := pool_connection_acquire(&pool)
 		state.Return_Status = driver.STATUS_BAD_CONNECTION
 		sql.Connection_Probe(&connection)
 	}
@@ -1449,9 +1471,51 @@ func text_of(size int) (text string) {
 	return string(make([]byte, size))
 }
 
+func data_source_validate(
+	unvalidated driver.Data_Source_Unvalidated,
+) (data_source driver.Data_Source, status driver.Validation_Status) {
+	data_source = driver.Data_Source_Validate(unvalidated, &status)
+	return data_source, status
+}
+
+func query_validate(
+	unvalidated driver.Query_Unvalidated,
+) (query driver.Query, status driver.Validation_Status) {
+	query = driver.Query_Validate(unvalidated, &status)
+	return query, status
+}
+
+func request_of(
+	query driver.Query, arguments driver.Arguments,
+) (request driver.Request, status driver.Validation_Status) {
+	request = driver.Request_Of(query, arguments, &status)
+	return request, status
+}
+
+func pool_connection_acquire(
+	pool sql.Pool_Pointer,
+) (connection sql.Connection, status sql.Status) {
+	connection = sql.Pool_Connection_Acquire(pool, &status)
+	return connection, status
+}
+
+func result_rows_affected(
+	result sql.Result,
+) (count driver.Rows_Affected, status driver.Optional_Status) {
+	count = sql.Result_Rows_Affected(result, &status)
+	return count, status
+}
+
+func result_last_insert_identifier(
+	result sql.Result,
+) (identifier driver.Last_Insert_Identifier, status driver.Optional_Status) {
+	identifier = sql.Result_Last_Insert_Identifier(result, &status)
+	return identifier, status
+}
+
 func test_pool(t *testing.T, state *fake_state) (pool sql.Pool) {
 	t.Helper()
-	data_source, validation := driver.Data_Source_Validate("memory")
+	data_source, validation := data_source_validate("memory")
 	testify.Equal_Values(t, driver.STATUS_OK, validation, "data source")
 	var slots [POOL_CAPACITY]sql.Slot
 	status := sql.Pool_Init(
@@ -1463,9 +1527,9 @@ func test_pool(t *testing.T, state *fake_state) (pool sql.Pool) {
 
 func test_request(t *testing.T) (request driver.Request) {
 	t.Helper()
-	query, validation := driver.Query_Validate("select value")
+	query, validation := query_validate("select value")
 	testify.Equal_Values(t, driver.STATUS_OK, validation, "query")
-	request, validation = driver.Request_Of(query, nil)
+	request, validation = request_of(query, nil)
 	testify.Equal_Values(t, driver.STATUS_OK, validation, "request")
 	return request
 }

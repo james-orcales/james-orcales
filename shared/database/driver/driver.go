@@ -38,6 +38,19 @@ func Validation_Status_Invariants(
 		Ensure()
 }
 
+// Validation_Status_Pointer keeps paired validation output caller-owned.
+type Validation_Status_Pointer *Validation_Status
+
+// Validation_Status_Pointer_Invariants admits absent optional storage.
+func Validation_Status_Pointer_Invariants(
+	value Validation_Status_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Validation_Status_Invariants(*value, namespace)
+}
+
 // Optional_Status admits success or an absent optional driver capability.
 type Optional_Status Status
 
@@ -50,6 +63,19 @@ func Optional_Status_Invariants(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_UNSUPPORTED),
 		).
 		Ensure()
+}
+
+// Optional_Status_Pointer keeps optional-result status caller-owned.
+type Optional_Status_Pointer *Optional_Status
+
+// Optional_Status_Pointer_Invariants admits absent optional storage.
+func Optional_Status_Pointer_Invariants(
+	value Optional_Status_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Optional_Status_Invariants(*value, namespace)
 }
 
 // STATUS_OK reports completed driver work.
@@ -343,94 +369,129 @@ func Value_Of_Time(destination Value_Pointer, value time.Moment) {
 }
 
 // Value_Kind_Of rejects hostile tags before exposing closed-union member.
-func Value_Kind_Of(value Value) (kind Value_Kind, status Validation_Status) {
-	defer func() {
-		Value_Kind_Invariants(kind, "value_kind_of.kind")
-		Validation_Status_Invariants(status, "value_kind_of.status")
-	}()
+func Value_Kind_Of(
+	value Value, status Validation_Status_Pointer,
+) (kind Value_Kind) {
+	defer func() { Value_Kind_Invariants(kind, "value_kind_of.kind") }()
 	Value_Invariants(value, "value_kind_of.value")
+	Validation_Status_Pointer_Invariants(status, "value_kind_of.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "value_kind_of.status")
+	}()
 	if value.Kind > Value_Kind_Unvalidated(VALUE_TIME) {
-		return VALUE_NULL, Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return VALUE_NULL
 	}
-	return Value_Kind(value.Kind), Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return Value_Kind(value.Kind)
 }
 
 // Value_As_Boolean reads Boolean only when tag agrees.
-func Value_As_Boolean(value Value) (result Boolean, status Validation_Status) {
-	defer func() {
-		Boolean_Invariants(result, "value_as_boolean.result")
-		Validation_Status_Invariants(status, "value_as_boolean.status")
-	}()
+func Value_As_Boolean(
+	value Value, status Validation_Status_Pointer,
+) (result Boolean) {
+	defer func() { Boolean_Invariants(result, "value_as_boolean.result") }()
 	Value_Invariants(value, "value_as_boolean.value")
+	Validation_Status_Pointer_Invariants(status, "value_as_boolean.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "value_as_boolean.status")
+	}()
 	if Value_Kind(value.Kind) != VALUE_BOOLEAN {
-		return false, Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return false
 	}
-	return value.Boolean, Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return value.Boolean
 }
 
 // Value_As_Integer reads integer only when tag agrees.
-func Value_As_Integer(value Value) (result Integer, status Validation_Status) {
-	defer func() {
-		Integer_Invariants(result, "value_as_integer.result")
-		Validation_Status_Invariants(status, "value_as_integer.status")
-	}()
+func Value_As_Integer(
+	value Value, status Validation_Status_Pointer,
+) (result Integer) {
+	defer func() { Integer_Invariants(result, "value_as_integer.result") }()
 	Value_Invariants(value, "value_as_integer.value")
+	Validation_Status_Pointer_Invariants(status, "value_as_integer.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "value_as_integer.status")
+	}()
 	if Value_Kind(value.Kind) != VALUE_INTEGER {
-		return Integer(bits.WORD_64_MINIMUM), Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return Integer(bits.WORD_64_MINIMUM)
 	}
-	return value.Integer, Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return value.Integer
 }
 
 // Value_As_Float reads binary64 bits only when tag agrees.
-func Value_As_Float(value Value) (result Float, status Validation_Status) {
-	defer func() {
-		Float_Invariants(result, "value_as_float.result")
-		Validation_Status_Invariants(status, "value_as_float.status")
-	}()
+func Value_As_Float(
+	value Value, status Validation_Status_Pointer,
+) (result Float) {
+	defer func() { Float_Invariants(result, "value_as_float.result") }()
 	Value_Invariants(value, "value_as_float.value")
+	Validation_Status_Pointer_Invariants(status, "value_as_float.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "value_as_float.status")
+	}()
 	if Value_Kind(value.Kind) != VALUE_FLOAT {
-		return Float(bits.WORD_64_MINIMUM), Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return Float(bits.WORD_64_MINIMUM)
 	}
-	return value.Float, Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return value.Float
 }
 
 // Value_As_Bytes returns borrowed bytes only when tag agrees.
-func Value_As_Bytes(value Value) (result Bytes, status Validation_Status) {
-	defer func() {
-		Bytes_Invariants(result, "value_as_bytes.result")
-		Validation_Status_Invariants(status, "value_as_bytes.status")
-	}()
+func Value_As_Bytes(
+	value Value, status Validation_Status_Pointer,
+) (result Bytes) {
+	defer func() { Bytes_Invariants(result, "value_as_bytes.result") }()
 	Value_Invariants(value, "value_as_bytes.value")
+	Validation_Status_Pointer_Invariants(status, "value_as_bytes.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "value_as_bytes.status")
+	}()
 	if Value_Kind(value.Kind) != VALUE_BYTES {
-		return nil, Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return nil
 	}
-	return value.Bytes, Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return value.Bytes
 }
 
 // Value_As_Text returns borrowed text only when tag agrees.
-func Value_As_Text(value Value) (result Text, status Validation_Status) {
-	defer func() {
-		Text_Invariants(result, "value_as_text.result")
-		Validation_Status_Invariants(status, "value_as_text.status")
-	}()
+func Value_As_Text(
+	value Value, status Validation_Status_Pointer,
+) (result Text) {
+	defer func() { Text_Invariants(result, "value_as_text.result") }()
 	Value_Invariants(value, "value_as_text.value")
+	Validation_Status_Pointer_Invariants(status, "value_as_text.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "value_as_text.status")
+	}()
 	if Value_Kind(value.Kind) != VALUE_TEXT {
-		return "", Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return ""
 	}
-	return value.Text, Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return value.Text
 }
 
 // Value_As_Time reads timestamp only when tag agrees.
-func Value_As_Time(value Value) (result time.Moment, status Validation_Status) {
-	defer func() {
-		time.Moment_Invariants(result, "value_as_time.result")
-		Validation_Status_Invariants(status, "value_as_time.status")
-	}()
+func Value_As_Time(
+	value Value, status Validation_Status_Pointer,
+) (result time.Moment) {
+	defer func() { time.Moment_Invariants(result, "value_as_time.result") }()
 	Value_Invariants(value, "value_as_time.value")
+	Validation_Status_Pointer_Invariants(status, "value_as_time.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "value_as_time.status")
+	}()
 	if Value_Kind(value.Kind) != VALUE_TIME {
-		return time.Moment(bits.WORD_64_MINIMUM), Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return time.Moment(bits.WORD_64_MINIMUM)
 	}
-	return value.Moment, Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return value.Moment
 }
 
 // Query_Unvalidated admits one rejected text-boundary witness.
@@ -458,17 +519,20 @@ func Query_Invariants(value Query, namespace aver.Namespace) {
 
 // Query_Validate changes raw caller text into bounded Query.
 func Query_Validate(
-	unvalidated Query_Unvalidated,
-) (query Query, status Validation_Status) {
-	defer func() {
-		Query_Invariants(query, "query_validate.query")
-		Validation_Status_Invariants(status, "query_validate.status")
-	}()
+	unvalidated Query_Unvalidated, status Validation_Status_Pointer,
+) (query Query) {
+	defer func() { Query_Invariants(query, "query_validate.query") }()
 	Query_Unvalidated_Invariants(unvalidated, "query_validate.unvalidated")
+	Validation_Status_Pointer_Invariants(status, "query_validate.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "query_validate.status")
+	}()
 	if len(unvalidated) > strings.TEXT_SIZE_MAXIMUM {
-		return "", Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return ""
 	}
-	return Query(unvalidated), Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return Query(unvalidated)
 }
 
 // Data_Source_Unvalidated admits one rejected text-boundary witness.
@@ -498,17 +562,22 @@ func Data_Source_Invariants(value Data_Source, namespace aver.Namespace) {
 
 // Data_Source_Validate changes raw caller text into bounded Data_Source.
 func Data_Source_Validate(
-	unvalidated Data_Source_Unvalidated,
-) (data_source Data_Source, status Validation_Status) {
+	unvalidated Data_Source_Unvalidated, status Validation_Status_Pointer,
+) (data_source Data_Source) {
 	defer func() {
 		Data_Source_Invariants(data_source, "data_source_validate.data_source")
-		Validation_Status_Invariants(status, "data_source_validate.status")
 	}()
 	Data_Source_Unvalidated_Invariants(unvalidated, "data_source_validate.unvalidated")
+	Validation_Status_Pointer_Invariants(status, "data_source_validate.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "data_source_validate.status")
+	}()
 	if len(unvalidated) > strings.TEXT_SIZE_MAXIMUM {
-		return "", Validation_Status(STATUS_INPUT_INVALID)
+		*status = Validation_Status(STATUS_INPUT_INVALID)
+		return ""
 	}
-	return Data_Source(unvalidated), Validation_Status(STATUS_OK)
+	*status = Validation_Status(STATUS_OK)
+	return Data_Source(unvalidated)
 }
 
 // Argument_Name_Unvalidated is raw standard named-argument name.
@@ -720,20 +789,21 @@ func Request_Invariants(value Request, namespace aver.Namespace) {
 
 // Request_Of validates and stores one bounded query with caller arguments.
 func Request_Of(
-	query Query, arguments Arguments,
-) (request Request, status Validation_Status) {
-	defer func() {
-		Request_Invariants(request, "request_of.request")
-		Validation_Status_Invariants(status, "request_of.status")
-	}()
+	query Query, arguments Arguments, status Validation_Status_Pointer,
+) (request Request) {
+	defer func() { Request_Invariants(request, "request_of.request") }()
 	Query_Invariants(query, "request_of.query")
 	Arguments_Invariants(arguments, "request_of.arguments")
+	Validation_Status_Pointer_Invariants(status, "request_of.status_storage")
+	defer func() {
+		Validation_Status_Pointer_Invariants(status, "request_of.status")
+	}()
 	request = Request{
 		Query:     query,
 		Arguments: arguments,
 	}
-	status = Request_Validate(request)
-	return request, status
+	*status = Request_Validate(request)
+	return request
 }
 
 // Request_Validate checks argument validity and exact standard ordinal sequence.
@@ -950,41 +1020,50 @@ func Result_Set_Rows_Affected(result Result_Pointer, value Rows_Affected) {
 
 // Result_Last_Insert_Identifier reads generated identity when reported.
 func Result_Last_Insert_Identifier(
-	result Result_Pointer,
-) (value Last_Insert_Identifier, status Optional_Status) {
+	result Result_Pointer, status Optional_Status_Pointer,
+) (value Last_Insert_Identifier) {
 	defer func() {
 		Last_Insert_Identifier_Invariants(value, "result_last_insert_identifier.value")
-		Optional_Status_Invariants(status, "result_last_insert_identifier.status")
 	}()
 	Result_Pointer_Invariants(result, "result_last_insert_identifier.result")
+	Optional_Status_Pointer_Invariants(
+		status, "result_last_insert_identifier.status_storage",
+	)
+	defer func() {
+		Optional_Status_Pointer_Invariants(status, "result_last_insert_identifier.status")
+	}()
 	Last_Insert_Identifier_Validity_Invariants(
 		result.Last_Insert_Identifier_Validity,
 		"result_last_insert_identifier.valid",
 	)
 	if !bool(result.Last_Insert_Identifier_Validity) {
-		return Last_Insert_Identifier(bits.WORD_64_MINIMUM),
-			Optional_Status(STATUS_UNSUPPORTED)
+		*status = Optional_Status(STATUS_UNSUPPORTED)
+		return Last_Insert_Identifier(bits.WORD_64_MINIMUM)
 	}
-	return result.Last_Insert_Identifier, Optional_Status(STATUS_OK)
+	*status = Optional_Status(STATUS_OK)
+	return result.Last_Insert_Identifier
 }
 
 // Result_Rows_Affected reads affected count when reported.
 func Result_Rows_Affected(
-	result Result_Pointer,
-) (value Rows_Affected, status Optional_Status) {
-	defer func() {
-		Rows_Affected_Invariants(value, "result_rows_affected.value")
-		Optional_Status_Invariants(status, "result_rows_affected.status")
-	}()
+	result Result_Pointer, status Optional_Status_Pointer,
+) (value Rows_Affected) {
+	defer func() { Rows_Affected_Invariants(value, "result_rows_affected.value") }()
 	Result_Pointer_Invariants(result, "result_rows_affected.result")
+	Optional_Status_Pointer_Invariants(status, "result_rows_affected.status_storage")
+	defer func() {
+		Optional_Status_Pointer_Invariants(status, "result_rows_affected.status")
+	}()
 	Rows_Affected_Validity_Invariants(
 		result.Rows_Affected_Validity,
 		"result_rows_affected.valid",
 	)
 	if !bool(result.Rows_Affected_Validity) {
-		return Rows_Affected(bits.WORD_64_MINIMUM), Optional_Status(STATUS_UNSUPPORTED)
+		*status = Optional_Status(STATUS_UNSUPPORTED)
+		return Rows_Affected(bits.WORD_64_MINIMUM)
 	}
-	return result.Rows_Affected, Optional_Status(STATUS_OK)
+	*status = Optional_Status(STATUS_OK)
+	return result.Rows_Affected
 }
 
 func value_validate(value Value) (status Validation_Status) {

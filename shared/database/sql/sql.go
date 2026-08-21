@@ -20,6 +20,17 @@ func Status_Invariants(value Status, namespace aver.Namespace) {
 		Ensure()
 }
 
+// Status_Pointer keeps paired operation status caller-owned.
+type Status_Pointer *Status
+
+// Status_Pointer_Invariants admits absent optional storage.
+func Status_Pointer_Invariants(value Status_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Status_Invariants(*value, namespace)
+}
+
 // Initialization_Status reports successful initialization or missing slot storage.
 type Initialization_Status Status
 
@@ -812,16 +823,22 @@ func Pool_Init(
 }
 
 // Pool_Connection_Acquire reserves idle storage or opens one empty slot.
-func Pool_Connection_Acquire(pool Pool_Pointer) (connection Connection, status Status) {
+func Pool_Connection_Acquire(
+	pool Pool_Pointer, status Status_Pointer,
+) (connection Connection) {
 	defer func() {
 		Connection_Invariants(connection, "pool_connection_acquire.connection")
-		Status_Invariants(status, "pool_connection_acquire.status")
 	}()
 	Pool_Pointer_Invariants(pool, "pool_connection_acquire.pool")
+	Status_Pointer_Invariants(status, "pool_connection_acquire.status_storage")
+	defer func() {
+		Status_Pointer_Invariants(status, "pool_connection_acquire.status")
+	}()
 	pool_initialized(pool)
 	open_pool := (*Open_Pool)((*Pool)(pool))
 	if pool.Closed == POOL_CLOSED {
-		return Connection{}, STATUS_CLOSED
+		*status = STATUS_CLOSED
+		return Connection{}
 	}
 	slots := pool.Slots
 	generation_exhausted := false
@@ -839,7 +856,8 @@ func Pool_Connection_Acquire(pool Pool_Pointer) (connection Connection, status S
 		connection = Connection(connection_of(
 			open_pool, Slot_Index(index), Lease_Generation(slot.Generation),
 		))
-		return connection, STATUS_OK
+		*status = STATUS_OK
+		return connection
 	}
 	for index := range slots {
 		slot := &slots[index]
@@ -860,18 +878,22 @@ func Pool_Connection_Acquire(pool Pool_Pointer) (connection Connection, status S
 		if driver_status != driver.STATUS_OK {
 			slot.Connection = driver.Connection{}
 			slot.State = SLOT_EMPTY
-			return Connection{}, Status(status_of_driver(driver_status))
+			*status = Status(status_of_driver(driver_status))
+			return Connection{}
 		}
 		slot.State = SLOT_CONNECTION
 		connection = Connection(connection_of(
 			open_pool, Slot_Index(index), Lease_Generation(generation),
 		))
-		return connection, STATUS_OK
+		*status = STATUS_OK
+		return connection
 	}
 	if generation_exhausted {
-		return Connection{}, STATUS_GENERATION_EXHAUSTED
+		*status = STATUS_GENERATION_EXHAUSTED
+		return Connection{}
 	}
-	return Connection{}, STATUS_EXHAUSTED
+	*status = STATUS_EXHAUSTED
+	return Connection{}
 }
 
 // Connection_Close returns one explicit lease to idle pool state.
@@ -995,35 +1017,45 @@ func Statistics_In_Use(value Statistics) (count Connection_Count) {
 
 // Result_Rows_Affected reports driver affected count when supported.
 func Result_Rows_Affected(
-	result Result,
-) (count driver.Rows_Affected, status driver.Optional_Status) {
-	defer func() {
-		driver.Rows_Affected_Invariants(count, "result_rows_affected.count")
-		driver.Optional_Status_Invariants(status, "result_rows_affected.status")
-	}()
+	result Result, status driver.Optional_Status_Pointer,
+) (count driver.Rows_Affected) {
+	defer func() { driver.Rows_Affected_Invariants(count, "result_rows_affected.count") }()
 	Result_Invariants(result, "result_rows_affected.result")
-	return driver.Result_Rows_Affected(&result.Driver_Result)
+	driver.Optional_Status_Pointer_Invariants(
+		status, "result_rows_affected.status_storage",
+	)
+	defer func() {
+		driver.Optional_Status_Pointer_Invariants(status, "result_rows_affected.status")
+	}()
+	return driver.Result_Rows_Affected(&result.Driver_Result, status)
 }
 
 // Result_Last_Insert_Identifier reports generated identity when supported.
 func Result_Last_Insert_Identifier(
-	result Result,
-) (identifier driver.Last_Insert_Identifier, status driver.Optional_Status) {
+	result Result, status driver.Optional_Status_Pointer,
+) (identifier driver.Last_Insert_Identifier) {
 	defer func() {
 		driver.Last_Insert_Identifier_Invariants(
 			identifier, "result_last_insert_identifier.identifier",
 		)
-		driver.Optional_Status_Invariants(status, "result_last_insert_identifier.status")
 	}()
 	Result_Invariants(result, "result_last_insert_identifier.result")
-	return driver.Result_Last_Insert_Identifier(&result.Driver_Result)
+	driver.Optional_Status_Pointer_Invariants(
+		status, "result_last_insert_identifier.status_storage",
+	)
+	defer func() {
+		driver.Optional_Status_Pointer_Invariants(
+			status, "result_last_insert_identifier.status",
+		)
+	}()
+	return driver.Result_Last_Insert_Identifier(&result.Driver_Result, status)
 }
 
 // Pool_Probe probes one bounded connection and returns it to pool.
 func Pool_Probe(pool Pool_Pointer) (status Status) {
 	defer func() { Status_Invariants(status, "pool_probe.status") }()
 	Pool_Pointer_Invariants(pool, "pool_probe.pool")
-	connection, status := Pool_Connection_Acquire(pool)
+	connection := Pool_Connection_Acquire(pool, &status)
 	if status != STATUS_OK {
 		return status
 	}
@@ -1045,7 +1077,7 @@ func Pool_Exec(pool Pool_Pointer, request driver.Request, result Result_Pointer)
 	Pool_Pointer_Invariants(pool, "pool_exec.pool")
 	driver.Request_Invariants(request, "pool_exec.request")
 	Result_Pointer_Invariants(result, "pool_exec.result")
-	connection, status := Pool_Connection_Acquire(pool)
+	connection := Pool_Connection_Acquire(pool, &status)
 	if status != STATUS_OK {
 		return status
 	}
@@ -1073,7 +1105,7 @@ func Pool_Query(pool Pool_Pointer, request driver.Request, rows Rows_Pointer) (s
 	Pool_Pointer_Invariants(pool, "pool_query.pool")
 	driver.Request_Invariants(request, "pool_query.request")
 	Rows_Pointer_Invariants(rows, "pool_query.rows")
-	connection, status := Pool_Connection_Acquire(pool)
+	connection := Pool_Connection_Acquire(pool, &status)
 	if status != STATUS_OK {
 		return status
 	}
@@ -1195,7 +1227,7 @@ func Pool_Prepare(
 	Pool_Pointer_Invariants(pool, "pool_prepare.pool")
 	driver.Query_Invariants(query, "pool_prepare.query")
 	Statement_Pointer_Invariants(statement, "pool_prepare.statement")
-	connection, status := Pool_Connection_Acquire(pool)
+	connection := Pool_Connection_Acquire(pool, &status)
 	if status != STATUS_OK {
 		return status
 	}
@@ -1326,7 +1358,7 @@ func Pool_Begin(
 	Pool_Pointer_Invariants(pool, "pool_begin.pool")
 	driver.Transaction_Options_Invariants(options, "pool_begin.options")
 	Transaction_Pointer_Invariants(transaction, "pool_begin.transaction")
-	connection, status := Pool_Connection_Acquire(pool)
+	connection := Pool_Connection_Acquire(pool, &status)
 	if status != STATUS_OK {
 		return status
 	}
