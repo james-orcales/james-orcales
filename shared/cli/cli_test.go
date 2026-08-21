@@ -16,22 +16,38 @@ func TestMain(m *testing.M) {
 
 type output_buffer struct {
 	cli.Output
+	Storage []byte
 }
 
-func output_cli(output *output_buffer) (destination *cli.Output) {
-	return &output.Output
+func new_output_buffer() (output output_buffer) {
+	output.Storage = make([]byte, strings.TEXT_SIZE_MAXIMUM)
+	return output
 }
 
-func (output *output_buffer) String() (text string) {
-	return string(cli.Output_Bytes(&output.Output))
+func output_cli(output *output_buffer) (reference cli.Output_Reference) {
+	output.Output.Builder.Storage = strings.Bytes(output.Storage)
+	return cli_output_reference(&output.Output)
+}
+
+func new_cli_output() (output cli.Output) {
+	output.Builder.Storage = make([]byte, strings.TEXT_SIZE_MAXIMUM)
+	return output
+}
+
+func cli_output_reference(output *cli.Output) (reference cli.Output_Reference) {
+	return cli.Output_Reference_Of(output)
+}
+
+func output_text(output *output_buffer) (text string) {
+	return string(cli.Output_Bytes(output_cli(output)))
 }
 
 func output_write_string(output *output_buffer, source string) {
-	cli.Output_Write_Text(&output.Output, cli.Value_Text(source))
+	cli.Output_Write_Text(output_cli(output), cli.Value_Text(source))
 }
 
 func output_reset(output *output_buffer) {
-	cli.Output_Reset(&output.Output)
+	cli.Output_Reset(output_cli(output))
 }
 
 func cli_complete(program cli.Program, words []string) (candidates cli.Candidates) {
@@ -61,7 +77,7 @@ func candidates_equal(candidates cli.Candidates, expected []string) (equal bool)
 }
 
 func handle_completion(
-	program cli.Program, args []string, output *cli.Output,
+	program cli.Program, args []string, output cli.Output_Reference,
 ) (handled bool) {
 	var storage [cli.CANDIDATE_COUNT_MAXIMUM]cli.Candidate
 	return bool(cli.Handle_Completion(program, args, output, storage[:]))
@@ -70,9 +86,9 @@ func handle_completion(
 func completion_script(
 	program cli.Program, shell cli.Shell,
 ) (script string, err error) {
-	var output cli.Output
-	err = cli.Completion_Script(program, shell, &output)
-	return string(cli.Output_Bytes(&output)), err
+	output := new_cli_output()
+	err = cli.Completion_Script(program, shell, cli_output_reference(&output))
+	return string(cli.Output_Bytes(cli_output_reference(&output))), err
 }
 
 func text_contains(source string, fragment string) (contained bool) {
@@ -135,9 +151,12 @@ type cli_fixture struct {
 // Builds the todoctl program with fresh buffers. cli.New runs here, inside each
 // test, so its assertions are registered before use.
 func new_cli_fixture() (fixture cli_fixture) {
-	fixture.Stdout = &output_buffer{}
-	fixture.Stderr = &output_buffer{}
-	fixture.Database = &output_buffer{}
+	stdout := new_output_buffer()
+	stderr := new_output_buffer()
+	database := new_output_buffer()
+	fixture.Stdout = &stdout
+	fixture.Stderr = &stderr
+	fixture.Database = &database
 	fixture.Program = cli.New(cli.New_Input{
 		Label:       "todoctl",
 		Description: "is a todo list manager",
@@ -156,12 +175,23 @@ func todoctl_add_command() (command cli.Command) {
 	return cli.Command{
 		Label: "add",
 		Arguments: []cli.Option{
-			{Label: "task", Value: "", Description: "describes what you need to do"},
+			cli.New_Option(cli.New_Option_Input{
+				Label: "task", Description: "describes what you need to do",
+			}),
 		},
 		Flags: []cli.Option{
-			{Label: "deadline", Value: "Jan 02 Mon", Description: "deadline date"},
-			{Label: "priority", Value: "low", Description: "set priority"},
-			{Label: "noop", Value: false, Description: "random flag that does nothing"},
+			cli.New_Option(cli.New_Option_Input{
+				Label: "deadline", String: "Jan 02 Mon",
+				Description: "deadline date", Is_Flag: true,
+			}),
+			cli.New_Option(cli.New_Option_Input{
+				Label: "priority", String: "low",
+				Description: "set priority", Is_Flag: true,
+			}),
+			cli.New_Option(cli.New_Option_Input{
+				Label: "noop", Type: cli.OPTION_TYPE_BOOLEAN,
+				Description: "random flag that does nothing", Is_Flag: true,
+			}),
 		},
 	}
 }
@@ -171,13 +201,15 @@ func todoctl_list_command() (command cli.Command) {
 	return cli.Command{
 		Label: "list",
 		Flags: []cli.Option{
-			{
-				Label: "columns",
-				Value: "all",
+			cli.New_Option(cli.New_Option_Input{
+				Label: "columns", String: "all", Is_Flag: true,
 				Description: "comma-separated (all, deadline, " +
 					"priority, description)",
-			},
-			{Label: "count", Value: 0, Description: "how many tasks to display"},
+			}),
+			cli.New_Option(cli.New_Option_Input{
+				Label: "count", Type: cli.OPTION_TYPE_INTEGER,
+				Description: "how many tasks to display", Is_Flag: true,
+			}),
 		},
 	}
 }
@@ -188,19 +220,18 @@ func todoctl_delete_command() (command cli.Command) {
 		Label:       "delete",
 		Description: "remove a task by ID",
 		Arguments: []cli.Option{
-			// Setting Value to 0 makes the parser treat this as an int.
-			{
+			cli.New_Option(cli.New_Option_Input{
 				Label:       "id",
-				Value:       0,
+				Type:        cli.OPTION_TYPE_INTEGER,
 				Description: "the integer index of the task to remove",
-			},
+			}),
 		},
 	}
 }
 
 // Dispatches a parsed command against the fixture's state, the way func main
 // would; extracted so each test stays its own entry point.
-func run_command(command cli.Command, fixture *cli_fixture) {
+func run_command(command cli.Resolved_Command, fixture *cli_fixture) {
 	switch command.Label {
 	case "help":
 		cli.Print_Help(output_cli(fixture.Stdout), fixture.Program)
@@ -214,32 +245,34 @@ func run_command(command cli.Command, fixture *cli_fixture) {
 }
 
 // Appends a formatted task row to the fixture's database.
-func run_add(command cli.Command, fixture *cli_fixture) {
+func run_add(command cli.Resolved_Command, fixture *cli_fixture) {
 	output_write_string(fixture.Database, fmt.Sprintf(
 		"%s | %s | %s\n",
-		cli.Option_String(cli.Get_Option(command.Flags, "deadline")),
-		cli.Option_String(cli.Get_Option(command.Flags, "priority")),
-		cli.Option_String(cli.Get_Option(command.Arguments, "task")),
+		cli.Option_String(cli.Resolved_Options(command.Flags), "deadline"),
+		cli.Option_String(cli.Resolved_Options(command.Flags), "priority"),
+		cli.Option_String(cli.Resolved_Options(command.Arguments), "task"),
 	))
 }
 
 // Removes the task at the given index from the fixture's database.
-func run_delete(command cli.Command, fixture *cli_fixture) {
-	identifier := int(cli.Option_Integer(cli.Get_Option(command.Arguments, "id")))
-	content := text_trim_space(fixture.Database.String())
+func run_delete(command cli.Resolved_Command, fixture *cli_fixture) {
+	identifier := int(cli.Option_Integer(cli.Resolved_Options(command.Arguments), "id"))
+	content := text_trim_space(output_text(fixture.Database))
 	if content == "" {
-		fmt.Fprintln(fixture.Stdout, "List is already empty")
+		output_write_string(fixture.Stdout, "List is already empty\n")
 		return
 	}
 	lines := text_split(content, "\n")
 	if identifier < 0 {
-		fmt.Fprintf(fixture.Stdout, "Error: ID %d is out of range (0 to %d)\n",
-			identifier, len(lines)-1)
+		output_write_string(fixture.Stdout, fmt.Sprintf(
+			"Error: ID %d is out of range (0 to %d)\n", identifier, len(lines)-1,
+		))
 		return
 	}
 	if identifier >= len(lines) {
-		fmt.Fprintf(fixture.Stdout, "Error: ID %d is out of range (0 to %d)\n",
-			identifier, len(lines)-1)
+		output_write_string(fixture.Stdout, fmt.Sprintf(
+			"Error: ID %d is out of range (0 to %d)\n", identifier, len(lines)-1,
+		))
 		return
 	}
 	output_reset(fixture.Database)
@@ -249,13 +282,13 @@ func run_delete(command cli.Command, fixture *cli_fixture) {
 		}
 		output_write_string(fixture.Database, line+"\n")
 	}
-	fmt.Fprintf(fixture.Stdout, "Deleted task %d\n", identifier)
+	output_write_string(fixture.Stdout, fmt.Sprintf("Deleted task %d\n", identifier))
 }
 
 // Prints the selected columns of up to count tasks from the database.
-func run_list(command cli.Command, fixture *cli_fixture) {
-	columns := string(cli.Option_String(cli.Get_Option(command.Flags, "columns")))
-	count := int(cli.Option_Integer(cli.Get_Option(command.Flags, "count")))
+func run_list(command cli.Resolved_Command, fixture *cli_fixture) {
+	columns := string(cli.Option_String(cli.Resolved_Options(command.Flags), "columns"))
+	count := int(cli.Option_Integer(cli.Resolved_Options(command.Flags), "count"))
 	all, deadline, priority, description := false, false, false, false
 	for _, column := range text_split(columns, ",") {
 		if column == "all" {
@@ -273,11 +306,11 @@ func run_list(command cli.Command, fixture *cli_fixture) {
 		}
 	}
 	if all {
-		fmt.Fprintln(fixture.Stdout, fixture.Database.String())
+		output_write_string(fixture.Stdout, output_text(fixture.Database)+"\n")
 		return
 	}
 	iteration := 0
-	for _, line := range text_lines(fixture.Database.String()) {
+	for _, line := range text_lines(output_text(fixture.Database)) {
 		if iteration >= count {
 			break
 		}
@@ -292,7 +325,7 @@ func run_list(command cli.Command, fixture *cli_fixture) {
 		if description {
 			output = append(output, string(parts[2][:len(parts[2])-1]))
 		}
-		fmt.Fprintln(fixture.Stdout, text_join(output, "::"))
+		output_write_string(fixture.Stdout, text_join(output, "::")+"\n")
 		iteration++
 	}
 }
@@ -308,8 +341,8 @@ type check_input struct {
 func check(input check_input) {
 	input.T.Helper()
 	expect := fmt.Sprintf("Stdout:\n%s\nStderr:\n%s\nDatabase:\n%s\n",
-		input.Fixture.Stdout.String(), input.Fixture.Stderr.String(),
-		input.Fixture.Database.String())
+		output_text(input.Fixture.Stdout), output_text(input.Fixture.Stderr),
+		output_text(input.Fixture.Database))
 	if !snap.Snapshot_Is_Equal(input.Snapshot, expect) {
 		input.T.Fatal("Snapshot mismatch")
 	}
@@ -368,8 +401,8 @@ func Test_Demo(t *testing.T) {
 	}
 	for _, command := range commands {
 		command, err := parse_program(&fixture.Program, command)
-		if err != nil {
-			panic(err)
+		if err != "" {
+			t.Fatal(err)
 		}
 		run_command(command, &fixture)
 	}
@@ -406,8 +439,8 @@ func Test_User_Error(t *testing.T) {
 	}
 	for _, command := range commands {
 		command, err := parse_program(&fixture.Program, command)
-		if err != nil {
-			fmt.Fprintln(fixture.Stderr, err.Error())
+		if err != "" {
+			output_write_string(fixture.Stderr, err+"\n")
 			continue
 		}
 		run_command(command, &fixture)
@@ -467,8 +500,8 @@ func Test_Quotes(t *testing.T) {
 	}
 	for _, command := range commands {
 		command, err := parse_program(&fixture.Program, command)
-		if err != nil {
-			panic(err)
+		if err != "" {
+			t.Fatal(err)
 		}
 		run_command(command, &fixture)
 	}
@@ -492,9 +525,9 @@ Dec 01 Mon | medium | task with mixed text
 // renders the program's own positionals in the usage line.
 func Test_Single_Help(t *testing.T) {
 	program := new_single_fixture()
-	output := output_buffer{}
+	output := new_output_buffer()
 	cli.Print_Help(output_cli(&output), program)
-	help := output.String()
+	help := output_text(&output)
 	if text_contains(help, "<command>") {
 		t.Errorf("single-command help must not mention <command>:\n%s", help)
 	}
@@ -506,15 +539,17 @@ func Test_Single_Help(t *testing.T) {
 // Test_Variadic_Help verifies a variadic renders with an ellipsis and its element
 // type, not the raw slice type.
 func Test_Variadic_Help(t *testing.T) {
-	program := cli.New_Single(cli.New_Single_Input{
+	program := cli.New(cli.New_Input{Mode: cli.PROGRAM_MODE_SINGLE,
 		Label: "sloc", Description: "count lines of code",
 		Arguments: []cli.Option{
-			cli.New_Variadic[string](cli.New_Variadic_Input{Label: "path"}),
+			cli.New_Option(cli.New_Option_Input{
+				Label: "path", Type: cli.OPTION_TYPE_STRINGS,
+			}),
 		},
 	})
-	output := output_buffer{}
+	output := new_output_buffer()
 	cli.Print_Help(output_cli(&output), program)
-	help := output.String()
+	help := output_text(&output)
 	if !text_contains(help, "<path: string...>") {
 		t.Errorf("expected <path: string...>, got:\n%s", help)
 	}
@@ -526,18 +561,18 @@ func Test_Variadic_Help(t *testing.T) {
 // Test_Enum_Flag_Help verifies an enum flag renders its permitted set in place of the
 // bare type annotation, keeping its default.
 func Test_Enum_Flag_Help(t *testing.T) {
-	program := cli.New_Single(cli.New_Single_Input{
+	program := cli.New(cli.New_Input{Mode: cli.PROGRAM_MODE_SINGLE,
 		Label: "prog", Description: "enum flag help",
 		Flags: []cli.Option{
-			cli.New_String_Enum_Flag(cli.New_String_Enum_Flag_Input{
-				Label: "color", Enum: []string{"auto", "never", "always"},
-				Value: "auto", Description: "when to colorize",
+			cli.New_Option(cli.New_Option_Input{
+				Label: "color", String_Enum: []string{"auto", "never", "always"},
+				String: "auto", Is_Flag: true, Description: "when to colorize",
 			}),
 		},
 	})
-	output := output_buffer{}
+	output := new_output_buffer()
 	cli.Print_Help(output_cli(&output), program)
-	help := output.String()
+	help := output_text(&output)
 	// The label is ANSI-colored in flag rows, so assert on the uncolored value part —
 	// the enum set — rather than the "-color" prefix.
 	if !text_contains(help, "=(auto|never|always)") {
@@ -551,18 +586,19 @@ func Test_Enum_Flag_Help(t *testing.T) {
 // Test_Enum_Argument_Help verifies an enum positional shows its permitted set in the
 // usage signature instead of the bare type.
 func Test_Enum_Argument_Help(t *testing.T) {
-	program := cli.New_Single(cli.New_Single_Input{
+	program := cli.New(cli.New_Input{Mode: cli.PROGRAM_MODE_SINGLE,
 		Label: "prog", Description: "enum argument help",
 		Arguments: []cli.Option{
-			cli.New_Integer_Enum_Argument(cli.New_Integer_Enum_Argument_Input{
-				Label: "level", Enum: []int{1, 2, 4, 8},
+			cli.New_Option(cli.New_Option_Input{
+				Label: "level", Integer_Enum: []int{1, 2, 4, 8},
+				Type:        cli.OPTION_TYPE_INTEGER,
 				Description: "compression level",
 			}),
 		},
 	})
-	output := output_buffer{}
+	output := new_output_buffer()
 	cli.Print_Help(output_cli(&output), program)
-	help := output.String()
+	help := output_text(&output)
 	if !text_contains(help, "<level: (1|2|4|8)>") {
 		t.Errorf("expected the enum set in the signature, got:\n%s", help)
 	}
@@ -572,33 +608,41 @@ func Test_Enum_Argument_Help(t *testing.T) {
 // context (empty-label command) and per-command help for a selected command.
 func Test_Print_Requested_Help(t *testing.T) {
 	fixture := new_cli_fixture()
-	root := output_buffer{}
-	cli.Print_Requested_Help(output_cli(&root), fixture.Program, cli.Command{})
-	if !text_contains(root.String(), "Available Commands") {
-		t.Errorf("root help should list commands, got:\n%s", root.String())
+	root := new_output_buffer()
+	cli.Print_Requested_Help(output_cli(&root), fixture.Program, "")
+	if !text_contains(output_text(&root), "Available Commands") {
+		t.Errorf("root help should list commands, got:\n%s", output_text(&root))
 	}
 
 	command, _ := parse_program(&fixture.Program, []string{"todoctl", "list", "-help"})
-	one := output_buffer{}
-	cli.Print_Requested_Help(output_cli(&one), fixture.Program, command)
-	if !text_contains(one.String(), "list") {
-		t.Errorf("command help should name the command, got:\n%s", one.String())
+	one := new_output_buffer()
+	cli.Print_Requested_Help(output_cli(&one), fixture.Program, command.Label)
+	if !text_contains(output_text(&one), "list") {
+		t.Errorf("command help should name the command, got:\n%s", output_text(&one))
 	}
-	if text_contains(one.String(), "Available Commands") {
-		t.Errorf("command help should not list every command, got:\n%s", one.String())
+	if text_contains(output_text(&one), "Available Commands") {
+		t.Errorf(
+			"command help should not list every command, got:\n%s",
+			output_text(&one),
+		)
 	}
 }
 
 // Builds a single-command program: one positional path and one flag, no selector.
 func new_single_fixture() (program cli.Program) {
-	return cli.New_Single(cli.New_Single_Input{
+	return cli.New(cli.New_Input{Mode: cli.PROGRAM_MODE_SINGLE,
 		Label:       "sloc",
 		Description: "count lines of code",
 		Arguments: []cli.Option{
-			{Label: "path", Value: "", Description: "directory to scan"},
+			cli.New_Option(cli.New_Option_Input{
+				Label: "path", Description: "directory to scan",
+			}),
 		},
 		Flags: []cli.Option{
-			{Label: "hidden", Value: false, Description: "include hidden dot-files"},
+			cli.New_Option(cli.New_Option_Input{
+				Label: "hidden", Type: cli.OPTION_TYPE_BOOLEAN,
+				Description: "include hidden dot-files", Is_Flag: true,
+			}),
 		},
 	})
 }
@@ -608,12 +652,12 @@ func new_single_fixture() (program cli.Program) {
 func Test_Command_Help(t *testing.T) {
 	program := new_multicall_fixture()
 	command, err := parse_program(&program, []string{"add", "milk"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
 	}
-	output := output_buffer{}
-	cli.Print_Command(output_cli(&output), program, command)
-	help := output.String()
+	output := new_output_buffer()
+	cli.Print_Requested_Help(output_cli(&output), program, command.Label)
+	help := output_text(&output)
 	if !text_contains(help, "add <task: string>") {
 		t.Errorf("expected the command signature, got:\n%s", help)
 	}
@@ -625,7 +669,7 @@ func Test_Command_Help(t *testing.T) {
 // Builds a multicall program: each command is selected by the binary name in argv[0],
 // as a busybox-style symlinked binary is.
 func new_multicall_fixture() (program cli.Program) {
-	return cli.New_Multicall(cli.New_Multicall_Input{
+	return cli.New(cli.New_Input{Mode: cli.PROGRAM_MODE_MULTICALL,
 		Label:       "toolbox",
 		Description: "a multicall binary",
 		Commands: []cli.Command{
@@ -639,19 +683,21 @@ func new_multicall_fixture() (program cli.Program) {
 // Builds a single-command program with an enum flag and an enum positional, for the
 // value-completion cases. path is a plain string arg (file completion, no candidates).
 func new_completion_fixture() (program cli.Program) {
-	return cli.New_Single(cli.New_Single_Input{
+	return cli.New(cli.New_Input{Mode: cli.PROGRAM_MODE_SINGLE,
 		Label: "tool", Description: "a tool",
 		Arguments: []cli.Option{
-			cli.New_String_Enum_Argument(cli.New_String_Enum_Argument_Input{
-				Label: "format", Enum: []string{"json", "csv", "toml"},
+			cli.New_Option(cli.New_Option_Input{
+				Label: "format", String_Enum: []string{"json", "csv", "toml"},
 			}),
 		},
 		Flags: []cli.Option{
-			cli.New_String_Enum_Flag(cli.New_String_Enum_Flag_Input{
-				Label: "color", Enum: []string{"auto", "never", "always"},
-				Value: "auto",
+			cli.New_Option(cli.New_Option_Input{
+				Label: "color", String_Enum: []string{"auto", "never", "always"},
+				String: "auto", Is_Flag: true,
 			}),
-			cli.New_Flag(cli.New_Flag_Input[bool]{Label: "verbose"}),
+			cli.New_Option(cli.New_Option_Input{
+				Label: "verbose", Type: cli.OPTION_TYPE_BOOLEAN, Is_Flag: true,
+			}),
 		},
 	})
 }
@@ -753,13 +799,13 @@ func Test_Completion_Script(t *testing.T) {
 func Test_Handle_Completion(t *testing.T) {
 	program := new_cli_fixture().Program
 
-	output := output_buffer{}
+	output := new_output_buffer()
 	args := []string{"todoctl", "__complete", "todoctl", "l"}
 	if !handle_completion(program, args, output_cli(&output)) {
 		t.Fatal("expected __complete to be handled")
 	}
-	if !text_contains(output.String(), "list") {
-		t.Errorf("expected list candidate, got %q", output.String())
+	if !text_contains(output_text(&output), "list") {
+		t.Errorf("expected list candidate, got %q", output_text(&output))
 	}
 
 	output_reset(&output)
@@ -768,8 +814,8 @@ func Test_Handle_Completion(t *testing.T) {
 	) {
 		t.Fatal("expected completion to be handled")
 	}
-	if !text_contains(output.String(), "__complete") {
-		t.Errorf("expected a script, got %q", output.String())
+	if !text_contains(output_text(&output), "__complete") {
+		t.Errorf("expected a script, got %q", output_text(&output))
 	}
 
 	output_reset(&output)
@@ -782,15 +828,16 @@ func Test_Handle_Completion(t *testing.T) {
 func parse_program(
 	program *cli.Program,
 	arguments []string,
-) (command cli.Command, err error) {
+) (command cli.Resolved_Command, err string) {
 	var parser cli.Parser
 	input := cli_test_parse_input(*program, arguments)
-	cli.Program_Parse(program, &parser, input)
+	cli.Program_Parse(*program, &parser, input)
 	result, done := cli.Parser_Done(&parser)
 	if !done {
-		panic("a program without secrets did not complete synchronously")
+		return cli.Resolved_Command{},
+			"a program without secrets did not complete synchronously"
 	}
-	return result.Command, result.Error
+	return result.Command, string(cli.Parse_Error_Bytes(result.Error))
 }
 
 func cli_test_parse_input(
@@ -798,12 +845,12 @@ func cli_test_parse_input(
 ) (input cli.Program_Parse_Input) {
 	argument_count := 0
 	flag_count := 0
-	if program.Selection[0].Mode[0] == cli.PROGRAM_MODE_SINGLE {
-		command := program.Selection[0].Single_Commands[0]
+	if program.Selection.Mode.Value == cli.PROGRAM_MODE_SINGLE {
+		command := program.Selection.Single_Commands.Command
 		argument_count = len(command.Arguments)
 		flag_count = len(command.Flags)
 	} else {
-		for _, command := range program.Selection[0].Commands {
+		for _, command := range program.Selection.Commands {
 			if len(command.Arguments) > argument_count {
 				argument_count = len(command.Arguments)
 			}
@@ -812,7 +859,7 @@ func cli_test_parse_input(
 			}
 		}
 	}
-	global_count := len(program.Selection[0].Global_Flags)
+	global_count := len(program.Selection.Global_Flags)
 	environment_count := len(program.Environment_Variables)
 	secret_count := len(program.Secrets)
 	environment_warning_count := environment_count
@@ -825,26 +872,25 @@ func cli_test_parse_input(
 	}
 	return cli.Program_Parse_Input{
 		Arguments:            arguments,
-		Command_Arguments:    make([]cli.Option, argument_count),
-		Command_Flags:        make([]cli.Option, flag_count),
-		Global_Flags:         make([]cli.Option, global_count),
+		Command_Arguments:    make(cli.Command_Argument_Storage, argument_count),
+		Command_Flags:        make(cli.Command_Flag_Storage, flag_count),
+		Global_Flags:         make(cli.Global_Flag_Storage, global_count),
 		Filled:               make([]bool, argument_count+flag_count+global_count),
 		Positionals:          make([]cli.Indexed_Token, token_count),
 		Slice_Named:          make([]cli.Indexed_Token, token_count),
 		String_Values:        make([]string, token_count),
 		Integer_Values:       make([]int, token_count),
+		Failure_Storage:      make([]byte, cli.FAILURE_SIZE_MAXIMUM),
 		Deprecation_Warnings: make([]cli.Warning, cli.DEPRECATION_WARNING_COUNT_MAXIMUM),
-		Environment_Values:   make([]cli.Environment_Variable, environment_count),
-		Environment_Errors:   make([]error, environment_count),
+		Environment_Values:   make(cli.Environment_Variables, environment_count),
 		Environment_Warnings: make([]cli.Warning, environment_warning_count),
 		Environment_Sources:  make(cli.Environment_Sources, environment_count),
-		Secret_Values:        make([]cli.Secret, secret_count),
+		Secret_Values:        make([]cli.Resolved_Secret, secret_count),
 		Secret_Errors:        make([]cli.Secret_Failure, secret_count),
 		Secret_Warnings:      make([]cli.Warning, secret_count),
 		Secret_Parsers:       make([]cli.Secret_Parser, secret_count),
 		Secret_Buffers:       make([]cli.Secret_Bytes, secret_count),
 		Secret_Path_Failures: make([]cli.Path_Failures, secret_count),
-		Failures:             make([]error, environment_count+secret_count),
 	}
 }
 
@@ -854,7 +900,7 @@ func cli_test_program_parse(
 	prepared := cli_test_parse_input(*program, input.Arguments)
 	prepared.Environment = input.Environment
 	prepared.Loop = input.Loop
-	if input.Loop.Storage.Open_At_Procedure != nil {
+	if input.Loop.Open_Procedure != nil {
 		for index, secret := range program.Secrets {
 			prepared.Secret_Buffers[index] = make([]byte, cli.SECRET_BUFFER_BYTES_MAX)
 			prepared.Secret_Path_Failures[index] = make(
@@ -863,7 +909,7 @@ func cli_test_program_parse(
 		}
 	}
 	cli_test_parse_override(&prepared, input)
-	cli.Program_Parse(program, parser, prepared)
+	cli.Program_Parse(*program, parser, prepared)
 }
 
 func cli_test_parse_override(
@@ -893,14 +939,14 @@ func cli_test_parse_override(
 	if input.Integer_Values != nil {
 		prepared.Integer_Values = input.Integer_Values
 	}
+	if input.Failure_Storage != nil {
+		prepared.Failure_Storage = input.Failure_Storage
+	}
 	if input.Deprecation_Warnings != nil {
 		prepared.Deprecation_Warnings = input.Deprecation_Warnings
 	}
 	if input.Environment_Values != nil {
 		prepared.Environment_Values = input.Environment_Values
-	}
-	if input.Environment_Errors != nil {
-		prepared.Environment_Errors = input.Environment_Errors
 	}
 	if input.Environment_Warnings != nil {
 		prepared.Environment_Warnings = input.Environment_Warnings
@@ -925,8 +971,5 @@ func cli_test_parse_override(
 	}
 	if input.Secret_Path_Failures != nil {
 		prepared.Secret_Path_Failures = input.Secret_Path_Failures
-	}
-	if input.Failures != nil {
-		prepared.Failures = input.Failures
 	}
 }

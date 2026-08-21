@@ -65,14 +65,15 @@ can permit an empty value, can have a default, and can restrict the value to an 
 
 ### Secrets
 
-A secret has ordered absolute paths that use one uppercase base filename as the key. The parser
-starts secrets in parallel, accepts regular files of at most 64 KiB, and rejects a final link.
-It removes one final LF or CRLF, converts the value, and closes each opened file.
+A secret has ordered absolute paths inside shared/filepath host bound. Paths use one uppercase base
+filename as key. Parser starts secrets in parallel, accepts regular files of at most 64 KiB,
+rejects final link, removes one final LF or CRLF, converts value, and closes each opened file.
 
 ### External Errors
 
-The parser joins external errors in declaration order and does not disclose secret values.
-Help and CLI syntax errors stop before external validation or file I/O.
+Parser joins ordered external errors without secret values. Help and CLI errors stop first.
+Program_Parse writes Failure_Storage. Parse_Result.Error borrows it until caller overwrites it.
+Parse_Error_Bytes exposes bytes. Secret_IO_Of narrows nbio.IO without closure state or allocation.
 
 # Completion
 
