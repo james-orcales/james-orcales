@@ -1219,16 +1219,18 @@ func Scanner_Pointer_Invariants(value Scanner_Pointer, namespace aver.Namespace)
 // Source_Validate changes hostile text into bounded scanner source.
 func Source_Validate(
 	unvalidated Source_Unvalidated,
-) (source Source, status Validation_Status) {
+) (_ Source, status Validation_Status) {
 	defer func() {
-		Source_Invariants(source, "Source_Validate.source")
 		Validation_Status_Invariants(status, "Source_Validate.status")
 	}()
 	Source_Unvalidated_Invariants(unvalidated, "Source_Validate.unvalidated")
+	var source Source
+	defer func() { Source_Invariants(source, "Source_Validate.source") }()
 	if len(unvalidated) > SOURCE_SIZE_MAXIMUM {
-		return "", Validation_Status(STATUS_INPUT_INVALID)
+		return source, Validation_Status(STATUS_INPUT_INVALID)
 	}
-	return Source(unvalidated), Validation_Status(STATUS_OK)
+	source = Source(unvalidated)
+	return source, Validation_Status(STATUS_OK)
 }
 
 // Position_Valid reports whether position names a source line.
@@ -1297,13 +1299,13 @@ func Scanner_Next(subject Scanner_Pointer) (character Character) {
 
 // Scanner_Scan consumes next configured token.
 func Scanner_Scan(subject Scanner_Pointer) (token Token) {
-	defer func() {
-		Token_Invariants(token, "Scanner_Scan.token")
-		Error_Count_Invariants(subject.Error_Count, "Scanner_Scan.error_count")
-	}()
+	defer func() { Token_Invariants(token, "Scanner_Scan.token") }()
 	Scanner_Pointer_Invariants(subject, "Scanner_Scan")
 	Mode_Invariants(subject.Mode, "Scanner_Scan.mode")
 	Whitespace_Invariants(subject.Whitespace, "Scanner_Scan.whitespace")
+	defer func() {
+		Error_Count_Invariants(subject.Error_Count, "Scanner_Scan.error_count")
+	}()
 	diagnostics := Scanner_Diagnostics{
 		Error:       subject.Error,
 		Error_Count: subject.Error_Count,
@@ -1382,13 +1384,12 @@ func Scanner_Token_Text(subject Scanner_Pointer) (text Text) {
 // Token_Append_Into writes printable token into caller storage.
 func Token_Append_Into(
 	destination Token_Output, token Token,
-) (count Token_Count, status Status) {
-	defer func() {
-		Token_Count_Invariants(count, "Token_Append_Into.count")
-		Status_Invariants(status, "Token_Append_Into.status")
-	}()
+) (_ Token_Count, status Status) {
+	defer func() { Status_Invariants(status, "Token_Append_Into.status") }()
 	Token_Output_Invariants(destination, "Token_Append_Into.destination")
 	Token_Invariants(token, "Token_Append_Into.token")
+	var count Token_Count
+	defer func() { Token_Count_Invariants(count, "Token_Append_Into.count") }()
 	label := ""
 	switch token {
 	case TOKEN_EOF:
@@ -1410,39 +1411,44 @@ func Token_Append_Into(
 	}
 	if label != "" {
 		if len(destination) < len(label) {
-			return Token_Count(len(label)), Status(STATUS_OUTPUT_TOO_SMALL)
+			count = Token_Count(len(label))
+			return count, Status(STATUS_OUTPUT_TOO_SMALL)
 		}
-		return Token_Count(copy(destination, label)), Status(STATUS_OK)
+		count = Token_Count(copy(destination, label))
+		return count, Status(STATUS_OK)
 	}
 	var storage [strconv.CHARACTER_TEXT_SIZE_MAXIMUM]byte
 	required := strconv.Quote_Rune_Into(
 		storage[:], strconv.Character(token),
 	)
 	if len(destination) < int(required) {
-		return Token_Count(required), Status(STATUS_OUTPUT_TOO_SMALL)
+		count = Token_Count(required)
+		return count, Status(STATUS_OUTPUT_TOO_SMALL)
 	}
-	return Token_Count(copy(destination, storage[:required])), Status(STATUS_OK)
+	count = Token_Count(copy(destination, storage[:required]))
+	return count, Status(STATUS_OK)
 }
 
 // Position_Append_Into writes standard position form into caller storage.
 func Position_Append_Into(
 	destination Position_Output, position Position,
-) (count Position_Count, status Status) {
-	defer func() {
-		Position_Count_Invariants(count, "Position_Append_Into.count")
-		Status_Invariants(status, "Position_Append_Into.status")
-	}()
+) (_ Position_Count, status Status) {
+	defer func() { Status_Invariants(status, "Position_Append_Into.status") }()
 	Position_Output_Invariants(destination, "Position_Append_Into.destination")
 	Position_Invariants(position, "Position_Append_Into.position")
+	var count Position_Count
+	defer func() { Position_Count_Invariants(count, "Position_Append_Into.count") }()
 	filename := string(position.Filename)
 	if filename == "" {
 		filename = DEFAULT_FILENAME
 	}
 	if !Position_Valid(position) {
 		if len(destination) < len(filename) {
-			return Position_Count(len(filename)), Status(STATUS_OUTPUT_TOO_SMALL)
+			count = Position_Count(len(filename))
+			return count, Status(STATUS_OUTPUT_TOO_SMALL)
 		}
-		return Position_Count(copy(destination, filename)), Status(STATUS_OK)
+		count = Position_Count(copy(destination, filename))
+		return count, Status(STATUS_OK)
 	}
 	var line_storage [strconv.DECIMAL_TEXT_SIZE_MAXIMUM]byte
 	var column_storage [strconv.DECIMAL_TEXT_SIZE_MAXIMUM]byte
@@ -1455,7 +1461,8 @@ func Position_Append_Into(
 	required := len(filename) + POSITION_SEPARATOR_COUNT +
 		int(line_count) + int(column_count)
 	if len(destination) < required {
-		return Position_Count(required), Status(STATUS_OUTPUT_TOO_SMALL)
+		count = Position_Count(required)
+		return count, Status(STATUS_OUTPUT_TOO_SMALL)
 	}
 	written := copy(destination, filename)
 	destination[written] = ':'
@@ -1464,7 +1471,8 @@ func Position_Append_Into(
 	destination[written] = ':'
 	written++
 	written += copy(destination[written:], column_storage[:column_count])
-	return Position_Count(written), Status(STATUS_OK)
+	count = Position_Count(written)
+	return count, Status(STATUS_OK)
 }
 
 func scan_token_unchecked(
@@ -1475,28 +1483,30 @@ func scan_token_unchecked(
 	identifier_function Identifier_Function,
 	character Character,
 ) (
-	token Token, next Character, skip Boolean,
+	_ Token, _ Character, skip Boolean,
 ) {
-	defer func() {
-		Token_Invariants(token, "scan_token_unchecked.token")
-		Character_Invariants(next, "scan_token_unchecked.next")
-		Boolean_Invariants(skip, "scan_token_unchecked.skip")
-	}()
+	defer func() { Boolean_Invariants(skip, "scan_token_unchecked.skip") }()
 	Scanner_Decoder_Pointer_Invariants(cursor, "scan_token_unchecked.cursor")
 	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_token_unchecked.diagnostics")
 	Token_Start_Invariants(start, "scan_token_unchecked.start")
 	Mode_Invariants(mode, "scan_token_unchecked.mode")
 	Character_Invariants(character, "scan_token_unchecked.character")
-	token = Token(character)
+	token := Token(character)
+	defer func() { Token_Invariants(token, "scan_token_unchecked.token") }()
+	var next Character
+	defer func() { Character_Invariants(next, "scan_token_unchecked.next") }()
 	identifier := scanner_identifier_unchecked(
 		identifier_function, character, CHARACTER_INDEX_MINIMUM)
 	if bool(identifier) {
 		if mode&SCAN_IDENTIFIERS != MODE_MINIMUM {
-			return TOKEN_IDENTIFIER, scan_identifier_unchecked(
+			token = TOKEN_IDENTIFIER
+			next = scan_identifier_unchecked(
 				cursor, diagnostics, identifier_function,
-			), false
+			)
+			return token, next, false
 		}
-		return token, scanner_advance_unchecked(cursor, diagnostics), false
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		return token, next, false
 	}
 	if bool(decimal_unchecked(character)) {
 		if mode&(SCAN_INTEGERS|SCAN_FLOATS) != MODE_MINIMUM {
@@ -1505,11 +1515,14 @@ func scan_token_unchecked(
 				Decimal_Character(character), false,
 				Boolean(mode&SCAN_FLOATS != MODE_MINIMUM),
 			)
-			return Token(number), next_character, false
+			token, next = Token(number), next_character
+			return token, next, false
 		}
-		return token, scanner_advance_unchecked(cursor, diagnostics), false
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		return token, next, false
 	}
-	return scan_symbol_unchecked(cursor, diagnostics, start, mode, character)
+	token, next, skip = scan_symbol_unchecked(cursor, diagnostics, start, mode, character)
+	return token, next, skip
 }
 
 func scan_symbol_unchecked(
@@ -1518,27 +1531,28 @@ func scan_symbol_unchecked(
 	start Token_Start,
 	mode Mode,
 	character Character,
-) (token Token, next Character, skip Boolean) {
-	defer func() {
-		Token_Invariants(token, "scan_symbol_unchecked.token")
-		Character_Invariants(next, "scan_symbol_unchecked.next")
-		Boolean_Invariants(skip, "scan_symbol_unchecked.skip")
-	}()
+) (_ Token, _ Character, skip Boolean) {
+	defer func() { Boolean_Invariants(skip, "scan_symbol_unchecked.skip") }()
 	Scanner_Decoder_Pointer_Invariants(cursor, "scan_symbol_unchecked.cursor")
 	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_symbol_unchecked.diagnostics")
 	Token_Start_Invariants(start, "scan_symbol_unchecked.start")
 	Mode_Invariants(mode, "scan_symbol_unchecked.mode")
 	Character_Invariants(character, "scan_symbol_unchecked.character")
-	token = Token(character)
+	token := Token(character)
+	defer func() { Token_Invariants(token, "scan_symbol_unchecked.token") }()
+	var next Character
+	defer func() { Character_Invariants(next, "scan_symbol_unchecked.next") }()
 	switch character {
 	case Character(TOKEN_EOF):
-		return token, character, false
+		next = character
+		return token, next, false
 	case '"':
 		if mode&SCAN_STRINGS != MODE_MINIMUM {
 			scan_string_unchecked(cursor, diagnostics, QUOTE_STRING)
 			token = TOKEN_STRING
 		}
-		return token, scanner_advance_unchecked(cursor, diagnostics), false
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		return token, next, false
 	case '\'':
 		if mode&SCAN_CHARACTERS != MODE_MINIMUM {
 			count := scan_string_unchecked(cursor, diagnostics, QUOTE_CHARACTER)
@@ -1550,7 +1564,8 @@ func scan_symbol_unchecked(
 			}
 			token = TOKEN_CHARACTER
 		}
-		return token, scanner_advance_unchecked(cursor, diagnostics), false
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		return token, next, false
 	case '.':
 		character = scanner_advance_unchecked(cursor, diagnostics)
 		if bool(decimal_unchecked(character)) {
@@ -1564,23 +1579,26 @@ func scan_symbol_unchecked(
 				token = Token(number)
 			}
 		}
-		return token, character, false
+		next = character
+		return token, next, false
 	case '/':
 		slash, character, skipped := scan_slash_unchecked(
-			cursor,
-			diagnostics,
+			cursor, diagnostics,
 			Boolean(mode&SCAN_COMMENTS != MODE_MINIMUM),
 			Boolean(mode&SKIP_COMMENTS != MODE_MINIMUM),
 		)
-		return Token(slash), character, skipped
+		token, next, skip = Token(slash), character, skipped
+		return token, next, skip
 	case '`':
 		if mode&SCAN_RAW_STRINGS != MODE_MINIMUM {
 			scan_raw_string_unchecked(cursor, diagnostics)
 			token = TOKEN_RAW_STRING
 		}
-		return token, scanner_advance_unchecked(cursor, diagnostics), false
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		return token, next, false
 	default:
-		return token, scanner_advance_unchecked(cursor, diagnostics), false
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		return token, next, false
 	}
 }
 
@@ -1589,26 +1607,28 @@ func scan_slash_unchecked(
 	diagnostics Scanner_Diagnostics_Pointer,
 	comments Boolean,
 	skip_comments Boolean,
-) (result Slash_Token, next Character, skip Boolean) {
-	defer func() {
-		Slash_Token_Invariants(result, "scan_slash_unchecked.result")
-		Character_Invariants(next, "scan_slash_unchecked.next")
-		Boolean_Invariants(skip, "scan_slash_unchecked.skip")
-	}()
+) (_ Slash_Token, _ Character, skip Boolean) {
+	defer func() { Boolean_Invariants(skip, "scan_slash_unchecked.skip") }()
 	Scanner_Decoder_Pointer_Invariants(cursor, "scan_slash_unchecked.cursor")
 	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_slash_unchecked.diagnostics")
 	Boolean_Invariants(comments, "scan_slash_unchecked.comments")
 	Boolean_Invariants(skip_comments, "scan_slash_unchecked.skip_comments")
+	result := Slash_Token(SLASH_TOKEN)
+	defer func() { Slash_Token_Invariants(result, "scan_slash_unchecked.result") }()
+	var next Character
+	defer func() { Character_Invariants(next, "scan_slash_unchecked.next") }()
 	character := scanner_advance_unchecked(cursor, diagnostics)
 	comment := character == Character(COMMENT_KIND_LINE)
 	if character == Character(COMMENT_KIND_BLOCK) {
 		comment = true
 	}
 	if !comment {
-		return SLASH_TOKEN, character, false
+		next = character
+		return result, next, false
 	}
 	if !bool(comments) {
-		return SLASH_TOKEN, character, false
+		next = character
+		return result, next, false
 	}
 	if character == Character(COMMENT_KIND_LINE) {
 		character = scanner_advance_unchecked(cursor, diagnostics)
@@ -1642,9 +1662,12 @@ func scan_slash_unchecked(
 		}
 	}
 	if bool(skip_comments) {
-		return SLASH_TOKEN, character, true
+		next = character
+		return result, next, true
 	}
-	return Slash_Token(TOKEN_COMMENT), character, false
+	result = Slash_Token(TOKEN_COMMENT)
+	next = character
+	return result, next, false
 }
 
 func scanner_peek_unchecked(
@@ -1804,17 +1827,16 @@ func scan_number_unchecked(
 	decimal Decimal_Character,
 	seen_dot Boolean,
 	floats Boolean,
-) (token Number_Token, next Character) {
-	defer func() {
-		Number_Token_Invariants(token, "scan_number_unchecked.token")
-		Character_Invariants(next, "scan_number_unchecked.next")
-	}()
+) (token Number_Token, _ Character) {
+	defer func() { Number_Token_Invariants(token, "scan_number_unchecked.token") }()
 	Scanner_Decoder_Pointer_Invariants(cursor, "scan_number_unchecked.cursor")
 	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_number_unchecked.diagnostics")
 	Token_Start_Invariants(start, "scan_number_unchecked.start")
 	Decimal_Character_Invariants(decimal, "scan_number_unchecked.character")
 	Boolean_Invariants(seen_dot, "scan_number_unchecked.seen_dot")
 	Boolean_Invariants(floats, "scan_number_unchecked.floats")
+	var next Character
+	defer func() { Character_Invariants(next, "scan_number_unchecked.next") }()
 	character, base, explicit, token, digits_and_separators, invalid :=
 		scan_mantissa_unchecked(
 			cursor, diagnostics, decimal, seen_dot, floats)
@@ -1866,7 +1888,8 @@ func scan_number_unchecked(
 		Report_Line(cursor.Character_Line), Report_Column(cursor.Character_Column),
 		character, token, digits_and_separators, invalid,
 	)
-	return token, character
+	next = character
+	return token, next
 }
 
 func scan_number_finish_unchecked(
@@ -1918,19 +1941,14 @@ func scan_mantissa_unchecked(
 	seen_dot Boolean,
 	floats Boolean,
 ) (
-	character Character,
-	base Base,
-	explicit Boolean,
-	token Number_Token,
-	flags Digit_Flags,
+	_ Character,
+	_ Base,
+	_ Boolean,
+	_ Number_Token,
+	_ Digit_Flags,
 	invalid Invalid_Digit,
 ) {
 	defer func() {
-		Character_Invariants(character, "scan_mantissa_unchecked.character")
-		Base_Invariants(base, "scan_mantissa_unchecked.base")
-		Boolean_Invariants(explicit, "scan_mantissa_unchecked.explicit")
-		Number_Token_Invariants(token, "scan_mantissa_unchecked.token")
-		Digit_Flags_Invariants(flags, "scan_mantissa_unchecked.flags")
 		Invalid_Digit_Invariants(invalid, "scan_mantissa_unchecked.invalid")
 	}()
 	Scanner_Decoder_Pointer_Invariants(cursor, "scan_mantissa_unchecked.cursor")
@@ -1938,6 +1956,22 @@ func scan_mantissa_unchecked(
 	Decimal_Character_Invariants(decimal, "scan_mantissa_unchecked.decimal")
 	Boolean_Invariants(seen_dot, "scan_mantissa_unchecked.seen_dot")
 	Boolean_Invariants(floats, "scan_mantissa_unchecked.floats")
+	var character Character
+	defer func() {
+		Character_Invariants(character, "scan_mantissa_unchecked.character")
+	}()
+	var base Base
+	defer func() { Base_Invariants(base, "scan_mantissa_unchecked.base") }()
+	var explicit Boolean
+	defer func() {
+		Boolean_Invariants(explicit, "scan_mantissa_unchecked.explicit")
+	}()
+	var token Number_Token
+	defer func() {
+		Number_Token_Invariants(token, "scan_mantissa_unchecked.token")
+	}()
+	var flags Digit_Flags
+	defer func() { Digit_Flags_Invariants(flags, "scan_mantissa_unchecked.flags") }()
 	character, base, explicit = Character(decimal), Base(BASE_DECIMAL), false
 	invalid = Invalid_Digit(INVALID_DIGIT_ABSENT)
 	token = Number_Token(TOKEN_INTEGER)
@@ -1988,15 +2022,12 @@ func scan_radix_unchecked(
 	diagnostics Scanner_Diagnostics_Pointer,
 	decimal Decimal_Character,
 ) (
-	next Character,
-	base Base,
-	explicit Boolean,
+	_ Character,
+	_ Base,
+	_ Boolean,
 	digits_and_separators Radix_Digit_Flags,
 ) {
 	defer func() {
-		Character_Invariants(next, "scan_radix_unchecked.next")
-		Base_Invariants(base, "scan_radix_unchecked.base")
-		Boolean_Invariants(explicit, "scan_radix_unchecked.explicit")
 		Radix_Digit_Flags_Invariants(
 			digits_and_separators, "scan_radix_unchecked.digits_and_separators",
 		)
@@ -2004,23 +2035,34 @@ func scan_radix_unchecked(
 	Scanner_Decoder_Pointer_Invariants(cursor, "scan_radix_unchecked.cursor")
 	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_radix_unchecked.diagnostics")
 	Decimal_Character_Invariants(decimal, "scan_radix_unchecked.character")
+	var next Character
+	defer func() { Character_Invariants(next, "scan_radix_unchecked.next") }()
+	var base Base
+	defer func() { Base_Invariants(base, "scan_radix_unchecked.base") }()
+	var explicit Boolean
+	defer func() { Boolean_Invariants(explicit, "scan_radix_unchecked.explicit") }()
 	character := Character(decimal)
 	if character != '0' {
-		return character, BASE_DECIMAL, false, Radix_Digit_Flags(DIGIT_FLAGS_NONE)
+		next, base, explicit = character, BASE_DECIMAL, false
+		return next, base, explicit, Radix_Digit_Flags(DIGIT_FLAGS_NONE)
 	}
 	character = scanner_advance_unchecked(cursor, diagnostics)
 	switch LOWER_CASE_OFFSET | character {
 	case 'x':
-		return scanner_advance_unchecked(cursor, diagnostics), BASE_HEXADECIMAL, true,
-			Radix_Digit_Flags(DIGIT_FLAGS_NONE)
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		base, explicit = BASE_HEXADECIMAL, true
+		return next, base, explicit, Radix_Digit_Flags(DIGIT_FLAGS_NONE)
 	case 'o':
-		return scanner_advance_unchecked(cursor, diagnostics), BASE_OCTAL, true,
-			Radix_Digit_Flags(DIGIT_FLAGS_NONE)
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		base, explicit = BASE_OCTAL, true
+		return next, base, explicit, Radix_Digit_Flags(DIGIT_FLAGS_NONE)
 	case 'b':
-		return scanner_advance_unchecked(cursor, diagnostics), BASE_BINARY, true,
-			Radix_Digit_Flags(DIGIT_FLAGS_NONE)
+		next = scanner_advance_unchecked(cursor, diagnostics)
+		base, explicit = BASE_BINARY, true
+		return next, base, explicit, Radix_Digit_Flags(DIGIT_FLAGS_NONE)
 	default:
-		return character, BASE_OCTAL, false, Radix_Digit_Flags(DIGIT_FLAGS_DIGIT)
+		next, base, explicit = character, BASE_OCTAL, false
+		return next, base, explicit, Radix_Digit_Flags(DIGIT_FLAGS_DIGIT)
 	}
 }
 
@@ -2084,19 +2126,21 @@ func scan_digits_unchecked(
 	character Character,
 	base Base,
 ) (
-	next Character,
-	digits_and_separators Digit_Flags,
+	_ Character,
+	_ Digit_Flags,
 	invalid Invalid_Digit,
 ) {
-	defer func() {
-		Character_Invariants(next, "scan_digits_unchecked.next")
-		Digit_Flags_Invariants(digits_and_separators, "scan_digits_unchecked.flags")
-		Invalid_Digit_Invariants(invalid, "scan_digits_unchecked.invalid")
-	}()
+	defer func() { Invalid_Digit_Invariants(invalid, "scan_digits_unchecked.invalid") }()
 	Scanner_Decoder_Pointer_Invariants(cursor, "scan_digits_unchecked.cursor")
 	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_digits_unchecked.diagnostics")
 	Character_Invariants(character, "scan_digits_unchecked.character")
 	Base_Invariants(base, "scan_digits_unchecked.base")
+	var next Character
+	defer func() { Character_Invariants(next, "scan_digits_unchecked.next") }()
+	var digits_and_separators Digit_Flags
+	defer func() {
+		Digit_Flags_Invariants(digits_and_separators, "scan_digits_unchecked.flags")
+	}()
 	invalid = Invalid_Digit(INVALID_DIGIT_ABSENT)
 	if base <= BASE_DECIMAL {
 		maximum := Character('0' + base)
@@ -2114,7 +2158,8 @@ func scan_digits_unchecked(
 			digits_and_separators |= seen
 			character = scanner_advance_unchecked(cursor, diagnostics)
 		}
-		return character, digits_and_separators, invalid
+		next = character
+		return next, digits_and_separators, invalid
 	}
 	for bool(hexadecimal_unchecked(character)) || character == '_' {
 		seen := Digit_Flags(DIGIT_FLAGS_DIGIT)
@@ -2124,7 +2169,8 @@ func scan_digits_unchecked(
 		digits_and_separators |= seen
 		character = scanner_advance_unchecked(cursor, diagnostics)
 	}
-	return character, digits_and_separators, invalid
+	next = character
+	return next, digits_and_separators, invalid
 }
 
 func scan_string_unchecked(

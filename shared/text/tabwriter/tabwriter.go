@@ -1167,12 +1167,15 @@ func Append_Status_Invariants(value Append_Status, namespace aver.Namespace) {
 // New_Configuration validates formatting policy without retaining a driver.
 func New_Configuration(
 	input Configuration_Input,
-) (configuration Configuration, status Configuration_Status) {
+) (_ Configuration, status Configuration_Status) {
 	defer func() {
-		Configuration_Invariants(configuration, "new_configuration.configuration")
 		Configuration_Status_Invariants(status, "new_configuration.status")
 	}()
 	Configuration_Input_Invariants(input, "new_configuration.input")
+	var configuration Configuration
+	defer func() {
+		Configuration_Invariants(configuration, "new_configuration.configuration")
+	}()
 	if input.Minimum_Width < WIDTH_MINIMUM {
 		return Configuration{}, STATUS_CONFIGURATION_INVALID
 	}
@@ -1198,28 +1201,29 @@ func New_Configuration(
 	if input.Pad_Character == '\t' {
 		flags &^= ALIGN_RIGHT
 	}
-	return Configuration{
+	configuration = Configuration{
 		Minimum_Width: input.Minimum_Width,
 		Tab_Width:     input.Tab_Width,
 		Padding:       input.Padding,
 		Pad_Character: input.Pad_Character,
 		Flags:         flags,
-	}, STATUS_OK
+	}
+	return configuration, STATUS_OK
 }
 
 // Source_Validate refuses oversized input before workspace mutation.
 func Source_Validate(
 	unvalidated Source_Unvalidated,
-) (source Source, status Source_Status) {
-	defer func() {
-		Source_Invariants(source, "source_validate.source")
-		Source_Status_Invariants(status, "source_validate.status")
-	}()
+) (_ Source, status Source_Status) {
+	defer func() { Source_Status_Invariants(status, "source_validate.status") }()
 	Source_Unvalidated_Invariants(unvalidated, "source_validate.unvalidated")
+	var source Source
+	defer func() { Source_Invariants(source, "source_validate.source") }()
 	if len(unvalidated) > SOURCE_SIZE_MAXIMUM {
-		return nil, STATUS_INPUT_INVALID
+		return source, STATUS_INPUT_INVALID
 	}
-	return Source(unvalidated), STATUS_OK
+	source = Source(unvalidated)
+	return source, STATUS_OK
 }
 
 // Format_Into aligns one complete source without hidden IO or owned storage.
@@ -1228,15 +1232,14 @@ func Format_Into(
 	source Source,
 	configuration Configuration,
 	workspace Workspace_Input,
-) (count Output_Count, status Format_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "format_into.count")
-		Format_Status_Invariants(status, "format_into.status")
-	}()
+) (_ Output_Count, status Format_Status) {
+	defer func() { Format_Status_Invariants(status, "format_into.status") }()
 	Output_Invariants(destination, "format_into.destination")
 	Source_Invariants(source, "format_into.source")
 	Configuration_Invariants(configuration, "format_into.configuration")
 	Workspace_Input_Invariants(workspace, "format_into.workspace")
+	count := Output_Count(OUTPUT_SIZE_MINIMUM)
+	defer func() { Output_Count_Invariants(count, "format_into.count") }()
 	if !bool(Workspace_Valid(workspace.State)) {
 		return Output_Count(OUTPUT_SIZE_MINIMUM), STATUS_WORKSPACE_INVALID
 	}
@@ -1543,17 +1546,16 @@ func render_unchecked(
 	workspace Workspace_Pointer,
 	line_count Parsed_Line_Count,
 	write Write_Output,
-) (count Output_Count, status Append_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "render_unchecked.count")
-		Append_Status_Invariants(status, "render_unchecked.status")
-	}()
+) (_ Output_Count, status Append_Status) {
+	defer func() { Append_Status_Invariants(status, "render_unchecked.status") }()
 	Output_Invariants(destination, "render_unchecked.destination")
 	Source_Invariants(source, "render_unchecked.source")
 	Configuration_Invariants(configuration, "render_unchecked.configuration")
 	Workspace_Pointer_Invariants(workspace, "render_unchecked.workspace")
 	Parsed_Line_Count_Invariants(line_count, "render_unchecked.line_count")
 	Write_Output_Invariants(write, "render_unchecked.write")
+	var count Output_Count
+	defer func() { Output_Count_Invariants(count, "render_unchecked.count") }()
 	offset := Append_Offset(OUTPUT_SIZE_MINIMUM)
 	for line_index := LINE_INDEX_MINIMUM; line_index < int(line_count); line_index++ {
 		var append_status Append_Status
@@ -1562,7 +1564,8 @@ func render_unchecked(
 			Line_Index(line_index), line_count, write, offset,
 		)
 		if append_status != STATUS_OK {
-			return OUTPUT_SIZE_UNREPRESENTABLE, append_status
+			count = OUTPUT_SIZE_UNREPRESENTABLE
+			return count, append_status
 		}
 		terminator := workspace.Line_Terminators[line_index]
 		if terminator != Line_Terminator(LINE_TERMINATOR_NONE) {
@@ -1572,7 +1575,8 @@ func render_unchecked(
 			)
 			offset = Append_Offset(appended)
 			if append_status != STATUS_OK {
-				return OUTPUT_SIZE_UNREPRESENTABLE, append_status
+				count = OUTPUT_SIZE_UNREPRESENTABLE
+				return count, append_status
 			}
 		}
 		if terminator == '\f' {
@@ -1585,13 +1589,15 @@ func render_unchecked(
 					)
 					offset = Append_Offset(appended)
 					if append_status != STATUS_OK {
-						return OUTPUT_SIZE_UNREPRESENTABLE, append_status
+						count = OUTPUT_SIZE_UNREPRESENTABLE
+						return count, append_status
 					}
 				}
 			}
 		}
 	}
-	return Output_Count(offset), STATUS_OK
+	count = Output_Count(offset)
+	return count, STATUS_OK
 }
 
 func render_line_unchecked(
@@ -1603,11 +1609,8 @@ func render_line_unchecked(
 	line_count Parsed_Line_Count,
 	write Write_Output,
 	count_value Append_Offset,
-) (count Append_Offset, status Append_Status) {
-	defer func() {
-		Append_Offset_Invariants(count, "render_line_unchecked.count")
-		Append_Status_Invariants(status, "render_line_unchecked.status")
-	}()
+) (_ Append_Offset, status Append_Status) {
+	defer func() { Append_Status_Invariants(status, "render_line_unchecked.status") }()
 	Output_Invariants(destination, "render_line_unchecked.destination")
 	Source_Invariants(source, "render_line_unchecked.source")
 	Configuration_Invariants(configuration, "render_line_unchecked.configuration")
@@ -1616,7 +1619,8 @@ func render_line_unchecked(
 	Parsed_Line_Count_Invariants(line_count, "render_line_unchecked.line_count")
 	Write_Output_Invariants(write, "render_line_unchecked.write")
 	Append_Offset_Invariants(count_value, "render_line_unchecked.count_value")
-	count = Append_Offset(count_value)
+	count := Append_Offset(count_value)
+	defer func() { Append_Offset_Invariants(count, "render_line_unchecked.count") }()
 	first := int(workspace.Line_First_Cells[line_index])
 	cell_count := int(workspace.Line_Cell_Counts[line_index])
 	flags := configuration.Flags.(Flags)
@@ -1678,9 +1682,8 @@ func append_nonempty_cell_unchecked(
 	aligned Aligned_Cell,
 	write Write_Output,
 	count_value Append_Offset,
-) (count Appended_Offset, status Append_Status) {
+) (_ Appended_Offset, status Append_Status) {
 	defer func() {
-		Appended_Offset_Invariants(count, "append_nonempty_cell_unchecked.count")
 		Append_Status_Invariants(status, "append_nonempty_cell_unchecked.status")
 	}()
 	Output_Invariants(destination, "append_nonempty_cell_unchecked.destination")
@@ -1692,6 +1695,10 @@ func append_nonempty_cell_unchecked(
 	Aligned_Cell_Invariants(aligned, "append_nonempty_cell_unchecked.aligned")
 	Write_Output_Invariants(write, "append_nonempty_cell_unchecked.write")
 	Append_Offset_Invariants(count_value, "append_nonempty_cell_unchecked.count_value")
+	count := Appended_Offset(count_value)
+	defer func() {
+		Appended_Offset_Invariants(count, "append_nonempty_cell_unchecked.count")
+	}()
 	offset := Append_Offset(count_value)
 	right := configuration.Flags.(Flags)&ALIGN_RIGHT !=
 		Flags(bits.WORD_MINIMUM)
@@ -1703,7 +1710,8 @@ func append_nonempty_cell_unchecked(
 				column_width, false, write, offset,
 			)
 			if status != STATUS_OK {
-				return Appended_Offset(offset), status
+				count = Appended_Offset(offset)
+				return count, status
 			}
 		}
 	}
@@ -1727,7 +1735,8 @@ func append_nonempty_cell_unchecked(
 		Aligned_Cell_Width(workspace.Cell_Widths[index]),
 		column_width, false, write, offset,
 	)
-	return Appended_Offset(offset), status
+	count = Appended_Offset(offset)
+	return count, status
 }
 
 func column_width_unchecked(
@@ -1798,11 +1807,8 @@ func append_padding_unchecked(
 	use_tabs Use_Tabs,
 	write Write_Output,
 	count_value Append_Offset,
-) (count Append_Offset, status Append_Status) {
-	defer func() {
-		Append_Offset_Invariants(count, "append_padding_unchecked.count")
-		Append_Status_Invariants(status, "append_padding_unchecked.status")
-	}()
+) (_ Append_Offset, status Append_Status) {
+	defer func() { Append_Status_Invariants(status, "append_padding_unchecked.status") }()
 	Output_Invariants(destination, "append_padding_unchecked.destination")
 	Configuration_Invariants(configuration, "append_padding_unchecked.configuration")
 	Aligned_Cell_Width_Invariants(text_width, "append_padding_unchecked.text_width")
@@ -1810,7 +1816,8 @@ func append_padding_unchecked(
 	Use_Tabs_Invariants(use_tabs, "append_padding_unchecked.use_tabs")
 	Write_Output_Invariants(write, "append_padding_unchecked.write")
 	Append_Offset_Invariants(count_value, "append_padding_unchecked.count_value")
-	count = Append_Offset(count_value)
+	count := Append_Offset(count_value)
+	defer func() { Append_Offset_Invariants(count, "append_padding_unchecked.count") }()
 	padding_character := Output_Byte(configuration.Pad_Character.(Pad_Character))
 	padding_count := int(cell_width) - int(text_width)
 	tab_padding := configuration.Pad_Character.(Pad_Character) == '\t'
@@ -1848,11 +1855,8 @@ func append_cell_unchecked(
 	end Nonempty_Cell_End,
 	write Write_Output,
 	count_value Append_Offset,
-) (count Appended_Offset, status Append_Status) {
-	defer func() {
-		Appended_Offset_Invariants(count, "append_cell_unchecked.count")
-		Append_Status_Invariants(status, "append_cell_unchecked.status")
-	}()
+) (_ Appended_Offset, status Append_Status) {
+	defer func() { Append_Status_Invariants(status, "append_cell_unchecked.status") }()
 	Output_Invariants(destination, "append_cell_unchecked.destination")
 	Nonempty_Source_Invariants(source, "append_cell_unchecked.source")
 	Configuration_Invariants(configuration, "append_cell_unchecked.configuration")
@@ -1860,6 +1864,8 @@ func append_cell_unchecked(
 	Nonempty_Cell_End_Invariants(end, "append_cell_unchecked.end")
 	Write_Output_Invariants(write, "append_cell_unchecked.write")
 	Append_Offset_Invariants(count_value, "append_cell_unchecked.count_value")
+	var count Appended_Offset
+	defer func() { Appended_Offset_Invariants(count, "append_cell_unchecked.count") }()
 	offset := Append_Offset(count_value)
 	end_character := End_Character(LINE_TERMINATOR_NONE)
 	flags := configuration.Flags.(Flags)
@@ -1903,10 +1909,12 @@ func append_cell_unchecked(
 		)
 		offset = Append_Offset(appended)
 		if status != STATUS_OK {
-			return appended, status
+			count = appended
+			return count, status
 		}
 	}
-	return Appended_Offset(offset), STATUS_OK
+	count = Appended_Offset(offset)
+	return count, STATUS_OK
 }
 
 func append_byte_unchecked(
@@ -1914,20 +1922,21 @@ func append_byte_unchecked(
 	count_value Append_Offset,
 	character Output_Byte,
 	write Write_Output,
-) (count Appended_Offset, status Append_Status) {
-	defer func() {
-		Appended_Offset_Invariants(count, "append_byte_unchecked.count")
-		Append_Status_Invariants(status, "append_byte_unchecked.status")
-	}()
+) (_ Appended_Offset, status Append_Status) {
+	defer func() { Append_Status_Invariants(status, "append_byte_unchecked.status") }()
 	Output_Invariants(destination, "append_byte_unchecked.destination")
 	Append_Offset_Invariants(count_value, "append_byte_unchecked.count_value")
 	Output_Byte_Invariants(character, "append_byte_unchecked.character")
 	Write_Output_Invariants(write, "append_byte_unchecked.write")
+	var count Appended_Offset
+	defer func() { Appended_Offset_Invariants(count, "append_byte_unchecked.count") }()
 	if count_value == OUTPUT_SIZE_MAXIMUM {
-		return Appended_Offset(count_value), STATUS_RESULT_TOO_LARGE
+		count = Appended_Offset(count_value)
+		return count, STATUS_RESULT_TOO_LARGE
 	}
 	if bool(write) {
 		destination[count_value] = byte(character)
 	}
-	return Appended_Offset(count_value + utf8.CHARACTER_SIZE_MINIMUM), STATUS_OK
+	count = Appended_Offset(count_value + utf8.CHARACTER_SIZE_MINIMUM)
+	return count, STATUS_OK
 }

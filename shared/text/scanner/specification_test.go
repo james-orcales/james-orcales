@@ -463,6 +463,9 @@ func scanner_maximum_lexical_state(input scanner.Scanner) (maximum scanner.Scann
 func test_escape_domains(t *testing.T) {
 	maximum := string(rune(scanner.TOKEN_MAXIMUM))
 	sources := [...]string{
+		"\"\\",
+		"\"\\\x00",
+		"\"\\n\"",
 		"\"\\x",
 		"\"\\x" + maximum + "\"",
 		"\"\\x\x00\"",
@@ -490,6 +493,7 @@ func test_escape_domains(t *testing.T) {
 
 func test_lexical_tail_domains(t *testing.T, maximum string) {
 	sources := [...]string{
+		"1_000",
 		"0b.0",
 		"0o.0",
 		"0x.0",
@@ -720,6 +724,18 @@ func test_configuration_domains(t *testing.T) {
 		subject.Whitespace = whitespace
 		scanner.Scanner_Scan(&subject)
 	}
+	for _, one := range [...]struct {
+		Source string
+		Mode   scanner.Mode
+	}{
+		{"1e2", scanner.SCAN_INTEGERS},
+		{"//x", scanner.MODE_MINIMUM},
+	} {
+		var subject scanner.Scanner
+		scanner.Scanner_Init(&subject, source_from(t, one.Source))
+		subject.Mode = one.Mode
+		scanner.Scanner_Scan(&subject)
+	}
 }
 
 func test_token_domains(t *testing.T) {
@@ -734,6 +750,7 @@ func test_token_domains(t *testing.T) {
 		scanner.Scanner_Init(&subject, source_from(t, source))
 		subject.Mode = scanner.MODE_MINIMUM
 		scanner.Scanner_Scan(&subject)
+		scanner.Scanner_Token_Text(&subject)
 	}
 	var comment scanner.Scanner
 	scanner.Scanner_Init(&comment, source_from(t, "//x"))

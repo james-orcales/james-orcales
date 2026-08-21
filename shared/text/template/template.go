@@ -2520,33 +2520,32 @@ func Value_Of_Function(value Function_Call) (result Value) {
 }
 
 // Value_As_Text returns text only for exact text kind.
-func Value_As_Text(value Value) (result Text, status Value_Text_Status) {
-	defer func() {
-		Text_Invariants(result, "Value_As_Text.result")
-		Value_Text_Status_Invariants(status, "Value_As_Text.status")
-	}()
+func Value_As_Text(value Value) (_ Text, status Value_Text_Status) {
+	defer func() { Value_Text_Status_Invariants(status, "Value_As_Text.status") }()
 	Value_Invariants(value, "Value_As_Text.value")
+	var result Text
+	defer func() { Text_Invariants(result, "Value_As_Text.result") }()
 	if Value_Kind(value.Kind.Value) != VALUE_TEXT {
-		return nil, VALUE_TEXT_STATUS_INVALID
+		return result, VALUE_TEXT_STATUS_INVALID
 	}
-	return Text(value.Text.Value), VALUE_TEXT_STATUS_OK
+	result = Text(value.Text.Value)
+	return result, VALUE_TEXT_STATUS_OK
 }
 
 // Compile parses one bounded program into caller syntax storage.
 func Compile(
 	input Compile_Input,
-) (program Program, diagnostic Parse_Diagnostic, status Parse_Status) {
-	defer func() {
-		Program_Invariants(program, "Compile.program")
-		Parse_Diagnostic_Invariants(diagnostic, "Compile.diagnostic")
-		Parse_Status_Invariants(status, "Compile.status")
-	}()
+) (_ Program, _ Parse_Diagnostic, status Parse_Status) {
+	defer func() { Parse_Status_Invariants(status, "Compile.status") }()
 	Compile_Input_Invariants(input, "Compile.input")
+	var program Program
+	defer func() { Program_Invariants(program, "Compile.program") }()
+	var diagnostic Parse_Diagnostic
+	defer func() { Parse_Diagnostic_Invariants(diagnostic, "Compile.diagnostic") }()
 	source, source_status := Source_Validate(input.Source)
 	if source_status != PARSE_STATUS_OK {
-		return Program{}, Parse_Diagnostic{
-			Code: DIAGNOSTIC_INPUT_INVALID,
-		}, PARSE_STATUS_INPUT_INVALID
+		diagnostic.Code = DIAGNOSTIC_INPUT_INVALID
+		return program, diagnostic, PARSE_STATUS_INPUT_INVALID
 	}
 	configuration, configuration_status := New_Configuration(
 		Configuration_Input{
@@ -2555,9 +2554,8 @@ func Compile(
 		},
 	)
 	if configuration_status != PARSE_STATUS_OK {
-		return Program{}, Parse_Diagnostic{
-			Code: DIAGNOSTIC_CONFIGURATION_INVALID,
-		}, PARSE_STATUS_CONFIGURATION_INVALID
+		diagnostic.Code = DIAGNOSTIC_CONFIGURATION_INVALID
+		return program, diagnostic, PARSE_STATUS_CONFIGURATION_INVALID
 	}
 	syntax := input.Workspace.State.Value
 	var workspace_input Syntax_Workspace_Input
@@ -2568,12 +2566,13 @@ func Compile(
 		source, configuration, workspace_input,
 	)
 	if status != PARSE_STATUS_OK {
-		return Program{}, diagnostic, status
+		return program, diagnostic, status
 	}
-	return Program{
+	program = Program{
 		Source: source, Document: document,
 		Syntax: Syntax_Storage{Value: Syntax_Workspace_Pointer(syntax)},
-	}, diagnostic, status
+	}
+	return program, diagnostic, status
 }
 
 // Output_Storage is caller-owned atomic staging memory.
@@ -5058,56 +5057,54 @@ func Pipeline_State_Invariants(value Pipeline_State, namespace aver.Namespace) {
 }
 
 // Execute_Into stages and atomically commits one bounded execution.
-func Execute_Into(
-	input Execute_Input,
-) (count Output_Count, diagnostic Diagnostic, status Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Execute_Into.count")
-		Diagnostic_Invariants(diagnostic, "Execute_Into.diagnostic")
-		Status_Invariants(status, "Execute_Into.status")
-	}()
+func Execute_Into(input Execute_Input) (_ Output_Count, _ Diagnostic, status Status) {
+	defer func() { Status_Invariants(status, "Execute_Into.status") }()
 	Execute_Input_Invariants(input, "Execute_Into.input")
+	count := Output_Count(OUTPUT_SIZE_MINIMUM)
+	defer func() { Output_Count_Invariants(count, "Execute_Into.count") }()
+	var diagnostic Diagnostic
+	defer func() { Diagnostic_Invariants(diagnostic, "Execute_Into.diagnostic") }()
 	workspace_input := input.Workspace.State.Value
 	if workspace_input.Value == nil {
-		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			Diagnostic{Code: STATUS_WORKSPACE_INVALID},
-			STATUS_WORKSPACE_INVALID
+		diagnostic.Code = STATUS_WORKSPACE_INVALID
+		return count, diagnostic, STATUS_WORKSPACE_INVALID
 	}
 	if !bool(workspace_valid(input.Workspace)) {
-		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			Diagnostic{Code: STATUS_WORKSPACE_INVALID},
-			STATUS_WORKSPACE_INVALID
+		diagnostic.Code = STATUS_WORKSPACE_INVALID
+		return count, diagnostic, STATUS_WORKSPACE_INVALID
 	}
 	workspace := workspace_begin(workspace_input)
-	refuse := func(
-		status_value Failure_Status_Validated_Value,
-	) (refusal_count Output_Count, refusal_diagnostic Diagnostic, refusal_status Status) {
-		execution_refusal(workspace, Failure_Status_Validated{Value: status_value})
-		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			Diagnostic(workspace.Diagnostic.Value), Status(status_value)
-	}
+	failure := Failure_Status_Validated{}
+	refuse := func() { execution_refusal(workspace, failure) }
 	if !bool(program_valid(input.Program)) {
-		return refuse(Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID))
+		status = STATUS_PROGRAM_INVALID
 	}
-	value_status := value_graph_validate(workspace, Value_Unvalidated(input.Value))
-	if value_status != VALUE_GRAPH_STATUS_OK {
-		return refuse(Failure_Status_Validated_Value(value_status))
+	if status == STATUS_OK {
+		value_status := value_graph_validate(workspace, Value_Unvalidated(input.Value))
+		if value_status != VALUE_GRAPH_STATUS_OK {
+			status = Status(value_status)
+		}
 	}
-	if !bool(registry_valid(input.Functions)) {
-		return refuse(Failure_Status_Validated_Value(STATUS_FUNCTION_INVALID))
+	if status == STATUS_OK {
+		if !bool(registry_valid(input.Functions)) {
+			status = STATUS_FUNCTION_INVALID
+		}
+	}
+	if status != STATUS_OK {
+		failure.Value = Failure_Status_Validated_Value(status)
+		refuse()
+		diagnostic = Diagnostic(workspace.Diagnostic.Value)
+		return count, diagnostic, status
 	}
 	for index := NODE_COUNT_MINIMUM; index < int(input.Program.Document.Node_Count); index++ {
 		workspace.Literal_Decoded[index] = false
 	}
+	document_input := input.Program.Document
 	document := Program_Validated_Document{
-		Root:       Program_Validated_Root(input.Program.Document.Root),
-		Node_Count: Program_Validated_Node_Count(input.Program.Document.Node_Count),
-		First_Template: Program_Validated_First_Template(
-			input.Program.Document.First_Template,
-		),
-		Template_Count: Program_Validated_Template_Count(
-			input.Program.Document.Template_Count,
-		),
+		Root:           Program_Validated_Root(document_input.Root),
+		Node_Count:     Program_Validated_Node_Count(document_input.Node_Count),
+		First_Template: Program_Validated_First_Template(document_input.First_Template),
+		Template_Count: Program_Validated_Template_Count(document_input.Template_Count),
 	}
 	program := program_validate(input.Program.Source, document, input.Program.Syntax)
 	functions := Functions_Validated{Value: Functions_Validated_Value(input.Functions)}
@@ -5115,16 +5112,20 @@ func Execute_Into(
 		workspace, program, input.Value, functions,
 	)
 	if execution_status != NODE_EXECUTION_STATUS_OK {
-		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			Diagnostic(workspace.Diagnostic.Value),
-			Status(execution_status)
+		diagnostic = Diagnostic(workspace.Diagnostic.Value)
+		return count, diagnostic, Status(execution_status)
 	}
 	written := written_state.Value.(Output_Count_Staged_Value)
 	if len(input.Destination) < int(written) {
-		return refuse(Failure_Status_Validated_Value(STATUS_OUTPUT_TOO_SMALL))
+		status = STATUS_OUTPUT_TOO_SMALL
+		failure.Value = Failure_Status_Validated_Value(status)
+		refuse()
+		diagnostic = Diagnostic(workspace.Diagnostic.Value)
+		return count, diagnostic, status
 	}
 	copy(input.Destination, workspace.Output[:written])
-	return Output_Count(written), Diagnostic{}, STATUS_OK
+	count = Output_Count(written)
+	return count, diagnostic, STATUS_OK
 }
 
 func workspace_begin(input Workspace_Unvalidated_Pointer) (workspace Workspace_Pointer) {
@@ -5345,13 +5346,12 @@ func node_record_valid(
 func program_node(
 	program_value Program_Validated,
 	reference_value Node_Link_Validated,
-) (node Node_Validated, valid Node_Validity) {
-	defer func() {
-		Node_Validated_Invariants(node, "program_node.node")
-		Node_Validity_Invariants(valid, "program_node.valid")
-	}()
+) (_ Node_Validated, valid Node_Validity) {
+	defer func() { Node_Validity_Invariants(valid, "program_node.valid") }()
 	Program_Validated_Invariants(program_value, "program_node.program_value")
 	Node_Link_Validated_Invariants(reference_value, "program_node.reference_value")
+	var node Node_Validated
+	defer func() { Node_Validated_Invariants(node, "program_node.node") }()
 	program := program_value
 	reference := reference_value.Value.(Node_Link_Validated_Value)
 	if Node_Reference(reference) == NO_NODE {
@@ -5621,21 +5621,20 @@ func execute_unchecked(
 	root_value Value,
 	function_values Functions_Validated,
 ) (
-	count Output_Count_Staged,
+	_ Output_Count_Staged,
 	status Node_Execution_Status,
-	steps Active_Step_Count,
+	_ Active_Step_Count,
 ) {
-	defer func() {
-		Output_Count_Staged_Invariants(count, "execute_unchecked.count")
-		Node_Execution_Status_Invariants(status, "execute_unchecked.status")
-		Active_Step_Count_Invariants(steps, "execute_unchecked.steps")
-	}()
+	defer func() { Node_Execution_Status_Invariants(status, "execute_unchecked.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "execute_unchecked.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_unchecked.program_value")
 	Value_Invariants(root_value, "execute_unchecked.root_value")
 	Functions_Validated_Invariants(function_values, "execute_unchecked.function_values")
+	count := Output_Count_Staged{Value: Output_Count_Staged_Value(OUTPUT_SIZE_MINIMUM)}
+	defer func() { Output_Count_Staged_Invariants(count, "execute_unchecked.count") }()
+	steps := Active_Step_Count(STEP_COUNT_MINIMUM)
+	defer func() { Active_Step_Count_Invariants(steps, "execute_unchecked.steps") }()
 	workspace, root := (Workspace_Pointer)(workspace_state), Value(root_value)
-	count = Output_Count_Staged{Value: Output_Count_Staged_Value(OUTPUT_SIZE_MINIMUM)}
 	execute_begin(workspace, program_value, root)
 	limit_failure := Failure_Status_Validated{
 		Value: Failure_Status_Validated_Value(STATUS_LIMIT_EXCEEDED)}
@@ -5647,7 +5646,8 @@ func execute_unchecked(
 		Workspace_Frame_Count_Storage_Value(NODE_COUNT_MINIMUM) {
 		if steps == Active_Step_Count(STEP_COUNT_MAXIMUM) {
 			execution_failure_at(workspace, limit_failure, initial_position)
-			return Output_Count_Staged{}, NODE_EXECUTION_STATUS_LIMIT_EXCEEDED, steps
+			count = Output_Count_Staged{}
+			return count, NODE_EXECUTION_STATUS_LIMIT_EXCEEDED, steps
 		}
 		steps++
 		frame_count := workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value)
@@ -5669,7 +5669,8 @@ func execute_unchecked(
 		)
 		if !bool(found) {
 			execution_failure_at(workspace, program_failure, initial_position)
-			return Output_Count_Staged{}, NODE_EXECUTION_STATUS_PROGRAM_INVALID, steps
+			count = Output_Count_Staged{}
+			return count, NODE_EXECUTION_STATUS_PROGRAM_INVALID, steps
 		}
 		node := node_value.Value.(*Node)
 		frame.Reference = Node_Reference(node.Next_Sibling)
@@ -5678,15 +5679,16 @@ func execute_unchecked(
 			workspace, program_value, node_value, frame.Dot, function_values, count,
 		)
 		if status != NODE_EXECUTION_STATUS_OK {
-			return Output_Count_Staged{}, status, steps
+			count = Output_Count_Staged{}
+			return count, status, steps
 		}
 		if flow != FLOW_NORMAL {
 			if !bool(range_unwind(workspace, Range_Flow(flow))) {
 				node_position := Execution_Failure_Position{
 					Value: Execution_Failure_Position_Value(node.Start)}
 				execution_failure_at(workspace, program_failure, node_position)
-				return Output_Count_Staged{},
-					NODE_EXECUTION_STATUS_PROGRAM_INVALID, steps
+				count = Output_Count_Staged{}
+				return count, NODE_EXECUTION_STATUS_PROGRAM_INVALID, steps
 			}
 		}
 	}
@@ -5792,34 +5794,33 @@ func execute_node(
 	workspace_state Workspace_Pointer, program_value Program_Validated,
 	node_value Node_Validated, dot_value Value,
 	function_values Functions_Validated, count_value Output_Count_Staged,
-) (written Output_Count_Staged, flow Flow, status Node_Execution_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "execute_node.written")
-		Flow_Invariants(flow, "execute_node.flow")
-		Node_Execution_Status_Invariants(status, "execute_node.status")
-	}()
+) (_ Output_Count_Staged, _ Flow, status Node_Execution_Status) {
+	defer func() { Node_Execution_Status_Invariants(status, "execute_node.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "execute_node.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_node.program_value")
 	Node_Validated_Invariants(node_value, "execute_node.node_value")
 	Value_Invariants(dot_value, "execute_node.dot_value")
 	Functions_Validated_Invariants(function_values, "execute_node.function_values")
 	Output_Count_Staged_Invariants(count_value, "execute_node.count_value")
+	written, flow := count_value, Flow(FLOW_NORMAL)
+	defer func() { Output_Count_Staged_Invariants(written, "execute_node.written") }()
+	defer func() { Flow_Invariants(flow, "execute_node.flow") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	node, dot := node_value.Value.(*Node), Value(dot_value)
-	count := count_value
 	switch node.Kind {
 	case NODE_TEXT:
 		text := program_value.Source.Data.Value[node.Value_Start:node.Value_End]
-		count, output_status := output_bytes(workspace, count, Text(text))
+		var output_status Output_Status
+		written, output_status = output_bytes(workspace, written, Text(text))
 		status = Node_Execution_Status(output_status)
-		return count, FLOW_NORMAL, status
+		return written, flow, status
 	case NODE_COMMENT:
-		return count, FLOW_NORMAL, NODE_EXECUTION_STATUS_OK
+		return written, flow, NODE_EXECUTION_STATUS_OK
 	case NODE_ACTION:
-		count, status = execute_action(
-			workspace, program_value, node_value, dot, function_values, count,
+		written, status = execute_action(
+			workspace, program_value, node_value, dot, function_values, written,
 		)
-		return count, FLOW_NORMAL, status
+		return written, flow, status
 	case NODE_IF, NODE_WITH, NODE_RANGE:
 		control_status := execute_control(
 			workspace, program_value, node_value, dot, function_values,
@@ -5828,13 +5829,11 @@ func execute_node(
 			failure := Failure_Status_Validated{
 				Value: Failure_Status_Validated_Value(control_status),
 			}
-			execution_node_error(
-				workspace, failure, node_value,
-			)
-			return Output_Count_Staged{}, FLOW_NORMAL,
-				Node_Execution_Status(control_status)
+			execution_node_error(workspace, failure, node_value)
+			written = Output_Count_Staged{}
+			return written, flow, Node_Execution_Status(control_status)
 		}
-		return count, FLOW_NORMAL, NODE_EXECUTION_STATUS_OK
+		return written, flow, NODE_EXECUTION_STATUS_OK
 	case NODE_TEMPLATE:
 		template_status := execute_template(
 			workspace, program_value, node_value, dot, function_values,
@@ -5843,24 +5842,25 @@ func execute_node(
 			failure := Failure_Status_Validated{
 				Value: Failure_Status_Validated_Value(template_status),
 			}
-			execution_node_error(
-				workspace, failure, node_value,
-			)
-			return Output_Count_Staged{}, FLOW_NORMAL,
-				Node_Execution_Status(template_status)
+			execution_node_error(workspace, failure, node_value)
+			written = Output_Count_Staged{}
+			return written, flow, Node_Execution_Status(template_status)
 		}
-		return count, FLOW_NORMAL, NODE_EXECUTION_STATUS_OK
+		return written, flow, NODE_EXECUTION_STATUS_OK
 	case NODE_BREAK:
-		return count, FLOW_BREAK, NODE_EXECUTION_STATUS_OK
+		flow = FLOW_BREAK
+		return written, flow, NODE_EXECUTION_STATUS_OK
 	case NODE_CONTINUE:
-		return count, FLOW_CONTINUE, NODE_EXECUTION_STATUS_OK
+		flow = FLOW_CONTINUE
+		return written, flow, NODE_EXECUTION_STATUS_OK
 	}
 	execution_node_error(
 		workspace, Failure_Status_Validated{
 			Value: Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID),
 		}, node_value,
 	)
-	return Output_Count_Staged{}, FLOW_NORMAL, NODE_EXECUTION_STATUS_PROGRAM_INVALID
+	written = Output_Count_Staged{}
+	return written, flow, NODE_EXECUTION_STATUS_PROGRAM_INVALID
 }
 
 func execute_action(
@@ -5869,21 +5869,19 @@ func execute_action(
 	dot_value Value,
 	function_values Functions_Validated,
 	count_value Output_Count_Staged,
-) (count Output_Count_Staged, status Node_Execution_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(count, "execute_action.count")
-		Node_Execution_Status_Invariants(status, "execute_action.status")
-	}()
+) (_ Output_Count_Staged, status Node_Execution_Status) {
+	defer func() { Node_Execution_Status_Invariants(status, "execute_action.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "execute_action.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_action.program_value")
 	Node_Validated_Invariants(node_value, "execute_action.node_value")
 	Value_Invariants(dot_value, "execute_action.dot_value")
 	Functions_Validated_Invariants(function_values, "execute_action.function_values")
 	Output_Count_Staged_Invariants(count_value, "execute_action.count_value")
+	count := count_value
+	defer func() { Output_Count_Staged_Invariants(count, "execute_action.count") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	node, dot := node_value.Value.(*Node), Value(dot_value)
 	functions := function_values
-	count = count_value
 	pipe_value, found := program_node(
 		program_value,
 		Node_Link_Validated{Value: Node_Link_Validated_Value(node.First_Child)},
@@ -5894,7 +5892,8 @@ func execute_action(
 				Value: Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID),
 			}, node_value,
 		)
-		return Output_Count_Staged{}, NODE_EXECUTION_STATUS_PROGRAM_INVALID
+		count = Output_Count_Staged{}
+		return count, NODE_EXECUTION_STATUS_PROGRAM_INVALID
 	}
 	pipe := pipe_value.Value.(*Node)
 	if pipe.Kind != NODE_PIPE {
@@ -5903,7 +5902,8 @@ func execute_action(
 				Value: Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID),
 			}, node_value,
 		)
-		return Output_Count_Staged{}, NODE_EXECUTION_STATUS_PROGRAM_INVALID
+		count = Output_Count_Staged{}
+		return count, NODE_EXECUTION_STATUS_PROGRAM_INVALID
 	}
 	state, pipeline_status := pipeline_evaluate(
 		workspace, program_value, pipe_value, dot, functions,
@@ -5914,7 +5914,8 @@ func execute_action(
 				Value: Failure_Status_Validated_Value(pipeline_status),
 			}, node_value,
 		)
-		return Output_Count_Staged{}, Node_Execution_Status(pipeline_status)
+		count = Output_Count_Staged{}
+		return count, Node_Execution_Status(pipeline_status)
 	}
 	if state.Declaration_Count != DECLARATION_COUNT_NONE {
 		return count, NODE_EXECUTION_STATUS_OK
@@ -5926,7 +5927,8 @@ func execute_action(
 				Value: Failure_Status_Validated_Value(output_status),
 			}, node_value,
 		)
-		return Output_Count_Staged{}, Node_Execution_Status(output_status)
+		count = Output_Count_Staged{}
+		return count, Node_Execution_Status(output_status)
 	}
 	return count, NODE_EXECUTION_STATUS_OK
 }
@@ -6212,37 +6214,31 @@ func range_bind(
 		declaration_end <= int(frame.Iteration_Variables),
 		"Range frame retains the declarations bound before iteration.",
 	)
-	bind := func(reference Declaration_Reference_Validated_Value, value Value) {
-		bind_status := variable_bind_reference(
-			workspace, program_value,
-			Declaration_Reference_Validated{Value: reference},
-			value, frame.Assignment,
-		)
-		aver.Always(
-			bind_status == EXECUTION_LIMIT_STATUS_OK,
-			"Parsed range assignment retains its visible binding.",
-		)
+	if bool(frame.Assignment) {
+		for index := DECLARATION_COUNT_NONE; index < frame.Declaration_Count; index++ {
+			value := item
+			if frame.Declaration_Count == DECLARATION_COUNT_TWO {
+				if index == DECLARATION_COUNT_NONE {
+					value = key
+				}
+			}
+			status := variable_bind_reference(
+				workspace, program_value,
+				declaration_reference(frame.Declarations, Declaration_Index(index)),
+				value, frame.Assignment,
+			)
+			aver.Always(
+				status == EXECUTION_LIMIT_STATUS_OK,
+				"Parsed range assignment retains its visible binding.",
+			)
+		}
+		return
 	}
 	if frame.Declaration_Count == DECLARATION_COUNT_ONE {
-		if bool(frame.Assignment) {
-			bind(Declaration_Reference_Validated_Value(
-				frame.Declarations.First.Value.(Declaration_First_Reference),
-			), item)
-		} else {
-			workspace.Variables[declaration_start].Value = item
-		}
+		workspace.Variables[declaration_start].Value = item
 	} else if frame.Declaration_Count == DECLARATION_COUNT_TWO {
-		if bool(frame.Assignment) {
-			bind(Declaration_Reference_Validated_Value(
-				frame.Declarations.First.Value.(Declaration_First_Reference),
-			), key)
-			bind(Declaration_Reference_Validated_Value(
-				frame.Declarations.Second.Value.(Declaration_Second_Reference),
-			), item)
-		} else {
-			workspace.Variables[declaration_start].Value = key
-			workspace.Variables[declaration_start+VARIABLE_COUNT_INCREMENT].Value = item
-		}
+		workspace.Variables[declaration_start].Value = key
+		workspace.Variables[declaration_start+VARIABLE_COUNT_INCREMENT].Value = item
 	}
 }
 
@@ -6251,15 +6247,11 @@ func range_map_next(
 	previous_index_value Prior_Map_Entry_Index,
 	previous_selection_value Map_Selection,
 ) (
-	key Value,
-	item Value,
+	_ Value,
+	_ Value,
 	selected Range_Map_Entry_Index,
 ) {
-	defer func() {
-		Value_Invariants(key, "range_map_next.key")
-		Value_Invariants(item, "range_map_next.item")
-		Range_Map_Entry_Index_Invariants(selected, "range_map_next.selected")
-	}()
+	defer func() { Range_Map_Entry_Index_Invariants(selected, "range_map_next.selected") }()
 	Value_Invariants(value_state, "range_map_next.value_state")
 	Prior_Map_Entry_Index_Invariants(
 		previous_index_value, "range_map_next.previous_index_value",
@@ -6267,6 +6259,10 @@ func range_map_next(
 	Map_Selection_Invariants(
 		previous_selection_value, "range_map_next.previous_selection_value",
 	)
+	var key Value
+	defer func() { Value_Invariants(key, "range_map_next.key") }()
+	var item Value
+	defer func() { Value_Invariants(item, "range_map_next.item") }()
 	value := Value(value_state)
 	fields := Fields(value.Fields.Value)
 	validated_fields := Map_Fields_Validated{Value: Fields_Storage_Value(fields)}
@@ -6308,7 +6304,9 @@ func range_map_next(
 	}
 	aver.Always(found, "Counted map iteration requests one remaining entry.")
 	field := fields[selected_index]
-	return field.Key.Data, field.Value.Data, Range_Map_Entry_Index(selected_index)
+	key, item = field.Key.Data, field.Value.Data
+	selected = Range_Map_Entry_Index(selected_index)
+	return key, item, selected
 }
 
 func map_field_order(
@@ -6402,68 +6400,65 @@ func float64_sort_order(left_value Float, right_value Float) (order Order) {
 }
 
 func range_value_count(value_state Value) (
-	count Collection_Count,
+	_ Collection_Count,
 	status Range_Status,
 ) {
-	defer func() {
-		Collection_Count_Invariants(count, "range_value_count.count")
-		Range_Status_Invariants(status, "range_value_count.status")
-	}()
+	defer func() { Range_Status_Invariants(status, "range_value_count.status") }()
 	Value_Invariants(value_state, "range_value_count.value_state")
+	count := Collection_Count(bytes.SLICE_SIZE_MINIMUM)
+	defer func() { Collection_Count_Invariants(count, "range_value_count.count") }()
 	value := Value(value_state)
 	switch Value_Kind(value.Kind.Value) {
 	case VALUE_NIL:
-		return Collection_Count(bytes.SLICE_SIZE_MINIMUM), RANGE_STATUS_OK
+		return count, RANGE_STATUS_OK
 	case VALUE_SEQUENCE:
-		return Collection_Count(len(Values(value.Values.Value))),
-			RANGE_STATUS_OK
+		count = Collection_Count(len(Values(value.Values.Value)))
+		return count, RANGE_STATUS_OK
 	case VALUE_MAP:
-		return Collection_Count(len(Fields(value.Fields.Value))),
-			RANGE_STATUS_OK
+		count = Collection_Count(len(Fields(value.Fields.Value)))
+		return count, RANGE_STATUS_OK
 	case VALUE_INTEGER:
 		integer := Integer(int64(value.Scalar.Real))
 		if integer < Integer(bits.WORD_64_MINIMUM) {
-			return Collection_Count(bytes.SLICE_SIZE_MINIMUM), RANGE_STATUS_OK
+			return count, RANGE_STATUS_OK
 		}
 		if integer > Integer(VALUE_COUNT_MAXIMUM) {
-			return Collection_Count(bytes.SLICE_SIZE_MINIMUM),
-				RANGE_STATUS_LIMIT_EXCEEDED
+			return count, RANGE_STATUS_LIMIT_EXCEEDED
 		}
-		return Collection_Count(integer), RANGE_STATUS_OK
+		count = Collection_Count(integer)
+		return count, RANGE_STATUS_OK
 	case VALUE_UNSIGNED:
 		unsigned := Unsigned(value.Scalar.Real)
 		if unsigned > Unsigned(VALUE_COUNT_MAXIMUM) {
-			return Collection_Count(bytes.SLICE_SIZE_MINIMUM),
-				RANGE_STATUS_LIMIT_EXCEEDED
+			return count, RANGE_STATUS_LIMIT_EXCEEDED
 		}
-		return Collection_Count(unsigned), RANGE_STATUS_OK
+		count = Collection_Count(unsigned)
+		return count, RANGE_STATUS_OK
 	}
-	return Collection_Count(bytes.SLICE_SIZE_MINIMUM), RANGE_STATUS_KIND_INVALID
+	return count, RANGE_STATUS_KIND_INVALID
 }
 
 func range_value_at(
 	value_state Value,
 	index_value Collection_Element_Index,
-) (key Value, item Value) {
-	defer func() {
-		Value_Invariants(key, "range_value_at.key")
-		Value_Invariants(item, "range_value_at.item")
-	}()
+) (_ Value, item Value) {
+	defer func() { Value_Invariants(item, "range_value_at.item") }()
 	Value_Invariants(value_state, "range_value_at.value_state")
 	Collection_Element_Index_Invariants(index_value, "range_value_at.index_value")
+	var key Value
+	defer func() { Value_Invariants(key, "range_value_at.key") }()
 	value := Value(value_state)
 	index := Collection_Element_Index(index_value)
 	kind := Value_Kind(value.Kind.Value)
 	Range_Value_Kind_Invariants(Range_Value_Kind(kind), "range_value_at.kind")
 	switch kind {
 	case VALUE_SEQUENCE:
-		return Value_Of_Integer(Integer(index)),
-			Values(value.Values.Value)[index]
+		key = Value_Of_Integer(Integer(index))
+		item = Values(value.Values.Value)[index]
 	case VALUE_INTEGER, VALUE_UNSIGNED:
-		item := Value_Of_Integer(Integer(index))
-		return Value_Nil(), item
+		key, item = Value_Nil(), Value_Of_Integer(Integer(index))
 	}
-	return Value{}, Value{}
+	return key, item
 }
 
 func range_unwind(
@@ -6586,14 +6581,13 @@ func execute_template(
 func definition_find(
 	workspace_state Workspace_Pointer, program_value Program_Validated,
 	invocation_value Node_Validated,
-) (definition Node_Validated, status Definition_Status) {
-	defer func() {
-		Node_Validated_Invariants(definition, "definition_find.definition")
-		Definition_Status_Invariants(status, "definition_find.status")
-	}()
+) (_ Node_Validated, status Definition_Status) {
+	defer func() { Definition_Status_Invariants(status, "definition_find.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "definition_find.workspace_state")
 	Program_Validated_Invariants(program_value, "definition_find.program_value")
 	Node_Validated_Invariants(invocation_value, "definition_find.invocation_value")
+	var definition Node_Validated
+	defer func() { Node_Validated_Invariants(definition, "definition_find.definition") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	program := program_value
 	invocation := invocation_value.Value.(*Node)
@@ -6640,7 +6634,8 @@ func definition_find(
 			if bytes_equal(
 				Text(left_name), Text(right_name),
 			) {
-				return candidate_value, DEFINITION_STATUS_OK
+				definition = candidate_value
+				return definition, DEFINITION_STATUS_OK
 			}
 		}
 		reference = Node_Reference(candidate.Next_Sibling)
@@ -6654,16 +6649,15 @@ func pipeline_evaluate(
 	pipe_value Node_Validated,
 	dot_value Value,
 	function_values Functions_Validated,
-) (state Pipeline_State, status Evaluation_Status) {
-	defer func() {
-		Pipeline_State_Invariants(state, "pipeline_evaluate.state")
-		Evaluation_Status_Invariants(status, "pipeline_evaluate.status")
-	}()
+) (_ Pipeline_State, status Evaluation_Status) {
+	defer func() { Evaluation_Status_Invariants(status, "pipeline_evaluate.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "pipeline_evaluate.workspace_state")
 	Program_Validated_Invariants(program_value, "pipeline_evaluate.program_value")
 	Node_Validated_Invariants(pipe_value, "pipeline_evaluate.pipe_value")
 	Value_Invariants(dot_value, "pipeline_evaluate.dot_value")
 	Functions_Validated_Invariants(function_values, "pipeline_evaluate.function_values")
+	var state Pipeline_State
+	defer func() { Pipeline_State_Invariants(state, "pipeline_evaluate.state") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	functions := function_values
 	depth := ACTIVE_FRAME_COUNT_MINIMUM
@@ -6857,12 +6851,8 @@ func evaluation_term_step(
 	workspace_state Workspace_Pointer, program_value Program_Validated,
 	function_values Functions_Validated, depth_value Active_Frame_Count,
 	argument_count_value Argument_Count_Tracked,
-) (depth Active_Frame_Count, argument_count Argument_Count_Tracked, status Term_Status) {
-	defer func() {
-		Active_Frame_Count_Invariants(depth, "evaluation_term_step.depth")
-		Argument_Count_Tracked_Invariants(argument_count, "evaluation_term_step.arguments")
-		Term_Status_Invariants(status, "evaluation_term_step.status")
-	}()
+) (_ Active_Frame_Count, _ Argument_Count_Tracked, status Term_Status) {
+	defer func() { Term_Status_Invariants(status, "evaluation_term_step.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "evaluation_term_step.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_term_step.program_value")
 	Functions_Validated_Invariants(function_values, "evaluation_term_step.function_values")
@@ -6870,26 +6860,29 @@ func evaluation_term_step(
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_term_step.argument_count_value",
 	)
-	depth, argument_count = depth_value, argument_count_value
+	depth, count := depth_value, argument_count_value
+	defer func() { Active_Frame_Count_Invariants(depth, "evaluation_term_step.depth") }()
+	defer func() { Argument_Count_Tracked_Invariants(count, "evaluation_term_step.count") }()
 	frame := &workspace_state.Evaluations[depth-ACTIVE_FRAME_COUNT_MINIMUM]
 	reference := Node_Reference(frame.References.Term)
 	if reference == NO_NODE {
 		frame.Control.Stage = EVALUATION_STAGE_CALL
-		return depth, argument_count, TERM_STATUS_OK
+		return depth, count, TERM_STATUS_OK
 	}
 	reference_value := Node_Link_Validated{Value: Node_Link_Validated_Value(reference)}
 	node_value, found := program_node(program_value, reference_value)
 	if !bool(found) {
-		return depth, argument_count, TERM_STATUS_PROGRAM_INVALID
+		return depth, count, TERM_STATUS_PROGRAM_INVALID
 	}
 	node := node_value.Value.(*Node)
 	frame.References.Term = Evaluation_Term_Reference(node.Next_Sibling)
 	if node.Kind == NODE_PIPE {
 		child_depth, child_status := evaluation_child_push(
 			workspace_state, program_value, node_value,
-			Node_Optional_Validated{}, depth, argument_count,
+			Node_Optional_Validated{}, depth, count,
 		)
-		return child_depth, argument_count, Term_Status(child_status)
+		depth, status = child_depth, Term_Status(child_status)
+		return depth, count, status
 	}
 	if node.Kind == NODE_CHAIN {
 		pipe_reference := Node_Link_Validated{
@@ -6897,17 +6890,18 @@ func evaluation_term_step(
 		}
 		pipe_value, pipe_found := program_node(program_value, pipe_reference)
 		if !bool(pipe_found) {
-			return depth, argument_count, TERM_STATUS_PROGRAM_INVALID
+			return depth, count, TERM_STATUS_PROGRAM_INVALID
 		}
 		pipe := pipe_value.Value.(*Node)
 		if pipe.Kind != NODE_PIPE {
-			return depth, argument_count, TERM_STATUS_PROGRAM_INVALID
+			return depth, count, TERM_STATUS_PROGRAM_INVALID
 		}
 		child_depth, child_status := evaluation_child_push(
 			workspace_state, program_value, pipe_value,
-			Node_Optional_Validated{Value: Node_Stored(node)}, depth, argument_count,
+			Node_Optional_Validated{Value: Node_Stored(node)}, depth, count,
 		)
-		return child_depth, argument_count, Term_Status(child_status)
+		depth, status = child_depth, Term_Status(child_status)
+		return depth, count, status
 	}
 	location := Node_Location_Validated{Value: Node_Location_Stored{
 		Reference: reference, Node: Node_Stored(node)}}
@@ -6916,16 +6910,16 @@ func evaluation_term_step(
 		Value(frame.Values.Dot), function_values,
 	)
 	if term_status != TERM_SCALAR_STATUS_OK {
-		return depth, argument_count, Term_Status(term_status)
+		return depth, count, Term_Status(term_status)
 	}
 	var delivery_status Limit_Status
-	argument_count, delivery_status = evaluation_value_deliver(
-		frame, workspace_state, value, argument_count,
+	count, delivery_status = evaluation_value_deliver(
+		frame, workspace_state, value, count,
 	)
 	if delivery_status == LIMIT_STATUS_OK {
 		evaluation_short_circuit(frame, program_value, value)
 	}
-	return depth, argument_count, Term_Status(delivery_status)
+	return depth, count, Term_Status(delivery_status)
 }
 
 func evaluation_child_push(
@@ -6934,11 +6928,8 @@ func evaluation_child_push(
 	chain_value Node_Optional_Validated,
 	depth_value Active_Frame_Count,
 	argument_count_value Argument_Count_Tracked,
-) (depth Active_Frame_Count, status Program_Limit_Status) {
-	defer func() {
-		Active_Frame_Count_Invariants(depth, "evaluation_child_push.depth")
-		Program_Limit_Status_Invariants(status, "evaluation_child_push.status")
-	}()
+) (_ Active_Frame_Count, status Program_Limit_Status) {
+	defer func() { Program_Limit_Status_Invariants(status, "evaluation_child_push.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "evaluation_child_push.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_child_push.program_value")
 	Node_Validated_Invariants(pipe_value, "evaluation_child_push.pipe_value")
@@ -6950,7 +6941,8 @@ func evaluation_child_push(
 		argument_count_value, "evaluation_child_push.argument_count_value",
 	)
 	workspace := (Workspace_Pointer)(workspace_state)
-	depth = Active_Frame_Count(depth_value)
+	depth := Active_Frame_Count(depth_value)
+	defer func() { Active_Frame_Count_Invariants(depth, "evaluation_child_push.depth") }()
 	if int(depth) == len(workspace.Evaluations) {
 		return depth, PROGRAM_LIMIT_STATUS_LIMIT_EXCEEDED
 	}
@@ -6977,22 +6969,22 @@ func evaluation_child_push(
 func evaluation_value_deliver(
 	frame_state Evaluation_Frame_Pointer, workspace_state Workspace_Pointer, value_state Value,
 	argument_count_value Argument_Count_Tracked,
-) (argument_count Argument_Count_Tracked, status Limit_Status) {
-	defer func() {
-		Argument_Count_Tracked_Invariants(
-			argument_count, "evaluation_value_deliver.argument_count",
-		)
-		Limit_Status_Invariants(status, "evaluation_value_deliver.status")
-	}()
+) (_ Argument_Count_Tracked, status Limit_Status) {
+	defer func() { Limit_Status_Invariants(status, "evaluation_value_deliver.status") }()
 	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_value_deliver.frame_state")
 	Workspace_Pointer_Invariants(workspace_state, "evaluation_value_deliver.workspace_state")
 	Value_Invariants(value_state, "evaluation_value_deliver.value_state")
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_value_deliver.argument_count_value",
 	)
+	argument_count := argument_count_value
+	defer func() {
+		Argument_Count_Tracked_Invariants(
+			argument_count, "evaluation_value_deliver.argument_count",
+		)
+	}()
 	frame := (Evaluation_Frame_Pointer)(frame_state)
 	value := Value(value_state)
-	argument_count = argument_count_value
 	if frame.Control.Stage == EVALUATION_STAGE_FIRST {
 		frame.Values.Current = Evaluation_Current_Value(value)
 		frame.Control.Stage = EVALUATION_STAGE_ARGUMENT
@@ -7017,11 +7009,8 @@ func evaluation_child_deliver(
 	program_value Program_Validated,
 	value_state Value,
 	argument_count_value Argument_Count_Tracked,
-) (argument_count Argument_Count_Tracked, status Program_Execution_Status) {
+) (_ Argument_Count_Tracked, status Program_Execution_Status) {
 	defer func() {
-		Argument_Count_Tracked_Invariants(
-			argument_count, "evaluation_child_deliver.argument_count",
-		)
 		Program_Execution_Status_Invariants(status, "evaluation_child_deliver.status")
 	}()
 	Evaluation_Frame_Delivery_Pointer_Invariants(
@@ -7033,9 +7022,14 @@ func evaluation_child_deliver(
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_child_deliver.argument_count_value",
 	)
+	argument_count := argument_count_value
+	defer func() {
+		Argument_Count_Tracked_Invariants(
+			argument_count, "evaluation_child_deliver.argument_count",
+		)
+	}()
 	frame := frame_state.(Evaluation_Frame_Pointer)
 	value := Value(value_state)
-	argument_count = argument_count_value
 	if frame.Control.Chain == EVALUATION_CONTROL_TRUE {
 		chain, _ := frame.Nodes.Chain.(*Node)
 		program := program_value
@@ -7094,13 +7088,8 @@ func evaluation_command_call(
 	program_value Program_Validated,
 	function_values Functions_Validated,
 	argument_count_value Argument_Count_Tracked,
-) (argument_count Argument_Count_Tracked, status Call_Status) {
-	defer func() {
-		Argument_Count_Tracked_Invariants(
-			argument_count, "evaluation_command_call.argument_count",
-		)
-		Call_Status_Invariants(status, "evaluation_command_call.status")
-	}()
+) (_ Argument_Count_Tracked, status Call_Status) {
+	defer func() { Call_Status_Invariants(status, "evaluation_command_call.status") }()
 	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_command_call.frame_state")
 	Workspace_Pointer_Invariants(workspace_state, "evaluation_command_call.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_command_call.program_value")
@@ -7108,9 +7097,14 @@ func evaluation_command_call(
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_command_call.argument_count_value",
 	)
+	argument_count := argument_count_value
+	defer func() {
+		Argument_Count_Tracked_Invariants(
+			argument_count, "evaluation_command_call.argument_count",
+		)
+	}()
 	frame := (Evaluation_Frame_Pointer)(frame_state)
 	workspace := (Workspace_Pointer)(workspace_state)
-	argument_count = argument_count_value
 	base := frame.Argument_Bases.Value
 	state := &frame.States.Value
 	count := argument_count.Value.(Argument_Count_Tracked_Value)
@@ -7161,16 +7155,15 @@ func evaluation_command_call(
 func evaluation_complete(
 	frame_state Evaluation_Frame_Pointer, workspace_state Workspace_Pointer,
 	program_value Program_Validated,
-) (state Pipeline_State, status Program_Execution_Limit_Status) {
+) (_ Pipeline_State, status Program_Execution_Limit_Status) {
 	defer func() {
-		Pipeline_State_Invariants(state, "evaluation_complete.state")
-		Program_Execution_Limit_Status_Invariants(
-			status, "evaluation_complete.status",
-		)
+		Program_Execution_Limit_Status_Invariants(status, "evaluation_complete.status")
 	}()
 	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_complete.frame_state")
 	Workspace_Pointer_Invariants(workspace_state, "evaluation_complete.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_complete.program_value")
+	var state Pipeline_State
+	defer func() { Pipeline_State_Invariants(state, "evaluation_complete.state") }()
 	frame := (Evaluation_Frame_Pointer)(frame_state)
 	if frame.Control.Present != EVALUATION_CONTROL_TRUE {
 		return Pipeline_State{}, PROGRAM_EXECUTION_LIMIT_STATUS_PROGRAM_INVALID
@@ -7185,7 +7178,8 @@ func evaluation_complete(
 		)
 		status = Program_Execution_Limit_Status(bind_status)
 		if bind_status != EXECUTION_LIMIT_STATUS_OK {
-			return Pipeline_State{}, status
+			state = Pipeline_State{}
+			return state, status
 		}
 	}
 	return state, PROGRAM_EXECUTION_LIMIT_STATUS_OK
@@ -7196,11 +7190,8 @@ func term_scalar_evaluate(
 	location_value Node_Location_Validated,
 	dot_value Value,
 	function_values Functions_Validated,
-) (result Value, status Term_Scalar_Status) {
-	defer func() {
-		Value_Invariants(result, "term_scalar_evaluate.result")
-		Term_Scalar_Status_Invariants(status, "term_scalar_evaluate.status")
-	}()
+) (_ Value, status Term_Scalar_Status) {
+	defer func() { Term_Scalar_Status_Invariants(status, "term_scalar_evaluate.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "term_scalar_evaluate.workspace_state")
 	Program_Validated_Invariants(program_value, "term_scalar_evaluate.program_value")
 	Node_Location_Validated_Invariants(
@@ -7208,6 +7199,8 @@ func term_scalar_evaluate(
 	)
 	Value_Invariants(dot_value, "term_scalar_evaluate.dot_value")
 	Functions_Validated_Invariants(function_values, "term_scalar_evaluate.function_values")
+	var result Value
+	defer func() { Value_Invariants(result, "term_scalar_evaluate.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	program := program_value
 	location := location_value.Value
@@ -7217,50 +7210,56 @@ func term_scalar_evaluate(
 	functions := function_values
 	switch node.Kind {
 	case NODE_DOT:
-		return dot, TERM_SCALAR_STATUS_OK
+		result = dot
 	case NODE_BOOLEAN:
 		data := program.Source.Data.Value[node.Value_Start:node.Value_End]
-		return Value_Of_Boolean(
+		result = Value_Of_Boolean(
 			Boolean(bytes_equal(Text(data), Text("true"))),
-		), TERM_SCALAR_STATUS_OK
+		)
 	case NODE_NIL:
-		return Value_Nil(), TERM_SCALAR_STATUS_OK
+		result = Value_Nil()
 	case NODE_STRING:
-		result, literal_status := literal_value(
+		var literal_status Program_Status
+		result, literal_status = literal_value(
 			workspace, program_value, location_value,
 		)
 		return result, Term_Scalar_Status(literal_status)
 	case NODE_NUMBER:
-		result, number_status := number_value(
+		var number_status Number_Status
+		result, number_status = number_value(
 			workspace, program_value, location_value,
 		)
 		return result, Term_Scalar_Status(number_status)
 	case NODE_FIELD:
-		result, access_status := field_value(program_value, node_value, dot)
+		var access_status Value_Access_Status
+		result, access_status = field_value(program_value, node_value, dot)
 		return result, Term_Scalar_Status(access_status)
 	case NODE_VARIABLE:
-		result, variable_status := variable_value(
+		var variable_status Variable_Status
+		result, variable_status = variable_value(
 			workspace, program_value, node_value,
 		)
 		return result, Term_Scalar_Status(variable_status)
 	case NODE_IDENTIFIER:
-		result, lookup_status := function_value(program_value, node_value, functions)
+		var lookup_status Function_Lookup_Status
+		result, lookup_status = function_value(program_value, node_value, functions)
 		return result, Term_Scalar_Status(lookup_status)
+	default:
+		return result, TERM_SCALAR_STATUS_PROGRAM_INVALID
 	}
-	return Value{}, TERM_SCALAR_STATUS_PROGRAM_INVALID
+	return result, TERM_SCALAR_STATUS_OK
 }
 
 func literal_value(
 	workspace_state Workspace_Pointer, program_value Program_Validated,
 	location_value Node_Location_Validated,
-) (result Value, status Program_Status) {
-	defer func() {
-		Value_Invariants(result, "literal_value.result")
-		Program_Status_Invariants(status, "literal_value.status")
-	}()
+) (_ Value, status Program_Status) {
+	defer func() { Program_Status_Invariants(status, "literal_value.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "literal_value.workspace_state")
 	Program_Validated_Invariants(program_value, "literal_value.program_value")
 	Node_Location_Validated_Invariants(location_value, "literal_value.location_value")
+	var result Value
+	defer func() { Value_Invariants(result, "literal_value.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	program := program_value
 	location := location_value.Value
@@ -7270,7 +7269,8 @@ func literal_value(
 		offset := workspace.Literal_Offsets[index]
 		count := workspace.Literal_Counts[index]
 		literal := workspace.Literals[offset:]
-		return Value_Of_Text(Text(literal[:count])), PROGRAM_STATUS_OK
+		result = Value_Of_Text(Text(literal[:count]))
+		return result, PROGRAM_STATUS_OK
 	}
 	decoded, decode_status := Quoted_Unquote_Into(
 		Quoted_Output(workspace.Name_Left), program.Source,
@@ -7293,22 +7293,22 @@ func literal_value(
 	workspace.Literal_Decoded[index] = true
 	workspace.Literal_Count.Value = literal_count +
 		Workspace_Literal_Count_Storage_Value(decoded)
-	return Value_Of_Text(Text(
+	result = Value_Of_Text(Text(
 		workspace.Literals[offset : offset+Workspace_Literal_Count_Storage_Value(decoded)],
-	)), PROGRAM_STATUS_OK
+	))
+	return result, PROGRAM_STATUS_OK
 }
 
 func number_value(
 	workspace_state Workspace_Pointer, program_value Program_Validated,
 	location_value Node_Location_Validated,
-) (result Value, status Number_Status) {
-	defer func() {
-		Value_Invariants(result, "number_value.result")
-		Number_Status_Invariants(status, "number_value.status")
-	}()
+) (_ Value, status Number_Status) {
+	defer func() { Number_Status_Invariants(status, "number_value.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "number_value.workspace_state")
 	Program_Validated_Invariants(program_value, "number_value.program_value")
 	Node_Location_Validated_Invariants(location_value, "number_value.location_value")
+	var result Value
+	defer func() { Value_Invariants(result, "number_value.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	program := program_value
 	location := location_value.Value
@@ -7333,7 +7333,8 @@ func number_value(
 		if int(size) != len(text) {
 			return Value{}, NUMBER_STATUS_PROGRAM_INVALID
 		}
-		return Value_Of_Integer(Integer(character)), NUMBER_STATUS_OK
+		result = Value_Of_Integer(Integer(character))
+		return result, NUMBER_STATUS_OK
 	}
 	if data[len(data)-SOURCE_POSITION_INCREMENT] == 'i' {
 		value, valid := complex_parse(
@@ -7344,22 +7345,25 @@ func number_value(
 		if !bool(valid) {
 			return Value{}, NUMBER_STATUS_VALUE_INVALID
 		}
-		return value, NUMBER_STATUS_OK
+		result = value
+		return result, NUMBER_STATUS_OK
 	}
 	if bool(number_float_syntax(number_text)) {
 		encoding_value, valid := float_bits_parse(workspace, number_text)
 		if !valid {
 			return Value{}, NUMBER_STATUS_VALUE_INVALID
 		}
-		return Value_Of_Float(
+		result = Value_Of_Float(
 			Float(encoding_value.Value.(Parsed_Float_Validated_Value)),
-		), NUMBER_STATUS_OK
+		)
+		return result, NUMBER_STATUS_OK
 	}
 	value, valid := integer_parse(number_text)
 	if !bool(valid) {
 		return Value{}, NUMBER_STATUS_VALUE_INVALID
 	}
-	return value, NUMBER_STATUS_OK
+	result = value
+	return result, NUMBER_STATUS_OK
 }
 
 func number_float_syntax(data_value Number_Text_Validated) (found Number_Float_Syntax) {
@@ -7400,13 +7404,12 @@ func number_float_syntax(data_value Number_Text_Validated) (found Number_Float_S
 
 func complex_parse(
 	workspace_state Workspace_Pointer, data_value Number_Text_Validated,
-) (result Value, valid Value_Validity) {
-	defer func() {
-		Value_Invariants(result, "complex_parse.result")
-		Value_Validity_Invariants(valid, "complex_parse.valid")
-	}()
+) (_ Value, valid Value_Validity) {
+	defer func() { Value_Validity_Invariants(valid, "complex_parse.valid") }()
 	Workspace_Pointer_Invariants(workspace_state, "complex_parse.workspace_state")
 	Number_Text_Validated_Invariants(data_value, "complex_parse.data_value")
+	var result Value
+	defer func() { Value_Invariants(result, "complex_parse.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	data := data_value.Value.(Number_Text_Validated_Value)
 	if len(data) == SOURCE_SIZE_MINIMUM {
@@ -7449,23 +7452,23 @@ func complex_parse(
 	if !component_valid {
 		return Value{}, false
 	}
-	return Value_Of_Complex(Complex{
+	result = Value_Of_Complex(Complex{
 		Real: Complex_Real(real.Value.(Parsed_Float_Validated_Value)),
 		Imaginary: Complex_Imaginary(
 			imaginary.Value.(Parsed_Float_Validated_Value),
 		),
-	}), true
+	})
+	return result, true
 }
 
 func float_bits_parse(
 	workspace_state Workspace_Pointer, data_value Number_Text_Validated,
-) (encoding Parsed_Float_Validated, valid Value_Validity) {
-	defer func() {
-		Parsed_Float_Validated_Invariants(encoding, "float_bits_parse.encoding")
-		Value_Validity_Invariants(valid, "float_bits_parse.valid")
-	}()
+) (_ Parsed_Float_Validated, valid Value_Validity) {
+	defer func() { Value_Validity_Invariants(valid, "float_bits_parse.valid") }()
 	Workspace_Pointer_Invariants(workspace_state, "float_bits_parse.workspace_state")
 	Number_Text_Validated_Invariants(data_value, "float_bits_parse.data_value")
+	var encoding Parsed_Float_Validated
+	defer func() { Parsed_Float_Validated_Invariants(encoding, "float_bits_parse.encoding") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	data := data_value.Value.(Number_Text_Validated_Value)
 	float_value := &workspace.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX]
@@ -7487,21 +7490,17 @@ func float_bits_parse(
 		return Parsed_Float_Validated{}, false
 	}
 	value, _ := big.Float_Float_64_Bits(float_value)
-	return Parsed_Float_Validated{Value: Parsed_Float_Validated_Value(Float(value))}, true
+	encoding = Parsed_Float_Validated{Value: Parsed_Float_Validated_Value(Float(value))}
+	return encoding, true
 }
 
-func integer_parse(data_value Number_Text_Validated) (
-	result Value,
-	valid Value_Validity,
-) {
-	defer func() {
-		Value_Invariants(result, "integer_parse.result")
-		Value_Validity_Invariants(valid, "integer_parse.valid")
-	}()
+func integer_parse(data_value Number_Text_Validated) (_ Value, valid Value_Validity) {
+	defer func() { Value_Validity_Invariants(valid, "integer_parse.valid") }()
 	Number_Text_Validated_Invariants(data_value, "integer_parse.data_value")
+	var result Value
+	defer func() { Value_Invariants(result, "integer_parse.result") }()
 	data := data_value.Value.(Number_Text_Validated_Value)
-	position := SOURCE_SIZE_MINIMUM
-	negative := false
+	position, negative := SOURCE_SIZE_MINIMUM, false
 	if data[position] == '+' {
 		position++
 	} else if data[position] == '-' {
@@ -7549,50 +7548,51 @@ func integer_parse(data_value Number_Text_Validated) (
 		magnitude = magnitude*base + digit
 	}
 	if negative {
-		limit := INTEGER_64_NEGATIVE_MAGNITUDE_MAXIMUM
-		if magnitude > limit {
+		if magnitude > INTEGER_64_NEGATIVE_MAGNITUDE_MAXIMUM {
 			return Value{}, false
 		}
-		if magnitude == limit {
-			return Value_Of_Integer(Integer(bits.INTEGER_64_MINIMUM)), true
+		if magnitude == INTEGER_64_NEGATIVE_MAGNITUDE_MAXIMUM {
+			result = Value_Of_Integer(Integer(bits.INTEGER_64_MINIMUM))
+			return result, true
 		}
-		return Value_Of_Integer(Integer(-int64(magnitude))), true
+		result = Value_Of_Integer(Integer(-int64(magnitude)))
+		return result, true
 	}
 	if magnitude > uint64(bits.INTEGER_MAXIMUM) {
 		return Value{}, false
 	}
-	return Value_Of_Integer(Integer(magnitude)), true
+	result = Value_Of_Integer(Integer(magnitude))
+	return result, true
 }
 
 func field_value(
 	program_value Program_Validated, node_value Node_Validated, value_state Value,
 ) (
-	result Value,
+	_ Value,
 	status Value_Access_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "field_value.result")
-		Value_Access_Status_Invariants(status, "field_value.status")
-	}()
+	defer func() { Value_Access_Status_Invariants(status, "field_value.status") }()
 	Program_Validated_Invariants(program_value, "field_value.program_value")
 	Node_Validated_Invariants(node_value, "field_value.node_value")
 	Value_Invariants(value_state, "field_value.value_state")
+	var result Value
+	defer func() { Value_Invariants(result, "field_value.result") }()
 	program := program_value
 	node := node_value.Value.(*Node)
 	value := Value(value_state)
 	path := program.Source.Data.Value[node.Value_Start:node.Value_End]
-	return field_path(Text(path), value)
+	result, status = field_path(Text(path), value)
+	return result, status
 }
 
 func field_path(
 	path Text, value_state Value,
-) (result Value, status Value_Access_Status) {
-	defer func() {
-		Value_Invariants(result, "field_path.result")
-		Value_Access_Status_Invariants(status, "field_path.status")
-	}()
+) (_ Value, status Value_Access_Status) {
+	defer func() { Value_Access_Status_Invariants(status, "field_path.status") }()
 	Text_Invariants(path, "field_path.path")
 	Value_Invariants(value_state, "field_path.value_state")
+	var result Value
+	defer func() { Value_Invariants(result, "field_path.result") }()
 	value := Value(value_state)
 	if len(path) < NUMBER_PREFIX_SIZE {
 		return Value{}, VALUE_ACCESS_STATUS_PROGRAM_INVALID
@@ -7641,24 +7641,25 @@ func field_path(
 			}
 		}
 		if !found {
-			return Value_Nil(), VALUE_ACCESS_STATUS_OK
+			result = Value_Nil()
+			return result, VALUE_ACCESS_STATUS_OK
 		}
 		position = end + SOURCE_POSITION_INCREMENT
 	}
-	return current, VALUE_ACCESS_STATUS_OK
+	result = current
+	return result, VALUE_ACCESS_STATUS_OK
 }
 
 func variable_value(
 	workspace_state Workspace_Pointer, program_value Program_Validated,
 	node_value Node_Validated,
-) (result Value, status Variable_Status) {
-	defer func() {
-		Value_Invariants(result, "variable_value.result")
-		Variable_Status_Invariants(status, "variable_value.status")
-	}()
+) (_ Value, status Variable_Status) {
+	defer func() { Variable_Status_Invariants(status, "variable_value.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "variable_value.workspace_state")
 	Program_Validated_Invariants(program_value, "variable_value.program_value")
 	Node_Validated_Invariants(node_value, "variable_value.node_value")
+	var result Value
+	defer func() { Value_Invariants(result, "variable_value.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	program := program_value
 	node := node_value.Value.(*Node)
@@ -7680,7 +7681,8 @@ func variable_value(
 		if access_status == VALUE_ACCESS_STATUS_RECEIVER_INVALID {
 			return Value{}, VARIABLE_STATUS_ABSENT
 		}
-		return access_result, VARIABLE_STATUS_OK
+		result = access_result
+		return result, VARIABLE_STATUS_OK
 	}
 	return result, VARIABLE_STATUS_OK
 }
@@ -7779,21 +7781,21 @@ func function_value(
 	program_value Program_Validated,
 	node_value Node_Validated,
 	function_values Functions_Validated,
-) (result Value, status Function_Lookup_Status) {
-	defer func() {
-		Value_Invariants(result, "function_value.result")
-		Function_Lookup_Status_Invariants(status, "function_value.status")
-	}()
+) (_ Value, status Function_Lookup_Status) {
+	defer func() { Function_Lookup_Status_Invariants(status, "function_value.status") }()
 	Program_Validated_Invariants(program_value, "function_value.program_value")
 	Node_Validated_Invariants(node_value, "function_value.node_value")
 	Functions_Validated_Invariants(function_values, "function_value.function_values")
+	var result Value
+	defer func() { Value_Invariants(result, "function_value.result") }()
 	program := program_value
 	node := node_value.Value.(*Node)
 	functions := function_values.Value.(Functions_Validated_Value)
 	name := program.Source.Data.Value[node.Value_Start:node.Value_End]
 	for index := range functions {
 		if bytes_equal(Text(name), Text(functions[index].Name)) {
-			return Value_Of_Function(functions[index].Call), FUNCTION_LOOKUP_STATUS_OK
+			result = Value_Of_Function(functions[index].Call)
+			return result, FUNCTION_LOOKUP_STATUS_OK
 		}
 	}
 	return Value{}, FUNCTION_LOOKUP_STATUS_ABSENT
@@ -7804,11 +7806,8 @@ func function_call_identifier(
 	identifier_value Node_Validated,
 	function_values Functions_Validated,
 	argument_values Arguments_Staged,
-) (result Value, status Call_Status) {
-	defer func() {
-		Value_Invariants(result, "function_call_identifier.result")
-		Call_Status_Invariants(status, "function_call_identifier.status")
-	}()
+) (_ Value, status Call_Status) {
+	defer func() { Call_Status_Invariants(status, "function_call_identifier.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "function_call_identifier.workspace_state")
 	Program_Validated_Invariants(program_value, "function_call_identifier.program_value")
 	Node_Validated_Invariants(
@@ -7816,6 +7815,8 @@ func function_call_identifier(
 	)
 	Functions_Validated_Invariants(function_values, "function_call_identifier.function_values")
 	Arguments_Staged_Invariants(argument_values, "function_call_identifier.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "function_call_identifier.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	program := program_value
 	identifier := identifier_value.Value.(*Node)
@@ -7827,30 +7828,31 @@ func function_call_identifier(
 			call_result, call_status := callback_call(
 				workspace, functions[index].Call, arguments,
 			)
-			return call_result, Call_Status(call_status)
+			result, status = call_result, Call_Status(call_status)
+			return result, status
 		}
 	}
-	return builtin_call(
+	result, status = builtin_call(
 		workspace, Function_Name_Validated{
 			Value: Function_Name_Validated_Value(Function_Name(name)),
 		}, arguments,
 	)
+	return result, status
 }
 
 func callback_call(
 	workspace_state Workspace_Pointer, call_value Function_Call,
 	argument_values Arguments_Staged,
 ) (
-	result Value,
+	_ Value,
 	status Function_Call_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "callback_call.result")
-		Function_Call_Status_Invariants(status, "callback_call.status")
-	}()
+	defer func() { Function_Call_Status_Invariants(status, "callback_call.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "callback_call.workspace_state")
 	Function_Call_Invariants(call_value, "callback_call.call_value")
 	Arguments_Staged_Invariants(argument_values, "callback_call.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "callback_call.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	call := Function_Call(call_value)
 	arguments := Values(argument_values.Value.(Arguments_Staged_Value))
@@ -7866,44 +7868,44 @@ func callback_call(
 	) != VALUE_GRAPH_STATUS_OK {
 		return Value{}, FUNCTION_CALL_STATUS_INVALID
 	}
-	return output.Value, FUNCTION_CALL_STATUS_OK
+	result = output.Value
+	return result, FUNCTION_CALL_STATUS_OK
 }
 
 func builtin_call(
 	workspace_state Workspace_Pointer, name_value Function_Name_Validated,
 	argument_values Arguments_Staged,
-) (result Value, status Call_Status) {
-	defer func() {
-		Value_Invariants(result, "builtin_call.result")
-		Call_Status_Invariants(status, "builtin_call.status")
-	}()
+) (_ Value, status Call_Status) {
+	defer func() { Call_Status_Invariants(status, "builtin_call.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "builtin_call.workspace_state")
 	Function_Name_Validated_Invariants(name_value, "builtin_call.name_value")
 	Arguments_Staged_Invariants(argument_values, "builtin_call.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_call.result") }()
 	workspace, arguments := (Workspace_Pointer)(workspace_state), argument_values
 	name := name_value.Value.(Function_Name_Validated_Value)
 	switch {
 	case bool(bytes_equal(Text(name), Text("and"))):
-		builtin_result, argument_status := builtin_and(arguments)
-		return builtin_result, Call_Status(argument_status)
+		result, argument_status := builtin_and(arguments)
+		return result, Call_Status(argument_status)
 	case bool(bytes_equal(Text(name), Text("or"))):
-		builtin_result, argument_status := builtin_or(arguments)
-		return builtin_result, Call_Status(argument_status)
+		result, argument_status := builtin_or(arguments)
+		return result, Call_Status(argument_status)
 	case bool(bytes_equal(Text(name), Text("call"))):
-		builtin_result, value_status := builtin_call_function(workspace, arguments)
-		return builtin_result, Call_Status(value_status)
+		result, value_status := builtin_call_function(workspace, arguments)
+		return result, Call_Status(value_status)
 	case bool(bytes_equal(Text(name), Text("index"))):
-		builtin_result, value_status := builtin_index(arguments)
-		return builtin_result, Call_Status(value_status)
+		result, value_status := builtin_index(arguments)
+		return result, Call_Status(value_status)
 	case bool(bytes_equal(Text(name), Text("slice"))):
-		builtin_result, value_status := builtin_slice(arguments)
-		return builtin_result, Call_Status(value_status)
+		result, value_status := builtin_slice(arguments)
+		return result, Call_Status(value_status)
 	case bool(bytes_equal(Text(name), Text("eq"))):
-		builtin_result, argument_status := builtin_equal(arguments)
-		return builtin_result, Call_Status(argument_status)
+		result, argument_status := builtin_equal(arguments)
+		return result, Call_Status(argument_status)
 	case bool(bytes_equal(Text(name), Text("ne"))):
-		builtin_result, argument_status := builtin_not_equal(arguments)
-		return builtin_result, Call_Status(argument_status)
+		result, argument_status := builtin_not_equal(arguments)
+		return result, Call_Status(argument_status)
 	case bool(bytes_equal(Text(name), Text("lt"))),
 		bool(bytes_equal(Text(name), Text("le"))),
 		bool(bytes_equal(Text(name), Text("gt"))),
@@ -7913,23 +7915,23 @@ func builtin_call(
 			Second: Builtin_Order_Name_Second(name[BUILTIN_ARGUMENT_SECOND]),
 		}
 		kind := builtin_order_kind(order_name)
-		builtin_result, value_status := builtin_order(kind, arguments)
-		return builtin_result, Call_Status(value_status)
+		result, value_status := builtin_order(kind, arguments)
+		return result, Call_Status(value_status)
 	case bool(bytes_equal(Text(name), Text("not"))):
-		builtin_result, argument_status := builtin_not(arguments)
-		return builtin_result, Call_Status(argument_status)
+		result, argument_status := builtin_not(arguments)
+		return result, Call_Status(argument_status)
 	case bool(bytes_equal(Text(name), Text("len"))):
-		builtin_result, value_status := builtin_count(arguments)
-		return builtin_result, Call_Status(value_status)
+		result, value_status := builtin_count(arguments)
+		return result, Call_Status(value_status)
 	case bool(bytes_equal(Text(name), Text("print"))):
-		builtin_result, generated_status := builtin_print(workspace, arguments, false)
-		return builtin_result, Call_Status(generated_status)
+		result, generated_status := builtin_print(workspace, arguments, false)
+		return result, Call_Status(generated_status)
 	case bool(bytes_equal(Text(name), Text("println"))):
-		builtin_result, generated_status := builtin_print(workspace, arguments, true)
-		return builtin_result, Call_Status(generated_status)
+		result, generated_status := builtin_print(workspace, arguments, true)
+		return result, Call_Status(generated_status)
 	case bool(bytes_equal(Text(name), Text("printf"))):
-		builtin_result, formatting_status := builtin_printf(workspace, arguments)
-		return builtin_result, Call_Status(formatting_status)
+		result, formatting_status := builtin_printf(workspace, arguments)
+		return result, Call_Status(formatting_status)
 	case bool(bytes_equal(Text(name), Text("html"))):
 		result, generated_status := builtin_escape(workspace, arguments, ESCAPE_HTML)
 		return result, Call_Status(generated_status)
@@ -7944,14 +7946,13 @@ func builtin_call(
 }
 
 func builtin_and(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Argument_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_and.result")
-		Builtin_Argument_Status_Invariants(status, "builtin_and.status")
-	}()
+	defer func() { Builtin_Argument_Status_Invariants(status, "builtin_and.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_and.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_and.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
@@ -7966,14 +7967,13 @@ func builtin_and(argument_values Arguments_Staged) (
 }
 
 func builtin_or(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Argument_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_or.result")
-		Builtin_Argument_Status_Invariants(status, "builtin_or.status")
-	}()
+	defer func() { Builtin_Argument_Status_Invariants(status, "builtin_or.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_or.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_or.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
@@ -7990,15 +7990,14 @@ func builtin_or(argument_values Arguments_Staged) (
 func builtin_call_function(
 	workspace_state Workspace_Pointer, argument_values Arguments_Staged,
 ) (
-	result Value,
+	_ Value,
 	status Builtin_Value_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_call_function.result")
-		Builtin_Value_Status_Invariants(status, "builtin_call_function.status")
-	}()
+	defer func() { Builtin_Value_Status_Invariants(status, "builtin_call_function.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "builtin_call_function.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_call_function.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_call_function.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
@@ -8024,14 +8023,13 @@ func builtin_call_function(
 }
 
 func builtin_equal(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Argument_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_equal.result")
-		Builtin_Argument_Status_Invariants(status, "builtin_equal.status")
-	}()
+	defer func() { Builtin_Argument_Status_Invariants(status, "builtin_equal.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_equal.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_equal.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) < BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
@@ -8043,18 +8041,18 @@ func builtin_equal(argument_values Arguments_Staged) (
 			break
 		}
 	}
-	return Value_Of_Boolean(Boolean(equal)), BUILTIN_ARGUMENT_STATUS_OK
+	result = Value_Of_Boolean(Boolean(equal))
+	return result, BUILTIN_ARGUMENT_STATUS_OK
 }
 
 func builtin_not_equal(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Argument_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_not_equal.result")
-		Builtin_Argument_Status_Invariants(status, "builtin_not_equal.status")
-	}()
+	defer func() { Builtin_Argument_Status_Invariants(status, "builtin_not_equal.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_not_equal.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_not_equal.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
@@ -8062,35 +8060,35 @@ func builtin_not_equal(argument_values Arguments_Staged) (
 	equal := bool(values_equal(
 		arguments[BUILTIN_ARGUMENT_FIRST], arguments[BUILTIN_ARGUMENT_SECOND],
 	))
-	return Value_Of_Boolean(Boolean(!equal)), BUILTIN_ARGUMENT_STATUS_OK
+	result = Value_Of_Boolean(Boolean(!equal))
+	return result, BUILTIN_ARGUMENT_STATUS_OK
 }
 
 func builtin_not(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Argument_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_not.result")
-		Builtin_Argument_Status_Invariants(status, "builtin_not.status")
-	}()
+	defer func() { Builtin_Argument_Status_Invariants(status, "builtin_not.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_not.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_not.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_ONE {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
 	}
 	truth := bool(value_truth(arguments[BUILTIN_ARGUMENT_FIRST]))
-	return Value_Of_Boolean(Boolean(!truth)), BUILTIN_ARGUMENT_STATUS_OK
+	result = Value_Of_Boolean(Boolean(!truth))
+	return result, BUILTIN_ARGUMENT_STATUS_OK
 }
 
 func builtin_count(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Value_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_count.result")
-		Builtin_Value_Status_Invariants(status, "builtin_count.status")
-	}()
+	defer func() { Builtin_Value_Status_Invariants(status, "builtin_count.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_count.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_count.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_ONE {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
@@ -8098,32 +8096,27 @@ func builtin_count(argument_values Arguments_Staged) (
 	value := arguments[BUILTIN_ARGUMENT_FIRST]
 	switch Value_Kind(value.Kind.Value) {
 	case VALUE_TEXT:
-		return Value_Of_Integer(Integer(len(
-			Text(value.Text.Value),
-		))), BUILTIN_VALUE_STATUS_OK
+		result = Value_Of_Integer(Integer(len(Text(value.Text.Value))))
 	case VALUE_SEQUENCE:
-		return Value_Of_Integer(Integer(len(
-			Values(value.Values.Value),
-		))), BUILTIN_VALUE_STATUS_OK
+		result = Value_Of_Integer(Integer(len(Values(value.Values.Value))))
 	case VALUE_OBJECT, VALUE_MAP:
-		return Value_Of_Integer(Integer(len(
-			Fields(value.Fields.Value),
-		))), BUILTIN_VALUE_STATUS_OK
+		result = Value_Of_Integer(Integer(len(Fields(value.Fields.Value))))
+	default:
+		return result, BUILTIN_VALUE_STATUS_KIND_INVALID
 	}
-	return Value{}, BUILTIN_VALUE_STATUS_KIND_INVALID
+	return result, BUILTIN_VALUE_STATUS_OK
 }
 
 func builtin_print(
 	workspace_state Workspace_Pointer, argument_values Arguments_Staged,
 	newline Boolean,
-) (result Value, status Generated_Status) {
-	defer func() {
-		Value_Invariants(result, "builtin_print.result")
-		Generated_Status_Invariants(status, "builtin_print.status")
-	}()
+) (_ Value, status Generated_Status) {
+	defer func() { Generated_Status_Invariants(status, "builtin_print.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "builtin_print.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_print.argument_values")
 	Boolean_Invariants(newline, "builtin_print.newline")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_print.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	start := Generated_Start_Validated{
@@ -8172,15 +8165,14 @@ func builtin_print(
 }
 
 func builtin_printf(workspace_state Workspace_Pointer, argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Formatting_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_printf.result")
-		Formatting_Status_Invariants(status, "builtin_printf.status")
-	}()
+	defer func() { Formatting_Status_Invariants(status, "builtin_printf.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "builtin_printf.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_printf.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_printf.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
@@ -8241,30 +8233,31 @@ func builtin_printf(workspace_state Workspace_Pointer, argument_values Arguments
 }
 
 func format_directive_parse(source Format_Source) (
-	verb Format_Verb,
-	width Format_Width,
-	zero_padding Format_Zero_Padding,
-	alternate Format_Alternate,
-	consumed Format_Count,
+	_ Format_Verb,
+	_ Format_Width,
+	_ Format_Zero_Padding,
+	_ Format_Alternate,
+	_ Format_Count,
 	status Format_Status,
 ) {
-	defer func() {
-		Format_Verb_Invariants(verb, "format_directive_parse.verb")
-		Format_Width_Invariants(width, "format_directive_parse.width")
-		Format_Zero_Padding_Invariants(
-			zero_padding, "format_directive_parse.zero_padding",
-		)
-		Format_Alternate_Invariants(
-			alternate, "format_directive_parse.alternate",
-		)
-		Format_Count_Invariants(consumed, "format_directive_parse.consumed")
-		Format_Status_Invariants(status, "format_directive_parse.status")
-	}()
+	defer func() { Format_Status_Invariants(status, "format_directive_parse.status") }()
 	Format_Source_Invariants(source, "format_directive_parse.source")
+	verb := Format_Verb(bits.WORD_8_MINIMUM)
+	defer func() { Format_Verb_Invariants(verb, "format_directive_parse.verb") }()
+	width := Format_Width(OUTPUT_SIZE_MINIMUM)
+	defer func() { Format_Width_Invariants(width, "format_directive_parse.width") }()
+	var zero_padding Format_Zero_Padding
+	defer func() {
+		Format_Zero_Padding_Invariants(zero_padding, "format_directive_parse.zero_padding")
+	}()
+	var alternate Format_Alternate
+	defer func() {
+		Format_Alternate_Invariants(alternate, "format_directive_parse.alternate")
+	}()
+	consumed := Format_Count(SOURCE_SIZE_MINIMUM)
+	defer func() { Format_Count_Invariants(consumed, "format_directive_parse.consumed") }()
 	if len(source) == SOURCE_SIZE_MINIMUM {
-		return Format_Verb(bits.WORD_8_MINIMUM),
-			Format_Width(OUTPUT_SIZE_MINIMUM), false, false,
-			Format_Count(SOURCE_SIZE_MINIMUM), FORMAT_STATUS_INVALID
+		return verb, width, zero_padding, alternate, consumed, FORMAT_STATUS_INVALID
 	}
 	position_index := SOURCE_SIZE_MINIMUM
 	flags := true
@@ -8279,9 +8272,10 @@ func format_directive_parse(source Format_Source) (
 			flags = false
 		}
 		if position_index == len(source) {
-			return Format_Verb(bits.WORD_8_MINIMUM),
-				Format_Width(OUTPUT_SIZE_MINIMUM), false, false,
-				Format_Count(SOURCE_SIZE_MINIMUM), FORMAT_STATUS_INVALID
+			verb = Format_Verb(bits.WORD_8_MINIMUM)
+			width = Format_Width(OUTPUT_SIZE_MINIMUM)
+			zero_padding, alternate = false, false
+			return verb, width, zero_padding, alternate, consumed, FORMAT_STATUS_INVALID
 		}
 	}
 	for position_index < len(source) {
@@ -8294,18 +8288,23 @@ func format_directive_parse(source Format_Source) (
 		}
 		width = width*strconv.DECIMAL_BASE + Format_Width(character-'0')
 		if width > Format_Width(OUTPUT_SIZE_MAXIMUM) {
-			return Format_Verb(bits.WORD_8_MINIMUM), Format_Width(OUTPUT_SIZE_MINIMUM),
-				false, false, Format_Count(SOURCE_SIZE_MINIMUM),
+			verb = Format_Verb(bits.WORD_8_MINIMUM)
+			width = Format_Width(OUTPUT_SIZE_MINIMUM)
+			zero_padding, alternate = false, false
+			return verb, width, zero_padding, alternate, consumed,
 				FORMAT_STATUS_LIMIT_EXCEEDED
 		}
 		position_index++
 	}
 	if position_index == len(source) {
-		return Format_Verb(bits.WORD_8_MINIMUM), Format_Width(OUTPUT_SIZE_MINIMUM),
-			false, false, Format_Count(SOURCE_SIZE_MINIMUM), FORMAT_STATUS_INVALID
+		verb = Format_Verb(bits.WORD_8_MINIMUM)
+		width = Format_Width(OUTPUT_SIZE_MINIMUM)
+		zero_padding, alternate = false, false
+		return verb, width, zero_padding, alternate, consumed, FORMAT_STATUS_INVALID
 	}
-	return Format_Verb(source[position_index]), width, zero_padding, alternate,
-		Format_Count(position_index + SOURCE_POSITION_INCREMENT), FORMAT_STATUS_OK
+	verb = Format_Verb(source[position_index])
+	consumed = Format_Count(position_index + SOURCE_POSITION_INCREMENT)
+	return verb, width, zero_padding, alternate, consumed, FORMAT_STATUS_OK
 }
 
 func generated_format_value(
@@ -8747,17 +8746,16 @@ func generated_append_text(
 func generated_text_value(
 	workspace_state Workspace_Pointer, start_value Generated_Start_Validated,
 ) (
-	result Value,
+	_ Value,
 	status Generated_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "generated_text_value.result")
-		Generated_Status_Invariants(status, "generated_text_value.status")
-	}()
+	defer func() { Generated_Status_Invariants(status, "generated_text_value.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "generated_text_value.workspace_state")
 	Generated_Start_Validated_Invariants(
 		start_value, "generated_text_value.start_value",
 	)
+	var result Value
+	defer func() { Value_Invariants(result, "generated_text_value.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	start := Generated_Count(start_value.Value.(Generated_Start_Validated_Value))
 	end := Generated_Count(
@@ -8766,20 +8764,20 @@ func generated_text_value(
 	if int(end-start) > OUTPUT_SIZE_MAXIMUM {
 		return Value{}, GENERATED_STATUS_LIMIT_EXCEEDED
 	}
-	return Value_Of_Text(Text(workspace.Generated[start:end])), GENERATED_STATUS_OK
+	result = Value_Of_Text(Text(workspace.Generated[start:end]))
+	return result, GENERATED_STATUS_OK
 }
 
 func builtin_escape(
 	workspace_state Workspace_Pointer, argument_values Arguments_Staged,
 	kind Escape_Kind,
-) (result Value, status Generated_Status) {
-	defer func() {
-		Value_Invariants(result, "builtin_escape.result")
-		Generated_Status_Invariants(status, "builtin_escape.status")
-	}()
+) (_ Value, status Generated_Status) {
+	defer func() { Generated_Status_Invariants(status, "builtin_escape.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "builtin_escape.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_escape.argument_values")
 	Escape_Kind_Invariants(kind, "builtin_escape.kind")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_escape.result") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	source, print_status := builtin_print(workspace, argument_values, false)
 	if print_status != GENERATED_STATUS_OK {
@@ -9017,13 +9015,12 @@ func url_query_safe(value_value utf8.Byte) (safe Boolean) {
 func builtin_order(
 	kind Builtin_Order_Kind,
 	argument_values Arguments_Staged,
-) (result Value, status Builtin_Value_Status) {
-	defer func() {
-		Value_Invariants(result, "builtin_order.result")
-		Builtin_Value_Status_Invariants(status, "builtin_order.status")
-	}()
+) (_ Value, status Builtin_Value_Status) {
+	defer func() { Builtin_Value_Status_Invariants(status, "builtin_order.status") }()
 	Builtin_Order_Kind_Invariants(kind, "builtin_order.kind")
 	Arguments_Staged_Invariants(argument_values, "builtin_order.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_order.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
@@ -9048,7 +9045,8 @@ func builtin_order(
 		)
 		matched = order >= ORDER_SAME
 	}
-	return Value_Of_Boolean(Boolean(matched)), BUILTIN_VALUE_STATUS_OK
+	result = Value_Of_Boolean(Boolean(matched))
+	return result, BUILTIN_VALUE_STATUS_OK
 }
 
 func builtin_order_kind(name Builtin_Order_Name_Validated) (kind Builtin_Order_Kind) {
@@ -9073,23 +9071,24 @@ func builtin_order_kind(name Builtin_Order_Name_Validated) (kind Builtin_Order_K
 func values_order(
 	left Value,
 	right Value,
-) (order Order, comparable Comparable) {
-	defer func() {
-		Order_Invariants(order, "values_order.order")
-		Comparable_Invariants(comparable, "values_order.comparable")
-	}()
+) (_ Order, comparable Comparable) {
+	defer func() { Comparable_Invariants(comparable, "values_order.comparable") }()
 	Value_Invariants(left, "values_order.left")
 	Value_Invariants(right, "values_order.right")
+	var order Order
+	defer func() { Order_Invariants(order, "values_order.order") }()
 	left_kind := Value_Kind(left.Kind.Value)
 	right_kind := Value_Kind(right.Kind.Value)
 	if left_kind == VALUE_INTEGER {
 		if right_kind == VALUE_UNSIGNED {
-			return integer_unsigned_order(left, right), true
+			order = integer_unsigned_order(left, right)
+			return order, true
 		}
 	}
 	if left_kind == VALUE_UNSIGNED {
 		if right_kind == VALUE_INTEGER {
-			return -integer_unsigned_order(right, left), true
+			order = -integer_unsigned_order(right, left)
+			return order, true
 		}
 	}
 	if left_kind != right_kind {
@@ -9097,24 +9096,28 @@ func values_order(
 	}
 	switch left_kind {
 	case VALUE_INTEGER:
-		return int64_order(
+		order = int64_order(
 			Integer(left.Scalar.Real),
 			Integer(right.Scalar.Real),
-		), true
+		)
+		return order, true
 	case VALUE_UNSIGNED:
-		return uint64_order(
+		order = uint64_order(
 			Unsigned(left.Scalar.Real),
 			Unsigned(right.Scalar.Real),
-		), true
+		)
+		return order, true
 	case VALUE_FLOAT:
-		return float64_order(
+		order, comparable = float64_order(
 			Float(left.Scalar.Real),
 			Float(right.Scalar.Real),
 		)
+		return order, comparable
 	case VALUE_TEXT:
-		return bytes_order(
+		order = bytes_order(
 			Text(left.Text.Value), Text(right.Text.Value),
-		), true
+		)
+		return order, true
 	default:
 		return ORDER_SAME, false
 	}
@@ -9166,13 +9169,12 @@ func uint64_order(left Unsigned, right Unsigned) (order Order) {
 func float64_order(
 	left Float,
 	right Float,
-) (order Order, comparable Comparable) {
-	defer func() {
-		Order_Invariants(order, "float64_order.order")
-		Comparable_Invariants(comparable, "float64_order.comparable")
-	}()
+) (_ Order, comparable Comparable) {
+	defer func() { Comparable_Invariants(comparable, "float64_order.comparable") }()
 	Float_Invariants(left, "float64_order.left")
 	Float_Invariants(right, "float64_order.right")
+	var order Order
+	defer func() { Order_Invariants(order, "float64_order.order") }()
 	if float64_nan(left) {
 		return ORDER_SAME, false
 	}
@@ -9190,9 +9192,11 @@ func float64_order(
 	right_negative := right_encoding&FLOAT_64_SIGN_MASK != bits.WORD_64_MINIMUM
 	if left_negative != right_negative {
 		if left_negative {
-			return ORDER_BEFORE, true
+			order = ORDER_BEFORE
+			return order, true
 		}
-		return ORDER_AFTER, true
+		order = ORDER_AFTER
+		return order, true
 	}
 	order = uint64_order(Unsigned(left), Unsigned(right))
 	if left_negative {
@@ -9231,14 +9235,13 @@ func bytes_order(left Text, right Text) (order Order) {
 }
 
 func builtin_index(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Value_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_index.result")
-		Builtin_Value_Status_Invariants(status, "builtin_index.status")
-	}()
+	defer func() { Builtin_Value_Status_Invariants(status, "builtin_index.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_index.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_index.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) < BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
@@ -9257,13 +9260,12 @@ func builtin_index(argument_values Arguments_Staged) (
 func value_index(
 	item Value,
 	index Value,
-) (result Value, status Index_Status) {
-	defer func() {
-		Value_Invariants(result, "value_index.result")
-		Index_Status_Invariants(status, "value_index.status")
-	}()
+) (_ Value, status Index_Status) {
+	defer func() { Index_Status_Invariants(status, "value_index.status") }()
 	Value_Invariants(item, "value_index.item")
 	Value_Invariants(index, "value_index.index")
+	var result Value
+	defer func() { Value_Invariants(result, "value_index.result") }()
 	switch Value_Kind(item.Kind.Value) {
 	case VALUE_TEXT:
 		position, valid := index_position(
@@ -9272,9 +9274,10 @@ func value_index(
 		if !valid {
 			return Value{}, INDEX_STATUS_INVALID
 		}
-		return Value_Of_Unsigned(Unsigned(
+		result = Value_Of_Unsigned(Unsigned(
 			Text(item.Text.Value)[position],
-		)), INDEX_STATUS_OK
+		))
+		return result, INDEX_STATUS_OK
 	case VALUE_SEQUENCE:
 		position, valid := index_position(
 			index, Collection_Limit(len(Values(item.Values.Value))),
@@ -9282,15 +9285,18 @@ func value_index(
 		if !valid {
 			return Value{}, INDEX_STATUS_INVALID
 		}
-		return Values(item.Values.Value)[position], INDEX_STATUS_OK
+		result = Values(item.Values.Value)[position]
+		return result, INDEX_STATUS_OK
 	case VALUE_MAP:
 		fields := Fields(item.Fields.Value)
 		for field_index := range fields {
 			if bool(values_equal(fields[field_index].Key.Data, index)) {
-				return fields[field_index].Value.Data, INDEX_STATUS_OK
+				result = fields[field_index].Value.Data
+				return result, INDEX_STATUS_OK
 			}
 		}
-		return Value_Nil(), INDEX_STATUS_OK
+		result = Value_Nil()
+		return result, INDEX_STATUS_OK
 	}
 	return Value{}, INDEX_STATUS_INVALID
 }
@@ -9298,13 +9304,12 @@ func value_index(
 func index_position(
 	index Value,
 	limit Collection_Limit,
-) (position Collection_Element_Index, valid Collection_Position_Validity) {
-	defer func() {
-		Collection_Element_Index_Invariants(position, "index_position.position")
-		Collection_Position_Validity_Invariants(valid, "index_position.valid")
-	}()
+) (_ Collection_Element_Index, valid Collection_Position_Validity) {
+	defer func() { Collection_Position_Validity_Invariants(valid, "index_position.valid") }()
 	Value_Invariants(index, "index_position.index")
 	Collection_Limit_Invariants(limit, "index_position.limit")
+	position := Collection_Element_Index(bytes.SLICE_SIZE_MINIMUM)
+	defer func() { Collection_Element_Index_Invariants(position, "index_position.position") }()
 	switch Value_Kind(index.Kind.Value) {
 	case VALUE_INTEGER:
 		value := Integer(index.Scalar.Real)
@@ -9314,26 +9319,27 @@ func index_position(
 		if value >= Integer(limit) {
 			return Collection_Element_Index(bytes.SLICE_SIZE_MINIMUM), false
 		}
-		return Collection_Element_Index(value), true
+		position = Collection_Element_Index(value)
+		return position, true
 	case VALUE_UNSIGNED:
 		value := Unsigned(index.Scalar.Real)
 		if value >= Unsigned(limit) {
 			return Collection_Element_Index(bytes.SLICE_SIZE_MINIMUM), false
 		}
-		return Collection_Element_Index(value), true
+		position = Collection_Element_Index(value)
+		return position, true
 	}
 	return Collection_Element_Index(bytes.SLICE_SIZE_MINIMUM), false
 }
 
 func builtin_slice(argument_values Arguments_Staged) (
-	result Value,
+	_ Value,
 	status Builtin_Value_Status,
 ) {
-	defer func() {
-		Value_Invariants(result, "builtin_slice.result")
-		Builtin_Value_Status_Invariants(status, "builtin_slice.status")
-	}()
+	defer func() { Builtin_Value_Status_Invariants(status, "builtin_slice.status") }()
 	Arguments_Staged_Invariants(argument_values, "builtin_slice.argument_values")
+	var result Value
+	defer func() { Value_Invariants(result, "builtin_slice.result") }()
 	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) < SLICE_ARGUMENT_COUNT_MINIMUM {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
@@ -9391,21 +9397,22 @@ func builtin_slice(argument_values Arguments_Staged) (
 	values := Values(item.Values.Value)
 	if len(arguments) == SLICE_ARGUMENT_COUNT_MAXIMUM {
 		maximum := indexes[SLICE_INDEX_CAPACITY]
-		return Value_Of_Sequence(values[start:end:maximum]), BUILTIN_VALUE_STATUS_OK
+		result = Value_Of_Sequence(values[start:end:maximum])
+		return result, BUILTIN_VALUE_STATUS_OK
 	}
-	return Value_Of_Sequence(values[start:end]), BUILTIN_VALUE_STATUS_OK
+	result = Value_Of_Sequence(values[start:end])
+	return result, BUILTIN_VALUE_STATUS_OK
 }
 
 func slice_position(
 	index Value,
 	limit Collection_Limit,
-) (position Collection_Position, valid Collection_Position_Validity) {
-	defer func() {
-		Collection_Position_Invariants(position, "slice_position.position")
-		Collection_Position_Validity_Invariants(valid, "slice_position.valid")
-	}()
+) (_ Collection_Position, valid Collection_Position_Validity) {
+	defer func() { Collection_Position_Validity_Invariants(valid, "slice_position.valid") }()
 	Value_Invariants(index, "slice_position.index")
 	Collection_Limit_Invariants(limit, "slice_position.limit")
+	position := Collection_Position(bytes.SLICE_SIZE_MINIMUM)
+	defer func() { Collection_Position_Invariants(position, "slice_position.position") }()
 	switch Value_Kind(index.Kind.Value) {
 	case VALUE_INTEGER:
 		value := Integer(index.Scalar.Real)
@@ -9415,13 +9422,15 @@ func slice_position(
 		if value > Integer(limit) {
 			return Collection_Position(bytes.SLICE_SIZE_MINIMUM), false
 		}
-		return Collection_Position(value), true
+		position = Collection_Position(value)
+		return position, true
 	case VALUE_UNSIGNED:
 		value := Unsigned(index.Scalar.Real)
 		if value > Unsigned(limit) {
 			return Collection_Position(bytes.SLICE_SIZE_MINIMUM), false
 		}
-		return Collection_Position(value), true
+		position = Collection_Position(value)
+		return position, true
 	}
 	return Collection_Position(bytes.SLICE_SIZE_MINIMUM), false
 }
@@ -9549,41 +9558,43 @@ func float64_equal(
 func output_value(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	value_state Value,
-) (written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_value.written")
-		Output_Status_Invariants(status, "output_value.status")
-	}()
+) (_ Output_Count_Staged, status Output_Status) {
+	defer func() { Output_Status_Invariants(status, "output_value.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_value.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_value.count_value")
 	Value_Invariants(value_state, "output_value.value_state")
+	written := count_value
+	defer func() { Output_Count_Staged_Invariants(written, "output_value.written") }()
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := Value(value_state)
 	kind := Value_Kind(value.Kind.Value)
 	if kind == VALUE_SEQUENCE {
-		return output_composite((Workspace_Pointer)(workspace_state), count_value, value)
+		written, status = output_composite(workspace, count_value, value)
+		return written, status
 	}
 	if kind == VALUE_OBJECT {
-		return output_composite((Workspace_Pointer)(workspace_state), count_value, value)
+		written, status = output_composite(workspace, count_value, value)
+		return written, status
 	}
 	if kind == VALUE_MAP {
-		return output_composite((Workspace_Pointer)(workspace_state), count_value, value)
+		written, status = output_composite(workspace, count_value, value)
+		return written, status
 	}
-	return output_scalar((Workspace_Pointer)(workspace_state), count_value, value)
+	written, status = output_scalar(workspace, count_value, value)
+	return written, status
 }
 
 func output_scalar(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	value_state Value,
-) (written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_scalar.written")
-		Output_Status_Invariants(status, "output_scalar.status")
-	}()
+) (_ Output_Count_Staged, status Output_Status) {
+	defer func() { Output_Status_Invariants(status, "output_scalar.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_scalar.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_scalar.count_value")
 	Value_Invariants(value_state, "output_scalar.value_state")
+	written := count_value
+	defer func() { Output_Count_Staged_Invariants(written, "output_scalar.written") }()
 	workspace := (Workspace_Pointer)(workspace_state)
-	count := count_value
 	value := Value(value_state)
 	kind := Value_Kind(value.Kind.Value)
 	aver.Always(
@@ -9600,58 +9611,61 @@ func output_scalar(
 	)
 	switch kind {
 	case VALUE_NIL:
-		return output_text(workspace, count, "<no value>")
+		written, status = output_text(workspace, written, "<no value>")
 	case VALUE_BOOLEAN:
 		if uint64(value.Scalar.Real) != bits.WORD_64_MINIMUM {
-			return output_text(workspace, count, "true")
+			written, status = output_text(workspace, written, "true")
+			return written, status
 		}
-		return output_text(workspace, count, "false")
+		written, status = output_text(workspace, written, "false")
 	case VALUE_INTEGER:
 		integer := Integer(int64(value.Scalar.Real))
 		count := strconv.Format_Integer_Into(
 			strconv.Buffer(workspace.Number), strconv.Signed_Integer(integer),
 			strconv.DECIMAL_BASE,
 		)
-		return output_bytes(workspace, count_value, Text(workspace.Number[:count]))
+		written, status = output_bytes(
+			workspace, count_value, Text(workspace.Number[:count]),
+		)
 	case VALUE_UNSIGNED:
 		unsigned := Unsigned(value.Scalar.Real)
 		count := strconv.Format_Unsigned_Integer_Into(
 			strconv.Buffer(workspace.Number), strconv.Unsigned_Integer(unsigned),
 			strconv.DECIMAL_BASE,
 		)
-		return output_bytes(workspace, count_value, Text(workspace.Number[:count]))
+		written, status = output_bytes(
+			workspace, count_value, Text(workspace.Number[:count]),
+		)
 	case VALUE_FLOAT:
-		return output_float_bits(
-			workspace, count, Float(value.Scalar.Real),
+		written, status = output_float_bits(
+			workspace, written, Float(value.Scalar.Real),
 		)
 	case VALUE_COMPLEX:
-		return output_complex_bits(
-			workspace, count, Float(value.Scalar.Real),
+		written, status = output_complex_bits(
+			workspace, written, Float(value.Scalar.Real),
 			Float(value.Scalar.Imaginary),
 		)
 	case VALUE_TEXT:
-		return output_bytes(
-			workspace, count, Text(value.Text.Value),
+		written, status = output_bytes(
+			workspace, written, Text(value.Text.Value),
 		)
 	case VALUE_FUNCTION:
-		return output_text(workspace, count, "<function>")
+		written, status = output_text(workspace, written, "<function>")
 	}
-	return count, OUTPUT_STATUS_OK
+	return written, status
 }
 
 func output_composite(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	value_state Value,
-) (written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_composite.written")
-		Output_Status_Invariants(status, "output_composite.status")
-	}()
+) (_ Output_Count_Staged, status Output_Status) {
+	defer func() { Output_Status_Invariants(status, "output_composite.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_composite.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite.count_value")
 	Value_Invariants(value_state, "output_composite.value_state")
 	workspace := (Workspace_Pointer)(workspace_state)
 	count := count_value
+	defer func() { Output_Count_Staged_Invariants(count, "output_composite.written") }()
 	workspace.Format[bytes.SLICE_SIZE_MINIMUM].Value =
 		Value_Format_Frame_Stored(Value_Format_Frame{Value: Value(value_state)})
 	depth := Frame_Index(FRAME_COUNT_INCREMENT)
@@ -9736,59 +9750,62 @@ func output_composite_count(value_state Value) (
 func output_composite_open(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged, value_state Value,
 ) (
-	written Output_Count_Staged, status Output_Status,
+	_ Output_Count_Staged, status Output_Status,
 ) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_composite_open.written")
-		Output_Status_Invariants(status, "output_composite_open.status")
-	}()
+	defer func() { Output_Status_Invariants(status, "output_composite_open.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_composite_open.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite_open.count_value")
 	Value_Invariants(value_state, "output_composite_open.value_state")
+	written := count_value
+	defer func() { Output_Count_Staged_Invariants(written, "output_composite_open.written") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	value := Value(value_state)
 	if Value_Kind(value.Kind.Value) == VALUE_MAP {
-		return output_text(workspace, count_value, "map[")
+		written, status = output_text(workspace, count_value, "map[")
+		return written, status
 	}
 	if Value_Kind(value.Kind.Value) == VALUE_OBJECT {
-		return output_text(workspace, count_value, "{")
+		written, status = output_text(workspace, count_value, "{")
+		return written, status
 	}
-	return output_text(workspace, count_value, "[")
+	written, status = output_text(workspace, count_value, "[")
+	return written, status
 }
 
 func output_composite_close(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged, value_state Value,
 ) (
-	written Output_Count_Staged, status Output_Status,
+	_ Output_Count_Staged, status Output_Status,
 ) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_composite_close.written")
-		Output_Status_Invariants(status, "output_composite_close.status")
-	}()
+	defer func() { Output_Status_Invariants(status, "output_composite_close.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_composite_close.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite_close.count_value")
 	Value_Invariants(value_state, "output_composite_close.value_state")
+	written := count_value
+	defer func() { Output_Count_Staged_Invariants(written, "output_composite_close.written") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	value := Value(value_state)
 	if Value_Kind(value.Kind.Value) == VALUE_OBJECT {
-		return output_text(workspace, count_value, "}")
+		written, status = output_text(workspace, count_value, "}")
+		return written, status
 	}
-	return output_text(workspace, count_value, "]")
+	written, status = output_text(workspace, count_value, "]")
+	return written, status
 }
 
 func output_composite_child(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	frame_state Value_Format_Frame_Storage_Pointer,
-) (child Value, written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Value_Invariants(child, "output_composite_child.child")
-		Output_Count_Staged_Invariants(written, "output_composite_child.written")
-		Output_Status_Invariants(status, "output_composite_child.status")
-	}()
+) (_ Value, _ Output_Count_Staged, status Output_Status) {
+	defer func() { Output_Status_Invariants(status, "output_composite_child.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_composite_child.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite_child.count_value")
 	Value_Format_Frame_Storage_Pointer_Invariants(
 		frame_state, "output_composite_child.frame_state")
+	var child Value
+	defer func() { Value_Invariants(child, "output_composite_child.child") }()
+	written := count_value
+	defer func() { Output_Count_Staged_Invariants(written, "output_composite_child.written") }()
 
 	workspace := (Workspace_Pointer)(workspace_state)
 	frame := &frame_state.Value
@@ -9801,10 +9818,11 @@ func output_composite_child(
 	)
 	switch kind {
 	case VALUE_SEQUENCE:
-		return Values(value.Values.Value)[index], count_value, OUTPUT_STATUS_OK
+		child = Values(value.Values.Value)[index]
+		return child, written, OUTPUT_STATUS_OK
 	case VALUE_OBJECT:
-		return Fields(value.Fields.Value)[index].Value.Data,
-			count_value, OUTPUT_STATUS_OK
+		child = Fields(value.Fields.Value)[index].Value.Data
+		return child, written, OUTPUT_STATUS_OK
 	case VALUE_MAP:
 		key, item, selected := range_map_next(
 			value, Prior_Map_Entry_Index(frame.Map_Entry_Index),
@@ -9812,69 +9830,71 @@ func output_composite_child(
 		)
 		frame.Map_Entry_Index = selected
 		frame.Map_Selected = true
-		count, write_status := output_scalar(workspace, count_value, key)
+		var write_status Output_Status
+		written, write_status = output_scalar(workspace, count_value, key)
 		if write_status != OUTPUT_STATUS_OK {
-			return Value{}, count, OUTPUT_STATUS_TOO_LARGE
+			return child, written, OUTPUT_STATUS_TOO_LARGE
 		}
-		count, write_status = output_text(workspace, count, ":")
+		written, write_status = output_text(workspace, written, ":")
 		if write_status != OUTPUT_STATUS_OK {
-			return Value{}, count, OUTPUT_STATUS_TOO_LARGE
+			return child, written, OUTPUT_STATUS_TOO_LARGE
 		}
-		return item, count, OUTPUT_STATUS_OK
+		child = item
+		return child, written, OUTPUT_STATUS_OK
 	}
-	return Value{}, count_value, OUTPUT_STATUS_OK
+	return child, written, OUTPUT_STATUS_OK
 }
 
 func output_complex_bits(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	real Float,
 	imaginary Float,
-) (written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_complex_bits.written")
-		Output_Status_Invariants(status, "output_complex_bits.status")
-	}()
+) (_ Output_Count_Staged, status Output_Status) {
+	defer func() { Output_Status_Invariants(status, "output_complex_bits.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_complex_bits.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_complex_bits.count_value")
 	Float_Invariants(real, "output_complex_bits.real")
 	Float_Invariants(imaginary, "output_complex_bits.imaginary")
+	written := count_value
+	defer func() { Output_Count_Staged_Invariants(written, "output_complex_bits.written") }()
 	workspace := (Workspace_Pointer)(workspace_state)
-	count, write_status := output_text(workspace, count_value, "(")
+	var write_status Output_Status
+	written, write_status = output_text(workspace, count_value, "(")
 	if write_status != OUTPUT_STATUS_OK {
-		return count, OUTPUT_STATUS_TOO_LARGE
+		return written, OUTPUT_STATUS_TOO_LARGE
 	}
-	count, write_status = output_float_bits(workspace, count, real)
+	written, write_status = output_float_bits(workspace, written, real)
 	if write_status != OUTPUT_STATUS_OK {
-		return count, OUTPUT_STATUS_TOO_LARGE
+		return written, OUTPUT_STATUS_TOO_LARGE
 	}
 	if uint64(imaginary)&FLOAT_64_SIGN_MASK == bits.WORD_64_MINIMUM {
-		count, write_status = output_text(workspace, count, "+")
+		written, write_status = output_text(workspace, written, "+")
 		if write_status != OUTPUT_STATUS_OK {
-			return count, OUTPUT_STATUS_TOO_LARGE
+			return written, OUTPUT_STATUS_TOO_LARGE
 		}
 	}
-	count, write_status = output_float_bits(workspace, count, imaginary)
+	written, write_status = output_float_bits(workspace, written, imaginary)
 	if write_status != OUTPUT_STATUS_OK {
-		return count, OUTPUT_STATUS_TOO_LARGE
+		return written, OUTPUT_STATUS_TOO_LARGE
 	}
-	return output_text(workspace, count, "i)")
+	written, status = output_text(workspace, written, "i)")
+	return written, status
 }
 
 func output_float_bits(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	encoding Float,
-) (written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_float_bits.written")
-		Output_Status_Invariants(status, "output_float_bits.status")
-	}()
+) (_ Output_Count_Staged, status Output_Status) {
+	defer func() { Output_Status_Invariants(status, "output_float_bits.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_float_bits.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_float_bits.count_value")
 	Float_Invariants(encoding, "output_float_bits.encoding")
 	workspace := (Workspace_Pointer)(workspace_state)
 	count := count_value
+	defer func() { Output_Count_Staged_Invariants(count, "output_float_bits.written") }()
 	if float64_nan(encoding) {
-		return output_text(workspace, count, "NaN")
+		count, status = output_text(workspace, count, "NaN")
+		return count, status
 	}
 	float_value := &workspace.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX]
 	float_text := (*big.Float_Text_Workspace)(&workspace.Float_Text)
@@ -9902,77 +9922,32 @@ func output_float_bits(
 		text_status == big.STATUS_OK,
 		"Validated shortest binary64 formatting has no other failure.",
 	)
-	return Output_Count_Staged{
-			Value: count.Value.(Output_Count_Staged_Value) +
-				Output_Count_Staged_Value(formatted_count),
-		},
-
-		OUTPUT_STATUS_OK
+	count = Output_Count_Staged{
+		Value: count.Value.(Output_Count_Staged_Value) +
+			Output_Count_Staged_Value(formatted_count),
+	}
+	return count, OUTPUT_STATUS_OK
 }
 
 func output_bytes(
 	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	source Text,
-) (written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_bytes.written")
-		Output_Status_Invariants(status, "output_bytes.status")
-	}()
+) (_ Output_Count_Staged, status Output_Status) {
+	defer func() { Output_Status_Invariants(status, "output_bytes.status") }()
 	Workspace_Pointer_Invariants(workspace_state, "output_bytes.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_bytes.count_value")
 	Text_Invariants(source, "output_bytes.source")
+	written := count_value
+	defer func() { Output_Count_Staged_Invariants(written, "output_bytes.written") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	count := int(count_value.Value.(Output_Count_Staged_Value))
 	if count > len(workspace.Output)-len(source) {
 		return count_value, OUTPUT_STATUS_TOO_LARGE
 	}
 	copy(workspace.Output[count:], source)
-	return Output_Count_Staged{
-			Value: count_value.Value.(Output_Count_Staged_Value) +
-				Output_Count_Staged_Value(len(source)),
-		},
-
-		OUTPUT_STATUS_OK
-}
-
-func output_text(
-	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
-	source Output_Text,
-) (written Output_Count_Staged, status Output_Status) {
-	defer func() {
-		Output_Count_Staged_Invariants(written, "output_text.written")
-		Output_Status_Invariants(status, "output_text.status")
-	}()
-	Workspace_Pointer_Invariants(workspace_state, "output_text.workspace_state")
-	Output_Count_Staged_Invariants(count_value, "output_text.count_value")
-	Output_Text_Invariants(source, "output_text.source")
-	workspace := (Workspace_Pointer)(workspace_state)
-	count := int(count_value.Value.(Output_Count_Staged_Value))
-	if count > len(workspace.Output)-len(source) {
-		return count_value, OUTPUT_STATUS_TOO_LARGE
+	written = Output_Count_Staged{
+		Value: count_value.Value.(Output_Count_Staged_Value) +
+			Output_Count_Staged_Value(len(source)),
 	}
-	copy(workspace.Output[count:], source)
-	return Output_Count_Staged{
-			Value: count_value.Value.(Output_Count_Staged_Value) +
-				Output_Count_Staged_Value(len(source)),
-		},
-
-		OUTPUT_STATUS_OK
-}
-
-func bytes_equal(left Text, right Text) (
-	equal Bytes_Equality,
-) {
-	defer func() { Bytes_Equality_Invariants(equal, "bytes_equal.equal") }()
-	Text_Invariants(left, "bytes_equal.left")
-	Text_Invariants(right, "bytes_equal.right")
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return written, OUTPUT_STATUS_OK
 }

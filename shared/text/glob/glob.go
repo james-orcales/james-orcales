@@ -2379,44 +2379,45 @@ func compile_control_initialize(workspace_state Compile_Workspace_Pointer) {
 
 // Compile validates and emits one NFA into caller workspace.
 func Compile(input Compile_Input) (
-	pattern Pattern,
-	diagnostic Diagnostic,
+	_ Pattern,
+	_ Diagnostic,
 	status Compile_Status,
 ) {
-	defer func() {
-		Pattern_Invariants(pattern, "Compile.pattern")
-		Diagnostic_Invariants(diagnostic, "Compile.diagnostic")
-		Compile_Status_Invariants(status, "Compile.status")
-	}()
+	defer func() { Compile_Status_Invariants(status, "Compile.status") }()
 	Compile_Input_Invariants(input, "Compile.input")
+	var pattern Pattern
+	defer func() { Pattern_Invariants(pattern, "Compile.pattern") }()
+	var diagnostic Diagnostic
+	defer func() { Diagnostic_Invariants(diagnostic, "Compile.diagnostic") }()
 	if len(input.Source) > PATTERN_SIZE_MAXIMUM {
-		return Pattern{}, Diagnostic{Code: STATUS_INPUT_INVALID},
-			STATUS_INPUT_INVALID
+		diagnostic = Diagnostic{Code: STATUS_INPUT_INVALID}
+		return pattern, diagnostic, STATUS_INPUT_INVALID
 	}
 	if len(input.Separators) > SEPARATOR_COUNT_MAXIMUM {
-		return Pattern{}, Diagnostic{Code: STATUS_INPUT_INVALID},
-			STATUS_INPUT_INVALID
+		diagnostic = Diagnostic{Code: STATUS_INPUT_INVALID}
+		return pattern, diagnostic, STATUS_INPUT_INVALID
 	}
 	workspace, workspace_valid := input.Workspace.State.(Compile_Workspace_Pointer)
 	if !workspace_valid {
-		return Pattern{}, Diagnostic{Code: STATUS_WORKSPACE_INVALID},
-			STATUS_WORKSPACE_INVALID
+		diagnostic = Diagnostic{Code: STATUS_WORKSPACE_INVALID}
+		return pattern, diagnostic, STATUS_WORKSPACE_INVALID
 	}
 	Compile_Workspace_Pointer_Invariants(workspace, "Compile.workspace")
 	compile_control_initialize(workspace)
 	for index := range input.Separators {
 		if !bool(utf8.Valid_Character(utf8.Character(input.Separators[index]))) {
-			return Pattern{}, Diagnostic{Code: STATUS_INPUT_INVALID},
-				STATUS_INPUT_INVALID
+			diagnostic = Diagnostic{Code: STATUS_INPUT_INVALID}
+			return pattern, diagnostic, STATUS_INPUT_INVALID
 		}
 		workspace.Separators[index] = Separator(input.Separators[index])
 	}
 	*workspace.Control.Separator_Count.(*uint16) = uint16(len(input.Separators))
 	root, position, parse_status := pattern_parse(workspace, Pattern_Source(input.Source))
 	if parse_status != STATUS_OK {
-		return Pattern{}, Diagnostic{
+		diagnostic = Diagnostic{
 			Code: Compile_Status(parse_status), Position: Diagnostic_Position(position),
-		}, Compile_Status(parse_status)
+		}
+		return pattern, diagnostic, Compile_Status(parse_status)
 	}
 	start := pattern_compile(workspace, root)
 	*workspace.Pattern_Control.Start.(*uint16) = uint16(start)
@@ -2425,16 +2426,15 @@ func Compile(input Compile_Input) (
 	*workspace.Pattern_Control.Separator_Count.(*uint16) =
 		*workspace.Control.Separator_Count.(*uint16)
 	pattern = Pattern{Workspace: workspace, Control: workspace.Pattern_Control}
-	return pattern, Diagnostic{}, STATUS_OK
+	return pattern, diagnostic, STATUS_OK
 }
 
 // Match executes compiled NFA against one bounded candidate.
-func Match(input Match_Input) (matched Matched, status Match_Status) {
-	defer func() {
-		Matched_Invariants(matched, "Match.matched")
-		Match_Status_Invariants(status, "Match.status")
-	}()
+func Match(input Match_Input) (_ Matched, status Match_Status) {
+	defer func() { Match_Status_Invariants(status, "Match.status") }()
 	Match_Input_Invariants(input, "Match.input")
+	matched := Matched(false)
+	defer func() { Matched_Invariants(matched, "Match.matched") }()
 	if len(input.Text) > TEXT_SIZE_MAXIMUM {
 		return false, STATUS_INPUT_INVALID
 	}
@@ -2476,25 +2476,25 @@ func Match(input Match_Input) (matched Matched, status Match_Status) {
 	for index := bytes.SLICE_SIZE_MINIMUM; index < int(current_count); index++ {
 		kind := compiled.Instruction_Kinds[current[index]]
 		if kind == INSTRUCTION_MATCH {
-			return true, STATUS_OK
+			matched = true
+			return matched, STATUS_OK
 		}
 	}
-	return false, STATUS_OK
+	return matched, STATUS_OK
 }
 
 // Quote_Meta_Into escapes metacharacters into caller destination atomically.
 func Quote_Meta_Into(destination Output, source Pattern_Source_Unvalidated) (
-	count Output_Count,
+	_ Output_Count,
 	status Quote_Status,
 ) {
-	defer func() {
-		Output_Count_Invariants(count, "Quote_Meta_Into.count")
-		Quote_Status_Invariants(status, "Quote_Meta_Into.status")
-	}()
+	defer func() { Quote_Status_Invariants(status, "Quote_Meta_Into.status") }()
 	Output_Invariants(destination, "Quote_Meta_Into.destination")
 	Pattern_Source_Unvalidated_Invariants(source, "Quote_Meta_Into.source")
+	count := Output_Count(bytes.SLICE_SIZE_MINIMUM)
+	defer func() { Output_Count_Invariants(count, "Quote_Meta_Into.count") }()
 	if len(source) > PATTERN_SIZE_MAXIMUM {
-		return Output_Count(bytes.SLICE_SIZE_MINIMUM), STATUS_INPUT_INVALID
+		return count, STATUS_INPUT_INVALID
 	}
 	required_count := len(source)
 	for index := range source {
@@ -2503,7 +2503,7 @@ func Quote_Meta_Into(destination Output, source Pattern_Source_Unvalidated) (
 		}
 	}
 	if len(destination) < required_count {
-		return Output_Count(bytes.SLICE_SIZE_MINIMUM), STATUS_OUTPUT_TOO_SMALL
+		return count, STATUS_OUTPUT_TOO_SMALL
 	}
 	position := bytes.SLICE_SIZE_MINIMUM
 	for index := range source {
@@ -2514,7 +2514,8 @@ func Quote_Meta_Into(destination Output, source Pattern_Source_Unvalidated) (
 		destination[position] = source[index]
 		position++
 	}
-	return Output_Count(position), STATUS_OK
+	count = Output_Count(position)
+	return count, STATUS_OK
 }
 
 // Special reports whether byte needs glob quoting.
@@ -2533,14 +2534,14 @@ func Special(character Character) (special Special_Character) {
 func pattern_parse(
 	workspace_state Compile_Workspace_Pointer,
 	source Pattern_Source,
-) (root Root_Node_Reference, position Pattern_Position, status Syntax_Status) {
-	defer func() {
-		Root_Node_Reference_Invariants(root, "pattern_parse.root")
-		Pattern_Position_Invariants(position, "pattern_parse.position")
-		Syntax_Status_Invariants(status, "pattern_parse.status")
-	}()
+) (_ Root_Node_Reference, _ Pattern_Position, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "pattern_parse.status") }()
 	Compile_Workspace_Pointer_Invariants(workspace_state, "pattern_parse.workspace_state")
 	Pattern_Source_Invariants(source, "pattern_parse.source")
+	var root Root_Node_Reference
+	defer func() { Root_Node_Reference_Invariants(root, "pattern_parse.root") }()
+	position := Pattern_Position(PATTERN_SIZE_MINIMUM)
+	defer func() { Pattern_Position_Invariants(position, "pattern_parse.position") }()
 	workspace := (*Compile_Workspace)(workspace_state)
 	root_reference, status := node_create(workspace, NODE_SEQUENCE)
 	root = Root_Node_Reference(root_reference)
@@ -2607,15 +2608,14 @@ func star_parse(
 	source Nonempty_Pattern_Source,
 	parent Container_Node_Reference,
 	position Pattern_Index,
-) (end Nonzero_Pattern_Position, status Syntax_Status) {
-	defer func() {
-		Nonzero_Pattern_Position_Invariants(end, "star_parse.end")
-		Syntax_Status_Invariants(status, "star_parse.status")
-	}()
+) (_ Nonzero_Pattern_Position, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "star_parse.status") }()
 	Compile_Workspace_Pointer_Invariants(workspace, "star_parse.workspace")
 	Nonempty_Pattern_Source_Invariants(source, "star_parse.source")
 	Container_Node_Reference_Invariants(parent, "star_parse.parent")
 	Pattern_Index_Invariants(position, "star_parse.position")
+	end := Nonzero_Pattern_Position(PATTERN_SIZE_NONEMPTY_MINIMUM)
+	defer func() { Nonzero_Pattern_Position_Invariants(end, "star_parse.end") }()
 	cursor := Pattern_Position(position) + Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM)
 	kind := ATOM_STAR
 	if cursor < Pattern_Position(len(source)) {
@@ -2627,7 +2627,8 @@ func star_parse(
 	status = atom_append(
 		workspace, parent, kind, ATOM_CHARACTER_EMPTY,
 	)
-	return Nonzero_Pattern_Position(cursor), status
+	end = Nonzero_Pattern_Position(cursor)
+	return end, status
 }
 
 func group_open(
@@ -2635,35 +2636,44 @@ func group_open(
 	current Container_Node_Reference,
 	depth Parser_Depth,
 ) (
-	updated_current Opened_Sequence_Reference,
-	updated_depth Opened_Parser_Depth,
+	_ Opened_Sequence_Reference,
+	_ Opened_Parser_Depth,
 	status Syntax_Status,
 ) {
+	defer func() { Syntax_Status_Invariants(status, "group_open.status") }()
+	Compile_Workspace_Pointer_Invariants(workspace_state, "group_open.workspace_state")
+	Container_Node_Reference_Invariants(current, "group_open.current")
+	Parser_Depth_Invariants(depth, "group_open.depth")
+	var updated_current Opened_Sequence_Reference
 	defer func() {
 		Opened_Sequence_Reference_Invariants(
 			updated_current, "group_open.updated_current",
 		)
-		Opened_Parser_Depth_Invariants(updated_depth, "group_open.updated_depth")
-		Syntax_Status_Invariants(status, "group_open.status")
 	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "group_open.workspace_state")
-	Container_Node_Reference_Invariants(current, "group_open.current")
-	Parser_Depth_Invariants(depth, "group_open.depth")
+	var updated_depth Opened_Parser_Depth
+	defer func() {
+		Opened_Parser_Depth_Invariants(updated_depth, "group_open.updated_depth")
+	}()
 	workspace := (*Compile_Workspace)(workspace_state)
 	if depth == Parser_Depth(len(workspace.Parser_Frames)) {
-		return Opened_Sequence_Reference(current), Opened_Parser_Depth(depth),
-			STATUS_SYNTAX_INVALID
+		updated_current = Opened_Sequence_Reference(current)
+		updated_depth = Opened_Parser_Depth(depth)
+		return updated_current, updated_depth, STATUS_SYNTAX_INVALID
 	}
 	alternative, status := node_create(workspace, NODE_ALTERNATIVE)
 	if status != STATUS_OK {
-		return Opened_Sequence_Reference(current), Opened_Parser_Depth(depth), status
+		updated_current = Opened_Sequence_Reference(current)
+		updated_depth = Opened_Parser_Depth(depth)
+		return updated_current, updated_depth, status
 	}
 	node_append_child(
 		workspace, Child_Parent_Reference(current), Child_Node_Reference(alternative),
 	)
 	sequence, status := node_create(workspace, NODE_SEQUENCE)
 	if status != STATUS_OK {
-		return Opened_Sequence_Reference(current), Opened_Parser_Depth(depth), status
+		updated_current = Opened_Sequence_Reference(current)
+		updated_depth = Opened_Parser_Depth(depth)
+		return updated_current, updated_depth, status
 	}
 	node_append_child(
 		workspace, Child_Parent_Reference(alternative), Child_Node_Reference(sequence),
@@ -2673,29 +2683,32 @@ func group_open(
 		Alternative: Parser_Alternative_Reference(alternative),
 		Sequence:    Opened_Sequence_Reference(sequence),
 	}}
-	return Opened_Sequence_Reference(sequence),
-		Opened_Parser_Depth(depth + utf8.CHARACTER_SIZE_MINIMUM), STATUS_OK
+	updated_current = Opened_Sequence_Reference(sequence)
+	updated_depth = Opened_Parser_Depth(depth + utf8.CHARACTER_SIZE_MINIMUM)
+	return updated_current, updated_depth, STATUS_OK
 }
 
 func group_branch(
 	workspace_state Compile_Workspace_Pointer,
 	current Nested_Sequence_Reference,
 	depth Open_Parser_Depth,
-) (updated_current Branch_Sequence_Reference, status Syntax_Status) {
+) (_ Branch_Sequence_Reference, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "group_branch.status") }()
+	Compile_Workspace_Pointer_Invariants(workspace_state, "group_branch.workspace_state")
+	Nested_Sequence_Reference_Invariants(current, "group_branch.current")
+	Open_Parser_Depth_Invariants(depth, "group_branch.depth")
+	var updated_current Branch_Sequence_Reference
 	defer func() {
 		Branch_Sequence_Reference_Invariants(
 			updated_current, "group_branch.updated_current",
 		)
-		Syntax_Status_Invariants(status, "group_branch.status")
 	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "group_branch.workspace_state")
-	Nested_Sequence_Reference_Invariants(current, "group_branch.current")
-	Open_Parser_Depth_Invariants(depth, "group_branch.depth")
 	workspace := (*Compile_Workspace)(workspace_state)
 	frame := &workspace.Parser_Frames[int(depth)-utf8.CHARACTER_SIZE_MINIMUM]
 	sequence, status := node_create(workspace, NODE_SEQUENCE)
 	if status != STATUS_OK {
-		return Branch_Sequence_Reference(current), status
+		updated_current = Branch_Sequence_Reference(current)
+		return updated_current, status
 	}
 	node_append_child(
 		workspace,
@@ -2703,24 +2716,27 @@ func group_branch(
 		Child_Node_Reference(sequence),
 	)
 	frame.References.Sequence = Opened_Sequence_Reference(sequence)
-	return Branch_Sequence_Reference(sequence), STATUS_OK
+	updated_current = Branch_Sequence_Reference(sequence)
+	return updated_current, STATUS_OK
 }
 
 func group_close(
 	workspace_state Compile_Workspace_Pointer,
 	depth Open_Parser_Depth,
-) (current Suspended_Sequence_Reference, updated_depth Closed_Parser_Depth) {
+) (_ Suspended_Sequence_Reference, updated_depth Closed_Parser_Depth) {
 	defer func() {
-		Suspended_Sequence_Reference_Invariants(current, "group_close.current")
 		Closed_Parser_Depth_Invariants(updated_depth, "group_close.updated_depth")
 	}()
 	Compile_Workspace_Pointer_Invariants(workspace_state, "group_close.workspace_state")
 	Open_Parser_Depth_Invariants(depth, "group_close.depth")
+	var current Suspended_Sequence_Reference
+	defer func() {
+		Suspended_Sequence_Reference_Invariants(current, "group_close.current")
+	}()
 	workspace := (*Compile_Workspace)(workspace_state)
 	depth--
-	return Suspended_Sequence_Reference(
-		workspace.Parser_Frames[depth].References.Parent,
-	), Closed_Parser_Depth(depth)
+	current = Suspended_Sequence_Reference(workspace.Parser_Frames[depth].References.Parent)
+	return current, Closed_Parser_Depth(depth)
 }
 
 func literal_parse(
@@ -2728,28 +2744,30 @@ func literal_parse(
 	source Nonempty_Pattern_Source,
 	parent Container_Node_Reference,
 	position Pattern_Index,
-) (updated_position Nonzero_Pattern_Position, status Syntax_Status) {
-	defer func() {
-		Nonzero_Pattern_Position_Invariants(
-			updated_position, "literal_parse.updated_position",
-		)
-		Syntax_Status_Invariants(status, "literal_parse.status")
-	}()
+) (_ Nonzero_Pattern_Position, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "literal_parse.status") }()
 	Compile_Workspace_Pointer_Invariants(workspace_state, "literal_parse.workspace_state")
 	Nonempty_Pattern_Source_Invariants(source, "literal_parse.source")
 	Container_Node_Reference_Invariants(parent, "literal_parse.parent")
 	Pattern_Index_Invariants(position, "literal_parse.position")
+	var updated_position Nonzero_Pattern_Position
+	defer func() {
+		Nonzero_Pattern_Position_Invariants(
+			updated_position, "literal_parse.updated_position",
+		)
+	}()
 	workspace := (*Compile_Workspace)(workspace_state)
 	if source[position] == '\\' {
 		position++
 		if position == Pattern_Index(len(source)) {
-			return Nonzero_Pattern_Position(position), STATUS_SYNTAX_INVALID
+			updated_position = Nonzero_Pattern_Position(position)
+			return updated_position, STATUS_SYNTAX_INVALID
 		}
 	}
 	character, size := utf8.Decode_Character(utf8.Bytes(source[position:]))
 	position += Pattern_Index(size)
-	return Nonzero_Pattern_Position(position),
-		atom_append(workspace, parent, ATOM_LITERAL, character)
+	updated_position = Nonzero_Pattern_Position(position)
+	return updated_position, atom_append(workspace, parent, ATOM_LITERAL, character)
 }
 
 func class_parse(
@@ -2757,33 +2775,33 @@ func class_parse(
 	source Nonempty_Pattern_Source,
 	parent Container_Node_Reference,
 	position Pattern_Index,
-) (end Nonzero_Pattern_Position, status Syntax_Status) {
-	defer func() {
-		Nonzero_Pattern_Position_Invariants(end, "class_parse.end")
-		Syntax_Status_Invariants(status, "class_parse.status")
-	}()
+) (_ Nonzero_Pattern_Position, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "class_parse.status") }()
 	Compile_Workspace_Pointer_Invariants(workspace, "class_parse.workspace")
 	Nonempty_Pattern_Source_Invariants(source, "class_parse.source")
 	Container_Node_Reference_Invariants(parent, "class_parse.parent")
 	Pattern_Index_Invariants(position, "class_parse.position")
-	size := Pattern_Position(len(source))
+	var end Nonzero_Pattern_Position
+	defer func() { Nonzero_Pattern_Position_Invariants(end, "class_parse.end") }()
 	cursor := Pattern_Position(position) + Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM)
-	negated := false
-	if cursor < size {
-		negated = source[cursor] == '!'
-	}
-	if negated {
-		cursor++
+	negated_value := uint16(CONTROL_FALSE)
+	if cursor < Pattern_Position(len(source)) {
+		if source[cursor] == '!' {
+			negated_value = uint16(CONTROL_TRUE)
+			cursor++
+		}
 	}
 	range_index := *workspace.Control.Range_Count.(*uint16)
 	range_count := uint16(bytes.SLICE_SIZE_MINIMUM)
 	for status == STATUS_OK {
-		if cursor == size {
-			return Nonzero_Pattern_Position(cursor), STATUS_SYNTAX_INVALID
+		if cursor == Pattern_Position(len(source)) {
+			status = STATUS_SYNTAX_INVALID
+			break
 		}
 		if source[cursor] == ']' {
 			if range_count == bytes.SLICE_SIZE_MINIMUM {
-				return Nonzero_Pattern_Position(cursor), STATUS_SYNTAX_INVALID
+				status = STATUS_SYNTAX_INVALID
+				break
 			}
 			cursor++
 			break
@@ -2795,10 +2813,11 @@ func class_parse(
 		)
 		cursor = Pattern_Position(class_end)
 		if status != STATUS_OK {
-			return Nonzero_Pattern_Position(cursor), status
+			break
 		}
 		high := low
-		if cursor+Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM) < size {
+		if cursor+Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM) <
+			Pattern_Position(len(source)) {
 			if source[cursor] == '-' {
 				if source[cursor+utf8.CHARACTER_SIZE_MINIMUM] != ']' {
 					cursor++
@@ -2811,21 +2830,20 @@ func class_parse(
 			}
 		}
 		if status != STATUS_OK {
-			return Nonzero_Pattern_Position(cursor), status
+			break
 		}
 		if high < low {
-			return Nonzero_Pattern_Position(cursor), STATUS_SYNTAX_INVALID
+			status = STATUS_SYNTAX_INVALID
+			break
 		}
 		range_append(workspace, low, high)
 		range_count++
 	}
-	negated_value := uint16(CONTROL_FALSE)
-	if negated {
-		negated_value = uint16(CONTROL_TRUE)
-	}
-	return Nonzero_Pattern_Position(cursor), class_append(
-		workspace, parent, &range_index, &range_count, &negated_value,
+	end = Nonzero_Pattern_Position(cursor)
+	status = class_append(
+		workspace, parent, &range_index, &range_count, &negated_value, status,
 	)
+	return end, status
 }
 
 func class_append(
@@ -2834,6 +2852,7 @@ func class_append(
 	range_index Node_Class_Range_Index_Storage,
 	range_count Node_Class_Range_Count_Storage,
 	negated Node_Class_Negated_Storage,
+	prior Syntax_Status,
 ) (status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "class_append.status") }()
 	Compile_Workspace_Pointer_Invariants(workspace, "class_append.workspace")
@@ -2841,6 +2860,10 @@ func class_append(
 	Node_Class_Range_Index_Storage_Invariants(range_index, "class_append.range_index")
 	Node_Class_Range_Count_Storage_Invariants(range_count, "class_append.range_count")
 	Node_Class_Negated_Storage_Invariants(negated, "class_append.negated")
+	Syntax_Status_Invariants(prior, "class_append.prior")
+	if prior != STATUS_OK {
+		return prior
+	}
 	node, create_status := node_create(workspace, NODE_CLASS)
 	if create_status != STATUS_OK {
 		return create_status
@@ -2859,30 +2882,34 @@ func class_character(
 	source Class_Pattern_Source,
 	position_value Class_Character_Index,
 ) (
-	character utf8.Decoded_Character,
-	position Class_Character_End,
+	_ utf8.Decoded_Character,
+	_ Class_Character_End,
 	status Syntax_Status,
 ) {
-	defer func() {
-		utf8.Decoded_Character_Invariants(character, "class_character.character")
-		Class_Character_End_Invariants(position, "class_character.position")
-		Syntax_Status_Invariants(status, "class_character.status")
-	}()
+	defer func() { Syntax_Status_Invariants(status, "class_character.status") }()
 	Class_Pattern_Source_Invariants(source, "class_character.source")
 	Class_Character_Index_Invariants(
 		position_value, "class_character.position_value",
 	)
+	character := utf8.Decoded_Character(utf8.DECODED_CHARACTER_MINIMUM)
+	defer func() {
+		utf8.Decoded_Character_Invariants(character, "class_character.character")
+	}()
+	var position Class_Character_End
+	defer func() {
+		Class_Character_End_Invariants(position, "class_character.position")
+	}()
 	position_index := Pattern_Position(position_value)
 	if source[position_index] == '\\' {
 		position_index++
 		if position_index == Pattern_Position(len(source)) {
-			return utf8.Decoded_Character(utf8.DECODED_CHARACTER_MINIMUM),
-				Class_Character_End(position_index), STATUS_SYNTAX_INVALID
+			position = Class_Character_End(position_index)
+			return character, position, STATUS_SYNTAX_INVALID
 		}
 	}
 	character, size := utf8.Decode_Character(utf8.Bytes(source[position_index:]))
-	return character, Class_Character_End(position_index + Pattern_Position(size)),
-		STATUS_OK
+	position = Class_Character_End(position_index + Pattern_Position(size))
+	return character, position, STATUS_OK
 }
 
 func atom_append(
@@ -2912,13 +2939,12 @@ func atom_append(
 func node_create(
 	workspace_state Compile_Workspace_Pointer,
 	kind Node_Kind,
-) (reference Node_Reference, status Syntax_Status) {
-	defer func() {
-		Node_Reference_Invariants(reference, "node_create.reference")
-		Syntax_Status_Invariants(status, "node_create.status")
-	}()
+) (_ Node_Reference, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "node_create.status") }()
 	Compile_Workspace_Pointer_Invariants(workspace_state, "node_create.workspace_state")
 	Node_Kind_Invariants(kind, "node_create.kind")
+	reference := NODE_NONE
+	defer func() { Node_Reference_Invariants(reference, "node_create.reference") }()
 	workspace := (*Compile_Workspace)(workspace_state)
 	count := *workspace.Control.Node_Count.(*uint16)
 	if int(count) == len(workspace.Nodes) {
@@ -2937,7 +2963,8 @@ func node_create(
 	}
 	count++
 	*workspace.Control.Node_Count.(*uint16) = count
-	return Node_Reference(count), STATUS_OK
+	reference = Node_Reference(count)
+	return reference, STATUS_OK
 }
 
 func node_append_child(
@@ -3094,17 +3121,20 @@ func compile_enter(
 	depth Nonzero_Compile_Depth,
 	result Instruction_Continuation,
 ) (
-	updated_depth Nonzero_Compile_Depth,
+	_ Nonzero_Compile_Depth,
 	updated_result Instruction_PC,
 ) {
 	defer func() {
-		Nonzero_Compile_Depth_Invariants(updated_depth, "compile_enter.updated_depth")
 		Instruction_PC_Invariants(updated_result, "compile_enter.updated_result")
 	}()
 	Compile_Workspace_Pointer_Invariants(workspace_state, "compile_enter.workspace_state")
 	Compile_Frame_Pointer_Invariants(frame_state, "compile_enter.frame_state")
 	Nonzero_Compile_Depth_Invariants(depth, "compile_enter.depth")
 	Instruction_Continuation_Invariants(result, "compile_enter.result")
+	var updated_depth Nonzero_Compile_Depth
+	defer func() {
+		Nonzero_Compile_Depth_Invariants(updated_depth, "compile_enter.updated_depth")
+	}()
 	workspace := (*Compile_Workspace)(workspace_state)
 	frame := (*Compile_Frame)(frame_state)
 	updated_result = Instruction_PC(result)
@@ -3139,7 +3169,8 @@ func compile_enter(
 		))
 		depth--
 	}
-	return depth, updated_result
+	updated_depth = depth
+	return updated_depth, updated_result
 }
 
 func compile_sequence(
@@ -3148,25 +3179,29 @@ func compile_sequence(
 	depth Sequence_Compile_Level,
 	result Instruction_PC,
 ) (
-	updated_depth Sequence_Updated_Level,
+	_ Sequence_Updated_Level,
 	updated_result Instruction_PC,
 ) {
 	defer func() {
-		Sequence_Updated_Level_Invariants(
-			updated_depth, "compile_sequence.updated_depth",
-		)
 		Instruction_PC_Invariants(updated_result, "compile_sequence.updated_result")
 	}()
 	Compile_Workspace_Pointer_Invariants(workspace_state, "compile_sequence.workspace_state")
 	Compile_Frame_Pointer_Invariants(frame_state, "compile_sequence.frame_state")
 	Sequence_Compile_Level_Invariants(depth, "compile_sequence.depth")
 	Instruction_PC_Invariants(result, "compile_sequence.result")
+	var updated_depth Sequence_Updated_Level
+	defer func() {
+		Sequence_Updated_Level_Invariants(
+			updated_depth, "compile_sequence.updated_depth",
+		)
+	}()
 	workspace := (*Compile_Workspace)(workspace_state)
 	frame := (*Compile_Frame)(frame_state)
 	child := *frame.References.Child.(*Node_Reference)
 	if child == NODE_NONE {
-		return Sequence_Updated_Level(depth),
-			*frame.Targets.Accumulated.(*Instruction_PC)
+		updated_depth = Sequence_Updated_Level(depth)
+		updated_result = *frame.Targets.Accumulated.(*Instruction_PC)
+		return updated_depth, updated_result
 	}
 	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_SEQUENCE_RETURN
 	raw_depth := Push_Compile_Depth(
@@ -3179,7 +3214,9 @@ func compile_sequence(
 		Instruction_Continuation(*frame.Targets.Accumulated.(*Instruction_PC)),
 		raw_depth,
 	)
-	return Sequence_Updated_Level(pushed / Pushed_Compile_Depth(len("{}"))), result
+	updated_depth = Sequence_Updated_Level(pushed / Pushed_Compile_Depth(len("{}")))
+	updated_result = result
+	return updated_depth, updated_result
 }
 
 func compile_sequence_return(
@@ -3208,13 +3245,10 @@ func compile_alternative(
 	depth Alternative_Compile_Level,
 	result Alternative_Result_PC,
 ) (
-	updated_depth Alternative_Updated_Level,
+	_ Alternative_Updated_Level,
 	updated_result Alternative_Updated_PC,
 ) {
 	defer func() {
-		Alternative_Updated_Level_Invariants(
-			updated_depth, "compile_alternative.updated_depth",
-		)
 		Alternative_Updated_PC_Invariants(
 			updated_result, "compile_alternative.updated_result",
 		)
@@ -3223,6 +3257,12 @@ func compile_alternative(
 	Compile_Frame_Pointer_Invariants(frame_state, "compile_alternative.frame_state")
 	Alternative_Compile_Level_Invariants(depth, "compile_alternative.depth")
 	Alternative_Result_PC_Invariants(result, "compile_alternative.result")
+	var updated_depth Alternative_Updated_Level
+	defer func() {
+		Alternative_Updated_Level_Invariants(
+			updated_depth, "compile_alternative.updated_depth",
+		)
+	}()
 	workspace := (*Compile_Workspace)(workspace_state)
 	frame := (*Compile_Frame)(frame_state)
 	child := *frame.References.Child.(*Node_Reference)
@@ -3231,8 +3271,11 @@ func compile_alternative(
 			*frame.Control.First.(*uint8) != CONTROL_TRUE,
 			"Parsed alternative retains at least one sequence branch.",
 		)
-		return Alternative_Updated_Level(depth - utf8.CHARACTER_SIZE_MINIMUM),
-			Alternative_Updated_PC(*frame.Targets.Accumulated.(*Instruction_PC))
+		updated_depth = Alternative_Updated_Level(depth - utf8.CHARACTER_SIZE_MINIMUM)
+		updated_result = Alternative_Updated_PC(
+			*frame.Targets.Accumulated.(*Instruction_PC),
+		)
+		return updated_depth, updated_result
 	}
 	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_ALTERNATIVE_RETURN
 	raw_depth := Push_Compile_Depth(depth * Alternative_Compile_Level(len("{}")))
@@ -3242,10 +3285,12 @@ func compile_alternative(
 		Instruction_Continuation(*frame.Targets.Continuation.(*Instruction_PC)),
 		raw_depth,
 	)
-	return Alternative_Updated_Level(
+	updated_depth = Alternative_Updated_Level(
 		(pushed - Pushed_Compile_Depth(COMPILE_DEPTH_NONZERO_MINIMUM)) /
 			Pushed_Compile_Depth(len("{}")),
-	), Alternative_Updated_PC(result)
+	)
+	updated_result = Alternative_Updated_PC(result)
+	return updated_depth, updated_result
 }
 
 func compile_alternative_return(

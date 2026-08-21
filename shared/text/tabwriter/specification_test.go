@@ -277,7 +277,7 @@ func test_format_branch_allocation(t *testing.T) {
 	}{
 		{
 			Name:   "right",
-			Source: "a\tbb\nccc\tdd\n",
+			Source: "a\tbb\nccc\tdd\nx\ty\n",
 			Input: configuration_input(
 				TEST_WIDTH_FOUR, TEST_WIDTH_ZERO, TEST_WIDTH_ONE, '.',
 				tabwriter.ALIGN_RIGHT,
