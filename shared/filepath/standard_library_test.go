@@ -5,7 +5,6 @@ package filepath
 
 import (
 	"fmt"
-	"path/filepath"
 	"runtime"
 	"testing"
 	"unsafe"
@@ -654,7 +653,7 @@ func standard_glob_symlinks(t *testing.T) {
 		{Path: "broken", Link: "missing"},
 	}}
 	storage := nbio.Storage{
-		State: unsafe.Pointer(&filesystem), Status_Procedure: standard_link_status,
+		State: &filesystem, Status_Procedure: standard_link_status,
 		Read_Link_Procedure: standard_link_read,
 	}
 	for _, path := range []Text{"link", "broken"} {
@@ -749,7 +748,7 @@ func standard_walk_symlink_root(t *testing.T, directory_entry bool) {
 		{Path: "target", Directory: true},
 	}}
 	storage := nbio.Storage{
-		State: unsafe.Pointer(&filesystem), Status_Procedure: standard_link_status,
+		State: &filesystem, Status_Procedure: standard_link_status,
 		Read_Link_Procedure: standard_link_read,
 	}
 	state := standard_walk_state_make()
@@ -890,6 +889,17 @@ func standard_filesystem_loop(seed uint64) (loop nbio.IO, driver nbio.Driver) {
 	nodes := [STANDARD_FILESYSTEM_NODE_CAPACITY]nbio.Sim_Node{}
 	descriptors := [STANDARD_FILESYSTEM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor{}
 	operations := [STANDARD_FILESYSTEM_OPERATION_CAPACITY]nbio.Sim_Operation{}
+	for index := range nodes {
+		nodes[index].Name = make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM)
+		nodes[index].Contents = make([]byte, nbio.SIM_FILE_BYTES_MAXIMUM)
+	}
+	for index := range descriptors {
+		descriptors[index].Address_IP = make([]byte, nbio.IPV6_ADDRESS_BYTES)
+		descriptors[index].Peer_IP = make([]byte, nbio.IPV6_ADDRESS_BYTES)
+	}
+	for index := range operations {
+		operations[index].Address_IP = make([]byte, nbio.IPV6_ADDRESS_BYTES)
+	}
 	return nbio.New_Simulated_IO(&state, seed, time.NANOSECOND, nbio.Sim_Memory{
 		Nodes:       nodes[:],
 		Descriptors: descriptors[:],
@@ -1011,7 +1021,7 @@ func Test_Standard_Library_Eval_Symlinks(t *testing.T) {
 		{Path: "cycle2", Link: "cycle1"},
 	}}
 	storage := nbio.Storage{
-		State: unsafe.Pointer(&filesystem), Status_Procedure: standard_link_status,
+		State: &filesystem, Status_Procedure: standard_link_status,
 		Read_Link_Procedure: standard_link_read,
 	}
 	tests := []struct {
@@ -1058,9 +1068,9 @@ func Test_Standard_Library_Eval_Symlinks(t *testing.T) {
 }
 
 func standard_link_status(
-	state unsafe.Pointer, path string,
+	state nbio.State, path string,
 ) (status nbio.File_Status, err error) {
-	filesystem := (*standard_link_storage)(state)
+	filesystem := state.(*standard_link_storage)
 	for _, node := range filesystem.Nodes {
 		if node.Path != path {
 			continue
@@ -1077,9 +1087,9 @@ func standard_link_status(
 }
 
 func standard_link_read(
-	state unsafe.Pointer, path string, destination []byte,
+	state nbio.State, path string, destination []byte,
 ) (count int, err error) {
-	filesystem := (*standard_link_storage)(state)
+	filesystem := state.(*standard_link_storage)
 	for _, node := range filesystem.Nodes {
 		if node.Path != path {
 			continue
@@ -1499,12 +1509,12 @@ func standard_path_helper_bounds(values []Text) {
 }
 
 func standard_existing_status(
-	_ unsafe.Pointer, _ string,
+	_ nbio.State, _ string,
 ) (status nbio.File_Status, err error) {
 	return nbio.File_Status{Exists: true}, nil
 }
 
-// Benchmark_Is_Local pairs upstream whole-corpus workload.
+// Benchmark_Is_Local preserves upstream whole-corpus workload.
 func Benchmark_Is_Local(b *testing.B) {
 	cases := standard_filepath_local_cases()
 	b.Run("Shared", func(b *testing.B) {
@@ -1513,17 +1523,6 @@ func Benchmark_Is_Local(b *testing.B) {
 		for b.Loop() {
 			for _, one := range cases {
 				local = Is_Local(one.Path)
-			}
-		}
-		b.StopTimer()
-		runtime.KeepAlive(local)
-	})
-	b.Run("Standard_Library", func(b *testing.B) {
-		b.ReportAllocs()
-		var local bool
-		for b.Loop() {
-			for _, one := range cases {
-				local = filepath.IsLocal(string(one.Path))
 			}
 		}
 		b.StopTimer()
@@ -1547,19 +1546,6 @@ func Benchmark_Match(b *testing.B) {
 				runtime.KeepAlive(matched)
 				runtime.KeepAlive(err)
 			})
-			b.Run("Standard_Library", func(b *testing.B) {
-				b.ReportAllocs()
-				var matched bool
-				var err error
-				for b.Loop() {
-					matched, err = filepath.Match(
-						string(one.Pattern), string(one.Name),
-					)
-				}
-				b.StopTimer()
-				runtime.KeepAlive(matched)
-				runtime.KeepAlive(err)
-			})
 		})
 	}
 }
@@ -1574,19 +1560,6 @@ func Benchmark_Match_Corpus(b *testing.B) {
 		for b.Loop() {
 			for _, one := range cases {
 				matched, err = Match(one.Pattern, one.Name)
-			}
-		}
-		b.StopTimer()
-		runtime.KeepAlive(matched)
-		runtime.KeepAlive(err)
-	})
-	b.Run("Standard_Library", func(b *testing.B) {
-		b.ReportAllocs()
-		var matched bool
-		var err error
-		for b.Loop() {
-			for _, one := range cases {
-				matched, err = filepath.Match(string(one.Pattern), string(one.Name))
 			}
 		}
 		b.StopTimer()

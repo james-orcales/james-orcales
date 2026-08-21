@@ -536,7 +536,7 @@ func specification_paths() (paths filepath.Path_Storage) {
 }
 
 func specification_status(
-	_ unsafe.Pointer, _ string,
+	_ nbio.State, _ string,
 ) (status nbio.File_Status, err error) {
 	return nbio.File_Status{Exists: true}, nil
 }
@@ -554,7 +554,7 @@ func specification_walk_visit(
 }
 
 func specification_link_status(
-	_ unsafe.Pointer, path string,
+	_ nbio.State, path string,
 ) (status nbio.File_Status, err error) {
 	if path == "link" {
 		return nbio.File_Status{Exists: true, Mode: nbio.FILE_MODE_SYMBOLIC_LINK}, nil
@@ -566,7 +566,7 @@ func specification_link_status(
 }
 
 func specification_link_read(
-	_ unsafe.Pointer, path string, destination []byte,
+	_ nbio.State, path string, destination []byte,
 ) (count int, err error) {
 	if path != "link" {
 		return 0, filepath.Error_Path_Absent
@@ -937,7 +937,7 @@ func allocation_fixture_init(fixture *allocation_fixture) {
 	}
 	fixture.IO = nbio.IO{
 		Storage: nbio.Storage{
-			State:                           unsafe.Pointer(&fixture.Filesystem),
+			State:                           &fixture.Filesystem,
 			Status_Procedure:                allocation_filesystem_status,
 			Read_Link_Procedure:             allocation_filesystem_read_link,
 			Open_At_Procedure:               allocation_filesystem_open,
@@ -1255,7 +1255,7 @@ func allocation_filesystem_reset(state *allocation_filesystem_state) {
 }
 
 func allocation_filesystem_status(
-	_ unsafe.Pointer, path string,
+	_ nbio.State, path string,
 ) (status nbio.File_Status, err error) {
 	switch path {
 	case ".", "dir":
@@ -1270,7 +1270,7 @@ func allocation_filesystem_status(
 }
 
 func allocation_filesystem_read_link(
-	_ unsafe.Pointer, path string, destination []byte,
+	_ nbio.State, path string, destination []byte,
 ) (count int, err error) {
 	switch path {
 	case "link":
@@ -1285,10 +1285,10 @@ func allocation_filesystem_read_link(
 }
 
 func allocation_filesystem_open(
-	state unsafe.Pointer, completion *nbio.Completion, _ nbio.File, _ string,
+	state nbio.State, completion *nbio.Completion, _ nbio.File, _ string,
 	_ nbio.Open_At_Options, callback nbio.Callback,
 ) {
-	filesystem := (*allocation_filesystem_state)(state)
+	filesystem := state.(*allocation_filesystem_state)
 	filesystem.Read_Count = 0
 	completion.Data = 1
 	completion.Error = filesystem.Open_Error
@@ -1296,10 +1296,10 @@ func allocation_filesystem_open(
 }
 
 func allocation_filesystem_read_directory(
-	state unsafe.Pointer, completion *nbio.Completion, _ nbio.File, _ []byte,
+	state nbio.State, completion *nbio.Completion, _ nbio.File, _ []byte,
 	entries []nbio.Directory_Entry, callback nbio.Callback,
 ) {
-	filesystem := (*allocation_filesystem_state)(state)
+	filesystem := state.(*allocation_filesystem_state)
 	completion.Data = 0
 	completion.Error = filesystem.Read_Error
 	if completion.Error == nil {
@@ -1313,7 +1313,7 @@ func allocation_filesystem_read_directory(
 }
 
 func allocation_filesystem_close(
-	_ unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	_ nbio.State, completion *nbio.Completion, _ nbio.File,
 	callback nbio.Callback,
 ) {
 	completion.Data = 0
