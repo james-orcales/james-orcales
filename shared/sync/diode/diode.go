@@ -1,29 +1,27 @@
-// Package diode is a non-blocking writer that never makes its caller
-// wait on the underlying sink. Each Write copies the bytes into a lock-free ring
-// buffer and returns immediately; a single background goroutine drains the ring into
-// the wrapped writer. When producers outrun the sink past the ring's capacity, the
-// oldest unread entries are overwritten — bounded memory, never blocking — and the
-// count of lost entries is reported through an injected Alerter.
+// Package diode is a non-blocking Stream that never makes its caller wait on the inner Stream.
+// Each Write copies the bytes into a lock-free ring buffer and retires immediately. The root
+// drives the drain: each Writer_Rearm submits one queued line to the inner Stream when nothing
+// is in flight. When producers outrun the inner Stream past the ring's capacity, the oldest
+// unread entries are overwritten — bounded memory, never blocking — and the count of lost
+// entries is reported through an injected Alerter.
 //
-// This is a house-style port of the diode in CloudFoundry's go-diodes (the same
-// structure rs/zerolog wraps). It uses the Poller strategy: when the ring is empty
-// the drain sleeps for Poll_Interval before checking again. The sleep is taken via
-// the injected time.Clock so the library tier holds no impure time dependency and
-// the drain loop stays deterministic under a virtual clock in tests.
+// This is a house-style port of the diode in CloudFoundry's go-diodes (the same structure
+// rs/zerolog wraps). The poller strategy is gone: no goroutine sleeps on an empty ring, and the
+// library never pumps itself; the timeline holder calls Writer_Rearm (see inject_io).
 //
-// A diode trades reliability for non-blocking writes. Lines can be dropped under
-// sustained overload (surfaced via the Alerter, never silently), and lines still
-// buffered when the process exits are lost unless Close is called to flush. Code that
-// needs guaranteed delivery should write to its sink synchronously instead.
+// A diode trades reliability for non-blocking writes. Lines can be dropped under sustained
+// overload (surfaced via the Alerter, never silently), and lines still buffered when the process
+// exits are lost unless Close is called to flush. Code that needs guaranteed delivery should
+// write to its Stream directly instead.
 package diode
 
 import (
 	"errors"
-	"sync"
 	"sync/atomic"
 	"unsafe"
 
 	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/sim/time"
 )
 
@@ -31,18 +29,37 @@ import (
 // typical bursts before the drain has to drop anything.
 const DEFAULT_COUNT = 1000
 
-// How long the drain sleeps on an empty ring when New_Input.Poll_Interval is unset.
-const DEFAULT_POLL_INTERVAL = 100 * time.MILLISECOND
+// LINE_BYTES_MAXIMUM is one bucket's fixed storage; a longer line is refused. Buckets are
+// preallocated, so this times the bucket count is the diode's whole retained memory.
+const LINE_BYTES_MAXIMUM = 1 << 12
 
-// Caps the capacity of a line buffer returned to the pool, so one giant line cannot
-// bloat every pooled entry (see Go issue 23199).
-const MAXIMUM_POOLED_BUFFER = 1 << 16
+// BUCKET_SLACK is how many producers may hold a bucket outside the ring at once (mid-Write)
+// before a Write finds none free. Sixty-four exceeds any plausible concurrent producer count.
+const BUCKET_SLACK = 64
 
-// SLOT_COUNT_MAXIMUM keeps one ring below the same bounded entry count as one line.
-const SLOT_COUNT_MAXIMUM = MAXIMUM_POOLED_BUFFER
+// SLOT_COUNT_MAXIMUM bounds one ring.
+const SLOT_COUNT_MAXIMUM = 1 << 16
+
+// SLOT_COUNT_MINIMUM is the smallest active ring.
+const SLOT_COUNT_MINIMUM = 1
+
+// BUCKET_COUNT_MINIMUM is the smallest ring's buckets plus its producer slack.
+const BUCKET_COUNT_MINIMUM = SLOT_COUNT_MINIMUM + BUCKET_SLACK
+
+// BUCKET_COUNT_MAXIMUM is the largest ring's buckets plus its producer slack.
+const BUCKET_COUNT_MAXIMUM = SLOT_COUNT_MAXIMUM + BUCKET_SLACK
+
+// BUCKET_INDEX_NONE is the free-list terminator and the "nothing in flight" marker; bucket
+// indexes are one-based so zero can mean absent.
+const BUCKET_INDEX_NONE = 0
+
+// FREE_LIST_RETRIES_MAX bounds a free-list compare-and-swap loop. A retry needs another
+// producer to win between the load and the swap; this many losses in a row does not happen
+// with BUCKET_SLACK producers, so exhausting it is reported, never spun on.
+const FREE_LIST_RETRIES_MAX = 1 << 16
 
 // BYTE_RATE_MAXIMUM keeps refill multiplication inside signed duration storage.
-const BYTE_RATE_MAXIMUM = MAXIMUM_POOLED_BUFFER * DEFAULT_COUNT
+const BYTE_RATE_MAXIMUM = SLOT_COUNT_MAXIMUM * DEFAULT_COUNT
 
 // BURST_SIZE_MAXIMUM shares the rate bound so one full refill cannot overflow.
 const BURST_SIZE_MAXIMUM = BYTE_RATE_MAXIMUM
@@ -50,11 +67,12 @@ const BURST_SIZE_MAXIMUM = BYTE_RATE_MAXIMUM
 // CONFIGURATION_MINIMUM accepts the one negative value that selects disabled/default behavior.
 const CONFIGURATION_MINIMUM = -1
 
-// SLOT_COUNT_MINIMUM is the smallest active ring.
-const SLOT_COUNT_MINIMUM = 1
-
 // DATA_SIZE_MINIMUM admits a zero-length writer call.
 const DATA_SIZE_MINIMUM = 0
+
+// DATA_SIZE_MAXIMUM bounds what a producer may hand over at all; between LINE_BYTES_MAXIMUM
+// and here a Write is refused with ERR_DATA_TOO_LARGE rather than failing an invariant.
+const DATA_SIZE_MAXIMUM = 1 << 16
 
 // MISSED_COUNT_MINIMUM is the smallest useful loss report.
 const MISSED_COUNT_MINIMUM = 1
@@ -62,17 +80,28 @@ const MISSED_COUNT_MINIMUM = 1
 // MISSED_COUNT_MAXIMUM is every entry one bounded ring can lose in one observed lap.
 const MISSED_COUNT_MAXIMUM = SLOT_COUNT_MAXIMUM
 
-// MESSAGE_SIZE_MINIMUM is the shortest static assertion explanation below.
-const MESSAGE_SIZE_MINIMUM = len("diode: Sleep is required")
-
-// MESSAGE_SIZE_MAXIMUM is the longest static assertion explanation below.
-const MESSAGE_SIZE_MAXIMUM = len("diode: delivered off the read cursor")
-
 // SEQUENCE_MINIMUM is the first ring cursor.
 const SEQUENCE_MINIMUM uint64 = 0
 
 // SEQUENCE_MAXIMUM is the last ring cursor before wrap.
 const SEQUENCE_MAXIMUM uint64 = ^uint64(0)
+
+// FREE_LIST_INDEX_BITS is the low half of the free-list head; the high half is the ABA tag.
+const FREE_LIST_INDEX_BITS = 32
+
+// FREE_LIST_INDEX_MASK extracts the one-based bucket index from the free-list head.
+const FREE_LIST_INDEX_MASK = 1<<FREE_LIST_INDEX_BITS - 1
+
+// WRITER_MODES excludes reads and cursor modes because the ring has no position to report.
+const WRITER_MODES nbio.Stream_Mode_Set = 1<<nbio.STREAM_MODE_CLOSE |
+	1<<nbio.STREAM_MODE_FLUSH | 1<<nbio.STREAM_MODE_WRITE |
+	1<<nbio.STREAM_MODE_DESTROY | 1<<nbio.STREAM_MODE_QUERY
+
+// CLOSE_OPEN means the inner Close has not been submitted.
+const CLOSE_OPEN Close_State = 0
+
+// CLOSE_SUBMITTED means the inner Close went out; nothing more may follow it.
+const CLOSE_SUBMITTED Close_State = 1
 
 // Missed_Count is one bounded loss report.
 type Missed_Count int
@@ -97,27 +126,20 @@ func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 // Line_Size is one bounded queued payload size.
 type Line_Size int
 
-// Line_Size_Invariants applies the pooled buffer bound.
+// Line_Size_Invariants applies the bucket storage bound.
 func Line_Size_Invariants(value Line_Size, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int(int(value), DATA_SIZE_MINIMUM, MAXIMUM_POOLED_BUFFER).
+		Range_Int(int(value), DATA_SIZE_MINIMUM, LINE_BYTES_MAXIMUM).
 		Ensure()
 }
 
-// Message is one static assertion explanation.
-type Message string
-
-// Message_Invariants spans the static explanations below.
-func Message_Invariants(value Message, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// ERR_DATA_TOO_LARGE rejects a line that cannot stay inside the pooled byte bound.
+// ERR_DATA_TOO_LARGE rejects a line that cannot fit one bucket.
 var ERR_DATA_TOO_LARGE = errors.New("diode: line exceeds byte limit")
 
-// Drop_Cause distinguishes why a line never reached the sink.
+// ERR_NO_BUCKET reports more than BUCKET_SLACK producers inside Write at once.
+var ERR_NO_BUCKET = errors.New("diode: no free bucket")
+
+// Drop_Cause distinguishes why a line never reached the inner Stream.
 type Drop_Cause int
 
 // Drop_Cause_Invariants admits every declared loss source.
@@ -127,7 +149,7 @@ func Drop_Cause_Invariants(value Drop_Cause, namespace aver.Namespace) {
 		Ensure()
 }
 
-// DROP_OVERFLOW marks a line lost because the ring lapped: the sink could not keep up.
+// DROP_OVERFLOW marks a line lost because the ring lapped: the inner Stream could not keep up.
 const DROP_OVERFLOW Drop_Cause = 0
 
 // DROP_RATE_LIMIT marks a line shed by the rate limiter.
@@ -135,12 +157,6 @@ const DROP_RATE_LIMIT Drop_Cause = 1
 
 // Alerter surfaces dropped lines, tagged with their cause; one is installed per diode.
 type Alerter func(missed int, cause Drop_Cause)
-
-// Write is the caller-owned sink procedure.
-type Write func(state unsafe.Pointer, data Data) (written Data_Size, err error)
-
-// Close releases the caller-owned sink when it owns a close operation.
-type Close func(state unsafe.Pointer) (err error)
 
 // Byte_Rate is a disabled marker or one positive bounded throughput.
 type Byte_Rate int
@@ -162,10 +178,10 @@ func Burst_Size_Invariants(value Burst_Size, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Rate_Limit caps how fast a diode writes to its sink, in bytes per second; lines over the
-// budget are shed (reported DROP_RATE_LIMIT), never blocked.
+// Rate_Limit caps how fast a diode writes to its inner Stream, in bytes per second; lines over
+// the budget are shed (reported DROP_RATE_LIMIT), never delayed.
 type Rate_Limit struct {
-	// Bytes_Per_Second is the sustained throughput to the sink; zero disables the limiter.
+	// Bytes_Per_Second is the sustained throughput; zero disables the limiter.
 	Bytes_Per_Second Byte_Rate
 	// Burst is the most bytes that may accumulate while idle; zero defaults to
 	// Bytes_Per_Second (one second of slack).
@@ -178,8 +194,8 @@ func Rate_Limit_Invariants(value Rate_Limit, namespace aver.Namespace) {
 	Burst_Size_Invariants(value.Burst, namespace)
 }
 
-// Writer is compatible with io.Writer. Build it with New; it is always used by pointer because it
-// owns a background goroutine and atomic state.
+// Writer is the opaque diode handle. Build it with New and submit to it through
+// Writer_To_Stream.
 type Writer struct {
 	// State stays opaque so ring cursors cannot become caller-owned API.
 	State unsafe.Pointer
@@ -190,26 +206,15 @@ func Writer_Invariants(value Writer, _ aver.Namespace) {
 	aver.Always(value.State != nil, "A diode writer has internal state.")
 }
 
-// Poll_Interval is one positive bounded idle wait.
-type Poll_Interval time.Duration
+// Writer_Pointer is the handle every diode operation takes.
+type Writer_Pointer *Writer
 
-// Poll_Interval_Invariants keeps polling below the process uptime bound.
-func Poll_Interval_Invariants(value Poll_Interval, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int64(int64(value), int64(time.NANOSECOND), int64(time.DAY)).
-		Ensure()
-}
-
-// Stored_Poll_Interval admits the default marker before New normalizes it.
-type Stored_Poll_Interval time.Duration
-
-// Stored_Poll_Interval_Invariants bounds caller configuration.
-func Stored_Poll_Interval_Invariants(
-	value Stored_Poll_Interval, namespace aver.Namespace,
-) {
-	aver.Tree(value, namespace).
-		Range_Int64(int64(value), CONFIGURATION_MINIMUM, int64(time.DAY)).
-		Ensure()
+// Writer_Pointer_Invariants composes the handle only when present.
+func Writer_Pointer_Invariants(value Writer_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Writer_Invariants(*value, namespace)
 }
 
 // Slots owns one bounded ring of bucket pointers.
@@ -242,51 +247,129 @@ func Token_Count_Invariants(value Token_Count, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Writer_State owns the mutable ring behind one opaque Writer handle.
+// Bucket_Index is a one-based position in Buckets, or BUCKET_INDEX_NONE.
+type Bucket_Index uint32
+
+// Bucket_Index_Invariants keeps an index inside the largest bucket array.
+func Bucket_Index_Invariants(value Bucket_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), BUCKET_INDEX_NONE, BUCKET_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Close_State records whether the inner Close has gone out.
+type Close_State int
+
+// Close_State_Invariants admits the two lifecycle positions.
+func Close_State_Invariants(value Close_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(int(value), int(CLOSE_OPEN), int(CLOSE_SUBMITTED)).
+		Ensure()
+}
+
+// Line_Bytes is one bucket's fixed storage, a window into the arena New allocates once.
+type Line_Bytes []byte
+
+// Line_Bytes_Invariants requires every bucket to hold a full line.
+func Line_Bytes_Invariants(value Line_Bytes, namespace aver.Namespace) {
+	aver.Always(len(value) == LINE_BYTES_MAXIMUM, "A bucket holds one full line.")
+}
+
+// Bucket owns one queued line and its publication sequence.
+type Bucket struct {
+	// Data is the fixed storage the line is copied into.
+	Data Line_Bytes
+	// Size is how much of Data the line uses.
+	Size Line_Size
+	// Sequence is the write index at store time; the drain compares it to Read_Index to
+	// tell a fresh entry from a stale leftover or one that lapped it. It is atomic
+	// because the recycle path can hand a bucket to a new producer that re-stamps it
+	// while another producer still holds a stale pointer to it (from a slot it loaded)
+	// and reads Sequence in the collision check — a benign staleness the CAS resolves,
+	// but a data race unless the field is atomic.
+	Sequence atomic.Uint64
+	// Next links this bucket into the free list while it is free: the index of the bucket
+	// below it, BUCKET_INDEX_NONE at the bottom.
+	Next atomic.Uint64
+	// Index is this bucket's own one-based position, so a pointer taken from a ring slot can
+	// be pushed back onto the free list.
+	Index Bucket_Index
+}
+
+// Bucket_Invariants composes the line and its position.
+func Bucket_Invariants(value Bucket, namespace aver.Namespace) {
+	Line_Bytes_Invariants(value.Data, namespace)
+	Line_Size_Invariants(value.Size, namespace)
+	Bucket_Index_Invariants(value.Index, namespace)
+}
+
+// Buckets is every line's storage, allocated once; the ring and the free list hold indexes
+// into it.
+type Buckets []Bucket
+
+// Buckets_Invariants bounds the array to a ring plus its producer slack.
+func Buckets_Invariants(value Buckets, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), BUCKET_COUNT_MINIMUM, BUCKET_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Writer_State owns the mutable ring behind one opaque Writer handle. Fields marked drain-owned
+// are touched only by Writer_Rearm and the inner retirement, both of which the root runs on its
+// one thread, so they need no synchronization.
 type Writer_State struct {
-	// Sink_State keeps callback state explicit instead of captured.
-	Sink_State unsafe.Pointer
-	// Sink_Write keeps blocking sink ownership outside the ring.
-	Sink_Write Write
-	// Close_Sink is present only when the composition root transfers ownership.
-	Close_Sink Close
+	// Completion sits first so the retire callback, which receives only the Completion,
+	// recovers its Writer_State without a captured closure. Drain-owned.
+	Completion nbio.Completion
+	// Stream is the inner transport that lines are submitted to.
+	Stream nbio.Stream
 	// Clock makes token refill deterministic.
 	Clock time.Clock
-	// Sleep keeps wall-clock blocking outside this package.
-	Sleep func(duration time.Duration)
-	// Poll_Interval bounds idle spinning.
-	Poll_Interval Poll_Interval
 	// Alerter prevents silent loss.
 	Alerter Alerter
-	// Buffer_Pool amortizes owned line storage.
-	Buffer_Pool *sync.Pool
+	// Buckets is every line's storage.
+	Buckets Buckets
+	// Free is a lock-free stack head over Buckets: one-based index in the low bits, an ABA tag
+	// in the high bits, BUCKET_INDEX_NONE when empty.
+	Free atomic.Uint64
 	// Slots bounds unread work.
 	Slots Slots
 	// Write_Index separates concurrent producer claims.
 	Write_Index atomic.Uint64
-	// Read_Index belongs to the single drain.
+	// Read_Index is drain-owned.
 	Read_Index Sequence
 	// Rate_Limit is immutable after construction.
 	Rate_Limit Rate_Limit
-	// Tokens belong to the single drain.
+	// Tokens are drain-owned.
 	Tokens Token_Count
-	// Last_Refill makes elapsed refill monotonic.
+	// Last_Refill makes elapsed refill monotonic. Drain-owned.
 	Last_Refill time.Monotonic_Moment
-	// Stop transfers shutdown request to the drain.
-	Stop chan struct{}
-	// Done acknowledges the final flush.
-	Done chan struct{}
+	// In_Flight is the bucket the inner Stream still borrows, or BUCKET_INDEX_NONE.
+	// Drain-owned.
+	In_Flight Bucket_Index
+	// Close_Claimed admits one Close caller.
+	Close_Claimed atomic.Bool
+	// Close_Requested publishes Close_Completion and Close_Callback to the drain.
+	Close_Requested atomic.Bool
+	// Close_Completion is the caller's Close storage, forwarded to the inner Close.
+	Close_Completion nbio.Completion_Handle
+	// Close_Callback is the caller's Close retirement.
+	Close_Callback nbio.Stream_Callback
+	// Close is where the inner Close stands. Drain-owned.
+	Close Close_State
 }
 
 // Writer_State_Invariants composes the ring's bounded state.
 func Writer_State_Invariants(value Writer_State, namespace aver.Namespace) {
 	time.Clock_Invariants(value.Clock, namespace)
-	Poll_Interval_Invariants(value.Poll_Interval, namespace)
+	Buckets_Invariants(value.Buckets, namespace)
 	Slots_Invariants(value.Slots, namespace)
 	Sequence_Invariants(value.Read_Index, namespace)
 	Rate_Limit_Invariants(value.Rate_Limit, namespace)
 	Token_Count_Invariants(value.Tokens, namespace)
 	time.Monotonic_Moment_Invariants(value.Last_Refill, namespace)
+	Bucket_Index_Invariants(value.In_Flight, namespace)
+	Close_State_Invariants(value.Close, namespace)
 }
 
 // Slot_Count is a default marker or one positive bounded ring size.
@@ -301,21 +384,13 @@ func Slot_Count_Invariants(value Slot_Count, namespace aver.Namespace) {
 
 // New_Input configures New.
 type New_Input struct {
-	// State belongs to the sink procedures and stays opaque to the diode.
-	Sink_State unsafe.Pointer
-	// Write is the sink to wrap; nil discards.
-	Write Write
-	// Close releases the sink after the drain stops; nil keeps it borrowed.
-	Close Close
+	// Stream receives drained lines; the zero Stream retires each line as Stream_Empty.
+	Stream nbio.Stream
 	// Clock is the read-only time source the rate limiter refills against; required.
 	Clock time.Clock
-	// Sleep parks the drain on an empty ring; required (the drain panics without it).
-	Sleep func(duration time.Duration)
 	// Count is the ring slot count; zero or negative uses DEFAULT_COUNT.
 	Count Slot_Count
-	// Poll_Interval is the empty-ring sleep; zero or negative uses one hundred milliseconds.
-	Poll_Interval Stored_Poll_Interval
-	// Rate_Limit caps the sink write rate in bytes per second; the zero value is no limit.
+	// Rate_Limit caps the write rate in bytes per second; the zero value is no limit.
 	Rate_Limit Rate_Limit
 	// Alerter receives the dropped-entry count and cause; nil installs a no-op.
 	Alerter Alerter
@@ -325,17 +400,16 @@ type New_Input struct {
 func New_Input_Invariants(value New_Input, namespace aver.Namespace) {
 	Slot_Count_Invariants(value.Count, namespace)
 	time.Clock_Invariants(value.Clock, namespace)
-	Stored_Poll_Interval_Invariants(value.Poll_Interval, namespace)
 	Rate_Limit_Invariants(value.Rate_Limit, namespace)
 }
 
-// Data is one owned line buffer.
+// Data is one line as the producer hands it over.
 type Data []byte
 
-// Data_Invariants keeps pooled capacity from becoming retained hostile input.
+// Data_Invariants bounds what a producer may hand over; the bucket bound is checked after.
 func Data_Invariants(value Data, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int(len(value), DATA_SIZE_MINIMUM, MAXIMUM_POOLED_BUFFER).
+		Range_Int(len(value), DATA_SIZE_MINIMUM, DATA_SIZE_MAXIMUM).
 		Ensure()
 }
 
@@ -345,45 +419,19 @@ type Data_Size int
 // Data_Size_Invariants applies the line storage bound.
 func Data_Size_Invariants(value Data_Size, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int(int(value), DATA_SIZE_MINIMUM, MAXIMUM_POOLED_BUFFER).
+		Range_Int(int(value), DATA_SIZE_MINIMUM, LINE_BYTES_MAXIMUM).
 		Ensure()
 }
 
-// One queued line, stored behind an unsafe.Pointer in a ring slot.
-// Bucket owns one queued line and its publication sequence.
-type Bucket struct {
-	// Data is the copied line bytes; it owns its backing array so the pool reuses the
-	// bucket and the array together.
-	Data Data
-	// Sequence is the write index at store time; the drain compares it to Read_Index to
-	// tell a fresh entry from a stale leftover or one that lapped it. It is atomic
-	// because the recycle path can hand a bucket to a new producer that re-stamps it
-	// while another producer still holds a stale pointer to it (from a slot it loaded)
-	// and reads Sequence in the collision check — a benign staleness the CAS resolves,
-	// but a data race unless the field is atomic.
-	Sequence atomic.Uint64
-}
-
-// Bucket_Invariants applies the line byte bound.
-func Bucket_Invariants(value Bucket, namespace aver.Namespace) {
-	Data_Invariants(value.Data, namespace)
-}
-
-// New wraps a sink in a non-blocking diode and starts its drain goroutine.
-func New(input New_Input) (writer *Writer) {
-	defer func() { Writer_Invariants(*writer, "new.writer") }()
+// New wraps an inner Stream in a non-blocking diode. It starts no goroutine and never drives:
+// the root calls Writer_Rearm to submit queued lines. It allocates once, here, for the ring and
+// the line arena; nothing allocates afterwards.
+func New(input New_Input) (writer Writer_Pointer) {
+	defer func() { Writer_Pointer_Invariants(writer, "new.writer") }()
 	New_Input_Invariants(input, "new.input")
-	write := input.Write
-	if write == nil {
-		write = discard
-	}
 	count := input.Count
 	if count <= 0 {
 		count = DEFAULT_COUNT
-	}
-	interval := input.Poll_Interval
-	if interval <= 0 {
-		interval = Stored_Poll_Interval(DEFAULT_POLL_INTERVAL)
 	}
 	alerter := input.Alerter
 	if alerter == nil {
@@ -395,70 +443,216 @@ func New(input New_Input) (writer *Writer) {
 			limit.Burst = Burst_Size(limit.Bytes_Per_Second)
 		}
 	}
-	assert(input.Sleep != nil, "diode: Sleep is required")
-	assert(count > 0, "diode: ring count must be positive")
+	aver.Always(count > 0, "diode: ring count must be positive")
+	bucket_count := int(count) + BUCKET_SLACK
 	state := &Writer_State{
-		Sink_State:    input.Sink_State,
-		Sink_Write:    write,
-		Close_Sink:    input.Close,
-		Clock:         input.Clock,
-		Sleep:         input.Sleep,
-		Poll_Interval: Poll_Interval(interval),
-		Alerter:       alerter,
-		Rate_Limit:    limit,
-		Tokens:        Token_Count(limit.Burst),
-		Last_Refill:   time.Clock_Now_Monotonic(input.Clock),
-		Buffer_Pool:   &sync.Pool{New: new_bucket},
-		Slots:         make(Slots, count),
-		Stop:          make(chan struct{}),
-		Done:          make(chan struct{}),
+		Stream:      input.Stream,
+		Clock:       input.Clock,
+		Alerter:     alerter,
+		Rate_Limit:  limit,
+		Tokens:      Token_Count(limit.Burst),
+		Last_Refill: time.Clock_Now_Monotonic(input.Clock),
+		Buckets:     make(Buckets, bucket_count),
+		Slots:       make(Slots, count),
+	}
+	// One byte arena rather than one array per bucket keeps the fixed-array ban satisfied and
+	// the storage contiguous.
+	arena := make([]byte, bucket_count*LINE_BYTES_MAXIMUM)
+	// Every bucket starts free. Pushing in descending order leaves bucket one on top, which
+	// keeps the first lines in the lowest storage; nothing depends on it.
+	for bucket_index := bucket_count; bucket_index > 0; bucket_index-- {
+		bucket := &state.Buckets[bucket_index-1]
+		low := (bucket_index - 1) * LINE_BYTES_MAXIMUM
+		bucket.Data = arena[low : low+LINE_BYTES_MAXIMUM]
+		bucket.Index = Bucket_Index(bucket_index)
+		bucket_free(unsafe.Pointer(state), unsafe.Pointer(bucket))
 	}
 	// Start the write cursor one before zero so the first atomic Add yields 0,
 	// matching the read cursor's start and keeping slot math symmetric.
 	state.Write_Index.Store(^uint64(0))
-	writer = &Writer{State: unsafe.Pointer(state)}
-	go drain(unsafe.Pointer(state))
-	return writer
+	return &Writer{State: unsafe.Pointer(state)}
 }
 
-func discard(_ unsafe.Pointer, data Data) (written Data_Size, err error) {
-	defer func() { Data_Size_Invariants(written, "discard.written") }()
-	Data_Invariants(data, "discard.data")
-	return Data_Size(len(data)), nil
+// Writer_To_Stream exposes the diode as an nbio.Stream. A Write retires inline once its bytes
+// are queued; Writer_Rearm decides when they actually leave.
+func Writer_To_Stream(writer Writer_Pointer) (stream nbio.Stream) {
+	Writer_Pointer_Invariants(writer, "Writer_To_Stream.writer")
+	aver.Always(writer != nil, "diode: writer must not be nil")
+	// The literal captures nothing, so it is a static function value; it exists only to give
+	// nbio its own procedure shape while writer_procedure keeps typed boundaries.
+	return nbio.Stream{
+		State: writer,
+		Procedure: func(
+			state nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode,
+			buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+		) {
+			writer_procedure(state, completion, mode, Data(buffer), callback)
+		},
+	}
 }
 
-// Builds a fresh bucket for the pool, with a small starting backing array.
-func new_bucket() (item any) {
-	return &Bucket{Data: make(Data, 0, 512)}
-}
-
-// Write copies p into the ring and returns at once; it never touches the sink, so a
-// slow sink never blocks the caller. The copy is mandatory: callers (jlog) reuse p
-// the moment Write returns.
-func (writer *Writer) Write(p []byte) (n int, err error) {
+// Writer_Rearm is the root's one pump step: with nothing in flight it submits the next queued
+// line to the inner Stream, or the pending Close once the ring is empty, and reports whether it
+// submitted anything. The root loops it until false. It continues nothing on its own, so an
+// immediate inner Stream retires inside this call and the next call submits the next line.
+func Writer_Rearm(writer Writer_Pointer) (submitted Boolean) {
+	defer func() { Boolean_Invariants(submitted, "Writer_Rearm.submitted") }()
+	Writer_Pointer_Invariants(writer, "Writer_Rearm.writer")
 	state := (*Writer_State)(writer.State)
-	item := state.Buffer_Pool.Get().(*Bucket)
-	if len(p) > MAXIMUM_POOLED_BUFFER {
-		state.Buffer_Pool.Put(item)
+	if state.In_Flight != BUCKET_INDEX_NONE {
+		return false
+	}
+	if state.Close == CLOSE_SUBMITTED {
+		return false
+	}
+	// Each pass takes one entry, so the ring bounds the loop; a shed line moves to the next.
+	for pass_index := 0; pass_index < len(state.Slots); pass_index++ {
+		item_pointer, ok := ring_try_next(unsafe.Pointer(state))
+		if !ok {
+			return drain_close(unsafe.Pointer(state))
+		}
+		item := (*Bucket)(item_pointer)
+		if rate_limit_sheds(unsafe.Pointer(state), item.Size) {
+			alert(unsafe.Pointer(state), 1, DROP_RATE_LIMIT)
+			bucket_free(unsafe.Pointer(state), item_pointer)
+			continue
+		}
+		state.In_Flight = item.Index
+		nbio.Write(state.Stream, &state.Completion, item.Data[:item.Size], drain_retire)
+		return true
+	}
+	return drain_close(unsafe.Pointer(state))
+}
+
+// Writer_Work_Queued reports whether the diode still has work outstanding: a line in flight,
+// lines in the ring, or a Close waiting for the ring to empty. The root pumps until it is
+// false; it never takes anything from the ring.
+func Writer_Work_Queued(writer Writer_Pointer) (queued Boolean) {
+	defer func() { Boolean_Invariants(queued, "Writer_Work_Queued.queued") }()
+	Writer_Pointer_Invariants(writer, "Writer_Work_Queued.writer")
+	state := (*Writer_State)(writer.State)
+	if state.In_Flight != BUCKET_INDEX_NONE {
+		return true
+	}
+	if state.Close == CLOSE_SUBMITTED {
+		return false
+	}
+	slot := uint64(state.Read_Index) % uint64(len(state.Slots))
+	if atomic.LoadPointer(&state.Slots[slot]) != nil {
+		return true
+	}
+	return Boolean(state.Close_Requested.Load())
+}
+
+// Pops a free bucket, or BUCKET_INDEX_NONE when BUCKET_SLACK producers already hold one
+// mid-Write. The tag in the high bits makes the compare-and-swap safe against a bucket popped,
+// pushed, and popped again between this load and this swap.
+func bucket_take(state_pointer unsafe.Pointer) (item_pointer unsafe.Pointer) {
+	state := (*Writer_State)(state_pointer)
+	for retry_index := 0; retry_index < FREE_LIST_RETRIES_MAX; retry_index++ {
+		head := state.Free.Load()
+		index := head & FREE_LIST_INDEX_MASK
+		if index == BUCKET_INDEX_NONE {
+			return nil
+		}
+		item := &state.Buckets[index-1]
+		next := item.Next.Load()
+		tag := head>>FREE_LIST_INDEX_BITS + 1
+		if state.Free.CompareAndSwap(head, tag<<FREE_LIST_INDEX_BITS|next) {
+			return unsafe.Pointer(item)
+		}
+	}
+	return nil
+}
+
+// Pushes a bucket back onto the free list. A successful overwrite may push its victim because
+// the CAS over a non-nil slot proves the drain never took that bucket — a drain read would
+// have nil'd the slot and failed the CAS.
+func bucket_free(state_pointer unsafe.Pointer, item_pointer unsafe.Pointer) {
+	state := (*Writer_State)(state_pointer)
+	item := (*Bucket)(item_pointer)
+	aver.Always(item != nil, "diode: freed a bucket that does not exist")
+	index := uint64(item.Index)
+	pushed := false
+	for retry_index := 0; retry_index < FREE_LIST_RETRIES_MAX; retry_index++ {
+		head := state.Free.Load()
+		item.Next.Store(head & FREE_LIST_INDEX_MASK)
+		tag := head>>FREE_LIST_INDEX_BITS + 1
+		if state.Free.CompareAndSwap(head, tag<<FREE_LIST_INDEX_BITS|index) {
+			pushed = true
+			break
+		}
+	}
+	aver.Always(pushed, "diode: free list push exhausted its retries")
+}
+
+// The diode has no cursor, so the offset and whence nbio carries never reach here.
+func writer_procedure(
+	state_value nbio.State, completion nbio.Completion_Handle, mode nbio.Stream_Mode,
+	data Data, callback nbio.Stream_Callback,
+) {
+	Data_Invariants(data, "writer_procedure.data")
+	state := (*Writer_State)(state_value.(Writer_Pointer).State)
+	completion.Data = 0
+	completion.Error = nil
+	switch mode {
+	case nbio.STREAM_MODE_WRITE:
+		written, write_err := writer_write(unsafe.Pointer(state), data)
+		completion.Data = int(written)
+		completion.Error = write_err
+	case nbio.STREAM_MODE_FLUSH:
+	case nbio.STREAM_MODE_CLOSE, nbio.STREAM_MODE_DESTROY:
+		if writer_close(unsafe.Pointer(state), completion, callback) {
+			return
+		}
+	case nbio.STREAM_MODE_QUERY:
+		completion.Data = int(WRITER_MODES)
+	default:
+		completion.Error = nbio.Stream_Empty
+	}
+	nbio.Stream_Callback_Call(callback, completion)
+}
+
+// The copy is mandatory: callers (jlog) reuse data the moment Write retires.
+func writer_write(state_pointer unsafe.Pointer, data Data) (written Data_Size, err error) {
+	defer func() { Data_Size_Invariants(written, "writer_write.written") }()
+	Data_Invariants(data, "writer_write.data")
+	state := (*Writer_State)(state_pointer)
+	if state.Close_Claimed.Load() {
+		return 0, nbio.Stream_Empty
+	}
+	if len(data) > LINE_BYTES_MAXIMUM {
 		return 0, ERR_DATA_TOO_LARGE
 	}
-	item.Data = append(item.Data[:0], p...)
-	Data_Invariants(item.Data, "write.data")
-	assert(len(item.Data) == len(p), "diode: write copy length mismatch")
-	ring_set(writer.State, unsafe.Pointer(item))
-	return len(p), nil
+	item_pointer := bucket_take(state_pointer)
+	if item_pointer == nil {
+		return 0, ERR_NO_BUCKET
+	}
+	item := (*Bucket)(item_pointer)
+	Line_Bytes_Invariants(item.Data, "writer_write.item")
+	copied := copy(item.Data, data)
+	item.Size = Line_Size(copied)
+	aver.Always(copied == len(data), "diode: write copy length mismatch")
+	ring_set(state_pointer, unsafe.Pointer(item))
+	return Data_Size(copied), nil
 }
 
-// Close asks the drain to flush what remains and stop, waits for it, then closes the
-// wrapped sink through its injected Close procedure. Call it once.
-func (writer *Writer) Close() (err error) {
-	state := (*Writer_State)(writer.State)
-	close(state.Stop)
-	<-state.Done
-	if state.Close_Sink == nil {
-		return nil
+// Reports owned when Close takes the caller's retirement, which Writer_Rearm delivers once the
+// ring is empty; a repeated Close retires inline because Close is idempotent.
+func writer_close(
+	state_pointer unsafe.Pointer, completion nbio.Completion_Handle,
+	callback nbio.Stream_Callback,
+) (owned Boolean) {
+	defer func() { Boolean_Invariants(owned, "writer_close.owned") }()
+	state := (*Writer_State)(state_pointer)
+	if !state.Close_Claimed.CompareAndSwap(false, true) {
+		return false
 	}
-	return state.Close_Sink(state.Sink_State)
+	state.Close_Completion = completion
+	state.Close_Callback = callback
+	// Store after both fields so the drain never reads a half-published Close.
+	state.Close_Requested.Store(true)
+	return true
 }
 
 // Stores item in the next ring slot, advancing the shared write cursor atomically so
@@ -483,28 +677,15 @@ func ring_set(state_pointer unsafe.Pointer, item_pointer unsafe.Pointer) {
 		stored = atomic.CompareAndSwapPointer(
 			&state.Slots[slot], previous, unsafe.Pointer(item))
 		if stored {
-			assert(previous != unsafe.Pointer(item), "diode: recycled a live bucket")
-			recycle_overwritten(state_pointer, previous)
+			aver.Always(
+				previous != unsafe.Pointer(item), "diode: recycled a live bucket",
+			)
+			if previous != nil {
+				bucket_free(state_pointer, previous)
+			}
 		}
 		// A failed CAS means another producer won this slot; loop to the next index.
 	}
-}
-
-// Returns a bucket that a successful overwrite has dropped back to the pool, keeping a
-// diode allocation-free even while shedding load. A successful CAS over a non-nil slot
-// proves the drain never took that bucket — a drain read would have nil'd the slot and
-// failed the CAS — so the producer holds the only reference and may pool it.
-func recycle_overwritten(state_pointer unsafe.Pointer, previous unsafe.Pointer) {
-	state := (*Writer_State)(state_pointer)
-	if previous == nil {
-		return
-	}
-	dropped := (*Bucket)(previous)
-	if cap(dropped.Data) > MAXIMUM_POOLED_BUFFER {
-		return
-	}
-	dropped.Data = dropped.Data[:0]
-	state.Buffer_Pool.Put(dropped)
 }
 
 // Takes the next entry for the drain, reporting drops when the writer has lapped the
@@ -534,77 +715,46 @@ func ring_try_next(
 		}
 		alert(state_pointer, missed, DROP_OVERFLOW)
 	}
-	assert(
-		Boolean(sequence == uint64(state.Read_Index)),
-		"diode: delivered off the read cursor",
+	aver.Always(
+		sequence == uint64(state.Read_Index), "diode: delivered off the read cursor",
 	)
 	state.Read_Index++
 	return unsafe.Pointer(taken), true
 }
 
-// Drives the single reader: forward entries to the sink, sleep the poll interval on an
-// empty ring, and once Close requests a stop flush the remainder and exit.
-func drain(state_pointer unsafe.Pointer) {
-	state := (*Writer_State)(state_pointer)
-	for !is_stopped(state_pointer) {
-		item_pointer, ok := ring_try_next(state_pointer)
-		if ok {
-			forward(state_pointer, item_pointer)
-			continue
-		}
-		state.Sleep(time.Duration(state.Poll_Interval))
-	}
-	drain_remainder(state_pointer)
-	close(state.Done)
+// Inner Stream failures have no reporting channel above a diode, so retirement only recycles
+// the bucket. It records state and continues nothing: the root's next Writer_Rearm submits.
+func drain_retire(completion nbio.Completion_Handle) {
+	state := (*Writer_State)(unsafe.Pointer(completion))
+	bucket_free(unsafe.Pointer(state), unsafe.Pointer(&state.Buckets[state.In_Flight-1]))
+	state.In_Flight = BUCKET_INDEX_NONE
 }
 
-// Reports whether Close has asked the drain to finish.
-func is_stopped(state_pointer unsafe.Pointer) (stopped Boolean) {
-	defer func() { Boolean_Invariants(stopped, "is_stopped.stopped") }()
+// Sends the caller's Close to the inner Stream once the ring has drained.
+func drain_close(state_pointer unsafe.Pointer) (submitted Boolean) {
+	defer func() { Boolean_Invariants(submitted, "drain_close.submitted") }()
 	state := (*Writer_State)(state_pointer)
-	select {
-	case <-state.Stop:
-		return true
-	default:
+	if !state.Close_Requested.Load() {
 		return false
 	}
-}
-
-// Flushes whatever is still buffered, used on Close so a clean shutdown does not drop
-// already-queued lines.
-func drain_remainder(state_pointer unsafe.Pointer) {
-	item_pointer, ok := ring_try_next(state_pointer)
-	for ok {
-		forward(state_pointer, item_pointer)
-		item_pointer, ok = ring_try_next(state_pointer)
+	state.Close = CLOSE_SUBMITTED
+	inner := state.Stream
+	if inner.Procedure == nil {
+		state.Close_Completion.Data = 0
+		state.Close_Completion.Error = nil
+		nbio.Stream_Callback_Call(state.Close_Callback, state.Close_Completion)
+		return true
 	}
-}
-
-// Writes one line to the sink and returns its bucket to the pool.
-func forward(state_pointer unsafe.Pointer, item_pointer unsafe.Pointer) {
-	state := (*Writer_State)(state_pointer)
-	item := (*Bucket)(item_pointer)
-	assert(item != nil, "diode: forward got a nil bucket")
-	if rate_limit_sheds(state_pointer, Line_Size(len(item.Data))) {
-		alert(state_pointer, 1, DROP_RATE_LIMIT)
-	} else {
-		// One Write per line, exactly as a synchronous wrapped writer would have seen.
-		state.Sink_Write(state.Sink_State, item.Data)
-	}
-	if cap(item.Data) > MAXIMUM_POOLED_BUFFER {
-		return
-	}
-	item.Data = item.Data[:0]
-	state.Buffer_Pool.Put(item)
+	inner.Procedure(inner.State, state.Close_Completion, nbio.STREAM_MODE_CLOSE, nil, 0,
+		nbio.SEEK_FROM_START, state.Close_Callback)
+	return true
 }
 
 // Reports whether the rate limiter sheds a line of size bytes. It refills the byte token
 // bucket from the clock, caps it at the burst, and a non-positive balance means shed (the
 // line is dropped, never delayed). A disabled limiter (Bytes_Per_Second <= 0) never sheds.
-// Only the drain goroutine calls this, so the bucket state needs no synchronization.
-func rate_limit_sheds(
-	state_pointer unsafe.Pointer, size Line_Size,
-) (shed Boolean) {
+// Only the drain owner calls this, so the bucket state needs no synchronization.
+func rate_limit_sheds(state_pointer unsafe.Pointer, size Line_Size) (shed Boolean) {
 	defer func() { Boolean_Invariants(shed, "rate_limit_sheds.shed") }()
 	Line_Size_Invariants(size, "rate_limit_sheds.size")
 	state := (*Writer_State)(state_pointer)
@@ -639,16 +789,4 @@ func alert(state_pointer unsafe.Pointer, missed Missed_Count, cause Drop_Cause) 
 	Drop_Cause_Invariants(cause, "alert.cause")
 	state := (*Writer_State)(state_pointer)
 	state.Alerter(int(missed), cause)
-}
-
-// Panics with message when condition is false. Unlike the invariant framework it captures
-// no caller site, so it inlines to a single predictable branch over a constant string —
-// free on the hot path and allocation-free. The panic's stack trace carries the location;
-// message names the invariant.
-func assert(condition Boolean, message Message) {
-	Boolean_Invariants(condition, "assert.condition")
-	Message_Invariants(message, "assert.message")
-	if !condition {
-		panic(message)
-	}
 }
