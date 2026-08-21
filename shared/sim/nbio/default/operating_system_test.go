@@ -2,6 +2,7 @@ package nbio
 
 import (
 	"errors"
+	"os"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -3047,4 +3048,163 @@ func self_exec_close(loop nbio.IO, driver nbio.Driver, socket nbio.File) {
 	var completion nbio.Completion
 	nbio.IO_Close(loop, &completion, socket, func(_ nbio.Completion_Handle) { closed = true })
 	nbio.Driver_Run_Until(driver, REAL_DEADLINE, func() (finished bool) { return closed })
+}
+
+// Reports whether fcntl command reads flag set on file.
+func descriptor_flag_set(t *testing.T, file nbio.File, command int, flag int) (set bool) {
+	t.Helper()
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(file), uintptr(command), 0)
+	testify.Equal(t, syscall.Errno(0), errno)
+	return int(flags)&flag != 0
+}
+
+// Submits one pipe transfer at the descriptor position and reports its sole result.
+func operating_system_test_pipe_transfer(
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File, buffer []byte,
+	write bool,
+) (count int, transfer_err error) {
+	t.Helper()
+	count = -1
+	var completion nbio.Completion
+	callback := func(completed nbio.Completion_Handle) {
+		count = completed.Data
+		transfer_err = completed.Error
+	}
+	if write {
+		nbio.Storage_Write(loop.Storage, &completion, file, buffer,
+			nbio.FILE_POSITION_CURRENT, REAL_DEADLINE, callback)
+	} else {
+		nbio.Storage_Read(loop.Storage, &completion, file, buffer,
+			nbio.FILE_POSITION_CURRENT, REAL_DEADLINE, callback)
+	}
+	testify.True(t,
+		operating_system_run_until(t, driver, func() (finished bool) { return count >= 0 }))
+	return count, transfer_err
+}
+
+// Test_Operating_System_IO_Pipe verifies both ends open non-blocking and close-on-exec, a read
+// armed on an empty pipe waits for the writer, and closing the write end reads as end of file.
+func Test_Operating_System_IO_Pipe(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	read, write, pipe_err := nbio.IO_Pipe(loop)
+	if !testify.No_Error(t, pipe_err) {
+		return
+	}
+	for _, end := range []nbio.File{read, write} {
+		testify.True(t, descriptor_flag_set(t, end, syscall.F_GETFL, syscall.O_NONBLOCK))
+		testify.True(t, descriptor_flag_set(t, end, syscall.F_GETFD, syscall.FD_CLOEXEC))
+	}
+	buffer := make([]byte, len("hello"))
+	read_count := -1
+	var read_err error
+	var read_completion nbio.Completion
+	// Armed before the write, thus the read meets an empty pipe and must wait.
+	nbio.Storage_Read(loop.Storage, &read_completion, read, buffer,
+		nbio.FILE_POSITION_CURRENT, REAL_DEADLINE, func(completed nbio.Completion_Handle) {
+			read_count = completed.Data
+			read_err = completed.Error
+		})
+	write_count, write_err := operating_system_test_pipe_transfer(
+		t, loop, driver, write, []byte("hello"), true,
+	)
+	testify.True(t, operating_system_run_until(t, driver,
+		func() (finished bool) { return read_count >= 0 }))
+	testify.No_Error(t, write_err)
+	testify.No_Error(t, read_err)
+	testify.Equal(t, len("hello"), write_count)
+	testify.Equal(t, len("hello"), read_count)
+	testify.Equal(t, "hello", string(buffer))
+	close_file(t, loop, driver, "pipe write end", write)
+	end_count, end_err := operating_system_test_pipe_transfer(
+		t, loop, driver, read, buffer, false,
+	)
+	testify.No_Error(t, end_err)
+	testify.Equal(t, 0, end_count)
+	close_file(t, loop, driver, "pipe read end", read)
+	nbio.IO_Deinit(loop)
+}
+
+// Test_Operating_System_IO_Pipe_Broken verifies a write whose read end is closed reports
+// Broken_Pipe.
+func Test_Operating_System_IO_Pipe_Broken(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	read, write, pipe_err := nbio.IO_Pipe(loop)
+	if !testify.No_Error(t, pipe_err) {
+		return
+	}
+	close_file(t, loop, driver, "pipe read end", read)
+	count, write_err := operating_system_test_pipe_transfer(
+		t, loop, driver, write, []byte("hello"), true,
+	)
+	testify.Error_Is(t, write_err, nbio.Broken_Pipe)
+	testify.Equal(t, 0, count)
+	close_file(t, loop, driver, "pipe write end", write)
+	nbio.IO_Deinit(loop)
+}
+
+// SPAWN_PROBE_ENVIRONMENT marks a test binary run as the child that reports its own standard
+// descriptor flags.
+const SPAWN_PROBE_ENVIRONMENT = "NBIO_SPAWN_PROBE=1"
+
+// SPAWN_PROBE_DESCRIPTORS is standard input, output, and error.
+const SPAWN_PROBE_DESCRIPTORS = 3
+
+// Test_Operating_System_IO_Spawn_Probe is the child side of the inherited-descriptor tests: it
+// writes one byte per standard descriptor, 'n' when O_NONBLOCK is set and 'b' otherwise, then
+// exits before the test framework writes anything. Run directly, it does nothing.
+func Test_Operating_System_IO_Spawn_Probe(t *testing.T) {
+	value, found := syscall.Getenv("NBIO_SPAWN_PROBE")
+	if !found {
+		return
+	}
+	if value != "1" {
+		return
+	}
+	report := make([]byte, SPAWN_PROBE_DESCRIPTORS)
+	for descriptor := range SPAWN_PROBE_DESCRIPTORS {
+		report[descriptor] = 'b'
+		file := nbio.File(descriptor)
+		if descriptor_flag_set(t, file, syscall.F_GETFL, syscall.O_NONBLOCK) {
+			report[descriptor] = 'n'
+		}
+	}
+	syscall.Write(1, report)
+	syscall.Exit(0)
+}
+
+// Spawns this test binary as the probe child and returns the flag report it wrote.
+func spawn_probe_report(t *testing.T, nonblock bool) (report string) {
+	t.Helper()
+	loop, _, driver := operating_system_loop(t, new_operating_system_clock())
+	done := false
+	var completion nbio.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
+		Path:               os.Args[0],
+		Arguments:          []string{"-test.run=^Test_Operating_System_IO_Spawn_Probe$"},
+		Environment:        []string{SPAWN_PROBE_ENVIRONMENT},
+		Input:              []byte("x"),
+		Inherited_Nonblock: nonblock,
+	}, REAL_DEADLINE, func(_ *nbio.Completion, spawned nbio.Process_Result, err error) {
+		testify.No_Error(t, err)
+		report = string(spawned.Output)
+		done = true
+	})
+	testify.True(t,
+		operating_system_run_until(t, driver, func() (finished bool) { return done }))
+	nbio.IO_Deinit(loop)
+	return report
+}
+
+// Test_Operating_System_IO_Spawn_Inherited_Default verifies a spawned child inherits blocking
+// standard descriptors by default.
+func Test_Operating_System_IO_Spawn_Inherited_Default(t *testing.T) {
+	testify.Equal(t, "bbb", spawn_probe_report(t, false))
+}
+
+// Test_Operating_System_IO_Spawn_Inherited_Nonblock verifies Inherited_Nonblock hands the child
+// non-blocking standard descriptors.
+func Test_Operating_System_IO_Spawn_Inherited_Nonblock(t *testing.T) {
+	testify.Equal(t, "nnn", spawn_probe_report(t, true))
 }

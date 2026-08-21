@@ -67,6 +67,9 @@ type Operating_System_Descriptor struct {
 	Used bool
 	// Descriptor is the kernel descriptor whose ownership the backend tracks.
 	Descriptor int
+	// Pipe routes Storage transfers to pipe operations, because pread and an io_uring file
+	// offset reject a pipe with ESPIPE.
+	Pipe bool
 }
 
 // Operating_System_Memory supplies every bounded queue and registry the backend retains.
@@ -379,7 +382,7 @@ func process_start(
 	if path_err != nil {
 		return nil, path_err
 	}
-	spawn, child, pipe_err := process_pipes(request)
+	spawn, child, pipe_err := process_pipes(state, request)
 	if pipe_err != nil {
 		return nil, pipe_err
 	}
@@ -394,56 +397,54 @@ func process_start(
 	)
 	// Child hold its own copies once StartProcess return, thus parent release three ends it
 	// handed over, whether or not fork succeeded.
-	for _, descriptor := range child {
-		syscall.Close(int(descriptor))
-	}
+	process_release_child(state, child)
 	if start_err != nil {
-		process_close_pipes(spawn)
+		process_close_pipes(state, spawn)
 		return nil, start_err
 	}
 	spawn.Identifier = identifier
 	if ready_err := process_watch_ready(spawn); ready_err != nil {
 		syscall.Kill(-identifier, syscall.SIGKILL)
-		process_close_pipes(spawn)
+		process_close_pipes(state, spawn)
 		process_reap(identifier)
 		return nil, ready_err
 	}
 	return spawn, nil
 }
 
-// Make three pipes of child. Return tracking entry that hold ends loop keep, and three ends child
-// receive as its standard descriptors.
+// Make three pipes of child through Pipe, thus every end sit in descriptor census and Deinit
+// catch leaked one. Return tracking entry that hold ends loop keep, and three ends child receive
+// as its standard descriptors.
 //
-// Kept ends take close-on-exec here, BEFORE fork. StartProcess dup only Files entries and leave
-// every other open descriptor to exec, thus kept end without flag reach child. Child would then
+// Pipe make every end close-on-exec BEFORE fork. StartProcess dup only Files entries and leave
+// every other open descriptor to exec, thus kept end never reach child. Child would otherwise
 // hold writer for its own standard input, and close of parent end would never give it
 // end-of-file.
 func process_pipes(
-	request nbio.Process_Request,
+	state *Operating_System, request nbio.Process_Request,
 ) (spawn *Spawn, child []uintptr, err error) {
-	input_read, input_write, input_err := pipe_open()
+	input_read, input_write, input_err := operating_system_pipe_procedure(state)
 	if input_err != nil {
 		return nil, nil, input_err
 	}
-	output_read, output_write, output_err := pipe_open()
+	output_read, output_write, output_err := operating_system_pipe_procedure(state)
 	if output_err != nil {
-		syscall.Close(input_read)
-		syscall.Close(input_write)
+		process_release_child(state, []uintptr{uintptr(input_read), uintptr(input_write)})
 		return nil, nil, output_err
 	}
-	error_read, error_write, error_err := pipe_open()
+	error_read, error_write, error_err := operating_system_pipe_procedure(state)
 	if error_err != nil {
-		syscall.Close(input_read)
-		syscall.Close(input_write)
-		syscall.Close(output_read)
-		syscall.Close(output_write)
+		process_release_child(state, []uintptr{
+			uintptr(input_read), uintptr(input_write),
+			uintptr(output_read), uintptr(output_write),
+		})
 		return nil, nil, error_err
 	}
 	spawn = &Spawn{
 		Exit_Descriptor:   -1,
-		Input_Descriptor:  input_write,
-		Output_Descriptor: output_read,
-		Error_Descriptor:  error_read,
+		Input_Descriptor:  int(input_write),
+		Output_Descriptor: int(output_read),
+		Error_Descriptor:  int(error_read),
 		Input:             request.Input,
 		Output_Buffer:     make([]byte, PROCESS_PIPE_BYTES),
 		Error_Buffer:      make([]byte, PROCESS_PIPE_BYTES),
@@ -451,25 +452,24 @@ func process_pipes(
 	child = []uintptr{
 		uintptr(input_read), uintptr(output_write), uintptr(error_write),
 	}
-	if retain_err := process_retain_pipes(spawn); retain_err != nil {
-		for _, descriptor := range child {
-			syscall.Close(int(descriptor))
+	if request.Inherited_Nonblock {
+		return spawn, child, nil
+	}
+	for _, descriptor := range child {
+		if inherit_err := pipe_inherit(int(descriptor)); inherit_err != nil {
+			process_release_child(state, child)
+			process_close_pipes(state, spawn)
+			return nil, nil, inherit_err
 		}
-		process_close_pipes(spawn)
-		return nil, nil, retain_err
 	}
 	return spawn, child, nil
 }
 
-// Config three pipe ends loop keep.
-func process_retain_pipes(spawn *Spawn) (err error) {
-	if retain_err := pipe_retain(spawn.Input_Descriptor); retain_err != nil {
-		return retain_err
+// Release pipe ends child hold its own copies of, or ends a failed start never handed over.
+func process_release_child(state *Operating_System, child []uintptr) {
+	for _, descriptor := range child {
+		operating_system_descriptor_release(state, int(descriptor))
 	}
-	if retain_err := pipe_retain(spawn.Output_Descriptor); retain_err != nil {
-		return retain_err
-	}
-	return pipe_retain(spawn.Error_Descriptor)
 }
 
 // Build argv child receive: program name, then caller arguments, which exclude it. exec.Command
@@ -536,7 +536,7 @@ func process_output_pass(
 ) {
 	if process_pass_ended(count, read_err) {
 		spawn.Output_Drained = true
-		process_close_input_or_output(&spawn.Output_Descriptor)
+		process_close_input_or_output(state, &spawn.Output_Descriptor)
 		process_finish(state, spawn)
 		return
 	}
@@ -562,7 +562,7 @@ func process_error_pass(
 ) {
 	if process_pass_ended(count, read_err) {
 		spawn.Error_Drained = true
-		process_close_input_or_output(&spawn.Error_Descriptor)
+		process_close_input_or_output(state, &spawn.Error_Descriptor)
 		process_finish(state, spawn)
 		return
 	}
@@ -594,23 +594,25 @@ func process_stream_pass(
 
 // Accept one standard-input pass. Write failure end feed by close of end, which child observe as
 // end-of-file.
-func process_input_pass(spawn *Spawn, count int, write_err error) {
+func process_input_pass(
+	state *Operating_System, spawn *Spawn, count int, write_err error,
+) {
 	if write_err != nil {
-		process_close_input_or_output(&spawn.Input_Descriptor)
+		process_close_input_or_output(state, &spawn.Input_Descriptor)
 		return
 	}
 	spawn.Input = spawn.Input[count:]
 	if len(spawn.Input) == 0 {
-		process_close_input_or_output(&spawn.Input_Descriptor)
+		process_close_input_or_output(state, &spawn.Input_Descriptor)
 	}
 }
 
 // Close one pipe end once and mark it released.
-func process_close_input_or_output(descriptor *int) {
+func process_close_input_or_output(state *Operating_System, descriptor *int) {
 	if *descriptor < 0 {
 		return
 	}
-	syscall.Close(*descriptor)
+	operating_system_descriptor_release(state, *descriptor)
 	*descriptor = -1
 }
 
@@ -648,14 +650,14 @@ func process_pipe_idle(descriptor int, completion *nbio.Completion) (idle bool) 
 // end-of-file only once this end is closed.
 func process_write_input(state *Operating_System, spawn *Spawn) {
 	if len(spawn.Input) == 0 {
-		process_close_input_or_output(&spawn.Input_Descriptor)
+		process_close_input_or_output(state, &spawn.Input_Descriptor)
 		return
 	}
 	operating_system_submit(&spawn.Input_Completion)
 	operating_system_pipe_write(
 		state, &spawn.Input_Completion, spawn.Input_Descriptor, spawn.Input,
 		func(count int, write_err error) {
-			process_input_pass(spawn, count, write_err)
+			process_input_pass(state, spawn, count, write_err)
 		},
 	)
 }
@@ -747,7 +749,7 @@ func process_cleanup(state *Operating_System, spawn *Spawn) {
 	process_retire_pass(state, &spawn.Output_Completion)
 	process_retire_pass(state, &spawn.Error_Completion)
 	process_retire_pass(state, &spawn.Input_Completion)
-	process_close_pipes(spawn)
+	process_close_pipes(state, spawn)
 	process_finish(state, spawn)
 }
 
@@ -790,7 +792,7 @@ func process_finish(state *Operating_System, spawn *Spawn) {
 	operating_system_internal_timeout_cancel(state, &spawn.Cleanup_Completion)
 	spawn.Delivered = true
 	operating_system_spawn_remove(state, spawn)
-	process_close_pipes(spawn)
+	process_close_pipes(state, spawn)
 	spawn.Result.Usage.Wall = time.Duration(
 		int64(time.Clock_Now_Monotonic(state.Host)) - int64(spawn.Started))
 	result := spawn.Result
@@ -834,10 +836,10 @@ func operating_system_spawn_remove(state *Operating_System, spawn *Spawn) {
 }
 
 // Release every pipe end loop still hold.
-func process_close_pipes(spawn *Spawn) {
-	process_close_input_or_output(&spawn.Input_Descriptor)
-	process_close_input_or_output(&spawn.Output_Descriptor)
-	process_close_input_or_output(&spawn.Error_Descriptor)
+func process_close_pipes(state *Operating_System, spawn *Spawn) {
+	process_close_input_or_output(state, &spawn.Input_Descriptor)
+	process_close_input_or_output(state, &spawn.Output_Descriptor)
+	process_close_input_or_output(state, &spawn.Error_Descriptor)
 }
 
 // Submit one pipe read through platform scheduler.
@@ -903,6 +905,13 @@ func operating_system_storage_read(
 	aver.Always(timeout > 0, "A storage read timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
+	if operating_system_descriptor_pipe(state, int(file)) {
+		aver.Always(offset == nbio.FILE_POSITION_CURRENT,
+			"A pipe transfer names no offset, because pipe is not seekable.")
+		operating_system_pipe_transfer(state, completion, file, buffer, timeout, callback,
+			OPERATING_SYSTEM_OPERATION_PIPE_READ)
+		return
+	}
 	operating_system_read(state, completion, file, buffer, offset, deadline, callback)
 }
 
@@ -914,7 +923,36 @@ func operating_system_storage_write(
 	aver.Always(timeout > 0, "A storage write timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
+	if operating_system_descriptor_pipe(state, int(file)) {
+		aver.Always(offset == nbio.FILE_POSITION_CURRENT,
+			"A pipe transfer names no offset, because pipe is not seekable.")
+		operating_system_pipe_transfer(state, completion, file, buffer, timeout, callback,
+			OPERATING_SYSTEM_OPERATION_PIPE_WRITE)
+		return
+	}
 	operating_system_write(state, completion, file, buffer, offset, deadline, callback)
+}
+
+// Pipe can stay empty or full forever, unlike file, thus its transfer carry socket deadline on
+// both platforms, not storage deadline Darwin ignore.
+func operating_system_pipe_transfer(
+	state *Operating_System, completion *nbio.Completion, file nbio.File, buffer []byte,
+	timeout time.Duration, callback nbio.Callback, kind Operating_System_Operation_Kind,
+) {
+	if len(buffer) == 0 {
+		operating_system_empty_transfer_complete(state, completion, callback)
+		return
+	}
+	operation := operating_system_operation_acquire(state, Operating_System_Operation{
+		Completion: completion,
+		Kind:       kind,
+		Descriptor: int(file), Buffer: platform_buffer_limit(buffer),
+		Deadline: time.Clock_Now_Monotonic(state.Host) +
+			time.Monotonic_Moment(timeout),
+		Deadline_Span: operating_system_timeout_span(timeout),
+		Deliver:       callback,
+	})
+	operating_system_operation_submit(state, operation)
 }
 
 func operating_system_storage_fsync(
@@ -1019,11 +1057,27 @@ func operating_system_timeline_close_event(state nbio.State, event nbio.Event) {
 	platform_event_close(system, event)
 }
 
-// Wire two members both halves share: asynchronous close of any descriptor, and leak check that
-// state run released every one it took.
+// Wire members both halves share: pipe that make descriptors, asynchronous close of any
+// descriptor, and leak check that state run released every one it took.
 func operating_system_wire_close(loop *nbio.IO) {
+	loop.Pipe_Procedure = operating_system_pipe_procedure
 	loop.Close_Procedure = operating_system_close_procedure
 	loop.Deinit_Procedure = operating_system_deinit_procedure
+}
+
+func operating_system_pipe_procedure(
+	state_pointer nbio.State,
+) (read nbio.File, write nbio.File, err error) {
+	state := state_pointer.(*Operating_System)
+	read_end, write_end, open_err := pipe_open_retained()
+	if open_err != nil {
+		return nbio.File(-1), nbio.File(-1), open_err
+	}
+	operating_system_descriptor_add(state, read_end)
+	operating_system_descriptor_add(state, write_end)
+	operating_system_descriptor_mark_pipe(state, read_end)
+	operating_system_descriptor_mark_pipe(state, write_end)
+	return nbio.File(read_end), nbio.File(write_end), nil
 }
 
 func operating_system_close_procedure(

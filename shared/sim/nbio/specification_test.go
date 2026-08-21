@@ -654,6 +654,45 @@ func Test_Sim_Spawn(t *testing.T) {
 	nbio.IO_Deinit(loop)
 }
 
+// Test_Sim_Pipe verifies a read armed on an empty pipe waits for the writer, bytes arrive in
+// order, and closing the write end reads as end of file.
+func Test_Sim_Pipe(t *testing.T) {
+	for seed := uint64(0); seed < 64; seed++ {
+		loop, driver, _ := sim_loop(seed)
+		read, write, pipe_err := nbio.IO_Pipe(loop)
+		if !testify.No_Error(t, pipe_err, seed) {
+			return
+		}
+		buffer := make([]byte, len("hello"))
+		read_count := -1
+		var read_err error
+		var read_completion nbio.Completion
+		// Armed before the write, thus the read meets an empty pipe and must wait.
+		read_callback := func(completed nbio.Completion_Handle) {
+			read_count = completed.Data
+			read_err = completed.Error
+		}
+		nbio.Storage_Read(loop.Storage, &read_completion, read, buffer,
+			nbio.FILE_POSITION_CURRENT, SIM_DEADLINE, read_callback)
+		write_count, write_err := sim_pipe_transfer(
+			t, loop, driver, write, []byte("hello"), true,
+		)
+		nbio.Driver_Run_Until(driver, SIM_DEADLINE,
+			func() (finished bool) { return read_count >= 0 })
+		testify.No_Error(t, write_err, seed)
+		testify.No_Error(t, read_err, seed)
+		testify.Equal(t, len("hello"), write_count, seed)
+		testify.Equal(t, len("hello"), read_count, seed)
+		testify.Equal(t, "hello", string(buffer), seed)
+		sim_pipe_close(t, loop, driver, write)
+		end_count, end_err := sim_pipe_transfer(t, loop, driver, read, buffer, false)
+		testify.No_Error(t, end_err, seed)
+		testify.Equal(t, 0, end_count, seed)
+		sim_pipe_close(t, loop, driver, read)
+		nbio.IO_Deinit(loop)
+	}
+}
+
 // Test_Sim_Deinit verify surface own leak check: Deinit reject run that still hold descriptor,
 // and accept same run once caller closed it.
 func Test_Sim_Deinit(t *testing.T) {
@@ -3416,6 +3455,56 @@ func Test_Spawn_Deadline_Sim(t *testing.T) {
 	}
 	testify.True(t, saw_deadline)
 	testify.True(t, saw_tie)
+}
+
+// Submits one pipe transfer at the descriptor position and reports its sole result.
+func sim_pipe_transfer(
+	t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File, buffer []byte,
+	write bool,
+) (count int, transfer_err error) {
+	t.Helper()
+	count = -1
+	var completion nbio.Completion
+	callback := func(completed nbio.Completion_Handle) {
+		count = completed.Data
+		transfer_err = completed.Error
+	}
+	if write {
+		nbio.Storage_Write(loop.Storage, &completion, file, buffer,
+			nbio.FILE_POSITION_CURRENT, SIM_DEADLINE, callback)
+	} else {
+		nbio.Storage_Read(loop.Storage, &completion, file, buffer,
+			nbio.FILE_POSITION_CURRENT, SIM_DEADLINE, callback)
+	}
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return count >= 0 })
+	return count, transfer_err
+}
+
+func sim_pipe_close(t *testing.T, loop nbio.IO, driver nbio.Driver, file nbio.File) {
+	t.Helper()
+	closed := false
+	var completion nbio.Completion
+	nbio.IO_Close(loop, &completion, file, func(completed nbio.Completion_Handle) {
+		testify.No_Error(t, completed.Error)
+		closed = true
+	})
+	nbio.Driver_Run_Until(driver, SIM_DEADLINE, func() (finished bool) { return closed })
+	testify.True(t, closed)
+}
+
+// Test_Pipe_Broken_Sim verifies a write whose read end is closed reports Broken_Pipe.
+func Test_Pipe_Broken_Sim(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	read, write, pipe_err := nbio.IO_Pipe(loop)
+	if !testify.No_Error(t, pipe_err) {
+		return
+	}
+	sim_pipe_close(t, loop, driver, read)
+	count, write_err := sim_pipe_transfer(t, loop, driver, write, []byte("hello"), true)
+	testify.Error_Is(t, write_err, nbio.Broken_Pipe)
+	testify.Equal(t, 0, count)
+	sim_pipe_close(t, loop, driver, write)
+	nbio.IO_Deinit(loop)
 }
 
 // Fuzz_Sim_Effects keeps seed whole so every modeled signal grain and exit outcome stays

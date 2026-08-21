@@ -50,18 +50,24 @@ func Test_Socket_Open_Darwin_No_Sigpipe(t *testing.T) {
 
 // State counters alone cannot prove the kernel filter was deleted, so wake the old descriptor.
 func Test_Platform_Expire_Operation_Deletes_Kernel_Registration(t *testing.T) {
-	platform, platform_err := platform_initialize(1, 0)
-	if !testify.No_Error(t, platform_err) {
+	memory := &operating_system_test_memory{}
+	loop, driver, loop_err := New_Operating_System_IO(
+		&memory.State, operating_system_memory_view(memory),
+		new_operating_system_clock(), 1, 0,
+	)
+	if !testify.No_Error(t, loop_err) {
 		return
 	}
-	state := &Operating_System{Platform: platform}
-	defer platform_deinitialize(state)
-	descriptors := []int{0, 0}
-	if !testify.No_Error(t, syscall.Pipe(descriptors)) {
+	state := &memory.State
+	defer nbio.Driver_Deinit(driver)
+	defer nbio.IO_Deinit(loop)
+	read, write, pipe_err := nbio.IO_Pipe(loop)
+	if !testify.No_Error(t, pipe_err) {
 		return
 	}
-	defer syscall.Close(descriptors[0])
-	defer syscall.Close(descriptors[1])
+	defer close_file(t, loop, driver, "pipe read end", read)
+	defer close_file(t, loop, driver, "pipe write end", write)
+	descriptors := []int{int(read), int(write)}
 	operation := &Operating_System_Operation{
 		Kind:       OPERATING_SYSTEM_OPERATION_RECEIVE,
 		Descriptor: descriptors[0],

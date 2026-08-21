@@ -282,25 +282,43 @@ func pipe_write(descriptor int, buffer []byte) (count int, again bool, err error
 	return count, false, nil
 }
 
-// Make pipe and return its read and write ends. Neither end is configured: caller keep one end
-// and hand other to child, and only kept end take close-on-exec and non-blocking mode. Two ends
-// are separate open file descriptions, thus config of one does not change what child see on
-// other.
-func pipe_open() (read int, write int, err error) {
+// Make pipe whose both ends are close-on-exec and non-blocking. This is the only pipe(2) in the
+// backend, thus every pipe end, spawn ones included, is born this way. Surface hand out no
+// blocking descriptor: eager attempt on either end must report EAGAIN, never park loop thread.
+func pipe_open_retained() (read int, write int, err error) {
 	descriptors := [PIPE_ENDS]int{}
 	if pipe_err := syscall.Pipe(descriptors[:]); pipe_err != nil {
 		return -1, -1, pipe_err
 	}
-	return descriptors[0], descriptors[1], nil
+	read = descriptors[0]
+	write = descriptors[1]
+	if retain_err := pipe_retain(read); retain_err != nil {
+		syscall.Close(read)
+		syscall.Close(write)
+		return -1, -1, retain_err
+	}
+	if retain_err := pipe_retain(write); retain_err != nil {
+		syscall.Close(read)
+		syscall.Close(write)
+		return -1, -1, retain_err
+	}
+	return read, write, nil
 }
 
-// Config end of pipe loop keep: close-on-exec, thus later spawn does not inherit it, and
-// non-blocking, thus loop eager attempt report EAGAIN instead of wait.
+// Config one pipe end: close-on-exec, thus later spawn does not inherit it, and non-blocking,
+// thus loop eager attempt report EAGAIN instead of wait.
 func pipe_retain(descriptor int) (err error) {
 	if flag_err := descriptor_close_on_exec(descriptor); flag_err != nil {
 		return flag_err
 	}
 	return syscall.SetNonblock(descriptor, true)
+}
+
+// Give child end blocking mode, the Process_Request.Inherited_Nonblock default. O_NONBLOCK live on
+// open file description, which dup into child share. Two ends of one pipe are separate
+// descriptions, thus kept end stay non-blocking.
+func pipe_inherit(descriptor int) (err error) {
+	return syscall.SetNonblock(descriptor, false)
 }
 
 // Set FD_CLOEXEC on descriptor. Both platform carry SYS_FCNTL, thus one raw call cover them.

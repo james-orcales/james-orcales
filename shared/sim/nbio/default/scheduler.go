@@ -418,6 +418,40 @@ func operating_system_descriptor_remove(state *Operating_System, descriptor int)
 	aver.Always(found, "A released descriptor belonged to the backend.")
 }
 
+// Close descriptor the backend itself own, off the loop, and drop it from census. Only internal
+// pipe ends take this path: caller-owned descriptor retire through asynchronous Close.
+func operating_system_descriptor_release(state *Operating_System, descriptor int) {
+	syscall.Close(descriptor)
+	operating_system_descriptor_remove(state, descriptor)
+}
+
+func operating_system_descriptor_mark_pipe(state *Operating_System, descriptor int) {
+	for index := range state.Raw_Open {
+		slot := &state.Raw_Open[index]
+		if !slot.Used {
+			continue
+		}
+		if slot.Descriptor == descriptor {
+			slot.Pipe = true
+			return
+		}
+	}
+	aver.Always(false, "A pipe end belongs to the backend.")
+}
+
+func operating_system_descriptor_pipe(state *Operating_System, descriptor int) (pipe bool) {
+	for index := range state.Raw_Open {
+		slot := &state.Raw_Open[index]
+		if !slot.Used {
+			continue
+		}
+		if slot.Descriptor == descriptor {
+			return slot.Pipe
+		}
+	}
+	return false
+}
+
 func operating_system_descriptor_count(state *Operating_System) (count int) {
 	for index := range state.Raw_Open {
 		if state.Raw_Open[index].Used {
@@ -505,6 +539,12 @@ func operating_system_timeout_result(
 		return 0
 	}
 	if operation.Kind == OPERATING_SYSTEM_OPERATION_WRITE {
+		return 0
+	}
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_PIPE_READ {
+		return 0
+	}
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_PIPE_WRITE {
 		return 0
 	}
 	if operation.Kind == OPERATING_SYSTEM_OPERATION_FSYNC {

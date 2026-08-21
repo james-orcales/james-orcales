@@ -124,9 +124,15 @@ identifies no watch. Simulator draws arrival grain from its own seed stream.
 
 ### Spawn
 
-A spawn requires a positive finite deadline; natural completion returns the seed-drawn exit code,
-while the deadline wins ties with Deadline_Exceeded. Real backend kills its subprocess group, bounds
-pipe cleanup to one second, and returns partial output; simulator captures none.
+A spawn requires a positive finite deadline; completion returns the seed-drawn exit code, and the
+deadline wins ties with Deadline_Exceeded. Inherited stdio ends block unless Inherited_Nonblock.
+Real backend kills subprocess group, bounds pipe cleanup to 1s, returns partial output; sim none.
+
+### Pipe
+
+Pipe synchronously return read and write ends, always non-blocking and close-on-exec. Transfers
+name FILE_POSITION_CURRENT; read on empty pipe waits for writer and reads zero once write end is
+closed. Write whose read end is closed reports Broken_Pipe.
 
 ### Deinit
 
@@ -136,7 +142,7 @@ leak check, thus caller need no census.
 ### Halves
 
 IO carry one backend pointer per half, Network and Storage, and none above them. Close, Deinit,
-Watch_Signal, Spawn, and platform operations read the Storage half. IO_Invariants assert both
+Pipe, Watch_Signal, Spawn, and platform operations read the Storage half. IO_Invariants assert both
 halves name one backend, thus a surface composed over two backends fail at construction.
 
 # File Mode

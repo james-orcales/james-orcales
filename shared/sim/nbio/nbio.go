@@ -53,6 +53,12 @@ type IO struct {
 	// Deinit assert every descriptor run open is closed. Surface own leak check, thus leaked
 	// descriptor fail run. Caller need no census it must remember to read.
 	Deinit_Procedure func(state State)
+	// Pipe open one-way byte channel and hand out its read end and write end, synchronously
+	// like Socket_TCP: pipe(2) never wait. Both ends are always non-blocking and close-on-exec,
+	// thus no transfer on them can park loop thread. Storage_Read and Storage_Write move bytes
+	// at FILE_POSITION_CURRENT; Close release each end. It sit here, not on one half: it own
+	// descriptor lifecycle, and its ends are neither file path nor socket.
+	Pipe_Procedure func(state State) (read File, write File, err error)
 	// Watch_Signal fires callback when the process receives signal before the finite
 	// deadline, or with Deadline_Exceeded. The lifetime is finite deliberately: a
 	// permanent waiter is a process that cannot state when it is done. It sit here because
@@ -106,6 +112,11 @@ func IO_Deinit(loop IO) {
 	loop.Deinit_Procedure(loop.Storage.State)
 }
 
+// IO_Pipe keeps backend state explicit so operation needs no captured environment.
+func IO_Pipe(loop IO) (read File, write File, err error) {
+	return loop.Pipe_Procedure(loop.Storage.State)
+}
+
 // IO_Watch_Signal keeps backend state explicit so operation needs no captured environment.
 func IO_Watch_Signal(
 	loop IO, completion *Completion, signal Signal, deadline time.Duration,
@@ -153,6 +164,11 @@ type Process_Request struct {
 	Working_Directory string
 	// Input is the bytes written to the process's standard input.
 	Input []byte
+	// Inherited_Nonblock sets O_NONBLOCK on the three pipe ends the process inherits as its
+	// standard descriptors. Zero value leaves them blocking, because ordinary program read and
+	// write its standard descriptors without handling EAGAIN. Ends the loop keeps are always
+	// non-blocking. The simulated backend runs no process and ignores it.
+	Inherited_Nonblock bool
 	// Stdout, when its Procedure is set, streams the process's standard output to the stream
 	// as it runs instead of capturing it into Result.Output — the affordance a long build
 	// needs so its progress reaches the user live. A zero Stream keeps the captured-buffer
@@ -1538,6 +1554,9 @@ type Sim_Operation struct {
 	Buffer []byte
 	// Offset preserves positioned transfer input until callback.
 	Offset int64
+	// Timeout is what remains of a pipe transfer's bound, thus every wait for the other end
+	// spend from one budget.
+	Timeout time.Duration
 	// Address preserves socket target until connection retirement.
 	Address Address
 	// Directory preserves path base until callback.
@@ -1683,6 +1702,9 @@ type Sim struct {
 	// Clock_Generator isolates epoch and per-view skew from every transfer stream, thus one
 	// more application clock cannot move any grain a banked seed already produce.
 	Clock_Generator prng.Xoshiro
+	// Pipe_Generator isolates pipe latency and wait from every file transfer stream, thus a run
+	// that opens a pipe cannot move any grain a banked seed already produce.
+	Pipe_Generator prng.Xoshiro
 	// Next_File is synthetic descriptor counter. Listen, Accept, Open_Socket, Open, and Create
 	// hand out next value, thus every descriptor is distinct.
 	Next_File File
@@ -1721,6 +1743,7 @@ func New_Simulated_IO(
 	state.Link_Generator = prng.Xoshiro_Split(&root_generator)
 	state.Permission_Generator = prng.Xoshiro_Split(&root_generator)
 	state.Clock_Generator = prng.Xoshiro_Split(&root_generator)
+	state.Pipe_Generator = prng.Xoshiro_Split(&root_generator)
 	virtual_timeline_initialize(
 		&state.Timeline, resolution, sim_epoch_draw(state), memory.Queue, memory.Events,
 	)
@@ -1746,6 +1769,7 @@ func New_Simulated_IO(
 	loop.Timeline = virtual_timeline_to_timeline(&state.Timeline)
 	loop.Close_Procedure = sim_close_procedure
 	loop.Deinit_Procedure = sim_deinit_procedure
+	loop.Pipe_Procedure = sim_pipe_procedure
 	loop.Watch_Signal = sim_watch_signal_procedure
 	loop.Spawn = sim_spawn_procedure
 	IO_Invariants(loop, "new_simulated_io.loop")
@@ -2149,6 +2173,10 @@ var sim_path_component_too_large = errors.New("io: path component too large")
 var sim_file_capacity_exceeded = errors.New("io: file capacity exceeded")
 var sim_file_offset_invalid = errors.New("io: file offset invalid")
 
+// Pipe wait sentinel never reach caller: retirement turn it into one more wait, the way real
+// kernel park EAGAIN on readiness.
+var sim_pipe_again = errors.New("io: pipe transfer must wait")
+
 func sim_accept_procedure(
 	state_pointer State, completion *Completion, listener File,
 	timeout time.Duration, callback Callback,
@@ -2337,12 +2365,39 @@ func sim_storage_read(
 	state_pointer State, completion *Completion, file File, buffer []byte,
 	offset int64, timeout time.Duration, callback Callback,
 ) {
-	state := state_pointer.(*Sim)
 	aver.Always(timeout > 0, "A storage read timeout is positive and finite.")
+	sim_storage_transfer(
+		state_pointer.(*Sim), completion, file, buffer, offset, timeout, callback,
+		SIM_OPERATION_KIND_READ,
+	)
+}
+
+func sim_storage_write(
+	state_pointer State, completion *Completion, file File, buffer []byte,
+	offset int64, timeout time.Duration, callback Callback,
+) {
+	aver.Always(timeout > 0, "A storage write timeout is positive and finite.")
+	sim_storage_transfer(
+		state_pointer.(*Sim), completion, file, buffer, offset, timeout, callback,
+		SIM_OPERATION_KIND_WRITE,
+	)
+}
+
+// Read and write share one submit. Pipe end leave file latency stream untouched: its wait draw
+// from Pipe_Generator.
+func sim_storage_transfer(
+	state *Sim, completion *Completion, file File, buffer []byte, offset int64,
+	timeout time.Duration, callback Callback, kind Sim_Operation_Kind,
+) {
 	descriptor := sim_descriptor_find(state, file)
-	aver.Always(descriptor != nil, "A Storage read names an open descriptor.")
-	aver.Always(!descriptor.Socket, "A Storage read names an open file.")
-	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_READ, callback)
+	aver.Always(descriptor != nil, "A Storage transfer names an open descriptor.")
+	aver.Always(!descriptor.Socket, "A Storage transfer names an open file.")
+	pipe := sim_node_is_pipe(state, descriptor.Node)
+	if pipe {
+		aver.Always(offset == FILE_POSITION_CURRENT,
+			"A pipe transfer names no offset, because pipe is not seekable.")
+	}
+	operation := sim_operation_acquire(state, completion, kind, callback)
 	if operation == nil {
 		return
 	}
@@ -2353,6 +2408,11 @@ func sim_storage_read(
 	sim_operation_borrow(operation)
 	if len(buffer) == 0 {
 		sim_operation_submit(operation, completion, 0)
+		return
+	}
+	if pipe {
+		operation.Timeout = timeout
+		sim_pipe_submit(operation, completion)
 		return
 	}
 	latency := sim_latency(state)
@@ -2364,35 +2424,127 @@ func sim_storage_read(
 	sim_operation_submit(operation, completion, latency)
 }
 
-func sim_storage_write(
-	state_pointer State, completion *Completion, file File, buffer []byte,
-	offset int64, timeout time.Duration, callback Callback,
-) {
-	state := state_pointer.(*Sim)
-	aver.Always(timeout > 0, "A storage write timeout is positive and finite.")
-	descriptor := sim_descriptor_find(state, file)
-	aver.Always(descriptor != nil, "A Storage write names an open descriptor.")
-	aver.Always(!descriptor.Socket, "A Storage write names an open file.")
-	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_WRITE, callback)
-	if operation == nil {
-		return
-	}
-	operation.File = file
-	operation.Node = descriptor.Node
-	operation.Buffer = buffer
-	operation.Offset = offset
-	sim_operation_borrow(operation)
-	if len(buffer) == 0 {
-		sim_operation_submit(operation, completion, 0)
-		return
-	}
-	latency := sim_latency(state)
-	if sim_storage_timeout_first(state, latency, timeout) {
+// Real kernel park pipe transfer on readiness, and timeout bound whole park. Simulator model
+// that park as repeated drawn waits spent from one Timeout budget.
+func sim_pipe_submit(operation *Sim_Operation, completion *Completion) {
+	state := operation.State
+	// One extra grain make every wait advance clock, thus pipe nobody fill still reach timeout.
+	latency := 1 + sim_latency_from(&state.Pipe_Generator)
+	if sim_timeout_order_first(&state.Pipe_Generator, latency, operation.Timeout) {
 		operation.Operation_Err = Deadline_Exceeded
-		sim_operation_submit(operation, completion, timeout)
+		sim_operation_submit(operation, completion, operation.Timeout)
 		return
 	}
+	operation.Timeout -= latency
 	sim_operation_submit(operation, completion, latency)
+}
+
+// A pipe is one pathless node both ends name, thus a read drains what a write appended. Node
+// parent -1 hang it off no directory, thus no path resolve to it.
+func sim_pipe_procedure(state_pointer State) (read File, write File, err error) {
+	state := state_pointer.(*Sim)
+	node, node_err := sim_node_acquire(state, -1, "", FILE_MODE_NAMED_PIPE)
+	if node_err != nil {
+		return File(-1), File(-1), node_err
+	}
+	read_end, read_err := sim_descriptor_acquire(state, node, false, Sim_Socket{})
+	if read_err != nil {
+		sim_node_reset(&state.Nodes[node])
+		return File(-1), File(-1), read_err
+	}
+	read_end.Access = OPEN_READ_ONLY
+	write_end, write_err := sim_descriptor_acquire(state, node, false, Sim_Socket{})
+	if write_err != nil {
+		sim_descriptor_reset(read_end)
+		sim_node_reset(&state.Nodes[node])
+		return File(-1), File(-1), write_err
+	}
+	write_end.Access = OPEN_WRITE_ONLY
+	return read_end.File, write_end.File, nil
+}
+
+// Socket descriptor carry node -1, thus only a file node index can name a pipe.
+func sim_node_is_pipe(state *Sim, node int) (pipe bool) {
+	if node < 0 {
+		return false
+	}
+	return state.Nodes[node].Mode&FILE_MODE_NAMED_PIPE != 0
+}
+
+// Report whether any open descriptor with access still name pipe node.
+func sim_pipe_end_open(state *Sim, node int, access Open_Access) (open bool) {
+	for index := range state.Descriptors {
+		descriptor := &state.Descriptors[index]
+		if !descriptor.Used {
+			continue
+		}
+		if descriptor.Socket {
+			continue
+		}
+		if descriptor.Node != node {
+			continue
+		}
+		if descriptor.Access == access {
+			return true
+		}
+	}
+	return false
+}
+
+// Pipe read consume from front. Empty pipe with live write end wait; with none it read as end of
+// file.
+func sim_pipe_read(operation *Sim_Operation) (data int, err error) {
+	state := operation.State
+	node := &state.Nodes[operation.Node]
+	if node.Contents_Count == 0 {
+		if sim_pipe_end_open(state, operation.Node, OPEN_WRITE_ONLY) {
+			return 0, sim_pipe_again
+		}
+		return 0, nil
+	}
+	count := copy(operation.Buffer, node.Contents[:node.Contents_Count])
+	copy(node.Contents, node.Contents[count:node.Contents_Count])
+	node.Contents_Count -= count
+	return count, nil
+}
+
+// Pipe write append. No live read end break pipe, and full buffer wait for reader.
+func sim_pipe_write(operation *Sim_Operation) (data int, err error) {
+	state := operation.State
+	if !sim_pipe_end_open(state, operation.Node, OPEN_READ_ONLY) {
+		return 0, Broken_Pipe
+	}
+	node := &state.Nodes[operation.Node]
+	count := copy(node.Contents[node.Contents_Count:], operation.Buffer)
+	if count == 0 {
+		return 0, sim_pipe_again
+	}
+	node.Contents_Count += count
+	return count, nil
+}
+
+// Pipe has no path, thus its node live only while an end is open.
+func sim_close_release(state *Sim, file File) {
+	descriptor := sim_descriptor_find(state, file)
+	if descriptor == nil {
+		return
+	}
+	node := descriptor.Node
+	pipe := !descriptor.Socket
+	if pipe {
+		pipe = sim_node_is_pipe(state, node)
+	}
+	sim_descriptor_reset(descriptor)
+	if !pipe {
+		return
+	}
+	if sim_pipe_end_open(state, node, OPEN_READ_ONLY) {
+		return
+	}
+	if sim_pipe_end_open(state, node, OPEN_WRITE_ONLY) {
+		return
+	}
+	sim_node_reset(&state.Nodes[node])
 }
 
 func sim_storage_fsync(
@@ -3252,7 +3404,7 @@ func sim_operation_complete(completion Completion_Handle) {
 		)
 		switch operation.Kind {
 		case SIM_OPERATION_KIND_CLOSE:
-			sim_descriptor_release(operation.State, operation.File)
+			sim_close_release(operation.State, operation.File)
 		case SIM_OPERATION_KIND_ACCEPT:
 			data, err = sim_operation_accept(operation)
 		case SIM_OPERATION_KIND_CONNECT:
@@ -3292,6 +3444,10 @@ func sim_operation_complete(completion Completion_Handle) {
 		case SIM_OPERATION_KIND_STATX:
 			data, err = sim_statx_operation_complete(operation)
 		}
+	}
+	if err == sim_pipe_again {
+		sim_pipe_submit(operation, completion)
+		return
 	}
 	sim_operation_deliver(operation, completion, data, err)
 }
@@ -3373,6 +3529,9 @@ func sim_operation_read(operation *Sim_Operation) (data int, err error) {
 	if descriptor.Access == OPEN_WRITE_ONLY {
 		return 0, sim_bad_file_descriptor
 	}
+	if sim_node_is_pipe(operation.State, operation.Node) {
+		return sim_pipe_read(operation)
+	}
 	node := &operation.State.Nodes[operation.Node]
 	if File_Mode_Is_Directory(node.Mode) {
 		return 0, sim_is_a_directory
@@ -3396,6 +3555,9 @@ func sim_operation_write(operation *Sim_Operation) (data int, err error) {
 	descriptor := sim_descriptor_find(operation.State, operation.File)
 	if descriptor.Access == OPEN_READ_ONLY {
 		return 0, sim_bad_file_descriptor
+	}
+	if sim_node_is_pipe(operation.State, operation.Node) {
+		return sim_pipe_write(operation)
 	}
 	node := &operation.State.Nodes[operation.Node]
 	if File_Mode_Is_Directory(node.Mode) {
