@@ -30,6 +30,13 @@
   "opt_out_assertion_mandate_packages": [
           "**",
           "!shared/**",
+          "shared/invariant/**",
+          "shared/vsr/**",
+          "shared/testify/**",
+          "shared/snap/**",
+          "shared/jlog/**",
+          "shared/simulation/**",
+
           "!maddox/**",
           "!sloc/**",
           "!setup/**",
