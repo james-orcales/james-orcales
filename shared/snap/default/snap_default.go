@@ -35,7 +35,7 @@ type Frame_Information = snap.Frame_Information
 type New_Snapshot_Input = snap.New_Snapshot_Input
 
 // Entry re-exports the library's Entry.
-type Entry[T any] = snap.Entry[T]
+type Entry = snap.Entry
 
 // Default is the OS-bound Snapper used by the package-level Init / Edit / …
 // convenience functions. Tests that need to redirect I/O construct their own
@@ -50,16 +50,18 @@ func Init_Default_Snapper() (snapper *snap.Snapper) {
 		Read_File:    operating_read_file,
 		Output_Write: standard_error_write,
 		Write_File:   operating_write_file,
-		Get_Caller: func(skip int) (frame_information snap.Frame_Information, err error) {
-			callers := [CALLER_FRAME_COUNT]uintptr{}
-			count := runtime.Callers(skip, callers[:])
-			frame, _ := runtime.CallersFrames(callers[:count]).Next()
-			return snap.Frame_Information{File: frame.File, Line: frame.Line}, nil
-		},
-		Stdout: &snap.Buffer{},
-		Stderr: &snap.Buffer{},
-		Edits:  make(map[string][]snap.File_Edit),
+		Get_Caller:   operating_caller,
+		Stdout:       &snap.Buffer{},
+		Stderr:       &snap.Buffer{},
+		Edits:        make(map[string][]snap.File_Edit),
 	}
+}
+
+func operating_caller(skip int) (frame_information snap.Frame_Information, err error) {
+	callers := [CALLER_FRAME_COUNT]uintptr{}
+	count := runtime.Callers(skip, callers[:])
+	frame, _ := runtime.CallersFrames(callers[:count]).Next()
+	return snap.Frame_Information{File: frame.File, Line: frame.Line}, nil
 }
 
 func operating_read_file(
@@ -163,13 +165,13 @@ func Run(t *testing.T, function func(), snapshot snap.Snapshot) (output string, 
 }
 
 // Batch_Expect forwards to snap.Batch_Expect.
-func Batch_Expect[T any](t *testing.T, function func(T) (result any), entries []Entry[T]) {
+func Batch_Expect(t *testing.T, function func(string) (result any), entries []Entry) {
 	t.Helper()
 	snap.Batch_Expect(t, function, entries)
 }
 
 // Batch_Expect_Panic forwards to snap.Batch_Expect_Panic.
-func Batch_Expect_Panic[T any](t *testing.T, function func(T), entries []Entry[T]) {
+func Batch_Expect_Panic(t *testing.T, function func(string), entries []Entry) {
 	t.Helper()
 	snap.Batch_Expect_Panic(t, function, entries)
 }

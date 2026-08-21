@@ -2,10 +2,10 @@ package snap_test
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 	"unsafe"
 
+	"local/james-orcales/shared/sim/aver"
 	"local/james-orcales/shared/snap"
 )
 
@@ -22,7 +22,9 @@ func Test_Equal_Match(t *testing.T) {
 		t.Fatal("expected Snapshot_Is_Equal to return true for matching strings")
 	}
 	if snap.Buffer_Size(output_buffer) != 0 {
-		t.Fatalf("expected no diagnostic output, got: %s", output_buffer.String())
+		t.Fatalf(
+			"expected no diagnostic output, got: %s", snap.Buffer_String(output_buffer),
+		)
 	}
 }
 
@@ -38,8 +40,11 @@ func Test_Equal_Mismatch(t *testing.T) {
 	if snap.Snapshot_Is_Equal(snapshot, "actual") {
 		t.Fatal("expected Snapshot_Is_Equal to return false for mismatching strings")
 	}
-	if !contains(output_buffer.String(), "Snapshot mismatch") {
-		t.Fatalf("expected mismatch header in output, got: %s", output_buffer.String())
+	if !contains(snap.Buffer_String(output_buffer), "Snapshot mismatch") {
+		t.Fatalf(
+			"expected mismatch header in output, got: %s",
+			snap.Buffer_String(output_buffer),
+		)
 	}
 }
 
@@ -55,7 +60,7 @@ func Test_Equal_Legend(t *testing.T) {
 	})
 	snap.Snapshot_Is_Equal(snapshot, "actual")
 
-	output := output_buffer.String()
+	output := snap.Buffer_String(output_buffer)
 	if !contains(output, "\033[31mexpected\033[0m") {
 		t.Fatalf("expected red 'expected' in legend, got:\n%s", output)
 	}
@@ -82,11 +87,17 @@ func Test_Edit_Rewrite(t *testing.T) {
 	if !snap.Snapshot_Is_Equal(snapshot, "new") {
 		t.Fatal("expected Snapshot_Is_Equal with Should_Edit=true to return true")
 	}
-	if !contains(output_buffer.String(), "UPDATED SNAPSHOT") {
-		t.Fatalf("expected UPDATED SNAPSHOT notice, got: %s", output_buffer.String())
+	if !contains(snap.Buffer_String(output_buffer), "UPDATED SNAPSHOT") {
+		t.Fatalf(
+			"expected UPDATED SNAPSHOT notice, got: %s",
+			snap.Buffer_String(output_buffer),
+		)
 	}
-	if !contains(w_buffer.String(), "snap.Init(`new`)") {
-		t.Fatalf("expected W to contain snap.Init(`new`), got: %s", w_buffer.String())
+	if !contains(snap.Buffer_String(w_buffer), "snap.Init(`new`)") {
+		t.Fatalf(
+			"expected W to contain snap.Init(`new`), got: %s",
+			snap.Buffer_String(w_buffer),
+		)
 	}
 }
 
@@ -122,9 +133,13 @@ func Test_Panic_Match(t *testing.T) {
 		Snapper:   s,
 		File_Path: "/fake/test.go",
 		Line:      5,
-		Expected:  "boom",
+		Expected: aver.ASSERTION_FAILURE_MESSAGE_PREFIX +
+			"Snapshot_Is_Equal snapshot is bound to a Snapper" +
+			"  Always — condition was false: false",
 	})
-	snap.Expect_Panic(t, snapshot, func() { panic("boom") })
+	snap.Expect_Panic(t, snapshot, func() {
+		snap.Snapshot_Is_Equal(snap.Snapshot{}, "")
+	})
 }
 
 // Test_Panic_Mismatch verifies a panic message differing from the snapshot is
@@ -145,7 +160,7 @@ func Test_Panic_Mismatch(t *testing.T) {
 // Test_Batch_Expect verifies Batch_Expect runs every entry as its own subtest.
 func Test_Batch_Expect(t *testing.T) {
 	s, _, _ := test_snapper(nil)
-	entries := []snap.Entry[string]{
+	entries := []snap.Entry{
 		{
 			Name:  "upper",
 			Input: "hello",
@@ -174,7 +189,7 @@ func Test_Run_Capture(t *testing.T) {
 		Expected:  "\nSTDOUT:\nhello\n\n",
 	})
 	snap.Run(t, func() {
-		fmt.Fprintln(s.Stdout, "hello")
+		snap.Buffer_Write(s.Stdout, snap.Data("hello\n"))
 	}, snapshot)
 }
 

@@ -11,12 +11,12 @@ package snap
 
 import (
 	"fmt"
-	"path/filepath"
 	"sync"
 	"testing"
 	"unsafe"
 
 	"local/james-orcales/shared/diff/myers"
+	"local/james-orcales/shared/path"
 	"local/james-orcales/shared/sim/aver/default"
 )
 
@@ -47,14 +47,8 @@ type Write_File func(
 // Buffer owns captured test output.
 type Buffer []byte
 
-// Write satisfies the bounded writer seam used by fmt in test callbacks.
-func (buffer *Buffer) Write(data []byte) (written int, err error) {
-	*buffer = append(*buffer, data...)
-	return len(data), nil
-}
-
-// String satisfies fmt.Stringer without exposing mutable storage.
-func (buffer Buffer) String() (text string) { return string(buffer) }
+// Buffer_String returns immutable text without exposing mutable storage.
+func Buffer_String(buffer *Buffer) (text string) { return string(*buffer) }
 
 // Buffer_Reset retains storage between captured runs.
 func Buffer_Reset(buffer *Buffer) { *buffer = (*buffer)[:0] }
@@ -118,8 +112,7 @@ type Snapper struct {
 	Get_Caller func(skip int) (frame_information Frame_Information, err error)
 	// Stdout is reset by Run before calling function, then read after.
 	Stdout *Buffer
-	// Stderr is reset by Run before calling function, then read after. function is
-	// expected to close over the Snapper and write to Snapper.Stdout/Stderr.
+	// Stderr is reset by Run before calling function, then read after.
 	Stderr *Buffer
 	// Edits records per-file line deltas accumulated by edit-mode snapshots.
 	Edits map[string][]File_Edit
@@ -255,13 +248,11 @@ func string_count(value string, sought string) (count int) {
 	return count
 }
 
-// Panics anew when the recovered value does not match the snapshot.
-func expect_panic_mismatch(recovered any, snapshot Snapshot) {
+// The assertion preserves panic behavior when the recovered value does not match.
+func expect_panic_match(recovered any, snapshot Snapshot) {
 	actual_string := fmt.Sprint(recovered)
-	if Snapshot_Is_Equal(snapshot, actual_string) {
-		return
-	}
-	panic(fmt.Sprintf("Expected a different panic. Got: %s", actual_string))
+	aver.Always(Snapshot_Is_Equal(snapshot, actual_string),
+		"recovered panic output matches its snapshot")
 }
 
 // Expect compares the actual output against the snapshot's expected output.
@@ -280,45 +271,52 @@ func Expect(t *testing.T, snapshot Snapshot, actual any) (got string) {
 func Expect_Panic(t *testing.T, snapshot Snapshot, callback func()) {
 	t.Helper()
 	did_panic := false
-	defer func() {
-		if r := recover(); r != nil {
-			did_panic = true
-			expect_panic_mismatch(r, snapshot)
-		}
-	}()
+	defer expect_panic_recover(snapshot, &did_panic)
 	callback()
 	if !did_panic {
 		expect_panic_fail_no_panic(t, snapshot.Expected_Output)
 	}
 }
 
-// Entry represents a test case with input and expected output snapshot.
-// T is the input type for the test case.
-type Entry[T any] struct {
+// Recover must run directly inside deferred function.
+func expect_panic_recover(snapshot Snapshot, did_panic *bool) {
+	if r := recover(); r != nil {
+		*did_panic = true
+		expect_panic_match(r, snapshot)
+	}
+}
+
+// Entry represents a string test case with expected output snapshot.
+type Entry struct {
 	// Name is the subtest name.
 	Name string
 	// Input is the test-case input passed to the batch function.
-	Input T
+	Input string
 	// Snapshot is the expected-output snapshot for this case.
 	Snapshot Snapshot
 }
 
 // Batch_Expect runs multiple test cases as subtests, each with snapshot validation.
 // The function callback transforms each input into output for snapshot comparison.
-func Batch_Expect[T any](t *testing.T, function func(T) (result any), entries []Entry[T]) {
+func Batch_Expect(t *testing.T, function func(string) (result any), entries []Entry) {
 	t.Helper()
 	for _, e := range entries {
 		t.Run(e.Name, func(st *testing.T) {
 			st.Helper()
-			result := function(e.Input)
-			Expect(st, e.Snapshot, result)
+			batch_expect_entry(st, function, e)
 		})
 	}
 }
 
+func batch_expect_entry(t *testing.T, function func(string) (result any), entry Entry) {
+	t.Helper()
+	result := function(entry.Input)
+	Expect(t, entry.Snapshot, result)
+}
+
 // Batch_Expect_Panic runs multiple panic test cases as subtests with a shared callback.
 // The function callback is expected to panic for each input.
-func Batch_Expect_Panic[T any](t *testing.T, function func(T), entries []Entry[T]) {
+func Batch_Expect_Panic(t *testing.T, function func(string), entries []Entry) {
 	t.Helper()
 	for _, e := range entries {
 		t.Run(e.Name, func(st *testing.T) {
@@ -349,9 +347,7 @@ func snapper_is_equal_edit(
 	content, err := s.Read_File(
 		s.File_System_State, string_trim_prefix(snapshot.File_Path, "/"),
 	)
-	if err != nil {
-		panic(fmt.Sprintf("Update snapshot | can't read file: %s\n", err))
-	}
+	aver.Always(err == nil, "snapshot source file read succeeds")
 
 	span := snapper_locate_edit(s, snapshot, content)
 	if !span.Found {
@@ -370,16 +366,13 @@ func snapper_is_equal_edit(
 	new_content = append(new_content, content[span.Close:]...)
 
 	if s.Write != nil {
-		if _, write_err := s.Write(s.Writer_State, Data(new_content)); write_err != nil {
-			panic(write_err)
-		}
+		_, write_err := s.Write(s.Writer_State, Data(new_content))
+		aver.Always(write_err == nil, "injected snapshot write succeeds")
 	} else {
 		write_err := s.Write_File(
 			s.Write_File_State, snapshot.File_Path, Data(new_content), 0o664,
 		)
-		if write_err != nil {
-			panic(write_err)
-		}
+		aver.Always(write_err == nil, "snapshot source file write succeeds")
 	}
 
 	if !is_equal {
@@ -485,7 +478,8 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 	aver.Always(string_count(snapshot.Expected_Output, "`") == 0,
 		"expected output has no backtick")
 	aver.Always(string_count(actual, "`") == 0, "actual output has no backtick")
-	aver.Always(filepath.IsAbs(snapshot.File_Path), "snapshot file path is absolute")
+	aver.Always(bool(path.Is_Absolute(path.Text(snapshot.File_Path))),
+		"snapshot file path is absolute")
 
 	is_equal := actual == snapshot.Expected_Output
 	if snapshot.Should_Edit {
@@ -548,9 +542,8 @@ func snapper_print_lines(snapper *Snapper, text string) {
 	}
 }
 
-// Run executes function, captures what function writes to s.Stdout and s.Stderr, and asserts
-// the combined output against snapshot.
-// function is expected to close over the Snapper and write to Snapper.Stdout/Stderr.
+// Run executes function, captures what function writes through Buffer_Write, and asserts the
+// combined output against snapshot.
 // Run resets Stdout and Stderr before calling function and reads them after.
 func Run(t *testing.T, function func(), snapshot Snapshot) (output string, err string) {
 	t.Helper()
@@ -559,8 +552,8 @@ func Run(t *testing.T, function func(), snapshot Snapshot) (output string, err s
 	Buffer_Reset(s.Stdout)
 	Buffer_Reset(s.Stderr)
 	function()
-	output = s.Stdout.String()
-	err = s.Stderr.String()
+	output = Buffer_String(s.Stdout)
+	err = Buffer_String(s.Stderr)
 	if output == "" {
 		if err == "" {
 			Expect(t, snapshot, "snap.Run: no output")
