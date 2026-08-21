@@ -208,6 +208,7 @@ func match_cases_three() (cases match_case_set) {
 		{Pattern: "[-x]", Name: "-", Bad: true},
 		{Pattern: "[-x]", Name: "a", Bad: true},
 		{Pattern: "\\", Name: "a", Bad: true},
+		{Pattern: "a\\", Name: "b", Bad: true},
 		{Pattern: "[a-b-c]", Name: "a", Bad: true},
 		{Pattern: "[", Name: "a", Bad: true},
 		{Pattern: "[^", Name: "a", Bad: true},

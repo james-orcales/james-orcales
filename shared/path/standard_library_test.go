@@ -4,6 +4,9 @@
 package path
 
 import (
+	"fmt"
+	"path"
+	"runtime"
 	"testing"
 
 	"local/james-orcales/shared/testify"
@@ -317,4 +320,101 @@ func Test_Standard_Library_Match(t *testing.T) {
 		testify.Equal(t, one.Match, bool(matched), "Match(%q, %q)", one.Pattern, one.Name)
 		testify.Equal(t, one.Error, err, "Match(%q, %q) error", one.Pattern, one.Name)
 	}
+}
+
+// Benchmark_Join pairs upstream workload with caller-owned output.
+func Benchmark_Join(b *testing.B) {
+	b.Run("Shared", benchmark_join_shared)
+	b.Run("Standard_Library", benchmark_join_standard_library)
+}
+
+func benchmark_join_shared(b *testing.B) {
+	b.ReportAllocs()
+	parts := Elements{"one", "two", "three", "four"}
+	var destination [PATH_SIZE_MAXIMUM]byte
+	var count Boundary
+	for b.Loop() {
+		count = Join_Into(destination[:], parts)
+	}
+	b.StopTimer()
+	runtime.KeepAlive(count)
+}
+
+func benchmark_join_standard_library(b *testing.B) {
+	b.ReportAllocs()
+	parts := []string{"one", "two", "three", "four"}
+	text := parts[0]
+	for b.Loop() {
+		parts[0] = text
+		text = path.Join(parts...)
+		text = text[:len(parts[0])]
+	}
+	b.StopTimer()
+	runtime.KeepAlive(text)
+}
+
+// Benchmark_Match pairs every upstream match case.
+func Benchmark_Match(b *testing.B) {
+	for _, one := range standard_match_cases() {
+		name := fmt.Sprintf("%q_%q", one.Pattern, one.Name)
+		b.Run(name, func(b *testing.B) {
+			b.Run("Shared", func(b *testing.B) {
+				b.ReportAllocs()
+				var matched Boolean
+				var err error
+				for b.Loop() {
+					matched, err = Match(one.Pattern, one.Name)
+				}
+				b.StopTimer()
+				runtime.KeepAlive(matched)
+				runtime.KeepAlive(err)
+			})
+			b.Run("Standard_Library", func(b *testing.B) {
+				b.ReportAllocs()
+				var matched bool
+				var err error
+				for b.Loop() {
+					matched, err = path.Match(
+						string(one.Pattern), string(one.Name),
+					)
+				}
+				b.StopTimer()
+				runtime.KeepAlive(matched)
+				runtime.KeepAlive(err)
+			})
+		})
+	}
+}
+
+// Benchmark_Match_Corpus weighs every upstream case once per operation.
+func Benchmark_Match_Corpus(b *testing.B) {
+	cases := standard_match_cases()
+	b.Run("Shared", func(b *testing.B) {
+		b.ReportAllocs()
+		var matched Boolean
+		var err error
+		for b.Loop() {
+			for _, one := range cases {
+				matched, err = Match(one.Pattern, one.Name)
+			}
+		}
+		b.StopTimer()
+		runtime.KeepAlive(matched)
+		runtime.KeepAlive(err)
+	})
+	b.Run("Standard_Library", func(b *testing.B) {
+		b.ReportAllocs()
+		var matched bool
+		var err error
+		for b.Loop() {
+			for _, one := range cases {
+				matched, err = path.Match(
+					string(one.Pattern), string(one.Name),
+				)
+			}
+		}
+		b.StopTimer()
+		runtime.KeepAlive(matched)
+		runtime.KeepAlive(err)
+	})
 }

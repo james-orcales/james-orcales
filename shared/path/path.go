@@ -24,6 +24,39 @@ const NONEMPTY_SIZE_MINIMUM = 1
 // PATH_TERMINATOR_BYTES reserves one kernel C-string NUL outside pathname text.
 const PATH_TERMINATOR_BYTES = 1
 
+// MATCH_RESULT_INDEX locates sole bounded helper result.
+const MATCH_RESULT_INDEX = 0
+
+// MATCH_RESULT_COUNT gives internal helpers one bounded result slot.
+const MATCH_RESULT_COUNT = MATCH_RESULT_INDEX + NONEMPTY_SIZE_MINIMUM
+
+// MATCH_STAR_INDEX_ABSENT keeps simple classification distinct from first-byte star.
+const MATCH_STAR_INDEX_ABSENT = -NONEMPTY_SIZE_MINIMUM
+
+// MATCH_CLASSIFICATION_STAR_INDEX locates simple star position.
+const MATCH_CLASSIFICATION_STAR_INDEX = 0
+
+// MATCH_CLASSIFICATION_QUESTION_INDEX follows star position.
+const MATCH_CLASSIFICATION_QUESTION_INDEX = MATCH_CLASSIFICATION_STAR_INDEX + 1
+
+// MATCH_CLASSIFICATION_GENERIC_INDEX follows question presence.
+const MATCH_CLASSIFICATION_GENERIC_INDEX = MATCH_CLASSIFICATION_QUESTION_INDEX + 1
+
+// MATCH_CLASSIFICATION_COUNT bounds classification state.
+const MATCH_CLASSIFICATION_COUNT = MATCH_CLASSIFICATION_GENERIC_INDEX + 1
+
+// MATCH_CLASSIFICATION_GENERIC_ABSENT keeps literal and single wildcard paths direct.
+const MATCH_CLASSIFICATION_GENERIC_ABSENT = 0
+
+// MATCH_CLASSIFICATION_GENERIC_PATTERN routes interacting wildcard operators.
+const MATCH_CLASSIFICATION_GENERIC_PATTERN = MATCH_CLASSIFICATION_GENERIC_ABSENT + 1
+
+// MATCH_CLASSIFICATION_GENERIC_CLASS gives one class a direct bounded parse first.
+const MATCH_CLASSIFICATION_GENERIC_CLASS = MATCH_CLASSIFICATION_GENERIC_PATTERN + 1
+
+// MATCH_CLASSIFICATION_GENERIC_ESCAPE gives literal escapes a direct bounded scan first.
+const MATCH_CLASSIFICATION_GENERIC_ESCAPE = MATCH_CLASSIFICATION_GENERIC_CLASS + 1
+
 // TAIL_SIZE_MAXIMUM subtracts one byte because tail follows consumed input.
 const TAIL_SIZE_MAXIMUM = PATH_SIZE_MAXIMUM - NONEMPTY_SIZE_MINIMUM
 
@@ -96,56 +129,6 @@ type Text bytes.Text
 func Text_Invariants(value Text, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Nonempty_Text excludes loop state after Match exhausts pattern.
-type Nonempty_Text string
-
-// Nonempty_Text_Invariants proves Match scans only active pattern tails.
-func Nonempty_Text_Invariants(value Nonempty_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Tail_Text preserves proof that scan consumed at least one byte.
-type Tail_Text string
-
-// Tail_Text_Invariants subtracts one consumed byte from maximum path.
-func Tail_Text_Invariants(value Tail_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), PATH_SIZE_MINIMUM, TAIL_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Class_Text preserves proof that opening bracket was consumed.
-type Class_Text string
-
-// Class_Text_Invariants subtracts opening bracket consumed by matcher.
-func Class_Text_Invariants(value Class_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), PATH_SIZE_MINIMUM, TAIL_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Class_Tail preserves proof that opening bracket and one member were consumed.
-type Class_Tail string
-
-// Class_Tail_Invariants subtracts opening bracket and one consumed member byte.
-func Class_Tail_Invariants(value Class_Tail, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), PATH_SIZE_MINIMUM, CLASS_TAIL_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Class_Match_Tail preserves proof that one complete character class was consumed.
-type Class_Match_Tail string
-
-// Class_Match_Tail_Invariants subtracts shortest complete class grammar.
-func Class_Match_Tail_Invariants(value Class_Match_Tail, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), PATH_SIZE_MINIMUM, CLASS_MATCH_TAIL_SIZE_MAXIMUM).
 		Ensure()
 }
 
@@ -273,67 +256,644 @@ func Match(pattern Text, name Text) (matched Boolean, err error) {
 	defer func() { Boolean_Invariants(matched, "match.matched") }()
 	Text_Invariants(pattern, "match.pattern")
 	Text_Invariants(name, "match.name")
-	pattern_tail := pattern
-	name_tail := name
+	if pattern == "*" {
+		result := match_trailing_star([MATCH_RESULT_COUNT]Text{name})
+		return result[MATCH_RESULT_INDEX], nil
+	}
+	classification := classify_match(
+		[MATCH_RESULT_COUNT]Text{pattern},
+	)
+	star_index := classification[MATCH_CLASSIFICATION_STAR_INDEX]
+	question := classification[MATCH_CLASSIFICATION_QUESTION_INDEX] != 0
+	generic := classification[MATCH_CLASSIFICATION_GENERIC_INDEX]
+	if star_index >= 0 {
+		if question {
+			generic = MATCH_CLASSIFICATION_GENERIC_PATTERN
+		}
+	}
+	if generic == MATCH_CLASSIFICATION_GENERIC_CLASS {
+		result, handled, match_error := match_simple_class(
+			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
+		)
+		if handled[MATCH_RESULT_INDEX] {
+			return result[MATCH_RESULT_INDEX], match_error
+		}
+	}
+	if generic == MATCH_CLASSIFICATION_GENERIC_ESCAPE {
+		result, handled, match_error := match_simple_escape(
+			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
+		)
+		if handled[MATCH_RESULT_INDEX] {
+			return result[MATCH_RESULT_INDEX], match_error
+		}
+	}
+	if generic != MATCH_CLASSIFICATION_GENERIC_ABSENT {
+		result, match_error := match_pattern(
+			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
+		)
+		return result[MATCH_RESULT_INDEX], match_error
+	}
+	if star_index >= 0 {
+		prefix := pattern[:star_index]
+		suffix := pattern[star_index+NONEMPTY_SIZE_MINIMUM:]
+		if len(name) < len(pattern)-NONEMPTY_SIZE_MINIMUM {
+			return false, nil
+		}
+		if name[:len(prefix)] != prefix {
+			return false, nil
+		}
+		suffix_start := len(name) - len(suffix)
+		if name[suffix_start:] != suffix {
+			return false, nil
+		}
+		for count := len(prefix); count < suffix_start; count++ {
+			if name[count] == '/' {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	if question {
+		result := match_simple_question(
+			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
+		)
+		return result[MATCH_RESULT_INDEX], nil
+	}
+	return pattern == name, nil
+}
 
+func match_pattern(
+	pattern_value [MATCH_RESULT_COUNT]Text, name_value [MATCH_RESULT_COUNT]Text,
+) (matched [MATCH_RESULT_COUNT]Boolean, err error) {
+	pattern := pattern_value[MATCH_RESULT_INDEX]
+	name := name_value[MATCH_RESULT_INDEX]
 Pattern:
-	for len(pattern_tail) > 0 {
-		star, chunk, rest := scan_chunk(Nonempty_Text(pattern_tail))
-		pattern_tail = Text(rest)
+	for len(pattern) > 0 {
+		star_result, chunk_result, pattern_result := scan_match_chunk(
+			[MATCH_RESULT_COUNT]Text{pattern},
+		)
+		star := star_result[MATCH_RESULT_INDEX]
+		chunk := chunk_result[MATCH_RESULT_INDEX]
+		pattern = pattern_result[MATCH_RESULT_INDEX]
 		if star {
 			if chunk == "" {
-				// Star cannot cross slash.
-				for index := 0; index < len(name_tail); index++ {
-					if name_tail[index] == '/' {
-						return false, nil
-					}
-				}
-				return true, nil
+				result := match_trailing_star([MATCH_RESULT_COUNT]Text{name})
+				return result, nil
 			}
 		}
-		tail, okay, match_error := match_chunk(chunk, name_tail)
+		rest_result, okay_result, chunk_error := match_text_chunk(
+			[MATCH_RESULT_COUNT]Text{chunk}, [MATCH_RESULT_COUNT]Text{name},
+		)
+		rest := rest_result[MATCH_RESULT_INDEX]
+		okay := okay_result[MATCH_RESULT_INDEX]
 		if okay {
-			if len(tail) == 0 {
-				name_tail = Text(tail)
+			if len(rest) == 0 {
+				name = rest
 				continue
 			}
-			if len(pattern_tail) > 0 {
-				name_tail = Text(tail)
+			if len(pattern) > 0 {
+				name = rest
 				continue
 			}
 		}
-		if match_error != nil {
-			return false, match_error
+		if chunk_error != nil {
+			return [MATCH_RESULT_COUNT]Boolean{false}, chunk_error
 		}
 		if star {
-			for index := 0; index < len(name_tail) && name_tail[index] != '/'; index++ {
-				tail, okay, match_error = match_chunk(chunk, name_tail[index+1:])
+			for index := 0; index < len(name); index++ {
+				if name[index] == '/' {
+					break
+				}
+				rest_result, okay_result, chunk_error = match_text_chunk(
+					[MATCH_RESULT_COUNT]Text{chunk},
+					[MATCH_RESULT_COUNT]Text{name[index+1:]},
+				)
+				rest = rest_result[MATCH_RESULT_INDEX]
+				okay = okay_result[MATCH_RESULT_INDEX]
 				if okay {
-					if len(pattern_tail) == 0 {
-						if len(tail) > 0 {
+					if len(pattern) == 0 {
+						if len(rest) > 0 {
 							continue
 						}
 					}
-					name_tail = Text(tail)
+					name = rest
 					continue Pattern
 				}
-				if match_error != nil {
-					return false, match_error
+				if chunk_error != nil {
+					return [MATCH_RESULT_COUNT]Boolean{false}, chunk_error
 				}
 			}
 		}
-		// Remaining grammar still needs validation because malformed pattern outranks
-		// mismatch.
-		for len(pattern_tail) > 0 {
-			_, chunk, rest = scan_chunk(Nonempty_Text(pattern_tail))
-			pattern_tail = Text(rest)
-			if _, _, match_error = match_chunk(chunk, ""); match_error != nil {
-				return false, match_error
+		validation_input := [MATCH_RESULT_COUNT]Text{pattern}
+		validation_error := match_validate_rest(validation_input)
+		if validation_error != nil {
+			return [MATCH_RESULT_COUNT]Boolean{false}, validation_error
+		}
+		return [MATCH_RESULT_COUNT]Boolean{false}, nil
+	}
+	return [MATCH_RESULT_COUNT]Boolean{Boolean(len(name) == 0)}, nil
+}
+
+func classify_match(pattern_value [MATCH_RESULT_COUNT]Text) (
+	classification [MATCH_CLASSIFICATION_COUNT]int,
+) {
+	pattern := pattern_value[MATCH_RESULT_INDEX]
+	star_index := MATCH_STAR_INDEX_ABSENT
+	question := 0
+	for index := 0; index < len(pattern); index++ {
+		switch pattern[index] {
+		case '\\':
+			return [MATCH_CLASSIFICATION_COUNT]int{
+				star_index, question, MATCH_CLASSIFICATION_GENERIC_ESCAPE,
+			}
+		case '[':
+			return [MATCH_CLASSIFICATION_COUNT]int{
+				star_index, question, MATCH_CLASSIFICATION_GENERIC_CLASS,
+			}
+		case '?':
+			question = NONEMPTY_SIZE_MINIMUM
+		case '*':
+			if star_index >= 0 {
+				return [MATCH_CLASSIFICATION_COUNT]int{
+					star_index, question, MATCH_CLASSIFICATION_GENERIC_PATTERN,
+				}
+			}
+			star_index = index
+		}
+	}
+	return [MATCH_CLASSIFICATION_COUNT]int{
+		star_index, question, MATCH_CLASSIFICATION_GENERIC_ABSENT,
+	}
+}
+
+func match_simple_escape(
+	pattern_value, name_value [MATCH_RESULT_COUNT]Text,
+) (matched, handled [MATCH_RESULT_COUNT]Boolean, err error) {
+	pattern := pattern_value[MATCH_RESULT_INDEX]
+	name := name_value[MATCH_RESULT_INDEX]
+	name_index := 0
+	failed := false
+	for pattern_index := 0; pattern_index < len(pattern); pattern_index++ {
+		character := pattern[pattern_index]
+		if character == '\\' {
+			pattern_index++
+			if pattern_index == len(pattern) {
+				return [MATCH_RESULT_COUNT]Boolean{false},
+					[MATCH_RESULT_COUNT]Boolean{true}, Error_Bad_Pattern
+			}
+			character = pattern[pattern_index]
+		} else {
+			switch character {
+			case '*', '?', '[':
+				return [MATCH_RESULT_COUNT]Boolean{false},
+					[MATCH_RESULT_COUNT]Boolean{false}, nil
 			}
 		}
-		return false, nil
+		if name_index == len(name) {
+			failed = true
+			continue
+		}
+		failed = failed || character != name[name_index]
+		name_index++
 	}
-	return Boolean(len(name_tail) == 0), nil
+	matched_value := Boolean(name_index == len(name))
+	matched_value = matched_value && Boolean(!failed)
+	return [MATCH_RESULT_COUNT]Boolean{matched_value},
+		[MATCH_RESULT_COUNT]Boolean{true}, nil
+}
+
+func match_simple_class(
+	pattern_value, name_value [MATCH_RESULT_COUNT]Text,
+) (matched, handled [MATCH_RESULT_COUNT]Boolean, err error) {
+	pattern := pattern_value[MATCH_RESULT_INDEX]
+	name := name_value[MATCH_RESULT_INDEX]
+	class_start := 0
+	for pattern[class_start] != '[' {
+		class_start++
+	}
+	candidate := Text("")
+	if class_start < len(name) {
+		candidate = name[class_start:]
+	}
+	class_rest, member_result, negated_result, class_error := match_class(
+		[MATCH_RESULT_COUNT]Text{pattern[class_start+NONEMPTY_SIZE_MINIMUM:]},
+		[MATCH_RESULT_COUNT]Text{candidate},
+	)
+	if class_error != nil {
+		return [MATCH_RESULT_COUNT]Boolean{false},
+			[MATCH_RESULT_COUNT]Boolean{true}, class_error
+	}
+	rest := class_rest[MATCH_RESULT_INDEX]
+	for index := 0; index < len(rest); index++ {
+		switch rest[index] {
+		case '*', '?', '\\', '[':
+			return [MATCH_RESULT_COUNT]Boolean{false},
+				[MATCH_RESULT_COUNT]Boolean{false}, nil
+		}
+	}
+	if len(name) <= class_start {
+		return [MATCH_RESULT_COUNT]Boolean{false}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+	}
+	if name[:class_start] != pattern[:class_start] {
+		return [MATCH_RESULT_COUNT]Boolean{false}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+	}
+	candidate_count := int(utf8.CHARACTER_SIZE_MINIMUM)
+	if name[class_start] >= byte(utf8.CHARACTER_SELF) {
+		_, decoded_size := utf8.Decode_Character_Text(utf8.Text(name[class_start:]))
+		candidate_count = int(decoded_size)
+	}
+	if member_result[MATCH_RESULT_INDEX] == negated_result[MATCH_RESULT_INDEX] {
+		return [MATCH_RESULT_COUNT]Boolean{false}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+	}
+	name_rest := name[class_start+candidate_count:]
+	return [MATCH_RESULT_COUNT]Boolean{Boolean(name_rest == rest)},
+		[MATCH_RESULT_COUNT]Boolean{true}, nil
+}
+
+func match_simple_question(
+	pattern_value [MATCH_RESULT_COUNT]Text,
+	name_value [MATCH_RESULT_COUNT]Text,
+) (matched [MATCH_RESULT_COUNT]Boolean) {
+	pattern := pattern_value[MATCH_RESULT_INDEX]
+	name := name_value[MATCH_RESULT_INDEX]
+	pattern_index := 0
+	name_index := 0
+	for pattern_index < len(pattern) {
+		if name_index == len(name) {
+			return [MATCH_RESULT_COUNT]Boolean{false}
+		}
+		if pattern[pattern_index] == '?' {
+			if name[name_index] == '/' {
+				return [MATCH_RESULT_COUNT]Boolean{false}
+			}
+			size := int(utf8.CHARACTER_SIZE_MINIMUM)
+			if name[name_index] >= byte(utf8.CHARACTER_SELF) {
+				_, decoded_size := utf8.Decode_Character_Text(
+					utf8.Text(name[name_index:]),
+				)
+				size = int(decoded_size)
+			}
+			name_index += size
+			pattern_index++
+			continue
+		}
+		if pattern[pattern_index] != name[name_index] {
+			return [MATCH_RESULT_COUNT]Boolean{false}
+		}
+		pattern_index++
+		name_index++
+	}
+	return [MATCH_RESULT_COUNT]Boolean{Boolean(name_index == len(name))}
+}
+
+func match_trailing_star(
+	name_value [MATCH_RESULT_COUNT]Text,
+) (matched [MATCH_RESULT_COUNT]Boolean) {
+	name := name_value[MATCH_RESULT_INDEX]
+	for index := 0; index < len(name); index++ {
+		if name[index] == '/' {
+			return [MATCH_RESULT_COUNT]Boolean{false}
+		}
+	}
+	return [MATCH_RESULT_COUNT]Boolean{true}
+}
+
+func match_validate_rest(pattern_value [MATCH_RESULT_COUNT]Text) (err error) {
+	pattern := pattern_value[MATCH_RESULT_INDEX]
+	for len(pattern) > 0 {
+		_, chunk_result, rest_result := scan_match_chunk(
+			[MATCH_RESULT_COUNT]Text{pattern},
+		)
+		pattern = rest_result[MATCH_RESULT_INDEX]
+		_, _, chunk_error := match_text_chunk(
+			chunk_result, [MATCH_RESULT_COUNT]Text{""},
+		)
+		if chunk_error != nil {
+			return chunk_error
+		}
+	}
+	return nil
+}
+
+func scan_match_chunk(pattern_value [MATCH_RESULT_COUNT]Text) (
+	star [MATCH_RESULT_COUNT]Boolean,
+	chunk [MATCH_RESULT_COUNT]Text,
+	rest [MATCH_RESULT_COUNT]Text,
+) {
+	pattern := pattern_value[MATCH_RESULT_INDEX]
+	star_value := Boolean(false)
+	for len(pattern) > 0 {
+		if pattern[0] != '*' {
+			break
+		}
+		pattern = pattern[1:]
+		star_value = true
+	}
+	in_range := false
+	for index := 0; index < len(pattern); index++ {
+		switch pattern[index] {
+		case '\\':
+			if index+1 < len(pattern) {
+				index++
+			}
+		case '[':
+			in_range = true
+		case ']':
+			in_range = false
+		case '*':
+			if !in_range {
+				return [MATCH_RESULT_COUNT]Boolean{star_value},
+					[MATCH_RESULT_COUNT]Text{pattern[:index]},
+					[MATCH_RESULT_COUNT]Text{pattern[index:]}
+			}
+		}
+	}
+	return [MATCH_RESULT_COUNT]Boolean{star_value},
+		[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{""}
+}
+
+func match_text_chunk(chunk_value, name_value [MATCH_RESULT_COUNT]Text) (
+	rest [MATCH_RESULT_COUNT]Text, okay [MATCH_RESULT_COUNT]Boolean, err error,
+) {
+	chunk := chunk_value[MATCH_RESULT_INDEX]
+	name := name_value[MATCH_RESULT_INDEX]
+	failed := false
+	for len(chunk) > 0 {
+		if len(name) == 0 {
+			failed = true
+		}
+		switch chunk[0] {
+		case '[':
+			candidate := Text("")
+			if !failed {
+				size := int(utf8.CHARACTER_SIZE_MINIMUM)
+				if name[0] >= byte(utf8.CHARACTER_SELF) {
+					text := utf8.Text(name)
+					_, decoded_size := utf8.Decode_Character_Text(text)
+					size = int(decoded_size)
+				}
+				candidate = name[:size]
+				name = name[size:]
+			}
+			class_result, member_result, negated_result, err := match_class(
+				[MATCH_RESULT_COUNT]Text{chunk[1:]},
+				[MATCH_RESULT_COUNT]Text{candidate},
+			)
+			if err != nil {
+				return [MATCH_RESULT_COUNT]Text{""},
+					[MATCH_RESULT_COUNT]Boolean{false}, err
+			}
+			chunk = class_result[MATCH_RESULT_INDEX]
+			if member_result[MATCH_RESULT_INDEX] == negated_result[MATCH_RESULT_INDEX] {
+				failed = true
+			}
+		case '?':
+			if !failed {
+				failed = name[0] == '/'
+				size := int(utf8.CHARACTER_SIZE_MINIMUM)
+				if name[0] >= byte(utf8.CHARACTER_SELF) {
+					text := utf8.Text(name)
+					_, decoded_size := utf8.Decode_Character_Text(text)
+					size = int(decoded_size)
+				}
+				name = name[size:]
+			}
+			chunk = chunk[1:]
+		case '\\':
+			chunk = chunk[1:]
+			if len(chunk) == 0 {
+				return [MATCH_RESULT_COUNT]Text{""},
+					[MATCH_RESULT_COUNT]Boolean{false}, Error_Bad_Pattern
+			}
+			if !failed {
+				failed = chunk[0] != name[0]
+				name = name[1:]
+			}
+			chunk = chunk[1:]
+		default:
+			if !failed {
+				failed = chunk[0] != name[0]
+				name = name[1:]
+			}
+			chunk = chunk[1:]
+		}
+	}
+	if failed {
+		return [MATCH_RESULT_COUNT]Text{""},
+			[MATCH_RESULT_COUNT]Boolean{false}, nil
+	}
+	return [MATCH_RESULT_COUNT]Text{name}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+}
+
+func match_character(
+	value_result [MATCH_RESULT_COUNT]Text,
+) (character [MATCH_RESULT_COUNT]utf8.Decoded_Character) {
+	value := value_result[MATCH_RESULT_INDEX]
+	if len(value) == 0 {
+		return [MATCH_RESULT_COUNT]utf8.Decoded_Character{0}
+	}
+	if value[0] < byte(utf8.CHARACTER_SELF) {
+		return [MATCH_RESULT_COUNT]utf8.Decoded_Character{
+			utf8.Decoded_Character(value[0]),
+		}
+	}
+	decoded, _ := utf8.Decode_Character_Text(utf8.Text(value))
+	return [MATCH_RESULT_COUNT]utf8.Decoded_Character{decoded}
+}
+
+func match_class(
+	chunk_result [MATCH_RESULT_COUNT]Text,
+	candidate_result [MATCH_RESULT_COUNT]Text,
+) (
+	rest [MATCH_RESULT_COUNT]Text,
+	member_result, negated_result [MATCH_RESULT_COUNT]Boolean,
+	err error,
+) {
+	chunk := chunk_result[MATCH_RESULT_INDEX]
+	candidate := match_character(candidate_result)[MATCH_RESULT_INDEX]
+	negated := Boolean(len(chunk) > 0 && chunk[0] == '^')
+	if negated {
+		chunk = chunk[1:]
+	}
+	if len(chunk) == 0 {
+		return [MATCH_RESULT_COUNT]Text{""}, [MATCH_RESULT_COUNT]Boolean{false},
+			[MATCH_RESULT_COUNT]Boolean{false}, Error_Bad_Pattern
+	}
+	literal := len(chunk) >= 2 && chunk[1] == ']' && chunk[0] != '\\' && chunk[0] != '-'
+	if literal {
+		character := utf8.Decoded_Character(chunk[0])
+		member := Boolean(candidate == character)
+		return [MATCH_RESULT_COUNT]Text{chunk[2:]},
+			[MATCH_RESULT_COUNT]Boolean{member},
+			[MATCH_RESULT_COUNT]Boolean{negated}, nil
+	}
+	escaped_literal := len(chunk) == 3 && chunk[0] == '\\' && chunk[2] == ']'
+	if escaped_literal {
+		character := utf8.Decoded_Character(chunk[1])
+		member := Boolean(candidate == character)
+		return [MATCH_RESULT_COUNT]Text{""},
+			[MATCH_RESULT_COUNT]Boolean{member},
+			[MATCH_RESULT_COUNT]Boolean{negated}, nil
+	}
+	range_literal := len(chunk) >= 4 && chunk[1] == '-' && chunk[3] == ']'
+	range_literal = range_literal && chunk[0] != '\\' && chunk[2] != '\\'
+	if range_literal {
+		low := utf8.Decoded_Character(chunk[0])
+		high := utf8.Decoded_Character(chunk[2])
+		member := Boolean(low <= candidate)
+		member = member && Boolean(candidate <= high)
+		return [MATCH_RESULT_COUNT]Text{chunk[4:]},
+			[MATCH_RESULT_COUNT]Boolean{member},
+			[MATCH_RESULT_COUNT]Boolean{negated}, nil
+	}
+	if len(chunk) == 4 {
+		if chunk[3] == ']' {
+			if chunk[0] == '\\' {
+				member := Boolean(candidate == utf8.Decoded_Character(chunk[1]))
+				second := utf8.Decoded_Character(chunk[2])
+				member = member || Boolean(candidate == second)
+				return [MATCH_RESULT_COUNT]Text{""},
+					[MATCH_RESULT_COUNT]Boolean{member},
+					[MATCH_RESULT_COUNT]Boolean{negated}, nil
+			}
+			if chunk[1] == '\\' {
+				member := Boolean(candidate == utf8.Decoded_Character(chunk[0]))
+				second := utf8.Decoded_Character(chunk[2])
+				member = member || Boolean(candidate == second)
+				return [MATCH_RESULT_COUNT]Text{""},
+					[MATCH_RESULT_COUNT]Boolean{member},
+					[MATCH_RESULT_COUNT]Boolean{negated}, nil
+			}
+		}
+	}
+	return match_class_ranges(
+		[MATCH_RESULT_COUNT]Text{chunk}, candidate_result,
+		[MATCH_RESULT_COUNT]Boolean{negated},
+	)
+}
+
+func match_class_ranges(
+	chunk_result, candidate_result [MATCH_RESULT_COUNT]Text,
+	negated_result [MATCH_RESULT_COUNT]Boolean,
+) (
+	rest [MATCH_RESULT_COUNT]Text, member_result,
+	negated_output [MATCH_RESULT_COUNT]Boolean, err error,
+) {
+	chunk := chunk_result[MATCH_RESULT_INDEX]
+	candidate := match_character(candidate_result)[MATCH_RESULT_INDEX]
+	negated := negated_result[MATCH_RESULT_INDEX]
+	if len(chunk) >= 5 {
+		if chunk[1] == '-' {
+			if chunk[2] >= byte(utf8.CHARACTER_SELF) {
+				high, size := utf8.Decode_Character_Text(utf8.Text(chunk[2:]))
+				close_index := int(size) + 2
+				if close_index < len(chunk) {
+					if chunk[close_index] == ']' {
+						low := utf8.Decoded_Character(chunk[0])
+						member := Boolean(low <= candidate)
+						member = member && Boolean(candidate <= high)
+						tail := chunk[close_index+1:]
+						return [MATCH_RESULT_COUNT]Text{tail},
+							[MATCH_RESULT_COUNT]Boolean{member},
+							[MATCH_RESULT_COUNT]Boolean{negated}, nil
+					}
+				}
+			}
+		}
+	}
+	member := Boolean(false)
+	range_count := 0
+	for range len(chunk) + NONEMPTY_SIZE_MINIMUM {
+		if len(chunk) > 0 {
+			if chunk[0] == ']' {
+				if range_count > 0 {
+					return [MATCH_RESULT_COUNT]Text{chunk[1:]},
+						[MATCH_RESULT_COUNT]Boolean{member},
+						[MATCH_RESULT_COUNT]Boolean{negated}, nil
+				}
+			}
+		}
+		escaped_input := [MATCH_RESULT_COUNT]Text{chunk}
+		escaped_result, low_result, escaped_error := match_escaped_character(escaped_input)
+		if escaped_error != nil {
+			return [MATCH_RESULT_COUNT]Text{""},
+				[MATCH_RESULT_COUNT]Boolean{false},
+				[MATCH_RESULT_COUNT]Boolean{false}, escaped_error
+		}
+		chunk = escaped_result[MATCH_RESULT_INDEX]
+		low_text := low_result[MATCH_RESULT_INDEX]
+		low_character := match_character([MATCH_RESULT_COUNT]Text{low_text})
+		low := low_character[MATCH_RESULT_INDEX]
+		high := low
+		if chunk[0] == '-' {
+			high_input := [MATCH_RESULT_COUNT]Text{chunk[1:]}
+			high_rest, high_result, high_error := match_escaped_character(high_input)
+			if high_error != nil {
+				return [MATCH_RESULT_COUNT]Text{""},
+					[MATCH_RESULT_COUNT]Boolean{false},
+					[MATCH_RESULT_COUNT]Boolean{false}, high_error
+			}
+			chunk = high_rest[MATCH_RESULT_INDEX]
+			high_text := high_result[MATCH_RESULT_INDEX]
+			high_character := match_character([MATCH_RESULT_COUNT]Text{high_text})
+			high = high_character[MATCH_RESULT_INDEX]
+		}
+		if low <= candidate {
+			if candidate <= high {
+				member = true
+			}
+		}
+		range_count++
+	}
+	return [MATCH_RESULT_COUNT]Text{""}, [MATCH_RESULT_COUNT]Boolean{false},
+		[MATCH_RESULT_COUNT]Boolean{false}, Error_Bad_Pattern
+}
+
+func match_escaped_character(chunk_result [MATCH_RESULT_COUNT]Text) (
+	rest_result [MATCH_RESULT_COUNT]Text,
+	character_result [MATCH_RESULT_COUNT]Text,
+	err error,
+) {
+	chunk := chunk_result[MATCH_RESULT_INDEX]
+	size := int(utf8.CHARACTER_SIZE_MINIMUM)
+	if len(chunk) == 0 {
+		return [MATCH_RESULT_COUNT]Text{""},
+			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+	}
+	if chunk[0] == '-' {
+		return [MATCH_RESULT_COUNT]Text{""},
+			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+	}
+	if chunk[0] == ']' {
+		return [MATCH_RESULT_COUNT]Text{""},
+			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+	}
+	if chunk[0] == '\\' {
+		chunk = chunk[1:]
+		if len(chunk) == 0 {
+			return [MATCH_RESULT_COUNT]Text{""},
+				[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+		}
+	}
+	decoded := utf8.Decoded_Character(chunk[0])
+	if chunk[0] >= byte(utf8.CHARACTER_SELF) {
+		decoded_character, decoded_size := utf8.Decode_Character_Text(utf8.Text(chunk))
+		decoded = decoded_character
+		size = int(decoded_size)
+	}
+	if decoded == utf8.REPLACEMENT_CHARACTER {
+		if size == int(utf8.CHARACTER_SIZE_MINIMUM) {
+			return [MATCH_RESULT_COUNT]Text{""},
+				[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+		}
+	}
+	character := chunk[:size]
+	rest := chunk[size:]
+	if len(rest) == 0 {
+		return [MATCH_RESULT_COUNT]Text{""},
+			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+	}
+	return [MATCH_RESULT_COUNT]Text{rest}, [MATCH_RESULT_COUNT]Text{character}, nil
 }
 
 func clean_text(storage *[PATH_SIZE_MAXIMUM]byte, value Text) (count Nonempty_Count) {
@@ -416,178 +976,4 @@ func clean_joined(storage *[PATH_SIZE_MAXIMUM]byte, size Nonempty_Count) (count 
 		write = 1
 	}
 	return Nonempty_Count(write)
-}
-
-func scan_chunk(
-	pattern Nonempty_Text,
-) (star Boolean, chunk Text, rest Tail_Text) {
-	defer func() {
-		Boolean_Invariants(star, "scan_chunk.star")
-		Text_Invariants(chunk, "scan_chunk.chunk")
-		Tail_Text_Invariants(rest, "scan_chunk.rest")
-	}()
-	Nonempty_Text_Invariants(pattern, "scan_chunk.pattern")
-	for len(pattern) > 0 && pattern[0] == '*' {
-		pattern = pattern[1:]
-		star = true
-	}
-	in_range := false
-	for index := 0; index < len(pattern); index++ {
-		switch pattern[index] {
-		case '\\':
-			if index+1 < len(pattern) {
-				index++
-			}
-		case '[':
-			in_range = true
-		case ']':
-			in_range = false
-		case '*':
-			if !in_range {
-				return star, Text(pattern[:index]), Tail_Text(pattern[index:])
-			}
-		}
-	}
-	return star, Text(pattern), ""
-}
-
-func match_chunk(
-	chunk Text, name Text,
-) (rest Tail_Text, okay Boolean, err error) {
-	defer func() {
-		Tail_Text_Invariants(rest, "match_chunk.rest")
-		Boolean_Invariants(okay, "match_chunk.okay")
-	}()
-	Text_Invariants(chunk, "match_chunk.chunk")
-	Text_Invariants(name, "match_chunk.name")
-	failed := false
-	for len(chunk) > 0 {
-		failed = failed || len(name) == 0
-		switch chunk[0] {
-		case '[':
-			var character utf8.Decoded_Character
-			if !failed {
-				var size utf8.Decoded_Size
-				character, size = utf8.Decode_Character_Text(utf8.Text(name))
-				name = name[size:]
-			}
-			class_tail, member, negated, class_error := match_class(
-				Class_Text(chunk[1:]), character,
-			)
-			if class_error != nil {
-				return "", false, class_error
-			}
-			chunk = Text(class_tail)
-			failed = failed || member == negated
-		case '?':
-			if !failed {
-				failed = name[0] == '/'
-				_, size := utf8.Decode_Character_Text(utf8.Text(name))
-				name = name[size:]
-			}
-			chunk = chunk[1:]
-		case '\\':
-			chunk = chunk[1:]
-			if len(chunk) == 0 {
-				return "", false, Error_Bad_Pattern
-			}
-			if !failed {
-				failed = chunk[0] != name[0]
-				name = name[1:]
-			}
-			chunk = chunk[1:]
-		default:
-			if !failed {
-				failed = chunk[0] != name[0]
-				name = name[1:]
-			}
-			chunk = chunk[1:]
-		}
-	}
-	if failed {
-		return "", false, nil
-	}
-	return Tail_Text(name), true, nil
-}
-
-func match_class(
-	chunk Class_Text, character utf8.Decoded_Character,
-) (rest Class_Match_Tail, member Boolean, negated Boolean, err error) {
-	defer func() {
-		Class_Match_Tail_Invariants(rest, "match_class.rest")
-		Boolean_Invariants(member, "match_class.member")
-		Boolean_Invariants(negated, "match_class.negated")
-	}()
-	Class_Text_Invariants(chunk, "match_class.chunk")
-	utf8.Decoded_Character_Invariants(character, "match_class.character")
-	if len(chunk) > 0 {
-		if chunk[0] == '^' {
-			negated = true
-			chunk = chunk[1:]
-		}
-	}
-	range_count := 0
-	// Extra pass turns missing closing bracket into stable syntax error without sentinel
-	// storage.
-	for range len(chunk) + 1 {
-		if len(chunk) > 0 {
-			if chunk[0] == ']' {
-				if range_count > 0 {
-					return Class_Match_Tail(chunk[1:]), member, negated, nil
-				}
-			}
-		}
-		low, tail, escape_error := escaped_character(chunk)
-		if escape_error != nil {
-			return "", false, false, escape_error
-		}
-		chunk = Class_Text(tail)
-		high := low
-		if chunk[0] == '-' {
-			high, tail, escape_error = escaped_character(Class_Text(chunk[1:]))
-			chunk = Class_Text(tail)
-			if escape_error != nil {
-				return "", false, false, escape_error
-			}
-		}
-		member = member || low <= character && character <= high
-		range_count++
-	}
-	return "", false, false, Error_Bad_Pattern
-}
-
-func escaped_character(
-	chunk Class_Text,
-) (character utf8.Decoded_Character, rest Class_Tail, err error) {
-	defer func() {
-		utf8.Decoded_Character_Invariants(character, "escaped_character.character")
-		Class_Tail_Invariants(rest, "escaped_character.rest")
-	}()
-	Class_Text_Invariants(chunk, "escaped_character.chunk")
-	if len(chunk) == 0 {
-		return 0, "", Error_Bad_Pattern
-	}
-	if chunk[0] == '-' {
-		return 0, "", Error_Bad_Pattern
-	}
-	if chunk[0] == ']' {
-		return 0, "", Error_Bad_Pattern
-	}
-	if chunk[0] == '\\' {
-		chunk = chunk[1:]
-		if len(chunk) == 0 {
-			return 0, "", Error_Bad_Pattern
-		}
-	}
-	character, size := utf8.Decode_Character_Text(utf8.Text(chunk))
-	if character == utf8.REPLACEMENT_CHARACTER {
-		if size == 1 {
-			return 0, "", Error_Bad_Pattern
-		}
-	}
-	rest = Class_Tail(chunk[size:])
-	if len(rest) == 0 {
-		return 0, "", Error_Bad_Pattern
-	}
-	return character, rest, nil
 }

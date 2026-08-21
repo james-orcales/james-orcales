@@ -4,6 +4,9 @@
 package filepath
 
 import (
+	"fmt"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -1479,4 +1482,95 @@ func standard_existing_status(
 	_ unsafe.Pointer, _ string,
 ) (status nbio.File_Status, err error) {
 	return nbio.File_Status{Exists: true}, nil
+}
+
+// Benchmark_Is_Local pairs upstream whole-corpus workload.
+func Benchmark_Is_Local(b *testing.B) {
+	cases := standard_filepath_local_cases()
+	b.Run("Shared", func(b *testing.B) {
+		b.ReportAllocs()
+		var local Boolean
+		for b.Loop() {
+			for _, one := range cases {
+				local = Is_Local(one.Path)
+			}
+		}
+		b.StopTimer()
+		runtime.KeepAlive(local)
+	})
+	b.Run("Standard_Library", func(b *testing.B) {
+		b.ReportAllocs()
+		var local bool
+		for b.Loop() {
+			for _, one := range cases {
+				local = filepath.IsLocal(string(one.Path))
+			}
+		}
+		b.StopTimer()
+		runtime.KeepAlive(local)
+	})
+}
+
+// Benchmark_Match pairs every upstream match case.
+func Benchmark_Match(b *testing.B) {
+	for _, one := range standard_filepath_match_cases() {
+		name := fmt.Sprintf("%q_%q", one.Pattern, one.Name)
+		b.Run(name, func(b *testing.B) {
+			b.Run("Shared", func(b *testing.B) {
+				b.ReportAllocs()
+				var matched Boolean
+				var err error
+				for b.Loop() {
+					matched, err = Match(one.Pattern, one.Name)
+				}
+				b.StopTimer()
+				runtime.KeepAlive(matched)
+				runtime.KeepAlive(err)
+			})
+			b.Run("Standard_Library", func(b *testing.B) {
+				b.ReportAllocs()
+				var matched bool
+				var err error
+				for b.Loop() {
+					matched, err = filepath.Match(
+						string(one.Pattern), string(one.Name),
+					)
+				}
+				b.StopTimer()
+				runtime.KeepAlive(matched)
+				runtime.KeepAlive(err)
+			})
+		})
+	}
+}
+
+// Benchmark_Match_Corpus weighs every upstream case once per operation.
+func Benchmark_Match_Corpus(b *testing.B) {
+	cases := standard_filepath_match_cases()
+	b.Run("Shared", func(b *testing.B) {
+		b.ReportAllocs()
+		var matched Boolean
+		var err error
+		for b.Loop() {
+			for _, one := range cases {
+				matched, err = Match(one.Pattern, one.Name)
+			}
+		}
+		b.StopTimer()
+		runtime.KeepAlive(matched)
+		runtime.KeepAlive(err)
+	})
+	b.Run("Standard_Library", func(b *testing.B) {
+		b.ReportAllocs()
+		var matched bool
+		var err error
+		for b.Loop() {
+			for _, one := range cases {
+				matched, err = filepath.Match(string(one.Pattern), string(one.Name))
+			}
+		}
+		b.StopTimer()
+		runtime.KeepAlive(matched)
+		runtime.KeepAlive(err)
+	})
 }

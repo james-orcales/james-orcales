@@ -7,6 +7,7 @@ import (
 
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/path"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
@@ -29,8 +30,9 @@ var Skip_Directory = errors.New("filepath: skip directory")
 // Skip_All tells walk to finish successfully without visiting remaining paths.
 var Skip_All = errors.New("filepath: skip all")
 
-// SYMBOLIC_LINK_COUNT_MAXIMUM matches standard library cycle guard.
-const SYMBOLIC_LINK_COUNT_MAXIMUM = 255
+// SYMBOLIC_LINK_COUNT_MAXIMUM shares the standard library traversal guard with its
+// authoritative unsigned-byte bound.
+const SYMBOLIC_LINK_COUNT_MAXIMUM = 1<<bits.BIT_COUNT_8_MAXIMUM - NONEMPTY_SIZE_MINIMUM
 
 // SYMBOLIC_LINK_COUNT_MINIMUM is resolution before any link.
 const SYMBOLIC_LINK_COUNT_MINIMUM = 0
@@ -245,13 +247,13 @@ func Glob_Phase_Invariants(value Glob_Phase, namespace invariant.Namespace) {
 const GLOB_PHASE_IDLE Glob_Phase = 0
 
 // GLOB_PHASE_OPEN means directory open is submitted.
-const GLOB_PHASE_OPEN Glob_Phase = 1
+const GLOB_PHASE_OPEN Glob_Phase = GLOB_PHASE_IDLE + NONEMPTY_SIZE_MINIMUM
 
 // GLOB_PHASE_READ means directory entry read is submitted.
-const GLOB_PHASE_READ Glob_Phase = 2
+const GLOB_PHASE_READ Glob_Phase = GLOB_PHASE_OPEN + NONEMPTY_SIZE_MINIMUM
 
 // GLOB_PHASE_CLOSE means directory close is submitted.
-const GLOB_PHASE_CLOSE Glob_Phase = 3
+const GLOB_PHASE_CLOSE Glob_Phase = GLOB_PHASE_READ + NONEMPTY_SIZE_MINIMUM
 
 // Glob_Runner composes injected async directory primitives without owning driver. Completion is
 // first so static callback can recover caller-owned runner without closure allocation.
@@ -764,13 +766,13 @@ func Walk_Phase_Invariants(value Walk_Phase, namespace invariant.Namespace) {
 const WALK_PHASE_IDLE Walk_Phase = 0
 
 // WALK_PHASE_OPEN means directory open is submitted.
-const WALK_PHASE_OPEN Walk_Phase = 1
+const WALK_PHASE_OPEN Walk_Phase = WALK_PHASE_IDLE + NONEMPTY_SIZE_MINIMUM
 
 // WALK_PHASE_READ means directory entry read is submitted.
-const WALK_PHASE_READ Walk_Phase = 2
+const WALK_PHASE_READ Walk_Phase = WALK_PHASE_OPEN + NONEMPTY_SIZE_MINIMUM
 
 // WALK_PHASE_CLOSE means directory close is submitted.
-const WALK_PHASE_CLOSE Walk_Phase = 3
+const WALK_PHASE_CLOSE Walk_Phase = WALK_PHASE_READ + NONEMPTY_SIZE_MINIMUM
 
 // Walk_Runner walks injected filesystem without driver ownership. Completion stays first for
 // same intrusive static-callback ownership as Glob_Runner.
@@ -1966,41 +1968,31 @@ func Is_Local(value Text) (local Boolean) {
 	if value == "" {
 		return false
 	}
-	if Is_Absolute(value) {
+	if value[0] == SEPARATOR {
 		return false
 	}
-	has_dots := false
-	for tail := value; tail != ""; {
-		part, rest := next_part(Nonempty_Text(tail))
-		if part == "." {
-			has_dots = true
-			break
+	depth := 0
+	start := 0
+	for end := 0; end <= len(value); end++ {
+		if end < len(value) {
+			if value[end] != SEPARATOR {
+				continue
+			}
 		}
+		part := value[start:end]
 		if part == ".." {
-			has_dots = true
-			break
+			if depth == 0 {
+				return false
+			}
+			depth--
+		} else if part != "" {
+			if part != "." {
+				depth++
+			}
 		}
-		tail = Text(rest)
+		start = end + 1
 	}
-	if !has_dots {
-		return true
-	}
-	var storage [PATH_SIZE_MAXIMUM]byte
-	count := Clean_Into(storage[:], value)
-	cleaned := storage[:count]
-	if bytes.Equal(cleaned, []byte("..")) {
-		return false
-	}
-	if len(cleaned) < 3 {
-		return true
-	}
-	if cleaned[0] != '.' {
-		return true
-	}
-	if cleaned[1] != '.' {
-		return true
-	}
-	return cleaned[2] != SEPARATOR
+	return true
 }
 
 // Localize_Into validates before copy because input is malicious and caller must see no partial
