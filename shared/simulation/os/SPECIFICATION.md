@@ -48,23 +48,10 @@ process, so it reports the failure rather than destroying the run.
 
 # OS
 
-Seeded backend draws signal grain and exit code from seed, then retires both on injected loop.
-Caller owns backend state and bounded operation storage; constructor rejects empty or oversized
-storage, and callback frees entry before running so it may submit immediately.
+Host backend reads every value from the kernel, thus it owns no queue and takes no loop. Nothing
+here retires a completion: a signal watch and a spawn live on nbio.IO instead.
 
 ### Self Exec
 
 Self_Exec replaces process image and returns only on failure. Nil environment preserves ambient
 values. Non-nil slice is complete replacement environment, thus empty slice inherits nothing.
-
-### Watch Signal
-
-Watch_Signal requires positive finite deadline; signal arriving first fires once, and deadline wins
-ties with Deadline_Exceeded and SIGNAL_EXPIRED. Caller retains armed signal because expired value
-identifies no watch.
-
-### Spawn
-
-A spawn requires a positive finite deadline; natural completion returns the seed-drawn exit code,
-while the deadline wins ties with Deadline_Exceeded. The real backend kills its subprocess group,
-bounds pipe cleanup to one second, and returns partial output.

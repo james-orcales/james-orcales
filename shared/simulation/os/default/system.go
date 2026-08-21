@@ -16,10 +16,8 @@ import (
 )
 
 // New_Operating_System returns OS backed by host kernel. Static procedures keep vtable free of
-// captured state while values supplied by machine need no separate domain bundle.
-// It fills the ambient readers alone. The signal watch and the spawn retire a completion on a
-// loop's queue, so the backend that owns that queue completes this OS — see
-// nbio/default.New_Operating_System_IO, which takes what this returns and hands back the whole
+// captured state while values supplied by machine need no separate domain bundle. Every reader
+// here answers from ambient state alone, thus this constructor needs no loop and returns a whole
 // vtable.
 func New_Operating_System() (host os.OS) {
 	host = os.OS{
@@ -33,6 +31,7 @@ func New_Operating_System() (host os.OS) {
 		Effective_User_Identifier: system_effective_user_identifier,
 		Self_Exec:                 system_self_exec,
 	}
+	os.OS_Invariants(host, "new_operating_system.host")
 	return host
 }
 
