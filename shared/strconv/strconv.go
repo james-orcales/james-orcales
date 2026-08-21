@@ -861,9 +861,10 @@ func Format_Boolean_Into(destination Buffer, value Boolean) (count Boolean_Count
 		word = "true"
 	}
 	count = Boolean_Count(len(word))
-	if int(count) > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		int(count) <= len(destination),
+		"Format_Boolean_Into destination holds complete result.",
+	)
 	copy(destination, word)
 	return count
 }
@@ -1166,9 +1167,10 @@ func integer_into(
 		text_count++
 	}
 	count = Integer_Text_Count(text_count)
-	if text_count > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		text_count <= len(destination),
+		"Integer destination holds complete result.",
+	)
 	rest := uint64(magnitude)
 	write_index := text_count
 	for range digit_count {
@@ -1284,9 +1286,10 @@ func Format_Fixed_Point_Into(
 		text_count += 1 + int(digits)
 	}
 	count = Fixed_Point_Text_Count(text_count)
-	if text_count > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		text_count <= len(destination),
+		"Fixed-point destination holds complete result.",
+	)
 	integer_into(destination[:whole_count], whole, negative, DECIMAL_BASE)
 	if digits == 0 {
 		return count
@@ -1472,9 +1475,10 @@ func Unquote_Into(
 		return 0, Error_Syntax
 	}
 	count = value_count
-	if int(count) > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		int(count) <= len(destination),
+		"Unquote destination holds complete result.",
+	)
 	write_literal_value(Unquoted_Buffer(destination[:int(count)]), Literal_Text(text))
 	return count, nil
 }
@@ -1624,9 +1628,10 @@ func write_literal_value(destination Unquoted_Buffer, text Literal_Text) {
 	written := 0
 	for body[0] != byte(quote_mark) {
 		point, multibyte, tail, character_error := Unquote_Character(body, quote_mark)
-		if character_error != nil {
-			panic("strconv: measured literal changed")
-		}
+		aver.Always(
+			character_error == nil,
+			"Measured literal remains valid while writing.",
+		)
 		size := int(decoded_character_size(point, multibyte))
 		if size == ESCAPE_SIZE_MINIMUM {
 			destination[written] = byte(point)
@@ -1906,9 +1911,10 @@ func quoted_into(
 	Boolean_Invariants(ascii_only, "quoted_into.ascii_only")
 	Boolean_Invariants(graphic_only, "quoted_into.graphic_only")
 	count = quoted_text_size(text, ascii_only, graphic_only)
-	if int(count) > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		int(count) <= len(destination),
+		"Quoted text destination holds complete result.",
+	)
 	destination[0] = QUOTE_MARK_DOUBLE
 	written := 1
 	rest := text
@@ -1992,9 +1998,10 @@ func character_into(
 		point, QUOTE_MARK_SINGLE, ascii_only, graphic_only,
 	)
 	count = Character_Text_Count(int(body_count) + LITERAL_TEXT_SIZE_MINIMUM)
-	if int(count) > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		int(count) <= len(destination),
+		"Quoted character destination holds complete result.",
+	)
 	destination[0] = QUOTE_MARK_SINGLE
 	escape_into(
 		Escape_Destination(destination[1:1+int(body_count)]), point, QUOTE_MARK_SINGLE,
@@ -2067,9 +2074,10 @@ func escape_into(
 	Boolean_Invariants(ascii_only, "escape_into.ascii_only")
 	Boolean_Invariants(graphic_only, "escape_into.graphic_only")
 	count = escaped_text_size(value, quote_mark, ascii_only, graphic_only)
-	if int(count) > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		int(count) <= len(destination),
+		"Escaped character destination holds complete result.",
+	)
 	if value == Code_Point(quote_mark) {
 		destination[0], destination[1] = '\\', byte(value)
 		return count
@@ -2103,9 +2111,10 @@ func write_escape_sequence(destination Escape_Sequence_Buffer, value Code_Point)
 	Escape_Sequence_Buffer_Invariants(destination, "write_escape_sequence.destination")
 	Code_Point_Invariants(value, "write_escape_sequence.value")
 	count := escape_sequence_size(value)
-	if int(count) > len(destination) {
-		panic("strconv: destination too small")
-	}
+	aver.Always(
+		int(count) <= len(destination),
+		"Escape sequence destination holds complete result.",
+	)
 	if value < Code_Point(len(CONTROL_ESCAPE_LETTERS)) {
 		letter := CONTROL_ESCAPE_LETTERS[value]
 		if letter != 0 {
