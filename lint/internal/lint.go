@@ -7964,10 +7964,14 @@ func check_stream_conflict_markers(
 	if err != nil {
 		return
 	}
+	// One conversion per file. A conversion inside the loop copies the rest of
+	// the file on each line, which made the scan quadratic and put 99% of the
+	// run in GC.
+	text := string(source)
 	line_number := 1
 	for i := 0; i < len(source); {
 		for _, m := range conflict_marker_prefixes {
-			if strings.Has_Prefix(string(source[i:]), string(m)) {
+			if strings.Has_Prefix(text[i:], string(m)) {
 				*output = append(*output, Diagnostic{
 					Position: token.Position{
 						Filename: p,
@@ -7980,7 +7984,7 @@ func check_stream_conflict_markers(
 				break
 			}
 		}
-		newline_offset := strings.Index_Byte(string(source[i:]), '\n')
+		newline_offset := strings.Index_Byte(text[i:], '\n')
 		if newline_offset < 0 {
 			break
 		}
