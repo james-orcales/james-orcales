@@ -1,8 +1,14 @@
 
+# Allocation
+
+Every exported operation owns no heap storage. A writer fills caller storage and
+returns written byte count. Too-small storage causes panic before any partial result
+escapes.
+
 # Boolean
 
-Parse_Boolean reads the twelve accepted spellings, and Format_Boolean writes `true` or
-`false`. Append_Boolean writes the same text into a Buffer.
+Parse_Boolean reads twelve accepted spellings. Format_Boolean_Into writes `true` or
+`false` into caller Buffer and returns Boolean_Count.
 
 # Text To Integer
 
@@ -12,27 +18,27 @@ between digits. Parse_Decimal reads base ten at the machine integer width.
 
 # Integer To Text
 
-Format_Unsigned_Integer and Format_Integer write a value in a Base from two to
-thirty-six, with the lowercase letters for the digits above nine. Format_Decimal writes
-base ten. Each Append form writes the same text into a Buffer.
+Format_Unsigned_Integer_Into and Format_Integer_Into write value in Base from two to
+thirty-six, with lowercase letters for digits above nine. Format_Decimal_Into writes
+base ten. Each form fills caller Buffer and returns its exact text count.
 
 # Fixed Point
 
-Parse_Fixed_Point reads decimal text into a fixedpoint Number, which is what the
-deterministic tier holds in place of a float. Format_Fixed_Point and Append_Fixed_Point
-write a Number with zero to six fraction digits.
+Parse_Fixed_Point reads decimal text into fixedpoint Number, which deterministic tier
+holds in place of float. Format_Fixed_Point_Into writes Number with zero to six
+fraction digits into caller Buffer and returns Fixed_Point_Text_Count.
 
 # Domain Errors
 
-An out-of-domain Base, Bit_Size, or size causes a panic, not an error value. The two
-remaining errors are Error_Syntax for text that is not a number and Error_Range for a
-number that the width cannot hold.
+Out-of-domain Base, Bit_Size, or size causes panic. Too-small caller Buffer causes panic
+before partial output escapes. Error_Syntax reports invalid text. Error_Range reports
+number that target width cannot hold.
 
 # Quote Forms
 
-Quote returns a double-quoted Go string literal, and Quote_Rune returns a single-quoted
-Go character literal. The ASCII form escapes each character above the ASCII range, and
-the Graphic form keeps each character that is graphic.
+Quote_Into writes double-quoted Go string literal. Quote_Rune_Into writes single-quoted
+Go character literal. ASCII forms escape each character above ASCII range. Graphic
+forms keep each graphic character. Each form fills caller Buffer and returns count.
 
 # Backquote Form
 
@@ -42,9 +48,9 @@ prevents this form.
 
 # Unquote Forms
 
-Unquote reads a single-quoted, double-quoted, or backquoted Go literal. Quoted_Prefix
-returns the literal at the start of a Text. Unquote_Character decodes one character of
-a literal body and returns the remainder.
+Unquote_Into reads single-quoted, double-quoted, or backquoted Go literal into caller
+Buffer and returns decoded count. Quoted_Prefix returns literal at Text start.
+Unquote_Character decodes one literal-body character and returns remainder.
 
 # Printability
 

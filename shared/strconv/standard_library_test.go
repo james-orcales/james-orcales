@@ -1,7 +1,7 @@
 package strconv
 
 import (
-	standard_strconv "strconv"
+	"strconv"
 	"testing"
 	"unicode"
 
@@ -277,23 +277,21 @@ func standard_library_decimal_cases(t *testing.T, cases []signed_case) {
 // FormatUint tables.
 func Test_Standard_Library_Format_Integer(t *testing.T) {
 	t.Parallel()
+	var signed_storage [INTEGER_TEXT_SIZE_MAXIMUM]byte
 	for _, one := range signed_text_cases() {
-		text := Format_Integer(Signed_Integer(one.Input), Base(one.Base))
-		testify.Equal(t, one.Output, string(text),
-			"Format_Integer(%d, %d)", one.Input, one.Base)
-		appended := Append_Integer(nil, Signed_Integer(one.Input), Base(one.Base))
-		testify.Equal(t, one.Output, string(appended),
-			"Append_Integer(%d, %d)", one.Input, one.Base)
-	}
-	for _, one := range unsigned_text_cases() {
-		text := Format_Unsigned_Integer(Unsigned_Integer(one.Input), Base(one.Base))
-		testify.Equal(t, one.Output, string(text),
-			"Format_Unsigned_Integer(%d, %d)", one.Input, one.Base)
-		appended := Append_Unsigned_Integer(
-			nil, Unsigned_Integer(one.Input), Base(one.Base),
+		count := Format_Integer_Into(
+			signed_storage[:], Signed_Integer(one.Input), Base(one.Base),
 		)
-		testify.Equal(t, one.Output, string(appended),
-			"Append_Unsigned_Integer(%d, %d)", one.Input, one.Base)
+		testify.Equal(t, one.Output, string(signed_storage[:int(count)]),
+			"Format_Integer(%d, %d)", one.Input, one.Base)
+	}
+	var unsigned_storage [DIGIT_TEXT_SIZE_MAXIMUM]byte
+	for _, one := range unsigned_text_cases() {
+		count := Format_Unsigned_Integer_Into(
+			unsigned_storage[:], Unsigned_Integer(one.Input), Base(one.Base),
+		)
+		testify.Equal(t, one.Output, string(unsigned_storage[:int(count)]),
+			"Format_Unsigned_Integer(%d, %d)", one.Input, one.Base)
 	}
 }
 
@@ -305,21 +303,26 @@ func Test_Standard_Library_Boolean(t *testing.T) {
 		check_error(t, parse_error, one.Error, "Parse_Boolean", one.Input)
 		testify.Equal(t, one.Output, bool(value), "Parse_Boolean(%q)", one.Input)
 	}
-	testify.Equal(t, "true", string(Format_Boolean(true)))
-	testify.Equal(t, "false", string(Format_Boolean(false)))
-	testify.Equal(t, "foo true", string(Append_Boolean(Buffer("foo "), true)))
-	testify.Equal(t, "foo false", string(Append_Boolean(Buffer("foo "), false)))
+	var storage [BOOLEAN_TEXT_SIZE_FALSE]byte
+	true_count := Format_Boolean_Into(storage[:], true)
+	testify.Equal(t, "true", string(storage[:int(true_count)]))
+	false_count := Format_Boolean_Into(storage[:], false)
+	testify.Equal(t, "false", string(storage[:int(false_count)]))
 }
 
 // Test_Standard_Library_Quote reads the standard library Quote tables.
 func Test_Standard_Library_Quote(t *testing.T) {
 	t.Parallel()
+	var storage [QUOTED_TEXT_SIZE_MAXIMUM]byte
 	for _, one := range quote_cases() {
-		testify.Equal(t, one.Output, string(Quote(Text(one.Input))),
+		count := Quote_Into(storage[:], Text(one.Input))
+		testify.Equal(t, one.Output, string(storage[:int(count)]),
 			"Quote(%q)", one.Input)
-		testify.Equal(t, one.ASCII_Output, string(Quote_To_ASCII(Text(one.Input))),
+		count = Quote_To_ASCII_Into(storage[:], Text(one.Input))
+		testify.Equal(t, one.ASCII_Output, string(storage[:int(count)]),
 			"Quote_To_ASCII(%q)", one.Input)
-		testify.Equal(t, one.Graphic_Output, string(Quote_To_Graphic(Text(one.Input))),
+		count = Quote_To_Graphic_Into(storage[:], Text(one.Input))
+		testify.Equal(t, one.Graphic_Output, string(storage[:int(count)]),
 			"Quote_To_Graphic(%q)", one.Input)
 	}
 }
@@ -327,13 +330,17 @@ func Test_Standard_Library_Quote(t *testing.T) {
 // Test_Standard_Library_Quote_Rune reads the standard library QuoteRune tables.
 func Test_Standard_Library_Quote_Rune(t *testing.T) {
 	t.Parallel()
+	var storage [CHARACTER_TEXT_SIZE_MAXIMUM]byte
 	for _, one := range quote_rune_cases() {
 		value := Character(one.Input)
-		testify.Equal(t, one.Output, string(Quote_Rune(value)),
+		count := Quote_Rune_Into(storage[:], value)
+		testify.Equal(t, one.Output, string(storage[:int(count)]),
 			"Quote_Rune(%d)", one.Input)
-		testify.Equal(t, one.ASCII_Output, string(Quote_Rune_To_ASCII(value)),
+		count = Quote_Rune_To_ASCII_Into(storage[:], value)
+		testify.Equal(t, one.ASCII_Output, string(storage[:int(count)]),
 			"Quote_Rune_To_ASCII(%d)", one.Input)
-		testify.Equal(t, one.Graphic_Output, string(Quote_Rune_To_Graphic(value)),
+		count = Quote_Rune_To_Graphic_Into(storage[:], value)
+		testify.Equal(t, one.Graphic_Output, string(storage[:int(count)]),
 			"Quote_Rune_To_Graphic(%d)", one.Input)
 	}
 }
@@ -351,14 +358,15 @@ func Test_Standard_Library_Backquote(t *testing.T) {
 // literals it must reject.
 func Test_Standard_Library_Unquote(t *testing.T) {
 	t.Parallel()
+	var storage [UNQUOTED_TEXT_SIZE_MAXIMUM]byte
 	for _, one := range unquote_cases() {
-		value, unquote_error := Unquote(Text(one.Input))
+		count, unquote_error := Unquote_Into(storage[:], Text(one.Input))
 		testify.No_Error(t, unquote_error, "Unquote(%s)", one.Input)
-		testify.Equal(t, one.Output, string(value), "Unquote(%s)", one.Input)
+		testify.Equal(t, one.Output, string(storage[:int(count)]), "Unquote(%s)", one.Input)
 	}
 	for _, one := range misquoted_cases() {
-		value, unquote_error := Unquote(Text(one))
-		testify.Equal(t, "", string(value), "Unquote(%s)", one)
+		count, unquote_error := Unquote_Into(storage[:], Text(one))
+		testify.Equal(t, 0, int(count), "Unquote(%s)", one)
 		testify.Error_Is(t, unquote_error, Error_Syntax, "Unquote(%s)", one)
 	}
 }
@@ -379,9 +387,10 @@ func Test_Standard_Library_Printability(t *testing.T) {
 // every decimal width.
 func Test_Standard_Library_Format_Varlen(t *testing.T) {
 	t.Parallel()
+	var storage [DIGIT_TEXT_SIZE_MAXIMUM]byte
 	for _, one := range varlen_cases() {
-		text := Format_Unsigned_Integer(Unsigned_Integer(one.Input), 10)
-		testify.Equal(t, one.Output, string(text),
+		count := Format_Unsigned_Integer_Into(storage[:], Unsigned_Integer(one.Input), 10)
+		testify.Equal(t, one.Output, string(storage[:int(count)]),
 			"Format_Unsigned_Integer(%d, 10)", one.Input)
 	}
 }
@@ -390,6 +399,7 @@ func Test_Standard_Library_Format_Varlen(t *testing.T) {
 // literal that holds a byte which is not valid UTF-8.
 func Test_Standard_Library_Unquote_Invalid_UTF8(t *testing.T) {
 	t.Parallel()
+	var storage [UNQUOTED_TEXT_SIZE_MAXIMUM]byte
 	cases := make([]unquote_case, 0, 4)
 	cases = append(cases,
 		unquote_case{Input: "\"foo\"", Output: "foo"},
@@ -398,11 +408,11 @@ func Test_Standard_Library_Unquote_Invalid_UTF8(t *testing.T) {
 		unquote_case{Input: "\"\\t\xc0\"", Output: "\t\xef\xbf\xbd"},
 	)
 	for _, one := range cases {
-		value, unquote_error := Unquote(Text(one.Input))
+		count, unquote_error := Unquote_Into(storage[:], Text(one.Input))
 		testify.No_Error(t, unquote_error, "Unquote(%q)", one.Input)
-		testify.Equal(t, one.Output, string(value), "Unquote(%q)", one.Input)
+		testify.Equal(t, one.Output, string(storage[:int(count)]), "Unquote(%q)", one.Input)
 	}
-	_, reject := Unquote("\"foo")
+	_, reject := Unquote_Into(storage[:], "\"foo")
 	testify.Error_Is(t, reject, Error_Syntax, "an unterminated literal")
 }
 
@@ -1379,9 +1389,10 @@ func misquoted_cases() (cases []string) {
 // Benchmark_Quote_ASCII_House writes a literal of plain text.
 func Benchmark_Quote_ASCII_House(b *testing.B) {
 	text := Text(benchmark_text("a", TEXT_SIZE_MAXIMUM))
+	var storage [QUOTED_TEXT_SIZE_MAXIMUM]byte
 	b.ResetTimer()
 	for b.Loop() {
-		Quote(text)
+		Quote_Into(storage[:], text)
 	}
 }
 
@@ -1390,16 +1401,17 @@ func Benchmark_Quote_ASCII_Standard(b *testing.B) {
 	text := benchmark_text("a", TEXT_SIZE_MAXIMUM)
 	b.ResetTimer()
 	for b.Loop() {
-		standard_strconv.Quote(text)
+		strconv.Quote(text)
 	}
 }
 
 // Benchmark_Quote_CJK_House writes a literal of three-byte characters.
 func Benchmark_Quote_CJK_House(b *testing.B) {
 	text := Text(benchmark_text("一", TEXT_SIZE_MAXIMUM/3))
+	var storage [QUOTED_TEXT_SIZE_MAXIMUM]byte
 	b.ResetTimer()
 	for b.Loop() {
-		Quote(text)
+		Quote_Into(storage[:], text)
 	}
 }
 
@@ -1408,16 +1420,17 @@ func Benchmark_Quote_CJK_Standard(b *testing.B) {
 	text := benchmark_text("一", TEXT_SIZE_MAXIMUM/3)
 	b.ResetTimer()
 	for b.Loop() {
-		standard_strconv.Quote(text)
+		strconv.Quote(text)
 	}
 }
 
 // Benchmark_Quote_Control_House writes a literal whose every byte needs an escape.
 func Benchmark_Quote_Control_House(b *testing.B) {
 	text := Text(benchmark_text("\x01", TEXT_SIZE_MAXIMUM))
+	var storage [QUOTED_TEXT_SIZE_MAXIMUM]byte
 	b.ResetTimer()
 	for b.Loop() {
-		Quote(text)
+		Quote_Into(storage[:], text)
 	}
 }
 
@@ -1426,16 +1439,17 @@ func Benchmark_Quote_Control_Standard(b *testing.B) {
 	text := benchmark_text("\x01", TEXT_SIZE_MAXIMUM)
 	b.ResetTimer()
 	for b.Loop() {
-		standard_strconv.Quote(text)
+		strconv.Quote(text)
 	}
 }
 
 // Benchmark_Unquote_Plain_House reads a literal that holds no escape.
 func Benchmark_Unquote_Plain_House(b *testing.B) {
 	text := Text(`"` + benchmark_text("a", TEXT_SIZE_MAXIMUM-2) + `"`)
+	var storage [UNQUOTED_TEXT_SIZE_MAXIMUM]byte
 	b.ResetTimer()
 	for b.Loop() {
-		Unquote(text)
+		Unquote_Into(storage[:], text)
 	}
 }
 
@@ -1444,16 +1458,17 @@ func Benchmark_Unquote_Plain_Standard(b *testing.B) {
 	text := `"` + benchmark_text("a", TEXT_SIZE_MAXIMUM-2) + `"`
 	b.ResetTimer()
 	for b.Loop() {
-		standard_strconv.Unquote(text)
+		strconv.Unquote(text)
 	}
 }
 
 // Benchmark_Unquote_Escaped_House reads a literal that holds one escape.
 func Benchmark_Unquote_Escaped_House(b *testing.B) {
 	text := Text(`"\n` + benchmark_text("a", TEXT_SIZE_MAXIMUM-4) + `"`)
+	var storage [UNQUOTED_TEXT_SIZE_MAXIMUM]byte
 	b.ResetTimer()
 	for b.Loop() {
-		Unquote(text)
+		Unquote_Into(storage[:], text)
 	}
 }
 
@@ -1462,7 +1477,7 @@ func Benchmark_Unquote_Escaped_Standard(b *testing.B) {
 	text := `"\n` + benchmark_text("a", TEXT_SIZE_MAXIMUM-4) + `"`
 	b.ResetTimer()
 	for b.Loop() {
-		standard_strconv.Unquote(text)
+		strconv.Unquote(text)
 	}
 }
 
@@ -1476,7 +1491,7 @@ func Benchmark_Parse_Integer_House(b *testing.B) {
 // Benchmark_Parse_Integer_Standard reads the same number with the standard library.
 func Benchmark_Parse_Integer_Standard(b *testing.B) {
 	for b.Loop() {
-		standard_strconv.ParseInt("9223372036854775807", 10, 64)
+		strconv.ParseInt("9223372036854775807", 10, 64)
 	}
 }
 
@@ -1490,35 +1505,37 @@ func Benchmark_Parse_Decimal_House(b *testing.B) {
 // Benchmark_Parse_Decimal_Standard reads the same number with the standard library.
 func Benchmark_Parse_Decimal_Standard(b *testing.B) {
 	for b.Loop() {
-		standard_strconv.Atoi("-12345")
+		strconv.Atoi("-12345")
 	}
 }
 
 // Benchmark_Format_Integer_House writes the smallest signed number.
 func Benchmark_Format_Integer_House(b *testing.B) {
+	var storage [INTEGER_TEXT_SIZE_MAXIMUM]byte
 	for b.Loop() {
-		Format_Integer(-9223372036854775808, 10)
+		Format_Integer_Into(storage[:], -9223372036854775808, 10)
 	}
 }
 
 // Benchmark_Format_Integer_Standard writes the same number with the standard library.
 func Benchmark_Format_Integer_Standard(b *testing.B) {
 	for b.Loop() {
-		standard_strconv.FormatInt(-9223372036854775808, 10)
+		strconv.FormatInt(-9223372036854775808, 10)
 	}
 }
 
 // Benchmark_Quote_Rune_House writes one character literal.
 func Benchmark_Quote_Rune_House(b *testing.B) {
+	var storage [CHARACTER_TEXT_SIZE_MAXIMUM]byte
 	for b.Loop() {
-		Quote_Rune('a')
+		Quote_Rune_Into(storage[:], 'a')
 	}
 }
 
 // Benchmark_Quote_Rune_Standard writes the same literal with the standard library.
 func Benchmark_Quote_Rune_Standard(b *testing.B) {
 	for b.Loop() {
-		standard_strconv.QuoteRune('a')
+		strconv.QuoteRune('a')
 	}
 }
 
@@ -1536,7 +1553,7 @@ func Benchmark_Can_Backquote_Standard(b *testing.B) {
 	text := benchmark_text("a", TEXT_SIZE_MAXIMUM)
 	b.ResetTimer()
 	for b.Loop() {
-		standard_strconv.CanBackquote(text)
+		strconv.CanBackquote(text)
 	}
 }
 

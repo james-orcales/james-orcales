@@ -1,15 +1,16 @@
 // Package strconv converts between text and the Go scalar types. It is a port of the
-// standard library package of the same name. Four differences follow from the house
+// standard library package of the same name. Five differences follow from house
 // rules: every text and buffer domain has a declared size limit, an out-of-domain Base
 // or Bit_Size panics instead of returning an error value, the printable and graphic
 // facts come from unicode instead of a private table, and float and complex conversion
-// is absent because the deterministic tier admits no float type.
+// is absent because deterministic tier admits no float type. Every writer fills caller
+// storage and owns no heap memory.
 package strconv
 
 import (
 	"errors"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/strings"
@@ -30,38 +31,13 @@ const HEXADECIMAL_SYMBOLS = "0123456789abcdef"
 // marks a control that needs a hexadecimal escape.
 const CONTROL_ESCAPE_LETTERS = "\x00\x00\x00\x00\x00\x00\x00abtnvfr"
 
-// PLAIN_ASCII_CHARACTER_TEXTS holds one three-byte literal for each printable ASCII value.
-const PLAIN_ASCII_CHARACTER_TEXTS = "' ''!''\"''#''$''%''&'''''('')''*''+'',''-''.'" +
-	"'/''0''1''2''3''4''5''6''7''8''9'':'';''<''='" +
-	"'>''?''@''A''B''C''D''E''F''G''H''I''J''K''L'" +
-	"'M''N''O''P''Q''R''S''T''U''V''W''X''Y''Z''['" +
-	"'\\'']''^''_''`''a''b''c''d''e''f''g''h''i''j'" +
-	"'k''l''m''n''o''p''q''r''s''t''u''v''w''x''y'" +
-	"'z''{''|''}''~'"
-
-// DOUBLE_QUOTED_PLAIN_EXCLUSIONS select the bytes that require literal decoding.
-const DOUBLE_QUOTED_PLAIN_EXCLUSIONS = "\"\\\n"
-
-// DECIMAL_PAIRS holds each two-digit decimal value at twice its value.
-const DECIMAL_PAIRS = "00010203040506070809" +
-	"10111213141516171819" +
-	"20212223242526272829" +
-	"30313233343536373839" +
-	"40414243444546474849" +
-	"50515253545556575859" +
-	"60616263646566676869" +
-	"70717273747576777879" +
-	"80818283848586878889" +
-	"90919293949596979899"
-
 // UNICODE_REPLACEMENT stands in for text that is not valid UTF-8.
 const UNICODE_REPLACEMENT = Code_Point(utf8.REPLACEMENT_CHARACTER)
 
 // TEXT_SIZE_MINIMUM is the size of empty text.
 const TEXT_SIZE_MINIMUM = 0
 
-// TEXT_SIZE_MAXIMUM caps the text a conversion reads. A conversion holds its whole
-// input and its whole output in memory, thus the cap is what keeps both bounded.
+// TEXT_SIZE_MAXIMUM caps text conversion reads.
 const TEXT_SIZE_MAXIMUM = 4096
 
 // PREFIX_TEXT_SIZE_HOLE is the one size that no literal has, because a literal holds
@@ -80,6 +56,10 @@ const TAIL_TEXT_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM - 1
 // BODY_TEXT_SIZE_MAXIMUM is the text that a two-character prefix leaves.
 const BODY_TEXT_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM - LITERAL_TEXT_SIZE_MINIMUM
 
+// UNQUOTED_TEXT_SIZE_MAXIMUM admits one replacement character for each invalid input
+// byte in an interpreted literal.
+const UNQUOTED_TEXT_SIZE_MAXIMUM = BODY_TEXT_SIZE_MAXIMUM * utf8.CHARACTER_SIZE_THREE
+
 // ESCAPE_TAIL_SIZE_MAXIMUM is the text that a two-character escape leaves in a body.
 const ESCAPE_TAIL_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM - BYTE_ESCAPE_SIZE
 
@@ -90,13 +70,6 @@ const QUOTED_TEXT_SIZE_MINIMUM = LITERAL_TEXT_SIZE_MINIMUM
 // four-character byte escape.
 const QUOTED_TEXT_SIZE_MAXIMUM = TEXT_SIZE_MAXIMUM*BYTE_ESCAPE_SIZE +
 	QUOTED_TEXT_SIZE_MINIMUM
-
-// QUOTED_CAPACITY_NUMERATOR reserves three parts of each quoted-text estimate.
-const QUOTED_CAPACITY_NUMERATOR = 3
-
-// QUOTED_CAPACITY_DENOMINATOR makes that estimate one and a half input lengths. This
-// helps escaped text without charging plain text for the worst case.
-const QUOTED_CAPACITY_DENOMINATOR = 2
 
 // CHARACTER_TEXT_SIZE_MINIMUM is the size of a literal that holds one plain character.
 const CHARACTER_TEXT_SIZE_MINIMUM = LITERAL_TEXT_SIZE_MINIMUM + ESCAPE_SIZE_MINIMUM
@@ -113,60 +86,6 @@ const ESCAPE_SEQUENCE_SIZE_MINIMUM = 2
 // BYTE_ESCAPE_SIZE is the size of the escape that names one byte: a backslash, the
 // letter x, and two digits.
 const BYTE_ESCAPE_SIZE = 4
-
-// ESCAPE_DESTINATION_SIZE_MINIMUM is the opening quote mark, which the buffer holds
-// before the first character.
-const ESCAPE_DESTINATION_SIZE_MINIMUM = 1
-
-// ESCAPE_DESTINATION_SIZE_MAXIMUM is the opening quote mark and every byte escape but
-// the last, which is the largest buffer that one more character can extend.
-const ESCAPE_DESTINATION_SIZE_MAXIMUM = ESCAPE_DESTINATION_SIZE_MINIMUM +
-	(TEXT_SIZE_MAXIMUM-1)*BYTE_ESCAPE_SIZE
-
-// ESCAPE_LETTER_SIZE is the backslash and the letter that open a digit escape.
-const ESCAPE_LETTER_SIZE = 2
-
-// ESCAPE_LETTER_BUFFER_SIZE_MINIMUM is the opening quote mark and one escape
-// letter.
-const ESCAPE_LETTER_BUFFER_SIZE_MINIMUM = ESCAPE_DESTINATION_SIZE_MINIMUM +
-	ESCAPE_LETTER_SIZE
-
-// ESCAPE_LETTER_BUFFER_SIZE_MAXIMUM adds one escape letter to the largest
-// destination.
-const ESCAPE_LETTER_BUFFER_SIZE_MAXIMUM = ESCAPE_DESTINATION_SIZE_MAXIMUM +
-	ESCAPE_LETTER_SIZE
-
-// ESCAPE_SEQUENCE_BUFFER_SIZE_MINIMUM is the opening quote mark and the shortest
-// escape sequence.
-const ESCAPE_SEQUENCE_BUFFER_SIZE_MINIMUM = ESCAPE_DESTINATION_SIZE_MINIMUM +
-	ESCAPE_SEQUENCE_SIZE_MINIMUM
-
-// HEXADECIMAL_BUFFER_SIZE_MINIMUM is the opening quote mark, one escape letter,
-// and the digits of the shortest digit escape.
-const HEXADECIMAL_BUFFER_SIZE_MINIMUM = ESCAPE_LETTER_BUFFER_SIZE_MINIMUM +
-	HEXADECIMAL_DIGIT_COUNT
-
-// ESCAPED_BUFFER_SIZE_MINIMUM is the opening quote mark and one plain character.
-const ESCAPED_BUFFER_SIZE_MINIMUM = ESCAPE_DESTINATION_SIZE_MINIMUM + 1
-
-// ESCAPED_BUFFER_SIZE_MAXIMUM adds the last byte escape to the largest destination.
-const ESCAPED_BUFFER_SIZE_MAXIMUM = ESCAPE_DESTINATION_SIZE_MAXIMUM + BYTE_ESCAPE_SIZE
-
-// ASCII_QUOTE_DESTINATION_SIZE_MINIMUM is the opening quote before any body byte.
-const ASCII_QUOTE_DESTINATION_SIZE_MINIMUM = ESCAPE_DESTINATION_SIZE_MINIMUM
-
-// ASCII_QUOTE_DESTINATION_SIZE_MAXIMUM leaves room for one final byte escape.
-const ASCII_QUOTE_DESTINATION_SIZE_MAXIMUM = ESCAPE_DESTINATION_SIZE_MAXIMUM
-
-// ASCII_QUOTE_DESTINATION_SIZE_HOLE cannot occur: a non-ASCII character adds at least
-// two bytes before the ASCII writer can run again.
-const ASCII_QUOTE_DESTINATION_SIZE_HOLE = ESCAPED_BUFFER_SIZE_MINIMUM
-
-// OPEN_QUOTED_BUFFER_SIZE_MINIMUM is one opening quote and no body.
-const OPEN_QUOTED_BUFFER_SIZE_MINIMUM = ESCAPE_DESTINATION_SIZE_MINIMUM
-
-// OPEN_QUOTED_BUFFER_SIZE_MAXIMUM is the body before its closing quote.
-const OPEN_QUOTED_BUFFER_SIZE_MAXIMUM = ESCAPED_BUFFER_SIZE_MAXIMUM
 
 // ASCII_BYTE_MAXIMUM is the largest byte of ASCII text.
 const ASCII_BYTE_MAXIMUM uint8 = 127
@@ -208,23 +127,8 @@ const DECIMAL_TEXT_SIZE_MAXIMUM = 20
 // BUFFER_SIZE_MINIMUM is the size of an empty buffer.
 const BUFFER_SIZE_MINIMUM = 0
 
-// BUFFER_SIZE_MAXIMUM caps the buffer an append conversion extends.
-const BUFFER_SIZE_MAXIMUM = 4096
-
-// BOOLEAN_BUFFER_SIZE_MAXIMUM is a full buffer and the longest Boolean word.
-const BOOLEAN_BUFFER_SIZE_MAXIMUM = BUFFER_SIZE_MAXIMUM + BOOLEAN_TEXT_SIZE_FALSE
-
-// INTEGER_BUFFER_SIZE_MAXIMUM is a full buffer and the widest signed number.
-const INTEGER_BUFFER_SIZE_MAXIMUM = BUFFER_SIZE_MAXIMUM + INTEGER_TEXT_SIZE_MAXIMUM
-
-// DIGIT_BUFFER_SIZE_MAXIMUM is a full buffer and the widest unsigned number.
-const DIGIT_BUFFER_SIZE_MAXIMUM = BUFFER_SIZE_MAXIMUM + DIGIT_TEXT_SIZE_MAXIMUM
-
-// QUOTED_BUFFER_SIZE_MAXIMUM is a full buffer and the longest literal.
-const QUOTED_BUFFER_SIZE_MAXIMUM = BUFFER_SIZE_MAXIMUM + QUOTED_TEXT_SIZE_MAXIMUM
-
-// CHARACTER_BUFFER_SIZE_MAXIMUM is a full buffer and the longest character literal.
-const CHARACTER_BUFFER_SIZE_MAXIMUM = BUFFER_SIZE_MAXIMUM + CHARACTER_TEXT_SIZE_MAXIMUM
+// BUFFER_SIZE_MAXIMUM is caller storage for largest possible written form.
+const BUFFER_SIZE_MAXIMUM = QUOTED_TEXT_SIZE_MAXIMUM
 
 // FRACTION_TEXT_SIZE_MAXIMUM is how many fraction digits the reader keeps. A tenth
 // digit cannot change a value that holds one part in 2^20, thus the reader drops it and
@@ -244,9 +148,6 @@ const FIXED_POINT_UNITS_POSITIVE_MAXIMUM uint64 = uint64(bits.INTEGER_64_MAXIMUM
 // FIXED_POINT_UNITS_NEGATIVE_MAXIMUM is the magnitude of the smallest fixed-point
 // storage value.
 const FIXED_POINT_UNITS_NEGATIVE_MAXIMUM uint64 = SIGNED_MAGNITUDE_MAXIMUM
-
-// FIXED_POINT_BUFFER_SIZE_MAXIMUM is a full buffer and the longest fixed-point text.
-const FIXED_POINT_BUFFER_SIZE_MAXIMUM = BUFFER_SIZE_MAXIMUM + FIXED_POINT_TEXT_SIZE_MAXIMUM
 
 // FIXED_POINT_TEXT_SIZE_MINIMUM is the size of a one-digit number. It names the size
 // fixedpoint declares, because fixedpoint writes the text this package appends.
@@ -304,15 +205,6 @@ const DECIMAL_PAIR_FOLD uint64 = 2_561
 // DECIMAL_PAIR_LANES retain four folded decimal pairs.
 const DECIMAL_PAIR_LANES uint64 = 0x00ff00ff00ff00ff
 
-// DECIMAL_CHUNK_BASE is the largest decimal power that fits in 32 bits.
-const DECIMAL_CHUNK_BASE uint64 = 1_000_000_000
-
-// DECIMAL_CHUNK_SHIFT cheaply detects every value that can need a nine-digit chunk.
-const DECIMAL_CHUNK_SHIFT = 29
-
-// DECIMAL_CHUNK_PAIR_COUNT is the pair count before the leading digit of a chunk.
-const DECIMAL_CHUNK_PAIR_COUNT = 4
-
 // IMPLIED_BASE_MINIMUM is the value that takes the radix from the text prefix.
 const IMPLIED_BASE_MINIMUM = 0
 
@@ -335,19 +227,16 @@ const INTEGER_64_MINIMUM int64 = bits.INTEGER_64_MINIMUM
 const INTEGER_64_MAXIMUM int64 = bits.INTEGER_64_MAXIMUM
 
 // INTEGER_64_MINIMUM_DECIMAL_TEXT is the decimal form of the lower storage boundary.
-const INTEGER_64_MINIMUM_DECIMAL_TEXT Integer_Text = "-9223372036854775808"
+const INTEGER_64_MINIMUM_DECIMAL_TEXT Text = "-9223372036854775808"
 
 // INTEGER_64_MAXIMUM_DECIMAL_TEXT is the decimal form of the upper storage boundary.
-const INTEGER_64_MAXIMUM_DECIMAL_TEXT Integer_Text = "9223372036854775807"
+const INTEGER_64_MAXIMUM_DECIMAL_TEXT Text = "9223372036854775807"
 
 // UNSIGNED_64_MINIMUM is the smallest unsigned 64-bit integer.
 const UNSIGNED_64_MINIMUM uint64 = bits.WORD_64_MINIMUM
 
 // UNSIGNED_64_MAXIMUM is the largest unsigned 64-bit integer.
 const UNSIGNED_64_MAXIMUM uint64 = bits.WORD_64_MAXIMUM
-
-// SIGNED_MAGNITUDE_MINIMUM is the magnitude of zero.
-const SIGNED_MAGNITUDE_MINIMUM uint64 = bits.WORD_64_MINIMUM
 
 // SIGNED_MAGNITUDE_MAXIMUM is the magnitude of the smallest signed 64-bit integer.
 const SIGNED_MAGNITUDE_MAXIMUM uint64 = uint64(bits.INTEGER_64_MAXIMUM) + 1
@@ -400,6 +289,12 @@ const TEXT_BYTE_MINIMUM uint8 = bits.WORD_8_MINIMUM
 // TEXT_BYTE_MAXIMUM is the largest byte of text.
 const TEXT_BYTE_MAXIMUM uint8 = bits.WORD_8_MAXIMUM
 
+// INVALID_TEXT_BYTE_MINIMUM is first byte that can fail UTF-8 decoding alone.
+const INVALID_TEXT_BYTE_MINIMUM uint8 = uint8(utf8.CHARACTER_SELF)
+
+// INVALID_TEXT_BYTE_MAXIMUM is largest byte of text.
+const INVALID_TEXT_BYTE_MAXIMUM uint8 = bits.WORD_8_MAXIMUM
+
 // FOLDED_BYTE_MINIMUM is the smallest byte that a lowercase fold can give, because the
 // fold sets one bit that every smaller byte lacks.
 const FOLDED_BYTE_MINIMUM uint8 = 32
@@ -436,6 +331,12 @@ const SHORT_UNICODE_DIGIT_COUNT = 4
 
 // LONG_UNICODE_DIGIT_COUNT is the digit count of a four-byte code point escape.
 const LONG_UNICODE_DIGIT_COUNT = 8
+
+// SHORT_UNICODE_ESCAPE_SIZE is slash, escape letter, and four digits.
+const SHORT_UNICODE_ESCAPE_SIZE = 6
+
+// LONG_UNICODE_ESCAPE_SIZE is slash, escape letter, and eight digits.
+const LONG_UNICODE_ESCAPE_SIZE = 10
 
 // OCTAL_ESCAPE_DIGIT_COUNT is the digit count that follows the first octal digit.
 const OCTAL_ESCAPE_DIGIT_COUNT = 2
@@ -527,198 +428,48 @@ func Escape_Tail_Text_Invariants(value Escape_Tail_Text, namespace invariant.Nam
 		Ensure()
 }
 
-// Quoted_Text is a Go string literal.
-type Quoted_Text string
-
-// Quoted_Text_Invariants bounds a string literal, whose every input byte can need a
-// four-character escape.
-func Quoted_Text_Invariants(value Quoted_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), QUOTED_TEXT_SIZE_MINIMUM, QUOTED_TEXT_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Character_Text is a Go character literal.
-type Character_Text string
-
-// Character_Text_Invariants bounds a character literal.
-func Character_Text_Invariants(value Character_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), CHARACTER_TEXT_SIZE_MINIMUM, CHARACTER_TEXT_SIZE_MAXIMUM,
-		).
-		Ensure()
-}
-
-// Escape_Destination is the literal a written character extends. It holds at least the
-// opening quote mark.
+// Escape_Destination is exact caller storage for one body character.
 type Escape_Destination []byte
 
-// Escape_Destination_Invariants bounds the literal that one more character extends.
+// Escape_Destination_Invariants bounds plain UTF-8 and escaped widths.
 func Escape_Destination_Invariants(
 	value Escape_Destination, namespace invariant.Namespace,
 ) {
 	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), ESCAPE_DESTINATION_SIZE_MINIMUM,
-			ESCAPE_DESTINATION_SIZE_MAXIMUM,
-		).
+		Range_Int(len(value), ESCAPE_SIZE_MINIMUM, ESCAPE_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// ASCII_Quote_Destination is the open literal before an ASCII run. A two-byte value is
-// absent because only non-ASCII processing can precede a later run.
-type ASCII_Quote_Destination []byte
-
-// ASCII_Quote_Destination_Invariants bounds each reachable ASCII-run boundary.
-func ASCII_Quote_Destination_Invariants(
-	value ASCII_Quote_Destination, namespace invariant.Namespace,
-) {
-	invariant.Tree(value, namespace).
-		Range_Holed_Int(
-			len(value), ASCII_QUOTE_DESTINATION_SIZE_MINIMUM,
-			ASCII_QUOTE_DESTINATION_SIZE_MAXIMUM,
-			ASCII_QUOTE_DESTINATION_SIZE_HOLE, ASCII_QUOTE_DESTINATION_SIZE_HOLE,
-			ASCII_QUOTE_DESTINATION_SIZE_HOLE, ASCII_QUOTE_DESTINATION_SIZE_HOLE,
-		).
-		Ensure()
-}
-
-// Open_Quoted_Buffer is a quoted literal after its body and before its closing quote.
-type Open_Quoted_Buffer []byte
-
-// Open_Quoted_Buffer_Invariants bounds every completed open literal body.
-func Open_Quoted_Buffer_Invariants(value Open_Quoted_Buffer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), OPEN_QUOTED_BUFFER_SIZE_MINIMUM,
-			OPEN_QUOTED_BUFFER_SIZE_MAXIMUM,
-		).
-		Ensure()
-}
-
-// Escape_Sequence_Buffer is the literal that holds one more escape sequence.
+// Escape_Sequence_Buffer is exact storage for one mandatory escape.
 type Escape_Sequence_Buffer []byte
 
-// Escape_Sequence_Buffer_Invariants bounds the literal that gained one escape.
+// Escape_Sequence_Buffer_Invariants states four mandatory escape widths.
 func Escape_Sequence_Buffer_Invariants(
 	value Escape_Sequence_Buffer, namespace invariant.Namespace,
 ) {
 	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), ESCAPE_SEQUENCE_BUFFER_SIZE_MINIMUM,
-			ESCAPED_BUFFER_SIZE_MAXIMUM,
+		Enum_4_Int(
+			len(value), ESCAPE_SEQUENCE_SIZE_MINIMUM, BYTE_ESCAPE_SIZE,
+			SHORT_UNICODE_ESCAPE_SIZE, LONG_UNICODE_ESCAPE_SIZE,
 		).
 		Ensure()
 }
 
-// Hexadecimal_Buffer is the literal that holds one more digit escape.
-type Hexadecimal_Buffer []byte
+// Byte_Escape_Buffer is exact storage for one hexadecimal byte escape.
+type Byte_Escape_Buffer []byte
 
-// Hexadecimal_Buffer_Invariants bounds the literal that gained the digits.
-func Hexadecimal_Buffer_Invariants(
-	value Hexadecimal_Buffer, namespace invariant.Namespace,
-) {
-	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), HEXADECIMAL_BUFFER_SIZE_MINIMUM,
-			ESCAPED_BUFFER_SIZE_MAXIMUM,
-		).
-		Ensure()
+// Byte_Escape_Buffer_Invariants states hexadecimal byte escape width.
+func Byte_Escape_Buffer_Invariants(value Byte_Escape_Buffer, namespace invariant.Namespace) {
+	invariant.Always(len(value) == BYTE_ESCAPE_SIZE, "Byte escape storage has four bytes.")
 }
 
-// Escape_Letter_Buffer is the literal that holds an escape letter and awaits the
-// digits of that escape.
-type Escape_Letter_Buffer []byte
+// Unquoted_Buffer is exact caller storage for one decoded literal value.
+type Unquoted_Buffer []byte
 
-// Escape_Letter_Buffer_Invariants bounds the literal that the digits extend.
-func Escape_Letter_Buffer_Invariants(
-	value Escape_Letter_Buffer, namespace invariant.Namespace,
-) {
+// Unquoted_Buffer_Invariants bounds decoded literal width.
+func Unquoted_Buffer_Invariants(value Unquoted_Buffer, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), ESCAPE_LETTER_BUFFER_SIZE_MINIMUM,
-			ESCAPE_LETTER_BUFFER_SIZE_MAXIMUM,
-		).
-		Ensure()
-}
-
-// Escaped_Buffer is the literal that holds one more written character.
-type Escaped_Buffer []byte
-
-// Escaped_Buffer_Invariants bounds the literal that gained one character.
-func Escaped_Buffer_Invariants(value Escaped_Buffer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), ESCAPED_BUFFER_SIZE_MINIMUM, ESCAPED_BUFFER_SIZE_MAXIMUM,
-		).
-		Ensure()
-}
-
-// Escape_Sequence_Text is the written form of one character that needs an escape.
-type Escape_Sequence_Text string
-
-// Escape_Sequence_Text_Invariants bounds one escape sequence.
-func Escape_Sequence_Text_Invariants(
-	value Escape_Sequence_Text, namespace invariant.Namespace,
-) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), ESCAPE_SEQUENCE_SIZE_MINIMUM, ESCAPE_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Hexadecimal_Digits_Text is the digits that one escape sequence writes.
-type Hexadecimal_Digits_Text string
-
-// Hexadecimal_Digits_Text_Invariants states the three escape widths.
-func Hexadecimal_Digits_Text_Invariants(
-	value Hexadecimal_Digits_Text, namespace invariant.Namespace,
-) {
-	invariant.Tree(value, namespace).
-		Enum_3_Int(
-			len(value), HEXADECIMAL_DIGIT_COUNT, SHORT_UNICODE_DIGIT_COUNT,
-			LONG_UNICODE_DIGIT_COUNT,
-		).
-		Ensure()
-}
-
-// Boolean_Text is the written form of a Boolean.
-type Boolean_Text string
-
-// Boolean_Text_Invariants states the two Boolean words.
-func Boolean_Text_Invariants(value Boolean_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Enum_Int(len(value), BOOLEAN_TEXT_SIZE_TRUE, BOOLEAN_TEXT_SIZE_FALSE).
-		Ensure()
-}
-
-// Digit_Text is the written form of an unsigned number.
-type Digit_Text string
-
-// Digit_Text_Invariants bounds the digits of an unsigned number.
-func Digit_Text_Invariants(value Digit_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), DIGIT_TEXT_SIZE_MINIMUM, DIGIT_TEXT_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Integer_Text is the written form of a signed number.
-type Integer_Text string
-
-// Integer_Text_Invariants bounds the sign and the digits of a signed number.
-func Integer_Text_Invariants(value Integer_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), INTEGER_TEXT_SIZE_MINIMUM, INTEGER_TEXT_SIZE_MAXIMUM).
-		Ensure()
-}
-
-// Decimal_Text is the written form of a machine integer in base ten.
-type Decimal_Text string
-
-// Decimal_Text_Invariants bounds a machine integer in base ten.
-func Decimal_Text_Invariants(value Decimal_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(len(value), DECIMAL_TEXT_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
+		Range_Int(len(value), TEXT_SIZE_MINIMUM, UNQUOTED_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
@@ -743,77 +494,141 @@ func Fraction_Units_Invariants(value Fraction_Units, namespace invariant.Namespa
 		Ensure()
 }
 
-// Fixed_Point_Buffer is a buffer that holds one more fixed-point number.
-type Fixed_Point_Buffer []byte
-
-// Fixed_Point_Buffer_Invariants bounds a buffer and the number it gained.
-func Fixed_Point_Buffer_Invariants(value Fixed_Point_Buffer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Int(
-			len(value), FIXED_POINT_TEXT_SIZE_MINIMUM, FIXED_POINT_BUFFER_SIZE_MAXIMUM,
-		).
-		Ensure()
-}
-
-// Buffer is the byte slice that an append conversion extends.
+// Buffer is caller-owned storage for a written conversion.
 type Buffer []byte
 
-// Buffer_Invariants bounds the buffer an append conversion takes.
+// Buffer_Invariants bounds caller-owned conversion storage.
 func Buffer_Invariants(value Buffer, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int(len(value), BUFFER_SIZE_MINIMUM, BUFFER_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// Boolean_Buffer is a buffer that holds one more Boolean word.
-type Boolean_Buffer []byte
+// Boolean_Count is byte count of one written Boolean.
+type Boolean_Count int
 
-// Boolean_Buffer_Invariants bounds a buffer and the Boolean word it gained.
-func Boolean_Buffer_Invariants(value Boolean_Buffer, namespace invariant.Namespace) {
+// Boolean_Count_Invariants states both Boolean text widths.
+func Boolean_Count_Invariants(value Boolean_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int(len(value), BOOLEAN_TEXT_SIZE_TRUE, BOOLEAN_BUFFER_SIZE_MAXIMUM).
+		Enum_Int(int(value), BOOLEAN_TEXT_SIZE_TRUE, BOOLEAN_TEXT_SIZE_FALSE).
 		Ensure()
 }
 
-// Integer_Buffer is a buffer that holds one more signed number.
-type Integer_Buffer []byte
+// Digit_Text_Count is byte count of one written unsigned integer.
+type Digit_Text_Count int
 
-// Integer_Buffer_Invariants bounds a buffer and the number it gained.
-func Integer_Buffer_Invariants(value Integer_Buffer, namespace invariant.Namespace) {
+// Digit_Text_Count_Invariants bounds unsigned integer width.
+func Digit_Text_Count_Invariants(value Digit_Text_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int(len(value), INTEGER_TEXT_SIZE_MINIMUM, INTEGER_BUFFER_SIZE_MAXIMUM).
+		Range_Int(int(value), DIGIT_TEXT_SIZE_MINIMUM, DIGIT_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// Digit_Buffer is a buffer that holds one more unsigned number.
-type Digit_Buffer []byte
+// Integer_Text_Count is byte count of one written signed integer.
+type Integer_Text_Count int
 
-// Digit_Buffer_Invariants bounds a buffer and the number it gained.
-func Digit_Buffer_Invariants(value Digit_Buffer, namespace invariant.Namespace) {
+// Integer_Text_Count_Invariants bounds signed integer width.
+func Integer_Text_Count_Invariants(value Integer_Text_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int(len(value), DIGIT_TEXT_SIZE_MINIMUM, DIGIT_BUFFER_SIZE_MAXIMUM).
+		Range_Int(int(value), INTEGER_TEXT_SIZE_MINIMUM, INTEGER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// Quoted_Buffer is a buffer that holds one more string literal.
-type Quoted_Buffer []byte
+// Decimal_Text_Count is byte count of one written machine integer.
+type Decimal_Text_Count int
 
-// Quoted_Buffer_Invariants bounds a buffer and the literal it gained.
-func Quoted_Buffer_Invariants(value Quoted_Buffer, namespace invariant.Namespace) {
+// Decimal_Text_Count_Invariants bounds machine integer decimal width.
+func Decimal_Text_Count_Invariants(value Decimal_Text_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int(len(value), QUOTED_TEXT_SIZE_MINIMUM, QUOTED_BUFFER_SIZE_MAXIMUM).
+		Range_Int(int(value), DECIMAL_TEXT_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// Character_Buffer is a buffer that holds one more character literal.
-type Character_Buffer []byte
+// Fixed_Point_Text_Count is byte count of one written fixed-point number.
+type Fixed_Point_Text_Count int
 
-// Character_Buffer_Invariants bounds a buffer and the literal it gained.
-func Character_Buffer_Invariants(value Character_Buffer, namespace invariant.Namespace) {
+// Fixed_Point_Text_Count_Invariants bounds fixed-point text width.
+func Fixed_Point_Text_Count_Invariants(
+	value Fixed_Point_Text_Count, namespace invariant.Namespace,
+) {
 	invariant.Tree(value, namespace).
 		Range_Int(
-			len(value), CHARACTER_TEXT_SIZE_MINIMUM, CHARACTER_BUFFER_SIZE_MAXIMUM,
+			int(value), FIXED_POINT_TEXT_SIZE_MINIMUM, FIXED_POINT_TEXT_SIZE_MAXIMUM,
 		).
+		Ensure()
+}
+
+// Quoted_Text_Count is byte count of one written string literal.
+type Quoted_Text_Count int
+
+// Quoted_Text_Count_Invariants bounds string literal width.
+func Quoted_Text_Count_Invariants(value Quoted_Text_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), QUOTED_TEXT_SIZE_MINIMUM, QUOTED_TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Character_Text_Count is byte count of one written character literal.
+type Character_Text_Count int
+
+// Character_Text_Count_Invariants bounds character literal width.
+func Character_Text_Count_Invariants(
+	value Character_Text_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), CHARACTER_TEXT_SIZE_MINIMUM, CHARACTER_TEXT_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Escape_Text_Count is byte count of one written literal body character.
+type Escape_Text_Count int
+
+// Escape_Text_Count_Invariants bounds plain UTF-8 and escaped widths.
+func Escape_Text_Count_Invariants(value Escape_Text_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), ESCAPE_SIZE_MINIMUM, ESCAPE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Escape_Sequence_Count is byte count of one mandatory escape.
+type Escape_Sequence_Count int
+
+// Escape_Sequence_Count_Invariants states four mandatory escape widths.
+func Escape_Sequence_Count_Invariants(
+	value Escape_Sequence_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_4_Int(
+			int(value), ESCAPE_SEQUENCE_SIZE_MINIMUM, BYTE_ESCAPE_SIZE,
+			SHORT_UNICODE_ESCAPE_SIZE, LONG_UNICODE_ESCAPE_SIZE,
+		).
+		Ensure()
+}
+
+// Decoded_Text_Count is byte count of one decoded character.
+type Decoded_Text_Count int
+
+// Decoded_Text_Count_Invariants states UTF-8 sequence widths.
+func Decoded_Text_Count_Invariants(value Decoded_Text_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_4_Int(
+			int(value), utf8.CHARACTER_SIZE_MINIMUM, utf8.CHARACTER_SIZE_TWO,
+			utf8.CHARACTER_SIZE_THREE, utf8.CHARACTER_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Unquoted_Text_Count is byte count of one decoded literal value.
+type Unquoted_Text_Count int
+
+// Unquoted_Text_Count_Invariants bounds decoded literal width.
+func Unquoted_Text_Count_Invariants(
+	value Unquoted_Text_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), TEXT_SIZE_MINIMUM, UNQUOTED_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
@@ -881,18 +696,6 @@ func Unsigned_Integer_Invariants(value Unsigned_Integer, namespace invariant.Nam
 		Ensure()
 }
 
-// Signed_Magnitude is the absolute value of a signed 64-bit integer.
-type Signed_Magnitude uint64
-
-// Signed_Magnitude_Invariants bounds a magnitude through the smallest signed value.
-func Signed_Magnitude_Invariants(value Signed_Magnitude, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Uint64(
-			uint64(value), SIGNED_MAGNITUDE_MINIMUM, SIGNED_MAGNITUDE_MAXIMUM,
-		).
-		Ensure()
-}
-
 // Machine_Integer is a signed value of the platform integer width.
 type Machine_Integer int
 
@@ -953,6 +756,18 @@ type Text_Byte uint8
 func Text_Byte_Invariants(value Text_Byte, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Uint8(uint8(value), TEXT_BYTE_MINIMUM, TEXT_BYTE_MAXIMUM).
+		Ensure()
+}
+
+// Invalid_Text_Byte is one non-ASCII byte that failed UTF-8 decoding.
+type Invalid_Text_Byte uint8
+
+// Invalid_Text_Byte_Invariants bounds failed leading byte.
+func Invalid_Text_Byte_Invariants(value Invalid_Text_Byte, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value), INVALID_TEXT_BYTE_MINIMUM, INVALID_TEXT_BYTE_MAXIMUM,
+		).
 		Ensure()
 }
 
@@ -1029,20 +844,6 @@ func Digit_Count_Invariants(value Digit_Count, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Quoted_Capacity is the reserved storage for one quoted text.
-type Quoted_Capacity int
-
-// Quoted_Capacity_Invariants bounds storage from no body through all escaped bytes.
-func Quoted_Capacity_Invariants(value Quoted_Capacity, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Range_Holed_Int(
-			int(value), TEXT_SIZE_MINIMUM, QUOTED_TEXT_SIZE_MAXIMUM,
-			QUOTED_TEXT_SIZE_MINIMUM, QUOTED_TEXT_SIZE_MINIMUM,
-			QUOTED_TEXT_SIZE_MINIMUM, QUOTED_TEXT_SIZE_MINIMUM,
-		).
-		Ensure()
-}
-
 // Parse_Boolean reads the accepted spellings of a Boolean.
 func Parse_Boolean(text Text) (value Boolean, err error) {
 	defer func() {
@@ -1058,26 +859,21 @@ func Parse_Boolean(text Text) (value Boolean, err error) {
 	return false, Error_Syntax
 }
 
-// Format_Boolean writes true or false.
-func Format_Boolean(value Boolean) (text Boolean_Text) {
-	defer func() {
-		Boolean_Text_Invariants(text, "format_boolean.text")
-	}()
-	Boolean_Invariants(value, "format_boolean.value")
+// Format_Boolean_Into writes true or false into caller storage.
+func Format_Boolean_Into(destination Buffer, value Boolean) (count Boolean_Count) {
+	defer func() { Boolean_Count_Invariants(count, "format_boolean_into.count") }()
+	Buffer_Invariants(destination, "format_boolean_into.destination")
+	Boolean_Invariants(value, "format_boolean_into.value")
+	word := "false"
 	if value {
-		return "true"
+		word = "true"
 	}
-	return "false"
-}
-
-// Append_Boolean writes true or false into the destination.
-func Append_Boolean(destination Buffer, value Boolean) (extended Boolean_Buffer) {
-	defer func() {
-		Boolean_Buffer_Invariants(extended, "append_boolean.extended")
-	}()
-	Buffer_Invariants(destination, "append_boolean.destination")
-	Boolean_Invariants(value, "append_boolean.value")
-	return append(Boolean_Buffer(destination), []byte(Format_Boolean(value))...)
+	count = Boolean_Count(len(word))
+	if int(count) > len(destination) {
+		panic("strconv: destination too small")
+	}
+	copy(destination, word)
+	return count
 }
 
 // Parse_Unsigned_Integer reads an unsigned value. A sign prefix is not permitted.
@@ -1322,149 +1118,90 @@ func parse_decimal_general(text Text) (value Machine_Integer, err error) {
 	return Machine_Integer(wide), parse_err
 }
 
-// Format_Unsigned_Integer writes an unsigned value in the given radix.
-func Format_Unsigned_Integer(value Unsigned_Integer, base Base) (text Digit_Text) {
+// Format_Unsigned_Integer_Into writes unsigned value into caller storage.
+func Format_Unsigned_Integer_Into(
+	destination Buffer, value Unsigned_Integer, base Base,
+) (count Digit_Text_Count) {
 	defer func() {
-		Digit_Text_Invariants(text, "format_unsigned_integer.text")
+		Digit_Text_Count_Invariants(count, "format_unsigned_integer_into.count")
 	}()
-	Unsigned_Integer_Invariants(value, "format_unsigned_integer.value")
-	Base_Invariants(base, "format_unsigned_integer.base")
-	return digits_of(value, base)
+	Buffer_Invariants(destination, "format_unsigned_integer_into.destination")
+	Unsigned_Integer_Invariants(value, "format_unsigned_integer_into.value")
+	Base_Invariants(base, "format_unsigned_integer_into.base")
+	return Digit_Text_Count(integer_into(destination, value, false, base))
 }
 
-// Format_Integer writes a signed value in the given radix, the sign leading the digits.
-func Format_Integer(value Signed_Integer, base Base) (text Integer_Text) {
-	defer func() {
-		Integer_Text_Invariants(text, "format_integer.text")
-	}()
-	Signed_Integer_Invariants(value, "format_integer.value")
-	Base_Invariants(base, "format_integer.base")
+// Format_Integer_Into writes signed value into caller storage.
+func Format_Integer_Into(
+	destination Buffer, value Signed_Integer, base Base,
+) (count Integer_Text_Count) {
+	defer func() { Integer_Text_Count_Invariants(count, "format_integer_into.count") }()
+	Buffer_Invariants(destination, "format_integer_into.destination")
+	Signed_Integer_Invariants(value, "format_integer_into.value")
+	Base_Invariants(base, "format_integer_into.base")
 	magnitude := uint64(value)
 	if value < 0 {
 		magnitude = -magnitude
 	}
-	if base == DECIMAL_BASE {
-		if int64(value) == INTEGER_64_MINIMUM {
-			return INTEGER_64_MINIMUM_DECIMAL_TEXT
-		}
-		if int64(value) == INTEGER_64_MAXIMUM {
-			return INTEGER_64_MAXIMUM_DECIMAL_TEXT
-		}
-		var decimal [DECIMAL_TEXT_SIZE_MAXIMUM]byte
-		free_count := len(decimal)
-		for magnitude>>DECIMAL_CHUNK_SHIFT != 0 {
-			var chunk uint32
-			magnitude, chunk = magnitude/DECIMAL_CHUNK_BASE,
-				uint32(magnitude%DECIMAL_CHUNK_BASE)
-			for range DECIMAL_CHUNK_PAIR_COUNT {
-				var pair uint32
-				chunk, pair = chunk/DECIMAL_PAIR_BASE,
-					chunk%DECIMAL_PAIR_BASE*DECIMAL_PAIR_INDEX_SCALE
-				free_count -= 2
-				decimal[free_count], decimal[free_count+1] =
-					DECIMAL_PAIRS[pair], DECIMAL_PAIRS[pair+1]
-			}
-			free_count--
-			decimal[free_count] = DECIMAL_PAIRS[chunk*2+1]
-			if magnitude == 0 {
-				break
-			}
-		}
-		if magnitude > 0 {
-			chunk := uint32(magnitude)
-			for chunk >= DECIMAL_PAIR_BASE {
-				var pair uint32
-				chunk, pair = chunk/DECIMAL_PAIR_BASE,
-					chunk%DECIMAL_PAIR_BASE*DECIMAL_PAIR_INDEX_SCALE
-				free_count -= 2
-				decimal[free_count], decimal[free_count+1] =
-					DECIMAL_PAIRS[pair], DECIMAL_PAIRS[pair+1]
-			}
-			free_count--
-			pair := chunk * DECIMAL_PAIR_INDEX_SCALE
-			decimal[free_count] = DECIMAL_PAIRS[pair+1]
-			if chunk >= DECIMAL_BASE {
-				free_count--
-				decimal[free_count] = DECIMAL_PAIRS[pair]
-			}
-		}
-		if value == 0 {
-			free_count--
-			decimal[free_count] = DIGIT_SYMBOLS[0]
-		}
-		if value < 0 {
-			free_count--
-			decimal[free_count] = '-'
-		}
-		return Integer_Text(decimal[free_count:])
-	}
-	return radix_integer_text(Signed_Magnitude(magnitude), Boolean(value < 0), base)
+	return integer_into(destination, Unsigned_Integer(magnitude), Boolean(value < 0), base)
 }
 
-// Writes a signed magnitude in a non-decimal radix.
-func radix_integer_text(
-	magnitude Signed_Magnitude, negative Boolean, base Base,
-) (text Integer_Text) {
-	defer func() {
-		Integer_Text_Invariants(text, "radix_integer_text.text")
-	}()
-	Signed_Magnitude_Invariants(magnitude, "radix_integer_text.magnitude")
-	Boolean_Invariants(negative, "radix_integer_text.negative")
-	Base_Invariants(base, "radix_integer_text.base")
-	// The sign and digits share one scratch so converting the completed slice makes
-	// the only owned string. Building the unsigned text first would allocate it too.
-	var scratch [INTEGER_TEXT_SIZE_MAXIMUM]byte
-	free_count := len(scratch)
+// Format_Decimal_Into writes machine integer into caller storage.
+func Format_Decimal_Into(
+	destination Buffer, value Machine_Integer,
+) (count Decimal_Text_Count) {
+	defer func() { Decimal_Text_Count_Invariants(count, "format_decimal_into.count") }()
+	Buffer_Invariants(destination, "format_decimal_into.destination")
+	Machine_Integer_Invariants(value, "format_decimal_into.value")
+	return Decimal_Text_Count(Format_Integer_Into(
+		destination, Signed_Integer(value), DECIMAL_BASE,
+	))
+}
+
+// Writes sign and magnitude after proving caller storage holds complete text.
+func integer_into(
+	destination Buffer, magnitude Unsigned_Integer, negative Boolean, base Base,
+) (count Integer_Text_Count) {
+	defer func() { Integer_Text_Count_Invariants(count, "integer_into.count") }()
+	Buffer_Invariants(destination, "integer_into.destination")
+	Unsigned_Integer_Invariants(magnitude, "integer_into.magnitude")
+	Boolean_Invariants(negative, "integer_into.negative")
+	Base_Invariants(base, "integer_into.base")
 	radix := uint64(base)
-	for free_count > 0 {
-		free_count--
-		scratch[free_count] = DIGIT_SYMBOLS[uint64(magnitude)%radix]
-		magnitude = Signed_Magnitude(uint64(magnitude) / radix)
-		if magnitude == 0 {
-			break
-		}
+	digit_count := int(digit_count_of(magnitude, base))
+	text_count := digit_count
+	if negative {
+		text_count++
+	}
+	count = Integer_Text_Count(text_count)
+	if text_count > len(destination) {
+		panic("strconv: destination too small")
+	}
+	rest := uint64(magnitude)
+	write_index := text_count
+	for range digit_count {
+		write_index--
+		destination[write_index] = DIGIT_SYMBOLS[rest%radix]
+		rest /= radix
 	}
 	if negative {
-		free_count--
-		scratch[free_count] = '-'
+		destination[0] = '-'
 	}
-	return Integer_Text(scratch[free_count:])
+	return count
 }
 
-// Format_Decimal writes a machine integer in base ten.
-func Format_Decimal(value Machine_Integer) (text Decimal_Text) {
-	defer func() {
-		Decimal_Text_Invariants(text, "format_decimal.text")
-	}()
-	Machine_Integer_Invariants(value, "format_decimal.value")
-	return Decimal_Text(Format_Integer(Signed_Integer(value), DECIMAL_BASE))
-}
-
-// Append_Integer writes a signed value into the destination.
-func Append_Integer(
-	destination Buffer, value Signed_Integer, base Base,
-) (extended Integer_Buffer) {
-	defer func() {
-		Integer_Buffer_Invariants(extended, "append_integer.extended")
-	}()
-	Buffer_Invariants(destination, "append_integer.destination")
-	Signed_Integer_Invariants(value, "append_integer.value")
-	Base_Invariants(base, "append_integer.base")
-	return append(Integer_Buffer(destination), []byte(Format_Integer(value, base))...)
-}
-
-// Append_Unsigned_Integer writes an unsigned value into the destination.
-func Append_Unsigned_Integer(
-	destination Buffer, value Unsigned_Integer, base Base,
-) (extended Digit_Buffer) {
-	defer func() {
-		Digit_Buffer_Invariants(extended, "append_unsigned_integer.extended")
-	}()
-	Buffer_Invariants(destination, "append_unsigned_integer.destination")
-	Unsigned_Integer_Invariants(value, "append_unsigned_integer.value")
-	Base_Invariants(base, "append_unsigned_integer.base")
-	digits := Format_Unsigned_Integer(value, base)
-	return append(Digit_Buffer(destination), []byte(digits)...)
+// Counts digits before writer changes caller storage.
+func digit_count_of(
+	magnitude Unsigned_Integer, base Base,
+) (count Digit_Text_Count) {
+	defer func() { Digit_Text_Count_Invariants(count, "digit_count_of.count") }()
+	Unsigned_Integer_Invariants(magnitude, "digit_count_of.magnitude")
+	Base_Invariants(base, "digit_count_of.base")
+	count = DIGIT_TEXT_SIZE_MINIMUM
+	for rest := uint64(magnitude); rest >= uint64(base); rest /= uint64(base) {
+		count++
+	}
+	return count
 }
 
 // Parse_Fixed_Point reads decimal text into a fixed-point number, which is what the
@@ -1513,175 +1250,118 @@ func Parse_Fixed_Point(text Text) (value fixedpoint.Number, err error) {
 	return fixed_point_of(whole, units, negative)
 }
 
-// Format_Fixed_Point writes a fixed-point number with a set number of fraction digits.
-// The fixedpoint package owns the rendering, thus this form only names it here.
-func Format_Fixed_Point(
-	value fixedpoint.Number, digits fixedpoint.Digit_Count,
-) (text fixedpoint.Text) {
-	defer func() {
-		fixedpoint.Text_Invariants(text, "format_fixed_point.text")
-	}()
-	fixedpoint.Number_Invariants(value, "format_fixed_point.value")
-	fixedpoint.Digit_Count_Invariants(digits, "format_fixed_point.digits")
-	return fixedpoint.Format(value, digits)
-}
-
-// Append_Fixed_Point writes a fixed-point number into the destination.
-func Append_Fixed_Point(
+// Format_Fixed_Point_Into writes fixed-point number into caller storage.
+func Format_Fixed_Point_Into(
 	destination Buffer, value fixedpoint.Number, digits fixedpoint.Digit_Count,
-) (extended Fixed_Point_Buffer) {
+) (count Fixed_Point_Text_Count) {
 	defer func() {
-		Fixed_Point_Buffer_Invariants(extended, "append_fixed_point.extended")
+		Fixed_Point_Text_Count_Invariants(count, "format_fixed_point_into.count")
 	}()
-	Buffer_Invariants(destination, "append_fixed_point.destination")
-	fixedpoint.Number_Invariants(value, "append_fixed_point.value")
-	fixedpoint.Digit_Count_Invariants(digits, "append_fixed_point.digits")
-	text := Format_Fixed_Point(value, digits)
-	return append(Fixed_Point_Buffer(destination), []byte(text)...)
-}
-
-// Quote returns a double-quoted Go string literal for the text.
-func Quote(text Text) (quoted Quoted_Text) {
-	defer func() {
-		Quoted_Text_Invariants(quoted, "quote.quoted")
-	}()
-	Text_Invariants(text, "quote.text")
-	return quoted_text(text, false, false)
-}
-
-// Quote_To_ASCII returns a double-quoted Go string literal that escapes every character
-// above the ASCII range.
-func Quote_To_ASCII(text Text) (quoted Quoted_Text) {
-	defer func() {
-		Quoted_Text_Invariants(quoted, "quote_to_ascii.quoted")
-	}()
-	Text_Invariants(text, "quote_to_ascii.text")
-	return quoted_text(text, true, false)
-}
-
-// Quote_To_Graphic returns a double-quoted Go string literal that keeps every graphic
-// character.
-func Quote_To_Graphic(text Text) (quoted Quoted_Text) {
-	defer func() {
-		Quoted_Text_Invariants(quoted, "quote_to_graphic.quoted")
-	}()
-	Text_Invariants(text, "quote_to_graphic.text")
-	return quoted_text(text, false, true)
-}
-
-// Append_Quote writes the double-quoted literal for the text into the destination.
-func Append_Quote(destination Buffer, text Text) (extended Quoted_Buffer) {
-	defer func() {
-		Quoted_Buffer_Invariants(extended, "append_quote.extended")
-	}()
-	Buffer_Invariants(destination, "append_quote.destination")
-	Text_Invariants(text, "append_quote.text")
-	literal := quoted_text(text, false, false)
-	return append(Quoted_Buffer(destination), []byte(literal)...)
-}
-
-// Append_Quote_To_ASCII writes the ASCII-only literal for the text into the
-// destination.
-func Append_Quote_To_ASCII(destination Buffer, text Text) (extended Quoted_Buffer) {
-	defer func() {
-		Quoted_Buffer_Invariants(extended, "append_quote_to_ascii.extended")
-	}()
-	Buffer_Invariants(destination, "append_quote_to_ascii.destination")
-	Text_Invariants(text, "append_quote_to_ascii.text")
-	literal := quoted_text(text, true, false)
-	return append(Quoted_Buffer(destination), []byte(literal)...)
-}
-
-// Append_Quote_To_Graphic writes the graphic literal for the text into the destination.
-func Append_Quote_To_Graphic(destination Buffer, text Text) (extended Quoted_Buffer) {
-	defer func() {
-		Quoted_Buffer_Invariants(extended, "append_quote_to_graphic.extended")
-	}()
-	Buffer_Invariants(destination, "append_quote_to_graphic.destination")
-	Text_Invariants(text, "append_quote_to_graphic.text")
-	literal := quoted_text(text, false, true)
-	return append(Quoted_Buffer(destination), []byte(literal)...)
-}
-
-// Quote_Rune returns a single-quoted Go character literal for the character.
-func Quote_Rune(value Character) (quoted Character_Text) {
-	defer func() {
-		Character_Text_Invariants(quoted, "quote_rune.quoted")
-	}()
-	Character_Invariants(value, "quote_rune.value")
-	if value >= Character(ASCII_PRINT_MINIMUM) {
-		if value <= Character(ASCII_PRINT_MAXIMUM) {
-			if value != QUOTE_MARK_SINGLE {
-				if value != '\\' {
-					index := int(value-Character(ASCII_PRINT_MINIMUM)) *
-						CHARACTER_TEXT_SIZE_MINIMUM
-					end := index + CHARACTER_TEXT_SIZE_MINIMUM
-					plain := PLAIN_ASCII_CHARACTER_TEXTS[index:end]
-					return Character_Text(plain)
-				}
-			}
-		}
+	Buffer_Invariants(destination, "format_fixed_point_into.destination")
+	fixedpoint.Number_Invariants(value, "format_fixed_point_into.value")
+	fixedpoint.Digit_Count_Invariants(digits, "format_fixed_point_into.digits")
+	negative := Boolean(value < 0)
+	magnitude := uint64(value)
+	if negative {
+		magnitude = uint64(-int64(value))
 	}
-	return character_text(value, false, false)
+	power := int64(1)
+	for range int(digits) {
+		power *= DECIMAL_BASE
+	}
+	product_high, product_low := bits.Multiply_64(
+		bits.Word_64(magnitude), bits.Multiplier_64(power),
+	)
+	rounded, carry := bits.Add_64(
+		bits.Word_64(product_low), 1<<(fixedpoint.FRACTIONAL_BITS-1), 0,
+	)
+	scaled := (uint64(product_high)+uint64(carry))<<
+		(64-fixedpoint.FRACTIONAL_BITS) |
+		uint64(rounded)>>fixedpoint.FRACTIONAL_BITS
+	if scaled == 0 {
+		negative = false
+	}
+	unsigned_power := uint64(power)
+	whole := Unsigned_Integer(scaled / unsigned_power)
+	whole_count := int(digit_count_of(whole, DECIMAL_BASE))
+	if negative {
+		whole_count++
+	}
+	text_count := whole_count
+	if digits > 0 {
+		text_count += 1 + int(digits)
+	}
+	count = Fixed_Point_Text_Count(text_count)
+	if text_count > len(destination) {
+		panic("strconv: destination too small")
+	}
+	integer_into(destination[:whole_count], whole, negative, DECIMAL_BASE)
+	if digits == 0 {
+		return count
+	}
+	destination[whole_count] = '.'
+	fraction := scaled % unsigned_power
+	for index := text_count - 1; index > whole_count; index-- {
+		destination[index] = byte('0' + fraction%DECIMAL_BASE)
+		fraction /= DECIMAL_BASE
+	}
+	return count
 }
 
-// Quote_Rune_To_ASCII returns a single-quoted Go character literal that escapes every
-// character above the ASCII range.
-func Quote_Rune_To_ASCII(value Character) (quoted Character_Text) {
-	defer func() {
-		Character_Text_Invariants(quoted, "quote_rune_to_ascii.quoted")
-	}()
-	Character_Invariants(value, "quote_rune_to_ascii.value")
-	return character_text(value, true, false)
+// Quote_Into writes double-quoted Go string literal into caller storage.
+func Quote_Into(destination Buffer, text Text) (count Quoted_Text_Count) {
+	defer func() { Quoted_Text_Count_Invariants(count, "quote_into.count") }()
+	Buffer_Invariants(destination, "quote_into.destination")
+	Text_Invariants(text, "quote_into.text")
+	return quoted_into(destination, text, false, false)
 }
 
-// Quote_Rune_To_Graphic returns a single-quoted Go character literal that keeps every
-// graphic character.
-func Quote_Rune_To_Graphic(value Character) (quoted Character_Text) {
-	defer func() {
-		Character_Text_Invariants(quoted, "quote_rune_to_graphic.quoted")
-	}()
-	Character_Invariants(value, "quote_rune_to_graphic.value")
-	return character_text(value, false, true)
+// Quote_To_ASCII_Into writes ASCII-only string literal into caller storage.
+func Quote_To_ASCII_Into(destination Buffer, text Text) (count Quoted_Text_Count) {
+	defer func() { Quoted_Text_Count_Invariants(count, "quote_to_ascii_into.count") }()
+	Buffer_Invariants(destination, "quote_to_ascii_into.destination")
+	Text_Invariants(text, "quote_to_ascii_into.text")
+	return quoted_into(destination, text, true, false)
 }
 
-// Append_Quote_Rune writes the character literal into the destination.
-func Append_Quote_Rune(destination Buffer, value Character) (extended Character_Buffer) {
-	defer func() {
-		Character_Buffer_Invariants(extended, "append_quote_rune.extended")
-	}()
-	Buffer_Invariants(destination, "append_quote_rune.destination")
-	Character_Invariants(value, "append_quote_rune.value")
-	literal := character_text(value, false, false)
-	return append(Character_Buffer(destination), []byte(literal)...)
+// Quote_To_Graphic_Into writes graphic string literal into caller storage.
+func Quote_To_Graphic_Into(destination Buffer, text Text) (count Quoted_Text_Count) {
+	defer func() { Quoted_Text_Count_Invariants(count, "quote_to_graphic_into.count") }()
+	Buffer_Invariants(destination, "quote_to_graphic_into.destination")
+	Text_Invariants(text, "quote_to_graphic_into.text")
+	return quoted_into(destination, text, false, true)
 }
 
-// Append_Quote_Rune_To_ASCII writes the ASCII-only character literal into the
-// destination.
-func Append_Quote_Rune_To_ASCII(
+// Quote_Rune_Into writes character literal into caller storage.
+func Quote_Rune_Into(destination Buffer, value Character) (count Character_Text_Count) {
+	defer func() { Character_Text_Count_Invariants(count, "quote_rune_into.count") }()
+	Buffer_Invariants(destination, "quote_rune_into.destination")
+	Character_Invariants(value, "quote_rune_into.value")
+	return character_into(destination, value, false, false)
+}
+
+// Quote_Rune_To_ASCII_Into writes ASCII-only character literal into caller storage.
+func Quote_Rune_To_ASCII_Into(
 	destination Buffer, value Character,
-) (extended Character_Buffer) {
+) (count Character_Text_Count) {
 	defer func() {
-		Character_Buffer_Invariants(extended, "append_quote_rune_to_ascii.extended")
+		Character_Text_Count_Invariants(count, "quote_rune_to_ascii_into.count")
 	}()
-	Buffer_Invariants(destination, "append_quote_rune_to_ascii.destination")
-	Character_Invariants(value, "append_quote_rune_to_ascii.value")
-	literal := character_text(value, true, false)
-	return append(Character_Buffer(destination), []byte(literal)...)
+	Buffer_Invariants(destination, "quote_rune_to_ascii_into.destination")
+	Character_Invariants(value, "quote_rune_to_ascii_into.value")
+	return character_into(destination, value, true, false)
 }
 
-// Append_Quote_Rune_To_Graphic writes the graphic character literal into the
-// destination.
-func Append_Quote_Rune_To_Graphic(
+// Quote_Rune_To_Graphic_Into writes graphic character literal into caller storage.
+func Quote_Rune_To_Graphic_Into(
 	destination Buffer, value Character,
-) (extended Character_Buffer) {
+) (count Character_Text_Count) {
 	defer func() {
-		Character_Buffer_Invariants(extended, "append_quote_rune_to_graphic.extended")
+		Character_Text_Count_Invariants(count, "quote_rune_to_graphic_into.count")
 	}()
-	Buffer_Invariants(destination, "append_quote_rune_to_graphic.destination")
-	Character_Invariants(value, "append_quote_rune_to_graphic.value")
-	literal := character_text(value, false, true)
-	return append(Character_Buffer(destination), []byte(literal)...)
+	Buffer_Invariants(destination, "quote_rune_to_graphic_into.destination")
+	Character_Invariants(value, "quote_rune_to_graphic_into.value")
+	return character_into(destination, value, false, true)
 }
 
 // Can_Backquote reports whether the text stays unchanged inside backquotes.
@@ -1785,30 +1465,26 @@ func Is_Graphic(value Character) (yes Boolean) {
 	return Boolean(ucd.Is_Graphic(ucd.Character(value)))
 }
 
-// Unquote reads a single-quoted, double-quoted, or backquoted Go literal and returns
-// the value it holds.
-func Unquote(text Text) (value Body_Text, err error) {
-	defer func() {
-		Body_Text_Invariants(value, "unquote.value")
-	}()
-	Text_Invariants(text, "unquote.text")
-	if len(text) >= LITERAL_TEXT_SIZE_MINIMUM {
-		if text[0] == QUOTE_MARK_DOUBLE {
-			if text[len(text)-1] == QUOTE_MARK_DOUBLE {
-				body := text[1 : len(text)-1]
-				if strings.Index_Byte_Or_Non_ASCII(
-					strings.Text(body), DOUBLE_QUOTED_PLAIN_EXCLUSIONS,
-				) == strings.INDEX_ABSENT {
-					return Body_Text(body), nil
-				}
-			}
-		}
+// Unquote_Into decodes complete Go literal into caller storage.
+func Unquote_Into(
+	destination Buffer, text Text,
+) (count Unquoted_Text_Count, err error) {
+	defer func() { Unquoted_Text_Count_Invariants(count, "unquote_into.count") }()
+	Buffer_Invariants(destination, "unquote_into.destination")
+	Text_Invariants(text, "unquote_into.text")
+	prefix, value_count, measure_error := measure_literal(text)
+	if measure_error != nil {
+		return 0, measure_error
 	}
-	unquoted, rest, unquote_err := unquote_prefix(text, true)
-	if len(rest) > 0 {
-		return "", Error_Syntax
+	if len(prefix) != len(text) {
+		return 0, Error_Syntax
 	}
-	return Body_Text(unquoted), unquote_err
+	count = value_count
+	if int(count) > len(destination) {
+		panic("strconv: destination too small")
+	}
+	write_literal_value(Unquoted_Buffer(destination[:int(count)]), Literal_Text(text))
+	return count, nil
 }
 
 // Quoted_Prefix returns the literal at the start of the text, quote marks included.
@@ -1817,8 +1493,8 @@ func Quoted_Prefix(text Text) (quoted Prefix_Text, err error) {
 		Prefix_Text_Invariants(quoted, "quoted_prefix.quoted")
 	}()
 	Text_Invariants(text, "quoted_prefix.text")
-	prefix, _, prefix_error := unquote_prefix(text, false)
-	return Prefix_Text(prefix), prefix_error
+	prefix, _, prefix_error := measure_literal(text)
+	return prefix, prefix_error
 }
 
 // Unquote_Character decodes the first character of a literal body. The quote mark names
@@ -1856,6 +1532,121 @@ func Unquote_Character(
 		Text_Byte(text[1]), Body_Text(text[2:]), quote_mark,
 	)
 	return value, multibyte, Tail_Text(body), err
+}
+
+// Measures first literal and decoded value without writing.
+func measure_literal(
+	text Text,
+) (prefix Prefix_Text, count Unquoted_Text_Count, err error) {
+	defer func() {
+		Prefix_Text_Invariants(prefix, "measure_literal.prefix")
+		Unquoted_Text_Count_Invariants(count, "measure_literal.count")
+	}()
+	Text_Invariants(text, "measure_literal.text")
+	if len(text) < LITERAL_TEXT_SIZE_MINIMUM {
+		return "", 0, Error_Syntax
+	}
+	if text[0] == '`' {
+		end_offset := int(strings.Index_Byte(strings.Text(text[1:]), '`'))
+		if end_offset < 0 {
+			return "", 0, Error_Syntax
+		}
+		end_offset += LITERAL_TEXT_SIZE_MINIMUM
+		for _, character := range []byte(text[1 : end_offset-1]) {
+			if character != '\r' {
+				count++
+			}
+		}
+		return Prefix_Text(text[:end_offset]), count, nil
+	}
+	if text[0] != QUOTE_MARK_DOUBLE {
+		if text[0] != QUOTE_MARK_SINGLE {
+			return "", 0, Error_Syntax
+		}
+	}
+	quote_mark := Quote_Mark(text[0])
+	body := Text(text[1:])
+	for len(body) > 0 {
+		if body[0] == byte(quote_mark) {
+			if quote_mark == QUOTE_MARK_SINGLE {
+				if count == 0 {
+					return "", 0, Error_Syntax
+				}
+			}
+			boundary := len(text) - len(body) + 1
+			return Prefix_Text(text[:boundary]), count, nil
+		}
+		if body[0] == '\n' {
+			return "", 0, Error_Syntax
+		}
+		point, multibyte, tail, character_error := Unquote_Character(body, quote_mark)
+		if character_error != nil {
+			return "", 0, Error_Syntax
+		}
+		count += Unquoted_Text_Count(decoded_character_size(point, multibyte))
+		body = Text(tail)
+		if quote_mark == QUOTE_MARK_SINGLE {
+			if len(body) == 0 {
+				return "", 0, Error_Syntax
+			}
+			if body[0] != QUOTE_MARK_SINGLE {
+				return "", 0, Error_Syntax
+			}
+			boundary := len(text) - len(body) + 1
+			return Prefix_Text(text[:boundary]), count, nil
+		}
+	}
+	return "", 0, Error_Syntax
+}
+
+// Gives decoded byte width for one literal body character.
+func decoded_character_size(value Code_Point, multibyte Boolean) (size Decoded_Text_Count) {
+	defer func() { Decoded_Text_Count_Invariants(size, "decoded_character_size.size") }()
+	Code_Point_Invariants(value, "decoded_character_size.value")
+	Boolean_Invariants(multibyte, "decoded_character_size.multibyte")
+	if value < Code_Point(utf8.CHARACTER_SELF) {
+		return ESCAPE_SIZE_MINIMUM
+	}
+	if !multibyte {
+		return ESCAPE_SIZE_MINIMUM
+	}
+	return Decoded_Text_Count(utf8.Character_Size(utf8.Character(value)))
+}
+
+// Writes already-measured complete literal value.
+func write_literal_value(destination Unquoted_Buffer, text Literal_Text) {
+	Unquoted_Buffer_Invariants(destination, "write_literal_value.destination")
+	Literal_Text_Invariants(text, "write_literal_value.text")
+	if text[0] == '`' {
+		written := 0
+		for _, character := range []byte(text[1 : len(text)-1]) {
+			if character != '\r' {
+				destination[written] = character
+				written++
+			}
+		}
+		return
+	}
+	quote_mark := Quote_Mark(text[0])
+	body := Text(text[1:])
+	written := 0
+	for body[0] != byte(quote_mark) {
+		point, multibyte, tail, character_error := Unquote_Character(body, quote_mark)
+		if character_error != nil {
+			panic("strconv: measured literal changed")
+		}
+		size := int(decoded_character_size(point, multibyte))
+		if size == ESCAPE_SIZE_MINIMUM {
+			destination[written] = byte(point)
+		} else {
+			utf8.Encode_Character(
+				utf8.Bytes(destination[written:written+size]),
+				utf8.Character(point),
+			)
+		}
+		written += size
+		body = Text(tail)
+	}
 }
 
 // Drops each fraction digit that the fixed-point grid cannot hold. The decimal point
@@ -2058,29 +1849,6 @@ func underscores_separate_digits(text Number_Text) (yes Boolean) {
 	return Boolean(previous != '_')
 }
 
-// Writes the value into a scratch array from the last digit backward, thus the divide
-// that finds each digit needs no second pass to reverse the text.
-func digits_of(value Unsigned_Integer, base Base) (text Digit_Text) {
-	defer func() {
-		Digit_Text_Invariants(text, "digits_of.text")
-	}()
-	Unsigned_Integer_Invariants(value, "digits_of.value")
-	Base_Invariants(base, "digits_of.base")
-	var scratch [DIGIT_TEXT_SIZE_MAXIMUM]byte
-	rest := uint64(value)
-	radix := uint64(base)
-	free_count := len(scratch)
-	for free_count > 0 {
-		free_count--
-		scratch[free_count] = DIGIT_SYMBOLS[rest%radix]
-		rest /= radix
-		if rest == 0 {
-			break
-		}
-	}
-	return Digit_Text(scratch[free_count:])
-}
-
 // Reads the value of one digit symbol in the largest radix.
 func digit_value(character Text_Byte) (digit Digit_Value, known Boolean) {
 	defer func() {
@@ -2136,307 +1904,248 @@ func separates_digits(character Text_Byte, hexadecimal Boolean) (yes Boolean) {
 	return false
 }
 
-// Writes consecutive ASCII characters into a literal without Unicode decoding.
-func append_quoted_ascii(
-	destination ASCII_Quote_Destination, text Text,
-) (extended Open_Quoted_Buffer, rest Text) {
-	defer func() {
-		Open_Quoted_Buffer_Invariants(extended, "append_quoted_ascii.extended")
-		Text_Invariants(rest, "append_quoted_ascii.rest")
-	}()
-	ASCII_Quote_Destination_Invariants(destination, "append_quoted_ascii.destination")
-	Text_Invariants(text, "append_quoted_ascii.text")
-	quote_mark := Literal_Quote_Mark(QUOTE_MARK_DOUBLE)
-	extended = Open_Quoted_Buffer(destination)
-	rest = text
+// Writes quoted text only after exact size proves destination sufficient.
+func quoted_into(
+	destination Buffer, text Text, ascii_only Boolean, graphic_only Boolean,
+) (count Quoted_Text_Count) {
+	defer func() { Quoted_Text_Count_Invariants(count, "quoted_into.count") }()
+	Buffer_Invariants(destination, "quoted_into.destination")
+	Text_Invariants(text, "quoted_into.text")
+	Boolean_Invariants(ascii_only, "quoted_into.ascii_only")
+	Boolean_Invariants(graphic_only, "quoted_into.graphic_only")
+	count = quoted_text_size(text, ascii_only, graphic_only)
+	if int(count) > len(destination) {
+		panic("strconv: destination too small")
+	}
+	destination[0] = QUOTE_MARK_DOUBLE
+	written := 1
+	rest := text
 	for len(rest) > 0 {
-		if rest[0] >= byte(utf8.CHARACTER_SELF) {
-			return extended, rest
-		}
-		plain_size := 0
-		for plain_size < len(rest) {
-			// The scalar path owns the final character and therefore still proves the
-			// minimum and maximum destination boundaries of the shared escape writer.
-			if len(rest)-plain_size == ESCAPE_SIZE_MINIMUM {
-				break
-			}
-			character := rest[plain_size]
-			if character < byte(ASCII_PRINT_MINIMUM) {
-				break
-			}
-			if character > byte(ASCII_PRINT_MAXIMUM) {
-				break
-			}
-			if character == byte(quote_mark) {
-				break
-			}
-			if character == '\\' {
-				break
-			}
-			plain_size++
-		}
-		if plain_size > 0 {
-			extended = append(extended, rest[:plain_size]...)
-			rest = rest[plain_size:]
-			continue
-		}
-		if len(rest) == ESCAPE_SIZE_MINIMUM {
-			extended = Open_Quoted_Buffer(append_escape(
-				Escape_Destination(extended), Code_Point(rest[0]), quote_mark,
-				false, false,
-			))
-			rest = rest[1:]
-			continue
-		}
-		character := rest[0]
-		escape_letter := byte(0)
-		if int(character) < len(CONTROL_ESCAPE_LETTERS) {
-			escape_letter = CONTROL_ESCAPE_LETTERS[character]
-		}
-		if escape_letter != 0 {
-			extended = append(extended, '\\', escape_letter)
-		} else if character == '\\' {
-			extended = append(extended, `\\`...)
-		} else if character == byte(quote_mark) {
-			extended = append(extended, '\\', character)
-		} else {
-			extended = append(extended, '\\', 'x')
-			extended = append(extended, HEXADECIMAL_SYMBOLS[character>>4])
-			extended = append(extended, HEXADECIMAL_SYMBOLS[character&0xf])
-		}
-		rest = rest[1:]
-	}
-	return extended, rest
-}
-
-// Gives the initial allocation enough space when an early escape predicts growth.
-func quoted_capacity(text Text) (capacity Quoted_Capacity) {
-	defer func() {
-		Quoted_Capacity_Invariants(capacity, "quoted_capacity.capacity")
-	}()
-	Text_Invariants(text, "quoted_capacity.text")
-	capacity_size := QUOTED_CAPACITY_NUMERATOR * len(text) / QUOTED_CAPACITY_DENOMINATOR
-	if len(text) == 0 {
-		return Quoted_Capacity(capacity_size)
-	}
-	first := text[0]
-	first_needs_escape := first < byte(ASCII_PRINT_MINIMUM)
-	if first == QUOTE_MARK_DOUBLE {
-		first_needs_escape = true
-	}
-	if first == '\\' {
-		first_needs_escape = true
-	}
-	if first == ASCII_BYTE_MAXIMUM {
-		first_needs_escape = true
-	}
-	if first_needs_escape {
-		// A leading escape predicts enough growth that the maximum bounded size
-		// costs less than repeated allocation and copying.
-		capacity_size = len(text)*BYTE_ESCAPE_SIZE + QUOTED_TEXT_SIZE_MINIMUM
-	}
-	return Quoted_Capacity(capacity_size)
-}
-
-// Reports whether the complete text holds basic CJK unified ideographs.
-func cjk_unified_ideographs(text Text) (complete Boolean) {
-	defer func() {
-		Boolean_Invariants(complete, "cjk_unified_ideographs.complete")
-	}()
-	Text_Invariants(text, "cjk_unified_ideographs.text")
-	if len(text) == 0 {
-		return false
-	}
-	if len(text)%utf8.CHARACTER_SIZE_THREE != 0 {
-		return false
-	}
-	for position := 0; position < len(text); position += utf8.CHARACTER_SIZE_THREE {
-		first := text[position]
-		second := text[position+1]
-		third := text[position+2]
-		if first < utf8.FIRST_BYTE_THREE {
-			return false
-		}
-		if first >= utf8.FIRST_BYTE_FOUR {
-			return false
-		}
-		if second < utf8.CONTINUATION_MINIMUM {
-			return false
-		}
-		if second > utf8.CONTINUATION_MAXIMUM {
-			return false
-		}
-		if third < utf8.CONTINUATION_MINIMUM {
-			return false
-		}
-		if third > utf8.CONTINUATION_MAXIMUM {
-			return false
-		}
-		point := ucd.Character(first&utf8.FIRST_MASK_THREE)<<
-			(2*utf8.CONTINUATION_PAYLOAD_BIT_COUNT) |
-			ucd.Character(second&utf8.CONTINUATION_MASK)<<
-				utf8.CONTINUATION_PAYLOAD_BIT_COUNT |
-			ucd.Character(third&utf8.CONTINUATION_MASK)
-		if point < ucd.CJK_UNIFIED_IDEOGRAPHS_MINIMUM {
-			return false
-		}
-		if point > ucd.CJK_UNIFIED_IDEOGRAPHS_MAXIMUM {
-			return false
-		}
-	}
-	return true
-}
-
-// Writes the quoted form of the text.
-func quoted_text(
-	text Text, ascii_only Boolean, graphic_only Boolean,
-) (quoted Quoted_Text) {
-	defer func() { Quoted_Text_Invariants(quoted, "quoted_text.quoted") }()
-	Text_Invariants(text, "quoted_text.text")
-	Boolean_Invariants(ascii_only, "quoted_text.ascii_only")
-	Boolean_Invariants(graphic_only, "quoted_text.graphic_only")
-	quote_mark := Literal_Quote_Mark(QUOTE_MARK_DOUBLE)
-	if !ascii_only {
-		if cjk_unified_ideographs(text) {
-			built := make([]byte, 0, len(text)+QUOTED_TEXT_SIZE_MINIMUM)
-			built = append(built, byte(quote_mark))
-			built = append(built, text...)
-			built = append(built, byte(quote_mark))
-			return Quoted_Text(built)
-		}
-	}
-	built := make([]byte, 0, int(quoted_capacity(text)))
-	built = append(built, byte(quote_mark))
-	opened, rest := append_quoted_ascii(ASCII_Quote_Destination(built), text)
-	built = []byte(opened)
-	for len(rest) > 0 {
-		if rest[0] < byte(utf8.CHARACTER_SELF) {
-			extended, tail := append_quoted_ascii(
-				ASCII_Quote_Destination(built), rest,
-			)
-			built, rest = []byte(extended), tail
-			continue
-		}
 		value, width := utf8.Decode_Character_Text(utf8.Text(rest))
-		if width == 1 {
+		if width == utf8.CHARACTER_SIZE_MINIMUM {
 			if value == utf8.REPLACEMENT_CHARACTER {
-				// Invalid UTF-8 names the byte, not the replacement character.
-				built = append(
-					built, '\\', 'x', HEXADECIMAL_SYMBOLS[rest[0]>>4],
-					HEXADECIMAL_SYMBOLS[rest[0]&0xf],
-				)
-				rest = rest[width:]
-				continue
-			}
-		}
-		if !ascii_only {
-			printable := Boolean(false)
-			if Code_Point(value) <= Code_Point(LATIN_1_MAXIMUM) {
-				printable = Is_Print(Character(value))
-			} else {
-				// Above Latin-1, use the shared table directly.
-				// This avoids two assertion boundaries in the loop.
-				printable = Boolean(ucd.Is_Print(ucd.Character(value)))
-			}
-			if printable {
-				built = append(built, rest[:width]...)
-				rest = rest[width:]
-				continue
-			}
-			if graphic_only {
-				if Is_Graphic(Character(value)) {
-					built = append(built, rest[:width]...)
-					rest = rest[width:]
+				if rest[0] >= byte(utf8.CHARACTER_SELF) {
+					escape_end := written + BYTE_ESCAPE_SIZE
+					write_byte_escape(
+						Byte_Escape_Buffer(destination[written:escape_end]),
+						Invalid_Text_Byte(rest[0]),
+					)
+					written += BYTE_ESCAPE_SIZE
+					rest = rest[1:]
 					continue
 				}
 			}
 		}
-		built = []byte(append_escape(
-			built, Code_Point(value), quote_mark, ascii_only, graphic_only,
-		))
-		rest = rest[width:]
+		body_count := escaped_text_size(
+			Code_Point(value), QUOTE_MARK_DOUBLE, ascii_only, graphic_only,
+		)
+		escape_into(
+			Escape_Destination(destination[written:written+int(body_count)]),
+			Code_Point(value), QUOTE_MARK_DOUBLE,
+			ascii_only, graphic_only,
+		)
+		written += int(body_count)
+		rest = rest[int(width):]
 	}
-	built = append(built, byte(quote_mark))
-	return Quoted_Text(built)
+	destination[written] = QUOTE_MARK_DOUBLE
+	return count
 }
 
-// Writes the quoted form of one character, the replacement character standing in for a
-// value that is not a code point.
-func character_text(
-	value Character, ascii_only Boolean, graphic_only Boolean,
-) (quoted Character_Text) {
-	defer func() {
-		Character_Text_Invariants(quoted, "character_text.quoted")
-	}()
-	Character_Invariants(value, "character_text.value")
-	Boolean_Invariants(ascii_only, "character_text.ascii_only")
-	Boolean_Invariants(graphic_only, "character_text.graphic_only")
-	quote_mark := Literal_Quote_Mark(QUOTE_MARK_SINGLE)
+// Counts quoted text without borrowing hidden scratch storage.
+func quoted_text_size(
+	text Text, ascii_only Boolean, graphic_only Boolean,
+) (count Quoted_Text_Count) {
+	defer func() { Quoted_Text_Count_Invariants(count, "quoted_text_size.count") }()
+	Text_Invariants(text, "quoted_text_size.text")
+	Boolean_Invariants(ascii_only, "quoted_text_size.ascii_only")
+	Boolean_Invariants(graphic_only, "quoted_text_size.graphic_only")
+	count = QUOTED_TEXT_SIZE_MINIMUM
+	for len(text) > 0 {
+		value, width := utf8.Decode_Character_Text(utf8.Text(text))
+		if width == utf8.CHARACTER_SIZE_MINIMUM {
+			if value == utf8.REPLACEMENT_CHARACTER {
+				if text[0] >= byte(utf8.CHARACTER_SELF) {
+					count += BYTE_ESCAPE_SIZE
+					text = text[1:]
+					continue
+				}
+			}
+		}
+		count += Quoted_Text_Count(escaped_text_size(
+			Code_Point(value), QUOTE_MARK_DOUBLE, ascii_only, graphic_only,
+		))
+		text = text[int(width):]
+	}
+	return count
+}
+
+// Writes one quoted character only after exact size proves destination sufficient.
+func character_into(
+	destination Buffer, value Character, ascii_only Boolean, graphic_only Boolean,
+) (count Character_Text_Count) {
+	defer func() { Character_Text_Count_Invariants(count, "character_into.count") }()
+	Buffer_Invariants(destination, "character_into.destination")
+	Character_Invariants(value, "character_into.value")
+	Boolean_Invariants(ascii_only, "character_into.ascii_only")
+	Boolean_Invariants(graphic_only, "character_into.graphic_only")
 	point := Code_Point(value)
 	if !utf8.Valid_Character(utf8.Character(value)) {
 		point = UNICODE_REPLACEMENT
 	}
-	if point >= Code_Point(ASCII_PRINT_MINIMUM) {
-		if point <= Code_Point(ASCII_PRINT_MAXIMUM) {
-			switch point {
-			case Code_Point(quote_mark), '\\':
-			default:
-				// Every quote policy keeps plain printable ASCII, so no Unicode or
-				// escape question can change this three-byte literal.
-				return Character_Text([]byte{
-					byte(quote_mark), byte(point), byte(quote_mark),
-				})
-			}
-		}
+	body_count := escaped_text_size(
+		point, QUOTE_MARK_SINGLE, ascii_only, graphic_only,
+	)
+	count = Character_Text_Count(int(body_count) + LITERAL_TEXT_SIZE_MINIMUM)
+	if int(count) > len(destination) {
+		panic("strconv: destination too small")
 	}
-	built := make([]byte, 0, CHARACTER_TEXT_SIZE_MAXIMUM)
-	built = append(built, byte(quote_mark))
-	built = []byte(append_escape(built, point, quote_mark, ascii_only, graphic_only))
-	built = append(built, byte(quote_mark))
-	return Character_Text(built)
+	destination[0] = QUOTE_MARK_SINGLE
+	escape_into(
+		Escape_Destination(destination[1:1+int(body_count)]), point, QUOTE_MARK_SINGLE,
+		ascii_only, graphic_only,
+	)
+	destination[int(count)-1] = QUOTE_MARK_SINGLE
+	return count
 }
 
-// Writes one character, escaped when the form demands it.
-func append_escape(
-	destination Escape_Destination, value Code_Point, quote_mark Literal_Quote_Mark,
+// Counts one body character under quote policy.
+func escaped_text_size(
+	value Code_Point, quote_mark Literal_Quote_Mark,
 	ascii_only Boolean, graphic_only Boolean,
-) (extended Escaped_Buffer) {
-	defer func() {
-		Escaped_Buffer_Invariants(extended, "append_escape.extended")
-	}()
-	Escape_Destination_Invariants(destination, "append_escape.destination")
-	Code_Point_Invariants(value, "append_escape.value")
-	Literal_Quote_Mark_Invariants(quote_mark, "append_escape.quote_mark")
-	Boolean_Invariants(ascii_only, "append_escape.ascii_only")
-	Boolean_Invariants(graphic_only, "append_escape.graphic_only")
+) (count Escape_Text_Count) {
+	defer func() { Escape_Text_Count_Invariants(count, "escaped_text_size.count") }()
+	Code_Point_Invariants(value, "escaped_text_size.value")
+	Literal_Quote_Mark_Invariants(quote_mark, "escaped_text_size.quote_mark")
+	Boolean_Invariants(ascii_only, "escaped_text_size.ascii_only")
+	Boolean_Invariants(graphic_only, "escaped_text_size.graphic_only")
 	if value == Code_Point(quote_mark) {
-		return Escaped_Buffer(append(destination, '\\', byte(value)))
+		return ESCAPE_SEQUENCE_SIZE_MINIMUM
 	}
 	if value == '\\' {
-		return Escaped_Buffer(append(destination, '\\', '\\'))
+		return ESCAPE_SEQUENCE_SIZE_MINIMUM
 	}
 	if ascii_only {
 		if value < Code_Point(utf8.CHARACTER_SELF) {
 			if Is_Print(Character(value)) {
-				return Escaped_Buffer(append(destination, byte(value)))
+				return ESCAPE_SIZE_MINIMUM
 			}
 		}
-		return Escaped_Buffer(append_escape_sequence(destination, value))
+		return Escape_Text_Count(escape_sequence_size(value))
 	}
 	if stays_unescaped(value, graphic_only) {
-		if value < Code_Point(utf8.CHARACTER_SELF) {
-			// One byte is its own UTF-8 sequence, thus the common character needs no
-			// encoder and the literal gains it without an allocation.
-			return Escaped_Buffer(append(destination, byte(value)))
-		}
-		// The utf8 library bounds the buffer it extends at its own sequence limit, and
-		// a literal outgrows that limit. Thus the character goes into a scratch of one
-		// sequence, and the literal takes the bytes of that scratch.
-		var scratch [utf8.UTF_MAXIMUM]byte
-		encoded := utf8.Append_Character(scratch[:0], utf8.Character(value))
-		return Escaped_Buffer(append(destination, encoded...))
+		return Escape_Text_Count(utf8.Character_Size(utf8.Character(value)))
 	}
-	return Escaped_Buffer(append_escape_sequence(destination, value))
+	return Escape_Text_Count(escape_sequence_size(value))
+}
+
+// Counts mandatory escape representation.
+func escape_sequence_size(value Code_Point) (count Escape_Sequence_Count) {
+	defer func() {
+		Escape_Sequence_Count_Invariants(count, "escape_sequence_size.count")
+	}()
+	Code_Point_Invariants(value, "escape_sequence_size.value")
+	if value < Code_Point(len(CONTROL_ESCAPE_LETTERS)) {
+		if CONTROL_ESCAPE_LETTERS[value] != 0 {
+			return ESCAPE_SEQUENCE_SIZE_MINIMUM
+		}
+	}
+	switch {
+	case value < ' ', value == Code_Point(ASCII_BYTE_MAXIMUM):
+		return BYTE_ESCAPE_SIZE
+	case value < 0x10000:
+		return SHORT_UNICODE_ESCAPE_SIZE
+	default:
+		return LONG_UNICODE_ESCAPE_SIZE
+	}
+}
+
+// Writes one body character into proven storage.
+func escape_into(
+	destination Escape_Destination, value Code_Point, quote_mark Literal_Quote_Mark,
+	ascii_only Boolean, graphic_only Boolean,
+) (count Escape_Text_Count) {
+	defer func() { Escape_Text_Count_Invariants(count, "escape_into.count") }()
+	Escape_Destination_Invariants(destination, "escape_into.destination")
+	Code_Point_Invariants(value, "escape_into.value")
+	Literal_Quote_Mark_Invariants(quote_mark, "escape_into.quote_mark")
+	Boolean_Invariants(ascii_only, "escape_into.ascii_only")
+	Boolean_Invariants(graphic_only, "escape_into.graphic_only")
+	count = escaped_text_size(value, quote_mark, ascii_only, graphic_only)
+	if int(count) > len(destination) {
+		panic("strconv: destination too small")
+	}
+	if value == Code_Point(quote_mark) {
+		destination[0], destination[1] = '\\', byte(value)
+		return count
+	}
+	if value == '\\' {
+		destination[0], destination[1] = '\\', byte(value)
+		return count
+	}
+	if ascii_only {
+		if value < Code_Point(utf8.CHARACTER_SELF) {
+			if Is_Print(Character(value)) {
+				destination[0] = byte(value)
+				return count
+			}
+		}
+		write_escape_sequence(Escape_Sequence_Buffer(destination[:int(count)]), value)
+		return count
+	}
+	if stays_unescaped(value, graphic_only) {
+		utf8.Encode_Character(
+			utf8.Bytes(destination[:int(count)]), utf8.Character(value),
+		)
+		return count
+	}
+	write_escape_sequence(Escape_Sequence_Buffer(destination[:int(count)]), value)
+	return count
+}
+
+// Writes mandatory escape representation into proven storage.
+func write_escape_sequence(destination Escape_Sequence_Buffer, value Code_Point) {
+	Escape_Sequence_Buffer_Invariants(destination, "write_escape_sequence.destination")
+	Code_Point_Invariants(value, "write_escape_sequence.value")
+	count := escape_sequence_size(value)
+	if int(count) > len(destination) {
+		panic("strconv: destination too small")
+	}
+	if value < Code_Point(len(CONTROL_ESCAPE_LETTERS)) {
+		letter := CONTROL_ESCAPE_LETTERS[value]
+		if letter != 0 {
+			destination[0], destination[1] = '\\', letter
+			return
+		}
+	}
+	digit_count := HEXADECIMAL_DIGIT_COUNT
+	escape_letter := byte('x')
+	if value >= ' ' {
+		if value != Code_Point(ASCII_BYTE_MAXIMUM) {
+			digit_count = SHORT_UNICODE_DIGIT_COUNT
+			escape_letter = 'u'
+			if value >= 0x10000 {
+				digit_count = LONG_UNICODE_DIGIT_COUNT
+				escape_letter = 'U'
+			}
+		}
+	}
+	destination[0], destination[1] = '\\', escape_letter
+	for index := digit_count - 1; index >= 0; index-- {
+		destination[index+2] = HEXADECIMAL_SYMBOLS[value&0xf]
+		value >>= 4
+	}
+}
+
+// Writes invalid input byte as hexadecimal escape.
+func write_byte_escape(destination Byte_Escape_Buffer, value Invalid_Text_Byte) {
+	Byte_Escape_Buffer_Invariants(destination, "write_byte_escape.destination")
+	Invalid_Text_Byte_Invariants(value, "write_byte_escape.value")
+	if BYTE_ESCAPE_SIZE > len(destination) {
+		panic("strconv: destination too small")
+	}
+	destination[0], destination[1] = '\\', 'x'
+	destination[2] = HEXADECIMAL_SYMBOLS[value>>4]
+	destination[3] = HEXADECIMAL_SYMBOLS[value&0xf]
 }
 
 // Reports whether the quoted form keeps the character as it is.
@@ -2453,248 +2162,6 @@ func stays_unescaped(value Code_Point, graphic_only Boolean) (yes Boolean) {
 		return false
 	}
 	return Is_Graphic(Character(value))
-}
-
-// Writes the escape sequence of one character.
-func append_escape_sequence(
-	destination Escape_Destination, value Code_Point,
-) (extended Escape_Sequence_Buffer) {
-	defer func() {
-		Escape_Sequence_Buffer_Invariants(
-			extended, "append_escape_sequence.extended",
-		)
-	}()
-	Escape_Destination_Invariants(destination, "append_escape_sequence.destination")
-	Code_Point_Invariants(value, "append_escape_sequence.value")
-	switch value {
-	case '\a':
-		return Escape_Sequence_Buffer(append(destination, `\a`...))
-	case '\b':
-		return Escape_Sequence_Buffer(append(destination, `\b`...))
-	case '\f':
-		return Escape_Sequence_Buffer(append(destination, `\f`...))
-	case '\n':
-		return Escape_Sequence_Buffer(append(destination, `\n`...))
-	case '\r':
-		return Escape_Sequence_Buffer(append(destination, `\r`...))
-	case '\t':
-		return Escape_Sequence_Buffer(append(destination, `\t`...))
-	case '\v':
-		return Escape_Sequence_Buffer(append(destination, `\v`...))
-	}
-	switch {
-	case value < ' ', value == '':
-		return Escape_Sequence_Buffer(append_hexadecimal(
-			Escape_Letter_Buffer(append(destination, `\x`...)), value,
-			HEXADECIMAL_DIGIT_COUNT,
-		))
-	case value < 0x10000:
-		return Escape_Sequence_Buffer(append_hexadecimal(
-			Escape_Letter_Buffer(append(destination, `\u`...)), value,
-			SHORT_UNICODE_DIGIT_COUNT,
-		))
-	}
-	return Escape_Sequence_Buffer(append_hexadecimal(
-		Escape_Letter_Buffer(append(destination, `\U`...)), value,
-		LONG_UNICODE_DIGIT_COUNT,
-	))
-}
-
-// Writes the character as a fixed count of hexadecimal digits, the most significant one
-// first. The escape letter precedes them, thus the buffer is two bytes longer than the
-// buffer that one whole escape extends.
-func append_hexadecimal(
-	destination Escape_Letter_Buffer, value Code_Point, digit_count Digit_Count,
-) (extended Hexadecimal_Buffer) {
-	defer func() {
-		Hexadecimal_Buffer_Invariants(extended, "append_hexadecimal.extended")
-	}()
-	Escape_Letter_Buffer_Invariants(destination, "append_hexadecimal.destination")
-	Code_Point_Invariants(value, "append_hexadecimal.value")
-	Digit_Count_Invariants(digit_count, "append_hexadecimal.digit_count")
-	extended = Hexadecimal_Buffer(destination)
-	for shift := (int(digit_count) - 1) * 4; shift >= 0; shift -= 4 {
-		extended = append(extended, HEXADECIMAL_SYMBOLS[(value>>uint(shift))&0xf])
-	}
-	return extended
-}
-
-// Reads the literal at the start of the text and returns it, the text that follows it,
-// and the reason it is not a literal.
-func unquote_prefix(text Text, unescape Boolean) (value Text, rest Body_Text, err error) {
-	defer func() {
-		Text_Invariants(value, "unquote_prefix.value")
-		Body_Text_Invariants(rest, "unquote_prefix.rest")
-	}()
-	Text_Invariants(text, "unquote_prefix.text")
-	Boolean_Invariants(unescape, "unquote_prefix.unescape")
-	if len(text) < 2 {
-		return "", Body_Text(text), Error_Syntax
-	}
-	switch text[0] {
-	case '`':
-		return unquote_backquoted(Literal_Text(text), unescape)
-	case QUOTE_MARK_DOUBLE, QUOTE_MARK_SINGLE:
-		return unquote_escaped(
-			Literal_Text(text), Literal_Quote_Mark(text[0]), unescape,
-		)
-	}
-	return "", Body_Text(text[2:]), Error_Syntax
-}
-
-// Reads a raw literal, which holds no escape and drops each carriage return.
-func unquote_backquoted(
-	text Literal_Text, unescape Boolean,
-) (value Text, rest Body_Text, err error) {
-	defer func() {
-		Text_Invariants(value, "unquote_backquoted.value")
-		Body_Text_Invariants(rest, "unquote_backquoted.rest")
-	}()
-	Literal_Text_Invariants(text, "unquote_backquoted.text")
-	Boolean_Invariants(unescape, "unquote_backquoted.unescape")
-	end_offset := int(strings.Index_Byte(strings.Text(text[1:]), '`'))
-	if end_offset < 0 {
-		return "", Body_Text(text[2:]), Error_Syntax
-	}
-	end_offset += 2
-	if !unescape {
-		return Text(text[:end_offset]), Body_Text(text[end_offset:]), nil
-	}
-	body := text[1 : end_offset-1]
-	if strings.Index_Byte(strings.Text(body), '\r') < 0 {
-		return Text(body), Body_Text(text[end_offset:]), nil
-	}
-	// The Go specification drops a carriage return from the value of a raw literal.
-	kept := make([]byte, 0, len(body))
-	for _, character := range []byte(body) {
-		if character != '\r' {
-			kept = append(kept, character)
-		}
-	}
-	return Text(kept), Body_Text(text[end_offset:]), nil
-}
-
-// Reads an interpreted literal one character at a time.
-func unquote_escaped(
-	text Literal_Text, quote_mark Literal_Quote_Mark, unescape Boolean,
-) (value Text, rest Body_Text, err error) {
-	defer func() {
-		Text_Invariants(value, "unquote_escaped.value")
-		Body_Text_Invariants(rest, "unquote_escaped.rest")
-	}()
-	Literal_Text_Invariants(text, "unquote_escaped.text")
-	Literal_Quote_Mark_Invariants(quote_mark, "unquote_escaped.quote_mark")
-	Boolean_Invariants(unescape, "unquote_escaped.unescape")
-	end_offset := int(strings.Index_Byte(
-		strings.Text(text[1:]), strings.Byte(quote_mark),
-	))
-	if end_offset < 0 {
-		return unquote_escaped_body(text, quote_mark, unescape)
-	}
-	end_offset += LITERAL_TEXT_SIZE_MINIMUM
-	body := Body_Text(text[1 : end_offset-1])
-	if strings.Index_Byte(strings.Text(body), '\\') >= 0 {
-		return unquote_escaped_body(text, quote_mark, unescape)
-	}
-	if strings.Index_Byte(strings.Text(body), '\n') >= 0 {
-		return unquote_escaped_body(text, quote_mark, unescape)
-	}
-	if !holds_one_value(body, quote_mark) {
-		return unquote_escaped_body(text, quote_mark, unescape)
-	}
-	if unescape {
-		return Text(body), Body_Text(text[end_offset:]), nil
-	}
-	return Text(text[:end_offset]), Body_Text(text[end_offset:]), nil
-}
-
-// Reports whether a literal body that holds no escape is the value of its literal. A
-// double-quoted body must be valid text, and a single-quoted body must be one character.
-func holds_one_value(body Body_Text, quote_mark Literal_Quote_Mark) (yes Boolean) {
-	defer func() {
-		Boolean_Invariants(yes, "holds_one_value.yes")
-	}()
-	Body_Text_Invariants(body, "holds_one_value.body")
-	Literal_Quote_Mark_Invariants(quote_mark, "holds_one_value.quote_mark")
-	if quote_mark == QUOTE_MARK_DOUBLE {
-		return Boolean(utf8.Valid_Text(utf8.Text(body)))
-	}
-	character, size := utf8.Decode_Character_Text(utf8.Text(body))
-	if int(size) != len(body) {
-		return false
-	}
-	if character != utf8.REPLACEMENT_CHARACTER {
-		return true
-	}
-	return Boolean(int(size) != utf8.CHARACTER_SIZE_MINIMUM)
-}
-
-// Reads an interpreted literal one character at a time, which an escape needs.
-func unquote_escaped_body(
-	text Literal_Text, quote_mark Literal_Quote_Mark, unescape Boolean,
-) (value Text, rest Body_Text, err error) {
-	defer func() {
-		Text_Invariants(value, "unquote_escaped_body.value")
-		Body_Text_Invariants(rest, "unquote_escaped_body.rest")
-	}()
-	Literal_Text_Invariants(text, "unquote_escaped_body.text")
-	Literal_Quote_Mark_Invariants(quote_mark, "unquote_escaped_body.quote_mark")
-	Boolean_Invariants(unescape, "unquote_escaped_body.unescape")
-	body := Text(text[1:])
-	kept := make([]byte, 0, len(text))
-	for len(body) > 0 {
-		first := body[0]
-		if first == byte(quote_mark) {
-			break
-		}
-		if first == '\n' {
-			// A literal newline cannot occur inside an interpreted literal.
-			return "", Body_Text(text[2:]), Error_Syntax
-		}
-		if first < byte(utf8.CHARACTER_SELF) {
-			if first != '\\' {
-				body = body[1:]
-				if unescape {
-					kept = append(kept, first)
-				}
-				if quote_mark == QUOTE_MARK_SINGLE {
-					break
-				}
-				continue
-			}
-		}
-		point, multibyte, tail, character_err := Unquote_Character(
-			body, Quote_Mark(quote_mark),
-		)
-		if character_err != nil {
-			return "", Body_Text(text[2:]), Error_Syntax
-		}
-		body = Text(tail)
-		// A single byte stays one byte, so a hexadecimal escape can name a byte that is
-		// not valid UTF-8.
-		switch {
-		case point < Code_Point(utf8.CHARACTER_SELF):
-			kept = append(kept, byte(point))
-		case !bool(multibyte):
-			kept = append(kept, byte(point))
-		default:
-			kept = utf8.Append_Character(kept, utf8.Character(point))
-		}
-		if quote_mark == QUOTE_MARK_SINGLE {
-			break
-		}
-	}
-	if len(body) == 0 {
-		return "", Body_Text(text[2:]), Error_Syntax
-	}
-	if body[0] != byte(quote_mark) {
-		return "", Body_Text(text[2:]), Error_Syntax
-	}
-	body = body[1:]
-	if !unescape {
-		return Text(text[:len(text)-len(body)]), Body_Text(body), nil
-	}
-	return Text(kept), Body_Text(body), nil
 }
 
 // Decodes the escape sequence that follows a backslash.

@@ -10,8 +10,12 @@ import (
 	"local/james-orcales/shared/testify"
 )
 
-// Test_Boolean verifies the accepted spellings, the two written forms, and the appended
-// form.
+// Test_Allocation proves every exported operation owns no heap storage.
+func Test_Allocation(t *testing.T) {
+	verify_api_is_zero_allocation(t)
+}
+
+// Test_Boolean verifies accepted spellings and caller-owned written form.
 func Test_Boolean(t *testing.T) {
 	t.Parallel()
 	for _, text := range []strconv.Text{"1", "t", "T", "true", "TRUE", "True"} {
@@ -28,13 +32,8 @@ func Test_Boolean(t *testing.T) {
 		_, parse_error := strconv.Parse_Boolean(text)
 		testify.Error_Is(t, parse_error, strconv.Error_Syntax, "Parse_Boolean(%q)", text)
 	}
-	testify.Equal(t, strconv.Boolean_Text("true"), strconv.Format_Boolean(true))
-	testify.Equal(t, strconv.Boolean_Text("false"), strconv.Format_Boolean(false))
-	testify.Equal(t, "true", string(strconv.Append_Boolean(nil, true)))
-	for _, size := range buffer_sizes() {
-		appended := strconv.Append_Boolean(buffer_of(size), false)
-		testify.Equal(t, size+5, len(appended), "Append_Boolean over %d bytes", size)
-	}
+	testify.Equal(t, "true", format_boolean(true))
+	testify.Equal(t, "false", format_boolean(false))
 }
 
 // Test_Text_To_Integer verifies the explicit bases, the implied bases, the underscore
@@ -47,36 +46,33 @@ func Test_Text_To_Integer(t *testing.T) {
 	decimal_cases(t)
 }
 
-// Test_Integer_To_Text verifies each base, the sign, the width extremes, and the
-// appended forms.
+// Test_Integer_To_Text verifies each base, sign, width extremes, and caller storage.
 func Test_Integer_To_Text(t *testing.T) {
 	t.Parallel()
-	for value, want := range map[strconv.Unsigned_Integer]strconv.Digit_Text{
+	for value, want := range map[strconv.Unsigned_Integer]string{
 		0: "0", 1: "1", 2: "10", 3: "11",
 	} {
-		text := strconv.Format_Unsigned_Integer(value, 2)
+		text := format_unsigned_integer(value, 2)
 		testify.Equal(t, want, text, "Format_Unsigned_Integer(%d, 2)", value)
 	}
-	testify.Equal(t, strconv.Digit_Text("z"), strconv.Format_Unsigned_Integer(35, 36))
-	testify.Equal(t, strconv.Digit_Text("18446744073709551615"),
-		strconv.Format_Unsigned_Integer(math.MaxUint64, 10))
-	testify.Equal(t, 64, len(strconv.Format_Unsigned_Integer(math.MaxUint64, 2)),
+	testify.Equal(t, "z", format_unsigned_integer(35, 36))
+	testify.Equal(t, "18446744073709551615",
+		format_unsigned_integer(math.MaxUint64, 10))
+	testify.Equal(t, 64, len(format_unsigned_integer(math.MaxUint64, 2)),
 		"the unsigned maximum in base two")
-	testify.Equal(t, strconv.Integer_Text("0"), strconv.Format_Integer(0, 10))
-	testify.Equal(t, strconv.Integer_Text("-1"), strconv.Format_Integer(-1, 10))
-	testify.Equal(t, strconv.Integer_Text("2"), strconv.Format_Integer(2, 10))
-	testify.Equal(t, strconv.Integer_Text("10"), strconv.Format_Integer(2, 2))
-	testify.Equal(t, strconv.Integer_Text("-ff"), strconv.Format_Integer(-255, 16))
-	testify.Equal(t, strconv.Integer_Text("9223372036854775807"),
-		strconv.Format_Integer(math.MaxInt64, 10))
-	testify.Equal(t, 65, len(strconv.Format_Integer(math.MinInt64, 2)),
+	testify.Equal(t, "0", format_integer(0, 10))
+	testify.Equal(t, "-1", format_integer(-1, 10))
+	testify.Equal(t, "2", format_integer(2, 10))
+	testify.Equal(t, "10", format_integer(2, 2))
+	testify.Equal(t, "-ff", format_integer(-255, 16))
+	testify.Equal(t, "9223372036854775807",
+		format_integer(math.MaxInt64, 10))
+	testify.Equal(t, 65, len(format_integer(math.MinInt64, 2)),
 		"the signed minimum in base two")
 	decimal_text_cases(t)
-	append_integer_cases(t)
 }
 
-// Test_Fixed_Point verifies the decimal reader, the two written forms, and the storage
-// extremes of a fixed-point number.
+// Test_Fixed_Point verifies decimal reader, written form, and storage extremes.
 func Test_Fixed_Point(t *testing.T) {
 	t.Parallel()
 	for text, want := range map[strconv.Text]fixedpoint.Number{
@@ -116,41 +112,40 @@ func Test_Domain_Errors(t *testing.T) {
 		"the two errors stay distinct")
 	_, range_error := strconv.Parse_Unsigned_Integer("18446744073709551616", 10, 0)
 	testify.Error_Is(t, range_error, strconv.Error_Range, "the unsigned overflow")
-	testify.Panics(t, func() { strconv.Format_Integer(1, 37) }, "a Base of 37")
-	testify.Panics(t, func() { strconv.Format_Integer(1, 1) }, "a Base of 1")
+	testify.Panics(t, func() { format_integer(1, 37) }, "a Base of 37")
+	testify.Panics(t, func() { format_integer(1, 1) }, "a Base of 1")
 	testify.Panics(t, func() { strconv.Parse_Integer("1", 1, 0) }, "an Implied_Base of 1")
 	testify.Panics(t, func() { strconv.Parse_Integer("1", 10, 65) }, "a Bit_Size of 65")
 	oversize := strconv.Text(strings.Repeat("1", strconv.TEXT_SIZE_MAXIMUM+1))
-	testify.Panics(t, func() { strconv.Quote(oversize) }, "a Text above the size limit")
-	large := buffer_of(strconv.BUFFER_SIZE_MAXIMUM + 1)
-	testify.Panics(t, func() { strconv.Append_Quote(large, "") },
+	testify.Panics(t, func() { quote(oversize) }, "a Text above the size limit")
+	var large [strconv.BUFFER_SIZE_MAXIMUM + 1]byte
+	testify.Panics(t, func() { strconv.Quote_Into(large[:], "") },
 		"a Buffer above the size limit")
 }
 
-// Test_Quote_Forms verifies the three string forms, the three character forms, and the
-// appended forms.
+// Test_Quote_Forms verifies three string forms and three character forms.
 func Test_Quote_Forms(t *testing.T) {
 	t.Parallel()
-	testify.Equal(t, strconv.Quoted_Text(`""`), strconv.Quote(""))
-	testify.Equal(t, strconv.Quoted_Text(`"a\tb"`), strconv.Quote("a\tb"))
-	testify.Equal(t, strconv.Quoted_Text(`"a\"b\\c"`), strconv.Quote(`a"b\c`))
-	testify.Equal(t, strconv.Quoted_Text(`"héllo"`), strconv.Quote("héllo"))
-	testify.Equal(t, strconv.Quoted_Text(`"水"`), strconv.Quote("水"))
+	testify.Equal(t, `""`, quote(""))
+	testify.Equal(t, `"a\tb"`, quote("a\tb"))
+	testify.Equal(t, `"a\"b\\c"`, quote(`a"b\c`))
+	testify.Equal(t, `"héllo"`, quote("héllo"))
+	testify.Equal(t, `"水"`, quote("水"))
 	for _, text := range []strconv.Text{"", "a", "ab"} {
-		testify.Equal(t, len(text)+2, len(strconv.Quote(text)), "Quote(%q)", text)
-		testify.Equal(t, len(text)+2, len(strconv.Quote_To_ASCII(text)),
+		testify.Equal(t, len(text)+2, len(quote(text)), "Quote(%q)", text)
+		testify.Equal(t, len(text)+2, len(quote_to_ascii(text)),
 			"Quote_To_ASCII(%q)", text)
-		testify.Equal(t, len(text)+2, len(strconv.Quote_To_Graphic(text)),
+		testify.Equal(t, len(text)+2, len(quote_to_graphic(text)),
 			"Quote_To_Graphic(%q)", text)
 	}
-	testify.Equal(t, strconv.Character_Text(`'a'`), strconv.Quote_Rune_To_ASCII('a'))
-	testify.Equal(t, strconv.Quoted_Text(`"\xff"`), strconv.Quote("\xff"))
-	testify.Equal(t, strconv.Quoted_Text(`"h\u00e9llo"`),
-		strconv.Quote_To_ASCII("héllo"))
-	testify.Equal(t, strconv.Quoted_Text("\" \""), strconv.Quote_To_Graphic(" "))
-	testify.Equal(t, strconv.Quoted_Text(`"\n"`), strconv.Quote_To_Graphic("\n"))
+	testify.Equal(t, `'a'`, quote_rune_to_ascii('a'))
+	testify.Equal(t, `"\x80"`, quote("\x80"))
+	testify.Equal(t, `"\xff"`, quote("\xff"))
+	testify.Equal(t, `"h\u00e9llo"`,
+		quote_to_ascii("héllo"))
+	testify.Equal(t, "\" \"", quote_to_graphic(" "))
+	testify.Equal(t, `"\n"`, quote_to_graphic("\n"))
 	quote_rune_cases(t)
-	append_quote_cases(t)
 }
 
 // Test_Backquote_Form verifies the text that stays unchanged inside backquotes and the
@@ -202,38 +197,85 @@ func Test_Size_Limits(t *testing.T) {
 	t.Parallel()
 	full := text_of(strconv.TEXT_SIZE_MAXIMUM, '1')
 	invalid := text_of(strconv.TEXT_SIZE_MAXIMUM, '\xff')
-	destination := buffer_of(strconv.BUFFER_SIZE_MAXIMUM)
-	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM, len(strconv.Quote(invalid)),
+	var destination [strconv.BUFFER_SIZE_MAXIMUM]byte
+	count := strconv.Quote_Into(destination[:], invalid)
+	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM, int(count),
 		"Quote of invalid bytes")
-	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM,
-		len(strconv.Quote_To_ASCII(invalid)), "Quote_To_ASCII of invalid bytes")
-	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM,
-		len(strconv.Quote_To_Graphic(invalid)), "Quote_To_Graphic of invalid bytes")
+	count = strconv.Quote_To_ASCII_Into(destination[:], invalid)
+	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM, int(count),
+		"Quote_To_ASCII of invalid bytes")
+	count = strconv.Quote_To_Graphic_Into(destination[:], invalid)
+	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM, int(count),
+		"Quote_To_Graphic of invalid bytes")
 	// The final ASCII byte makes the ASCII writer receive the largest open literal
 	// that one more byte escape can extend.
 	mixed := invalid[:len(invalid)-1] + "a"
+	count = strconv.Quote_Into(destination[:], mixed)
 	testify.Equal(t,
 		strconv.QUOTED_TEXT_SIZE_MAXIMUM-strconv.BYTE_ESCAPE_SIZE+
 			strconv.ESCAPE_SIZE_MINIMUM,
-		len(strconv.Quote(mixed)), "Quote of invalid bytes followed by ASCII")
-	testify.Equal(t, strconv.QUOTED_BUFFER_SIZE_MAXIMUM,
-		len(strconv.Append_Quote(destination, invalid)), "Append_Quote")
-	testify.Equal(t, strconv.QUOTED_BUFFER_SIZE_MAXIMUM,
-		len(strconv.Append_Quote_To_ASCII(destination, invalid)),
-		"Append_Quote_To_ASCII")
-	testify.Equal(t, strconv.QUOTED_BUFFER_SIZE_MAXIMUM,
-		len(strconv.Append_Quote_To_Graphic(destination, invalid)),
-		"Append_Quote_To_Graphic")
+		int(count), "Quote of invalid bytes followed by ASCII")
 	// An invalid byte takes the inline escape of the quote writer, thus only a valid
 	// character that needs a byte escape drives the character writer to its limit.
 	control := text_of(strconv.TEXT_SIZE_MAXIMUM, '\x01')
-	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM, len(strconv.Quote(control)),
+	count = strconv.Quote_Into(destination[:], control)
+	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM, int(count),
 		"Quote of control characters")
-	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM,
-		len(strconv.Quote_To_ASCII(control)), "Quote_To_ASCII of control characters")
+	count = strconv.Quote_To_ASCII_Into(destination[:], control)
+	testify.Equal(t, strconv.QUOTED_TEXT_SIZE_MAXIMUM, int(count),
+		"Quote_To_ASCII of control characters")
 	testify.True(t, bool(strconv.Can_Backquote(full)), "a full text of digits")
+	destination_size_cases(t, destination[:])
 	full_size_reads(t, full)
 	full_size_literals(t)
+}
+
+// Drives common destination domain through smallest boundaries and maximum.
+func destination_size_cases(t *testing.T, storage strconv.Buffer) {
+	invalid := text_of(strconv.TEXT_SIZE_MAXIMUM, '\xff')
+	invalid_literal := strconv.Text(
+		"\"" + strings.Repeat("\xff", strconv.BODY_TEXT_SIZE_MAXIMUM) + "\"",
+	)
+	for _, size := range []int{0, 1, 2} {
+		destination := storage[:size]
+		testify.Panics(t, func() { strconv.Format_Boolean_Into(destination, false) })
+		testify.Panics(t, func() {
+			strconv.Format_Unsigned_Integer_Into(destination, math.MaxUint64, 2)
+		})
+		testify.Panics(t, func() {
+			strconv.Format_Integer_Into(destination, math.MinInt64, 2)
+		})
+		testify.Panics(t, func() { strconv.Format_Decimal_Into(destination, math.MinInt) })
+		testify.Panics(t, func() {
+			strconv.Format_Fixed_Point_Into(destination, math.MinInt64, 6)
+		})
+		testify.Panics(t, func() { strconv.Quote_Into(destination, invalid) })
+		testify.Panics(t, func() { strconv.Quote_To_ASCII_Into(destination, invalid) })
+		testify.Panics(t, func() { strconv.Quote_To_Graphic_Into(destination, invalid) })
+		testify.Panics(t, func() { strconv.Quote_Rune_Into(destination, 0x10ffff) })
+		testify.Panics(t, func() {
+			strconv.Quote_Rune_To_ASCII_Into(destination, 0x10ffff)
+		})
+		testify.Panics(t, func() {
+			strconv.Quote_Rune_To_Graphic_Into(destination, 0x10ffff)
+		})
+		testify.Panics(t, func() { strconv.Unquote_Into(destination, invalid_literal) })
+	}
+	strconv.Format_Boolean_Into(storage, false)
+	strconv.Format_Unsigned_Integer_Into(storage, math.MaxUint64, 2)
+	strconv.Format_Integer_Into(storage, math.MinInt64, 2)
+	strconv.Format_Decimal_Into(storage, math.MinInt)
+	strconv.Format_Fixed_Point_Into(storage, math.MinInt64, 6)
+	strconv.Quote_Into(storage, invalid)
+	strconv.Quote_To_ASCII_Into(storage, invalid)
+	strconv.Quote_To_Graphic_Into(storage, invalid)
+	strconv.Quote_Rune_Into(storage, 0x10ffff)
+	strconv.Quote_Rune_To_ASCII_Into(storage, 0x10ffff)
+	strconv.Quote_Rune_To_Graphic_Into(storage, 0x10ffff)
+	count, unquote_error := strconv.Unquote_Into(storage, invalid_literal)
+	testify.No_Error(t, unquote_error, "maximum decoded literal")
+	testify.Equal(t, strconv.UNQUOTED_TEXT_SIZE_MAXIMUM, int(count),
+		"maximum decoded literal")
 }
 
 // Exercises Parse_Unsigned_Integer over every base form and both width extremes.
@@ -348,117 +390,40 @@ func decimal_cases(t *testing.T) {
 
 // Exercises Format_Decimal over both machine integer extremes.
 func decimal_text_cases(t *testing.T) {
-	for value, want := range map[strconv.Machine_Integer]strconv.Decimal_Text{
+	for value, want := range map[strconv.Machine_Integer]string{
 		0: "0", 1: "1", 2: "2", -1: "-1",
 	} {
-		testify.Equal(t, want, strconv.Format_Decimal(value), "Format_Decimal(%d)", value)
+		testify.Equal(t, want, format_decimal(value), "Format_Decimal(%d)", value)
 	}
-	testify.Equal(t, strconv.Decimal_Text("9223372036854775807"),
-		strconv.Format_Decimal(math.MaxInt))
+	testify.Equal(t, "9223372036854775807",
+		format_decimal(math.MaxInt))
 	testify.Equal(t, strconv.DECIMAL_TEXT_SIZE_MAXIMUM,
-		len(strconv.Format_Decimal(math.MinInt)), "the machine minimum in base ten")
-}
-
-// Exercises both append forms over every buffer size and both width extremes.
-func append_integer_cases(t *testing.T) {
-	testify.Equal(t, "0", string(strconv.Append_Integer(nil, 0, 10)))
-	testify.Equal(t, "1", string(strconv.Append_Integer(nil, 1, 10)))
-	testify.Equal(t, "-1", string(strconv.Append_Integer(nil, -1, 10)))
-	testify.Equal(t, "2", string(strconv.Append_Integer(nil, 2, 10)))
-	testify.Equal(t, "1y2p0ij32e8e7",
-		string(strconv.Append_Integer(nil, math.MaxInt64, 36)))
-	testify.Equal(t, "0", string(strconv.Append_Unsigned_Integer(nil, 0, 10)))
-	testify.Equal(t, "1", string(strconv.Append_Unsigned_Integer(nil, 1, 10)))
-	testify.Equal(t, "10", string(strconv.Append_Unsigned_Integer(nil, 10, 10)))
-	testify.Equal(t, "2", string(strconv.Append_Unsigned_Integer(nil, 2, 36)))
-	for _, size := range buffer_sizes() {
-		signed := strconv.Append_Integer(buffer_of(size), math.MinInt64, 2)
-		testify.Equal(t, size+strconv.INTEGER_TEXT_SIZE_MAXIMUM, len(signed),
-			"Append_Integer over %d bytes", size)
-		unsigned := strconv.Append_Unsigned_Integer(buffer_of(size), math.MaxUint64, 2)
-		testify.Equal(t, size+strconv.DIGIT_TEXT_SIZE_MAXIMUM, len(unsigned),
-			"Append_Unsigned_Integer over %d bytes", size)
-	}
+		len(format_decimal(math.MinInt)), "the machine minimum in base ten")
 }
 
 // Exercises the three character forms over the whole Character domain.
 func quote_rune_cases(t *testing.T) {
-	testify.Equal(t, strconv.Character_Text(`'a'`), strconv.Quote_Rune('a'))
-	testify.Equal(t, strconv.Character_Text(`'\''`), strconv.Quote_Rune('\''))
-	testify.Equal(t, strconv.Character_Text(`'☺'`), strconv.Quote_Rune('☺'))
-	testify.Equal(t, strconv.Character_Text(`'\U0010ffff'`),
-		strconv.Quote_Rune(0x10ffff))
-	separator := strconv.Quote_Rune(0x2028)
+	testify.Equal(t, `'a'`, quote_rune('a'))
+	testify.Equal(t, `'\''`, quote_rune('\''))
+	testify.Equal(t, `'☺'`, quote_rune('☺'))
+	testify.Equal(t, `'\U0010ffff'`,
+		quote_rune(0x10ffff))
+	separator := quote_rune(0x2028)
 	testify.Equal(t, strconv.SHORT_UNICODE_DIGIT_COUNT+4, len(separator),
 		"a line separator")
-	testify.Equal(t, strconv.Character_Text(`'\u263a'`),
-		strconv.Quote_Rune_To_ASCII('☺'))
-	testify.Equal(t, strconv.Character_Text(`'\n'`), strconv.Quote_Rune_To_Graphic('\n'))
-	testify.Equal(t, strconv.Character_Text("' '"), strconv.Quote_Rune_To_Graphic(' '))
+	testify.Equal(t, `'\u263a'`,
+		quote_rune_to_ascii('☺'))
+	testify.Equal(t, `'\n'`, quote_rune_to_graphic('\n'))
+	testify.Equal(t, "' '", quote_rune_to_graphic(' '))
 	for _, value := range []strconv.Character{
 		0, 1, 2, -1, math.MinInt32, math.MaxInt32, 0x10ffff,
 	} {
-		testify.True(t, len(strconv.Quote_Rune(value)) >=
+		testify.True(t, len(quote_rune(value)) >=
 			strconv.CHARACTER_TEXT_SIZE_MINIMUM, "Quote_Rune(%d)", value)
-		testify.True(t, len(strconv.Quote_Rune_To_ASCII(value)) >=
+		testify.True(t, len(quote_rune_to_ascii(value)) >=
 			strconv.CHARACTER_TEXT_SIZE_MINIMUM, "Quote_Rune_To_ASCII(%d)", value)
-		testify.True(t, len(strconv.Quote_Rune_To_Graphic(value)) >=
+		testify.True(t, len(quote_rune_to_graphic(value)) >=
 			strconv.CHARACTER_TEXT_SIZE_MINIMUM, "Quote_Rune_To_Graphic(%d)", value)
-	}
-}
-
-// Exercises every append form of a literal.
-func append_quote_cases(t *testing.T) {
-	testify.Equal(t, `""`, string(strconv.Append_Quote(nil, "")))
-	testify.Equal(t, `x"a"`, string(strconv.Append_Quote(strconv.Buffer("x"), "a")))
-	testify.Equal(t, `'a'`, string(strconv.Append_Quote_Rune(nil, 'a')))
-	testify.Equal(t, `'a'`, string(strconv.Append_Quote_Rune_To_ASCII(nil, 'a')))
-	testify.Equal(t, `'a'`, string(strconv.Append_Quote_Rune_To_Graphic(nil, 'a')))
-	testify.Equal(t, `xx"ab"`, string(strconv.Append_Quote(buffer_of(2), "ab")))
-	for _, text := range []strconv.Text{"", "a", "ab"} {
-		ascii := strconv.Append_Quote_To_ASCII(nil, text)
-		testify.Equal(t, len(text)+2, len(ascii), "Append_Quote_To_ASCII(nil, %q)", text)
-		graphic := strconv.Append_Quote_To_Graphic(nil, text)
-		testify.Equal(t, len(text)+2, len(graphic),
-			"Append_Quote_To_Graphic(nil, %q)", text)
-	}
-	for _, value := range []strconv.Character{
-		0, 1, 2, -1, math.MinInt32, math.MaxInt32, 0x10ffff,
-	} {
-		testify.True(t, len(strconv.Append_Quote_Rune(nil, value)) >=
-			strconv.CHARACTER_TEXT_SIZE_MINIMUM, "Append_Quote_Rune(%d)", value)
-		testify.True(t, len(strconv.Append_Quote_Rune_To_ASCII(nil, value)) >=
-			strconv.CHARACTER_TEXT_SIZE_MINIMUM,
-			"Append_Quote_Rune_To_ASCII(%d)", value)
-		testify.True(t, len(strconv.Append_Quote_Rune_To_Graphic(nil, value)) >=
-			strconv.CHARACTER_TEXT_SIZE_MINIMUM,
-			"Append_Quote_Rune_To_Graphic(%d)", value)
-	}
-	append_quote_size_cases(t)
-}
-
-// Exercises every append form of a literal over every buffer size.
-func append_quote_size_cases(t *testing.T) {
-	widest := strconv.Append_Quote_Rune_To_Graphic(
-		buffer_of(strconv.BUFFER_SIZE_MAXIMUM), 0x10ffff,
-	)
-	testify.Equal(t, strconv.CHARACTER_BUFFER_SIZE_MAXIMUM, len(widest),
-		"Append_Quote_Rune_To_Graphic at the buffer size limit")
-	for _, size := range buffer_sizes() {
-		ascii := strconv.Append_Quote_To_ASCII(buffer_of(size), "é")
-		testify.Equal(t, size+8, len(ascii), "Append_Quote_To_ASCII over %d bytes", size)
-		graphic := strconv.Append_Quote_To_Graphic(buffer_of(size), "a")
-		testify.Equal(t, size+3, len(graphic),
-			"Append_Quote_To_Graphic over %d bytes", size)
-		plain := strconv.Append_Quote_Rune(buffer_of(size), 0x10ffff)
-		testify.Equal(t, size+strconv.CHARACTER_TEXT_SIZE_MAXIMUM, len(plain),
-			"Append_Quote_Rune over %d bytes", size)
-		limited := strconv.Append_Quote_Rune_To_ASCII(buffer_of(size), 0x10ffff)
-		testify.Equal(t, size+strconv.CHARACTER_TEXT_SIZE_MAXIMUM, len(limited),
-			"Append_Quote_Rune_To_ASCII over %d bytes", size)
-		visible := strconv.Append_Quote_Rune_To_Graphic(buffer_of(size), 'a')
-		testify.Equal(t, size+3, len(visible),
-			"Append_Quote_Rune_To_Graphic over %d bytes", size)
 	}
 }
 
@@ -473,7 +438,7 @@ func unquote_cases(t *testing.T) {
 		`'a'`: "a", `'\''`: "'",
 		`"\a\b\f\n\r\t\v\\"`: "\a\b\f\n\r\t\v\\", `"\""`: `"`, `"\n\n"`: "\n\n",
 	} {
-		value, unquote_error := strconv.Unquote(text)
+		value, unquote_error := unquote(text)
 		testify.No_Error(t, unquote_error, "Unquote(%s)", text)
 		testify.Equal(t, want, value, "Unquote(%s)", text)
 	}
@@ -481,7 +446,7 @@ func unquote_cases(t *testing.T) {
 		"", `"`, `"a`, `'ab'`, `"a"b`, "\"\n\"", `"\q"`, `"\x4"`, `"\400"`, `"\08"`,
 		"x", `"\u00"`, `"\ud800"`, "`a", `"'"a`,
 	} {
-		_, reject := strconv.Unquote(text)
+		_, reject := unquote(text)
 		testify.Error_Is(t, reject, strconv.Error_Syntax, "Unquote(%s)", text)
 	}
 }
@@ -526,9 +491,9 @@ func unquote_character_cases(t *testing.T) {
 	_, _, _, other := strconv.Unquote_Character(`\'`, '"')
 	testify.Error_Is(t, other, strconv.Error_Syntax,
 		"a double-quoted body rejects the other quote escape")
-	quote, _, _, quote_error := strconv.Unquote_Character(`"`, 0)
+	decoded_quote, _, _, quote_error := strconv.Unquote_Character(`"`, 0)
 	testify.No_Error(t, quote_error, "a bodiless form admits both quote marks")
-	testify.Equal(t, strconv.Code_Point('"'), quote)
+	testify.Equal(t, strconv.Code_Point('"'), decoded_quote)
 }
 
 // Drives every escape letter and every escape width.
@@ -582,7 +547,7 @@ func full_size_reads(t *testing.T, full strconv.Text) {
 	separated := strconv.Text("1_" + strings.Repeat("1", strconv.TEXT_SIZE_MAXIMUM-2))
 	_, separated_error := strconv.Parse_Unsigned_Integer(separated, 0, 0)
 	testify.Error_Is(t, separated_error, strconv.Error_Range, "a full separated text")
-	_, unquote_error := strconv.Unquote(full)
+	_, unquote_error := unquote(full)
 	testify.Error_Is(t, unquote_error, strconv.Error_Syntax, "a full text of digits")
 	_, prefix_error := strconv.Quoted_Prefix(full)
 	testify.Error_Is(t, prefix_error, strconv.Error_Syntax, "a full text of digits")
@@ -596,7 +561,7 @@ func full_size_reads(t *testing.T, full strconv.Text) {
 func full_size_literals(t *testing.T) {
 	body := strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-2)
 	raw := strconv.Text("`" + body + "`")
-	value, raw_error := strconv.Unquote(raw)
+	value, raw_error := unquote(raw)
 	testify.No_Error(t, raw_error, "a full raw literal")
 	testify.Equal(t, strconv.BODY_TEXT_SIZE_MAXIMUM, len(value), "a full raw literal")
 	prefix, prefix_error := strconv.Quoted_Prefix(raw)
@@ -607,7 +572,7 @@ func full_size_literals(t *testing.T) {
 	testify.No_Error(t, quoted_prefix_error, "a full literal prefix")
 	testify.Equal(t, strconv.TEXT_SIZE_MAXIMUM, len(quoted_prefix),
 		"a full literal prefix")
-	interpreted, quoted_error := strconv.Unquote(quoted)
+	interpreted, quoted_error := unquote(quoted)
 	testify.No_Error(t, quoted_error, "a full interpreted literal")
 	testify.Equal(t, strconv.BODY_TEXT_SIZE_MAXIMUM, len(interpreted),
 		"a full interpreted literal")
@@ -615,12 +580,12 @@ func full_size_literals(t *testing.T) {
 	// such a body drives the decoder to its limits.
 	accented := strconv.Text(`"` + strings.Repeat("é", (strconv.TEXT_SIZE_MAXIMUM-2)/2) +
 		`"`)
-	accented_value, accented_error := strconv.Unquote(accented)
+	accented_value, accented_error := unquote(accented)
 	testify.No_Error(t, accented_error, "a full accented literal")
 	testify.Equal(t, strconv.BODY_TEXT_SIZE_MAXIMUM, len(accented_value),
 		"a full accented literal")
 	single_byte := strconv.Text("\"\x80\"")
-	single_byte_value, single_byte_error := strconv.Unquote(single_byte)
+	single_byte_value, single_byte_error := unquote(single_byte)
 	testify.No_Error(t, single_byte_error, "a body of one byte that is not valid text")
 	testify.Equal(t, "�", string(single_byte_value),
 		"a byte that is not valid text reads as the replacement character")
@@ -682,56 +647,284 @@ func fixed_point_limit_cases(t *testing.T) {
 	testify.No_Error(t, full_error, "a full fraction")
 }
 
-// Exercises the two written forms of a fixed-point number over every digit count and
-// every buffer size.
+// Exercises fixed-point text over every digit count.
 func fixed_point_text_cases(t *testing.T) {
 	whole := fixedpoint.From_Integer(5)
 	for digits, want := range map[fixedpoint.Digit_Count]fixedpoint.Text{
 		0: "5", 1: "5.0", 2: "5.00", 6: "5.000000",
 	} {
-		text := strconv.Format_Fixed_Point(fixedpoint.Number(whole), digits)
+		text := format_fixed_point(fixedpoint.Number(whole), digits)
 		testify.Equal(t, want, text, "Format_Fixed_Point(5, %d)", digits)
 	}
-	testify.Equal(t, fixedpoint.Text("0"), strconv.Format_Fixed_Point(0, 0))
+	testify.Equal(t, fixedpoint.Text("0"), format_fixed_point(0, 0))
 	testify.Equal(t, fixedpoint.Text("-1"),
-		strconv.Format_Fixed_Point(-fixedpoint.SCALE, 0))
-	widest := strconv.Format_Fixed_Point(math.MinInt64, 6)
+		format_fixed_point(-fixedpoint.SCALE, 0))
+	widest := format_fixed_point(math.MinInt64, 6)
 	testify.Equal(t, strconv.FIXED_POINT_TEXT_SIZE_MAXIMUM, len(widest),
 		"the fixed-point minimum at six digits")
 	round_trip, round_trip_error := strconv.Parse_Fixed_Point(
-		strconv.Text(strconv.Format_Fixed_Point(fixedpoint.Number(whole), 6)),
+		strconv.Text(format_fixed_point(fixedpoint.Number(whole), 6)),
 	)
 	testify.No_Error(t, round_trip_error, "the round trip")
 	testify.Equal(t, fixedpoint.Number(whole), round_trip, "the round trip")
-	for _, size := range buffer_sizes() {
-		appended := strconv.Append_Fixed_Point(buffer_of(size), math.MinInt64, 6)
-		testify.Equal(t, size+strconv.FIXED_POINT_TEXT_SIZE_MAXIMUM, len(appended),
-			"Append_Fixed_Point over %d bytes", size)
-	}
-	testify.Equal(t, "0", string(strconv.Append_Fixed_Point(nil, 0, 0)))
-	testify.Equal(t, "-1",
-		string(strconv.Append_Fixed_Point(nil, -fixedpoint.SCALE, 0)))
 	for _, value := range []fixedpoint.Number{math.MaxInt64, 1, 2, -1} {
 		for _, digits := range []fixedpoint.Digit_Count{0, 1, 2, 6} {
-			text := strconv.Format_Fixed_Point(value, digits)
-			appended := strconv.Append_Fixed_Point(nil, value, digits)
-			testify.Equal(t, string(text), string(appended),
-				"Append_Fixed_Point(%d, %d)", value, digits)
+			want := fixedpoint.Format(value, digits)
+			testify.Equal(t, want, format_fixed_point(value, digits),
+				"Format_Fixed_Point_Into(%d, %d)", value, digits)
 		}
 	}
-}
-
-// Returns the buffer sizes that the Buffer domain names.
-func buffer_sizes() (sizes []int) {
-	return []int{0, 1, 2, strconv.BUFFER_SIZE_MAXIMUM}
-}
-
-// Returns a buffer of the given size.
-func buffer_of(size int) (buffer strconv.Buffer) {
-	return strconv.Buffer(strings.Repeat("x", size))
 }
 
 // Returns text of the given size, every byte the same.
 func text_of(size int, filler byte) (text strconv.Text) {
 	return strconv.Text(strings.Repeat(string([]byte{filler}), size))
+}
+
+type allocation_check struct {
+	Name string
+	Call func()
+}
+
+type allocation_fixture struct {
+	Storage    [strconv.BUFFER_SIZE_MAXIMUM]byte
+	Observable int
+	Error      error
+}
+
+func verify_api_is_zero_allocation(t *testing.T) {
+	fixture := allocation_fixture{}
+	groups := [][]allocation_check{
+		parse_allocation_checks(&fixture),
+		format_allocation_checks(&fixture),
+		quote_allocation_checks(&fixture),
+		query_allocation_checks(&fixture),
+	}
+	for _, checks := range groups {
+		for _, check := range checks {
+			t.Run(check.Name, func(t *testing.T) {
+				testify.Zero_Allocation(t, check.Call)
+			})
+		}
+	}
+	if fixture.Observable == -1 {
+		t.Fatal("operations produced impossible observation")
+	}
+}
+
+func parse_allocation_checks(fixture *allocation_fixture) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Parse_Boolean", Call: func() {
+			value, parse_error := strconv.Parse_Boolean("true")
+			fixture.Observable = 0
+			if value {
+				fixture.Observable = 1
+			}
+			fixture.Error = parse_error
+		}},
+		{Name: "Parse_Unsigned_Integer", Call: func() {
+			value, parse_error := strconv.Parse_Unsigned_Integer(
+				"18446744073709551615", 10, 64,
+			)
+			fixture.Observable = int(value)
+			fixture.Error = parse_error
+		}},
+		{Name: "Parse_Integer", Call: func() {
+			value, parse_error := strconv.Parse_Integer("-9223372036854775808", 10, 64)
+			fixture.Observable = int(value)
+			fixture.Error = parse_error
+		}},
+		{Name: "Parse_Decimal", Call: func() {
+			value, parse_error := strconv.Parse_Decimal("-12345")
+			fixture.Observable = int(value)
+			fixture.Error = parse_error
+		}},
+		{Name: "Parse_Fixed_Point", Call: func() {
+			value, parse_error := strconv.Parse_Fixed_Point("-1.25")
+			fixture.Observable = int(value)
+			fixture.Error = parse_error
+		}},
+	}
+}
+
+func format_allocation_checks(fixture *allocation_fixture) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Format_Boolean_Into", Call: func() {
+			fixture.Observable = int(strconv.Format_Boolean_Into(
+				fixture.Storage[:], true,
+			))
+		}},
+		{Name: "Format_Unsigned_Integer_Into", Call: func() {
+			fixture.Observable = int(strconv.Format_Unsigned_Integer_Into(
+				fixture.Storage[:], math.MaxUint64, 2,
+			))
+		}},
+		{Name: "Format_Integer_Into", Call: func() {
+			fixture.Observable = int(strconv.Format_Integer_Into(
+				fixture.Storage[:], math.MinInt64, 2,
+			))
+		}},
+		{Name: "Format_Decimal_Into", Call: func() {
+			fixture.Observable = int(strconv.Format_Decimal_Into(
+				fixture.Storage[:], math.MinInt,
+			))
+		}},
+		{Name: "Format_Fixed_Point_Into", Call: func() {
+			fixture.Observable = int(strconv.Format_Fixed_Point_Into(
+				fixture.Storage[:], math.MinInt64, 6,
+			))
+		}},
+	}
+}
+
+func quote_allocation_checks(fixture *allocation_fixture) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Quote_Into", Call: func() {
+			fixture.Observable = int(strconv.Quote_Into(fixture.Storage[:], "a\n☺"))
+		}},
+		{Name: "Quote_To_ASCII_Into", Call: func() {
+			fixture.Observable = int(strconv.Quote_To_ASCII_Into(
+				fixture.Storage[:], "a\n☺",
+			))
+		}},
+		{Name: "Quote_To_Graphic_Into", Call: func() {
+			fixture.Observable = int(strconv.Quote_To_Graphic_Into(
+				fixture.Storage[:], "a\n☺",
+			))
+		}},
+		{Name: "Quote_Rune_Into", Call: func() {
+			fixture.Observable = int(strconv.Quote_Rune_Into(fixture.Storage[:], '☺'))
+		}},
+		{Name: "Quote_Rune_To_ASCII_Into", Call: func() {
+			fixture.Observable = int(strconv.Quote_Rune_To_ASCII_Into(
+				fixture.Storage[:], '☺',
+			))
+		}},
+		{Name: "Quote_Rune_To_Graphic_Into", Call: func() {
+			fixture.Observable = int(strconv.Quote_Rune_To_Graphic_Into(
+				fixture.Storage[:], '☺',
+			))
+		}},
+	}
+}
+
+func query_allocation_checks(fixture *allocation_fixture) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Can_Backquote", Call: func() {
+			fixture.Observable = 0
+			if strconv.Can_Backquote("plain") {
+				fixture.Observable = 1
+			}
+		}},
+		{Name: "Is_Print", Call: func() {
+			fixture.Observable = 0
+			if strconv.Is_Print('☺') {
+				fixture.Observable = 1
+			}
+		}},
+		{Name: "Is_Graphic", Call: func() {
+			fixture.Observable = 0
+			if strconv.Is_Graphic(' ') {
+				fixture.Observable = 1
+			}
+		}},
+		{Name: "Unquote_Into", Call: func() {
+			count, unquote_error := strconv.Unquote_Into(fixture.Storage[:], `"a\n☺"`)
+			fixture.Observable = int(count)
+			fixture.Error = unquote_error
+		}},
+		{Name: "Quoted_Prefix", Call: func() {
+			prefix, prefix_error := strconv.Quoted_Prefix(`"a"tail`)
+			fixture.Observable = len(prefix)
+			fixture.Error = prefix_error
+		}},
+		{Name: "Unquote_Character", Call: func() {
+			value, multibyte, tail, character_error := strconv.Unquote_Character(
+				`\u263a!`, 0,
+			)
+			fixture.Observable = int(value) + len(tail)
+			if multibyte {
+				fixture.Observable++
+			}
+			fixture.Error = character_error
+		}},
+	}
+}
+
+func format_boolean(value strconv.Boolean) (text string) {
+	var storage [strconv.BOOLEAN_TEXT_SIZE_FALSE]byte
+	count := strconv.Format_Boolean_Into(storage[:], value)
+	return string(storage[:int(count)])
+}
+
+func format_unsigned_integer(
+	value strconv.Unsigned_Integer, base strconv.Base,
+) (text string) {
+	var storage [strconv.DIGIT_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Format_Unsigned_Integer_Into(storage[:], value, base)
+	return string(storage[:int(count)])
+}
+
+func format_integer(
+	value strconv.Signed_Integer, base strconv.Base,
+) (text string) {
+	var storage [strconv.INTEGER_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Format_Integer_Into(storage[:], value, base)
+	return string(storage[:int(count)])
+}
+
+func format_decimal(value strconv.Machine_Integer) (text string) {
+	var storage [strconv.DECIMAL_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Format_Decimal_Into(storage[:], value)
+	return string(storage[:int(count)])
+}
+
+func format_fixed_point(
+	value fixedpoint.Number, digits fixedpoint.Digit_Count,
+) (text fixedpoint.Text) {
+	var storage [strconv.FIXED_POINT_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Format_Fixed_Point_Into(storage[:], value, digits)
+	return fixedpoint.Text(storage[:int(count)])
+}
+
+func quote(text strconv.Text) (quoted string) {
+	var storage [strconv.QUOTED_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Quote_Into(storage[:], text)
+	return string(storage[:int(count)])
+}
+
+func quote_to_ascii(text strconv.Text) (quoted string) {
+	var storage [strconv.QUOTED_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Quote_To_ASCII_Into(storage[:], text)
+	return string(storage[:int(count)])
+}
+
+func quote_to_graphic(text strconv.Text) (quoted string) {
+	var storage [strconv.QUOTED_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Quote_To_Graphic_Into(storage[:], text)
+	return string(storage[:int(count)])
+}
+
+func quote_rune(value strconv.Character) (quoted string) {
+	var storage [strconv.CHARACTER_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Quote_Rune_Into(storage[:], value)
+	return string(storage[:int(count)])
+}
+
+func quote_rune_to_ascii(value strconv.Character) (quoted string) {
+	var storage [strconv.CHARACTER_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Quote_Rune_To_ASCII_Into(storage[:], value)
+	return string(storage[:int(count)])
+}
+
+func quote_rune_to_graphic(value strconv.Character) (quoted string) {
+	var storage [strconv.CHARACTER_TEXT_SIZE_MAXIMUM]byte
+	count := strconv.Quote_Rune_To_Graphic_Into(storage[:], value)
+	return string(storage[:int(count)])
+}
+
+func unquote(text strconv.Text) (value strconv.Body_Text, err error) {
+	var storage [strconv.UNQUOTED_TEXT_SIZE_MAXIMUM]byte
+	count, unquote_error := strconv.Unquote_Into(storage[:], text)
+	return strconv.Body_Text(storage[:int(count)]), unquote_error
 }
