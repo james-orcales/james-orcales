@@ -120,8 +120,14 @@ func Test_Bounds(t *testing.T) {
 	special_boundaries(t)
 }
 
-// Test_Allocation prevents compile, match, and quote storage from escaping.
+// Test_Allocation prevents public operation storage from escaping.
 func Test_Allocation(t *testing.T) {
+	var special glob.Special_Character
+	testify.Zero_Allocation(t, func() {
+		special = glob.Special('*')
+	})
+	testify.True(t, bool(special))
+
 	source := []byte("{abc,def}*.[a-z]")
 	text := []byte("defghi.z")
 	var compiled glob.Compile_Workspace
@@ -217,10 +223,62 @@ func compile_input(
 	source []byte,
 	separators []rune,
 ) (input glob.Compile_Input) {
+	if workspace != nil {
+		compile_workspace_init(workspace)
+	}
 	input.Source = source
 	input.Separators = separators
-	input.Workspace.State[glob.WORKSPACE_FIELD] = workspace
+	if workspace != nil {
+		input.Workspace.State = glob.Compile_Workspace_Pointer(workspace)
+	}
 	return input
+}
+
+func compile_workspace_init(workspace *glob.Compile_Workspace) {
+	if len(workspace.Nodes) != glob.NODE_COUNT_MAXIMUM {
+		workspace.Nodes = make(glob.Nodes, glob.NODE_COUNT_MAXIMUM)
+		workspace.Node_Characters = make(
+			glob.Node_Character_Values, glob.NODE_CHARACTER_VALUE_COUNT,
+		)
+		workspace.Uint16_Values = make(
+			glob.Uint16_Values, glob.UINT16_VALUE_COUNT,
+		)
+	}
+	if len(workspace.Parser_Frames) != glob.PATTERN_DEPTH_MAXIMUM {
+		workspace.Parser_Frames = make(glob.Parser_Frames, glob.PATTERN_DEPTH_MAXIMUM)
+	}
+	if len(workspace.Ranges) != glob.CLASS_RANGE_STORAGE_COUNT_MAXIMUM {
+		workspace.Ranges = make(glob.Class_Ranges, glob.CLASS_RANGE_STORAGE_COUNT_MAXIMUM)
+	}
+	if len(workspace.Instruction_Kinds) != glob.INSTRUCTION_COUNT_MAXIMUM {
+		workspace.Instruction_Kinds = make(
+			glob.Instruction_Kinds, glob.INSTRUCTION_COUNT_MAXIMUM,
+		)
+		workspace.Instruction_Characters = make(
+			glob.Instruction_Characters, glob.INSTRUCTION_COUNT_MAXIMUM,
+		)
+		workspace.Instruction_Targets = make(
+			glob.Instruction_Target_Values, glob.INSTRUCTION_TARGET_VALUE_COUNT,
+		)
+		workspace.Instruction_Classes = make(
+			glob.Instruction_Class_Values, glob.INSTRUCTION_CLASS_VALUE_COUNT,
+		)
+	}
+	if len(workspace.Compile_Frames) != glob.NODE_COUNT_MAXIMUM {
+		workspace.Compile_Frames = make(glob.Compile_Frames, glob.NODE_COUNT_MAXIMUM)
+		workspace.Compile_References = make(
+			glob.Compile_Reference_Values, glob.COMPILE_REFERENCE_VALUE_COUNT,
+		)
+		workspace.Compile_Targets = make(
+			glob.Compile_Target_Values, glob.COMPILE_TARGET_VALUE_COUNT,
+		)
+		workspace.Compile_Frame_Controls = make(
+			glob.Compile_Frame_Control_Values, glob.COMPILE_FRAME_CONTROL_VALUE_COUNT,
+		)
+	}
+	if len(workspace.Separators) != glob.SEPARATOR_COUNT_MAXIMUM {
+		workspace.Separators = make(glob.Separators, glob.SEPARATOR_COUNT_MAXIMUM)
+	}
 }
 
 func match_from(
@@ -240,10 +298,25 @@ func match_input(
 	text []byte,
 	workspace *glob.Match_Workspace,
 ) (input glob.Match_Input) {
+	if workspace != nil {
+		match_workspace_init(workspace)
+	}
 	input.Pattern = pattern
 	input.Text = text
-	input.Workspace.State[glob.WORKSPACE_FIELD] = workspace
+	if workspace != nil {
+		input.Workspace.State = glob.Match_Workspace_Pointer(workspace)
+	}
 	return input
+}
+
+func match_workspace_init(workspace *glob.Match_Workspace) {
+	if len(workspace.Current) == glob.INSTRUCTION_COUNT_MAXIMUM {
+		return
+	}
+	workspace.Current = make(glob.Current_States, glob.INSTRUCTION_COUNT_MAXIMUM)
+	workspace.Next = make(glob.Next_States, glob.INSTRUCTION_COUNT_MAXIMUM)
+	workspace.Closure = make(glob.Closure_States, glob.INSTRUCTION_COUNT_MAXIMUM)
+	workspace.Seen = make(glob.State_Generations, glob.INSTRUCTION_COUNT_MAXIMUM)
 }
 
 func compile_boundaries(t *testing.T) {
@@ -481,7 +554,7 @@ func match_boundaries(t *testing.T, pattern glob.Pattern) {
 func match_forged_pattern(t *testing.T, workspace *glob.Match_Workspace) {
 	var compiled glob.Compile_Workspace
 	pattern := compile_from(t, &compiled, []byte("a"), nil)
-	start := pattern.Control[glob.PATTERN_CONTROL_START]
+	start := *pattern.Control.Start.(*uint16)
 	compiled.Instruction_Kinds[start] = glob.INSTRUCTION_SPLIT +
 		utf8.CHARACTER_SIZE_MINIMUM
 	_, status := glob.Match(match_input(pattern, nil, workspace))

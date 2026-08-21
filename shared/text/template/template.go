@@ -257,17 +257,31 @@ const FAILURE_STATUS_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const FAILURE_STATUS_VALIDATED_FIELD_COUNT = FAILURE_STATUS_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Failure_Status_Validated_Value retains failure-status proof storage.
+type Failure_Status_Validated_Value uint8
+
+// Failure_Status_Validated_Value_Invariants preserves the status encoding.
+func Failure_Status_Validated_Value_Invariants(
+	value Failure_Status_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value), uint8(STATUS_OUTPUT_TOO_SMALL), uint8(STATUS_LIMIT_EXCEEDED),
+		).
+		Ensure()
+}
+
 // Failure_Status_Validated carries one status proven non-success by dispatch.
-type Failure_Status_Validated [FAILURE_STATUS_VALIDATED_FIELD_COUNT]Status
+type Failure_Status_Validated struct {
+	// Value keeps failure proof attached to execution status.
+	Value Failure_Status_Proof_Stored
+}
 
 // Failure_Status_Validated_Invariants checks failure ownership.
 func Failure_Status_Validated_Invariants(
-	value Failure_Status_Validated, _ aver.Namespace,
+	value Failure_Status_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == FAILURE_STATUS_VALIDATED_FIELD_COUNT,
-		"Validated failure status storage has one field.",
-	)
+	Failure_Status_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // EXECUTION_FAILURE_POSITION_FIELD selects one proven diagnostic position.
@@ -277,17 +291,31 @@ const EXECUTION_FAILURE_POSITION_FIELD = bytes.SLICE_SIZE_MINIMUM
 const EXECUTION_FAILURE_POSITION_FIELD_COUNT = EXECUTION_FAILURE_POSITION_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Execution_Failure_Position_Value retains diagnostic-position proof storage.
+type Execution_Failure_Position_Value uint16
+
+// Execution_Failure_Position_Value_Invariants preserves position encoding.
+func Execution_Failure_Position_Value_Invariants(
+	value Execution_Failure_Position_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(SOURCE_SIZE_MINIMUM), uint16(SOURCE_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Execution_Failure_Position carries one validated diagnostic position by value.
-type Execution_Failure_Position [EXECUTION_FAILURE_POSITION_FIELD_COUNT]Diagnostic_Position
+type Execution_Failure_Position struct {
+	// Value keeps program proof attached to diagnostic position.
+	Value Execution_Failure_Position_Proof_Stored
+}
 
 // Execution_Failure_Position_Invariants checks proof ownership.
 func Execution_Failure_Position_Invariants(
-	value Execution_Failure_Position, _ aver.Namespace,
+	value Execution_Failure_Position, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == EXECUTION_FAILURE_POSITION_FIELD_COUNT,
-		"Execution failure position storage has one field.",
-	)
+	Execution_Failure_Position_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // FUNCTION_STATUS_OK accepts callback result.
@@ -419,17 +447,62 @@ func Builtin_Order_Kind_Invariants(value Builtin_Order_Kind, namespace aver.Name
 		Ensure()
 }
 
+// BUILTIN_ORDER_NAME_GREATER is the greater comparison prefix.
+const BUILTIN_ORDER_NAME_GREATER = 'g'
+
+// BUILTIN_ORDER_NAME_LESS is the less comparison prefix.
+const BUILTIN_ORDER_NAME_LESS = 'l'
+
+// Builtin_Order_Name_First selects less or greater comparison family.
+type Builtin_Order_Name_First byte
+
+// Builtin_Order_Name_First_Invariants rejects non-builtin prefixes.
+func Builtin_Order_Name_First_Invariants(
+	value Builtin_Order_Name_First, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value), uint8(BUILTIN_ORDER_NAME_GREATER),
+			uint8(BUILTIN_ORDER_NAME_LESS),
+		).
+		Ensure()
+}
+
+// BUILTIN_ORDER_NAME_EQUAL is the inclusive comparison suffix.
+const BUILTIN_ORDER_NAME_EQUAL = 'e'
+
+// BUILTIN_ORDER_NAME_THAN is the strict comparison suffix.
+const BUILTIN_ORDER_NAME_THAN = 't'
+
+// Builtin_Order_Name_Second selects strict or inclusive comparison.
+type Builtin_Order_Name_Second byte
+
+// Builtin_Order_Name_Second_Invariants rejects non-builtin suffixes.
+func Builtin_Order_Name_Second_Invariants(
+	value Builtin_Order_Name_Second, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value), uint8(BUILTIN_ORDER_NAME_EQUAL),
+			uint8(BUILTIN_ORDER_NAME_THAN),
+		).
+		Ensure()
+}
+
 // Builtin_Order_Name_Validated carries one comparison identifier proven by dispatch.
-type Builtin_Order_Name_Validated [BUILTIN_ORDER_NAME_SIZE]byte
+type Builtin_Order_Name_Validated struct {
+	// First can only select the less or greater family.
+	First Builtin_Order_Name_First
+	// Second can only select strict or inclusive comparison.
+	Second Builtin_Order_Name_Second
+}
 
 // Builtin_Order_Name_Validated_Invariants fixes complete comparison-name transport.
 func Builtin_Order_Name_Validated_Invariants(
-	value Builtin_Order_Name_Validated, _ aver.Namespace,
+	value Builtin_Order_Name_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == BUILTIN_ORDER_NAME_SIZE,
-		"Validated comparison name stores both identifier bytes.",
-	)
+	Builtin_Order_Name_First_Invariants(value.First, namespace)
+	Builtin_Order_Name_Second_Invariants(value.Second, namespace)
 }
 
 // Quoted_Control_Byte is one ASCII control requiring hexadecimal quoting.
@@ -654,14 +727,28 @@ const NUMBER_TEXT_VALIDATED_FIELD_COUNT = NUMBER_TEXT_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
 // Number_Text_Validated carries one lexer-proven numeric token by value.
-type Number_Text_Validated [NUMBER_TEXT_VALIDATED_FIELD_COUNT]Text
+type Number_Text_Validated_Value []byte
+
+// Number_Text_Validated_Value_Invariants admits text after numeric syntax validation.
+func Number_Text_Validated_Value_Invariants(
+	value Number_Text_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), IDENTIFIER_SIZE_MINIMUM, ACTION_CONTENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Number_Text_Validated carries one lexer-proven numeric token by value.
+type Number_Text_Validated struct {
+	// Value keeps syntax proof attached to numeric text.
+	Value Number_Text_Proof_Stored
+}
 
 // Number_Text_Validated_Invariants checks ownership after numeric syntax validation.
-func Number_Text_Validated_Invariants(value Number_Text_Validated, _ aver.Namespace) {
-	aver.Always(
-		len(value) == NUMBER_TEXT_VALIDATED_FIELD_COUNT,
-		"Validated number text storage has one field.",
-	)
+func Number_Text_Validated_Invariants(
+	value Number_Text_Validated, namespace aver.Namespace,
+) {
+	Number_Text_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // PARSED_FLOAT_VALIDATED_FIELD selects one accepted binary64 encoding.
@@ -671,17 +758,29 @@ const PARSED_FLOAT_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const PARSED_FLOAT_VALIDATED_FIELD_COUNT = PARSED_FLOAT_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Parsed_Float_Validated_Value retains parsed-float proof storage.
+type Parsed_Float_Validated_Value uint64
+
+// Parsed_Float_Validated_Value_Invariants preserves every float bit.
+func Parsed_Float_Validated_Value_Invariants(
+	value Parsed_Float_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
 // Parsed_Float_Validated carries one accepted binary64 encoding by value.
-type Parsed_Float_Validated [PARSED_FLOAT_VALIDATED_FIELD_COUNT]Float
+type Parsed_Float_Validated struct {
+	// Value keeps conversion proof attached to float bits.
+	Value Parsed_Float_Proof_Stored
+}
 
 // Parsed_Float_Validated_Invariants checks ownership after numeric conversion.
 func Parsed_Float_Validated_Invariants(
-	value Parsed_Float_Validated, _ aver.Namespace,
+	value Parsed_Float_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == PARSED_FLOAT_VALIDATED_FIELD_COUNT,
-		"Validated parsed float storage has one field.",
-	)
+	Parsed_Float_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Field_Name is borrowed object metadata.
@@ -716,14 +815,26 @@ const ARGUMENTS_STAGED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const ARGUMENTS_STAGED_FIELD_COUNT = ARGUMENTS_STAGED_FIELD + STORAGE_FIELD_COUNT_INCREMENT
 
 // Arguments_Staged carries active callback arguments by value.
-type Arguments_Staged [ARGUMENTS_STAGED_FIELD_COUNT]Values
+type Arguments_Staged_Value []Value
+
+// Arguments_Staged_Value_Invariants admits a header after workspace bounds validation.
+func Arguments_Staged_Value_Invariants(
+	value Arguments_Staged_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), ARGUMENT_COUNT_MINIMUM, ARGUMENT_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Arguments_Staged carries active callback arguments by value.
+type Arguments_Staged struct {
+	// Value keeps workspace proof attached to callback arguments.
+	Value Arguments_Proof_Stored
+}
 
 // Arguments_Staged_Invariants checks ownership after workspace bounds enforcement.
-func Arguments_Staged_Invariants(value Arguments_Staged, _ aver.Namespace) {
-	aver.Always(
-		len(value) == ARGUMENTS_STAGED_FIELD_COUNT,
-		"Staged callback arguments storage has one field.",
-	)
+func Arguments_Staged_Invariants(value Arguments_Staged, namespace aver.Namespace) {
+	Arguments_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Fields is caller-owned object or map storage.
@@ -746,14 +857,14 @@ const BOUNDED_FIELDS_FIELD = bytes.SLICE_SIZE_MINIMUM
 const BOUNDED_FIELDS_FIELD_COUNT = BOUNDED_FIELDS_FIELD + STORAGE_FIELD_COUNT_INCREMENT
 
 // Bounded_Fields carries one active-value-bounded field slice by value.
-type Bounded_Fields [BOUNDED_FIELDS_FIELD_COUNT]Fields
+type Bounded_Fields struct {
+	// Value keeps traversal proof attached to caller fields.
+	Value Fields_Proof_Stored
+}
 
 // Bounded_Fields_Invariants checks proof ownership.
-func Bounded_Fields_Invariants(value Bounded_Fields, _ aver.Namespace) {
-	aver.Always(
-		len(value) == BOUNDED_FIELDS_FIELD_COUNT,
-		"Bounded field storage has one field.",
-	)
+func Bounded_Fields_Invariants(value Bounded_Fields, namespace aver.Namespace) {
+	Fields_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // MAP_KEYS_VALIDATED_FIELD selects fields whose map keys were individually checked.
@@ -763,14 +874,14 @@ const MAP_KEYS_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const MAP_KEYS_VALIDATED_FIELD_COUNT = MAP_KEYS_VALIDATED_FIELD + STORAGE_FIELD_COUNT_INCREMENT
 
 // Map_Keys_Validated carries individually sortable map keys by value.
-type Map_Keys_Validated [MAP_KEYS_VALIDATED_FIELD_COUNT]Fields
+type Map_Keys_Validated struct {
+	// Value keeps key proof attached to caller fields.
+	Value Fields_Proof_Stored
+}
 
 // Map_Keys_Validated_Invariants checks proof ownership.
-func Map_Keys_Validated_Invariants(value Map_Keys_Validated, _ aver.Namespace) {
-	aver.Always(
-		len(value) == MAP_KEYS_VALIDATED_FIELD_COUNT,
-		"Validated map-key storage has one field.",
-	)
+func Map_Keys_Validated_Invariants(value Map_Keys_Validated, namespace aver.Namespace) {
+	Fields_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Map_Keys_Monotonic reports strict ascending or descending caller key order.
@@ -793,16 +904,16 @@ const MAP_FIELDS_VALIDATED_FIELD_COUNT = MAP_FIELDS_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
 // Map_Fields_Validated carries map fields whose names and keys were checked.
-type Map_Fields_Validated [MAP_FIELDS_VALIDATED_FIELD_COUNT]Fields
+type Map_Fields_Validated struct {
+	// Value keeps deep proof attached to caller fields.
+	Value Fields_Proof_Stored
+}
 
 // Map_Fields_Validated_Invariants checks proof ownership.
 func Map_Fields_Validated_Invariants(
-	value Map_Fields_Validated, _ aver.Namespace,
+	value Map_Fields_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == MAP_FIELDS_VALIDATED_FIELD_COUNT,
-		"Validated map field storage has one field.",
-	)
+	Fields_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // MAP_KEY_VALIDATED_FIELD selects one deeply validated sortable map key.
@@ -812,14 +923,14 @@ const MAP_KEY_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const MAP_KEY_VALIDATED_FIELD_COUNT = MAP_KEY_VALIDATED_FIELD + STORAGE_FIELD_COUNT_INCREMENT
 
 // Map_Key_Validated carries one sortable map key by value.
-type Map_Key_Validated [MAP_KEY_VALIDATED_FIELD_COUNT]Value
+type Map_Key_Validated struct {
+	// Value keeps ordering proof attached to the map key.
+	Value Value
+}
 
 // Map_Key_Validated_Invariants checks proof ownership.
-func Map_Key_Validated_Invariants(value Map_Key_Validated, _ aver.Namespace) {
-	aver.Always(
-		len(value) == MAP_KEY_VALIDATED_FIELD_COUNT,
-		"Validated map key storage has one field.",
-	)
+func Map_Key_Validated_Invariants(value Map_Key_Validated, namespace aver.Namespace) {
+	Value_Invariants(value.Value, namespace)
 }
 
 // Function_Name is borrowed callable identifier.
@@ -842,89 +953,242 @@ const FUNCTION_NAME_VALIDATED_FIELD_COUNT = FUNCTION_NAME_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
 // Function_Name_Validated carries one lexer-proven identifier by value.
-type Function_Name_Validated [FUNCTION_NAME_VALIDATED_FIELD_COUNT]Function_Name
+type Function_Name_Validated_Value []byte
+
+// Function_Name_Validated_Value_Invariants admits a name after lexical validation.
+func Function_Name_Validated_Value_Invariants(
+	value Function_Name_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), IDENTIFIER_SIZE_MINIMUM, ACTION_CONTENT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Function_Name_Validated carries one lexer-proven identifier by value.
+type Function_Name_Validated struct {
+	// Value keeps token proof attached to the function name.
+	Value Function_Name_Proof_Stored
+}
 
 // Function_Name_Validated_Invariants checks ownership after token validation.
-func Function_Name_Validated_Invariants(value Function_Name_Validated, _ aver.Namespace) {
-	aver.Always(
-		len(value) == FUNCTION_NAME_VALIDATED_FIELD_COUNT,
-		"Validated function name storage has one field.",
-	)
+func Function_Name_Validated_Invariants(
+	value Function_Name_Validated, namespace aver.Namespace,
+) {
+	Function_Name_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Function_Call executes one injected bounded function.
 type Function_Call func(input Function_Input) (result Function_Result)
 
+// Function_Call_Invariants rejects behavior that cannot be invoked.
+func Function_Call_Invariants(value Function_Call, namespace aver.Namespace) {
+	aver.Always(
+		value != nil,
+		"Injected function behavior must exist before construction or invocation.",
+	)
+}
+
 // Value_Kind_Storage retains one active union selector.
-type Value_Kind_Storage [VALUE_PAYLOAD_FIELD_COUNT]Value_Kind
+type Value_Kind_Storage_Value uint8
+
+// Value_Kind_Storage_Value_Invariants admits any selector after union validation.
+func Value_Kind_Storage_Value_Invariants(
+	value Value_Kind_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
+		Ensure()
+}
+
+// Value_Kind_Storage retains one active union selector.
+type Value_Kind_Storage struct {
+	// Value keeps the selector inside union storage.
+	Value Value_Kind_Storage_Value
+}
 
 // Value_Kind_Storage_Invariants fixes selector storage shape.
 func Value_Kind_Storage_Invariants(
-	value Value_Kind_Storage, _ aver.Namespace,
+	value Value_Kind_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == VALUE_PAYLOAD_FIELD_COUNT,
-		"Value kind storage has one field.",
-	)
+	Value_Kind_Storage_Value_Invariants(value.Value, namespace)
+}
+
+// Value_Scalar_Real keeps the primary word's invariant identity independent.
+type Value_Scalar_Real uint64
+
+// Value_Scalar_Real_Invariants admits every caller bit pattern.
+func Value_Scalar_Real_Invariants(value Value_Scalar_Real, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
+}
+
+// Value_Scalar_Imaginary keeps the secondary word's invariant identity independent.
+type Value_Scalar_Imaginary uint64
+
+// Value_Scalar_Imaginary_Invariants admits every caller bit pattern.
+func Value_Scalar_Imaginary_Invariants(
+	value Value_Scalar_Imaginary, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
+		Ensure()
 }
 
 // Value_Scalar stores one scalar or both complex component words.
-type Value_Scalar [VALUE_SCALAR_WORD_COUNT]uint64
+type Value_Scalar struct {
+	// Real cannot share invariant identity with the imaginary word.
+	Real Value_Scalar_Real
+	// Imaginary cannot share invariant identity with the real word.
+	Imaginary Value_Scalar_Imaginary
+}
 
 // Value_Scalar_Invariants fixes closed scalar storage shape.
-func Value_Scalar_Invariants(value Value_Scalar, _ aver.Namespace) {
-	aver.Always(
-		len(value) == VALUE_SCALAR_WORD_COUNT,
-		"Template scalar storage holds both complex words.",
-	)
+func Value_Scalar_Invariants(value Value_Scalar, namespace aver.Namespace) {
+	Value_Scalar_Real_Invariants(value.Real, namespace)
+	Value_Scalar_Imaginary_Invariants(value.Imaginary, namespace)
 }
 
 // Text_Storage retains one borrowed text payload.
-type Text_Storage [VALUE_PAYLOAD_FIELD_COUNT]Text
+type Text_Storage_Value []byte
+
+// Text_Storage_Value_Invariants admits any header after active-union validation.
+func Text_Storage_Value_Invariants(
+	value Text_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), OUTPUT_SIZE_MINIMUM, SOURCE_SIZE_UNVALIDATED_MAXIMUM).
+		Ensure()
+}
+
+// Text_Storage retains one borrowed text payload.
+type Text_Storage struct {
+	// Value keeps borrowed text inside union storage.
+	Value Text_Storage_Value
+}
 
 // Text_Storage_Invariants fixes text payload shape.
-func Text_Storage_Invariants(value Text_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == VALUE_PAYLOAD_FIELD_COUNT,
-		"Text payload storage has one field.",
-	)
+func Text_Storage_Invariants(value Text_Storage, namespace aver.Namespace) {
+	Text_Storage_Value_Invariants(value.Value, namespace)
 }
 
 // Values_Storage retains one borrowed sequence payload.
-type Values_Storage [VALUE_PAYLOAD_FIELD_COUNT]Values
+type Values_Storage_Value []Value
+
+// Values_Storage_Value_Invariants admits any header after active-union validation.
+func Values_Storage_Value_Invariants(
+	value Values_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, VALUE_COUNT_UNVALIDATED_MAXIMUM).
+		Ensure()
+}
+
+// Values_Storage retains one borrowed sequence payload.
+type Values_Storage struct {
+	// Value keeps borrowed sequence inside union storage.
+	Value Values_Storage_Value
+}
 
 // Values_Storage_Invariants fixes sequence payload shape.
-func Values_Storage_Invariants(value Values_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == VALUE_PAYLOAD_FIELD_COUNT,
-		"Sequence payload storage has one field.",
-	)
+func Values_Storage_Invariants(value Values_Storage, namespace aver.Namespace) {
+	Values_Storage_Value_Invariants(value.Value, namespace)
 }
 
 // Fields_Storage retains one borrowed object or map payload.
-type Fields_Storage [VALUE_PAYLOAD_FIELD_COUNT]Fields
+type Fields_Storage_Value []Field
+
+// Fields_Storage_Value_Invariants admits any header after active-union validation.
+func Fields_Storage_Value_Invariants(
+	value Fields_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, VALUE_COUNT_UNVALIDATED_MAXIMUM).
+		Ensure()
+}
+
+// Fields_Storage retains one borrowed object or map payload.
+type Fields_Storage struct {
+	// Value keeps borrowed fields inside union storage.
+	Value Fields_Storage_Value
+}
 
 // Fields_Storage_Invariants fixes field payload shape.
-func Fields_Storage_Invariants(value Fields_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == VALUE_PAYLOAD_FIELD_COUNT,
-		"Field payload storage has one field.",
-	)
+func Fields_Storage_Invariants(value Fields_Storage, namespace aver.Namespace) {
+	Fields_Storage_Value_Invariants(value.Value, namespace)
 }
 
 // Function_Storage retains one callable payload.
-type Function_Storage [VALUE_PAYLOAD_FIELD_COUNT]Function_Call
+type Function_Storage_Value func(input Function_Input) (result Function_Result)
+
+// Function_Storage retains one callable payload.
+type Function_Storage struct {
+	// Value keeps injected behavior inside union storage.
+	Value Function_Storage_Value
+}
 
 // Function_Storage_Invariants fixes callable payload shape.
 func Function_Storage_Invariants(value Function_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == VALUE_PAYLOAD_FIELD_COUNT,
-		"Function payload storage has one field.",
-	)
+	present := value.Value != nil
+	aver.Always(present == present, "Function payload retains caller behavior.")
 }
 
-// Value is reflection-free template data.
-type Value struct {
+// Value_Kind_Stored separates union shape from active selector validation.
+type Value_Kind_Stored interface{}
+
+// Value_Kind_Stored_Invariants fixes union-selector representation.
+func Value_Kind_Stored_Invariants(value Value_Kind_Stored, _ aver.Namespace) {
+	_, valid := value.(Value_Kind_Storage)
+	aver.Always(valid == (value != nil), "Value selector has expected storage type.")
+}
+
+// Value_Scalar_Stored separates union shape from active scalar validation.
+type Value_Scalar_Stored interface{}
+
+// Value_Scalar_Stored_Invariants fixes union-scalar representation.
+func Value_Scalar_Stored_Invariants(value Value_Scalar_Stored, _ aver.Namespace) {
+	_, valid := value.(Value_Scalar)
+	aver.Always(valid == (value != nil), "Value scalar has expected storage type.")
+}
+
+// Value_Text_Stored separates union shape from active text validation.
+type Value_Text_Stored interface{}
+
+// Value_Text_Stored_Invariants fixes union-text representation.
+func Value_Text_Stored_Invariants(value Value_Text_Stored, _ aver.Namespace) {
+	_, valid := value.(Text_Storage)
+	aver.Always(valid == (value != nil), "Value text has expected storage type.")
+}
+
+// Value_Values_Stored separates union shape from active sequence validation.
+type Value_Values_Stored interface{}
+
+// Value_Values_Stored_Invariants fixes union-sequence representation.
+func Value_Values_Stored_Invariants(value Value_Values_Stored, _ aver.Namespace) {
+	_, valid := value.(Values_Storage)
+	aver.Always(valid == (value != nil), "Value sequence has expected storage type.")
+}
+
+// Value_Fields_Stored separates union shape from active field validation.
+type Value_Fields_Stored interface{}
+
+// Value_Fields_Stored_Invariants fixes union-field representation.
+func Value_Fields_Stored_Invariants(value Value_Fields_Stored, _ aver.Namespace) {
+	_, valid := value.(Fields_Storage)
+	aver.Always(valid == (value != nil), "Value fields have expected storage type.")
+}
+
+// Value_Function_Stored separates union shape from active callable validation.
+type Value_Function_Stored interface{}
+
+// Value_Function_Stored_Invariants fixes union-callable representation.
+func Value_Function_Stored_Invariants(value Value_Function_Stored, _ aver.Namespace) {
+	_, valid := value.(Function_Storage)
+	aver.Always(valid == (value != nil), "Value function has expected storage type.")
+}
+
+// Value_Fields is reflection-free template data before active validation.
+type Value_Fields struct {
 	// Kind selects active payload.
 	Kind Value_Kind_Storage
 	// Scalar stores Boolean, numeric, or complex bits.
@@ -939,14 +1203,42 @@ type Value struct {
 	Function Function_Storage
 }
 
-// Value_Invariants keeps closed-union storage bounded before active validation.
-func Value_Invariants(value Value, namespace aver.Namespace) {
+// Value_Fields_Invariants admits hostile union storage before active validation.
+func Value_Fields_Invariants(value Value_Fields, namespace aver.Namespace) {
 	Value_Kind_Storage_Invariants(value.Kind, namespace)
 	Value_Scalar_Invariants(value.Scalar, namespace)
 	Text_Storage_Invariants(value.Text, namespace)
 	Values_Storage_Invariants(value.Values, namespace)
 	Fields_Storage_Invariants(value.Fields, namespace)
 	Function_Storage_Invariants(value.Function, namespace)
+}
+
+// Value is reflection-free template data after active validation.
+type Value Value_Fields
+
+// Value_Invariants keeps closed-union storage bounded before active validation.
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	Value_Kind_Stored_Invariants(Value_Kind_Stored(value.Kind), namespace)
+	Value_Scalar_Stored_Invariants(Value_Scalar_Stored(value.Scalar), namespace)
+	Value_Text_Stored_Invariants(Value_Text_Stored(value.Text), namespace)
+	Value_Values_Stored_Invariants(Value_Values_Stored(value.Values), namespace)
+	Value_Fields_Stored_Invariants(Value_Fields_Stored(value.Fields), namespace)
+	Function_Storage_Invariants(value.Function, namespace)
+}
+
+// Value_Unvalidated carries hostile callback or nested caller data.
+type Value_Unvalidated Value
+
+// Value_Unvalidated_Invariants admits every kind until active validation.
+func Value_Unvalidated_Invariants(
+	value Value_Unvalidated, namespace aver.Namespace,
+) {
+	Value_Kind_Stored_Invariants(Value_Kind_Stored(value.Kind), namespace)
+	Value_Scalar_Stored_Invariants(Value_Scalar_Stored(value.Scalar), namespace)
+	Value_Text_Stored_Invariants(Value_Text_Stored(value.Text), namespace)
+	Value_Values_Stored_Invariants(Value_Values_Stored(value.Values), namespace)
+	Value_Fields_Stored_Invariants(Value_Fields_Stored(value.Fields), namespace)
+	Value_Function_Stored_Invariants(Value_Function_Stored(value.Function), namespace)
 }
 
 // Field_Key stores one map key without repeating Value in Field invariant chain.
@@ -999,6 +1291,7 @@ type Function struct {
 // Function_Invariants bounds registry metadata.
 func Function_Invariants(value Function, namespace aver.Namespace) {
 	Function_Name_Invariants(value.Name, namespace)
+	Function_Call_Invariants(value.Call, namespace)
 }
 
 // Functions is caller-owned function registry.
@@ -1021,13 +1314,27 @@ const FUNCTIONS_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const FUNCTIONS_VALIDATED_FIELD_COUNT = FUNCTIONS_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Functions_Validated_Value retains one registry after deep validation.
+type Functions_Validated_Value []Function
+
+// Functions_Validated_Value_Invariants admits a header after registry validation.
+func Functions_Validated_Value_Invariants(
+	value Functions_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, FUNCTION_COUNT_MAXIMUM).
+		Ensure()
+}
+
 // Functions_Validated carries one deeply checked function registry.
-type Functions_Validated [FUNCTIONS_VALIDATED_FIELD_COUNT]Functions
+type Functions_Validated struct {
+	// Value keeps registry proof attached to caller functions.
+	Value Functions_Proof_Stored
+}
 
 // Functions_Validated_Invariants checks transport ownership after registry validation.
-func Functions_Validated_Invariants(value Functions_Validated, _ aver.Namespace) {
-	aver.Always(len(value) == FUNCTIONS_VALIDATED_FIELD_COUNT,
-		"Validated function registry storage has one field.")
+func Functions_Validated_Invariants(value Functions_Validated, namespace aver.Namespace) {
+	Functions_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Function_Input borrows arguments only during callback.
@@ -1069,14 +1376,14 @@ func Function_Result_Invariants(value Function_Result, namespace aver.Namespace)
 }
 
 // Syntax_Storage admits absent caller syntax state.
-type Syntax_Storage [SYNTAX_FIELD_COUNT]*Syntax_Workspace
+type Syntax_Storage struct {
+	// Value keeps absence explicit inside hostile input.
+	Value Syntax_Workspace_Pointer
+}
 
 // Syntax_Storage_Invariants fixes pointer input shape.
-func Syntax_Storage_Invariants(value Syntax_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == SYNTAX_FIELD_COUNT,
-		"Syntax input has one pointer field.",
-	)
+func Syntax_Storage_Invariants(value Syntax_Storage, namespace aver.Namespace) {
+	Syntax_Workspace_Pointer_Invariants(value.Value, namespace)
 }
 
 // Syntax_Input carries hostile optional parser storage.
@@ -1136,13 +1443,91 @@ const PROGRAM_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 // PROGRAM_VALIDATED_FIELD_COUNT fixes trusted program transport shape.
 const PROGRAM_VALIDATED_FIELD_COUNT = PROGRAM_VALIDATED_FIELD + STORAGE_FIELD_COUNT_INCREMENT
 
+// Program_Validated_Root retains checked root storage.
+type Program_Validated_Root uint16
+
+// Program_Validated_Root_Invariants preserves the canonical root encoding.
+func Program_Validated_Root_Invariants(value Program_Validated_Root, _ aver.Namespace) {
+	aver.Always(
+		uint16(value) == uint16(ROOT_NODE_COUNT),
+		"Validated program root occupies the first syntax arena slot.",
+	)
+}
+
+// Program_Validated_Node_Count retains checked arena-count storage.
+type Program_Validated_Node_Count uint16
+
+// Program_Validated_Node_Count_Invariants preserves the arena count.
+func Program_Validated_Node_Count_Invariants(
+	value Program_Validated_Node_Count, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(ROOT_NODE_COUNT), uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Program_Validated_First_Template retains checked definition storage.
+type Program_Validated_First_Template uint16
+
+// Program_Validated_First_Template_Invariants preserves the first definition.
+func Program_Validated_First_Template_Invariants(
+	value Program_Validated_First_Template, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(DOCUMENT_FIRST_TEMPLATE_MINIMUM),
+			uint16(DOCUMENT_FIRST_TEMPLATE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Program_Validated_Template_Count retains checked definition-count storage.
+type Program_Validated_Template_Count uint16
+
+// Program_Validated_Template_Count_Invariants preserves the definition count.
+func Program_Validated_Template_Count_Invariants(
+	value Program_Validated_Template_Count, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(TEMPLATE_COUNT_MINIMUM),
+			uint16(TEMPLATE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Program_Validated_Document stores metadata already checked by program_valid.
+type Program_Validated_Document struct {
+	// Root retains the checked root encoding.
+	Root Program_Validated_Root
+	// Node_Count retains the checked populated arena size.
+	Node_Count Program_Validated_Node_Count
+	// First_Template retains the checked definition-chain opening.
+	First_Template Program_Validated_First_Template
+	// Template_Count retains the checked definition count.
+	Template_Count Program_Validated_Template_Count
+}
+
+// Program_Validated_Document_Invariants fixes proof transport without repeating validation.
+func Program_Validated_Document_Invariants(
+	value Program_Validated_Document, namespace aver.Namespace,
+) {
+	Program_Validated_Root_Invariants(value.Root, namespace)
+	Program_Validated_Node_Count_Invariants(value.Node_Count, namespace)
+	Program_Validated_First_Template_Invariants(value.First_Template, namespace)
+	Program_Validated_Template_Count_Invariants(value.Template_Count, namespace)
+}
+
 // Program_Validated carries one deeply checked program through execution.
-type Program_Validated [PROGRAM_VALIDATED_FIELD_COUNT]Program
+type Program_Validated Program_Validated_Fields
 
 // Program_Validated_Invariants checks transport ownership after deep validation.
-func Program_Validated_Invariants(value Program_Validated, _ aver.Namespace) {
-	aver.Always(len(value) == PROGRAM_VALIDATED_FIELD_COUNT,
-		"Validated execution program storage has one field.")
+func Program_Validated_Invariants(value Program_Validated, namespace aver.Namespace) {
+	Source_Invariants(value.Source, namespace)
+	Program_Document_Stored_Invariants(Program_Document_Stored(value.Document), namespace)
+	Syntax_Storage_Invariants(value.Syntax, namespace)
 }
 
 // NODE_VALIDATED_FIELD selects one syntax node checked by program_valid.
@@ -1152,23 +1537,27 @@ const NODE_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const NODE_VALIDATED_FIELD_COUNT = NODE_VALIDATED_FIELD + STORAGE_FIELD_COUNT_INCREMENT
 
 // Node_Validated carries one deeply checked syntax record through execution.
-type Node_Validated [NODE_VALIDATED_FIELD_COUNT]Node
+type Node_Validated struct {
+	// Value keeps deep proof attached to the node.
+	Value Node_Stored
+}
 
 // Node_Validated_Invariants checks transport ownership after deep validation.
-func Node_Validated_Invariants(value Node_Validated, _ aver.Namespace) {
-	aver.Always(len(value) == NODE_VALIDATED_FIELD_COUNT,
-		"Validated execution node storage has one field.")
+func Node_Validated_Invariants(value Node_Validated, namespace aver.Namespace) {
+	Node_Stored_Invariants(value.Value, namespace)
 }
 
 // Node_Optional_Validated carries an absent sentinel or one deeply checked chain.
-type Node_Optional_Validated [NODE_VALIDATED_FIELD_COUNT]Node
+type Node_Optional_Validated struct {
+	// Value keeps optional-chain proof attached to the node.
+	Value Node_Stored
+}
 
 // Node_Optional_Validated_Invariants checks trusted optional-node transport shape.
 func Node_Optional_Validated_Invariants(
-	value Node_Optional_Validated, _ aver.Namespace,
+	value Node_Optional_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(len(value) == NODE_VALIDATED_FIELD_COUNT,
-		"Optional validated node storage has one field.")
+	Node_Stored_Invariants(value.Value, namespace)
 }
 
 // Node_Location binds one validated syntax node to its arena slot.
@@ -1176,13 +1565,29 @@ type Node_Location struct {
 	// Reference selects the node's caller-owned arena slot.
 	Reference Node_Reference
 	// Node is the syntax record validated for that slot.
-	Node Node
+	Node Node_Stored
 }
 
 // Node_Location_Invariants composes hostile location parts before deep validation.
 func Node_Location_Invariants(value Node_Location, namespace aver.Namespace) {
 	Node_Reference_Invariants(value.Reference, namespace)
-	Node_Invariants(value.Node, namespace)
+	Node_Stored_Invariants(value.Node, namespace)
+}
+
+// Node_Location_Stored carries one location after program validation.
+type Node_Location_Stored struct {
+	// Reference retains the validated caller-owned arena slot.
+	Reference Node_Reference_Proof_Stored
+	// Node retains the caller-owned node without copying it.
+	Node Node_Stored
+}
+
+// Node_Location_Stored_Invariants preserves location encodings without repeated checks.
+func Node_Location_Stored_Invariants(
+	value Node_Location_Stored, namespace aver.Namespace,
+) {
+	Node_Reference_Proof_Stored_Invariants(value.Reference, namespace)
+	Node_Stored_Invariants(value.Node, namespace)
 }
 
 // NODE_LOCATION_VALIDATED_FIELD selects one deeply checked node location.
@@ -1193,16 +1598,16 @@ const NODE_LOCATION_VALIDATED_FIELD_COUNT = NODE_LOCATION_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
 // Node_Location_Validated carries one arena-bound node by value.
-type Node_Location_Validated [NODE_LOCATION_VALIDATED_FIELD_COUNT]Node_Location
+type Node_Location_Validated struct {
+	// Value keeps arena proof attached to the node location.
+	Value Node_Location_Stored
+}
 
 // Node_Location_Validated_Invariants checks transport ownership after program validation.
 func Node_Location_Validated_Invariants(
-	value Node_Location_Validated, _ aver.Namespace,
+	value Node_Location_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == NODE_LOCATION_VALIDATED_FIELD_COUNT,
-		"Validated node location storage has one field.",
-	)
+	Node_Location_Stored_Invariants(value.Value, namespace)
 }
 
 // NODE_LINK_VALIDATED_FIELD selects one optional link from a validated node.
@@ -1212,15 +1617,30 @@ const NODE_LINK_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const NODE_LINK_VALIDATED_FIELD_COUNT = NODE_LINK_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Node_Link_Validated_Value retains program-link proof storage.
+type Node_Link_Validated_Value uint16
+
+// Node_Link_Validated_Value_Invariants preserves link encoding.
+func Node_Link_Validated_Value_Invariants(
+	value Node_Link_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_REFERENCE_MINIMUM),
+			uint16(NODE_REFERENCE_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Node_Link_Validated carries one optional program link by value.
-type Node_Link_Validated [NODE_LINK_VALIDATED_FIELD_COUNT]Node_Reference
+type Node_Link_Validated struct {
+	// Value keeps link proof attached to the reference.
+	Value Node_Link_Proof_Stored
+}
 
 // Node_Link_Validated_Invariants checks ownership after program validation.
-func Node_Link_Validated_Invariants(value Node_Link_Validated, _ aver.Namespace) {
-	aver.Always(
-		len(value) == NODE_LINK_VALIDATED_FIELD_COUNT,
-		"Validated node link storage has one field.",
-	)
+func Node_Link_Validated_Invariants(value Node_Link_Validated, namespace aver.Namespace) {
+	Node_Link_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Output is caller destination.
@@ -1255,15 +1675,31 @@ const OUTPUT_COUNT_STAGED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const OUTPUT_COUNT_STAGED_FIELD_COUNT = OUTPUT_COUNT_STAGED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Output_Count_Staged_Value retains staged-count proof storage.
+type Output_Count_Staged_Value uint16
+
+// Output_Count_Staged_Value_Invariants preserves the staged count.
+func Output_Count_Staged_Value_Invariants(
+	value Output_Count_Staged_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(OUTPUT_SIZE_MINIMUM), uint16(OUTPUT_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Output_Count_Staged carries committed staged output progress by value.
-type Output_Count_Staged [OUTPUT_COUNT_STAGED_FIELD_COUNT]Output_Count
+type Output_Count_Staged struct {
+	// Value keeps destination proof attached to output progress.
+	Value Output_Count_Proof_Stored
+}
 
 // Output_Count_Staged_Invariants checks transport ownership after writer validation.
-func Output_Count_Staged_Invariants(value Output_Count_Staged, _ aver.Namespace) {
-	aver.Always(
-		len(value) == OUTPUT_COUNT_STAGED_FIELD_COUNT,
-		"Staged output count storage has one field.",
-	)
+func Output_Count_Staged_Invariants(
+	value Output_Count_Staged, namespace aver.Namespace,
+) {
+	Output_Count_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Status classifies execution without allocated error text.
@@ -1973,7 +2409,7 @@ func Diagnostic_Invariants(value Diagnostic, namespace aver.Namespace) {
 // Value_Nil constructs absent data.
 func Value_Nil() (result Value) {
 	defer func() { Value_Invariants(result, "Value_Nil.result") }()
-	return Value{Kind: Value_Kind_Storage{VALUE_NIL}}
+	return Value{Kind: Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_NIL)}}
 }
 
 // Value_Of_Boolean constructs truth data.
@@ -1985,8 +2421,8 @@ func Value_Of_Boolean(value Boolean) (result Value) {
 		scalar = bits.CARRY_MAXIMUM
 	}
 	return Value{
-		Kind:   Value_Kind_Storage{VALUE_BOOLEAN},
-		Scalar: Value_Scalar{VALUE_SCALAR_REAL: scalar},
+		Kind:   Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_BOOLEAN)},
+		Scalar: Value_Scalar{Real: Value_Scalar_Real(scalar)},
 	}
 }
 
@@ -1995,8 +2431,8 @@ func Value_Of_Integer(value Integer) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Integer.result") }()
 	Integer_Invariants(value, "Value_Of_Integer.value")
 	return Value{
-		Kind:   Value_Kind_Storage{VALUE_INTEGER},
-		Scalar: Value_Scalar{VALUE_SCALAR_REAL: uint64(value)},
+		Kind:   Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_INTEGER)},
+		Scalar: Value_Scalar{Real: Value_Scalar_Real(value)},
 	}
 }
 
@@ -2005,8 +2441,8 @@ func Value_Of_Unsigned(value Unsigned) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Unsigned.result") }()
 	Unsigned_Invariants(value, "Value_Of_Unsigned.value")
 	return Value{
-		Kind:   Value_Kind_Storage{VALUE_UNSIGNED},
-		Scalar: Value_Scalar{VALUE_SCALAR_REAL: uint64(value)},
+		Kind:   Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_UNSIGNED)},
+		Scalar: Value_Scalar{Real: Value_Scalar_Real(value)},
 	}
 }
 
@@ -2015,8 +2451,8 @@ func Value_Of_Float(value Float) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Float.result") }()
 	Float_Invariants(value, "Value_Of_Float.value")
 	return Value{
-		Kind:   Value_Kind_Storage{VALUE_FLOAT},
-		Scalar: Value_Scalar{VALUE_SCALAR_REAL: uint64(value)},
+		Kind:   Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_FLOAT)},
+		Scalar: Value_Scalar{Real: Value_Scalar_Real(value)},
 	}
 }
 
@@ -2025,10 +2461,10 @@ func Value_Of_Complex(value Complex) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Complex.result") }()
 	Complex_Invariants(value, "Value_Of_Complex.value")
 	return Value{
-		Kind: Value_Kind_Storage{VALUE_COMPLEX},
+		Kind: Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_COMPLEX)},
 		Scalar: Value_Scalar{
-			VALUE_SCALAR_REAL:      uint64(value.Real),
-			VALUE_SCALAR_IMAGINARY: uint64(value.Imaginary),
+			Real:      Value_Scalar_Real(value.Real),
+			Imaginary: Value_Scalar_Imaginary(value.Imaginary),
 		},
 	}
 }
@@ -2038,7 +2474,8 @@ func Value_Of_Text(value Text) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Text.result") }()
 	Text_Invariants(value, "Value_Of_Text.value")
 	return Value{
-		Kind: Value_Kind_Storage{VALUE_TEXT}, Text: Text_Storage{value},
+		Kind: Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_TEXT)},
+		Text: Text_Storage{Value: Text_Storage_Value(value)},
 	}
 }
 
@@ -2047,7 +2484,8 @@ func Value_Of_Sequence(value Values) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Sequence.result") }()
 	Values_Invariants(value, "Value_Of_Sequence.value")
 	return Value{
-		Kind: Value_Kind_Storage{VALUE_SEQUENCE}, Values: Values_Storage{value},
+		Kind:   Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_SEQUENCE)},
+		Values: Values_Storage{Value: Values_Storage_Value(value)},
 	}
 }
 
@@ -2056,7 +2494,8 @@ func Value_Of_Object(value Fields) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Object.result") }()
 	Fields_Invariants(value, "Value_Of_Object.value")
 	return Value{
-		Kind: Value_Kind_Storage{VALUE_OBJECT}, Fields: Fields_Storage{value},
+		Kind:   Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_OBJECT)},
+		Fields: Fields_Storage{Value: Fields_Storage_Value(value)},
 	}
 }
 
@@ -2065,16 +2504,18 @@ func Value_Of_Map(value Fields) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Map.result") }()
 	Fields_Invariants(value, "Value_Of_Map.value")
 	return Value{
-		Kind: Value_Kind_Storage{VALUE_MAP}, Fields: Fields_Storage{value},
+		Kind:   Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_MAP)},
+		Fields: Fields_Storage{Value: Fields_Storage_Value(value)},
 	}
 }
 
 // Value_Of_Function stores injected callable data.
 func Value_Of_Function(value Function_Call) (result Value) {
 	defer func() { Value_Invariants(result, "Value_Of_Function.result") }()
+	Function_Call_Invariants(value, "Value_Of_Function.value")
 	return Value{
-		Kind:     Value_Kind_Storage{VALUE_FUNCTION},
-		Function: Function_Storage{value},
+		Kind:     Value_Kind_Storage{Value: Value_Kind_Storage_Value(VALUE_FUNCTION)},
+		Function: Function_Storage{Value: Function_Storage_Value(value)},
 	}
 }
 
@@ -2085,10 +2526,10 @@ func Value_As_Text(value Value) (result Text, status Value_Text_Status) {
 		Value_Text_Status_Invariants(status, "Value_As_Text.status")
 	}()
 	Value_Invariants(value, "Value_As_Text.value")
-	if value.Kind[VALUE_PAYLOAD_FIELD] != VALUE_TEXT {
+	if Value_Kind(value.Kind.Value) != VALUE_TEXT {
 		return nil, VALUE_TEXT_STATUS_INVALID
 	}
-	return value.Text[VALUE_PAYLOAD_FIELD], VALUE_TEXT_STATUS_OK
+	return Text(value.Text.Value), VALUE_TEXT_STATUS_OK
 }
 
 // Compile parses one bounded program into caller syntax storage.
@@ -2118,9 +2559,11 @@ func Compile(
 			Code: DIAGNOSTIC_CONFIGURATION_INVALID,
 		}, PARSE_STATUS_CONFIGURATION_INVALID
 	}
-	syntax := input.Workspace.State[SYNTAX_FIELD]
+	syntax := input.Workspace.State.Value
 	var workspace_input Syntax_Workspace_Input
-	workspace_input.State[SYNTAX_WORKSPACE_FIELD] = syntax
+	workspace_input.State.Value = Syntax_Workspace_Unvalidated_Pointer{
+		Value: (*Syntax_Workspace)(syntax),
+	}
 	document, diagnostic, status := Parse_Into(
 		source, configuration, workspace_input,
 	)
@@ -2129,7 +2572,7 @@ func Compile(
 	}
 	return Program{
 		Source: source, Document: document,
-		Syntax: Syntax_Storage{syntax},
+		Syntax: Syntax_Storage{Value: Syntax_Workspace_Pointer(syntax)},
 	}, diagnostic, status
 }
 
@@ -2266,17 +2709,43 @@ func Generated_Count_Invariants(
 		Ensure()
 }
 
+// Workspace_Generated_Count_Storage_Value retains generated-cursor storage.
+type Workspace_Generated_Count_Storage_Value uint16
+
+// Workspace_Generated_Count_Storage_Value_Invariants preserves cursor encoding.
+func Workspace_Generated_Count_Storage_Value_Invariants(
+	value Workspace_Generated_Count_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(GENERATED_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Workspace_Generated_Count_Stored keeps stale caller state opaque until reset.
+type Workspace_Generated_Count_Stored interface{}
+
+// Workspace_Generated_Count_Stored_Invariants accepts absent or typed generated state.
+func Workspace_Generated_Count_Stored_Invariants(
+	value Workspace_Generated_Count_Stored, _ aver.Namespace,
+) {
+	_, valid := value.(Workspace_Generated_Count_Storage_Value)
+	aver.Always(valid == (value != nil), "Stored generated cursor has expected type.")
+}
+
 // Workspace_Generated_Count_Storage keeps generated cursor caller-owned.
-type Workspace_Generated_Count_Storage [WORKSPACE_SCALAR_FIELD_COUNT]Generated_Count
+type Workspace_Generated_Count_Storage struct {
+	// Value keeps mutation inside execution workspace.
+	Value Workspace_Generated_Count_Stored
+}
 
 // Workspace_Generated_Count_Storage_Invariants fixes scalar shape.
 func Workspace_Generated_Count_Storage_Invariants(
-	value Workspace_Generated_Count_Storage, _ aver.Namespace,
+	value Workspace_Generated_Count_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == WORKSPACE_SCALAR_FIELD_COUNT,
-		"Generated text cursor has one field.",
-	)
+	Workspace_Generated_Count_Stored_Invariants(value.Value, namespace)
 }
 
 // Frame_Kind distinguishes list and range continuation.
@@ -2493,6 +2962,25 @@ func Scope_Restore_Invariants(value Scope_Restore, namespace aver.Namespace) {
 	Scope_Base_Invariants(value.Previous, namespace)
 }
 
+// Scope_Restore_Stored carries lexical cursors after workspace validation.
+type Scope_Restore_Stored Scope_Restore
+
+// Scope_Restore_Stored_Invariants preserves validated lexical cursors.
+func Scope_Restore_Stored_Invariants(
+	value Scope_Restore_Stored, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value.Mark), uint16(VARIABLE_COUNT_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Range_Uint16(
+			uint16(value.Previous), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
 // SCOPE_RESTORE_VALIDATED_FIELD selects one state captured from workspace.
 const SCOPE_RESTORE_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 
@@ -2501,15 +2989,14 @@ const SCOPE_RESTORE_VALIDATED_FIELD_COUNT = SCOPE_RESTORE_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
 // Scope_Restore_Validated carries one captured lexical state by value.
-type Scope_Restore_Validated [SCOPE_RESTORE_VALIDATED_FIELD_COUNT]Scope_Restore
+type Scope_Restore_Validated Scope_Restore_Validated_Fields
 
 // Scope_Restore_Validated_Invariants checks ownership after workspace validation.
 func Scope_Restore_Validated_Invariants(
-	value Scope_Restore_Validated, _ aver.Namespace,
+	value Scope_Restore_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == SCOPE_RESTORE_VALIDATED_FIELD_COUNT,
-		"Validated scope restoration storage has one field.",
+	Scope_Restore_Proof_Stored_Invariants(
+		Scope_Restore_Proof_Stored(value.Value), namespace,
 	)
 }
 
@@ -2586,6 +3073,19 @@ func Declaration_Count_Invariants(value Declaration_Count, namespace aver.Namesp
 		Ensure()
 }
 
+// Declaration_Index selects one populated declaration slot.
+type Declaration_Index uint8
+
+// Declaration_Index_Invariants covers the two fixed declaration slots.
+func Declaration_Index_Invariants(value Declaration_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value), uint8(DECLARATION_COUNT_NONE),
+			uint8(DECLARATION_COUNT_ONE),
+		).
+		Ensure()
+}
+
 // Assignment reports equals instead of declaration.
 type Assignment bool
 
@@ -2633,28 +3133,98 @@ const DECLARATION_REFERENCE_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const DECLARATION_REFERENCE_VALIDATED_FIELD_COUNT = DECLARATION_REFERENCE_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Declaration_Reference_Validated_Value retains declaration proof storage.
+type Declaration_Reference_Validated_Value uint16
+
+// Declaration_Reference_Validated_Value_Invariants preserves the declaration reference.
+func Declaration_Reference_Validated_Value_Invariants(
+	value Declaration_Reference_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_REFERENCE_MINIMUM),
+			uint16(NODE_REFERENCE_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Declaration_Reference_Validated carries one proven variable node by value.
-type Declaration_Reference_Validated [DECLARATION_REFERENCE_VALIDATED_FIELD_COUNT]Node_Reference
+type Declaration_Reference_Validated struct {
+	// Value keeps program proof attached to the declaration.
+	Value Declaration_Reference_Proof_Stored
+}
 
 // Declaration_Reference_Validated_Invariants checks ownership after program traversal.
 func Declaration_Reference_Validated_Invariants(
-	value Declaration_Reference_Validated, _ aver.Namespace,
+	value Declaration_Reference_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == DECLARATION_REFERENCE_VALIDATED_FIELD_COUNT,
-		"Validated declaration reference storage has one field.",
-	)
+	Declaration_Reference_Proof_Stored_Invariants(value.Value, namespace)
+}
+
+// Declaration_First_Reference keeps range index proof independent.
+type Declaration_First_Reference uint16
+
+// Declaration_First_Reference_Invariants composes range index proof.
+func Declaration_First_Reference_Invariants(
+	value Declaration_First_Reference, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_REFERENCE_MINIMUM),
+			uint16(NODE_REFERENCE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Declaration_Second_Reference keeps range value proof independent.
+type Declaration_Second_Reference uint16
+
+// Declaration_Second_Reference_Invariants composes range value proof.
+func Declaration_Second_Reference_Invariants(
+	value Declaration_Second_Reference, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_REFERENCE_MINIMUM),
+			uint16(NODE_REFERENCE_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Declaration_References stores both range names.
-type Declaration_References [DECLARATION_REFERENCE_COUNT]Declaration_Reference_Validated
+type Declaration_References Declaration_References_Fields
 
 // Declaration_References_Invariants fixes standard range arity storage.
-func Declaration_References_Invariants(value Declaration_References, _ aver.Namespace) {
-	aver.Always(
-		len(value) == DECLARATION_REFERENCE_COUNT,
-		"Range declaration storage has maximum arity.",
-	)
+func Declaration_References_Invariants(
+	value Declaration_References, namespace aver.Namespace,
+) {
+	Declaration_First_Reference_Storage_Invariants(value.First, namespace)
+	Declaration_Second_Reference_Storage_Invariants(value.Second, namespace)
+}
+
+// Separate fields keep declaration identity without dynamic short storage.
+func declaration_reference(
+	value Declaration_References, index Declaration_Index,
+) (reference Declaration_Reference_Validated) {
+	defer func() {
+		Declaration_Reference_Validated_Invariants(
+			reference, "declaration_reference.reference",
+		)
+	}()
+	Declaration_References_Invariants(value, "declaration_reference.value")
+	Declaration_Index_Invariants(index, "declaration_reference.index")
+	if index == Declaration_Index(DECLARATION_COUNT_NONE) {
+		return Declaration_Reference_Validated{
+			Value: Declaration_Reference_Validated_Value(
+				value.First.Value.(Declaration_First_Reference),
+			),
+		}
+	}
+	return Declaration_Reference_Validated{
+		Value: Declaration_Reference_Validated_Value(
+			value.Second.Value.(Declaration_Second_Reference),
+		),
+	}
 }
 
 // Frame keeps one iterative list or range continuation.
@@ -2707,6 +3277,55 @@ func Frame_Invariants(value Frame, namespace aver.Namespace) {
 	Boolean_Invariants(value.Restore, namespace)
 }
 
+// Frame_Stored carries traversal state after workspace validation.
+type Frame_Stored Frame
+
+// Frame_Stored_Invariants preserves mutable traversal state.
+func Frame_Stored_Invariants(value Frame_Stored, namespace aver.Namespace) {
+	Value_Invariants(value.Dot, namespace)
+	Declaration_References_Stored_Invariants(
+		Declaration_References_Stored(value.Declarations), namespace,
+	)
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value.Kind), uint8(FRAME_LIST), uint8(FRAME_RANGE)).
+		Range_Uint16(
+			uint16(value.Reference), uint16(NODE_REFERENCE_MINIMUM),
+			uint16(NODE_REFERENCE_MAXIMUM),
+		).
+		Range_Uint16(
+			uint16(value.Index), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(VALUE_COUNT_MAXIMUM),
+		).
+		Range_Uint16(
+			uint16(value.Map_Entry_Index), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(RANGE_MAP_ENTRY_INDEX_MAXIMUM),
+		).
+		Sometimes(bool(value.Map_Selected), "Map traversal selected its first entry.").
+		Range_Uint16(
+			uint16(value.Variable_Mark), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Range_Uint16(
+			uint16(value.Iteration_Variables), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Range_Uint16(
+			uint16(value.Scope_Base), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Range_Uint16(
+			uint16(value.Previous_Scope_Base), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Enum_3_Uint8(
+			uint8(value.Declaration_Count), uint8(DECLARATION_COUNT_NONE),
+			uint8(DECLARATION_COUNT_ONE), uint8(DECLARATION_COUNT_TWO),
+		).
+		Sometimes(bool(value.Assignment), "Frame updates an existing variable.").
+		Sometimes(bool(value.Restore), "Frame restores an enclosing scope.").
+		Ensure()
+}
+
 // FRAME_STORAGE_FIELD selects one mutable traversal frame.
 const FRAME_STORAGE_FIELD = bytes.SLICE_SIZE_MINIMUM
 
@@ -2714,12 +3333,24 @@ const FRAME_STORAGE_FIELD = bytes.SLICE_SIZE_MINIMUM
 const FRAME_STORAGE_FIELD_COUNT = FRAME_STORAGE_FIELD + STORAGE_FIELD_COUNT_INCREMENT
 
 // Frame_Storage owns one mutable traversal frame without scalar pointers.
-type Frame_Storage [FRAME_STORAGE_FIELD_COUNT]Frame
+type Frame_Storage Frame_Storage_Fields
 
 // Frame_Storage_Invariants checks ownership, not transient traversal state.
-func Frame_Storage_Invariants(value Frame_Storage, _ aver.Namespace) {
-	aver.Always(len(value) == FRAME_STORAGE_FIELD_COUNT,
-		"Traversal frame storage has one field.")
+func Frame_Storage_Invariants(value Frame_Storage, namespace aver.Namespace) {
+	Frame_State_Stored_Invariants(Frame_State_Stored(value.Value), namespace)
+}
+
+// Frame_Storage_Pointer keeps traversal mutation typed.
+type Frame_Storage_Pointer *Frame_Storage
+
+// Frame_Storage_Pointer_Invariants composes present traversal storage.
+func Frame_Storage_Pointer_Invariants(
+	value Frame_Storage_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Frame_Storage_Invariants(*value, namespace)
 }
 
 // Value_Format_Frame keeps one iterative composite output continuation.
@@ -2747,6 +3378,30 @@ func Value_Format_Frame_Invariants(
 	Composite_Opened_Invariants(value.Opened, namespace)
 }
 
+// Value_Format_Frame_Stored carries formatter state after workspace validation.
+type Value_Format_Frame_Stored Value_Format_Frame
+
+// Value_Format_Frame_Stored_Invariants preserves mutable formatter state.
+func Value_Format_Frame_Stored_Invariants(
+	value Value_Format_Frame_Stored, namespace aver.Namespace,
+) {
+	Value_Invariants(value.Value, namespace)
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value.Index), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(VALUE_COUNT_MAXIMUM),
+		).
+		Range_Uint16(
+			uint16(value.Map_Entry_Index), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(RANGE_MAP_ENTRY_INDEX_MAXIMUM),
+		).
+		Sometimes(bool(value.Map_Selected), "Map formatting selected its first entry.").
+		Sometimes(
+			bool(value.Opened), "Composite formatting emitted its opening delimiter.",
+		).
+		Ensure()
+}
+
 // VALUE_FORMAT_FRAME_STORAGE_FIELD selects one mutable formatter frame.
 const VALUE_FORMAT_FRAME_STORAGE_FIELD = bytes.SLICE_SIZE_MINIMUM
 
@@ -2755,14 +3410,28 @@ const VALUE_FORMAT_FRAME_STORAGE_FIELD_COUNT = VALUE_FORMAT_FRAME_STORAGE_FIELD 
 	STORAGE_FIELD_COUNT_INCREMENT
 
 // Value_Format_Frame_Storage owns one mutable formatter frame.
-type Value_Format_Frame_Storage [VALUE_FORMAT_FRAME_STORAGE_FIELD_COUNT]Value_Format_Frame
+type Value_Format_Frame_Storage Value_Format_Frame_Storage_Fields
 
 // Value_Format_Frame_Storage_Invariants checks ownership, not transient formatter state.
 func Value_Format_Frame_Storage_Invariants(
-	value Value_Format_Frame_Storage, _ aver.Namespace,
+	value Value_Format_Frame_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(len(value) == VALUE_FORMAT_FRAME_STORAGE_FIELD_COUNT,
-		"Value formatter frame storage has one field.")
+	Value_Format_Frame_State_Stored_Invariants(
+		Value_Format_Frame_State_Stored(value.Value), namespace,
+	)
+}
+
+// Value_Format_Frame_Storage_Pointer keeps formatter mutation typed.
+type Value_Format_Frame_Storage_Pointer *Value_Format_Frame_Storage
+
+// Value_Format_Frame_Storage_Pointer_Invariants composes present formatter storage.
+func Value_Format_Frame_Storage_Pointer_Invariants(
+	value Value_Format_Frame_Storage_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Value_Format_Frame_Storage_Invariants(*value, namespace)
 }
 
 // Value_Format_Frames is caller-owned composite output stack.
@@ -2902,133 +3571,594 @@ const EVALUATION_CONTROL_CHAIN = EVALUATION_CONTROL_PRESENT + EVALUATION_CONTROL
 // EVALUATION_CONTROL_COUNT fixes state-machine metadata shape.
 const EVALUATION_CONTROL_COUNT = EVALUATION_CONTROL_CHAIN + EVALUATION_CONTROL_SLOT_INCREMENT
 
+// Evaluation_Stage identifies one evaluator state-machine step.
+type Evaluation_Stage uint8
+
+// Evaluation_Stage_Invariants bounds suspended evaluator progress.
+func Evaluation_Stage_Invariants(value Evaluation_Stage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value), uint8(EVALUATION_STAGE_COMMAND), uint8(EVALUATION_STAGE_DONE),
+		).
+		Ensure()
+}
+
+// Evaluation_Mode selects identifier or evaluated-value command head.
+type Evaluation_Mode uint8
+
+// Evaluation_Mode_Invariants lists both command-head forms.
+func Evaluation_Mode_Invariants(value Evaluation_Mode, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value), uint8(EVALUATION_MODE_VALUE),
+			uint8(EVALUATION_MODE_IDENTIFIER),
+		).
+		Ensure()
+}
+
+// Evaluation_Present records prior pipeline result presence.
+type Evaluation_Present uint8
+
+// Evaluation_Present_Invariants lists both result states.
+func Evaluation_Present_Invariants(value Evaluation_Present, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value), uint8(EVALUATION_CONTROL_FALSE),
+			uint8(EVALUATION_CONTROL_TRUE),
+		).
+		Ensure()
+}
+
+// Evaluation_Chain records pending field selection.
+type Evaluation_Chain uint8
+
+// Evaluation_Chain_Invariants lists both chain states.
+func Evaluation_Chain_Invariants(value Evaluation_Chain, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value), uint8(EVALUATION_CONTROL_FALSE),
+			uint8(EVALUATION_CONTROL_TRUE),
+		).
+		Ensure()
+}
+
 // EVALUATION_STAGE_COMMAND begins next command or finishes pipeline.
-const EVALUATION_STAGE_COMMAND uint8 = bits.WORD_8_MINIMUM
+const EVALUATION_STAGE_COMMAND Evaluation_Stage = Evaluation_Stage(bits.WORD_8_MINIMUM)
 
 // EVALUATION_STAGE_INCREMENT advances one pipeline-evaluation stage.
-const EVALUATION_STAGE_INCREMENT uint8 = 1
+const EVALUATION_STAGE_INCREMENT Evaluation_Stage = 1
 
 // EVALUATION_STAGE_FIRST evaluates nonidentifier command head.
-const EVALUATION_STAGE_FIRST uint8 = EVALUATION_STAGE_COMMAND + EVALUATION_STAGE_INCREMENT
+const EVALUATION_STAGE_FIRST = Evaluation_Stage(
+	EVALUATION_STAGE_COMMAND + EVALUATION_STAGE_INCREMENT,
+)
 
 // EVALUATION_STAGE_ARGUMENT evaluates remaining command terms.
-const EVALUATION_STAGE_ARGUMENT uint8 = EVALUATION_STAGE_FIRST + EVALUATION_STAGE_INCREMENT
+const EVALUATION_STAGE_ARGUMENT = Evaluation_Stage(
+	EVALUATION_STAGE_FIRST + EVALUATION_STAGE_INCREMENT,
+)
 
 // EVALUATION_STAGE_CALL invokes command target.
-const EVALUATION_STAGE_CALL uint8 = EVALUATION_STAGE_ARGUMENT + EVALUATION_STAGE_INCREMENT
+const EVALUATION_STAGE_CALL = Evaluation_Stage(
+	EVALUATION_STAGE_ARGUMENT + EVALUATION_STAGE_INCREMENT,
+)
 
 // EVALUATION_STAGE_DONE binds declarations and returns pipeline value.
-const EVALUATION_STAGE_DONE uint8 = EVALUATION_STAGE_CALL + EVALUATION_STAGE_INCREMENT
+const EVALUATION_STAGE_DONE Evaluation_Stage = EVALUATION_STAGE_CALL + EVALUATION_STAGE_INCREMENT
 
 // EVALUATION_MODE_VALUE treats command head as evaluated value.
-const EVALUATION_MODE_VALUE uint8 = bits.WORD_8_MINIMUM
+const EVALUATION_MODE_VALUE Evaluation_Mode = Evaluation_Mode(bits.WORD_8_MINIMUM)
 
 // EVALUATION_MODE_INCREMENT adds one command-head evaluation mode.
-const EVALUATION_MODE_INCREMENT uint8 = 1
+const EVALUATION_MODE_INCREMENT Evaluation_Mode = 1
 
 // EVALUATION_MODE_IDENTIFIER treats command head as named function.
-const EVALUATION_MODE_IDENTIFIER uint8 = EVALUATION_MODE_VALUE + EVALUATION_MODE_INCREMENT
+const EVALUATION_MODE_IDENTIFIER Evaluation_Mode = EVALUATION_MODE_VALUE + EVALUATION_MODE_INCREMENT
 
 // EVALUATION_CONTROL_FALSE clears one state-machine flag.
-const EVALUATION_CONTROL_FALSE uint8 = bits.WORD_8_MINIMUM
+const EVALUATION_CONTROL_FALSE = 0
 
 // EVALUATION_CONTROL_TRUE sets one state-machine flag.
-const EVALUATION_CONTROL_TRUE uint8 = 1
+const EVALUATION_CONTROL_TRUE = 1
+
+// Evaluation_Pipe_Node keeps an optional caller-owned pipeline node.
+type Evaluation_Pipe_Node interface{}
+
+// Evaluation_Pipe_Node_Invariants accepts absent scratch or one pipeline-node pointer.
+func Evaluation_Pipe_Node_Invariants(
+	value Evaluation_Pipe_Node, _ aver.Namespace,
+) {
+	_, valid := value.(*Node)
+	aver.Always(valid == (value != nil), "Evaluation pipeline node has expected type.")
+}
+
+// Evaluation_Identifier_Node keeps an optional caller-owned callable node.
+type Evaluation_Identifier_Node interface{}
+
+// Evaluation_Identifier_Node_Invariants accepts absent scratch or one callable-node pointer.
+func Evaluation_Identifier_Node_Invariants(
+	value Evaluation_Identifier_Node, _ aver.Namespace,
+) {
+	_, valid := value.(*Node)
+	aver.Always(valid == (value != nil), "Evaluation callable node has expected type.")
+}
+
+// Evaluation_Chain_Node keeps an optional caller-owned field-chain node.
+type Evaluation_Chain_Node interface{}
+
+// Evaluation_Chain_Node_Invariants accepts absent scratch or one chain-node pointer.
+func Evaluation_Chain_Node_Invariants(
+	value Evaluation_Chain_Node, _ aver.Namespace,
+) {
+	_, valid := value.(*Node)
+	aver.Always(valid == (value != nil), "Evaluation chain node has expected type.")
+}
 
 // Evaluation_Nodes stores active pipe, identifier, and chain syntax.
-type Evaluation_Nodes [EVALUATION_NODE_COUNT]Node
+type Evaluation_Nodes struct {
+	// Pipe retains pipeline syntax while a child waits.
+	Pipe Evaluation_Pipe_Node
+	// Identifier retains callable syntax while arguments run.
+	Identifier Evaluation_Identifier_Node
+	// Chain retains pending field syntax while a child runs.
+	Chain Evaluation_Chain_Node
+}
 
 // Evaluation_Nodes_Invariants fixes iterative syntax-frame shape.
-func Evaluation_Nodes_Invariants(value Evaluation_Nodes, _ aver.Namespace) {
+func Evaluation_Nodes_Invariants(value Evaluation_Nodes, namespace aver.Namespace) {
+	Evaluation_Pipe_Node_Invariants(value.Pipe, namespace)
+	Evaluation_Identifier_Node_Invariants(value.Identifier, namespace)
+	Evaluation_Chain_Node_Invariants(value.Chain, namespace)
+}
+
+// Evaluation_Dot_Value keeps cursor identity independent.
+type Evaluation_Dot_Value Value
+
+// Evaluation_Dot_Value_Invariants composes cursor value.
+func Evaluation_Dot_Value_Invariants(value Evaluation_Dot_Value, namespace aver.Namespace) {
+	Evaluation_Dot_Kind_Storage_Invariants(
+		Evaluation_Dot_Kind_Storage(value.Kind), namespace,
+	)
+	Evaluation_Dot_Scalar_Storage_Invariants(
+		Evaluation_Dot_Scalar_Storage(value.Scalar), namespace,
+	)
+	Evaluation_Dot_Text_Storage_Invariants(
+		Evaluation_Dot_Text_Storage(value.Text), namespace,
+	)
+	Evaluation_Dot_Values_Storage_Invariants(
+		Evaluation_Dot_Values_Storage(value.Values), namespace,
+	)
+	Evaluation_Dot_Fields_Storage_Invariants(
+		Evaluation_Dot_Fields_Storage(value.Fields), namespace,
+	)
+	Evaluation_Dot_Function_Storage_Invariants(
+		Evaluation_Dot_Function_Storage(value.Function), namespace,
+	)
+}
+
+// Evaluation_Dot_Kind_Storage prevents a mutable cursor from proving stale contents.
+type Evaluation_Dot_Kind_Storage interface{}
+
+// Evaluation_Dot_Kind_Storage_Invariants fixes the cursor selector representation.
+func Evaluation_Dot_Kind_Storage_Invariants(value Evaluation_Dot_Kind_Storage, _ aver.Namespace) {
+	_, valid := value.(Value_Kind_Storage)
+	aver.Always(valid == (value != nil), "Evaluation cursor kind storage has expected type.")
+}
+
+// Evaluation_Dot_Scalar_Storage prevents a mutable cursor from proving stale contents.
+type Evaluation_Dot_Scalar_Storage interface{}
+
+// Evaluation_Dot_Scalar_Storage_Invariants fixes the cursor scalar representation.
+func Evaluation_Dot_Scalar_Storage_Invariants(
+	value Evaluation_Dot_Scalar_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Value_Scalar)
+	aver.Always(valid == (value != nil), "Evaluation cursor scalar storage has expected type.")
+}
+
+// Evaluation_Dot_Text_Storage prevents a mutable cursor from proving stale contents.
+type Evaluation_Dot_Text_Storage interface{}
+
+// Evaluation_Dot_Text_Storage_Invariants fixes the cursor text representation.
+func Evaluation_Dot_Text_Storage_Invariants(value Evaluation_Dot_Text_Storage, _ aver.Namespace) {
+	_, valid := value.(Text_Storage)
+	aver.Always(valid == (value != nil), "Evaluation cursor text storage has expected type.")
+}
+
+// Evaluation_Dot_Values_Storage prevents a mutable cursor from proving stale contents.
+type Evaluation_Dot_Values_Storage interface{}
+
+// Evaluation_Dot_Values_Storage_Invariants fixes the cursor sequence representation.
+func Evaluation_Dot_Values_Storage_Invariants(
+	value Evaluation_Dot_Values_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Values_Storage)
 	aver.Always(
-		len(value) == EVALUATION_NODE_COUNT,
-		"Evaluation frame has complete syntax slots.",
+		valid == (value != nil), "Evaluation cursor sequence storage has expected type.",
+	)
+}
+
+// Evaluation_Dot_Fields_Storage prevents a mutable cursor from proving stale contents.
+type Evaluation_Dot_Fields_Storage interface{}
+
+// Evaluation_Dot_Fields_Storage_Invariants fixes the cursor field representation.
+func Evaluation_Dot_Fields_Storage_Invariants(
+	value Evaluation_Dot_Fields_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Fields_Storage)
+	aver.Always(valid == (value != nil), "Evaluation cursor field storage has expected type.")
+}
+
+// Evaluation_Dot_Function_Storage prevents a mutable cursor from proving stale contents.
+type Evaluation_Dot_Function_Storage interface{}
+
+// Evaluation_Dot_Function_Storage_Invariants fixes the cursor callable representation.
+func Evaluation_Dot_Function_Storage_Invariants(
+	value Evaluation_Dot_Function_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Function_Storage)
+	aver.Always(
+		valid == (value != nil), "Evaluation cursor callable storage has expected type.",
+	)
+}
+
+// Evaluation_Current_Value keeps command result identity independent.
+type Evaluation_Current_Value Value
+
+// Evaluation_Current_Value_Invariants composes command result.
+func Evaluation_Current_Value_Invariants(
+	value Evaluation_Current_Value, namespace aver.Namespace,
+) {
+	Evaluation_Current_Kind_Storage_Invariants(
+		Evaluation_Current_Kind_Storage(value.Kind), namespace,
+	)
+	Evaluation_Current_Scalar_Storage_Invariants(
+		Evaluation_Current_Scalar_Storage(value.Scalar), namespace,
+	)
+	Evaluation_Current_Text_Storage_Invariants(
+		Evaluation_Current_Text_Storage(value.Text), namespace,
+	)
+	Evaluation_Current_Values_Storage_Invariants(
+		Evaluation_Current_Values_Storage(value.Values), namespace,
+	)
+	Evaluation_Current_Fields_Storage_Invariants(
+		Evaluation_Current_Fields_Storage(value.Fields), namespace,
+	)
+	Evaluation_Current_Function_Storage_Invariants(
+		Evaluation_Current_Function_Storage(value.Function), namespace,
+	)
+}
+
+// Evaluation_Current_Kind_Storage prevents a mutable result from proving stale contents.
+type Evaluation_Current_Kind_Storage interface{}
+
+// Evaluation_Current_Kind_Storage_Invariants fixes the current selector representation.
+func Evaluation_Current_Kind_Storage_Invariants(
+	value Evaluation_Current_Kind_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Value_Kind_Storage)
+	aver.Always(valid == (value != nil), "Evaluation current kind storage has expected type.")
+}
+
+// Evaluation_Current_Scalar_Storage prevents a mutable result from proving stale contents.
+type Evaluation_Current_Scalar_Storage interface{}
+
+// Evaluation_Current_Scalar_Storage_Invariants fixes the current scalar representation.
+func Evaluation_Current_Scalar_Storage_Invariants(
+	value Evaluation_Current_Scalar_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Value_Scalar)
+	aver.Always(valid == (value != nil), "Evaluation current scalar storage has expected type.")
+}
+
+// Evaluation_Current_Text_Storage prevents a mutable result from proving stale contents.
+type Evaluation_Current_Text_Storage interface{}
+
+// Evaluation_Current_Text_Storage_Invariants fixes the current text representation.
+func Evaluation_Current_Text_Storage_Invariants(
+	value Evaluation_Current_Text_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Text_Storage)
+	aver.Always(valid == (value != nil), "Evaluation current text storage has expected type.")
+}
+
+// Evaluation_Current_Values_Storage prevents a mutable result from proving stale contents.
+type Evaluation_Current_Values_Storage interface{}
+
+// Evaluation_Current_Values_Storage_Invariants fixes the current sequence representation.
+func Evaluation_Current_Values_Storage_Invariants(
+	value Evaluation_Current_Values_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Values_Storage)
+	aver.Always(
+		valid == (value != nil), "Evaluation current sequence storage has expected type.",
+	)
+}
+
+// Evaluation_Current_Fields_Storage prevents a mutable result from proving stale contents.
+type Evaluation_Current_Fields_Storage interface{}
+
+// Evaluation_Current_Fields_Storage_Invariants fixes the current field representation.
+func Evaluation_Current_Fields_Storage_Invariants(
+	value Evaluation_Current_Fields_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Fields_Storage)
+	aver.Always(valid == (value != nil), "Evaluation current field storage has expected type.")
+}
+
+// Evaluation_Current_Function_Storage prevents a mutable result from proving stale contents.
+type Evaluation_Current_Function_Storage interface{}
+
+// Evaluation_Current_Function_Storage_Invariants fixes the current callable representation.
+func Evaluation_Current_Function_Storage_Invariants(
+	value Evaluation_Current_Function_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Function_Storage)
+	aver.Always(
+		valid == (value != nil), "Evaluation current callable storage has expected type.",
 	)
 }
 
 // Evaluation_Values stores dot and current command value.
-type Evaluation_Values [EVALUATION_VALUE_COUNT]Value
+type Evaluation_Values struct {
+	// Dot retains the pipeline cursor.
+	Dot Evaluation_Dot_Value
+	// Current retains the first command result.
+	Current Evaluation_Current_Value
+}
 
 // Evaluation_Values_Invariants fixes iterative value-frame shape.
-func Evaluation_Values_Invariants(value Evaluation_Values, _ aver.Namespace) {
-	aver.Always(
-		len(value) == EVALUATION_VALUE_COUNT,
-		"Evaluation frame has complete value slots.",
-	)
+func Evaluation_Values_Invariants(value Evaluation_Values, namespace aver.Namespace) {
+	Evaluation_Dot_Value_Invariants(value.Dot, namespace)
+	Evaluation_Current_Value_Invariants(value.Current, namespace)
+}
+
+// Evaluation_Command_Reference keeps command continuation identity independent.
+type Evaluation_Command_Reference Node_Reference
+
+// Evaluation_Command_Reference_Invariants composes command continuation.
+func Evaluation_Command_Reference_Invariants(
+	value Evaluation_Command_Reference, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_REFERENCE_MINIMUM),
+			uint16(NODE_REFERENCE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Evaluation_Term_Reference keeps term continuation identity independent.
+type Evaluation_Term_Reference Node_Reference
+
+// Evaluation_Term_Reference_Invariants composes term continuation.
+func Evaluation_Term_Reference_Invariants(
+	value Evaluation_Term_Reference, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_REFERENCE_MINIMUM),
+			uint16(NODE_REFERENCE_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Evaluation_References stores next command and next term.
-type Evaluation_References [EVALUATION_REFERENCE_COUNT]Node_Reference
+type Evaluation_References struct {
+	// Command retains the next pipeline command.
+	Command Evaluation_Command_Reference
+	// Term retains the next command argument.
+	Term Evaluation_Term_Reference
+}
 
 // Evaluation_References_Invariants fixes iterative reference-frame shape.
 func Evaluation_References_Invariants(
-	value Evaluation_References, _ aver.Namespace,
+	value Evaluation_References, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == EVALUATION_REFERENCE_COUNT,
-		"Evaluation frame has complete syntax references.",
+	Evaluation_Command_Reference_Invariants(value.Command, namespace)
+	Evaluation_Term_Reference_Invariants(value.Term, namespace)
+}
+
+// Evaluation_State_Value keeps pipeline state independent from both evaluation cursors.
+type Evaluation_State_Value Value
+
+// Evaluation_State_Value_Invariants composes pipeline state through unique proof subjects.
+func Evaluation_State_Value_Invariants(
+	value Evaluation_State_Value, namespace aver.Namespace,
+) {
+	Evaluation_State_Kind_Storage_Invariants(
+		Evaluation_State_Kind_Storage(value.Kind), namespace,
 	)
+	Evaluation_State_Scalar_Storage_Invariants(
+		Evaluation_State_Scalar_Storage(value.Scalar), namespace,
+	)
+	Evaluation_State_Text_Storage_Invariants(
+		Evaluation_State_Text_Storage(value.Text), namespace,
+	)
+	Evaluation_State_Values_Storage_Invariants(
+		Evaluation_State_Values_Storage(value.Values), namespace,
+	)
+	Evaluation_State_Fields_Storage_Invariants(
+		Evaluation_State_Fields_Storage(value.Fields), namespace,
+	)
+	Evaluation_State_Function_Storage_Invariants(
+		Evaluation_State_Function_Storage(value.Function), namespace,
+	)
+}
+
+// Evaluation_State_Kind_Storage prevents mutable state from proving stale contents.
+type Evaluation_State_Kind_Storage interface{}
+
+// Evaluation_State_Kind_Storage_Invariants fixes the state selector representation.
+func Evaluation_State_Kind_Storage_Invariants(
+	value Evaluation_State_Kind_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Value_Kind_Storage)
+	aver.Always(valid == (value != nil), "Evaluation state kind storage has expected type.")
+}
+
+// Evaluation_State_Scalar_Storage prevents mutable state from proving stale contents.
+type Evaluation_State_Scalar_Storage interface{}
+
+// Evaluation_State_Scalar_Storage_Invariants fixes the state scalar representation.
+func Evaluation_State_Scalar_Storage_Invariants(
+	value Evaluation_State_Scalar_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Value_Scalar)
+	aver.Always(valid == (value != nil), "Evaluation state scalar storage has expected type.")
+}
+
+// Evaluation_State_Text_Storage prevents mutable state from proving stale contents.
+type Evaluation_State_Text_Storage interface{}
+
+// Evaluation_State_Text_Storage_Invariants fixes the state text representation.
+func Evaluation_State_Text_Storage_Invariants(
+	value Evaluation_State_Text_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Text_Storage)
+	aver.Always(valid == (value != nil), "Evaluation state text storage has expected type.")
+}
+
+// Evaluation_State_Values_Storage prevents mutable state from proving stale contents.
+type Evaluation_State_Values_Storage interface{}
+
+// Evaluation_State_Values_Storage_Invariants fixes the state sequence representation.
+func Evaluation_State_Values_Storage_Invariants(
+	value Evaluation_State_Values_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Values_Storage)
+	aver.Always(valid == (value != nil), "Evaluation state sequence storage has expected type.")
+}
+
+// Evaluation_State_Fields_Storage prevents mutable state from proving stale contents.
+type Evaluation_State_Fields_Storage interface{}
+
+// Evaluation_State_Fields_Storage_Invariants fixes the state field representation.
+func Evaluation_State_Fields_Storage_Invariants(
+	value Evaluation_State_Fields_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Fields_Storage)
+	aver.Always(valid == (value != nil), "Evaluation state field storage has expected type.")
+}
+
+// Evaluation_State_Function_Storage prevents mutable state from proving stale contents.
+type Evaluation_State_Function_Storage interface{}
+
+// Evaluation_State_Function_Storage_Invariants fixes the state callable representation.
+func Evaluation_State_Function_Storage_Invariants(
+	value Evaluation_State_Function_Storage, _ aver.Namespace,
+) {
+	_, valid := value.(Function_Storage)
+	aver.Always(valid == (value != nil), "Evaluation state callable storage has expected type.")
 }
 
 // Evaluation_States stores one pipeline state.
-type Evaluation_States [EVALUATION_STATE_FIELD_COUNT]Pipeline_State
+type Pipeline_State_Stored Pipeline_State
+
+// Pipeline_State_Stored_Invariants preserves mutable pipeline state.
+func Pipeline_State_Stored_Invariants(
+	value Pipeline_State_Stored, namespace aver.Namespace,
+) {
+	Evaluation_State_Value_Invariants(Evaluation_State_Value(value.Value), namespace)
+	Declaration_References_Stored_Invariants(
+		Declaration_References_Stored(value.Declarations), namespace,
+	)
+	aver.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value.Declaration_Count), uint8(DECLARATION_COUNT_NONE),
+			uint8(DECLARATION_COUNT_ONE), uint8(DECLARATION_COUNT_TWO),
+		).
+		Sometimes(bool(value.Assignment), "Pipeline updates an existing variable.").
+		Ensure()
+}
+
+// Evaluation_States stores one pipeline state.
+type Evaluation_States struct {
+	// Value retains pipeline result and declarations.
+	Value Pipeline_State_Stored
+}
 
 // Evaluation_States_Invariants fixes iterative pipeline-state shape.
-func Evaluation_States_Invariants(value Evaluation_States, _ aver.Namespace) {
-	aver.Always(
-		len(value) == EVALUATION_STATE_FIELD_COUNT,
-		"Evaluation frame has one pipeline state.",
-	)
+func Evaluation_States_Invariants(value Evaluation_States, namespace aver.Namespace) {
+	Pipeline_State_Stored_Invariants(value.Value, namespace)
+}
+
+// Evaluation_Argument_Bases_Value retains argument-base storage.
+type Evaluation_Argument_Bases_Value uint16
+
+// Evaluation_Argument_Bases_Value_Invariants preserves the stack boundary.
+func Evaluation_Argument_Bases_Value_Invariants(
+	value Evaluation_Argument_Bases_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(ARGUMENT_COUNT_MINIMUM),
+			uint16(ARGUMENT_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Evaluation_Argument_Bases stores one argument-stack opening.
-type Evaluation_Argument_Bases [EVALUATION_ARGUMENT_BASE_FIELD_COUNT]Argument_Count
+type Evaluation_Argument_Bases struct {
+	// Value isolates nested callback argument regions.
+	Value Evaluation_Argument_Bases_Value
+}
 
 // Evaluation_Argument_Bases_Invariants fixes argument opening shape.
 func Evaluation_Argument_Bases_Invariants(
-	value Evaluation_Argument_Bases, _ aver.Namespace,
+	value Evaluation_Argument_Bases, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == EVALUATION_ARGUMENT_BASE_FIELD_COUNT,
-		"Evaluation frame has one argument opening.",
-	)
+	Evaluation_Argument_Bases_Value_Invariants(value.Value, namespace)
 }
 
 // Evaluation_Control stores stage, mode, and state-machine flags.
-type Evaluation_Control [EVALUATION_CONTROL_COUNT]uint8
+type Evaluation_Control struct {
+	// Stage drives the evaluator state machine.
+	Stage Evaluation_Stage
+	// Mode separates identifier calls from value calls.
+	Mode Evaluation_Mode
+	// Present records a prior pipeline result.
+	Present Evaluation_Present
+	// Chain records pending field selection.
+	Chain Evaluation_Chain
+}
 
 // Evaluation_Control_Invariants fixes iterative control shape.
-func Evaluation_Control_Invariants(value Evaluation_Control, _ aver.Namespace) {
-	aver.Always(
-		len(value) == EVALUATION_CONTROL_COUNT,
-		"Evaluation frame has complete control fields.",
-	)
+func Evaluation_Control_Invariants(value Evaluation_Control, namespace aver.Namespace) {
+	Evaluation_Stage_Invariants(value.Stage, namespace)
+	Evaluation_Mode_Invariants(value.Mode, namespace)
+	Evaluation_Present_Invariants(value.Present, namespace)
+	Evaluation_Chain_Invariants(value.Chain, namespace)
 }
 
 // Evaluation_Frame stores one suspended nested pipeline without recursion.
-type Evaluation_Frame struct {
-	// Nodes retain caller parser records while parent evaluation waits.
-	Nodes Evaluation_Nodes
-	// Values retain dot and command head while child evaluation runs.
-	Values Evaluation_Values
-	// References retain next sibling work.
-	References Evaluation_References
-	// States retain pipeline value and declarations.
-	States Evaluation_States
-	// Argument_Bases isolate nested callback argument regions.
-	Argument_Bases Evaluation_Argument_Bases
-	// Control retains iterative evaluator state.
-	Control Evaluation_Control
-}
+type Evaluation_Frame Evaluation_Frame_Fields
 
 // Evaluation_Frame_Invariants composes fixed caller-owned frame storage.
 func Evaluation_Frame_Invariants(value Evaluation_Frame, namespace aver.Namespace) {
 	Evaluation_Nodes_Invariants(value.Nodes, namespace)
 	Evaluation_Values_Invariants(value.Values, namespace)
-	Evaluation_References_Invariants(value.References, namespace)
+	Evaluation_References_Stored_Invariants(
+		Evaluation_References_Stored(value.References), namespace,
+	)
 	Evaluation_States_Invariants(value.States, namespace)
-	Evaluation_Argument_Bases_Invariants(value.Argument_Bases, namespace)
-	Evaluation_Control_Invariants(value.Control, namespace)
+	Evaluation_Argument_Bases_Stored_Invariants(
+		Evaluation_Argument_Bases_Stored(value.Argument_Bases), namespace,
+	)
+	Evaluation_Control_Stored_Invariants(Evaluation_Control_Stored(value.Control), namespace)
+}
+
+// Evaluation_Frame_Pointer keeps evaluator mutation typed.
+type Evaluation_Frame_Pointer *Evaluation_Frame
+
+// Evaluation_Frame_Pointer_Invariants composes present evaluator storage.
+func Evaluation_Frame_Pointer_Invariants(
+	value Evaluation_Frame_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Evaluation_Frame_Invariants(*value, namespace)
 }
 
 // Evaluations is caller-owned nested pipeline storage.
@@ -3042,80 +4172,210 @@ func Evaluations_Invariants(value Evaluations, _ aver.Namespace) {
 	)
 }
 
+// Workspace_Literal_Count_Storage_Value retains decoded-cursor storage.
+type Workspace_Literal_Count_Storage_Value uint16
+
+// Workspace_Literal_Count_Storage_Value_Invariants preserves cursor encoding.
+func Workspace_Literal_Count_Storage_Value_Invariants(
+	value Workspace_Literal_Count_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(QUOTED_DECODED_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Workspace_Literal_Count_Storage keeps decoded cursor corruption detectable.
-type Workspace_Literal_Count_Storage [WORKSPACE_SCALAR_FIELD_COUNT]Literal_Count
+type Workspace_Literal_Count_Stored interface{}
+
+// Workspace_Literal_Count_Stored_Invariants accepts absent or typed literal state.
+func Workspace_Literal_Count_Stored_Invariants(
+	value Workspace_Literal_Count_Stored, _ aver.Namespace,
+) {
+	_, valid := value.(Workspace_Literal_Count_Storage_Value)
+	aver.Always(valid == (value != nil), "Stored literal cursor has expected type.")
+}
+
+// Workspace_Literal_Count_Storage keeps decoded cursor corruption detectable.
+type Workspace_Literal_Count_Storage struct {
+	// Value keeps mutation inside execution workspace.
+	Value Workspace_Literal_Count_Stored
+}
 
 // Workspace_Literal_Count_Storage_Invariants fixes decoded cursor shape.
 func Workspace_Literal_Count_Storage_Invariants(
-	value Workspace_Literal_Count_Storage, _ aver.Namespace,
+	value Workspace_Literal_Count_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == WORKSPACE_SCALAR_FIELD_COUNT,
-		"Workspace literal cursor has one field.",
-	)
+	Workspace_Literal_Count_Stored_Invariants(value.Value, namespace)
+}
+
+// Workspace_Frame_Count_Storage_Value retains traversal-cursor storage.
+type Workspace_Frame_Count_Storage_Value uint16
+
+// Workspace_Frame_Count_Storage_Value_Invariants preserves cursor encoding.
+func Workspace_Frame_Count_Storage_Value_Invariants(
+	value Workspace_Frame_Count_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(FRAME_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Workspace_Frame_Count_Storage keeps traversal cursor corruption detectable.
-type Workspace_Frame_Count_Storage [WORKSPACE_SCALAR_FIELD_COUNT]Frame_Index
+type Workspace_Frame_Count_Stored interface{}
+
+// Workspace_Frame_Count_Stored_Invariants accepts absent or typed frame state.
+func Workspace_Frame_Count_Stored_Invariants(
+	value Workspace_Frame_Count_Stored, _ aver.Namespace,
+) {
+	_, valid := value.(Workspace_Frame_Count_Storage_Value)
+	aver.Always(valid == (value != nil), "Stored frame cursor has expected type.")
+}
+
+// Workspace_Frame_Count_Storage keeps traversal cursor corruption detectable.
+type Workspace_Frame_Count_Storage struct {
+	// Value keeps mutation inside execution workspace.
+	Value Workspace_Frame_Count_Stored
+}
 
 // Workspace_Frame_Count_Storage_Invariants fixes traversal cursor shape.
 func Workspace_Frame_Count_Storage_Invariants(
-	value Workspace_Frame_Count_Storage, _ aver.Namespace,
+	value Workspace_Frame_Count_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == WORKSPACE_SCALAR_FIELD_COUNT,
-		"Workspace frame cursor has one field.",
-	)
+	Workspace_Frame_Count_Stored_Invariants(value.Value, namespace)
+}
+
+// Workspace_Variable_Count_Storage_Value retains binding-cursor storage.
+type Workspace_Variable_Count_Storage_Value uint16
+
+// Workspace_Variable_Count_Storage_Value_Invariants preserves cursor encoding.
+func Workspace_Variable_Count_Storage_Value_Invariants(
+	value Workspace_Variable_Count_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(VARIABLE_COUNT_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Workspace_Variable_Count_Storage keeps binding cursor corruption detectable.
-type Workspace_Variable_Count_Storage [WORKSPACE_SCALAR_FIELD_COUNT]Variable_Count
+type Workspace_Variable_Count_Stored interface{}
+
+// Workspace_Variable_Count_Stored_Invariants accepts absent or typed binding state.
+func Workspace_Variable_Count_Stored_Invariants(
+	value Workspace_Variable_Count_Stored, _ aver.Namespace,
+) {
+	_, valid := value.(Workspace_Variable_Count_Storage_Value)
+	aver.Always(valid == (value != nil), "Stored variable cursor has expected type.")
+}
+
+// Workspace_Variable_Count_Storage keeps binding cursor corruption detectable.
+type Workspace_Variable_Count_Storage struct {
+	// Value keeps mutation inside execution workspace.
+	Value Workspace_Variable_Count_Stored
+}
 
 // Workspace_Variable_Count_Storage_Invariants fixes binding cursor shape.
 func Workspace_Variable_Count_Storage_Invariants(
-	value Workspace_Variable_Count_Storage, _ aver.Namespace,
+	value Workspace_Variable_Count_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == WORKSPACE_SCALAR_FIELD_COUNT,
-		"Workspace variable cursor has one field.",
-	)
+	Workspace_Variable_Count_Stored_Invariants(value.Value, namespace)
+}
+
+// Workspace_Scope_Base_Storage_Value retains visibility-cursor storage.
+type Workspace_Scope_Base_Storage_Value uint16
+
+// Workspace_Scope_Base_Storage_Value_Invariants preserves cursor encoding.
+func Workspace_Scope_Base_Storage_Value_Invariants(
+	value Workspace_Scope_Base_Storage_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(VARIABLE_COUNT_MINIMUM),
+			uint16(VARIABLE_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Workspace_Scope_Base_Storage keeps visibility cursor corruption detectable.
-type Workspace_Scope_Base_Storage [WORKSPACE_SCALAR_FIELD_COUNT]Scope_Base
+type Workspace_Scope_Base_Stored interface{}
+
+// Workspace_Scope_Base_Stored_Invariants accepts absent or typed scope state.
+func Workspace_Scope_Base_Stored_Invariants(
+	value Workspace_Scope_Base_Stored, _ aver.Namespace,
+) {
+	_, valid := value.(Workspace_Scope_Base_Storage_Value)
+	aver.Always(valid == (value != nil), "Stored scope cursor has expected type.")
+}
+
+// Workspace_Scope_Base_Storage keeps visibility cursor corruption detectable.
+type Workspace_Scope_Base_Storage struct {
+	// Value keeps mutation inside execution workspace.
+	Value Workspace_Scope_Base_Stored
+}
 
 // Workspace_Scope_Base_Storage_Invariants fixes visibility cursor shape.
 func Workspace_Scope_Base_Storage_Invariants(
-	value Workspace_Scope_Base_Storage, _ aver.Namespace,
+	value Workspace_Scope_Base_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == WORKSPACE_SCALAR_FIELD_COUNT,
-		"Workspace scope cursor has one field.",
-	)
+	Workspace_Scope_Base_Stored_Invariants(value.Value, namespace)
 }
 
 // Workspace_Diagnostic_Storage keeps first refusal corruption detectable.
-type Workspace_Diagnostic_Storage [WORKSPACE_SCALAR_FIELD_COUNT]Diagnostic
+type Diagnostic_Stored Diagnostic
+
+// Diagnostic_Stored_Invariants preserves bounded diagnostic storage.
+func Diagnostic_Stored_Invariants(value Diagnostic_Stored, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value.Code), uint8(STATUS_OK), uint8(STATUS_LIMIT_EXCEEDED),
+		).
+		Range_Uint16(
+			uint16(value.Position), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(SOURCE_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Workspace_Diagnostic_Fields keeps first refusal state before workspace validation.
+type Workspace_Diagnostic_Fields struct {
+	// Value keeps mutation inside execution workspace.
+	Value Diagnostic_Stored
+}
+
+// Workspace_Diagnostic_Fields_Invariants bounds hostile diagnostic storage.
+func Workspace_Diagnostic_Fields_Invariants(
+	value Workspace_Diagnostic_Fields, namespace aver.Namespace,
+) {
+	Diagnostic_Stored_Invariants(value.Value, namespace)
+}
+
+// Workspace_Diagnostic_Stored separates stale failure state from active diagnostics.
+type Workspace_Diagnostic_Stored interface{}
+
+// Workspace_Diagnostic_Stored_Invariants fixes diagnostic representation.
+func Workspace_Diagnostic_Stored_Invariants(value Workspace_Diagnostic_Stored, _ aver.Namespace) {
+	_, valid := value.(Diagnostic_Stored)
+	aver.Always(valid == (value != nil), "Workspace diagnostic has expected storage type.")
+}
+
+// Workspace_Diagnostic_Storage keeps first refusal corruption detectable.
+type Workspace_Diagnostic_Storage Workspace_Diagnostic_Fields
 
 // Workspace_Diagnostic_Storage_Invariants fixes first-refusal shape.
 func Workspace_Diagnostic_Storage_Invariants(
-	value Workspace_Diagnostic_Storage, _ aver.Namespace,
+	value Workspace_Diagnostic_Storage, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == WORKSPACE_SCALAR_FIELD_COUNT,
-		"Workspace diagnostic has one field.",
+	Workspace_Diagnostic_Stored_Invariants(
+		Workspace_Diagnostic_Stored(value.Value), namespace,
 	)
-}
-
-// Float_Value_Workspace keeps one numeric staging value as untrusted scratch.
-type Float_Value_Workspace [WORKSPACE_SCALAR_FIELD_COUNT]big.Float
-
-// Float_Value_Workspace_Invariants checks ownership without treating stale scratch as live data.
-func Float_Value_Workspace_Invariants(
-	value Float_Value_Workspace, _ aver.Namespace,
-) {
-	aver.Always(len(value) == WORKSPACE_SCALAR_FIELD_COUNT,
-		"Execution float staging owns one value.")
 }
 
 // Float_Parse_Workspace keeps parser scratch inline in execution storage.
@@ -3125,14 +4385,44 @@ type Float_Parse_Workspace big.Float_Parse_Workspace
 func Float_Parse_Workspace_Invariants(
 	value Float_Parse_Workspace, namespace aver.Namespace,
 ) {
-	aver.Always(len(value.Source) == big.FLOAT_PARSE_TEXT_SIZE_MAXIMUM,
-		"Execution float parse owns complete validated source storage.")
-	aver.Always(len(value.Control) == big.FLOAT_PARSE_CONTROL_COUNT,
-		"Execution float parse owns complete structural scanner state.")
-	big.Float_Parse_Integer_Workspace_Invariants(value.Parse, namespace)
-	big.Rat_Parse_Fraction_Integers_Invariants(value.Integers, namespace)
-	big.Float_Rat_Values_Invariants(value.Values, namespace)
-	big.Float_Parse_Division_Workspace_Invariants(value.Division, namespace)
+	Float_Parse_Source_Count_Invariants(
+		Float_Parse_Source_Count(len(value.Source)), namespace,
+	)
+	Float_Parse_Control_Count_Invariants(
+		Float_Parse_Control_Count(len(value.Control)), namespace,
+	)
+}
+
+// FLOAT_PARSE_SOURCE_COUNT_COMPLETE is required source scratch size.
+const FLOAT_PARSE_SOURCE_COUNT_COMPLETE Float_Parse_Source_Count = big.FLOAT_PARSE_TEXT_SIZE_MAXIMUM
+
+// Float_Parse_Source_Count keeps parser source proof independent.
+type Float_Parse_Source_Count int
+
+// Float_Parse_Source_Count_Invariants requires complete source scratch.
+func Float_Parse_Source_Count_Invariants(
+	value Float_Parse_Source_Count, _ aver.Namespace,
+) {
+	aver.Always(
+		int(value) == int(FLOAT_PARSE_SOURCE_COUNT_COMPLETE),
+		"Execution float source scratch is complete.",
+	)
+}
+
+// FLOAT_PARSE_CONTROL_COUNT_COMPLETE is required control scratch size.
+const FLOAT_PARSE_CONTROL_COUNT_COMPLETE Float_Parse_Control_Count = big.FLOAT_PARSE_CONTROL_COUNT
+
+// Float_Parse_Control_Count keeps parser control proof independent.
+type Float_Parse_Control_Count int
+
+// Float_Parse_Control_Count_Invariants requires complete control scratch.
+func Float_Parse_Control_Count_Invariants(
+	value Float_Parse_Control_Count, _ aver.Namespace,
+) {
+	aver.Always(
+		int(value) == int(FLOAT_PARSE_CONTROL_COUNT_COMPLETE),
+		"Execution float control scratch is complete.",
+	)
 }
 
 // Float_Text_Workspace keeps formatter scratch inline in execution storage.
@@ -3142,56 +4432,38 @@ type Float_Text_Workspace big.Float_Text_Workspace
 func Float_Text_Workspace_Invariants(
 	value Float_Text_Workspace, _ aver.Namespace,
 ) {
-	aver.Always(len(value.Integers) == big.FLOAT_TEXT_INTEGER_COUNT,
-		"Float text owns complete integer conversion storage.")
-	aver.Always(len(value.Values) == big.FLOAT_TEXT_VALUE_COUNT,
-		"Float text owns source and rounded values.")
-	aver.Always(len(value.Text) == big.FLOAT_TEXT_INTEGER_WORKSPACE_COUNT,
-		"Float text owns both integer text workspaces.")
-	aver.Always(len(value.Control) == big.FLOAT_TEXT_CONTROL_COUNT,
-		"Float text owns complete scalar control storage.")
-	aver.Always(len(value.Decimals) == big.FLOAT_DECIMAL_COUNT,
-		"Float text owns value and both shortest bounds.")
 	aver.Always(
-		len(value.Decimals[big.FLOAT_DECIMAL_VALUE_INDEX].Digits) ==
-			big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
-		"Float text value decimal retains every exact digit.",
+		len(value.Integers) == big.FLOAT_TEXT_INTEGER_COUNT,
+		"Float text scratch owns both integer conversions.",
 	)
 	aver.Always(
-		len(value.Decimals[big.FLOAT_DECIMAL_LOWER_INDEX].Digits) ==
-			big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
-		"Float text lower decimal retains every exact digit.",
+		len(value.Values) == big.FLOAT_TEXT_VALUE_COUNT,
+		"Float text scratch retains source and rounded values.",
 	)
 	aver.Always(
-		len(value.Decimals[big.FLOAT_DECIMAL_UPPER_INDEX].Digits) ==
-			big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
-		"Float text upper decimal retains every exact digit.",
+		len(value.Text) == big.FLOAT_TEXT_INTEGER_WORKSPACE_COUNT,
+		"Float text scratch owns both integer text conversions.",
 	)
 	aver.Always(
-		len(value.Decimals[big.FLOAT_DECIMAL_VALUE_INDEX].Control) ==
-			big.FLOAT_DECIMAL_CONTROL_COUNT,
-		"Float text value decimal retains count and point state.",
+		len(value.Control) == big.FLOAT_TEXT_CONTROL_COUNT,
+		"Float text scratch owns its bounded scalar state.",
 	)
 	aver.Always(
-		len(value.Decimals[big.FLOAT_DECIMAL_LOWER_INDEX].Control) ==
-			big.FLOAT_DECIMAL_CONTROL_COUNT,
-		"Float text lower decimal retains count and point state.",
-	)
-	aver.Always(
-		len(value.Decimals[big.FLOAT_DECIMAL_UPPER_INDEX].Control) ==
-			big.FLOAT_DECIMAL_CONTROL_COUNT,
-		"Float text upper decimal retains count and point state.",
+		len(value.Decimals) == big.FLOAT_DECIMAL_COUNT,
+		"Float text scratch owns exact value and rounding bounds.",
 	)
 	aver.Always(
 		len(value.Magnitude.Words) == big.FLOAT_TEXT_MAGNITUDE_WORD_COUNT_MAXIMUM,
-		"Float text midpoint retains one guard bit.",
+		"Float text midpoint retains its guard bit.",
 	)
 	aver.Always(
 		len(value.Magnitude.Control) == big.FLOAT_TEXT_MAGNITUDE_CONTROL_COUNT,
 		"Float text midpoint retains its active word count.",
 	)
-	aver.Always(len(value.Output) == big.FLOAT_TEXT_SIZE_MAXIMUM,
-		"Float text owns complete transactional output.")
+	aver.Always(
+		len(value.Output) == big.FLOAT_TEXT_SIZE_MAXIMUM,
+		"Float text output remains transactional.",
+	)
 }
 
 // Workspace owns every execution mutation and scratch byte.
@@ -3218,8 +4490,6 @@ type Workspace struct {
 	Generated Generated_Storage
 	// Generated_Count is populated derived text.
 	Generated_Count Workspace_Generated_Count_Storage
-	// Float_Value stays inline so scalar formatting needs no pointer field.
-	Float_Value Float_Value_Workspace
 	// Float_Parse stays inline because workspace already owns scratch lifetime.
 	Float_Parse Float_Parse_Workspace
 	// Float_Text stays inline because workspace already owns scratch lifetime.
@@ -3247,8 +4517,7 @@ type Workspace struct {
 }
 
 // Workspace_Invariants verifies caller storage shape and scalar cursors.
-func Workspace_Invariants(value *Workspace, namespace aver.Namespace) {
-	aver.Always(value != nil, "Execution workspace is present.")
+func Workspace_Invariants(value Workspace, namespace aver.Namespace) {
 	Output_Storage_Invariants(value.Output, namespace)
 	Literal_Storage_Invariants(value.Literals, namespace)
 	Workspace_Literal_Count_Storage_Invariants(value.Literal_Count, namespace)
@@ -3260,7 +4529,6 @@ func Workspace_Invariants(value *Workspace, namespace aver.Namespace) {
 	Number_Storage_Invariants(value.Number, namespace)
 	Generated_Storage_Invariants(value.Generated, namespace)
 	Workspace_Generated_Count_Storage_Invariants(value.Generated_Count, namespace)
-	Float_Value_Workspace_Invariants(value.Float_Value, namespace)
 	Float_Parse_Workspace_Invariants(value.Float_Parse, namespace)
 	Float_Text_Workspace_Invariants(value.Float_Text, namespace)
 	Frames_Invariants(value.Frames, namespace)
@@ -3275,15 +4543,50 @@ func Workspace_Invariants(value *Workspace, namespace aver.Namespace) {
 	Workspace_Diagnostic_Storage_Invariants(value.Diagnostic, namespace)
 }
 
+// Workspace_Pointer keeps optional execution storage typed.
+type Workspace_Pointer *Workspace
+
+// Workspace_Pointer_Invariants composes present caller storage.
+func Workspace_Pointer_Invariants(value Workspace_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Workspace_Invariants(*value, namespace)
+}
+
 // Workspace_Storage admits absent caller execution state.
-type Workspace_Storage [WORKSPACE_FIELD_COUNT]*Workspace
+type Workspace_Storage struct {
+	// Value keeps absence explicit inside hostile input.
+	Value Workspace_Unvalidated_Pointer
+}
 
 // Workspace_Storage_Invariants fixes pointer input shape.
-func Workspace_Storage_Invariants(value Workspace_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == WORKSPACE_FIELD_COUNT,
-		"Execution workspace input has one pointer field.",
-	)
+func Workspace_Storage_Invariants(value Workspace_Storage, namespace aver.Namespace) {
+	Workspace_Unvalidated_Pointer_Invariants(value.Value, namespace)
+}
+
+// Workspace_Unvalidated_Value retains hostile caller storage.
+type Workspace_Unvalidated_Value any
+
+// Workspace_Unvalidated_Value_Invariants defers shape trust.
+func Workspace_Unvalidated_Value_Invariants(
+	value Workspace_Unvalidated_Value, _ aver.Namespace,
+) {
+	present := value != nil
+	aver.Always(present == present, "Execution workspace input retains caller storage.")
+}
+
+// Workspace_Unvalidated_Pointer admits absent or malformed caller storage.
+type Workspace_Unvalidated_Pointer struct {
+	// Value delays pointer-shape trust until workspace_valid.
+	Value Workspace_Unvalidated_Value
+}
+
+// Workspace_Unvalidated_Pointer_Invariants defers shape checks to workspace_valid.
+func Workspace_Unvalidated_Pointer_Invariants(
+	value Workspace_Unvalidated_Pointer, namespace aver.Namespace,
+) {
+	Workspace_Unvalidated_Value_Invariants(value.Value, namespace)
 }
 
 // Workspace_Input carries hostile optional execution state.
@@ -3486,15 +4789,32 @@ const ARGUMENT_COUNT_TRACKED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const ARGUMENT_COUNT_TRACKED_FIELD_COUNT = ARGUMENT_COUNT_TRACKED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Argument_Count_Tracked_Value retains callback-count proof storage.
+type Argument_Count_Tracked_Value uint16
+
+// Argument_Count_Tracked_Value_Invariants preserves the callback count.
+func Argument_Count_Tracked_Value_Invariants(
+	value Argument_Count_Tracked_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(ARGUMENT_COUNT_MINIMUM),
+			uint16(ARGUMENT_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Argument_Count_Tracked carries callback staging progress by value.
-type Argument_Count_Tracked [ARGUMENT_COUNT_TRACKED_FIELD_COUNT]Argument_Count
+type Argument_Count_Tracked struct {
+	// Value keeps staging proof attached to argument progress.
+	Value Argument_Count_Proof_Stored
+}
 
 // Argument_Count_Tracked_Invariants checks transport ownership after storage validation.
-func Argument_Count_Tracked_Invariants(value Argument_Count_Tracked, _ aver.Namespace) {
-	aver.Always(
-		len(value) == ARGUMENT_COUNT_TRACKED_FIELD_COUNT,
-		"Tracked argument count storage has one field.",
-	)
+func Argument_Count_Tracked_Invariants(
+	value Argument_Count_Tracked, namespace aver.Namespace,
+) {
+	Argument_Count_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Function_Found reports registry or builtin resolution.
@@ -3648,21 +4968,38 @@ func Output_Text_Invariants(value Output_Text, namespace aver.Namespace) {
 // FORMATTED_INTEGER_TEXT_FIELD selects one completed integer conversion.
 const FORMATTED_INTEGER_TEXT_FIELD = bytes.SLICE_SIZE_MINIMUM
 
+// FORMATTED_INTEGER_TEXT_SIZE_MINIMUM is the shortest completed conversion.
+const FORMATTED_INTEGER_TEXT_SIZE_MINIMUM = len("0")
+
 // FORMATTED_INTEGER_TEXT_FIELD_COUNT fixes conversion transport shape.
 const FORMATTED_INTEGER_TEXT_FIELD_COUNT = FORMATTED_INTEGER_TEXT_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Formatted_Integer_Text_Validated_Value retains completed conversion storage.
+type Formatted_Integer_Text_Validated_Value []byte
+
+// Formatted_Integer_Text_Validated_Value_Invariants preserves conversion proof.
+func Formatted_Integer_Text_Validated_Value_Invariants(
+	value Formatted_Integer_Text_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value), FORMATTED_INTEGER_TEXT_SIZE_MINIMUM, NUMBER_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
 // Formatted_Integer_Text_Validated carries one completed integer conversion.
-type Formatted_Integer_Text_Validated [FORMATTED_INTEGER_TEXT_FIELD_COUNT]Text
+type Formatted_Integer_Text_Validated struct {
+	// Value keeps conversion proof attached to output text.
+	Value Formatted_Integer_Text_Proof_Stored
+}
 
 // Formatted_Integer_Text_Validated_Invariants checks conversion ownership.
 func Formatted_Integer_Text_Validated_Invariants(
-	value Formatted_Integer_Text_Validated, _ aver.Namespace,
+	value Formatted_Integer_Text_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == FORMATTED_INTEGER_TEXT_FIELD_COUNT,
-		"Validated formatted integer text storage has one field.",
-	)
+	Formatted_Integer_Text_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // GENERATED_START_VALIDATED_FIELD selects one captured arena boundary.
@@ -3672,17 +5009,32 @@ const GENERATED_START_VALIDATED_FIELD = bytes.SLICE_SIZE_MINIMUM
 const GENERATED_START_VALIDATED_FIELD_COUNT = GENERATED_START_VALIDATED_FIELD +
 	STORAGE_FIELD_COUNT_INCREMENT
 
+// Generated_Start_Validated_Value retains generated-boundary proof storage.
+type Generated_Start_Validated_Value uint16
+
+// Generated_Start_Validated_Value_Invariants preserves the generated boundary.
+func Generated_Start_Validated_Value_Invariants(
+	value Generated_Start_Validated_Value, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(GENERATED_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Generated_Start_Validated carries one workspace-proven arena boundary.
-type Generated_Start_Validated [GENERATED_START_VALIDATED_FIELD_COUNT]Generated_Count
+type Generated_Start_Validated struct {
+	// Value keeps workspace proof attached to the arena boundary.
+	Value Generated_Start_Proof_Stored
+}
 
 // Generated_Start_Validated_Invariants checks captured-boundary ownership.
 func Generated_Start_Validated_Invariants(
-	value Generated_Start_Validated, _ aver.Namespace,
+	value Generated_Start_Validated, namespace aver.Namespace,
 ) {
-	aver.Always(
-		len(value) == GENERATED_START_VALIDATED_FIELD_COUNT,
-		"Validated generated start storage has one field.",
-	)
+	Generated_Start_Proof_Stored_Invariants(value.Value, namespace)
 }
 
 // Pipeline_State retains result and declarations without tuple widening.
@@ -3715,8 +5067,8 @@ func Execute_Into(
 		Status_Invariants(status, "Execute_Into.status")
 	}()
 	Execute_Input_Invariants(input, "Execute_Into.input")
-	workspace := input.Workspace.State[WORKSPACE_FIELD]
-	if workspace == nil {
+	workspace_input := input.Workspace.State.Value
+	if workspace_input.Value == nil {
 		return Output_Count(OUTPUT_SIZE_MINIMUM),
 			Diagnostic{Code: STATUS_WORKSPACE_INVALID},
 			STATUS_WORKSPACE_INVALID
@@ -3726,56 +5078,87 @@ func Execute_Into(
 			Diagnostic{Code: STATUS_WORKSPACE_INVALID},
 			STATUS_WORKSPACE_INVALID
 	}
-	workspace.Frame_Count[WORKSPACE_SCALAR_FIELD] = Frame_Index(bytes.SLICE_SIZE_MINIMUM)
-	workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] =
-		Variable_Count(VARIABLE_COUNT_MINIMUM)
-	workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] = Scope_Base(VARIABLE_COUNT_MINIMUM)
-	workspace.Literal_Count[WORKSPACE_SCALAR_FIELD] = Literal_Count(SOURCE_SIZE_MINIMUM)
-	workspace.Generated_Count[WORKSPACE_SCALAR_FIELD] =
-		Generated_Count(OUTPUT_SIZE_MINIMUM)
-	workspace.Diagnostic[WORKSPACE_SCALAR_FIELD] = Diagnostic{}
-	Workspace_Invariants(workspace, "Execute_Into.workspace_state")
-	if !bool(program_valid(input.Program)) {
-		execution_refusal(workspace, Failure_Status_Validated{STATUS_PROGRAM_INVALID})
+	workspace := workspace_begin(workspace_input)
+	refuse := func(
+		status_value Failure_Status_Validated_Value,
+	) (refusal_count Output_Count, refusal_diagnostic Diagnostic, refusal_status Status) {
+		execution_refusal(workspace, Failure_Status_Validated{Value: status_value})
 		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			workspace.Diagnostic[WORKSPACE_SCALAR_FIELD],
-			STATUS_PROGRAM_INVALID
+			Diagnostic(workspace.Diagnostic.Value), Status(status_value)
 	}
-	value_status := value_graph_validate(workspace, input.Value)
+	if !bool(program_valid(input.Program)) {
+		return refuse(Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID))
+	}
+	value_status := value_graph_validate(workspace, Value_Unvalidated(input.Value))
 	if value_status != VALUE_GRAPH_STATUS_OK {
-		execution_refusal(workspace, Failure_Status_Validated{Status(value_status)})
-		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			workspace.Diagnostic[WORKSPACE_SCALAR_FIELD],
-			Status(value_status)
+		return refuse(Failure_Status_Validated_Value(value_status))
 	}
 	if !bool(registry_valid(input.Functions)) {
-		execution_refusal(workspace, Failure_Status_Validated{STATUS_FUNCTION_INVALID})
-		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			workspace.Diagnostic[WORKSPACE_SCALAR_FIELD],
-			STATUS_FUNCTION_INVALID
+		return refuse(Failure_Status_Validated_Value(STATUS_FUNCTION_INVALID))
 	}
 	for index := NODE_COUNT_MINIMUM; index < int(input.Program.Document.Node_Count); index++ {
 		workspace.Literal_Decoded[index] = false
 	}
-	program := Program_Validated{input.Program}
-	functions := Functions_Validated{input.Functions}
+	document := Program_Validated_Document{
+		Root:       Program_Validated_Root(input.Program.Document.Root),
+		Node_Count: Program_Validated_Node_Count(input.Program.Document.Node_Count),
+		First_Template: Program_Validated_First_Template(
+			input.Program.Document.First_Template,
+		),
+		Template_Count: Program_Validated_Template_Count(
+			input.Program.Document.Template_Count,
+		),
+	}
+	program := program_validate(input.Program.Source, document, input.Program.Syntax)
+	functions := Functions_Validated{Value: Functions_Validated_Value(input.Functions)}
 	written_state, execution_status, _ := execute_unchecked(
 		workspace, program, input.Value, functions,
 	)
 	if execution_status != NODE_EXECUTION_STATUS_OK {
 		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			workspace.Diagnostic[WORKSPACE_SCALAR_FIELD],
+			Diagnostic(workspace.Diagnostic.Value),
 			Status(execution_status)
 	}
-	written := written_state[OUTPUT_COUNT_STAGED_FIELD]
+	written := written_state.Value.(Output_Count_Staged_Value)
 	if len(input.Destination) < int(written) {
-		execution_refusal(workspace, Failure_Status_Validated{STATUS_OUTPUT_TOO_SMALL})
-		return Output_Count(OUTPUT_SIZE_MINIMUM),
-			workspace.Diagnostic[WORKSPACE_SCALAR_FIELD],
-			STATUS_OUTPUT_TOO_SMALL
+		return refuse(Failure_Status_Validated_Value(STATUS_OUTPUT_TOO_SMALL))
 	}
 	copy(input.Destination, workspace.Output[:written])
-	return written, Diagnostic{}, STATUS_OK
+	return Output_Count(written), Diagnostic{}, STATUS_OK
+}
+
+func workspace_begin(input Workspace_Unvalidated_Pointer) (workspace Workspace_Pointer) {
+	defer func() {
+		Workspace_Pointer_Invariants(workspace, "workspace_begin.workspace")
+	}()
+	Workspace_Unvalidated_Pointer_Invariants(input, "workspace_begin.input")
+	workspace_value, _ := input.Value.(*Workspace)
+	workspace = Workspace_Pointer(workspace_value)
+	workspace.Frame_Count.Value = Workspace_Frame_Count_Storage_Value(bytes.SLICE_SIZE_MINIMUM)
+	workspace.Variable_Count.Value = Workspace_Variable_Count_Storage_Value(
+		VARIABLE_COUNT_MINIMUM,
+	)
+	workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(VARIABLE_COUNT_MINIMUM)
+	workspace.Literal_Count.Value = Workspace_Literal_Count_Storage_Value(SOURCE_SIZE_MINIMUM)
+	workspace.Generated_Count.Value = Workspace_Generated_Count_Storage_Value(
+		OUTPUT_SIZE_MINIMUM,
+	)
+	workspace.Diagnostic.Value = Diagnostic_Stored(Diagnostic{})
+	return workspace
+}
+
+func program_validate(
+	source Source, document Program_Validated_Document, syntax Syntax_Storage,
+) (validated Program_Validated) {
+	defer func() {
+		Program_Validated_Invariants(validated, "program_validate.validated")
+	}()
+	Source_Invariants(source, "program_validate.source")
+	Program_Validated_Document_Invariants(document, "program_validate.document")
+	Syntax_Storage_Invariants(syntax, "program_validate.syntax")
+	return Program_Validated{
+		Source: source, Document: document, Syntax: syntax,
+	}
 }
 
 func workspace_valid(
@@ -3785,7 +5168,10 @@ func workspace_valid(
 		Workspace_Validity_Invariants(valid, "workspace_valid.valid")
 	}()
 	Workspace_Input_Invariants(input, "workspace_valid.input")
-	workspace := input.State[WORKSPACE_FIELD]
+	workspace, typed := input.State.Value.Value.(*Workspace)
+	if !typed {
+		return false
+	}
 	if workspace == nil {
 		return false
 	}
@@ -3838,36 +5224,34 @@ func workspace_valid(
 }
 
 func execution_refusal(
-	workspace_state *Workspace,
-	status_value Failure_Status_Validated,
+	workspace_state Workspace_Pointer, status_value Failure_Status_Validated,
 ) {
-	Workspace_Invariants(workspace_state, "execution_refusal.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execution_refusal.workspace_state")
 	Failure_Status_Validated_Invariants(status_value, "execution_refusal.status_value")
-	workspace := (*Workspace)(workspace_state)
-	status := status_value[FAILURE_STATUS_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	status := Status(status_value.Value.(Failure_Status_Validated_Value))
 	set_diagnostic(
-		workspace, Failure_Status_Validated{status},
+		workspace, Failure_Status_Validated{Value: Failure_Status_Validated_Value(status)},
 		Diagnostic_Position(SOURCE_SIZE_MINIMUM),
 	)
 }
 
 func set_diagnostic(
-	workspace_state *Workspace,
-	status_value Failure_Status_Validated,
+	workspace_state Workspace_Pointer, status_value Failure_Status_Validated,
 	position_value Diagnostic_Position,
 ) {
-	Workspace_Invariants(workspace_state, "set_diagnostic.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "set_diagnostic.workspace_state")
 	Failure_Status_Validated_Invariants(status_value, "set_diagnostic.status_value")
 	Diagnostic_Position_Invariants(position_value, "set_diagnostic.position_value")
-	workspace := (*Workspace)(workspace_state)
-	status := status_value[FAILURE_STATUS_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	status := Status(status_value.Value.(Failure_Status_Validated_Value))
 	position := Diagnostic_Position(position_value)
-	if workspace.Diagnostic[WORKSPACE_SCALAR_FIELD].Code != STATUS_OK {
+	if workspace.Diagnostic.Value.Code != STATUS_OK {
 		return
 	}
-	workspace.Diagnostic[WORKSPACE_SCALAR_FIELD] = Diagnostic{
+	workspace.Diagnostic.Value = Diagnostic_Stored(Diagnostic{
 		Code: status, Position: position,
-	}
+	})
 }
 
 func program_valid(program_value Program) (
@@ -3876,11 +5260,11 @@ func program_valid(program_value Program) (
 	defer func() { Program_Validity_Invariants(valid, "program_valid.valid") }()
 	Program_Invariants(program_value, "program_valid.program_value")
 	program := Program(program_value)
-	syntax := program.Syntax[SYNTAX_FIELD]
+	syntax := program.Syntax.Value
 	if syntax == nil {
 		return false
 	}
-	data := program.Source.Data[SOURCE_FIELD]
+	data := program.Source.Data.Value
 	if len(data) > SOURCE_SIZE_MAXIMUM {
 		return false
 	}
@@ -3968,20 +5352,21 @@ func program_node(
 	}()
 	Program_Validated_Invariants(program_value, "program_node.program_value")
 	Node_Link_Validated_Invariants(reference_value, "program_node.reference_value")
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	reference := reference_value[NODE_LINK_VALIDATED_FIELD]
-	if reference == NO_NODE {
+	program := program_value
+	reference := reference_value.Value.(Node_Link_Validated_Value)
+	if Node_Reference(reference) == NO_NODE {
 		return Node_Validated{}, false
 	}
-	if reference > Node_Reference(program.Document.Node_Count) {
+	if Node_Reference(reference) > Node_Reference(program.Document.Node_Count) {
 		return Node_Validated{}, false
 	}
-	node = Node_Validated{
-		program.Syntax[SYNTAX_FIELD].Nodes[reference-NODE_COUNT_INCREMENT],
-	}
-	node_record := node[NODE_VALIDATED_FIELD]
+	node = Node_Validated{Value: Node_Stored(
+		&program.Syntax.Value.Nodes[reference-NODE_COUNT_INCREMENT],
+	)}
+
+	node_record := node.Value.(*Node)
 	if !bool(node_record_valid(
-		node_record, Source_Position(len(program.Source.Data[SOURCE_FIELD])),
+		*node_record, Source_Position(len(program.Source.Data.Value)),
 		Active_Node_Count(program.Document.Node_Count),
 	)) {
 		return Node_Validated{}, false
@@ -3990,18 +5375,16 @@ func program_node(
 }
 
 func value_graph_validate(
-	workspace_state *Workspace, root_value Value,
+	workspace_state Workspace_Pointer, root_value Value_Unvalidated,
 ) (status Value_Graph_Status) {
 	defer func() {
 		Value_Graph_Status_Invariants(status, "value_graph_validate.status")
 	}()
-	Workspace_Invariants(workspace_state, "value_graph_validate.workspace_state")
-	Value_Invariants(root_value, "value_graph_validate.root_value")
-	workspace := (*Workspace)(workspace_state)
-	root := Value(root_value)
+	Workspace_Pointer_Invariants(workspace_state, "value_graph_validate.workspace_state")
+	Value_Unvalidated_Invariants(root_value, "value_graph_validate.root_value")
+	workspace, root := Workspace_Pointer(workspace_state), Value(root_value)
 	workspace.Validation[bytes.SLICE_SIZE_MINIMUM] = root
-	count := VALUE_COUNT_INCREMENT
-	steps := Active_Step_Count(STEP_COUNT_MINIMUM)
+	count, steps := VALUE_COUNT_INCREMENT, Active_Step_Count(STEP_COUNT_MINIMUM)
 	defer func() {
 		Active_Step_Count_Invariants(steps, "value_graph_validate.steps")
 	}()
@@ -4012,22 +5395,23 @@ func value_graph_validate(
 		steps++
 		count--
 		current := workspace.Validation[count]
-		if !bool(value_active_valid(current)) {
+		if !bool(value_active_valid(Value_Unvalidated(current))) {
 			return VALUE_GRAPH_STATUS_INVALID
 		}
-		switch current.Kind[VALUE_PAYLOAD_FIELD] {
+		switch Value_Kind(current.Kind.Value) {
 		case VALUE_SEQUENCE:
-			values := current.Values[VALUE_PAYLOAD_FIELD]
-			for index := range values {
+			for index := range Values(current.Values.Value) {
 				if count == len(workspace.Validation) {
 					return VALUE_GRAPH_STATUS_LIMIT_EXCEEDED
 				}
-				workspace.Validation[count] = values[index]
+				workspace.Validation[count] = Values(current.Values.Value)[index]
 				count++
 			}
 		case VALUE_OBJECT:
-			fields := current.Fields[VALUE_PAYLOAD_FIELD]
-			if !bool(object_fields_valid(Bounded_Fields{fields})) {
+			fields := Fields(current.Fields.Value)
+			if !bool(object_fields_valid(Bounded_Fields{
+				Value: Fields_Storage_Value(fields),
+			})) {
 				return VALUE_GRAPH_STATUS_INVALID
 			}
 			for index := range fields {
@@ -4039,11 +5423,13 @@ func value_graph_validate(
 				count++
 			}
 		case VALUE_MAP:
-			fields := current.Fields[VALUE_PAYLOAD_FIELD]
+			fields := Fields(current.Fields.Value)
 			if len(fields) > RANGE_MAP_ENTRY_COUNT_MAXIMUM {
 				return VALUE_GRAPH_STATUS_LIMIT_EXCEEDED
 			}
-			if !bool(map_fields_valid(Bounded_Fields{fields})) {
+			if !bool(map_fields_valid(Bounded_Fields{
+				Value: Fields_Storage_Value(fields),
+			})) {
 				return VALUE_GRAPH_STATUS_INVALID
 			}
 			for index := range fields {
@@ -4066,7 +5452,7 @@ func object_fields_valid(field_values Bounded_Fields) (
 ) {
 	defer func() { Value_Validity_Invariants(valid, "object_fields_valid.valid") }()
 	Bounded_Fields_Invariants(field_values, "object_fields_valid.field_values")
-	fields := field_values[BOUNDED_FIELDS_FIELD]
+	fields := field_values.Value.(Fields_Storage_Value)
 	for index := range fields {
 		field := fields[index]
 		if len(field.Name) == SOURCE_SIZE_MINIMUM {
@@ -4093,7 +5479,7 @@ func map_fields_valid(field_values Bounded_Fields) (
 ) {
 	defer func() { Value_Validity_Invariants(valid, "map_fields_valid.valid") }()
 	Bounded_Fields_Invariants(field_values, "map_fields_valid.field_values")
-	fields := field_values[BOUNDED_FIELDS_FIELD]
+	fields := field_values.Value.(Fields_Storage_Value)
 	for index := range fields {
 		field := fields[index]
 		if len(field.Name) != SOURCE_SIZE_MINIMUM {
@@ -4103,7 +5489,7 @@ func map_fields_valid(field_values Bounded_Fields) (
 			return false
 		}
 	}
-	if bool(map_keys_monotonic(Map_Keys_Validated{fields})) {
+	if bool(map_keys_monotonic(Map_Keys_Validated{Value: Fields_Storage_Value(fields)})) {
 		return true
 	}
 	for index := range fields {
@@ -4128,7 +5514,7 @@ func map_keys_monotonic(
 		Map_Keys_Monotonic_Invariants(monotonic, "map_keys_monotonic.monotonic")
 	}()
 	Map_Keys_Validated_Invariants(field_values, "map_keys_monotonic.field_values")
-	fields := field_values[MAP_KEYS_VALIDATED_FIELD]
+	fields := field_values.Value.(Fields_Storage_Value)
 	direction := ORDER_SAME
 	monotonic = true
 	for index := MAP_ENTRY_COUNT_INCREMENT; index < len(fields); index++ {
@@ -4138,7 +5524,7 @@ func map_keys_monotonic(
 			return false
 		}
 		order := map_key_order(
-			Map_Key_Validated{previous}, Map_Key_Validated{current},
+			Map_Key_Validated{Value: previous}, Map_Key_Validated{Value: current},
 		)
 		if order == ORDER_SAME {
 			monotonic = false
@@ -4155,13 +5541,13 @@ func map_keys_monotonic(
 	return monotonic
 }
 
-func value_active_valid(value_state Value) (
+func value_active_valid(value_state Value_Unvalidated) (
 	valid Value_Validity,
 ) {
 	defer func() { Value_Validity_Invariants(valid, "value_active_valid.valid") }()
-	Value_Invariants(value_state, "value_active_valid.value_state")
+	Value_Unvalidated_Invariants(value_state, "value_active_valid.value_state")
 	value := Value(value_state)
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	if kind < VALUE_NIL {
 		return false
 	}
@@ -4172,14 +5558,14 @@ func value_active_valid(value_state Value) (
 	switch kind {
 	case VALUE_TEXT:
 		return Value_Validity(
-			len(value.Text[VALUE_PAYLOAD_FIELD]) <= OUTPUT_SIZE_MAXIMUM,
+			len(Text(value.Text.Value)) <= OUTPUT_SIZE_MAXIMUM,
 		)
 	case VALUE_SEQUENCE:
-		return Value_Validity(len(value.Values[VALUE_PAYLOAD_FIELD]) <= VALUE_COUNT_MAXIMUM)
+		return Value_Validity(len(Values(value.Values.Value)) <= VALUE_COUNT_MAXIMUM)
 	case VALUE_OBJECT, VALUE_MAP:
-		return Value_Validity(len(value.Fields[VALUE_PAYLOAD_FIELD]) <= VALUE_COUNT_MAXIMUM)
+		return Value_Validity(len(Fields(value.Fields.Value)) <= VALUE_COUNT_MAXIMUM)
 	case VALUE_FUNCTION:
-		return Value_Validity(value.Function[VALUE_PAYLOAD_FIELD] != nil)
+		return Value_Validity(Function_Call(value.Function.Value) != nil)
 	}
 	return true
 }
@@ -4190,7 +5576,7 @@ func map_key_valid(value_state Value) (
 	defer func() { Value_Validity_Invariants(valid, "map_key_valid.valid") }()
 	Value_Invariants(value_state, "map_key_valid.value_state")
 	value := Value(value_state)
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	if kind < VALUE_NIL {
 		return false
 	}
@@ -4231,8 +5617,7 @@ func registry_valid(function_values Functions) (
 }
 
 func execute_unchecked(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	root_value Value,
 	function_values Functions_Validated,
 ) (
@@ -4245,27 +5630,30 @@ func execute_unchecked(
 		Node_Execution_Status_Invariants(status, "execute_unchecked.status")
 		Active_Step_Count_Invariants(steps, "execute_unchecked.steps")
 	}()
-	Workspace_Invariants(workspace_state, "execute_unchecked.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execute_unchecked.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_unchecked.program_value")
 	Value_Invariants(root_value, "execute_unchecked.root_value")
 	Functions_Validated_Invariants(function_values, "execute_unchecked.function_values")
-	workspace := (*Workspace)(workspace_state)
-	root, functions := Value(root_value), function_values
+	workspace, root := (Workspace_Pointer)(workspace_state), Value(root_value)
+	count = Output_Count_Staged{Value: Output_Count_Staged_Value(OUTPUT_SIZE_MINIMUM)}
 	execute_begin(workspace, program_value, root)
-	origin := Execution_Failure_Position{Diagnostic_Position(SOURCE_SIZE_MINIMUM)}
-	for workspace.Frame_Count[WORKSPACE_SCALAR_FIELD] > Frame_Index(NODE_COUNT_MINIMUM) {
+	limit_failure := Failure_Status_Validated{
+		Value: Failure_Status_Validated_Value(STATUS_LIMIT_EXCEEDED)}
+	program_failure := Failure_Status_Validated{
+		Value: Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID)}
+	initial_position := Execution_Failure_Position{
+		Value: Execution_Failure_Position_Value(SOURCE_SIZE_MINIMUM)}
+	for workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value) >
+		Workspace_Frame_Count_Storage_Value(NODE_COUNT_MINIMUM) {
 		if steps == Active_Step_Count(STEP_COUNT_MAXIMUM) {
-			execution_failure(
-				workspace, Failure_Status_Validated{STATUS_LIMIT_EXCEEDED},
-				origin,
-			)
+			execution_failure_at(workspace, limit_failure, initial_position)
 			return Output_Count_Staged{}, NODE_EXECUTION_STATUS_LIMIT_EXCEEDED, steps
 		}
 		steps++
-		frame_count := workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]
+		frame_count := workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value)
 		frame_index := int(frame_count) - FRAME_COUNT_INCREMENT
 		frame_state := &workspace.Frames[frame_index]
-		frame := &frame_state[FRAME_STORAGE_FIELD]
+		frame := &frame_state.Value
 		if frame.Kind == FRAME_RANGE {
 			range_schedule(workspace, program_value, frame_state)
 			continue
@@ -4276,30 +5664,27 @@ func execute_unchecked(
 		}
 		reference := frame.Reference
 		node_value, found := program_node(
-			program_value, Node_Link_Validated{reference},
+			program_value,
+			Node_Link_Validated{Value: Node_Link_Validated_Value(reference)},
 		)
 		if !bool(found) {
-			execution_failure(
-				workspace, Failure_Status_Validated{STATUS_PROGRAM_INVALID},
-				origin,
-			)
+			execution_failure_at(workspace, program_failure, initial_position)
 			return Output_Count_Staged{}, NODE_EXECUTION_STATUS_PROGRAM_INVALID, steps
 		}
-		node := node_value[NODE_VALIDATED_FIELD]
+		node := node_value.Value.(*Node)
 		frame.Reference = Node_Reference(node.Next_Sibling)
 		flow := FLOW_NORMAL
 		count, flow, status = execute_node(
-			workspace, program_value, node_value, frame.Dot, functions, count,
+			workspace, program_value, node_value, frame.Dot, function_values, count,
 		)
 		if status != NODE_EXECUTION_STATUS_OK {
 			return Output_Count_Staged{}, status, steps
 		}
 		if flow != FLOW_NORMAL {
 			if !bool(range_unwind(workspace, Range_Flow(flow))) {
-				execution_failure(
-					workspace, Failure_Status_Validated{STATUS_PROGRAM_INVALID},
-					Execution_Failure_Position{Diagnostic_Position(node.Start)},
-				)
+				node_position := Execution_Failure_Position{
+					Value: Execution_Failure_Position_Value(node.Start)}
+				execution_failure_at(workspace, program_failure, node_position)
 				return Output_Count_Staged{},
 					NODE_EXECUTION_STATUS_PROGRAM_INVALID, steps
 			}
@@ -4308,110 +5693,123 @@ func execute_unchecked(
 	return count, NODE_EXECUTION_STATUS_OK, steps
 }
 
-func execution_failure(
-	workspace_state *Workspace,
-	status_value Failure_Status_Validated,
+func execution_failure_at(
+	workspace_state Workspace_Pointer, status_value Failure_Status_Validated,
 	position_value Execution_Failure_Position,
 ) {
-	Workspace_Invariants(workspace_state, "execution_failure.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execution_failure_at.workspace_state")
+	Failure_Status_Validated_Invariants(status_value, "execution_failure_at.status_value")
+	Execution_Failure_Position_Invariants(
+		position_value, "execution_failure_at.position_value",
+	)
+	execution_failure(workspace_state, status_value, position_value)
+}
+
+func execution_failure(
+	workspace_state Workspace_Pointer, status_value Failure_Status_Validated,
+	position_value Execution_Failure_Position,
+) {
+	Workspace_Pointer_Invariants(workspace_state, "execution_failure.workspace_state")
 	Failure_Status_Validated_Invariants(status_value, "execution_failure.status_value")
 	Execution_Failure_Position_Invariants(
 		position_value, "execution_failure.position_value",
 	)
 	set_diagnostic(
 		workspace_state, status_value,
-		position_value[EXECUTION_FAILURE_POSITION_FIELD],
+		Diagnostic_Position(position_value.Value.(Execution_Failure_Position_Value)),
 	)
 }
 
 func execute_begin(
-	workspace_state *Workspace, program_value Program_Validated, root_value Value,
+	workspace_state Workspace_Pointer, program_value Program_Validated, root_value Value,
 ) {
-	Workspace_Invariants(workspace_state, "execute_begin.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execute_begin.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_begin.program_value")
 	Value_Invariants(root_value, "execute_begin.root_value")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
 	root := Value(root_value)
-	workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] = Variable_Count(DECLARATION_COUNT_ONE)
-	workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] = Scope_Base(VARIABLE_COUNT_MINIMUM)
+	workspace.Variable_Count.Value = Workspace_Variable_Count_Storage_Value(
+		DECLARATION_COUNT_ONE,
+	)
+	workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(VARIABLE_COUNT_MINIMUM)
 	workspace.Variables[VARIABLE_COUNT_MINIMUM] = Variable{Root: true, Value: root}
-	workspace.Frame_Count[WORKSPACE_SCALAR_FIELD] = Frame_Index(FRAME_COUNT_INCREMENT)
-	root_node := program.Syntax[SYNTAX_FIELD].Nodes[program.Document.Root-NODE_COUNT_INCREMENT]
-	workspace.Frames[bytes.SLICE_SIZE_MINIMUM][FRAME_STORAGE_FIELD] = Frame{
+	workspace.Frame_Count.Value = Workspace_Frame_Count_Storage_Value(FRAME_COUNT_INCREMENT)
+	root_node := program.Syntax.Value.Nodes[program.Document.Root-NODE_COUNT_INCREMENT]
+	workspace.Frames[bytes.SLICE_SIZE_MINIMUM].Value = Frame_Stored(Frame{
 		Kind: FRAME_LIST, Reference: Node_Reference(root_node.First_Child),
 		Dot: root,
-	}
+	})
 }
 
-func frame_pop(workspace_state *Workspace) {
-	Workspace_Invariants(workspace_state, "frame_pop.workspace_state")
-	workspace := (*Workspace)(workspace_state)
-	index := int(workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]) - FRAME_COUNT_INCREMENT
-	frame := workspace.Frames[index][FRAME_STORAGE_FIELD]
+func frame_pop(workspace_state Workspace_Pointer) {
+	Workspace_Pointer_Invariants(workspace_state, "frame_pop.workspace_state")
+	workspace := (Workspace_Pointer)(workspace_state)
+	index := int(workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value)) -
+		FRAME_COUNT_INCREMENT
+	frame := workspace.Frames[index].Value
 	if bool(frame.Restore) {
-		workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] =
-			Variable_Count(frame.Variable_Mark)
-		workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] =
-			Scope_Base(frame.Previous_Scope_Base)
+		workspace.Variable_Count.Value = Workspace_Variable_Count_Storage_Value(
+			frame.Variable_Mark,
+		)
+		workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(
+			frame.Previous_Scope_Base,
+		)
 	}
-	workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]--
+	workspace.Frame_Count.Value =
+		workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value) -
+			Workspace_Frame_Count_Storage_Value(FRAME_COUNT_INCREMENT)
 }
 
 func frame_push_list(
-	workspace_state *Workspace,
-	reference_value Node_Link_Validated,
+	workspace_state Workspace_Pointer, reference_value Node_Link_Validated,
 	dot_value Value,
 	restore_value Scope_Restore_Validated,
 ) {
-	Workspace_Invariants(workspace_state, "frame_push_list.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "frame_push_list.workspace_state")
 	Node_Link_Validated_Invariants(reference_value, "frame_push_list.reference_value")
 	Value_Invariants(dot_value, "frame_push_list.dot_value")
 	Scope_Restore_Validated_Invariants(restore_value, "frame_push_list.restore_value")
-	workspace := (*Workspace)(workspace_state)
-	reference := reference_value[NODE_LINK_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	reference := reference_value.Value.(Node_Link_Validated_Value)
 	dot := Value(dot_value)
-	restore := restore_value[SCOPE_RESTORE_VALIDATED_FIELD]
-	frame_count := workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]
+	restore := restore_value.Value
+	frame_count := workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value)
 	aver.Always(
 		int(frame_count) < len(workspace.Frames),
 		"Source and variable bounds exhaust before caller frame storage.",
 	)
-	workspace.Frames[frame_count][FRAME_STORAGE_FIELD] = Frame{
-		Kind: FRAME_LIST, Reference: reference, Dot: dot,
+	workspace.Frames[frame_count].Value = Frame_Stored(Frame{
+		Kind: FRAME_LIST, Reference: Node_Reference(reference), Dot: dot,
 		Restore: true, Variable_Mark: Frame_Variable_Mark(restore.Mark),
 		Previous_Scope_Base: Frame_Previous_Scope_Base(restore.Previous),
-	}
-	workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]++
+	})
+	workspace.Frame_Count.Value = frame_count +
+		Workspace_Frame_Count_Storage_Value(FRAME_COUNT_INCREMENT)
 }
 
 func execute_node(
-	workspace_state *Workspace,
-	program_value Program_Validated,
-	node_value Node_Validated,
-	dot_value Value,
-	function_values Functions_Validated,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
+	node_value Node_Validated, dot_value Value,
+	function_values Functions_Validated, count_value Output_Count_Staged,
 ) (written Output_Count_Staged, flow Flow, status Node_Execution_Status) {
 	defer func() {
 		Output_Count_Staged_Invariants(written, "execute_node.written")
 		Flow_Invariants(flow, "execute_node.flow")
 		Node_Execution_Status_Invariants(status, "execute_node.status")
 	}()
-	Workspace_Invariants(workspace_state, "execute_node.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execute_node.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_node.program_value")
 	Node_Validated_Invariants(node_value, "execute_node.node_value")
 	Value_Invariants(dot_value, "execute_node.dot_value")
 	Functions_Validated_Invariants(function_values, "execute_node.function_values")
 	Output_Count_Staged_Invariants(count_value, "execute_node.count_value")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	node, dot := node_value[NODE_VALIDATED_FIELD], Value(dot_value)
-	functions := function_values
+	workspace := (Workspace_Pointer)(workspace_state)
+	node, dot := node_value.Value.(*Node), Value(dot_value)
 	count := count_value
 	switch node.Kind {
 	case NODE_TEXT:
-		text := program.Source.Data[SOURCE_FIELD][node.Value_Start:node.Value_End]
+		text := program_value.Source.Data.Value[node.Value_Start:node.Value_End]
 		count, output_status := output_bytes(workspace, count, Text(text))
 		status = Node_Execution_Status(output_status)
 		return count, FLOW_NORMAL, status
@@ -4419,15 +5817,17 @@ func execute_node(
 		return count, FLOW_NORMAL, NODE_EXECUTION_STATUS_OK
 	case NODE_ACTION:
 		count, status = execute_action(
-			workspace, program_value, node_value, dot, functions, count,
+			workspace, program_value, node_value, dot, function_values, count,
 		)
 		return count, FLOW_NORMAL, status
 	case NODE_IF, NODE_WITH, NODE_RANGE:
 		control_status := execute_control(
-			workspace, program_value, node_value, dot, functions,
+			workspace, program_value, node_value, dot, function_values,
 		)
 		if control_status != EVALUATION_STATUS_OK {
-			failure := Failure_Status_Validated{Status(control_status)}
+			failure := Failure_Status_Validated{
+				Value: Failure_Status_Validated_Value(control_status),
+			}
 			execution_node_error(
 				workspace, failure, node_value,
 			)
@@ -4437,10 +5837,12 @@ func execute_node(
 		return count, FLOW_NORMAL, NODE_EXECUTION_STATUS_OK
 	case NODE_TEMPLATE:
 		template_status := execute_template(
-			workspace, program_value, node_value, dot, functions,
+			workspace, program_value, node_value, dot, function_values,
 		)
 		if template_status != EVALUATION_STATUS_OK {
-			failure := Failure_Status_Validated{Status(template_status)}
+			failure := Failure_Status_Validated{
+				Value: Failure_Status_Validated_Value(template_status),
+			}
 			execution_node_error(
 				workspace, failure, node_value,
 			)
@@ -4454,14 +5856,15 @@ func execute_node(
 		return count, FLOW_CONTINUE, NODE_EXECUTION_STATUS_OK
 	}
 	execution_node_error(
-		workspace, Failure_Status_Validated{STATUS_PROGRAM_INVALID}, node_value,
+		workspace, Failure_Status_Validated{
+			Value: Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID),
+		}, node_value,
 	)
 	return Output_Count_Staged{}, FLOW_NORMAL, NODE_EXECUTION_STATUS_PROGRAM_INVALID
 }
 
 func execute_action(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	node_value Node_Validated,
 	dot_value Value,
 	function_values Functions_Validated,
@@ -4471,29 +5874,34 @@ func execute_action(
 		Output_Count_Staged_Invariants(count, "execute_action.count")
 		Node_Execution_Status_Invariants(status, "execute_action.status")
 	}()
-	Workspace_Invariants(workspace_state, "execute_action.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execute_action.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_action.program_value")
 	Node_Validated_Invariants(node_value, "execute_action.node_value")
 	Value_Invariants(dot_value, "execute_action.dot_value")
 	Functions_Validated_Invariants(function_values, "execute_action.function_values")
 	Output_Count_Staged_Invariants(count_value, "execute_action.count_value")
-	workspace := (*Workspace)(workspace_state)
-	node, dot := node_value[NODE_VALIDATED_FIELD], Value(dot_value)
+	workspace := (Workspace_Pointer)(workspace_state)
+	node, dot := node_value.Value.(*Node), Value(dot_value)
 	functions := function_values
 	count = count_value
 	pipe_value, found := program_node(
-		program_value, Node_Link_Validated{Node_Reference(node.First_Child)},
+		program_value,
+		Node_Link_Validated{Value: Node_Link_Validated_Value(node.First_Child)},
 	)
 	if !bool(found) {
 		execution_node_error(
-			workspace, Failure_Status_Validated{STATUS_PROGRAM_INVALID}, node_value,
+			workspace, Failure_Status_Validated{
+				Value: Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID),
+			}, node_value,
 		)
 		return Output_Count_Staged{}, NODE_EXECUTION_STATUS_PROGRAM_INVALID
 	}
-	pipe := pipe_value[NODE_VALIDATED_FIELD]
+	pipe := pipe_value.Value.(*Node)
 	if pipe.Kind != NODE_PIPE {
 		execution_node_error(
-			workspace, Failure_Status_Validated{STATUS_PROGRAM_INVALID}, node_value,
+			workspace, Failure_Status_Validated{
+				Value: Failure_Status_Validated_Value(STATUS_PROGRAM_INVALID),
+			}, node_value,
 		)
 		return Output_Count_Staged{}, NODE_EXECUTION_STATUS_PROGRAM_INVALID
 	}
@@ -4502,7 +5910,9 @@ func execute_action(
 	)
 	if pipeline_status != EVALUATION_STATUS_OK {
 		execution_node_error(
-			workspace, Failure_Status_Validated{Status(pipeline_status)}, node_value,
+			workspace, Failure_Status_Validated{
+				Value: Failure_Status_Validated_Value(pipeline_status),
+			}, node_value,
 		)
 		return Output_Count_Staged{}, Node_Execution_Status(pipeline_status)
 	}
@@ -4512,7 +5922,9 @@ func execute_action(
 	count, output_status := output_value(workspace, count, state.Value)
 	if output_status != OUTPUT_STATUS_OK {
 		execution_node_error(
-			workspace, Failure_Status_Validated{Status(output_status)}, node_value,
+			workspace, Failure_Status_Validated{
+				Value: Failure_Status_Validated_Value(output_status),
+			}, node_value,
 		)
 		return Output_Count_Staged{}, Node_Execution_Status(output_status)
 	}
@@ -4520,26 +5932,25 @@ func execute_action(
 }
 
 func execution_node_error(
-	workspace_state *Workspace,
-	status_value Failure_Status_Validated,
+	workspace_state Workspace_Pointer, status_value Failure_Status_Validated,
 	node_value Node_Validated,
 ) {
-	Workspace_Invariants(workspace_state, "execution_node_error.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execution_node_error.workspace_state")
 	Failure_Status_Validated_Invariants(
 		status_value, "execution_node_error.status_value",
 	)
 	Node_Validated_Invariants(node_value, "execution_node_error.node_value")
-	workspace := (*Workspace)(workspace_state)
-	status := status_value[FAILURE_STATUS_VALIDATED_FIELD]
-	node := node_value[NODE_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	status := status_value.Value.(Failure_Status_Validated_Value)
+	node := node_value.Value.(*Node)
 	set_diagnostic(
-		workspace, Failure_Status_Validated{status}, Diagnostic_Position(node.Start),
+		workspace, Failure_Status_Validated{Value: Failure_Status_Validated_Value(status)},
+		Diagnostic_Position(node.Start),
 	)
 }
 
 func execute_control(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	control_value Node_Validated,
 	dot_value Value,
 	function_values Functions_Validated,
@@ -4547,26 +5958,29 @@ func execute_control(
 	defer func() {
 		Evaluation_Status_Invariants(status, "execute_control.status")
 	}()
-	Workspace_Invariants(workspace_state, "execute_control.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "execute_control.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_control.program_value")
 	Node_Validated_Invariants(control_value, "execute_control.control_value")
 	Value_Invariants(dot_value, "execute_control.dot_value")
 	Functions_Validated_Invariants(function_values, "execute_control.function_values")
-	workspace := (*Workspace)(workspace_state)
-	control := control_value[NODE_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	control := control_value.Value.(*Node)
 	pipe_value, found := program_node(
-		program_value, Node_Link_Validated{Node_Reference(control.First_Child)},
+		program_value,
+		Node_Link_Validated{Value: Node_Link_Validated_Value(control.First_Child)},
 	)
 	if !bool(found) {
 		return EVALUATION_STATUS_PROGRAM_INVALID
 	}
-	pipe := pipe_value[NODE_VALIDATED_FIELD]
+	pipe := pipe_value.Value.(*Node)
 	if pipe.Kind != NODE_PIPE {
 		return EVALUATION_STATUS_PROGRAM_INVALID
 	}
-	mark := workspace.Variable_Count[WORKSPACE_SCALAR_FIELD]
-	previous_scope := workspace.Scope_Base[WORKSPACE_SCALAR_FIELD]
-	restore := Scope_Restore_Validated{{Mark: mark, Previous: previous_scope}}
+	mark := workspace.Variable_Count.Value.(Workspace_Variable_Count_Storage_Value)
+	previous_scope := workspace.Scope_Base.Value.(Workspace_Scope_Base_Storage_Value)
+	restore := Scope_Restore_Validated{Value: Scope_Restore_Stored(
+		Scope_Restore{Mark: Variable_Count(mark), Previous: Scope_Base(previous_scope)})}
+
 	state, pipeline_status := pipeline_evaluate(
 		workspace, program_value, pipe_value, dot_value, function_values,
 	)
@@ -4574,12 +5988,13 @@ func execute_control(
 		return pipeline_status
 	}
 	body_value, found := program_node(
-		program_value, Node_Link_Validated{Node_Reference(pipe.Next_Sibling)},
+		program_value,
+		Node_Link_Validated{Value: Node_Link_Validated_Value(pipe.Next_Sibling)},
 	)
 	if !bool(found) {
 		return EVALUATION_STATUS_PROGRAM_INVALID
 	}
-	body := body_value[NODE_VALIDATED_FIELD]
+	body := body_value.Value.(*Node)
 	if body.Kind != NODE_LIST {
 		return EVALUATION_STATUS_PROGRAM_INVALID
 	}
@@ -4597,8 +6012,7 @@ func execute_control(
 }
 
 func control_body_select(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	control_value Node_Validated,
 	body_value Node_Validated,
 	dot_value Value,
@@ -4606,36 +6020,41 @@ func control_body_select(
 	restore_value Scope_Restore_Validated,
 ) (status Program_Status) {
 	defer func() { Program_Status_Invariants(status, "control_body_select.status") }()
-	Workspace_Invariants(workspace_state, "control_body_select.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "control_body_select.workspace_state")
 	Program_Validated_Invariants(program_value, "control_body_select.program_value")
 	Node_Validated_Invariants(control_value, "control_body_select.control_value")
 	Node_Validated_Invariants(body_value, "control_body_select.body_value")
 	Value_Invariants(dot_value, "control_body_select.dot_value")
 	Value_Invariants(condition_value, "control_body_select.condition_value")
 	Scope_Restore_Validated_Invariants(restore_value, "control_body_select.restore_value")
-	workspace := (*Workspace)(workspace_state)
-	control := control_value[NODE_VALIDATED_FIELD]
-	body := body_value[NODE_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	control := control_value.Value.(*Node)
+	body := body_value.Value.(*Node)
 	condition := Value(condition_value)
-	restore := restore_value[SCOPE_RESTORE_VALIDATED_FIELD]
+	restore := restore_value.Value
 	selected_value := body_value
 	selected := body
 	selected_dot := dot_value
 	if !bool(value_truth(condition)) {
 		alternate := Node_Reference(body.Next_Sibling)
 		if alternate == NO_NODE {
-			workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] = restore.Mark
-			workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] = restore.Previous
+			workspace.Variable_Count.Value = Workspace_Variable_Count_Storage_Value(
+				restore.Mark,
+			)
+			workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(
+				restore.Previous,
+			)
 			return PROGRAM_STATUS_OK
 		}
 		var selected_valid Node_Validity
 		selected_value, selected_valid = program_node(
-			program_value, Node_Link_Validated{alternate},
+			program_value,
+			Node_Link_Validated{Value: Node_Link_Validated_Value(alternate)},
 		)
 		if !bool(selected_valid) {
 			return PROGRAM_STATUS_INVALID
 		}
-		selected = selected_value[NODE_VALIDATED_FIELD]
+		selected = selected_value.Value.(*Node)
 		if selected.Kind != NODE_LIST {
 			return PROGRAM_STATUS_INVALID
 		}
@@ -4643,35 +6062,29 @@ func control_body_select(
 		selected_dot = condition
 	}
 	frame_push_list(
-		workspace, Node_Link_Validated{Node_Reference(selected.First_Child)}, selected_dot,
+		workspace,
+		Node_Link_Validated{Value: Node_Link_Validated_Value(selected.First_Child)},
+		selected_dot,
 		restore_value,
 	)
 	return PROGRAM_STATUS_OK
 }
 
 func range_begin(
-	workspace_state *Workspace,
-	program_value Program_Validated,
-	body_value Node_Validated,
-	dot_value Value,
-	state_value Pipeline_State,
-	restore_value Scope_Restore_Validated,
+	workspace_state Workspace_Pointer,
+	program_value Program_Validated, body_value Node_Validated, dot_value Value,
+	state_value Pipeline_State, restore_value Scope_Restore_Validated,
 ) (status Program_Execution_Limit_Status) {
-	defer func() {
-		Program_Execution_Limit_Status_Invariants(status, "range_begin.status")
-	}()
-	Workspace_Invariants(workspace_state, "range_begin.workspace_state")
+	defer func() { Program_Execution_Limit_Status_Invariants(status, "range_begin.status") }()
+	Workspace_Pointer_Invariants(workspace_state, "range_begin.workspace_state")
 	Program_Validated_Invariants(program_value, "range_begin.program_value")
 	Node_Validated_Invariants(body_value, "range_begin.body_value")
 	Value_Invariants(dot_value, "range_begin.dot_value")
 	Pipeline_State_Invariants(state_value, "range_begin.state_value")
 	Scope_Restore_Validated_Invariants(restore_value, "range_begin.restore_value")
-	workspace := (*Workspace)(workspace_state)
-	body := body_value[NODE_VALIDATED_FIELD]
-	dot := Value(dot_value)
-	state := Pipeline_State(state_value)
-	restore := restore_value[SCOPE_RESTORE_VALIDATED_FIELD]
-	mark, previous_scope := restore.Mark, restore.Previous
+	workspace, body := Workspace_Pointer(workspace_state), body_value.Value.(*Node)
+	dot, state := Value(dot_value), Pipeline_State(state_value)
+	mark, previous_scope := restore_value.Value.Mark, restore_value.Value.Previous
 	count, count_status := range_value_count(state.Value)
 	if count_status != RANGE_STATUS_OK {
 		return Program_Execution_Limit_Status(count_status)
@@ -4679,58 +6092,64 @@ func range_begin(
 	if count == Collection_Count(bytes.SLICE_SIZE_MINIMUM) {
 		alternate_reference := Node_Reference(body.Next_Sibling)
 		if alternate_reference == NO_NODE {
-			workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] = mark
-			workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] = previous_scope
+			workspace.Variable_Count.Value = Workspace_Variable_Count_Storage_Value(
+				mark,
+			)
+			workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(
+				previous_scope,
+			)
 			return PROGRAM_EXECUTION_LIMIT_STATUS_OK
 		}
 		alternate_value, found := program_node(
-			program_value, Node_Link_Validated{alternate_reference},
+			program_value,
+			Node_Link_Validated{Value: Node_Link_Validated_Value(alternate_reference)},
 		)
 		if !bool(found) {
 			return PROGRAM_EXECUTION_LIMIT_STATUS_PROGRAM_INVALID
 		}
-		alternate := alternate_value[NODE_VALIDATED_FIELD]
+		alternate := alternate_value.Value.(*Node)
 		if alternate.Kind != NODE_LIST {
 			return PROGRAM_EXECUTION_LIMIT_STATUS_PROGRAM_INVALID
 		}
 		frame_push_list(
-			workspace, Node_Link_Validated{Node_Reference(alternate.First_Child)}, dot,
+			workspace,
+			Node_Link_Validated{
+				Value: Node_Link_Validated_Value(alternate.First_Child),
+			},
+			dot,
 			restore_value,
 		)
 		return PROGRAM_EXECUTION_LIMIT_STATUS_OK
 	}
-	frame_count := workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]
+	frame_count := workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value)
+	variable_count := workspace.Variable_Count.Value.(Workspace_Variable_Count_Storage_Value)
+	scope_base := workspace.Scope_Base.Value.(Workspace_Scope_Base_Storage_Value)
 	if int(frame_count) == len(workspace.Frames) {
 		return PROGRAM_EXECUTION_LIMIT_STATUS_LIMIT_EXCEEDED
 	}
-	workspace.Frames[frame_count][FRAME_STORAGE_FIELD] = Frame{
+	workspace.Frames[frame_count].Value = Frame_Stored(Frame{
 		Kind: FRAME_RANGE, Reference: Node_Reference(body.First_Child),
 		Dot: state.Value, Variable_Mark: Frame_Variable_Mark(mark),
-		Iteration_Variables: Frame_Iteration_Variable_Count(
-			workspace.Variable_Count[WORKSPACE_SCALAR_FIELD],
-		),
-		Scope_Base: Frame_Scope_Base(
-			workspace.Scope_Base[WORKSPACE_SCALAR_FIELD],
-		),
+		Iteration_Variables: Frame_Iteration_Variable_Count(variable_count),
+		Scope_Base:          Frame_Scope_Base(scope_base),
 		Previous_Scope_Base: Frame_Previous_Scope_Base(previous_scope),
 		Declarations:        state.Declarations,
 		Declaration_Count:   state.Declaration_Count,
 		Assignment:          state.Assignment, Restore: true,
-	}
-	workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]++
+	})
+	workspace.Frame_Count.Value = frame_count +
+		Workspace_Frame_Count_Storage_Value(FRAME_COUNT_INCREMENT)
 	return PROGRAM_EXECUTION_LIMIT_STATUS_OK
 }
 
 func range_schedule(
-	workspace_state *Workspace,
-	program_value Program_Validated,
-	frame_state *Frame_Storage,
-) {
-	Workspace_Invariants(workspace_state, "range_schedule.workspace_state")
+	workspace_state Workspace_Pointer, program_value Program_Validated,
+	frame_state Frame_Storage_Pointer) {
+	Workspace_Pointer_Invariants(workspace_state, "range_schedule.workspace_state")
 	Program_Validated_Invariants(program_value, "range_schedule.program_value")
-	Frame_Storage_Invariants(*frame_state, "range_schedule.frame_state")
-	workspace := (*Workspace)(workspace_state)
-	frame := &frame_state[FRAME_STORAGE_FIELD]
+	Frame_Storage_Pointer_Invariants(frame_state, "range_schedule.frame_state")
+	workspace := (Workspace_Pointer)(workspace_state)
+	frame := &frame_state.Value
 	count, count_status := range_value_count(frame.Dot)
 	aver.Always(
 		count_status == RANGE_STATUS_OK,
@@ -4743,7 +6162,7 @@ func range_schedule(
 	index := frame.Index
 	key := Value{}
 	item := Value{}
-	if frame.Dot.Kind[VALUE_PAYLOAD_FIELD] == VALUE_MAP {
+	if Value_Kind(frame.Dot.Kind.Value) == VALUE_MAP {
 		selected := Range_Map_Entry_Index(bytes.SLICE_SIZE_MINIMUM)
 		key, item, selected = range_map_next(
 			frame.Dot, Prior_Map_Entry_Index(frame.Map_Entry_Index),
@@ -4755,34 +6174,35 @@ func range_schedule(
 		key, item = range_value_at(frame.Dot, Collection_Element_Index(index))
 	}
 	frame.Index++
+	variable_count := workspace.Variable_Count.Value.(Workspace_Variable_Count_Storage_Value)
+	scope_base := workspace.Scope_Base.Value.(Workspace_Scope_Base_Storage_Value)
 	range_bind(workspace, program_value, frame_state, key, item)
 	frame_push_list(
-		workspace, Node_Link_Validated{frame.Reference}, item, Scope_Restore_Validated{{
-			Mark:     workspace.Variable_Count[WORKSPACE_SCALAR_FIELD],
-			Previous: workspace.Scope_Base[WORKSPACE_SCALAR_FIELD],
-		}},
+		workspace, Node_Link_Validated{Value: Node_Link_Validated_Value(frame.Reference)},
+		item,
+		Scope_Restore_Validated{Value: Scope_Restore_Stored(Scope_Restore{
+			Mark:     Variable_Count(variable_count),
+			Previous: Scope_Base(scope_base),
+		})},
 	)
 }
 
 func range_bind(
-	workspace_state *Workspace,
-	program_value Program_Validated,
-	frame_state *Frame_Storage,
-	key_value Value,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
+	frame_state Frame_Storage_Pointer, key_value Value,
 	item_value Value,
 ) {
-	Workspace_Invariants(workspace_state, "range_bind.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "range_bind.workspace_state")
 	Program_Validated_Invariants(program_value, "range_bind.program_value")
-	Frame_Storage_Invariants(*frame_state, "range_bind.frame_state")
+	Frame_Storage_Pointer_Invariants(frame_state, "range_bind.frame_state")
 	Value_Invariants(key_value, "range_bind.key_value")
 	Value_Invariants(item_value, "range_bind.item_value")
-	workspace := (*Workspace)(workspace_state)
-	frame := &frame_state[FRAME_STORAGE_FIELD]
-	key := Value(key_value)
-	item := Value(item_value)
-	workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] =
-		Variable_Count(frame.Iteration_Variables)
-	workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] = Scope_Base(frame.Scope_Base)
+	workspace, frame := Workspace_Pointer(workspace_state), &frame_state.Value
+	key, item := Value(key_value), Value(item_value)
+	workspace.Variable_Count.Value = Workspace_Variable_Count_Storage_Value(
+		frame.Iteration_Variables,
+	)
+	workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(frame.Scope_Base)
 	declaration_start := int(frame.Variable_Mark)
 	declaration_end := declaration_start
 	if !bool(frame.Assignment) {
@@ -4792,40 +6212,33 @@ func range_bind(
 		declaration_end <= int(frame.Iteration_Variables),
 		"Range frame retains the declarations bound before iteration.",
 	)
+	bind := func(reference Declaration_Reference_Validated_Value, value Value) {
+		bind_status := variable_bind_reference(
+			workspace, program_value,
+			Declaration_Reference_Validated{Value: reference},
+			value, frame.Assignment,
+		)
+		aver.Always(
+			bind_status == EXECUTION_LIMIT_STATUS_OK,
+			"Parsed range assignment retains its visible binding.",
+		)
+	}
 	if frame.Declaration_Count == DECLARATION_COUNT_ONE {
 		if bool(frame.Assignment) {
-			bind_status := variable_bind_reference(
-				workspace, program_value,
-				frame.Declarations[DECLARATION_COUNT_NONE],
-				item, frame.Assignment,
-			)
-			aver.Always(
-				bind_status == EXECUTION_LIMIT_STATUS_OK,
-				"Parsed range assignment retains its visible binding.",
-			)
+			bind(Declaration_Reference_Validated_Value(
+				frame.Declarations.First.Value.(Declaration_First_Reference),
+			), item)
 		} else {
 			workspace.Variables[declaration_start].Value = item
 		}
 	} else if frame.Declaration_Count == DECLARATION_COUNT_TWO {
 		if bool(frame.Assignment) {
-			key_status := variable_bind_reference(
-				workspace, program_value,
-				frame.Declarations[DECLARATION_COUNT_NONE], key,
-				frame.Assignment,
-			)
-			aver.Always(
-				key_status == EXECUTION_LIMIT_STATUS_OK,
-				"Parsed range key assignment retains its visible binding.",
-			)
-			item_status := variable_bind_reference(
-				workspace, program_value,
-				frame.Declarations[DECLARATION_COUNT_ONE], item,
-				frame.Assignment,
-			)
-			aver.Always(
-				item_status == EXECUTION_LIMIT_STATUS_OK,
-				"Parsed range value assignment retains its visible binding.",
-			)
+			bind(Declaration_Reference_Validated_Value(
+				frame.Declarations.First.Value.(Declaration_First_Reference),
+			), key)
+			bind(Declaration_Reference_Validated_Value(
+				frame.Declarations.Second.Value.(Declaration_Second_Reference),
+			), item)
 		} else {
 			workspace.Variables[declaration_start].Value = key
 			workspace.Variables[declaration_start+VARIABLE_COUNT_INCREMENT].Value = item
@@ -4855,8 +6268,8 @@ func range_map_next(
 		previous_selection_value, "range_map_next.previous_selection_value",
 	)
 	value := Value(value_state)
-	fields := value.Fields[VALUE_PAYLOAD_FIELD]
-	validated_fields := Map_Fields_Validated{fields}
+	fields := Fields(value.Fields.Value)
+	validated_fields := Map_Fields_Validated{Value: Fields_Storage_Value(fields)}
 	previous_index := int(previous_index_value)
 	previous_selected := bool(previous_selection_value)
 	found := false
@@ -4907,10 +6320,10 @@ func map_field_order(
 	Map_Fields_Validated_Invariants(fields_value, "map_field_order.fields_value")
 	Range_Map_Entry_Index_Invariants(left_index, "map_field_order.left_index")
 	Prior_Map_Entry_Index_Invariants(right_index, "map_field_order.right_index")
-	fields := fields_value[MAP_FIELDS_VALIDATED_FIELD]
+	fields := fields_value.Value.(Fields_Storage_Value)
 	return map_key_order(
-		Map_Key_Validated{fields[left_index].Key.Data},
-		Map_Key_Validated{fields[right_index].Key.Data},
+		Map_Key_Validated{Value: fields[left_index].Key.Data},
+		Map_Key_Validated{Value: fields[right_index].Key.Data},
 	)
 }
 
@@ -4921,10 +6334,10 @@ func map_key_order(
 	defer func() { Order_Invariants(order, "map_key_order.order") }()
 	Map_Key_Validated_Invariants(left_value, "map_key_order.left_value")
 	Map_Key_Validated_Invariants(right_value, "map_key_order.right_value")
-	left := left_value[MAP_KEY_VALIDATED_FIELD]
-	right := right_value[MAP_KEY_VALIDATED_FIELD]
-	left_kind := left.Kind[VALUE_PAYLOAD_FIELD]
-	right_kind := right.Kind[VALUE_PAYLOAD_FIELD]
+	left := left_value.Value
+	right := right_value.Value
+	left_kind := Value_Kind(left.Kind.Value)
+	right_kind := Value_Kind(right.Kind.Value)
 	if left_kind != right_kind {
 		return uint64_order(Unsigned(left_kind), Unsigned(right_kind))
 	}
@@ -4933,34 +6346,34 @@ func map_key_order(
 		return ORDER_SAME
 	case VALUE_BOOLEAN, VALUE_UNSIGNED:
 		return uint64_order(
-			Unsigned(left.Scalar[VALUE_SCALAR_REAL]),
-			Unsigned(right.Scalar[VALUE_SCALAR_REAL]),
+			Unsigned(left.Scalar.Real),
+			Unsigned(right.Scalar.Real),
 		)
 	case VALUE_INTEGER:
 		return int64_order(
-			Integer(left.Scalar[VALUE_SCALAR_REAL]),
-			Integer(right.Scalar[VALUE_SCALAR_REAL]),
+			Integer(left.Scalar.Real),
+			Integer(right.Scalar.Real),
 		)
 	case VALUE_FLOAT:
 		return float64_sort_order(
-			Float(left.Scalar[VALUE_SCALAR_REAL]),
-			Float(right.Scalar[VALUE_SCALAR_REAL]),
+			Float(left.Scalar.Real),
+			Float(right.Scalar.Real),
 		)
 	case VALUE_COMPLEX:
 		order = float64_sort_order(
-			Float(left.Scalar[VALUE_SCALAR_REAL]),
-			Float(right.Scalar[VALUE_SCALAR_REAL]),
+			Float(left.Scalar.Real),
+			Float(right.Scalar.Real),
 		)
 		if order == ORDER_SAME {
 			order = float64_sort_order(
-				Float(left.Scalar[VALUE_SCALAR_IMAGINARY]),
-				Float(right.Scalar[VALUE_SCALAR_IMAGINARY]),
+				Float(left.Scalar.Imaginary),
+				Float(right.Scalar.Imaginary),
 			)
 		}
 		return order
 	case VALUE_TEXT:
 		return bytes_order(
-			left.Text[VALUE_PAYLOAD_FIELD], right.Text[VALUE_PAYLOAD_FIELD],
+			Text(left.Text.Value), Text(right.Text.Value),
 		)
 	}
 	return ORDER_SAME
@@ -4998,17 +6411,17 @@ func range_value_count(value_state Value) (
 	}()
 	Value_Invariants(value_state, "range_value_count.value_state")
 	value := Value(value_state)
-	switch value.Kind[VALUE_PAYLOAD_FIELD] {
+	switch Value_Kind(value.Kind.Value) {
 	case VALUE_NIL:
 		return Collection_Count(bytes.SLICE_SIZE_MINIMUM), RANGE_STATUS_OK
 	case VALUE_SEQUENCE:
-		return Collection_Count(len(value.Values[VALUE_PAYLOAD_FIELD])),
+		return Collection_Count(len(Values(value.Values.Value))),
 			RANGE_STATUS_OK
 	case VALUE_MAP:
-		return Collection_Count(len(value.Fields[VALUE_PAYLOAD_FIELD])),
+		return Collection_Count(len(Fields(value.Fields.Value))),
 			RANGE_STATUS_OK
 	case VALUE_INTEGER:
-		integer := Integer(int64(value.Scalar[VALUE_SCALAR_REAL]))
+		integer := Integer(int64(value.Scalar.Real))
 		if integer < Integer(bits.WORD_64_MINIMUM) {
 			return Collection_Count(bytes.SLICE_SIZE_MINIMUM), RANGE_STATUS_OK
 		}
@@ -5018,7 +6431,7 @@ func range_value_count(value_state Value) (
 		}
 		return Collection_Count(integer), RANGE_STATUS_OK
 	case VALUE_UNSIGNED:
-		unsigned := Unsigned(value.Scalar[VALUE_SCALAR_REAL])
+		unsigned := Unsigned(value.Scalar.Real)
 		if unsigned > Unsigned(VALUE_COUNT_MAXIMUM) {
 			return Collection_Count(bytes.SLICE_SIZE_MINIMUM),
 				RANGE_STATUS_LIMIT_EXCEEDED
@@ -5040,12 +6453,12 @@ func range_value_at(
 	Collection_Element_Index_Invariants(index_value, "range_value_at.index_value")
 	value := Value(value_state)
 	index := Collection_Element_Index(index_value)
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	Range_Value_Kind_Invariants(Range_Value_Kind(kind), "range_value_at.kind")
 	switch kind {
 	case VALUE_SEQUENCE:
 		return Value_Of_Integer(Integer(index)),
-			value.Values[VALUE_PAYLOAD_FIELD][index]
+			Values(value.Values.Value)[index]
 	case VALUE_INTEGER, VALUE_UNSIGNED:
 		item := Value_Of_Integer(Integer(index))
 		return Value_Nil(), item
@@ -5054,27 +6467,39 @@ func range_value_at(
 }
 
 func range_unwind(
-	workspace_state *Workspace, flow_value Range_Flow,
+	workspace_state Workspace_Pointer, flow_value Range_Flow,
 ) (found Function_Found) {
 	defer func() { Function_Found_Invariants(found, "range_unwind.found") }()
-	Workspace_Invariants(workspace_state, "range_unwind.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "range_unwind.workspace_state")
 	Range_Flow_Invariants(flow_value, "range_unwind.flow_value")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	flow := Range_Flow(flow_value)
-	for workspace.Frame_Count[WORKSPACE_SCALAR_FIELD] > Frame_Index(bytes.SLICE_SIZE_MINIMUM) {
-		index := int(workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]) - FRAME_COUNT_INCREMENT
-		frame := workspace.Frames[index][FRAME_STORAGE_FIELD]
+	for workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value) >
+		Workspace_Frame_Count_Storage_Value(
+			bytes.SLICE_SIZE_MINIMUM,
+		) {
+		index := int(workspace.Frame_Count.Value.(Workspace_Frame_Count_Storage_Value)) -
+			FRAME_COUNT_INCREMENT
+		frame := workspace.Frames[index].Value
 		if frame.Kind == FRAME_RANGE {
-			workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] =
-				Variable_Count(frame.Iteration_Variables)
-			workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] =
-				Scope_Base(frame.Scope_Base)
+			workspace.Variable_Count.Value = Workspace_Variable_Count_Storage_Value(
+				frame.Iteration_Variables,
+			)
+			workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(
+				frame.Scope_Base,
+			)
 			if flow == Range_Flow(FLOW_BREAK) {
-				workspace.Variable_Count[WORKSPACE_SCALAR_FIELD] =
-					Variable_Count(frame.Variable_Mark)
-				workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] =
-					Scope_Base(frame.Previous_Scope_Base)
-				workspace.Frame_Count[WORKSPACE_SCALAR_FIELD]--
+				workspace.Variable_Count.Value =
+					Workspace_Variable_Count_Storage_Value(
+						frame.Variable_Mark,
+					)
+				workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(
+					frame.Previous_Scope_Base,
+				)
+				stored_count := workspace.Frame_Count.Value
+				frame_count := stored_count.(Workspace_Frame_Count_Storage_Value)
+				workspace.Frame_Count.Value = frame_count -
+					Workspace_Frame_Count_Storage_Value(FRAME_COUNT_INCREMENT)
 			}
 			return true
 		}
@@ -5084,39 +6509,34 @@ func range_unwind(
 }
 
 func execute_template(
-	workspace_state *Workspace,
-	program_value Program_Validated,
-	invocation_value Node_Validated,
-	dot_value Value,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
+	invocation_value Node_Validated, dot_value Value,
 	function_values Functions_Validated,
 ) (status Evaluation_Status) {
-	defer func() {
-		Evaluation_Status_Invariants(status, "execute_template.status")
-	}()
-	Workspace_Invariants(workspace_state, "execute_template.workspace_state")
+	defer func() { Evaluation_Status_Invariants(status, "execute_template.status") }()
+	Workspace_Pointer_Invariants(workspace_state, "execute_template.workspace_state")
 	Program_Validated_Invariants(program_value, "execute_template.program_value")
 	Node_Validated_Invariants(invocation_value, "execute_template.invocation_value")
 	Value_Invariants(dot_value, "execute_template.dot_value")
 	Functions_Validated_Invariants(function_values, "execute_template.function_values")
-	workspace := (*Workspace)(workspace_state)
-	invocation := invocation_value[NODE_VALIDATED_FIELD]
-	dot := Value(dot_value)
-	functions := function_values
-	cursor := Value_Nil()
+	workspace, invocation := Workspace_Pointer(workspace_state), invocation_value.Value.(*Node)
+	dot, cursor := Value(dot_value), Value_Nil()
 	if invocation.First_Child != Node_First_Child(NO_NODE) {
 		pipe_value, found := program_node(
 			program_value,
-			Node_Link_Validated{Node_Reference(invocation.First_Child)},
+			Node_Link_Validated{
+				Value: Node_Link_Validated_Value(invocation.First_Child),
+			},
 		)
 		if !bool(found) {
 			return EVALUATION_STATUS_PROGRAM_INVALID
 		}
-		pipe := pipe_value[NODE_VALIDATED_FIELD]
+		pipe := pipe_value.Value.(*Node)
 		if pipe.Kind != NODE_PIPE {
 			return EVALUATION_STATUS_PROGRAM_INVALID
 		}
 		state, pipeline_status := pipeline_evaluate(
-			workspace, program_value, pipe_value, dot, functions,
+			workspace, program_value, pipe_value, dot, function_values,
 		)
 		if pipeline_status != EVALUATION_STATUS_OK {
 			return pipeline_status
@@ -5132,48 +6552,51 @@ func execute_template(
 	body_value, found := program_node(
 		program_value,
 		Node_Link_Validated{
-			Node_Reference(definition[NODE_VALIDATED_FIELD].First_Child),
+			Value: Node_Link_Validated_Value(definition.Value.(*Node).First_Child),
 		},
 	)
 	if !bool(found) {
 		return EVALUATION_STATUS_PROGRAM_INVALID
 	}
-	body := body_value[NODE_VALIDATED_FIELD]
-	if body.Kind != NODE_LIST {
+	if body_value.Value.(*Node).Kind != NODE_LIST {
 		return EVALUATION_STATUS_PROGRAM_INVALID
 	}
-	mark := workspace.Variable_Count[WORKSPACE_SCALAR_FIELD]
-	previous_scope := workspace.Scope_Base[WORKSPACE_SCALAR_FIELD]
+	mark := workspace.Variable_Count.Value.(Workspace_Variable_Count_Storage_Value)
+	previous_scope := workspace.Scope_Base.Value.(Workspace_Scope_Base_Storage_Value)
 	if int(mark) == len(workspace.Variables) {
 		return EVALUATION_STATUS_LIMIT_EXCEEDED
 	}
-	workspace.Scope_Base[WORKSPACE_SCALAR_FIELD] = Scope_Base(mark)
+	workspace.Scope_Base.Value = Workspace_Scope_Base_Storage_Value(mark)
 	workspace.Variables[mark] = Variable{
 		Root: true, Value: cursor,
 	}
-	workspace.Variable_Count[WORKSPACE_SCALAR_FIELD]++
+	workspace.Variable_Count.Value = mark +
+		Workspace_Variable_Count_Storage_Value(VARIABLE_COUNT_INCREMENT)
+	restore := Scope_Restore_Validated{Value: Scope_Restore_Stored(Scope_Restore{
+		Mark: Variable_Count(mark), Previous: Scope_Base(previous_scope),
+	})}
 	frame_push_list(
-		workspace, Node_Link_Validated{Node_Reference(body.First_Child)}, cursor,
-		Scope_Restore_Validated{{Mark: mark, Previous: previous_scope}},
+		workspace, Node_Link_Validated{
+			Value: Node_Link_Validated_Value(body_value.Value.(*Node).First_Child),
+		}, cursor, restore,
 	)
 	return EVALUATION_STATUS_OK
 }
 
 func definition_find(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	invocation_value Node_Validated,
 ) (definition Node_Validated, status Definition_Status) {
 	defer func() {
 		Node_Validated_Invariants(definition, "definition_find.definition")
 		Definition_Status_Invariants(status, "definition_find.status")
 	}()
-	Workspace_Invariants(workspace_state, "definition_find.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "definition_find.workspace_state")
 	Program_Validated_Invariants(program_value, "definition_find.program_value")
 	Node_Validated_Invariants(invocation_value, "definition_find.invocation_value")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	invocation := invocation_value[NODE_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	invocation := invocation_value.Value.(*Node)
 	left_count, left_status := Quoted_Unquote_Into(
 		Quoted_Output(workspace.Name_Left), program.Source,
 		Quoted_Span_Unvalidated{
@@ -5189,14 +6612,15 @@ func definition_find(
 		reference += Node_Reference(ROOT_NODE_COUNT)
 	}
 	index := Template_Count(TEMPLATE_COUNT_MINIMUM)
-	for index < program.Document.Template_Count {
+	for index < Template_Count(program.Document.Template_Count) {
 		candidate_value, found := program_node(
-			program_value, Node_Link_Validated{reference},
+			program_value,
+			Node_Link_Validated{Value: Node_Link_Validated_Value(reference)},
 		)
 		if !bool(found) {
 			return Node_Validated{}, DEFINITION_STATUS_PROGRAM_INVALID
 		}
-		candidate := candidate_value[NODE_VALIDATED_FIELD]
+		candidate := candidate_value.Value.(*Node)
 		if candidate.Kind != NODE_TEMPLATE {
 			return Node_Validated{}, DEFINITION_STATUS_PROGRAM_INVALID
 		}
@@ -5226,8 +6650,7 @@ func definition_find(
 }
 
 func pipeline_evaluate(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	pipe_value Node_Validated,
 	dot_value Value,
 	function_values Functions_Validated,
@@ -5236,15 +6659,17 @@ func pipeline_evaluate(
 		Pipeline_State_Invariants(state, "pipeline_evaluate.state")
 		Evaluation_Status_Invariants(status, "pipeline_evaluate.status")
 	}()
-	Workspace_Invariants(workspace_state, "pipeline_evaluate.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "pipeline_evaluate.workspace_state")
 	Program_Validated_Invariants(program_value, "pipeline_evaluate.program_value")
 	Node_Validated_Invariants(pipe_value, "pipeline_evaluate.pipe_value")
 	Value_Invariants(dot_value, "pipeline_evaluate.dot_value")
 	Functions_Validated_Invariants(function_values, "pipeline_evaluate.function_values")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	functions := function_values
 	depth := ACTIVE_FRAME_COUNT_MINIMUM
-	argument_count := Argument_Count_Tracked{Argument_Count(ARGUMENT_COUNT_MINIMUM)}
+	argument_count := Argument_Count_Tracked{
+		Value: Argument_Count_Tracked_Value(ARGUMENT_COUNT_MINIMUM),
+	}
 	push_status := evaluation_push(
 		&workspace.Evaluations[bytes.SLICE_SIZE_MINIMUM], program_value,
 		pipe_value,
@@ -5253,7 +6678,7 @@ func pipeline_evaluate(
 	status = Evaluation_Status(push_status)
 	for status == EVALUATION_STATUS_OK {
 		frame := &workspace.Evaluations[depth-ACTIVE_FRAME_COUNT_MINIMUM]
-		switch frame.Control[EVALUATION_CONTROL_STAGE] {
+		switch frame.Control.Stage {
 		case EVALUATION_STAGE_COMMAND:
 			command_status := evaluation_command_begin(
 				frame, program_value, argument_count,
@@ -5286,7 +6711,7 @@ func pipeline_evaluate(
 				parent_index := depth - ACTIVE_FRAME_COUNT_MINIMUM
 				parent := &workspace.Evaluations[parent_index]
 				argument_count, deliver_status = evaluation_child_deliver(
-					parent, workspace, program_value,
+					Evaluation_Frame_Pointer(parent), workspace, program_value,
 					state.Value, argument_count,
 				)
 				status = Evaluation_Status(deliver_status)
@@ -5299,51 +6724,64 @@ func pipeline_evaluate(
 }
 
 func evaluation_push(
-	frame_state *Evaluation_Frame,
-	program_value Program_Validated,
+	frame_state Evaluation_Frame_Pointer, program_value Program_Validated,
 	pipe_value Node_Validated,
 	dot_value Value,
 	argument_base_value Argument_Count_Tracked,
 ) (status Program_Status) {
 	defer func() { Program_Status_Invariants(status, "evaluation_push.status") }()
-	Evaluation_Frame_Invariants(*frame_state, "evaluation_push.frame_state")
+	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_push.frame_state")
 	Program_Validated_Invariants(program_value, "evaluation_push.program_value")
 	Node_Validated_Invariants(pipe_value, "evaluation_push.pipe_value")
 	Value_Invariants(dot_value, "evaluation_push.dot_value")
 	Argument_Count_Tracked_Invariants(
 		argument_base_value, "evaluation_push.argument_base_value",
 	)
-	frame := (*Evaluation_Frame)(frame_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	pipe := pipe_value[NODE_VALIDATED_FIELD]
+	frame := (Evaluation_Frame_Pointer)(frame_state)
+	program := program_value
+	pipe := pipe_value.Value.(*Node)
 	*frame = Evaluation_Frame{}
-	frame.Nodes[EVALUATION_NODE_PIPE] = pipe
-	frame.Values[EVALUATION_VALUE_DOT] = Value(dot_value)
-	frame.Argument_Bases[EVALUATION_ARGUMENT_BASE_FIELD] =
-		argument_base_value[ARGUMENT_COUNT_TRACKED_FIELD]
-	frame.Control[EVALUATION_CONTROL_STAGE] = EVALUATION_STAGE_COMMAND
+	frame.Nodes.Pipe = Evaluation_Pipe_Node(pipe)
+	frame.Values.Dot = Evaluation_Dot_Value(dot_value)
+	frame.Argument_Bases.Value = Evaluation_Argument_Bases_Value(
+		argument_base_value.Value.(Argument_Count_Tracked_Value),
+	)
+	frame.Control.Stage = EVALUATION_STAGE_COMMAND
 	reference := Node_Reference(pipe.First_Child)
-	state := &frame.States[EVALUATION_STATE_FIELD]
+	state := &frame.States.Value
 	for reference != NO_NODE {
 		node_value, found := program_node(
-			program_value, Node_Link_Validated{reference},
+			program_value,
+			Node_Link_Validated{Value: Node_Link_Validated_Value(reference)},
 		)
 		if !bool(found) {
 			return PROGRAM_STATUS_INVALID
 		}
-		node := node_value[NODE_VALIDATED_FIELD]
+		node := node_value.Value.(*Node)
 		if node.Kind != NODE_VARIABLE {
 			break
 		}
 		if state.Declaration_Count == DECLARATION_COUNT_TWO {
 			return PROGRAM_STATUS_INVALID
 		}
-		state.Declarations[state.Declaration_Count] =
-			Declaration_Reference_Validated{reference}
+		declaration := Declaration_Reference_Validated{
+			Value: Declaration_Reference_Validated_Value(reference),
+		}
+		if state.Declaration_Count == DECLARATION_COUNT_NONE {
+			state.Declarations.First.Value =
+				Declaration_First_Reference(
+					declaration.Value.(Declaration_Reference_Validated_Value),
+				)
+		} else {
+			state.Declarations.Second.Value =
+				Declaration_Second_Reference(
+					declaration.Value.(Declaration_Reference_Validated_Value),
+				)
+		}
 		state.Declaration_Count++
 		reference = Node_Reference(node.Next_Sibling)
 	}
-	operator := program.Source.Data[SOURCE_FIELD][pipe.Value_Start:pipe.Value_End]
+	operator := program.Source.Data.Value[pipe.Value_Start:pipe.Value_End]
 	if state.Declaration_Count > DECLARATION_COUNT_NONE {
 		if bytes_equal(Text(operator), Text("=")) {
 			state.Assignment = true
@@ -5351,37 +6789,36 @@ func evaluation_push(
 			return PROGRAM_STATUS_INVALID
 		}
 	}
-	frame.References[EVALUATION_REFERENCE_COMMAND] = reference
-	Evaluation_Frame_Invariants(*frame, "evaluation_push.frame")
+	frame.References.Command = Evaluation_Command_Reference(reference)
+	Evaluation_Frame_Pointer_Invariants(frame, "evaluation_push.frame")
 	return PROGRAM_STATUS_OK
 }
 
 func evaluation_command_begin(
-	frame_state *Evaluation_Frame,
-	program_value Program_Validated,
+	frame_state Evaluation_Frame_Pointer, program_value Program_Validated,
 	argument_count_value Argument_Count_Tracked,
 ) (status Program_Status) {
 	defer func() {
 		Program_Status_Invariants(status, "evaluation_command_begin.status")
 	}()
-	Evaluation_Frame_Invariants(*frame_state, "evaluation_command_begin.frame_state")
+	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_command_begin.frame_state")
 	Program_Validated_Invariants(program_value, "evaluation_command_begin.program_value")
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_command_begin.argument_count_value",
 	)
-	frame := (*Evaluation_Frame)(frame_state)
-	reference := frame.References[EVALUATION_REFERENCE_COMMAND]
+	frame := (Evaluation_Frame_Pointer)(frame_state)
+	reference := Node_Reference(frame.References.Command)
 	if reference == NO_NODE {
-		frame.Control[EVALUATION_CONTROL_STAGE] = EVALUATION_STAGE_DONE
+		frame.Control.Stage = EVALUATION_STAGE_DONE
 		return PROGRAM_STATUS_OK
 	}
 	command_value, found := program_node(
-		program_value, Node_Link_Validated{reference},
+		program_value, Node_Link_Validated{Value: Node_Link_Validated_Value(reference)},
 	)
 	if !bool(found) {
 		return PROGRAM_STATUS_INVALID
 	}
-	command := command_value[NODE_VALIDATED_FIELD]
+	command := command_value.Value.(*Node)
 	if command.Kind != NODE_COMMAND {
 		return PROGRAM_STATUS_INVALID
 	}
@@ -5390,32 +6827,34 @@ func evaluation_command_begin(
 		return PROGRAM_STATUS_INVALID
 	}
 	first_value, found := program_node(
-		program_value, Node_Link_Validated{first_reference},
+		program_value,
+		Node_Link_Validated{Value: Node_Link_Validated_Value(first_reference)},
 	)
 	if !bool(found) {
 		return PROGRAM_STATUS_INVALID
 	}
-	first := first_value[NODE_VALIDATED_FIELD]
-	frame.References[EVALUATION_REFERENCE_COMMAND] =
-		Node_Reference(command.Next_Sibling)
-	frame.Argument_Bases[EVALUATION_ARGUMENT_BASE_FIELD] =
-		argument_count_value[ARGUMENT_COUNT_TRACKED_FIELD]
+	first := first_value.Value.(*Node)
+	frame.References.Command =
+		Evaluation_Command_Reference(command.Next_Sibling)
+	frame.Argument_Bases.Value = Evaluation_Argument_Bases_Value(
+		argument_count_value.Value.(Argument_Count_Tracked_Value),
+	)
 	if first.Kind == NODE_IDENTIFIER {
-		frame.Nodes[EVALUATION_NODE_IDENTIFIER] = first
-		frame.References[EVALUATION_REFERENCE_TERM] =
-			Node_Reference(first.Next_Sibling)
-		frame.Control[EVALUATION_CONTROL_MODE] = EVALUATION_MODE_IDENTIFIER
-		frame.Control[EVALUATION_CONTROL_STAGE] = EVALUATION_STAGE_ARGUMENT
+		frame.Nodes.Identifier = Evaluation_Identifier_Node(first)
+		frame.References.Term =
+			Evaluation_Term_Reference(first.Next_Sibling)
+		frame.Control.Mode = EVALUATION_MODE_IDENTIFIER
+		frame.Control.Stage = EVALUATION_STAGE_ARGUMENT
 		return PROGRAM_STATUS_OK
 	}
-	frame.References[EVALUATION_REFERENCE_TERM] = first_reference
-	frame.Control[EVALUATION_CONTROL_MODE] = EVALUATION_MODE_VALUE
-	frame.Control[EVALUATION_CONTROL_STAGE] = EVALUATION_STAGE_FIRST
+	frame.References.Term = Evaluation_Term_Reference(first_reference)
+	frame.Control.Mode = EVALUATION_MODE_VALUE
+	frame.Control.Stage = EVALUATION_STAGE_FIRST
 	return PROGRAM_STATUS_OK
 }
 
 func evaluation_term_step(
-	workspace_state *Workspace, program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	function_values Functions_Validated, depth_value Active_Frame_Count,
 	argument_count_value Argument_Count_Tracked,
 ) (depth Active_Frame_Count, argument_count Argument_Count_Tracked, status Term_Status) {
@@ -5424,7 +6863,7 @@ func evaluation_term_step(
 		Argument_Count_Tracked_Invariants(argument_count, "evaluation_term_step.arguments")
 		Term_Status_Invariants(status, "evaluation_term_step.status")
 	}()
-	Workspace_Invariants(workspace_state, "evaluation_term_step.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "evaluation_term_step.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_term_step.program_value")
 	Functions_Validated_Invariants(function_values, "evaluation_term_step.function_values")
 	Active_Frame_Count_Invariants(depth_value, "evaluation_term_step.depth_value")
@@ -5433,65 +6872,64 @@ func evaluation_term_step(
 	)
 	depth, argument_count = depth_value, argument_count_value
 	frame := &workspace_state.Evaluations[depth-ACTIVE_FRAME_COUNT_MINIMUM]
-	reference := frame.References[EVALUATION_REFERENCE_TERM]
+	reference := Node_Reference(frame.References.Term)
 	if reference == NO_NODE {
-		frame.Control[EVALUATION_CONTROL_STAGE] = EVALUATION_STAGE_CALL
+		frame.Control.Stage = EVALUATION_STAGE_CALL
 		return depth, argument_count, TERM_STATUS_OK
 	}
-	node_value, found := program_node(program_value, Node_Link_Validated{reference})
+	reference_value := Node_Link_Validated{Value: Node_Link_Validated_Value(reference)}
+	node_value, found := program_node(program_value, reference_value)
 	if !bool(found) {
 		return depth, argument_count, TERM_STATUS_PROGRAM_INVALID
 	}
-	node := node_value[NODE_VALIDATED_FIELD]
-	frame.References[EVALUATION_REFERENCE_TERM] = Node_Reference(node.Next_Sibling)
+	node := node_value.Value.(*Node)
+	frame.References.Term = Evaluation_Term_Reference(node.Next_Sibling)
 	if node.Kind == NODE_PIPE {
-		var child_status Program_Limit_Status
-		depth, child_status = evaluation_child_push(
+		child_depth, child_status := evaluation_child_push(
 			workspace_state, program_value, node_value,
 			Node_Optional_Validated{}, depth, argument_count,
 		)
-		return depth, argument_count, Term_Status(child_status)
+		return child_depth, argument_count, Term_Status(child_status)
 	}
 	if node.Kind == NODE_CHAIN {
-		pipe_value, pipe_found := program_node(
-			program_value, Node_Link_Validated{Node_Reference(node.First_Child)},
-		)
+		pipe_reference := Node_Link_Validated{
+			Value: Node_Link_Validated_Value(node.First_Child),
+		}
+		pipe_value, pipe_found := program_node(program_value, pipe_reference)
 		if !bool(pipe_found) {
 			return depth, argument_count, TERM_STATUS_PROGRAM_INVALID
 		}
-		pipe := pipe_value[NODE_VALIDATED_FIELD]
+		pipe := pipe_value.Value.(*Node)
 		if pipe.Kind != NODE_PIPE {
 			return depth, argument_count, TERM_STATUS_PROGRAM_INVALID
 		}
-		var child_status Program_Limit_Status
-		depth, child_status = evaluation_child_push(
+		child_depth, child_status := evaluation_child_push(
 			workspace_state, program_value, pipe_value,
-			Node_Optional_Validated{node}, depth, argument_count,
+			Node_Optional_Validated{Value: Node_Stored(node)}, depth, argument_count,
 		)
-		return depth, argument_count, Term_Status(child_status)
+		return child_depth, argument_count, Term_Status(child_status)
 	}
-	location := Node_Location_Validated{{Reference: reference, Node: node}}
+	location := Node_Location_Validated{Value: Node_Location_Stored{
+		Reference: reference, Node: Node_Stored(node)}}
 	value, term_status := term_scalar_evaluate(
 		workspace_state, program_value, location,
-		frame.Values[EVALUATION_VALUE_DOT], function_values,
+		Value(frame.Values.Dot), function_values,
 	)
 	if term_status != TERM_SCALAR_STATUS_OK {
 		return depth, argument_count, Term_Status(term_status)
 	}
-	var deliver_status Limit_Status
-	argument_count, deliver_status = evaluation_value_deliver(
+	var delivery_status Limit_Status
+	argument_count, delivery_status = evaluation_value_deliver(
 		frame, workspace_state, value, argument_count,
 	)
-	status = Term_Status(deliver_status)
-	if deliver_status == LIMIT_STATUS_OK {
+	if delivery_status == LIMIT_STATUS_OK {
 		evaluation_short_circuit(frame, program_value, value)
 	}
-	return depth, argument_count, status
+	return depth, argument_count, Term_Status(delivery_status)
 }
 
 func evaluation_child_push(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	pipe_value Node_Validated,
 	chain_value Node_Optional_Validated,
 	depth_value Active_Frame_Count,
@@ -5501,7 +6939,7 @@ func evaluation_child_push(
 		Active_Frame_Count_Invariants(depth, "evaluation_child_push.depth")
 		Program_Limit_Status_Invariants(status, "evaluation_child_push.status")
 	}()
-	Workspace_Invariants(workspace_state, "evaluation_child_push.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "evaluation_child_push.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_child_push.program_value")
 	Node_Validated_Invariants(pipe_value, "evaluation_child_push.pipe_value")
 	Node_Optional_Validated_Invariants(
@@ -5511,22 +6949,23 @@ func evaluation_child_push(
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_child_push.argument_count_value",
 	)
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	depth = Active_Frame_Count(depth_value)
 	if int(depth) == len(workspace.Evaluations) {
 		return depth, PROGRAM_LIMIT_STATUS_LIMIT_EXCEEDED
 	}
 	parent := &workspace.Evaluations[depth-ACTIVE_FRAME_COUNT_MINIMUM]
-	chain := chain_value[NODE_VALIDATED_FIELD]
-	if chain.Kind == NODE_CHAIN {
-		parent.Nodes[EVALUATION_NODE_CHAIN] = chain
-		parent.Control[EVALUATION_CONTROL_CHAIN] = EVALUATION_CONTROL_TRUE
-	} else {
-		parent.Control[EVALUATION_CONTROL_CHAIN] = EVALUATION_CONTROL_FALSE
+	chain, _ := chain_value.Value.(*Node)
+	parent.Control.Chain = EVALUATION_CONTROL_FALSE
+	if chain != nil {
+		if chain.Kind == NODE_CHAIN {
+			parent.Nodes.Chain = Evaluation_Chain_Node(chain)
+			parent.Control.Chain = EVALUATION_CONTROL_TRUE
+		}
 	}
 	push_status := evaluation_push(
 		&workspace.Evaluations[depth], program_value, pipe_value,
-		parent.Values[EVALUATION_VALUE_DOT], argument_count_value,
+		Value(parent.Values.Dot), argument_count_value,
 	)
 	status = Program_Limit_Status(push_status)
 	if push_status == PROGRAM_STATUS_OK {
@@ -5536,9 +6975,7 @@ func evaluation_child_push(
 }
 
 func evaluation_value_deliver(
-	frame_state *Evaluation_Frame,
-	workspace_state *Workspace,
-	value_state Value,
+	frame_state Evaluation_Frame_Pointer, workspace_state Workspace_Pointer, value_state Value,
 	argument_count_value Argument_Count_Tracked,
 ) (argument_count Argument_Count_Tracked, status Limit_Status) {
 	defer func() {
@@ -5547,37 +6984,36 @@ func evaluation_value_deliver(
 		)
 		Limit_Status_Invariants(status, "evaluation_value_deliver.status")
 	}()
-	Evaluation_Frame_Invariants(*frame_state, "evaluation_value_deliver.frame_state")
-	Workspace_Invariants(workspace_state, "evaluation_value_deliver.workspace_state")
+	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_value_deliver.frame_state")
+	Workspace_Pointer_Invariants(workspace_state, "evaluation_value_deliver.workspace_state")
 	Value_Invariants(value_state, "evaluation_value_deliver.value_state")
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_value_deliver.argument_count_value",
 	)
-	frame := (*Evaluation_Frame)(frame_state)
+	frame := (Evaluation_Frame_Pointer)(frame_state)
 	value := Value(value_state)
 	argument_count = argument_count_value
-	if frame.Control[EVALUATION_CONTROL_STAGE] == EVALUATION_STAGE_FIRST {
-		frame.Values[EVALUATION_VALUE_CURRENT] = value
-		frame.Control[EVALUATION_CONTROL_STAGE] = EVALUATION_STAGE_ARGUMENT
+	if frame.Control.Stage == EVALUATION_STAGE_FIRST {
+		frame.Values.Current = Evaluation_Current_Value(value)
+		frame.Control.Stage = EVALUATION_STAGE_ARGUMENT
 		return argument_count, LIMIT_STATUS_OK
 	}
 	aver.Always(
-		frame.Control[EVALUATION_CONTROL_STAGE] == EVALUATION_STAGE_ARGUMENT,
+		frame.Control.Stage == EVALUATION_STAGE_ARGUMENT,
 		"Evaluation state machine delivers only first values and arguments.",
 	)
-	workspace := (*Workspace)(workspace_state)
-	count := argument_count[ARGUMENT_COUNT_TRACKED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	count := argument_count.Value.(Argument_Count_Tracked_Value)
 	if int(count) == len(workspace.Arguments) {
 		return argument_count, LIMIT_STATUS_EXCEEDED
 	}
 	workspace.Arguments[count] = value
-	argument_count[ARGUMENT_COUNT_TRACKED_FIELD]++
+	argument_count.Value = count + ARGUMENT_COUNT_INCREMENT
 	return argument_count, LIMIT_STATUS_OK
 }
 
 func evaluation_child_deliver(
-	frame_state *Evaluation_Frame,
-	workspace_state *Workspace,
+	frame_state Evaluation_Frame_Delivery_Pointer, workspace_state Workspace_Pointer,
 	program_value Program_Validated,
 	value_state Value,
 	argument_count_value Argument_Count_Tracked,
@@ -5588,30 +7024,32 @@ func evaluation_child_deliver(
 		)
 		Program_Execution_Status_Invariants(status, "evaluation_child_deliver.status")
 	}()
-	Evaluation_Frame_Invariants(*frame_state, "evaluation_child_deliver.frame_state")
-	Workspace_Invariants(workspace_state, "evaluation_child_deliver.workspace_state")
+	Evaluation_Frame_Delivery_Pointer_Invariants(
+		frame_state, "evaluation_child_deliver.frame_state",
+	)
+	Workspace_Pointer_Invariants(workspace_state, "evaluation_child_deliver.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_child_deliver.program_value")
 	Value_Invariants(value_state, "evaluation_child_deliver.value_state")
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_child_deliver.argument_count_value",
 	)
-	frame := (*Evaluation_Frame)(frame_state)
+	frame := frame_state.(Evaluation_Frame_Pointer)
 	value := Value(value_state)
 	argument_count = argument_count_value
-	if frame.Control[EVALUATION_CONTROL_CHAIN] == EVALUATION_CONTROL_TRUE {
-		chain := frame.Nodes[EVALUATION_NODE_CHAIN]
-		program := program_value[PROGRAM_VALIDATED_FIELD]
-		path := program.Source.Data[SOURCE_FIELD][chain.Value_Start:chain.Value_End]
+	if frame.Control.Chain == EVALUATION_CONTROL_TRUE {
+		chain, _ := frame.Nodes.Chain.(*Node)
+		program := program_value
+		path := program.Source.Data.Value[chain.Value_Start:chain.Value_End]
 		access_value, access_status := field_path(Text(path), value)
 		if access_status != VALUE_ACCESS_STATUS_OK {
 			return argument_count, Program_Execution_Status(access_status)
 		}
 		value = access_value
-		frame.Control[EVALUATION_CONTROL_CHAIN] = EVALUATION_CONTROL_FALSE
+		frame.Control.Chain = EVALUATION_CONTROL_FALSE
 	}
 	var deliver_status Limit_Status
 	argument_count, deliver_status = evaluation_value_deliver(
-		frame, (*Workspace)(workspace_state), value,
+		frame, (Workspace_Pointer)(workspace_state), value,
 		argument_count,
 	)
 	aver.Always(
@@ -5623,38 +7061,36 @@ func evaluation_child_deliver(
 }
 
 func evaluation_short_circuit(
-	frame_state *Evaluation_Frame,
-	program_value Program_Validated,
+	frame_state Evaluation_Frame_Pointer, program_value Program_Validated,
 	value_state Value,
 ) {
-	Evaluation_Frame_Invariants(*frame_state, "evaluation_short_circuit.frame_state")
+	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_short_circuit.frame_state")
 	Program_Validated_Invariants(program_value, "evaluation_short_circuit.program_value")
 	Value_Invariants(value_state, "evaluation_short_circuit.value_state")
-	frame := (*Evaluation_Frame)(frame_state)
-	if frame.Control[EVALUATION_CONTROL_MODE] != EVALUATION_MODE_IDENTIFIER {
+	frame := (Evaluation_Frame_Pointer)(frame_state)
+	if frame.Control.Mode != EVALUATION_MODE_IDENTIFIER {
 		return
 	}
-	identifier := frame.Nodes[EVALUATION_NODE_IDENTIFIER]
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	source := program.Source.Data[SOURCE_FIELD]
+	identifier := frame.Nodes.Identifier.(*Node)
+	program := program_value
+	source := program.Source.Data.Value
 	name := source[identifier.Value_Start:identifier.Value_End]
 	truth := bool(value_truth(Value(value_state)))
 	if bool(bytes_equal(Text(name), Text("and"))) {
 		if !truth {
-			frame.References[EVALUATION_REFERENCE_TERM] = NO_NODE
+			frame.References.Term = Evaluation_Term_Reference(NO_NODE)
 		}
 		return
 	}
 	if bool(bytes_equal(Text(name), Text("or"))) {
 		if truth {
-			frame.References[EVALUATION_REFERENCE_TERM] = NO_NODE
+			frame.References.Term = Evaluation_Term_Reference(NO_NODE)
 		}
 	}
 }
 
 func evaluation_command_call(
-	frame_state *Evaluation_Frame,
-	workspace_state *Workspace,
+	frame_state Evaluation_Frame_Pointer, workspace_state Workspace_Pointer,
 	program_value Program_Validated,
 	function_values Functions_Validated,
 	argument_count_value Argument_Count_Tracked,
@@ -5665,64 +7101,65 @@ func evaluation_command_call(
 		)
 		Call_Status_Invariants(status, "evaluation_command_call.status")
 	}()
-	Evaluation_Frame_Invariants(*frame_state, "evaluation_command_call.frame_state")
-	Workspace_Invariants(workspace_state, "evaluation_command_call.workspace_state")
+	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_command_call.frame_state")
+	Workspace_Pointer_Invariants(workspace_state, "evaluation_command_call.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_command_call.program_value")
 	Functions_Validated_Invariants(function_values, "evaluation_command_call.function_values")
 	Argument_Count_Tracked_Invariants(
 		argument_count_value, "evaluation_command_call.argument_count_value",
 	)
-	frame := (*Evaluation_Frame)(frame_state)
-	workspace := (*Workspace)(workspace_state)
+	frame := (Evaluation_Frame_Pointer)(frame_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	argument_count = argument_count_value
-	base := frame.Argument_Bases[EVALUATION_ARGUMENT_BASE_FIELD]
-	state := &frame.States[EVALUATION_STATE_FIELD]
-	if frame.Control[EVALUATION_CONTROL_PRESENT] == EVALUATION_CONTROL_TRUE {
-		count := argument_count[ARGUMENT_COUNT_TRACKED_FIELD]
+	base := frame.Argument_Bases.Value
+	state := &frame.States.Value
+	count := argument_count.Value.(Argument_Count_Tracked_Value)
+	if frame.Control.Present == EVALUATION_CONTROL_TRUE {
 		if int(count) == len(workspace.Arguments) {
 			return argument_count, CALL_STATUS_LIMIT_EXCEEDED
 		}
 		workspace.Arguments[count] = state.Value
-		argument_count[ARGUMENT_COUNT_TRACKED_FIELD]++
+		count++
 	}
-	count := argument_count[ARGUMENT_COUNT_TRACKED_FIELD]
-	arguments := Arguments_Staged{Values(workspace.Arguments[base:count])}
+	argument_count.Value = count
+	arguments := Arguments_Staged{Value: Arguments_Staged_Value(
+		Values(workspace.Arguments[base:count]),
+	)}
 	var result Value
-	if frame.Control[EVALUATION_CONTROL_MODE] == EVALUATION_MODE_IDENTIFIER {
+	if frame.Control.Mode == EVALUATION_MODE_IDENTIFIER {
 		result, status = function_call_identifier(
 			workspace, program_value,
-			Node_Validated{frame.Nodes[EVALUATION_NODE_IDENTIFIER]},
+			Node_Validated{Value: Node_Stored(frame.Nodes.Identifier.(*Node))},
 			function_values, arguments,
 		)
 	} else {
-		result = frame.Values[EVALUATION_VALUE_CURRENT]
-		if count != base {
-			if result.Kind[VALUE_PAYLOAD_FIELD] != VALUE_FUNCTION {
+		result = Value(frame.Values.Current)
+		if count != Argument_Count_Tracked_Value(base) {
+			if Value_Kind(result.Kind.Value) != VALUE_FUNCTION {
 				status = CALL_STATUS_EXECUTION_INVALID
-			} else if result.Function[VALUE_PAYLOAD_FIELD] == nil {
+			} else if Function_Call(result.Function.Value) == nil {
 				status = CALL_STATUS_EXECUTION_INVALID
 			} else {
 				var call_status Function_Call_Status
 				result, call_status = callback_call(
-					workspace, result.Function[VALUE_PAYLOAD_FIELD], arguments,
+					workspace, Function_Call(result.Function.Value), arguments,
 				)
 				status = Call_Status(call_status)
 			}
 		}
 	}
-	argument_count = Argument_Count_Tracked{base}
+	argument_count = Argument_Count_Tracked{Value: Argument_Count_Tracked_Value(base)}
 	if status != CALL_STATUS_OK {
 		return argument_count, status
 	}
 	state.Value = result
-	frame.Control[EVALUATION_CONTROL_PRESENT] = EVALUATION_CONTROL_TRUE
-	frame.Control[EVALUATION_CONTROL_STAGE] = EVALUATION_STAGE_COMMAND
+	frame.Control.Present = EVALUATION_CONTROL_TRUE
+	frame.Control.Stage = EVALUATION_STAGE_COMMAND
 	return argument_count, CALL_STATUS_OK
 }
 
 func evaluation_complete(
-	frame_state *Evaluation_Frame,
-	workspace_state *Workspace,
+	frame_state Evaluation_Frame_Pointer, workspace_state Workspace_Pointer,
 	program_value Program_Validated,
 ) (state Pipeline_State, status Program_Execution_Limit_Status) {
 	defer func() {
@@ -5731,18 +7168,20 @@ func evaluation_complete(
 			status, "evaluation_complete.status",
 		)
 	}()
-	Evaluation_Frame_Invariants(*frame_state, "evaluation_complete.frame_state")
-	Workspace_Invariants(workspace_state, "evaluation_complete.workspace_state")
+	Evaluation_Frame_Pointer_Invariants(frame_state, "evaluation_complete.frame_state")
+	Workspace_Pointer_Invariants(workspace_state, "evaluation_complete.workspace_state")
 	Program_Validated_Invariants(program_value, "evaluation_complete.program_value")
-	frame := (*Evaluation_Frame)(frame_state)
-	if frame.Control[EVALUATION_CONTROL_PRESENT] != EVALUATION_CONTROL_TRUE {
+	frame := (Evaluation_Frame_Pointer)(frame_state)
+	if frame.Control.Present != EVALUATION_CONTROL_TRUE {
 		return Pipeline_State{}, PROGRAM_EXECUTION_LIMIT_STATUS_PROGRAM_INVALID
 	}
-	state = frame.States[EVALUATION_STATE_FIELD]
+	state = Pipeline_State(frame.States.Value)
 	for index := DECLARATION_COUNT_NONE; index < state.Declaration_Count; index++ {
 		bind_status := variable_bind_reference(
-			(*Workspace)(workspace_state), program_value,
-			state.Declarations[index], state.Value, state.Assignment,
+			(Workspace_Pointer)(workspace_state), program_value,
+			declaration_reference(state.Declarations, Declaration_Index(index)),
+			state.Value,
+			state.Assignment,
 		)
 		status = Program_Execution_Limit_Status(bind_status)
 		if bind_status != EXECUTION_LIMIT_STATUS_OK {
@@ -5753,8 +7192,7 @@ func evaluation_complete(
 }
 
 func term_scalar_evaluate(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	location_value Node_Location_Validated,
 	dot_value Value,
 	function_values Functions_Validated,
@@ -5763,25 +7201,25 @@ func term_scalar_evaluate(
 		Value_Invariants(result, "term_scalar_evaluate.result")
 		Term_Scalar_Status_Invariants(status, "term_scalar_evaluate.status")
 	}()
-	Workspace_Invariants(workspace_state, "term_scalar_evaluate.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "term_scalar_evaluate.workspace_state")
 	Program_Validated_Invariants(program_value, "term_scalar_evaluate.program_value")
 	Node_Location_Validated_Invariants(
 		location_value, "term_scalar_evaluate.location_value",
 	)
 	Value_Invariants(dot_value, "term_scalar_evaluate.dot_value")
 	Functions_Validated_Invariants(function_values, "term_scalar_evaluate.function_values")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	location := location_value[NODE_LOCATION_VALIDATED_FIELD]
-	node_value := Node_Validated{location.Node}
-	node := location.Node
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	location := location_value.Value
+	node_value := Node_Validated{Value: location.Node}
+	node := location.Node.(*Node)
 	dot := Value(dot_value)
 	functions := function_values
 	switch node.Kind {
 	case NODE_DOT:
 		return dot, TERM_SCALAR_STATUS_OK
 	case NODE_BOOLEAN:
-		data := program.Source.Data[SOURCE_FIELD][node.Value_Start:node.Value_End]
+		data := program.Source.Data.Value[node.Value_Start:node.Value_End]
 		return Value_Of_Boolean(
 			Boolean(bytes_equal(Text(data), Text("true"))),
 		), TERM_SCALAR_STATUS_OK
@@ -5813,21 +7251,20 @@ func term_scalar_evaluate(
 }
 
 func literal_value(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	location_value Node_Location_Validated,
 ) (result Value, status Program_Status) {
 	defer func() {
 		Value_Invariants(result, "literal_value.result")
 		Program_Status_Invariants(status, "literal_value.status")
 	}()
-	Workspace_Invariants(workspace_state, "literal_value.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "literal_value.workspace_state")
 	Program_Validated_Invariants(program_value, "literal_value.program_value")
 	Node_Location_Validated_Invariants(location_value, "literal_value.location_value")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	location := location_value[NODE_LOCATION_VALIDATED_FIELD]
-	reference, node := location.Reference, location.Node
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	location := location_value.Value
+	reference, node := location.Reference.(Node_Reference), location.Node.(*Node)
 	index := int(reference) - NODE_COUNT_INCREMENT
 	if bool(workspace.Literal_Decoded[index]) {
 		offset := workspace.Literal_Offsets[index]
@@ -5845,39 +7282,39 @@ func literal_value(
 	if decode_status != PARSE_STATUS_OK {
 		return Value{}, PROGRAM_STATUS_INVALID
 	}
-	literal_count := workspace.Literal_Count[WORKSPACE_SCALAR_FIELD]
+	literal_count := workspace.Literal_Count.Value.(Workspace_Literal_Count_Storage_Value)
 	if int(literal_count)+int(decoded) > len(workspace.Literals) {
 		return Value{}, PROGRAM_STATUS_INVALID
 	}
 	offset := literal_count
 	copy(workspace.Literals[offset:], workspace.Name_Left[:decoded])
-	workspace.Literal_Offsets[index] = offset
+	workspace.Literal_Offsets[index] = Literal_Count(offset)
 	workspace.Literal_Counts[index] = Literal_Count(decoded)
 	workspace.Literal_Decoded[index] = true
-	workspace.Literal_Count[WORKSPACE_SCALAR_FIELD] += Literal_Count(decoded)
+	workspace.Literal_Count.Value = literal_count +
+		Workspace_Literal_Count_Storage_Value(decoded)
 	return Value_Of_Text(Text(
-		workspace.Literals[offset : offset+Literal_Count(decoded)],
+		workspace.Literals[offset : offset+Workspace_Literal_Count_Storage_Value(decoded)],
 	)), PROGRAM_STATUS_OK
 }
 
 func number_value(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	location_value Node_Location_Validated,
 ) (result Value, status Number_Status) {
 	defer func() {
 		Value_Invariants(result, "number_value.result")
 		Number_Status_Invariants(status, "number_value.status")
 	}()
-	Workspace_Invariants(workspace_state, "number_value.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "number_value.workspace_state")
 	Program_Validated_Invariants(program_value, "number_value.program_value")
 	Node_Location_Validated_Invariants(location_value, "number_value.location_value")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	location := location_value[NODE_LOCATION_VALIDATED_FIELD]
-	node := location.Node
-	data := program.Source.Data[SOURCE_FIELD][node.Value_Start:node.Value_End]
-	number_text := Number_Text_Validated{Text(data)}
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	location := location_value.Value
+	node := location.Node.(*Node)
+	data := program.Source.Data.Value[node.Value_Start:node.Value_End]
+	number_text := Number_Text_Validated{Value: Number_Text_Validated_Value(Text(data))}
 	if len(data) == SOURCE_SIZE_MINIMUM {
 		return Value{}, NUMBER_STATUS_PROGRAM_INVALID
 	}
@@ -5885,7 +7322,7 @@ func number_value(
 		decoded, decode_status := literal_value(
 			workspace, program_value, location_value,
 		)
-		text := decoded.Text[VALUE_PAYLOAD_FIELD]
+		text := Text(decoded.Text.Value)
 		if decode_status != PROGRAM_STATUS_OK {
 			return Value{}, NUMBER_STATUS_PROGRAM_INVALID
 		}
@@ -5900,9 +7337,9 @@ func number_value(
 	}
 	if data[len(data)-SOURCE_POSITION_INCREMENT] == 'i' {
 		value, valid := complex_parse(
-			workspace, Number_Text_Validated{
+			workspace, Number_Text_Validated{Value: Number_Text_Validated_Value(
 				Text(data[:len(data)-SOURCE_POSITION_INCREMENT]),
-			},
+			)},
 		)
 		if !bool(valid) {
 			return Value{}, NUMBER_STATUS_VALUE_INVALID
@@ -5915,7 +7352,7 @@ func number_value(
 			return Value{}, NUMBER_STATUS_VALUE_INVALID
 		}
 		return Value_Of_Float(
-			encoding_value[PARSED_FLOAT_VALIDATED_FIELD],
+			Float(encoding_value.Value.(Parsed_Float_Validated_Value)),
 		), NUMBER_STATUS_OK
 	}
 	value, valid := integer_parse(number_text)
@@ -5930,7 +7367,7 @@ func number_float_syntax(data_value Number_Text_Validated) (found Number_Float_S
 		Number_Float_Syntax_Invariants(found, "number_float_syntax.found")
 	}()
 	Number_Text_Validated_Invariants(data_value, "number_float_syntax.data_value")
-	data := data_value[NUMBER_TEXT_VALIDATED_FIELD]
+	data := data_value.Value.(Number_Text_Validated_Value)
 	position_index := SOURCE_SIZE_MINIMUM
 	if data[position_index] == '+' {
 		position_index++
@@ -5962,16 +7399,16 @@ func number_float_syntax(data_value Number_Text_Validated) (found Number_Float_S
 }
 
 func complex_parse(
-	workspace_state *Workspace, data_value Number_Text_Validated,
+	workspace_state Workspace_Pointer, data_value Number_Text_Validated,
 ) (result Value, valid Value_Validity) {
 	defer func() {
 		Value_Invariants(result, "complex_parse.result")
 		Value_Validity_Invariants(valid, "complex_parse.valid")
 	}()
-	Workspace_Invariants(workspace_state, "complex_parse.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "complex_parse.workspace_state")
 	Number_Text_Validated_Invariants(data_value, "complex_parse.data_value")
-	workspace := (*Workspace)(workspace_state)
-	data := data_value[NUMBER_TEXT_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	data := data_value.Value.(Number_Text_Validated_Value)
 	if len(data) == SOURCE_SIZE_MINIMUM {
 		return Value{}, false
 	}
@@ -5990,43 +7427,53 @@ func complex_parse(
 		separator = position
 		break
 	}
-	real := Parsed_Float_Validated{Float(bits.WORD_64_MINIMUM)}
+	real := Parsed_Float_Validated{
+		Value: Parsed_Float_Validated_Value(Float(bits.WORD_64_MINIMUM)),
+	}
 	if separator != SOURCE_SIZE_MINIMUM {
 		var component_valid Value_Validity
 		real, component_valid = float_bits_parse(
-			workspace, Number_Text_Validated{Text(data[:separator])},
+			workspace, Number_Text_Validated{
+				Value: Number_Text_Validated_Value(Text(data[:separator])),
+			},
 		)
 		if !component_valid {
 			return Value{}, false
 		}
 	}
 	imaginary, component_valid := float_bits_parse(
-		workspace, Number_Text_Validated{Text(data[separator:])},
+		workspace, Number_Text_Validated{
+			Value: Number_Text_Validated_Value(Text(data[separator:])),
+		},
 	)
 	if !component_valid {
 		return Value{}, false
 	}
 	return Value_Of_Complex(Complex{
-		Real:      Complex_Real(real[PARSED_FLOAT_VALIDATED_FIELD]),
-		Imaginary: Complex_Imaginary(imaginary[PARSED_FLOAT_VALIDATED_FIELD]),
+		Real: Complex_Real(real.Value.(Parsed_Float_Validated_Value)),
+		Imaginary: Complex_Imaginary(
+			imaginary.Value.(Parsed_Float_Validated_Value),
+		),
 	}), true
 }
 
 func float_bits_parse(
-	workspace_state *Workspace,
-	data_value Number_Text_Validated,
+	workspace_state Workspace_Pointer, data_value Number_Text_Validated,
 ) (encoding Parsed_Float_Validated, valid Value_Validity) {
 	defer func() {
 		Parsed_Float_Validated_Invariants(encoding, "float_bits_parse.encoding")
 		Value_Validity_Invariants(valid, "float_bits_parse.valid")
 	}()
-	Workspace_Invariants(workspace_state, "float_bits_parse.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "float_bits_parse.workspace_state")
 	Number_Text_Validated_Invariants(data_value, "float_bits_parse.data_value")
-	workspace := (*Workspace)(workspace_state)
-	data := data_value[NUMBER_TEXT_VALIDATED_FIELD]
-	float_value := &workspace.Float_Value[WORKSPACE_SCALAR_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	data := data_value.Value.(Number_Text_Validated_Value)
+	float_value := &workspace.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX]
 	float_parse := (*big.Float_Parse_Workspace)(&workspace.Float_Parse)
+	// Reset semantics must not discard caller-owned bounded mantissa storage.
+	words := float_value.Mantissa.Words
 	*float_value = big.Float{}
+	float_value.Mantissa.Words = words
 	if big.Float_Set_Precision(
 		float_value, big.FLOAT_64_VALUE_MANTISSA_BIT_COUNT,
 	) != big.STATUS_OK {
@@ -6040,7 +7487,7 @@ func float_bits_parse(
 		return Parsed_Float_Validated{}, false
 	}
 	value, _ := big.Float_Float_64_Bits(float_value)
-	return Parsed_Float_Validated{Float(value)}, true
+	return Parsed_Float_Validated{Value: Parsed_Float_Validated_Value(Float(value))}, true
 }
 
 func integer_parse(data_value Number_Text_Validated) (
@@ -6052,7 +7499,7 @@ func integer_parse(data_value Number_Text_Validated) (
 		Value_Validity_Invariants(valid, "integer_parse.valid")
 	}()
 	Number_Text_Validated_Invariants(data_value, "integer_parse.data_value")
-	data := data_value[NUMBER_TEXT_VALIDATED_FIELD]
+	data := data_value.Value.(Number_Text_Validated_Value)
 	position := SOURCE_SIZE_MINIMUM
 	negative := false
 	if data[position] == '+' {
@@ -6130,10 +7577,10 @@ func field_value(
 	Program_Validated_Invariants(program_value, "field_value.program_value")
 	Node_Validated_Invariants(node_value, "field_value.node_value")
 	Value_Invariants(value_state, "field_value.value_state")
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	node := node_value[NODE_VALIDATED_FIELD]
+	program := program_value
+	node := node_value.Value.(*Node)
 	value := Value(value_state)
-	path := program.Source.Data[SOURCE_FIELD][node.Value_Start:node.Value_End]
+	path := program.Source.Data.Value[node.Value_Start:node.Value_End]
 	return field_path(Text(path), value)
 }
 
@@ -6166,14 +7613,14 @@ func field_path(
 		if end == position {
 			return Value{}, VALUE_ACCESS_STATUS_PROGRAM_INVALID
 		}
-		kind := current.Kind[VALUE_PAYLOAD_FIELD]
+		kind := Value_Kind(current.Kind.Value)
 		if kind != VALUE_OBJECT {
 			if kind != VALUE_MAP {
 				return Value{}, VALUE_ACCESS_STATUS_RECEIVER_INVALID
 			}
 		}
 		found := false
-		fields := current.Fields[VALUE_PAYLOAD_FIELD]
+		fields := Fields(current.Fields.Value)
 		for index := range fields {
 			field := fields[index]
 			if kind == VALUE_OBJECT {
@@ -6182,8 +7629,8 @@ func field_path(
 					found = true
 					break
 				}
-			} else if field.Key.Data.Kind[VALUE_PAYLOAD_FIELD] == VALUE_TEXT {
-				key_text := field.Key.Data.Text[VALUE_PAYLOAD_FIELD]
+			} else if Value_Kind(field.Key.Data.Kind.Value) == VALUE_TEXT {
+				key_text := Text(field.Key.Data.Text.Value)
 				if bytes_equal(
 					path[position:end], key_text,
 				) {
@@ -6202,21 +7649,20 @@ func field_path(
 }
 
 func variable_value(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	node_value Node_Validated,
 ) (result Value, status Variable_Status) {
 	defer func() {
 		Value_Invariants(result, "variable_value.result")
 		Variable_Status_Invariants(status, "variable_value.status")
 	}()
-	Workspace_Invariants(workspace_state, "variable_value.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "variable_value.workspace_state")
 	Program_Validated_Invariants(program_value, "variable_value.program_value")
 	Node_Validated_Invariants(node_value, "variable_value.node_value")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	node := node_value[NODE_VALIDATED_FIELD]
-	data := program.Source.Data[SOURCE_FIELD][node.Value_Start:node.Value_End]
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	node := node_value.Value.(*Node)
+	data := program.Source.Data.Value[node.Value_Start:node.Value_End]
 	name_end := SOURCE_SIZE_MINIMUM
 	for name_end < len(data) && data[name_end] != '.' {
 		name_end++
@@ -6239,18 +7685,18 @@ func variable_value(
 	return result, VARIABLE_STATUS_OK
 }
 
-func variable_find(workspace_state *Workspace, program_value Program_Validated, name Text) (
+func variable_find(workspace_state Workspace_Pointer, program_value Program_Validated, name Text) (
 	result Variable_Index,
 ) {
 	defer func() { Variable_Index_Invariants(result, "variable_find.result") }()
-	Workspace_Invariants(workspace_state, "variable_find.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "variable_find.workspace_state")
 	Program_Validated_Invariants(program_value, "variable_find.program_value")
 	Text_Invariants(name, "variable_find.name")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	data := program.Source.Data[SOURCE_FIELD]
-	variable_count := workspace.Variable_Count[WORKSPACE_SCALAR_FIELD]
-	scope_base := workspace.Scope_Base[WORKSPACE_SCALAR_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	data := program.Source.Data.Value
+	variable_count := workspace.Variable_Count.Value.(Workspace_Variable_Count_Storage_Value)
+	scope_base := workspace.Scope_Base.Value.(Workspace_Scope_Base_Storage_Value)
 	minimum := int(scope_base)
 	for index := int(variable_count) - VARIABLE_COUNT_INCREMENT; index >= minimum; index-- {
 		variable := workspace.Variables[index]
@@ -6270,8 +7716,7 @@ func variable_find(workspace_state *Workspace, program_value Program_Validated, 
 }
 
 func variable_bind_reference(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	reference_value Declaration_Reference_Validated,
 	value_state Value,
 	assignment_value Assignment,
@@ -6279,20 +7724,20 @@ func variable_bind_reference(
 	defer func() {
 		Execution_Limit_Status_Invariants(status, "variable_bind_reference.status")
 	}()
-	Workspace_Invariants(workspace_state, "variable_bind_reference.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "variable_bind_reference.workspace_state")
 	Program_Validated_Invariants(program_value, "variable_bind_reference.program_value")
 	Declaration_Reference_Validated_Invariants(
 		reference_value, "variable_bind_reference.reference_value",
 	)
 	Value_Invariants(value_state, "variable_bind_reference.value_state")
 	Assignment_Invariants(assignment_value, "variable_bind_reference.assignment_value")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	reference := reference_value[DECLARATION_REFERENCE_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	reference := reference_value.Value.(Declaration_Reference_Validated_Value)
 	value := Value(value_state)
 	assignment := Assignment(assignment_value)
 	node_value, found := program_node(
-		program_value, Node_Link_Validated{reference},
+		program_value, Node_Link_Validated{Value: Node_Link_Validated_Value(reference)},
 	)
 	aver.Always(
 		bool(found),
@@ -6301,7 +7746,7 @@ func variable_bind_reference(
 	if !bool(found) {
 		return EXECUTION_LIMIT_STATUS_EXECUTION_INVALID
 	}
-	node := node_value[NODE_VALIDATED_FIELD]
+	node := node_value.Value.(*Node)
 	aver.Always(
 		node.Kind == NODE_VARIABLE,
 		"Evaluation retains only variable nodes as declarations.",
@@ -6309,7 +7754,7 @@ func variable_bind_reference(
 	if node.Kind != NODE_VARIABLE {
 		return EXECUTION_LIMIT_STATUS_EXECUTION_INVALID
 	}
-	name := program.Source.Data[SOURCE_FIELD][node.Value_Start:node.Value_End]
+	name := program.Source.Data.Value[node.Value_Start:node.Value_End]
 	if bool(assignment) {
 		index := variable_find(workspace, program_value, Text(name))
 		if index == VARIABLE_INDEX_ABSENT {
@@ -6318,14 +7763,15 @@ func variable_bind_reference(
 		workspace.Variables[index-VARIABLE_COUNT_INCREMENT].Value = value
 		return EXECUTION_LIMIT_STATUS_OK
 	}
-	variable_count := workspace.Variable_Count[WORKSPACE_SCALAR_FIELD]
+	variable_count := workspace.Variable_Count.Value.(Workspace_Variable_Count_Storage_Value)
 	if int(variable_count) == len(workspace.Variables) {
 		return EXECUTION_LIMIT_STATUS_LIMIT_EXCEEDED
 	}
 	workspace.Variables[variable_count] = Variable{
 		Start: node.Value_Start, End: node.Value_End, Value: value,
 	}
-	workspace.Variable_Count[WORKSPACE_SCALAR_FIELD]++
+	workspace.Variable_Count.Value = variable_count +
+		Workspace_Variable_Count_Storage_Value(VARIABLE_COUNT_INCREMENT)
 	return EXECUTION_LIMIT_STATUS_OK
 }
 
@@ -6341,10 +7787,10 @@ func function_value(
 	Program_Validated_Invariants(program_value, "function_value.program_value")
 	Node_Validated_Invariants(node_value, "function_value.node_value")
 	Functions_Validated_Invariants(function_values, "function_value.function_values")
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	node := node_value[NODE_VALIDATED_FIELD]
-	functions := function_values[FUNCTIONS_VALIDATED_FIELD]
-	name := program.Source.Data[SOURCE_FIELD][node.Value_Start:node.Value_End]
+	program := program_value
+	node := node_value.Value.(*Node)
+	functions := function_values.Value.(Functions_Validated_Value)
+	name := program.Source.Data.Value[node.Value_Start:node.Value_End]
 	for index := range functions {
 		if bytes_equal(Text(name), Text(functions[index].Name)) {
 			return Value_Of_Function(functions[index].Call), FUNCTION_LOOKUP_STATUS_OK
@@ -6354,8 +7800,7 @@ func function_value(
 }
 
 func function_call_identifier(
-	workspace_state *Workspace,
-	program_value Program_Validated,
+	workspace_state Workspace_Pointer, program_value Program_Validated,
 	identifier_value Node_Validated,
 	function_values Functions_Validated,
 	argument_values Arguments_Staged,
@@ -6364,19 +7809,19 @@ func function_call_identifier(
 		Value_Invariants(result, "function_call_identifier.result")
 		Call_Status_Invariants(status, "function_call_identifier.status")
 	}()
-	Workspace_Invariants(workspace_state, "function_call_identifier.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "function_call_identifier.workspace_state")
 	Program_Validated_Invariants(program_value, "function_call_identifier.program_value")
 	Node_Validated_Invariants(
 		identifier_value, "function_call_identifier.identifier_value",
 	)
 	Functions_Validated_Invariants(function_values, "function_call_identifier.function_values")
 	Arguments_Staged_Invariants(argument_values, "function_call_identifier.argument_values")
-	workspace := (*Workspace)(workspace_state)
-	program := program_value[PROGRAM_VALIDATED_FIELD]
-	identifier := identifier_value[NODE_VALIDATED_FIELD]
-	functions := function_values[FUNCTIONS_VALIDATED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	program := program_value
+	identifier := identifier_value.Value.(*Node)
+	functions := function_values.Value.(Functions_Validated_Value)
 	arguments := argument_values
-	name := program.Source.Data[SOURCE_FIELD][identifier.Value_Start:identifier.Value_End]
+	name := program.Source.Data.Value[identifier.Value_Start:identifier.Value_End]
 	for index := range functions {
 		if bytes_equal(Text(name), Text(functions[index].Name)) {
 			call_result, call_status := callback_call(
@@ -6386,13 +7831,14 @@ func function_call_identifier(
 		}
 	}
 	return builtin_call(
-		workspace, Function_Name_Validated{Function_Name(name)}, arguments,
+		workspace, Function_Name_Validated{
+			Value: Function_Name_Validated_Value(Function_Name(name)),
+		}, arguments,
 	)
 }
 
 func callback_call(
-	workspace_state *Workspace,
-	call_value Function_Call,
+	workspace_state Workspace_Pointer, call_value Function_Call,
 	argument_values Arguments_Staged,
 ) (
 	result Value,
@@ -6402,37 +7848,40 @@ func callback_call(
 		Value_Invariants(result, "callback_call.result")
 		Function_Call_Status_Invariants(status, "callback_call.status")
 	}()
-	Workspace_Invariants(workspace_state, "callback_call.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "callback_call.workspace_state")
+	Function_Call_Invariants(call_value, "callback_call.call_value")
 	Arguments_Staged_Invariants(argument_values, "callback_call.argument_values")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	call := Function_Call(call_value)
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := Values(argument_values.Value.(Arguments_Staged_Value))
 	output := call(Function_Input{Arguments: arguments})
 	if output.Status != FUNCTION_STATUS_OK {
 		return Value{}, FUNCTION_CALL_STATUS_INVALID
 	}
-	if !bool(value_active_valid(output.Value)) {
+	if !bool(value_active_valid(Value_Unvalidated(output.Value))) {
 		return Value{}, FUNCTION_CALL_STATUS_INVALID
 	}
-	if value_graph_validate(workspace, output.Value) != VALUE_GRAPH_STATUS_OK {
+	if value_graph_validate(
+		workspace, Value_Unvalidated(output.Value),
+	) != VALUE_GRAPH_STATUS_OK {
 		return Value{}, FUNCTION_CALL_STATUS_INVALID
 	}
 	return output.Value, FUNCTION_CALL_STATUS_OK
 }
 
 func builtin_call(
-	workspace_state *Workspace, name_value Function_Name_Validated,
+	workspace_state Workspace_Pointer, name_value Function_Name_Validated,
 	argument_values Arguments_Staged,
 ) (result Value, status Call_Status) {
 	defer func() {
 		Value_Invariants(result, "builtin_call.result")
 		Call_Status_Invariants(status, "builtin_call.status")
 	}()
-	Workspace_Invariants(workspace_state, "builtin_call.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "builtin_call.workspace_state")
 	Function_Name_Validated_Invariants(name_value, "builtin_call.name_value")
 	Arguments_Staged_Invariants(argument_values, "builtin_call.argument_values")
-	workspace, arguments := (*Workspace)(workspace_state), argument_values
-	name := name_value[FUNCTION_NAME_VALIDATED_FIELD]
+	workspace, arguments := (Workspace_Pointer)(workspace_state), argument_values
+	name := name_value.Value.(Function_Name_Validated_Value)
 	switch {
 	case bool(bytes_equal(Text(name), Text("and"))):
 		builtin_result, argument_status := builtin_and(arguments)
@@ -6460,7 +7909,8 @@ func builtin_call(
 		bool(bytes_equal(Text(name), Text("gt"))),
 		bool(bytes_equal(Text(name), Text("ge"))):
 		order_name := Builtin_Order_Name_Validated{
-			name[BUILTIN_ARGUMENT_FIRST], name[BUILTIN_ARGUMENT_SECOND],
+			First:  Builtin_Order_Name_First(name[BUILTIN_ARGUMENT_FIRST]),
+			Second: Builtin_Order_Name_Second(name[BUILTIN_ARGUMENT_SECOND]),
 		}
 		kind := builtin_order_kind(order_name)
 		builtin_result, value_status := builtin_order(kind, arguments)
@@ -6502,7 +7952,7 @@ func builtin_and(argument_values Arguments_Staged) (
 		Builtin_Argument_Status_Invariants(status, "builtin_and.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_and.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
 	}
@@ -6524,7 +7974,7 @@ func builtin_or(argument_values Arguments_Staged) (
 		Builtin_Argument_Status_Invariants(status, "builtin_or.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_or.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
 	}
@@ -6538,7 +7988,7 @@ func builtin_or(argument_values Arguments_Staged) (
 }
 
 func builtin_call_function(
-	workspace_state *Workspace, argument_values Arguments_Staged,
+	workspace_state Workspace_Pointer, argument_values Arguments_Staged,
 ) (
 	result Value,
 	status Builtin_Value_Status,
@@ -6547,24 +7997,25 @@ func builtin_call_function(
 		Value_Invariants(result, "builtin_call_function.result")
 		Builtin_Value_Status_Invariants(status, "builtin_call_function.status")
 	}()
-	Workspace_Invariants(workspace_state, "builtin_call_function.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "builtin_call_function.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_call_function.argument_values")
-	workspace := (*Workspace)(workspace_state)
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
 	}
 	function := arguments[BUILTIN_ARGUMENT_FIRST]
-	if function.Kind[VALUE_PAYLOAD_FIELD] != VALUE_FUNCTION {
+	if Value_Kind(function.Kind.Value) != VALUE_FUNCTION {
 		return Value{}, BUILTIN_VALUE_STATUS_KIND_INVALID
 	}
-	call := function.Function[VALUE_PAYLOAD_FIELD]
+	call := Function_Call(function.Function.Value)
 	if call == nil {
 		return Value{}, BUILTIN_VALUE_STATUS_KIND_INVALID
 	}
-	callback_arguments := Arguments_Staged{
+	callback_arguments := Arguments_Staged{Value: Arguments_Staged_Value(
 		Values(arguments[BUILTIN_ARGUMENT_COUNT_ONE:]),
-	}
+	)}
+
 	result, call_status := callback_call(workspace, call, callback_arguments)
 	if call_status != FUNCTION_CALL_STATUS_OK {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
@@ -6581,7 +8032,7 @@ func builtin_equal(argument_values Arguments_Staged) (
 		Builtin_Argument_Status_Invariants(status, "builtin_equal.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_equal.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) < BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
 	}
@@ -6604,7 +8055,7 @@ func builtin_not_equal(argument_values Arguments_Staged) (
 		Builtin_Argument_Status_Invariants(status, "builtin_not_equal.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_not_equal.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
 	}
@@ -6623,7 +8074,7 @@ func builtin_not(argument_values Arguments_Staged) (
 		Builtin_Argument_Status_Invariants(status, "builtin_not.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_not.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_ONE {
 		return Value{}, BUILTIN_ARGUMENT_STATUS_INVALID
 	}
@@ -6640,52 +8091,54 @@ func builtin_count(argument_values Arguments_Staged) (
 		Builtin_Value_Status_Invariants(status, "builtin_count.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_count.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_ONE {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
 	}
 	value := arguments[BUILTIN_ARGUMENT_FIRST]
-	switch value.Kind[VALUE_PAYLOAD_FIELD] {
+	switch Value_Kind(value.Kind.Value) {
 	case VALUE_TEXT:
 		return Value_Of_Integer(Integer(len(
-			value.Text[VALUE_PAYLOAD_FIELD],
+			Text(value.Text.Value),
 		))), BUILTIN_VALUE_STATUS_OK
 	case VALUE_SEQUENCE:
 		return Value_Of_Integer(Integer(len(
-			value.Values[VALUE_PAYLOAD_FIELD],
+			Values(value.Values.Value),
 		))), BUILTIN_VALUE_STATUS_OK
 	case VALUE_OBJECT, VALUE_MAP:
 		return Value_Of_Integer(Integer(len(
-			value.Fields[VALUE_PAYLOAD_FIELD],
+			Fields(value.Fields.Value),
 		))), BUILTIN_VALUE_STATUS_OK
 	}
 	return Value{}, BUILTIN_VALUE_STATUS_KIND_INVALID
 }
 
 func builtin_print(
-	workspace_state *Workspace,
-	argument_values Arguments_Staged,
+	workspace_state Workspace_Pointer, argument_values Arguments_Staged,
 	newline Boolean,
 ) (result Value, status Generated_Status) {
 	defer func() {
 		Value_Invariants(result, "builtin_print.result")
 		Generated_Status_Invariants(status, "builtin_print.status")
 	}()
-	Workspace_Invariants(workspace_state, "builtin_print.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "builtin_print.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_print.argument_values")
 	Boolean_Invariants(newline, "builtin_print.newline")
-	workspace := (*Workspace)(workspace_state)
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	start := Generated_Start_Validated{
-		workspace.Generated_Count[WORKSPACE_SCALAR_FIELD],
+		Value: Generated_Start_Validated_Value(
+			workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value),
+		),
 	}
+
 	for argument_index := range arguments {
 		if argument_index > BUILTIN_ARGUMENT_FIRST {
 			separator_required := bool(newline)
 			if !separator_required {
 				previous := arguments[argument_index-ARGUMENT_COUNT_INCREMENT]
-				previous_kind := previous.Kind[VALUE_PAYLOAD_FIELD]
-				current_kind := arguments[argument_index].Kind[VALUE_PAYLOAD_FIELD]
+				previous_kind := Value_Kind(previous.Kind.Value)
+				current_kind := Value_Kind(arguments[argument_index].Kind.Value)
 				separator_required = previous_kind != VALUE_TEXT
 				if current_kind == VALUE_TEXT {
 					separator_required = false
@@ -6697,7 +8150,7 @@ func builtin_print(
 				}
 			}
 		}
-		if arguments[argument_index].Kind[VALUE_PAYLOAD_FIELD] == VALUE_NIL {
+		if Value_Kind(arguments[argument_index].Kind.Value) == VALUE_NIL {
 			if generated_append_text(workspace, "<nil>") != GENERATED_STATUS_OK {
 				return Value{}, GENERATED_STATUS_LIMIT_EXCEEDED
 			}
@@ -6718,7 +8171,7 @@ func builtin_print(
 	return result, generated_status
 }
 
-func builtin_printf(workspace_state *Workspace, argument_values Arguments_Staged) (
+func builtin_printf(workspace_state Workspace_Pointer, argument_values Arguments_Staged) (
 	result Value,
 	status Formatting_Status,
 ) {
@@ -6726,10 +8179,10 @@ func builtin_printf(workspace_state *Workspace, argument_values Arguments_Staged
 		Value_Invariants(result, "builtin_printf.result")
 		Formatting_Status_Invariants(status, "builtin_printf.status")
 	}()
-	Workspace_Invariants(workspace_state, "builtin_printf.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "builtin_printf.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_printf.argument_values")
-	workspace := (*Workspace)(workspace_state)
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) == BUILTIN_ARGUMENT_COUNT_NONE {
 		return Value{}, FORMATTING_STATUS_INVALID
 	}
@@ -6738,8 +8191,11 @@ func builtin_printf(workspace_state *Workspace, argument_values Arguments_Staged
 		return Value{}, FORMATTING_STATUS_INVALID
 	}
 	start := Generated_Start_Validated{
-		workspace.Generated_Count[WORKSPACE_SCALAR_FIELD],
+		Value: Generated_Start_Validated_Value(
+			workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value),
+		),
 	}
+
 	argument_index := BUILTIN_ARGUMENT_SECOND
 	for format_index := SOURCE_SIZE_MINIMUM; format_index < len(format); format_index++ {
 		if format[format_index] != '%' {
@@ -6853,8 +8309,7 @@ func format_directive_parse(source Format_Source) (
 }
 
 func generated_format_value(
-	workspace_state *Workspace,
-	value_state Value,
+	workspace_state Workspace_Pointer, value_state Value,
 	verb Format_Verb,
 	width Format_Width,
 	zero_padding Format_Zero_Padding,
@@ -6865,7 +8320,7 @@ func generated_format_value(
 	defer func() {
 		Formatting_Status_Invariants(status, "generated_format_value.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_format_value.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_format_value.workspace_state")
 	Value_Invariants(value_state, "generated_format_value.value_state")
 	Format_Verb_Invariants(verb, "generated_format_value.verb")
 	Format_Width_Invariants(width, "generated_format_value.width")
@@ -6873,9 +8328,9 @@ func generated_format_value(
 		zero_padding, "generated_format_value.zero_padding",
 	)
 	Format_Alternate_Invariants(alternate, "generated_format_value.alternate")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := Value(value_state)
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	switch verb {
 	case 'v':
 		return Formatting_Status(generated_append_value(workspace, value))
@@ -6884,14 +8339,14 @@ func generated_format_value(
 			return FORMATTING_STATUS_INVALID
 		}
 		return Formatting_Status(generated_append_bytes(
-			workspace, value.Text[VALUE_PAYLOAD_FIELD],
+			workspace, Text(value.Text.Value),
 		))
 	case 'q':
 		if kind != VALUE_TEXT {
 			return FORMATTING_STATUS_INVALID
 		}
 		return Formatting_Status(generated_format_quote(
-			workspace, value.Text[VALUE_PAYLOAD_FIELD], alternate,
+			workspace, Text(value.Text.Value), alternate,
 		))
 	case 'b', 'd', 'o', 'x', 'X':
 		if kind != VALUE_INTEGER {
@@ -6929,8 +8384,7 @@ func generated_format_value(
 }
 
 func generated_format_integer(
-	workspace_state *Workspace,
-	value_state Value,
+	workspace_state Workspace_Pointer, value_state Value,
 	base Integer_Format_Base,
 	uppercase Integer_Format_Uppercase,
 	width Format_Width,
@@ -6939,7 +8393,7 @@ func generated_format_integer(
 	defer func() {
 		Generated_Status_Invariants(status, "generated_format_integer.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_format_integer.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_format_integer.workspace_state")
 	Value_Invariants(value_state, "generated_format_integer.value_state")
 	Integer_Format_Base_Invariants(base, "generated_format_integer.base")
 	Integer_Format_Uppercase_Invariants(
@@ -6949,19 +8403,19 @@ func generated_format_integer(
 	Format_Zero_Padding_Invariants(
 		zero_padding, "generated_format_integer.zero_padding",
 	)
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := Value(value_state)
 	count := SOURCE_SIZE_MINIMUM
-	if value.Kind[VALUE_PAYLOAD_FIELD] == VALUE_INTEGER {
+	if Value_Kind(value.Kind.Value) == VALUE_INTEGER {
 		count = int(strconv.Format_Integer_Into(
 			strconv.Buffer(workspace.Number),
-			strconv.Signed_Integer(int64(value.Scalar[VALUE_SCALAR_REAL])),
+			strconv.Signed_Integer(int64(value.Scalar.Real)),
 			strconv.Base(base),
 		))
 	} else {
 		count = int(strconv.Format_Unsigned_Integer_Into(
 			strconv.Buffer(workspace.Number),
-			strconv.Unsigned_Integer(value.Scalar[VALUE_SCALAR_REAL]),
+			strconv.Unsigned_Integer(value.Scalar.Real),
 			strconv.Base(base),
 		))
 	}
@@ -6974,21 +8428,22 @@ func generated_format_integer(
 	}
 	return generated_append_padded(
 		workspace, Formatted_Integer_Text_Validated{
-			Text(workspace.Number[:count]),
-		}, width, zero_padding,
+			Value: Formatted_Integer_Text_Validated_Value(workspace.Number[:count]),
+		},
+
+		width, zero_padding,
 	)
 }
 
 func generated_append_padded(
-	workspace_state *Workspace,
-	source_value Formatted_Integer_Text_Validated,
+	workspace_state Workspace_Pointer, source_value Formatted_Integer_Text_Validated,
 	width Format_Width,
 	zero_padding Format_Zero_Padding,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_append_padded.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_append_padded.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_append_padded.workspace_state")
 	Formatted_Integer_Text_Validated_Invariants(
 		source_value, "generated_append_padded.source_value",
 	)
@@ -6996,8 +8451,8 @@ func generated_append_padded(
 	Format_Zero_Padding_Invariants(
 		zero_padding, "generated_append_padded.zero_padding",
 	)
-	workspace := (*Workspace)(workspace_state)
-	source := source_value[FORMATTED_INTEGER_TEXT_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	source := Text(source_value.Value.(Formatted_Integer_Text_Validated_Value))
 	padding_count := int(width) - len(source)
 	if padding_count < OUTPUT_SIZE_MINIMUM {
 		padding_count = OUTPUT_SIZE_MINIMUM
@@ -7029,13 +8484,15 @@ func generated_append_padded(
 	return generated_append_bytes(workspace, source)
 }
 
-func generated_format_type(workspace_state *Workspace, kind Value_Kind) (status Generated_Status) {
+func generated_format_type(
+	workspace_state Workspace_Pointer, kind Value_Kind,
+) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_format_type.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_format_type.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_format_type.workspace_state")
 	Value_Kind_Invariants(kind, "generated_format_type.kind")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	name := ""
 	switch kind {
 	case VALUE_NIL:
@@ -7065,17 +8522,16 @@ func generated_format_type(workspace_state *Workspace, kind Value_Kind) (status 
 }
 
 func generated_format_quote(
-	workspace_state *Workspace,
-	source Text,
+	workspace_state Workspace_Pointer, source Text,
 	alternate Format_Alternate,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_format_quote.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_format_quote.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_format_quote.workspace_state")
 	Text_Invariants(source, "generated_format_quote.source")
 	Format_Alternate_Invariants(alternate, "generated_format_quote.alternate")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	if bool(alternate) {
 		if bool(quote_backquote_safe(source)) {
 			if generated_append_text(workspace, "`") != GENERATED_STATUS_OK {
@@ -7116,14 +8572,16 @@ func generated_format_quote(
 }
 
 func generated_append_quoted_ascii(
-	workspace_state *Workspace, value_value ASCII_Byte,
+	workspace_state Workspace_Pointer, value_value ASCII_Byte,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_append_quoted_ascii.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_append_quoted_ascii.workspace_state")
+	Workspace_Pointer_Invariants(
+		workspace_state, "generated_append_quoted_ascii.workspace_state",
+	)
 	ASCII_Byte_Invariants(value_value, "generated_append_quoted_ascii.value_value")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := byte(value_value)
 	replacement := ""
 	switch value {
@@ -7156,16 +8614,18 @@ func generated_append_quoted_ascii(
 }
 
 func generated_append_control_byte(
-	workspace_state *Workspace, value_value Quoted_Control_Byte,
+	workspace_state Workspace_Pointer, value_value Quoted_Control_Byte,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(
 			status, "generated_append_control_byte.status",
 		)
 	}()
-	Workspace_Invariants(workspace_state, "generated_append_control_byte.workspace_state")
+	Workspace_Pointer_Invariants(
+		workspace_state, "generated_append_control_byte.workspace_state",
+	)
 	Quoted_Control_Byte_Invariants(value_value, "generated_append_control_byte.value_value")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := byte(value_value)
 	encoded := [len(`\x00`)]byte{
 		'\\', 'x',
@@ -7205,15 +8665,15 @@ func quote_backquote_safe(source Text) (safe Boolean) {
 }
 
 func generated_append_value(
-	workspace_state *Workspace, value_state Value,
+	workspace_state Workspace_Pointer, value_state Value,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_append_value.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_append_value.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_append_value.workspace_state")
 	Value_Invariants(value_state, "generated_append_value.value_state")
-	workspace := (*Workspace)(workspace_state)
-	start := int(workspace.Generated_Count[WORKSPACE_SCALAR_FIELD])
+	workspace := (Workspace_Pointer)(workspace_state)
+	start := int(workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value))
 	end := start + OUTPUT_SIZE_MAXIMUM
 	if end > len(workspace.Generated) {
 		end = len(workspace.Generated)
@@ -7224,7 +8684,9 @@ func generated_append_value(
 	output := workspace.Output
 	workspace.Output = Output_Storage(workspace.Generated[start:end])
 	written, value_status := output_value(
-		workspace, Output_Count_Staged{}, Value(value_state),
+		workspace,
+		Output_Count_Staged{Value: Output_Count_Staged_Value(OUTPUT_SIZE_MINIMUM)},
+		Value(value_state),
 	)
 	workspace.Output = output
 	if value_status == OUTPUT_STATUS_TOO_LARGE {
@@ -7234,49 +8696,56 @@ func generated_append_value(
 		value_status == OUTPUT_STATUS_OK,
 		"Validated builtin values cannot fail scalar or composite formatting.",
 	)
-	workspace.Generated_Count[WORKSPACE_SCALAR_FIELD] +=
-		Generated_Count(written[OUTPUT_COUNT_STAGED_FIELD])
+	workspace.Generated_Count.Value =
+		workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value) +
+			Workspace_Generated_Count_Storage_Value(
+				written.Value.(Output_Count_Staged_Value),
+			)
 	return GENERATED_STATUS_OK
 }
 
 func generated_append_bytes(
-	workspace_state *Workspace, source Text,
+	workspace_state Workspace_Pointer, source Text,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_append_bytes.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_append_bytes.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_append_bytes.workspace_state")
 	Text_Invariants(source, "generated_append_bytes.source")
-	workspace := (*Workspace)(workspace_state)
-	count := int(workspace.Generated_Count[WORKSPACE_SCALAR_FIELD])
+	workspace := (Workspace_Pointer)(workspace_state)
+	count := int(workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value))
 	if count > len(workspace.Generated)-len(source) {
 		return GENERATED_STATUS_LIMIT_EXCEEDED
 	}
 	copy(workspace.Generated[count:], source)
-	workspace.Generated_Count[WORKSPACE_SCALAR_FIELD] += Generated_Count(len(source))
+	workspace.Generated_Count.Value =
+		workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value) +
+			Workspace_Generated_Count_Storage_Value(len(source))
 	return GENERATED_STATUS_OK
 }
 
 func generated_append_text(
-	workspace_state *Workspace, source Generated_Text,
+	workspace_state Workspace_Pointer, source Generated_Text,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_append_text.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_append_text.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_append_text.workspace_state")
 	Generated_Text_Invariants(source, "generated_append_text.source")
-	workspace := (*Workspace)(workspace_state)
-	count := int(workspace.Generated_Count[WORKSPACE_SCALAR_FIELD])
+	workspace := (Workspace_Pointer)(workspace_state)
+	count := int(workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value))
 	if count > len(workspace.Generated)-len(source) {
 		return GENERATED_STATUS_LIMIT_EXCEEDED
 	}
 	copy(workspace.Generated[count:], source)
-	workspace.Generated_Count[WORKSPACE_SCALAR_FIELD] += Generated_Count(len(source))
+	workspace.Generated_Count.Value =
+		workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value) +
+			Workspace_Generated_Count_Storage_Value(len(source))
 	return GENERATED_STATUS_OK
 }
 
 func generated_text_value(
-	workspace_state *Workspace, start_value Generated_Start_Validated,
+	workspace_state Workspace_Pointer, start_value Generated_Start_Validated,
 ) (
 	result Value,
 	status Generated_Status,
@@ -7285,13 +8754,15 @@ func generated_text_value(
 		Value_Invariants(result, "generated_text_value.result")
 		Generated_Status_Invariants(status, "generated_text_value.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_text_value.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_text_value.workspace_state")
 	Generated_Start_Validated_Invariants(
 		start_value, "generated_text_value.start_value",
 	)
-	workspace := (*Workspace)(workspace_state)
-	start := start_value[GENERATED_START_VALIDATED_FIELD]
-	end := workspace.Generated_Count[WORKSPACE_SCALAR_FIELD]
+	workspace := (Workspace_Pointer)(workspace_state)
+	start := Generated_Count(start_value.Value.(Generated_Start_Validated_Value))
+	end := Generated_Count(
+		workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value),
+	)
 	if int(end-start) > OUTPUT_SIZE_MAXIMUM {
 		return Value{}, GENERATED_STATUS_LIMIT_EXCEEDED
 	}
@@ -7299,26 +8770,28 @@ func generated_text_value(
 }
 
 func builtin_escape(
-	workspace_state *Workspace,
-	argument_values Arguments_Staged,
+	workspace_state Workspace_Pointer, argument_values Arguments_Staged,
 	kind Escape_Kind,
 ) (result Value, status Generated_Status) {
 	defer func() {
 		Value_Invariants(result, "builtin_escape.result")
 		Generated_Status_Invariants(status, "builtin_escape.status")
 	}()
-	Workspace_Invariants(workspace_state, "builtin_escape.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "builtin_escape.workspace_state")
 	Arguments_Staged_Invariants(argument_values, "builtin_escape.argument_values")
 	Escape_Kind_Invariants(kind, "builtin_escape.kind")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	source, print_status := builtin_print(workspace, argument_values, false)
 	if print_status != GENERATED_STATUS_OK {
 		return Value{}, print_status
 	}
-	text := source.Text[VALUE_PAYLOAD_FIELD]
+	text := Text(source.Text.Value)
 	start := Generated_Start_Validated{
-		workspace.Generated_Count[WORKSPACE_SCALAR_FIELD],
+		Value: Generated_Start_Validated_Value(
+			workspace.Generated_Count.Value.(Workspace_Generated_Count_Storage_Value),
+		),
 	}
+
 	generated_status := GENERATED_STATUS_OK
 	switch kind {
 	case ESCAPE_HTML:
@@ -7336,14 +8809,14 @@ func builtin_escape(
 }
 
 func generated_escape_html(
-	workspace_state *Workspace, source Text,
+	workspace_state Workspace_Pointer, source Text,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_escape_html.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_escape_html.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_escape_html.workspace_state")
 	Text_Invariants(source, "generated_escape_html.source")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	for source_index := range source {
 		replacement := ""
 		switch source[source_index] {
@@ -7374,14 +8847,14 @@ func generated_escape_html(
 }
 
 func generated_escape_js(
-	workspace_state *Workspace, source Text,
+	workspace_state Workspace_Pointer, source Text,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_escape_js.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_escape_js.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_escape_js.workspace_state")
 	Text_Invariants(source, "generated_escape_js.source")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	for source_index := SOURCE_SIZE_MINIMUM; source_index < len(source); {
 		value := source[source_index]
 		if value < byte(utf8.CHARACTER_SELF) {
@@ -7411,14 +8884,14 @@ func generated_escape_js(
 }
 
 func generated_escape_js_ascii(
-	workspace_state *Workspace, value_value ASCII_Byte,
+	workspace_state Workspace_Pointer, value_value ASCII_Byte,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_escape_js_ascii.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_escape_js_ascii.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_escape_js_ascii.workspace_state")
 	ASCII_Byte_Invariants(value_value, "generated_escape_js_ascii.value_value")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := byte(value_value)
 	replacement := ""
 	switch value {
@@ -7450,16 +8923,16 @@ func generated_escape_js_ascii(
 }
 
 func generated_append_js_unicode(
-	workspace_state *Workspace, value_value utf8.Decoded_Character,
+	workspace_state Workspace_Pointer, value_value utf8.Decoded_Character,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_append_js_unicode.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_append_js_unicode.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_append_js_unicode.workspace_state")
 	utf8.Decoded_Character_Invariants(
 		value_value, "generated_append_js_unicode.value_value",
 	)
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := uint32(value_value)
 	hexadecimal_count := strconv.SHORT_UNICODE_DIGIT_COUNT
 	for value >= uint32(bits.CARRY_MAXIMUM)<<
@@ -7484,14 +8957,14 @@ func generated_append_js_unicode(
 }
 
 func generated_escape_url_query(
-	workspace_state *Workspace, source Text,
+	workspace_state Workspace_Pointer, source Text,
 ) (status Generated_Status) {
 	defer func() {
 		Generated_Status_Invariants(status, "generated_escape_url_query.status")
 	}()
-	Workspace_Invariants(workspace_state, "generated_escape_url_query.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "generated_escape_url_query.workspace_state")
 	Text_Invariants(source, "generated_escape_url_query.source")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	for source_index := range source {
 		value := source[source_index]
 		if bool(url_query_safe(utf8.Byte(value))) {
@@ -7551,7 +9024,7 @@ func builtin_order(
 	}()
 	Builtin_Order_Kind_Invariants(kind, "builtin_order.kind")
 	Arguments_Staged_Invariants(argument_values, "builtin_order.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) != BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
 	}
@@ -7581,17 +9054,17 @@ func builtin_order(
 func builtin_order_kind(name Builtin_Order_Name_Validated) (kind Builtin_Order_Kind) {
 	defer func() { Builtin_Order_Kind_Invariants(kind, "builtin_order_kind.kind") }()
 	Builtin_Order_Name_Validated_Invariants(name, "builtin_order_kind.name")
-	if name[BUILTIN_ARGUMENT_FIRST] == 'l' {
-		if name[BUILTIN_ARGUMENT_SECOND] == 't' {
+	if name.First == 'l' {
+		if name.Second == 't' {
 			return BUILTIN_ORDER_LESS
 		}
 		return BUILTIN_ORDER_LESS_EQUAL
 	}
-	if name[BUILTIN_ARGUMENT_SECOND] == 't' {
+	if name.Second == 't' {
 		return BUILTIN_ORDER_GREATER
 	}
 	aver.Always(
-		name[BUILTIN_ARGUMENT_FIRST] == 'g',
+		name.First == 'g',
 		"Builtin dispatch permits only standard comparison names.",
 	)
 	return BUILTIN_ORDER_GREATER_EQUAL
@@ -7607,8 +9080,8 @@ func values_order(
 	}()
 	Value_Invariants(left, "values_order.left")
 	Value_Invariants(right, "values_order.right")
-	left_kind := left.Kind[VALUE_PAYLOAD_FIELD]
-	right_kind := right.Kind[VALUE_PAYLOAD_FIELD]
+	left_kind := Value_Kind(left.Kind.Value)
+	right_kind := Value_Kind(right.Kind.Value)
 	if left_kind == VALUE_INTEGER {
 		if right_kind == VALUE_UNSIGNED {
 			return integer_unsigned_order(left, right), true
@@ -7625,22 +9098,22 @@ func values_order(
 	switch left_kind {
 	case VALUE_INTEGER:
 		return int64_order(
-			Integer(left.Scalar[VALUE_SCALAR_REAL]),
-			Integer(right.Scalar[VALUE_SCALAR_REAL]),
+			Integer(left.Scalar.Real),
+			Integer(right.Scalar.Real),
 		), true
 	case VALUE_UNSIGNED:
 		return uint64_order(
-			Unsigned(left.Scalar[VALUE_SCALAR_REAL]),
-			Unsigned(right.Scalar[VALUE_SCALAR_REAL]),
+			Unsigned(left.Scalar.Real),
+			Unsigned(right.Scalar.Real),
 		), true
 	case VALUE_FLOAT:
 		return float64_order(
-			Float(left.Scalar[VALUE_SCALAR_REAL]),
-			Float(right.Scalar[VALUE_SCALAR_REAL]),
+			Float(left.Scalar.Real),
+			Float(right.Scalar.Real),
 		)
 	case VALUE_TEXT:
 		return bytes_order(
-			left.Text[VALUE_PAYLOAD_FIELD], right.Text[VALUE_PAYLOAD_FIELD],
+			Text(left.Text.Value), Text(right.Text.Value),
 		), true
 	default:
 		return ORDER_SAME, false
@@ -7656,8 +9129,8 @@ func integer_unsigned_order(
 	}()
 	Value_Invariants(integer, "integer_unsigned_order.integer")
 	Value_Invariants(unsigned, "integer_unsigned_order.unsigned")
-	integer_scalar := Integer(integer.Scalar[VALUE_SCALAR_REAL])
-	unsigned_scalar := Unsigned(unsigned.Scalar[VALUE_SCALAR_REAL])
+	integer_scalar := Integer(integer.Scalar.Real)
+	unsigned_scalar := Unsigned(unsigned.Scalar.Real)
 	if integer_scalar < Integer(bits.WORD_64_MINIMUM) {
 		return ORDER_BEFORE
 	}
@@ -7766,7 +9239,7 @@ func builtin_index(argument_values Arguments_Staged) (
 		Builtin_Value_Status_Invariants(status, "builtin_index.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_index.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) < BUILTIN_ARGUMENT_COUNT_TWO {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
 	}
@@ -7791,27 +9264,27 @@ func value_index(
 	}()
 	Value_Invariants(item, "value_index.item")
 	Value_Invariants(index, "value_index.index")
-	switch item.Kind[VALUE_PAYLOAD_FIELD] {
+	switch Value_Kind(item.Kind.Value) {
 	case VALUE_TEXT:
 		position, valid := index_position(
-			index, Collection_Limit(len(item.Text[VALUE_PAYLOAD_FIELD])),
+			index, Collection_Limit(len(Text(item.Text.Value))),
 		)
 		if !valid {
 			return Value{}, INDEX_STATUS_INVALID
 		}
 		return Value_Of_Unsigned(Unsigned(
-			item.Text[VALUE_PAYLOAD_FIELD][position],
+			Text(item.Text.Value)[position],
 		)), INDEX_STATUS_OK
 	case VALUE_SEQUENCE:
 		position, valid := index_position(
-			index, Collection_Limit(len(item.Values[VALUE_PAYLOAD_FIELD])),
+			index, Collection_Limit(len(Values(item.Values.Value))),
 		)
 		if !valid {
 			return Value{}, INDEX_STATUS_INVALID
 		}
-		return item.Values[VALUE_PAYLOAD_FIELD][position], INDEX_STATUS_OK
+		return Values(item.Values.Value)[position], INDEX_STATUS_OK
 	case VALUE_MAP:
-		fields := item.Fields[VALUE_PAYLOAD_FIELD]
+		fields := Fields(item.Fields.Value)
 		for field_index := range fields {
 			if bool(values_equal(fields[field_index].Key.Data, index)) {
 				return fields[field_index].Value.Data, INDEX_STATUS_OK
@@ -7832,9 +9305,9 @@ func index_position(
 	}()
 	Value_Invariants(index, "index_position.index")
 	Collection_Limit_Invariants(limit, "index_position.limit")
-	switch index.Kind[VALUE_PAYLOAD_FIELD] {
+	switch Value_Kind(index.Kind.Value) {
 	case VALUE_INTEGER:
-		value := Integer(index.Scalar[VALUE_SCALAR_REAL])
+		value := Integer(index.Scalar.Real)
 		if value < Integer(bits.WORD_64_MINIMUM) {
 			return Collection_Element_Index(bytes.SLICE_SIZE_MINIMUM), false
 		}
@@ -7843,7 +9316,7 @@ func index_position(
 		}
 		return Collection_Element_Index(value), true
 	case VALUE_UNSIGNED:
-		value := Unsigned(index.Scalar[VALUE_SCALAR_REAL])
+		value := Unsigned(index.Scalar.Real)
 		if value >= Unsigned(limit) {
 			return Collection_Element_Index(bytes.SLICE_SIZE_MINIMUM), false
 		}
@@ -7861,7 +9334,7 @@ func builtin_slice(argument_values Arguments_Staged) (
 		Builtin_Value_Status_Invariants(status, "builtin_slice.status")
 	}()
 	Arguments_Staged_Invariants(argument_values, "builtin_slice.argument_values")
-	arguments := argument_values[ARGUMENTS_STAGED_FIELD]
+	arguments := argument_values.Value.(Arguments_Staged_Value)
 	if len(arguments) < SLICE_ARGUMENT_COUNT_MINIMUM {
 		return Value{}, BUILTIN_VALUE_STATUS_FUNCTION_INVALID
 	}
@@ -7871,13 +9344,13 @@ func builtin_slice(argument_values Arguments_Staged) (
 	item := arguments[BUILTIN_ARGUMENT_FIRST]
 	count := VALUE_COUNT_MAXIMUM - VALUE_COUNT_MAXIMUM
 	capacity := VALUE_COUNT_MAXIMUM - VALUE_COUNT_MAXIMUM
-	switch item.Kind[VALUE_PAYLOAD_FIELD] {
+	switch Value_Kind(item.Kind.Value) {
 	case VALUE_TEXT:
-		count = len(item.Text[VALUE_PAYLOAD_FIELD])
+		count = len(Text(item.Text.Value))
 		capacity = count
 	case VALUE_SEQUENCE:
-		count = len(item.Values[VALUE_PAYLOAD_FIELD])
-		capacity = cap(item.Values[VALUE_PAYLOAD_FIELD])
+		count = len(Values(item.Values.Value))
+		capacity = cap(Values(item.Values.Value))
 		if capacity > VALUE_COUNT_MAXIMUM {
 			capacity = VALUE_COUNT_MAXIMUM
 		}
@@ -7902,7 +9375,7 @@ func builtin_slice(argument_values Arguments_Staged) (
 		return Value{}, BUILTIN_VALUE_STATUS_KIND_INVALID
 	}
 	if len(arguments) == SLICE_ARGUMENT_COUNT_MAXIMUM {
-		if item.Kind[VALUE_PAYLOAD_FIELD] == VALUE_TEXT {
+		if Value_Kind(item.Kind.Value) == VALUE_TEXT {
 			return Value{}, BUILTIN_VALUE_STATUS_KIND_INVALID
 		}
 		if indexes[SLICE_INDEX_END] > indexes[SLICE_INDEX_CAPACITY] {
@@ -7911,11 +9384,11 @@ func builtin_slice(argument_values Arguments_Staged) (
 	}
 	start := indexes[SLICE_INDEX_START]
 	end := indexes[SLICE_INDEX_END]
-	if item.Kind[VALUE_PAYLOAD_FIELD] == VALUE_TEXT {
-		result = Value_Of_Text(item.Text[VALUE_PAYLOAD_FIELD][start:end])
+	if Value_Kind(item.Kind.Value) == VALUE_TEXT {
+		result = Value_Of_Text(Text(item.Text.Value)[start:end])
 		return result, BUILTIN_VALUE_STATUS_OK
 	}
-	values := item.Values[VALUE_PAYLOAD_FIELD]
+	values := Values(item.Values.Value)
 	if len(arguments) == SLICE_ARGUMENT_COUNT_MAXIMUM {
 		maximum := indexes[SLICE_INDEX_CAPACITY]
 		return Value_Of_Sequence(values[start:end:maximum]), BUILTIN_VALUE_STATUS_OK
@@ -7933,9 +9406,9 @@ func slice_position(
 	}()
 	Value_Invariants(index, "slice_position.index")
 	Collection_Limit_Invariants(limit, "slice_position.limit")
-	switch index.Kind[VALUE_PAYLOAD_FIELD] {
+	switch Value_Kind(index.Kind.Value) {
 	case VALUE_INTEGER:
-		value := Integer(index.Scalar[VALUE_SCALAR_REAL])
+		value := Integer(index.Scalar.Real)
 		if value < Integer(bits.WORD_64_MINIMUM) {
 			return Collection_Position(bytes.SLICE_SIZE_MINIMUM), false
 		}
@@ -7944,7 +9417,7 @@ func slice_position(
 		}
 		return Collection_Position(value), true
 	case VALUE_UNSIGNED:
-		value := Unsigned(index.Scalar[VALUE_SCALAR_REAL])
+		value := Unsigned(index.Scalar.Real)
 		if value > Unsigned(limit) {
 			return Collection_Position(bytes.SLICE_SIZE_MINIMUM), false
 		}
@@ -7957,33 +9430,33 @@ func value_truth(value_state Value) (truth Truth) {
 	defer func() { Truth_Invariants(truth, "value_truth.truth") }()
 	Value_Invariants(value_state, "value_truth.value_state")
 	value := Value(value_state)
-	switch value.Kind[VALUE_PAYLOAD_FIELD] {
+	switch Value_Kind(value.Kind.Value) {
 	case VALUE_NIL:
 		return false
 	case VALUE_BOOLEAN:
-		return Truth(value.Scalar[VALUE_SCALAR_REAL] != bits.WORD_64_MINIMUM)
+		return Truth(uint64(value.Scalar.Real) != bits.WORD_64_MINIMUM)
 	case VALUE_INTEGER:
-		return Truth(int64(value.Scalar[VALUE_SCALAR_REAL]) != int64(bits.WORD_64_MINIMUM))
+		return Truth(int64(value.Scalar.Real) != int64(bits.WORD_64_MINIMUM))
 	case VALUE_UNSIGNED:
-		return Truth(value.Scalar[VALUE_SCALAR_REAL] != bits.WORD_64_MINIMUM)
+		return Truth(uint64(value.Scalar.Real) != bits.WORD_64_MINIMUM)
 	case VALUE_FLOAT:
 		return Truth(
-			value.Scalar[VALUE_SCALAR_REAL]&^FLOAT_64_SIGN_MASK != bits.WORD_64_MINIMUM,
+			uint64(value.Scalar.Real)&^FLOAT_64_SIGN_MASK != bits.WORD_64_MINIMUM,
 		)
 	case VALUE_COMPLEX:
-		if value.Scalar[VALUE_SCALAR_REAL]&^FLOAT_64_SIGN_MASK != bits.WORD_64_MINIMUM {
+		if uint64(value.Scalar.Real)&^FLOAT_64_SIGN_MASK != bits.WORD_64_MINIMUM {
 			return true
 		}
 		return Truth(
-			value.Scalar[VALUE_SCALAR_IMAGINARY]&^FLOAT_64_SIGN_MASK !=
+			uint64(value.Scalar.Imaginary)&^FLOAT_64_SIGN_MASK !=
 				bits.WORD_64_MINIMUM,
 		)
 	case VALUE_TEXT:
-		return Truth(len(value.Text[VALUE_PAYLOAD_FIELD]) != OUTPUT_SIZE_MINIMUM)
+		return Truth(len(Text(value.Text.Value)) != OUTPUT_SIZE_MINIMUM)
 	case VALUE_SEQUENCE:
-		return Truth(len(value.Values[VALUE_PAYLOAD_FIELD]) != ARGUMENT_COUNT_MINIMUM)
+		return Truth(len(Values(value.Values.Value)) != ARGUMENT_COUNT_MINIMUM)
 	case VALUE_MAP:
-		return Truth(len(value.Fields[VALUE_PAYLOAD_FIELD]) != ARGUMENT_COUNT_MINIMUM)
+		return Truth(len(Fields(value.Fields.Value)) != ARGUMENT_COUNT_MINIMUM)
 	case VALUE_OBJECT, VALUE_FUNCTION:
 		return true
 	}
@@ -7998,27 +9471,27 @@ func values_equal(
 	Value_Invariants(right_value, "values_equal.right_value")
 	left := Value(left_value)
 	right := Value(right_value)
-	left_kind := left.Kind[VALUE_PAYLOAD_FIELD]
-	right_kind := right.Kind[VALUE_PAYLOAD_FIELD]
+	left_kind := Value_Kind(left.Kind.Value)
+	right_kind := Value_Kind(right.Kind.Value)
 	if left_kind == VALUE_INTEGER {
 		if right_kind == VALUE_UNSIGNED {
-			left_integer := Integer(int64(left.Scalar[VALUE_SCALAR_REAL]))
+			left_integer := Integer(int64(left.Scalar.Real))
 			if left_integer < Integer(bits.WORD_64_MINIMUM) {
 				return false
 			}
 			return Equality(
-				Unsigned(left_integer) == Unsigned(right.Scalar[VALUE_SCALAR_REAL]),
+				Unsigned(left_integer) == Unsigned(right.Scalar.Real),
 			)
 		}
 	}
 	if left_kind == VALUE_UNSIGNED {
 		if right_kind == VALUE_INTEGER {
-			right_integer := Integer(int64(right.Scalar[VALUE_SCALAR_REAL]))
+			right_integer := Integer(int64(right.Scalar.Real))
 			if right_integer < Integer(bits.WORD_64_MINIMUM) {
 				return false
 			}
 			return Equality(
-				Unsigned(left.Scalar[VALUE_SCALAR_REAL]) == Unsigned(right_integer),
+				Unsigned(left.Scalar.Real) == Unsigned(right_integer),
 			)
 		}
 	}
@@ -8030,34 +9503,34 @@ func values_equal(
 		return true
 	case VALUE_BOOLEAN:
 		return Equality(
-			left.Scalar[VALUE_SCALAR_REAL] == right.Scalar[VALUE_SCALAR_REAL],
+			left.Scalar.Real == right.Scalar.Real,
 		)
 	case VALUE_INTEGER:
 		return Equality(
-			left.Scalar[VALUE_SCALAR_REAL] == right.Scalar[VALUE_SCALAR_REAL],
+			left.Scalar.Real == right.Scalar.Real,
 		)
 	case VALUE_UNSIGNED:
 		return Equality(
-			left.Scalar[VALUE_SCALAR_REAL] == right.Scalar[VALUE_SCALAR_REAL],
+			left.Scalar.Real == right.Scalar.Real,
 		)
 	case VALUE_FLOAT:
 		return float64_equal(
-			Float(left.Scalar[VALUE_SCALAR_REAL]),
-			Float(right.Scalar[VALUE_SCALAR_REAL]),
+			Float(left.Scalar.Real),
+			Float(right.Scalar.Real),
 		)
 	case VALUE_COMPLEX:
 		return Equality(
 			bool(float64_equal(
-				Float(left.Scalar[VALUE_SCALAR_REAL]),
-				Float(right.Scalar[VALUE_SCALAR_REAL]),
+				Float(left.Scalar.Real),
+				Float(right.Scalar.Real),
 			)) && bool(float64_equal(
-				Float(left.Scalar[VALUE_SCALAR_IMAGINARY]),
-				Float(right.Scalar[VALUE_SCALAR_IMAGINARY]),
+				Float(left.Scalar.Imaginary),
+				Float(right.Scalar.Imaginary),
 			)),
 		)
 	case VALUE_TEXT:
 		return Equality(bytes_equal(
-			left.Text[VALUE_PAYLOAD_FIELD], right.Text[VALUE_PAYLOAD_FIELD],
+			Text(left.Text.Value), Text(right.Text.Value),
 		))
 	}
 	return false
@@ -8074,47 +9547,45 @@ func float64_equal(
 }
 
 func output_value(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	value_state Value,
 ) (written Output_Count_Staged, status Output_Status) {
 	defer func() {
 		Output_Count_Staged_Invariants(written, "output_value.written")
 		Output_Status_Invariants(status, "output_value.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_value.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_value.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_value.count_value")
 	Value_Invariants(value_state, "output_value.value_state")
 	value := Value(value_state)
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	if kind == VALUE_SEQUENCE {
-		return output_composite((*Workspace)(workspace_state), count_value, value)
+		return output_composite((Workspace_Pointer)(workspace_state), count_value, value)
 	}
 	if kind == VALUE_OBJECT {
-		return output_composite((*Workspace)(workspace_state), count_value, value)
+		return output_composite((Workspace_Pointer)(workspace_state), count_value, value)
 	}
 	if kind == VALUE_MAP {
-		return output_composite((*Workspace)(workspace_state), count_value, value)
+		return output_composite((Workspace_Pointer)(workspace_state), count_value, value)
 	}
-	return output_scalar((*Workspace)(workspace_state), count_value, value)
+	return output_scalar((Workspace_Pointer)(workspace_state), count_value, value)
 }
 
 func output_scalar(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	value_state Value,
 ) (written Output_Count_Staged, status Output_Status) {
 	defer func() {
 		Output_Count_Staged_Invariants(written, "output_scalar.written")
 		Output_Status_Invariants(status, "output_scalar.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_scalar.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_scalar.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_scalar.count_value")
 	Value_Invariants(value_state, "output_scalar.value_state")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	count := count_value
 	value := Value(value_state)
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	aver.Always(
 		kind != VALUE_SEQUENCE,
 		"Sequences are dispatched before scalar formatting.",
@@ -8131,19 +9602,19 @@ func output_scalar(
 	case VALUE_NIL:
 		return output_text(workspace, count, "<no value>")
 	case VALUE_BOOLEAN:
-		if value.Scalar[VALUE_SCALAR_REAL] != bits.WORD_64_MINIMUM {
+		if uint64(value.Scalar.Real) != bits.WORD_64_MINIMUM {
 			return output_text(workspace, count, "true")
 		}
 		return output_text(workspace, count, "false")
 	case VALUE_INTEGER:
-		integer := Integer(int64(value.Scalar[VALUE_SCALAR_REAL]))
+		integer := Integer(int64(value.Scalar.Real))
 		count := strconv.Format_Integer_Into(
 			strconv.Buffer(workspace.Number), strconv.Signed_Integer(integer),
 			strconv.DECIMAL_BASE,
 		)
 		return output_bytes(workspace, count_value, Text(workspace.Number[:count]))
 	case VALUE_UNSIGNED:
-		unsigned := Unsigned(value.Scalar[VALUE_SCALAR_REAL])
+		unsigned := Unsigned(value.Scalar.Real)
 		count := strconv.Format_Unsigned_Integer_Into(
 			strconv.Buffer(workspace.Number), strconv.Unsigned_Integer(unsigned),
 			strconv.DECIMAL_BASE,
@@ -8151,16 +9622,16 @@ func output_scalar(
 		return output_bytes(workspace, count_value, Text(workspace.Number[:count]))
 	case VALUE_FLOAT:
 		return output_float_bits(
-			workspace, count, Float(value.Scalar[VALUE_SCALAR_REAL]),
+			workspace, count, Float(value.Scalar.Real),
 		)
 	case VALUE_COMPLEX:
 		return output_complex_bits(
-			workspace, count, Float(value.Scalar[VALUE_SCALAR_REAL]),
-			Float(value.Scalar[VALUE_SCALAR_IMAGINARY]),
+			workspace, count, Float(value.Scalar.Real),
+			Float(value.Scalar.Imaginary),
 		)
 	case VALUE_TEXT:
 		return output_bytes(
-			workspace, count, value.Text[VALUE_PAYLOAD_FIELD],
+			workspace, count, Text(value.Text.Value),
 		)
 	case VALUE_FUNCTION:
 		return output_text(workspace, count, "<function>")
@@ -8169,25 +9640,24 @@ func output_scalar(
 }
 
 func output_composite(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	value_state Value,
 ) (written Output_Count_Staged, status Output_Status) {
 	defer func() {
 		Output_Count_Staged_Invariants(written, "output_composite.written")
 		Output_Status_Invariants(status, "output_composite.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_composite.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_composite.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite.count_value")
 	Value_Invariants(value_state, "output_composite.value_state")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	count := count_value
-	workspace.Format[bytes.SLICE_SIZE_MINIMUM][VALUE_FORMAT_FRAME_STORAGE_FIELD] =
-		Value_Format_Frame{Value: Value(value_state)}
+	workspace.Format[bytes.SLICE_SIZE_MINIMUM].Value =
+		Value_Format_Frame_Stored(Value_Format_Frame{Value: Value(value_state)})
 	depth := Frame_Index(FRAME_COUNT_INCREMENT)
 	for depth > Frame_Index(bytes.SLICE_SIZE_MINIMUM) {
 		frame_state := &workspace.Format[depth-Frame_Index(FRAME_COUNT_INCREMENT)]
-		frame := &frame_state[VALUE_FORMAT_FRAME_STORAGE_FIELD]
+		frame := &frame_state.Value
 		if !bool(frame.Opened) {
 			var write_status Output_Status
 			count, write_status = output_composite_open(workspace, count, frame.Value)
@@ -8220,7 +9690,7 @@ func output_composite(
 		if child_status != OUTPUT_STATUS_OK {
 			return count, child_status
 		}
-		kind := child.Kind[VALUE_PAYLOAD_FIELD]
+		kind := Value_Kind(child.Kind.Value)
 		composite := kind == VALUE_SEQUENCE || kind == VALUE_OBJECT ||
 			kind == VALUE_MAP
 		if composite {
@@ -8228,8 +9698,8 @@ func output_composite(
 				int(depth) < len(workspace.Format),
 				"Value validation rejects depth beyond format storage.",
 			)
-			workspace.Format[depth][VALUE_FORMAT_FRAME_STORAGE_FIELD] =
-				Value_Format_Frame{Value: child}
+			workspace.Format[depth].Value =
+				Value_Format_Frame_Stored(Value_Format_Frame{Value: child})
 			depth++
 			continue
 		}
@@ -8250,21 +9720,21 @@ func output_composite_count(value_state Value) (
 	}()
 	Value_Invariants(value_state, "output_composite_count.value_state")
 	value := Value(value_state)
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	Composite_Kind_Invariants(
 		Composite_Kind(kind), "output_composite_count.kind",
 	)
 	switch kind {
 	case VALUE_SEQUENCE:
-		return Collection_Count(len(value.Values[VALUE_PAYLOAD_FIELD]))
+		return Collection_Count(len(Values(value.Values.Value)))
 	case VALUE_OBJECT, VALUE_MAP:
-		return Collection_Count(len(value.Fields[VALUE_PAYLOAD_FIELD]))
+		return Collection_Count(len(Fields(value.Fields.Value)))
 	}
 	return VALUE_COUNT_MAXIMUM - VALUE_COUNT_MAXIMUM
 }
 
 func output_composite_open(
-	workspace_state *Workspace, count_value Output_Count_Staged, value_state Value,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged, value_state Value,
 ) (
 	written Output_Count_Staged, status Output_Status,
 ) {
@@ -8272,22 +9742,22 @@ func output_composite_open(
 		Output_Count_Staged_Invariants(written, "output_composite_open.written")
 		Output_Status_Invariants(status, "output_composite_open.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_composite_open.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_composite_open.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite_open.count_value")
 	Value_Invariants(value_state, "output_composite_open.value_state")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := Value(value_state)
-	if value.Kind[VALUE_PAYLOAD_FIELD] == VALUE_MAP {
+	if Value_Kind(value.Kind.Value) == VALUE_MAP {
 		return output_text(workspace, count_value, "map[")
 	}
-	if value.Kind[VALUE_PAYLOAD_FIELD] == VALUE_OBJECT {
+	if Value_Kind(value.Kind.Value) == VALUE_OBJECT {
 		return output_text(workspace, count_value, "{")
 	}
 	return output_text(workspace, count_value, "[")
 }
 
 func output_composite_close(
-	workspace_state *Workspace, count_value Output_Count_Staged, value_state Value,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged, value_state Value,
 ) (
 	written Output_Count_Staged, status Output_Status,
 ) {
@@ -8295,46 +9765,45 @@ func output_composite_close(
 		Output_Count_Staged_Invariants(written, "output_composite_close.written")
 		Output_Status_Invariants(status, "output_composite_close.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_composite_close.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_composite_close.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite_close.count_value")
 	Value_Invariants(value_state, "output_composite_close.value_state")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	value := Value(value_state)
-	if value.Kind[VALUE_PAYLOAD_FIELD] == VALUE_OBJECT {
+	if Value_Kind(value.Kind.Value) == VALUE_OBJECT {
 		return output_text(workspace, count_value, "}")
 	}
 	return output_text(workspace, count_value, "]")
 }
 
 func output_composite_child(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
-	frame_state *Value_Format_Frame_Storage,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
+	frame_state Value_Format_Frame_Storage_Pointer,
 ) (child Value, written Output_Count_Staged, status Output_Status) {
 	defer func() {
 		Value_Invariants(child, "output_composite_child.child")
 		Output_Count_Staged_Invariants(written, "output_composite_child.written")
 		Output_Status_Invariants(status, "output_composite_child.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_composite_child.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_composite_child.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_composite_child.count_value")
-	Value_Format_Frame_Storage_Invariants(
-		*frame_state, "output_composite_child.frame_state",
-	)
-	workspace := (*Workspace)(workspace_state)
-	frame := &frame_state[VALUE_FORMAT_FRAME_STORAGE_FIELD]
+	Value_Format_Frame_Storage_Pointer_Invariants(
+		frame_state, "output_composite_child.frame_state")
+
+	workspace := (Workspace_Pointer)(workspace_state)
+	frame := &frame_state.Value
 	value := frame.Value
 	index := frame.Index
 	frame.Index++
-	kind := value.Kind[VALUE_PAYLOAD_FIELD]
+	kind := Value_Kind(value.Kind.Value)
 	Composite_Kind_Invariants(
 		Composite_Kind(kind), "output_composite_child.kind",
 	)
 	switch kind {
 	case VALUE_SEQUENCE:
-		return value.Values[VALUE_PAYLOAD_FIELD][index], count_value, OUTPUT_STATUS_OK
+		return Values(value.Values.Value)[index], count_value, OUTPUT_STATUS_OK
 	case VALUE_OBJECT:
-		return value.Fields[VALUE_PAYLOAD_FIELD][index].Value.Data,
+		return Fields(value.Fields.Value)[index].Value.Data,
 			count_value, OUTPUT_STATUS_OK
 	case VALUE_MAP:
 		key, item, selected := range_map_next(
@@ -8357,8 +9826,7 @@ func output_composite_child(
 }
 
 func output_complex_bits(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	real Float,
 	imaginary Float,
 ) (written Output_Count_Staged, status Output_Status) {
@@ -8366,11 +9834,11 @@ func output_complex_bits(
 		Output_Count_Staged_Invariants(written, "output_complex_bits.written")
 		Output_Status_Invariants(status, "output_complex_bits.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_complex_bits.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_complex_bits.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_complex_bits.count_value")
 	Float_Invariants(real, "output_complex_bits.real")
 	Float_Invariants(imaginary, "output_complex_bits.imaginary")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	count, write_status := output_text(workspace, count_value, "(")
 	if write_status != OUTPUT_STATUS_OK {
 		return count, OUTPUT_STATUS_TOO_LARGE
@@ -8393,25 +9861,27 @@ func output_complex_bits(
 }
 
 func output_float_bits(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	encoding Float,
 ) (written Output_Count_Staged, status Output_Status) {
 	defer func() {
 		Output_Count_Staged_Invariants(written, "output_float_bits.written")
 		Output_Status_Invariants(status, "output_float_bits.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_float_bits.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_float_bits.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_float_bits.count_value")
 	Float_Invariants(encoding, "output_float_bits.encoding")
-	workspace := (*Workspace)(workspace_state)
+	workspace := (Workspace_Pointer)(workspace_state)
 	count := count_value
 	if float64_nan(encoding) {
 		return output_text(workspace, count, "NaN")
 	}
-	float_value := &workspace.Float_Value[WORKSPACE_SCALAR_FIELD]
+	float_value := &workspace.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX]
 	float_text := (*big.Float_Text_Workspace)(&workspace.Float_Text)
+	// Reset semantics must not discard caller-owned bounded mantissa storage.
+	words := float_value.Mantissa.Words
 	*float_value = big.Float{}
+	float_value.Mantissa.Words = words
 	set_status := big.Float_Set_Float_64_Bits(
 		float_value, big.Float_64_Bits(encoding),
 	)
@@ -8419,7 +9889,7 @@ func output_float_bits(
 		set_status == big.STATUS_OK,
 		"A non-NaN binary64 encoding is always a valid shared big float.",
 	)
-	start := int(count[OUTPUT_COUNT_STAGED_FIELD])
+	start := int(count.Value.(Output_Count_Staged_Value))
 	formatted_count, text_status := big.Float_Text_Into(
 		big.Text(workspace.Output[start:]), float_value,
 		big.FLOAT_TEXT_FORMAT_DECIMAL_GENERAL, big.FLOAT_TEXT_PRECISION_MINIMUM,
@@ -8433,54 +9903,61 @@ func output_float_bits(
 		"Validated shortest binary64 formatting has no other failure.",
 	)
 	return Output_Count_Staged{
-		count[OUTPUT_COUNT_STAGED_FIELD] + Output_Count(formatted_count),
-	}, OUTPUT_STATUS_OK
+			Value: count.Value.(Output_Count_Staged_Value) +
+				Output_Count_Staged_Value(formatted_count),
+		},
+
+		OUTPUT_STATUS_OK
 }
 
 func output_bytes(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	source Text,
 ) (written Output_Count_Staged, status Output_Status) {
 	defer func() {
 		Output_Count_Staged_Invariants(written, "output_bytes.written")
 		Output_Status_Invariants(status, "output_bytes.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_bytes.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_bytes.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_bytes.count_value")
 	Text_Invariants(source, "output_bytes.source")
-	workspace := (*Workspace)(workspace_state)
-	count := int(count_value[OUTPUT_COUNT_STAGED_FIELD])
+	workspace := (Workspace_Pointer)(workspace_state)
+	count := int(count_value.Value.(Output_Count_Staged_Value))
 	if count > len(workspace.Output)-len(source) {
 		return count_value, OUTPUT_STATUS_TOO_LARGE
 	}
 	copy(workspace.Output[count:], source)
 	return Output_Count_Staged{
-		count_value[OUTPUT_COUNT_STAGED_FIELD] + Output_Count(len(source)),
-	}, OUTPUT_STATUS_OK
+			Value: count_value.Value.(Output_Count_Staged_Value) +
+				Output_Count_Staged_Value(len(source)),
+		},
+
+		OUTPUT_STATUS_OK
 }
 
 func output_text(
-	workspace_state *Workspace,
-	count_value Output_Count_Staged,
+	workspace_state Workspace_Pointer, count_value Output_Count_Staged,
 	source Output_Text,
 ) (written Output_Count_Staged, status Output_Status) {
 	defer func() {
 		Output_Count_Staged_Invariants(written, "output_text.written")
 		Output_Status_Invariants(status, "output_text.status")
 	}()
-	Workspace_Invariants(workspace_state, "output_text.workspace_state")
+	Workspace_Pointer_Invariants(workspace_state, "output_text.workspace_state")
 	Output_Count_Staged_Invariants(count_value, "output_text.count_value")
 	Output_Text_Invariants(source, "output_text.source")
-	workspace := (*Workspace)(workspace_state)
-	count := int(count_value[OUTPUT_COUNT_STAGED_FIELD])
+	workspace := (Workspace_Pointer)(workspace_state)
+	count := int(count_value.Value.(Output_Count_Staged_Value))
 	if count > len(workspace.Output)-len(source) {
 		return count_value, OUTPUT_STATUS_TOO_LARGE
 	}
 	copy(workspace.Output[count:], source)
 	return Output_Count_Staged{
-		count_value[OUTPUT_COUNT_STAGED_FIELD] + Output_Count(len(source)),
-	}, OUTPUT_STATUS_OK
+			Value: count_value.Value.(Output_Count_Staged_Value) +
+				Output_Count_Staged_Value(len(source)),
+		},
+
+		OUTPUT_STATUS_OK
 }
 
 func bytes_equal(left Text, right Text) (

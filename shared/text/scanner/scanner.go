@@ -1082,6 +1082,19 @@ func Scanner_Decoder_Invariants(value Scanner_Decoder, namespace aver.Namespace)
 	Character_Column_Invariants(value.Character_Column, namespace)
 }
 
+// Scanner_Decoder_Pointer names mutable decoder state without raw pointer boundaries.
+type Scanner_Decoder_Pointer *Scanner_Decoder
+
+// Scanner_Decoder_Pointer_Invariants composes present decoder state.
+func Scanner_Decoder_Pointer_Invariants(
+	value Scanner_Decoder_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Scanner_Decoder_Invariants(*value, namespace)
+}
+
 // Scanner_Cursor adds only cache state needed by public look-ahead.
 type Scanner_Cursor struct {
 	// Decoder stays separate because token helpers consume known characters.
@@ -1097,6 +1110,19 @@ func Scanner_Cursor_Invariants(value Scanner_Cursor, namespace aver.Namespace) {
 	Scanner_Decoder_Invariants(value.Decoder, namespace)
 	Look_Ahead_Character_Invariants(value.Character, namespace)
 	Look_Ahead_Invariants(value.Looked, namespace)
+}
+
+// Scanner_Cursor_Pointer names mutable public look-ahead state.
+type Scanner_Cursor_Pointer *Scanner_Cursor
+
+// Scanner_Cursor_Pointer_Invariants composes present look-ahead state.
+func Scanner_Cursor_Pointer_Invariants(
+	value Scanner_Cursor_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Scanner_Cursor_Invariants(*value, namespace)
 }
 
 // Scanner_Diagnostics holds policy and count changed by reports.
@@ -1115,6 +1141,19 @@ func Scanner_Diagnostics_Invariants(
 ) {
 	Error_Count_Invariants(value.Error_Count, namespace)
 	Filename_Invariants(value.Filename, namespace)
+}
+
+// Scanner_Diagnostics_Pointer names mutable injected diagnostic state.
+type Scanner_Diagnostics_Pointer *Scanner_Diagnostics
+
+// Scanner_Diagnostics_Pointer_Invariants composes present diagnostic state.
+func Scanner_Diagnostics_Pointer_Invariants(
+	value Scanner_Diagnostics_Pointer, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Scanner_Diagnostics_Invariants(*value, namespace)
 }
 
 // Scanner_Token_Bounds holds source boundaries changed during token scanning.
@@ -1166,6 +1205,17 @@ func Scanner_Invariants(value Scanner, namespace aver.Namespace) {
 	Initialization_Invariants(value.Initialized, namespace)
 }
 
+// Scanner_Pointer names mutable scanner state without raw pointer boundaries.
+type Scanner_Pointer *Scanner
+
+// Scanner_Pointer_Invariants composes present scanner state.
+func Scanner_Pointer_Invariants(value Scanner_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Scanner_Invariants(*value, namespace)
+}
+
 // Source_Validate changes hostile text into bounded scanner source.
 func Source_Validate(
 	unvalidated Source_Unvalidated,
@@ -1191,8 +1241,8 @@ func Position_Valid(position Position) (valid Boolean) {
 }
 
 // Scanner_Init resets scanner while retaining caller filename policy.
-func Scanner_Init(subject *Scanner, source Source) {
-	Scanner_Invariants(*subject, "Scanner_Init.subject.input")
+func Scanner_Init(subject Scanner_Pointer, source Source) {
+	Scanner_Pointer_Invariants(subject, "Scanner_Init.subject.input")
 	Source_Invariants(source, "Scanner_Init.source")
 	Filename_Invariants(subject.Position.Filename, "Scanner_Init.filename")
 	filename := subject.Position.Filename
@@ -1213,9 +1263,9 @@ func Scanner_Init(subject *Scanner, source Source) {
 }
 
 // Scanner_Peek returns next character without advancing public cursor.
-func Scanner_Peek(subject *Scanner) (character Character) {
+func Scanner_Peek(subject Scanner_Pointer) (character Character) {
 	defer func() { Character_Invariants(character, "Scanner_Peek.character") }()
-	Scanner_Invariants(*subject, "Scanner_Peek")
+	Scanner_Pointer_Invariants(subject, "Scanner_Peek")
 	diagnostics := Scanner_Diagnostics{
 		Error:       subject.Error,
 		Error_Count: subject.Error_Count,
@@ -1227,9 +1277,9 @@ func Scanner_Peek(subject *Scanner) (character Character) {
 }
 
 // Scanner_Next consumes next character and invalidates token start.
-func Scanner_Next(subject *Scanner) (character Character) {
+func Scanner_Next(subject Scanner_Pointer) (character Character) {
 	defer func() { Character_Invariants(character, "Scanner_Next.character") }()
-	Scanner_Invariants(*subject, "Scanner_Next")
+	Scanner_Pointer_Invariants(subject, "Scanner_Next")
 	subject.Position.Line = LINE_INVALID
 	subject.Position.Column = COLUMN_INVALID
 	diagnostics := Scanner_Diagnostics{
@@ -1246,12 +1296,12 @@ func Scanner_Next(subject *Scanner) (character Character) {
 }
 
 // Scanner_Scan consumes next configured token.
-func Scanner_Scan(subject *Scanner) (token Token) {
+func Scanner_Scan(subject Scanner_Pointer) (token Token) {
 	defer func() {
 		Token_Invariants(token, "Scanner_Scan.token")
 		Error_Count_Invariants(subject.Error_Count, "Scanner_Scan.error_count")
 	}()
-	Scanner_Invariants(*subject, "Scanner_Scan")
+	Scanner_Pointer_Invariants(subject, "Scanner_Scan")
 	Mode_Invariants(subject.Mode, "Scanner_Scan.mode")
 	Whitespace_Invariants(subject.Whitespace, "Scanner_Scan.whitespace")
 	diagnostics := Scanner_Diagnostics{
@@ -1293,9 +1343,9 @@ func Scanner_Scan(subject *Scanner) (token Token) {
 }
 
 // Scanner_Position returns boundary immediately after prior token or character.
-func Scanner_Position(subject *Scanner) (position Position) {
+func Scanner_Position(subject Scanner_Pointer) (position Position) {
 	defer func() { Position_Invariants(position, "Scanner_Position.position") }()
-	Scanner_Invariants(*subject, "Scanner_Position")
+	Scanner_Pointer_Invariants(subject, "Scanner_Position")
 	if bool(subject.Cursor.Looked) {
 		return Position{
 			Filename: subject.Position.Filename,
@@ -1315,9 +1365,9 @@ func Scanner_Position(subject *Scanner) (position Position) {
 }
 
 // Scanner_Token_Text returns source view for prior Scan.
-func Scanner_Token_Text(subject *Scanner) (text Text) {
+func Scanner_Token_Text(subject Scanner_Pointer) (text Text) {
 	defer func() { Text_Invariants(text, "Scanner_Token_Text.text") }()
-	Scanner_Invariants(*subject, "Scanner_Token_Text")
+	Scanner_Pointer_Invariants(subject, "Scanner_Token_Text")
 	aver.Always(
 		Token_End(subject.Token.Start) <= subject.Token.End,
 		"Scanner token start does not follow token end.",
@@ -1418,8 +1468,8 @@ func Position_Append_Into(
 }
 
 func scan_token_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	start Token_Start,
 	mode Mode,
 	identifier_function Identifier_Function,
@@ -1432,8 +1482,8 @@ func scan_token_unchecked(
 		Character_Invariants(next, "scan_token_unchecked.next")
 		Boolean_Invariants(skip, "scan_token_unchecked.skip")
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scan_token_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_token_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_token_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_token_unchecked.diagnostics")
 	Token_Start_Invariants(start, "scan_token_unchecked.start")
 	Mode_Invariants(mode, "scan_token_unchecked.mode")
 	Character_Invariants(character, "scan_token_unchecked.character")
@@ -1463,8 +1513,8 @@ func scan_token_unchecked(
 }
 
 func scan_symbol_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	start Token_Start,
 	mode Mode,
 	character Character,
@@ -1474,8 +1524,8 @@ func scan_symbol_unchecked(
 		Character_Invariants(next, "scan_symbol_unchecked.next")
 		Boolean_Invariants(skip, "scan_symbol_unchecked.skip")
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scan_symbol_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_symbol_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_symbol_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_symbol_unchecked.diagnostics")
 	Token_Start_Invariants(start, "scan_symbol_unchecked.start")
 	Mode_Invariants(mode, "scan_symbol_unchecked.mode")
 	Character_Invariants(character, "scan_symbol_unchecked.character")
@@ -1535,8 +1585,8 @@ func scan_symbol_unchecked(
 }
 
 func scan_slash_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	comments Boolean,
 	skip_comments Boolean,
 ) (result Slash_Token, next Character, skip Boolean) {
@@ -1545,8 +1595,8 @@ func scan_slash_unchecked(
 		Character_Invariants(next, "scan_slash_unchecked.next")
 		Boolean_Invariants(skip, "scan_slash_unchecked.skip")
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scan_slash_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_slash_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_slash_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_slash_unchecked.diagnostics")
 	Boolean_Invariants(comments, "scan_slash_unchecked.comments")
 	Boolean_Invariants(skip_comments, "scan_slash_unchecked.skip_comments")
 	character := scanner_advance_unchecked(cursor, diagnostics)
@@ -1598,11 +1648,11 @@ func scan_slash_unchecked(
 }
 
 func scanner_peek_unchecked(
-	cursor *Scanner_Cursor, diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Cursor_Pointer, diagnostics Scanner_Diagnostics_Pointer,
 ) (character Character) {
 	defer func() { Character_Invariants(character, "scanner_peek_unchecked.character") }()
-	Scanner_Cursor_Invariants(*cursor, "scanner_peek_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scanner_peek_unchecked.diagnostics")
+	Scanner_Cursor_Pointer_Invariants(cursor, "scanner_peek_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scanner_peek_unchecked.diagnostics")
 	if bool(cursor.Looked) {
 		return Character(cursor.Character)
 	}
@@ -1618,11 +1668,11 @@ func scanner_peek_unchecked(
 }
 
 func scanner_decode_unchecked(
-	cursor *Scanner_Decoder, diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer, diagnostics Scanner_Diagnostics_Pointer,
 ) (character Character) {
 	defer func() { Character_Invariants(character, "scanner_decode_unchecked.character") }()
-	Scanner_Decoder_Invariants(*cursor, "scanner_decode_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scanner_decode_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scanner_decode_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scanner_decode_unchecked.diagnostics")
 	line := Error_Line(cursor.Line)
 	if line > ERROR_LINE_MAXIMUM {
 		line = ERROR_LINE_MAXIMUM
@@ -1675,13 +1725,13 @@ func scanner_decode_unchecked(
 }
 
 func scanner_advance_unchecked(
-	cursor *Scanner_Decoder, diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer, diagnostics Scanner_Diagnostics_Pointer,
 ) (character Character) {
 	defer func() {
 		Character_Invariants(character, "scanner_advance_unchecked.character")
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scanner_advance_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scanner_advance_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scanner_advance_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scanner_advance_unchecked.diagnostics")
 	return scanner_decode_unchecked(cursor, diagnostics)
 }
 
@@ -1731,13 +1781,13 @@ func scanner_identifier_unchecked(
 }
 
 func scan_identifier_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	identifier Identifier_Function,
 ) (character Character) {
 	defer func() { Character_Invariants(character, "scan_identifier_unchecked.character") }()
-	Scanner_Decoder_Invariants(*cursor, "scan_identifier_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_identifier_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_identifier_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_identifier_unchecked.diagnostics")
 	character = scanner_advance_unchecked(cursor, diagnostics)
 	index := Character_Index(utf8.CHARACTER_SIZE_MINIMUM)
 	for bool(scanner_identifier_unchecked(identifier, character, index)) {
@@ -1748,8 +1798,8 @@ func scan_identifier_unchecked(
 }
 
 func scan_number_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	start Token_Start,
 	decimal Decimal_Character,
 	seen_dot Boolean,
@@ -1759,8 +1809,8 @@ func scan_number_unchecked(
 		Number_Token_Invariants(token, "scan_number_unchecked.token")
 		Character_Invariants(next, "scan_number_unchecked.next")
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scan_number_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_number_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_number_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_number_unchecked.diagnostics")
 	Token_Start_Invariants(start, "scan_number_unchecked.start")
 	Decimal_Character_Invariants(decimal, "scan_number_unchecked.character")
 	Boolean_Invariants(seen_dot, "scan_number_unchecked.seen_dot")
@@ -1820,7 +1870,7 @@ func scan_number_unchecked(
 }
 
 func scan_number_finish_unchecked(
-	diagnostics *Scanner_Diagnostics,
+	diagnostics Scanner_Diagnostics_Pointer,
 	source Source,
 	start Token_Start,
 	end Character_Offset,
@@ -1831,7 +1881,9 @@ func scan_number_finish_unchecked(
 	flags Digit_Flags,
 	invalid Invalid_Digit,
 ) {
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_number_finish_unchecked.diagnostics")
+	Scanner_Diagnostics_Pointer_Invariants(
+		diagnostics, "scan_number_finish_unchecked.diagnostics",
+	)
 	Source_Invariants(source, "scan_number_finish_unchecked.source")
 	Token_Start_Invariants(start, "scan_number_finish_unchecked.start")
 	Character_Offset_Invariants(end, "scan_number_finish_unchecked.end")
@@ -1860,8 +1912,8 @@ func scan_number_finish_unchecked(
 }
 
 func scan_mantissa_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	decimal Decimal_Character,
 	seen_dot Boolean,
 	floats Boolean,
@@ -1881,8 +1933,8 @@ func scan_mantissa_unchecked(
 		Digit_Flags_Invariants(flags, "scan_mantissa_unchecked.flags")
 		Invalid_Digit_Invariants(invalid, "scan_mantissa_unchecked.invalid")
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scan_mantissa_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_mantissa_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_mantissa_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_mantissa_unchecked.diagnostics")
 	Decimal_Character_Invariants(decimal, "scan_mantissa_unchecked.decimal")
 	Boolean_Invariants(seen_dot, "scan_mantissa_unchecked.seen_dot")
 	Boolean_Invariants(floats, "scan_mantissa_unchecked.floats")
@@ -1932,8 +1984,8 @@ func scan_mantissa_unchecked(
 }
 
 func scan_radix_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	decimal Decimal_Character,
 ) (
 	next Character,
@@ -1949,8 +2001,8 @@ func scan_radix_unchecked(
 			digits_and_separators, "scan_radix_unchecked.digits_and_separators",
 		)
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scan_radix_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_radix_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_radix_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_radix_unchecked.diagnostics")
 	Decimal_Character_Invariants(decimal, "scan_radix_unchecked.character")
 	character := Character(decimal)
 	if character != '0' {
@@ -2027,8 +2079,8 @@ func exponent_action_unchecked(
 }
 
 func scan_digits_unchecked(
-	cursor *Scanner_Decoder,
-	diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer,
+	diagnostics Scanner_Diagnostics_Pointer,
 	character Character,
 	base Base,
 ) (
@@ -2041,8 +2093,8 @@ func scan_digits_unchecked(
 		Digit_Flags_Invariants(digits_and_separators, "scan_digits_unchecked.flags")
 		Invalid_Digit_Invariants(invalid, "scan_digits_unchecked.invalid")
 	}()
-	Scanner_Decoder_Invariants(*cursor, "scan_digits_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_digits_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_digits_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_digits_unchecked.diagnostics")
 	Character_Invariants(character, "scan_digits_unchecked.character")
 	Base_Invariants(base, "scan_digits_unchecked.base")
 	invalid = Invalid_Digit(INVALID_DIGIT_ABSENT)
@@ -2076,11 +2128,11 @@ func scan_digits_unchecked(
 }
 
 func scan_string_unchecked(
-	cursor *Scanner_Decoder, diagnostics *Scanner_Diagnostics, quote Quote,
+	cursor Scanner_Decoder_Pointer, diagnostics Scanner_Diagnostics_Pointer, quote Quote,
 ) (count Character_Count) {
 	defer func() { Character_Count_Invariants(count, "scan_string_unchecked.count") }()
-	Scanner_Decoder_Invariants(*cursor, "scan_string_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_string_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_string_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_string_unchecked.diagnostics")
 	Quote_Invariants(quote, "scan_string_unchecked.quote")
 	delimiter := Character(quote)
 	character_count := Character_Count(CHARACTER_COUNT_MINIMUM)
@@ -2172,10 +2224,10 @@ func string_character_invalid(character Character) (invalid Boolean) {
 }
 
 func scan_raw_string_unchecked(
-	cursor *Scanner_Decoder, diagnostics *Scanner_Diagnostics,
+	cursor Scanner_Decoder_Pointer, diagnostics Scanner_Diagnostics_Pointer,
 ) {
-	Scanner_Decoder_Invariants(*cursor, "scan_raw_string_unchecked.cursor")
-	Scanner_Diagnostics_Invariants(*diagnostics, "scan_raw_string_unchecked.diagnostics")
+	Scanner_Decoder_Pointer_Invariants(cursor, "scan_raw_string_unchecked.cursor")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scan_raw_string_unchecked.diagnostics")
 	character := scanner_advance_unchecked(cursor, diagnostics)
 	for character != '`' {
 		if character < Character(utf8.DECODED_CHARACTER_MINIMUM) {
@@ -2190,14 +2242,14 @@ func scan_raw_string_unchecked(
 }
 
 func scanner_report_unchecked(
-	diagnostics *Scanner_Diagnostics,
+	diagnostics Scanner_Diagnostics_Pointer,
 	code Lexical_Report_Code,
 	character Character,
 	offset Character_Offset,
 	line Report_Line,
 	column Report_Column,
 ) {
-	Scanner_Diagnostics_Invariants(*diagnostics, "scanner_report_unchecked.diagnostics")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scanner_report_unchecked.diagnostics")
 	Lexical_Report_Code_Invariants(code, "scanner_report_unchecked.code")
 	Character_Invariants(character, "scanner_report_unchecked.character")
 	Character_Offset_Invariants(offset, "scanner_report_unchecked.offset")
@@ -2217,12 +2269,12 @@ func scanner_report_unchecked(
 }
 
 func scanner_error_unchecked(
-	diagnostics *Scanner_Diagnostics,
+	diagnostics Scanner_Diagnostics_Pointer,
 	code Report_Code,
 	character Character,
 	position Error_Position,
 ) {
-	Scanner_Diagnostics_Invariants(*diagnostics, "scanner_error_unchecked.diagnostics")
+	Scanner_Diagnostics_Pointer_Invariants(diagnostics, "scanner_error_unchecked.diagnostics")
 	Report_Code_Invariants(code, "scanner_error_unchecked.code")
 	Character_Invariants(character, "scanner_error_unchecked.character")
 	Error_Position_Invariants(position, "scanner_error_unchecked.position")

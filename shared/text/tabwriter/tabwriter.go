@@ -256,63 +256,19 @@ func Configuration_Input_Invariants(
 }
 
 // Minimum_Width_Storage keeps caller mutation status-reportable.
-type Minimum_Width_Storage [CONFIGURATION_FIELD_COUNT]int
-
-// Minimum_Width_Storage_Invariants fixes policy storage shape.
-func Minimum_Width_Storage_Invariants(
-	value Minimum_Width_Storage, _ aver.Namespace,
-) {
-	aver.Always(
-		len(value) == CONFIGURATION_FIELD_COUNT,
-		"Minimum width has one storage field.",
-	)
-}
+type Minimum_Width_Storage interface{}
 
 // Tab_Width_Storage keeps caller mutation status-reportable.
-type Tab_Width_Storage [CONFIGURATION_FIELD_COUNT]int
-
-// Tab_Width_Storage_Invariants fixes policy storage shape.
-func Tab_Width_Storage_Invariants(value Tab_Width_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == CONFIGURATION_FIELD_COUNT,
-		"Tab width has one storage field.",
-	)
-}
+type Tab_Width_Storage interface{}
 
 // Padding_Storage keeps caller mutation status-reportable.
-type Padding_Storage [CONFIGURATION_FIELD_COUNT]int
-
-// Padding_Storage_Invariants fixes policy storage shape.
-func Padding_Storage_Invariants(value Padding_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == CONFIGURATION_FIELD_COUNT,
-		"Padding has one storage field.",
-	)
-}
+type Padding_Storage interface{}
 
 // Pad_Character_Storage keeps caller mutation status-reportable.
-type Pad_Character_Storage [CONFIGURATION_FIELD_COUNT]byte
-
-// Pad_Character_Storage_Invariants fixes policy storage shape.
-func Pad_Character_Storage_Invariants(
-	value Pad_Character_Storage, _ aver.Namespace,
-) {
-	aver.Always(
-		len(value) == CONFIGURATION_FIELD_COUNT,
-		"Pad character has one storage field.",
-	)
-}
+type Pad_Character_Storage interface{}
 
 // Flags_Storage keeps caller mutation status-reportable.
-type Flags_Storage [CONFIGURATION_FIELD_COUNT]uint
-
-// Flags_Storage_Invariants fixes policy storage shape.
-func Flags_Storage_Invariants(value Flags_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == CONFIGURATION_FIELD_COUNT,
-		"Formatting flags have one storage field.",
-	)
-}
+type Flags_Storage interface{}
 
 // Configuration stores validated formatting policy by value.
 type Configuration struct {
@@ -328,13 +284,33 @@ type Configuration struct {
 	Flags Flags_Storage
 }
 
-// Configuration_Invariants composes immutable validated policy.
-func Configuration_Invariants(value Configuration, namespace aver.Namespace) {
-	Minimum_Width_Storage_Invariants(value.Minimum_Width, namespace)
-	Tab_Width_Storage_Invariants(value.Tab_Width, namespace)
-	Padding_Storage_Invariants(value.Padding, namespace)
-	Pad_Character_Storage_Invariants(value.Pad_Character, namespace)
-	Flags_Storage_Invariants(value.Flags, namespace)
+// Configuration_Invariants admits zero failure output and typed configured storage.
+func Configuration_Invariants(value Configuration, _ aver.Namespace) {
+	_, minimum_width_valid := value.Minimum_Width.(Minimum_Width)
+	_, tab_width_valid := value.Tab_Width.(Tab_Width)
+	_, padding_valid := value.Padding.(Padding)
+	_, pad_character_valid := value.Pad_Character.(Pad_Character)
+	_, flags_valid := value.Flags.(Flags)
+	aver.Always(
+		minimum_width_valid == (value.Minimum_Width != nil),
+		"Configuration minimum width has expected type.",
+	)
+	aver.Always(
+		tab_width_valid == (value.Tab_Width != nil),
+		"Configuration tab width has expected type.",
+	)
+	aver.Always(
+		padding_valid == (value.Padding != nil),
+		"Configuration padding has expected type.",
+	)
+	aver.Always(
+		pad_character_valid == (value.Pad_Character != nil),
+		"Configuration pad character has expected type.",
+	)
+	aver.Always(
+		flags_valid == (value.Flags != nil),
+		"Configuration flags have expected type.",
+	)
 }
 
 // Configuration_Validity reports whether visible storage remains bounded.
@@ -357,10 +333,26 @@ func Configuration_Valid(
 		Configuration_Validity_Invariants(valid, "configuration_valid.valid")
 	}()
 	Configuration_Invariants(configuration, "configuration_valid.configuration")
-	minimum_width := configuration.Minimum_Width[CONFIGURATION_FIELD]
-	tab_width := configuration.Tab_Width[CONFIGURATION_FIELD]
-	padding := configuration.Padding[CONFIGURATION_FIELD]
-	flags := Flags(configuration.Flags[CONFIGURATION_FIELD])
+	minimum_width, minimum_width_valid := configuration.Minimum_Width.(Minimum_Width)
+	tab_width, tab_width_valid := configuration.Tab_Width.(Tab_Width)
+	padding, padding_valid := configuration.Padding.(Padding)
+	pad_character, pad_character_valid := configuration.Pad_Character.(Pad_Character)
+	flags, flags_valid := configuration.Flags.(Flags)
+	if !minimum_width_valid {
+		return false
+	}
+	if !tab_width_valid {
+		return false
+	}
+	if !padding_valid {
+		return false
+	}
+	if !pad_character_valid {
+		return false
+	}
+	if !flags_valid {
+		return false
+	}
 	if minimum_width < WIDTH_MINIMUM {
 		return false
 	}
@@ -382,7 +374,7 @@ func Configuration_Valid(
 	if flags > FLAGS_MAXIMUM {
 		return false
 	}
-	if configuration.Pad_Character[CONFIGURATION_FIELD] == '\t' {
+	if pad_character == '\t' {
 		if flags&ALIGN_RIGHT != Flags(bits.WORD_MINIMUM) {
 			return false
 		}
@@ -754,80 +746,78 @@ func Line_Terminator_Invariants(
 		Ensure()
 }
 
-// Cell_Starts stores source beginnings without owned dynamic slices.
-type Cell_Starts [CELL_COUNT_MAXIMUM]Stored_Cell_Start
+// Cell_Starts borrows caller storage for source beginnings.
+type Cell_Starts []Stored_Cell_Start
 
-// Cell_Starts_Invariants fixes workspace capacity while parser owns content validity.
+// Cell_Starts_Invariants fixes complete caller storage.
 func Cell_Starts_Invariants(value Cell_Starts, _ aver.Namespace) {
-	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell starts have fixed capacity.")
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell starts retain complete length.")
+	aver.Always(cap(value) == CELL_COUNT_MAXIMUM, "Cell starts cannot grow.")
 }
 
-// Cell_Ends stores source endings without owned dynamic slices.
-type Cell_Ends [CELL_COUNT_MAXIMUM]Cell_End
+// Cell_Ends borrows caller storage for source endings.
+type Cell_Ends []Cell_End
 
-// Cell_Ends_Invariants fixes workspace capacity while parser owns content validity.
+// Cell_Ends_Invariants fixes complete caller storage.
 func Cell_Ends_Invariants(value Cell_Ends, _ aver.Namespace) {
-	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell ends have fixed capacity.")
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell ends retain complete length.")
+	aver.Always(cap(value) == CELL_COUNT_MAXIMUM, "Cell ends cannot grow.")
 }
 
-// Cell_Widths stores display widths without owned dynamic slices.
-type Cell_Widths [CELL_COUNT_MAXIMUM]Cell_Width
+// Cell_Widths borrows caller storage for decoded widths.
+type Cell_Widths []Cell_Width
 
-// Cell_Widths_Invariants fixes workspace capacity while parser owns content validity.
+// Cell_Widths_Invariants fixes complete caller storage.
 func Cell_Widths_Invariants(value Cell_Widths, _ aver.Namespace) {
-	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell widths have fixed capacity.")
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell widths retain complete length.")
+	aver.Always(cap(value) == CELL_COUNT_MAXIMUM, "Cell widths cannot grow.")
 }
 
-// Cell_Output_Sizes stores retained byte sizes without owned dynamic slices.
-type Cell_Output_Sizes [CELL_COUNT_MAXIMUM]Cell_Output_Size
+// Cell_Output_Sizes borrows caller storage for retained byte sizes.
+type Cell_Output_Sizes []Cell_Output_Size
 
-// Cell_Output_Sizes_Invariants fixes workspace capacity while parser owns content validity.
+// Cell_Output_Sizes_Invariants fixes complete caller storage.
 func Cell_Output_Sizes_Invariants(value Cell_Output_Sizes, _ aver.Namespace) {
-	aver.Always(
-		len(value) == CELL_COUNT_MAXIMUM,
-		"Cell output sizes have fixed capacity.",
-	)
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell output sizes retain complete length.")
+	aver.Always(cap(value) == CELL_COUNT_MAXIMUM, "Cell output sizes cannot grow.")
 }
 
-// Cell_Hard_Tabs stores tab kind without owned dynamic slices.
-type Cell_Hard_Tabs [CELL_COUNT_MAXIMUM]Cell_Hard_Tab
+// Cell_Hard_Tabs borrows caller storage for tab kind.
+type Cell_Hard_Tabs []Cell_Hard_Tab
 
-// Cell_Hard_Tabs_Invariants fixes workspace capacity while parser owns content validity.
+// Cell_Hard_Tabs_Invariants fixes complete caller storage.
 func Cell_Hard_Tabs_Invariants(value Cell_Hard_Tabs, _ aver.Namespace) {
-	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell tab kinds have fixed capacity.")
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell tab kinds retain complete length.")
+	aver.Always(cap(value) == CELL_COUNT_MAXIMUM, "Cell tab kinds cannot grow.")
 }
 
 // Line_First_Cells stores flat cell beginnings for each line.
-type Line_First_Cells [LINE_COUNT_MAXIMUM]Line_First_Cell
+type Line_First_Cells []Line_First_Cell
 
-// Line_First_Cells_Invariants fixes workspace capacity while parser owns content validity.
+// Line_First_Cells_Invariants fixes complete caller storage.
 func Line_First_Cells_Invariants(value Line_First_Cells, _ aver.Namespace) {
 	aver.Always(
-		len(value) == LINE_COUNT_MAXIMUM,
-		"Line cell beginnings have fixed capacity.",
+		len(value) == LINE_COUNT_MAXIMUM, "Line cell beginnings retain complete length.",
 	)
+	aver.Always(cap(value) == LINE_COUNT_MAXIMUM, "Line cell beginnings cannot grow.")
 }
 
 // Line_Cell_Counts stores flat cell counts for each line.
-type Line_Cell_Counts [LINE_COUNT_MAXIMUM]Line_Cell_Count
+type Line_Cell_Counts []Line_Cell_Count
 
-// Line_Cell_Counts_Invariants fixes workspace capacity while parser owns content validity.
+// Line_Cell_Counts_Invariants fixes complete caller storage.
 func Line_Cell_Counts_Invariants(value Line_Cell_Counts, _ aver.Namespace) {
-	aver.Always(
-		len(value) == LINE_COUNT_MAXIMUM,
-		"Line cell counts have fixed capacity.",
-	)
+	aver.Always(len(value) == LINE_COUNT_MAXIMUM, "Line cell counts retain complete length.")
+	aver.Always(cap(value) == LINE_COUNT_MAXIMUM, "Line cell counts cannot grow.")
 }
 
 // Line_Terminators stores source line-ending kind.
-type Line_Terminators [LINE_COUNT_MAXIMUM]Line_Terminator
+type Line_Terminators []Line_Terminator
 
-// Line_Terminators_Invariants fixes workspace capacity while parser owns content validity.
+// Line_Terminators_Invariants fixes complete caller storage.
 func Line_Terminators_Invariants(value Line_Terminators, _ aver.Namespace) {
-	aver.Always(
-		len(value) == LINE_COUNT_MAXIMUM,
-		"Line endings have fixed capacity.",
-	)
+	aver.Always(len(value) == LINE_COUNT_MAXIMUM, "Line endings retain complete length.")
+	aver.Always(cap(value) == LINE_COUNT_MAXIMUM, "Line endings cannot grow.")
 }
 
 // Workspace is caller-owned cell and line metadata.
@@ -862,20 +852,186 @@ func Workspace_Invariants(value Workspace, namespace aver.Namespace) {
 	Line_Terminators_Invariants(value.Line_Terminators, namespace)
 }
 
-// Workspace_Storage retains an absent pointer without changing aggregate shape.
-type Workspace_Storage [WORKSPACE_FIELD_COUNT]*Workspace
+// Workspace_Pointer names validated mutable metadata state.
+type Workspace_Pointer *Workspace
 
-// Workspace_Storage_Invariants leaves pointer presence to Format_Into status.
-func Workspace_Storage_Invariants(value Workspace_Storage, _ aver.Namespace) {
-	aver.Always(
-		len(value) == WORKSPACE_FIELD_COUNT,
-		"Workspace input has one pointer field.",
+// Workspace_Pointer_Invariants composes present metadata state.
+func Workspace_Pointer_Invariants(value Workspace_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Workspace_Invariants(*value, namespace)
+}
+
+// Workspace_Validity reports complete caller storage without indexing it.
+type Workspace_Validity bool
+
+// Workspace_Validity_Invariants covers valid and rejected storage.
+func Workspace_Validity_Invariants(value Workspace_Validity, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(bool(value), "Workspace storage is complete.").
+		Ensure()
+}
+
+// Cell_Starts_Input retains hostile borrowed source-beginning storage.
+type Cell_Starts_Input []Stored_Cell_Start
+
+// Cell_Starts_Input_Invariants states Go slice shape without scanning hostile storage.
+func Cell_Starts_Input_Invariants(value Cell_Starts_Input, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Enum_Int(cap(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Cell_Ends_Input retains hostile borrowed source-ending storage.
+type Cell_Ends_Input []Cell_End
+
+// Cell_Ends_Input_Invariants states Go slice shape without scanning hostile storage.
+func Cell_Ends_Input_Invariants(value Cell_Ends_Input, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Enum_Int(cap(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Cell_Widths_Input retains hostile borrowed display-width storage.
+type Cell_Widths_Input []Cell_Width
+
+// Cell_Widths_Input_Invariants states Go slice shape without scanning hostile storage.
+func Cell_Widths_Input_Invariants(value Cell_Widths_Input, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Enum_Int(cap(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Cell_Output_Sizes_Input retains hostile borrowed byte-count storage.
+type Cell_Output_Sizes_Input []Cell_Output_Size
+
+// Cell_Output_Sizes_Input_Invariants states Go slice shape without scanning hostile storage.
+func Cell_Output_Sizes_Input_Invariants(
+	value Cell_Output_Sizes_Input, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Enum_Int(cap(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Cell_Hard_Tabs_Input retains hostile borrowed tab-kind storage.
+type Cell_Hard_Tabs_Input []Cell_Hard_Tab
+
+// Cell_Hard_Tabs_Input_Invariants states Go slice shape without scanning hostile storage.
+func Cell_Hard_Tabs_Input_Invariants(
+	value Cell_Hard_Tabs_Input, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Enum_Int(cap(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Line_First_Cells_Input retains hostile borrowed line-beginning storage.
+type Line_First_Cells_Input []Line_First_Cell
+
+// Line_First_Cells_Input_Invariants states Go slice shape without scanning hostile storage.
+func Line_First_Cells_Input_Invariants(
+	value Line_First_Cells_Input, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Enum_Int(cap(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Line_Cell_Counts_Input retains hostile borrowed line-size storage.
+type Line_Cell_Counts_Input []Line_Cell_Count
+
+// Line_Cell_Counts_Input_Invariants states Go slice shape without scanning hostile storage.
+func Line_Cell_Counts_Input_Invariants(
+	value Line_Cell_Counts_Input, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Enum_Int(cap(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Line_Terminators_Input retains hostile borrowed line-ending storage.
+type Line_Terminators_Input []Line_Terminator
+
+// Line_Terminators_Input_Invariants states Go slice shape without scanning hostile storage.
+func Line_Terminators_Input_Invariants(
+	value Line_Terminators_Input, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Int(len(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Enum_Int(cap(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Workspace_Valid checks every slice before parser indexes caller storage.
+func Workspace_Valid(storage Workspace_Storage) (valid Workspace_Validity) {
+	defer func() {
+		Workspace_Validity_Invariants(valid, "workspace_valid.valid")
+	}()
+	Workspace_Storage_Invariants(storage, "workspace_valid.storage")
+	return Workspace_Validity(
+		len(storage.Cell_Starts) == CELL_COUNT_MAXIMUM &&
+			cap(storage.Cell_Starts) == CELL_COUNT_MAXIMUM &&
+			len(storage.Cell_Ends) == CELL_COUNT_MAXIMUM &&
+			cap(storage.Cell_Ends) == CELL_COUNT_MAXIMUM &&
+			len(storage.Cell_Widths) == CELL_COUNT_MAXIMUM &&
+			cap(storage.Cell_Widths) == CELL_COUNT_MAXIMUM &&
+			len(storage.Cell_Output_Size) == CELL_COUNT_MAXIMUM &&
+			cap(storage.Cell_Output_Size) == CELL_COUNT_MAXIMUM &&
+			len(storage.Cell_Hard_Tabs) == CELL_COUNT_MAXIMUM &&
+			cap(storage.Cell_Hard_Tabs) == CELL_COUNT_MAXIMUM &&
+			len(storage.Line_First_Cells) == LINE_COUNT_MAXIMUM &&
+			cap(storage.Line_First_Cells) == LINE_COUNT_MAXIMUM &&
+			len(storage.Line_Cell_Counts) == LINE_COUNT_MAXIMUM &&
+			cap(storage.Line_Cell_Counts) == LINE_COUNT_MAXIMUM &&
+			len(storage.Line_Terminators) == LINE_COUNT_MAXIMUM &&
+			cap(storage.Line_Terminators) == LINE_COUNT_MAXIMUM,
 	)
+}
+
+// Workspace_Storage retains hostile caller slices until validation.
+type Workspace_Storage struct {
+	// Cell_Starts remains borrowed until exact length validation.
+	Cell_Starts Cell_Starts_Input
+	// Cell_Ends remains borrowed until exact length validation.
+	Cell_Ends Cell_Ends_Input
+	// Cell_Widths remains borrowed until exact length validation.
+	Cell_Widths Cell_Widths_Input
+	// Cell_Output_Size remains borrowed until exact length validation.
+	Cell_Output_Size Cell_Output_Sizes_Input
+	// Cell_Hard_Tabs remains borrowed until exact length validation.
+	Cell_Hard_Tabs Cell_Hard_Tabs_Input
+	// Line_First_Cells remains borrowed until exact length validation.
+	Line_First_Cells Line_First_Cells_Input
+	// Line_Cell_Counts remains borrowed until exact length validation.
+	Line_Cell_Counts Line_Cell_Counts_Input
+	// Line_Terminators remains borrowed until exact length validation.
+	Line_Terminators Line_Terminators_Input
+}
+
+// Workspace_Storage_Invariants composes hostile borrowed slice shapes.
+func Workspace_Storage_Invariants(value Workspace_Storage, namespace aver.Namespace) {
+	Cell_Starts_Input_Invariants(value.Cell_Starts, namespace)
+	Cell_Ends_Input_Invariants(value.Cell_Ends, namespace)
+	Cell_Widths_Input_Invariants(value.Cell_Widths, namespace)
+	Cell_Output_Sizes_Input_Invariants(value.Cell_Output_Size, namespace)
+	Cell_Hard_Tabs_Input_Invariants(value.Cell_Hard_Tabs, namespace)
+	Line_First_Cells_Input_Invariants(value.Line_First_Cells, namespace)
+	Line_Cell_Counts_Input_Invariants(value.Line_Cell_Counts, namespace)
+	Line_Terminators_Input_Invariants(value.Line_Terminators, namespace)
 }
 
 // Workspace_Input retains absent hostile state until Format_Into can return status.
 type Workspace_Input struct {
-	// State points at caller-owned parser metadata when present.
+	// State borrows caller-owned parser metadata when present.
 	State Workspace_Storage
 }
 
@@ -1043,11 +1199,11 @@ func New_Configuration(
 		flags &^= ALIGN_RIGHT
 	}
 	return Configuration{
-		Minimum_Width: Minimum_Width_Storage{int(input.Minimum_Width)},
-		Tab_Width:     Tab_Width_Storage{int(input.Tab_Width)},
-		Padding:       Padding_Storage{int(input.Padding)},
-		Pad_Character: Pad_Character_Storage{byte(input.Pad_Character)},
-		Flags:         Flags_Storage{uint(flags)},
+		Minimum_Width: input.Minimum_Width,
+		Tab_Width:     input.Tab_Width,
+		Padding:       input.Padding,
+		Pad_Character: input.Pad_Character,
+		Flags:         flags,
 	}, STATUS_OK
 }
 
@@ -1081,21 +1237,30 @@ func Format_Into(
 	Source_Invariants(source, "format_into.source")
 	Configuration_Invariants(configuration, "format_into.configuration")
 	Workspace_Input_Invariants(workspace, "format_into.workspace")
-	state := workspace.State[WORKSPACE_FIELD]
-	if state == nil {
+	if !bool(Workspace_Valid(workspace.State)) {
 		return Output_Count(OUTPUT_SIZE_MINIMUM), STATUS_WORKSPACE_INVALID
 	}
-	Workspace_Invariants(*state, "format_into.workspace_state")
+	state := Workspace{
+		Cell_Starts:      Cell_Starts(workspace.State.Cell_Starts),
+		Cell_Ends:        Cell_Ends(workspace.State.Cell_Ends),
+		Cell_Widths:      Cell_Widths(workspace.State.Cell_Widths),
+		Cell_Output_Size: Cell_Output_Sizes(workspace.State.Cell_Output_Size),
+		Cell_Hard_Tabs:   Cell_Hard_Tabs(workspace.State.Cell_Hard_Tabs),
+		Line_First_Cells: Line_First_Cells(workspace.State.Line_First_Cells),
+		Line_Cell_Counts: Line_Cell_Counts(workspace.State.Line_Cell_Counts),
+		Line_Terminators: Line_Terminators(workspace.State.Line_Terminators),
+	}
+	Workspace_Invariants(state, "format_into.workspace_state")
 	if !bool(Configuration_Valid(configuration)) {
 		return Output_Count(OUTPUT_SIZE_MINIMUM), STATUS_CONFIGURATION_INVALID
 	}
 	if bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))) {
 		return Output_Count(OUTPUT_SIZE_MINIMUM), STATUS_STORAGE_INVALID
 	}
-	line_count := parse_unchecked(source, configuration, state)
+	line_count := parse_unchecked(source, configuration, &state)
 	var append_status Append_Status
 	count, append_status = render_unchecked(
-		nil, source, configuration, state, line_count, false,
+		nil, source, configuration, &state, line_count, false,
 	)
 	if append_status != STATUS_OK {
 		return count, Format_Status(append_status)
@@ -1104,20 +1269,20 @@ func Format_Into(
 		return count, STATUS_OUTPUT_TOO_SMALL
 	}
 	count, append_status = render_unchecked(
-		destination, source, configuration, state, line_count, true,
+		destination, source, configuration, &state, line_count, true,
 	)
 	return count, Format_Status(append_status)
 }
 
 func parse_unchecked(
-	source Source, configuration Configuration, workspace *Workspace,
+	source Source, configuration Configuration, workspace Workspace_Pointer,
 ) (line_count Parsed_Line_Count) {
 	defer func() {
 		Parsed_Line_Count_Invariants(line_count, "parse_unchecked.line_count")
 	}()
 	Source_Invariants(source, "parse_unchecked.source")
 	Configuration_Invariants(configuration, "parse_unchecked.configuration")
-	Workspace_Invariants(*workspace, "parse_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "parse_unchecked.workspace")
 	cell_start, segment_start := CELL_INDEX_MINIMUM, CELL_INDEX_MINIMUM
 	cell_width, cell_output_size := WIDTH_MINIMUM, OUTPUT_SIZE_MINIMUM
 	line_first, line_index := CELL_INDEX_MINIMUM, Line_Index(LINE_INDEX_MINIMUM)
@@ -1184,7 +1349,7 @@ func parse_unchecked(
 
 func parse_finish_unchecked(
 	source Source,
-	workspace *Workspace,
+	workspace Workspace_Pointer,
 	cell_count Cell_Count,
 	line_index Line_Index,
 	cell_start Cell_Start,
@@ -1198,7 +1363,7 @@ func parse_finish_unchecked(
 		Parsed_Line_Count_Invariants(line_count, "parse_finish_unchecked.line_count")
 	}()
 	Source_Invariants(source, "parse_finish_unchecked.source")
-	Workspace_Invariants(*workspace, "parse_finish_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "parse_finish_unchecked.workspace")
 	Cell_Count_Invariants(cell_count, "parse_finish_unchecked.input_cell_count")
 	Line_Index_Invariants(line_index, "parse_finish_unchecked.line_index")
 	Cell_Start_Invariants(cell_start, "parse_finish_unchecked.cell_start")
@@ -1234,7 +1399,7 @@ func escape_start_unchecked(
 	if character == Input_Byte(ESCAPE) {
 		return End_Character(escape_end(Escape_Start_Byte(character)))
 	}
-	if Flags(configuration.Flags[CONFIGURATION_FIELD])&FILTER_HTML == Flags(bits.WORD_MINIMUM) {
+	if configuration.Flags.(Flags)&FILTER_HTML == Flags(bits.WORD_MINIMUM) {
 		return End_Character(LINE_TERMINATOR_NONE)
 	}
 	if character == Input_Byte(ESCAPE_START_HTML_TAG) {
@@ -1259,7 +1424,7 @@ func escaped_output_size(
 	Configuration_Invariants(configuration, "escaped_output_size.configuration")
 	if character == Input_Byte(end_character) {
 		if end_character == Active_End_Character(ESCAPE) {
-			if Flags(configuration.Flags[CONFIGURATION_FIELD])&STRIP_ESCAPE !=
+			if configuration.Flags.(Flags)&STRIP_ESCAPE !=
 				Flags(bits.WORD_MINIMUM) {
 				return Escape_Output_Size(OUTPUT_SIZE_MINIMUM)
 			}
@@ -1317,7 +1482,7 @@ func escape_start_output_size(
 	Escape_Start_Byte_Invariants(character, "escape_start_output_size.character")
 	Configuration_Invariants(configuration, "escape_start_output_size.configuration")
 	if character == Escape_Start_Byte(ESCAPE) {
-		if Flags(configuration.Flags[CONFIGURATION_FIELD])&STRIP_ESCAPE !=
+		if configuration.Flags.(Flags)&STRIP_ESCAPE !=
 			Flags(bits.WORD_MINIMUM) {
 			return Escape_Output_Size(OUTPUT_SIZE_MINIMUM)
 		}
@@ -1326,7 +1491,7 @@ func escape_start_output_size(
 }
 
 func add_cell_unchecked(
-	workspace *Workspace,
+	workspace Workspace_Pointer,
 	index Cell_Index,
 	start Stored_Cell_Start,
 	end Cell_End,
@@ -1335,7 +1500,7 @@ func add_cell_unchecked(
 	hard_tab Cell_Hard_Tab,
 ) (count Nonzero_Cell_Count) {
 	defer func() { Nonzero_Cell_Count_Invariants(count, "add_cell_unchecked.count") }()
-	Workspace_Invariants(*workspace, "add_cell_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "add_cell_unchecked.workspace")
 	Cell_Index_Invariants(index, "add_cell_unchecked.index")
 	Stored_Cell_Start_Invariants(start, "add_cell_unchecked.start")
 	Cell_End_Invariants(end, "add_cell_unchecked.end")
@@ -1351,14 +1516,14 @@ func add_cell_unchecked(
 }
 
 func add_line_unchecked(
-	workspace *Workspace,
+	workspace Workspace_Pointer,
 	index Line_Index,
 	first Line_First_Cell,
 	cell_boundary Line_Cell_Boundary,
 	terminator Line_Terminator,
 ) (count Parsed_Line_Count) {
 	defer func() { Parsed_Line_Count_Invariants(count, "add_line_unchecked.count") }()
-	Workspace_Invariants(*workspace, "add_line_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "add_line_unchecked.workspace")
 	Line_Index_Invariants(index, "add_line_unchecked.index")
 	Line_First_Cell_Invariants(first, "add_line_unchecked.first")
 	Line_Cell_Boundary_Invariants(cell_boundary, "add_line_unchecked.cell_boundary")
@@ -1375,7 +1540,7 @@ func render_unchecked(
 	destination Output,
 	source Source,
 	configuration Configuration,
-	workspace *Workspace,
+	workspace Workspace_Pointer,
 	line_count Parsed_Line_Count,
 	write Write_Output,
 ) (count Output_Count, status Append_Status) {
@@ -1386,7 +1551,7 @@ func render_unchecked(
 	Output_Invariants(destination, "render_unchecked.destination")
 	Source_Invariants(source, "render_unchecked.source")
 	Configuration_Invariants(configuration, "render_unchecked.configuration")
-	Workspace_Invariants(*workspace, "render_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "render_unchecked.workspace")
 	Parsed_Line_Count_Invariants(line_count, "render_unchecked.line_count")
 	Write_Output_Invariants(write, "render_unchecked.write")
 	offset := Append_Offset(OUTPUT_SIZE_MINIMUM)
@@ -1411,7 +1576,7 @@ func render_unchecked(
 			}
 		}
 		if terminator == '\f' {
-			if Flags(configuration.Flags[CONFIGURATION_FIELD])&DEBUG !=
+			if configuration.Flags.(Flags)&DEBUG !=
 				Flags(bits.WORD_MINIMUM) {
 				for _, character := range [...]byte{'-', '-', '-', '\n'} {
 					var appended Appended_Offset
@@ -1433,7 +1598,7 @@ func render_line_unchecked(
 	destination Output,
 	source Source,
 	configuration Configuration,
-	workspace *Workspace,
+	workspace Workspace_Pointer,
 	line_index Line_Index,
 	line_count Parsed_Line_Count,
 	write Write_Output,
@@ -1446,7 +1611,7 @@ func render_line_unchecked(
 	Output_Invariants(destination, "render_line_unchecked.destination")
 	Source_Invariants(source, "render_line_unchecked.source")
 	Configuration_Invariants(configuration, "render_line_unchecked.configuration")
-	Workspace_Invariants(*workspace, "render_line_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "render_line_unchecked.workspace")
 	Line_Index_Invariants(line_index, "render_line_unchecked.line_index")
 	Parsed_Line_Count_Invariants(line_count, "render_line_unchecked.line_count")
 	Write_Output_Invariants(write, "render_line_unchecked.write")
@@ -1454,7 +1619,7 @@ func render_line_unchecked(
 	count = Append_Offset(count_value)
 	first := int(workspace.Line_First_Cells[line_index])
 	cell_count := int(workspace.Line_Cell_Counts[line_index])
-	flags := Flags(configuration.Flags[CONFIGURATION_FIELD])
+	flags := configuration.Flags.(Flags)
 	use_tabs := flags&TAB_INDENT != Flags(bits.WORD_MINIMUM)
 	for column_index := COLUMN_INDEX_MINIMUM; column_index < cell_count; column_index++ {
 		index := first + column_index
@@ -1507,7 +1672,7 @@ func append_nonempty_cell_unchecked(
 	destination Output,
 	source Nonempty_Source,
 	configuration Configuration,
-	workspace *Workspace,
+	workspace Workspace_Pointer,
 	index Cell_Index,
 	column_width Column_Width,
 	aligned Aligned_Cell,
@@ -1521,14 +1686,14 @@ func append_nonempty_cell_unchecked(
 	Output_Invariants(destination, "append_nonempty_cell_unchecked.destination")
 	Nonempty_Source_Invariants(source, "append_nonempty_cell_unchecked.source")
 	Configuration_Invariants(configuration, "append_nonempty_cell_unchecked.configuration")
-	Workspace_Invariants(*workspace, "append_nonempty_cell_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "append_nonempty_cell_unchecked.workspace")
 	Cell_Index_Invariants(index, "append_nonempty_cell_unchecked.index")
 	Column_Width_Invariants(column_width, "append_nonempty_cell_unchecked.column_width")
 	Aligned_Cell_Invariants(aligned, "append_nonempty_cell_unchecked.aligned")
 	Write_Output_Invariants(write, "append_nonempty_cell_unchecked.write")
 	Append_Offset_Invariants(count_value, "append_nonempty_cell_unchecked.count_value")
 	offset := Append_Offset(count_value)
-	right := Flags(configuration.Flags[CONFIGURATION_FIELD])&ALIGN_RIGHT !=
+	right := configuration.Flags.(Flags)&ALIGN_RIGHT !=
 		Flags(bits.WORD_MINIMUM)
 	if bool(aligned) {
 		if right {
@@ -1566,14 +1731,14 @@ func append_nonempty_cell_unchecked(
 }
 
 func column_width_unchecked(
-	workspace *Workspace,
+	workspace Workspace_Pointer,
 	configuration Configuration,
 	line_index Column_Line_Index,
 	column_index Column_Index,
 	line_count Column_Line_Count,
 ) (width Column_Width) {
 	defer func() { Column_Width_Invariants(width, "column_width_unchecked.width") }()
-	Workspace_Invariants(*workspace, "column_width_unchecked.workspace")
+	Workspace_Pointer_Invariants(workspace, "column_width_unchecked.workspace")
 	Configuration_Invariants(configuration, "column_width_unchecked.configuration")
 	Column_Line_Index_Invariants(line_index, "column_width_unchecked.line_index")
 	Column_Index_Invariants(column_index, "column_width_unchecked.column_index")
@@ -1600,12 +1765,12 @@ func column_width_unchecked(
 		}
 		end++
 	}
-	width = Column_Width(configuration.Minimum_Width[CONFIGURATION_FIELD])
+	width = Column_Width(configuration.Minimum_Width.(Minimum_Width))
 	discardable := true
 	for row := first; row < end; row++ {
 		index := int(workspace.Line_First_Cells[row]) + int(column_index)
 		candidate := int(workspace.Cell_Widths[index]) +
-			configuration.Padding[CONFIGURATION_FIELD]
+			int(configuration.Padding.(Padding))
 		if candidate > int(width) {
 			width = Column_Width(candidate)
 		}
@@ -1617,7 +1782,7 @@ func column_width_unchecked(
 		}
 	}
 	if discardable {
-		if Flags(configuration.Flags[CONFIGURATION_FIELD])&DISCARD_EMPTY_COLUMNS !=
+		if configuration.Flags.(Flags)&DISCARD_EMPTY_COLUMNS !=
 			Flags(bits.WORD_MINIMUM) {
 			return Column_Width(WIDTH_MINIMUM)
 		}
@@ -1646,17 +1811,17 @@ func append_padding_unchecked(
 	Write_Output_Invariants(write, "append_padding_unchecked.write")
 	Append_Offset_Invariants(count_value, "append_padding_unchecked.count_value")
 	count = Append_Offset(count_value)
-	padding_character := Output_Byte(configuration.Pad_Character[CONFIGURATION_FIELD])
+	padding_character := Output_Byte(configuration.Pad_Character.(Pad_Character))
 	padding_count := int(cell_width) - int(text_width)
-	tab_padding := configuration.Pad_Character[CONFIGURATION_FIELD] == '\t'
+	tab_padding := configuration.Pad_Character.(Pad_Character) == '\t'
 	if bool(use_tabs) {
 		tab_padding = true
 	}
 	if tab_padding {
-		if configuration.Tab_Width[CONFIGURATION_FIELD] == WIDTH_MINIMUM {
+		if configuration.Tab_Width.(Tab_Width) == WIDTH_MINIMUM {
 			return count, STATUS_OK
 		}
-		tab_width := configuration.Tab_Width[CONFIGURATION_FIELD]
+		tab_width := int(configuration.Tab_Width.(Tab_Width))
 		rounded_width := (int(cell_width) + tab_width - utf8.CHARACTER_SIZE_MINIMUM) /
 			tab_width * tab_width
 		padding_count = (rounded_width - int(text_width) + tab_width -
@@ -1697,7 +1862,7 @@ func append_cell_unchecked(
 	Append_Offset_Invariants(count_value, "append_cell_unchecked.count_value")
 	offset := Append_Offset(count_value)
 	end_character := End_Character(LINE_TERMINATOR_NONE)
-	flags := Flags(configuration.Flags[CONFIGURATION_FIELD])
+	flags := configuration.Flags.(Flags)
 	for index := int(start); index < int(end); index++ {
 		character := source[index]
 		strip := false

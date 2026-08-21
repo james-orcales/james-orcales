@@ -2,7 +2,6 @@ package template_test
 
 import (
 	"testing"
-	standard_template "text/template"
 	"text/template/parse"
 
 	"local/james-orcales/shared/bytes"
@@ -18,11 +17,10 @@ import (
 func Test_Compile(t *testing.T) {
 	program := compile_from(t, "hello {{.Name}}")
 	testify.Equal(t, "hello {{.Name}}", string(
-		program.Source.Data[template.SOURCE_FIELD],
+		program.Source.Data.Value,
 	))
 	var workspace template.Syntax_Workspace
-	var input template.Syntax_Workspace_Input
-	input.State[template.SYNTAX_WORKSPACE_FIELD] = &workspace
+	input := parse_workspace_from(&workspace)
 	source, source_status := template.Source_Validate([]byte("{{.}}"))
 	testify.Equal_Values(t, template.PARSE_STATUS_OK, source_status)
 	configuration, configuration_status := template.New_Configuration(
@@ -75,7 +73,7 @@ func Test_Bounds(t *testing.T) {
 	program := compile_from(t, "hello")
 	var empty template.Workspace
 	var empty_input template.Workspace_Input
-	empty_input.State[template.WORKSPACE_FIELD] = &empty
+	empty_input.State.Value = template.Workspace_Unvalidated_Pointer{Value: &empty}
 	_, _, execution_status := template.Execute_Into(template.Execute_Input{
 		Program: program, Value: template.Value_Nil(), Workspace: empty_input,
 	})
@@ -219,26 +217,6 @@ func test_formulas(t *testing.T) {
 	testify.Equal_Values(t, big.FLOAT_64_MANTISSA_MASK, template.FLOAT_64_FRACTION_MASK)
 }
 
-type standard_output struct {
-	Data  [template.OUTPUT_SIZE_MAXIMUM]byte
-	Count int
-}
-
-func (output *standard_output) Write(source []byte) (count int, failure error) {
-	count = copy(output.Data[output.Count:], source)
-	output.Count += count
-	if count != len(source) {
-		return count, standard_output_full{}
-	}
-	return count, nil
-}
-
-type standard_output_full struct{}
-
-func (standard_output_full) Error() (message string) {
-	return "standard output full"
-}
-
 func test_scalar_value_allocation(t *testing.T) {
 	t.Helper()
 	var value template.Value
@@ -267,7 +245,7 @@ func test_scalar_value_allocation(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		value = template.Value_Of_Complex(complex_value)
 	})
-	testify.Equal_Values(t, template.VALUE_COMPLEX, value.Kind[template.VALUE_PAYLOAD_FIELD])
+	testify.Equal_Values(t, template.VALUE_COMPLEX, value.Kind.Value)
 }
 
 func test_borrowed_value_allocation(t *testing.T) {
@@ -377,7 +355,8 @@ func test_execution_branch_allocation(t *testing.T) {
 		template.Value_Of_Integer(TEST_COUNT_ZERO),
 	}
 	test_execution_allocation(
-		t, `{{slice . 3 5}}`, template.Value_Of_Sequence(capacity_values[:TEST_COUNT_THREE]),
+		t, `{{slice . 3 5}}`,
+		template.Value_Of_Sequence(capacity_values[:TEST_COUNT_THREE]),
 		nil, "[0 0]",
 	)
 	test_execution_allocation(
@@ -551,7 +530,7 @@ func test_workspace_float(t *testing.T, value big.Float) {
 	t.Helper()
 	program := compile_from(t, "")
 	var execution execution_storage
-	execution.Float_Value = value
+	execution.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX] = value
 	_, _, status := template.Execute_Into(template.Execute_Input{
 		Program: program, Value: template.Value_Nil(),
 		Workspace: workspace_from(&execution),
@@ -711,7 +690,7 @@ func test_compile_diagnostic_boundaries(t *testing.T) {
 	t.Helper()
 	workspace := template.Syntax_Workspace{
 		Node_Limit: template.Node_Limit_Storage{
-			template.Node_Limit(template.NODE_COUNT_INCREMENT),
+			Value: template.Node_Limit_Storage_Value(template.NODE_COUNT_INCREMENT),
 		},
 	}
 	_, diagnostic, status := template.Compile(template.Compile_Input{
@@ -802,7 +781,7 @@ func test_execute_evaluation_program_bounds(t *testing.T) {
 	testify.Equal_Values(t, template.STATUS_PROGRAM_INVALID, status)
 
 	program = compile_from(t, `{{$x := 1}}{{$x = 2}}`)
-	data := program.Source.Data[template.SOURCE_FIELD]
+	data := program.Source.Data.Value
 	data[len(`{{$x := 1}}{{$`)] = 'y'
 	_, status = execute_from(t, program, template.Value_Nil())
 	testify.Equal_Values(t, template.STATUS_EXECUTION_INVALID, status)
@@ -880,7 +859,7 @@ func test_execute_lookup_span_bounds(t *testing.T) {
 		if kind == template.NODE_FIELD {
 			maximum[template.SOURCE_SIZE_MINIMUM] = '.'
 		}
-		program.Source.Data[template.SOURCE_FIELD] = maximum[:]
+		program.Source.Data.Value = maximum[:]
 		term.Value_Start = template.Node_Value_Start(template.SOURCE_SIZE_MINIMUM)
 		term.Value_End = template.Node_Value_End(len(maximum))
 		_, status = execute_from(t, program, template.Value_Nil())
@@ -1082,7 +1061,9 @@ func test_execute_lookup_program_bounds(t *testing.T) {
 func test_execute_value_bounds(t *testing.T) {
 	program := compile_from(t, "x")
 	invalid := template.Value_Nil()
-	invalid.Kind[template.VALUE_PAYLOAD_FIELD] = template.VALUE_FUNCTION + TEST_COUNT_ONE
+	invalid.Kind.Value = template.Value_Kind_Storage_Value(
+		template.VALUE_FUNCTION + TEST_COUNT_ONE,
+	)
 	_, execution_status := execute_from(t, program, invalid)
 	testify.Equal_Values(t, template.STATUS_VALUE_INVALID, execution_status)
 
@@ -2105,7 +2086,11 @@ func reject(template.Function_Input) (result template.Function_Result) {
 
 func invalid_nested(template.Function_Input) (result template.Function_Result) {
 	invalid_kind := template.VALUE_FUNCTION + template.VALUE_KIND_INCREMENT
-	values := [...]template.Value{{Kind: template.Value_Kind_Storage{invalid_kind}}}
+	values := [...]template.Value{{
+		Kind: template.Value_Kind_Storage{
+			Value: template.Value_Kind_Storage_Value(invalid_kind),
+		},
+	}}
 	return template.Function_Result{
 		Value: template.Value_Of_Sequence(values[:]), Status: template.FUNCTION_STATUS_OK,
 	}
@@ -2140,15 +2125,12 @@ func test_standard_library_execution(t *testing.T) {
 		t.Run(one.Name, func(t *testing.T) {
 			program := compile_from(t, one.Source)
 			value := template.Value_Nil()
-			var standard_value any
 			if one.Name == "js" {
 				value = template.Value_Of_Text([]byte("It'd be nice."))
-				standard_value = "It'd be nice."
 			}
 			output, status := execute_from(t, program, value)
 			testify.Equal_Values(t, template.STATUS_OK, status)
 			testify.Equal(t, one.Want, output)
-			testify.Equal(t, standard_execute(t, one.Source, standard_value), output)
 		})
 	}
 }
@@ -2165,20 +2147,18 @@ func test_standard_library_value_execution(t *testing.T) {
 			Value: template.Field_Value{Data: template.Value_Of_Boolean(true)},
 		},
 	}
-	compare_standard_execution(
+	compare_execution(
 		t, `{{.Name}}|{{if .Ready}}yes{{end}}`, template.Value_Of_Object(fields[:]),
-		map[string]any{"Name": "Ada", "Ready": true},
+		"Ada|yes",
 	)
 	values := [...]template.Value{
 		template.Value_Of_Integer(TEST_COUNT_THREE),
 		template.Value_Of_Integer(TEST_COUNT_ONE),
 		template.Value_Of_Integer(TEST_COUNT_TWO),
 	}
-	compare_standard_execution(
+	compare_execution(
 		t, `{{range $index, $value := .}}{{$index}}={{$value}};{{end}}`,
-		template.Value_Of_Sequence(values[:]), []int{
-			TEST_COUNT_THREE, TEST_COUNT_ONE, TEST_COUNT_TWO,
-		},
+		template.Value_Of_Sequence(values[:]), "0=3;1=1;2=2;",
 	)
 	entries := [...]template.Field{
 		{
@@ -2194,24 +2174,20 @@ func test_standard_library_value_execution(t *testing.T) {
 			},
 		},
 	}
-	compare_standard_execution(
+	compare_execution(
 		t, `{{range $key, $value := .}}{{$key}}={{$value}};{{end}}`,
-		template.Value_Of_Map(entries[:]), map[string]int{
-			"b": TEST_COUNT_TWO, "a": TEST_COUNT_ONE,
-		},
+		template.Value_Of_Map(entries[:]), "a=1;b=2;",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{index . 1}}|{{len (slice . 1 3)}}`,
-		template.Value_Of_Sequence(values[:]), []int{
-			TEST_COUNT_THREE, TEST_COUNT_ONE, TEST_COUNT_TWO,
-		},
+		template.Value_Of_Sequence(values[:]), "1|2",
 	)
-	compare_standard_execution(
-		t, `{{$value := 1}}{{$value = 2}}{{$value}}`, template.Value_Nil(), nil,
+	compare_execution(
+		t, `{{$value := 1}}{{$value = 2}}{{$value}}`, template.Value_Nil(), "2",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{template "named" .}}{{define "named"}}value{{end}}`,
-		template.Value_Nil(), nil,
+		template.Value_Nil(), "value",
 	)
 }
 
@@ -2224,19 +2200,15 @@ func test_standard_library_slice_capacity(t *testing.T) {
 		template.Value_Of_Integer(TEST_COUNT_ZERO),
 		template.Value_Of_Integer(TEST_COUNT_ZERO),
 	}
-	standard_values := [...]int{
-		TEST_COUNT_THREE, TEST_COUNT_FOUR, TEST_COUNT_FIVE,
-		TEST_COUNT_ZERO, TEST_COUNT_ZERO,
-	}
-	compare_standard_execution(
+	compare_execution(
 		t, `{{slice . 3 5}}`,
 		template.Value_Of_Sequence(shared_values[:TEST_COUNT_THREE]),
-		standard_values[:TEST_COUNT_THREE],
+		"[0 0]",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{slice . 3 5 5}}`,
 		template.Value_Of_Sequence(shared_values[:TEST_COUNT_THREE]),
-		standard_values[:TEST_COUNT_THREE],
+		"[0 0]",
 	)
 }
 
@@ -2248,35 +2220,29 @@ func test_standard_library_collection_execution(t *testing.T) {
 		template.Value_Of_Integer(TEST_COUNT_FOUR),
 		template.Value_Of_Integer(TEST_COUNT_FIVE),
 	}
-	compare_standard_execution(
+	compare_execution(
 		t, `{{range $index, $value := .}}{{$index}}={{$value}};{{end}}`,
-		template.Value_Of_Sequence(values[:]), []int{
-			TEST_COUNT_THREE, TEST_COUNT_FOUR, TEST_COUNT_FIVE,
-		},
+		template.Value_Of_Sequence(values[:]), "0=3;1=4;2=5;",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{index . 1}}|{{slice . 1 3}}|{{len .}}`,
-		template.Value_Of_Sequence(values[:]), []int{
-			TEST_COUNT_THREE, TEST_COUNT_FOUR, TEST_COUNT_FIVE,
-		},
+		template.Value_Of_Sequence(values[:]), "4|[4 5]|3",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{index . 1}}|{{slice . 1 3}}|{{len .}}`,
-		template.Value_Of_Text([]byte("abc")), "abc",
+		template.Value_Of_Text([]byte("abc")), "98|bc|3",
 	)
 	mixed := [...]template.Value{
 		template.Value_Of_Integer(TEST_COUNT_ONE),
 		template.Value_Of_Unsigned(TEST_COUNT_ONE),
 	}
-	compare_standard_execution(
+	compare_execution(
 		t, `{{eq (index . 0) (index . 1)}}|{{le (index . 0) (index . 1)}}`,
-		template.Value_Of_Sequence(mixed[:]), []any{
-			int64(TEST_COUNT_ONE), uint64(TEST_COUNT_ONE),
-		},
+		template.Value_Of_Sequence(mixed[:]), "true|true",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{if .}}true{{else}}false{{end}}`,
-		template.Value_Of_Object(nil), struct{}{},
+		template.Value_Of_Object(nil), "true",
 	)
 	entries := [...]template.Field{{
 		Key: template.Field_Key{
@@ -2284,71 +2250,56 @@ func test_standard_library_collection_execution(t *testing.T) {
 		},
 		Value: template.Field_Value{Data: template.Value_Of_Integer(TEST_COUNT_ONE)},
 	}}
-	compare_standard_execution(
+	compare_execution(
 		t, `{{index . "missing"}}`, template.Value_Of_Map(entries[:]),
-		map[string]any{"present": TEST_COUNT_ONE},
+		"<no value>",
 	)
 }
 
 func test_standard_library_scalar_execution(t *testing.T) {
 	t.Helper()
-	compare_standard_execution(
+	compare_execution(
 		t, `<{{.}}>`, template.Value_Of_Integer(-TEST_COUNT_THIRTEEN),
-		int64(-TEST_COUNT_THIRTEEN),
+		"<-13>",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `<{{.}}>`, template.Value_Of_Unsigned(TEST_COUNT_FOURTEEN),
-		uint64(TEST_COUNT_FOURTEEN),
+		"<14>",
 	)
 	const FLOAT_ONE_BITS = uint64(big.FLOAT_64_EXPONENT_BIAS) <<
 		big.FLOAT_64_EXPONENT_SHIFT
-	compare_standard_execution(
+	compare_execution(
 		t, `<{{.}}>`, template.Value_Of_Float(template.Float(FLOAT_ONE_BITS)),
-		"1",
+		"<1>",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `<{{.}}>`, template.Value_Of_Complex(template.Complex{
 			Real:      template.Complex_Real(FLOAT_ONE_BITS),
 			Imaginary: template.Complex_Imaginary(FLOAT_ONE_BITS),
-		}), complex(TEST_COUNT_ONE, TEST_COUNT_ONE),
+		}), "<(1+1i)>",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{range $value := .}}{{$value}}{{else}}empty{{end}}`,
-		template.Value_Of_Integer(TEST_COUNT_THREE), int64(TEST_COUNT_THREE),
+		template.Value_Of_Integer(TEST_COUNT_THREE), "012",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{range $value := .}}{{$value}}{{else}}empty{{end}}`,
-		template.Value_Of_Unsigned(TEST_COUNT_THREE), uint64(TEST_COUNT_THREE),
+		template.Value_Of_Unsigned(TEST_COUNT_THREE), "012",
 	)
-	compare_standard_execution(
+	compare_execution(
 		t, `{{range $value := .}}{{$value}}{{else}}empty{{end}}`,
-		template.Value_Of_Integer(-TEST_COUNT_ONE), int64(-TEST_COUNT_ONE),
+		template.Value_Of_Integer(-TEST_COUNT_ONE), "empty",
 	)
 }
 
-func compare_standard_execution(
-	t *testing.T, source string, shared_value template.Value, standard_value any,
+func compare_execution(
+	t *testing.T, source string, shared_value template.Value, expected string,
 ) {
 	t.Helper()
 	program := compile_from(t, source)
 	shared_output, status := execute_from(t, program, shared_value)
 	testify.Equal_Values(t, template.STATUS_OK, status)
-	expected := standard_execute(t, source, standard_value)
 	testify.Equal(t, expected, shared_output)
-}
-
-func standard_execute(t *testing.T, source string, value any) (output string) {
-	t.Helper()
-	program, failure := standard_template.New("subject").Parse(source)
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	var destination standard_output
-	failure = program.Execute(&destination, value)
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	return string(destination.Data[:destination.Count])
 }
 
 func compile_from(
@@ -2385,14 +2336,31 @@ func execute_functions_from(
 }
 
 func syntax_from(workspace *template.Syntax_Workspace) (input template.Syntax_Input) {
-	input.State[template.SYNTAX_FIELD] = workspace
+	syntax_workspace_prepare(workspace)
+	input.State.Value = template.Syntax_Workspace_Pointer(workspace)
 	return input
+}
+
+func syntax_workspace_prepare(workspace *template.Syntax_Workspace) {
+	if workspace.Nodes == nil {
+		workspace.Nodes = make(template.Nodes, template.NODE_COUNT_MAXIMUM)
+	}
+	if workspace.Template_Name_Left == nil {
+		workspace.Template_Name_Left = make(
+			template.Template_Name_Left, template.TEMPLATE_NAME_SIZE_MAXIMUM,
+		)
+	}
+	if workspace.Template_Name_Right == nil {
+		workspace.Template_Name_Right = make(
+			template.Template_Name_Right, template.TEMPLATE_NAME_SIZE_MAXIMUM,
+		)
+	}
 }
 
 func syntax_node(
 	program template.Program, reference template.Node_Reference,
 ) (node *template.Node) {
-	return &program.Syntax[template.SYNTAX_FIELD].Nodes[reference-template.NODE_COUNT_INCREMENT]
+	return &program.Syntax.Value.Nodes[reference-template.NODE_COUNT_INCREMENT]
 }
 
 func syntax_first_pipe(program template.Program) (pipe *template.Node) {
@@ -2403,27 +2371,47 @@ func syntax_first_pipe(program template.Program) (pipe *template.Node) {
 
 type execution_storage struct {
 	Workspace       template.Workspace
-	Output          [template.OUTPUT_SIZE_MAXIMUM]byte
-	Literals        [template.QUOTED_DECODED_SIZE_MAXIMUM]byte
-	Literal_Counts  [template.NODE_COUNT_MAXIMUM]template.Literal_Count
-	Literal_Offsets [template.NODE_COUNT_MAXIMUM]template.Literal_Count
-	Literal_Decoded [template.NODE_COUNT_MAXIMUM]template.Boolean
-	Name_Left       [template.QUOTED_DECODED_SIZE_MAXIMUM]byte
-	Name_Right      [template.QUOTED_DECODED_SIZE_MAXIMUM]byte
-	Number          [template.NUMBER_SIZE_MAXIMUM]byte
-	Generated       [template.GENERATED_SIZE_MAXIMUM]byte
-	Float_Value     big.Float
+	Output          []byte
+	Literals        []byte
+	Literal_Counts  []template.Literal_Count
+	Literal_Offsets []template.Literal_Count
+	Literal_Decoded []template.Boolean
+	Name_Left       []byte
+	Name_Right      []byte
+	Number          []byte
+	Generated       []byte
 	Float_Parse     big.Float_Parse_Workspace
 	Float_Text      big.Float_Text_Workspace
-	Frames          [template.FRAME_COUNT_MAXIMUM]template.Frame_Storage
-	Variables       [template.VARIABLE_COUNT_MAXIMUM]template.Variable
-	Arguments       [template.ARGUMENT_COUNT_MAXIMUM]template.Value
-	Validation      [template.FRAME_COUNT_MAXIMUM]template.Value
-	Evaluations     [template.FRAME_COUNT_MAXIMUM]template.Evaluation_Frame
-	Format          [template.FRAME_COUNT_MAXIMUM]template.Value_Format_Frame_Storage
+	Frames          []template.Frame_Storage
+	Variables       []template.Variable
+	Arguments       []template.Value
+	Validation      []template.Value
+	Evaluations     []template.Evaluation_Frame
+	Format          []template.Value_Format_Frame_Storage
+}
+
+func execution_storage_prepare(storage *execution_storage) {
+	storage.Output = make([]byte, template.OUTPUT_SIZE_MAXIMUM)
+	storage.Literals = make([]byte, template.QUOTED_DECODED_SIZE_MAXIMUM)
+	storage.Literal_Counts = make([]template.Literal_Count, template.NODE_COUNT_MAXIMUM)
+	storage.Literal_Offsets = make([]template.Literal_Count, template.NODE_COUNT_MAXIMUM)
+	storage.Literal_Decoded = make([]template.Boolean, template.NODE_COUNT_MAXIMUM)
+	storage.Name_Left = make([]byte, template.QUOTED_DECODED_SIZE_MAXIMUM)
+	storage.Name_Right = make([]byte, template.QUOTED_DECODED_SIZE_MAXIMUM)
+	storage.Number = make([]byte, template.NUMBER_SIZE_MAXIMUM)
+	storage.Generated = make([]byte, template.GENERATED_SIZE_MAXIMUM)
+	storage.Frames = make([]template.Frame_Storage, template.FRAME_COUNT_MAXIMUM)
+	storage.Variables = make([]template.Variable, template.VARIABLE_COUNT_MAXIMUM)
+	storage.Arguments = make([]template.Value, template.ARGUMENT_COUNT_MAXIMUM)
+	storage.Validation = make([]template.Value, template.FRAME_COUNT_MAXIMUM)
+	storage.Evaluations = make([]template.Evaluation_Frame, template.FRAME_COUNT_MAXIMUM)
+	storage.Format = make(
+		[]template.Value_Format_Frame_Storage, template.FRAME_COUNT_MAXIMUM,
+	)
 }
 
 func workspace_from(storage *execution_storage) (input template.Workspace_Input) {
+	execution_storage_prepare(storage)
 	storage.Workspace = template.Workspace{
 		Output: storage.Output[:], Literals: storage.Literals[:],
 		Literal_Counts:  storage.Literal_Counts[:],
@@ -2432,7 +2420,6 @@ func workspace_from(storage *execution_storage) (input template.Workspace_Input)
 		Name_Left:       storage.Name_Left[:], Name_Right: storage.Name_Right[:],
 		Number:      storage.Number[:],
 		Generated:   storage.Generated[:],
-		Float_Value: template.Float_Value_Workspace{storage.Float_Value},
 		Float_Parse: template.Float_Parse_Workspace(storage.Float_Parse),
 		Float_Text:  template.Float_Text_Workspace(storage.Float_Text),
 		Frames:      storage.Frames[:],
@@ -2441,7 +2428,7 @@ func workspace_from(storage *execution_storage) (input template.Workspace_Input)
 		Evaluations: storage.Evaluations[:],
 		Format:      storage.Format[:],
 	}
-	input.State[template.WORKSPACE_FIELD] = &storage.Workspace
+	input.State.Value = template.Workspace_Unvalidated_Pointer{Value: &storage.Workspace}
 	return input
 }
 
@@ -2454,12 +2441,12 @@ func Test_Source(t *testing.T) {
 	var maximum [template.SOURCE_SIZE_MAXIMUM]byte
 	source, status := template.Source_Validate(maximum[:])
 	testify.Equal_Values(t, template.PARSE_STATUS_OK, status)
-	testify.Equal(t, len(maximum), len(source.Data[template.SOURCE_FIELD]))
+	testify.Equal(t, len(maximum), len(source.Data.Value))
 
 	var oversized [template.SOURCE_SIZE_UNVALIDATED_MAXIMUM]byte
 	source, status = template.Source_Validate(oversized[:])
 	testify.Equal_Values(t, template.PARSE_STATUS_INPUT_INVALID, status)
-	testify.Equal(t, template.SOURCE_SIZE_MINIMUM, len(source.Data[template.SOURCE_FIELD]))
+	testify.Equal(t, template.SOURCE_SIZE_MINIMUM, len(source.Data.Value))
 }
 
 // Test_Configuration selects standard delimiters and rejects half custom policy.
@@ -2608,7 +2595,7 @@ func Test_Parse_Bounds(t *testing.T) {
 
 	limited := template.Syntax_Workspace{
 		Node_Limit: template.Node_Limit_Storage{
-			template.Node_Limit(template.NODE_COUNT_INCREMENT),
+			Value: template.Node_Limit_Storage_Value(template.NODE_COUNT_INCREMENT),
 		},
 	}
 	document, diagnostic, status = template.Parse_Into(
@@ -2653,12 +2640,13 @@ func Test_Parse_Allocation(t *testing.T) {
 	testify.True(t, bool(configuration_valid))
 
 	var workspace template.Syntax_Workspace
+	parse_input := parse_workspace_from(&workspace)
 	var document template.Document
 	var diagnostic template.Parse_Diagnostic
 	var status template.Parse_Status
 	testify.Zero_Allocation(t, func() {
 		document, diagnostic, status = template.Parse_Into(
-			source, configuration, parse_workspace_from(&workspace),
+			source, configuration, parse_input,
 		)
 	})
 	testify.Equal_Values(t, template.PARSE_STATUS_OK, status)
@@ -2696,12 +2684,13 @@ func test_parse_branch_allocation(
 	} {
 		source := source_from(t, source_text)
 		var workspace template.Syntax_Workspace
+		parse_input := parse_workspace_from(&workspace)
 		var document template.Document
 		var diagnostic template.Parse_Diagnostic
 		var status template.Parse_Status
 		testify.Zero_Allocation(t, func() {
 			document, diagnostic, status = template.Parse_Into(
-				source, configuration, parse_workspace_from(&workspace),
+				source, configuration, parse_input,
 			)
 		})
 		testify.Equal_Values(t, template.PARSE_STATUS_OK, status)
@@ -2925,7 +2914,9 @@ func test_capacity_propagation(t *testing.T) {
 				break
 			}
 			limited := template.Syntax_Workspace{
-				Node_Limit: template.Node_Limit_Storage{limit},
+				Node_Limit: template.Node_Limit_Storage{
+					Value: template.Node_Limit_Storage_Value(limit),
+				},
 			}
 			_, _, status = template.Parse_Into(
 				source, configuration, parse_workspace_from(&limited),
@@ -2942,7 +2933,7 @@ func test_hostile_public_inputs(
 	t.Helper()
 	var oversized [template.SOURCE_SIZE_UNVALIDATED_MAXIMUM]byte
 	malicious_source := template.Source{
-		Data: template.Source_Storage{template.Source_Data(oversized[:])},
+		Data: template.Source_Storage{Value: template.Source_Storage_Value(oversized[:])},
 	}
 	var workspace template.Syntax_Workspace
 	document, diagnostic, status := template.Parse_Into(
@@ -2953,7 +2944,9 @@ func test_hostile_public_inputs(
 	testify.Equal_Values(t, template.NO_NODE, document.Root)
 
 	malicious_configuration := template.Configuration{
-		Left: template.Opening_Delimiter_Storage{template.Opening_Delimiter("<")},
+		Left: template.Opening_Delimiter_Storage{
+			Value: template.Opening_Delimiter_Storage_Value("<"),
+		},
 	}
 	document, diagnostic, status = template.Parse_Into(
 		source, malicious_configuration, parse_workspace_from(&workspace),
@@ -2962,10 +2955,9 @@ func test_hostile_public_inputs(
 	testify.Equal_Values(t, template.DIAGNOSTIC_CONFIGURATION_INVALID, diagnostic.Code)
 	testify.Equal_Values(t, template.NO_NODE, document.Root)
 
-	workspace.Node_Limit = template.Node_Limit_Storage{
-		template.Node_Limit(template.NODE_COUNT_MAXIMUM) +
-			template.Node_Limit(template.NODE_COUNT_INCREMENT),
-	}
+	workspace.Node_Limit = template.Node_Limit_Storage{Value: template.Node_Limit_Storage_Value(
+		template.NODE_COUNT_MAXIMUM + template.NODE_COUNT_INCREMENT)}
+
 	document, diagnostic, status = template.Parse_Into(
 		source, configuration, parse_workspace_from(&workspace),
 	)
@@ -2982,13 +2974,13 @@ func test_workspace_state_bounds(
 	workspace_cases := [...]template.Syntax_Workspace{
 		{
 			Parse_Diagnostic: template.Syntax_Diagnostic_Storage{
-				{
+				Value: template.Parse_Diagnostic_Stored(template.Parse_Diagnostic{
 					Code:     template.DIAGNOSTIC_INPUT_INVALID,
 					Position: template.Parse_Diagnostic_Position(len("<")),
-				},
+				}),
 			},
 			Node_Limit: template.Node_Limit_Storage{
-				template.Node_Limit(
+				Value: template.Node_Limit_Storage_Value(
 					template.NODE_COUNT_INCREMENT +
 						template.NODE_COUNT_INCREMENT,
 				),
@@ -2996,20 +2988,24 @@ func test_workspace_state_bounds(
 		},
 		{
 			Parse_Diagnostic: template.Syntax_Diagnostic_Storage{
-				{
+				Value: template.Parse_Diagnostic_Stored(template.Parse_Diagnostic{
 					Code: template.DIAGNOSTIC_CONFIGURATION_INVALID,
 					Position: template.Parse_Diagnostic_Position(
 						template.SOURCE_SIZE_MAXIMUM,
 					),
-				},
+				}),
 			},
 			Node_Limit: template.Node_Limit_Storage{
-				template.Node_Limit(template.NODE_COUNT_MAXIMUM),
+				Value: template.Node_Limit_Storage_Value(
+					template.NODE_COUNT_MAXIMUM,
+				),
 			},
 		},
 		{
 			Parse_Diagnostic: template.Syntax_Diagnostic_Storage{
-				{Code: template.DIAGNOSTIC_CAPACITY_EXCEEDED},
+				Value: template.Parse_Diagnostic_Stored(template.Parse_Diagnostic{
+					Code: template.DIAGNOSTIC_CAPACITY_EXCEEDED,
+				}),
 			},
 		},
 	}
@@ -3828,7 +3824,8 @@ func known_printf(name template.Parse_Function_Name) (known template.Function_Kn
 func parse_workspace_from(
 	workspace *template.Syntax_Workspace,
 ) (input template.Syntax_Workspace_Input) {
-	input.State[template.SYNTAX_WORKSPACE_FIELD] = workspace
+	syntax_workspace_prepare(workspace)
+	input.State.Value = template.Syntax_Workspace_Unvalidated_Pointer{Value: workspace}
 	return input
 }
 
@@ -3850,7 +3847,7 @@ func node_at(
 }
 
 func node_value(source template.Source, node template.Node) (value string) {
-	return string(source.Data[template.SOURCE_FIELD][node.Value_Start:node.Value_End])
+	return string(source.Data.Value[node.Value_Start:node.Value_End])
 }
 
 // Test_Standard_Library_Number_Validity matches upstream numeric syntax decisions.

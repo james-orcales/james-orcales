@@ -1,6 +1,7 @@
 package scanner_test
 
 import (
+	"net"
 	"testing"
 	standard_scanner "text/scanner"
 
@@ -15,29 +16,6 @@ func TestMain(m *testing.M) {
 	aver.Run_Test_Main(m)
 }
 
-type source_reader struct {
-	Text   string
-	Offset int
-}
-
-func (subject *source_reader) Read(destination []byte) (count int, failure error) {
-	if subject.Offset == len(subject.Text) {
-		return TEST_COUNT_ZERO, source_end{}
-	}
-	count = copy(destination, subject.Text[subject.Offset:])
-	subject.Offset += count
-	if subject.Offset == len(subject.Text) {
-		return count, source_end{}
-	}
-	return count, nil
-}
-
-type source_end struct{}
-
-func (source_end) Error() (message string) {
-	return "source end"
-}
-
 // Test_Standard_Library_Tokens compares bounded inputs against upstream scanner sequence.
 func Test_Standard_Library_Tokens(t *testing.T) {
 	cases := [...]string{
@@ -49,7 +27,7 @@ func Test_Standard_Library_Tokens(t *testing.T) {
 		"+ - * / . , ; : ( ) [ ] { }",
 	}
 	for _, source := range cases {
-		reader := source_reader{Text: source}
+		reader := net.Buffers{[]byte(source)}
 		standard := new(standard_scanner.Scanner).Init(&reader)
 		standard.Error = func(*standard_scanner.Scanner, string) {}
 		var shared scanner.Scanner
@@ -74,7 +52,7 @@ func Test_Standard_Library_Tokens(t *testing.T) {
 // Test_Standard_Library_Positions compares token starts and next position.
 func Test_Standard_Library_Positions(t *testing.T) {
 	const SOURCE = "one\n  世 two"
-	reader := source_reader{Text: SOURCE}
+	reader := net.Buffers{[]byte(SOURCE)}
 	standard := new(standard_scanner.Scanner).Init(&reader)
 	standard.Error = func(*standard_scanner.Scanner, string) {}
 	standard.Filename = "one.go"
@@ -156,13 +134,11 @@ func Test_Standard_Library_Short_Exhaustive(t *testing.T) {
 
 func compare_scanners(t *testing.T, source string, mode scanner.Mode) {
 	t.Helper()
-	reader := source_reader{Text: source}
+	reader := net.Buffers{[]byte(source)}
 	standard := new(standard_scanner.Scanner).Init(&reader)
 	standard_error_count := TEST_COUNT_ZERO
 	standard.Error = func(_ *standard_scanner.Scanner, message string) {
-		if message != "source end" {
-			standard_error_count++
-		}
+		standard_error_count++
 	}
 	standard.Mode = uint(mode)
 	validated, validation_status := scanner.Source_Validate(

@@ -34,9 +34,9 @@ func Test_Configuration(t *testing.T) {
 		testify.Equal_Values(t, tabwriter.STATUS_CONFIGURATION_INVALID, status)
 	}
 	corrupt := configuration
-	corrupt.Minimum_Width[tabwriter.CONFIGURATION_FIELD] = TEST_WIDTH_NEGATIVE_ONE
+	corrupt.Minimum_Width = tabwriter.Minimum_Width(TEST_WIDTH_NEGATIVE_ONE)
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
 	_, status := tabwriter.Format_Into(
 		output[:], source_from(t, "x"), corrupt, workspace_from(&workspace),
 	)
@@ -147,7 +147,7 @@ func Test_Bounds(t *testing.T) {
 		Pad_Character: '.',
 	})
 	source := source_from(t, "a\tb")
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
 	destination := [...]byte{'x'}
 	count, status := tabwriter.Format_Into(
 		destination[:], source, configuration, workspace_from(&workspace),
@@ -178,6 +178,13 @@ func Test_Bounds(t *testing.T) {
 
 	count, status = tabwriter.Format_Into(
 		output[:], source, configuration, tabwriter.Workspace_Input{},
+	)
+	testify.Equal_Values(t, tabwriter.STATUS_WORKSPACE_INVALID, status)
+	testify.Equal(t, tabwriter.Output_Count(tabwriter.OUTPUT_SIZE_MINIMUM), count)
+
+	var malformed_workspace tabwriter.Workspace
+	count, status = tabwriter.Format_Into(
+		output[:], source, configuration, workspace_from(&malformed_workspace),
 	)
 	testify.Equal_Values(t, tabwriter.STATUS_WORKSPACE_INVALID, status)
 	testify.Equal(t, tabwriter.Output_Count(tabwriter.OUTPUT_SIZE_MINIMUM), count)
@@ -213,7 +220,13 @@ func Test_Allocation(t *testing.T) {
 	testify.Equal_Values(t, tabwriter.STATUS_OK, source_status)
 
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
+	workspace_storage := workspace_from(&workspace).State
+	var workspace_valid tabwriter.Workspace_Validity
+	testify.Zero_Allocation(t, func() {
+		workspace_valid = tabwriter.Workspace_Valid(workspace_storage)
+	})
+	testify.True(t, bool(workspace_valid))
 	var count tabwriter.Output_Count
 	var status tabwriter.Format_Status
 	testify.Zero_Allocation(t, func() {
@@ -317,7 +330,7 @@ func test_format_allocation(
 	configuration := configuration_from(t, input)
 	source := source_from(t, source_text)
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
 	var count tabwriter.Output_Count
 	var status tabwriter.Format_Status
 	testify.Zero_Allocation(t, func() {
@@ -349,12 +362,15 @@ func test_scalar_domains(t *testing.T) {
 		{Flags: tabwriter.Flags(bits.WORD_MAXIMUM)},
 	} {
 		configuration, status := tabwriter.New_Configuration(input)
-		testify.True(t, bool(tabwriter.Configuration_Valid(configuration)))
 		known_status := status == tabwriter.STATUS_OK
 		if status == tabwriter.STATUS_CONFIGURATION_INVALID {
 			known_status = true
 		}
 		testify.True(t, known_status)
+		testify.Equal(
+			t, status == tabwriter.STATUS_OK,
+			bool(tabwriter.Configuration_Valid(configuration)),
+		)
 	}
 }
 
@@ -373,7 +389,7 @@ func test_output_domains(t *testing.T) {
 		source, status := tabwriter.Source_Validate(source_storage[:source_size])
 		testify.Equal_Values(t, tabwriter.STATUS_OK, status)
 		var output [OUTPUT_DOMAIN_SIZE_MAXIMUM]byte
-		var workspace tabwriter.Workspace
+		workspace := workspace_new()
 		count, format_status := tabwriter.Format_Into(
 			output[:source_size], source, configuration, workspace_from(&workspace),
 		)
@@ -389,7 +405,7 @@ func test_output_domains(t *testing.T) {
 	} {
 		source := source_from(t, fixture.Source)
 		var output [OUTPUT_DOMAIN_SIZE_MAXIMUM]byte
-		var workspace tabwriter.Workspace
+		workspace := workspace_new()
 		count, status := tabwriter.Format_Into(
 			output[:len(fixture.Expected)], source,
 			configuration, workspace_from(&workspace),
@@ -490,7 +506,7 @@ func assert_result_too_large(
 	testify.Equal_Values(t, tabwriter.STATUS_OK, source_status)
 	configuration := configuration_from(t, input)
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
 	count, status := tabwriter.Format_Into(
 		output[:], source, configuration, workspace_from(&workspace),
 	)
@@ -505,7 +521,7 @@ func format_bytes(
 	source, status := tabwriter.Source_Validate(source_storage)
 	testify.Equal_Values(t, tabwriter.STATUS_OK, status)
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
 	_, format_status := tabwriter.Format_Into(
 		output[:], source, configuration, workspace_from(&workspace),
 	)
@@ -535,7 +551,7 @@ func format_text(
 	configuration := configuration_from(t, input)
 	source := source_from(t, text)
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
 	count, status := tabwriter.Format_Into(
 		output[:], source, configuration, workspace_from(&workspace),
 	)
@@ -549,7 +565,7 @@ func format_configuration(
 	t.Helper()
 	source := source_from(t, text)
 	var output [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	var workspace tabwriter.Workspace
+	workspace := workspace_new()
 	count, status := tabwriter.Format_Into(
 		output[:], source, configuration, workspace_from(&workspace),
 	)
@@ -558,6 +574,41 @@ func format_configuration(
 }
 
 func workspace_from(workspace *tabwriter.Workspace) (input tabwriter.Workspace_Input) {
-	input.State[tabwriter.WORKSPACE_FIELD] = workspace
+	input.State.Cell_Starts = tabwriter.Cell_Starts_Input(workspace.Cell_Starts)
+	input.State.Cell_Ends = tabwriter.Cell_Ends_Input(workspace.Cell_Ends)
+	input.State.Cell_Widths = tabwriter.Cell_Widths_Input(workspace.Cell_Widths)
+	input.State.Cell_Output_Size = tabwriter.Cell_Output_Sizes_Input(
+		workspace.Cell_Output_Size,
+	)
+	input.State.Cell_Hard_Tabs = tabwriter.Cell_Hard_Tabs_Input(workspace.Cell_Hard_Tabs)
+	input.State.Line_First_Cells = tabwriter.Line_First_Cells_Input(
+		workspace.Line_First_Cells,
+	)
+	input.State.Line_Cell_Counts = tabwriter.Line_Cell_Counts_Input(
+		workspace.Line_Cell_Counts,
+	)
+	input.State.Line_Terminators = tabwriter.Line_Terminators_Input(
+		workspace.Line_Terminators,
+	)
 	return input
+}
+
+func workspace_new() (workspace tabwriter.Workspace) {
+	workspace.Cell_Starts = make(tabwriter.Cell_Starts, tabwriter.CELL_COUNT_MAXIMUM)
+	workspace.Cell_Ends = make(tabwriter.Cell_Ends, tabwriter.CELL_COUNT_MAXIMUM)
+	workspace.Cell_Widths = make(tabwriter.Cell_Widths, tabwriter.CELL_COUNT_MAXIMUM)
+	workspace.Cell_Output_Size = make(
+		tabwriter.Cell_Output_Sizes, tabwriter.CELL_COUNT_MAXIMUM,
+	)
+	workspace.Cell_Hard_Tabs = make(tabwriter.Cell_Hard_Tabs, tabwriter.CELL_COUNT_MAXIMUM)
+	workspace.Line_First_Cells = make(
+		tabwriter.Line_First_Cells, tabwriter.LINE_COUNT_MAXIMUM,
+	)
+	workspace.Line_Cell_Counts = make(
+		tabwriter.Line_Cell_Counts, tabwriter.LINE_COUNT_MAXIMUM,
+	)
+	workspace.Line_Terminators = make(
+		tabwriter.Line_Terminators, tabwriter.LINE_COUNT_MAXIMUM,
+	)
+	return workspace
 }

@@ -1,6 +1,7 @@
 package tabwriter_test
 
 import (
+	"net/http/httptest"
 	"testing"
 	standard_tabwriter "text/tabwriter"
 
@@ -14,17 +15,6 @@ import (
 // TestMain keeps allocation probes on production assertion paths.
 func TestMain(m *testing.M) {
 	aver.Run_Test_Main(m)
-}
-
-type standard_output struct {
-	Data  [tabwriter.OUTPUT_SIZE_MAXIMUM]byte
-	Count int
-}
-
-func (output *standard_output) Write(source []byte) (count int, failure error) {
-	count = copy(output.Data[output.Count:], source)
-	output.Count += count
-	return count, nil
 }
 
 // Test_Standard_Library compares semantic branches against upstream output.
@@ -79,7 +69,7 @@ func Test_Standard_Library(t *testing.T) {
 	}
 	for _, one := range cases {
 		shared := format_text(t, one.Source, one.Input)
-		standard := standard_format(one.Source, one.Input)
+		standard := standard_format(t, one.Source, one.Input)
 		testify.Equal(t, standard, shared)
 	}
 	test_standard_library_extended(t)
@@ -139,7 +129,7 @@ func test_standard_library_extended(t *testing.T) {
 	}
 	for _, one := range cases {
 		shared := format_text(t, one.Source, one.Input)
-		standard := standard_format(one.Source, one.Input)
+		standard := standard_format(t, one.Source, one.Input)
 		testify.Equal(t, standard, shared)
 	}
 }
@@ -196,7 +186,7 @@ func Test_Standard_Library_Short_Exhaustive(t *testing.T) {
 			text := string(source[:size])
 			for _, configuration := range configurations {
 				shared := format_text(t, text, configuration)
-				standard := standard_format(text, configuration)
+				standard := standard_format(t, text, configuration)
 				if shared != standard {
 					t.Fatalf(
 						"source %q: shared %q, standard %q",
@@ -224,12 +214,13 @@ func configuration_input(
 }
 
 func standard_format(
-	source string, input tabwriter.Configuration_Input,
+	t *testing.T, source string, input tabwriter.Configuration_Input,
 ) (formatted string) {
-	var output standard_output
+	t.Helper()
+	output := httptest.NewRecorder()
 	writer := new(standard_tabwriter.Writer)
 	writer.Init(
-		&output,
+		output,
 		int(input.Minimum_Width),
 		int(input.Tab_Width),
 		int(input.Padding),
@@ -237,15 +228,9 @@ func standard_format(
 		uint(input.Flags),
 	)
 	written, write_error := writer.Write([]byte(source))
-	if write_error != nil {
-		panic(write_error)
-	}
-	if written != len(source) {
-		panic("standard tabwriter accepted a partial source")
-	}
+	testify.No_Error(t, write_error)
+	testify.Equal(t, len(source), written)
 	flush_error := writer.Flush()
-	if flush_error != nil {
-		panic(flush_error)
-	}
-	return string(output.Data[:output.Count])
+	testify.No_Error(t, flush_error)
+	return output.Body.String()
 }
