@@ -8,7 +8,9 @@ import (
 	"errors"
 	"runtime"
 	"syscall"
+	"unsafe"
 
+	"local/james-orcales/shared/filepath"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/sim/nbio"
@@ -94,6 +96,14 @@ type Operating_System_Memory struct {
 	Spawns []Spawn
 	// Spawn_Registry bounds lookup of active child slots.
 	Spawn_Registry []*Spawn
+	// Spawn_Pipe_Buffers supply standard-output and standard-error pass storage for each spawn.
+	Spawn_Pipe_Buffers []byte
+	// Spawn_Paths supply one resolved executable path region for each spawn.
+	Spawn_Paths []byte
+	// Spawn_Arguments supply one argv region for each spawn.
+	Spawn_Arguments []string
+	// Spawn_Child_Files supply the child's three standard descriptors for each spawn.
+	Spawn_Child_Files []uintptr
 	// Platform_Operations bound Darwin readiness backlog or Linux retry backlog.
 	Platform_Operations []*Operating_System_Operation
 	// Platform_Changes bound one Darwin kevent changelist; Linux leaves it unused.
@@ -174,9 +184,7 @@ func New_Operating_System_IO(
 	for index := range memory.Descriptors {
 		memory.Descriptors[index] = Operating_System_Descriptor{}
 	}
-	for index := range memory.Spawns {
-		memory.Spawns[index] = Spawn{}
-	}
+	operating_system_spawn_memory_initialize(memory)
 	*state = Operating_System{
 		Host:             host,
 		Platform:         platform,
@@ -222,6 +230,50 @@ func operating_system_operation_memory_initialize(memory Operating_System_Memory
 			File_Path: file_path, Socket_Address: socket_address,
 		}
 	}
+}
+
+// Each spawn slot gets disjoint windows of caller memory, so a slot reused after delivery never
+// aliases bytes an earlier child still borrows, and a spawn needs no storage of its own.
+func operating_system_spawn_memory_initialize(memory Operating_System_Memory) {
+	spawn_count := len(memory.Spawns)
+	aver.Always(len(memory.Spawn_Pipe_Buffers) ==
+		spawn_count*PROCESS_PIPE_BUFFER_COUNT*PROCESS_PIPE_BYTES,
+		"Spawns have exact pipe buffer storage.")
+	aver.Always(len(memory.Spawn_Paths) == spawn_count*filepath.PATH_SIZE_MAXIMUM,
+		"Spawns have exact path storage.")
+	aver.Always(len(memory.Spawn_Arguments) == spawn_count*PROCESS_ARGUMENT_COUNT_MAXIMUM,
+		"Spawns have exact argument storage.")
+	aver.Always(len(memory.Spawn_Child_Files) == spawn_count*PROCESS_CHILD_DESCRIPTOR_COUNT,
+		"Spawns have exact child descriptor storage.")
+	for index := range memory.Spawns {
+		pipe_start := index * PROCESS_PIPE_BUFFER_COUNT * PROCESS_PIPE_BYTES
+		pipe_middle := pipe_start + PROCESS_PIPE_BYTES
+		pipe_end := pipe_middle + PROCESS_PIPE_BYTES
+		path_start := index * filepath.PATH_SIZE_MAXIMUM
+		path_end := path_start + filepath.PATH_SIZE_MAXIMUM
+		argument_start := index * PROCESS_ARGUMENT_COUNT_MAXIMUM
+		argument_end := argument_start + PROCESS_ARGUMENT_COUNT_MAXIMUM
+		file_start := index * PROCESS_CHILD_DESCRIPTOR_COUNT
+		file_end := file_start + PROCESS_CHILD_DESCRIPTOR_COUNT
+		pipes, arguments := memory.Spawn_Pipe_Buffers, memory.Spawn_Arguments
+		memory.Spawns[index] = Spawn{
+			Output_Buffer:   pipes[pipe_start:pipe_middle:pipe_middle],
+			Error_Buffer:    pipes[pipe_middle:pipe_end:pipe_end],
+			Path_Storage:    memory.Spawn_Paths[path_start:path_end:path_end],
+			Argument_Vector: arguments[argument_start:argument_end:argument_end],
+			Child_Files:     memory.Spawn_Child_Files[file_start:file_end:file_end],
+		}
+	}
+}
+
+// Zero a slot's state while keeping its caller memory windows, which stay fixed for the life of
+// the backend.
+func spawn_reset(slot *Spawn) {
+	output_buffer, error_buffer := slot.Output_Buffer, slot.Error_Buffer
+	path, arguments, files := slot.Path_Storage, slot.Argument_Vector, slot.Child_Files
+	*slot = Spawn{}
+	slot.Output_Buffer, slot.Error_Buffer = output_buffer, error_buffer
+	slot.Path_Storage, slot.Argument_Vector, slot.Child_Files = path, arguments, files
 }
 
 // Arm completion through idle-to-armed lifecycle edge, same edge virtual timeline stamp
@@ -270,6 +322,19 @@ func operating_system_spawn_procedure(
 // allocation.
 const PROCESS_PIPE_BYTES = 8 * bits.KIBIBYTE_BYTES
 
+// PROCESS_ARGUMENT_COUNT_MAXIMUM bounds argv held in a spawn slot, program name included. A
+// command past it fails with E2BIG, the verdict the kernel gives an oversized argv.
+const PROCESS_ARGUMENT_COUNT_MAXIMUM = 256
+
+// PROCESS_CHILD_DESCRIPTOR_COUNT is the child's standard input, output, and error.
+const PROCESS_CHILD_DESCRIPTOR_COUNT = 3
+
+// PROCESS_PIPE_BUFFER_COUNT is one pass buffer for standard output and one for standard error.
+const PROCESS_PIPE_BUFFER_COUNT = 2
+
+// PROCESS_PATH_BYTES is the resolved executable path region of one spawn slot.
+const PROCESS_PATH_BYTES = filepath.PATH_SIZE_MAXIMUM
+
 // Cap wait for pipes of killed child to close. Grandchild that inherited write end keep pipe
 // open after its parent die, thus drain need its own bound.
 const PROCESS_CLEANUP_DURATION = 1 * time.SECOND
@@ -296,12 +361,30 @@ type Spawn struct {
 	Output_Descriptor int
 	// Error_Descriptor is read end of child standard error. -1 once closed.
 	Error_Descriptor int
+	// Operating_System is the backend owning this slot, so a static callback reaches it from
+	// the slot alone.
+	Operating_System *Operating_System
 	// Input is remaining bytes to write to child standard input.
 	Input []byte
-	// Output_Buffer receive one standard-output pass.
+	// Output_Buffer receive one standard-output pass. It and the four fields below are windows
+	// of caller spawn memory, fixed for the life of the backend.
 	Output_Buffer []byte
 	// Error_Buffer receive one standard-error pass.
 	Error_Buffer []byte
+	// Path_Storage holds the resolved executable path; argv[0] and StartProcess view it.
+	Path_Storage []byte
+	// Argument_Vector holds argv the child receives: program name, then caller arguments.
+	Argument_Vector []string
+	// Child_Files hold the three pipe ends the child receives as its standard descriptors.
+	Child_Files []uintptr
+	// Attributes is the fork request StartProcess reads.
+	Attributes syscall.ProcAttr
+	// System_Attributes is the platform part of Attributes.
+	System_Attributes syscall.SysProcAttr
+	// Final_Error is the error delivered beside Result.
+	Final_Error error
+	// Caller_Backend keeps the caller's Completion.Backend while delivery borrows it.
+	Caller_Backend nbio.State
 	// Result accumulate captured output, exit code, and usage.
 	Result nbio.Process_Result
 	// Request hold caller live output sinks.
@@ -345,21 +428,16 @@ func operating_system_spawn(
 	state *Operating_System, completion *nbio.Completion, request nbio.Process_Request,
 	deadline time.Duration, callback nbio.Process_Callback,
 ) {
-	spawn, start_err := process_start(state, request)
-	if start_err != nil {
-		completion.Callback = func(_ nbio.Completion_Handle) {
-			process_deliver(
-				state, completion, callback, nbio.Process_Result{}, start_err,
-			)
-		}
-		operating_system_completion_add(state, completion)
-		return
-	}
+	spawn := operating_system_spawn_acquire(state)
 	spawn.Completion = completion
 	spawn.Callback = callback
+	if start_err := process_start(state, spawn, request); start_err != nil {
+		spawn.Final_Error = start_err
+		process_publish(state, spawn)
+		return
+	}
 	spawn.Request = request
 	spawn.Started = time.Clock_Now_Monotonic(state.Host)
-	spawn.Used = true
 	aver.Always(len(state.Spawns) < cap(state.Spawns),
 		"The caller-owned spawn registry has capacity before child ownership.")
 	state.Spawns = append(state.Spawns, spawn)
@@ -367,70 +445,103 @@ func operating_system_spawn(
 	process_watch_exit(state, spawn)
 	operating_system_submit(&spawn.Deadline_Completion)
 	operating_system_internal_timeout(
-		state, &spawn.Deadline_Completion, deadline, func(_ nbio.Completion_Handle) {
-			process_expire(state, spawn)
-		},
+		state, &spawn.Deadline_Completion, deadline, process_deadline_fired,
 	)
 }
 
-// Fork child with its three pipes and return tracking entry. Every descriptor is released on
-// failure part-way through, thus failed start leak nothing.
+// Take one caller-owned spawn slot. The slot holds every byte a spawn needs until its result is
+// delivered, so starting a child allocates nothing of the backend's own.
+func operating_system_spawn_acquire(state *Operating_System) (spawn *Spawn) {
+	for index := range state.Spawn_Memory {
+		slot := &state.Spawn_Memory[index]
+		if slot.Used {
+			continue
+		}
+		spawn_reset(slot)
+		slot.Used = true
+		slot.Operating_System = state
+		slot.Exit_Descriptor = -1
+		slot.Input_Descriptor = -1
+		slot.Output_Descriptor = -1
+		slot.Error_Descriptor = -1
+		return slot
+	}
+	aver.Always(false, "The caller-owned spawn pool has capacity before child ownership.")
+	return nil
+}
+
+// Every backend completion of a spawn is a field of its slot, so the field offset leads from the
+// completion back to the slot without a captured closure.
+func spawn_of(completion *nbio.Completion, offset uintptr) (spawn *Spawn) {
+	return (*Spawn)(unsafe.Add(unsafe.Pointer(completion), -int(offset)))
+}
+
+func process_deadline_fired(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Deadline_Completion))
+	process_expire(spawn.Operating_System, spawn)
+}
+
+// Fork child with its three pipes into slot. Every descriptor is released on failure part-way
+// through, thus failed start leak nothing.
 func process_start(
-	state *Operating_System, request nbio.Process_Request,
-) (spawn *Spawn, err error) {
-	path, path_err := executable_path(request.Path, operating_system_search_path(request))
+	state *Operating_System, spawn *Spawn, request nbio.Process_Request,
+) (err error) {
+	path, path_err := executable_path(
+		request.Path, operating_system_search_path(request), spawn.Path_Storage[:],
+	)
 	if path_err != nil {
-		return nil, path_err
+		return path_err
 	}
-	spawn, child, pipe_err := process_pipes(state, request)
-	if pipe_err != nil {
-		return nil, pipe_err
+	argv, argv_err := process_argv(spawn, path, request.Arguments)
+	if argv_err != nil {
+		return argv_err
 	}
-	attributes := &syscall.ProcAttr{
+	if pipe_err := process_pipes(state, spawn, request); pipe_err != nil {
+		return pipe_err
+	}
+	spawn.Attributes = syscall.ProcAttr{
 		Dir:   request.Working_Directory,
 		Env:   request.Environment,
-		Files: child,
+		Files: spawn.Child_Files[:],
 		Sys:   process_attributes(spawn),
 	}
-	identifier, _, start_err := syscall.StartProcess(
-		path, process_argv(path, request.Arguments), attributes,
-	)
+	identifier, _, start_err := syscall.StartProcess(path, argv, &spawn.Attributes)
 	// Child hold its own copies once StartProcess return, thus parent release three ends it
 	// handed over, whether or not fork succeeded.
-	process_release_child(state, child)
+	process_release_child(state, spawn.Child_Files[:])
 	if start_err != nil {
 		process_close_pipes(state, spawn)
-		return nil, start_err
+		return start_err
 	}
 	spawn.Identifier = identifier
 	if ready_err := process_watch_ready(spawn); ready_err != nil {
 		syscall.Kill(-identifier, syscall.SIGKILL)
 		process_close_pipes(state, spawn)
 		process_reap(identifier)
-		return nil, ready_err
+		return ready_err
 	}
-	return spawn, nil
+	return nil
 }
 
 // Make three pipes of child through Pipe, thus every end sit in descriptor census and Deinit
-// catch leaked one. Return tracking entry that hold ends loop keep, and three ends child receive
-// as its standard descriptors.
+// catch leaked one. Slot keep ends loop hold, and Child_Files the three ends child receive as its
+// standard descriptors.
 //
 // Pipe make every end close-on-exec BEFORE fork. StartProcess dup only Files entries and leave
 // every other open descriptor to exec, thus kept end never reach child. Child would otherwise
 // hold writer for its own standard input, and close of parent end would never give it
 // end-of-file.
 func process_pipes(
-	state *Operating_System, request nbio.Process_Request,
-) (spawn *Spawn, child []uintptr, err error) {
+	state *Operating_System, spawn *Spawn, request nbio.Process_Request,
+) (err error) {
 	input_read, input_write, input_err := operating_system_pipe_procedure(state)
 	if input_err != nil {
-		return nil, nil, input_err
+		return input_err
 	}
 	output_read, output_write, output_err := operating_system_pipe_procedure(state)
 	if output_err != nil {
 		process_release_child(state, []uintptr{uintptr(input_read), uintptr(input_write)})
-		return nil, nil, output_err
+		return output_err
 	}
 	error_read, error_write, error_err := operating_system_pipe_procedure(state)
 	if error_err != nil {
@@ -438,31 +549,26 @@ func process_pipes(
 			uintptr(input_read), uintptr(input_write),
 			uintptr(output_read), uintptr(output_write),
 		})
-		return nil, nil, error_err
+		return error_err
 	}
-	spawn = &Spawn{
-		Exit_Descriptor:   -1,
-		Input_Descriptor:  int(input_write),
-		Output_Descriptor: int(output_read),
-		Error_Descriptor:  int(error_read),
-		Input:             request.Input,
-		Output_Buffer:     make([]byte, PROCESS_PIPE_BYTES),
-		Error_Buffer:      make([]byte, PROCESS_PIPE_BYTES),
-	}
-	child = []uintptr{
-		uintptr(input_read), uintptr(output_write), uintptr(error_write),
-	}
+	spawn.Input_Descriptor = int(input_write)
+	spawn.Output_Descriptor = int(output_read)
+	spawn.Error_Descriptor = int(error_read)
+	spawn.Input = request.Input
+	spawn.Child_Files[0] = uintptr(input_read)
+	spawn.Child_Files[1] = uintptr(output_write)
+	spawn.Child_Files[2] = uintptr(error_write)
 	if request.Inherited_Nonblock {
-		return spawn, child, nil
+		return nil
 	}
-	for _, descriptor := range child {
+	for _, descriptor := range spawn.Child_Files {
 		if inherit_err := pipe_inherit(int(descriptor)); inherit_err != nil {
-			process_release_child(state, child)
+			process_release_child(state, spawn.Child_Files[:])
 			process_close_pipes(state, spawn)
-			return nil, nil, inherit_err
+			return inherit_err
 		}
 	}
-	return spawn, child, nil
+	return nil
 }
 
 // Release pipe ends child hold its own copies of, or ends a failed start never handed over.
@@ -473,11 +579,17 @@ func process_release_child(state *Operating_System, child []uintptr) {
 }
 
 // Build argv child receive: program name, then caller arguments, which exclude it. exec.Command
-// supplied this before, and StartProcess does not.
-func process_argv(path string, arguments []string) (argv []string) {
-	argv = make([]string, 0, len(arguments)+1)
-	argv = append(argv, path)
-	return append(argv, arguments...)
+// supplied this before, and StartProcess does not. It lives in the slot, bounded like the
+// kernel bounds argv.
+func process_argv(
+	spawn *Spawn, path string, arguments []string,
+) (argv []string, err error) {
+	if len(arguments) >= len(spawn.Argument_Vector) {
+		return nil, syscall.E2BIG
+	}
+	spawn.Argument_Vector[0] = path
+	count := 1 + copy(spawn.Argument_Vector[1:], arguments)
+	return spawn.Argument_Vector[:count], nil
 }
 
 // Report PATH a spawn resolve bare command name against. Request carrying its own environment
@@ -503,22 +615,28 @@ func operating_system_search_path(request nbio.Process_Request) (search string) 
 func process_read_output(state *Operating_System, spawn *Spawn) {
 	operating_system_submit(&spawn.Output_Completion)
 	operating_system_pipe_read(
-		state, &spawn.Output_Completion, spawn.Output_Descriptor, spawn.Output_Buffer,
-		func(count int, read_err error) {
-			process_output_pass(state, spawn, count, read_err)
-		},
+		state, &spawn.Output_Completion, spawn.Output_Descriptor, spawn.Output_Buffer[:],
+		process_output_read,
 	)
+}
+
+func process_output_read(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Output_Completion))
+	process_output_pass(spawn.Operating_System, spawn, completion.Data, completion.Error)
 }
 
 // Arm read that drain child standard error.
 func process_read_error(state *Operating_System, spawn *Spawn) {
 	operating_system_submit(&spawn.Error_Completion)
 	operating_system_pipe_read(
-		state, &spawn.Error_Completion, spawn.Error_Descriptor, spawn.Error_Buffer,
-		func(count int, read_err error) {
-			process_error_pass(state, spawn, count, read_err)
-		},
+		state, &spawn.Error_Completion, spawn.Error_Descriptor, spawn.Error_Buffer[:],
+		process_error_read,
 	)
+}
+
+func process_error_read(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Error_Completion))
+	process_error_pass(spawn.Operating_System, spawn, completion.Data, completion.Error)
 }
 
 // Report whether one output pass ended pipe. Zero count is child write end closing, and error
@@ -547,12 +665,10 @@ func process_output_pass(
 	if spawn.Request.Stdout.Procedure != nil {
 		nbio.Write(
 			spawn.Request.Stdout, &spawn.Output_Stream_Completion, pass,
-			func(completed nbio.Completion_Handle) {
-				process_stream_pass(state, spawn, completed)
-			},
+			process_output_streamed,
 		)
 	} else {
-		spawn.Result.Output = append(spawn.Result.Output, pass...)
+		process_capture(spawn, &spawn.Result.Output, spawn.Request.Output_Storage, pass)
 	}
 }
 
@@ -570,13 +686,38 @@ func process_error_pass(
 	if spawn.Request.Stderr.Procedure != nil {
 		nbio.Write(
 			spawn.Request.Stderr, &spawn.Error_Stream_Completion, pass,
-			func(completed nbio.Completion_Handle) {
-				process_stream_pass(state, spawn, completed)
-			},
+			process_error_streamed,
 		)
 	} else {
-		spawn.Result.Error_Output = append(spawn.Result.Error_Output, pass...)
+		process_capture(
+			spawn, &spawn.Result.Error_Output, spawn.Request.Error_Output_Storage, pass,
+		)
 	}
+}
+
+// Copy one pass into caller capture storage, never growing it. Output past storage is dropped
+// and recorded as the first failure, while the pipe keeps draining so the child cannot block on
+// a full pipe.
+func process_capture(spawn *Spawn, captured *[]byte, storage []byte, pass []byte) {
+	count := len(*captured)
+	written := copy(storage[count:], pass)
+	*captured = storage[:count+written]
+	if written == len(pass) {
+		return
+	}
+	if spawn.Stream_Error == nil {
+		spawn.Stream_Error = nbio.Process_Output_Too_Large
+	}
+}
+
+func process_output_streamed(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Output_Stream_Completion))
+	process_stream_pass(spawn.Operating_System, spawn, completion)
+}
+
+func process_error_streamed(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Error_Stream_Completion))
+	process_stream_pass(spawn.Operating_System, spawn, completion)
 }
 
 // A sink failure cannot stop pipe drain because a child can block on its full pipe. Preserve the
@@ -656,10 +797,13 @@ func process_write_input(state *Operating_System, spawn *Spawn) {
 	operating_system_submit(&spawn.Input_Completion)
 	operating_system_pipe_write(
 		state, &spawn.Input_Completion, spawn.Input_Descriptor, spawn.Input,
-		func(count int, write_err error) {
-			process_input_pass(state, spawn, count, write_err)
-		},
+		process_input_written,
 	)
+}
+
+func process_input_written(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Input_Completion))
+	process_input_pass(spawn.Operating_System, spawn, completion.Data, completion.Error)
 }
 
 // Arm exit watch. Darwin watch process identifier through EVFILT_PROC, Linux poll pidfd, thus
@@ -672,10 +816,13 @@ func process_watch_exit(state *Operating_System, spawn *Spawn) {
 			Kind:               OPERATING_SYSTEM_OPERATION_PROCESS_EXIT,
 			Descriptor:         spawn.Exit_Descriptor,
 			Process_Identifier: spawn.Identifier,
-			Deliver: func(_ nbio.Completion_Handle) {
-				process_exit(state, spawn)
-			},
+			Deliver:            process_exited,
 		}))
+}
+
+func process_exited(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Exit_Completion))
+	process_exit(spawn.Operating_System, spawn)
 }
 
 // Reap exited child and record its outcome. Reap is unconditional and happen here alone, thus
@@ -723,9 +870,12 @@ func process_bound_cleanup(state *Operating_System, spawn *Spawn) {
 	spawn.Cleanup_Armed = true
 	operating_system_submit(&spawn.Cleanup_Completion)
 	operating_system_internal_timeout(state, &spawn.Cleanup_Completion,
-		PROCESS_CLEANUP_DURATION, func(_ nbio.Completion_Handle) {
-			process_cleanup(state, spawn)
-		})
+		PROCESS_CLEANUP_DURATION, process_cleanup_fired)
+}
+
+func process_cleanup_fired(completion nbio.Completion_Handle) {
+	spawn := spawn_of(completion, unsafe.Offsetof(Spawn{}.Cleanup_Completion))
+	process_cleanup(spawn.Operating_System, spawn)
 }
 
 // Report whether both output pipes reached their end.
@@ -795,27 +945,36 @@ func process_finish(state *Operating_System, spawn *Spawn) {
 	process_close_pipes(state, spawn)
 	spawn.Result.Usage.Wall = time.Duration(
 		int64(time.Clock_Now_Monotonic(state.Host)) - int64(spawn.Started))
-	result := spawn.Result
-	err := error(nil)
 	if spawn.Expired {
-		err = nbio.Deadline_Exceeded
+		spawn.Final_Error = nbio.Deadline_Exceeded
 	} else if spawn.Stream_Error != nil {
-		err = spawn.Stream_Error
+		spawn.Final_Error = spawn.Stream_Error
 	}
+	process_publish(state, spawn)
+}
+
+// Queue the caller completion. The slot carries result and callback to delivery, and Backend
+// carries the slot, since a caller completion is not a field of the slot. The caller's own
+// Backend value is kept and put back before its callback runs.
+func process_publish(state *Operating_System, spawn *Spawn) {
 	completion := spawn.Completion
-	callback := spawn.Callback
-	completion.Callback = func(_ nbio.Completion_Handle) {
-		process_deliver(state, completion, callback, result, err)
-	}
+	spawn.Caller_Backend = completion.Backend
+	completion.Backend = nbio.State(spawn)
+	completion.Callback = process_delivered
 	operating_system_completion_add(state, completion)
 }
 
 // One process completion reaches its caller: the extension count drops as the callback runs,
-// thus the loop sees the retirement and the caller sees the result in one step.
-func process_deliver(
-	state *Operating_System, completion *nbio.Completion, callback nbio.Process_Callback,
-	result nbio.Process_Result, err error,
-) {
+// thus the loop sees the retirement and the caller sees the result in one step. The slot frees
+// before the callback so the callback may spawn again into it; locals keep what it receives.
+func process_delivered(completion nbio.Completion_Handle) {
+	spawn := completion.Backend.(*Spawn)
+	completion.Backend = spawn.Caller_Backend
+	state := spawn.Operating_System
+	callback := spawn.Callback
+	result := spawn.Result
+	err := spawn.Final_Error
+	spawn_reset(spawn)
 	state.Extension_Submitted--
 	callback(completion, result, err)
 }
@@ -831,7 +990,6 @@ func operating_system_spawn_remove(state *Operating_System, spawn *Spawn) {
 		kept = append(kept, candidate)
 	}
 	state.Spawns = kept
-	spawn.Used = false
 	aver.Always(found, "A reaped child occupied one caller-owned registry slot.")
 }
 
@@ -845,7 +1003,7 @@ func process_close_pipes(state *Operating_System, spawn *Spawn) {
 // Submit one pipe read through platform scheduler.
 func operating_system_pipe_read(
 	state *Operating_System, completion *nbio.Completion,
-	descriptor int, buffer []byte, deliver func(count int, err error),
+	descriptor int, buffer []byte, deliver nbio.Callback,
 ) {
 	operating_system_operation_submit(state, operating_system_operation_acquire(
 		state, Operating_System_Operation{
@@ -853,16 +1011,14 @@ func operating_system_pipe_read(
 			Kind:       OPERATING_SYSTEM_OPERATION_PIPE_READ,
 			Descriptor: descriptor,
 			Buffer:     platform_buffer_limit(buffer),
-			Deliver: func(completed nbio.Completion_Handle) {
-				deliver(completed.Data, completed.Error)
-			},
+			Deliver:    deliver,
 		}))
 }
 
 // Submit one pipe write through platform scheduler.
 func operating_system_pipe_write(
 	state *Operating_System, completion *nbio.Completion,
-	descriptor int, buffer []byte, deliver func(count int, err error),
+	descriptor int, buffer []byte, deliver nbio.Callback,
 ) {
 	operating_system_operation_submit(state, operating_system_operation_acquire(
 		state, Operating_System_Operation{
@@ -870,9 +1026,7 @@ func operating_system_pipe_write(
 			Kind:       OPERATING_SYSTEM_OPERATION_PIPE_WRITE,
 			Descriptor: descriptor,
 			Buffer:     platform_buffer_limit(buffer),
-			Deliver: func(completed nbio.Completion_Handle) {
-				deliver(completed.Data, completed.Error)
-			},
+			Deliver:    deliver,
 		}))
 }
 

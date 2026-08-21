@@ -75,6 +75,10 @@ type operating_system_test_memory struct {
 	Signal_Waiters      []Signal_Waiter
 	Spawns              []Spawn
 	Spawn_Registry      []*Spawn
+	Spawn_Pipe_Buffers  []byte
+	Spawn_Paths         []byte
+	Spawn_Arguments     []string
+	Spawn_Child_Files   []uintptr
 	Platform_Operations []*Operating_System_Operation
 	Platform_Changes    []Kernel_Event
 	Platform_Events     []Kernel_Event
@@ -95,6 +99,10 @@ func operating_system_memory_view(
 		Signal_Waiters:             memory.Signal_Waiters,
 		Spawns:                     memory.Spawns,
 		Spawn_Registry:             memory.Spawn_Registry,
+		Spawn_Pipe_Buffers:         memory.Spawn_Pipe_Buffers,
+		Spawn_Paths:                memory.Spawn_Paths,
+		Spawn_Arguments:            memory.Spawn_Arguments,
+		Spawn_Child_Files:          memory.Spawn_Child_Files,
 		Platform_Operations:        memory.Platform_Operations,
 		Platform_Changes:           memory.Platform_Changes,
 		Platform_Events:            memory.Platform_Events,
@@ -126,6 +134,19 @@ func operating_system_test_memory_initialize(memory *operating_system_test_memor
 	memory.Signal_Waiters = make([]Signal_Waiter, OPERATING_SYSTEM_TEST_SIGNAL_CAPACITY)
 	memory.Spawns = make([]Spawn, OPERATING_SYSTEM_TEST_SPAWN_CAPACITY)
 	memory.Spawn_Registry = make([]*Spawn, OPERATING_SYSTEM_TEST_SPAWN_CAPACITY)
+	memory.Spawn_Pipe_Buffers = make(
+		[]byte,
+		OPERATING_SYSTEM_TEST_SPAWN_CAPACITY*PROCESS_PIPE_BUFFER_COUNT*PROCESS_PIPE_BYTES,
+	)
+	memory.Spawn_Paths = make(
+		[]byte, OPERATING_SYSTEM_TEST_SPAWN_CAPACITY*filepath.PATH_SIZE_MAXIMUM,
+	)
+	memory.Spawn_Arguments = make(
+		[]string, OPERATING_SYSTEM_TEST_SPAWN_CAPACITY*PROCESS_ARGUMENT_COUNT_MAXIMUM,
+	)
+	memory.Spawn_Child_Files = make(
+		[]uintptr, OPERATING_SYSTEM_TEST_SPAWN_CAPACITY*PROCESS_CHILD_DESCRIPTOR_COUNT,
+	)
 	memory.Platform_Operations = make(
 		[]*Operating_System_Operation, OPERATING_SYSTEM_TEST_PLATFORM_CAPACITY,
 	)
@@ -2524,7 +2545,10 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 	nbio.IO_Spawn(
 		loop,
 		&echo_completion,
-		nbio.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}},
+		nbio.Process_Request{
+			Path: "/bin/echo", Arguments: []string{"hi"},
+			Output_Storage: make([]byte, SPAWN_CAPTURE_BYTES),
+		},
 		REAL_DEADLINE,
 		func(
 			_ *nbio.Completion, result nbio.Process_Result, err error,
@@ -2555,6 +2579,164 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 
 	testify.True(t, failed)
 	testify.Equal(t, 1, fail.Exit)
+}
+
+// SPAWN_ALLOCATION_PATH names a program that exists on Darwin and Linux and writes nothing.
+const SPAWN_ALLOCATION_PATH = "/usr/bin/true"
+
+// Test_Operating_System_Spawn_Heap_Allocation proves a spawn adds no allocation of its own: one
+// whole spawn, armed and driven through reap, allocates exactly what the bare syscalls under it
+// do. syscall.Stat and syscall.StartProcess convert path, argv, and environment to C strings on
+// every call, so their count is the floor, not zero.
+func Test_Operating_System_Spawn_Heap_Allocation(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	request := nbio.Process_Request{Path: SPAWN_ALLOCATION_PATH}
+	harness := spawn_allocation_harness{}
+	// Built outside the measured run: only the spawn itself is counted, not the predicate.
+	delivered := func() (finished bool) { return harness.Called }
+	var run_err error
+	completed := false
+	measured := testing.AllocsPerRun(1, func() {
+		harness.Called = false
+		nbio.IO_Spawn(
+			loop, &harness.Completion, request, REAL_DEADLINE,
+			spawn_allocation_callback,
+		)
+		completed, run_err = nbio.Driver_Run_Until(driver, REAL_DEADLINE, delivered)
+	})
+	testify.No_Error(t, run_err)
+	testify.True(t, completed)
+	testify.True(t, harness.Called)
+	testify.No_Error(t, harness.Error)
+	testify.Zero(t, harness.Exit)
+	testify.Equal(t, spawn_baseline_allocation(
+		t, SPAWN_ALLOCATION_PATH, []string{SPAWN_ALLOCATION_PATH},
+	), measured)
+	nbio.Driver_Deinit(driver)
+}
+
+// SPAWN_CAPTURE_PATH names a program that exists on Darwin and Linux and writes its arguments.
+const SPAWN_CAPTURE_PATH = "/bin/echo"
+
+// SPAWN_CAPTURE_BYTES holds the captured "hi\n" with room to spare.
+const SPAWN_CAPTURE_BYTES = 64
+
+// Test_Operating_System_Spawn_Capture_Heap_Allocation proves captured output lands in caller
+// storage: a child that writes adds no allocation over the bare syscalls either.
+func Test_Operating_System_Spawn_Capture_Heap_Allocation(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	var output_storage [SPAWN_CAPTURE_BYTES]byte
+	request := nbio.Process_Request{
+		Path: SPAWN_CAPTURE_PATH, Arguments: []string{"hi"},
+		Output_Storage: output_storage[:],
+	}
+	harness := spawn_allocation_harness{}
+	delivered := func() (finished bool) { return harness.Called }
+	var run_err error
+	completed := false
+	measured := testing.AllocsPerRun(1, func() {
+		harness.Called = false
+		nbio.IO_Spawn(
+			loop, &harness.Completion, request, REAL_DEADLINE,
+			spawn_allocation_callback,
+		)
+		completed, run_err = nbio.Driver_Run_Until(driver, REAL_DEADLINE, delivered)
+	})
+	testify.No_Error(t, run_err)
+	testify.True(t, completed)
+	testify.No_Error(t, harness.Error)
+	testify.Equal(t, "hi\n", string(harness.Output))
+	testify.Equal(t, spawn_baseline_allocation(
+		t, SPAWN_CAPTURE_PATH, []string{SPAWN_CAPTURE_PATH, "hi"},
+	), measured)
+	nbio.Driver_Deinit(driver)
+}
+
+// Test_Operating_System_IO_Spawn_Output_Too_Large verify output past caller storage reports
+// Process_Output_Too_Large, keeps the prefix that fit, and still drains and reaps the child.
+func Test_Operating_System_IO_Spawn_Output_Too_Large(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	const CAPTURE_SIZE = 4
+	callback_count := 0
+	result := nbio.Process_Result{}
+	var operation_err error
+	var completion nbio.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
+		Path: SPAWN_CAPTURE_PATH, Arguments: []string{"overflowing"},
+		Output_Storage: make([]byte, CAPTURE_SIZE),
+	}, REAL_DEADLINE, func(
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	})
+	testify.True(t, operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	))
+	testify.Error_Is(t, operation_err, nbio.Process_Output_Too_Large)
+	testify.Equal(t, "over", string(result.Output))
+	testify.Zero(t, result.Exit)
+	nbio.Driver_Deinit(driver)
+}
+
+type spawn_allocation_harness struct {
+	// Completion stays first so the static callback recovers the harness from its address.
+	Completion nbio.Completion
+	Called     bool
+	Exit       int
+	Output     []byte
+	Error      error
+}
+
+func spawn_allocation_callback(
+	completion *nbio.Completion, result nbio.Process_Result, err error,
+) {
+	harness := (*spawn_allocation_harness)(unsafe.Pointer(completion))
+	harness.Called = true
+	harness.Exit = result.Exit
+	harness.Output = result.Output
+	harness.Error = err
+}
+
+// Counts allocations of the syscalls every spawn makes, shaped as the backend makes them: the
+// executable check, the fork with three child descriptors and the platform attributes, and the
+// reap. The child writes into /dev/null so the count is not tied to test output.
+func spawn_baseline_allocation(
+	t *testing.T, path string, argv []string,
+) (allocations float64) {
+	t.Helper()
+	null, open_err := syscall.Open("/dev/null", syscall.O_RDWR|syscall.O_CLOEXEC, 0)
+	if !testify.No_Error(t, open_err) {
+		return 0
+	}
+	defer syscall.Close(null)
+	var metadata syscall.Stat_t
+	var slot Spawn
+	slot.Exit_Descriptor = -1
+	files := []uintptr{uintptr(null), uintptr(null), uintptr(null)}
+	attributes := syscall.ProcAttr{Files: files, Sys: process_attributes(&slot)}
+	var status syscall.WaitStatus
+	var usage syscall.Rusage
+	var start_err error
+	allocations = testing.AllocsPerRun(1, func() {
+		syscall.Stat(path, &metadata)
+		identifier, _, err := syscall.StartProcess(path, argv, &attributes)
+		start_err = err
+		if err != nil {
+			return
+		}
+		if slot.Exit_Descriptor >= 0 {
+			syscall.Close(slot.Exit_Descriptor)
+			slot.Exit_Descriptor = -1
+		}
+		syscall.Wait4(identifier, &status, 0, &usage)
+	})
+	testify.No_Error(t, start_err)
+	return allocations
 }
 
 // Test_Operating_System_IO_Spawn_Streams_To_Sink run command with live stdout sink. It confirm
@@ -2635,6 +2817,7 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 			"-c", "printf '%d' $$ > \"$1\"; printf partial; sleep 30 & wait",
 			"bounded-spawn", process_path,
 		},
+		Output_Storage: make([]byte, SPAWN_CAPTURE_BYTES),
 	}
 	callback_count := 0
 	result := nbio.Process_Result{}
@@ -2702,8 +2885,9 @@ func Test_Operating_System_IO_Spawn_Bounds_Lingering_Drain(t *testing.T) {
 	var operation_err error
 	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
-		Path:      "/bin/sh",
-		Arguments: []string{"-c", "printf quick; sleep 30 & exit 0"},
+		Path:           "/bin/sh",
+		Arguments:      []string{"-c", "printf quick; sleep 30 & exit 0"},
+		Output_Storage: make([]byte, SPAWN_CAPTURE_BYTES),
 	}, SPAWN_DEADLINE, func(
 		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
@@ -2738,8 +2922,9 @@ func Test_Operating_System_IO_Spawn_Concurrent(t *testing.T) {
 		position := index
 		completions[position] = &nbio.Completion{}
 		nbio.IO_Spawn(loop, completions[position], nbio.Process_Request{
-			Path:  "/bin/cat",
-			Input: []byte(test_decimal_text(position)),
+			Path:           "/bin/cat",
+			Input:          []byte(test_decimal_text(position)),
+			Output_Storage: make([]byte, SPAWN_CAPTURE_BYTES),
 		}, REAL_DEADLINE, func(
 			_ *nbio.Completion, spawned nbio.Process_Result, err error,
 		) {
@@ -2769,6 +2954,7 @@ func Test_Operating_System_IO_Spawn_Feeds_Input(t *testing.T) {
 	var completion nbio.Completion
 	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
 		Path: "/bin/cat", Input: []byte("fed through stdin"),
+		Output_Storage: make([]byte, SPAWN_CAPTURE_BYTES),
 	}, REAL_DEADLINE, func(
 		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
@@ -2800,6 +2986,7 @@ func Test_Operating_System_IO_Spawn_Drains_Full_Pipe(t *testing.T) {
 		Arguments: []string{
 			"-c", "i=0; while [ $i -lt 20000 ]; do echo line; i=$((i+1)); done",
 		},
+		Output_Storage: make([]byte, LINES*len("line\n")),
 	}, REAL_DEADLINE, func(
 		_ *nbio.Completion, spawned nbio.Process_Result, err error,
 	) {
@@ -2827,7 +3014,10 @@ func Test_Operating_System_IO_Spawn_Resolves_Path(t *testing.T) {
 	nbio.IO_Spawn(
 		loop,
 		&completion,
-		nbio.Process_Request{Path: "echo", Arguments: []string{"resolved"}},
+		nbio.Process_Request{
+			Path: "echo", Arguments: []string{"resolved"},
+			Output_Storage: make([]byte, SPAWN_CAPTURE_BYTES),
+		},
 		REAL_DEADLINE,
 		func(
 			_ *nbio.Completion, spawned nbio.Process_Result, err error,
@@ -3186,6 +3376,7 @@ func spawn_probe_report(t *testing.T, nonblock bool) (report string) {
 		Environment:        []string{SPAWN_PROBE_ENVIRONMENT},
 		Input:              []byte("x"),
 		Inherited_Nonblock: nonblock,
+		Output_Storage:     make([]byte, SPAWN_CAPTURE_BYTES),
 	}, REAL_DEADLINE, func(_ *nbio.Completion, spawned nbio.Process_Result, err error) {
 		testify.No_Error(t, err)
 		report = string(spawned.Output)

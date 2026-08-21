@@ -336,8 +336,10 @@ func descriptor_close_on_exec(descriptor int) (err error) {
 // Resolve executable name same way shell do, because syscall.StartProcess require path while
 // caller pass bare name such as sh or fc-cache. Name holding slash is used as given. This
 // mirror os/exec own fallback: reject directory, then accept any execute bit, and let
-// StartProcess report EACCES when mode bits promise more than file allow.
-func executable_path(name string, search string) (path string, err error) {
+// StartProcess report EACCES when mode bits promise more than file allow. A resolved candidate
+// lives in storage, which the caller keeps unchanged until the path is used, so the returned
+// path is a view, never a copy.
+func executable_path(name string, search string, storage []byte) (path string, err error) {
 	if name == "" {
 		return "", syscall.ENOENT
 	}
@@ -353,7 +355,6 @@ func executable_path(name string, search string) (path string, err error) {
 		}
 	}
 	start := 0
-	var candidate_storage [filepath.PATH_SIZE_MAXIMUM]byte
 	for position := 0; position <= len(search); position++ {
 		if position < len(search) {
 			if search[position] != ':' {
@@ -364,18 +365,17 @@ func executable_path(name string, search string) (path string, err error) {
 		if directory == "" {
 			directory = "."
 		}
-		if len(directory)+1+len(name) > len(candidate_storage) {
+		if len(directory)+1+len(name) > len(storage) {
 			start = position + 1
 			continue
 		}
 		count := filepath.Join_Into(
-			bytes.Slice(candidate_storage[:]),
+			bytes.Slice(storage),
 			filepath.Elements{bytes.Text(directory), bytes.Text(name)},
 		)
-		// A copy, not a view: a view over this array moves the whole array to heap, and
-		// syscall.Stat below copies the path again regardless, thus no path here is
-		// allocation-free.
-		candidate := string(candidate_storage[:count])
+		// A view over caller storage, not a copy. The next candidate overwrites it only
+		// after this one failed its check, so a returned path is never overwritten.
+		candidate := unsafe.String(&storage[0], count)
 		if executable_check(candidate) == nil {
 			return candidate, nil
 		}

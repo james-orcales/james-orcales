@@ -62,7 +62,9 @@ type Platform_Operation struct {
 // descendants too. PidFD ask kernel for descriptor naming child, made atomic at fork, thus exit
 // watch never name process identifier that could be reused.
 func process_attributes(spawn *Spawn) (attributes *syscall.SysProcAttr) {
-	return &syscall.SysProcAttr{Setpgid: true, PidFD: &spawn.Exit_Descriptor}
+	// Written into the slot: a fresh SysProcAttr escaped to the heap on every spawn.
+	spawn.System_Attributes = syscall.SysProcAttr{Setpgid: true, PidFD: &spawn.Exit_Descriptor}
+	return &spawn.System_Attributes
 }
 
 // Report whether kernel supplied pidfd. StartProcess leave it negative below Linux 5.3, and exit

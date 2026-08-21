@@ -70,8 +70,10 @@ func operating_system_wire_platform(state *Operating_System, loop *nbio.IO) {
 // Build child process attributes. Setpgid put child in its own group, thus deadline kill its
 // descendants too. Darwin watch exit by process identifier, thus it need no descriptor from
 // fork.
-func process_attributes(_ *Spawn) (attributes *syscall.SysProcAttr) {
-	return &syscall.SysProcAttr{Setpgid: true}
+func process_attributes(spawn *Spawn) (attributes *syscall.SysProcAttr) {
+	// Written into the slot: a fresh SysProcAttr escaped to the heap on every spawn.
+	spawn.System_Attributes = syscall.SysProcAttr{Setpgid: true}
+	return &spawn.System_Attributes
 }
 
 // Report nothing to check after fork: EVFILT_PROC need only process identifier.

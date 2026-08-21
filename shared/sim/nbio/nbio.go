@@ -164,6 +164,12 @@ type Process_Request struct {
 	Working_Directory string
 	// Input is the bytes written to the process's standard input.
 	Input []byte
+	// Output_Storage is caller storage that captured standard output fills; its length is the
+	// capture bound. Output past it drains unkept and the result reports
+	// Process_Output_Too_Large, so a chatty child cannot grow memory. Result.Output views it.
+	Output_Storage []byte
+	// Error_Output_Storage is the standard-error counterpart of Output_Storage.
+	Error_Output_Storage []byte
 	// Inherited_Nonblock sets O_NONBLOCK on the three pipe ends the process inherits as its
 	// standard descriptors. Zero value leaves them blocking, because ordinary program read and
 	// write its standard descriptors without handling EAGAIN. Ends the loop keeps are always
@@ -210,6 +216,10 @@ type Process_Result struct {
 // Process_Callback receives a finished process's result, or an error when the process
 // could not be started at all.
 type Process_Callback func(completion *Completion, result Process_Result, err error)
+
+// Process_Output_Too_Large reports captured output past the caller's capture storage; the
+// result keeps the prefix that fit.
+var Process_Output_Too_Large = errors.New("io: process output exceeds capture storage")
 
 // Network is half of IO: every transfer whose endpoint is socket, plus socket lifecycle that
 // open one. Holder that only speak to socket take this and cannot reach file.
