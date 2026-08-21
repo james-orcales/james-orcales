@@ -264,6 +264,42 @@ func Test_Operating_System_Self_Exec_Environment(t *testing.T) {
 	testify.False(t, (*state.Self_Exec.Environment_Pointers)[0] != nil)
 }
 
+// Test_Operating_System_Memory verifies kernel region is zeroed, writable to its last byte, and
+// unmaps without error, and empty region unmaps as no-op.
+func Test_Operating_System_Memory(t *testing.T) {
+	state := test_host()
+	host := os.New_Operating_System(&state)
+	testify.No_Error(t, os.OS_Memory_Unmap(host, nil))
+	for _, memory_size := range [...]shared_os.Memory_Size{
+		shared_os.MEMORY_SIZE_MINIMUM, shared_os.MEMORY_SIZE_MAXIMUM,
+	} {
+		region, map_err := os.OS_Memory_Map(host, memory_size)
+		if !testify.No_Error(t, map_err) {
+			continue
+		}
+		testify.Equal(t, int(memory_size), len(region))
+		testify.Equal(t, int(memory_size), cap(region))
+		testify.Zero(t, region[len(region)-1])
+		region[len(region)-1] = 1
+		testify.No_Error(t, os.OS_Memory_Unmap(host, region))
+	}
+}
+
+// Kernel map and unmap leave Go heap untouched.
+func Test_Operating_System_Memory_Heap_Allocation(t *testing.T) {
+	state := test_host()
+	host := os.New_Operating_System(&state)
+	var region shared_os.Memory
+	var operation_err error
+	testify.Zero_Allocation(t, func() {
+		region, operation_err = os.OS_Memory_Map(host, shared_os.MEMORY_SIZE_MINIMUM)
+		if operation_err == nil {
+			operation_err = os.OS_Memory_Unmap(host, region)
+		}
+	})
+	testify.No_Error(t, operation_err)
+}
+
 func test_host() (host os.Host) {
 	return os.Host{
 		Arguments:         []string{"os.test"},
@@ -292,4 +328,39 @@ func test_self_exec_workspace() (workspace *os.Self_Exec_Workspace) {
 		Argument_Pointers:    os.Self_Exec_Argument_Pointers(&argument_pointers),
 		Environment_Pointers: os.Self_Exec_Environment_Pointers(&environment_pointers),
 	}
+}
+
+// FILE_TEST_PERMISSION is owner read and write, the mode a rewritten source file keeps.
+const FILE_TEST_PERMISSION os.File_Permission = 0o600
+
+// Test_File_Round_Trip covers File_Write creating a file with the given content and File_Read
+// returning exactly those bytes, then a rewrite replacing rather than appending.
+func Test_File_Round_Trip(t *testing.T) {
+	path := os.File_Path(t.TempDir() + "/round_trip.txt")
+	first := os.File_Content("first content\n")
+	testify.No_Error(t, os.File_Write(path, first, FILE_TEST_PERMISSION))
+	read, read_err := os.File_Read(path)
+	testify.No_Error(t, read_err)
+	testify.Equal(t, string(first), string(read))
+
+	second := os.File_Content("second\n")
+	testify.No_Error(t, os.File_Write(path, second, FILE_TEST_PERMISSION))
+	read, read_err = os.File_Read(path)
+	testify.No_Error(t, read_err)
+	testify.Equal(t, string(second), string(read))
+}
+
+// Test_File_Read_Absent covers a missing path reporting the kernel's error and no content.
+func Test_File_Read_Absent(t *testing.T) {
+	read, read_err := os.File_Read(os.File_Path(t.TempDir() + "/absent.txt"))
+	if read_err == nil {
+		t.Fatal("reading an absent file must fail")
+	}
+	testify.Equal(t, 0, len(read))
+}
+
+// Test_Standard_Error_Write covers the diagnostics path accepting a line; its bytes land on the
+// test binary's own stderr.
+func Test_Standard_Error_Write(t *testing.T) {
+	testify.No_Error(t, os.Standard_Error_Write(os.File_Content("os/default: stderr write\n")))
 }

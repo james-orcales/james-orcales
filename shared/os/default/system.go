@@ -8,6 +8,7 @@
 package os
 
 import (
+	"errors"
 	"syscall"
 	"unsafe"
 
@@ -433,8 +434,61 @@ func New_Operating_System(state Host_Pointer) (host os.OS) {
 		Process_Identifier:        system_process_identifier,
 		Effective_User_Identifier: system_effective_user_identifier,
 		Self_Exec:                 system_self_exec,
+		Memory_Map:                system_memory_map,
+		Memory_Unmap:              system_memory_unmap,
 	}
 	return host
+}
+
+// MEMORY_DESCRIPTOR_ANONYMOUS is fd -1, which portable anonymous map requires.
+const MEMORY_DESCRIPTOR_ANONYMOUS = ^uintptr(0)
+
+// Raw syscall rather than syscall.Mmap, because syscall.Mmap records every region in heap map.
+func system_memory_map(
+	_ unsafe.Pointer, size os.Memory_Size,
+) (region os.Memory, err error) {
+	defer func() { os.Memory_Invariants(region, "system_memory_map.region") }()
+	os.Memory_Size_Invariants(size, "system_memory_map.size")
+	address, _, operation_errno := syscall.RawSyscall6(
+		syscall.SYS_MMAP, 0, uintptr(size),
+		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_PRIVATE|syscall.MAP_ANON,
+		MEMORY_DESCRIPTOR_ANONYMOUS, 0,
+	)
+	if operation_errno != 0 {
+		return nil, operation_errno
+	}
+	return unsafe.Slice((*byte)(unsafe.Pointer(address)), int(size)), nil
+}
+
+func system_memory_unmap(_ unsafe.Pointer, region os.Memory) (err error) {
+	os.Memory_Invariants(region, "system_memory_unmap.region")
+	// Kernel returns EINVAL for zero length; empty region is what failed map returned.
+	if len(region) == 0 {
+		return nil
+	}
+	_, _, operation_errno := syscall.RawSyscall(
+		syscall.SYS_MUNMAP, uintptr(unsafe.Pointer(unsafe.SliceData(region))),
+		uintptr(len(region)), 0,
+	)
+	if operation_errno != 0 {
+		return operation_errno
+	}
+	return nil
+}
+
+// OS_Memory_Map keeps default-package callers on pure OS operation.
+func OS_Memory_Map(host os.OS, size os.Memory_Size) (region os.Memory, err error) {
+	defer func() { os.Memory_Invariants(region, "default_os_memory_map.region") }()
+	os.OS_Invariants(host, "default_os_memory_map.host")
+	os.Memory_Size_Invariants(size, "default_os_memory_map.size")
+	return os.OS_Memory_Map(host, size)
+}
+
+// OS_Memory_Unmap keeps default-package callers on pure OS operation.
+func OS_Memory_Unmap(host os.OS, region os.Memory) (err error) {
+	os.OS_Invariants(host, "default_os_memory_unmap.host")
+	os.Memory_Invariants(region, "default_os_memory_unmap.region")
+	return os.OS_Memory_Unmap(host, region)
 }
 
 // OS_Arguments keeps default-package callers on pure OS operation.
@@ -520,4 +574,154 @@ func OS_Self_Exec(
 	os.Arguments_Invariants(arguments, "default_os_self_exec.arguments")
 	os.Environment_Invariants(environment, "default_os_self_exec.environment")
 	return os.OS_Self_Exec(host, path, arguments, environment)
+}
+
+// FILE_BYTES_MAXIMUM bounds one whole-file read or write; larger files belong on the IO loop,
+// not on a synchronous gateway call.
+const FILE_BYTES_MAXIMUM = 1 << 24
+
+// FILE_BYTES_MINIMUM admits an empty file.
+const FILE_BYTES_MINIMUM = 0
+
+// FILE_PERMISSION_MAXIMUM is the full mode word: setuid, setgid, sticky, and rwxrwxrwx.
+const FILE_PERMISSION_MAXIMUM = 0o7777
+
+// FILE_PERMISSION_MINIMUM is a file nobody may touch.
+const FILE_PERMISSION_MINIMUM = 0
+
+// STANDARD_ERROR is the descriptor the process inherited for diagnostics.
+const STANDARD_ERROR Descriptor = 2
+
+// DESCRIPTOR_MINIMUM is standard input, the lowest descriptor a process holds.
+const DESCRIPTOR_MINIMUM = 0
+
+// DESCRIPTOR_MAXIMUM is the highest descriptor the default per-process limit hands out.
+const DESCRIPTOR_MAXIMUM = 1<<20 - 1
+
+// Descriptor is one open kernel file handle.
+type Descriptor int
+
+// Descriptor_Invariants keeps a handle inside the per-process table.
+func Descriptor_Invariants(value Descriptor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), DESCRIPTOR_MINIMUM, DESCRIPTOR_MAXIMUM).
+		Ensure()
+}
+
+// File_Path names one file on the host filesystem.
+type File_Path string
+
+// File_Path_Invariants bounds path text the way every other host path is bounded.
+func File_Path_Invariants(value File_Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
+		Ensure()
+}
+
+// File_Content is one whole file's bytes.
+type File_Content []byte
+
+// File_Content_Invariants bounds a synchronous transfer.
+func File_Content_Invariants(value File_Content, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), FILE_BYTES_MINIMUM, FILE_BYTES_MAXIMUM).
+		Ensure()
+}
+
+// File_Permission is the mode word a created file gets, before the process umask.
+type File_Permission uint32
+
+// File_Permission_Invariants keeps the mode inside the twelve permission bits.
+func File_Permission_Invariants(value File_Permission, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint32(uint32(value), FILE_PERMISSION_MINIMUM, FILE_PERMISSION_MAXIMUM).
+		Ensure()
+}
+
+// File_Too_Large reports a file past FILE_BYTES_MAXIMUM rather than reading part of it.
+var File_Too_Large = errors.New("os: file exceeds the synchronous read bound")
+
+// File_Short_Write reports a write the kernel stopped advancing before the content ended.
+var File_Short_Write = errors.New("os: file write made no progress")
+
+// File_Read reads one whole file. It is synchronous by design: it serves tools that run
+// before or outside an IO loop, such as a test rewriting its own source.
+func File_Read(path File_Path) (content File_Content, err error) {
+	defer func() { File_Content_Invariants(content, "File_Read.content") }()
+	File_Path_Invariants(path, "File_Read.path")
+	file, open_err := syscall.Open(string(path), syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
+	if open_err != nil {
+		return nil, open_err
+	}
+	defer syscall.Close(file)
+	var facts syscall.Stat_t
+	if stat_err := syscall.Fstat(file, &facts); stat_err != nil {
+		return nil, stat_err
+	}
+	if facts.Size > FILE_BYTES_MAXIMUM {
+		return nil, File_Too_Large
+	}
+	content = make(File_Content, int(facts.Size))
+	filled := 0
+	// Each pass advances by at least one byte or ends, so the size bounds the loop.
+	for pass_index := 0; pass_index < len(content); pass_index++ {
+		if filled >= len(content) {
+			break
+		}
+		count, read_err := syscall.Read(file, content[filled:])
+		if read_err != nil {
+			return nil, read_err
+		}
+		if count == 0 {
+			break
+		}
+		filled += count
+	}
+	return content[:filled], nil
+}
+
+// File_Write replaces one whole file, creating it with permission when absent. Synchronous
+// for the same reason as File_Read.
+func File_Write(path File_Path, content File_Content, permission File_Permission) (err error) {
+	File_Path_Invariants(path, "File_Write.path")
+	File_Content_Invariants(content, "File_Write.content")
+	File_Permission_Invariants(permission, "File_Write.permission")
+	file, open_err := syscall.Open(
+		string(path), syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC|syscall.O_CLOEXEC,
+		uint32(permission),
+	)
+	if open_err != nil {
+		return open_err
+	}
+	defer syscall.Close(file)
+	return descriptor_write(Descriptor(file), content)
+}
+
+// Standard_Error_Write sends content to the inherited standard error descriptor, for
+// diagnostics that must land even when no IO loop is running.
+func Standard_Error_Write(content File_Content) (err error) {
+	File_Content_Invariants(content, "Standard_Error_Write.content")
+	return descriptor_write(STANDARD_ERROR, content)
+}
+
+// A pipe or terminal may accept a partial write, so the remainder is resubmitted. Each pass
+// advances by at least one byte or ends, so the content length bounds the loop.
+func descriptor_write(descriptor Descriptor, content File_Content) (err error) {
+	Descriptor_Invariants(descriptor, "descriptor_write.descriptor")
+	File_Content_Invariants(content, "descriptor_write.content")
+	written := 0
+	for pass_index := 0; pass_index < len(content); pass_index++ {
+		if written >= len(content) {
+			break
+		}
+		count, write_err := syscall.Write(int(descriptor), content[written:])
+		if write_err != nil {
+			return write_err
+		}
+		if count <= 0 {
+			return File_Short_Write
+		}
+		written += count
+	}
+	return nil
 }

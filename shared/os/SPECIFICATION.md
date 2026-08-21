@@ -46,6 +46,16 @@ carries no positive bound and a simulation states it deliberately.
 Self_Exec always fails with Self_Exec_Unsupported. A simulation cannot replace its own test
 process, so it reports the failure rather than destroying the run.
 
+### Memory Map
+
+Memory_Map carves next region of exactly size bytes from caller-owned arena and zeroes it.
+Capacity equals length, so append cannot spill into next region. Regions never overlap. Arena
+too small for region returns Memory_Exhausted.
+
+### Memory Unmap
+
+Memory_Unmap returns no error and releases nothing.
+
 # OS
 
 Caller captures allocating ambient values in Host before construction. Kernel reads stay live.

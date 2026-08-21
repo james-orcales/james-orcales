@@ -110,6 +110,36 @@ func Test_Virtual_OS_Self_Exec(t *testing.T) {
 	testify.Error_Is(t, err, os.Self_Exec_Unsupported)
 }
 
+// Test_Virtual_OS_Memory_Map verifies each region comes zeroed from arena, regions never
+// overlap, append cannot spill into next region, and exhaustion returns error.
+func Test_Virtual_OS_Memory_Map(t *testing.T) {
+	virtual := test_virtual()
+	virtual.Memory[0] = 0xff
+	system := os.Virtual_OS_To_OS(&virtual)
+	first, first_err := os.OS_Memory_Map(system, TEST_MEMORY_SIZE)
+	testify.No_Error(t, first_err)
+	testify.Equal(t, TEST_MEMORY_SIZE, len(first))
+	testify.Equal(t, TEST_MEMORY_SIZE, cap(first))
+	testify.Zero(t, first[0])
+	first[0] = 1
+	second, second_err := os.OS_Memory_Map(system, TEST_MEMORY_SIZE)
+	testify.No_Error(t, second_err)
+	testify.Zero(t, second[0])
+	testify.Equal(t, byte(1), first[0])
+	_, exhausted_err := os.OS_Memory_Map(system, TEST_MEMORY_SIZE)
+	testify.Error_Is(t, exhausted_err, os.Memory_Exhausted)
+}
+
+// Test_Virtual_OS_Memory_Unmap verifies region from arena and empty region unmap without error.
+func Test_Virtual_OS_Memory_Unmap(t *testing.T) {
+	virtual := test_virtual()
+	system := os.Virtual_OS_To_OS(&virtual)
+	testify.No_Error(t, os.OS_Memory_Unmap(system, nil))
+	region, map_err := os.OS_Memory_Map(system, TEST_MEMORY_SIZE)
+	testify.No_Error(t, map_err)
+	testify.No_Error(t, os.OS_Memory_Unmap(system, region))
+}
+
 // Test_OS_Self_Exec verifies simulated backend cannot replace test process for either
 // environment ownership mode.
 func Test_OS_Self_Exec(t *testing.T) {
@@ -176,6 +206,24 @@ func Test_OS_Invariant_Boundaries(t *testing.T) {
 		os.OS_Effective_User_Identifier(system)
 		os.OS_Self_Exec(system, os.Executable_Path(text), arguments, environment)
 	}
+	memory_sizes := [...]os.Memory_Size{
+		os.MEMORY_SIZE_MINIMUM,
+		os.MEMORY_SIZE_MINIMUM + 1,
+		os.MEMORY_SIZE_MINIMUM + 2,
+		os.MEMORY_SIZE_MAXIMUM,
+	}
+	for _, memory_size := range memory_sizes {
+		virtual := test_virtual()
+		virtual.Memory = make(os.Memory, memory_size)
+		system := os.Virtual_OS_To_OS(&virtual)
+		region, map_err := os.OS_Memory_Map(system, memory_size)
+		testify.No_Error(t, map_err)
+		testify.No_Error(t, os.OS_Memory_Unmap(system, region))
+		// Rebuild over spent arena so offset reaches small values and maximum.
+		exhausted := os.Virtual_OS_To_OS(&virtual)
+		_, exhausted_err := os.OS_Memory_Map(exhausted, os.MEMORY_SIZE_MINIMUM)
+		testify.Error_Is(t, exhausted_err, os.Memory_Exhausted)
+	}
 }
 
 func verify_virtual_os_allocations(t *testing.T) {
@@ -185,6 +233,7 @@ func verify_virtual_os_allocations(t *testing.T) {
 		testify.Zero_Allocation(t, func() { system = os.Virtual_OS_To_OS(&virtual) })
 	})
 	verify_os_ambient_allocations(t, system, virtual)
+	verify_os_memory_allocations(t, system)
 	var text os.Variable_Value
 	var found os.Variable_Found
 	t.Run("Environment_Lookup", func(t *testing.T) {
@@ -243,6 +292,24 @@ func verify_os_ambient_allocations(t *testing.T, system os.OS, virtual os.Virtua
 	})
 }
 
+func verify_os_memory_allocations(t *testing.T, system os.OS) {
+	t.Helper()
+	var region os.Memory
+	var operation_err error
+	t.Run("Memory_Map", func(t *testing.T) {
+		testify.Zero_Allocation(t, func() {
+			region, operation_err = os.OS_Memory_Map(system, TEST_MEMORY_SIZE)
+		})
+		testify.No_Error(t, operation_err)
+	})
+	t.Run("Memory_Unmap", func(t *testing.T) {
+		testify.Zero_Allocation(t, func() {
+			operation_err = os.OS_Memory_Unmap(system, region)
+		})
+		testify.No_Error(t, operation_err)
+	})
+}
+
 func verify_virtual_os_text_allocations(t *testing.T, system os.OS, text *os.Variable_Value) {
 	t.Helper()
 	var read_err error
@@ -275,6 +342,15 @@ const TEST_ARGUMENT_COUNT = 2
 // Fixed fixture capacity makes caller-owned copies exact.
 const TEST_ENVIRONMENT_COUNT = 3
 
+// TEST_MEMORY_SIZE is small so fixture arena stays cheap.
+const TEST_MEMORY_SIZE = 64
+
+// TEST_MEMORY_REGION_COUNT lets second map succeed and third exhaust arena.
+const TEST_MEMORY_REGION_COUNT = 2
+
+// TEST_MEMORY_ARENA_SIZE holds exactly TEST_MEMORY_REGION_COUNT regions.
+const TEST_MEMORY_ARENA_SIZE = TEST_MEMORY_REGION_COUNT * TEST_MEMORY_SIZE
+
 // Returns one fully stated simulated process, so each test reads a value it did not set up
 // itself and a missing field shows as a wrong answer rather than as a zero.
 func test_virtual() (virtual os.Virtual_OS) {
@@ -287,5 +363,6 @@ func test_virtual() (virtual os.Virtual_OS) {
 		Process_Identifier: 4242,
 
 		Effective_User_Identifier: 501,
+		Memory:                    make(os.Memory, TEST_MEMORY_ARENA_SIZE),
 	}
 }

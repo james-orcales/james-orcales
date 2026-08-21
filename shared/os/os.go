@@ -7,7 +7,8 @@
 // directory, the host name, the process id, and the effective user id. None of it is IO: nothing
 // here opens a file, a socket, or a pipe, and nothing here can block, so none of it belongs on
 // the io.IO event loop. Self_Exec sits here for the same reason. It replaces the process image
-// rather than transferring bytes.
+// rather than transferring bytes. Memory_Map sits here too: anonymous map names no file, socket,
+// or descriptor, only process address space.
 //
 // The Virtual backend lives in this package because ambient state is plain data. It needs no
 // seed: a simulation states the values it wants and reads exactly those back. Nothing here
@@ -144,6 +145,42 @@ func Effective_User_Identifier_Invariants(
 		Ensure()
 }
 
+// MEMORY_SIZE_MINIMUM is one byte because kernel rejects zero-length map.
+const MEMORY_SIZE_MINIMUM = 1
+
+// MEMORY_SIZE_MAXIMUM bounds one region. Larger need caller split work, not bigger map.
+const MEMORY_SIZE_MAXIMUM = 1 << 24
+
+// Memory_Size is byte length of one mapped region.
+type Memory_Size int
+
+// Memory_Size_Invariants bounds one region.
+func Memory_Size_Invariants(value Memory_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), MEMORY_SIZE_MINIMUM, MEMORY_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Memory is process address space bytes. Empty admitted because failed map returns none.
+type Memory []byte
+
+// Memory_Invariants bounds region and arena alike.
+func Memory_Invariants(value Memory, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), slices.COUNT_MINIMUM, MEMORY_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Memory_Offset is byte position inside arena.
+type Memory_Offset int
+
+// Memory_Offset_Invariants bounds position by largest arena.
+func Memory_Offset_Invariants(value Memory_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), slices.POSITION_MINIMUM, MEMORY_SIZE_MAXIMUM).
+		Ensure()
+}
+
 // Arguments_Procedure copies complete process arguments into caller storage.
 type Arguments_Procedure func(
 	state unsafe.Pointer, destination Arguments,
@@ -188,6 +225,14 @@ type Self_Exec_Procedure func(
 	arguments Arguments, environment Environment,
 ) (err error)
 
+// Memory_Map_Procedure maps one zeroed anonymous region.
+type Memory_Map_Procedure func(
+	state unsafe.Pointer, size Memory_Size,
+) (region Memory, err error)
+
+// Memory_Unmap_Procedure releases one region Memory_Map returned.
+type Memory_Unmap_Procedure func(state unsafe.Pointer, region Memory) (err error)
+
 // OS is the operating system as the running process sees it. It is a vtable, so a caller holds
 // it by value and calls through it without knowing the backend, exactly as io.IO is held.
 type OS struct {
@@ -217,11 +262,17 @@ type OS struct {
 	// Nil preserves ambient values. Non-nil slice is complete replacement, thus empty inherits
 	// nothing.
 	Self_Exec Self_Exec_Procedure
+	// Memory_Map returns private read-write region of exactly size bytes, zeroed. Capacity
+	// equals length, so append reallocates rather than write past region.
+	Memory_Map Memory_Map_Procedure
+	// Memory_Unmap releases region. Caller must not touch region after. Empty region is no-op,
+	// because kernel rejects zero length yet failed map hands one back.
+	Memory_Unmap Memory_Unmap_Procedure
 }
 
 // OS_Invariants states that every reader is bound. An OS is a vtable, so its only property is
 // that every slot is filled: the zero OS reads as an OS but panics on first use, and a backend
-// that fills eight slots and forgets the ninth is the same failure one call later.
+// that fills all slots but one is the same failure one call later.
 func OS_Invariants(system OS, namespace aver.Namespace) {
 	aver.Always(system.Arguments != nil, "An OS reads its arguments.")
 	aver.Always(system.Environment != nil, "An OS reads its environment.")
@@ -233,6 +284,27 @@ func OS_Invariants(system OS, namespace aver.Namespace) {
 	aver.Always(
 		system.Effective_User_Identifier != nil, "An OS reads its effective user id.")
 	aver.Always(system.Self_Exec != nil, "An OS replaces its own image.")
+	aver.Always(system.Memory_Map != nil, "An OS maps memory.")
+	aver.Always(system.Memory_Unmap != nil, "An OS unmaps memory.")
+}
+
+// OS_Memory_Map keeps backend state explicit so operation needs no captured environment.
+func OS_Memory_Map(system OS, size Memory_Size) (region Memory, err error) {
+	defer func() {
+		Memory_Invariants(region, "os_memory_map.region")
+		// Capacity past region would let caller append corrupt neighbor.
+		aver.Always(len(region) == cap(region), "Mapped region capacity ends at region.")
+	}()
+	OS_Invariants(system, "os_memory_map.system")
+	Memory_Size_Invariants(size, "os_memory_map.size")
+	return system.Memory_Map(system.State, size)
+}
+
+// OS_Memory_Unmap keeps backend state explicit so operation needs no captured environment.
+func OS_Memory_Unmap(system OS, region Memory) (err error) {
+	OS_Invariants(system, "os_memory_unmap.system")
+	Memory_Invariants(region, "os_memory_unmap.region")
+	return system.Memory_Unmap(system.State, region)
 }
 
 // OS_Arguments keeps backend state explicit so reader needs no captured environment.
@@ -322,8 +394,13 @@ func OS_Self_Exec(
 // branch is exactly what a simulation exercises.
 var Self_Exec_Unsupported = errors.New("os: self-exec is not supported by a Virtual_OS")
 
+// Memory_Exhausted is what simulated Memory_Map returns when arena cannot hold region, the
+// counterpart of kernel ENOMEM.
+var Memory_Exhausted = errors.New("os: virtual memory arena exhausted")
+
 // Virtual_OS is the ambient state a simulation gives the process, as plain data. It holds no
-// closure and no clock, so a run reads back exactly the values it stated.
+// closure and no clock, so a run reads back exactly the values it stated. Memory_Offset is only
+// field an operation writes.
 type Virtual_OS struct {
 	// Arguments becomes the simulated argv.
 	Arguments Arguments
@@ -340,6 +417,11 @@ type Virtual_OS struct {
 	// Effective_User_Identifier becomes the simulated effective user id. Zero is root, so a
 	// simulation states it deliberately and the field carries no positive bound.
 	Effective_User_Identifier Effective_User_Identifier
+	// Memory is caller-owned arena Memory_Map carves regions from, so simulated map never
+	// touches heap. Unmap releases nothing: arena bound, not reuse, keeps run bounded.
+	Memory Memory
+	// Memory_Offset is arena prefix already handed out.
+	Memory_Offset Memory_Offset
 }
 
 // Virtual_OS_Invariants states the complete simulated domain. A process id is positive on every
@@ -353,6 +435,10 @@ func Virtual_OS_Invariants(virtual Virtual_OS, namespace aver.Namespace) {
 	Hostname_Invariants(virtual.Hostname, namespace)
 	Process_Identifier_Invariants(virtual.Process_Identifier, namespace)
 	Effective_User_Identifier_Invariants(virtual.Effective_User_Identifier, namespace)
+	Memory_Invariants(virtual.Memory, namespace)
+	Memory_Offset_Invariants(virtual.Memory_Offset, namespace)
+	aver.Always(int(virtual.Memory_Offset) <= len(virtual.Memory),
+		"Handed-out prefix lies inside arena.")
 }
 
 // Virtual_OS_Pointer names caller-owned simulated ambient state.
@@ -384,8 +470,30 @@ func Virtual_OS_To_OS(virtual Virtual_OS_Pointer) (system OS) {
 		Process_Identifier:        virtual_os_process_identifier,
 		Effective_User_Identifier: virtual_os_effective_user_identifier,
 		Self_Exec:                 virtual_os_self_exec,
+		Memory_Map:                virtual_os_memory_map,
+		Memory_Unmap:              virtual_os_memory_unmap,
 	}
 	return system
+}
+
+func virtual_os_memory_map(state unsafe.Pointer, size Memory_Size) (region Memory, err error) {
+	defer func() { Memory_Invariants(region, "virtual_os_memory_map.region") }()
+	Memory_Size_Invariants(size, "virtual_os_memory_map.size")
+	virtual := (*Virtual_OS)(state)
+	if int(size) > len(virtual.Memory)-int(virtual.Memory_Offset) {
+		return nil, Memory_Exhausted
+	}
+	end_offset := virtual.Memory_Offset + Memory_Offset(size)
+	region = virtual.Memory[virtual.Memory_Offset:end_offset:end_offset]
+	// Caller may hand in dirty arena; kernel region is always zeroed.
+	clear(region)
+	virtual.Memory_Offset = end_offset
+	return region, nil
+}
+
+func virtual_os_memory_unmap(state unsafe.Pointer, region Memory) (err error) {
+	Memory_Invariants(region, "virtual_os_memory_unmap.region")
+	return nil
 }
 
 func virtual_os_arguments(
