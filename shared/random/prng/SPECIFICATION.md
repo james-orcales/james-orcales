@@ -61,3 +61,7 @@ chance; every draw is one of the two values, never between.
 
 Percentile_Distribution builds a table from the values at p25, p50, p75, p95, p99, and p100,
 weighted by the mass between them, so a draw reproduces those percentiles.
+
+# Invariant Boundaries
+
+Public operations reach every named scalar boundary without waiting for chance.

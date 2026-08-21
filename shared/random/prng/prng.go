@@ -18,9 +18,8 @@
 package prng
 
 import (
-	"math/bits"
-
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 )
 
 // The splitmix64 increment, derived from the golden ratio, strides the seed state.
@@ -35,175 +34,563 @@ const SPLIT_MIX_MULTIPLIER_SECOND = 0x94d049bb133111eb
 // GENERATOR_STATE_WORD_COUNT is the fixed state width of xoshiro256++.
 const GENERATOR_STATE_WORD_COUNT = 4
 
+// DISTRIBUTION_COUNT_MAXIMUM keeps weighted sampling linear and stack-owned.
+const DISTRIBUTION_COUNT_MAXIMUM = 32
+
+// ITEM_COUNT_MAXIMUM shares the one fixed collection width used by this package.
+const ITEM_COUNT_MAXIMUM Item_Count = DISTRIBUTION_COUNT_MAXIMUM
+
+// ITEM_COUNT_MINIMUM admits an empty shuffle while Element rejects it separately.
+const ITEM_COUNT_MINIMUM Item_Count = 0
+
+// SEED_MINIMUM keeps every deterministic replay seed available.
+const SEED_MINIMUM Seed = Seed(bits.WORD_64_MINIMUM)
+
+// SEED_MAXIMUM keeps every deterministic replay seed available.
+const SEED_MAXIMUM Seed = Seed(bits.WORD_64_MAXIMUM)
+
+// WORD_MINIMUM preserves the complete xoshiro output domain.
+const WORD_MINIMUM Word = Word(bits.WORD_64_MINIMUM)
+
+// WORD_MAXIMUM preserves the complete xoshiro output domain.
+const WORD_MAXIMUM Word = Word(bits.WORD_64_MAXIMUM)
+
+// WEIGHT_MINIMUM permits an outcome that must never be selected.
+const WEIGHT_MINIMUM Weight = Weight(bits.WORD_64_MINIMUM)
+
+// WEIGHT_MAXIMUM prevents a narrower accidental cumulative domain.
+const WEIGHT_MAXIMUM Weight = Weight(bits.WORD_64_MAXIMUM)
+
+// RATIO_DENOMINATOR_MINIMUM prevents probability division by zero.
+const RATIO_DENOMINATOR_MINIMUM Ratio_Denominator = 1
+
+// RATIO_DENOMINATOR_MAXIMUM keeps every positive probability total available.
+const RATIO_DENOMINATOR_MAXIMUM Ratio_Denominator = Ratio_Denominator(WEIGHT_MAXIMUM)
+
+// BOUND_MINIMUM prevents division by zero in rejection sampling.
+const BOUND_MINIMUM Bound = 1
+
+// BOUND_MAXIMUM keeps each result representable as an Index.
+const BOUND_MAXIMUM Bound = Bound(bits.INTEGER_MAXIMUM)
+
+// INDEX_MINIMUM matches every half-open draw range.
+const INDEX_MINIMUM Index = 0
+
+// INDEX_MAXIMUM is one below the largest accepted bound.
+const INDEX_MAXIMUM Index = Index(bits.INTEGER_MAXIMUM - 1)
+
+// DRAW_BOUND_MINIMUM prevents rejection-sampling division by zero.
+const DRAW_BOUND_MINIMUM Draw_Bound = 1
+
+// DRAW_BOUND_MAXIMUM keeps the complete unsigned bound domain.
+const DRAW_BOUND_MAXIMUM Draw_Bound = Draw_Bound(bits.WORD_64_MAXIMUM)
+
+// DRAW_MINIMUM matches every half-open unsigned draw range.
+const DRAW_MINIMUM Draw = 0
+
+// DRAW_MAXIMUM is one below the largest accepted unsigned bound.
+const DRAW_MAXIMUM Draw = Draw(bits.WORD_64_MAXIMUM - 1)
+
+// DISTRIBUTION_COUNT_MINIMUM keeps the total bucket accessible.
+const DISTRIBUTION_COUNT_MINIMUM Distribution_Count = 1
+
+// Seed names replay identity separately from generated output.
+type Seed uint64
+
+// Seed_Invariants preserves all replay identities.
+func Seed_Invariants(seed Seed, namespace invariant.Namespace) {
+	invariant.Tree(seed, namespace).
+		Range_Uint64(uint64(seed), uint64(SEED_MINIMUM), uint64(SEED_MAXIMUM)).
+		Ensure()
+}
+
+// Word names raw generator state and output separately from weights.
+type Word uint64
+
+// Word_Invariants preserves every xoshiro output.
+func Word_Invariants(word Word, namespace invariant.Namespace) {
+	invariant.Tree(word, namespace).
+		Range_Uint64(uint64(word), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
+// Weight separates probability mass from random output.
+type Weight uint64
+
+// Weight_Invariants permits zero-mass buckets without narrowing totals.
+func Weight_Invariants(weight Weight, namespace invariant.Namespace) {
+	invariant.Tree(weight, namespace).
+		Range_Uint64(uint64(weight), uint64(WEIGHT_MINIMUM), uint64(WEIGHT_MAXIMUM)).
+		Ensure()
+}
+
+// Ratio_Numerator prevents two probability fields from sharing one invariant subject.
+type Ratio_Numerator Weight
+
+// Ratio_Numerator_Invariants preserves zero through complete favorable mass.
+func Ratio_Numerator_Invariants(value Ratio_Numerator, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WEIGHT_MINIMUM), uint64(WEIGHT_MAXIMUM)).
+		Ensure()
+}
+
+// Ratio_Denominator prevents two probability fields from sharing one invariant subject.
+type Ratio_Denominator Weight
+
+// Ratio_Denominator_Invariants preserves every representable total mass.
+func Ratio_Denominator_Invariants(value Ratio_Denominator, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(
+			uint64(value),
+			uint64(RATIO_DENOMINATOR_MINIMUM),
+			uint64(RATIO_DENOMINATOR_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Bound makes the positive exclusive draw limit explicit.
+type Bound int
+
+// Bound_Invariants rejects zero before unsigned rejection sampling.
+func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
+	invariant.Tree(bound, namespace).
+		Range_Int(int(bound), int(BOUND_MINIMUM), int(BOUND_MAXIMUM)).
+		Ensure()
+}
+
+// Index keeps a draw representable by Go slice indexing.
+type Index int
+
+// Index_Invariants preserves every result below the largest Bound.
+func Index_Invariants(index Index, namespace invariant.Namespace) {
+	invariant.Tree(index, namespace).
+		Range_Int(int(index), int(INDEX_MINIMUM), int(INDEX_MAXIMUM)).
+		Ensure()
+}
+
+// Draw_Bound separates positive unsigned limits from zero-weight buckets.
+type Draw_Bound uint64
+
+// Draw_Bound_Invariants preserves every positive unsigned limit.
+func Draw_Bound_Invariants(bound Draw_Bound, namespace invariant.Namespace) {
+	invariant.Tree(bound, namespace).
+		Range_Uint64(
+			uint64(bound), uint64(DRAW_BOUND_MINIMUM), uint64(DRAW_BOUND_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Draw is the half-open result of one unsigned bounded draw.
+type Draw uint64
+
+// Draw_Invariants excludes the unreachable largest word.
+func Draw_Invariants(draw Draw, namespace invariant.Namespace) {
+	invariant.Tree(draw, namespace).
+		Range_Uint64(uint64(draw), uint64(DRAW_MINIMUM), uint64(DRAW_MAXIMUM)).
+		Ensure()
+}
+
+// Boolean lets both random decisions become coverage obligations.
+type Boolean bool
+
+// Boolean_Invariants requires both decision branches across package runs.
+func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A random decision is true.").
+		Ensure()
+}
+
+// Item_Count keeps generic collection bounds on a concrete invariant subject.
+type Item_Count int
+
+// Item_Count_Invariants rejects hostile selection and shuffle work.
+func Item_Count_Invariants(count Item_Count, namespace invariant.Namespace) {
+	invariant.Tree(count, namespace).
+		Range_Int(int(count), int(ITEM_COUNT_MINIMUM), int(ITEM_COUNT_MAXIMUM)).
+		Ensure()
+}
+
+// Items keeps selection and shuffle storage fixed and caller-owned.
+type Items[T any] [ITEM_COUNT_MAXIMUM]T
+
+// Items_Invariants makes the generic aggregate a fixed-width singleton.
+func Items_Invariants[T any](items Items[T], _ invariant.Namespace) {
+	invariant.Always(
+		len(items) == int(ITEM_COUNT_MAXIMUM),
+		"Random item storage keeps its fixed width.",
+	)
+}
+
+// Weights stays at the fixed Distribution storage width.
+type Weights [DISTRIBUTION_COUNT_MAXIMUM]Weight
+
+// Weights_Invariants makes cumulative storage a fixed-width singleton.
+func Weights_Invariants(weights Weights, _ invariant.Namespace) {
+	invariant.Always(
+		len(weights) == DISTRIBUTION_COUNT_MAXIMUM,
+		"Distribution weights keep their fixed width.",
+	)
+}
+
+// Distribution_Count separates live buckets from zeroed fixed storage.
+type Distribution_Count int
+
+// Distribution_Count_Invariants keeps every live bucket addressable.
+func Distribution_Count_Invariants(count Distribution_Count, namespace invariant.Namespace) {
+	invariant.Tree(count, namespace).
+		Range_Int(
+			int(count), int(DISTRIBUTION_COUNT_MINIMUM), DISTRIBUTION_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
 // Generator is the state of a xoshiro256++ pseudo-random generator. Construct it with New; the zero
 // value is degenerate, since an all-zero xoshiro state emits only zeros.
 type Generator struct {
 	// State is the four 64-bit words of xoshiro256++ internal state.
-	State [GENERATOR_STATE_WORD_COUNT]uint64
+	State [GENERATOR_STATE_WORD_COUNT]Word
+}
+
+// Generator_Invariants rejects xoshiro's absorbing all-zero state.
+func Generator_Invariants(generator Generator, _ invariant.Namespace) {
+	invariant.Always(
+		generator.State != [GENERATOR_STATE_WORD_COUNT]Word{},
+		"A generator has nonzero xoshiro state.",
+	)
 }
 
 // Ratio is an integer probability, used instead of a float so a run reproduces bit-for-bit.
 type Ratio struct {
 	// Numerator is the count of favorable outcomes; it must not exceed Denominator.
-	Numerator uint64
+	Numerator Ratio_Numerator
 	// Denominator is the total count of outcomes; it must be positive.
-	Denominator uint64
+	Denominator Ratio_Denominator
+}
+
+// Ratio_Invariants rejects division by zero and probability above one.
+func Ratio_Invariants(ratio Ratio, namespace invariant.Namespace) {
+	Ratio_Numerator_Invariants(ratio.Numerator, namespace)
+	Ratio_Denominator_Invariants(ratio.Denominator, namespace)
+	invariant.Always(ratio.Denominator > 0, "A probability denominator is positive.")
+	invariant.Always(
+		Weight(ratio.Numerator) <= Weight(ratio.Denominator),
+		"A probability numerator does not exceed its denominator.",
+	)
 }
 
 // Distribution is a set of weighted outcomes Sample draws from, with the cumulative weights
 // precomputed. Sample finds the bucket by a linear scan, so keep the entry count to 32 or fewer.
 type Distribution[T any] struct {
 	// Outcomes are the values Sample may return, positionally paired with Cumulative.
-	Outcomes []T
+	Outcomes Items[T]
 	// Cumulative is the running sum of each outcome's weight; the final entry is the total.
-	Cumulative []uint64
+	Cumulative Weights
+}
+
+// Distribution_Invariants keeps the live fixed table nonempty and drawable.
+func Distribution_Invariants[T any](
+	distribution Distribution[T], namespace invariant.Namespace,
+) {
+	Items_Invariants(distribution.Outcomes, namespace)
+	Weights_Invariants(distribution.Cumulative, namespace)
+	invariant.Always(
+		distribution.Cumulative[DISTRIBUTION_COUNT_MAXIMUM-1] > 0,
+		"A distribution has positive total weight.",
+	)
 }
 
 // New seeds a Generator from one seed, expanding it through splitmix64 into the four words of
 // xoshiro256++ state. The zero Generator is degenerate, so always construct through New.
-func New(seed uint64) (generator Generator) {
+func New(seed Seed) (generator Generator) {
+	defer func() { Generator_Invariants(generator, "new.generator") }()
+	Seed_Invariants(seed, "new.seed")
 	state := seed
-	generator.State[0] = split_mix_64(&state)
-	generator.State[1] = split_mix_64(&state)
-	generator.State[2] = split_mix_64(&state)
-	generator.State[3] = split_mix_64(&state)
+	for index := 0; index < GENERATOR_STATE_WORD_COUNT; index++ {
+		state += SPLIT_MIX_INCREMENT
+		value := Word(state)
+		value = (value ^ (value >> 30)) * SPLIT_MIX_MULTIPLIER_FIRST
+		value = (value ^ (value >> 27)) * SPLIT_MIX_MULTIPLIER_SECOND
+		generator.State[index] = value ^ (value >> 31)
+	}
 	return generator
 }
 
 // Generator_Next advances the xoshiro256++ state and returns the next value. It is the raw draw
 // every other function builds on, and the one hot path that must not allocate.
-func Generator_Next(generator *Generator) (value uint64) {
-	result := bits.RotateLeft64(generator.State[0]+generator.State[3], 23) + generator.State[0]
+func Generator_Next(generator *Generator) (value Word) {
+	defer func() { Word_Invariants(value, "generator_next.value") }()
+	Generator_Invariants(*generator, "generator_next.generator")
+	result := Word(bits.Rotate_Left_64(
+		bits.Word_64(generator.State[0]+generator.State[3]), 23,
+	)) + generator.State[0]
 	shifted := generator.State[1] << 17
 	generator.State[2] ^= generator.State[0]
 	generator.State[3] ^= generator.State[1]
 	generator.State[1] ^= generator.State[2]
 	generator.State[0] ^= generator.State[3]
 	generator.State[2] ^= shifted
-	generator.State[3] = bits.RotateLeft64(generator.State[3], 45)
+	generator.State[3] = Word(bits.Rotate_Left_64(bits.Word_64(generator.State[3]), 45))
 	return result
 }
 
 // Generator_Below returns a value in the half-open range zero to bound, never bound itself.
-func Generator_Below(generator *Generator, bound int) (value int) {
-	invariant.Always(bound > 0, "prng below bound is positive")
-	return int(generator_below_unsigned(generator, uint64(bound)))
+func Generator_Below(generator *Generator, bound Bound) (value Index) {
+	defer func() { Index_Invariants(value, "generator_below.value") }()
+	Generator_Invariants(*generator, "generator_below.generator")
+	Bound_Invariants(bound, "generator_below.bound")
+	return Index(generator_below_unsigned(generator, Draw_Bound(bound)))
 }
 
 // Generator_Element returns one uniformly chosen element of items; an empty slice panics.
-func Generator_Element[T any](generator *Generator, items []T) (item T) {
-	invariant.Always(len(items) > 0, "prng element slice is not empty")
-	return items[Generator_Below(generator, len(items))]
+func Generator_Element[T any](
+	generator *Generator, items *Items[T], count Item_Count,
+) (item T) {
+	Generator_Invariants(*generator, "generator_element.generator")
+	Items_Invariants(*items, "generator_element.items")
+	Item_Count_Invariants(count, "generator_element.count")
+	invariant.Always(count > 0, "prng element count is not empty")
+	return items[Generator_Below(generator, Bound(count))]
 }
 
 // Generator_Boolean returns true or false with equal probability, from the top state bit.
-func Generator_Boolean(generator *Generator) (value bool) {
+func Generator_Boolean(generator *Generator) (value Boolean) {
+	defer func() { Boolean_Invariants(value, "generator_boolean.value") }()
+	Generator_Invariants(*generator, "generator_boolean.generator")
 	return Generator_Next(generator)>>63 != 0
 }
 
 // Generator_Chance returns true at a frequency tracking the integer Ratio, with no floating point.
-func Generator_Chance(generator *Generator, probability Ratio) (value bool) {
-	invariant.Always(probability.Denominator > 0, "prng chance denominator is positive")
-	invariant.Always(
-		probability.Numerator <= probability.Denominator,
-		"prng chance numerator within denominator",
-	)
-	return generator_below_unsigned(generator, probability.Denominator) < probability.Numerator
+func Generator_Chance(generator *Generator, probability Ratio) (value Boolean) {
+	defer func() { Boolean_Invariants(value, "generator_chance.value") }()
+	Generator_Invariants(*generator, "generator_chance.generator")
+	Ratio_Invariants(probability, "generator_chance.probability")
+	return Draw_Bound(generator_below_unsigned(
+		generator, Draw_Bound(probability.Denominator),
+	)) < Draw_Bound(probability.Numerator)
 }
 
 // New_Distribution builds a Distribution from outcomes and their integer weights, precomputing the
 // cumulative table Sample draws against. The slices must be equal length and hold a positive total.
-func New_Distribution[T any](outcomes []T, weights []uint64) (distribution Distribution[T]) {
-	invariant.Always(len(outcomes) == len(weights), "prng distribution outcomes match weights")
-	invariant.Always(len(weights) > 0, "prng distribution is not empty")
-	cumulative := make([]uint64, len(weights))
-	running_total := uint64(0)
-	for index := 0; index < len(weights); index++ {
+func New_Distribution[T any](
+	outcomes Items[T], weights Weights, count Distribution_Count,
+) (distribution Distribution[T]) {
+	defer func() { Distribution_Invariants(distribution, "new_distribution.distribution") }()
+	Items_Invariants(outcomes, "new_distribution.outcomes")
+	Weights_Invariants(weights, "new_distribution.weights")
+	Distribution_Count_Invariants(count, "new_distribution.count")
+	running_total := Weight(0)
+	for index := 0; index < int(count); index++ {
+		Weight_Invariants(weights[index], "new_distribution.weight")
+		invariant.Always(
+			weights[index] <= WEIGHT_MAXIMUM-running_total,
+			"Distribution cumulative weight does not overflow.",
+		)
 		running_total += weights[index]
-		cumulative[index] = running_total
+		distribution.Outcomes[index] = outcomes[index]
+		distribution.Cumulative[index] = running_total
 	}
 	invariant.Always(running_total > 0, "prng distribution total is positive")
-	distribution.Outcomes = outcomes
-	distribution.Cumulative = cumulative
+	for index := int(count); index < DISTRIBUTION_COUNT_MAXIMUM; index++ {
+		distribution.Cumulative[index] = running_total
+	}
 	return distribution
 }
 
 // Generator_Sample returns an outcome at a frequency tracking its integer weight in distribution.
 func Generator_Sample[T any](generator *Generator, distribution Distribution[T]) (item T) {
+	Generator_Invariants(*generator, "generator_sample.generator")
+	Distribution_Invariants(distribution, "generator_sample.distribution")
 	cumulative := distribution.Cumulative
-	count := len(cumulative)
+	count := DISTRIBUTION_COUNT_MAXIMUM
 	total := cumulative[count-1]
-	roll := generator_below_unsigned(generator, total)
+	roll := generator_below_unsigned(generator, Draw_Bound(total))
 	for index := 0; index < count; index++ {
-		if roll < cumulative[index] {
+		if Weight(roll) < cumulative[index] {
 			return distribution.Outcomes[index]
 		}
 	}
 	return distribution.Outcomes[count-1]
 }
 
+// Bimodal_Fast separates the common mode from the rare mode's invariant subject.
+type Bimodal_Fast Word
+
+// Bimodal_Fast_Invariants preserves the caller's complete unit domain.
+func Bimodal_Fast_Invariants(value Bimodal_Fast, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
+// Bimodal_Slow separates the rare mode from the common mode's invariant subject.
+type Bimodal_Slow Word
+
+// Bimodal_Slow_Invariants preserves the caller's complete unit domain.
+func Bimodal_Slow_Invariants(value Bimodal_Slow, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
 // Bimodal_Distribution_Input configures a two-mode distribution.
 type Bimodal_Distribution_Input struct {
 	// Fast is the value of the common mode.
-	Fast uint64
+	Fast Bimodal_Fast
 	// Slow is the value of the rare mode.
-	Slow uint64
+	Slow Bimodal_Slow
 	// Slow_Chance is the probability that a draw takes the Slow mode.
 	Slow_Chance Ratio
+}
+
+// Bimodal_Distribution_Input_Invariants composes both modes and their probability.
+func Bimodal_Distribution_Input_Invariants(
+	input Bimodal_Distribution_Input, namespace invariant.Namespace,
+) {
+	Bimodal_Fast_Invariants(input.Fast, namespace)
+	Bimodal_Slow_Invariants(input.Slow, namespace)
+	Ratio_Invariants(input.Slow_Chance, namespace)
 }
 
 // Bimodal_Distribution returns a two-mode table: the Fast value with the complement of
 // Slow_Chance, the Slow value with Slow_Chance, and nothing in between. Values carry the
 // caller's own unit.
-func Bimodal_Distribution(input *Bimodal_Distribution_Input) (distribution Distribution[uint64]) {
-	invariant.Always(
-		input.Slow_Chance.Denominator > 0,
-		"bimodal slow chance denominator is positive",
-	)
-	invariant.Always(
-		input.Slow_Chance.Numerator <= input.Slow_Chance.Denominator,
-		"bimodal slow chance does not exceed one",
-	)
+func Bimodal_Distribution(
+	input *Bimodal_Distribution_Input,
+) (distribution Distribution[Word]) {
+	defer func() {
+		Distribution_Invariants(distribution, "bimodal_distribution.distribution")
+	}()
+	Bimodal_Distribution_Input_Invariants(*input, "bimodal_distribution.input")
 	return New_Distribution(
-		[]uint64{input.Fast, input.Slow},
-		[]uint64{
-			input.Slow_Chance.Denominator - input.Slow_Chance.Numerator,
-			input.Slow_Chance.Numerator,
+		Items[Word]{Word(input.Fast), Word(input.Slow)},
+		Weights{
+			Weight(input.Slow_Chance.Denominator) - Weight(input.Slow_Chance.Numerator),
+			Weight(input.Slow_Chance.Numerator),
 		},
+		2,
 	)
+}
+
+// Percentile_25 keeps its boundary independent from the other percentile fields.
+type Percentile_25 Word
+
+// Percentile_25_Invariants preserves the caller's complete unit domain.
+func Percentile_25_Invariants(value Percentile_25, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
+// Percentile_50 keeps its boundary independent from the other percentile fields.
+type Percentile_50 Word
+
+// Percentile_50_Invariants preserves the caller's complete unit domain.
+func Percentile_50_Invariants(value Percentile_50, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
+// Percentile_75 keeps its boundary independent from the other percentile fields.
+type Percentile_75 Word
+
+// Percentile_75_Invariants preserves the caller's complete unit domain.
+func Percentile_75_Invariants(value Percentile_75, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
+// Percentile_95 keeps its boundary independent from the other percentile fields.
+type Percentile_95 Word
+
+// Percentile_95_Invariants preserves the caller's complete unit domain.
+func Percentile_95_Invariants(value Percentile_95, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
+// Percentile_99 keeps its boundary independent from the other percentile fields.
+type Percentile_99 Word
+
+// Percentile_99_Invariants preserves the caller's complete unit domain.
+func Percentile_99_Invariants(value Percentile_99, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
+}
+
+// Percentile_100 keeps its boundary independent from the other percentile fields.
+type Percentile_100 Word
+
+// Percentile_100_Invariants preserves the caller's complete unit domain.
+func Percentile_100_Invariants(value Percentile_100, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
+		Ensure()
 }
 
 // Percentile_Distribution_Input gives the value at each of six percentiles of a distribution.
 type Percentile_Distribution_Input struct {
 	// P25 is the value at the twenty-fifth percentile.
-	P25 uint64
+	P25 Percentile_25
 	// P50 is the value at the median.
-	P50 uint64
+	P50 Percentile_50
 	// P75 is the value at the seventy-fifth percentile.
-	P75 uint64
+	P75 Percentile_75
 	// P95 is the value at the ninety-fifth percentile.
-	P95 uint64
+	P95 Percentile_95
 	// P99 is the value at the ninety-ninth percentile.
-	P99 uint64
+	P99 Percentile_99
 	// P100 is the ceiling value the top one percent returns.
-	P100 uint64
+	P100 Percentile_100
+}
+
+// Percentile_Distribution_Input_Invariants keeps all six caller-unit values representable.
+func Percentile_Distribution_Input_Invariants(
+	input Percentile_Distribution_Input, namespace invariant.Namespace,
+) {
+	Percentile_25_Invariants(input.P25, namespace)
+	Percentile_50_Invariants(input.P50, namespace)
+	Percentile_75_Invariants(input.P75, namespace)
+	Percentile_95_Invariants(input.P95, namespace)
+	Percentile_99_Invariants(input.P99, namespace)
+	Percentile_100_Invariants(input.P100, namespace)
 }
 
 // Percentile_Distribution builds a table from the six percentile values, weighted by the mass
 // between them, so a draw reproduces those percentiles; the top one percent returns P100.
 func Percentile_Distribution(
 	input *Percentile_Distribution_Input,
-) (distribution Distribution[uint64]) {
+) (distribution Distribution[Word]) {
+	defer func() {
+		Distribution_Invariants(distribution, "percentile_distribution.distribution")
+	}()
+	Percentile_Distribution_Input_Invariants(*input, "percentile_distribution.input")
 	return New_Distribution(
-		[]uint64{input.P25, input.P50, input.P75, input.P95, input.P99, input.P100},
-		[]uint64{25, 25, 25, 20, 4, 1},
+		Items[Word]{
+			Word(input.P25),
+			Word(input.P50),
+			Word(input.P75),
+			Word(input.P95),
+			Word(input.P99),
+			Word(input.P100),
+		},
+		Weights{25, 25, 25, 20, 4, 1},
+		6,
 	)
 }
 
 // Generator_Shuffle reorders items in place by Fisher-Yates, so each ordering is equally likely.
-func Generator_Shuffle[T any](generator *Generator, items []T) {
-	for index := len(items) - 1; index > 0; index-- {
-		swap_index := Generator_Below(generator, index+1)
+func Generator_Shuffle[T any](
+	generator *Generator, items *Items[T], count Item_Count,
+) {
+	Generator_Invariants(*generator, "generator_shuffle.generator")
+	Items_Invariants(*items, "generator_shuffle.items")
+	Item_Count_Invariants(count, "generator_shuffle.count")
+	for index := int(count) - 1; index > 0; index-- {
+		swap_index := Generator_Below(generator, Bound(index+1))
 		items[index], items[swap_index] = items[swap_index], items[index]
 	}
 }
@@ -211,30 +598,31 @@ func Generator_Shuffle[T any](generator *Generator, items []T) {
 // Generator_Split returns a child Generator seeded from one draw of the parent, an independent
 // stream so a draw in one cannot perturb the other.
 func Generator_Split(generator *Generator) (child Generator) {
-	return New(Generator_Next(generator))
+	defer func() { Generator_Invariants(child, "generator_split.child") }()
+	Generator_Invariants(*generator, "generator_split.generator")
+	return New(Seed(Generator_Next(generator)))
 }
 
 // Returns a value in the half-open range zero to bound using Lemire's method, so the result is
 // unbiased, not skewed the way a plain modulo would be. The caller guarantees bound is positive.
-func generator_below_unsigned(generator *Generator, bound uint64) (value uint64) {
+func generator_below_unsigned(generator *Generator, bound Draw_Bound) (value Draw) {
+	defer func() { Draw_Invariants(value, "generator_below_unsigned.value") }()
+	Generator_Invariants(*generator, "generator_below_unsigned.generator")
+	Draw_Bound_Invariants(bound, "generator_below_unsigned.bound")
 	random := Generator_Next(generator)
-	high, low := bits.Mul64(random, bound)
-	if low < bound {
+	high_word, low_word := bits.Multiply_64(
+		bits.Word_64(random), bits.Multiplier_64(bound),
+	)
+	high, low := Draw(high_word), Draw(low_word)
+	if Draw_Bound(low) < bound {
 		threshold := (-bound) % bound
-		for low < threshold {
+		for Draw_Bound(low) < threshold {
 			random = Generator_Next(generator)
-			high, low = bits.Mul64(random, bound)
+			high_word, low_word = bits.Multiply_64(
+				bits.Word_64(random), bits.Multiplier_64(bound),
+			)
+			high, low = Draw(high_word), Draw(low_word)
 		}
 	}
 	return high
-}
-
-// Advances a splitmix64 state and returns the next value. New uses it to expand one seed into the
-// four words of xoshiro256++ state, matching the seeding TigerBeetle's stdx.PRNG uses.
-func split_mix_64(state *uint64) (value uint64) {
-	*state += SPLIT_MIX_INCREMENT
-	value = *state
-	value = (value ^ (value >> 30)) * SPLIT_MIX_MULTIPLIER_FIRST
-	value = (value ^ (value >> 27)) * SPLIT_MIX_MULTIPLIER_SECOND
-	return value ^ (value >> 31)
 }

@@ -1,13 +1,12 @@
 package prng_test
 
 import (
-	"io"
 	"reflect"
 	"testing"
 
 	"local/james-orcales/shared/random/prng"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -41,7 +40,7 @@ func Test_Known_Sequence(t *testing.T) {
 	}
 	for index := 0; index < len(want); index++ {
 		value := prng.Generator_Next(&generator)
-		if value != want[index] {
+		if uint64(value) != want[index] {
 			t.Fatalf("draw %d was %d, want %d", index, value, want[index])
 		}
 	}
@@ -53,11 +52,11 @@ func Test_Below_Is_Bounded(t *testing.T) {
 	bounds := []int{1, 2, 7, 1000, 1 << 40}
 	for _, bound := range bounds {
 		for draw_index := 0; draw_index < 10000; draw_index++ {
-			value := prng.Generator_Below(&generator, bound)
+			value := prng.Generator_Below(&generator, prng.Bound(bound))
 			if value < 0 {
 				t.Fatalf("Below(%d) returned negative %d", bound, value)
 			}
-			if value >= bound {
+			if int(value) >= bound {
 				t.Fatalf("Below(%d) returned %d, out of range", bound, value)
 			}
 		}
@@ -67,11 +66,11 @@ func Test_Below_Is_Bounded(t *testing.T) {
 // Test_Element_Comes_From_Slice checks Element returns a member and rejects an empty slice.
 func Test_Element_Comes_From_Slice(t *testing.T) {
 	generator := prng.New(2)
-	items := []string{"a", "b", "c"}
+	items := prng.Items[string]{"a", "b", "c"}
 	for draw_index := 0; draw_index < 1000; draw_index++ {
-		item := prng.Generator_Element(&generator, items)
+		item := prng.Generator_Element(&generator, &items, 3)
 		found := false
-		for _, candidate := range items {
+		for _, candidate := range items[:3] {
 			if item == candidate {
 				found = true
 			}
@@ -81,8 +80,7 @@ func Test_Element_Comes_From_Slice(t *testing.T) {
 		}
 	}
 	died := did_die(func() {
-		empty := []string{}
-		prng.Generator_Element(&generator, empty)
+		prng.Generator_Element(&generator, &items, 0)
 	})
 	if !died {
 		t.Fatalf("Element on an empty slice did not exit")
@@ -139,9 +137,9 @@ func Test_Chance_Matches_Ratio(t *testing.T) {
 // Test_Sample_Matches_Weights checks Sample honors integer weights and skips zero-weight outcomes.
 func Test_Sample_Matches_Weights(t *testing.T) {
 	generator := prng.New(5)
-	outcomes := []string{"rare", "common", "never"}
-	weights := []uint64{10, 90, 0}
-	distribution := prng.New_Distribution(outcomes, weights)
+	outcomes := prng.Items[string]{"rare", "common", "never"}
+	weights := prng.Weights{10, 90, 0}
+	distribution := prng.New_Distribution(outcomes, weights, 3)
 	sample_count := 100000
 	rare_count := 0
 	common_count := 0
@@ -171,11 +169,11 @@ func Test_Sample_Matches_Weights(t *testing.T) {
 // Test_Shuffle_Permutes checks Shuffle preserves the multiset and can reorder.
 func Test_Shuffle_Permutes(t *testing.T) {
 	generator := prng.New(6)
-	original := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	items := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	prng.Generator_Shuffle(&generator, items)
+	original := [...]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	prng.Generator_Shuffle(&generator, &items, prng.Item_Count(len(original)))
 	seen := make([]bool, len(original))
-	for _, value := range items {
+	for _, value := range items[:len(original)] {
 		seen[value] = true
 	}
 	for _, present := range seen {
@@ -185,8 +183,8 @@ func Test_Shuffle_Permutes(t *testing.T) {
 	}
 	reordered := false
 	for attempt_index := 0; attempt_index < 10; attempt_index++ {
-		prng.Generator_Shuffle(&generator, items)
-		for index := 0; index < len(items); index++ {
+		prng.Generator_Shuffle(&generator, &items, prng.Item_Count(len(original)))
+		for index := 0; index < len(original); index++ {
 			if items[index] != original[index] {
 				reordered = true
 			}
@@ -316,6 +314,127 @@ func Test_Percentile_Distribution_Hits_Percentiles(t *testing.T) {
 	}
 }
 
+// Test_Invariant_Boundaries constructs deterministic draws because chance cannot prove word edges.
+func Test_Invariant_Boundaries(t *testing.T) {
+	verify_word_boundaries(t)
+	verify_ratio_boundaries()
+	verify_distribution_input_boundaries()
+	verify_collection_boundaries()
+	verify_distribution_boundaries()
+}
+
+func verify_word_boundaries(t *testing.T) {
+	prng.New(prng.SEED_MAXIMUM)
+	for _, value := range [...]prng.Word{
+		prng.WORD_MINIMUM,
+		prng.WORD_MINIMUM + 1,
+		prng.WORD_MINIMUM + 2,
+		prng.WORD_MAXIMUM,
+	} {
+		generator := generator_for_next(value)
+		if actual := prng.Generator_Next(&generator); actual != value {
+			t.Fatalf("constructed draw was %d, want %d", actual, value)
+		}
+	}
+
+	maximum_generator := generator_for_next(prng.WORD_MAXIMUM)
+	maximum_index := prng.Generator_Below(&maximum_generator, prng.BOUND_MAXIMUM)
+	if maximum_index != prng.INDEX_MAXIMUM {
+		t.Fatalf("maximum index was %d, want %d", maximum_index, prng.INDEX_MAXIMUM)
+	}
+}
+
+// BOUNDARY_RATIO_COUNT holds zero, one, two, and maximum witnesses.
+const BOUNDARY_RATIO_COUNT = 4
+
+func boundary_ratios() (ratios [BOUNDARY_RATIO_COUNT]prng.Ratio) {
+	return [BOUNDARY_RATIO_COUNT]prng.Ratio{
+		{Numerator: 0, Denominator: 1},
+		{Numerator: 1, Denominator: 1},
+		{Numerator: 2, Denominator: 2},
+		{Numerator: prng.Ratio_Numerator(prng.WEIGHT_MAXIMUM),
+			Denominator: prng.Ratio_Denominator(prng.WEIGHT_MAXIMUM)},
+	}
+}
+
+func verify_ratio_boundaries() {
+	for _, ratio := range boundary_ratios() {
+		generator := generator_for_next(prng.WORD_MAXIMUM)
+		prng.Generator_Chance(&generator, ratio)
+	}
+}
+
+func verify_distribution_input_boundaries() {
+	ratios := boundary_ratios()
+	for _, value := range [...]prng.Word{0, 1, 2, prng.WORD_MAXIMUM} {
+		index := int(value)
+		if value == prng.WORD_MAXIMUM {
+			index = len(ratios) - 1
+		}
+		prng.Bimodal_Distribution(&prng.Bimodal_Distribution_Input{
+			Fast:        prng.Bimodal_Fast(value),
+			Slow:        prng.Bimodal_Slow(value),
+			Slow_Chance: ratios[index],
+		})
+		prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
+			P25:  prng.Percentile_25(value),
+			P50:  prng.Percentile_50(value),
+			P75:  prng.Percentile_75(value),
+			P95:  prng.Percentile_95(value),
+			P99:  prng.Percentile_99(value),
+			P100: prng.Percentile_100(value),
+		})
+	}
+}
+
+func verify_collection_boundaries() {
+	var items prng.Items[int]
+	for _, count := range [...]prng.Item_Count{1, 2, prng.ITEM_COUNT_MAXIMUM} {
+		generator := prng.New(1)
+		prng.Generator_Element(&generator, &items, count)
+	}
+	for _, count := range [...]prng.Item_Count{0, 1, 2, prng.ITEM_COUNT_MAXIMUM} {
+		generator := prng.New(1)
+		prng.Generator_Shuffle(&generator, &items, count)
+	}
+}
+
+func verify_distribution_boundaries() {
+	var outcomes prng.Items[int]
+	for index := range outcomes {
+		outcomes[index] = index
+	}
+	var one, two, maximum prng.Weights
+	one[0] = prng.WEIGHT_MAXIMUM
+	two[0], two[1] = 1, 2
+	for index := range maximum {
+		maximum[index] = 1
+	}
+	for _, test_case := range []struct {
+		Weights prng.Weights
+		Count   prng.Distribution_Count
+	}{
+		{Weights: one, Count: 1},
+		{Weights: two, Count: 2},
+		{Weights: maximum, Count: prng.DISTRIBUTION_COUNT_MAXIMUM},
+	} {
+		distribution := prng.New_Distribution(
+			outcomes, test_case.Weights, test_case.Count,
+		)
+		generator := generator_for_next(prng.WORD_MAXIMUM)
+		prng.Generator_Sample(&generator, distribution)
+	}
+}
+
+func generator_for_next(value prng.Word) (generator prng.Generator) {
+	generator.State[0] = value
+	generator.State[3] = 0 - value
+	if value == 0 {
+		generator.State[1] = 1
+	}
+	return generator
+}
+
 // Runs action and reports whether it tripped a fatal invariant, used to assert preconditions. A
 // violation exits through the Default recorder, which os.Exit cannot recover, so the helper swaps
 // Exit for a panic — and silences the recorder's stderr — for the duration, then recovers it, so
@@ -323,7 +442,7 @@ func Test_Percentile_Distribution_Hits_Percentiles(t *testing.T) {
 func did_die(action func()) (died bool) {
 	exit, output := invariant.Default.Exit, invariant.Default.Output
 	invariant.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	invariant.Default.Output = io.Discard
+	invariant.Default.Output = discard_writer{}
 	defer func() {
 		invariant.Default.Exit, invariant.Default.Output = exit, output
 		if recover() != nil {
@@ -337,6 +456,74 @@ func did_die(action func()) (died bool) {
 // Marks the swapped-in Exit's panic, so did_die's recover tells a deliberately tripped guard from
 // an unrelated panic in the action.
 type tripped_invariant struct{}
+
+type discard_writer struct{}
+
+func (discard_writer) Write(data []byte) (count int, err error) {
+	return len(data), nil
+}
+
+func Benchmark_Next(b *testing.B) {
+	generator := prng.New(1)
+	for b.Loop() {
+		prng.Generator_Next(&generator)
+	}
+}
+
+func Benchmark_Below(b *testing.B) {
+	generator := prng.New(1)
+	for b.Loop() {
+		prng.Generator_Below(&generator, 100)
+	}
+}
+
+func Benchmark_Boolean(b *testing.B) {
+	generator := prng.New(1)
+	for b.Loop() {
+		prng.Generator_Boolean(&generator)
+	}
+}
+
+func Benchmark_Chance(b *testing.B) {
+	generator := prng.New(1)
+	probability := prng.Ratio{Numerator: 8, Denominator: 100}
+	for b.Loop() {
+		prng.Generator_Chance(&generator, probability)
+	}
+}
+
+func Benchmark_Element(b *testing.B) {
+	generator := prng.New(1)
+	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	for b.Loop() {
+		prng.Generator_Element(&generator, &items, 10)
+	}
+}
+
+func Benchmark_Sample(b *testing.B) {
+	generator := prng.New(1)
+	distribution := prng.New_Distribution(
+		prng.Items[int]{0, 1, 2, 3}, prng.Weights{10, 20, 30, 40}, 4,
+	)
+	for b.Loop() {
+		prng.Generator_Sample(&generator, distribution)
+	}
+}
+
+func Benchmark_Shuffle(b *testing.B) {
+	generator := prng.New(1)
+	items := prng.Items[int]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	for b.Loop() {
+		prng.Generator_Shuffle(&generator, &items, 10)
+	}
+}
+
+func Benchmark_Split(b *testing.B) {
+	generator := prng.New(1)
+	for b.Loop() {
+		prng.Generator_Split(&generator)
+	}
+}
 
 // Reports whether a struct type, or the element of a slice or array field, is floating point.
 func type_has_float(structure reflect.Type) (has bool) {
