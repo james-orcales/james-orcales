@@ -669,7 +669,7 @@ func fixed_point_text_cases(t *testing.T) {
 	testify.Equal(t, fixedpoint.Number(whole), round_trip, "the round trip")
 	for _, value := range []fixedpoint.Number{math.MaxInt64, 1, 2, -1} {
 		for _, digits := range []fixedpoint.Digit_Count{0, 1, 2, 6} {
-			want := fixedpoint.Format(value, digits)
+			want := format_fixed_point_direct(value, digits)
 			testify.Equal(t, want, format_fixed_point(value, digits),
 				"Format_Fixed_Point_Into(%d, %d)", value, digits)
 		}
@@ -885,6 +885,15 @@ func format_fixed_point(
 	var storage [strconv.FIXED_POINT_TEXT_SIZE_MAXIMUM]byte
 	count := strconv.Format_Fixed_Point_Into(storage[:], value, digits)
 	return fixedpoint.Text(storage[:int(count)])
+}
+
+// Keeps reference formatter caller-owned instead of sharing strconv implementation.
+func format_fixed_point_direct(
+	value fixedpoint.Number, digits fixedpoint.Digit_Count,
+) (text fixedpoint.Text) {
+	var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+	count := fixedpoint.Into_Text(storage[:], value, digits)
+	return fixedpoint.Text(storage[:count])
 }
 
 func quote(text strconv.Text) (quoted string) {

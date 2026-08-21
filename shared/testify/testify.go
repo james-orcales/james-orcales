@@ -1233,8 +1233,8 @@ func In_Delta(t *testing.T, input *In_Delta_Input, message_and_args ...any) (wit
 		return true
 	}
 	message := fmt.Sprintf("Max difference between %s and %s allowed is %s, but was %s",
-		fixedpoint.Format(input.Expected, 6), fixedpoint.Format(input.Actual, 6),
-		fixedpoint.Format(input.Delta, 6), fixedpoint.Format(difference, 6))
+		fixedpoint_text(input.Expected, 6), fixedpoint_text(input.Actual, 6),
+		fixedpoint_text(input.Delta, 6), fixedpoint_text(difference, 6))
 	return Fail(t, message, message_and_args...)
 }
 
@@ -1334,8 +1334,8 @@ func In_Epsilon(t *testing.T, input *In_Epsilon_Input, message_and_args ...any) 
 		return true
 	}
 	message := fmt.Sprintf("Relative error is too high: %s allowed, but was %s",
-		fixedpoint.Format(fixedpoint.Number(input.Epsilon), 6),
-		fixedpoint.Format(relative, 6))
+		fixedpoint_text(fixedpoint.Number(input.Epsilon), 6),
+		fixedpoint_text(relative, 6))
 	return Fail(t, message, message_and_args...)
 }
 
@@ -1370,6 +1370,13 @@ func In_Epsilon_Slice(
 		}
 	}
 	return true
+}
+
+// Keeps fixedpoint allocation free while failed assertion owns rendered diagnostic text.
+func fixedpoint_text(value fixedpoint.Number, digits fixedpoint.Digit_Count) (text string) {
+	var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+	count := fixedpoint.Into_Text(storage[:], value, digits)
+	return string(storage[:count])
 }
 
 // Returns the magnitude of a fixed-point number.

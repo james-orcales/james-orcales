@@ -151,7 +151,7 @@ const FIXED_POINT_UNITS_NEGATIVE_MAXIMUM uint64 = SIGNED_MAGNITUDE_MAXIMUM
 
 // FIXED_POINT_TEXT_SIZE_MINIMUM is the size of a one-digit number. It names the size
 // fixedpoint declares, because fixedpoint writes the text this package appends.
-const FIXED_POINT_TEXT_SIZE_MINIMUM = fixedpoint.TEXT_SIZE_MINIMUM
+const FIXED_POINT_TEXT_SIZE_MINIMUM = fixedpoint.DECIMAL_DIGITS_SIZE_MINIMUM
 
 // FIXED_POINT_TEXT_SIZE_MAXIMUM is a sign, the widest whole part, a point, and six
 // fraction digits.
