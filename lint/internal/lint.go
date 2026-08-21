@@ -6544,8 +6544,9 @@ func check_no_package_vars_is_map_or_slice_literal(vs *ast.ValueSpec) (yes bool)
 // binding — that's literally the shape they exist for. The package's directory
 // (workspace-root-relative) must match a listed instrumentation_packages glob;
 // the literal `default/` directory name confers nothing on its own. Allowed
-// only for the literal name "Default" and only as a single-name
-// single-initializer spec.
+// only for the literal name "Default" and only as a single-name spec. The
+// initializer is optional: a Default that the root assigns after it opens the
+// IO has only its zero value to declare.
 func check_no_package_vars_is_default(
 	file_set *token.FileSet, file *ast.File, vs *ast.ValueSpec, instrumentation []string,
 ) (yes bool) {
@@ -6560,10 +6561,7 @@ func check_no_package_vars_is_default(
 	if len(vs.Names) != 1 {
 		return false
 	}
-	if vs.Names[0].Name != "Default" {
-		return false
-	}
-	return len(vs.Values) == 1
+	return vs.Names[0].Name == "Default"
 }
 
 // Allowed only when every declared name has a paired initializer that is

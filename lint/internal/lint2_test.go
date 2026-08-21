@@ -471,6 +471,20 @@ var Default = &Thing{}
 			Allowlist: []string{"mylib/mylib_default"},
 		},
 		{
+			// The root assigns Default after it opens the IO, so the zero value is the
+			// only declaration a package that owns no IO can give it.
+			Name: "allowlisted uninitialized Default allowed",
+			Path: "snap/default/wire.go",
+			Source: `// Package snap is a fixture.
+package snap
+// Snapper is a fixture.
+type Snapper struct{}
+// Default is the OS-bound Snapper.
+var Default Snapper
+`,
+			Allowlist: []string{"snap/default"},
+		},
+		{
 			Name: "default dir absent from allowlist banned",
 			Path: "snap/default/wire.go",
 			Source: `// Package snap is a fixture.
