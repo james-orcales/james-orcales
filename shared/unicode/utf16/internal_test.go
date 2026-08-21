@@ -6,7 +6,6 @@ package utf16
 import (
 	"runtime"
 	"testing"
-	"unicode"
 
 	"local/james-orcales/shared/slices"
 )
@@ -63,13 +62,13 @@ func upstream_is_surrogate(character rune) (yes bool) {
 
 // Test_Upstream_Constants checks the constants copied from package unicode.
 func Test_Upstream_Constants(t *testing.T) {
-	if RUNE_MAX != unicode.MaxRune {
-		t.Errorf("utf16.maxRune is wrong: %x should be %x", RUNE_MAX, unicode.MaxRune)
+	if RUNE_MAX != '\U0010FFFF' {
+		t.Errorf("utf16.maxRune is wrong: %x should be %x", RUNE_MAX, '\U0010FFFF')
 	}
-	if REPLACEMENT_CHARACTER != unicode.ReplacementChar {
+	if REPLACEMENT_CHARACTER != '\uFFFD' {
 		t.Errorf(
 			"utf16.replacementChar is wrong: %x should be %x",
-			REPLACEMENT_CHARACTER, unicode.ReplacementChar,
+			REPLACEMENT_CHARACTER, '\uFFFD',
 		)
 	}
 }
@@ -153,16 +152,16 @@ func Test_Upstream_Encode_Character(t *testing.T) {
 			first, second := upstream_encode_character(character)
 			invalid := character < 0x10000
 			if !invalid {
-				invalid = character > unicode.MaxRune
+				invalid = character > '\U0010FFFF'
 			}
 			if invalid {
 				if output_index >= len(tt.Output) {
 					t.Errorf("#%d: ran out of tt.Output", fixture_index)
 					break
 				}
-				incorrect := first != unicode.ReplacementChar
+				incorrect := first != '\uFFFD'
 				if !incorrect {
-					incorrect = second != unicode.ReplacementChar
+					incorrect = second != '\uFFFD'
 				}
 				if incorrect {
 					t.Errorf(

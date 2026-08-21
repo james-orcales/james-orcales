@@ -19,14 +19,16 @@ import (
 // for entropy and the operating-system clock for the version 1, 6, and 7
 // timestamps. The node is random, drawn from crypto/rand when first needed.
 func New_Operating_System_Generator(
-	source *csprng.Generator, state uuid.Generator_State,
+	read system_csprng.Seed_Read,
+	source *csprng.Generator,
+	state uuid.Generator_State,
 ) (generator uuid.Generator) {
 	defer func() {
 		uuid.Generator_Invariants(generator, "new_operating_system_generator.generator")
 	}()
 	csprng.Generator_Invariants(*source, "new_operating_system_generator.source")
 	uuid.Generator_State_Invariants(state, "new_operating_system_generator.state")
-	*source = system_csprng.New_Operating_System_Generator(csprng.CURSOR_MIN)
+	*source = system_csprng.New_Operating_System_Generator(read, csprng.CURSOR_MIN)
 	clock := time.New_Operating_System_Clock()
 	return uuid.New(uuid.Source(source), clock, uuid.Node{}, state)
 }

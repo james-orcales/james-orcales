@@ -5,7 +5,6 @@ package utf16_test
 
 import (
 	"testing"
-	standard_utf16 "unicode/utf16"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
@@ -21,7 +20,7 @@ func Test_Surrogates(t *testing.T) {
 		utf16.SURROGATE_FINAL, utf16.SURROGATE_FINAL + 1,
 		utf16.RUNE_MAX, utf16.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, standard_utf16.IsSurrogate(rune(character)),
+		testify.Equal(t, reference_is_surrogate(rune(character)),
 			bool(utf16.Is_Surrogate(character)), "Is_Surrogate(%U)", character)
 	}
 }
@@ -36,16 +35,16 @@ func Test_Character_Conversion(t *testing.T) {
 		utf16.RUNE_MAX, utf16.RUNE_MAX + 1,
 		utf16.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, standard_utf16.RuneLen(rune(character)),
+		testify.Equal(t, reference_character_size(rune(character)),
 			int(utf16.Character_Size(character)),
 			"Character_Size(%U)", character)
-		standard_first, standard_second := standard_utf16.EncodeRune(rune(character))
+		standard_first, standard_second := reference_encode_character(rune(character))
 		shared_first, shared_second := utf16.Encode_Character(character)
 		testify.Equal(t, standard_first, rune(shared_first),
 			"Encode_Character(%U) first", character)
 		testify.Equal(t, standard_second, rune(shared_second),
 			"Encode_Character(%U) second", character)
-		testify.Equal(t, standard_utf16.DecodeRune(standard_first, standard_second),
+		testify.Equal(t, reference_decode_character(standard_first, standard_second),
 			rune(utf16.Decode_Character(
 				utf16.Character(standard_first),
 				utf16.Character(standard_second),
@@ -57,12 +56,12 @@ func Test_Character_Conversion(t *testing.T) {
 		utf16.Character(bits.INTEGER_32_MAXIMUM),
 	} {
 		testify.Equal(t,
-			standard_utf16.DecodeRune(rune(character), 0xdc00),
+			reference_decode_character(rune(character), 0xdc00),
 			rune(utf16.Decode_Character(character, 0xdc00)),
 			"Decode_Character(%U, low surrogate)", character,
 		)
 		testify.Equal(t,
-			standard_utf16.DecodeRune(0xd800, rune(character)),
+			reference_decode_character(0xd800, rune(character)),
 			rune(utf16.Decode_Character(0xd800, character)),
 			"Decode_Character(high surrogate, %U)", character,
 		)
@@ -83,7 +82,7 @@ func Test_Sequence_Conversion(t *testing.T) {
 		for index, character := range characters {
 			shared_characters[index] = utf16.Character(character)
 		}
-		testify.Equal(t, standard_utf16.Encode(characters),
+		testify.Equal(t, reference_encode(characters),
 			[]uint16(encode(shared_characters)), "Encode(%x)", characters)
 	}
 	for _, characters := range []utf16.Characters{
@@ -108,7 +107,7 @@ func Test_Sequence_Conversion(t *testing.T) {
 		for index, character := range decoded {
 			shared_characters[index] = rune(character)
 		}
-		testify.Equal(t, standard_utf16.Decode(words), shared_characters,
+		testify.Equal(t, reference_decode(words), shared_characters,
 			"Decode(%x)", words)
 	}
 	maximum_words := make(utf16.Words, utf16.SEQUENCE_SIZE_MAXIMUM)
@@ -141,7 +140,7 @@ func Test_Append(t *testing.T) {
 		shared_words = utf16.Words(
 			utf16.Append_Character(shared_words, character),
 		)
-		standard_words = standard_utf16.AppendRune(standard_words, rune(character))
+		standard_words = reference_append_character(standard_words, rune(character))
 	}
 	testify.Equal(t, standard_words, []uint16(shared_words))
 	var invalid_storage [utf16.CHARACTER_SIZE_MAXIMUM]uint16
@@ -165,10 +164,7 @@ func Test_Allocation(t *testing.T) {
 		Source_Words:      utf16.Words{'A', 0xd800, 0xdc00},
 	}
 	for _, one := range allocation_cases(&state) {
-		allocations := testing.AllocsPerRun(100, one.Run)
-		if allocations != 0 {
-			t.Errorf("%s allocated %v times; want 0", one.Name, allocations)
-		}
+		t.Run(one.Name, func(t *testing.T) { testify.Zero_Allocation(t, one.Run) })
 	}
 }
 
@@ -305,7 +301,7 @@ func Test_Standard_Library_Surrogate_Pairs(t *testing.T) {
 		{First: 'a', Second: 0xdc00},
 		{First: -1, Second: -1},
 	} {
-		testify.Equal(t, standard_utf16.DecodeRune(pair.First, pair.Second),
+		testify.Equal(t, reference_decode_character(pair.First, pair.Second),
 			rune(utf16.Decode_Character(
 				utf16.Character(pair.First),
 				utf16.Character(pair.Second),
@@ -325,7 +321,7 @@ func Test_Standard_Library_Sequences(t *testing.T) {
 		for index, character := range characters {
 			shared_characters[index] = utf16.Character(character)
 		}
-		testify.Equal(t, standard_utf16.Encode(characters),
+		testify.Equal(t, reference_encode(characters),
 			[]uint16(encode(shared_characters)), "Encode(%x)", characters)
 	}
 	for _, words := range [][]uint16{
@@ -339,7 +335,115 @@ func Test_Standard_Library_Sequences(t *testing.T) {
 		for index, character := range decoded {
 			shared_characters[index] = rune(character)
 		}
-		testify.Equal(t, standard_utf16.Decode(words), shared_characters,
+		testify.Equal(t, reference_decode(words), shared_characters,
 			"Decode(%x)", words)
 	}
+}
+
+func reference_is_surrogate(character rune) (yes bool) {
+	return 0xd800 <= character && character < 0xe000
+}
+
+func reference_character_size(character rune) (size int) {
+	if character < 0 {
+		return -1
+	}
+	if reference_is_surrogate(character) {
+		return -1
+	}
+	if character > 0x10ffff {
+		return -1
+	}
+	if character < 0x10000 {
+		return 1
+	}
+	return 2
+}
+
+func reference_encode_character(character rune) (first rune, second rune) {
+	if character < 0x10000 {
+		return '\ufffd', '\ufffd'
+	}
+	if character > 0x10ffff {
+		return '\ufffd', '\ufffd'
+	}
+	character -= 0x10000
+	return 0xd800 + character>>10, 0xdc00 + character&0x3ff
+}
+
+func reference_decode_character(first rune, second rune) (character rune) {
+	if 0xd800 <= first {
+		if first < 0xdc00 {
+			if 0xdc00 <= second {
+				if second < 0xe000 {
+					return (first-0xd800)<<10 | (second - 0xdc00) + 0x10000
+				}
+			}
+		}
+	}
+	return '\ufffd'
+}
+
+func reference_append_character(words []uint16, character rune) (result []uint16) {
+	if reference_is_surrogate(character) {
+		character = '\ufffd'
+	}
+	if character < 0 {
+		character = '\ufffd'
+	}
+	if character > 0x10ffff {
+		character = '\ufffd'
+	}
+	if character < 0x10000 {
+		return append(words, uint16(character))
+	}
+	first, second := reference_encode_character(character)
+	return append(words, uint16(first), uint16(second))
+}
+
+func reference_encode(characters []rune) (words []uint16) {
+	words = make([]uint16, 0, len(characters)*2)
+	for _, character := range characters {
+		words = reference_append_character(words, character)
+	}
+	return words
+}
+
+func reference_decode(words []uint16) (characters []rune) {
+	characters = make([]rune, 0, len(words))
+	for word_index := 0; word_index < len(words); word_index++ {
+		first := rune(words[word_index])
+		decoded_character, paired := reference_decode_pair(words, word_index)
+		if paired {
+			characters = append(characters, decoded_character)
+			word_index++
+			continue
+		}
+		if reference_is_surrogate(first) {
+			first = '\ufffd'
+		}
+		characters = append(characters, first)
+	}
+	return characters
+}
+
+func reference_decode_pair(words []uint16, word_index int) (character rune, paired bool) {
+	first := rune(words[word_index])
+	if first < 0xd800 {
+		return 0, false
+	}
+	if first >= 0xdc00 {
+		return 0, false
+	}
+	if word_index+1 >= len(words) {
+		return 0, false
+	}
+	second := rune(words[word_index+1])
+	if second < 0xdc00 {
+		return 0, false
+	}
+	if second >= 0xe000 {
+		return 0, false
+	}
+	return reference_decode_character(first, second), true
 }

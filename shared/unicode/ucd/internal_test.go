@@ -2,15 +2,50 @@ package ucd
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 	"testing"
-	"unicode"
 
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/slices"
-	"local/james-orcales/shared/testify"
 )
+
+func test_equal[Value comparable](
+	t *testing.T, expected Value, actual Value, message_and_arguments ...any,
+) {
+	t.Helper()
+	if expected != actual {
+		message := "values differ"
+		if len(message_and_arguments) > 0 {
+			message = fmt.Sprintf(
+				message_and_arguments[0].(string), message_and_arguments[1:]...,
+			)
+		}
+		t.Errorf("%s: expected %v, actual %v", message, expected, actual)
+	}
+}
+
+func test_true(t *testing.T, actual bool, message_and_arguments ...any) {
+	t.Helper()
+	if !actual {
+		t.Errorf(message_and_arguments[0].(string), message_and_arguments[1:]...)
+	}
+}
+
+func test_false(t *testing.T, actual bool, message_and_arguments ...any) {
+	t.Helper()
+	if actual {
+		t.Errorf(message_and_arguments[0].(string), message_and_arguments[1:]...)
+	}
+}
+
+func test_panics(t *testing.T, operation func(), message_and_arguments ...any) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Errorf(message_and_arguments[0].(string), message_and_arguments[1:]...)
+		}
+	}()
+	operation()
+}
 
 func named_table(
 	kind Table_Kind, name Name,
@@ -68,37 +103,37 @@ func append_fixed_hexadecimal(
 // Test_Encoded_Range_Boundaries verifies each private binary-search boundary.
 func Test_Encoded_Range_Boundaries(t *testing.T) {
 	t.Parallel()
-	testify.False(t, bool(encoded_ranges_16_contain(
+	test_false(t, bool(encoded_ranges_16_contain(
 		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MINIMUM, Code_Point_16(RANGE_16_MAXIMUM),
 	)), "an empty 16-bit range collection")
-	testify.True(t, bool(encoded_ranges_16_contain(
+	test_true(t, bool(encoded_ranges_16_contain(
 		encoded_ranges_16(1), DATA_POSITION_MINIMUM, 1, 0,
 	)), "one 16-bit range")
-	testify.True(t, bool(encoded_ranges_16_contain(
+	test_true(t, bool(encoded_ranges_16_contain(
 		"00"+encoded_ranges_16(2), 1, 2, 1,
 	)), "two 16-bit ranges after one byte")
-	testify.True(t, bool(encoded_ranges_16_contain(
+	test_true(t, bool(encoded_ranges_16_contain(
 		"0000"+encoded_ranges_16(DATA_COUNT_MAXIMUM),
 		2, DATA_COUNT_MAXIMUM, 2,
 	)), "the maximum 16-bit range collection after two bytes")
 
-	testify.False(t, bool(encoded_ranges_32_contain(
+	test_false(t, bool(encoded_ranges_32_contain(
 		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MINIMUM, Code_Point_32(RANGE_32_MAXIMUM),
 	)), "an empty 32-bit range collection")
-	testify.True(t, bool(encoded_ranges_32_contain(
+	test_true(t, bool(encoded_ranges_32_contain(
 		encoded_ranges_32(1), DATA_POSITION_MINIMUM, 1, Code_Point_32(RANGE_32_MINIMUM),
 	)), "one 32-bit range")
-	testify.True(t, bool(encoded_ranges_32_contain(
+	test_true(t, bool(encoded_ranges_32_contain(
 		"00"+encoded_ranges_32(2), 1, 2, Code_Point_32(RANGE_32_MINIMUM+1),
 	)), "two 32-bit ranges after one byte")
-	testify.True(t, bool(encoded_ranges_32_contain(
+	test_true(t, bool(encoded_ranges_32_contain(
 		"0000"+encoded_ranges_32(DATA_COUNT_MAXIMUM),
 		2, DATA_COUNT_MAXIMUM, Code_Point_32(RANGE_32_MINIMUM+2),
 	)), "the maximum 32-bit range collection after two bytes")
 	maximum_range := fmt.Sprintf(
 		"%08x%08x%08x", RANGE_32_MAXIMUM, RANGE_32_MAXIMUM, RANGE_32_STRIDE_MINIMUM,
 	)
-	testify.True(t, bool(encoded_ranges_32_contain(
+	test_true(t, bool(encoded_ranges_32_contain(
 		maximum_range, DATA_POSITION_MINIMUM, 1, Code_Point_32(RANGE_32_MAXIMUM),
 	)), "the maximum 32-bit code point")
 }
@@ -106,18 +141,18 @@ func Test_Encoded_Range_Boundaries(t *testing.T) {
 // Test_Encoded_Primitive_Boundaries verifies primitive decoder positions, sizes, and values.
 func Test_Encoded_Primitive_Boundaries(t *testing.T) {
 	t.Parallel()
-	testify.True(t, bool(encoded_name_equal(
+	test_true(t, bool(encoded_name_equal(
 		"", DATA_POSITION_MINIMUM, DATA_COUNT_MINIMUM, "",
 	)), "an empty name at the minimum position_count")
-	testify.True(t, bool(encoded_name_equal("", 1, 0, "")),
+	test_true(t, bool(encoded_name_equal("", 1, 0, "")),
 		"an empty name at position_count one")
-	testify.True(t, bool(encoded_name_equal("", 2, 0, "")),
+	test_true(t, bool(encoded_name_equal("", 2, 0, "")),
 		"an empty name at position_count two")
-	testify.True(t, bool(encoded_name_equal(
+	test_true(t, bool(encoded_name_equal(
 		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MINIMUM, "",
 	)), "an empty name at the maximum position_count")
 	maximum_name := Name(repeat("x", NAME_SIZE_MAXIMUM))
-	testify.False(t, bool(encoded_name_equal(
+	test_false(t, bool(encoded_name_equal(
 		"", DATA_POSITION_MAXIMUM, DATA_COUNT_MAXIMUM, maximum_name,
 	)), "a maximum count cannot equal a bounded name")
 
@@ -128,10 +163,10 @@ func Test_Encoded_Primitive_Boundaries(t *testing.T) {
 	maximum_position_buffer[len(maximum_position_buffer)-2] = 'f'
 	maximum_position_buffer[len(maximum_position_buffer)-1] = 'f'
 	maximum_position_data := string(maximum_position_buffer)
-	testify.Equal(t, Encoded_Number(0xff), encoded_number(
+	test_equal(t, Encoded_Number(0xff), encoded_number(
 		maximum_position_data, DATA_POSITION_MAXIMUM, ENCODED_WIDTH_BYTE,
 	))
-	testify.Equal(t, Encoded_Number(ENCODED_NUMBER_MAXIMUM), encoded_number(
+	test_equal(t, Encoded_Number(ENCODED_NUMBER_MAXIMUM), encoded_number(
 		"ffffffff", DATA_POSITION_MINIMUM, ENCODED_WIDTH_32,
 	))
 }
@@ -139,11 +174,11 @@ func Test_Encoded_Primitive_Boundaries(t *testing.T) {
 // Test_Case_Data_Uses_Native_Width prevents text decoding in case-conversion lookups.
 func Test_Case_Data_Uses_Native_Width(t *testing.T) {
 	t.Parallel()
-	testify.Equal(
+	test_equal(
 		t, CASE_RANGE_COUNT*CASE_RANGE_BYTE_COUNT, len(CASE_RANGE_DATA),
 		"case ranges use one byte per encoded byte",
 	)
-	testify.Equal(
+	test_equal(
 		t, CASE_ORBIT_COUNT*CASE_ORBIT_PAIR_BYTE_COUNT, len(CASE_ORBIT_DATA),
 		"case orbits use one byte per encoded byte",
 	)
@@ -152,18 +187,38 @@ func Test_Case_Data_Uses_Native_Width(t *testing.T) {
 // Test_ASCII_Fold_Data checks the complete upstream ASCII fold table.
 func Test_ASCII_Fold_Data(t *testing.T) {
 	t.Parallel()
-	testify.Equal(t, (int(ASCII_MAX)+1)*2, len(ASCII_FOLD_DATA))
+	test_equal(t, (int(ASCII_MAX)+1)*2, len(ASCII_FOLD_DATA))
 	for character := Character(0); character <= ASCII_MAX; character++ {
 		position := int(character) * 2
 		folded := Character(
 			uint16(ASCII_FOLD_DATA[position])<<8 |
 				uint16(ASCII_FOLD_DATA[position+1]),
 		)
-		testify.Equal(
-			t, unicode.SimpleFold(rune(character)), rune(folded),
+		test_equal(
+			t, reference_ascii_fold(character), rune(folded),
 			"the ASCII fold for %U", character,
 		)
 	}
+}
+
+func reference_ascii_fold(character Character) (folded rune) {
+	switch character {
+	case 'k':
+		return '\u212a'
+	case 's':
+		return '\u017f'
+	}
+	if 'A' <= character {
+		if character <= 'Z' {
+			return rune(character + ('a' - 'A'))
+		}
+	}
+	if 'a' <= character {
+		if character <= 'z' {
+			return rune(character - ('a' - 'A'))
+		}
+	}
+	return rune(character)
 }
 
 func test_digit() (tests []rune) {
@@ -558,7 +613,7 @@ func Test_Upstream_Examples(t *testing.T) {
 	example_is_upper(&output)
 	example_is_title(&output)
 	example_is_space(&output)
-	testify.Equal(t, UPSTREAM_EXAMPLE_OUTPUT, string(output))
+	test_equal(t, UPSTREAM_EXAMPLE_OUTPUT, string(output))
 }
 
 // Test_Is_Control_Latin_1 preserves the upstream behavior coverage.
@@ -650,34 +705,111 @@ func Test_Is_Graphic_Latin_1(t *testing.T) {
 // Test_Derived_Classification_Tables prevents generated data from drifting from Unicode.
 func Test_Derived_Classification_Tables(t *testing.T) {
 	t.Parallel()
+	print_tables := reference_classification_tables("L", "M", "N", "P", "S")
+	graphic_tables := reference_classification_tables("L", "M", "N", "P", "S", "Zs")
+	print := func(character rune) (yes bool) {
+		return reference_is_print(print_tables, character)
+	}
+	graphic := func(character rune) (yes bool) {
+		return reference_is_graphic(graphic_tables, character)
+	}
 	print_ranges_16, print_ranges_32 := derived_classification_data(
-		unicode.IsPrint,
+		print,
 	)
 	graphic_ranges_16, graphic_ranges_32 := derived_classification_data(
-		unicode.IsGraphic,
+		graphic,
 	)
-	testify.Equal(t, PRINT_RANGES_16_DATA, print_ranges_16,
+	test_equal(t, PRINT_RANGES_16_DATA, print_ranges_16,
 		"the generated 16-bit print ranges")
-	testify.Equal(t, PRINT_RANGES_32_DATA, print_ranges_32,
+	test_equal(t, PRINT_RANGES_32_DATA, print_ranges_32,
 		"the generated 32-bit print ranges")
-	testify.Equal(t, GRAPHIC_RANGES_16_DATA, graphic_ranges_16,
+	test_equal(t, GRAPHIC_RANGES_16_DATA, graphic_ranges_16,
 		"the generated 16-bit graphic ranges")
-	testify.Equal(t, GRAPHIC_RANGES_32_DATA, graphic_ranges_32,
+	test_equal(t, GRAPHIC_RANGES_32_DATA, graphic_ranges_32,
 		"the generated 32-bit graphic ranges")
 	for character := rune(0); character <= rune(RUNE_MAX); character++ {
 		shared_print := bool(Is_Print(Character(character)))
-		if shared_print != unicode.IsPrint(character) {
+		if shared_print != print(character) {
 			t.Errorf(
 				"the print ranges contain %U: got %t", character, shared_print,
 			)
 		}
 		shared_graphic := bool(Is_Graphic(Character(character)))
-		if shared_graphic != unicode.IsGraphic(character) {
+		if shared_graphic != graphic(character) {
 			t.Errorf(
 				"the graphic ranges contain %U: got %t", character, shared_graphic,
 			)
 		}
 	}
+}
+
+func reference_is_print(tables []Range_Table, character rune) (yes bool) {
+	if character == ' ' {
+		return true
+	}
+	return reference_in_tables(tables, character)
+}
+
+func reference_is_graphic(tables []Range_Table, character rune) (yes bool) {
+	return reference_in_tables(tables, character)
+}
+
+func reference_classification_tables(names ...Name) (tables []Range_Table) {
+	for _, name := range names {
+		table, found := named_table(TABLE_KIND_CATEGORY, name)
+		if !found {
+			panic("missing classification table")
+		}
+		tables = append(tables, table)
+	}
+	return tables
+}
+
+func reference_in_tables(tables []Range_Table, character rune) (yes bool) {
+	for _, table := range tables {
+		if reference_range_table_contains(table, character) {
+			return true
+		}
+	}
+	return false
+}
+
+func reference_range_table_contains(table Range_Table, character rune) (yes bool) {
+	if character < 0 {
+		return false
+	}
+	if character <= rune(RANGE_16_MAXIMUM) {
+		low_index, high_count := 0, len(table.Ranges_16)
+		for low_index < high_count {
+			middle_index := int(uint(low_index+high_count) >> 1)
+			one := table.Ranges_16[middle_index]
+			if character < rune(one.Minimum) {
+				high_count = middle_index
+				continue
+			}
+			if character <= rune(one.Maximum) {
+				difference := character - rune(one.Minimum)
+				return difference%rune(one.Stride) == 0
+			}
+			low_index = middle_index + 1
+		}
+		return false
+	}
+	low_index, high_count := 0, len(table.Ranges_32)
+	for low_index < high_count {
+		middle_index := int(uint(low_index+high_count) >> 1)
+		one := table.Ranges_32[middle_index]
+		if character < rune(one.Minimum) {
+			high_count = middle_index
+			continue
+		}
+		if character <= rune(one.Maximum) {
+			difference := character - rune(one.Minimum)
+			return difference%rune(one.Stride) == 0
+		}
+		low_index = middle_index + 1
+	}
+	return false
 }
 
 func derived_classification_data(
@@ -1066,7 +1198,7 @@ func case_name(c Case) (name string) {
 func Test_To(t *testing.T) {
 	for _, c := range case_test() {
 		if c.Cas < UPPER_CASE {
-			testify.Panics(t, func() {
+			test_panics(t, func() {
 				To(c.Cas, Character(c.In))
 			}, "To rejects case %d", c.Cas)
 			continue
@@ -1247,78 +1379,6 @@ func Test_Simple_Fold(t *testing.T) {
 	}
 }
 
-// UNICODE_CALIBRATE=1 runs the calibration to find a plausible
-// cutoff point for linear search of a range list vs. binary search.
-// We create a fake table and then time how long it takes to do a
-// sequence of searches within that table, for all possible inputs
-// relative to the ranges (something before all, in each, between each, after all).
-// This assumes that all possible runes are equally likely.
-// In practice most runes are ASCII so this is a conservative estimate
-// of an effective cutoff value. In practice we could probably set it higher
-// than what this function recommends.
-
-// Test_Calibrate preserves the upstream behavior coverage.
-func Test_Calibrate(t *testing.T) {
-	if os.Getenv("UNICODE_CALIBRATE") != "1" {
-		return
-	}
-
-	if runtime.GOARCH == "amd64" {
-		fmt.Printf("warning: running calibration on %s\n", runtime.GOARCH)
-	}
-
-	// Find the point where binary search wins by more than 10%.
-	// The 10% bias gives linear search an edge when they're close,
-	// because on predominantly ASCII inputs linear search is even
-	// better than our benchmarks measure.
-	n := search(64, func(n int) (found bool) {
-		tab := fake_table(n)
-		blinear := func(b *testing.B) {
-			tab := tab
-			max := n*5 + 20
-			for i_index := 0; i_index < b.N; i_index++ {
-				for j := 0; j <= max; j++ {
-					linear(tab, uint16(j))
-				}
-			}
-		}
-		bbinary := func(b *testing.B) {
-			tab := tab
-			max := n*5 + 20
-			for i_index := 0; i_index < b.N; i_index++ {
-				for j := 0; j <= max; j++ {
-					binary(tab, uint16(j))
-				}
-			}
-		}
-		bmlinear := testing.Benchmark(blinear)
-		bmbinary := testing.Benchmark(bbinary)
-		fmt.Printf("n=%d: linear=%d binary=%d\n",
-			n, bmlinear.NsPerOp(), bmbinary.NsPerOp())
-		return bmlinear.NsPerOp()*100 > bmbinary.NsPerOp()*110
-	})
-	fmt.Printf("calibration: linear cutoff = %d\n", n)
-}
-
-func search(
-	count int, predicate func(int) (yes bool),
-) (position_count int) {
-	indices := make([]int, count)
-	for index := range indices {
-		indices[index] = index
-	}
-	found, _ := slices.Binary_Search_Function(
-		indices, true,
-		func(index int, _ bool) (comparison slices.Comparison) {
-			if predicate(index) {
-				return slices.ORDERING_EQUAL
-			}
-			return slices.ORDERING_LESS
-		},
-	)
-	return int(found)
-}
-
 func repeat(text string, count int) (repeated string) {
 	buffer := make([]byte, len(text)*count)
 	position := 0
@@ -1326,86 +1386,6 @@ func repeat(text string, count int) (repeated string) {
 		position += copy(buffer[position:], text)
 	}
 	return string(buffer)
-}
-
-func fake_table(n int) (ranges []Range_16) {
-	var r16 []Range_16
-	for i_index := 0; i_index < n; i_index++ {
-		r16 = append(r16, Range_16{
-			Minimum: Range_16_Minimum(i_index*5 + 10),
-			Maximum: Range_16_Maximum(i_index*5 + 12),
-			Stride:  1,
-		})
-	}
-	return r16
-}
-
-func linear(ranges []Range_16, r uint16) (found bool) {
-	for i_index := range ranges {
-		current_range := &ranges[i_index]
-		if r < uint16(current_range.Minimum) {
-			return false
-		}
-		if r <= uint16(current_range.Maximum) {
-			return (r-uint16(current_range.Minimum))%uint16(current_range.Stride) == 0
-		}
-	}
-	return false
-}
-
-func binary(ranges []Range_16, r uint16) (found bool) {
-	// Binary search avoids a linear scan for large tables.
-	lo := 0
-	hi_count := len(ranges)
-	for lo < hi_count {
-		m := int(uint(lo+hi_count) >> 1)
-		current_range := &ranges[m]
-		if uint16(current_range.Minimum) <= r {
-			if r <= uint16(current_range.Maximum) {
-				difference := r - uint16(current_range.Minimum)
-				return difference%uint16(current_range.Stride) == 0
-			}
-		}
-		if r < uint16(current_range.Minimum) {
-			hi_count = m
-		} else {
-			lo = m + 1
-		}
-	}
-	return false
-}
-
-// Test_Latin_Offset preserves the upstream behavior coverage.
-func Test_Latin_Offset(t *testing.T) {
-	families := []struct {
-		Kind   Table_Kind
-		Tables map[string]*unicode.RangeTable
-	}{
-		{Kind: TABLE_KIND_CATEGORY, Tables: unicode.Categories},
-		{Kind: TABLE_KIND_FOLD_CATEGORY,
-			Tables: unicode.FoldCategory},
-		{Kind: TABLE_KIND_FOLD_SCRIPT,
-			Tables: unicode.FoldScript},
-		{Kind: TABLE_KIND_PROPERTY, Tables: unicode.Properties},
-		{Kind: TABLE_KIND_SCRIPT, Tables: unicode.Scripts},
-	}
-	for _, family := range families {
-		for name := range family.Tables {
-			table, found := named_table(family.Kind, Name(name))
-			if !found {
-				t.Fatalf("%s is not a known table", name)
-			}
-			i := 0
-			for i < len(table.Ranges_16) &&
-				uint16(table.Ranges_16[i].Maximum) <= uint16(LATIN_1_MAX) {
-				i++
-			}
-			if int(table.Latin_Offset) != i {
-				t.Errorf("%s: Latin_Offset=%d, want %d",
-					name, table.Latin_Offset, i)
-			}
-		}
-	}
 }
 
 // Test_Special_Case_No_Mapping preserves the upstream behavior coverage.
@@ -1515,36 +1495,6 @@ func Benchmark_Is_Graphic_Unassigned(b *testing.B) {
 	b.ReportAllocs()
 	for range b.N {
 		result = Is_Graphic(0x0378)
-	}
-	runtime.KeepAlive(result)
-}
-
-// Benchmark_Standard_Is_Print_Letter supplies a matched standard-library control.
-func Benchmark_Standard_Is_Print_Letter(b *testing.B) {
-	var result bool
-	b.ReportAllocs()
-	for range b.N {
-		result = unicode.IsPrint('世')
-	}
-	runtime.KeepAlive(result)
-}
-
-// Benchmark_Standard_Is_Print_Unassigned supplies a matched standard-library control.
-func Benchmark_Standard_Is_Print_Unassigned(b *testing.B) {
-	var result bool
-	b.ReportAllocs()
-	for range b.N {
-		result = unicode.IsPrint(0x0378)
-	}
-	runtime.KeepAlive(result)
-}
-
-// Benchmark_Standard_Is_Graphic_Unassigned supplies a matched standard-library control.
-func Benchmark_Standard_Is_Graphic_Unassigned(b *testing.B) {
-	var result bool
-	b.ReportAllocs()
-	for range b.N {
-		result = unicode.IsGraphic(0x0378)
 	}
 	runtime.KeepAlive(result)
 }

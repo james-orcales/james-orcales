@@ -4,9 +4,7 @@
 package utf8_test
 
 import (
-	"strings"
 	"testing"
-	standard_utf8 "unicode/utf8"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
@@ -19,10 +17,10 @@ func Test_Complete_Sequences(t *testing.T) {
 	for _, value := range []string{
 		"", "A", "¢", "€", "𐀀", "\xc2", "\xe2\x82", "\xf0\x90\x80", "\x80", "\xc0",
 	} {
-		testify.Equal(t, standard_utf8.FullRuneInString(value),
+		testify.Equal(t, reference_full_character(value),
 			bool(utf8.Full_Character_Text(utf8.Text(value))),
 			"Full_Character_Text(%q)", value)
-		testify.Equal(t, standard_utf8.FullRune([]byte(value)),
+		testify.Equal(t, reference_full_character(value),
 			bool(utf8.Full_Character(utf8.Bytes(value))),
 			"Full_Character(%q)", value)
 	}
@@ -37,7 +35,7 @@ func Test_Decode(t *testing.T) {
 	for _, value := range []string{
 		"", "A", "¢", "€", "𐀀", "A¢€𐀀", "\x80", "\xc0", "\xed\xa0\x80", "\xf4\x90\x80\x80",
 	} {
-		standard_character, standard_size := standard_utf8.DecodeRuneInString(value)
+		standard_character, standard_size := reference_decode_character(value)
 		shared_character, shared_size := utf8.Decode_Character_Text(
 			utf8.Text(value),
 		)
@@ -45,7 +43,7 @@ func Test_Decode(t *testing.T) {
 			"Decode_Character_Text(%q) character", value)
 		testify.Equal(t, standard_size, int(shared_size),
 			"Decode_Character_Text(%q) size", value)
-		standard_character, standard_size = standard_utf8.DecodeRune([]byte(value))
+		standard_character, standard_size = reference_decode_character(value)
 		shared_character, shared_size = utf8.Decode_Character(
 			utf8.Bytes(value),
 		)
@@ -54,7 +52,7 @@ func Test_Decode(t *testing.T) {
 		testify.Equal(t, standard_size, int(shared_size),
 			"Decode_Character(%q) size", value)
 
-		standard_character, standard_size = standard_utf8.DecodeLastRuneInString(value)
+		standard_character, standard_size = reference_decode_final_character(value)
 		shared_character, shared_size = utf8.Decode_Final_Character_Text(
 			utf8.Text(value),
 		)
@@ -62,7 +60,7 @@ func Test_Decode(t *testing.T) {
 			"Decode_Final_Character_Text(%q) character", value)
 		testify.Equal(t, standard_size, int(shared_size),
 			"Decode_Final_Character_Text(%q) size", value)
-		standard_character, standard_size = standard_utf8.DecodeLastRune([]byte(value))
+		standard_character, standard_size = reference_decode_final_character(value)
 		shared_character, shared_size = utf8.Decode_Final_Character(
 			utf8.Bytes(value),
 		)
@@ -93,10 +91,10 @@ func Test_Encoding(t *testing.T) {
 		0xdfff, 0xe000, 0xffff, 0x10000, utf8.RUNE_MAX,
 		utf8.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, standard_utf8.RuneLen(rune(character)),
+		testify.Equal(t, reference_character_size(rune(character)),
 			int(utf8.Character_Size(character)), "Character_Size(%U)", character)
-		standard_buffer := make([]byte, standard_utf8.UTFMax)
-		standard_size := standard_utf8.EncodeRune(standard_buffer, rune(character))
+		standard_buffer := make([]byte, utf8.UTF_MAXIMUM)
+		standard_size := reference_encode_character(standard_buffer, rune(character))
 		shared_buffer := make(utf8.Bytes, utf8.UTF_MAXIMUM)
 		shared_size := utf8.Encode_Character(shared_buffer, character)
 		testify.Equal(t, standard_size, int(shared_size),
@@ -106,7 +104,7 @@ func Test_Encoding(t *testing.T) {
 			"Encode_Character(%U) bytes", character)
 		var append_storage [utf8.UTF_MAXIMUM + 1]byte
 		append_storage[0] = 'x'
-		testify.Equal(t, standard_utf8.AppendRune([]byte("x"), rune(character)),
+		testify.Equal(t, reference_append_character([]byte("x"), rune(character)),
 			[]byte(utf8.Append_Character(append_storage[:1], character)),
 			"Append_Character(%U)", character)
 	}
@@ -132,10 +130,10 @@ func Test_Character_Count(t *testing.T) {
 	for _, value := range []string{
 		"", "ASCII", "☺☻☹", "A¢€𐀀", "\x80\x80", "\xe2\x98", "a\xffb",
 	} {
-		testify.Equal(t, standard_utf8.RuneCountInString(value),
+		testify.Equal(t, reference_character_count(value),
 			int(utf8.Character_Count_Text(utf8.Text(value))),
 			"Character_Count_Text(%q)", value)
-		testify.Equal(t, standard_utf8.RuneCount([]byte(value)),
+		testify.Equal(t, reference_character_count(value),
 			int(utf8.Character_Count(utf8.Bytes(value))),
 			"Character_Count(%q)", value)
 	}
@@ -152,7 +150,7 @@ func Test_Character_Count(t *testing.T) {
 func Test_Validation(t *testing.T) {
 	t.Parallel()
 	for value := 0; value <= int(bits.WORD_8_MAXIMUM); value++ {
-		testify.Equal(t, standard_utf8.RuneStart(byte(value)),
+		testify.Equal(t, byte(value)&0xc0 != 0x80,
 			bool(utf8.Character_Start(utf8.Byte(value))),
 			"Character_Start(%x)", value)
 	}
@@ -160,10 +158,10 @@ func Test_Validation(t *testing.T) {
 		"", "ASCII", "☺☻☹", "A¢€𐀀", "\x80", "\xc0\x80", "\xed\xa0\x80",
 		"\xf4\x8f\xbf\xbf", "\xf4\x90\x80\x80",
 	} {
-		testify.Equal(t, standard_utf8.ValidString(value),
+		testify.Equal(t, reference_valid(value),
 			bool(utf8.Valid_Text(utf8.Text(value))),
 			"Valid_Text(%q)", value)
-		testify.Equal(t, standard_utf8.Valid([]byte(value)),
+		testify.Equal(t, reference_valid(value),
 			bool(utf8.Valid(utf8.Bytes(value))), "Valid(%q)", value)
 	}
 	maximum := repeat("a", utf8.SEQUENCE_SIZE_MAXIMUM)
@@ -174,7 +172,7 @@ func Test_Validation(t *testing.T) {
 		-1, 0, 1, 2, 0xd7ff, 0xd800, 0xdfff, 0xe000,
 		utf8.RUNE_MAX, utf8.RUNE_MAX + 1, utf8.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, standard_utf8.ValidRune(rune(character)),
+		testify.Equal(t, reference_valid_character(rune(character)),
 			bool(utf8.Valid_Character(character)),
 			"Valid_Character(%U)", character)
 	}
@@ -187,10 +185,7 @@ func Test_Allocation(t *testing.T) {
 		Text:   "A世",
 	}
 	for _, one := range allocation_cases(&state) {
-		allocations := testing.AllocsPerRun(100, one.Run)
-		if allocations != 0 {
-			t.Errorf("%s allocated %v times; want 0", one.Name, allocations)
-		}
+		t.Run(one.Name, func(t *testing.T) { testify.Zero_Allocation(t, one.Run) })
 	}
 }
 
@@ -307,7 +302,11 @@ func Test_Encoding_Constants(t *testing.T) {
 }
 
 func repeat(text string, count int) (repeated string) {
-	return strings.Repeat(text, count)
+	storage := make([]byte, len(text)*count)
+	for copy_index := 0; copy_index < count; copy_index++ {
+		copy(storage[copy_index*len(text):], text)
+	}
+	return string(storage)
 }
 
 // Test_Standard_Library_Character_Map preserves the upstream behavior coverage.
@@ -319,8 +318,8 @@ func Test_Standard_Library_Character_Map(t *testing.T) {
 		0xd7ff, 0xe000, 0xfffe, 0xffff, 0x10000, 0x10001, 0x40000,
 		0x10fffe, 0x10ffff, 0xfffd,
 	} {
-		standard_buffer := make([]byte, standard_utf8.UTFMax)
-		standard_size := standard_utf8.EncodeRune(standard_buffer, character)
+		standard_buffer := make([]byte, utf8.UTF_MAXIMUM)
+		standard_size := reference_encode_character(standard_buffer, character)
 		standard_encoding := standard_buffer[:standard_size]
 		shared_buffer := make(utf8.Bytes, utf8.UTF_MAXIMUM)
 		shared_size := utf8.Encode_Character(
@@ -351,13 +350,13 @@ func Test_Standard_Library_First_Bytes(t *testing.T) {
 	for value := 0; value <= 0xff; value++ {
 		sequence := []byte{byte(value)}
 		text := string(sequence)
-		testify.Equal(t, standard_utf8.FullRune(sequence),
+		testify.Equal(t, reference_full_character(text),
 			bool(utf8.Full_Character(utf8.Bytes(sequence))),
 			"Full_Character(%x)", value)
-		testify.Equal(t, standard_utf8.FullRuneInString(text),
+		testify.Equal(t, reference_full_character(text),
 			bool(utf8.Full_Character_Text(utf8.Text(text))),
 			"Full_Character_Text(%x)", value)
-		standard_character, standard_size := standard_utf8.DecodeRune(sequence)
+		standard_character, standard_size := reference_decode_character(text)
 		shared_character, shared_size := utf8.Decode_Character(
 			utf8.Bytes(sequence),
 		)
@@ -365,7 +364,7 @@ func Test_Standard_Library_First_Bytes(t *testing.T) {
 			"Decode_Character(%x) character", value)
 		testify.Equal(t, standard_size, int(shared_size),
 			"Decode_Character(%x) size", value)
-		standard_character, standard_size = standard_utf8.DecodeRuneInString(text)
+		standard_character, standard_size = reference_decode_character(text)
 		shared_character, shared_size = utf8.Decode_Character_Text(
 			utf8.Text(text),
 		)
@@ -384,12 +383,12 @@ func Test_Standard_Library_Invalid_Sequences(t *testing.T) {
 		"\xf0\x80\x80\x80", "\xf4\x90\x80\x80", "\xf5\x80\x80\x80",
 		"\xe2\x28\xa1", "\xf0\x90\x28\xbc", "\xf0\x28\x8c\xbc",
 	} {
-		testify.Equal(t, standard_utf8.ValidString(value),
+		testify.Equal(t, reference_valid(value),
 			bool(utf8.Valid_Text(utf8.Text(value))),
 			"Valid_Text(%q)", value)
-		testify.Equal(t, standard_utf8.Valid([]byte(value)),
+		testify.Equal(t, reference_valid(value),
 			bool(utf8.Valid(utf8.Bytes(value))), "Valid(%q)", value)
-		standard_character, standard_size := standard_utf8.DecodeLastRuneInString(value)
+		standard_character, standard_size := reference_decode_final_character(value)
 		shared_character, shared_size := utf8.Decode_Final_Character_Text(
 			utf8.Text(value),
 		)
@@ -398,4 +397,206 @@ func Test_Standard_Library_Invalid_Sequences(t *testing.T) {
 		testify.Equal(t, standard_size, int(shared_size),
 			"Decode_Final_Character_Text(%q) size", value)
 	}
+}
+
+func reference_full_character(text string) (full bool) {
+	if len(text) == 0 {
+		return false
+	}
+	_, size := reference_decode_character(text)
+	if size != 1 {
+		return true
+	}
+	if text[0] < 0xc2 {
+		return true
+	}
+	if text[0] > 0xf4 {
+		return true
+	}
+	required := reference_encoded_size(text[0])
+	available_count := len(text)
+	if available_count > required {
+		available_count = required
+	}
+	for byte_index := 1; byte_index < available_count; byte_index++ {
+		minimum, maximum := byte(0x80), byte(0xbf)
+		if byte_index == 1 {
+			minimum, maximum = reference_second_byte_range(text[0])
+		}
+		if text[byte_index] < minimum {
+			return true
+		}
+		if text[byte_index] > maximum {
+			return true
+		}
+	}
+	return len(text) >= required
+}
+
+func reference_decode_character(text string) (character rune, size int) {
+	if len(text) == 0 {
+		return '\ufffd', 0
+	}
+	first := text[0]
+	if first < 0x80 {
+		return rune(first), 1
+	}
+	if first < 0xc2 {
+		return '\ufffd', 1
+	}
+	if first > 0xf4 {
+		return '\ufffd', 1
+	}
+	required := reference_encoded_size(first)
+	if required == 1 {
+		return '\ufffd', 1
+	}
+	if len(text) < required {
+		return '\ufffd', 1
+	}
+	second_minimum, second_maximum := reference_second_byte_range(first)
+	if text[1] < second_minimum {
+		return '\ufffd', 1
+	}
+	if text[1] > second_maximum {
+		return '\ufffd', 1
+	}
+	character = rune(first & (0x7f >> required))
+	for byte_index := 1; byte_index < required; byte_index++ {
+		if byte_index > 1 {
+			if text[byte_index] < 0x80 {
+				return '\ufffd', 1
+			}
+			if text[byte_index] > 0xbf {
+				return '\ufffd', 1
+			}
+		}
+		character = character<<6 | rune(text[byte_index]&0x3f)
+	}
+	return character, required
+}
+
+func reference_decode_final_character(text string) (character rune, byte_size int) {
+	if len(text) == 0 {
+		return '\ufffd', 0
+	}
+	minimum_index := len(text) - utf8.UTF_MAXIMUM
+	if minimum_index < 0 {
+		minimum_index = 0
+	}
+	for byte_index := len(text) - 1; byte_index >= minimum_index; byte_index-- {
+		if text[byte_index]&0xc0 == 0x80 {
+			continue
+		}
+		character, byte_size = reference_decode_character(text[byte_index:])
+		byte_count := byte_size
+		final_byte_index := byte_index + byte_count
+		if final_byte_index == len(text) {
+			return character, byte_size
+		}
+		break
+	}
+	return '\ufffd', 1
+}
+
+func reference_encoded_size(first byte) (size int) {
+	switch {
+	case first < 0x80:
+		return 1
+	case first < 0xe0:
+		return 2
+	case first < 0xf0:
+		return 3
+	case first < 0xf5:
+		return 4
+	default:
+		return 1
+	}
+}
+
+func reference_second_byte_range(first byte) (minimum byte, maximum byte) {
+	switch first {
+	case 0xe0:
+		return 0xa0, 0xbf
+	case 0xed:
+		return 0x80, 0x9f
+	case 0xf0:
+		return 0x90, 0xbf
+	case 0xf4:
+		return 0x80, 0x8f
+	default:
+		return 0x80, 0xbf
+	}
+}
+
+func reference_character_size(character rune) (size int) {
+	switch {
+	case character < 0:
+		return -1
+	case reference_is_surrogate(character):
+		return -1
+	case character <= 0x7f:
+		return 1
+	case character <= 0x7ff:
+		return 2
+	case character <= 0xffff:
+		return 3
+	case character <= 0x10ffff:
+		return 4
+	default:
+		return -1
+	}
+}
+
+func reference_encode_character(storage []byte, character rune) (size int) {
+	if !reference_valid_character(character) {
+		character = '\ufffd'
+	}
+	size = copy(storage, string(character))
+	return size
+}
+
+func reference_append_character(storage []byte, character rune) (result []byte) {
+	var encoded [utf8.UTF_MAXIMUM]byte
+	size := reference_encode_character(encoded[:], character)
+	return append(storage, encoded[:size]...)
+}
+
+func reference_character_count(text string) (count int) {
+	for len(text) > 0 {
+		_, size := reference_decode_character(text)
+		count++
+		text = text[size:]
+	}
+	return count
+}
+
+func reference_valid(text string) (valid bool) {
+	for len(text) > 0 {
+		character, size := reference_decode_character(text)
+		if character == '\ufffd' {
+			if size == 1 {
+				return false
+			}
+		}
+		text = text[size:]
+	}
+	return true
+}
+
+func reference_valid_character(character rune) (valid bool) {
+	if character < 0 {
+		return false
+	}
+	if character > 0x10ffff {
+		return false
+	}
+	return !reference_is_surrogate(character)
+}
+
+func reference_is_surrogate(character rune) (yes bool) {
+	if character < 0xd800 {
+		return false
+	}
+	return character < 0xe000
 }

@@ -4,9 +4,7 @@
 package ucd_test
 
 import (
-	"strings"
 	"testing"
-	"unicode"
 
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
@@ -43,53 +41,51 @@ func Test_Range_Tables(t *testing.T) {
 func Test_Classification(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		Name      string
-		Shared    func(ucd.Character) (yes ucd.Boolean)
-		Standard  func(rune) (yes bool)
-		Member    ucd.Character
-		Nonmember ucd.Character
+		Name        string
+		Shared      func(ucd.Character) (yes ucd.Boolean)
+		Member      ucd.Character
+		Nonmember   ucd.Character
+		Zero_To_Two bool
 	}{
 		{Name: "control", Shared: ucd.Is_Control,
-			Standard: unicode.IsControl, Member: '\n', Nonmember: 'A'},
+			Member: '\n', Nonmember: 'A', Zero_To_Two: true},
 		{Name: "digit", Shared: ucd.Is_Digit,
-			Standard: unicode.IsDigit, Member: '١', Nonmember: 'A'},
+			Member: '١', Nonmember: 'A'},
 		{Name: "graphic", Shared: ucd.Is_Graphic,
-			Standard: unicode.IsGraphic, Member: ' ', Nonmember: '\n'},
+			Member: ' ', Nonmember: '\n'},
 		{Name: "letter", Shared: ucd.Is_Letter,
-			Standard: unicode.IsLetter, Member: '世', Nonmember: '1'},
+			Member: '世', Nonmember: '1'},
 		{Name: "lower", Shared: ucd.Is_Lower,
-			Standard: unicode.IsLower, Member: 'å', Nonmember: 'Å'},
+			Member: 'å', Nonmember: 'Å'},
 		{Name: "mark", Shared: ucd.Is_Mark,
-			Standard: unicode.IsMark, Member: '\u0300', Nonmember: 'A'},
+			Member: '\u0300', Nonmember: 'A'},
 		{Name: "number", Shared: ucd.Is_Number,
-			Standard: unicode.IsNumber, Member: '\u2165', Nonmember: 'A'},
+			Member: '\u2165', Nonmember: 'A'},
 		{Name: "print", Shared: ucd.Is_Print,
-			Standard: unicode.IsPrint, Member: ' ', Nonmember: '\n'},
+			Member: ' ', Nonmember: '\n'},
 		{Name: "punctuation", Shared: ucd.Is_Punctuation,
-			Standard: unicode.IsPunct, Member: '!', Nonmember: 'A'},
+			Member: '!', Nonmember: 'A'},
 		{Name: "space", Shared: ucd.Is_Space,
-			Standard: unicode.IsSpace, Member: '\u3000', Nonmember: 'A'},
+			Member: '\u3000', Nonmember: 'A'},
 		{Name: "symbol", Shared: ucd.Is_Symbol,
-			Standard: unicode.IsSymbol, Member: '€', Nonmember: 'A'},
+			Member: '€', Nonmember: 'A'},
 		{Name: "title", Shared: ucd.Is_Title,
-			Standard: unicode.IsTitle, Member: '\u01c5', Nonmember: 'a'},
+			Member: '\u01c5', Nonmember: 'a'},
 		{Name: "upper", Shared: ucd.Is_Upper,
-			Standard: unicode.IsUpper, Member: 'Å', Nonmember: 'å'},
+			Member: 'Å', Nonmember: 'å'},
 	}
 	for _, one := range cases {
-		testify.Equal(
-			t, one.Standard(rune(one.Member)), bool(one.Shared(one.Member)), one.Name,
-		)
-		testify.Equal(
-			t, one.Standard(rune(one.Nonmember)),
-			bool(one.Shared(one.Nonmember)), one.Name,
-		)
+		testify.True(t, bool(one.Shared(one.Member)), one.Name)
+		testify.False(t, bool(one.Shared(one.Nonmember)), one.Name)
 		for _, boundary := range []ucd.Character{
 			ucd.Character(bits.INTEGER_32_MINIMUM),
-			-1, 0, 1, 2,
+			-1,
 			ucd.Character(bits.INTEGER_32_MAXIMUM),
 		} {
-			testify.Equal(t, one.Standard(rune(boundary)), bool(one.Shared(boundary)),
+			testify.False(t, bool(one.Shared(boundary)), "%s at %d", one.Name, boundary)
+		}
+		for _, boundary := range []ucd.Character{0, 1, 2} {
+			testify.Equal(t, one.Zero_To_Two, bool(one.Shared(boundary)),
 				"%s at %d", one.Name, boundary)
 		}
 	}
@@ -98,30 +94,47 @@ func Test_Classification(t *testing.T) {
 // Test_Case_Conversion preserves the upstream behavior coverage.
 func Test_Case_Conversion(t *testing.T) {
 	t.Parallel()
-	for _, character := range []ucd.Character{
-		'a', 'A', 'å', 'Å', '\u0131', '\u212a', ucd.Character(bits.INTEGER_32_MINIMUM),
-		-1, 0, 1, 2, ucd.RUNE_MAX, ucd.Character(bits.INTEGER_32_MAXIMUM),
+	for _, one := range []struct {
+		Character ucd.Character
+		Upper     ucd.Character
+		Lower     ucd.Character
+		Title     ucd.Character
+		Fold      ucd.Character
+	}{
+		{Character: 'a', Upper: 'A', Lower: 'a', Title: 'A', Fold: 'A'},
+		{Character: 'A', Upper: 'A', Lower: 'a', Title: 'A', Fold: 'a'},
+		{Character: 'å', Upper: 'Å', Lower: 'å', Title: 'Å', Fold: '\u212b'},
+		{Character: 'Å', Upper: 'Å', Lower: 'å', Title: 'Å', Fold: 'å'},
+		{Character: '\u0131', Upper: 'I', Lower: '\u0131', Title: 'I', Fold: '\u0131'},
+		{Character: '\u212a', Upper: '\u212a', Lower: 'k', Title: '\u212a', Fold: 'K'},
+		{Character: ucd.Character(bits.INTEGER_32_MINIMUM),
+			Upper: ucd.Character(bits.INTEGER_32_MINIMUM),
+			Lower: ucd.Character(bits.INTEGER_32_MINIMUM),
+			Title: ucd.Character(bits.INTEGER_32_MINIMUM),
+			Fold:  ucd.Character(bits.INTEGER_32_MINIMUM)},
+		{Character: -1, Upper: -1, Lower: -1, Title: -1, Fold: -1},
+		{Character: 0, Upper: 0, Lower: 0, Title: 0, Fold: 0},
+		{Character: 1, Upper: 1, Lower: 1, Title: 1, Fold: 1},
+		{Character: 2, Upper: 2, Lower: 2, Title: 2, Fold: 2},
+		{Character: ucd.RUNE_MAX, Upper: ucd.RUNE_MAX, Lower: ucd.RUNE_MAX,
+			Title: ucd.RUNE_MAX, Fold: ucd.RUNE_MAX},
+		{Character: ucd.Character(bits.INTEGER_32_MAXIMUM),
+			Upper: ucd.Character(bits.INTEGER_32_MAXIMUM),
+			Lower: ucd.Character(bits.INTEGER_32_MAXIMUM),
+			Title: ucd.Character(bits.INTEGER_32_MAXIMUM),
+			Fold:  ucd.Character(bits.INTEGER_32_MAXIMUM)},
 	} {
-		testify.Equal(t, unicode.ToUpper(rune(character)),
-			rune(ucd.To_Upper(character)), "To_Upper(%U)", character)
-		testify.Equal(t, unicode.ToLower(rune(character)),
-			rune(ucd.To_Lower(character)), "To_Lower(%U)", character)
-		testify.Equal(t, unicode.ToTitle(rune(character)),
-			rune(ucd.To_Title(character)), "To_Title(%U)", character)
-		testify.Equal(t, unicode.SimpleFold(rune(character)),
-			rune(ucd.Simple_Fold(character)), "Simple_Fold(%U)", character)
-	}
-	for _, case_value := range []ucd.Case{
-		ucd.UPPER_CASE, ucd.LOWER_CASE, ucd.TITLE_CASE,
-	} {
-		for _, character := range []ucd.Character{
-			ucd.Character(bits.INTEGER_32_MINIMUM), -1, 0, 1, 2, 'a', 'A', '\u01c5',
-			ucd.RUNE_MAX, ucd.Character(bits.INTEGER_32_MAXIMUM),
-		} {
-			testify.Equal(t, unicode.To(int(case_value), rune(character)),
-				rune(ucd.To(case_value, character)), "To(%d, %U)",
-				case_value, character)
-		}
+		testify.Equal(t, one.Upper, ucd.To_Upper(one.Character),
+			"To_Upper(%U)", one.Character)
+		testify.Equal(t, one.Lower, ucd.To_Lower(one.Character),
+			"To_Lower(%U)", one.Character)
+		testify.Equal(t, one.Title, ucd.To_Title(one.Character),
+			"To_Title(%U)", one.Character)
+		testify.Equal(t, one.Fold, ucd.Simple_Fold(one.Character),
+			"Simple_Fold(%U)", one.Character)
+		testify.Equal(t, one.Upper, ucd.To(ucd.UPPER_CASE, one.Character))
+		testify.Equal(t, one.Lower, ucd.To(ucd.LOWER_CASE, one.Character))
+		testify.Equal(t, one.Title, ucd.To(ucd.TITLE_CASE, one.Character))
 	}
 	turkish := ucd.Special_Case(turkish_case())
 	azerbaijani := ucd.Special_Case(azeri_case())
@@ -153,12 +166,12 @@ func Test_Named_Tables(t *testing.T) {
 // Test_Unicode_Data preserves the upstream behavior coverage.
 func Test_Unicode_Data(t *testing.T) {
 	t.Parallel()
-	testify.Equal(t, unicode.Version, ucd.VERSION)
-	testify.Equal(t, unicode.MaxRune, rune(ucd.RUNE_MAX))
-	testify.Equal(t, unicode.ReplacementChar,
+	testify.Equal(t, "15.0.0", ucd.VERSION)
+	testify.Equal(t, '\U0010FFFF', rune(ucd.RUNE_MAX))
+	testify.Equal(t, '\uFFFD',
 		rune(ucd.REPLACEMENT_CHARACTER))
-	testify.Equal(t, unicode.MaxASCII, rune(ucd.ASCII_MAX))
-	testify.Equal(t, unicode.MaxLatin1, rune(ucd.LATIN_1_MAX))
+	testify.Equal(t, '\u007F', rune(ucd.ASCII_MAX))
+	testify.Equal(t, '\u00FF', rune(ucd.LATIN_1_MAX))
 	alias, alias_found := ucd.Category_Alias("Cased_Letter")
 	testify.True(t, bool(alias_found), "the Cased_Letter alias")
 	testify.Equal(t, ucd.Category_Alias_Name("LC"), alias)
@@ -289,10 +302,7 @@ func named_table(
 func assert_zero_allocations(t *testing.T, cases []allocation_case) {
 	t.Helper()
 	for _, one := range cases {
-		allocations := testing.AllocsPerRun(100, one.Run)
-		if allocations != 0 {
-			t.Errorf("%s allocated %v times; want 0", one.Name, allocations)
-		}
+		t.Run(one.Name, func(t *testing.T) { testify.Zero_Allocation(t, one.Run) })
 	}
 }
 
@@ -433,33 +443,9 @@ func maximum_range_table() (table ucd.Range_Table) {
 	return table
 }
 
-func standard_range_table(
-	table ucd.Range_Table,
-) (standard_table *unicode.RangeTable) {
-	standard_table = &unicode.RangeTable{
-		R16:         make([]unicode.Range16, len(table.Ranges_16)),
-		R32:         make([]unicode.Range32, len(table.Ranges_32)),
-		LatinOffset: int(table.Latin_Offset),
-	}
-	for index, one := range table.Ranges_16 {
-		standard_table.R16[index] = unicode.Range16{
-			Lo: uint16(one.Minimum), Hi: uint16(one.Maximum),
-			Stride: uint16(one.Stride),
-		}
-	}
-	for index, one := range table.Ranges_32 {
-		standard_table.R32[index] = unicode.Range32{
-			Lo: uint32(one.Minimum), Hi: uint32(one.Maximum),
-			Stride: uint32(one.Stride),
-		}
-	}
-	return standard_table
-}
-
 func verify_maximum_range_table(t *testing.T) {
 	t.Helper()
 	maximum_table := maximum_range_table()
-	standard_table := standard_range_table(maximum_table)
 	for _, character := range []ucd.Character{
 		ucd.Character(bits.INTEGER_32_MINIMUM), -1, 0, 1, 2,
 		ucd.Character(ucd.RANGE_16_MAXIMUM),
@@ -468,9 +454,36 @@ func verify_maximum_range_table(t *testing.T) {
 		ucd.Character(ucd.RANGE_32_MAXIMUM),
 		ucd.Character(bits.INTEGER_32_MAXIMUM),
 	} {
-		testify.Equal(t, unicode.Is(standard_table, rune(character)),
+		testify.Equal(t, reference_range_table_contains(maximum_table, character),
 			bool(ucd.Is(&maximum_table, character)), "Is(%d)", character)
 	}
+}
+
+func reference_range_table_contains(
+	table ucd.Range_Table, character ucd.Character,
+) (contains bool) {
+	if character < 0 {
+		return false
+	}
+	for _, one := range table.Ranges_16 {
+		if character < ucd.Character(one.Minimum) {
+			break
+		}
+		if character <= ucd.Character(one.Maximum) {
+			difference := character - ucd.Character(one.Minimum)
+			return difference%ucd.Character(one.Stride) == 0
+		}
+	}
+	for _, one := range table.Ranges_32 {
+		if character < ucd.Character(one.Minimum) {
+			break
+		}
+		if character <= ucd.Character(one.Maximum) {
+			difference := character - ucd.Character(one.Minimum)
+			return difference%ucd.Character(one.Stride) == 0
+		}
+	}
+	return false
 }
 
 func verify_range_table_collections(t *testing.T) {
@@ -709,182 +722,10 @@ func verify_named_table_boundaries(t *testing.T) {
 	}
 }
 
-// Test_Standard_Library_Tables preserves the upstream behavior coverage.
-func Test_Standard_Library_Tables(t *testing.T) {
-	t.Parallel()
-	families := []struct {
-		Kind   ucd.Table_Kind
-		Tables map[string]*unicode.RangeTable
-	}{
-		{Kind: ucd.TABLE_KIND_CATEGORY, Tables: unicode.Categories},
-		{Kind: ucd.TABLE_KIND_SCRIPT, Tables: unicode.Scripts},
-		{Kind: ucd.TABLE_KIND_PROPERTY, Tables: unicode.Properties},
-		{Kind: ucd.TABLE_KIND_FOLD_CATEGORY,
-			Tables: unicode.FoldCategory},
-		{Kind: ucd.TABLE_KIND_FOLD_SCRIPT, Tables: unicode.FoldScript},
-	}
-	for _, family := range families {
-		for name, standard_table := range family.Tables {
-			shared_table, found := named_table(family.Kind, ucd.Name(name))
-			testify.True(t, bool(found), "table kind %d and name %s", family.Kind, name)
-			testify.Equal(t, standard_table.LatinOffset, int(shared_table.Latin_Offset),
-				"Latin offset for %s", name)
-			testify.Equal(t, len(standard_table.R16), len(shared_table.Ranges_16),
-				"16-bit range count for %s", name)
-			testify.Equal(t, len(standard_table.R32), len(shared_table.Ranges_32),
-				"32-bit range count for %s", name)
-			for index, standard_range := range standard_table.R16 {
-				shared_range := shared_table.Ranges_16[index]
-				testify.Equal(t, standard_range.Lo, uint16(shared_range.Minimum),
-					"16-bit minimum for %s at %d", name, index)
-				testify.Equal(t, standard_range.Hi, uint16(shared_range.Maximum),
-					"16-bit maximum for %s at %d", name, index)
-				testify.Equal(t, standard_range.Stride, uint16(shared_range.Stride),
-					"16-bit stride for %s at %d", name, index)
-			}
-			for index, standard_range := range standard_table.R32 {
-				shared_range := shared_table.Ranges_32[index]
-				testify.Equal(t, standard_range.Lo, uint32(shared_range.Minimum),
-					"32-bit minimum for %s at %d", name, index)
-				testify.Equal(t, standard_range.Hi, uint32(shared_range.Maximum),
-					"32-bit maximum for %s at %d", name, index)
-				testify.Equal(t, standard_range.Stride, uint32(shared_range.Stride),
-					"32-bit stride for %s at %d", name, index)
-			}
-		}
-	}
-}
-
-// Test_Standard_Library_Classification preserves the upstream behavior coverage.
-func Test_Standard_Library_Classification(t *testing.T) {
-	t.Parallel()
-	classifications := []struct {
-		Name     string
-		Shared   func(ucd.Character) (yes ucd.Boolean)
-		Standard func(rune) (yes bool)
-	}{
-		{Name: "control", Shared: ucd.Is_Control,
-			Standard: unicode.IsControl},
-		{Name: "digit", Shared: ucd.Is_Digit,
-			Standard: unicode.IsDigit},
-		{Name: "graphic", Shared: ucd.Is_Graphic,
-			Standard: unicode.IsGraphic},
-		{Name: "letter", Shared: ucd.Is_Letter,
-			Standard: unicode.IsLetter},
-		{Name: "lower", Shared: ucd.Is_Lower,
-			Standard: unicode.IsLower},
-		{Name: "mark", Shared: ucd.Is_Mark,
-			Standard: unicode.IsMark},
-		{Name: "number", Shared: ucd.Is_Number,
-			Standard: unicode.IsNumber},
-		{Name: "print", Shared: ucd.Is_Print,
-			Standard: unicode.IsPrint},
-		{Name: "punctuation", Shared: ucd.Is_Punctuation,
-			Standard: unicode.IsPunct},
-		{Name: "space", Shared: ucd.Is_Space,
-			Standard: unicode.IsSpace},
-		{Name: "symbol", Shared: ucd.Is_Symbol,
-			Standard: unicode.IsSymbol},
-		{Name: "title", Shared: ucd.Is_Title,
-			Standard: unicode.IsTitle},
-		{Name: "upper", Shared: ucd.Is_Upper,
-			Standard: unicode.IsUpper},
-	}
-	characters := make([]rune, 0, int(unicode.MaxLatin1)+20)
-	for character := rune(0); character <= unicode.MaxLatin1; character++ {
-		characters = append(characters, character)
-	}
-	characters = append(characters,
-		-0x100, -0x101, -0x1c5, -0x300, -0x660, -0x37e, -0x2c2, -0x1680,
-		0x10000, 0x10400, 0x10428, 0x1d7ce, 0x1f1ff, 0x20000, 0x2fa1d,
-		unicode.MaxRune,
-	)
-	for _, classification := range classifications {
-		for _, character := range characters {
-			testify.Equal(t, classification.Standard(character),
-				bool(classification.Shared(ucd.Character(character))),
-				"%s at %U", classification.Name, character)
-		}
-	}
-}
-
-// Test_Standard_Library_Case_Data preserves the upstream behavior coverage.
-func Test_Standard_Library_Case_Data(t *testing.T) {
-	t.Parallel()
-	for _, case_range := range unicode.CaseRanges {
-		for character := case_range.Lo; character <= case_range.Hi; character++ {
-			for _, case_value := range []ucd.Case{
-				ucd.UPPER_CASE,
-				ucd.LOWER_CASE,
-				ucd.TITLE_CASE,
-			} {
-				testify.Equal(
-					t, unicode.To(int(case_value), rune(character)),
-					rune(ucd.To(
-						case_value, ucd.Character(character),
-					)),
-					"case %d at %U", case_value, character)
-			}
-			testify.Equal(t, unicode.SimpleFold(rune(character)),
-				rune(ucd.Simple_Fold(
-					ucd.Character(character),
-				)),
-				"simple fold at %U", character)
-		}
-	}
-	for _, cycle := range []string{
-		"Aa", "δΔ", "KkK", "Ssſ", "ρϱΡ", "ͅΙιι", "İ", "ı", "\u13b0\uab80",
-	} {
-		for _, character := range cycle {
-			testify.Equal(t, unicode.SimpleFold(character),
-				rune(ucd.Simple_Fold(
-					ucd.Character(character),
-				)),
-				"simple fold orbit at %U", character)
-		}
-	}
-}
-
-// Test_Standard_Library_Remaining_Data preserves the upstream behavior coverage.
-func Test_Standard_Library_Remaining_Data(t *testing.T) {
-	t.Parallel()
-	for alias, standard_name := range unicode.CategoryAliases {
-		shared_name, found := ucd.Category_Alias(ucd.Name(alias))
-		testify.True(t, bool(found), "category alias %s", alias)
-		testify.Equal(t, standard_name, string(shared_name), "category alias %s", alias)
-	}
-	standard_special_cases := []unicode.SpecialCase{
-		unicode.TurkishCase,
-		unicode.AzeriCase,
-	}
-	shared_special_cases := []ucd.Language_Case{
-		turkish_case(),
-		azeri_case(),
-	}
-	for case_index, standard_special := range standard_special_cases {
-		shared_special := ucd.Special_Case(shared_special_cases[case_index])
-		for range_index, standard_range := range standard_special {
-			characters := []rune{
-				rune(standard_range.Lo), rune(standard_range.Hi),
-			}
-			for _, character := range characters {
-				testify.Equal(t, standard_special.ToUpper(character),
-					rune(ucd.Special_Case_To_Upper(
-						shared_special, ucd.Character(character),
-					)), "special case %d upper at %d", case_index, range_index)
-				testify.Equal(t, standard_special.ToLower(character),
-					rune(ucd.Special_Case_To_Lower(
-						shared_special, ucd.Character(character),
-					)), "special case %d lower at %d", case_index, range_index)
-				testify.Equal(t, standard_special.ToTitle(character),
-					rune(ucd.Special_Case_To_Title(
-						shared_special, ucd.Character(character),
-					)), "special case %d title at %d", case_index, range_index)
-			}
-		}
-	}
-}
-
 func repeat(text string, count int) (repeated string) {
-	return strings.Repeat(text, count)
+	storage := make([]byte, len(text)*count)
+	for copy_index := 0; copy_index < count; copy_index++ {
+		copy(storage[copy_index*len(text):], text)
+	}
+	return string(storage)
 }

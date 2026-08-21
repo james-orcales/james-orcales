@@ -7,9 +7,6 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
-	"unicode"
-
-	"local/james-orcales/shared/testify"
 )
 
 func example_decode_final_character(output *example_buffer) {
@@ -240,13 +237,13 @@ func check_decoded_character(
 
 // Test_Upstream_Constants preserves the upstream behavior coverage.
 func Test_Upstream_Constants(t *testing.T) {
-	if rune(RUNE_MAX) != unicode.MaxRune {
+	if rune(RUNE_MAX) != '\U0010FFFF' {
 		t.Errorf("utf8.RUNE_MAX is wrong: %x should be %x",
-			RUNE_MAX, unicode.MaxRune)
+			RUNE_MAX, '\U0010FFFF')
 	}
-	if rune(REPLACEMENT_CHARACTER) != unicode.ReplacementChar {
+	if rune(REPLACEMENT_CHARACTER) != '\uFFFD' {
 		t.Errorf("utf8.rune(REPLACEMENT_CHARACTER) is wrong: %x should be %x",
-			rune(REPLACEMENT_CHARACTER), unicode.ReplacementChar)
+			rune(REPLACEMENT_CHARACTER), '\uFFFD')
 	}
 }
 
@@ -1240,5 +1237,11 @@ func Test_Upstream_Examples(t *testing.T) {
 	example_valid_character(&output)
 	example_valid_text(&output)
 	example_append_character(&output)
-	testify.Equal(t, UPSTREAM_EXAMPLE_OUTPUT, string(output))
+	if actual := string(output); actual != UPSTREAM_EXAMPLE_OUTPUT {
+		t.Fatalf(
+			"example output mismatch:\nexpected %q\nactual   %q",
+			UPSTREAM_EXAMPLE_OUTPUT,
+			actual,
+		)
+	}
 }
