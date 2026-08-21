@@ -65,6 +65,12 @@ const NODE_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
 // CLASS_RANGE_COUNT_MAXIMUM spends the remaining bytes after one class shell.
 const CLASS_RANGE_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM - len("[]")
 
+// CLASS_MEMBER_INDEX_MAXIMUM leaves one validated member inside the range arena.
+const CLASS_MEMBER_INDEX_MAXIMUM = CLASS_RANGE_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// CLASS_RANGE_START_MAXIMUM leaves room for one closed class after earlier closed classes.
+const CLASS_RANGE_START_MAXIMUM = PATTERN_SIZE_MAXIMUM - len("[]") - len("[a]")
+
 // CLASS_RANGE_STORAGE_COUNT_MAXIMUM admits a maximum class missing its closing shell.
 const CLASS_RANGE_STORAGE_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM - len("[")
 
@@ -83,12 +89,15 @@ const INSTRUCTION_CONTINUATION_MAXIMUM = INSTRUCTION_PC_MAXIMUM - utf8.CHARACTER
 // EMITTED_INSTRUCTION_PC_MINIMUM follows the terminal match instruction.
 const EMITTED_INSTRUCTION_PC_MINIMUM = INSTRUCTION_PC_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
 
-// ALTERNATIVE_RESULT_PC_MAXIMUM reserves minimum brace, comma, and branch emissions.
-const ALTERNATIVE_RESULT_PC_MAXIMUM = INSTRUCTION_PC_MAXIMUM - len("{,}")
+// ALTERNATIVE_RESULT_PC_MAXIMUM reserves the minimum brace shell, which emits nothing.
+const ALTERNATIVE_RESULT_PC_MAXIMUM = INSTRUCTION_PC_MAXIMUM - len("{}")
 
-// ALTERNATIVE_UPDATED_PC_MAXIMUM adds one split to an alternative input result.
-const ALTERNATIVE_UPDATED_PC_MAXIMUM = ALTERNATIVE_RESULT_PC_MAXIMUM +
-	utf8.CHARACTER_SIZE_MINIMUM
+// ALTERNATIVE_UPDATED_PC_MAXIMUM matches the input bound: a split needs a comma, which costs
+// the byte its emission uses.
+const ALTERNATIVE_UPDATED_PC_MAXIMUM = ALTERNATIVE_RESULT_PC_MAXIMUM
+
+// SPLIT_BRANCH_PC_MAXIMUM reserves the brace shell and the comma every split needs.
+const SPLIT_BRANCH_PC_MAXIMUM = INSTRUCTION_PC_MAXIMUM - len("{,}")
 
 // STATE_GENERATION_MINIMUM is the cleared visited-set generation.
 const STATE_GENERATION_MINIMUM = bytes.SLICE_SIZE_MINIMUM
@@ -838,37 +847,87 @@ const NODE_CLASS_NEGATED = NODE_CLASS_RANGE_COUNT + utf8.CHARACTER_SIZE_MINIMUM
 // NODE_CLASS_FIELD_COUNT fixes every class metadata slot.
 const NODE_CLASS_FIELD_COUNT = NODE_CLASS_NEGATED + utf8.CHARACTER_SIZE_MINIMUM
 
+// Node_Class_Range_Index_Slot is one value Node_Class_Range_Index_Storage addresses.
+type Node_Class_Range_Index_Slot uint16
+
+// Node_Class_Range_Index_Slot_Invariants bounds the slot value.
+func Node_Class_Range_Index_Slot_Invariants(
+	value Node_Class_Range_Index_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(CLASS_RANGE_START_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Node_Class_Range_Index_Storage retains optional class opening storage.
-type Node_Class_Range_Index_Storage interface{}
+type Node_Class_Range_Index_Storage *Node_Class_Range_Index_Slot
 
 // Node_Class_Range_Index_Storage_Invariants accepts correctly typed storage.
 func Node_Class_Range_Index_Storage_Invariants(
-	value Node_Class_Range_Index_Storage, _ aver.Namespace,
+	value Node_Class_Range_Index_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Class opening has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Node_Class_Range_Index_Slot_Invariants(*value, namespace)
+}
+
+// Node_Class_Range_Count_Slot is one value Node_Class_Range_Count_Storage addresses.
+type Node_Class_Range_Count_Slot uint16
+
+// Node_Class_Range_Count_Slot_Invariants bounds the slot value.
+func Node_Class_Range_Count_Slot_Invariants(
+	value Node_Class_Range_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(CLASS_RANGE_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Node_Class_Range_Count_Storage retains optional class length storage.
-type Node_Class_Range_Count_Storage interface{}
+type Node_Class_Range_Count_Storage *Node_Class_Range_Count_Slot
 
 // Node_Class_Range_Count_Storage_Invariants accepts correctly typed storage.
 func Node_Class_Range_Count_Storage_Invariants(
-	value Node_Class_Range_Count_Storage, _ aver.Namespace,
+	value Node_Class_Range_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Class length has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Node_Class_Range_Count_Slot_Invariants(*value, namespace)
+}
+
+// Node_Class_Negated_Slot is one value Node_Class_Negated_Storage addresses.
+type Node_Class_Negated_Slot uint16
+
+// Node_Class_Negated_Slot_Invariants bounds the slot value.
+func Node_Class_Negated_Slot_Invariants(
+	value Node_Class_Negated_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Uint16(uint16(value), uint16(CONTROL_FALSE), uint16(CONTROL_TRUE)).
+		Ensure()
 }
 
 // Node_Class_Negated_Storage retains optional class polarity storage.
-type Node_Class_Negated_Storage interface{}
+type Node_Class_Negated_Storage *Node_Class_Negated_Slot
 
 // Node_Class_Negated_Storage_Invariants accepts correctly typed storage.
 func Node_Class_Negated_Storage_Invariants(
-	value Node_Class_Negated_Storage, _ aver.Namespace,
+	value Node_Class_Negated_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Class polarity has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Node_Class_Negated_Slot_Invariants(*value, namespace)
 }
 
 // Node_Class stores class opening, count, and negation.
@@ -894,15 +953,33 @@ const NODE_CHARACTER_FIELD = bytes.SLICE_SIZE_MINIMUM
 // NODE_CHARACTER_FIELD_COUNT fixes literal payload storage.
 const NODE_CHARACTER_FIELD_COUNT = NODE_CHARACTER_FIELD + utf8.CHARACTER_SIZE_MINIMUM
 
+// Node_Character_Slot is one value Node_Character_Storage addresses.
+type Node_Character_Slot rune
+
+// Node_Character_Slot_Invariants bounds the slot value.
+func Node_Character_Slot_Invariants(
+	value Node_Character_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(
+			int32(value),
+			utf8.DECODED_CHARACTER_MINIMUM,
+			utf8.DECODED_CHARACTER_MAXIMUM,
+		).
+		Ensure()
+}
+
 // Node_Character_Storage retains optional syntax literal storage.
-type Node_Character_Storage interface{}
+type Node_Character_Storage *Node_Character_Slot
 
 // Node_Character_Storage_Invariants accepts correctly typed storage.
 func Node_Character_Storage_Invariants(
-	value Node_Character_Storage, _ aver.Namespace,
+	value Node_Character_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*rune)
-	aver.Always(valid == (value != nil), "Node literal has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Node_Character_Slot_Invariants(*value, namespace)
 }
 
 // Node_Character stores one decoded literal.
@@ -1222,15 +1299,29 @@ const INSTRUCTION_KIND_FIELD = bytes.SLICE_SIZE_MINIMUM
 // INSTRUCTION_KIND_FIELD_COUNT fixes operation selector storage.
 const INSTRUCTION_KIND_FIELD_COUNT = INSTRUCTION_KIND_FIELD + utf8.CHARACTER_SIZE_MINIMUM
 
+// Instruction_Kind_Slot is one value Instruction_Kind_Storage addresses.
+type Instruction_Kind_Slot uint8
+
+// Instruction_Kind_Slot_Invariants bounds the slot value.
+func Instruction_Kind_Slot_Invariants(
+	value Instruction_Kind_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
+		Ensure()
+}
+
 // Instruction_Kind_Storage retains one operation selector.
-type Instruction_Kind_Storage interface{}
+type Instruction_Kind_Storage *Instruction_Kind_Slot
 
 // Instruction_Kind_Storage_Invariants accepts absent or correctly typed storage.
 func Instruction_Kind_Storage_Invariants(
-	value Instruction_Kind_Storage, _ aver.Namespace,
+	value Instruction_Kind_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*Instruction_Kind)
-	aver.Always(valid == (value != nil), "Instruction kind has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Instruction_Kind_Slot_Invariants(*value, namespace)
 }
 
 // INSTRUCTION_CHARACTER_FIELD is the sole literal payload slot.
@@ -1248,68 +1339,152 @@ const INSTRUCTION_TARGET_BRANCH = INSTRUCTION_TARGET_NEXT + utf8.CHARACTER_SIZE_
 // INSTRUCTION_TARGET_COUNT fixes both continuation slots.
 const INSTRUCTION_TARGET_COUNT = INSTRUCTION_TARGET_BRANCH + utf8.CHARACTER_SIZE_MINIMUM
 
+// Instruction_Next_Slot is one value Instruction_Next_Storage addresses.
+type Instruction_Next_Slot uint16
+
+// Instruction_Next_Slot_Invariants bounds the slot value.
+func Instruction_Next_Slot_Invariants(
+	value Instruction_Next_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
+}
+
 // Instruction_Next_Storage retains optional primary target storage.
-type Instruction_Next_Storage interface{}
+type Instruction_Next_Storage *Instruction_Next_Slot
 
 // Instruction_Next_Storage_Invariants accepts correctly typed storage.
-func Instruction_Next_Storage_Invariants(value Instruction_Next_Storage, _ aver.Namespace) {
-	_, valid := value.(*Instruction_PC)
-	aver.Always(valid == (value != nil), "Primary target has expected pointer type.")
+func Instruction_Next_Storage_Invariants(value Instruction_Next_Storage, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Instruction_Next_Slot_Invariants(*value, namespace)
+}
+
+// Instruction_Branch_Slot is one value Instruction_Branch_Storage addresses.
+type Instruction_Branch_Slot uint16
+
+// Instruction_Branch_Slot_Invariants bounds the slot value.
+func Instruction_Branch_Slot_Invariants(
+	value Instruction_Branch_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
 }
 
 // Instruction_Branch_Storage retains optional alternative target storage.
-type Instruction_Branch_Storage interface{}
+type Instruction_Branch_Storage *Instruction_Branch_Slot
 
 // Instruction_Branch_Storage_Invariants accepts correctly typed storage.
 func Instruction_Branch_Storage_Invariants(
-	value Instruction_Branch_Storage, _ aver.Namespace,
+	value Instruction_Branch_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*Instruction_PC)
-	aver.Always(valid == (value != nil), "Branch target has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Instruction_Branch_Slot_Invariants(*value, namespace)
+}
+
+// Instruction_Character_Slot is one value Instruction_Character_Storage addresses.
+type Instruction_Character_Slot rune
+
+// Instruction_Character_Slot_Invariants bounds the slot value.
+func Instruction_Character_Slot_Invariants(
+	value Instruction_Character_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
+		Ensure()
 }
 
 // Instruction_Character_Storage retains optional literal storage.
-type Instruction_Character_Storage interface{}
+type Instruction_Character_Storage *Instruction_Character_Slot
 
 // Instruction_Character_Storage_Invariants accepts correctly typed storage.
 func Instruction_Character_Storage_Invariants(
-	value Instruction_Character_Storage, _ aver.Namespace,
+	value Instruction_Character_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*rune)
-	aver.Always(valid == (value != nil), "Instruction literal has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Instruction_Character_Slot_Invariants(*value, namespace)
+}
+
+// Instruction_Class_Index_Slot is one value Instruction_Class_Index_Storage addresses.
+type Instruction_Class_Index_Slot uint16
+
+// Instruction_Class_Index_Slot_Invariants bounds the slot value.
+func Instruction_Class_Index_Slot_Invariants(
+	value Instruction_Class_Index_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
 }
 
 // Instruction_Class_Index_Storage retains optional class opening storage.
-type Instruction_Class_Index_Storage interface{}
+type Instruction_Class_Index_Storage *Instruction_Class_Index_Slot
 
 // Instruction_Class_Index_Storage_Invariants accepts correctly typed storage.
 func Instruction_Class_Index_Storage_Invariants(
-	value Instruction_Class_Index_Storage, _ aver.Namespace,
+	value Instruction_Class_Index_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Instruction class opening has expected type.")
+	if value == nil {
+		return
+	}
+	Instruction_Class_Index_Slot_Invariants(*value, namespace)
+}
+
+// Instruction_Class_Count_Slot is one value Instruction_Class_Count_Storage addresses.
+type Instruction_Class_Count_Slot uint16
+
+// Instruction_Class_Count_Slot_Invariants bounds the slot value.
+func Instruction_Class_Count_Slot_Invariants(
+	value Instruction_Class_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
 }
 
 // Instruction_Class_Count_Storage retains optional class length storage.
-type Instruction_Class_Count_Storage interface{}
+type Instruction_Class_Count_Storage *Instruction_Class_Count_Slot
 
 // Instruction_Class_Count_Storage_Invariants accepts correctly typed storage.
 func Instruction_Class_Count_Storage_Invariants(
-	value Instruction_Class_Count_Storage, _ aver.Namespace,
+	value Instruction_Class_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Instruction class length has expected type.")
+	if value == nil {
+		return
+	}
+	Instruction_Class_Count_Slot_Invariants(*value, namespace)
+}
+
+// Instruction_Class_Negated_Slot is one value Instruction_Class_Negated_Storage addresses.
+type Instruction_Class_Negated_Slot uint16
+
+// Instruction_Class_Negated_Slot_Invariants bounds the slot value.
+func Instruction_Class_Negated_Slot_Invariants(
+	value Instruction_Class_Negated_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
 }
 
 // Instruction_Class_Negated_Storage retains optional class polarity storage.
-type Instruction_Class_Negated_Storage interface{}
+type Instruction_Class_Negated_Storage *Instruction_Class_Negated_Slot
 
 // Instruction_Class_Negated_Storage_Invariants accepts correctly typed storage.
 func Instruction_Class_Negated_Storage_Invariants(
-	value Instruction_Class_Negated_Storage, _ aver.Namespace,
+	value Instruction_Class_Negated_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Instruction class polarity has expected type.")
+	if value == nil {
+		return
+	}
+	Instruction_Class_Negated_Slot_Invariants(*value, namespace)
 }
 
 // INSTRUCTION_CLASS_RANGE_INDEX retains first class range.
@@ -1421,24 +1596,60 @@ const COMPILE_REFERENCE_CHILD = COMPILE_REFERENCE_NODE + utf8.CHARACTER_SIZE_MIN
 // COMPILE_REFERENCE_COUNT fixes compiler syntax references.
 const COMPILE_REFERENCE_COUNT = COMPILE_REFERENCE_CHILD + utf8.CHARACTER_SIZE_MINIMUM
 
+// Compile_Node_Slot is one value Compile_Node_Storage addresses.
+type Compile_Node_Slot uint16
+
+// Compile_Node_Slot_Invariants bounds the slot value.
+func Compile_Node_Slot_Invariants(
+	value Compile_Node_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(NODE_NONE),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Compile_Node_Storage retains optional active syntax storage.
-type Compile_Node_Storage interface{}
+type Compile_Node_Storage *Compile_Node_Slot
 
 // Compile_Node_Storage_Invariants accepts correctly typed storage.
 func Compile_Node_Storage_Invariants(
-	value Compile_Node_Storage, _ aver.Namespace,
+	value Compile_Node_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*Node_Reference)
-	aver.Always(valid == (value != nil), "Compiler node has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Compile_Node_Slot_Invariants(*value, namespace)
+}
+
+// Compile_Child_Slot is one value Compile_Child_Storage addresses.
+type Compile_Child_Slot uint16
+
+// Compile_Child_Slot_Invariants bounds the slot value.
+func Compile_Child_Slot_Invariants(
+	value Compile_Child_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(NODE_NONE),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Compile_Child_Storage retains optional reverse child storage.
-type Compile_Child_Storage interface{}
+type Compile_Child_Storage *Compile_Child_Slot
 
 // Compile_Child_Storage_Invariants accepts correctly typed storage.
-func Compile_Child_Storage_Invariants(value Compile_Child_Storage, _ aver.Namespace) {
-	_, valid := value.(*Node_Reference)
-	aver.Always(valid == (value != nil), "Compiler child has expected pointer type.")
+func Compile_Child_Storage_Invariants(value Compile_Child_Storage, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Compile_Child_Slot_Invariants(*value, namespace)
 }
 
 // Compile_References stores active syntax node and reverse child.
@@ -1464,26 +1675,62 @@ const COMPILE_TARGET_ACCUMULATED = COMPILE_TARGET_CONTINUATION + utf8.CHARACTER_
 // COMPILE_TARGET_COUNT fixes compiler target storage.
 const COMPILE_TARGET_COUNT = COMPILE_TARGET_ACCUMULATED + utf8.CHARACTER_SIZE_MINIMUM
 
+// Compile_Continuation_Slot is one value Compile_Continuation_Storage addresses.
+type Compile_Continuation_Slot uint16
+
+// Compile_Continuation_Slot_Invariants bounds the slot value.
+func Compile_Continuation_Slot_Invariants(
+	value Compile_Continuation_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(INSTRUCTION_PC_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Compile_Continuation_Storage retains optional continuation storage.
-type Compile_Continuation_Storage interface{}
+type Compile_Continuation_Storage *Compile_Continuation_Slot
 
 // Compile_Continuation_Storage_Invariants accepts correctly typed storage.
 func Compile_Continuation_Storage_Invariants(
-	value Compile_Continuation_Storage, _ aver.Namespace,
+	value Compile_Continuation_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*Instruction_PC)
-	aver.Always(valid == (value != nil), "Compiler continuation has expected type.")
+	if value == nil {
+		return
+	}
+	Compile_Continuation_Slot_Invariants(*value, namespace)
+}
+
+// Compile_Accumulated_Slot is one value Compile_Accumulated_Storage addresses.
+type Compile_Accumulated_Slot uint16
+
+// Compile_Accumulated_Slot_Invariants bounds the slot value.
+func Compile_Accumulated_Slot_Invariants(
+	value Compile_Accumulated_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(INSTRUCTION_PC_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Compile_Accumulated_Storage retains optional accumulated target storage.
-type Compile_Accumulated_Storage interface{}
+type Compile_Accumulated_Storage *Compile_Accumulated_Slot
 
 // Compile_Accumulated_Storage_Invariants accepts correctly typed storage.
 func Compile_Accumulated_Storage_Invariants(
-	value Compile_Accumulated_Storage, _ aver.Namespace,
+	value Compile_Accumulated_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*Instruction_PC)
-	aver.Always(valid == (value != nil), "Compiler result has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Compile_Accumulated_Slot_Invariants(*value, namespace)
 }
 
 // Compile_Targets stores continuation and accumulated entry.
@@ -1509,22 +1756,50 @@ const COMPILE_FRAME_FIRST = COMPILE_FRAME_STAGE + utf8.CHARACTER_SIZE_MINIMUM
 // COMPILE_FRAME_CONTROL_COUNT fixes compiler control storage.
 const COMPILE_FRAME_CONTROL_COUNT = COMPILE_FRAME_FIRST + utf8.CHARACTER_SIZE_MINIMUM
 
+// Compile_Stage_Slot is one value Compile_Stage_Storage addresses.
+type Compile_Stage_Slot uint8
+
+// Compile_Stage_Slot_Invariants bounds the slot value.
+func Compile_Stage_Slot_Invariants(
+	value Compile_Stage_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), COMPILE_STAGE_ENTER, COMPILE_STAGE_ALTERNATIVE_RETURN).
+		Ensure()
+}
+
 // Compile_Stage_Storage retains optional traversal stage storage.
-type Compile_Stage_Storage interface{}
+type Compile_Stage_Storage *Compile_Stage_Slot
 
 // Compile_Stage_Storage_Invariants accepts correctly typed storage.
-func Compile_Stage_Storage_Invariants(value Compile_Stage_Storage, _ aver.Namespace) {
-	_, valid := value.(*uint8)
-	aver.Always(valid == (value != nil), "Compiler stage has expected pointer type.")
+func Compile_Stage_Storage_Invariants(value Compile_Stage_Storage, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Compile_Stage_Slot_Invariants(*value, namespace)
+}
+
+// Compile_First_Slot is one value Compile_First_Storage addresses.
+type Compile_First_Slot uint8
+
+// Compile_First_Slot_Invariants bounds the slot value.
+func Compile_First_Slot_Invariants(
+	value Compile_First_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), CONTROL_FALSE, CONTROL_TRUE).
+		Ensure()
 }
 
 // Compile_First_Storage retains optional branch-state storage.
-type Compile_First_Storage interface{}
+type Compile_First_Storage *Compile_First_Slot
 
 // Compile_First_Storage_Invariants accepts correctly typed storage.
-func Compile_First_Storage_Invariants(value Compile_First_Storage, _ aver.Namespace) {
-	_, valid := value.(*uint8)
-	aver.Always(valid == (value != nil), "Compiler branch state has expected type.")
+func Compile_First_Storage_Invariants(value Compile_First_Storage, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Compile_First_Slot_Invariants(*value, namespace)
 }
 
 // Compile_Frame_Control stores traversal stage and first-branch flag.
@@ -1578,19 +1853,6 @@ func Compile_Frame_Invariants(value Compile_Frame, namespace aver.Namespace) {
 	Compile_References_Invariants(value.References, namespace)
 	Compile_Targets_Invariants(value.Targets, namespace)
 	Compile_Frame_Control_Invariants(value.Control, namespace)
-}
-
-// Compile_Frame_Pointer names mutable suspended compiler state.
-type Compile_Frame_Pointer *Compile_Frame
-
-// Compile_Frame_Pointer_Invariants composes present compiler state.
-func Compile_Frame_Pointer_Invariants(
-	value Compile_Frame_Pointer, namespace aver.Namespace,
-) {
-	if value == nil {
-		return
-	}
-	Compile_Frame_Invariants(*value, namespace)
 }
 
 // Compile_Frames is caller-owned syntax traversal stack.
@@ -1665,6 +1927,9 @@ func Compile_Depth_Invariants(value Compile_Depth, namespace aver.Namespace) {
 
 // COMPILE_DEPTH_NONZERO_MINIMUM is one active compiler frame.
 const COMPILE_DEPTH_NONZERO_MINIMUM = bytes.SLICE_SIZE_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_SEQUENCE_DEPTH_MAXIMUM is one frame short of the syntax arena.
+const COMPILE_SEQUENCE_DEPTH_MAXIMUM = NODE_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
 
 // COMPILE_PUSH_DEPTH_MAXIMUM leaves one compiler frame slot.
 const COMPILE_PUSH_DEPTH_MAXIMUM = NODE_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
@@ -1793,48 +2058,120 @@ func Separators_Invariants(value Separators, _ aver.Namespace) {
 	aver.Always(cap(value) == SEPARATOR_COUNT_MAXIMUM, "Separator storage cannot grow.")
 }
 
+// Compile_Node_Count_Slot is one value Compile_Node_Count_Storage addresses.
+type Compile_Node_Count_Slot uint16
+
+// Compile_Node_Count_Slot_Invariants bounds the slot value.
+func Compile_Node_Count_Slot_Invariants(
+	value Compile_Node_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
 // Compile_Node_Count_Storage retains optional syntax cursor storage.
-type Compile_Node_Count_Storage interface{}
+type Compile_Node_Count_Storage *Compile_Node_Count_Slot
 
 // Compile_Node_Count_Storage_Invariants accepts correctly typed storage.
 func Compile_Node_Count_Storage_Invariants(
-	value Compile_Node_Count_Storage, _ aver.Namespace,
+	value Compile_Node_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Syntax cursor has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Compile_Node_Count_Slot_Invariants(*value, namespace)
+}
+
+// Compile_Range_Count_Slot is one value Compile_Range_Count_Storage addresses.
+type Compile_Range_Count_Slot uint16
+
+// Compile_Range_Count_Slot_Invariants bounds the slot value.
+func Compile_Range_Count_Slot_Invariants(
+	value Compile_Range_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(CLASS_RANGE_STORAGE_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Compile_Range_Count_Storage retains optional class cursor storage.
-type Compile_Range_Count_Storage interface{}
+type Compile_Range_Count_Storage *Compile_Range_Count_Slot
 
 // Compile_Range_Count_Storage_Invariants accepts correctly typed storage.
 func Compile_Range_Count_Storage_Invariants(
-	value Compile_Range_Count_Storage, _ aver.Namespace,
+	value Compile_Range_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Class cursor has expected pointer type.")
+	if value == nil {
+		return
+	}
+	Compile_Range_Count_Slot_Invariants(*value, namespace)
+}
+
+// Compile_Instruction_Count_Slot is one value Compile_Instruction_Count_Storage addresses.
+type Compile_Instruction_Count_Slot uint16
+
+// Compile_Instruction_Count_Slot_Invariants bounds the slot value.
+func Compile_Instruction_Count_Slot_Invariants(
+	value Compile_Instruction_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(INSTRUCTION_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Compile_Instruction_Count_Storage retains optional instruction cursor storage.
-type Compile_Instruction_Count_Storage interface{}
+type Compile_Instruction_Count_Storage *Compile_Instruction_Count_Slot
 
 // Compile_Instruction_Count_Storage_Invariants accepts correctly typed storage.
 func Compile_Instruction_Count_Storage_Invariants(
-	value Compile_Instruction_Count_Storage, _ aver.Namespace,
+	value Compile_Instruction_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Instruction cursor has expected type.")
+	if value == nil {
+		return
+	}
+	Compile_Instruction_Count_Slot_Invariants(*value, namespace)
+}
+
+// Compile_Separator_Count_Slot is one value Compile_Separator_Count_Storage addresses.
+type Compile_Separator_Count_Slot uint16
+
+// Compile_Separator_Count_Slot_Invariants bounds the slot value.
+func Compile_Separator_Count_Slot_Invariants(
+	value Compile_Separator_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(SEPARATOR_COUNT_MINIMUM),
+			uint16(SEPARATOR_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Compile_Separator_Count_Storage retains optional separator cursor storage.
-type Compile_Separator_Count_Storage interface{}
+type Compile_Separator_Count_Storage *Compile_Separator_Count_Slot
 
 // Compile_Separator_Count_Storage_Invariants accepts correctly typed storage.
 func Compile_Separator_Count_Storage_Invariants(
-	value Compile_Separator_Count_Storage, _ aver.Namespace,
+	value Compile_Separator_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Separator cursor has expected type.")
+	if value == nil {
+		return
+	}
+	Compile_Separator_Count_Slot_Invariants(*value, namespace)
 }
 
 // Compile_Control stores arena cursors only.
@@ -1887,10 +2224,6 @@ type Compile_Workspace struct {
 	Compile_Frame_Controls Compile_Frame_Control_Values
 	// Separators own copied caller boundaries.
 	Separators Separators
-	// Control retains arena cursors.
-	Control Compile_Control
-	// Pattern_Control backs returned immutable header views.
-	Pattern_Control Pattern_Control
 }
 
 // Compile_Workspace_Invariants composes fixed caller-owned storage.
@@ -1911,8 +2244,6 @@ func Compile_Workspace_Invariants(
 	Compile_Target_Values_Invariants(value.Compile_Targets, namespace)
 	Compile_Frame_Control_Values_Invariants(value.Compile_Frame_Controls, namespace)
 	Separators_Invariants(value.Separators, namespace)
-	Compile_Control_Invariants(value.Control, namespace)
-	Pattern_Control_Invariants(value.Pattern_Control, namespace)
 }
 
 // Compile_Workspace_Pointer names mutable compiler arenas.
@@ -1928,24 +2259,17 @@ func Compile_Workspace_Pointer_Invariants(
 	Compile_Workspace_Invariants(*value, namespace)
 }
 
-// Compile_Workspace_Storage admits absent caller storage.
-type Compile_Workspace_Storage interface{}
-
 // Compile_Workspace_Input carries hostile optional compile storage.
 type Compile_Workspace_Input struct {
 	// State points at caller storage when present.
-	State Compile_Workspace_Storage
+	State Compile_Workspace_Pointer
 }
 
 // Compile_Workspace_Input_Invariants fixes optional pointer shape.
 func Compile_Workspace_Input_Invariants(
-	value Compile_Workspace_Input, _ aver.Namespace,
+	value Compile_Workspace_Input, namespace aver.Namespace,
 ) {
-	_, valid := value.State.(Compile_Workspace_Pointer)
-	aver.Always(
-		valid == (value.State != nil),
-		"Compile input workspace has expected pointer type.",
-	)
+	Compile_Workspace_Pointer_Invariants(value.State, namespace)
 }
 
 // Compile_Input bundles bounded parser dependencies.
@@ -1965,38 +2289,89 @@ func Compile_Input_Invariants(value Compile_Input, namespace aver.Namespace) {
 	Compile_Workspace_Input_Invariants(value.Workspace, namespace)
 }
 
-// Pattern_Workspace_Storage retains one immutable compiled arena.
-type Pattern_Workspace_Storage interface{}
+// Pattern_Start_Slot is one value Pattern_Start_Storage addresses.
+type Pattern_Start_Slot uint16
+
+// Pattern_Start_Slot_Invariants bounds the slot value.
+func Pattern_Start_Slot_Invariants(
+	value Pattern_Start_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(INSTRUCTION_PC_MAXIMUM),
+		).
+		Ensure()
+}
 
 // Pattern_Start_Storage retains optional entry storage.
-type Pattern_Start_Storage interface{}
+type Pattern_Start_Storage *Pattern_Start_Slot
 
 // Pattern_Start_Storage_Invariants accepts correctly typed storage.
-func Pattern_Start_Storage_Invariants(value Pattern_Start_Storage, _ aver.Namespace) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Pattern entry has expected pointer type.")
+func Pattern_Start_Storage_Invariants(value Pattern_Start_Storage, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Pattern_Start_Slot_Invariants(*value, namespace)
+}
+
+// Pattern_Instruction_Count_Slot is one value Pattern_Instruction_Count_Storage addresses.
+type Pattern_Instruction_Count_Slot uint16
+
+// Pattern_Instruction_Count_Slot_Invariants bounds the slot value.
+func Pattern_Instruction_Count_Slot_Invariants(
+	value Pattern_Instruction_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(utf8.CHARACTER_SIZE_MINIMUM),
+			uint16(INSTRUCTION_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Pattern_Instruction_Count_Storage retains optional instruction length storage.
-type Pattern_Instruction_Count_Storage interface{}
+type Pattern_Instruction_Count_Storage *Pattern_Instruction_Count_Slot
 
 // Pattern_Instruction_Count_Storage_Invariants accepts correctly typed storage.
 func Pattern_Instruction_Count_Storage_Invariants(
-	value Pattern_Instruction_Count_Storage, _ aver.Namespace,
+	value Pattern_Instruction_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Pattern instruction count has expected type.")
+	if value == nil {
+		return
+	}
+	Pattern_Instruction_Count_Slot_Invariants(*value, namespace)
+}
+
+// Pattern_Separator_Count_Slot is one value Pattern_Separator_Count_Storage addresses.
+type Pattern_Separator_Count_Slot uint16
+
+// Pattern_Separator_Count_Slot_Invariants bounds the slot value.
+func Pattern_Separator_Count_Slot_Invariants(
+	value Pattern_Separator_Count_Slot, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(SEPARATOR_COUNT_MINIMUM),
+			uint16(SEPARATOR_COUNT_MAXIMUM),
+		).
+		Ensure()
 }
 
 // Pattern_Separator_Count_Storage retains optional separator length storage.
-type Pattern_Separator_Count_Storage interface{}
+type Pattern_Separator_Count_Storage *Pattern_Separator_Count_Slot
 
 // Pattern_Separator_Count_Storage_Invariants accepts correctly typed storage.
 func Pattern_Separator_Count_Storage_Invariants(
-	value Pattern_Separator_Count_Storage, _ aver.Namespace,
+	value Pattern_Separator_Count_Storage, namespace aver.Namespace,
 ) {
-	_, valid := value.(*uint16)
-	aver.Always(valid == (value != nil), "Pattern separator count has expected type.")
+	if value == nil {
+		return
+	}
+	Pattern_Separator_Count_Slot_Invariants(*value, namespace)
 }
 
 // Pattern_Control retains start and populated arena counts.
@@ -2019,18 +2394,14 @@ func Pattern_Control_Invariants(value Pattern_Control, namespace aver.Namespace)
 // Pattern borrows immutable caller compile storage.
 type Pattern struct {
 	// Workspace retains compiled instructions and separators.
-	Workspace Pattern_Workspace_Storage
+	Workspace Compile_Workspace_Pointer
 	// Control retains start and populated counts.
 	Control Pattern_Control
 }
 
-// Pattern_Invariants verifies shape without dereferencing hostile pointer.
+// Pattern_Invariants composes borrowed arena and header storage.
 func Pattern_Invariants(value Pattern, namespace aver.Namespace) {
-	_, valid := value.Workspace.(Compile_Workspace_Pointer)
-	aver.Always(
-		valid == (value.Workspace != nil),
-		"Compiled pattern workspace has expected pointer type.",
-	)
+	Compile_Workspace_Pointer_Invariants(value.Workspace, namespace)
 	Pattern_Control_Invariants(value.Control, namespace)
 }
 
@@ -2307,30 +2678,23 @@ func Match_Workspace_Pointer_Invariants(
 	Match_Workspace_Invariants(*value, namespace)
 }
 
-// Match_Workspace_Storage admits absent caller match state.
-type Match_Workspace_Storage interface{}
-
 // Match_Workspace_Input carries hostile optional match storage.
 type Match_Workspace_Input struct {
 	// State points at caller storage when present.
-	State Match_Workspace_Storage
+	State Match_Workspace_Pointer
 }
 
 // Match_Workspace_Input_Invariants fixes optional pointer shape.
 func Match_Workspace_Input_Invariants(
-	value Match_Workspace_Input, _ aver.Namespace,
+	value Match_Workspace_Input, namespace aver.Namespace,
 ) {
-	_, valid := value.State.(Match_Workspace_Pointer)
-	aver.Always(
-		valid == (value.State != nil),
-		"Match input workspace has expected pointer type.",
-	)
+	Match_Workspace_Pointer_Invariants(value.State, namespace)
 }
 
 // Match_Input bundles immutable pattern, hostile text, and caller state.
 type Match_Input struct {
 	// Pattern points at caller compiled NFA.
-	Pattern Pattern
+	Pattern Pattern_Unvalidated
 	// Text is hostile borrowed candidate.
 	Text Text_Unvalidated
 	// Workspace owns mutable NFA state sets.
@@ -2339,13 +2703,17 @@ type Match_Input struct {
 
 // Match_Input_Invariants composes hostile match boundary.
 func Match_Input_Invariants(value Match_Input, namespace aver.Namespace) {
-	Pattern_Invariants(value.Pattern, namespace)
+	Pattern_Unvalidated_Invariants(value.Pattern, namespace)
 	Text_Unvalidated_Invariants(value.Text, namespace)
 	Match_Workspace_Input_Invariants(value.Workspace, namespace)
 }
 
-// Caller ownership keeps compact controls bounded without hidden allocation.
-func compile_control_initialize(workspace_state Compile_Workspace_Pointer) {
+func compile_control_initialize(
+	workspace_state Compile_Workspace_Pointer,
+) (control Compile_Control) {
+	defer func() {
+		Compile_Control_Invariants(control, "compile_control_initialize.control")
+	}()
 	Compile_Workspace_Pointer_Invariants(
 		workspace_state, "compile_control_initialize.workspace_state",
 	)
@@ -2356,25 +2724,24 @@ func compile_control_initialize(workspace_state Compile_Workspace_Pointer) {
 		COMPILE_CONTROL_VALUE_START + COMPILE_CONTROL_INSTRUCTION_COUNT
 	separator_count_index :=
 		COMPILE_CONTROL_VALUE_START + COMPILE_CONTROL_SEPARATOR_COUNT
-	workspace.Control = Compile_Control{
-		Node_Count:        &workspace.Uint16_Values[node_count_index],
-		Range_Count:       &workspace.Uint16_Values[range_count_index],
-		Instruction_Count: &workspace.Uint16_Values[instruction_count_index],
-		Separator_Count:   &workspace.Uint16_Values[separator_count_index],
+	control = Compile_Control{
+		Node_Count: (*Compile_Node_Count_Slot)(
+			&workspace.Uint16_Values[node_count_index],
+		),
+		Range_Count: (*Compile_Range_Count_Slot)(
+			&workspace.Uint16_Values[range_count_index],
+		),
+		Instruction_Count: (*Compile_Instruction_Count_Slot)(
+			&workspace.Uint16_Values[instruction_count_index],
+		),
+		Separator_Count: (*Compile_Separator_Count_Slot)(
+			&workspace.Uint16_Values[separator_count_index],
+		),
 	}
-	start_index := PATTERN_CONTROL_VALUE_START + PATTERN_CONTROL_START
-	instruction_count_index =
-		PATTERN_CONTROL_VALUE_START + PATTERN_CONTROL_INSTRUCTION_COUNT
-	separator_count_index =
-		PATTERN_CONTROL_VALUE_START + PATTERN_CONTROL_SEPARATOR_COUNT
-	workspace.Pattern_Control = Pattern_Control{
-		Start:             &workspace.Uint16_Values[start_index],
-		Instruction_Count: &workspace.Uint16_Values[instruction_count_index],
-		Separator_Count:   &workspace.Uint16_Values[separator_count_index],
-	}
-	for index := COMPILE_CONTROL_VALUE_START; index < UINT16_VALUE_COUNT; index++ {
+	for index := PATTERN_CONTROL_VALUE_START; index < UINT16_VALUE_COUNT; index++ {
 		workspace.Uint16_Values[index] = bytes.SLICE_SIZE_MINIMUM
 	}
+	return control
 }
 
 // Compile validates and emits one NFA into caller workspace.
@@ -2397,13 +2764,13 @@ func Compile(input Compile_Input) (
 		diagnostic = Diagnostic{Code: STATUS_INPUT_INVALID}
 		return pattern, diagnostic, STATUS_INPUT_INVALID
 	}
-	workspace, workspace_valid := input.Workspace.State.(Compile_Workspace_Pointer)
-	if !workspace_valid {
+	workspace := input.Workspace.State
+	if workspace == nil {
 		diagnostic = Diagnostic{Code: STATUS_WORKSPACE_INVALID}
 		return pattern, diagnostic, STATUS_WORKSPACE_INVALID
 	}
 	Compile_Workspace_Pointer_Invariants(workspace, "Compile.workspace")
-	compile_control_initialize(workspace)
+	control := compile_control_initialize(workspace)
 	for index := range input.Separators {
 		if !bool(utf8.Valid_Character(utf8.Character(input.Separators[index]))) {
 			diagnostic = Diagnostic{Code: STATUS_INPUT_INVALID}
@@ -2411,21 +2778,30 @@ func Compile(input Compile_Input) (
 		}
 		workspace.Separators[index] = Separator(input.Separators[index])
 	}
-	*workspace.Control.Separator_Count.(*uint16) = uint16(len(input.Separators))
-	root, position, parse_status := pattern_parse(workspace, Pattern_Source(input.Source))
+	*control.Separator_Count = Compile_Separator_Count_Slot(uint16(len(input.Separators)))
+	root, position, parse_status := pattern_parse(
+		workspace.Nodes, workspace.Node_Characters, workspace.Uint16_Values,
+		control.Node_Count, workspace.Parser_Frames,
+		workspace.Ranges, control.Range_Count, Pattern_Source(input.Source),
+	)
 	if parse_status != STATUS_OK {
 		diagnostic = Diagnostic{
 			Code: Compile_Status(parse_status), Position: Diagnostic_Position(position),
 		}
 		return pattern, diagnostic, Compile_Status(parse_status)
 	}
-	start := pattern_compile(workspace, root)
-	*workspace.Pattern_Control.Start.(*uint16) = uint16(start)
-	*workspace.Pattern_Control.Instruction_Count.(*uint16) =
-		*workspace.Control.Instruction_Count.(*uint16)
-	*workspace.Pattern_Control.Separator_Count.(*uint16) =
-		*workspace.Control.Separator_Count.(*uint16)
-	pattern = Pattern{Workspace: workspace, Control: workspace.Pattern_Control}
+	start := pattern_compile(
+		workspace.Nodes, Parsed_Node_Count(*control.Node_Count),
+		workspace.Compile_Frames, workspace.Compile_References,
+		workspace.Compile_Targets, workspace.Compile_Frame_Controls,
+		workspace.Instruction_Kinds, workspace.Instruction_Characters,
+		workspace.Instruction_Targets, workspace.Instruction_Classes,
+		control.Instruction_Count, root,
+	)
+	pattern = Pattern{Workspace: workspace, Control: pattern_control_store(
+		workspace.Uint16_Values, start, Instruction_Count(*control.Instruction_Count),
+		Separator_Count(*control.Separator_Count),
+	)}
 	return pattern, diagnostic, STATUS_OK
 }
 
@@ -2442,23 +2818,26 @@ func Match(input Match_Input) (_ Matched, status Match_Status) {
 	if state != STATUS_OK {
 		return false, Match_Status(state)
 	}
-	workspace, workspace_valid := input.Workspace.State.(Match_Workspace_Pointer)
-	if !workspace_valid {
+	workspace := input.Workspace.State
+	if workspace == nil {
 		return false, STATUS_WORKSPACE_INVALID
 	}
 	Match_Workspace_Pointer_Invariants(workspace, "Match.workspace")
 	for index := range workspace.Seen {
 		workspace.Seen[index] = State_Generation(STATE_GENERATION_MINIMUM)
 	}
-	compiled := input.Pattern.Workspace.(Compile_Workspace_Pointer)
+	compiled := input.Pattern.Workspace
+	kinds, characters := compiled.Instruction_Kinds, compiled.Instruction_Characters
+	targets, classes := compiled.Instruction_Targets, compiled.Instruction_Classes
+	count := Instruction_Count(uint16(*input.Pattern.Control.Instruction_Count))
+	separator_count := Separator_Count(uint16(*input.Pattern.Control.Separator_Count))
 	current := Instruction_State_Storage(workspace.Current[:])
 	next := Instruction_State_Storage(workspace.Next[:])
-	current_count := State_Count(bytes.SLICE_SIZE_MINIMUM)
 	generation := Closure_Generation(CLOSURE_GENERATION_MINIMUM)
-	start := Instruction_PC(*input.Pattern.Control.Start.(*uint16))
-	current_count = State_Count(state_add(
-		input.Pattern, workspace, current, Append_State_Count(current_count),
-		start, generation,
+	current_count := State_Count(state_add(
+		kinds, characters, targets, classes, count, workspace, current,
+		Append_State_Count(bytes.SLICE_SIZE_MINIMUM),
+		Instruction_PC(uint16(*input.Pattern.Control.Start)), generation,
 	))
 	position := TEXT_SIZE_MINIMUM
 	for position < len(input.Text) {
@@ -2466,7 +2845,8 @@ func Match(input Match_Input) (_ Matched, status Match_Status) {
 		position += int(size)
 		generation++
 		next_count := state_consume(
-			input.Pattern, workspace,
+			kinds, characters, targets, classes, count, compiled.Ranges,
+			compiled.Separators, separator_count, workspace,
 			Active_Instruction_States(current[:current_count]), next,
 			utf8.Decoded_Character(character), Consume_Generation(generation),
 		)
@@ -2532,68 +2912,42 @@ func Special(character Character) (special Special_Character) {
 }
 
 func pattern_parse(
-	workspace_state Compile_Workspace_Pointer,
-	source Pattern_Source,
+	nodes Nodes, characters Node_Character_Values, values Uint16_Values,
+	node_count Compile_Node_Count_Storage, frames Parser_Frames, ranges Class_Ranges,
+	range_count Compile_Range_Count_Storage, source Pattern_Source,
 ) (_ Root_Node_Reference, _ Pattern_Position, status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "pattern_parse.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "pattern_parse.workspace_state")
+	Nodes_Invariants(nodes, "pattern_parse.nodes")
+	Node_Character_Values_Invariants(characters, "pattern_parse.characters")
+	Uint16_Values_Invariants(values, "pattern_parse.values")
+	Compile_Node_Count_Storage_Invariants(node_count, "pattern_parse.node_count")
+	Parser_Frames_Invariants(frames, "pattern_parse.frames")
+	Class_Ranges_Invariants(ranges, "pattern_parse.ranges")
+	Compile_Range_Count_Storage_Invariants(range_count, "pattern_parse.range_count")
 	Pattern_Source_Invariants(source, "pattern_parse.source")
+	*node_count = Compile_Node_Count_Slot(bytes.SLICE_SIZE_MINIMUM)
+	*range_count = Compile_Range_Count_Slot(bytes.SLICE_SIZE_MINIMUM)
 	var root Root_Node_Reference
 	defer func() { Root_Node_Reference_Invariants(root, "pattern_parse.root") }()
 	position := Pattern_Position(PATTERN_SIZE_MINIMUM)
 	defer func() { Pattern_Position_Invariants(position, "pattern_parse.position") }()
-	workspace := (*Compile_Workspace)(workspace_state)
-	root_reference, status := node_create(workspace, NODE_SEQUENCE)
+	root_reference, status := node_create(nodes, characters, values, node_count, NODE_SEQUENCE)
 	root = Root_Node_Reference(root_reference)
-	current, depth := Node_Reference(root), Parser_Depth(PATTERN_DEPTH_MINIMUM)
-	nonempty := Nonempty_Pattern_Source(source)
+	parsed := Parsed_Node_Count_Storage(
+		(*Parsed_Node_Count)((*Compile_Node_Count_Slot)(node_count)),
+	)
+	starts := Class_Member_Index_Storage(
+		(*Class_Member_Index)((*Compile_Range_Count_Slot)(range_count)),
+	)
+	current, depth := Container_Node_Reference(root), Parser_Depth(PATTERN_DEPTH_MINIMUM)
 	for status == STATUS_OK {
 		if position == Pattern_Position(len(source)) {
 			break
 		}
-		character := source[position]
-		index := Pattern_Index(position)
-		parent := Container_Node_Reference(current)
-		open_depth := Open_Parser_Depth(depth)
-		nested := Nested_Sequence_Reference(current)
-		switch character {
-		case '{':
-			opened, next_depth, state := group_open(
-				workspace, parent, depth,
-			)
-			current = Node_Reference(opened)
-			depth, status = Parser_Depth(next_depth), state
-			position++
-		case ',':
-			if depth == PATTERN_DEPTH_MINIMUM {
-				end, state := literal_parse(workspace, nonempty, parent, index)
-				position, status = Pattern_Position(end), state
-			} else {
-				branch, state := group_branch(workspace, nested, open_depth)
-				current, status = Node_Reference(branch), state
-				position++
-			}
-		case '}':
-			if depth == PATTERN_DEPTH_MINIMUM {
-				status = STATUS_SYNTAX_INVALID
-			} else {
-				parent, next_depth := group_close(workspace, open_depth)
-				current, depth = Node_Reference(parent), Parser_Depth(next_depth)
-				position++
-			}
-		case '[':
-			end, state := class_parse(workspace, nonempty, parent, index)
-			position, status = Pattern_Position(end), state
-		case '*':
-			end, state := star_parse(workspace, nonempty, parent, index)
-			position, status = Pattern_Position(end), state
-		case '?':
-			position++
-			status = atom_append(workspace, parent, ATOM_SINGLE, ATOM_CHARACTER_EMPTY)
-		default:
-			end, state := literal_parse(workspace, nonempty, parent, index)
-			position, status = Pattern_Position(end), state
-		}
+		current, depth, position, status = syntax_step(
+			nodes, characters, values, parsed, frames, ranges, starts,
+			Nonempty_Pattern_Source(source), current, depth, Pattern_Index(position),
+		)
 	}
 	if status == STATUS_OK {
 		if depth != PATTERN_DEPTH_MINIMUM {
@@ -2604,13 +2958,19 @@ func pattern_parse(
 }
 
 func star_parse(
-	workspace Compile_Workspace_Pointer,
+	nodes Nodes,
+	characters Node_Character_Values,
+	values Uint16_Values,
+	node_count Parsed_Node_Count_Storage,
 	source Nonempty_Pattern_Source,
 	parent Container_Node_Reference,
 	position Pattern_Index,
 ) (_ Nonzero_Pattern_Position, status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "star_parse.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace, "star_parse.workspace")
+	Nodes_Invariants(nodes, "star_parse.nodes")
+	Node_Character_Values_Invariants(characters, "star_parse.characters")
+	Uint16_Values_Invariants(values, "star_parse.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "star_parse.node_count")
 	Nonempty_Pattern_Source_Invariants(source, "star_parse.source")
 	Container_Node_Reference_Invariants(parent, "star_parse.parent")
 	Pattern_Index_Invariants(position, "star_parse.position")
@@ -2625,14 +2985,18 @@ func star_parse(
 		}
 	}
 	status = atom_append(
-		workspace, parent, kind, ATOM_CHARACTER_EMPTY,
+		nodes, characters, values, node_count, parent, kind, ATOM_CHARACTER_EMPTY,
 	)
 	end = Nonzero_Pattern_Position(cursor)
 	return end, status
 }
 
 func group_open(
-	workspace_state Compile_Workspace_Pointer,
+	nodes Nodes,
+	characters Node_Character_Values,
+	values Uint16_Values,
+	node_count Parsed_Node_Count_Storage,
+	frames Parser_Frames,
 	current Container_Node_Reference,
 	depth Parser_Depth,
 ) (
@@ -2641,7 +3005,11 @@ func group_open(
 	status Syntax_Status,
 ) {
 	defer func() { Syntax_Status_Invariants(status, "group_open.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "group_open.workspace_state")
+	Nodes_Invariants(nodes, "group_open.nodes")
+	Node_Character_Values_Invariants(characters, "group_open.characters")
+	Uint16_Values_Invariants(values, "group_open.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "group_open.node_count")
+	Parser_Frames_Invariants(frames, "group_open.frames")
 	Container_Node_Reference_Invariants(current, "group_open.current")
 	Parser_Depth_Invariants(depth, "group_open.depth")
 	var updated_current Opened_Sequence_Reference
@@ -2654,31 +3022,38 @@ func group_open(
 	defer func() {
 		Opened_Parser_Depth_Invariants(updated_depth, "group_open.updated_depth")
 	}()
-	workspace := (*Compile_Workspace)(workspace_state)
-	if depth == Parser_Depth(len(workspace.Parser_Frames)) {
+	if depth == Parser_Depth(len(frames)) {
 		updated_current = Opened_Sequence_Reference(current)
 		updated_depth = Opened_Parser_Depth(depth)
 		return updated_current, updated_depth, STATUS_SYNTAX_INVALID
 	}
-	alternative, status := node_create(workspace, NODE_ALTERNATIVE)
+	alternative, status := node_create(
+		nodes, characters, values,
+		(*Compile_Node_Count_Slot)((*Parsed_Node_Count)(node_count)),
+		NODE_ALTERNATIVE,
+	)
 	if status != STATUS_OK {
 		updated_current = Opened_Sequence_Reference(current)
 		updated_depth = Opened_Parser_Depth(depth)
 		return updated_current, updated_depth, status
 	}
 	node_append_child(
-		workspace, Child_Parent_Reference(current), Child_Node_Reference(alternative),
+		nodes, Child_Parent_Reference(current), Child_Node_Reference(alternative),
 	)
-	sequence, status := node_create(workspace, NODE_SEQUENCE)
+	sequence, status := node_create(
+		nodes, characters, values,
+		(*Compile_Node_Count_Slot)((*Parsed_Node_Count)(node_count)),
+		NODE_SEQUENCE,
+	)
 	if status != STATUS_OK {
 		updated_current = Opened_Sequence_Reference(current)
 		updated_depth = Opened_Parser_Depth(depth)
 		return updated_current, updated_depth, status
 	}
 	node_append_child(
-		workspace, Child_Parent_Reference(alternative), Child_Node_Reference(sequence),
+		nodes, Child_Parent_Reference(alternative), Child_Node_Reference(sequence),
 	)
-	workspace.Parser_Frames[depth] = Parser_Frame{References: Parser_References{
+	frames[depth] = Parser_Frame{References: Parser_References{
 		Parent:      Suspended_Sequence_Reference(current),
 		Alternative: Parser_Alternative_Reference(alternative),
 		Sequence:    Opened_Sequence_Reference(sequence),
@@ -2689,12 +3064,20 @@ func group_open(
 }
 
 func group_branch(
-	workspace_state Compile_Workspace_Pointer,
+	nodes Nodes,
+	characters Node_Character_Values,
+	values Uint16_Values,
+	node_count Grouped_Node_Count_Storage,
+	frames Parser_Frames,
 	current Nested_Sequence_Reference,
 	depth Open_Parser_Depth,
 ) (_ Branch_Sequence_Reference, status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "group_branch.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "group_branch.workspace_state")
+	Nodes_Invariants(nodes, "group_branch.nodes")
+	Node_Character_Values_Invariants(characters, "group_branch.characters")
+	Uint16_Values_Invariants(values, "group_branch.values")
+	Grouped_Node_Count_Storage_Invariants(node_count, "group_branch.node_count")
+	Parser_Frames_Invariants(frames, "group_branch.frames")
 	Nested_Sequence_Reference_Invariants(current, "group_branch.current")
 	Open_Parser_Depth_Invariants(depth, "group_branch.depth")
 	var updated_current Branch_Sequence_Reference
@@ -2703,15 +3086,18 @@ func group_branch(
 			updated_current, "group_branch.updated_current",
 		)
 	}()
-	workspace := (*Compile_Workspace)(workspace_state)
-	frame := &workspace.Parser_Frames[int(depth)-utf8.CHARACTER_SIZE_MINIMUM]
-	sequence, status := node_create(workspace, NODE_SEQUENCE)
+	frame := &frames[int(depth)-utf8.CHARACTER_SIZE_MINIMUM]
+	sequence, status := node_create(
+		nodes, characters, values,
+		(*Compile_Node_Count_Slot)((*Grouped_Node_Count)(node_count)),
+		NODE_SEQUENCE,
+	)
 	if status != STATUS_OK {
 		updated_current = Branch_Sequence_Reference(current)
 		return updated_current, status
 	}
 	node_append_child(
-		workspace,
+		nodes,
 		Child_Parent_Reference(frame.References.Alternative),
 		Child_Node_Reference(sequence),
 	)
@@ -2721,32 +3107,37 @@ func group_branch(
 }
 
 func group_close(
-	workspace_state Compile_Workspace_Pointer,
+	frames Parser_Frames,
 	depth Open_Parser_Depth,
 ) (_ Suspended_Sequence_Reference, updated_depth Closed_Parser_Depth) {
 	defer func() {
 		Closed_Parser_Depth_Invariants(updated_depth, "group_close.updated_depth")
 	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "group_close.workspace_state")
+	Parser_Frames_Invariants(frames, "group_close.frames")
 	Open_Parser_Depth_Invariants(depth, "group_close.depth")
 	var current Suspended_Sequence_Reference
 	defer func() {
 		Suspended_Sequence_Reference_Invariants(current, "group_close.current")
 	}()
-	workspace := (*Compile_Workspace)(workspace_state)
 	depth--
-	current = Suspended_Sequence_Reference(workspace.Parser_Frames[depth].References.Parent)
+	current = Suspended_Sequence_Reference(frames[depth].References.Parent)
 	return current, Closed_Parser_Depth(depth)
 }
 
 func literal_parse(
-	workspace_state Compile_Workspace_Pointer,
+	nodes Nodes,
+	characters Node_Character_Values,
+	values Uint16_Values,
+	node_count Parsed_Node_Count_Storage,
 	source Nonempty_Pattern_Source,
 	parent Container_Node_Reference,
 	position Pattern_Index,
 ) (_ Nonzero_Pattern_Position, status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "literal_parse.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "literal_parse.workspace_state")
+	Nodes_Invariants(nodes, "literal_parse.nodes")
+	Node_Character_Values_Invariants(characters, "literal_parse.characters")
+	Uint16_Values_Invariants(values, "literal_parse.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "literal_parse.node_count")
 	Nonempty_Pattern_Source_Invariants(source, "literal_parse.source")
 	Container_Node_Reference_Invariants(parent, "literal_parse.parent")
 	Pattern_Index_Invariants(position, "literal_parse.position")
@@ -2756,7 +3147,6 @@ func literal_parse(
 			updated_position, "literal_parse.updated_position",
 		)
 	}()
-	workspace := (*Compile_Workspace)(workspace_state)
 	if source[position] == '\\' {
 		position++
 		if position == Pattern_Index(len(source)) {
@@ -2767,113 +3157,84 @@ func literal_parse(
 	character, size := utf8.Decode_Character(utf8.Bytes(source[position:]))
 	position += Pattern_Index(size)
 	updated_position = Nonzero_Pattern_Position(position)
-	return updated_position, atom_append(workspace, parent, ATOM_LITERAL, character)
+	return updated_position, atom_append(
+		nodes, characters, values, node_count, parent, ATOM_LITERAL, character,
+	)
 }
 
 func class_parse(
-	workspace Compile_Workspace_Pointer,
-	source Nonempty_Pattern_Source,
-	parent Container_Node_Reference,
-	position Pattern_Index,
+	nodes Nodes, characters Node_Character_Values, values Uint16_Values,
+	node_count Parsed_Node_Count_Storage, ranges Class_Ranges,
+	range_count_state Class_Member_Index_Storage, source Nonempty_Pattern_Source,
+	parent Container_Node_Reference, position Pattern_Index,
 ) (_ Nonzero_Pattern_Position, status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "class_parse.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace, "class_parse.workspace")
+	Nodes_Invariants(nodes, "class_parse.nodes")
+	Node_Character_Values_Invariants(characters, "class_parse.characters")
+	Uint16_Values_Invariants(values, "class_parse.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "class_parse.node_count")
+	Class_Ranges_Invariants(ranges, "class_parse.ranges")
+	Class_Member_Index_Storage_Invariants(range_count_state, "class_parse.range_count_state")
 	Nonempty_Pattern_Source_Invariants(source, "class_parse.source")
 	Container_Node_Reference_Invariants(parent, "class_parse.parent")
 	Pattern_Index_Invariants(position, "class_parse.position")
 	var end Nonzero_Pattern_Position
 	defer func() { Nonzero_Pattern_Position_Invariants(end, "class_parse.end") }()
 	cursor := Pattern_Position(position) + Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM)
-	negated_value := uint16(CONTROL_FALSE)
+	negated_value := Node_Class_Negated_Slot(CONTROL_FALSE)
 	if cursor < Pattern_Position(len(source)) {
 		if source[cursor] == '!' {
-			negated_value = uint16(CONTROL_TRUE)
+			negated_value = Node_Class_Negated_Slot(CONTROL_TRUE)
 			cursor++
 		}
 	}
-	range_index := *workspace.Control.Range_Count.(*uint16)
-	range_count := uint16(bytes.SLICE_SIZE_MINIMUM)
-	for status == STATUS_OK {
-		if cursor == Pattern_Position(len(source)) {
-			status = STATUS_SYNTAX_INVALID
-			break
-		}
-		if source[cursor] == ']' {
-			if range_count == bytes.SLICE_SIZE_MINIMUM {
-				status = STATUS_SYNTAX_INVALID
-				break
-			}
-			cursor++
-			break
-		}
-		var low utf8.Decoded_Character
-		class_end := Class_Character_End(bytes.SLICE_SIZE_MINIMUM)
-		low, class_end, status = class_character(
-			Class_Pattern_Source(source), Class_Character_Index(cursor),
-		)
-		cursor = Pattern_Position(class_end)
-		if status != STATUS_OK {
-			break
-		}
-		high := low
-		if cursor+Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM) <
-			Pattern_Position(len(source)) {
-			if source[cursor] == '-' {
-				if source[cursor+utf8.CHARACTER_SIZE_MINIMUM] != ']' {
-					cursor++
-					high, class_end, status = class_character(
-						Class_Pattern_Source(source),
-						Class_Character_Index(cursor),
-					)
-					cursor = Pattern_Position(class_end)
-				}
-			}
-		}
-		if status != STATUS_OK {
-			break
-		}
-		if high < low {
-			status = STATUS_SYNTAX_INVALID
-			break
-		}
-		range_append(workspace, low, high)
-		range_count++
+	range_index := Node_Class_Range_Index_Slot(*range_count_state)
+	end, range_count, status := class_ranges_parse(
+		ranges, range_count_state, source, Nonzero_Pattern_Position(cursor),
+	)
+	if status != STATUS_OK {
+		return end, status
 	}
-	end = Nonzero_Pattern_Position(cursor)
 	status = class_append(
-		workspace, parent, &range_index, &range_count, &negated_value, status,
+		nodes, characters, values, node_count, parent,
+		range_index, Class_Member_Count(range_count), negated_value,
 	)
 	return end, status
 }
 
 func class_append(
-	workspace Compile_Workspace_Pointer,
+	nodes Nodes,
+	characters Node_Character_Values,
+	values Uint16_Values,
+	node_count Parsed_Node_Count_Storage,
 	parent Container_Node_Reference,
-	range_index Node_Class_Range_Index_Storage,
-	range_count Node_Class_Range_Count_Storage,
-	negated Node_Class_Negated_Storage,
-	prior Syntax_Status,
+	range_index Node_Class_Range_Index_Slot,
+	range_count Class_Member_Count,
+	negated Node_Class_Negated_Slot,
 ) (status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "class_append.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace, "class_append.workspace")
+	Nodes_Invariants(nodes, "class_append.nodes")
+	Node_Character_Values_Invariants(characters, "class_append.characters")
+	Uint16_Values_Invariants(values, "class_append.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "class_append.node_count")
 	Container_Node_Reference_Invariants(parent, "class_append.parent")
-	Node_Class_Range_Index_Storage_Invariants(range_index, "class_append.range_index")
-	Node_Class_Range_Count_Storage_Invariants(range_count, "class_append.range_count")
-	Node_Class_Negated_Storage_Invariants(negated, "class_append.negated")
-	Syntax_Status_Invariants(prior, "class_append.prior")
-	if prior != STATUS_OK {
-		return prior
-	}
-	node, create_status := node_create(workspace, NODE_CLASS)
+	Node_Class_Range_Index_Slot_Invariants(range_index, "class_append.range_index")
+	Class_Member_Count_Invariants(range_count, "class_append.range_count")
+	Node_Class_Negated_Slot_Invariants(negated, "class_append.negated")
+	node, create_status := node_create(
+		nodes, characters, values,
+		(*Compile_Node_Count_Slot)((*Parsed_Node_Count)(node_count)),
+		NODE_CLASS,
+	)
 	if create_status != STATUS_OK {
 		return create_status
 	}
-	class := workspace.Nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM].Class
-	*class.Range_Index.(*uint16) = *range_index.(*uint16)
-	*class.Range_Count.(*uint16) = *range_count.(*uint16)
-	*class.Negated.(*uint16) = *negated.(*uint16)
+	class := nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM].Class
+	*class.Range_Index = range_index
+	*class.Range_Count = Node_Class_Range_Count_Slot(range_count)
+	*class.Negated = negated
 	node_append_child(
-		workspace, Child_Parent_Reference(parent), Child_Node_Reference(node),
+		nodes, Child_Parent_Reference(parent), Child_Node_Reference(node),
 	)
 	return STATUS_OK
 }
@@ -2913,269 +3274,254 @@ func class_character(
 }
 
 func atom_append(
-	workspace_state Compile_Workspace_Pointer,
+	nodes Nodes,
+	characters Node_Character_Values,
+	values Uint16_Values,
+	node_count Parsed_Node_Count_Storage,
 	parent Container_Node_Reference,
 	kind Atom_Kind,
 	character utf8.Decoded_Character,
 ) (status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "atom_append.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "atom_append.workspace_state")
+	Nodes_Invariants(nodes, "atom_append.nodes")
+	Node_Character_Values_Invariants(characters, "atom_append.characters")
+	Uint16_Values_Invariants(values, "atom_append.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "atom_append.node_count")
 	Container_Node_Reference_Invariants(parent, "atom_append.parent")
 	Atom_Kind_Invariants(kind, "atom_append.kind")
 	utf8.Decoded_Character_Invariants(character, "atom_append.character")
-	workspace := (*Compile_Workspace)(workspace_state)
-	node, create_status := node_create(workspace, Node_Kind(kind))
+	node, create_status := node_create(
+		nodes, characters, values,
+		(*Compile_Node_Count_Slot)((*Parsed_Node_Count)(node_count)),
+		Node_Kind(kind),
+	)
 	if create_status != STATUS_OK {
 		return create_status
 	}
-	*workspace.Nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM].
-		Character.Value.(*rune) = rune(character)
+	slot := nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM].Character.Value
+	*slot = Node_Character_Slot(character)
 	node_append_child(
-		workspace, Child_Parent_Reference(parent), Child_Node_Reference(node),
+		nodes, Child_Parent_Reference(parent), Child_Node_Reference(node),
 	)
 	return STATUS_OK
 }
 
 func node_create(
-	workspace_state Compile_Workspace_Pointer,
+	nodes Nodes,
+	characters Node_Character_Values,
+	values Uint16_Values,
+	node_count Compile_Node_Count_Storage,
 	kind Node_Kind,
 ) (_ Node_Reference, status Syntax_Status) {
 	defer func() { Syntax_Status_Invariants(status, "node_create.status") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "node_create.workspace_state")
+	Nodes_Invariants(nodes, "node_create.nodes")
+	Node_Character_Values_Invariants(characters, "node_create.characters")
+	Uint16_Values_Invariants(values, "node_create.values")
+	Compile_Node_Count_Storage_Invariants(node_count, "node_create.node_count")
 	Node_Kind_Invariants(kind, "node_create.kind")
 	reference := NODE_NONE
 	defer func() { Node_Reference_Invariants(reference, "node_create.reference") }()
-	workspace := (*Compile_Workspace)(workspace_state)
-	count := *workspace.Control.Node_Count.(*uint16)
-	if int(count) == len(workspace.Nodes) {
+	count := uint16(*node_count)
+	if int(count) == len(nodes) {
 		return NODE_NONE, STATUS_SYNTAX_INVALID
 	}
 	character_start := int(count) * NODE_CHARACTER_FIELD_COUNT
 	class_start := int(count) * NODE_CLASS_FIELD_COUNT
-	workspace.Nodes[count] = Node{
-		Kind:      kind,
-		Character: Node_Character{Value: &workspace.Node_Characters[character_start]},
+	nodes[count] = Node{
+		Kind: kind,
+		Character: Node_Character{
+			Value: (*Node_Character_Slot)(&characters[character_start]),
+		},
 		Class: Node_Class{
-			Range_Index: &workspace.Uint16_Values[class_start+NODE_CLASS_RANGE_INDEX],
-			Range_Count: &workspace.Uint16_Values[class_start+NODE_CLASS_RANGE_COUNT],
-			Negated:     &workspace.Uint16_Values[class_start+NODE_CLASS_NEGATED],
+			Range_Index: (*Node_Class_Range_Index_Slot)(
+				&values[class_start+NODE_CLASS_RANGE_INDEX],
+			),
+			Range_Count: (*Node_Class_Range_Count_Slot)(
+				&values[class_start+NODE_CLASS_RANGE_COUNT],
+			),
+			Negated: (*Node_Class_Negated_Slot)(
+				&values[class_start+NODE_CLASS_NEGATED],
+			),
 		},
 	}
 	count++
-	*workspace.Control.Node_Count.(*uint16) = count
+	*node_count = Compile_Node_Count_Slot(count)
 	reference = Node_Reference(count)
 	return reference, STATUS_OK
 }
 
 func node_append_child(
-	workspace_state Compile_Workspace_Pointer,
+	nodes Nodes,
 	parent Child_Parent_Reference,
 	child Child_Node_Reference,
 ) {
-	Compile_Workspace_Pointer_Invariants(workspace_state, "node_append_child.workspace_state")
+	Nodes_Invariants(nodes, "node_append_child.nodes")
 	Child_Parent_Reference_Invariants(parent, "node_append_child.parent")
 	Child_Node_Reference_Invariants(child, "node_append_child.child")
-	workspace := (*Compile_Workspace)(workspace_state)
-	parent_node := &workspace.Nodes[int(parent)-utf8.CHARACTER_SIZE_MINIMUM]
+	parent_node := &nodes[int(parent)-utf8.CHARACTER_SIZE_MINIMUM]
 	last := parent_node.Links.Last_Child
 	if last == Last_Child_Reference(NODE_NONE) {
 		parent_node.Links.First_Child = First_Child_Reference(child)
 	} else {
-		workspace.Nodes[int(last)-utf8.CHARACTER_SIZE_MINIMUM].
+		nodes[int(last)-utf8.CHARACTER_SIZE_MINIMUM].
 			Links.Next_Sibling = Next_Sibling_Reference(child)
-		workspace.Nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].
+		nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].
 			Links.Previous_Sibling = Previous_Sibling_Reference(last)
 	}
 	parent_node.Links.Last_Child = Last_Child_Reference(child)
 }
 
 func range_append(
-	workspace_state Compile_Workspace_Pointer,
+	ranges Class_Ranges,
+	range_count Node_Class_Range_Count_Storage,
 	low utf8.Decoded_Character,
 	high utf8.Decoded_Character,
 ) {
-	Compile_Workspace_Pointer_Invariants(workspace_state, "range_append.workspace_state")
+	Class_Ranges_Invariants(ranges, "range_append.ranges")
+	Node_Class_Range_Count_Storage_Invariants(range_count, "range_append.range_count")
 	utf8.Decoded_Character_Invariants(low, "range_append.low")
 	utf8.Decoded_Character_Invariants(high, "range_append.high")
-	workspace := (*Compile_Workspace)(workspace_state)
-	count := *workspace.Control.Range_Count.(*uint16)
+	count := uint16(*range_count)
 	aver.Always(
-		int(count) < len(workspace.Ranges),
+		int(count) < len(ranges),
 		"One class shell leaves one formula-derived range slot per source byte.",
 	)
-	workspace.Ranges[count] = Class_Range{
+	ranges[count] = Class_Range{
 		Low:  Class_Low(low),
 		High: Class_High(high),
 	}
-	*workspace.Control.Range_Count.(*uint16) = count + utf8.CHARACTER_SIZE_MINIMUM
+	*range_count = Node_Class_Range_Count_Slot(count + utf8.CHARACTER_SIZE_MINIMUM)
 }
 
 func compile_frame_initialize(
-	workspace_state Compile_Workspace_Pointer,
-	index_value Instruction_PC,
-) (frame Compile_Frame_Pointer) {
-	defer func() {
-		Compile_Frame_Pointer_Invariants(frame, "compile_frame_initialize.frame")
-	}()
-	Compile_Workspace_Pointer_Invariants(
-		workspace_state, "compile_frame_initialize.workspace_state",
-	)
+	nodes Nodes, frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
+	index_value Instruction_PC, node Frame_Node_Reference,
+	continuation Instruction_Continuation,
+) {
+	Nodes_Invariants(nodes, "compile_frame_initialize.nodes")
+	Compile_Frames_Invariants(frames, "compile_frame_initialize.frames")
+	Compile_Reference_Values_Invariants(references, "compile_frame_initialize.references")
+	Compile_Target_Values_Invariants(targets, "compile_frame_initialize.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "compile_frame_initialize.controls")
 	Instruction_PC_Invariants(index_value, "compile_frame_initialize.index_value")
-	workspace := (*Compile_Workspace)(workspace_state)
+	Frame_Node_Reference_Invariants(node, "compile_frame_initialize.node")
+	Instruction_Continuation_Invariants(continuation, "compile_frame_initialize.continuation")
 	index := int(index_value)
 	reference_start := index * COMPILE_REFERENCE_COUNT
 	target_start := index * COMPILE_TARGET_COUNT
 	control_start := index * COMPILE_FRAME_CONTROL_COUNT
-	frame = &workspace.Compile_Frames[index]
+	frame := &frames[index]
 	frame.References = Compile_References{
-		Node:  &workspace.Compile_References[reference_start+COMPILE_REFERENCE_NODE],
-		Child: &workspace.Compile_References[reference_start+COMPILE_REFERENCE_CHILD],
+		Node:  (*Compile_Node_Slot)(&references[reference_start+COMPILE_REFERENCE_NODE]),
+		Child: (*Compile_Child_Slot)(&references[reference_start+COMPILE_REFERENCE_CHILD]),
 	}
 	frame.Targets = Compile_Targets{
-		Continuation: &workspace.Compile_Targets[target_start+COMPILE_TARGET_CONTINUATION],
-		Accumulated:  &workspace.Compile_Targets[target_start+COMPILE_TARGET_ACCUMULATED],
+		Continuation: (*Compile_Continuation_Slot)(
+			&targets[target_start+COMPILE_TARGET_CONTINUATION],
+		),
+		Accumulated: (*Compile_Accumulated_Slot)(
+			&targets[target_start+COMPILE_TARGET_ACCUMULATED],
+		),
 	}
 	frame.Control = Compile_Frame_Control{
-		Stage: &workspace.Compile_Frame_Controls[control_start+COMPILE_FRAME_STAGE],
-		First: &workspace.Compile_Frame_Controls[control_start+COMPILE_FRAME_FIRST],
+		Stage: (*Compile_Stage_Slot)(&controls[control_start+COMPILE_FRAME_STAGE]),
+		First: (*Compile_First_Slot)(&controls[control_start+COMPILE_FRAME_FIRST]),
 	}
-	*frame.References.Node.(*Node_Reference) = NODE_NONE
-	*frame.References.Child.(*Node_Reference) = NODE_NONE
-	*frame.Targets.Continuation.(*Instruction_PC) = INSTRUCTION_PC_MINIMUM
-	*frame.Targets.Accumulated.(*Instruction_PC) = INSTRUCTION_PC_MINIMUM
-	*frame.Control.Stage.(*uint8) = CONTROL_FALSE
-	*frame.Control.First.(*uint8) = CONTROL_FALSE
-	return frame
+	syntax := nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM]
+	*frame.References.Node = Compile_Node_Slot(node)
+	*frame.References.Child = Compile_Child_Slot(NODE_NONE)
+	*frame.Targets.Continuation = Compile_Continuation_Slot(continuation)
+	*frame.Targets.Accumulated = Compile_Accumulated_Slot(INSTRUCTION_PC_MINIMUM)
+	*frame.Control.Stage = Compile_Stage_Slot(COMPILE_STAGE_ENTER)
+	*frame.Control.First = Compile_First_Slot(CONTROL_FALSE)
+	switch syntax.Kind {
+	case NODE_SEQUENCE:
+		*frame.References.Child = Compile_Child_Slot(syntax.Links.Last_Child)
+		*frame.Targets.Accumulated = Compile_Accumulated_Slot(continuation)
+		*frame.Control.Stage = Compile_Stage_Slot(COMPILE_STAGE_SEQUENCE)
+	case NODE_ALTERNATIVE:
+		*frame.References.Child = Compile_Child_Slot(syntax.Links.Last_Child)
+		*frame.Control.First = Compile_First_Slot(CONTROL_TRUE)
+		*frame.Control.Stage = Compile_Stage_Slot(COMPILE_STAGE_ALTERNATIVE)
+	}
 }
 
 func pattern_compile(
-	workspace_state Compile_Workspace_Pointer,
-	root Root_Node_Reference,
+	nodes Nodes, node_count Parsed_Node_Count,
+	frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	instruction_targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Compile_Instruction_Count_Storage, root Root_Node_Reference,
 ) (start Instruction_PC) {
-	defer func() {
-		Instruction_PC_Invariants(start, "pattern_compile.start")
-	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "pattern_compile.workspace_state")
+	defer func() { Instruction_PC_Invariants(start, "pattern_compile.start") }()
+	Nodes_Invariants(nodes, "pattern_compile.nodes")
+	Parsed_Node_Count_Invariants(node_count, "pattern_compile.node_count")
+	Compile_Frames_Invariants(frames, "pattern_compile.frames")
+	Compile_Reference_Values_Invariants(references, "pattern_compile.references")
+	Compile_Target_Values_Invariants(targets, "pattern_compile.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "pattern_compile.controls")
+	Instruction_Kinds_Invariants(kinds, "pattern_compile.kinds")
+	Instruction_Characters_Invariants(characters, "pattern_compile.characters")
+	Instruction_Target_Values_Invariants(
+		instruction_targets, "pattern_compile.instruction_targets",
+	)
+	Instruction_Class_Values_Invariants(classes, "pattern_compile.classes")
+	Compile_Instruction_Count_Storage_Invariants(
+		instruction_count, "pattern_compile.instruction_count",
+	)
 	Root_Node_Reference_Invariants(root, "pattern_compile.root")
-	workspace := (*Compile_Workspace)(workspace_state)
-	*workspace.Control.Instruction_Count.(*uint16) = uint16(bytes.SLICE_SIZE_MINIMUM)
-	character := rune(utf8.DECODED_CHARACTER_MINIMUM)
-	next := Instruction_PC(INSTRUCTION_PC_MINIMUM)
-	branch := Instruction_PC(INSTRUCTION_PC_MINIMUM)
-	class_index := uint16(bytes.SLICE_SIZE_MINIMUM)
-	class_count := uint16(bytes.SLICE_SIZE_MINIMUM)
-	class_negated := uint16(CONTROL_FALSE)
-	match := instruction_emit(
-		workspace, INSTRUCTION_MATCH, &character, &next, &branch,
-		&class_index, &class_count, &class_negated,
+	compile_frame_initialize(
+		nodes, frames, references, targets, controls,
+		Instruction_PC(bytes.SLICE_SIZE_MINIMUM), Frame_Node_Reference(root),
+		Instruction_Continuation(INSTRUCTION_PC_MINIMUM),
 	)
-	depth := Compile_Depth(utf8.CHARACTER_SIZE_MINIMUM)
-	result := match
-	frame := compile_frame_initialize(
-		workspace, Instruction_PC(bytes.SLICE_SIZE_MINIMUM),
+	start = compile_frames(
+		nodes, node_count, frames, references, targets, controls,
+		kinds, characters, instruction_targets, classes, instruction_count,
 	)
-	*frame.References.Node.(*Node_Reference) = Node_Reference(root)
-	*frame.Targets.Continuation.(*Instruction_PC) = match
-	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_ENTER
-	for depth != PATTERN_DEPTH_MINIMUM {
-		frame = &workspace.Compile_Frames[depth-utf8.CHARACTER_SIZE_MINIMUM]
-		switch *frame.Control.Stage.(*uint8) {
-		case COMPILE_STAGE_ENTER:
-			updated, next := compile_enter(
-				workspace, frame, Nonzero_Compile_Depth(depth),
-				Instruction_Continuation(result),
-			)
-			depth, result = Compile_Depth(updated), next
-		case COMPILE_STAGE_SEQUENCE:
-			level := Sequence_Compile_Level(
-				(depth - Compile_Depth(COMPILE_DEPTH_NONZERO_MINIMUM)) /
-					Compile_Depth(len("{}")),
-			)
-			updated, next := compile_sequence(workspace, frame, level, result)
-			depth = Compile_Depth(updated * Sequence_Updated_Level(len("{}")))
-			result = next
-		case COMPILE_STAGE_SEQUENCE_RETURN:
-			compile_sequence_return(workspace, frame, result)
-		case COMPILE_STAGE_ALTERNATIVE:
-			level := Alternative_Compile_Level(depth / Compile_Depth(len("{}")))
-			updated, next := compile_alternative(
-				workspace, frame, level, Alternative_Result_PC(result),
-			)
-			depth = Compile_Depth(
-				updated*Alternative_Updated_Level(len("{}")) +
-					Alternative_Updated_Level(COMPILE_DEPTH_NONZERO_MINIMUM),
-			)
-			result = Instruction_PC(next)
-		case COMPILE_STAGE_ALTERNATIVE_RETURN:
-			compile_alternative_return(
-				workspace, frame, Alternative_Result_PC(result),
-			)
-		}
-	}
-	return result
+	return start
 }
 
 func compile_enter(
-	workspace_state Compile_Workspace_Pointer,
-	frame_state Compile_Frame_Pointer,
-	depth Nonzero_Compile_Depth,
-	result Instruction_Continuation,
-) (
-	_ Nonzero_Compile_Depth,
-	updated_result Instruction_PC,
-) {
-	defer func() {
-		Instruction_PC_Invariants(updated_result, "compile_enter.updated_result")
-	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "compile_enter.workspace_state")
-	Compile_Frame_Pointer_Invariants(frame_state, "compile_enter.frame_state")
-	Nonzero_Compile_Depth_Invariants(depth, "compile_enter.depth")
-	Instruction_Continuation_Invariants(result, "compile_enter.result")
-	var updated_depth Nonzero_Compile_Depth
-	defer func() {
-		Nonzero_Compile_Depth_Invariants(updated_depth, "compile_enter.updated_depth")
-	}()
-	workspace := (*Compile_Workspace)(workspace_state)
-	frame := (*Compile_Frame)(frame_state)
-	updated_result = Instruction_PC(result)
-	reference := *frame.References.Node.(*Node_Reference)
-	aver.Always(
-		reference != NODE_NONE,
-		"Compiler frame references one syntax node.",
+	nodes Nodes,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	instruction_targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Emitted_Instruction_PC_Storage,
+	node Child_Node_Reference,
+	continuation Instruction_Continuation,
+) (result Emitted_Instruction_PC) {
+	defer func() { Emitted_Instruction_PC_Invariants(result, "compile_enter.result") }()
+	Nodes_Invariants(nodes, "compile_enter.nodes")
+	Instruction_Kinds_Invariants(kinds, "compile_enter.kinds")
+	Instruction_Characters_Invariants(characters, "compile_enter.characters")
+	Instruction_Target_Values_Invariants(
+		instruction_targets, "compile_enter.instruction_targets",
 	)
-	aver.Always(
-		int(reference) <= int(*workspace.Control.Node_Count.(*uint16)),
-		"Compiler frame reference stays inside parsed syntax.",
+	Instruction_Class_Values_Invariants(classes, "compile_enter.classes")
+	Emitted_Instruction_PC_Storage_Invariants(
+		instruction_count, "compile_enter.instruction_count",
 	)
-	node := workspace.Nodes[int(reference)-utf8.CHARACTER_SIZE_MINIMUM]
-	switch node.Kind {
-	case NODE_SEQUENCE:
-		*frame.References.Child.(*Node_Reference) = Node_Reference(node.Links.Last_Child)
-		*frame.Targets.Accumulated.(*Instruction_PC) =
-			*frame.Targets.Continuation.(*Instruction_PC)
-		*frame.Control.Stage.(*uint8) = COMPILE_STAGE_SEQUENCE
-	case NODE_ALTERNATIVE:
-		*frame.References.Child.(*Node_Reference) = Node_Reference(node.Links.Last_Child)
-		*frame.Control.First.(*uint8) = CONTROL_TRUE
-		*frame.Control.Stage.(*uint8) = COMPILE_STAGE_ALTERNATIVE
-	default:
-		updated_result = Instruction_PC(instruction_from_node(
-			workspace,
-			Leaf_Node{
-				Kind: Leaf_Kind(node.Kind), Character: node.Character,
-				Class: node.Class,
-			},
-			Instruction_Continuation(*frame.Targets.Continuation.(*Instruction_PC)),
-		))
-		depth--
-	}
-	updated_depth = depth
-	return updated_depth, updated_result
+	Child_Node_Reference_Invariants(node, "compile_enter.node")
+	Instruction_Continuation_Invariants(continuation, "compile_enter.continuation")
+	syntax := nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM]
+	result = instruction_from_node(
+		kinds, characters, instruction_targets, classes, instruction_count,
+		Leaf_Node{
+			Kind: Leaf_Kind(syntax.Kind), Character: syntax.Character,
+			Class: syntax.Class,
+		},
+		continuation,
+	)
+	return result
 }
 
 func compile_sequence(
-	workspace_state Compile_Workspace_Pointer,
-	frame_state Compile_Frame_Pointer,
+	nodes Nodes, frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
+	child_state Last_Child_Reference_Storage,
+	accumulated_state Compile_Accumulated_Storage,
 	depth Sequence_Compile_Level,
 	result Instruction_PC,
 ) (
@@ -3185,8 +3531,15 @@ func compile_sequence(
 	defer func() {
 		Instruction_PC_Invariants(updated_result, "compile_sequence.updated_result")
 	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "compile_sequence.workspace_state")
-	Compile_Frame_Pointer_Invariants(frame_state, "compile_sequence.frame_state")
+	Nodes_Invariants(nodes, "compile_sequence.nodes")
+	Compile_Frames_Invariants(frames, "compile_sequence.frames")
+	Compile_Reference_Values_Invariants(references, "compile_sequence.references")
+	Compile_Target_Values_Invariants(targets, "compile_sequence.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "compile_sequence.controls")
+	Last_Child_Reference_Storage_Invariants(child_state, "compile_sequence.child_state")
+	Compile_Accumulated_Storage_Invariants(
+		accumulated_state, "compile_sequence.accumulated_state",
+	)
 	Sequence_Compile_Level_Invariants(depth, "compile_sequence.depth")
 	Instruction_PC_Invariants(result, "compile_sequence.result")
 	var updated_depth Sequence_Updated_Level
@@ -3195,23 +3548,20 @@ func compile_sequence(
 			updated_depth, "compile_sequence.updated_depth",
 		)
 	}()
-	workspace := (*Compile_Workspace)(workspace_state)
-	frame := (*Compile_Frame)(frame_state)
-	child := *frame.References.Child.(*Node_Reference)
+	child := Node_Reference(*child_state)
 	if child == NODE_NONE {
 		updated_depth = Sequence_Updated_Level(depth)
-		updated_result = *frame.Targets.Accumulated.(*Instruction_PC)
+		updated_result = Instruction_PC(*accumulated_state)
 		return updated_depth, updated_result
 	}
-	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_SEQUENCE_RETURN
 	raw_depth := Push_Compile_Depth(
 		depth*Sequence_Compile_Level(len("{}")) +
 			Sequence_Compile_Level(COMPILE_DEPTH_NONZERO_MINIMUM),
 	)
 	pushed := compile_push(
-		workspace,
+		nodes, frames, references, targets, controls,
 		Child_Node_Reference(child),
-		Instruction_Continuation(*frame.Targets.Accumulated.(*Instruction_PC)),
+		Instruction_Continuation(*accumulated_state),
 		raw_depth,
 	)
 	updated_depth = Sequence_Updated_Level(pushed / Pushed_Compile_Depth(len("{}")))
@@ -3220,28 +3570,25 @@ func compile_sequence(
 }
 
 func compile_sequence_return(
-	workspace_state Compile_Workspace_Pointer,
-	frame_state Compile_Frame_Pointer,
-	result Instruction_PC,
-) {
-	Compile_Workspace_Pointer_Invariants(
-		workspace_state, "compile_sequence_return.workspace_state",
-	)
-	Compile_Frame_Pointer_Invariants(frame_state, "compile_sequence_return.frame_state")
-	Instruction_PC_Invariants(result, "compile_sequence_return.result")
-	workspace := (*Compile_Workspace)(workspace_state)
-	frame := (*Compile_Frame)(frame_state)
-	child := *frame.References.Child.(*Node_Reference)
-	*frame.Targets.Accumulated.(*Instruction_PC) = result
-	*frame.References.Child.(*Node_Reference) =
-		Node_Reference(workspace.Nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].
-			Links.Previous_Sibling)
-	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_SEQUENCE
+	nodes Nodes,
+	child Child_Node_Reference,
+) (previous Previous_Sibling_Reference) {
+	defer func() {
+		Previous_Sibling_Reference_Invariants(previous, "compile_sequence_return.previous")
+	}()
+	Nodes_Invariants(nodes, "compile_sequence_return.nodes")
+	Child_Node_Reference_Invariants(child, "compile_sequence_return.child")
+	previous = nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].Links.Previous_Sibling
+	return previous
 }
 
 func compile_alternative(
-	workspace_state Compile_Workspace_Pointer,
-	frame_state Compile_Frame_Pointer,
+	nodes Nodes, frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
+	child_state Branch_Reference_Storage,
+	first_state Compile_First_Storage,
+	accumulated_state Alternative_Updated_PC_Storage,
+	continuation_state Alternative_Updated_PC_Storage,
 	depth Alternative_Compile_Level,
 	result Alternative_Result_PC,
 ) (
@@ -3253,8 +3600,19 @@ func compile_alternative(
 			updated_result, "compile_alternative.updated_result",
 		)
 	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "compile_alternative.workspace_state")
-	Compile_Frame_Pointer_Invariants(frame_state, "compile_alternative.frame_state")
+	Nodes_Invariants(nodes, "compile_alternative.nodes")
+	Compile_Frames_Invariants(frames, "compile_alternative.frames")
+	Compile_Reference_Values_Invariants(references, "compile_alternative.references")
+	Compile_Target_Values_Invariants(targets, "compile_alternative.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "compile_alternative.controls")
+	Branch_Reference_Storage_Invariants(child_state, "compile_alternative.child_state")
+	Compile_First_Storage_Invariants(first_state, "compile_alternative.first_state")
+	Alternative_Updated_PC_Storage_Invariants(
+		accumulated_state, "compile_alternative.accumulated_state",
+	)
+	Alternative_Updated_PC_Storage_Invariants(
+		continuation_state, "compile_alternative.continuation_state",
+	)
 	Alternative_Compile_Level_Invariants(depth, "compile_alternative.depth")
 	Alternative_Result_PC_Invariants(result, "compile_alternative.result")
 	var updated_depth Alternative_Updated_Level
@@ -3263,26 +3621,21 @@ func compile_alternative(
 			updated_depth, "compile_alternative.updated_depth",
 		)
 	}()
-	workspace := (*Compile_Workspace)(workspace_state)
-	frame := (*Compile_Frame)(frame_state)
-	child := *frame.References.Child.(*Node_Reference)
+	child := Node_Reference(*child_state)
 	if child == NODE_NONE {
 		aver.Always(
-			*frame.Control.First.(*uint8) != CONTROL_TRUE,
+			uint8(*first_state) != CONTROL_TRUE,
 			"Parsed alternative retains at least one sequence branch.",
 		)
 		updated_depth = Alternative_Updated_Level(depth - utf8.CHARACTER_SIZE_MINIMUM)
-		updated_result = Alternative_Updated_PC(
-			*frame.Targets.Accumulated.(*Instruction_PC),
-		)
+		updated_result = *accumulated_state
 		return updated_depth, updated_result
 	}
-	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_ALTERNATIVE_RETURN
 	raw_depth := Push_Compile_Depth(depth * Alternative_Compile_Level(len("{}")))
 	pushed := compile_push(
-		workspace,
+		nodes, frames, references, targets, controls,
 		Child_Node_Reference(child),
-		Instruction_Continuation(*frame.Targets.Continuation.(*Instruction_PC)),
+		Instruction_Continuation(*continuation_state),
 		raw_depth,
 	)
 	updated_depth = Alternative_Updated_Level(
@@ -3294,45 +3647,62 @@ func compile_alternative(
 }
 
 func compile_alternative_return(
-	workspace_state Compile_Workspace_Pointer,
-	frame_state Compile_Frame_Pointer,
+	nodes Nodes,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	instruction_targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Alternative_Emit_PC_Storage,
+	child Opened_Sequence_Reference,
+	first_state Compile_First_Storage,
+	accumulated Split_Branch_PC,
 	result Alternative_Result_PC,
-) {
-	Compile_Workspace_Pointer_Invariants(
-		workspace_state, "compile_alternative_return.workspace_state",
-	)
-	Compile_Frame_Pointer_Invariants(
-		frame_state, "compile_alternative_return.frame_state",
-	)
-	Alternative_Result_PC_Invariants(result, "compile_alternative_return.result")
-	workspace := (*Compile_Workspace)(workspace_state)
-	frame := (*Compile_Frame)(frame_state)
-	if *frame.Control.First.(*uint8) == CONTROL_TRUE {
-		*frame.Targets.Accumulated.(*Instruction_PC) = Instruction_PC(result)
-		*frame.Control.First.(*uint8) = CONTROL_FALSE
-	} else {
-		accumulated := *frame.Targets.Accumulated.(*Instruction_PC)
-		character := rune(utf8.DECODED_CHARACTER_MINIMUM)
-		next := Instruction_PC(result)
-		branch := accumulated
-		class_index := uint16(bytes.SLICE_SIZE_MINIMUM)
-		class_count := uint16(bytes.SLICE_SIZE_MINIMUM)
-		class_negated := uint16(CONTROL_FALSE)
-		split := instruction_emit(
-			workspace, INSTRUCTION_SPLIT, &character, &next, &branch,
-			&class_index, &class_count, &class_negated,
+) (previous Previous_Branch_Reference, _ Alternative_Updated_PC) {
+	defer func() {
+		Previous_Branch_Reference_Invariants(
+			previous, "compile_alternative_return.previous",
 		)
-		*frame.Targets.Accumulated.(*Instruction_PC) = split
+	}()
+	Nodes_Invariants(nodes, "compile_alternative_return.nodes")
+	Instruction_Kinds_Invariants(kinds, "compile_alternative_return.kinds")
+	Instruction_Characters_Invariants(characters, "compile_alternative_return.characters")
+	Instruction_Target_Values_Invariants(
+		instruction_targets, "compile_alternative_return.instruction_targets",
+	)
+	Instruction_Class_Values_Invariants(classes, "compile_alternative_return.classes")
+	Alternative_Emit_PC_Storage_Invariants(
+		instruction_count, "compile_alternative_return.instruction_count",
+	)
+	Opened_Sequence_Reference_Invariants(child, "compile_alternative_return.child")
+	Compile_First_Storage_Invariants(first_state, "compile_alternative_return.first_state")
+	Split_Branch_PC_Invariants(accumulated, "compile_alternative_return.accumulated")
+	Alternative_Result_PC_Invariants(result, "compile_alternative_return.result")
+	var updated Alternative_Updated_PC
+	defer func() {
+		Alternative_Updated_PC_Invariants(updated, "compile_alternative_return.updated")
+	}()
+	if uint8(*first_state) == CONTROL_TRUE {
+		updated = Alternative_Updated_PC(result)
+		*first_state = Compile_First_Slot(CONTROL_FALSE)
+	} else {
+		split := instruction_emit(
+			kinds, characters, instruction_targets, classes,
+			(*Instruction_PC)((*Alternative_Emit_PC)(instruction_count)),
+			INSTRUCTION_SPLIT, Node_Character_Slot(utf8.DECODED_CHARACTER_MINIMUM),
+			Instruction_Continuation(result), accumulated,
+			Node_Class_Range_Index_Slot(bytes.SLICE_SIZE_MINIMUM),
+			Node_Class_Range_Count_Slot(bytes.SLICE_SIZE_MINIMUM),
+			Node_Class_Negated_Slot(CONTROL_FALSE),
+		)
+		updated = Alternative_Updated_PC(split)
 	}
-	child := *frame.References.Child.(*Node_Reference)
-	*frame.References.Child.(*Node_Reference) =
-		Node_Reference(workspace.Nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].
-			Links.Previous_Sibling)
-	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_ALTERNATIVE
+	previous = Previous_Branch_Reference(
+		nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].Links.Previous_Sibling,
+	)
+	return previous, updated
 }
 
 func compile_push(
-	workspace_state Compile_Workspace_Pointer,
+	nodes Nodes, frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
 	node Child_Node_Reference,
 	continuation Instruction_Continuation,
 	depth Push_Compile_Depth,
@@ -3340,38 +3710,46 @@ func compile_push(
 	defer func() {
 		Pushed_Compile_Depth_Invariants(updated_depth, "compile_push.updated_depth")
 	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "compile_push.workspace_state")
+	Nodes_Invariants(nodes, "compile_push.nodes")
+	Compile_Frames_Invariants(frames, "compile_push.frames")
+	Compile_Reference_Values_Invariants(references, "compile_push.references")
+	Compile_Target_Values_Invariants(targets, "compile_push.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "compile_push.controls")
 	Child_Node_Reference_Invariants(node, "compile_push.node")
 	Instruction_Continuation_Invariants(continuation, "compile_push.continuation")
 	Push_Compile_Depth_Invariants(depth, "compile_push.depth")
-	workspace := (*Compile_Workspace)(workspace_state)
 	aver.Always(
-		depth < Push_Compile_Depth(len(workspace.Compile_Frames)),
+		depth < Push_Compile_Depth(len(frames)),
 		"Parsed syntax depth fits formula-derived compiler stack.",
 	)
-	frame := compile_frame_initialize(workspace, Instruction_PC(depth))
-	*frame.References.Node.(*Node_Reference) = Node_Reference(node)
-	*frame.Targets.Continuation.(*Instruction_PC) = Instruction_PC(continuation)
-	*frame.Control.Stage.(*uint8) = COMPILE_STAGE_ENTER
+	compile_frame_initialize(
+		nodes, frames, references, targets, controls,
+		Instruction_PC(depth), Frame_Node_Reference(node), continuation,
+	)
 	return Pushed_Compile_Depth(depth + utf8.CHARACTER_SIZE_MINIMUM)
 }
 
 func instruction_from_node(
-	workspace_state Compile_Workspace_Pointer,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Emitted_Instruction_PC_Storage,
 	node Leaf_Node,
 	continuation Instruction_Continuation,
 ) (result Emitted_Instruction_PC) {
 	defer func() {
 		Emitted_Instruction_PC_Invariants(result, "instruction_from_node.result")
 	}()
-	Compile_Workspace_Pointer_Invariants(
-		workspace_state, "instruction_from_node.workspace_state",
+	Instruction_Kinds_Invariants(kinds, "instruction_from_node.kinds")
+	Instruction_Characters_Invariants(characters, "instruction_from_node.characters")
+	Instruction_Target_Values_Invariants(targets, "instruction_from_node.targets")
+	Instruction_Class_Values_Invariants(classes, "instruction_from_node.classes")
+	Emitted_Instruction_PC_Storage_Invariants(
+		instruction_count, "instruction_from_node.instruction_count",
 	)
 	Leaf_Node_Invariants(node, "instruction_from_node.node")
 	Instruction_Continuation_Invariants(
 		continuation, "instruction_from_node.continuation",
 	)
-	workspace := (*Compile_Workspace)(workspace_state)
 	kind := INSTRUCTION_MATCH
 	switch node.Kind {
 	case Leaf_Kind(NODE_LITERAL):
@@ -3385,111 +3763,114 @@ func instruction_from_node(
 	case Leaf_Kind(NODE_CLASS):
 		kind = INSTRUCTION_CLASS
 	}
-	next := Instruction_PC(continuation)
-	branch := Instruction_PC(INSTRUCTION_PC_MINIMUM)
-	return Emitted_Instruction_PC(instruction_emit(
-		workspace, kind,
-		Instruction_Character_Storage(node.Character.Value), &next, &branch,
-		Instruction_Class_Index_Storage(node.Class.Range_Index),
-		Instruction_Class_Count_Storage(node.Class.Range_Count),
-		Instruction_Class_Negated_Storage(node.Class.Negated),
+	result = Emitted_Instruction_PC(instruction_emit(
+		kinds, characters, targets, classes,
+		(*Instruction_PC)((*Emitted_Instruction_PC)(instruction_count)), kind,
+		*node.Character.Value, continuation,
+		Split_Branch_PC(INSTRUCTION_PC_MINIMUM),
+		*node.Class.Range_Index, *node.Class.Range_Count, *node.Class.Negated,
 	))
+	return result
 }
 
 func instruction_emit(
-	workspace_state Compile_Workspace_Pointer,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Instruction_PC_Storage,
 	kind Instruction_Kind,
-	character Instruction_Character_Storage,
-	next Instruction_Next_Storage,
-	branch Instruction_Branch_Storage,
-	class_index Instruction_Class_Index_Storage,
-	class_count Instruction_Class_Count_Storage,
-	class_negated Instruction_Class_Negated_Storage,
+	character Node_Character_Slot,
+	next Instruction_Continuation,
+	branch Split_Branch_PC,
+	class_index Node_Class_Range_Index_Slot,
+	class_count Node_Class_Range_Count_Slot,
+	class_negated Node_Class_Negated_Slot,
 ) (result Instruction_PC) {
 	defer func() {
 		Instruction_PC_Invariants(result, "instruction_emit.result")
 	}()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "instruction_emit.workspace_state")
-	Instruction_Kind_Invariants(kind, "instruction_emit.kind")
-	Instruction_Character_Storage_Invariants(character, "instruction_emit.character")
-	Instruction_Next_Storage_Invariants(next, "instruction_emit.next")
-	Instruction_Branch_Storage_Invariants(branch, "instruction_emit.branch")
-	Instruction_Class_Index_Storage_Invariants(class_index, "instruction_emit.class_index")
-	Instruction_Class_Count_Storage_Invariants(class_count, "instruction_emit.class_count")
-	Instruction_Class_Negated_Storage_Invariants(
-		class_negated, "instruction_emit.class_negated",
+	Instruction_Kinds_Invariants(kinds, "instruction_emit.kinds")
+	Instruction_Characters_Invariants(characters, "instruction_emit.characters")
+	Instruction_Target_Values_Invariants(targets, "instruction_emit.targets")
+	Instruction_Class_Values_Invariants(classes, "instruction_emit.classes")
+	Instruction_PC_Storage_Invariants(
+		instruction_count, "instruction_emit.instruction_count",
 	)
-	workspace := (*Compile_Workspace)(workspace_state)
-	count := *workspace.Control.Instruction_Count.(*uint16)
+	Instruction_Kind_Invariants(kind, "instruction_emit.kind")
+	Node_Character_Slot_Invariants(character, "instruction_emit.character")
+	Instruction_Continuation_Invariants(next, "instruction_emit.next")
+	Split_Branch_PC_Invariants(branch, "instruction_emit.branch")
+	Node_Class_Range_Index_Slot_Invariants(class_index, "instruction_emit.class_index")
+	Node_Class_Range_Count_Slot_Invariants(class_count, "instruction_emit.class_count")
+	Node_Class_Negated_Slot_Invariants(class_negated, "instruction_emit.class_negated")
+	count := *instruction_count
 	aver.Always(
-		int(count) < len(workspace.Instruction_Kinds),
+		int(count) < len(kinds),
 		"One pattern byte cannot emit more than one instruction.",
 	)
 	target_start := int(count) * INSTRUCTION_TARGET_COUNT
 	class_start := int(count) * INSTRUCTION_CLASS_FIELD_COUNT
-	workspace.Instruction_Kinds[count] = kind
-	workspace.Instruction_Characters[count] = *character.(*rune)
-	workspace.Instruction_Targets[target_start+INSTRUCTION_TARGET_NEXT] =
-		*next.(*Instruction_PC)
-	workspace.Instruction_Targets[target_start+INSTRUCTION_TARGET_BRANCH] =
-		*branch.(*Instruction_PC)
-	workspace.Instruction_Classes[class_start+INSTRUCTION_CLASS_RANGE_INDEX] =
-		*class_index.(*uint16)
-	workspace.Instruction_Classes[class_start+INSTRUCTION_CLASS_RANGE_COUNT] =
-		*class_count.(*uint16)
-	workspace.Instruction_Classes[class_start+INSTRUCTION_CLASS_NEGATED] =
-		*class_negated.(*uint16)
-	*workspace.Control.Instruction_Count.(*uint16) =
-		count + utf8.CHARACTER_SIZE_MINIMUM
-	return Instruction_PC(count)
+	kinds[count] = kind
+	characters[count] = rune(character)
+	targets[target_start+INSTRUCTION_TARGET_NEXT] = Instruction_PC(next)
+	targets[target_start+INSTRUCTION_TARGET_BRANCH] = Instruction_PC(branch)
+	classes[class_start+INSTRUCTION_CLASS_RANGE_INDEX] = uint16(class_index)
+	classes[class_start+INSTRUCTION_CLASS_RANGE_COUNT] = uint16(class_count)
+	classes[class_start+INSTRUCTION_CLASS_NEGATED] = uint16(class_negated)
+	*instruction_count = count + Instruction_PC(utf8.CHARACTER_SIZE_MINIMUM)
+	return count
 }
 
 func instruction_load(
-	workspace_state Compile_Workspace_Pointer,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	targets Instruction_Target_Values, classes Instruction_Class_Values,
 	pc Instruction_PC,
 ) (instruction Instruction) {
 	defer func() { Instruction_Invariants(instruction, "instruction_load.instruction") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "instruction_load.workspace_state")
+	Instruction_Kinds_Invariants(kinds, "instruction_load.kinds")
+	Instruction_Characters_Invariants(characters, "instruction_load.characters")
+	Instruction_Target_Values_Invariants(targets, "instruction_load.targets")
+	Instruction_Class_Values_Invariants(classes, "instruction_load.classes")
 	Instruction_PC_Invariants(pc, "instruction_load.pc")
-	workspace := (*Compile_Workspace)(workspace_state)
 	position := int(pc)
 	target_start := position * INSTRUCTION_TARGET_COUNT
 	class_start := position * INSTRUCTION_CLASS_FIELD_COUNT
-	next := &workspace.Instruction_Targets[target_start+INSTRUCTION_TARGET_NEXT]
-	branch := &workspace.Instruction_Targets[target_start+INSTRUCTION_TARGET_BRANCH]
-	class_index := &workspace.Instruction_Classes[class_start+INSTRUCTION_CLASS_RANGE_INDEX]
-	class_count := &workspace.Instruction_Classes[class_start+INSTRUCTION_CLASS_RANGE_COUNT]
-	class_negated := &workspace.Instruction_Classes[class_start+INSTRUCTION_CLASS_NEGATED]
+	next := &targets[target_start+INSTRUCTION_TARGET_NEXT]
+	branch := &targets[target_start+INSTRUCTION_TARGET_BRANCH]
+	class_index := &classes[class_start+INSTRUCTION_CLASS_RANGE_INDEX]
+	class_count := &classes[class_start+INSTRUCTION_CLASS_RANGE_COUNT]
+	class_negated := &classes[class_start+INSTRUCTION_CLASS_NEGATED]
 	return Instruction{
-		Kind:          &workspace.Instruction_Kinds[position],
-		Character:     &workspace.Instruction_Characters[position],
-		Next:          next,
-		Branch:        branch,
-		Class_Index:   class_index,
-		Class_Count:   class_count,
-		Class_Negated: class_negated,
+		Kind:          (*Instruction_Kind_Slot)(&kinds[position]),
+		Character:     (*Instruction_Character_Slot)(&characters[position]),
+		Next:          (*Instruction_Next_Slot)(next),
+		Branch:        (*Instruction_Branch_Slot)(branch),
+		Class_Index:   (*Instruction_Class_Index_Slot)(class_index),
+		Class_Count:   (*Instruction_Class_Count_Slot)(class_count),
+		Class_Negated: (*Instruction_Class_Negated_Slot)(class_negated),
 	}
 }
 
-func pattern_validate(pattern Pattern) (status Pattern_Status) {
+func pattern_validate(pattern Pattern_Unvalidated) (status Pattern_Status) {
 	defer func() { Pattern_Status_Invariants(status, "pattern_validate.status") }()
-	Pattern_Invariants(pattern, "pattern_validate.pattern")
-	workspace, workspace_valid := pattern.Workspace.(Compile_Workspace_Pointer)
-	if !workspace_valid {
+	Pattern_Unvalidated_Invariants(pattern, "pattern_validate.pattern")
+	workspace := pattern.Workspace
+	if workspace == nil {
 		return STATUS_PATTERN_INVALID
 	}
-	start_state, start_valid := pattern.Control.Start.(*uint16)
-	if !start_valid {
+	start_state := (*uint16)((*Pattern_Start_Unvalidated)(pattern.Control.Start))
+	if start_state == nil {
 		return STATUS_PATTERN_INVALID
 	}
-	instruction_count_state, instruction_count_valid :=
-		pattern.Control.Instruction_Count.(*uint16)
-	if !instruction_count_valid {
+	instruction_count_state :=
+		(*uint16)((*Pattern_Instruction_Count_Unvalidated)(
+			pattern.Control.Instruction_Count,
+		))
+	if instruction_count_state == nil {
 		return STATUS_PATTERN_INVALID
 	}
-	separator_count_state, separator_count_valid :=
-		pattern.Control.Separator_Count.(*uint16)
-	if !separator_count_valid {
+	separator_count_state :=
+		(*uint16)((*Pattern_Separator_Count_Unvalidated)(pattern.Control.Separator_Count))
+	if separator_count_state == nil {
 		return STATUS_PATTERN_INVALID
 	}
 	instruction_count := int(*instruction_count_state)
@@ -3507,15 +3888,15 @@ func pattern_validate(pattern Pattern) (status Pattern_Status) {
 	if SEPARATOR_COUNT_MAXIMUM < separator_count {
 		return STATUS_PATTERN_INVALID
 	}
-	if int(*workspace.Control.Instruction_Count.(*uint16)) !=
-		instruction_count {
+	values := workspace.Uint16_Values
+	control_start := COMPILE_CONTROL_VALUE_START
+	if int(values[control_start+COMPILE_CONTROL_INSTRUCTION_COUNT]) != instruction_count {
 		return STATUS_PATTERN_INVALID
 	}
-	if int(*workspace.Control.Separator_Count.(*uint16)) !=
-		separator_count {
+	if int(values[control_start+COMPILE_CONTROL_SEPARATOR_COUNT]) != separator_count {
 		return STATUS_PATTERN_INVALID
 	}
-	range_count := int(*workspace.Control.Range_Count.(*uint16))
+	range_count := int(values[control_start+COMPILE_CONTROL_RANGE_COUNT])
 	if CLASS_RANGE_COUNT_MAXIMUM < range_count {
 		return STATUS_PATTERN_INVALID
 	}
@@ -3551,7 +3932,12 @@ func pattern_storage_validate(
 	)
 	workspace := (*Compile_Workspace)(workspace_state)
 	for index := INSTRUCTION_PC_MINIMUM; index < int(instruction_count); index++ {
-		instruction := instruction_load(workspace, Instruction_PC(index))
+		instruction := instruction_load(
+			workspace.Instruction_Kinds, workspace.Instruction_Characters,
+			workspace.Instruction_Targets,
+			workspace.Instruction_Classes,
+			Instruction_PC(index),
+		)
 		status = instruction_validate(instruction, instruction_count, range_count)
 		if status != STATUS_OK {
 			return status
@@ -3591,7 +3977,7 @@ func instruction_validate(
 	Instruction_Invariants(instruction, "instruction_validate.instruction")
 	Instruction_Count_Invariants(instruction_count, "instruction_validate.count")
 	Class_Range_Count_Invariants(range_count, "instruction_validate.range_count")
-	kind := *instruction.Kind.(*Instruction_Kind)
+	kind := Instruction_Kind(*instruction.Kind)
 	if kind < INSTRUCTION_MATCH {
 		return STATUS_PATTERN_INVALID
 	}
@@ -3602,37 +3988,37 @@ func instruction_validate(
 	case INSTRUCTION_MATCH:
 		return STATUS_OK
 	case INSTRUCTION_SPLIT:
-		if int(*instruction.Next.(*Instruction_PC)) >=
+		if int(Instruction_PC(*instruction.Next)) >=
 			int(instruction_count) {
 			return STATUS_PATTERN_INVALID
 		}
-		if int(*instruction.Branch.(*Instruction_PC)) >=
+		if int(Instruction_PC(*instruction.Branch)) >=
 			int(instruction_count) {
 			return STATUS_PATTERN_INVALID
 		}
 	default:
-		if int(*instruction.Next.(*Instruction_PC)) >=
+		if int(Instruction_PC(*instruction.Next)) >=
 			int(instruction_count) {
 			return STATUS_PATTERN_INVALID
 		}
 	}
 	if kind == INSTRUCTION_LITERAL {
 		if !bool(utf8.Valid_Character(
-			utf8.Character(*instruction.Character.(*rune)),
+			utf8.Character(rune(*instruction.Character)),
 		)) {
 			return STATUS_PATTERN_INVALID
 		}
 	}
 	if kind == INSTRUCTION_CLASS {
-		class_index := int(*instruction.Class_Index.(*uint16))
-		class_count := int(*instruction.Class_Count.(*uint16))
+		class_index := int(uint16(*instruction.Class_Index))
+		class_count := int(uint16(*instruction.Class_Count))
 		if class_count < utf8.CHARACTER_SIZE_MINIMUM {
 			return STATUS_PATTERN_INVALID
 		}
 		if int(range_count) < class_index+class_count {
 			return STATUS_PATTERN_INVALID
 		}
-		negated := *instruction.Class_Negated.(*uint16)
+		negated := uint16(*instruction.Class_Negated)
 		switch negated {
 		case uint16(CONTROL_FALSE), uint16(CONTROL_TRUE):
 		default:
@@ -3643,38 +4029,44 @@ func instruction_validate(
 }
 
 func state_consume(
-	pattern Pattern,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Instruction_Count, ranges Class_Ranges,
+	separators Separators, separator_count Separator_Count,
 	workspace_state Match_Workspace_Pointer,
-	current Active_Instruction_States,
-	next Instruction_State_Storage,
-	character utf8.Decoded_Character,
-	generation Consume_Generation,
+	current Active_Instruction_States, next Instruction_State_Storage,
+	character utf8.Decoded_Character, generation Consume_Generation,
 ) (next_count State_Count) {
 	defer func() {
 		State_Count_Invariants(next_count, "state_consume.next_count")
 	}()
-	Pattern_Invariants(pattern, "state_consume.pattern")
+	Instruction_Kinds_Invariants(kinds, "state_consume.kinds")
+	Instruction_Characters_Invariants(characters, "state_consume.characters")
+	Instruction_Target_Values_Invariants(targets, "state_consume.targets")
+	Instruction_Class_Values_Invariants(classes, "state_consume.classes")
+	Instruction_Count_Invariants(instruction_count, "state_consume.instruction_count")
+	Class_Ranges_Invariants(ranges, "state_consume.ranges")
+	Separators_Invariants(separators, "state_consume.separators")
+	Separator_Count_Invariants(separator_count, "state_consume.separator_count")
 	Match_Workspace_Pointer_Invariants(workspace_state, "state_consume.workspace_state")
 	Active_Instruction_States_Invariants(current, "state_consume.current")
 	Instruction_State_Storage_Invariants(next, "state_consume.next")
 	utf8.Decoded_Character_Invariants(character, "state_consume.character")
 	Consume_Generation_Invariants(generation, "state_consume.generation")
 	workspace := (*Match_Workspace)(workspace_state)
-	compiled := pattern.Workspace.(Compile_Workspace_Pointer)
-	instruction_count := int(*pattern.Control.Instruction_Count.(*uint16))
-	separator := separator_contains(pattern, character)
+	separator := separator_contains(separators, separator_count, character)
 	for index := range current {
 		pc := current[index]
 		aver.Always(
-			int(pc) < instruction_count,
+			int(pc) < int(instruction_count),
 			"Validated active state references one compiled instruction.",
 		)
-		instruction := instruction_load(compiled, pc)
-		kind := *instruction.Kind.(*Instruction_Kind)
+		instruction := instruction_load(kinds, characters, targets, classes, pc)
+		kind := Instruction_Kind(*instruction.Kind)
 		consume := Contains(false)
 		switch kind {
 		case INSTRUCTION_LITERAL:
-			literal := *instruction.Character.(*rune)
+			literal := rune(*instruction.Character)
 			consume = Contains(literal == rune(character))
 		case INSTRUCTION_STAR:
 			consume = !separator
@@ -3684,13 +4076,18 @@ func state_consume(
 			consume = !separator
 		case INSTRUCTION_CLASS:
 			if !separator {
-				consume = class_contains(compiled, instruction, character)
+				consume = class_contains(
+					ranges, Class_Member_Index(*instruction.Class_Index),
+					Class_Member_Count(*instruction.Class_Count),
+					Node_Class_Negated_Slot(*instruction.Class_Negated),
+					character,
+				)
 			}
 		}
 		if !consume {
 			continue
 		}
-		target := *instruction.Next.(*Instruction_PC)
+		target := Instruction_PC(*instruction.Next)
 		if kind == INSTRUCTION_STAR {
 			target = pc
 		}
@@ -3698,25 +4095,28 @@ func state_consume(
 			target = pc
 		}
 		next_count = State_Count(state_add(
-			pattern, workspace, next, Append_State_Count(next_count),
-			target, Closure_Generation(generation),
+			kinds, characters, targets, classes, instruction_count, workspace, next,
+			Append_State_Count(next_count), target, Closure_Generation(generation),
 		))
 	}
 	return next_count
 }
 
 func state_add(
-	pattern Pattern,
-	workspace_state Match_Workspace_Pointer,
-	states Instruction_State_Storage,
-	state_count_value Append_State_Count,
-	start Instruction_PC,
-	generation Closure_Generation,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Instruction_Count, workspace_state Match_Workspace_Pointer,
+	states Instruction_State_Storage, state_count_value Append_State_Count,
+	start Instruction_PC, generation Closure_Generation,
 ) (state_count Nonempty_State_Count) {
 	defer func() {
 		Nonempty_State_Count_Invariants(state_count, "state_add.state_count")
 	}()
-	Pattern_Invariants(pattern, "state_add.pattern")
+	Instruction_Kinds_Invariants(kinds, "state_add.kinds")
+	Instruction_Characters_Invariants(characters, "state_add.characters")
+	Instruction_Target_Values_Invariants(targets, "state_add.targets")
+	Instruction_Class_Values_Invariants(classes, "state_add.classes")
+	Instruction_Count_Invariants(instruction_count, "state_add.instruction_count")
 	Match_Workspace_Pointer_Invariants(workspace_state, "state_add.workspace_state")
 	Instruction_State_Storage_Invariants(states, "state_add.states")
 	Append_State_Count_Invariants(state_count_value, "state_add.state_count_value")
@@ -3724,29 +4124,25 @@ func state_add(
 	Closure_Generation_Invariants(generation, "state_add.generation")
 	workspace := (*Match_Workspace)(workspace_state)
 	active_count := State_Count(state_count_value)
-	compiled := pattern.Workspace.(Compile_Workspace_Pointer)
-	instruction_count := int(*pattern.Control.Instruction_Count.(*uint16))
 	closure := Instruction_State_Storage(workspace.Closure[:])
 	closure_count := Closure_Count(bytes.SLICE_SIZE_MINIMUM)
 	closure_count = state_enqueue(
 		workspace, closure, Closure_Append_Count(closure_count), start, generation,
-		Instruction_Count(instruction_count),
+		instruction_count,
 	)
 	for closure_count != bytes.SLICE_SIZE_MINIMUM {
 		closure_count--
 		pc := closure[closure_count]
-		instruction := instruction_load(compiled, pc)
-		switch *instruction.Kind.(*Instruction_Kind) {
+		instruction := instruction_load(kinds, characters, targets, classes, pc)
+		switch Instruction_Kind(*instruction.Kind) {
 		case INSTRUCTION_SPLIT:
 			closure_count = state_enqueue(
 				workspace, closure, Closure_Append_Count(closure_count),
-				*instruction.Next.(*Instruction_PC), generation,
-				Instruction_Count(instruction_count),
+				Instruction_PC(*instruction.Next), generation, instruction_count,
 			)
 			closure_count = state_enqueue(
 				workspace, closure, Closure_Append_Count(closure_count),
-				*instruction.Branch.(*Instruction_PC), generation,
-				Instruction_Count(instruction_count),
+				Instruction_PC(*instruction.Branch), generation, instruction_count,
 			)
 		case INSTRUCTION_STAR, INSTRUCTION_SUPER_STAR:
 			active_count = State_Count(state_append(
@@ -3754,8 +4150,7 @@ func state_add(
 			))
 			closure_count = state_enqueue(
 				workspace, closure, Closure_Append_Count(closure_count),
-				*instruction.Next.(*Instruction_PC), generation,
-				Instruction_Count(instruction_count),
+				Instruction_PC(*instruction.Next), generation, instruction_count,
 			)
 		default:
 			active_count = State_Count(state_append(
@@ -3824,16 +4219,16 @@ func state_append(
 }
 
 func separator_contains(
-	pattern Pattern,
+	separators Separators,
+	separator_count Separator_Count,
 	character utf8.Decoded_Character,
 ) (contains Contains) {
 	defer func() { Contains_Invariants(contains, "separator_contains.contains") }()
-	Pattern_Invariants(pattern, "separator_contains.pattern")
+	Separators_Invariants(separators, "separator_contains.separators")
+	Separator_Count_Invariants(separator_count, "separator_contains.separator_count")
 	utf8.Decoded_Character_Invariants(character, "separator_contains.character")
-	workspace := pattern.Workspace.(Compile_Workspace_Pointer)
-	count := int(*pattern.Control.Separator_Count.(*uint16))
-	for index := bytes.SLICE_SIZE_MINIMUM; index < count; index++ {
-		if rune(workspace.Separators[index]) == rune(character) {
+	for index := SEPARATOR_COUNT_MINIMUM; index < int(separator_count); index++ {
+		if rune(separators[index]) == rune(character) {
 			return true
 		}
 	}
@@ -3841,20 +4236,22 @@ func separator_contains(
 }
 
 func class_contains(
-	workspace_state Compile_Workspace_Pointer,
-	instruction Instruction,
+	ranges Class_Ranges,
+	index Class_Member_Index,
+	count Class_Member_Count,
+	negated Node_Class_Negated_Slot,
 	character utf8.Decoded_Character,
 ) (contains Contains) {
 	defer func() { Contains_Invariants(contains, "class_contains.contains") }()
-	Compile_Workspace_Pointer_Invariants(workspace_state, "class_contains.workspace_state")
-	Instruction_Invariants(instruction, "class_contains.instruction")
+	Class_Ranges_Invariants(ranges, "class_contains.ranges")
+	Class_Member_Index_Invariants(index, "class_contains.index")
+	Class_Member_Count_Invariants(count, "class_contains.count")
+	Node_Class_Negated_Slot_Invariants(negated, "class_contains.negated")
 	utf8.Decoded_Character_Invariants(character, "class_contains.character")
-	workspace := (*Compile_Workspace)(workspace_state)
-	index := int(*instruction.Class_Index.(*uint16))
-	count := int(*instruction.Class_Count.(*uint16))
 	matched := false
-	for range_index := index; range_index < index+count; range_index++ {
-		range_value := workspace.Ranges[range_index]
+	limit := int(index) + int(count)
+	for range_index := int(index); range_index < limit; range_index++ {
+		range_value := ranges[range_index]
 		if rune(range_value.Low) <= rune(character) {
 			if rune(character) <= rune(range_value.High) {
 				matched = true
@@ -3862,8 +4259,839 @@ func class_contains(
 			}
 		}
 	}
-	if *instruction.Class_Negated.(*uint16) == uint16(CONTROL_TRUE) {
+	if uint16(negated) == uint16(CONTROL_TRUE) {
 		matched = !matched
 	}
 	return Contains(matched)
+}
+
+func atom_parse(
+	nodes Nodes, characters Node_Character_Values, values Uint16_Values,
+	node_count Parsed_Node_Count_Storage, ranges Class_Ranges,
+	range_count Class_Member_Index_Storage, source Nonempty_Pattern_Source,
+	parent Container_Node_Reference, position Pattern_Index,
+) (_ Nonzero_Pattern_Position, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "atom_parse.status") }()
+	Nodes_Invariants(nodes, "atom_parse.nodes")
+	Node_Character_Values_Invariants(characters, "atom_parse.characters")
+	Uint16_Values_Invariants(values, "atom_parse.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "atom_parse.node_count")
+	Class_Ranges_Invariants(ranges, "atom_parse.ranges")
+	Class_Member_Index_Storage_Invariants(range_count, "atom_parse.range_count")
+	Nonempty_Pattern_Source_Invariants(source, "atom_parse.source")
+	Container_Node_Reference_Invariants(parent, "atom_parse.parent")
+	Pattern_Index_Invariants(position, "atom_parse.position")
+	var end Nonzero_Pattern_Position
+	defer func() { Nonzero_Pattern_Position_Invariants(end, "atom_parse.end") }()
+	switch source[position] {
+	case '[':
+		end, status = class_parse(
+			nodes, characters, values, node_count, ranges, range_count,
+			source, parent, position,
+		)
+	case '*':
+		end, status = star_parse(
+			nodes, characters, values, node_count, source, parent, position,
+		)
+	case '?':
+		end = Nonzero_Pattern_Position(position + utf8.CHARACTER_SIZE_MINIMUM)
+		status = atom_append(
+			nodes, characters, values, node_count,
+			parent, ATOM_SINGLE, ATOM_CHARACTER_EMPTY,
+		)
+	default:
+		end, status = literal_parse(
+			nodes, characters, values, node_count, source, parent, position,
+		)
+	}
+	return end, status
+}
+
+func class_ranges_parse(
+	ranges Class_Ranges, range_count_state Class_Member_Index_Storage,
+	source Nonempty_Pattern_Source, start Nonzero_Pattern_Position,
+) (_ Nonzero_Pattern_Position, _ Parsed_Range_Count, status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "class_ranges_parse.status") }()
+	Class_Ranges_Invariants(ranges, "class_ranges_parse.ranges")
+	Class_Member_Index_Storage_Invariants(
+		range_count_state, "class_ranges_parse.range_count_state",
+	)
+	Nonempty_Pattern_Source_Invariants(source, "class_ranges_parse.source")
+	Nonzero_Pattern_Position_Invariants(start, "class_ranges_parse.start")
+	var end Nonzero_Pattern_Position
+	defer func() { Nonzero_Pattern_Position_Invariants(end, "class_ranges_parse.end") }()
+	count := Parsed_Range_Count(bytes.SLICE_SIZE_MINIMUM)
+	defer func() { Parsed_Range_Count_Invariants(count, "class_ranges_parse.count") }()
+	appended := (*Node_Class_Range_Count_Slot)((*Class_Member_Index)(range_count_state))
+	cursor := Pattern_Position(start)
+	for status == STATUS_OK {
+		if cursor == Pattern_Position(len(source)) {
+			status = STATUS_SYNTAX_INVALID
+			break
+		}
+		if source[cursor] == ']' {
+			if count == bytes.SLICE_SIZE_MINIMUM {
+				status = STATUS_SYNTAX_INVALID
+				break
+			}
+			cursor++
+			break
+		}
+		var low utf8.Decoded_Character
+		class_end := Class_Character_End(bytes.SLICE_SIZE_MINIMUM)
+		low, class_end, status = class_character(
+			Class_Pattern_Source(source), Class_Character_Index(cursor),
+		)
+		cursor = Pattern_Position(class_end)
+		if status != STATUS_OK {
+			break
+		}
+		high := low
+		if cursor+Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM) <
+			Pattern_Position(len(source)) {
+			if source[cursor] == '-' {
+				if source[cursor+utf8.CHARACTER_SIZE_MINIMUM] != ']' {
+					cursor++
+					high, class_end, status = class_character(
+						Class_Pattern_Source(source),
+						Class_Character_Index(cursor),
+					)
+					cursor = Pattern_Position(class_end)
+				}
+			}
+		}
+		if status != STATUS_OK {
+			break
+		}
+		if high < low {
+			status = STATUS_SYNTAX_INVALID
+			break
+		}
+		range_append(ranges, appended, low, high)
+		count++
+	}
+	end = Nonzero_Pattern_Position(cursor)
+	return end, count, status
+}
+
+// Class_Member_Index names the first range of one validated class instruction.
+type Class_Member_Index uint16
+
+// Class_Member_Index_Invariants leaves room for one member inside the validated range arena.
+func Class_Member_Index_Invariants(value Class_Member_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(CLASS_MEMBER_INDEX_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Class_Member_Count counts the ranges of one validated class instruction.
+type Class_Member_Count uint16
+
+// Class_Member_Count_Invariants requires one member and fits the validated range arena.
+func Class_Member_Count_Invariants(value Class_Member_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(utf8.CHARACTER_SIZE_MINIMUM),
+			uint16(CLASS_RANGE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+func compile_frames(
+	nodes Nodes, node_count Parsed_Node_Count,
+	frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	edges Instruction_Target_Values, classes Instruction_Class_Values,
+	count Compile_Instruction_Count_Storage,
+) (start Instruction_PC) {
+	defer func() { Instruction_PC_Invariants(start, "compile_frames.start") }()
+	Nodes_Invariants(nodes, "compile_frames.nodes")
+	Parsed_Node_Count_Invariants(node_count, "compile_frames.node_count")
+	Compile_Frames_Invariants(frames, "compile_frames.frames")
+	Compile_Reference_Values_Invariants(references, "compile_frames.references")
+	Compile_Target_Values_Invariants(targets, "compile_frames.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "compile_frames.controls")
+	Instruction_Kinds_Invariants(kinds, "compile_frames.kinds")
+	Instruction_Characters_Invariants(characters, "compile_frames.characters")
+	Instruction_Target_Values_Invariants(edges, "compile_frames.edges")
+	Instruction_Class_Values_Invariants(classes, "compile_frames.classes")
+	Compile_Instruction_Count_Storage_Invariants(count, "compile_frames.count")
+	compile_match(kinds, characters, edges, classes, count)
+	start = Instruction_PC(INSTRUCTION_PC_MINIMUM)
+	emitted := (*Emitted_Instruction_PC)((*Compile_Instruction_Count_Slot)(count))
+	depth := Compile_Depth(COMPILE_DEPTH_NONZERO_MINIMUM)
+	for depth != Compile_Depth(PATTERN_DEPTH_MINIMUM) {
+		frame := &frames[depth-utf8.CHARACTER_SIZE_MINIMUM]
+		aver.Always(
+			int(*frame.References.Node) <= int(node_count),
+			"Compiler frame reference stays inside parsed syntax.",
+		)
+		switch uint8(*frame.Control.Stage) {
+		case COMPILE_STAGE_ENTER:
+			start = Instruction_PC(compile_enter(
+				nodes, kinds, characters, edges, classes, emitted,
+				Child_Node_Reference(*frame.References.Node),
+				Instruction_Continuation(*frame.Targets.Continuation),
+			))
+			depth--
+		case COMPILE_STAGE_SEQUENCE, COMPILE_STAGE_SEQUENCE_RETURN:
+			updated, next, stage := compile_sequence_stage(
+				nodes, frames, references, targets, controls,
+				Sequence_Stage(*frame.Control.Stage),
+				(*Last_Child_Reference)(
+					(*Compile_Child_Slot)(frame.References.Child),
+				),
+				frame.Targets.Accumulated,
+				Sequence_Compile_Level(depth/Compile_Depth(len("{}"))),
+				start,
+			)
+			depth, start = Compile_Depth(updated), next
+			*frame.Control.Stage = Compile_Stage_Slot(stage)
+		default:
+			updated, next, stage := compile_alternative_stage(
+				nodes, frames, references, targets, controls,
+				kinds,
+				characters,
+				edges,
+				classes,
+				(*Alternative_Emit_PC)(emitted),
+				Alternative_Stage(*frame.Control.Stage),
+				(*Branch_Reference)((*Compile_Child_Slot)(frame.References.Child)),
+				frame.Control.First,
+				(*Alternative_Updated_PC)(
+					(*Compile_Accumulated_Slot)(frame.Targets.Accumulated),
+				),
+				(*Alternative_Updated_PC)(
+					(*Compile_Continuation_Slot)(frame.Targets.Continuation),
+				),
+				Alternative_Compile_Level(depth/Compile_Depth(len("{}"))),
+				Alternative_Result_PC(start),
+			)
+			depth, start = Compile_Depth(updated), Instruction_PC(next)
+			*frame.Control.Stage = Compile_Stage_Slot(stage)
+		}
+	}
+	return start
+}
+
+// Parsed_Node_Count counts parsed syntax nodes, root included.
+type Parsed_Node_Count uint16
+
+// Parsed_Node_Count_Invariants spans the root alone through a full syntax arena.
+func Parsed_Node_Count_Invariants(value Parsed_Node_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), uint16(NODE_ROOT), uint16(NODE_COUNT_MAXIMUM)).
+		Ensure()
+}
+
+// Frame_Node_Reference names the syntax node one compiler frame traverses.
+type Frame_Node_Reference uint16
+
+// Frame_Node_Reference_Invariants spans the root through the last parsed node.
+func Frame_Node_Reference_Invariants(value Frame_Node_Reference, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), uint16(NODE_ROOT), uint16(NODE_COUNT_MAXIMUM)).
+		Ensure()
+}
+
+func compile_sequence_stage(
+	nodes Nodes, frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
+	stage Sequence_Stage, child_state Last_Child_Reference_Storage,
+	accumulated_state Compile_Accumulated_Storage,
+	level Sequence_Compile_Level, result Instruction_PC,
+) (_ Sequence_Resume_Depth, _ Instruction_PC, next_stage Sequence_Stage) {
+	defer func() {
+		Sequence_Stage_Invariants(next_stage, "compile_sequence_stage.next_stage")
+	}()
+	Nodes_Invariants(nodes, "compile_sequence_stage.nodes")
+	Compile_Frames_Invariants(frames, "compile_sequence_stage.frames")
+	Compile_Reference_Values_Invariants(references, "compile_sequence_stage.references")
+	Compile_Target_Values_Invariants(targets, "compile_sequence_stage.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "compile_sequence_stage.controls")
+	Sequence_Stage_Invariants(stage, "compile_sequence_stage.stage")
+	Last_Child_Reference_Storage_Invariants(child_state, "compile_sequence_stage.child_state")
+	Compile_Accumulated_Storage_Invariants(
+		accumulated_state, "compile_sequence_stage.accumulated_state",
+	)
+	Sequence_Compile_Level_Invariants(level, "compile_sequence_stage.level")
+	Instruction_PC_Invariants(result, "compile_sequence_stage.result")
+	var depth Sequence_Resume_Depth
+	defer func() { Sequence_Resume_Depth_Invariants(depth, "compile_sequence_stage.depth") }()
+	var updated_result Instruction_PC
+	defer func() {
+		Instruction_PC_Invariants(updated_result, "compile_sequence_stage.updated_result")
+	}()
+	if stage == Sequence_Stage(COMPILE_STAGE_SEQUENCE_RETURN) {
+		*accumulated_state = Compile_Accumulated_Slot(result)
+		*child_state = Last_Child_Reference(compile_sequence_return(
+			nodes, Child_Node_Reference(*child_state),
+		))
+		depth = Sequence_Resume_Depth(level*Sequence_Compile_Level(len("{}")) +
+			Sequence_Compile_Level(COMPILE_DEPTH_NONZERO_MINIMUM))
+		updated_result = result
+		return depth, updated_result, Sequence_Stage(COMPILE_STAGE_SEQUENCE)
+	}
+	updated, next := compile_sequence(
+		nodes, frames, references, targets, controls,
+		child_state, accumulated_state, level, result,
+	)
+	depth = Sequence_Resume_Depth(updated * Sequence_Updated_Level(len("{}")))
+	updated_result = next
+	return depth, updated_result, Sequence_Stage(COMPILE_STAGE_SEQUENCE_RETURN)
+}
+
+func compile_alternative_stage(
+	nodes Nodes, frames Compile_Frames, references Compile_Reference_Values,
+	targets Compile_Target_Values, controls Compile_Frame_Control_Values,
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	instruction_targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Alternative_Emit_PC_Storage,
+	stage Alternative_Stage, child_state Branch_Reference_Storage,
+	first_state Compile_First_Storage, accumulated_state Alternative_Updated_PC_Storage,
+	continuation_state Alternative_Updated_PC_Storage,
+	level Alternative_Compile_Level, result Alternative_Result_PC,
+) (_ Nonzero_Compile_Depth, _ Alternative_Updated_PC, next_stage Alternative_Stage) {
+	defer func() {
+		Alternative_Stage_Invariants(next_stage, "compile_alternative_stage.next_stage")
+	}()
+	Nodes_Invariants(nodes, "compile_alternative_stage.nodes")
+	Compile_Frames_Invariants(frames, "compile_alternative_stage.frames")
+	Compile_Reference_Values_Invariants(references, "compile_alternative_stage.references")
+	Compile_Target_Values_Invariants(targets, "compile_alternative_stage.targets")
+	Compile_Frame_Control_Values_Invariants(controls, "compile_alternative_stage.controls")
+	Instruction_Kinds_Invariants(kinds, "compile_alternative_stage.kinds")
+	Instruction_Characters_Invariants(characters, "compile_alternative_stage.characters")
+	Instruction_Target_Values_Invariants(
+		instruction_targets, "compile_alternative_stage.instruction_targets",
+	)
+	Instruction_Class_Values_Invariants(classes, "compile_alternative_stage.classes")
+	Alternative_Emit_PC_Storage_Invariants(
+		instruction_count, "compile_alternative_stage.instruction_count",
+	)
+	Alternative_Stage_Invariants(stage, "compile_alternative_stage.stage")
+	Branch_Reference_Storage_Invariants(child_state, "compile_alternative_stage.child_state")
+	Compile_First_Storage_Invariants(first_state, "compile_alternative_stage.first_state")
+	Alternative_Updated_PC_Storage_Invariants(
+		accumulated_state, "compile_alternative_stage.accumulated_state",
+	)
+	Alternative_Updated_PC_Storage_Invariants(
+		continuation_state, "compile_alternative_stage.continuation_state",
+	)
+	Alternative_Compile_Level_Invariants(level, "compile_alternative_stage.level")
+	Alternative_Result_PC_Invariants(result, "compile_alternative_stage.result")
+	var depth Nonzero_Compile_Depth
+	defer func() {
+		Nonzero_Compile_Depth_Invariants(depth, "compile_alternative_stage.depth")
+	}()
+	var updated_result Alternative_Updated_PC
+	defer func() {
+		Alternative_Updated_PC_Invariants(
+			updated_result, "compile_alternative_stage.updated_result",
+		)
+	}()
+	if stage == Alternative_Stage(COMPILE_STAGE_ALTERNATIVE_RETURN) {
+		previous, accumulated := compile_alternative_return(
+			nodes, kinds, characters, instruction_targets, classes, instruction_count,
+			Opened_Sequence_Reference(*child_state), first_state,
+			Split_Branch_PC(*accumulated_state), result,
+		)
+		*child_state, *accumulated_state = Branch_Reference(previous), accumulated
+		depth = Nonzero_Compile_Depth(level * Alternative_Compile_Level(len("{}")))
+		updated_result = Alternative_Updated_PC(result)
+		return depth, updated_result, Alternative_Stage(COMPILE_STAGE_ALTERNATIVE)
+	}
+	updated, next := compile_alternative(
+		nodes, frames, references, targets, controls,
+		child_state, first_state, accumulated_state, continuation_state, level, result,
+	)
+	depth = Nonzero_Compile_Depth(
+		updated*Alternative_Updated_Level(len("{}")) +
+			Alternative_Updated_Level(COMPILE_DEPTH_NONZERO_MINIMUM),
+	)
+	updated_result = next
+	return depth, updated_result, Alternative_Stage(COMPILE_STAGE_ALTERNATIVE_RETURN)
+}
+
+// Sequence_Stage is one sequence traversal stage.
+type Sequence_Stage uint8
+
+// Sequence_Stage_Invariants admits the two sequence traversal stages.
+func Sequence_Stage_Invariants(value Sequence_Stage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value),
+			uint8(COMPILE_STAGE_SEQUENCE),
+			uint8(COMPILE_STAGE_SEQUENCE_RETURN),
+		).
+		Ensure()
+}
+
+// Alternative_Stage is one alternative traversal stage.
+type Alternative_Stage uint8
+
+// Alternative_Stage_Invariants admits the two alternative traversal stages.
+func Alternative_Stage_Invariants(value Alternative_Stage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(
+			uint8(value),
+			uint8(COMPILE_STAGE_ALTERNATIVE),
+			uint8(COMPILE_STAGE_ALTERNATIVE_RETURN),
+		).
+		Ensure()
+}
+
+// Parsed_Node_Count_Storage points at the syntax counter once the root exists.
+type Parsed_Node_Count_Storage *Parsed_Node_Count
+
+// Parsed_Node_Count_Storage_Invariants accepts absent or bounded syntax counter storage.
+func Parsed_Node_Count_Storage_Invariants(
+	value Parsed_Node_Count_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Parsed_Node_Count_Invariants(*value, namespace)
+}
+
+// Class_Member_Index_Storage points at the range counter where the next class starts.
+type Class_Member_Index_Storage *Class_Member_Index
+
+// Class_Member_Index_Storage_Invariants accepts absent or bounded class start storage.
+func Class_Member_Index_Storage_Invariants(
+	value Class_Member_Index_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Class_Member_Index_Invariants(*value, namespace)
+}
+
+// Parsed_Range_Count counts the ranges one class parse consumed.
+type Parsed_Range_Count uint16
+
+// Parsed_Range_Count_Invariants admits a maximum class missing its closing shell.
+func Parsed_Range_Count_Invariants(value Parsed_Range_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(CLASS_RANGE_STORAGE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+func pattern_control_store(
+	values Uint16_Values,
+	start Instruction_PC,
+	instruction_count Instruction_Count,
+	separator_count Separator_Count,
+) (control Pattern_Control) {
+	defer func() { Pattern_Control_Invariants(control, "pattern_control_store.control") }()
+	Uint16_Values_Invariants(values, "pattern_control_store.values")
+	Instruction_PC_Invariants(start, "pattern_control_store.start")
+	Instruction_Count_Invariants(instruction_count, "pattern_control_store.instruction_count")
+	Separator_Count_Invariants(separator_count, "pattern_control_store.separator_count")
+	start_index := PATTERN_CONTROL_VALUE_START + PATTERN_CONTROL_START
+	instruction_count_index :=
+		PATTERN_CONTROL_VALUE_START + PATTERN_CONTROL_INSTRUCTION_COUNT
+	separator_count_index :=
+		PATTERN_CONTROL_VALUE_START + PATTERN_CONTROL_SEPARATOR_COUNT
+	values[start_index] = uint16(start)
+	values[instruction_count_index] = uint16(instruction_count)
+	values[separator_count_index] = uint16(separator_count)
+	control = Pattern_Control{
+		Start: (*Pattern_Start_Slot)(&values[start_index]),
+		Instruction_Count: (*Pattern_Instruction_Count_Slot)(
+			&values[instruction_count_index],
+		),
+		Separator_Count: (*Pattern_Separator_Count_Slot)(&values[separator_count_index]),
+	}
+	return control
+}
+
+// Last_Child_Reference_Storage points at the unvisited child cursor of one sequence frame.
+type Last_Child_Reference_Storage *Last_Child_Reference
+
+// Last_Child_Reference_Storage_Invariants accepts absent or bounded sequence cursor storage.
+func Last_Child_Reference_Storage_Invariants(
+	value Last_Child_Reference_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Last_Child_Reference_Invariants(*value, namespace)
+}
+
+// Branch_Reference names an unvisited alternative branch, or none.
+type Branch_Reference uint16
+
+// Branch_Reference_Invariants excludes the root and first alternative, which no branch reuses.
+func Branch_Reference_Invariants(value Branch_Reference, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
+			uint16(NODE_ROOT), uint16(NODE_FIRST_ALTERNATIVE),
+			uint16(NODE_FIRST_ALTERNATIVE),
+		).
+		Ensure()
+}
+
+// Branch_Reference_Storage points at the unvisited branch cursor of one alternative frame.
+type Branch_Reference_Storage *Branch_Reference
+
+// Branch_Reference_Storage_Invariants accepts absent or bounded alternative cursor storage.
+func Branch_Reference_Storage_Invariants(
+	value Branch_Reference_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Branch_Reference_Invariants(*value, namespace)
+}
+
+// Previous_Branch_Reference names the branch before one visited alternative branch, or none.
+type Previous_Branch_Reference uint16
+
+// Previous_Branch_Reference_Invariants excludes the root and first alternative before the last.
+func Previous_Branch_Reference_Invariants(
+	value Previous_Branch_Reference, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_NONE), uint16(CHILD_PARENT_REFERENCE_MAXIMUM),
+			uint16(NODE_ROOT), uint16(NODE_FIRST_ALTERNATIVE),
+			uint16(NODE_FIRST_ALTERNATIVE),
+		).
+		Ensure()
+}
+
+// Alternative_Updated_PC_Storage points at one alternative frame target.
+type Alternative_Updated_PC_Storage *Alternative_Updated_PC
+
+// Alternative_Updated_PC_Storage_Invariants accepts absent or bounded alternative target storage.
+func Alternative_Updated_PC_Storage_Invariants(
+	value Alternative_Updated_PC_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Alternative_Updated_PC_Invariants(*value, namespace)
+}
+
+// Instruction_PC_Storage points at the next emission position.
+type Instruction_PC_Storage *Instruction_PC
+
+// Instruction_PC_Storage_Invariants accepts absent or bounded emission cursor storage.
+func Instruction_PC_Storage_Invariants(
+	value Instruction_PC_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Instruction_PC_Invariants(*value, namespace)
+}
+
+// Emitted_Instruction_PC_Storage points at the next emission position after the terminal match.
+type Emitted_Instruction_PC_Storage *Emitted_Instruction_PC
+
+// Emitted_Instruction_PC_Storage_Invariants accepts absent or bounded emission cursor storage.
+func Emitted_Instruction_PC_Storage_Invariants(
+	value Emitted_Instruction_PC_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Emitted_Instruction_PC_Invariants(*value, namespace)
+}
+
+// Pattern_Unvalidated is one caller-held compiled pattern before header validation.
+type Pattern_Unvalidated struct {
+	// Workspace retains compiled instructions and separators.
+	Workspace Compile_Workspace_Pointer
+	// Control retains caller header storage.
+	Control Pattern_Control_Unvalidated
+}
+
+// Pattern_Unvalidated_Invariants composes caller storage whose header is not yet validated.
+func Pattern_Unvalidated_Invariants(value Pattern_Unvalidated, namespace aver.Namespace) {
+	Compile_Workspace_Pointer_Invariants(value.Workspace, namespace)
+	Pattern_Control_Unvalidated_Invariants(value.Control, namespace)
+}
+
+// Pattern_Control_Unvalidated is one caller-held pattern header before validation.
+type Pattern_Control_Unvalidated struct {
+	// Start retains entry storage.
+	Start Pattern_Start_Unvalidated_Storage
+	// Instruction_Count retains populated instruction count storage.
+	Instruction_Count Pattern_Instruction_Count_Unvalidated_Storage
+	// Separator_Count retains populated separator count storage.
+	Separator_Count Pattern_Separator_Count_Unvalidated_Storage
+}
+
+// Pattern_Control_Unvalidated_Invariants composes caller header storage before validation.
+func Pattern_Control_Unvalidated_Invariants(
+	value Pattern_Control_Unvalidated, namespace aver.Namespace,
+) {
+	Pattern_Start_Unvalidated_Storage_Invariants(value.Start, namespace)
+	Pattern_Instruction_Count_Unvalidated_Storage_Invariants(value.Instruction_Count, namespace)
+	Pattern_Separator_Count_Unvalidated_Storage_Invariants(value.Separator_Count, namespace)
+}
+
+// Pattern_Start_Unvalidated is one caller-held header value before validation.
+type Pattern_Start_Unvalidated uint16
+
+// Pattern_Start_Unvalidated_Invariants admits any stored entry before validation.
+func Pattern_Start_Unvalidated_Invariants(
+	value Pattern_Start_Unvalidated, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
+}
+
+// Pattern_Start_Unvalidated_Storage points at one caller-held header value.
+type Pattern_Start_Unvalidated_Storage *Pattern_Start_Unvalidated
+
+// Pattern_Start_Unvalidated_Storage_Invariants accepts absent or any caller entry storage.
+func Pattern_Start_Unvalidated_Storage_Invariants(
+	value Pattern_Start_Unvalidated_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Pattern_Start_Unvalidated_Invariants(*value, namespace)
+}
+
+// Pattern_Instruction_Count_Unvalidated is one caller-held header value before validation.
+type Pattern_Instruction_Count_Unvalidated uint16
+
+// Pattern_Instruction_Count_Unvalidated_Invariants admits any stored count before validation.
+func Pattern_Instruction_Count_Unvalidated_Invariants(
+	value Pattern_Instruction_Count_Unvalidated, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
+}
+
+// Pattern_Instruction_Count_Unvalidated_Storage points at one caller-held header value.
+type Pattern_Instruction_Count_Unvalidated_Storage *Pattern_Instruction_Count_Unvalidated
+
+// Pattern_Instruction_Count_Unvalidated_Storage_Invariants accepts absent or any count storage.
+func Pattern_Instruction_Count_Unvalidated_Storage_Invariants(
+	value Pattern_Instruction_Count_Unvalidated_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Pattern_Instruction_Count_Unvalidated_Invariants(*value, namespace)
+}
+
+// Pattern_Separator_Count_Unvalidated is one caller-held header value before validation.
+type Pattern_Separator_Count_Unvalidated uint16
+
+// Pattern_Separator_Count_Unvalidated_Invariants admits any stored count before validation.
+func Pattern_Separator_Count_Unvalidated_Invariants(
+	value Pattern_Separator_Count_Unvalidated, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
+		Ensure()
+}
+
+// Pattern_Separator_Count_Unvalidated_Storage points at one caller-held header value.
+type Pattern_Separator_Count_Unvalidated_Storage *Pattern_Separator_Count_Unvalidated
+
+// Pattern_Separator_Count_Unvalidated_Storage_Invariants accepts absent or any count storage.
+func Pattern_Separator_Count_Unvalidated_Storage_Invariants(
+	value Pattern_Separator_Count_Unvalidated_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Pattern_Separator_Count_Unvalidated_Invariants(*value, namespace)
+}
+
+func compile_match(
+	kinds Instruction_Kinds, characters Instruction_Characters,
+	targets Instruction_Target_Values, classes Instruction_Class_Values,
+	instruction_count Compile_Instruction_Count_Storage,
+) {
+	Instruction_Kinds_Invariants(kinds, "compile_match.kinds")
+	Instruction_Characters_Invariants(characters, "compile_match.characters")
+	Instruction_Target_Values_Invariants(targets, "compile_match.targets")
+	Instruction_Class_Values_Invariants(classes, "compile_match.classes")
+	Compile_Instruction_Count_Storage_Invariants(
+		instruction_count, "compile_match.instruction_count",
+	)
+	*instruction_count = Compile_Instruction_Count_Slot(bytes.SLICE_SIZE_MINIMUM)
+	match := instruction_emit(
+		kinds, characters, targets, classes,
+		(*Instruction_PC)((*Compile_Instruction_Count_Slot)(instruction_count)),
+		INSTRUCTION_MATCH, Node_Character_Slot(utf8.DECODED_CHARACTER_MINIMUM),
+		Instruction_Continuation(INSTRUCTION_PC_MINIMUM),
+		Split_Branch_PC(INSTRUCTION_PC_MINIMUM),
+		Node_Class_Range_Index_Slot(bytes.SLICE_SIZE_MINIMUM),
+		Node_Class_Range_Count_Slot(bytes.SLICE_SIZE_MINIMUM),
+		Node_Class_Negated_Slot(CONTROL_FALSE),
+	)
+	aver.Always(
+		match == Instruction_PC(INSTRUCTION_PC_MINIMUM),
+		"Terminal match occupies the first instruction.",
+	)
+}
+
+// Alternative_Emit_PC is the next emission position while one alternative compiles.
+type Alternative_Emit_PC uint16
+
+// Alternative_Emit_PC_Invariants spans the first emission after the terminal match through the
+// last position an alternative can reach before its shell.
+func Alternative_Emit_PC_Invariants(value Alternative_Emit_PC, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(EMITTED_INSTRUCTION_PC_MINIMUM),
+			uint16(INSTRUCTION_CONTINUATION_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Alternative_Emit_PC_Storage points at the emission position while one alternative compiles.
+type Alternative_Emit_PC_Storage *Alternative_Emit_PC
+
+// Alternative_Emit_PC_Storage_Invariants accepts absent or bounded alternative emission storage.
+func Alternative_Emit_PC_Storage_Invariants(
+	value Alternative_Emit_PC_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Alternative_Emit_PC_Invariants(*value, namespace)
+}
+
+// Grouped_Node_Count counts parsed syntax nodes once one group is open.
+type Grouped_Node_Count uint16
+
+// Grouped_Node_Count_Invariants starts at the root, one alternative, and one open sequence.
+func Grouped_Node_Count_Invariants(value Grouped_Node_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(NESTED_SEQUENCE_REFERENCE_MINIMUM),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Grouped_Node_Count_Storage points at the syntax counter once one group is open.
+type Grouped_Node_Count_Storage *Grouped_Node_Count
+
+// Grouped_Node_Count_Storage_Invariants accepts absent or bounded grouped counter storage.
+func Grouped_Node_Count_Storage_Invariants(
+	value Grouped_Node_Count_Storage, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Grouped_Node_Count_Invariants(*value, namespace)
+}
+
+// Sequence_Resume_Depth is the compiler depth after one sequence stage.
+type Sequence_Resume_Depth int
+
+// Sequence_Resume_Depth_Invariants stops one frame short of the syntax arena, because the
+// deepest sequence frame never pushes a child.
+func Sequence_Resume_Depth_Invariants(value Sequence_Resume_Depth, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), PATTERN_DEPTH_MINIMUM, COMPILE_SEQUENCE_DEPTH_MAXIMUM).
+		Ensure()
+}
+
+func syntax_step(
+	nodes Nodes, characters Node_Character_Values, values Uint16_Values,
+	node_count Parsed_Node_Count_Storage, frames Parser_Frames, ranges Class_Ranges,
+	range_count Class_Member_Index_Storage, source Nonempty_Pattern_Source,
+	current Container_Node_Reference, depth Parser_Depth, position Pattern_Index,
+) (
+	_ Container_Node_Reference, _ Parser_Depth, _ Pattern_Position, status Syntax_Status,
+) {
+	defer func() { Syntax_Status_Invariants(status, "syntax_step.status") }()
+	Nodes_Invariants(nodes, "syntax_step.nodes")
+	Node_Character_Values_Invariants(characters, "syntax_step.characters")
+	Uint16_Values_Invariants(values, "syntax_step.values")
+	Parsed_Node_Count_Storage_Invariants(node_count, "syntax_step.node_count")
+	Parser_Frames_Invariants(frames, "syntax_step.frames")
+	Class_Ranges_Invariants(ranges, "syntax_step.ranges")
+	Class_Member_Index_Storage_Invariants(range_count, "syntax_step.range_count")
+	Nonempty_Pattern_Source_Invariants(source, "syntax_step.source")
+	Container_Node_Reference_Invariants(current, "syntax_step.current")
+	Parser_Depth_Invariants(depth, "syntax_step.depth")
+	Pattern_Index_Invariants(position, "syntax_step.position")
+	next := current
+	defer func() { Container_Node_Reference_Invariants(next, "syntax_step.next") }()
+	next_depth := depth
+	defer func() { Parser_Depth_Invariants(next_depth, "syntax_step.next_depth") }()
+	next_position := Pattern_Position(position) + Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM)
+	defer func() { Pattern_Position_Invariants(next_position, "syntax_step.next_position") }()
+	switch source[position] {
+	case '{':
+		opened, opened_depth, state := group_open(
+			nodes, characters, values, node_count, frames, current, depth,
+		)
+		next, next_depth = Container_Node_Reference(opened), Parser_Depth(opened_depth)
+		status = state
+		return next, next_depth, next_position, status
+	case '}':
+		if depth == PATTERN_DEPTH_MINIMUM {
+			next_position = Pattern_Position(position)
+			return next, next_depth, next_position, STATUS_SYNTAX_INVALID
+		}
+		parent, closed_depth := group_close(frames, Open_Parser_Depth(depth))
+		next, next_depth = Container_Node_Reference(parent), Parser_Depth(closed_depth)
+		return next, next_depth, next_position, STATUS_OK
+	case ',':
+		if depth != PATTERN_DEPTH_MINIMUM {
+			branch, state := group_branch(
+				nodes, characters, values,
+				(*Grouped_Node_Count)((*Parsed_Node_Count)(node_count)), frames,
+				Nested_Sequence_Reference(current), Open_Parser_Depth(depth),
+			)
+			next, status = Container_Node_Reference(branch), state
+			return next, next_depth, next_position, status
+		}
+	}
+	end, status := atom_parse(
+		nodes,
+		characters,
+		values,
+		node_count,
+		ranges,
+		range_count,
+		source,
+		current,
+		position,
+	)
+	next_position = Pattern_Position(end)
+	return next, next_depth, next_position, status
+}
+
+// Split_Branch_PC is the alternative target one split branches to.
+type Split_Branch_PC uint16
+
+// Split_Branch_PC_Invariants reserves the brace shell and one comma.
+func Split_Branch_PC_Invariants(value Split_Branch_PC, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value),
+			uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(SPLIT_BRANCH_PC_MAXIMUM),
+		).
+		Ensure()
 }

@@ -301,7 +301,7 @@ func match_input(
 	if workspace != nil {
 		match_workspace_init(workspace)
 	}
-	input.Pattern = pattern
+	input.Pattern = pattern_unvalidated(pattern)
 	input.Text = text
 	if workspace != nil {
 		input.Workspace.State = glob.Match_Workspace_Pointer(workspace)
@@ -554,7 +554,7 @@ func match_boundaries(t *testing.T, pattern glob.Pattern) {
 func match_forged_pattern(t *testing.T, workspace *glob.Match_Workspace) {
 	var compiled glob.Compile_Workspace
 	pattern := compile_from(t, &compiled, []byte("a"), nil)
-	start := *pattern.Control.Start.(*uint16)
+	start := uint16(*pattern.Control.Start)
 	compiled.Instruction_Kinds[start] = glob.INSTRUCTION_SPLIT +
 		utf8.CHARACTER_SIZE_MINIMUM
 	_, status := glob.Match(match_input(pattern, nil, workspace))
@@ -621,4 +621,190 @@ func special_boundaries(t *testing.T) {
 	for index := range characters {
 		testify.False(t, bool(glob.Special(characters[index])))
 	}
+}
+
+func pattern_unvalidated(pattern glob.Pattern) (unvalidated glob.Pattern_Unvalidated) {
+	unvalidated.Workspace = pattern.Workspace
+	unvalidated.Control.Start = (*glob.Pattern_Start_Unvalidated)(
+		(*glob.Pattern_Start_Slot)(pattern.Control.Start),
+	)
+	unvalidated.Control.Instruction_Count = (*glob.Pattern_Instruction_Count_Unvalidated)(
+		(*glob.Pattern_Instruction_Count_Slot)(pattern.Control.Instruction_Count),
+	)
+	unvalidated.Control.Separator_Count = (*glob.Pattern_Separator_Count_Unvalidated)(
+		(*glob.Pattern_Separator_Count_Slot)(pattern.Control.Separator_Count),
+	)
+	return unvalidated
+}
+
+// Test_Storage_Limits reaches every proven storage limit through the public entry points.
+func Test_Storage_Limits(t *testing.T) {
+	var workspace glob.Match_Workspace
+	match_forged_headers(t, &workspace)
+	match_forged_instructions(t, &workspace)
+	compile_class_limits(t, &workspace)
+	compile_alternative_limits(t)
+	compile_reuse_limits(t)
+	match_separator_limits(t, &workspace)
+}
+
+func match_forged_headers(t *testing.T, workspace *glob.Match_Workspace) {
+	var compiled glob.Compile_Workspace
+	pattern := compile_from(t, &compiled, []byte("a"), nil)
+	start := glob.Pattern_Start_Unvalidated(bits.WORD_16_MAXIMUM)
+	counts := [...]glob.Pattern_Instruction_Count_Unvalidated{
+		glob.Pattern_Instruction_Count_Unvalidated(bits.WORD_16_MINIMUM),
+		glob.Pattern_Instruction_Count_Unvalidated(bits.WORD_16_MAXIMUM),
+	}
+	separators := glob.Pattern_Separator_Count_Unvalidated(bits.WORD_16_MAXIMUM)
+	input := match_input(pattern, nil, workspace)
+	input.Pattern.Control.Start = &start
+	_, status := glob.Match(input)
+	testify.Equal_Values(t, glob.STATUS_PATTERN_INVALID, status)
+	for index := range counts {
+		input = match_input(pattern, nil, workspace)
+		input.Pattern.Control.Instruction_Count = &counts[index]
+		_, status = glob.Match(input)
+		testify.Equal_Values(t, glob.STATUS_PATTERN_INVALID, status)
+	}
+	input = match_input(pattern, nil, workspace)
+	input.Pattern.Control.Separator_Count = &separators
+	_, status = glob.Match(input)
+	testify.Equal_Values(t, glob.STATUS_PATTERN_INVALID, status)
+}
+
+func match_forged_instructions(t *testing.T, workspace *glob.Match_Workspace) {
+	var compiled glob.Compile_Workspace
+	characters := [...]rune{
+		rune(bits.INTEGER_32_MINIMUM),
+		rune(bits.INTEGER_32_MAXIMUM),
+		-rune(utf8.CHARACTER_SIZE_MINIMUM),
+	}
+	for index := range characters {
+		pattern := compile_from(t, &compiled, []byte("a"), nil)
+		compiled.Instruction_Characters[uint16(*pattern.Control.Start)] = characters[index]
+		glob.Match(match_input(pattern, nil, workspace))
+	}
+	targets := [...]int{glob.INSTRUCTION_TARGET_NEXT, glob.INSTRUCTION_TARGET_BRANCH}
+	for index := range targets {
+		pattern := compile_from(t, &compiled, []byte("a"), nil)
+		offset := int(uint16(*pattern.Control.Start))*glob.INSTRUCTION_TARGET_COUNT +
+			targets[index]
+		compiled.Instruction_Targets[offset] = glob.Instruction_PC(bits.WORD_16_MAXIMUM)
+		glob.Match(match_input(pattern, nil, workspace))
+	}
+	classes := [...]forged_class{
+		{Field: glob.INSTRUCTION_CLASS_RANGE_INDEX, Value: bits.WORD_16_MAXIMUM},
+		{Field: glob.INSTRUCTION_CLASS_RANGE_COUNT, Value: bits.WORD_16_MAXIMUM},
+		{Field: glob.INSTRUCTION_CLASS_NEGATED, Value: bits.WORD_16_MAXIMUM},
+		{Field: glob.INSTRUCTION_CLASS_NEGATED, Value: utf8.CHARACTER_SIZE_TWO},
+	}
+	for index := range classes {
+		pattern := compile_from(t, &compiled, []byte("[a]"), nil)
+		offset := int(uint16(*pattern.Control.Start))*glob.INSTRUCTION_CLASS_FIELD_COUNT +
+			classes[index].Field
+		compiled.Instruction_Classes[offset] = classes[index].Value
+		_, status := glob.Match(match_input(pattern, nil, workspace))
+		testify.Equal_Values(t, glob.STATUS_PATTERN_INVALID, status)
+	}
+	pattern := compile_from(t, &compiled, []byte("a"), nil)
+	kind := glob.Instruction_Kind(bits.WORD_8_MAXIMUM)
+	compiled.Instruction_Kinds[uint16(*pattern.Control.Start)] = kind
+	_, status := glob.Match(match_input(pattern, nil, workspace))
+	testify.Equal_Values(t, glob.STATUS_PATTERN_INVALID, status)
+}
+
+type forged_class struct {
+	Field int
+	Value uint16
+}
+
+func compile_class_limits(t *testing.T, workspace *glob.Match_Workspace) {
+	var compiled glob.Compile_Workspace
+	pattern := compile_from(t, &compiled, []byte("[ab][c]"), nil)
+	testify.True(t, match_from(t, pattern, []byte("ac"), workspace))
+
+	var source [glob.PATTERN_SIZE_MAXIMUM]byte
+	start := glob.CLASS_RANGE_START_MAXIMUM + len("[]")
+	class_fill(source[:start], '[', ']')
+	copy(source[start:], []byte("[a]"))
+	pattern = compile_from(t, &compiled, source[:], nil)
+	testify.True(t, match_from(t, pattern, []byte("aa"), workspace))
+
+	open := glob.CLASS_MEMBER_INDEX_MAXIMUM + len("[]")
+	class_fill(source[:open], '[', ']')
+	source[open] = '['
+	_, _, status := glob.Compile(compile_input(&compiled, source[:open+len("[")], nil))
+	testify.Equal_Values(t, glob.STATUS_SYNTAX_INVALID, status)
+
+	class_fill(source[:], '[', ']')
+	pattern = compile_from(t, &compiled, source[:], nil)
+	offset := int(uint16(*pattern.Control.Start)) * glob.INSTRUCTION_CLASS_FIELD_COUNT
+	compiled.Instruction_Classes[offset+glob.INSTRUCTION_CLASS_RANGE_INDEX] =
+		uint16(glob.CLASS_MEMBER_INDEX_MAXIMUM)
+	compiled.Instruction_Classes[offset+glob.INSTRUCTION_CLASS_RANGE_COUNT] =
+		uint16(utf8.CHARACTER_SIZE_MINIMUM)
+	testify.True(t, match_from(t, pattern, []byte("a"), workspace))
+}
+
+// Fills one class shell whose members are the letter a.
+func class_fill(source []byte, open byte, close byte) {
+	source[bytes.SLICE_SIZE_MINIMUM] = open
+	for index := utf8.CHARACTER_SIZE_MINIMUM; index < len(source); index++ {
+		source[index] = 'a'
+	}
+	source[len(source)-utf8.CHARACTER_SIZE_MINIMUM] = close
+}
+
+func compile_alternative_limits(t *testing.T) {
+	var compiled glob.Compile_Workspace
+	var source [glob.PATTERN_SIZE_MAXIMUM]byte
+	for index := range source {
+		source[index] = 'a'
+	}
+	copy(source[:], []byte("{}"))
+	compile_from(t, &compiled, source[:], nil)
+	compile_from(t, &compiled, []byte("{}ab"), nil)
+	compile_from(t, &compiled, []byte("a{b}"), nil)
+
+	copy(source[:], []byte("{,"))
+	copy(source[len(source)-len(",}"):], []byte(",}"))
+	compile_from(t, &compiled, source[:], nil)
+
+	for index := range source {
+		source[index] = ','
+	}
+	source[bytes.SLICE_SIZE_MINIMUM] = '{'
+	source[len(source)-utf8.CHARACTER_SIZE_MINIMUM] = '}'
+	compile_from(t, &compiled, source[:], nil)
+
+	_, _, status := glob.Compile(compile_input(&compiled, []byte("}"), nil))
+	testify.Equal_Values(t, glob.STATUS_SYNTAX_INVALID, status)
+}
+
+func compile_reuse_limits(t *testing.T) {
+	var compiled glob.Compile_Workspace
+	separators := [...]rune{'.'}
+	compile_from(t, &compiled, []byte("[ab]"), separators[:])
+	compile_from(t, &compiled, []byte("a"), nil)
+}
+
+func match_separator_limits(t *testing.T, workspace *glob.Match_Workspace) {
+	var compiled glob.Compile_Workspace
+	separators_two := [...]rune{'.', '/'}
+	pattern := compile_from(t, &compiled, []byte("*"), separators_two[:])
+	testify.True(t, match_from(t, pattern, []byte("a"), workspace))
+	var separators_maximum [glob.SEPARATOR_COUNT_MAXIMUM]rune
+	for index := range separators_maximum {
+		separators_maximum[index] = '.'
+	}
+	pattern = compile_from(t, &compiled, []byte("*"), separators_maximum[:])
+	testify.True(t, match_from(t, pattern, []byte("a"), workspace))
+
+	var source [glob.PATTERN_SIZE_MAXIMUM]byte
+	for index := range source {
+		source[index] = 'a'
+	}
+	pattern = compile_from(t, &compiled, source[:], nil)
+	testify.False(t, match_from(t, pattern, []byte("a"), workspace))
 }
