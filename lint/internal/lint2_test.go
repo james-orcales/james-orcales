@@ -6125,6 +6125,25 @@ func Test_Deterministic_Negation_Holds_Package(t *testing.T) {
 	}
 }
 
+// Ordered refinement avoids duplicating broad package groups after one temporary
+// holdback ends.
+func Test_Deterministic_Later_Positive_Refines_Negation(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/keep/keep.go": []byte("// Package keep is a fixture.\n" +
+			"package keep\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+	}
+	diags := deterministic_self_diagnostics(
+		t, files, []string{"pkg/*", "!pkg/keep", "pkg/keep"})
+	if specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("later pkg/keep must release pkg/keep again")
+	}
+}
+
 // Test_Deterministic_Sibling_Import verifies a deterministic package importing
 // another deterministic first-party package satisfies the induction — no violation
 // — while still held to the bans itself. With no exceptions every pure package is

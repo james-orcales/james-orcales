@@ -591,7 +591,7 @@ type Configuration struct {
 	// names a package and its whole subtree. Names a package only — an entry naming
 	// one exact file is rejected; Ignore and Recursion_Exempt are the two lists that
 	// may name a file. A "!"-prefixed entry revokes instrumentation status from a
-	// package a broader entry granted it, regardless of either entry's position. An
+	// package a broader earlier entry granted it; a later match may refine it again. An
 	// instrumentation package is also released from the deterministic tier, so it need
 	// not be repeated in pure_but_indeterministic_packages.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
@@ -606,7 +606,7 @@ type Configuration struct {
 	// reported as a coverage gap (a typo or stale path that releases nothing). Names
 	// a package only, like Instrumentation_Packages and Invariant_Exempt_Packages —
 	// an entry naming one exact file is rejected. A "!"-prefixed entry holds a
-	// package to the tier despite a broader release entry, regardless of order.
+	// package to the tier despite a broader earlier release entry; last match wins.
 	Pure_But_Indeterministic []string `json:"pure_but_indeterministic_packages"`
 	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
 	// word maps to its preferred replacements (id -> identifier). An empty list
@@ -622,7 +622,7 @@ type Configuration struct {
 	// dropped from the scan set entirely, so no tier fires on it. Opt-in; empty
 	// ignores nothing. Unlike the other lists, an entry here may name a package or
 	// one exact file (e.g. "build.go"). A "!"-prefixed entry re-includes a path a
-	// broader entry ignored, winning regardless of either entry's position.
+	// broader earlier entry ignored; last match wins.
 	Ignore []string `json:"ignore"`
 	// Invariant_Exempt_Packages names the packages exempt from the type-invariant
 	// rule — the rule's sole escape hatch. The framework package that defines the
@@ -633,8 +633,8 @@ type Configuration struct {
 	// switch for a staged rollout. Opt-in; empty exempts nothing, so the rule binds
 	// every package by default. Names a package only, like Instrumentation_Packages
 	// and Pure_But_Indeterministic — an entry naming one exact file is rejected. A
-	// "!"-prefixed entry binds a package to the rule despite a broader exemption,
-	// regardless of order — e.g. "shared/**", "!shared/io" exempts shared/** except
+	// "!"-prefixed entry binds a package to the rule despite a broader earlier exemption;
+	// last match wins — e.g. "shared/**", "!shared/io" exempts shared/** except
 	// shared/io.
 	Invariant_Exempt_Packages []string `json:"opt_out_assertion_mandate_packages"`
 	// Recursion_Exempt names packages exempt from the self- and mutual-recursion
@@ -643,7 +643,7 @@ type Configuration struct {
 	// nothing. Unlike that list, an entry here may name a package or one exact file —
 	// a single recursive function living in an otherwise-unexceptional package. A
 	// "!"-prefixed entry re-bans recursion in a package or file a broader entry
-	// exempted, regardless of order.
+	// exempted; last match wins.
 	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
 }
 
@@ -9216,17 +9216,14 @@ func check_deterministic(input *Check_Deterministic_Input) (diags []Diagnostic) 
 	// "shared/io/**" opts out its subtree — a bare parent cannot silently drop its
 	// children. The subtraction runs before the checks so the import induction
 	// tests against the concrete deterministic set, and matched records which
-	// entries hit a package for the coverage-gap check. negated collects the
-	// directories a "!" entry hit; negation always wins regardless of processing
-	// order, so those are added back to covered only after every entry (positive
-	// and negated) has had a chance to hit — a negated entry seen before the
-	// positive entry it overrides must still win.
+	// entries hit a package for the coverage-gap check. Applying each matching
+	// decision immediately preserves list order, so a narrow later entry can refine
+	// broad earlier policy.
 	covered := map[string]bool{}
 	for directory := range pure {
 		covered[directory] = true
 	}
 	matched := map[string]bool{}
-	negated := map[string]bool{}
 	// Instrumentation packages are write-only side channels, inherently
 	// nondeterministic, so they release from the tier alongside the explicit
 	// exceptions — no duplicate pure_but_indeterministic_packages entry needed. The
@@ -9243,14 +9240,11 @@ func check_deterministic(input *Check_Deterministic_Input) (diags []Diagnostic) 
 			}
 			matched[entry] = true
 			if pattern.Negate {
-				negated[directory] = true
+				covered[directory] = true
 				continue
 			}
 			delete(covered, directory)
 		}
-	}
-	for directory := range negated {
-		covered[directory] = true
 	}
 	for _, pf := range input.Parsed_Files {
 		if !covered[path.Dir(pf.Path)] {

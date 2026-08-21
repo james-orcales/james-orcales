@@ -899,26 +899,19 @@ func Invariant_Name(type_name string) (name string) {
 
 // Path_Matches_Glob reports whether filename matches patterns as an exact-path
 // glob list: "pkg/sub" matches only that path, "pkg/**" its whole subtree, and
-// "**" everything. These are the same * / ** globs the deterministic tier's
-// exceptions use, so the invariant and recursion exemption lists — both
-// user-written lint.json globs — read alike. A "!"-prefixed entry negates:
-// negation always wins, so a filename any negated entry matches is reported as
-// not matching, regardless of whether — or where in patterns — a positive entry
-// also matches it.
+// "**" everything. Later matches refine earlier broad policy, letting one list
+// exempt a tree, bind a subtree, then exempt framework packages inside it. A
+// "!"-prefixed match clears the decision; a later positive match restores it.
 func Path_Matches_Glob(filename string, patterns []string) (yes bool) {
-	matched := false
 	for _, entry := range patterns {
 		parsed := Parse_Glob_Pattern(entry)
 		hit, _ := Glob_Match(&Glob_Match_Input{Pattern: parsed.Core, Path: filename})
 		if !hit {
 			continue
 		}
-		if parsed.Negate {
-			return false
-		}
-		matched = true
+		yes = !parsed.Negate
 	}
-	return matched
+	return yes
 }
 
 // A Glob_Pattern is a lint.json glob entry parsed into the two facts the matcher
@@ -929,8 +922,7 @@ func Path_Matches_Glob(filename string, patterns []string) (yes bool) {
 type Glob_Pattern struct {
 	// Core is the pattern reduced to the form Glob_Match runs against a full path.
 	Core string
-	// Negate marks a "!"-prefixed entry — one that vetoes a match rather than
-	// grants one. See Path_Matches_Glob.
+	// Negate marks a "!"-prefixed entry, clearing any earlier matching grant.
 	Negate bool
 }
 

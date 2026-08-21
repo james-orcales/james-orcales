@@ -188,17 +188,31 @@ func Test_Path_Matches_Glob_Negation_Overrides_Broader_Match(t *testing.T) {
 	}
 }
 
-// Test_Path_Matches_Glob_Negation_Wins_Regardless_Of_Order verifies negation
-// always wins whether the negated entry is listed before or after the positive
-// entry it overrides.
-func Test_Path_Matches_Glob_Negation_Wins_Regardless_Of_Order(t *testing.T) {
+// Ordered refinement keeps broad rollout policy small when only framework
+// subtrees remain exempt.
+func Test_Path_Matches_Glob_Later_Positive_Refines_Negation(t *testing.T) {
+	t.Parallel()
+	patterns := []string{"**", "!shared/**", "shared/invariant/**", "shared/vsr/**"}
+	if !source.Path_Matches_Glob("shared/invariant/invariant.go", patterns) {
+		t.Error("shared/invariant/** must re-exempt its subtree")
+	}
+	if !source.Path_Matches_Glob("shared/vsr/vsr.go", patterns) {
+		t.Error("shared/vsr/** must re-exempt its subtree")
+	}
+	if source.Path_Matches_Glob("shared/io/io.go", patterns) {
+		t.Error("!shared/** must keep unmatched shared packages bound")
+	}
+}
+
+// List order permits both temporary holdbacks and later narrow releases.
+func Test_Path_Matches_Glob_Last_Match_Wins(t *testing.T) {
 	t.Parallel()
 	negation_first := []string{"!pkg/keep", "pkg/**"}
 	negation_last := []string{"pkg/**", "!pkg/keep"}
-	if source.Path_Matches_Glob("pkg/keep", negation_first) {
-		t.Error("negation listed before the positive entry must still win")
+	if !source.Path_Matches_Glob("pkg/keep", negation_first) {
+		t.Error("later positive entry must restore the match")
 	}
 	if source.Path_Matches_Glob("pkg/keep", negation_last) {
-		t.Error("negation listed after the positive entry must still win")
+		t.Error("later negated entry must clear the match")
 	}
 }
