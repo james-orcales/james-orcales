@@ -847,12 +847,12 @@ func Test_Invariants_Fixed_Arrays(t *testing.T) {
 	}
 }
 
-// Test_Simulation_Presence verifies a binary component with a non-exempt internal
+// Test_Simulation_Presence verifies a binary component with a non-exempt pkg
 // package but no simulation_test package is flagged.
 func Test_Simulation_Presence(t *testing.T) {
 	t.Parallel()
 	if !diagnosed(simulation_diagnostics(simulation_base(t)),
-		"has no internal/simulation_test package") {
+		"has no pkg/simulation_test package") {
 		t.Fatal("a binary component without a simulation package must be flagged")
 	}
 }
@@ -866,7 +866,7 @@ func Test_Simulation_Contents(t *testing.T) {
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
-		"The simulation package has no fuzz function for internal.Main.") {
+		"The simulation package has no fuzz function for pkg.Main.") {
 		t.Fatal("a simulation package without a fuzz function must be flagged")
 	}
 }
@@ -884,44 +884,44 @@ func Test_Simulation_Test_Main(t *testing.T) {
 }
 
 // Test_Simulation_Coverage verifies a simulation TestMain whose directory arguments
-// do not register every internal package is flagged.
+// do not register every pkg package is flagged.
 func Test_Simulation_Coverage(t *testing.T) {
 	t.Parallel()
 	sim := simulation_fixture_source("aver.Run_Test_Main(m, \"../*\")")
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
 		"The body of the simulation TestMain is not "+
 			"aver.Run_Test_Main(m, \"../**\").") {
-		t.Fatal("a narrower glob that omits nested internal packages must be flagged")
+		t.Fatal("a narrower glob that omits nested pkg packages must be flagged")
 	}
 }
 
 // Test_Simulation_Entry verifies the simulation is flagged when it references an
-// internal function other than Main.
+// pkg function other than Main.
 func Test_Simulation_Entry(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
-		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
+		"\t\"github.com/james-orcales/james-orcales/pkg/pkg\"\n" +
 		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
-		"func Fuzz_Main(f *testing.F) {\n\tinternal.Extra()\n}\n"
+		"func Fuzz_Main(f *testing.F) {\n\tpkg.Extra()\n}\n"
 	files := []source.Parsed_File{
 		parse(t, &parse_input{
 			Path: "pkg/main.go",
 			Source_Text: "// Package main is a fixture.\n" +
 				"package main\n\nfunc main() {}\n"}),
 		parse(t, &parse_input{
-			Path: "pkg/internal/entry.go",
-			Source_Text: "// Package internal is a fixture.\npackage internal\n\n" +
+			Path: "pkg/pkg/entry.go",
+			Source_Text: "// Package pkg is a fixture.\npackage pkg\n\n" +
 				"// Main is the entry point.\nfunc Main() {}\n\n" +
 				"// Extra is a fixture.\nfunc Extra() {}\n"}),
 		parse(t, &parse_input{
-			Path:        "pkg/internal/simulation_test/sim_test.go",
+			Path:        "pkg/pkg/simulation_test/sim_test.go",
 			Source_Text: sim}),
 	}
 	if !diagnosed(simulation_diagnostics(files),
-		"The simulation package refers to internal.Extra. Refer only to Main.") {
-		t.Fatal("referencing a non-Main internal function must be flagged")
+		"The simulation package refers to pkg.Extra. Refer only to Main.") {
+		t.Fatal("referencing a non-Main pkg function must be flagged")
 	}
 }
 
@@ -1496,7 +1496,7 @@ func recorder_diagnostics(files []source.Parsed_File) (diags []diagnostic.Diagno
 }
 
 // Runs Check with the fixture treated as one binary component rooted at pkg, so the
-// simulation checks judge its internal/simulation_test package. Import_Path is the
+// simulation checks judge its pkg/simulation_test package. Import_Path is the
 // real module path the entry check compares the simulation's selector imports against.
 func simulation_diagnostics(files []source.Parsed_File) (diags []diagnostic.Diagnostic) {
 	mapping := map[string]int{}
@@ -1514,7 +1514,7 @@ func simulation_diagnostics(files []source.Parsed_File) (diags []diagnostic.Diag
 }
 
 // The binary-component fixture without a simulation package — a thin main and an
-// internal entry point — the base each simulation leaf builds on.
+// pkg entry point — the base each simulation leaf builds on.
 func simulation_base(t *testing.T) (files []source.Parsed_File) {
 	t.Helper()
 	return []source.Parsed_File{
@@ -1523,19 +1523,19 @@ func simulation_base(t *testing.T) (files []source.Parsed_File) {
 			Source_Text: "// Package main is a fixture.\n" +
 				"package main\n\nfunc main() {}\n"}),
 		parse(t, &parse_input{
-			Path: "pkg/internal/entry.go",
-			Source_Text: "// Package internal is a fixture.\npackage internal\n\n" +
+			Path: "pkg/pkg/entry.go",
+			Source_Text: "// Package pkg is a fixture.\npackage pkg\n\n" +
 				"// Main is the entry point.\nfunc Main() {}\n"}),
 	}
 }
 
 // The base fixture plus the given simulation package source at the conventional
-// internal/simulation_test path, so a leaf varies only the part it exercises.
+// pkg/simulation_test path, so a leaf varies only the part it exercises.
 func simulation_files(t *testing.T, sim string) (files []source.Parsed_File) {
 	t.Helper()
 	files = simulation_base(t)
 	return append(files, parse(t, &parse_input{
-		Path:        "pkg/internal/simulation_test/sim_test.go",
+		Path:        "pkg/pkg/simulation_test/sim_test.go",
 		Source_Text: sim}))
 }
 

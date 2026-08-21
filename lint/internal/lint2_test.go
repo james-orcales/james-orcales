@@ -587,10 +587,10 @@ func Test_Keyed_Struct_Init_Cross_Package(t *testing.T) {
 	}
 	workspace := func(beta_body string) (files map[string]string) {
 		return map[string]string{
-			"lib/alpha/alpha.go":              alpha,
+			"lib/alpha/alpha.go":             alpha,
 			"lib/alpha/REQUIREMENTS.md":      REQUIREMENTS_FIXTURE_MD,
 			"lib/alpha/requirements_test.go": fixture_requirements_test("alpha"),
-			"lib/beta/beta.go":                beta(beta_body),
+			"lib/beta/beta.go":               beta(beta_body),
 			"lib/beta/REQUIREMENTS.md":       REQUIREMENTS_FIXTURE_MD,
 			"lib/beta/requirements_test.go":  fixture_requirements_test("beta"),
 		}
@@ -1161,8 +1161,8 @@ func snapshot_package(body string) (files map[string]string) {
 // structural one the mutated markdown introduces.
 func snapshot_requirements(MARKDOWN string) (files map[string]string) {
 	return map[string]string{
-		"go.mod":                    DOCTRINE_SHARED_LIBRARY_GO_MODULE,
-		"pkg/fixture.go":            "// Package fixture is a fixture.\npackage fixture\n",
+		"go.mod":                   DOCTRINE_SHARED_LIBRARY_GO_MODULE,
+		"pkg/fixture.go":           "// Package fixture is a fixture.\npackage fixture\n",
 		"pkg/REQUIREMENTS.md":      MARKDOWN,
 		"pkg/requirements_test.go": SNAPSHOT_REQUIREMENTS_TEST,
 	}
@@ -1522,12 +1522,12 @@ func Test_Snapshot_Stream_Markdown(t *testing.T) {
 // the unavoidable missing-REQUIREMENTS.md coverage noise it adds.
 func Test_Snapshot_Module_Layout(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`app/feature/feature.go:1:1: Move feature -> app/internal/feature.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
-			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
+		{Snapshot: snap.Init(`app/feature/feature.go:1:1: Move feature -> app/pkg/feature.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+			"app/pkg/entry.go": DOCTRINE_BINARY_PACKAGE_MAIN,
 			"app/feature/feature.go": "// Package feature is a fixture.\n" +
 				"package feature\n"}},
 		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: The binary component "github.com/james-orcales/james-orcales/app" has its main package at "cmd/app". Move the main package to the component root.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
-			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
+			"app/pkg/entry.go": DOCTRINE_BINARY_PACKAGE_MAIN,
 			"app/cmd/app/main.go": "package main\n\n" +
 				"func main() {\n\tprintln(0)\n}\n"}},
 		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: A shared library permits no internal/ directory. Remove "shared/internal".`), Drop: "REQUIREMENTS.md", Files: map[string]string{
@@ -3364,9 +3364,9 @@ func Stamp() { fmt.Println("stamped") }
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
-				"mybinary/internal/lib/library.go": fixture_package("library"),
-				"mybinary/internal/lib/lib_default/" +
+				"mybinary/pkg/entry.go":       DOCTRINE_BINARY_PACKAGE_MAIN,
+				"mybinary/pkg/lib/library.go": fixture_package("library"),
+				"mybinary/pkg/lib/lib_default/" +
 					"library_default.go": `// Package library_default is a fixture.
 package library_default
 
@@ -3549,7 +3549,7 @@ func Test_Default_Package_Name(t *testing.T) {
 
 // Test_Binary_Module_Layout verifies that binary modules — every module
 // at the workspace root except the hardcoded shared library — must
-// keep all non-main, non-test packages under internal/. Files in
+// keep all non-main, non-test packages under pkg/. Files in
 // package main are exempt at any depth (Go itself bars importing
 // them), and the shared library is exempt because its purpose is to
 // expose packages to other modules.
@@ -3566,27 +3566,27 @@ func Test_Binary_Module_Layout(t *testing.T) {
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
+				"mybinary/pkg/entry.go": DOCTRINE_BINARY_PACKAGE_MAIN,
 			},
 		},
 		{
-			Name: "binary with non-main package outside internal flagged",
+			Name: "binary with non-main package outside pkg flagged",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
 				"mybinary/helpers/h.go": fixture_package("helpers"),
 			},
-			Want_Diags: []string{"Move helpers -> mybinary/internal/helpers"},
+			Want_Diags: []string{"Move helpers -> mybinary/pkg/helpers"},
 		},
 		{
-			Name: "binary with package under internal is clean",
+			Name: "binary with package under pkg is clean",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
-				"mybinary/internal/lib/library.go": fixture_package("library"),
+				"mybinary/pkg/entry.go":       DOCTRINE_BINARY_PACKAGE_MAIN,
+				"mybinary/pkg/lib/library.go": fixture_package("library"),
 			},
 		},
 		{
@@ -3595,7 +3595,7 @@ func Test_Binary_Module_Layout(t *testing.T) {
 				"mybinary/go.mod":     DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/library.go": fixture_package("mybinary"),
 			},
-			Want_Diags: []string{"Move . -> mybinary/internal"},
+			Want_Diags: []string{"Move . -> mybinary/pkg"},
 		},
 		{
 			Name: "shared library with non-main package at depth 1 is exempt",
@@ -3622,13 +3622,13 @@ func Test_Binary_Module_Layout(t *testing.T) {
 	run_doctrine_diag_table(t, tests)
 }
 
-// Test_Binary_Module_Internal_Main verifies that every binary module
-// declares exactly one free func Main in its top-level internal/ package
+// Test_Binary_Module_Package_Main verifies that every binary module
+// declares exactly one free func Main in its top-level pkg/ package
 // — the composition entry point main() delegates to. Location is the
-// internal/ directory itself, not a subpackage; the function must be a
+// pkg/ directory itself, not a subpackage; the function must be a
 // free function (no receiver) of any signature; test files don't count;
 // the shared library is exempt because it owns no entry point.
-func Test_Binary_Module_Internal_Main(t *testing.T) {
+func Test_Binary_Module_Package_Main(t *testing.T) {
 	tests := []struct {
 		Name       string
 		Files      map[string]string
@@ -3636,12 +3636,12 @@ func Test_Binary_Module_Internal_Main(t *testing.T) {
 		Forbid     []string
 	}{
 		{
-			Name: "binary with func Main in internal is clean",
+			Name: "binary with func Main in pkg is clean",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
+				"mybinary/pkg/entry.go": DOCTRINE_BINARY_PACKAGE_MAIN,
 			},
 		},
 		{
@@ -3650,7 +3650,7 @@ func Test_Binary_Module_Internal_Main(t *testing.T) {
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go": "// Package entry is a fixture.\n" +
+				"mybinary/pkg/entry.go": "// Package entry is a fixture.\n" +
 					"package entry\n\n// Main is a fixture.\n" +
 					"func Main(a int) (s string) { return \"\" }\n",
 			},
@@ -3663,28 +3663,28 @@ func Test_Binary_Module_Internal_Main(t *testing.T) {
 			},
 			Want_Diags: []string{
 				"mybinary:1:1",
-				"declares no func Main in internal/",
+				"declares no func Main in pkg/",
 			},
 		},
 		{
-			Name: "func Main below top-level internal does not satisfy the rule",
+			Name: "func Main below top-level pkg does not satisfy the rule",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/cmd/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
+				"mybinary/pkg/cmd/entry.go": DOCTRINE_BINARY_PACKAGE_MAIN,
 			},
-			Want_Diags: []string{"declares no func Main in internal/"},
+			Want_Diags: []string{"declares no func Main in pkg/"},
 		},
 	}
 	run_doctrine_diag_table(t, tests)
 }
 
-// Test_Binary_Module_Internal_Main_Part2 continues the binary entry-point
+// Test_Binary_Module_Package_Main_Part2 continues the binary entry-point
 // cases (split so neither table function exceeds the line budget): a method
 // named Main, a test-file-only Main, the multiple-Main violation, and the
 // shared-library exemption.
-func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
+func Test_Binary_Module_Package_Main_Part2(t *testing.T) {
 	tests := []struct {
 		Name       string
 		Files      map[string]string
@@ -3697,11 +3697,11 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go": "// Package entry is a fixture.\n" +
+				"mybinary/pkg/entry.go": "// Package entry is a fixture.\n" +
 					"package entry\n\n// R is a fixture.\ntype R struct{}\n\n" +
 					"// Main is a fixture.\nfunc (r R) Main() { return }\n",
 			},
-			Want_Diags: []string{"declares no func Main in internal/"},
+			Want_Diags: []string{"declares no func Main in pkg/"},
 		},
 		{
 			Name: "func Main only in a test file does not satisfy the rule",
@@ -3709,25 +3709,25 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry_test.go": "package entry\n\n" +
+				"mybinary/pkg/entry_test.go": "package entry\n\n" +
 					"// Main is a fixture.\nfunc Main() { return }\n",
 			},
-			Want_Diags: []string{"declares no func Main in internal/"},
+			Want_Diags: []string{"declares no func Main in pkg/"},
 		},
 		{
-			Name: "two func Main across internal files flagged as multiple",
+			Name: "two func Main across pkg files flagged as multiple",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/a.go": DOCTRINE_BINARY_INTERNAL_MAIN,
-				"mybinary/internal/b.go": "package entry\n\n" +
+				"mybinary/pkg/a.go": DOCTRINE_BINARY_PACKAGE_MAIN,
+				"mybinary/pkg/b.go": "package entry\n\n" +
 					"// Main is a fixture.\nfunc Main() { return }\n",
 			},
-			Want_Diags: []string{"declares more than one func Main in internal/"},
+			Want_Diags: []string{"declares more than one func Main in pkg/"},
 		},
 		{
-			Name: "shared library without internal func Main is exempt",
+			Name: "shared library without pkg func Main is exempt",
 			Files: map[string]string{
 				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
@@ -3748,7 +3748,7 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 
 // Test_Shared_Library_No_Internal verifies that the shared library
 // module may not contain internal/ directories or any package main.
-// Other modules are unaffected — they use internal/ and own a binary.
+// Other modules are unaffected — they use pkg/ and own a binary.
 func Test_Shared_Library_No_Internal(t *testing.T) {
 	tests := []struct {
 		Name       string
@@ -3786,13 +3786,13 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 			},
 		},
 		{
-			Name: "binary with internal directory is unaffected by this rule",
+			Name: "binary with pkg directory is unaffected by this rule",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
-				"mybinary/internal/lib/library.go": fixture_package("library"),
+				"mybinary/pkg/entry.go":       DOCTRINE_BINARY_PACKAGE_MAIN,
+				"mybinary/pkg/lib/library.go": fixture_package("library"),
 			},
 			Forbid: []string{"shared library forbids"},
 		},
@@ -3854,13 +3854,13 @@ func Test_Library_Tier_Depth(t *testing.T) {
 			Forbid: []string{"is below the library tier"},
 		},
 		{
-			Name: "binary composition tier one level under internal is clean",
+			Name: "binary composition tier one level under pkg is clean",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":   DOCTRINE_BINARY_INTERNAL_MAIN,
-				"mybinary/internal/foo/foo.go": fixture_package("foo"),
+				"mybinary/pkg/entry.go":   DOCTRINE_BINARY_PACKAGE_MAIN,
+				"mybinary/pkg/foo/foo.go": fixture_package("foo"),
 			},
 			Forbid: []string{"is below the library tier"},
 		},
@@ -3868,14 +3868,14 @@ func Test_Library_Tier_Depth(t *testing.T) {
 	run_doctrine_diag_table(t, tests)
 }
 
-// Test_Library_Tier_Depth_Internal_Anchor verifies that a binary module's
-// top-level internal directory is where the nesting count starts — the same
+// Test_Library_Tier_Depth_Package_Anchor verifies that a binary module's
+// top-level pkg directory is where the nesting count starts — the same
 // role a shared module's root plays — and is not itself a package counted
-// above another. A pure library package sits one level inside internal and one
-// more package below that (internal/foo/bar); anything deeper is flagged. Both
+// above another. A pure library package sits one level inside pkg and one
+// more package below that (pkg/foo/bar); anything deeper is flagged. Both
 // are pure — a binary holds no default tier — so the depth alone is the subject
 // here.
-func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
+func Test_Library_Tier_Depth_Package_Anchor(t *testing.T) {
 	tests := []struct {
 		Name       string
 		Files      map[string]string
@@ -3883,27 +3883,27 @@ func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
 		Forbid     []string
 	}{
 		{
-			Name: "library package and one below it under internal is clean",
+			Name: "library package and one below it under pkg is clean",
 			Files: map[string]string{
 				"bin/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"bin/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"bin/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
-				"bin/internal/foo/foo.go":     fixture_package("foo"),
-				"bin/internal/foo/bar/bar.go": fixture_package("bar"),
+				"bin/pkg/entry.go":       DOCTRINE_BINARY_PACKAGE_MAIN,
+				"bin/pkg/foo/foo.go":     fixture_package("foo"),
+				"bin/pkg/foo/bar/bar.go": fixture_package("bar"),
 			},
 			Forbid: []string{"is below the library tier"},
 		},
 		{
-			Name: "nesting beyond the composition tier under internal flagged",
+			Name: "nesting beyond the composition tier under pkg flagged",
 			Files: map[string]string{
 				"bin/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"bin/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"bin/internal/entry.go":           DOCTRINE_BINARY_INTERNAL_MAIN,
-				"bin/internal/foo/foo.go":         fixture_package("foo"),
-				"bin/internal/foo/bar/bar.go":     fixture_package("bar"),
-				"bin/internal/foo/bar/baz/baz.go": fixture_package("baz"),
+				"bin/pkg/entry.go":           DOCTRINE_BINARY_PACKAGE_MAIN,
+				"bin/pkg/foo/foo.go":         fixture_package("foo"),
+				"bin/pkg/foo/bar/bar.go":     fixture_package("bar"),
+				"bin/pkg/foo/bar/baz/baz.go": fixture_package("baz"),
 			},
 			Want_Diags: []string{"is below the library tier", "baz"},
 		},
@@ -5165,8 +5165,8 @@ func requirements_clean_files() (files map[string]string) {
 	return map[string]string{
 		// A go.mod gives greet an owning module; the coverage mandate no-ops on
 		// module-less directories, so without it the missing-file rule never fires.
-		"go.mod":                      "module fixture\n\ngo 1.25\n",
-		"greet/greet.go":              REQUIREMENTS_CLEAN_SOURCE,
+		"go.mod":                     "module fixture\n\ngo 1.25\n",
+		"greet/greet.go":             REQUIREMENTS_CLEAN_SOURCE,
 		"greet/requirements_test.go": REQUIREMENTS_CLEAN_TEST,
 		"greet/REQUIREMENTS.md":      REQUIREMENTS_CLEAN_MD,
 	}
@@ -5425,8 +5425,8 @@ func Test_Requirements_Coverage_Exempt_Requirements_Validated(t *testing.T) {
 	t.Parallel()
 	main_source := "// Package main is a fixture.\npackage main\n\nfunc main() {}\n"
 	files := map[string]string{
-		"go.mod":           "module example.com/mybinary\n\ngo 1.25\n",
-		"main.go":          main_source,
+		"go.mod":          "module example.com/mybinary\n\ngo 1.25\n",
+		"main.go":         main_source,
 		"REQUIREMENTS.md": "\n## Mid Level\n\nA level-two heading is banned.\n",
 	}
 	diags := requirements_diagnostics_workspace(t, files)
@@ -5483,8 +5483,8 @@ func Test_Requirements_File_Name_Exact_Case(t *testing.T) {
 func Test_Requirements_Test_File_Name_Exact_Case(t *testing.T) {
 	t.Parallel()
 	inner := fstest.MapFS{
-		"go.mod":                 {Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go":         {Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
+		"go.mod":                {Data: []byte("module fixture\n\ngo 1.25\n")},
+		"greet/greet.go":        {Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
 		"greet/REQUIREMENTS.md": {Data: []byte(REQUIREMENTS_CLEAN_MD)},
 		// Wrong-case name, still a _test.go so it parses as the test package.
 		"greet/Requirements_test.go": {Data: gofmt_must(t, REQUIREMENTS_CLEAN_TEST)},
@@ -6023,7 +6023,7 @@ func Test_Scope_Parses_Target_And_Shared_Components(t *testing.T) {
 		"shared/lib/library.go": &fstest.MapFile{Data: []byte(dot_import_file)},
 		"mybinary/go.mod": &fstest.MapFile{
 			Data: []byte("module example.com/mybinary\n")},
-		"mybinary/internal/entry.go": &fstest.MapFile{Data: []byte(dot_import_file)},
+		"mybinary/pkg/entry.go": &fstest.MapFile{Data: []byte(dot_import_file)},
 		"other/go.mod": &fstest.MapFile{
 			Data: []byte("module example.com/other\n")},
 		"other/lib/library.go": &fstest.MapFile{Data: []byte(dot_import_file)},
@@ -6037,9 +6037,9 @@ func Test_Scope_Parses_Target_And_Shared_Components(t *testing.T) {
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	if !requirements_diagnosed(
-		diags_at(diags, "mybinary/internal/entry.go"),
+		diags_at(diags, "mybinary/pkg/entry.go"),
 		"Do not use a dot import") {
-		t.Errorf("in-scope file mybinary/internal/entry.go was not parsed")
+		t.Errorf("in-scope file mybinary/pkg/entry.go was not parsed")
 	}
 	if !requirements_diagnosed(
 		diags_at(diags, "shared/lib/library.go"),

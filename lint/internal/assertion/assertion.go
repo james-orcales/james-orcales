@@ -2774,8 +2774,8 @@ func check_recorder_test_main(
 			continue
 		}
 		// A binary component's invariants are witnessed through its simulation
-		// package driving internal.Main, so only a shared library still registers
-		// its own recorder here; a binary internal package is covered there instead.
+		// package driving pkg.Main, so only a shared library still registers
+		// its own recorder here; a binary pkg package is covered there instead.
 		component_index_number := components.File_To_Component[group.Any_Path]
 		if component_index_number < 0 {
 			continue
@@ -2992,17 +2992,17 @@ func recorder_group_diagnostics(group *Recorder_Group) (diags []Diagnostic) {
 }
 
 // SIMULATION_DIRECTORY names the test-only package under a binary component's
-// internal/ whose fuzz test drives internal.Main.
+// pkg/ whose fuzz test drives pkg.Main.
 const SIMULATION_DIRECTORY = "simulation_test"
 
-// SIMULATION_GLOB is the sole TestMain directory argument: the internal package and
+// SIMULATION_GLOB is the sole TestMain directory argument: the pkg package and
 // every package beneath it, registered in one pattern since the recorder recurses on **.
 const SIMULATION_GLOB = "../**"
 
 // A binary component's invariants are witnessed only by a simulation package that
-// drives internal.Main through a fuzz test, never by a per-package Run_Test_Main.
+// drives pkg.Main through a fuzz test, never by a per-package Run_Test_Main.
 // This holds that package to its contract: it exists, declares nothing but the
-// fuzz driver and its TestMain, and registers every non-exempt internal package
+// fuzz driver and its TestMain, and registers every non-exempt pkg package
 // for coverage. Every diagnostic is tier two, so a tier-one issue suppresses it.
 func check_simulation(
 	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
@@ -3021,46 +3021,47 @@ func check_simulation(
 	return diags
 }
 
-// The simulation diagnostics for one binary component: none when its internal tree
+// The simulation diagnostics for one binary component: none when its pkg tree
 // carries no non-exempt package (nothing to witness), else the presence, contents,
-// and TestMain checks against the package at internal/simulation_test.
+// and TestMain checks against the package at pkg/simulation_test.
 func simulation_component_diagnostics(
 	parsed_files []Parsed_File, components *Component_Index,
 	component_index_number int, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	component := components.Components[component_index_number]
-	internal_root := component.Root + "/internal"
-	internal_dirs := simulation_internal_dirs(
-		parsed_files, components, component_index_number, exemptions, internal_root)
-	if len(internal_dirs) == 0 {
+	package_root := component.Root + "/" + source.BINARY_PACKAGE_DIRECTORY
+	package_dirs := simulation_package_dirs(
+		parsed_files, components, component_index_number, exemptions, package_root)
+	if len(package_dirs) == 0 {
 		return nil
 	}
-	position := token.Position{Filename: internal_root, Line: 1, Column: 1}
-	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
+	position := token.Position{Filename: package_root, Line: 1, Column: 1}
+	sim_directory := package_root + "/" + SIMULATION_DIRECTORY
 	sim_files := simulation_package_files(parsed_files, sim_directory)
 	if len(sim_files) == 0 {
 		return simulation_diagnostic(position, fmt.Sprintf(
-			"The binary component %q has no internal/%s package. "+
-				"Declare an internal/%s package that calls internal.Main.",
+			"The binary component %q has no pkg/%s package. "+
+				"Declare a pkg/%s package that calls pkg.Main.",
 			component.Import_Path, SIMULATION_DIRECTORY, SIMULATION_DIRECTORY))
 	}
 	diags = append(diags, simulation_package_diagnostics(sim_files, position)...)
 	diags = append(diags, simulation_contents_diagnostics(sim_files, position)...)
-	internal_functions := simulation_internal_functions(
-		parsed_files, components, component_index_number, internal_root)
+	package_functions := simulation_package_functions(
+		parsed_files, components, component_index_number, package_root)
 	diags = append(diags, simulation_entry_diagnostics(
-		sim_files, internal_functions, component.Import_Path+"/internal", position)...)
+		sim_files, package_functions,
+		component.Import_Path+"/"+source.BINARY_PACKAGE_DIRECTORY, position)...)
 	return append(diags, simulation_test_main_diagnostics(sim_files, position)...)
 }
 
-// The non-exempt internal package directories of the component, sorted, excluding
+// The non-exempt pkg package directories of the component, sorted, excluding
 // the simulation package itself — the packages the TestMain must register so their
 // invariants seed and judge in the simulation's isolated test binary.
-func simulation_internal_dirs(
+func simulation_package_dirs(
 	parsed_files []Parsed_File, components *Component_Index,
-	component_index_number int, exemptions *Exemptions, internal_root string,
+	component_index_number int, exemptions *Exemptions, package_root string,
 ) (dirs []string) {
-	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
+	sim_directory := package_root + "/" + SIMULATION_DIRECTORY
 	seen := map[string]bool{}
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
@@ -3070,11 +3071,11 @@ func simulation_internal_dirs(
 			continue
 		}
 		directory := path.Dir(pf.Path)
-		under_internal := directory == internal_root
-		if strings.Has_Prefix(directory, internal_root+"/") {
-			under_internal = true
+		under_package := directory == package_root
+		if strings.Has_Prefix(directory, package_root+"/") {
+			under_package = true
 		}
-		if !under_internal {
+		if !under_package {
 			continue
 		}
 		if directory == sim_directory {
@@ -3131,7 +3132,7 @@ func simulation_package_diagnostics(
 	return nil
 }
 
-// The simulation package declares a fuzz function that drives internal.Main — the
+// The simulation package declares a fuzz function that drives pkg.Main — the
 // witness for the component's invariants. Any other declaration is allowed; the fuzz
 // driver just has to be present.
 func simulation_contents_diagnostics(
@@ -3145,8 +3146,8 @@ func simulation_contents_diagnostics(
 		}
 	}
 	return simulation_diagnostic(position,
-		"The simulation package has no fuzz function for internal.Main. "+
-			"Declare a fuzz function that calls internal.Main.")
+		"The simulation package has no fuzz function for pkg.Main. "+
+			"Declare a fuzz function that calls pkg.Main.")
 }
 
 // Reports whether the declaration is a free Fuzz function taking a *testing.F.
@@ -3165,11 +3166,11 @@ func simulation_is_fuzz(declaration ast.Decl) (fuzz bool) {
 }
 
 // The exported free-function names, Main aside, declared across the component's
-// internal tree — the functions the simulation is forbidden to reference, since
+// pkg tree — the functions the simulation is forbidden to reference, since
 // each is a second entry point that could witness an invariant without driving Main.
-func simulation_internal_functions(
+func simulation_package_functions(
 	parsed_files []Parsed_File, components *Component_Index,
-	component_index_number int, internal_root string,
+	component_index_number int, package_root string,
 ) (functions map[string]bool) {
 	functions = map[string]bool{}
 	for _, pf := range parsed_files {
@@ -3180,8 +3181,8 @@ func simulation_internal_functions(
 			continue
 		}
 		directory := path.Dir(pf.Path)
-		under := directory == internal_root
-		if strings.Has_Prefix(directory, internal_root+"/") {
+		under := directory == package_root
+		if strings.Has_Prefix(directory, package_root+"/") {
 			under = true
 		}
 		if !under {
@@ -3207,16 +3208,16 @@ func simulation_internal_functions(
 	return functions
 }
 
-// The local names the simulation file binds to internal-subtree imports, so a
+// The local names the simulation file binds to pkg-subtree imports, so a
 // selector on one of them can be checked against the forbidden-function set.
-func simulation_internal_import_locals(
-	file *ast.File, internal_import_path string,
+func simulation_package_import_locals(
+	file *ast.File, package_import_path string,
 ) (locals map[string]bool) {
 	locals = map[string]bool{}
 	for _, specification := range file.Imports {
 		import_path := strings.Trim(specification.Path.Value, "\"")
-		under := import_path == internal_import_path
-		if strings.Has_Prefix(import_path, internal_import_path+"/") {
+		under := import_path == package_import_path
+		if strings.Has_Prefix(import_path, package_import_path+"/") {
 			under = true
 		}
 		if !under {
@@ -3227,25 +3228,25 @@ func simulation_internal_import_locals(
 	return locals
 }
 
-// The simulation may reference only Main among the internal tree's functions: any
-// other exported internal function it names is a second entry point that could
+// The simulation may reference only Main among the pkg tree's functions: any
+// other exported pkg function it names is a second entry point that could
 // fabricate a witness without driving Main. Types, constants, and vars stay free.
 func simulation_entry_diagnostics(
-	sim_files []Parsed_File, internal_functions map[string]bool,
-	internal_import_path string, position token.Position,
+	sim_files []Parsed_File, package_functions map[string]bool,
+	package_import_path string, position token.Position,
 ) (diags []Diagnostic) {
 	for _, pf := range sim_files {
-		locals := simulation_internal_import_locals(pf.File, internal_import_path)
+		locals := simulation_package_import_locals(pf.File, package_import_path)
 		ast.Inspect(pf.File, func(node ast.Node) (descend bool) {
 			return simulation_entry_node(
-				locals, internal_functions, position, node, &diags)
+				locals, package_functions, position, node, &diags)
 		})
 	}
 	return diags
 }
 
 func simulation_entry_node(
-	locals map[string]bool, internal_functions map[string]bool,
+	locals map[string]bool, package_functions map[string]bool,
 	position token.Position, node ast.Node, diags *[]Diagnostic,
 ) (descend bool) {
 	selector, is_selector := node.(*ast.SelectorExpr)
@@ -3259,7 +3260,7 @@ func simulation_entry_node(
 	if !locals[identifier.Name] {
 		return true
 	}
-	if !internal_functions[selector.Sel.Name] {
+	if !package_functions[selector.Sel.Name] {
 		return true
 	}
 	*diags = append(*diags, simulation_diagnostic(position, fmt.Sprintf(
@@ -3302,7 +3303,7 @@ func simulation_fuzz_parameter(function *ast.FuncDecl) (name string) {
 }
 
 // The simulation's TestMain body must be exactly aver.Run_Test_Main(m, "../**"):
-// that one glob registers the internal package and every package beneath it, so the
+// that one glob registers the pkg package and every package beneath it, so the
 // isolated simulation binary seeds and judges them all without enumerating each.
 func simulation_test_main_diagnostics(
 	files []Parsed_File, position token.Position,

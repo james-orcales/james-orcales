@@ -321,15 +321,38 @@ func Test_Component_Layout_Shared_Component(t *testing.T) {
 }
 
 // Test_Component_Layout_Binary_Component verifies a binary component's non-main
-// package outside internal/ is flagged.
+// package outside pkg/ is flagged.
 func Test_Component_Layout_Binary_Component(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"pkg/feature/feature.go": []byte(
 			"// Package feature is a fixture.\npackage feature\n"),
 	}
-	if !requirements_flags(t, files, "Move feature -> pkg/internal/feature") {
-		t.Fatal("a non-main package outside internal/ must be flagged")
+	if !requirements_flags(t, files, "Move feature -> pkg/pkg/feature") {
+		t.Fatal("a non-main package outside pkg/ must be flagged")
+	}
+}
+
+// Test_Component_Layout_Binary_Isolation verifies a binary component importing a
+// package of another binary component is flagged, while its own packages are not.
+func Test_Component_Layout_Binary_Isolation(t *testing.T) {
+	t.Parallel()
+	const IMPORTER = "// Package a is a fixture.\npackage a\n\n" +
+		"import _ \"github.com/james-orcales/james-orcales/"
+	const FRAGMENT = "imports the binary component"
+	foreign := map[string][]byte{
+		"pkg/pkg/a/a.go":  []byte(IMPORTER + "tool/pkg/b\"\n"),
+		"tool/pkg/b/b.go": []byte("// Package b is a fixture.\npackage b\n"),
+	}
+	if !requirements_flags(t, foreign, FRAGMENT) {
+		t.Fatal("an import of another binary component must be flagged")
+	}
+	own := map[string][]byte{
+		"pkg/pkg/a/a.go": []byte(IMPORTER + "pkg/pkg/b\"\n"),
+		"pkg/pkg/b/b.go": []byte("// Package b is a fixture.\npackage b\n"),
+	}
+	if requirements_flags(t, own, FRAGMENT) {
+		t.Fatal("an import of the component's own package must not be flagged")
 	}
 }
 
@@ -345,15 +368,15 @@ func Test_Component_Layout_Main_Package(t *testing.T) {
 	}
 }
 
-// Test_Component_Layout_Internal_Entry_Point verifies a binary module without a
-// func Main in its top-level internal/ package is flagged.
-func Test_Component_Layout_Internal_Entry_Point(t *testing.T) {
+// Test_Component_Layout_Entry_Point verifies a binary module without a
+// func Main in its top-level pkg/ package is flagged.
+func Test_Component_Layout_Entry_Point(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"pkg/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
 	}
-	if !requirements_flags(t, files, "declares no func Main in internal/") {
-		t.Fatal("a binary module without an internal func Main must be flagged")
+	if !requirements_flags(t, files, "declares no func Main in pkg/") {
+		t.Fatal("a binary module without a pkg func Main must be flagged")
 	}
 }
 
@@ -455,9 +478,9 @@ func Test_Component_Layout_Binary_Purity(t *testing.T) {
 func Test_Component_Layout_Binary_Default_Tier(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"pkg/internal/foo/foo.go": []byte(
+		"pkg/pkg/foo/foo.go": []byte(
 			"// Package foo is a fixture.\npackage foo\n"),
-		"pkg/internal/foo/default/wire.go": []byte(
+		"pkg/pkg/foo/default/wire.go": []byte(
 			"// Package foo is a fixture.\npackage foo\n"),
 	}
 	if !requirements_flags(t, files, "permits no default tier") {
@@ -2405,7 +2428,7 @@ func requirements_process_gateway_boundary(t *testing.T) {
 			"shared/sim/io/default/rule.go",
 			"pkg/shared/os/default/rule.go",
 			"pkg/main.go",
-			"pkg/internal/rule_test.go",
+			"pkg/pkg/rule_test.go",
 		} {
 			banned := map[string][]byte{
 				filename: []byte(
@@ -2970,22 +2993,22 @@ func requirements_named(diags []lint.Diagnostic, name string) (found bool) {
 }
 
 // The binary-component fixture without its simulation package — a thin main and an
-// internal entry point — the base each simulation test builds on.
+// pkg entry point — the base each simulation test builds on.
 func simulation_component_files() (files map[string][]byte) {
 	return map[string][]byte{
 		"pkg/main.go": []byte(
 			"// Package main is a fixture.\npackage main\n\nfunc main() {}\n"),
-		"pkg/internal/entry.go": []byte(
-			"// Package internal is a fixture.\npackage internal\n\n" +
+		"pkg/pkg/entry.go": []byte(
+			"// Package pkg is a fixture.\npackage pkg\n\n" +
 				"// Main is the entry point.\nfunc Main() {}\n"),
 	}
 }
 
 // The base fixture plus the given simulation package source, so the simulation rule
-// has a real component whose internal/simulation_test package it can judge.
+// has a real component whose pkg/simulation_test package it can judge.
 func simulation_test_files(sim string) (files map[string][]byte) {
 	files = simulation_component_files()
-	files["pkg/internal/simulation_test/sim_test.go"] = []byte(sim)
+	files["pkg/pkg/simulation_test/sim_test.go"] = []byte(sim)
 	return files
 }
 
@@ -3005,11 +3028,11 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 		tail
 }
 
-// A simulation package source that imports pkg/internal and runs the given statement
-// in its fuzz body, for exercising the entry restriction to internal.Main.
+// A simulation package source that imports pkg/pkg and runs the given statement
+// in its fuzz body, for exercising the entry restriction to pkg.Main.
 func simulation_entry_source(body string) (source string) {
 	return "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
-		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
+		"\t\"github.com/james-orcales/james-orcales/pkg/pkg\"\n" +
 		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
@@ -3027,25 +3050,25 @@ func Test_Simulation_Wired_Passes(t *testing.T) {
 	}
 }
 
-// Test_Simulation_Exempt_Passes verifies a binary component whose internal packages
+// Test_Simulation_Exempt_Passes verifies a binary component whose pkg packages
 // are all exempt needs no simulation package.
 func Test_Simulation_Exempt_Passes(t *testing.T) {
 	t.Parallel()
 	files := simulation_component_files()
-	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/internal/**"})
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/pkg/**"})
 	if requirements_named(diags, "simulation") {
-		t.Fatal("a wholly exempt internal tree must not require a simulation package")
+		t.Fatal("a wholly exempt pkg tree must not require a simulation package")
 	}
 }
 
 // Test_Simulation_Instrumentation_Exempt_Passes prevents instrumentation-only
-// internal trees from requiring assertion simulations.
+// pkg trees from requiring assertion simulations.
 func Test_Simulation_Instrumentation_Exempt_Passes(t *testing.T) {
 	t.Parallel()
 	files := simulation_component_files()
-	diags := instrumentation_self_diagnostics(t, files, []string{"pkg/internal/**"})
+	diags := instrumentation_self_diagnostics(t, files, []string{"pkg/pkg/**"})
 	if requirements_named(diags, "simulation") {
-		t.Fatal("instrumentation-only internal tree must not require a simulation package")
+		t.Fatal("instrumentation-only pkg tree must not require a simulation package")
 	}
 }
 
@@ -3062,12 +3085,12 @@ func Test_Simulation_Helpers_Allowed(t *testing.T) {
 }
 
 // Test_Simulation_Entry_Main_Allowed verifies a simulation that references only
-// internal.Main is not flagged.
+// pkg.Main is not flagged.
 func Test_Simulation_Entry_Main_Allowed(t *testing.T) {
 	t.Parallel()
-	files := simulation_test_files(simulation_entry_source("internal.Main()"))
+	files := simulation_test_files(simulation_entry_source("pkg.Main()"))
 	if requirements_named(requirements_self_diagnostics(t, files), "simulation") {
-		t.Fatal("referencing only internal.Main must not be flagged")
+		t.Fatal("referencing only pkg.Main must not be flagged")
 	}
 }
 
@@ -3077,11 +3100,11 @@ func Test_Simulation_No_Source(t *testing.T) {
 	t.Parallel()
 	files := simulation_test_files(
 		simulation_fixture_source("aver.Run_Test_Main(m, \"../**\")"))
-	files["pkg/internal/simulation_test/source.go"] =
+	files["pkg/pkg/simulation_test/source.go"] =
 		[]byte("// Package simulation is a fixture.\npackage simulation\n")
 	if !requirements_flags(t, files,
 		"The simulation directory has the source file "+
-			"pkg/internal/simulation_test/source.go. Remove the source file.") {
+			"pkg/pkg/simulation_test/source.go. Remove the source file.") {
 		t.Fatal("a source file in the simulation directory must be flagged")
 	}
 }

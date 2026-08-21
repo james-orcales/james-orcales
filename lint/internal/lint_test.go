@@ -38,10 +38,10 @@ const DOCTRINE_SHARED_COMPONENT_DIRECTORY = "shared"
 const DOCTRINE_SHARED_COMPONENT_AT_ROOT = "."
 
 // Satisfies the rule that every binary module declares exactly one free func
-// Main in its top-level internal/ package. Injected into binary-module fixtures
+// Main in its top-level pkg/ package. Injected into binary-module fixtures
 // that exist to exercise other rules so the entry-point check doesn't bleed an
 // extra diagnostic into them.
-const DOCTRINE_BINARY_INTERNAL_MAIN = "// Package entry is a fixture.\n" +
+const DOCTRINE_BINARY_PACKAGE_MAIN = "// Package entry is a fixture.\n" +
 	"package entry\n\n// Main is a fixture entry point.\nfunc Main() { return }\n"
 
 const FIXTURE_INVARIANT_IMPORT_PATH = "github.com/james-orcales/james-orcales/" +
@@ -3743,8 +3743,8 @@ func Test_Variable_Shadow_Package_Wide(t *testing.T) {
 	body := "func f() (value int) {\n\thelper := 1\n\treturn helper\n}\n"
 	workspace := func(clause string) (files map[string]string) {
 		return map[string]string{
-			"lib/foo/foo.go":                sibling,
-			"lib/foo/foo_test.go":           clause + "\n\n" + body,
+			"lib/foo/foo.go":               sibling,
+			"lib/foo/foo_test.go":          clause + "\n\n" + body,
 			"lib/foo/REQUIREMENTS.md":      REQUIREMENTS_FIXTURE_MD,
 			"lib/foo/requirements_test.go": fixture_requirements_test("foo"),
 		}

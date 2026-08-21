@@ -27,6 +27,11 @@ type Parsed_File struct {
 	Source []byte
 }
 
+// BINARY_PACKAGE_DIRECTORY is the top-level directory that holds every non-main
+// package of a binary component. Go does not guard it the way it guards
+// `internal`, so the binary-isolation rule bars cross-binary imports instead.
+const BINARY_PACKAGE_DIRECTORY = "pkg"
+
 // Component is one component's identity: a top-level directory of Go source in
 // the single-module repo. The layout rules need which module owns a file,
 // whether that module is the shared library, and which directories hold non-main
@@ -518,18 +523,19 @@ func check_component_tier_depth_ancestors(directory string) (ancestors []string)
 }
 
 // Returns the non-main Go ancestor packages of canonical that count toward
-// tier depth. A binary component's top-level internal directory is excluded: all
-// its code sits under internal and func Main lives there, so internal is the
+// tier depth. A binary component's top-level pkg directory is excluded: all
+// its code sits under pkg and func Main lives there, so pkg is the
 // directory the count starts from — the same role a shared module's root
 // plays — not a package nested above another. Without the exclusion
-// internal/foo/default would count internal as a second ancestor and read as
-// nested too deep. Shared components have no internal directory, so the exclusion
-// never affects them.
+// pkg/foo/bar would count pkg as a second ancestor and read as
+// nested too deep.
 func Library_Ancestors(
 	m Component, canonical string,
 ) (ancestors []string) {
 	for _, a := range check_component_tier_depth_ancestors(canonical) {
-		if a == "internal" {
+		// A shared package named pkg is an ordinary library package; only a
+		// binary's top-level pkg anchors the count.
+		if !m.Is_Shared_Library && a == BINARY_PACKAGE_DIRECTORY {
 			continue
 		}
 		if _, has := m.Directory_Package[a]; !has {
@@ -551,7 +557,7 @@ func Is_Composition_Tier(pf Parsed_File, components *Component_Index) (yes bool)
 	}
 	m := components.Components[component_index_number]
 	// A binary has one impure home, package main, so nothing under it reaches the
-	// composition tier. Without this gate a binary's internal/foo/bar would be
+	// composition tier. Without this gate a binary's pkg/foo/bar would be
 	// released from the purity bans by depth alone.
 	if !m.Is_Shared_Library {
 		return false

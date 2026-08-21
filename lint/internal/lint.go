@@ -23,9 +23,9 @@ import (
 
 	"local/james-orcales/lint/internal/assertion"
 	"local/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/requirements"
 	"local/james-orcales/lint/internal/resolution"
 	"local/james-orcales/lint/internal/source"
-	"local/james-orcales/lint/internal/requirements"
 	"local/james-orcales/lint/internal/vcs"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/unicode/ucd"
@@ -501,7 +501,7 @@ const THOUSANDS_GROUP_STRIDE = 3
 const MERGE_COMMIT_LINE_FIELDS = 3
 
 // MAIN_LINES_MAX caps a main package. Main is the composition root: it binds the
-// real world and hands off to internal.Main. Work past that budget is library
+// real world and hands off to pkg.Main. Work past that budget is library
 // code hiding in the one package Go bars from being imported, so no test can
 // reach it and no other binary can reuse it.
 const MAIN_LINES_MAX = 200
@@ -2603,9 +2603,10 @@ func check_file_system_doctrine(
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_main_package_size(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
+	output = append(output, check_binary_component_isolation(parsed_files, components)...)
 	output = append(output, check_binary_component_main_package(parsed_files, components)...)
 	output = append(output,
-		check_binary_component_internal_main(parsed_files, components)...)
+		check_binary_component_package_main(parsed_files, components)...)
 	output = append(output,
 		check_binary_component_no_default_tier(parsed_files, components)...)
 	output = append(output, check_shared_component_no_internal(parsed_files, components)...)
@@ -2759,8 +2760,8 @@ func check_file_system_package_split(parsed_files []Parsed_File) (diags []Diagno
 	for _, pf := range parsed_files {
 		is_test := strings.Has_Suffix(pf.Path, "_test.go")
 		key := Package_Group_Key{
-			Directory:             path.Dir(pf.Path),
-			Is_Test:               is_test,
+			Directory:            path.Dir(pf.Path),
+			Is_Test:              is_test,
 			Is_Requirements_Test: path.Base(pf.Path) == "requirements_test.go",
 			// A whitebox (foo) test package and a blackbox (foo_test) test package
 			// compile into different binaries, so they fragment independently.
@@ -2918,7 +2919,7 @@ func main_package_size_diag(
 		Want:     "Keep package main a thin composition root.",
 		Message: fmt.Sprintf(
 			"The package main in %s has %d lines%s. The maximum is %d. "+
-				"Move the work to internal/.",
+				"Move the work to pkg/.",
 			key.Directory, st.Lines, build_suffix, MAIN_LINES_MAX),
 	}
 }
@@ -3276,10 +3277,9 @@ func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
 	return false
 }
 
-// Binary components confine all non-main source to internal/ so the module
-// has no exported surface. Without the rule, an importable package
-// could leak out of any binary and become a cross-module dependency
-// the doctrine forbids. The check exempts the shared library (which is
+// Binary components confine all non-main source to pkg/ so every binary has
+// the same shape and check_binary_component_isolation has one place to
+// guard. The check exempts the shared library (which is
 // importable by design) and `package main` files (which can sit at any
 // depth because Go itself bars importing them).
 func check_binary_component_layout(
@@ -3319,8 +3319,9 @@ func check_binary_component_layout(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "binary-component-layout",
-			Want:     fmt.Sprintf("non-main packages live under %s/internal/", m.Root),
-			Message:  MESSAGE,
+			Want: fmt.Sprintf("non-main packages live under %s/%s/",
+				m.Root, source.BINARY_PACKAGE_DIRECTORY),
+			Message: MESSAGE,
 		})
 	}
 	return diags
@@ -3338,14 +3339,14 @@ type Binary_Component_Layout_Message_Input struct {
 func binary_component_layout_message(
 	input *Binary_Component_Layout_Message_Input,
 ) (MESSAGE string) {
-	destination := path.Join(input.Root+"/internal", input.Directory)
+	destination := path.Join(input.Root, source.BINARY_PACKAGE_DIRECTORY, input.Directory)
 	if input.Root == "." {
 		destination = "./" + destination
 	}
 	return fmt.Sprintf("Move %s -> %s.", input.Directory, destination)
 }
 
-// True for directories whose first segment is `internal` — the only
+// True for directories whose first segment is `pkg` — the only
 // legal home for non-main packages in a binary component under the
 // doctrine. "." (the module root) is illegal for non-main code:
 // `package main` is handled by the caller's earlier short-circuit.
@@ -3355,7 +3356,52 @@ func check_binary_component_layout_is_legal(directory string) (legal bool) {
 		return false
 	}
 	segments := strings.Split(directory, "/")
-	return segments[0] == "internal"
+	return segments[0] == source.BINARY_PACKAGE_DIRECTORY
+}
+
+// Go bars an import of another module's internal/ tree, and that bar kept each
+// binary sealed. pkg/ carries no such bar, so without this check one binary can
+// reach into another and couple two entry points that release apart. Code two
+// binaries need belongs in the shared component. Test files are included: a test
+// that imports a sibling binary couples the two just the same.
+func check_binary_component_isolation(
+	parsed_files []Parsed_File, components *Component_Index,
+) (diags []Diagnostic) {
+
+	for _, pf := range parsed_files {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
+			continue
+		}
+		m := components.Components[component_index_number]
+		if m.Is_Shared_Library {
+			continue
+		}
+		for _, implementation := range pf.File.Imports {
+			import_path := strings.Trim(implementation.Path.Value, `"`)
+			imported := source.For_Import_Path(import_path, components)
+			if imported < 0 {
+				continue
+			}
+			if imported == component_index_number {
+				continue
+			}
+			other := components.Components[imported]
+			if other.Is_Shared_Library {
+				continue
+			}
+			diags = append(diags, Diagnostic{
+				Position: pf.File_Set.Position(implementation.Pos()),
+				Name:     "binary-component-isolation",
+				Want:     "Import no package of another binary component.",
+				Message: fmt.Sprintf(
+					"The binary component %q imports the binary component %q. "+
+						"Move the shared code to the shared component.",
+					m.Import_Path, other.Import_Path),
+			})
+		}
+	}
+	return diags
 }
 
 // A binary component exposes exactly one entry point, so its single main
@@ -3410,7 +3456,7 @@ func check_binary_component_main_package(
 }
 
 // A binary component exposes its entry point as a single free func Main in its
-// top-level internal/ package — the composition tier that package main's
+// top-level pkg/ package — the composition tier that package main's
 // thin main() delegates to. Pinning it there keeps the real logic out of
 // package main (which Go bars from being imported, hence from being tested)
 // and gives every binary one auditable seam. Zero such functions means the
@@ -3419,7 +3465,7 @@ func check_binary_component_main_package(
 // never executed, so it owns no entry point. Files owned by no module resolve
 // to -1 and are skipped, matching the other module-level checks; third_party/
 // is pruned before discovery, so vendored trees never enter the index at all.
-func check_binary_component_internal_main(
+func check_binary_component_package_main(
 	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
@@ -3437,13 +3483,13 @@ func check_binary_component_internal_main(
 		if m.Root != "." {
 			relative = strings.Trim_Prefix(pf.Path, m.Root+"/")
 		}
-		if path.Dir(relative) != "internal" {
+		if path.Dir(relative) != source.BINARY_PACKAGE_DIRECTORY {
 			continue
 		}
 		counts[component_index_number] +=
-			check_binary_component_internal_main_count(pf.File)
+			check_binary_component_package_main_count(pf.File)
 	}
-	want := "exactly one func Main in internal/ per binary component"
+	want := "exactly one func Main in pkg/ per binary component"
 	for i, m := range components.Components {
 		if m.Is_Shared_Library {
 			continue
@@ -3454,11 +3500,11 @@ func check_binary_component_internal_main(
 		if counts[i] == 0 {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Name:     "binary-component-internal-main",
+				Name:     "binary-component-package-main",
 				Want:     want,
 				Message: fmt.Sprintf(
 					"The binary component %q declares no func Main in "+
-						"internal/. Declare a func Main in internal/.",
+						"pkg/. Declare a func Main in pkg/.",
 					m.Import_Path),
 			})
 			continue
@@ -3466,11 +3512,11 @@ func check_binary_component_internal_main(
 		if counts[i] > 1 {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Name:     "binary-component-internal-main",
+				Name:     "binary-component-package-main",
 				Want:     want,
 				Message: fmt.Sprintf(
 					"The binary component %q declares more than one "+
-						"func Main in internal/. "+
+						"func Main in pkg/. "+
 						"Declare only one func Main.",
 					m.Import_Path),
 			})
@@ -3482,7 +3528,7 @@ func check_binary_component_internal_main(
 // Counts free, top-level functions named Main in one parsed file. A method
 // named Main does not count: the entry point is a package-level function the
 // thin main() can call directly, not a behavior bound to some type.
-func check_binary_component_internal_main_count(file *ast.File) (count int) {
+func check_binary_component_package_main_count(file *ast.File) (count int) {
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
 		if !ok {
@@ -3547,7 +3593,7 @@ func check_shared_component_no_internal(
 // The default tier is where a library binds itself to the real world. A binary
 // already owns that place — package main, the composition root a reader can
 // find — so a default package under a binary would be a second impure home,
-// invisible from the root and reachable by every internal package. Reported
+// invisible from the root and reachable by every pkg package. Reported
 // once per offending directory.
 func check_binary_component_no_default_tier(
 	parsed_files []Parsed_File, components *Component_Index,
@@ -10284,7 +10330,7 @@ func driver_type_node(
 		Name:     "driver-gateway",
 		Want:     "Hold the Driver only in package main or in a test.",
 		Message: "Only package main or a test can hold an nbio.Driver. " +
-			"An internal package takes nbio.IO and the harness runs it.",
+			"A pkg package takes nbio.IO and the harness runs it.",
 		Tier: 1,
 	})
 	return true
