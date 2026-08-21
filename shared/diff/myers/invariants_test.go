@@ -9,31 +9,37 @@ import (
 
 // Test_Internal_Diff_Boundaries avoids quadratic public runs for writer states.
 func Test_Internal_Diff_Boundaries(t *testing.T) {
-	rune_bytes := Rune_Bytes{}
 	for _, character := range []utf8.Decoded_Character{
 		1, 2, utf8.Decoded_Character(utf8.DECODED_CHARACTER_MAXIMUM),
 	} {
 		writer := Diff_Writer{
-			Output: make(Output, DIFF_SIZE_MAXIMUM), Rune_Bytes: &rune_bytes,
+			Output: make(Output, DIFF_SIZE_MAXIMUM),
 		}
 		diff_writer_rune(&writer, character)
 	}
 	for _, position := range []Diff_Position{1, DIFF_SIZE_UNREPRESENTABLE} {
 		writer := Diff_Writer{
-			Output: make(Output, DIFF_SIZE_MAXIMUM), Rune_Bytes: &rune_bytes,
+			Output:   make(Output, DIFF_SIZE_MAXIMUM),
 			Position: position,
 		}
 		diff_writer_rune(&writer, 1)
 	}
-	for _, value := range []Byte{1, 2, Byte(strings.BYTE_MAXIMUM)} {
+	for _, value := range []Byte{0, 1, 2, Byte(strings.BYTE_MAXIMUM)} {
 		writer := Diff_Writer{
-			Output: make(Output, DIFF_SIZE_MAXIMUM), Rune_Bytes: &rune_bytes,
+			Output: make(Output, DIFF_SIZE_MAXIMUM),
 		}
 		diff_writer_byte(&writer, value)
 	}
 	for _, position := range []Diff_Position{1, 2, DIFF_SIZE_UNREPRESENTABLE} {
 		writer := Diff_Writer{
-			Output: make(Output, DIFF_SIZE_MAXIMUM), Rune_Bytes: &rune_bytes,
+			Output:   make(Output, DIFF_SIZE_MAXIMUM),
+			Position: position,
+		}
+		diff_writer_byte(&writer, 1)
+	}
+	for _, position := range []Diff_Position{1, 2, DIFF_SIZE_UNREPRESENTABLE} {
+		writer := Diff_Writer{
+			Output:   make(Output, DIFF_SIZE_MAXIMUM),
 			Position: position, Kind: Open_Edit_Kind(EDIT_INSERT),
 		}
 		diff_writer_open(&writer, EDIT_INSERT)

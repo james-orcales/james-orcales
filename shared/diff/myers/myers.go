@@ -262,18 +262,7 @@ func Matrix_Storage_Invariants(value Matrix_Storage, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Rune_Bytes owns one encoded character.
-type Rune_Bytes [utf8.CHARACTER_SIZE_MAXIMUM]byte
-
-// Rune_Bytes_Invariants fixes maximum UTF-8 character width.
-func Rune_Bytes_Invariants(value Rune_Bytes, _ aver.Namespace) {
-	aver.Always(
-		len(value) == utf8.CHARACTER_SIZE_MAXIMUM,
-		"Rune byte workspace holds widest UTF-8 character.",
-	)
-}
-
-// Workspace owns every scratch byte, rune, and matrix cell.
+// Workspace owns every scratch rune and matrix cell.
 type Workspace struct {
 	// Old_Runes avoids source decode allocation.
 	Old_Runes Old_Rune_Storage
@@ -281,8 +270,6 @@ type Workspace struct {
 	New_Runes New_Rune_Storage
 	// Matrix holds longest-common-subsequence lengths.
 	Matrix Matrix_Storage
-	// Rune_Bytes avoids encoded-rune temporary allocation.
-	Rune_Bytes Rune_Bytes
 }
 
 // Workspace_Invariants composes caller-owned scratch storage.
@@ -290,7 +277,17 @@ func Workspace_Invariants(value Workspace, namespace aver.Namespace) {
 	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
 	New_Rune_Storage_Invariants(value.New_Runes, namespace)
 	Matrix_Storage_Invariants(value.Matrix, namespace)
-	Rune_Bytes_Invariants(value.Rune_Bytes, namespace)
+}
+
+// Workspace_Pointer preserves caller ownership across operations.
+type Workspace_Pointer *Workspace
+
+// Workspace_Pointer_Invariants checks storage only when pointer is present.
+func Workspace_Pointer_Invariants(value Workspace_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Workspace_Invariants(*value, namespace)
 }
 
 // Diff_Input carries character output, workspace, and hostile texts.
@@ -298,7 +295,7 @@ type Diff_Input struct {
 	// Output receives rendered script.
 	Output Output
 	// Workspace owns all scratch state.
-	Workspace *Workspace
+	Workspace Workspace_Pointer
 	// Old is source text.
 	Old Old_Text_Unvalidated
 	// New is destination text.
@@ -308,7 +305,7 @@ type Diff_Input struct {
 // Diff_Input_Invariants composes character diff boundaries.
 func Diff_Input_Invariants(value Diff_Input, namespace aver.Namespace) {
 	Output_Invariants(value.Output, namespace)
-	Workspace_Invariants(*value.Workspace, namespace)
+	Workspace_Pointer_Invariants(value.Workspace, namespace)
 	Old_Text_Unvalidated_Invariants(value.Old, namespace)
 	New_Text_Unvalidated_Invariants(value.New, namespace)
 }
@@ -396,8 +393,6 @@ type Diff_State struct {
 	New_Runes New_Rune_Storage
 	// Matrix retains validated matrix storage.
 	Matrix Prepared_Matrix
-	// Rune_Bytes retains encoded-character scratch.
-	Rune_Bytes *Rune_Bytes
 	// Old is validated source text.
 	Old Validated_Old_Text
 	// New is validated destination text.
@@ -416,7 +411,6 @@ func Diff_State_Invariants(value Diff_State, namespace aver.Namespace) {
 	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
 	New_Rune_Storage_Invariants(value.New_Runes, namespace)
 	Prepared_Matrix_Invariants(value.Matrix, namespace)
-	Rune_Bytes_Invariants(*value.Rune_Bytes, namespace)
 	Validated_Old_Text_Invariants(value.Old, namespace)
 	Validated_New_Text_Invariants(value.New, namespace)
 	Old_Count_Invariants(value.Old_Count, namespace)
@@ -508,8 +502,6 @@ const LINE_PREFIX_DELETE Line_Prefix = '-'
 type Diff_Writer struct {
 	// Output receives bytes that fit.
 	Output Output
-	// Rune_Bytes owns one encoded character.
-	Rune_Bytes *Rune_Bytes
 	// Position counts required bytes.
 	Position Diff_Position
 	// Overflow records insufficient output.
@@ -521,14 +513,24 @@ type Diff_Writer struct {
 // Diff_Writer_Invariants composes character rendering state.
 func Diff_Writer_Invariants(value Diff_Writer, namespace aver.Namespace) {
 	Output_Invariants(value.Output, namespace)
-	Rune_Bytes_Invariants(*value.Rune_Bytes, namespace)
 	Diff_Position_Invariants(value.Position, namespace)
 	Overflow_Invariants(value.Overflow, namespace)
 	Open_Edit_Kind_Invariants(value.Kind, namespace)
 }
 
-func diff_writer_byte(writer *Diff_Writer, value Byte) {
-	Diff_Writer_Invariants(*writer, "diff_writer_byte.writer")
+// Diff_Writer_Pointer shares output position across rendering steps.
+type Diff_Writer_Pointer *Diff_Writer
+
+// Diff_Writer_Pointer_Invariants checks state only when pointer is present.
+func Diff_Writer_Pointer_Invariants(value Diff_Writer_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Diff_Writer_Invariants(*value, namespace)
+}
+
+func diff_writer_byte(writer Diff_Writer_Pointer, value Byte) {
+	Diff_Writer_Pointer_Invariants(writer, "diff_writer_byte.writer")
 	Byte_Invariants(value, "diff_writer_byte.value")
 	if int(writer.Position) < len(writer.Output) {
 		writer.Output[writer.Position] = byte(value)
@@ -538,20 +540,28 @@ func diff_writer_byte(writer *Diff_Writer, value Byte) {
 	writer.Position++
 }
 
-func diff_writer_rune(writer *Diff_Writer, character utf8.Decoded_Character) {
-	Diff_Writer_Invariants(*writer, "diff_writer_rune.writer")
+func diff_writer_rune(writer Diff_Writer_Pointer, character utf8.Decoded_Character) {
+	Diff_Writer_Pointer_Invariants(writer, "diff_writer_rune.writer")
 	utf8.Decoded_Character_Invariants(character, "diff_writer_rune.character")
 	if character == '"' {
 		diff_writer_byte(writer, '\\')
 	}
-	size := utf8.Encode_Character(writer.Rune_Bytes[:], utf8.Character(character))
-	for index := 0; index < int(size); index++ {
-		diff_writer_byte(writer, Byte(writer.Rune_Bytes[index]))
+	// Range over a string yields valid code points only, thus size is never invalid. A rune
+	// that does not fit whole is counted and not written, so Output never holds a cut encoding.
+	size := int(utf8.Character_Size(utf8.Character(character)))
+	start := int(writer.Position)
+	if start+size <= len(writer.Output) {
+		utf8.Encode_Character(
+			utf8.Bytes(writer.Output[start:start+size]), utf8.Character(character),
+		)
+	} else {
+		writer.Overflow = true
 	}
+	writer.Position += Diff_Position(size)
 }
 
-func diff_writer_open(writer *Diff_Writer, kind Edit_Kind) {
-	Diff_Writer_Invariants(*writer, "diff_writer_open.writer")
+func diff_writer_open(writer Diff_Writer_Pointer, kind Edit_Kind) {
+	Diff_Writer_Pointer_Invariants(writer, "diff_writer_open.writer")
 	Edit_Kind_Invariants(kind, "diff_writer_open.kind")
 	if writer.Kind == Open_Edit_Kind(kind) {
 		return
@@ -582,14 +592,13 @@ func Diff_Into(input Diff_Input) (count Count, status Status) {
 		return 0, Status(prepare_status)
 	}
 	state := Diff_State{
-		Output:     prepared.Input.Output,
-		Old_Runes:  prepared.Input.Workspace.Old_Runes,
-		New_Runes:  prepared.Input.Workspace.New_Runes,
-		Matrix:     Prepared_Matrix(prepared.Input.Workspace.Matrix),
-		Rune_Bytes: &prepared.Input.Workspace.Rune_Bytes,
-		Old:        Validated_Old_Text(prepared.Input.Old),
-		New:        Validated_New_Text(prepared.Input.New),
-		Old_Count:  prepared.Old_Count, New_Count: prepared.New_Count,
+		Output:    prepared.Input.Output,
+		Old_Runes: prepared.Input.Workspace.Old_Runes,
+		New_Runes: prepared.Input.Workspace.New_Runes,
+		Matrix:    Prepared_Matrix(prepared.Input.Workspace.Matrix),
+		Old:       Validated_Old_Text(prepared.Input.Old),
+		New:       Validated_New_Text(prepared.Input.New),
+		Old_Count: prepared.Old_Count, New_Count: prepared.New_Count,
 		Column_Count: prepared.Column_Count,
 	}
 	count, render_status := diff_render(state)
@@ -672,7 +681,7 @@ func diff_render(state Diff_State) (count Count, status Render_Status) {
 	old_count := int(state.Old_Count)
 	new_count := int(state.New_Count)
 	column_count := int(state.Column_Count)
-	writer := Diff_Writer{Output: state.Output, Rune_Bytes: state.Rune_Bytes}
+	writer := Diff_Writer{Output: state.Output}
 	old_index := 0
 	new_index := 0
 	for old_index < old_count || new_index < new_count {
@@ -752,7 +761,7 @@ type Line_Diff_Input struct {
 	// Output receives prefixed lines.
 	Output Line_Output
 	// Workspace owns all scratch state.
-	Workspace *Workspace
+	Workspace Workspace_Pointer
 	// Old is source text.
 	Old Line_Old_Text_Unvalidated
 	// New is destination text.
@@ -762,7 +771,7 @@ type Line_Diff_Input struct {
 // Line_Diff_Input_Invariants composes line diff boundaries.
 func Line_Diff_Input_Invariants(value Line_Diff_Input, namespace aver.Namespace) {
 	Line_Output_Invariants(value.Output, namespace)
-	Workspace_Invariants(*value.Workspace, namespace)
+	Workspace_Pointer_Invariants(value.Workspace, namespace)
 	Line_Old_Text_Unvalidated_Invariants(value.Old, namespace)
 	Line_New_Text_Unvalidated_Invariants(value.New, namespace)
 }
@@ -1045,7 +1054,7 @@ func Line_End_Invariants(value Line_End, namespace aver.Namespace) {
 // Line_Write_Input carries one prefixed line write.
 type Line_Write_Input struct {
 	// Writer receives line bytes.
-	Writer *Line_Writer
+	Writer Line_Writer_Pointer
 	// Prefix identifies operation.
 	Prefix Line_Prefix
 	// Text contains borrowed line.
@@ -1058,7 +1067,7 @@ type Line_Write_Input struct {
 
 // Line_Write_Input_Invariants composes one line write.
 func Line_Write_Input_Invariants(value Line_Write_Input, namespace aver.Namespace) {
-	Line_Writer_Invariants(*value.Writer, namespace)
+	Line_Writer_Pointer_Invariants(value.Writer, namespace)
 	Line_Prefix_Invariants(value.Prefix, namespace)
 	Line_Text_Invariants(value.Text, namespace)
 	Line_Start_Invariants(value.Start, namespace)
@@ -1087,8 +1096,19 @@ func Completed_Line_Writer_Invariants(
 	First_Line_Invariants(value.First, namespace)
 }
 
-func line_writer_byte(writer *Line_Writer, value Byte) {
-	Line_Writer_Invariants(*writer, "line_writer_byte.writer")
+// Line_Writer_Pointer shares output position across line rendering steps.
+type Line_Writer_Pointer *Line_Writer
+
+// Line_Writer_Pointer_Invariants checks state only when pointer is present.
+func Line_Writer_Pointer_Invariants(value Line_Writer_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Line_Writer_Invariants(*value, namespace)
+}
+
+func line_writer_byte(writer Line_Writer_Pointer, value Byte) {
+	Line_Writer_Pointer_Invariants(writer, "line_writer_byte.writer")
 	Byte_Invariants(value, "line_writer_byte.value")
 	if int(writer.Position) < len(writer.Output) {
 		writer.Output[writer.Position] = byte(value)
@@ -1186,10 +1206,10 @@ func new_line_end(
 }
 
 func line_writer_old(
-	writer *Line_Writer, runes Compared_Old_Runes, text Compared_Old_Text,
+	writer Line_Writer_Pointer, runes Compared_Old_Runes, text Compared_Old_Text,
 	count Compared_Old_Count, index Old_Line_Index, prefix Line_Prefix,
 ) {
-	Line_Writer_Invariants(*writer, "line_writer_old.writer")
+	Line_Writer_Pointer_Invariants(writer, "line_writer_old.writer")
 	Compared_Old_Runes_Invariants(runes, "line_writer_old.runes")
 	Compared_Old_Text_Invariants(text, "line_writer_old.text")
 	Compared_Old_Count_Invariants(count, "line_writer_old.count")
@@ -1203,10 +1223,10 @@ func line_writer_old(
 }
 
 func line_writer_new(
-	writer *Line_Writer, runes Compared_New_Runes, text Compared_New_Text,
+	writer Line_Writer_Pointer, runes Compared_New_Runes, text Compared_New_Text,
 	count Compared_New_Count, index New_Line_Index, prefix Line_Prefix,
 ) {
-	Line_Writer_Invariants(*writer, "line_writer_new.writer")
+	Line_Writer_Pointer_Invariants(writer, "line_writer_new.writer")
 	Compared_New_Runes_Invariants(runes, "line_writer_new.runes")
 	Compared_New_Text_Invariants(text, "line_writer_new.text")
 	Compared_New_Count_Invariants(count, "line_writer_new.count")

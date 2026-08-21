@@ -10,7 +10,12 @@ import (
 
 // Test_Distance_Cases covers equality, edits, symmetry, Unicode, and bounds.
 func Test_Distance_Cases(t *testing.T) {
-	var workspace levenshtein.Workspace
+	workspace := levenshtein.Workspace{
+		From:     make([]rune, levenshtein.RUNE_COUNT_MAXIMUM),
+		To:       make([]rune, levenshtein.RUNE_COUNT_MAXIMUM),
+		Previous: make([]int, levenshtein.ROW_COUNT),
+		Current:  make([]int, levenshtein.ROW_COUNT),
+	}
 	check := func(from string, to string, want levenshtein.Distance_Value) {
 		t.Helper()
 		got, status := levenshtein.Distance(levenshtein.Distance_Input{
@@ -55,17 +60,22 @@ func Test_Distance_Cases(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		distance, allocation_status := levenshtein.Distance(input)
 		if allocation_status != levenshtein.STATUS_OK {
-			panic("distance rejected")
+			t.Fatal("distance rejected")
 		}
 		if distance != 3 {
-			panic("distance changed")
+			t.Fatal("distance changed")
 		}
 	})
 }
 
 // Test_Closest_Cases covers match, miss, tie, empty set, and invalid candidate.
 func Test_Closest_Cases(t *testing.T) {
-	var workspace levenshtein.Workspace
+	workspace := levenshtein.Workspace{
+		From:     make([]rune, levenshtein.RUNE_COUNT_MAXIMUM),
+		To:       make([]rune, levenshtein.RUNE_COUNT_MAXIMUM),
+		Previous: make([]int, levenshtein.ROW_COUNT),
+		Current:  make([]int, levenshtein.ROW_COUNT),
+	}
 	commands := []string{"help", "add", "list", "delete"}
 	match, found, status := levenshtein.Closest(levenshtein.Closest_Input{
 		Workspace: &workspace, Target: "lst", Candidates: commands,
@@ -178,13 +188,13 @@ func check_closest_allocation(t *testing.T, workspace *levenshtein.Workspace) {
 	testify.Zero_Allocation(t, func() {
 		match, found, status := levenshtein.Closest(closest)
 		if status != levenshtein.STATUS_OK {
-			panic("closest rejected")
+			t.Fatal("closest rejected")
 		}
 		if !found {
-			panic("closest missed")
+			t.Fatal("closest missed")
 		}
 		if match != "list" {
-			panic("closest changed")
+			t.Fatal("closest changed")
 		}
 	})
 }

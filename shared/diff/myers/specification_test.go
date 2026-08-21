@@ -401,7 +401,7 @@ func check_diff_allocation(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		_, status := myers.Diff_Into(input)
 		if status != myers.STATUS_OK {
-			panic("Diff_Into rejected")
+			t.Fatal("Diff_Into rejected")
 		}
 	})
 }
@@ -420,7 +420,7 @@ func check_line_diff_allocation(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		_, status := myers.Line_Diff_Into(input)
 		if status != myers.STATUS_OK {
-			panic("Line_Diff_Into rejected")
+			t.Fatal("Line_Diff_Into rejected")
 		}
 	})
 }

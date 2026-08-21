@@ -117,7 +117,7 @@ func Candidates_Unvalidated_Invariants(
 }
 
 // From_Runes owns decoded source characters.
-type From_Runes [RUNE_COUNT_MAXIMUM]rune
+type From_Runes []rune
 
 // From_Runes_Invariants fixes source workspace capacity.
 func From_Runes_Invariants(value From_Runes, _ aver.Namespace) {
@@ -128,7 +128,7 @@ func From_Runes_Invariants(value From_Runes, _ aver.Namespace) {
 }
 
 // To_Runes owns decoded destination characters.
-type To_Runes [RUNE_COUNT_MAXIMUM]rune
+type To_Runes []rune
 
 // To_Runes_Invariants fixes destination workspace capacity.
 func To_Runes_Invariants(value To_Runes, _ aver.Namespace) {
@@ -139,7 +139,7 @@ func To_Runes_Invariants(value To_Runes, _ aver.Namespace) {
 }
 
 // Previous_Row owns prior dynamic-programming row.
-type Previous_Row [ROW_COUNT]int
+type Previous_Row []int
 
 // Previous_Row_Invariants fixes one slot per destination boundary.
 func Previous_Row_Invariants(value Previous_Row, _ aver.Namespace) {
@@ -147,7 +147,7 @@ func Previous_Row_Invariants(value Previous_Row, _ aver.Namespace) {
 }
 
 // Current_Row owns current dynamic-programming row.
-type Current_Row [ROW_COUNT]int
+type Current_Row []int
 
 // Current_Row_Invariants fixes one slot per destination boundary.
 func Current_Row_Invariants(value Current_Row, _ aver.Namespace) {
@@ -174,10 +174,21 @@ func Workspace_Invariants(value Workspace, namespace aver.Namespace) {
 	Current_Row_Invariants(value.Current, namespace)
 }
 
+// Workspace_Pointer preserves caller ownership across operations.
+type Workspace_Pointer *Workspace
+
+// Workspace_Pointer_Invariants checks storage only when pointer is present.
+func Workspace_Pointer_Invariants(value Workspace_Pointer, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Workspace_Invariants(*value, namespace)
+}
+
 // Distance_Input carries caller storage and hostile texts.
 type Distance_Input struct {
 	// Workspace owns all scratch state.
-	Workspace *Workspace
+	Workspace Workspace_Pointer
 	// From is source text.
 	From From_Text_Unvalidated
 	// To is destination text.
@@ -186,7 +197,7 @@ type Distance_Input struct {
 
 // Distance_Input_Invariants composes storage and both text boundaries.
 func Distance_Input_Invariants(value Distance_Input, namespace aver.Namespace) {
-	Workspace_Invariants(*value.Workspace, namespace)
+	Workspace_Pointer_Invariants(value.Workspace, namespace)
 	From_Text_Unvalidated_Invariants(value.From, namespace)
 	To_Text_Unvalidated_Invariants(value.To, namespace)
 }
@@ -238,7 +249,7 @@ func Distance(input Distance_Input) (distance Distance_Value, status Status) {
 // Closest_Input carries caller storage and bounded search values.
 type Closest_Input struct {
 	// Workspace is reused for every candidate distance.
-	Workspace *Workspace
+	Workspace Workspace_Pointer
 	// Target is possibly mistyped text.
 	Target Target_Text_Unvalidated
 	// Candidates are accepted spellings.
@@ -247,7 +258,7 @@ type Closest_Input struct {
 
 // Closest_Input_Invariants composes search storage and values.
 func Closest_Input_Invariants(value Closest_Input, namespace aver.Namespace) {
-	Workspace_Invariants(*value.Workspace, namespace)
+	Workspace_Pointer_Invariants(value.Workspace, namespace)
 	Target_Text_Unvalidated_Invariants(value.Target, namespace)
 	Candidates_Unvalidated_Invariants(value.Candidates, namespace)
 }
