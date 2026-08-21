@@ -335,7 +335,8 @@ func verify_transform_edges(t *testing.T, storage shared_strings.Bytes) {
 	if got := shared_strings.Replace_All_Into(storage, "ab", "", "-"); string(got) != "-a-b-" {
 		t.Fatal("Replace_All_Into must replace UTF-8 boundaries")
 	}
-	turkish := ucd.Special_Case(ucd.Turkish_Case())
+	var turkish_storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
+	turkish := ucd.Special_Case(ucd.Turkish_Case(turkish_storage[:]))
 	if got := shared_strings.To_Upper_Special_Into(storage, turkish, "i"); string(got) != "İ" {
 		t.Fatal("special case transform must use supplied language rules")
 	}
@@ -628,7 +629,8 @@ func collection_allocation_checks(
 func transform_allocation_checks(
 	observable *int, storage shared_strings.Bytes, maximum_y shared_strings.Text,
 ) (checks []allocation_check) {
-	turkish := ucd.Special_Case(ucd.Turkish_Case())
+	var turkish_storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
+	turkish := ucd.Special_Case(ucd.Turkish_Case(turkish_storage[:]))
 	return []allocation_check{
 		{Name: "Map_Into", Call: func() {
 			*observable = len(shared_strings.Map_Into(storage, maximum_y, map_upper_a))
@@ -1269,7 +1271,8 @@ func exercise_map_boundaries(
 func exercise_special_case_boundaries(
 	storage shared_strings.Bytes, maximum shared_strings.Text,
 ) {
-	turkish := ucd.Special_Case(ucd.Turkish_Case())
+	var turkish_storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
+	turkish := ucd.Special_Case(ucd.Turkish_Case(turkish_storage[:]))
 	exercise_special_transform_boundaries(
 		shared_strings.To_Upper_Special_Into, storage, maximum, turkish,
 	)
