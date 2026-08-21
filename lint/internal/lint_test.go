@@ -4432,6 +4432,35 @@ func value_at(values []int, index int) (result int) { return values[index] }
 	})
 }
 
+// Test_Instrumentation_Packages_Permit_Generics keeps one instrumentation adapter
+// usable across arbitrary observed types.
+func Test_Instrumentation_Packages_Permit_Generics(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"instrumentation/generic.go": &fstest.MapFile{Data: []byte(`package instrumentation
+
+type Box[Value any] struct {
+	Value Value
+}
+
+func Identity[Value any](value Value) (result Value) { return value }
+`)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     files,
+		Instrumentation_Packages: []string{"instrumentation/**"},
+		Word_Replacements:        test_word_replacements(),
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	for _, diagnostic := range diags {
+		if strings.Contains(diagnostic.Message, "Do not use generics") {
+			t.Fatal("instrumentation packages must permit generics")
+		}
+	}
+}
+
 // Test_No_Method_Stdlib_String_Flagged verifies interface satisfaction grants no escape.
 func Test_No_Method_Stdlib_String_Flagged(t *testing.T) {
 	t.Parallel()

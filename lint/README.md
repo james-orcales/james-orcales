@@ -216,6 +216,9 @@ entry in lint.json's `instrumentation_packages`, at the repo root. Everywhere el
 package absent from the list — package-level vars stay banned. This also frees composition packages
 to use a `<lib>_default` directory instead of a bare `default/`.
 
+An instrumentation package may also declare generic types and functions. One adapter can then
+observe arbitrary values without adding one concrete adapter for every production type.
+
 ## Resolving diagnostics
 
 ### `The stdlib import … is impure` / `The stdlib call … is impure`

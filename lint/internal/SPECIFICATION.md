@@ -208,7 +208,9 @@ package uses `aver.Always` so assertion reachability stays observable.
 
 ### Generics
 
-Type and func declarations have no type parameters. Each declaration names one concrete program.
+Outside packages listed in lint.json's `instrumentation_packages`, type and func declarations have
+no type parameters. Each production declaration names one concrete program. Instrumentation may
+use type parameters so one adapter can observe arbitrary types without production dependencies.
 
 ### Interface Declarations
 

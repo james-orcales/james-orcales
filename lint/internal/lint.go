@@ -577,7 +577,8 @@ type Configuration struct {
 	Shared_Component string `json:"shared_component"`
 	// Instrumentation_Packages names the packages of write-only instrumentation —
 	// assertions, snapshot tooling, telemetry. They may expose a `var Default`, and
-	// a pure or deterministic package may import them despite the import bans, since
+	// declare generic adapters for arbitrary observed types. A pure or deterministic
+	// package may also import them despite the import bans, since
 	// emitting to a write-only side channel cannot feed impurity or nondeterminism
 	// back into the importer. Exact-path globs, like the other lists: "shared/x/**"
 	// names a package and its whole subtree. Names a package only — an entry naming
@@ -1561,7 +1562,7 @@ type Check_File_Input struct {
 	// Source is the file's raw bytes, for checks that scan text rather than AST.
 	Source []byte
 	// Instrumentation is the lint.json instrumentation_packages list, exempting
-	// the package-var ban.
+	// the package-var and generics bans.
 	Instrumentation []string
 	// Word_Replacements is the lint.json vocabulary table; nil disables the check.
 	Word_Replacements map[string][]string
@@ -1614,7 +1615,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_default_package_name,
 		check_no_empty_function_body,
 		check_closure_bodies,
-		check_no_generics, resolution.Make(input.Declarations),
+		make_check_no_generics(input.Instrumentation), resolution.Make(input.Declarations),
 		check_no_interfaces,
 		make_check_names_vocabulary(input.Word_Replacements),
 		check_test_documentation_comment,
@@ -2281,8 +2282,8 @@ type Check_File_System_Input struct {
 	// not blanket-require it of every package in the tree.
 	Scope string
 	// Instrumentation_Packages is the lint.json instrumentation list forwarded
-	// from Main_Input: write-only packages exempt from the var-Default ban and
-	// the purity/determinism import bans. Threaded to the package-var,
+	// from Main_Input: write-only packages exempt from the var-Default and generics
+	// bans and the purity/determinism import bans. Threaded to the per-file,
 	// transitive-purity, and deterministic checks.
 	Instrumentation_Packages []string
 	// Shared_Component is the shared library module's workspace-root-relative
@@ -3963,7 +3964,7 @@ type Check_File_System_Run_Checks_Input struct {
 	Parsed_Files []Parsed_File
 	// CPU_Count bounds the parallelism.
 	CPU_Count int
-	// Instrumentation lists packages exempt as instrumentation.
+	// Instrumentation lists packages exempt from generic and package-var bans.
 	Instrumentation []string
 	// Word_Replacements is the configured terminology substitution table.
 	Word_Replacements map[string][]string
@@ -6284,8 +6285,26 @@ func check_no_function_init(
 	return diags
 }
 
+// Instrumentation must accept arbitrary observed types without making production
+// packages depend on each concrete adapter.
+func make_check_no_generics(instrumentation []string) (checker Check_Function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		return check_no_generics(file_set, file, instrumentation)
+	}
+}
+
 // Type parameters hide multiple concrete programs behind one declaration.
-func check_no_generics(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+func check_no_generics(
+	file_set *token.FileSet, file *ast.File, instrumentation []string,
+) (diags []Diagnostic) {
+	token_file := file_set.File(file.Pos())
+	if token_file != nil {
+		if source.Path_Matches_Glob(path.Dir(token_file.Name()), instrumentation) {
+			return nil
+		}
+	}
 
 	ast.Inspect(file, func(node ast.Node) (recurse bool) {
 		return check_no_generics_node(file_set, node, &diags)

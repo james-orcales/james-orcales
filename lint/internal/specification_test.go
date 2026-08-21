@@ -657,7 +657,8 @@ func Test_Source_And_Test_Bans_Panic(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Bans_Generics verifies type parameters are flagged.
+// Test_Source_And_Test_Bans_Generics keeps concrete production declarations while letting one
+// instrumentation adapter accept arbitrary observed types.
 func Test_Source_And_Test_Bans_Generics(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
@@ -665,6 +666,23 @@ func Test_Source_And_Test_Bans_Generics(t *testing.T) {
 		"func Identity[Value any](value Value) (result Value) { return value }\n")
 	if !specification_flags(t, files, "Do not use generics") {
 		t.Fatal("type parameters must be flagged")
+	}
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
+		Instrumentation_Packages: []string{"pkg/**"},
+		Word_Replacements:        test_word_replacements(),
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "Do not use generics") {
+		t.Fatal("instrumentation type parameters must be allowed")
 	}
 }
 
