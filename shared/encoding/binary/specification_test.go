@@ -1,10 +1,13 @@
 package binary_test
 
 import (
-	"io"
 	"testing"
+	"unsafe"
 
 	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/testify"
 )
 
 // Test_Allocation keeps public data paths free from hidden heap ownership.
@@ -72,22 +75,42 @@ func Test_Structured_Values(t *testing.T) {
 	}
 }
 
-// Test_Stream_IO keeps scratch storage explicit at blocking boundary.
+// Test_Stream_IO keeps scratch storage explicit across Stream completion.
 func Test_Stream_IO(t *testing.T) {
 	var storage [binary.UINT_64_SIZE]byte
-	stream := byte_stream{Source: storage[:]}
+	var scratch [binary.UINT_64_SIZE]byte
+	memory := nbio.Stream_Memory{Memory: storage[:]}
+	stream := nbio.Memory_To_Stream(&memory)
 	value := uint64(0x0102030405060708)
-	if binary.Write(&stream, storage[:], value, binary.BIG_ENDIAN) != nil {
-		t.Fatal("Write rejected fixed-size value")
-	}
-	stream.Source = stream.Storage[:binary.UINT_64_SIZE]
+	var writer binary.Writer
+	binary.Writer_Init(&writer, stream, scratch[:])
+	write_called := false
+	binary.Write(
+		&writer, &writer.Completion, value, binary.BIG_ENDIAN,
+		func(completed *time.Completion) {
+			write_called = true
+			testify.No_Error(t, completed.Error)
+		},
+	)
+	testify.True(t, write_called)
+	testify.Equal(t, binary.UINT_64_SIZE, writer.Completion.Data)
+	memory.Cursor = 0
 	var decoded uint64
-	if binary.Read(&stream, storage[:], &decoded, binary.BIG_ENDIAN) != nil {
-		t.Fatal("Read rejected fixed-size value")
-	}
-	if decoded != value {
-		t.Fatal("Read returned wrong fixed-size value")
-	}
+	var reader binary.Reader
+	binary.Reader_Init(&reader, stream, scratch[:])
+	read_called := false
+	binary.Read(
+		&reader, &reader.Completion, &decoded, binary.BIG_ENDIAN,
+		func(completed *time.Completion) {
+			read_called = true
+			testify.No_Error(t, completed.Error)
+		},
+	)
+	testify.True(t, read_called)
+	testify.Equal(t, binary.UINT_64_SIZE, reader.Completion.Data)
+	testify.Equal(t, value, decoded)
+	verify_deferred_stream(t, value)
+	verify_inline_reader_state(t)
 }
 
 // Test_Varints ports upstream value and malformed-input sweeps.
@@ -122,31 +145,192 @@ type byte_reader struct {
 	Position int
 }
 
-type byte_stream struct {
-	Storage  [binary.BYTE_SIZE_MAXIMUM]byte
-	Source   []byte
-	Position int
+type deferred_stream struct {
+	Source     []byte
+	Position   int
+	Buffer     []byte
+	Completion *time.Completion
+	Callback   nbio.Stream_Callback
+	Mode       nbio.Stream_Mode
 }
 
-// Read gives stream behavior without storage ownership.
-func (stream *byte_stream) Read(destination []byte) (count int, err error) {
-	if stream.Position == len(stream.Source) {
-		return 0, io.EOF
+func deferred_to_stream(state *deferred_stream) (stream nbio.Stream) {
+	return nbio.Stream{State: unsafe.Pointer(state), Procedure: deferred_stream_procedure}
+}
+
+func deferred_stream_procedure(
+	state_pointer unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	state := (*deferred_stream)(state_pointer)
+	state.Buffer = buffer
+	state.Completion = completion
+	state.Callback = callback
+	state.Mode = mode
+}
+
+func deferred_stream_retire(state *deferred_stream, count int, err error) {
+	if state.Mode == nbio.STREAM_MODE_READ {
+		copy(state.Buffer[:count], state.Source[state.Position:state.Position+count])
+		state.Position += count
 	}
-	count = copy(destination, stream.Source[stream.Position:])
-	stream.Position += count
-	return count, nil
+	completion := state.Completion
+	callback := state.Callback
+	state.Buffer = nil
+	state.Completion = nil
+	state.Callback = nbio.Stream_Callback{}
+	completion.Data = count
+	completion.Error = err
+	nbio.Stream_Callback_Call(callback, completion)
 }
 
-// Write gives stream behavior without storage growth.
-func (stream *byte_stream) Write(source []byte) (count int, err error) {
-	return copy(stream.Storage[:], source), nil
+type inline_reader_stream struct {
+	Reader         *binary.Reader
+	Stream         nbio.Stream
+	Scratch        []byte
+	Source         []byte
+	Position       int
+	Read_Panicked  bool
+	Init_Panicked  bool
+	State_Observed bool
+}
+
+func inline_reader_to_stream(state *inline_reader_stream) (stream nbio.Stream) {
+	stream = nbio.Stream{
+		State: unsafe.Pointer(state), Procedure: inline_reader_stream_procedure,
+	}
+	state.Stream = stream
+	return stream
+}
+
+func inline_reader_stream_procedure(
+	state_pointer unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	state := (*inline_reader_stream)(state_pointer)
+	if mode != nbio.STREAM_MODE_READ {
+		completion.Data = 0
+		completion.Error = nbio.Stream_Empty
+		nbio.Stream_Callback_Call(callback, completion)
+		return
+	}
+	count := len(buffer)
+	if state.Position == 0 {
+		count = 1
+	}
+	copy(buffer[:count], state.Source[state.Position:state.Position+count])
+	state.Position += count
+	completion.Data = count
+	completion.Error = nil
+	nbio.Stream_Callback_Call(callback, completion)
+	if state.State_Observed {
+		return
+	}
+	state.State_Observed = true
+	var destination uint16
+	state.Read_Panicked = panics(func() {
+		binary.Read(
+			state.Reader, &state.Reader.Completion, &destination, binary.BIG_ENDIAN,
+			stream_probe_completion,
+		)
+	})
+	state.Init_Panicked = panics(func() {
+		binary.Reader_Init(state.Reader, state.Stream, state.Scratch)
+	})
+}
+
+func stream_probe_completion(completion *time.Completion) {
+	if completion == nil {
+		panic("binary probe completion is absent")
+	}
+}
+
+func verify_deferred_stream(t *testing.T, value uint64) {
+	var encoded [binary.UINT_64_SIZE]byte
+	binary.Put_Uint_64(encoded[:], binary.Word_64(value), binary.BIG_ENDIAN)
+	read_state := deferred_stream{Source: encoded[:]}
+	read_stream := deferred_to_stream(&read_state)
+	var read_scratch [binary.UINT_64_SIZE]byte
+	var reader binary.Reader
+	binary.Reader_Init(&reader, read_stream, read_scratch[:])
+	var decoded uint64
+	read_called := false
+	binary.Read(
+		&reader, &reader.Completion, &decoded, binary.BIG_ENDIAN,
+		func(completed *time.Completion) {
+			read_called = true
+			testify.No_Error(t, completed.Error)
+		},
+	)
+	testify.False(t, read_called)
+	testify.True(t, panics(func() {
+		binary.Read(
+			&reader, &reader.Completion, &decoded, binary.BIG_ENDIAN,
+			stream_probe_completion,
+		)
+	}))
+	testify.True(t, panics(func() {
+		binary.Reader_Init(&reader, read_stream, read_scratch[:])
+	}))
+	deferred_stream_retire(&read_state, len(encoded), nil)
+	testify.True(t, read_called)
+	testify.Equal(t, value, decoded)
+
+	write_state := deferred_stream{}
+	write_stream := deferred_to_stream(&write_state)
+	var write_scratch [binary.UINT_64_SIZE]byte
+	var writer binary.Writer
+	binary.Writer_Init(&writer, write_stream, write_scratch[:])
+	write_called := false
+	binary.Write(
+		&writer, &writer.Completion, value, binary.BIG_ENDIAN,
+		func(completed *time.Completion) {
+			write_called = true
+			testify.No_Error(t, completed.Error)
+		},
+	)
+	testify.False(t, write_called)
+	testify.Equal(t, encoded[:], write_state.Buffer)
+	testify.True(t, panics(func() {
+		binary.Write(
+			&writer, &writer.Completion, value, binary.BIG_ENDIAN,
+			stream_probe_completion,
+		)
+	}))
+	testify.True(t, panics(func() {
+		binary.Writer_Init(&writer, write_stream, write_scratch[:])
+	}))
+	deferred_stream_retire(&write_state, len(encoded), nil)
+	testify.True(t, write_called)
+}
+
+func verify_inline_reader_state(t *testing.T) {
+	source := [binary.UINT_16_SIZE]byte{1, 2}
+	var scratch [binary.UINT_16_SIZE]byte
+	state := inline_reader_stream{Scratch: scratch[:], Source: source[:]}
+	stream := inline_reader_to_stream(&state)
+	var reader binary.Reader
+	state.Reader = &reader
+	binary.Reader_Init(&reader, stream, scratch[:])
+	var destination uint16
+	called := false
+	binary.Read(
+		&reader, &reader.Completion, &destination, binary.BIG_ENDIAN,
+		func(completed *time.Completion) {
+			called = true
+			testify.No_Error(t, completed.Error)
+		},
+	)
+	testify.True(t, called)
+	testify.True(t, state.Read_Panicked)
+	testify.True(t, state.Init_Panicked)
+	testify.Equal(t, uint16(0x0102), destination)
 }
 
 // Caller owns cursor, so varint reader needs no hidden storage.
 func read_byte(reader *byte_reader) (value byte, err error) {
 	if reader.Position == len(reader.Source) {
-		return 0, io.EOF
+		return 0, nbio.Stream_EOF
 	}
 	value = reader.Source[reader.Position]
 	reader.Position++
@@ -438,24 +622,59 @@ func verify_stream_boundaries(t *testing.T) {
 	verify_write_boundary(t, scratch[:1], octet, binary.NATIVE_ENDIAN)
 	verify_write_boundary(t, scratch[:2], word, binary.BIG_ENDIAN)
 	verify_write_boundary(t, scratch[:], &maximum, binary.BIG_ENDIAN)
+	var reader binary.Reader
+	if !panics(func() {
+		binary.Read(
+			&reader, &reader.Completion, &empty, binary.LITTLE_ENDIAN,
+			func(completed *time.Completion) { testify.Not_Nil(t, completed) },
+		)
+	}) {
+		t.Fatal("Read accepted uninitialized Reader")
+	}
+	var writer binary.Writer
+	if !panics(func() {
+		binary.Write(
+			&writer, &writer.Completion, empty, binary.LITTLE_ENDIAN,
+			func(completed *time.Completion) { testify.Not_Nil(t, completed) },
+		)
+	}) {
+		t.Fatal("Write accepted uninitialized Writer")
+	}
 }
 
 func verify_read_boundary(
 	t *testing.T, scratch []byte, destination any, order binary.Byte_Order,
 ) {
-	stream := byte_stream{Source: scratch}
-	if binary.Read(&stream, scratch, destination, order) != nil {
-		t.Fatal("Read rejected structured boundary")
-	}
+	memory := nbio.Stream_Memory{Memory: scratch}
+	var reader binary.Reader
+	binary.Reader_Init(&reader, nbio.Memory_To_Stream(&memory), scratch)
+	binary.Read(
+		&reader, &reader.Completion, destination, order,
+		func(completed *time.Completion) { testify.No_Error(t, completed.Error) },
+	)
+	memory.Cursor = 0
+	binary.Read(
+		&reader, &reader.Completion, destination, order,
+		func(completed *time.Completion) { testify.No_Error(t, completed.Error) },
+	)
+	binary.Reader_Init(&reader, nbio.Memory_To_Stream(&memory), scratch)
 }
 
 func verify_write_boundary(
 	t *testing.T, scratch []byte, source any, order binary.Byte_Order,
 ) {
-	var stream byte_stream
-	if binary.Write(&stream, scratch, source, order) != nil {
-		t.Fatal("Write rejected structured boundary")
-	}
+	var destination [binary.BYTE_SIZE_MAXIMUM]byte
+	memory := nbio.Stream_Memory{Memory: destination[:len(scratch)]}
+	var writer binary.Writer
+	binary.Writer_Init(&writer, nbio.Memory_To_Stream(&memory), scratch)
+	binary.Write(&writer, &writer.Completion, source, order, func(completed *time.Completion) {
+		testify.No_Error(t, completed.Error)
+	})
+	memory.Cursor = 0
+	binary.Write(&writer, &writer.Completion, source, order, func(completed *time.Completion) {
+		testify.No_Error(t, completed.Error)
+	})
+	binary.Writer_Init(&writer, nbio.Memory_To_Stream(&memory), scratch)
 }
 
 func verify_fixed_width(t *testing.T) {
@@ -699,9 +918,9 @@ func verify_varint_incomplete_and_overflow(t *testing.T) {
 		}
 		reader := byte_reader{Source: incomplete[:size_index]}
 		read, err := binary.Read_Unsigned_Varint(&reader, read_byte)
-		want := io.EOF
+		want := nbio.Stream_EOF
 		if size_index > 0 {
-			want = io.ErrUnexpectedEOF
+			want = nbio.Stream_Unexpected_EOF
 		}
 		if read != 0 {
 			t.Fatal("Read_Unsigned_Varint returned wrong incomplete value")

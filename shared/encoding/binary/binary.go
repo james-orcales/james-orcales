@@ -3,11 +3,13 @@ package binary
 
 import (
 	"errors"
-	"io"
 	"reflect"
+	"unsafe"
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/time"
 )
 
 // BYTE_SIZE_MINIMUM is empty byte storage size.
@@ -384,6 +386,168 @@ func Varint_Count_Invariants(value Varint_Count, namespace invariant.Namespace) 
 			VARINT_COUNT_GAP_NEGATIVE_ONE, VARINT_COUNT_GAP_NEGATIVE_ONE,
 		).
 		Ensure()
+}
+
+// Operation_Active prevents one callback slot from serving overlapping operations.
+type Operation_Active bool
+
+// Operation_Active_Invariants covers idle and borrowed callback states.
+func Operation_Active_Invariants(
+	value Operation_Active, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Binary Stream operation is active.").
+		Ensure()
+}
+
+// Stream_Initialized separates zero state from injected transport and scratch.
+type Stream_Initialized bool
+
+// Stream_Initialized_Invariants covers unbound and initialized state.
+func Stream_Initialized_Invariants(
+	value Stream_Initialized, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Binary Stream state is initialized.").
+		Ensure()
+}
+
+// Submission_Active marks one Stream Procedure frame on stack.
+type Submission_Active bool
+
+// Submission_Active_Invariants covers inline and deferred Stream retirement.
+func Submission_Active_Invariants(
+	value Submission_Active, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Binary Stream submission frame is active.").
+		Ensure()
+}
+
+// Wait_Active marks one Reader transfer not yet retired.
+type Wait_Active bool
+
+// Wait_Active_Invariants covers idle and in-flight Reader transfers.
+func Wait_Active_Invariants(value Wait_Active, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Binary Reader waits for Stream retirement.").
+		Ensure()
+}
+
+// Submission_Continue turns inline callback recursion into iteration.
+type Submission_Continue bool
+
+// Submission_Continue_Invariants covers both trampoline decisions.
+func Submission_Continue_Invariants(
+	value Submission_Continue, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Binary Reader has inline retirement to process.").
+		Ensure()
+}
+
+// Stream_Size is one valid structured width retained across Stream completion.
+type Stream_Size int
+
+// Stream_Size_Invariants bounds valid structured width without invalid-type sentinel.
+func Stream_Size_Invariants(value Stream_Size, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), BYTE_SIZE_MINIMUM, BYTE_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Reader retains caller scratch and one structured read continuation.
+type Reader struct {
+	// Completion stays first so static callback recovers Reader without allocating closure.
+	Completion time.Completion
+	// Stream owns transport and callback timing.
+	Stream nbio.Stream
+	// Callback retires after complete structured value, not each transfer.
+	Callback time.Callback
+	// Scratch remains caller-owned across every partial transfer.
+	Scratch Bytes
+	// Destination remains borrowed until decode or transport failure.
+	Destination any
+	// Order stays stable across deferred completion.
+	Order Byte_Order
+	// Size is complete encoded width required before decode.
+	Size Stream_Size
+	// Count is source bytes retired across partial reads.
+	Count Byte_Count
+	// Active protects retained destination and callback.
+	Active Operation_Active
+	// Initialized rejects use before dependency binding.
+	Initialized Stream_Initialized
+	// Submission_Active marks Stream Procedure stack lifetime.
+	Submission_Active Submission_Active
+	// Wait_Active marks one submitted read.
+	Wait_Active Wait_Active
+	// Continue requests next inline trampoline iteration.
+	Continue Submission_Continue
+}
+
+// Reader_Invariants keeps transfer cursor inside caller scratch.
+func Reader_Invariants(value *Reader, namespace invariant.Namespace) {
+	invariant.Always(value != nil, "Binary Reader state exists.")
+	invariant.Always(
+		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
+		"Binary Reader completion stays first for static callback recovery.",
+	)
+	Bytes_Invariants(value.Scratch, namespace)
+	Byte_Order_Invariants(value.Order, namespace)
+	Stream_Size_Invariants(value.Size, namespace)
+	Byte_Count_Invariants(value.Count, namespace)
+	Operation_Active_Invariants(value.Active, namespace)
+	Stream_Initialized_Invariants(value.Initialized, namespace)
+	Submission_Active_Invariants(value.Submission_Active, namespace)
+	Wait_Active_Invariants(value.Wait_Active, namespace)
+	Submission_Continue_Invariants(value.Continue, namespace)
+	invariant.Always(
+		int(value.Count) <= int(value.Size),
+		"Binary Reader cursor does not cross structured width.",
+	)
+	invariant.Always(
+		int(value.Size) <= len(value.Scratch),
+		"Binary Reader operation stays inside caller scratch.",
+	)
+}
+
+// Writer retains caller scratch and one structured write continuation.
+type Writer struct {
+	// Completion stays first so static callback recovers Writer without allocating closure.
+	Completion time.Completion
+	// Stream owns transport and callback timing.
+	Stream nbio.Stream
+	// Callback retires after encoded bytes leave caller scratch.
+	Callback time.Callback
+	// Scratch remains caller-owned until Stream retirement.
+	Scratch Bytes
+	// Order records encoded byte layout during active operation.
+	Order Byte_Order
+	// Size is exact encoded prefix borrowed by Stream.
+	Size Stream_Size
+	// Active protects retained scratch and callback.
+	Active Operation_Active
+	// Initialized rejects use before dependency binding.
+	Initialized Stream_Initialized
+}
+
+// Writer_Invariants keeps encoded prefix inside caller scratch.
+func Writer_Invariants(value *Writer, namespace invariant.Namespace) {
+	invariant.Always(value != nil, "Binary Writer state exists.")
+	invariant.Always(
+		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
+		"Binary Writer completion stays first for static callback recovery.",
+	)
+	Bytes_Invariants(value.Scratch, namespace)
+	Byte_Order_Invariants(value.Order, namespace)
+	Stream_Size_Invariants(value.Size, namespace)
+	Operation_Active_Invariants(value.Active, namespace)
+	Stream_Initialized_Invariants(value.Initialized, namespace)
+	invariant.Always(
+		int(value.Size) <= len(value.Scratch),
+		"Binary Writer operation stays inside caller scratch.",
+	)
 }
 
 // Byte_Order_String gives standard display name without forbidden method API.
@@ -785,8 +949,8 @@ func Read_Unsigned_Varint[State any](
 		octet, read_error := read_byte(state)
 		if read_error != nil {
 			if index > 0 {
-				if read_error == io.EOF {
-					read_error = io.ErrUnexpectedEOF
+				if read_error == nbio.Stream_EOF {
+					read_error = nbio.Stream_Unexpected_EOF
 				}
 			}
 			return value, read_error
@@ -1102,48 +1266,240 @@ func decode_target(
 	return value, size, true
 }
 
-// Read needs caller scratch because reflected destination cannot receive encoded bytes directly.
-func Read(
-	reader io.Reader, scratch Bytes, destination any, order Byte_Order,
-) (err error) {
-	Bytes_Invariants(scratch, "read.scratch")
-	Byte_Order_Invariants(order, "read.order")
-	_, size, valid := decode_target(destination)
-	if !valid {
-		return Error_Invalid_Type
-	}
-	invariant.Always(
-		len(scratch) >= int(size),
-		"Read scratch holds complete structured binary value.",
-	)
-	_, err = io.ReadFull(reader, scratch[:int(size)])
-	if err != nil {
-		return err
-	}
-	_, err = Decode(scratch[:int(size)], destination, order)
-	return err
+// Reader_Init binds injected Stream and caller scratch without submitting work.
+func Reader_Init(reader *Reader, stream nbio.Stream, scratch Bytes) {
+	Reader_Invariants(reader, "Reader_Init.reader")
+	Bytes_Invariants(scratch, "Reader_Init.scratch")
+	invariant.Always(!reader.Active, "Reader_Init owns idle Reader state.")
+	invariant.Always(stream.Procedure != nil, "Reader_Init has concrete Stream.")
+	*reader = Reader{Stream: stream, Scratch: scratch, Initialized: true}
 }
 
-// Write needs caller scratch because reflected source has no contiguous encoded byte view.
-func Write(
-	writer io.Writer, scratch Bytes, source any, order Byte_Order,
-) (err error) {
-	Bytes_Invariants(scratch, "write.scratch")
-	Byte_Order_Invariants(order, "write.order")
-	size := Size(source)
-	if size == VALUE_SIZE_INVALID {
-		return Error_Invalid_Type
+// Read defers decode until Stream supplies complete fixed-width value.
+func Read(
+	reader *Reader, completion *time.Completion, destination any, order Byte_Order,
+	callback time.Callback,
+) {
+	Reader_Invariants(reader, "Read.reader")
+	Byte_Order_Invariants(order, "Read.order")
+	invariant.Always(reader.Initialized, "Read uses initialized Reader.")
+	invariant.Always(completion != nil, "Read has completion storage.")
+	invariant.Always(
+		completion == &reader.Completion,
+		"Read submits completion owned by Reader.",
+	)
+	invariant.Always(callback != nil, "Read has callback.")
+	invariant.Always(!reader.Active, "Read owns free Reader callback slot.")
+	target := reflect.ValueOf(destination)
+	if !target.IsValid() {
+		completion.Data = 0
+		completion.Error = Error_Invalid_Type
+		callback(completion)
+		return
+	}
+	if target.Kind() != reflect.Pointer {
+		completion.Data = 0
+		completion.Error = Error_Invalid_Type
+		callback(completion)
+		return
+	}
+	_, size, valid := decode_target(destination)
+	if !valid {
+		completion.Data = 0
+		completion.Error = Error_Invalid_Type
+		callback(completion)
+		return
 	}
 	invariant.Always(
-		len(scratch) >= int(size),
+		len(reader.Scratch) >= int(size),
+		"Read scratch holds complete structured binary value.",
+	)
+	reader.Callback = callback
+	reader.Destination = destination
+	reader.Order = order
+	reader.Size = Stream_Size(size)
+	reader.Count = 0
+	reader.Active = true
+	completion.Data = 0
+	completion.Error = nil
+	reader_progress(completion)
+}
+
+// Reader progress uses trampoline because concrete Stream may retire inline.
+func reader_progress(completion *time.Completion) {
+	reader := (*Reader)(unsafe.Pointer(completion))
+	for bool(reader.Active) && !bool(reader.Wait_Active) {
+		if reader.Count == Byte_Count(reader.Size) {
+			reader_decode_finish(completion)
+			return
+		}
+		start := int(reader.Count)
+		end := int(reader.Size)
+		reader.Wait_Active = true
+		reader.Submission_Active = true
+		reader.Continue = false
+		nbio.Read(
+			reader.Stream, completion, reader.Scratch[start:end],
+			reader_stream_complete,
+		)
+		reader.Submission_Active = false
+		retired_inline := reader.Continue
+		reader.Continue = false
+		if !retired_inline {
+			return
+		}
+	}
+}
+
+func reader_stream_complete(completion *time.Completion) {
+	reader := (*Reader)(unsafe.Pointer(completion))
+	invariant.Always(reader.Active, "Reader callback belongs to active operation.")
+	invariant.Always(reader.Wait_Active, "Reader callback retires submitted transfer.")
+	reader.Wait_Active = false
+	requested := int(reader.Size) - int(reader.Count)
+	count := completion.Data
+	if count < 0 {
+		count = 0
+		completion.Error = nbio.Stream_Negative_Read
+	}
+	if count > requested {
+		count = 0
+		completion.Error = nbio.Stream_Short_Buffer
+	}
+	reader.Count += Byte_Count(count)
+	completion.Data = count
+	if reader.Count == Byte_Count(reader.Size) {
+		completion.Error = nil
+		reader_decode_finish(completion)
+		return
+	}
+	if completion.Error != nil {
+		if completion.Error == nbio.Stream_EOF {
+			if reader.Count > 0 {
+				completion.Error = nbio.Stream_Unexpected_EOF
+			}
+		}
+		reader_finish(completion)
+		return
+	}
+	if count == 0 {
+		completion.Error = nbio.Stream_No_Progress
+		reader_finish(completion)
+		return
+	}
+	if reader.Submission_Active {
+		reader.Continue = true
+		return
+	}
+	reader_progress(completion)
+}
+
+func reader_decode_finish(completion *time.Completion) {
+	reader := (*Reader)(unsafe.Pointer(completion))
+	_, completion.Error = Decode(
+		reader.Scratch[:reader.Size], reader.Destination, reader.Order,
+	)
+	reader_finish(completion)
+}
+
+func reader_finish(completion *time.Completion) {
+	reader := (*Reader)(unsafe.Pointer(completion))
+	callback := reader.Callback
+	count := reader.Count
+	reader.Callback = nil
+	reader.Destination = nil
+	reader.Active = false
+	reader.Submission_Active = false
+	reader.Wait_Active = false
+	reader.Continue = false
+	completion.Data = int(count)
+	callback(completion)
+}
+
+// Writer_Init binds injected Stream and caller scratch without submitting work.
+func Writer_Init(writer *Writer, stream nbio.Stream, scratch Bytes) {
+	Writer_Invariants(writer, "Writer_Init.writer")
+	Bytes_Invariants(scratch, "Writer_Init.scratch")
+	invariant.Always(!writer.Active, "Writer_Init owns idle Writer state.")
+	invariant.Always(stream.Procedure != nil, "Writer_Init has concrete Stream.")
+	*writer = Writer{Stream: stream, Scratch: scratch, Initialized: true}
+}
+
+// Write encodes before submission so invalid grammar never mutates Stream.
+func Write(
+	writer *Writer, completion *time.Completion, source any, order Byte_Order,
+	callback time.Callback,
+) {
+	Writer_Invariants(writer, "Write.writer")
+	Byte_Order_Invariants(order, "Write.order")
+	invariant.Always(writer.Initialized, "Write uses initialized Writer.")
+	invariant.Always(completion != nil, "Write has completion storage.")
+	invariant.Always(
+		completion == &writer.Completion,
+		"Write submits completion owned by Writer.",
+	)
+	invariant.Always(callback != nil, "Write has callback.")
+	invariant.Always(!writer.Active, "Write owns free Writer callback slot.")
+	size := Size(source)
+	if size == VALUE_SIZE_INVALID {
+		completion.Data = 0
+		completion.Error = Error_Invalid_Type
+		callback(completion)
+		return
+	}
+	invariant.Always(
+		len(writer.Scratch) >= int(size),
 		"Write scratch holds complete structured binary value.",
 	)
-	_, err = Encode(scratch[:int(size)], source, order)
-	if err != nil {
-		return err
+	_, encode_error := Encode(writer.Scratch[:size], source, order)
+	if encode_error != nil {
+		completion.Data = 0
+		completion.Error = encode_error
+		callback(completion)
+		return
 	}
-	_, err = writer.Write(scratch[:int(size)])
-	return err
+	writer.Callback = callback
+	writer.Order = order
+	writer.Size = Stream_Size(size)
+	writer.Active = true
+	completion.Data = 0
+	completion.Error = nil
+	if size == 0 {
+		writer_finish(completion)
+		return
+	}
+	nbio.Write(writer.Stream, completion, writer.Scratch[:size], writer_stream_complete)
+}
+
+func writer_stream_complete(completion *time.Completion) {
+	writer := (*Writer)(unsafe.Pointer(completion))
+	invariant.Always(writer.Active, "Writer callback belongs to active operation.")
+	count := completion.Data
+	if count < 0 {
+		count = 0
+		completion.Error = nbio.Stream_Negative_Write
+	}
+	if count > int(writer.Size) {
+		count = 0
+		completion.Error = nbio.Stream_Invalid_Write
+	}
+	if completion.Error == nil {
+		if count < int(writer.Size) {
+			completion.Error = nbio.Stream_Short_Write
+		}
+	}
+	completion.Data = count
+	writer_finish(completion)
+}
+
+func writer_finish(completion *time.Completion) {
+	writer := (*Writer)(unsafe.Pointer(completion))
+	callback := writer.Callback
+	count := completion.Data
+	writer.Callback = nil
+	writer.Active = false
+	completion.Data = count
+	callback(completion)
 }
 
 // Walk order matches Go field and element order; blank fields reserve zeroed format space.

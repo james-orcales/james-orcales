@@ -1,12 +1,14 @@
-// Copyright 2009 The Go Authors. All rights reserved.
-// Use of this source code is governed by BSD-style license in Go source tree LICENSE file.
-
 package binary
 
 import (
-	"io"
+	"errors"
 	"reflect"
 	"testing"
+	"unsafe"
+
+	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/testify"
 )
 
 // TEST_PREFIX_SIZE exposes preservation before appended bytes.
@@ -79,13 +81,40 @@ type memory_stream struct {
 	Failure  error
 }
 
-// Read keeps stream dependency allocation outside API under measurement.
-func (stream *memory_stream) Read(destination []byte) (count int, err error) {
+func memory_to_stream(state *memory_stream) (stream nbio.Stream) {
+	return nbio.Stream{State: unsafe.Pointer(state), Procedure: memory_stream_procedure}
+}
+
+func memory_stream_procedure(
+	state_pointer unsafe.Pointer, completion *time.Completion, mode nbio.Stream_Mode,
+	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	state := (*memory_stream)(state_pointer)
+	count, err := memory_stream_transfer(state, mode, buffer)
+	completion.Data = count
+	completion.Error = err
+	nbio.Stream_Callback_Call(callback, completion)
+}
+
+func memory_stream_transfer(
+	stream *memory_stream, mode nbio.Stream_Mode, buffer []byte,
+) (count int, err error) {
+	if mode == nbio.STREAM_MODE_READ {
+		return memory_stream_read(stream, buffer)
+	}
+	if mode == nbio.STREAM_MODE_WRITE {
+		return memory_stream_write(stream, buffer)
+	}
+	return 0, nbio.Stream_Empty
+}
+
+// Failure retires before mutation so tests can prove destination atomicity.
+func memory_stream_read(stream *memory_stream, destination []byte) (count int, err error) {
 	if stream.Failure != nil {
 		return 0, stream.Failure
 	}
 	if stream.Position == len(stream.Source) {
-		return 0, io.EOF
+		return 0, nbio.Stream_EOF
 	}
 	available_count := len(stream.Source) - stream.Position
 	count = len(destination)
@@ -97,14 +126,38 @@ func (stream *memory_stream) Read(destination []byte) (count int, err error) {
 	return count, nil
 }
 
-// Write keeps stream dependency allocation outside API under measurement.
-func (stream *memory_stream) Write(source []byte) (count int, err error) {
+// Failure retires before mutation so tests can prove source ownership.
+func memory_stream_write(stream *memory_stream, source []byte) (count int, err error) {
 	if stream.Failure != nil {
 		return 0, stream.Failure
 	}
 	copy(stream.Storage[stream.Written:], source)
 	stream.Written += len(source)
 	return len(source), nil
+}
+
+func read_memory(
+	stream *memory_stream, scratch Bytes, destination any, order Byte_Order,
+) (completion time.Completion) {
+	var reader Reader
+	Reader_Init(&reader, memory_to_stream(stream), scratch)
+	Read(&reader, &reader.Completion, destination, order, memory_completion)
+	return reader.Completion
+}
+
+func write_memory(
+	stream *memory_stream, scratch Bytes, source any, order Byte_Order,
+) (completion time.Completion) {
+	var writer Writer
+	Writer_Init(&writer, memory_to_stream(stream), scratch)
+	Write(&writer, &writer.Completion, source, order, memory_completion)
+	return writer.Completion
+}
+
+func memory_completion(completion *time.Completion) {
+	if completion == nil {
+		panic("binary test completion is absent")
+	}
 }
 
 func structure_value() (value structure) {
@@ -330,24 +383,14 @@ func Test_Structured_Stream_IO(t *testing.T) {
 	var scratch [TEST_STRUCTURE_SIZE]byte
 	reader := memory_stream{Source: encoded[:]}
 	var decoded structure
-	err := Read(&reader, scratch[:], &decoded, BIG_ENDIAN)
-	if err != nil {
-		t.Fatal("Read returned error")
-	}
-	if decoded != value {
-		t.Fatal("Read returned wrong structured value")
-	}
-	if reader.Position != len(encoded) {
-		t.Fatal("Read returned wrong structured value")
-	}
+	read_completion := read_memory(&reader, scratch[:], &decoded, BIG_ENDIAN)
+	testify.No_Error(t, read_completion.Error)
+	testify.Equal(t, value, decoded)
+	testify.Equal(t, len(encoded), reader.Position)
 	var writer memory_stream
-	err = Write(&writer, scratch[:], value, BIG_ENDIAN)
-	if err != nil {
-		t.Fatal("Write returned error")
-	}
-	if writer.Written != len(encoded) {
-		t.Fatal("Write returned wrong structured size")
-	}
+	write_completion := write_memory(&writer, scratch[:], value, BIG_ENDIAN)
+	testify.No_Error(t, write_completion.Error)
+	testify.Equal(t, len(encoded), writer.Written)
 	for index := range len(encoded) {
 		if writer.Storage[index] != encoded[index] {
 			t.Fatal("Write emitted wrong structured bytes")
@@ -387,26 +430,26 @@ func Test_Structured_Errors(t *testing.T) {
 	if !raises(func() {
 		var scratch [TEST_SHORT_UINT_64_SIZE]byte
 		var writer memory_stream
-		Write(&writer, scratch[:], value, BIG_ENDIAN)
+		write_memory(&writer, scratch[:], value, BIG_ENDIAN)
 	}) {
 		t.Fatal("Write accepted short scratch storage")
 	}
 	if !raises(func() {
 		var scratch [TEST_SHORT_UINT_64_SIZE]byte
 		var reader memory_stream
-		Read(&reader, scratch[:], &value, BIG_ENDIAN)
+		read_memory(&reader, scratch[:], &value, BIG_ENDIAN)
 	}) {
 		t.Fatal("Read accepted short scratch storage")
 	}
 	for size_index := 0; size_index < UINT_64_SIZE; size_index++ {
 		reader := memory_stream{Source: storage[:size_index]}
 		var scratch [UINT_64_SIZE]byte
-		err := Read(&reader, scratch[:], &value, BIG_ENDIAN)
-		want := io.ErrUnexpectedEOF
+		completion := read_memory(&reader, scratch[:], &value, BIG_ENDIAN)
+		want := nbio.Stream_Unexpected_EOF
 		if size_index == 0 {
-			want = io.EOF
+			want = nbio.Stream_EOF
 		}
-		if err != want {
+		if completion.Error != want {
 			t.Fatal("Read returned wrong truncated-stream error")
 		}
 	}
@@ -495,15 +538,18 @@ func Test_Structured_Bounds(t *testing.T) {
 func Test_Stream_Errors(t *testing.T) {
 	var scratch [UINT_64_SIZE]byte
 	value := uint64(1)
-	reader := memory_stream{Failure: io.ErrClosedPipe}
-	if Read(&reader, scratch[:], &value, BIG_ENDIAN) != io.ErrClosedPipe {
+	failure := errors.New("binary test stream failed")
+	reader := memory_stream{Failure: failure}
+	read_completion := read_memory(&reader, scratch[:], &value, BIG_ENDIAN)
+	if read_completion.Error != failure {
 		t.Fatal("Read replaced reader failure")
 	}
 	if value != 1 {
 		t.Fatal("Read mutated destination after reader failure")
 	}
-	writer := memory_stream{Failure: io.ErrClosedPipe}
-	if Write(&writer, scratch[:], value, BIG_ENDIAN) != io.ErrClosedPipe {
+	writer := memory_stream{Failure: failure}
+	write_completion := write_memory(&writer, scratch[:], value, BIG_ENDIAN)
+	if write_completion.Error != failure {
 		t.Fatal("Write replaced writer failure")
 	}
 }
@@ -529,7 +575,7 @@ type varint_reader struct {
 // Explicit Position reset keeps repeated allocation runs independent.
 func read_varint_byte(reader *varint_reader) (value byte, err error) {
 	if reader.Position == len(reader.Source) {
-		return 0, io.EOF
+		return 0, nbio.Stream_EOF
 	}
 	value = reader.Source[reader.Position]
 	reader.Position++
@@ -544,7 +590,10 @@ type allocation_fixture struct {
 	Decoded          structure
 	Words            [TEST_PAIR_COUNT]uint32
 	Decoded_Words    [TEST_PAIR_COUNT]uint32
-	Reader           varint_reader
+	Decoded_Word_Set []uint32
+	Varint_Reader    varint_reader
+	Reader           Reader
+	Writer           Writer
 	Bytes            Nonempty_Bytes
 	Uint_16_Bytes    Uint_16_Bytes
 	Uint_32_Bytes    Uint_32_Bytes
@@ -569,11 +618,15 @@ func Test_Zero_Allocation(t *testing.T) {
 		Structure: structure_value(),
 		Words:     [TEST_PAIR_COUNT]uint32{1, 2},
 	}
+	fixture.Decoded_Word_Set = fixture.Decoded_Words[:]
 	encoded := big_structure_bytes()
 	copy(fixture.Storage[:], encoded[:])
 	fixture.Stream.Source = fixture.Storage[:len(encoded)]
-	fixture.Reader.Source = fixture.Storage[:VARINT_SIZE_64_MAXIMUM]
+	fixture.Varint_Reader.Source = fixture.Storage[:VARINT_SIZE_64_MAXIMUM]
 	fixture.Storage[0] = 1
+	stream := memory_to_stream(&fixture.Stream)
+	Reader_Init(&fixture.Reader, stream, fixture.Scratch[:])
+	Writer_Init(&fixture.Writer, stream, fixture.Scratch[:])
 	groups := [...][]allocation_case{
 		allocation_fixed_checks(&fixture),
 		allocation_varint_checks(&fixture),
@@ -583,13 +636,7 @@ func Test_Zero_Allocation(t *testing.T) {
 	for _, group := range groups {
 		for _, check := range group {
 			t.Run(check.Name, func(t *testing.T) {
-				allocations := testing.AllocsPerRun(100, check.Run)
-				if allocations != 0 {
-					t.Errorf(
-						"%s allocated %v times; want 0",
-						check.Name, allocations,
-					)
-				}
+				testify.Zero_Allocation(t, check.Run, check.Name)
 			})
 		}
 	}
@@ -677,15 +724,15 @@ func allocation_varint_checks(
 			)
 		}},
 		{Name: "Read_Unsigned_Varint", Run: func() {
-			fixture.Reader.Position = 0
+			fixture.Varint_Reader.Position = 0
 			fixture.Uint64, fixture.Error = Read_Unsigned_Varint(
-				&fixture.Reader, read_varint_byte,
+				&fixture.Varint_Reader, read_varint_byte,
 			)
 		}},
 		{Name: "Read_Varint", Run: func() {
-			fixture.Reader.Position = 0
+			fixture.Varint_Reader.Position = 0
 			fixture.Signed, fixture.Error = Read_Varint(
-				&fixture.Reader, read_varint_byte,
+				&fixture.Varint_Reader, read_varint_byte,
 			)
 		}},
 	}
@@ -715,15 +762,19 @@ func allocation_structured_checks(
 		}},
 		{Name: "Read", Run: func() {
 			fixture.Stream.Position = 0
-			fixture.Error = Read(
-				&fixture.Stream, fixture.Scratch[:], &fixture.Decoded, BIG_ENDIAN,
+			Read(
+				&fixture.Reader, &fixture.Reader.Completion, &fixture.Decoded,
+				BIG_ENDIAN, memory_completion,
 			)
+			fixture.Error = fixture.Reader.Completion.Error
 		}},
 		{Name: "Write", Run: func() {
 			fixture.Stream.Written = 0
-			fixture.Error = Write(
-				&fixture.Stream, fixture.Scratch[:], &fixture.Structure, BIG_ENDIAN,
+			Write(
+				&fixture.Writer, &fixture.Writer.Completion, &fixture.Structure,
+				BIG_ENDIAN, memory_completion,
 			)
+			fixture.Error = fixture.Writer.Completion.Error
 		}},
 	}
 }
@@ -760,16 +811,19 @@ func allocation_structured_shape_checks(
 		}},
 		{Name: "Read_Slice", Run: func() {
 			fixture.Stream.Position = 0
-			fixture.Error = Read(
-				&fixture.Stream, fixture.Scratch[:],
-				fixture.Decoded_Words[:], BIG_ENDIAN,
+			Read(
+				&fixture.Reader, &fixture.Reader.Completion,
+				&fixture.Decoded_Word_Set, BIG_ENDIAN, memory_completion,
 			)
+			fixture.Error = fixture.Reader.Completion.Error
 		}},
 		{Name: "Write_Value", Run: func() {
 			fixture.Stream.Written = 0
-			fixture.Error = Write(
-				&fixture.Stream, fixture.Scratch[:], fixture.Structure, BIG_ENDIAN,
+			Write(
+				&fixture.Writer, &fixture.Writer.Completion, fixture.Structure,
+				BIG_ENDIAN, memory_completion,
 			)
+			fixture.Error = fixture.Writer.Completion.Error
 		}},
 	}
 }

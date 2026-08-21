@@ -29,8 +29,9 @@ caller storage; invalid grammar returns Error_Invalid_Type or VALUE_SIZE_INVALID
 
 # Stream IO
 
-Read and Write use caller scratch storage sized for structured value. Read preserves io.EOF and
-io.ErrUnexpectedEOF behavior. Reader and writer determine their own I/O errors.
+Reader and Writer bind injected nbio.Stream transport and caller scratch. Operations retire through
+caller-owned completions without driving timeline. Read joins partial transfers before decode and
+requires pointer destination. Empty source is Stream_EOF; truncated source is Stream_Unexpected_EOF.
 
 # Varints
 
