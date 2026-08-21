@@ -22,7 +22,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"unsafe"
 )
 
 // ASSERTION_FAILURE_MESSAGE_PREFIX opens every assertion-failure message.
@@ -312,20 +311,6 @@ type Plan_Key struct {
 	Package string
 	// Type is the subject type's name, from reflect.Type.Name.
 	Type string
-}
-
-// Assertion_Builder is the complete deferred runtime state. Fixed observations make escape and
-// allocation unnecessary even at the largest supported chain.
-type Assertion_Builder struct {
-	// Context holds ordinary namespace bytes or a recording plan. State_A and State_B interpret
-	// that pointer as a tagged union: namespace length plus failure for enforcement, or packed
-	// observations, ordinal, and failure for recording. The states are mutually exclusive, so
-	// carrying both representations through every fluent return would be pure overhead.
-	Context unsafe.Pointer
-	// State_A holds the namespace length or the first 64 observations selected by Context.
-	State_A uintptr
-	// State_B holds the union tag, deferred failure, ordinal, and remaining observations.
-	State_B uintptr
 }
 
 // Assertion_Plan is registration's immutable emission program for one chain.
