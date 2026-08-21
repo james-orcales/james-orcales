@@ -1318,6 +1318,10 @@ func Cache_Timeline_Invariants(timeline Cache_Timeline, _ invariant.Namespace) {
 		"A cache timeline timeout matches initialization state.",
 	)
 	invariant.Always(
+		(timeline.Stop_Timer == nil) == empty,
+		"A cache timeline timer stop matches initialization state.",
+	)
+	invariant.Always(
 		(timeline.Open_Event == nil) == empty,
 		"A cache timeline event opener matches initialization state.",
 	)

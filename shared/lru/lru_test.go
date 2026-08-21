@@ -446,7 +446,7 @@ func Test_Two_Queue_Random_Ops(t *testing.T) {
 	generator := prng.New(3)
 	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: Capacity(size)})
 	for op_index := 0; op_index < 200000; op_index++ {
-		key := prng.Generator_Below(&generator, 512)
+		key := int(prng.Generator_Below(&generator, 512))
 		switch prng.Generator_Below(&generator, 3) {
 		case 0:
 			Two_Queue_Add(c, key, key)
@@ -1004,7 +1004,7 @@ func Test_Simple_Operations_Allocation_Free(t *testing.T) {
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
-		key := prng.Generator_Below(&generator, 256)
+		key := int(prng.Generator_Below(&generator, 256))
 		Simple_Add(c, key, key)
 		Simple_Get(c, key)
 		Simple_Peek(c, key)
@@ -1075,7 +1075,7 @@ func Test_Two_Queue_Operations_Allocation_Free(t *testing.T) {
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
-		key := prng.Generator_Below(&generator, 256)
+		key := int(prng.Generator_Below(&generator, 256))
 		Two_Queue_Add(c, key, key)
 		Two_Queue_Get(c, key)
 		Two_Queue_Peek(c, key)
@@ -1107,7 +1107,7 @@ func Test_Expirable_Operations_Allocation_Free(t *testing.T) {
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
-		key := prng.Generator_Below(&generator, 256)
+		key := int(prng.Generator_Below(&generator, 256))
 		Expirable_Add(c, key, key)
 		Expirable_Get(c, key)
 		Expirable_Peek(c, key)
@@ -1600,11 +1600,18 @@ func invariant_timeline() (timeline time.Timeline) {
 	return time.Timeline{
 		Submit:        invariant_timeout,
 		Timeout:       invariant_timeout,
+		Stop_Timer:    invariant_stop_timer,
 		Open_Event:    invariant_open_event,
 		Event_Listen:  invariant_event_listen,
 		Event_Trigger: invariant_event_trigger,
 		Close_Event:   invariant_close_event,
 	}
+}
+
+func invariant_stop_timer(
+	_ unsafe.Pointer, _ *time.Completion,
+) (stopped bool) {
+	return false
 }
 
 // Invariant monotonic clock returns boot moment.
@@ -1652,7 +1659,7 @@ func Benchmark_Simple_Random(b *testing.B) {
 	c := new_simple_cache[int, int](COUNT_MAXIMUM, nil)
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
-		key := prng.Generator_Below(&generator, 32768)
+		key := int(prng.Generator_Below(&generator, 32768))
 		if op_index%2 == 0 {
 			Simple_Add(c, key, key)
 		} else {
@@ -1668,9 +1675,9 @@ func Benchmark_Simple_Frequent(b *testing.B) {
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		if op_index%2 == 0 {
-			Simple_Add(c, prng.Generator_Below(&generator, 16384), op_index)
+			Simple_Add(c, int(prng.Generator_Below(&generator, 16384)), op_index)
 		} else {
-			Simple_Get(c, prng.Generator_Below(&generator, 32768))
+			Simple_Get(c, int(prng.Generator_Below(&generator, 32768)))
 		}
 	}
 }
@@ -1681,7 +1688,7 @@ func Benchmark_Two_Queue_Random(b *testing.B) {
 	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: COUNT_MAXIMUM})
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
-		key := prng.Generator_Below(&generator, 32768)
+		key := int(prng.Generator_Below(&generator, 32768))
 		if op_index%2 == 0 {
 			Two_Queue_Add(c, key, key)
 		} else {
@@ -1697,9 +1704,9 @@ func Benchmark_Two_Queue_Frequent(b *testing.B) {
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		if op_index%2 == 0 {
-			Two_Queue_Add(c, prng.Generator_Below(&generator, 16384), op_index)
+			Two_Queue_Add(c, int(prng.Generator_Below(&generator, 16384)), op_index)
 		} else {
-			Two_Queue_Get(c, prng.Generator_Below(&generator, 32768))
+			Two_Queue_Get(c, int(prng.Generator_Below(&generator, 32768)))
 		}
 	}
 }
@@ -1717,7 +1724,7 @@ func Benchmark_Expirable_Random(b *testing.B) {
 	})
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
-		key := prng.Generator_Below(&generator, 32768)
+		key := int(prng.Generator_Below(&generator, 32768))
 		if op_index%2 == 0 {
 			Expirable_Add(c, key, key)
 		} else {
