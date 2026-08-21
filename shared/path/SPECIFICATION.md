@@ -18,7 +18,7 @@ Join ignores empty elements, inserts slash between retained elements, then appli
 
 Match implements Go path shell grammar. Star never crosses slash. Question mark consumes one UTF-8
 character except slash. Classes support negation, escaped members, and inclusive ranges. Malformed
-patterns return Error_Bad_Pattern.
+pattern returns Error_Bad_Pattern.
 
 # Bounds
 

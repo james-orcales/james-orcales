@@ -24,29 +24,17 @@ const NONEMPTY_SIZE_MINIMUM = 1
 // PATH_TERMINATOR_BYTES reserves one kernel C-string NUL outside pathname text.
 const PATH_TERMINATOR_BYTES = 1
 
-// MATCH_RESULT_INDEX locates sole bounded helper result.
-const MATCH_RESULT_INDEX = 0
-
-// MATCH_RESULT_COUNT gives internal helpers one bounded result slot.
-const MATCH_RESULT_COUNT = MATCH_RESULT_INDEX + NONEMPTY_SIZE_MINIMUM
-
 // MATCH_STAR_INDEX_ABSENT keeps simple classification distinct from first-byte star.
-const MATCH_STAR_INDEX_ABSENT = -NONEMPTY_SIZE_MINIMUM
+const MATCH_STAR_INDEX_ABSENT Match_Star_Index = -NONEMPTY_SIZE_MINIMUM
 
-// MATCH_CLASSIFICATION_STAR_INDEX locates simple star position.
-const MATCH_CLASSIFICATION_STAR_INDEX = 0
+// MATCH_STAR_INDEX_MAXIMUM keeps final star inside bounded pattern.
+const MATCH_STAR_INDEX_MAXIMUM = PATH_SIZE_MAXIMUM - NONEMPTY_SIZE_MINIMUM
 
-// MATCH_CLASSIFICATION_QUESTION_INDEX follows star position.
-const MATCH_CLASSIFICATION_QUESTION_INDEX = MATCH_CLASSIFICATION_STAR_INDEX + 1
-
-// MATCH_CLASSIFICATION_GENERIC_INDEX follows question presence.
-const MATCH_CLASSIFICATION_GENERIC_INDEX = MATCH_CLASSIFICATION_QUESTION_INDEX + 1
-
-// MATCH_CLASSIFICATION_COUNT bounds classification state.
-const MATCH_CLASSIFICATION_COUNT = MATCH_CLASSIFICATION_GENERIC_INDEX + 1
+// MATCH_PATTERN_SIZE_MINIMUM gives two operators enough bytes to interact.
+const MATCH_PATTERN_SIZE_MINIMUM = 2
 
 // MATCH_CLASSIFICATION_GENERIC_ABSENT keeps literal and single wildcard paths direct.
-const MATCH_CLASSIFICATION_GENERIC_ABSENT = 0
+const MATCH_CLASSIFICATION_GENERIC_ABSENT Match_Generic = 0
 
 // MATCH_CLASSIFICATION_GENERIC_PATTERN routes interacting wildcard operators.
 const MATCH_CLASSIFICATION_GENERIC_PATTERN = MATCH_CLASSIFICATION_GENERIC_ABSENT + 1
@@ -69,6 +57,9 @@ const CLASS_TAIL_SIZE_MAXIMUM = TAIL_SIZE_MAXIMUM - NONEMPTY_SIZE_MINIMUM
 // CLASS_MATCH_TAIL_SIZE_MAXIMUM leaves opening bracket, member, and closing bracket.
 const CLASS_MATCH_TAIL_SIZE_MAXIMUM = CLASS_TAIL_SIZE_MAXIMUM - NONEMPTY_SIZE_MINIMUM
 
+// CLASS_RANGE_REST_SIZE_MAXIMUM leaves opening bracket, two members, and closing bracket.
+const CLASS_RANGE_REST_SIZE_MAXIMUM = CLASS_MATCH_TAIL_SIZE_MAXIMUM - NONEMPTY_SIZE_MINIMUM
+
 // Error_Bad_Pattern keeps malformed shell grammar error stable.
 var Error_Bad_Pattern = errors.New("syntax error in pattern")
 
@@ -80,6 +71,135 @@ func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A path decision is true.").
 		Ensure()
+}
+
+// Match_Star_Index identifies first star or explicit absence.
+type Match_Star_Index int
+
+// Match_Star_Index_Invariants spans absence through final pattern byte.
+func Match_Star_Index_Invariants(value Match_Star_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), int(MATCH_STAR_INDEX_ABSENT), MATCH_STAR_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Match_Generic selects matcher needed beyond literal, star, or question fast paths.
+type Match_Generic uint8
+
+// Match_Generic_Invariants covers every generic matcher class.
+func Match_Generic_Invariants(value Match_Generic, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_4_Uint8(
+			uint8(value), uint8(MATCH_CLASSIFICATION_GENERIC_ABSENT),
+			uint8(MATCH_CLASSIFICATION_GENERIC_PATTERN),
+			uint8(MATCH_CLASSIFICATION_GENERIC_CLASS),
+			uint8(MATCH_CLASSIFICATION_GENERIC_ESCAPE),
+		).
+		Ensure()
+}
+
+// Match_Text holds a fragment of one validated matcher input.
+type Match_Text string
+
+// Match_Text_Invariants spans every fragment of one validated matcher input.
+func Match_Text_Invariants(value Match_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Nonempty_Text holds a fragment known to contain matcher work.
+type Match_Nonempty_Text string
+
+// Match_Nonempty_Text_Invariants excludes exhausted matcher input.
+func Match_Nonempty_Text_Invariants(value Match_Nonempty_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Pattern_Text holds generic matcher input with interacting operators.
+type Match_Pattern_Text string
+
+// Match_Pattern_Text_Invariants requires the two bytes needed to interact.
+func Match_Pattern_Text_Invariants(value Match_Pattern_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), MATCH_PATTERN_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Tail holds matcher input after at least one consumed byte.
+type Match_Tail string
+
+// Match_Tail_Invariants accounts for the byte preceding every tail.
+func Match_Tail_Invariants(value Match_Tail, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), PATH_SIZE_MINIMUM, TAIL_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Nonempty_Tail holds remaining matcher input after one consumed byte.
+type Match_Nonempty_Tail string
+
+// Match_Nonempty_Tail_Invariants excludes exhausted matcher tails.
+func Match_Nonempty_Tail_Invariants(
+	value Match_Nonempty_Tail, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, TAIL_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Class_Tail holds class input after opening bracket and one member byte.
+type Match_Class_Tail string
+
+// Match_Class_Tail_Invariants accounts for both consumed class bytes.
+func Match_Class_Tail_Invariants(value Match_Class_Tail, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), PATH_SIZE_MINIMUM, CLASS_TAIL_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Class_Rest holds pattern input after one complete class.
+type Match_Class_Rest string
+
+// Match_Class_Rest_Invariants accounts for opening bracket, member, and closing bracket.
+func Match_Class_Rest_Invariants(value Match_Class_Rest, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), PATH_SIZE_MINIMUM, CLASS_MATCH_TAIL_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Range_Rest holds pattern input after one class handled by the range parser.
+type Match_Range_Rest string
+
+// Match_Range_Rest_Invariants accounts for the range parser's two members and delimiters.
+func Match_Range_Rest_Invariants(value Match_Range_Rest, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), PATH_SIZE_MINIMUM, CLASS_RANGE_REST_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Match_Character_Text holds one encoded matcher character or failed empty output.
+type Match_Character_Text string
+
+// Match_Character_Text_Invariants spans malformed empty output through one encoded character.
+func Match_Character_Text_Invariants(
+	value Match_Character_Text, namespace aver.Namespace,
+) {
+	aver.Tree(value, namespace).
+		Range_Int(
+			len(value), PATH_SIZE_MINIMUM, int(utf8.CHARACTER_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Clean_Storage holds one complete bounded path during normalization.
+type Clean_Storage bytes.Slice
+
+// Clean_Storage_Invariants preserves the scratch capacity required by every cleaner branch.
+func Clean_Storage_Invariants(value Clean_Storage, _ aver.Namespace) {
+	aver.Always(len(value) == PATH_SIZE_MAXIMUM, "Clean storage has exact path capacity.")
 }
 
 // Elements bounds even empty Join_Into inputs, because empty values still consume work.
@@ -138,10 +258,11 @@ func Clean_Into(destination bytes.Slice, value Text) (count Nonempty_Count) {
 	bytes.Slice_Invariants(destination, "clean_into.destination")
 	Text_Invariants(value, "clean_into.value")
 	var storage [PATH_SIZE_MAXIMUM]byte
-	count = clean_text(&storage, value)
-	if len(destination) < int(count) {
-		panic("path: destination too small")
-	}
+	count = clean_text(Clean_Storage(storage[:]), value)
+	aver.Always(
+		len(destination) >= int(count),
+		"Path clean destination holds complete result.",
+	)
 	copy(destination, storage[:int(count)])
 	return count
 }
@@ -174,24 +295,27 @@ func Join_Into(destination bytes.Slice, elements Elements) (count Boundary) {
 				continue
 			}
 		} else {
-			if raw_count == len(storage) {
-				panic("path: joined path outside bounds")
-			}
+			aver.Always(
+				raw_count < len(storage),
+				"Path join storage has room for separator.",
+			)
 			storage[raw_count] = '/'
 			raw_count++
 		}
-		if len(element) > len(storage)-raw_count {
-			panic("path: joined path outside bounds")
-		}
+		aver.Always(
+			len(element) <= len(storage)-raw_count,
+			"Path join storage has room for element.",
+		)
 		raw_count += copy(storage[raw_count:], element)
 	}
 	if raw_count == 0 {
 		return 0
 	}
-	count = Boundary(clean_joined(&storage, Nonempty_Count(raw_count)))
-	if len(destination) < int(count) {
-		panic("path: destination too small")
-	}
+	count = Boundary(clean_joined(Clean_Storage(storage[:]), Nonempty_Count(raw_count)))
+	aver.Always(
+		len(destination) >= int(count),
+		"Path join destination holds complete result.",
+	)
 	copy(destination, storage[:count])
 	return count
 }
@@ -243,10 +367,11 @@ func Directory_Into(destination bytes.Slice, value Text) (count Directory_Count)
 	Text_Invariants(value, "directory_into.value")
 	directory, _ := Split(value)
 	var storage [PATH_SIZE_MAXIMUM]byte
-	count = Directory_Count(clean_text(&storage, directory))
-	if len(destination) < int(count) {
-		panic("path: destination too small")
-	}
+	count = Directory_Count(clean_text(Clean_Storage(storage[:]), directory))
+	aver.Always(
+		len(destination) >= int(count),
+		"Path directory destination holds complete result.",
+	)
 	copy(destination, storage[:int(count)])
 	return count
 }
@@ -256,181 +381,178 @@ func Match(pattern Text, name Text) (matched Boolean, err error) {
 	defer func() { Boolean_Invariants(matched, "match.matched") }()
 	Text_Invariants(pattern, "match.pattern")
 	Text_Invariants(name, "match.name")
-	if pattern == "*" {
-		result := match_trailing_star([MATCH_RESULT_COUNT]Text{name})
-		return result[MATCH_RESULT_INDEX], nil
+	matched, malformed := match(pattern, name)
+	if malformed {
+		return false, Error_Bad_Pattern
 	}
-	classification := classify_match(
-		[MATCH_RESULT_COUNT]Text{pattern},
-	)
-	star_index := classification[MATCH_CLASSIFICATION_STAR_INDEX]
-	question := classification[MATCH_CLASSIFICATION_QUESTION_INDEX] != 0
-	generic := classification[MATCH_CLASSIFICATION_GENERIC_INDEX]
+	return matched, nil
+}
+
+func match(pattern Text, name Text) (matched Boolean, malformed Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "match_internal.matched")
+		Boolean_Invariants(malformed, "match_internal.malformed")
+	}()
+	Text_Invariants(pattern, "match_internal.pattern")
+	Text_Invariants(name, "match_internal.name")
+	if pattern == "*" {
+		return match_trailing_star(Match_Text(name)), false
+	}
+	star_index, question, generic := classify_match(pattern)
 	if star_index >= 0 {
 		if question {
 			generic = MATCH_CLASSIFICATION_GENERIC_PATTERN
 		}
 	}
 	if generic == MATCH_CLASSIFICATION_GENERIC_CLASS {
-		result, handled, match_error := match_simple_class(
-			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
+		result, handled, match_malformed := match_simple_class(
+			Match_Nonempty_Text(pattern), Match_Text(name),
 		)
-		if handled[MATCH_RESULT_INDEX] {
-			return result[MATCH_RESULT_INDEX], match_error
+		if handled {
+			return result, match_malformed
 		}
 	}
 	if generic == MATCH_CLASSIFICATION_GENERIC_ESCAPE {
-		result, handled, match_error := match_simple_escape(
-			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
+		result, handled, match_malformed := match_simple_escape(
+			Match_Nonempty_Text(pattern), Match_Text(name),
 		)
-		if handled[MATCH_RESULT_INDEX] {
-			return result[MATCH_RESULT_INDEX], match_error
+		if handled {
+			return result, match_malformed
 		}
 	}
 	if generic != MATCH_CLASSIFICATION_GENERIC_ABSENT {
-		result, match_error := match_pattern(
-			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
-		)
-		return result[MATCH_RESULT_INDEX], match_error
+		return match_pattern(Match_Pattern_Text(pattern), Match_Text(name))
 	}
 	if star_index >= 0 {
 		prefix := pattern[:star_index]
 		suffix := pattern[star_index+NONEMPTY_SIZE_MINIMUM:]
 		if len(name) < len(pattern)-NONEMPTY_SIZE_MINIMUM {
-			return false, nil
+			return false, false
 		}
 		if name[:len(prefix)] != prefix {
-			return false, nil
+			return false, false
 		}
 		suffix_start := len(name) - len(suffix)
 		if name[suffix_start:] != suffix {
-			return false, nil
+			return false, false
 		}
 		for count := len(prefix); count < suffix_start; count++ {
 			if name[count] == '/' {
-				return false, nil
+				return false, false
 			}
 		}
-		return true, nil
+		return true, false
 	}
 	if question {
-		result := match_simple_question(
-			[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{name},
-		)
-		return result[MATCH_RESULT_INDEX], nil
+		return match_simple_question(Match_Nonempty_Text(pattern), Match_Text(name)), false
 	}
-	return pattern == name, nil
+	return pattern == name, false
 }
 
 func match_pattern(
-	pattern_value [MATCH_RESULT_COUNT]Text, name_value [MATCH_RESULT_COUNT]Text,
-) (matched [MATCH_RESULT_COUNT]Boolean, err error) {
-	pattern := pattern_value[MATCH_RESULT_INDEX]
-	name := name_value[MATCH_RESULT_INDEX]
+	pattern Match_Pattern_Text, name Match_Text,
+) (matched Boolean, malformed Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "match_pattern.matched")
+		Boolean_Invariants(malformed, "match_pattern.malformed")
+	}()
+	Match_Pattern_Text_Invariants(pattern, "match_pattern.pattern")
+	Match_Text_Invariants(name, "match_pattern.name")
+	remaining_pattern := Match_Text(pattern)
 Pattern:
-	for len(pattern) > 0 {
-		star_result, chunk_result, pattern_result := scan_match_chunk(
-			[MATCH_RESULT_COUNT]Text{pattern},
+	for len(remaining_pattern) > 0 {
+		star, chunk, pattern_result := scan_match_chunk(
+			Match_Nonempty_Text(remaining_pattern),
 		)
-		star := star_result[MATCH_RESULT_INDEX]
-		chunk := chunk_result[MATCH_RESULT_INDEX]
-		pattern = pattern_result[MATCH_RESULT_INDEX]
+		remaining_pattern = Match_Text(pattern_result)
 		if star {
 			if chunk == "" {
-				result := match_trailing_star([MATCH_RESULT_COUNT]Text{name})
-				return result, nil
+				return match_trailing_star(name), false
 			}
 		}
-		rest_result, okay_result, chunk_error := match_text_chunk(
-			[MATCH_RESULT_COUNT]Text{chunk}, [MATCH_RESULT_COUNT]Text{name},
-		)
-		rest := rest_result[MATCH_RESULT_INDEX]
-		okay := okay_result[MATCH_RESULT_INDEX]
+		rest, okay, chunk_malformed := match_text_chunk(chunk, name)
 		if okay {
 			if len(rest) == 0 {
-				name = rest
+				name = Match_Text(rest)
 				continue
 			}
-			if len(pattern) > 0 {
-				name = rest
+			if len(remaining_pattern) > 0 {
+				name = Match_Text(rest)
 				continue
 			}
 		}
-		if chunk_error != nil {
-			return [MATCH_RESULT_COUNT]Boolean{false}, chunk_error
+		if chunk_malformed {
+			return false, true
 		}
 		if star {
 			for index := 0; index < len(name); index++ {
 				if name[index] == '/' {
 					break
 				}
-				rest_result, okay_result, chunk_error = match_text_chunk(
-					[MATCH_RESULT_COUNT]Text{chunk},
-					[MATCH_RESULT_COUNT]Text{name[index+1:]},
+				rest, okay, chunk_malformed = match_text_chunk(
+					chunk, name[index+1:],
 				)
-				rest = rest_result[MATCH_RESULT_INDEX]
-				okay = okay_result[MATCH_RESULT_INDEX]
 				if okay {
-					if len(pattern) == 0 {
+					if len(remaining_pattern) == 0 {
 						if len(rest) > 0 {
 							continue
 						}
 					}
-					name = rest
+					name = Match_Text(rest)
 					continue Pattern
 				}
-				if chunk_error != nil {
-					return [MATCH_RESULT_COUNT]Boolean{false}, chunk_error
+				if chunk_malformed {
+					return false, true
 				}
 			}
 		}
-		validation_input := [MATCH_RESULT_COUNT]Text{pattern}
-		validation_error := match_validate_rest(validation_input)
-		if validation_error != nil {
-			return [MATCH_RESULT_COUNT]Boolean{false}, validation_error
+		invalid_rest := match_validate_rest(Match_Tail(remaining_pattern))
+		if invalid_rest {
+			return false, true
 		}
-		return [MATCH_RESULT_COUNT]Boolean{false}, nil
+		return false, false
 	}
-	return [MATCH_RESULT_COUNT]Boolean{Boolean(len(name) == 0)}, nil
+	return Boolean(len(name) == 0), false
 }
 
-func classify_match(pattern_value [MATCH_RESULT_COUNT]Text) (
-	classification [MATCH_CLASSIFICATION_COUNT]int,
-) {
-	pattern := pattern_value[MATCH_RESULT_INDEX]
-	star_index := MATCH_STAR_INDEX_ABSENT
-	question := 0
+func classify_match(
+	pattern Text,
+) (star_index Match_Star_Index, question Boolean, generic Match_Generic) {
+	defer func() {
+		Match_Star_Index_Invariants(star_index, "classify_match.star_index")
+		Boolean_Invariants(question, "classify_match.question")
+		Match_Generic_Invariants(generic, "classify_match.generic")
+	}()
+	Text_Invariants(pattern, "classify_match.pattern")
+	star_index = MATCH_STAR_INDEX_ABSENT
 	for index := 0; index < len(pattern); index++ {
 		switch pattern[index] {
 		case '\\':
-			return [MATCH_CLASSIFICATION_COUNT]int{
-				star_index, question, MATCH_CLASSIFICATION_GENERIC_ESCAPE,
-			}
+			return star_index, question, MATCH_CLASSIFICATION_GENERIC_ESCAPE
 		case '[':
-			return [MATCH_CLASSIFICATION_COUNT]int{
-				star_index, question, MATCH_CLASSIFICATION_GENERIC_CLASS,
-			}
+			return star_index, question, MATCH_CLASSIFICATION_GENERIC_CLASS
 		case '?':
-			question = NONEMPTY_SIZE_MINIMUM
+			question = true
 		case '*':
 			if star_index >= 0 {
-				return [MATCH_CLASSIFICATION_COUNT]int{
-					star_index, question, MATCH_CLASSIFICATION_GENERIC_PATTERN,
-				}
+				return star_index, question, MATCH_CLASSIFICATION_GENERIC_PATTERN
 			}
-			star_index = index
+			star_index = Match_Star_Index(index)
 		}
 	}
-	return [MATCH_CLASSIFICATION_COUNT]int{
-		star_index, question, MATCH_CLASSIFICATION_GENERIC_ABSENT,
-	}
+	return star_index, question, MATCH_CLASSIFICATION_GENERIC_ABSENT
 }
 
 func match_simple_escape(
-	pattern_value, name_value [MATCH_RESULT_COUNT]Text,
-) (matched, handled [MATCH_RESULT_COUNT]Boolean, err error) {
-	pattern := pattern_value[MATCH_RESULT_INDEX]
-	name := name_value[MATCH_RESULT_INDEX]
+	pattern Match_Nonempty_Text, name Match_Text,
+) (matched Boolean, handled Boolean, malformed Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "match_simple_escape.matched")
+		Boolean_Invariants(handled, "match_simple_escape.handled")
+		Boolean_Invariants(malformed, "match_simple_escape.malformed")
+	}()
+	Match_Nonempty_Text_Invariants(pattern, "match_simple_escape.pattern")
+	Match_Text_Invariants(name, "match_simple_escape.name")
 	name_index := 0
 	failed := false
 	for pattern_index := 0; pattern_index < len(pattern); pattern_index++ {
@@ -438,15 +560,13 @@ func match_simple_escape(
 		if character == '\\' {
 			pattern_index++
 			if pattern_index == len(pattern) {
-				return [MATCH_RESULT_COUNT]Boolean{false},
-					[MATCH_RESULT_COUNT]Boolean{true}, Error_Bad_Pattern
+				return false, true, true
 			}
 			character = pattern[pattern_index]
 		} else {
 			switch character {
 			case '*', '?', '[':
-				return [MATCH_RESULT_COUNT]Boolean{false},
-					[MATCH_RESULT_COUNT]Boolean{false}, nil
+				return false, false, false
 			}
 		}
 		if name_index == len(name) {
@@ -458,73 +578,73 @@ func match_simple_escape(
 	}
 	matched_value := Boolean(name_index == len(name))
 	matched_value = matched_value && Boolean(!failed)
-	return [MATCH_RESULT_COUNT]Boolean{matched_value},
-		[MATCH_RESULT_COUNT]Boolean{true}, nil
+	return matched_value, true, false
 }
 
 func match_simple_class(
-	pattern_value, name_value [MATCH_RESULT_COUNT]Text,
-) (matched, handled [MATCH_RESULT_COUNT]Boolean, err error) {
-	pattern := pattern_value[MATCH_RESULT_INDEX]
-	name := name_value[MATCH_RESULT_INDEX]
+	pattern Match_Nonempty_Text, name Match_Text,
+) (matched Boolean, handled Boolean, malformed Boolean) {
+	defer func() {
+		Boolean_Invariants(matched, "match_simple_class.matched")
+		Boolean_Invariants(handled, "match_simple_class.handled")
+		Boolean_Invariants(malformed, "match_simple_class.malformed")
+	}()
+	Match_Nonempty_Text_Invariants(pattern, "match_simple_class.pattern")
+	Match_Text_Invariants(name, "match_simple_class.name")
 	class_start := 0
 	for pattern[class_start] != '[' {
 		class_start++
 	}
-	candidate := Text("")
+	candidate := Match_Text("")
 	if class_start < len(name) {
 		candidate = name[class_start:]
 	}
-	class_rest, member_result, negated_result, class_error := match_class(
-		[MATCH_RESULT_COUNT]Text{pattern[class_start+NONEMPTY_SIZE_MINIMUM:]},
-		[MATCH_RESULT_COUNT]Text{candidate},
+	class_rest, member_result, negated_result, class_malformed := match_class(
+		Match_Tail(pattern[class_start+NONEMPTY_SIZE_MINIMUM:]), candidate,
 	)
-	if class_error != nil {
-		return [MATCH_RESULT_COUNT]Boolean{false},
-			[MATCH_RESULT_COUNT]Boolean{true}, class_error
+	if class_malformed {
+		return false, true, true
 	}
-	rest := class_rest[MATCH_RESULT_INDEX]
+	rest := Match_Text(class_rest)
 	for index := 0; index < len(rest); index++ {
 		switch rest[index] {
 		case '*', '?', '\\', '[':
-			return [MATCH_RESULT_COUNT]Boolean{false},
-				[MATCH_RESULT_COUNT]Boolean{false}, nil
+			return false, false, false
 		}
 	}
 	if len(name) <= class_start {
-		return [MATCH_RESULT_COUNT]Boolean{false}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+		return false, true, false
 	}
-	if name[:class_start] != pattern[:class_start] {
-		return [MATCH_RESULT_COUNT]Boolean{false}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+	if name[:class_start] != Match_Text(pattern[:class_start]) {
+		return false, true, false
 	}
 	candidate_count := int(utf8.CHARACTER_SIZE_MINIMUM)
 	if name[class_start] >= byte(utf8.CHARACTER_SELF) {
 		_, decoded_size := utf8.Decode_Character_Text(utf8.Text(name[class_start:]))
 		candidate_count = int(decoded_size)
 	}
-	if member_result[MATCH_RESULT_INDEX] == negated_result[MATCH_RESULT_INDEX] {
-		return [MATCH_RESULT_COUNT]Boolean{false}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+	if member_result == negated_result {
+		return false, true, false
 	}
 	name_rest := name[class_start+candidate_count:]
-	return [MATCH_RESULT_COUNT]Boolean{Boolean(name_rest == rest)},
-		[MATCH_RESULT_COUNT]Boolean{true}, nil
+	return Boolean(name_rest == rest), true, false
 }
 
 func match_simple_question(
-	pattern_value [MATCH_RESULT_COUNT]Text,
-	name_value [MATCH_RESULT_COUNT]Text,
-) (matched [MATCH_RESULT_COUNT]Boolean) {
-	pattern := pattern_value[MATCH_RESULT_INDEX]
-	name := name_value[MATCH_RESULT_INDEX]
+	pattern Match_Nonempty_Text, name Match_Text,
+) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "match_simple_question.matched") }()
+	Match_Nonempty_Text_Invariants(pattern, "match_simple_question.pattern")
+	Match_Text_Invariants(name, "match_simple_question.name")
 	pattern_index := 0
 	name_index := 0
 	for pattern_index < len(pattern) {
 		if name_index == len(name) {
-			return [MATCH_RESULT_COUNT]Boolean{false}
+			return false
 		}
 		if pattern[pattern_index] == '?' {
 			if name[name_index] == '/' {
-				return [MATCH_RESULT_COUNT]Boolean{false}
+				return false
 			}
 			size := int(utf8.CHARACTER_SIZE_MINIMUM)
 			if name[name_index] >= byte(utf8.CHARACTER_SELF) {
@@ -538,49 +658,49 @@ func match_simple_question(
 			continue
 		}
 		if pattern[pattern_index] != name[name_index] {
-			return [MATCH_RESULT_COUNT]Boolean{false}
+			return false
 		}
 		pattern_index++
 		name_index++
 	}
-	return [MATCH_RESULT_COUNT]Boolean{Boolean(name_index == len(name))}
+	return Boolean(name_index == len(name))
 }
 
-func match_trailing_star(
-	name_value [MATCH_RESULT_COUNT]Text,
-) (matched [MATCH_RESULT_COUNT]Boolean) {
-	name := name_value[MATCH_RESULT_INDEX]
+func match_trailing_star(name Match_Text) (matched Boolean) {
+	defer func() { Boolean_Invariants(matched, "match_trailing_star.matched") }()
+	Match_Text_Invariants(name, "match_trailing_star.name")
 	for index := 0; index < len(name); index++ {
 		if name[index] == '/' {
-			return [MATCH_RESULT_COUNT]Boolean{false}
+			return false
 		}
 	}
-	return [MATCH_RESULT_COUNT]Boolean{true}
+	return true
 }
 
-func match_validate_rest(pattern_value [MATCH_RESULT_COUNT]Text) (err error) {
-	pattern := pattern_value[MATCH_RESULT_INDEX]
-	for len(pattern) > 0 {
-		_, chunk_result, rest_result := scan_match_chunk(
-			[MATCH_RESULT_COUNT]Text{pattern},
-		)
-		pattern = rest_result[MATCH_RESULT_INDEX]
-		_, _, chunk_error := match_text_chunk(
-			chunk_result, [MATCH_RESULT_COUNT]Text{""},
-		)
-		if chunk_error != nil {
-			return chunk_error
+func match_validate_rest(pattern Match_Tail) (malformed Boolean) {
+	defer func() { Boolean_Invariants(malformed, "match_validate_rest.malformed") }()
+	Match_Tail_Invariants(pattern, "match_validate_rest.pattern")
+	remainder := Match_Text(pattern)
+	for len(remainder) > 0 {
+		_, chunk, rest := scan_match_chunk(Match_Nonempty_Text(remainder))
+		remainder = Match_Text(rest)
+		_, _, chunk_malformed := match_text_chunk(chunk, "")
+		if chunk_malformed {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
-func scan_match_chunk(pattern_value [MATCH_RESULT_COUNT]Text) (
-	star [MATCH_RESULT_COUNT]Boolean,
-	chunk [MATCH_RESULT_COUNT]Text,
-	rest [MATCH_RESULT_COUNT]Text,
-) {
-	pattern := pattern_value[MATCH_RESULT_INDEX]
+func scan_match_chunk(
+	pattern Match_Nonempty_Text,
+) (star Boolean, chunk Match_Text, rest Match_Tail) {
+	defer func() {
+		Boolean_Invariants(star, "scan_match_chunk.star")
+		Match_Text_Invariants(chunk, "scan_match_chunk.chunk")
+		Match_Tail_Invariants(rest, "scan_match_chunk.rest")
+	}()
+	Match_Nonempty_Text_Invariants(pattern, "scan_match_chunk.pattern")
 	star_value := Boolean(false)
 	for len(pattern) > 0 {
 		if pattern[0] != '*' {
@@ -602,21 +722,24 @@ func scan_match_chunk(pattern_value [MATCH_RESULT_COUNT]Text) (
 			in_range = false
 		case '*':
 			if !in_range {
-				return [MATCH_RESULT_COUNT]Boolean{star_value},
-					[MATCH_RESULT_COUNT]Text{pattern[:index]},
-					[MATCH_RESULT_COUNT]Text{pattern[index:]}
+				return star_value, Match_Text(pattern[:index]),
+					Match_Tail(pattern[index:])
 			}
 		}
 	}
-	return [MATCH_RESULT_COUNT]Boolean{star_value},
-		[MATCH_RESULT_COUNT]Text{pattern}, [MATCH_RESULT_COUNT]Text{""}
+	return star_value, Match_Text(pattern), ""
 }
 
-func match_text_chunk(chunk_value, name_value [MATCH_RESULT_COUNT]Text) (
-	rest [MATCH_RESULT_COUNT]Text, okay [MATCH_RESULT_COUNT]Boolean, err error,
+func match_text_chunk(chunk Match_Text, name Match_Text) (
+	rest Match_Tail, okay Boolean, malformed Boolean,
 ) {
-	chunk := chunk_value[MATCH_RESULT_INDEX]
-	name := name_value[MATCH_RESULT_INDEX]
+	defer func() {
+		Match_Tail_Invariants(rest, "match_text_chunk.rest")
+		Boolean_Invariants(okay, "match_text_chunk.okay")
+		Boolean_Invariants(malformed, "match_text_chunk.malformed")
+	}()
+	Match_Text_Invariants(chunk, "match_text_chunk.chunk")
+	Match_Text_Invariants(name, "match_text_chunk.name")
 	failed := false
 	for len(chunk) > 0 {
 		if len(name) == 0 {
@@ -624,46 +747,39 @@ func match_text_chunk(chunk_value, name_value [MATCH_RESULT_COUNT]Text) (
 		}
 		switch chunk[0] {
 		case '[':
-			candidate := Text("")
+			candidate := Match_Text("")
 			if !failed {
-				size := int(utf8.CHARACTER_SIZE_MINIMUM)
-				if name[0] >= byte(utf8.CHARACTER_SELF) {
-					text := utf8.Text(name)
-					_, decoded_size := utf8.Decode_Character_Text(text)
-					size = int(decoded_size)
-				}
+				_, decoded_size := utf8.Decode_Character_Text(
+					utf8.Text(name),
+				)
+				size := int(decoded_size)
 				candidate = name[:size]
 				name = name[size:]
 			}
-			class_result, member_result, negated_result, err := match_class(
-				[MATCH_RESULT_COUNT]Text{chunk[1:]},
-				[MATCH_RESULT_COUNT]Text{candidate},
+			class_result, member_result, negated_result, class_malformed := match_class(
+				Match_Tail(chunk[1:]), candidate,
 			)
-			if err != nil {
-				return [MATCH_RESULT_COUNT]Text{""},
-					[MATCH_RESULT_COUNT]Boolean{false}, err
+			if class_malformed {
+				return "", false, true
 			}
-			chunk = class_result[MATCH_RESULT_INDEX]
-			if member_result[MATCH_RESULT_INDEX] == negated_result[MATCH_RESULT_INDEX] {
+			chunk = Match_Text(class_result)
+			if member_result == negated_result {
 				failed = true
 			}
 		case '?':
 			if !failed {
 				failed = name[0] == '/'
-				size := int(utf8.CHARACTER_SIZE_MINIMUM)
-				if name[0] >= byte(utf8.CHARACTER_SELF) {
-					text := utf8.Text(name)
-					_, decoded_size := utf8.Decode_Character_Text(text)
-					size = int(decoded_size)
-				}
+				_, decoded_size := utf8.Decode_Character_Text(
+					utf8.Text(name),
+				)
+				size := int(decoded_size)
 				name = name[size:]
 			}
 			chunk = chunk[1:]
 		case '\\':
 			chunk = chunk[1:]
 			if len(chunk) == 0 {
-				return [MATCH_RESULT_COUNT]Text{""},
-					[MATCH_RESULT_COUNT]Boolean{false}, Error_Bad_Pattern
+				return "", false, true
 			}
 			if !failed {
 				failed = chunk[0] != name[0]
@@ -679,164 +795,142 @@ func match_text_chunk(chunk_value, name_value [MATCH_RESULT_COUNT]Text) (
 		}
 	}
 	if failed {
-		return [MATCH_RESULT_COUNT]Text{""},
-			[MATCH_RESULT_COUNT]Boolean{false}, nil
+		return "", false, false
 	}
-	return [MATCH_RESULT_COUNT]Text{name}, [MATCH_RESULT_COUNT]Boolean{true}, nil
+	return Match_Tail(name), true, false
 }
 
-func match_character(
-	value_result [MATCH_RESULT_COUNT]Text,
-) (character [MATCH_RESULT_COUNT]utf8.Decoded_Character) {
-	value := value_result[MATCH_RESULT_INDEX]
+func match_character(value Match_Text) (character utf8.Decoded_Character) {
+	defer func() {
+		utf8.Decoded_Character_Invariants(character, "match_character.character")
+	}()
+	Match_Text_Invariants(value, "match_character.value")
 	if len(value) == 0 {
-		return [MATCH_RESULT_COUNT]utf8.Decoded_Character{0}
+		return 0
 	}
 	if value[0] < byte(utf8.CHARACTER_SELF) {
-		return [MATCH_RESULT_COUNT]utf8.Decoded_Character{
-			utf8.Decoded_Character(value[0]),
-		}
+		return utf8.Decoded_Character(value[0])
 	}
 	decoded, _ := utf8.Decode_Character_Text(utf8.Text(value))
-	return [MATCH_RESULT_COUNT]utf8.Decoded_Character{decoded}
+	return decoded
 }
 
 func match_class(
-	chunk_result [MATCH_RESULT_COUNT]Text,
-	candidate_result [MATCH_RESULT_COUNT]Text,
+	chunk Match_Tail, candidate_text Match_Text,
 ) (
-	rest [MATCH_RESULT_COUNT]Text,
-	member_result, negated_result [MATCH_RESULT_COUNT]Boolean,
-	err error,
+	rest Match_Class_Rest, member Boolean, negated Boolean, malformed Boolean,
 ) {
-	chunk := chunk_result[MATCH_RESULT_INDEX]
-	candidate := match_character(candidate_result)[MATCH_RESULT_INDEX]
-	negated := Boolean(len(chunk) > 0 && chunk[0] == '^')
+	defer func() {
+		Match_Class_Rest_Invariants(rest, "match_class.rest")
+		Boolean_Invariants(member, "match_class.member")
+		Boolean_Invariants(negated, "match_class.negated")
+		Boolean_Invariants(malformed, "match_class.malformed")
+	}()
+	Match_Tail_Invariants(chunk, "match_class.chunk")
+	Match_Text_Invariants(candidate_text, "match_class.candidate_text")
+	candidate := match_character(candidate_text)
+	negated = Boolean(len(chunk) > 0 && chunk[0] == '^')
 	if negated {
 		chunk = chunk[1:]
 	}
 	if len(chunk) == 0 {
-		return [MATCH_RESULT_COUNT]Text{""}, [MATCH_RESULT_COUNT]Boolean{false},
-			[MATCH_RESULT_COUNT]Boolean{false}, Error_Bad_Pattern
+		return "", false, false, true
 	}
 	literal := len(chunk) >= 2 && chunk[1] == ']' && chunk[0] != '\\' && chunk[0] != '-'
 	if literal {
 		character := utf8.Decoded_Character(chunk[0])
-		member := Boolean(candidate == character)
-		return [MATCH_RESULT_COUNT]Text{chunk[2:]},
-			[MATCH_RESULT_COUNT]Boolean{member},
-			[MATCH_RESULT_COUNT]Boolean{negated}, nil
+		member = Boolean(candidate == character)
+		return Match_Class_Rest(chunk[2:]), member, negated, false
 	}
 	escaped_literal := len(chunk) == 3 && chunk[0] == '\\' && chunk[2] == ']'
 	if escaped_literal {
 		character := utf8.Decoded_Character(chunk[1])
-		member := Boolean(candidate == character)
-		return [MATCH_RESULT_COUNT]Text{""},
-			[MATCH_RESULT_COUNT]Boolean{member},
-			[MATCH_RESULT_COUNT]Boolean{negated}, nil
+		member = Boolean(candidate == character)
+		return "", member, negated, false
 	}
 	range_literal := len(chunk) >= 4 && chunk[1] == '-' && chunk[3] == ']'
 	range_literal = range_literal && chunk[0] != '\\' && chunk[2] != '\\'
 	if range_literal {
 		low := utf8.Decoded_Character(chunk[0])
 		high := utf8.Decoded_Character(chunk[2])
-		member := Boolean(low <= candidate)
+		member = Boolean(low <= candidate)
 		member = member && Boolean(candidate <= high)
-		return [MATCH_RESULT_COUNT]Text{chunk[4:]},
-			[MATCH_RESULT_COUNT]Boolean{member},
-			[MATCH_RESULT_COUNT]Boolean{negated}, nil
+		return Match_Class_Rest(chunk[4:]), member, negated, false
 	}
 	if len(chunk) == 4 {
 		if chunk[3] == ']' {
 			if chunk[0] == '\\' {
-				member := Boolean(candidate == utf8.Decoded_Character(chunk[1]))
+				member = Boolean(candidate == utf8.Decoded_Character(chunk[1]))
 				second := utf8.Decoded_Character(chunk[2])
 				member = member || Boolean(candidate == second)
-				return [MATCH_RESULT_COUNT]Text{""},
-					[MATCH_RESULT_COUNT]Boolean{member},
-					[MATCH_RESULT_COUNT]Boolean{negated}, nil
+				return "", member, negated, false
 			}
 			if chunk[1] == '\\' {
-				member := Boolean(candidate == utf8.Decoded_Character(chunk[0]))
+				member = Boolean(candidate == utf8.Decoded_Character(chunk[0]))
 				second := utf8.Decoded_Character(chunk[2])
 				member = member || Boolean(candidate == second)
-				return [MATCH_RESULT_COUNT]Text{""},
-					[MATCH_RESULT_COUNT]Boolean{member},
-					[MATCH_RESULT_COUNT]Boolean{negated}, nil
+				return "", member, negated, false
 			}
 		}
 	}
-	return match_class_ranges(
-		[MATCH_RESULT_COUNT]Text{chunk}, candidate_result,
-		[MATCH_RESULT_COUNT]Boolean{negated},
+	range_rest, range_member, range_negated, range_malformed := match_class_ranges(
+		Match_Nonempty_Tail(chunk), candidate_text, negated,
 	)
+	return Match_Class_Rest(range_rest), range_member, range_negated, range_malformed
 }
 
 func match_class_ranges(
-	chunk_result, candidate_result [MATCH_RESULT_COUNT]Text,
-	negated_result [MATCH_RESULT_COUNT]Boolean,
+	chunk Match_Nonempty_Tail, candidate_text Match_Text, negated Boolean,
 ) (
-	rest [MATCH_RESULT_COUNT]Text, member_result,
-	negated_output [MATCH_RESULT_COUNT]Boolean, err error,
+	rest Match_Range_Rest, member Boolean, negated_output Boolean, malformed Boolean,
 ) {
-	chunk := chunk_result[MATCH_RESULT_INDEX]
-	candidate := match_character(candidate_result)[MATCH_RESULT_INDEX]
-	negated := negated_result[MATCH_RESULT_INDEX]
-	if len(chunk) >= 5 {
-		if chunk[1] == '-' {
-			if chunk[2] >= byte(utf8.CHARACTER_SELF) {
-				high, size := utf8.Decode_Character_Text(utf8.Text(chunk[2:]))
-				close_index := int(size) + 2
-				if close_index < len(chunk) {
-					if chunk[close_index] == ']' {
-						low := utf8.Decoded_Character(chunk[0])
-						member := Boolean(low <= candidate)
-						member = member && Boolean(candidate <= high)
-						tail := chunk[close_index+1:]
-						return [MATCH_RESULT_COUNT]Text{tail},
-							[MATCH_RESULT_COUNT]Boolean{member},
-							[MATCH_RESULT_COUNT]Boolean{negated}, nil
-					}
-				}
-			}
-		}
-	}
-	member := Boolean(false)
+	defer func() {
+		Match_Range_Rest_Invariants(rest, "match_class_ranges.rest")
+		Boolean_Invariants(member, "match_class_ranges.member")
+		Boolean_Invariants(negated_output, "match_class_ranges.negated_output")
+		Boolean_Invariants(malformed, "match_class_ranges.malformed")
+	}()
+	Match_Nonempty_Tail_Invariants(chunk, "match_class_ranges.chunk")
+	Match_Text_Invariants(candidate_text, "match_class_ranges.candidate_text")
+	Boolean_Invariants(negated, "match_class_ranges.negated")
+	candidate := match_character(candidate_text)
+	remainder := Match_Text(chunk)
 	range_count := 0
-	for range len(chunk) + NONEMPTY_SIZE_MINIMUM {
-		if len(chunk) > 0 {
-			if chunk[0] == ']' {
+	for range len(remainder) + NONEMPTY_SIZE_MINIMUM {
+		if len(remainder) > 0 {
+			if remainder[0] == ']' {
 				if range_count > 0 {
-					return [MATCH_RESULT_COUNT]Text{chunk[1:]},
-						[MATCH_RESULT_COUNT]Boolean{member},
-						[MATCH_RESULT_COUNT]Boolean{negated}, nil
+					return Match_Range_Rest(remainder[1:]), member,
+						negated, false
 				}
 			}
 		}
-		escaped_input := [MATCH_RESULT_COUNT]Text{chunk}
-		escaped_result, low_result, escaped_error := match_escaped_character(escaped_input)
-		if escaped_error != nil {
-			return [MATCH_RESULT_COUNT]Text{""},
-				[MATCH_RESULT_COUNT]Boolean{false},
-				[MATCH_RESULT_COUNT]Boolean{false}, escaped_error
+		if len(remainder) == 0 {
+			return "", false, false, true
 		}
-		chunk = escaped_result[MATCH_RESULT_INDEX]
-		low_text := low_result[MATCH_RESULT_INDEX]
-		low_character := match_character([MATCH_RESULT_COUNT]Text{low_text})
-		low := low_character[MATCH_RESULT_INDEX]
+		low_tail := Match_Nonempty_Tail(remainder)
+		escaped_result, low_result, escaped_malformed := match_escaped_character(
+			low_tail,
+		)
+		if escaped_malformed {
+			return "", false, false, true
+		}
+		remainder = Match_Text(escaped_result)
+		low := match_character(Match_Text(low_result))
 		high := low
-		if chunk[0] == '-' {
-			high_input := [MATCH_RESULT_COUNT]Text{chunk[1:]}
-			high_rest, high_result, high_error := match_escaped_character(high_input)
-			if high_error != nil {
-				return [MATCH_RESULT_COUNT]Text{""},
-					[MATCH_RESULT_COUNT]Boolean{false},
-					[MATCH_RESULT_COUNT]Boolean{false}, high_error
+		if remainder[0] == '-' {
+			if len(remainder) == NONEMPTY_SIZE_MINIMUM {
+				return "", false, false, true
 			}
-			chunk = high_rest[MATCH_RESULT_INDEX]
-			high_text := high_result[MATCH_RESULT_INDEX]
-			high_character := match_character([MATCH_RESULT_COUNT]Text{high_text})
-			high = high_character[MATCH_RESULT_INDEX]
+			high_tail := Match_Nonempty_Tail(remainder[1:])
+			high_rest, high_result, high_malformed := match_escaped_character(
+				high_tail,
+			)
+			if high_malformed {
+				return "", false, false, true
+			}
+			remainder = Match_Text(high_rest)
+			high = match_character(Match_Text(high_result))
 		}
 		if low <= candidate {
 			if candidate <= high {
@@ -845,34 +939,32 @@ func match_class_ranges(
 		}
 		range_count++
 	}
-	return [MATCH_RESULT_COUNT]Text{""}, [MATCH_RESULT_COUNT]Boolean{false},
-		[MATCH_RESULT_COUNT]Boolean{false}, Error_Bad_Pattern
+	return "", false, false, true
 }
 
-func match_escaped_character(chunk_result [MATCH_RESULT_COUNT]Text) (
-	rest_result [MATCH_RESULT_COUNT]Text,
-	character_result [MATCH_RESULT_COUNT]Text,
-	err error,
+func match_escaped_character(chunk Match_Nonempty_Tail) (
+	rest Match_Class_Tail, character Match_Character_Text, malformed Boolean,
 ) {
-	chunk := chunk_result[MATCH_RESULT_INDEX]
+	defer func() {
+		Match_Class_Tail_Invariants(rest, "match_escaped_character.rest")
+		Match_Character_Text_Invariants(character, "match_escaped_character.character")
+		Boolean_Invariants(malformed, "match_escaped_character.malformed")
+	}()
+	Match_Nonempty_Tail_Invariants(chunk, "match_escaped_character.chunk")
 	size := int(utf8.CHARACTER_SIZE_MINIMUM)
 	if len(chunk) == 0 {
-		return [MATCH_RESULT_COUNT]Text{""},
-			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+		return "", "", true
 	}
 	if chunk[0] == '-' {
-		return [MATCH_RESULT_COUNT]Text{""},
-			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+		return "", "", true
 	}
 	if chunk[0] == ']' {
-		return [MATCH_RESULT_COUNT]Text{""},
-			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+		return "", "", true
 	}
 	if chunk[0] == '\\' {
 		chunk = chunk[1:]
 		if len(chunk) == 0 {
-			return [MATCH_RESULT_COUNT]Text{""},
-				[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+			return "", "", true
 		}
 	}
 	decoded := utf8.Decoded_Character(chunk[0])
@@ -883,36 +975,35 @@ func match_escaped_character(chunk_result [MATCH_RESULT_COUNT]Text) (
 	}
 	if decoded == utf8.REPLACEMENT_CHARACTER {
 		if size == int(utf8.CHARACTER_SIZE_MINIMUM) {
-			return [MATCH_RESULT_COUNT]Text{""},
-				[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+			return "", "", true
 		}
 	}
-	character := chunk[:size]
-	rest := chunk[size:]
+	character = Match_Character_Text(chunk[:size])
+	rest = Match_Class_Tail(chunk[size:])
 	if len(rest) == 0 {
-		return [MATCH_RESULT_COUNT]Text{""},
-			[MATCH_RESULT_COUNT]Text{""}, Error_Bad_Pattern
+		return "", "", true
 	}
-	return [MATCH_RESULT_COUNT]Text{rest}, [MATCH_RESULT_COUNT]Text{character}, nil
+	return rest, character, false
 }
 
-func clean_text(storage *[PATH_SIZE_MAXIMUM]byte, value Text) (count Nonempty_Count) {
+func clean_text(storage Clean_Storage, value Text) (count Nonempty_Count) {
 	defer func() { Nonempty_Count_Invariants(count, "clean_text.count") }()
+	Clean_Storage_Invariants(storage, "clean_text.storage")
 	Text_Invariants(value, "clean_text.value")
 	if value == "" {
 		storage[0] = '.'
 		return 1
 	}
-	copy(storage[:], value)
+	copy(storage, value)
 	return clean_joined(storage, Nonempty_Count(len(value)))
 }
 
-func clean_joined(storage *[PATH_SIZE_MAXIMUM]byte, size Nonempty_Count) (count Nonempty_Count) {
+func clean_joined(storage Clean_Storage, size Nonempty_Count) (count Nonempty_Count) {
 	defer func() { Nonempty_Count_Invariants(count, "clean_joined.count") }()
+	Clean_Storage_Invariants(storage, "clean_joined.storage")
 	Nonempty_Count_Invariants(size, "clean_joined.size")
-	rooted := storage[0] == '/'
 	read, write, dot_dot := 0, 0, 0
-	if rooted {
+	if storage[0] == '/' {
 		read, write, dot_dot = 1, 1, 1
 	}
 	for read < int(size) {
@@ -943,7 +1034,7 @@ func clean_joined(storage *[PATH_SIZE_MAXIMUM]byte, size Nonempty_Count) (count 
 				for write > dot_dot && storage[write] != '/' {
 					write--
 				}
-			} else if !rooted {
+			} else if storage[0] != '/' {
 				// Root blocks parents; relative paths retain them.
 				if write > 0 {
 					storage[write] = '/'
@@ -955,7 +1046,7 @@ func clean_joined(storage *[PATH_SIZE_MAXIMUM]byte, size Nonempty_Count) (count 
 				dot_dot = write
 			}
 		default:
-			if rooted {
+			if storage[0] == '/' {
 				if write != 1 {
 					storage[write] = '/'
 					write++

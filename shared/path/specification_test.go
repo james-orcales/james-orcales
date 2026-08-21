@@ -194,6 +194,20 @@ func match_cases_two() (cases match_case_set) {
 		{Pattern: "[\\-x]", Name: "x", Matched: true},
 		{Pattern: "[\\-x]", Name: "-", Matched: true},
 		{Pattern: "[\\-x]", Name: "a"},
+		{Pattern: "aa*", Name: "aa", Matched: true},
+		{Pattern: "*", Name: "a/b"},
+		{Pattern: "*", Name: "ab", Matched: true},
+		{Pattern: "a\\b*", Name: "ab", Matched: true},
+		{Pattern: "[^a-cx]", Name: "z", Matched: true},
+		{Pattern: "**", Name: "", Matched: true},
+		{Pattern: "?", Name: ""},
+		{Pattern: "??", Name: "a"},
+		{Pattern: "??", Name: "ab", Matched: true},
+		{Pattern: "?*", Name: "/"},
+		{Pattern: "?**", Name: "/"},
+		{Pattern: "a**", Name: "ab", Matched: true},
+		{Pattern: "[ab]xy", Name: "axy", Matched: true},
+		{Pattern: "[αβ]", Name: "α", Matched: true},
 	}
 }
 
@@ -217,6 +231,10 @@ func match_cases_three() (cases match_case_set) {
 		{Pattern: "a[", Name: "ab", Bad: true},
 		{Pattern: "a[", Name: "x", Bad: true},
 		{Pattern: "a/b[", Name: "x", Bad: true},
+		{Pattern: "a*\\", Name: "b", Bad: true},
+		{Pattern: "[", Name: "", Bad: true},
+		{Pattern: "[a", Name: "a", Bad: true},
+		{Pattern: "\\", Name: "", Bad: true},
 		{Pattern: "*x", Name: "xxx", Matched: true},
 	}
 }
@@ -355,50 +373,118 @@ func path_size_bounds(t *testing.T) {
 }
 
 func match_size_bounds(t *testing.T) {
-	var maximum_storage [path.PATH_SIZE_MAXIMUM]byte
+	maximum := maximum_match_text()
+	match_name_size_bounds(t, maximum)
+	match_operator_size_bounds(t, maximum)
+	match_generic_size_bounds(t)
+}
+
+func maximum_match_text() (maximum path.Text) {
+	storage := make(bytes.Slice, path.PATH_SIZE_MAXIMUM)
+	for index := range storage {
+		storage[index] = 'a'
+	}
+	return path.Text(string(storage))
+}
+
+func match_name_size_bounds(t *testing.T, maximum path.Text) {
+	matched, err := path.Match(maximum, maximum)
+	testify.No_Error(t, err, "maximum Match input")
+	testify.True(t, bool(matched), "maximum Match input")
+	matched, err = path.Match("a*", maximum)
+	testify.No_Error(t, err, "maximum Match tail")
+	testify.True(t, bool(matched), "maximum Match tail")
+	matched, err = path.Match("*", maximum)
+	testify.No_Error(t, err, "maximum trailing star")
+	testify.True(t, bool(matched), "maximum trailing star")
+	matched, err = path.Match("[ab]", maximum)
+	testify.No_Error(t, err, "maximum class candidate")
+	testify.False(t, bool(matched), "maximum class candidate")
+	_, err = path.Match("\\", maximum)
+	testify.Error_Is(t, err, path.Error_Bad_Pattern, "maximum escape name")
+	matched, err = path.Match("a**", maximum)
+	testify.No_Error(t, err, "maximum generic name")
+	testify.True(t, bool(matched), "maximum generic name")
+	maximum_storage := bytes.Slice(maximum)
+	maximum_storage = append(bytes.Slice(nil), maximum_storage...)
+	maximum_storage[path.PATH_SIZE_MAXIMUM-1] = '*'
+	maximum_star := path.Text(string(maximum_storage))
+	matched, err = path.Match(maximum_star, maximum)
+	testify.No_Error(t, err, "maximum final star")
+	testify.True(t, bool(matched), "maximum final star")
+}
+
+func match_operator_size_bounds(t *testing.T, maximum path.Text) {
+	maximum_storage := append(bytes.Slice(nil), bytes.Slice(maximum)...)
+	for index := range maximum_storage {
+		maximum_storage[index] = '?'
+	}
+	maximum_question := path.Text(string(maximum_storage))
+	matched, err := path.Match(maximum_question, maximum)
+	testify.No_Error(t, err, "maximum question pattern")
+	testify.True(t, bool(matched), "maximum question pattern")
 	for index := range maximum_storage {
 		maximum_storage[index] = 'a'
 	}
-	maximum := path.Text(string(maximum_storage[:]))
-	matched, match_error := path.Match(maximum, maximum)
-	testify.No_Error(t, match_error, "maximum Match input")
-	testify.True(t, bool(matched), "maximum Match input")
-	matched, match_error = path.Match("a*", maximum)
-	testify.No_Error(t, match_error, "maximum Match tail")
-	testify.True(t, bool(matched), "maximum Match tail")
-	maximum_storage[0] = 'a'
+	maximum_storage[0] = '\\'
+	maximum_escape := path.Text(string(maximum_storage))
+	matched, err = path.Match(maximum_escape, "")
+	testify.No_Error(t, err, "maximum escape pattern")
+	testify.False(t, bool(matched), "maximum escape pattern")
+	maximum_storage[0] = '['
+	maximum_storage[1] = 'a'
+	maximum_storage[2] = 'b'
+	maximum_storage[3] = ']'
+	maximum_range := path.Text(string(maximum_storage))
+	matched, err = path.Match(
+		maximum_range, maximum[:path.PATH_SIZE_MAXIMUM-3],
+	)
+	testify.No_Error(t, err, "maximum range rest")
+	testify.True(t, bool(matched), "maximum range rest")
+	maximum_storage[0] = '?'
+	maximum_storage[1] = '*'
+	matched, err = path.Match(path.Text(string(maximum_storage)), "/")
+	testify.No_Error(t, err, "maximum validation rest")
+	testify.False(t, bool(matched), "maximum validation rest")
+}
+
+func match_generic_size_bounds(t *testing.T) {
+	maximum_storage := make(bytes.Slice, path.PATH_SIZE_MAXIMUM)
+	for index := range maximum_storage {
+		maximum_storage[index] = 'a'
+	}
 	for index := 1; index < path.PATH_SIZE_MAXIMUM; index++ {
 		maximum_storage[index] = '*'
 	}
-	maximum_star_tail := path.Text(string(maximum_storage[:]))
-	matched, match_error = path.Match(maximum_star_tail, "a")
-	testify.No_Error(t, match_error, "maximum pattern tail")
+	maximum_star_tail := path.Text(string(maximum_storage))
+	matched, err := path.Match(maximum_star_tail, "a")
+	testify.No_Error(t, err, "maximum pattern tail")
 	testify.True(t, bool(matched), "maximum pattern tail")
 	maximum_storage[0] = '['
 	for index := 1; index < path.PATH_SIZE_MAXIMUM; index++ {
 		maximum_storage[index] = 'a'
 	}
-	maximum_class := path.Text(string(maximum_storage[:]))
-	_, match_error = path.Match(maximum_class, "a")
-	testify.Error_Is(t, match_error, path.Error_Bad_Pattern, "maximum class tail")
+	maximum_class := path.Text(string(maximum_storage))
+	_, err = path.Match(maximum_class, "a")
+	testify.Error_Is(t, err, path.Error_Bad_Pattern, "maximum class tail")
 	maximum_storage[0] = '['
 	maximum_storage[1] = 'a'
 	maximum_storage[2] = ']'
 	for index := 3; index < path.PATH_SIZE_MAXIMUM; index++ {
 		maximum_storage[index] = '?'
 	}
-	maximum_class_result := path.Text(string(maximum_storage[:]))
+	maximum_class_result := path.Text(string(maximum_storage))
 	var maximum_name_storage [path.CLASS_MATCH_TAIL_SIZE_MAXIMUM + 1]byte
 	for index := range maximum_name_storage {
 		maximum_name_storage[index] = 'a'
 	}
-	matched, match_error = path.Match(
+	matched, err = path.Match(
 		maximum_class_result, path.Text(string(maximum_name_storage[:])),
 	)
-	testify.No_Error(t, match_error, "maximum class result tail")
+	testify.No_Error(t, err, "maximum class result tail")
 	testify.True(t, bool(matched), "maximum class result tail")
-	matched, match_error = path.Match("b*", "a")
-	testify.No_Error(t, match_error, "empty validation chunk")
+	matched, err = path.Match("b*", "a")
+	testify.No_Error(t, err, "empty validation chunk")
 	testify.False(t, bool(matched), "empty validation chunk")
 }
 
@@ -448,21 +534,35 @@ func invalid_bounds(t *testing.T) {
 }
 
 type allocation_fixture struct {
-	Storage         [TEST_STORAGE_SIZE]byte
-	Count           path.Boundary
-	Nonempty_Count  path.Nonempty_Count
-	Directory_Count path.Directory_Count
-	Directory       path.Text
-	File            path.Text
-	Text            path.Text
-	Matched         path.Boolean
-	Absolute        path.Boolean
-	Error           error
-	Components      [TEST_COMPONENT_COUNT]bytes.Text
+	Storage           bytes.Slice
+	Clean_Cases       clean_case_set
+	Split_Cases       split_case_set
+	Join_Cases        join_case_set
+	Match_Cases_One   match_case_set
+	Match_Cases_Two   match_case_set
+	Match_Cases_Three match_case_set
+	Count             path.Boundary
+	Nonempty_Count    path.Nonempty_Count
+	Directory_Count   path.Directory_Count
+	Directory         path.Text
+	File              path.Text
+	Text              path.Text
+	Matched           path.Boolean
+	Absolute          path.Boolean
+	Error             error
+	Components        path.Elements
 }
 
 func test_allocation(t *testing.T) {
 	fixture := allocation_fixture{}
+	fixture.Storage = make(bytes.Slice, TEST_STORAGE_SIZE)
+	fixture.Components = path.Elements{"a", "b"}
+	fixture.Clean_Cases = clean_cases()
+	fixture.Split_Cases = split_cases()
+	fixture.Join_Cases = join_cases()
+	fixture.Match_Cases_One = match_cases_one()
+	fixture.Match_Cases_Two = match_cases_two()
+	fixture.Match_Cases_Three = match_cases_three()
 	checks := []struct {
 		Name string
 		Call func()
@@ -487,12 +587,37 @@ func test_allocation(t *testing.T) {
 		{Name: "Match", Call: func() {
 			fixture.Matched, fixture.Error = path.Match("a*", "abc")
 		}},
+		{Name: "Clean_Into_Corpus", Call: func() {
+			for _, one := range fixture.Clean_Cases {
+				fixture.Nonempty_Count = path.Clean_Into(fixture.Storage, one.Input)
+			}
+		}},
+		{Name: "Split_Corpus", Call: func() {
+			for _, one := range fixture.Split_Cases {
+				fixture.Directory, fixture.File = path.Split(one.Input)
+			}
+		}},
+		{Name: "Join_Into_Corpus", Call: func() {
+			for _, one := range fixture.Join_Cases {
+				fixture.Count = path.Join_Into(fixture.Storage, one.Elements)
+			}
+		}},
+		{Name: "Match_Corpus", Call: func() {
+			allocation_match_cases(&fixture, fixture.Match_Cases_One)
+			allocation_match_cases(&fixture, fixture.Match_Cases_Two)
+			allocation_match_cases(&fixture, fixture.Match_Cases_Three)
+		}},
 	}
-	fixture.Components = [TEST_COMPONENT_COUNT]bytes.Text{"a", "b"}
 	for _, check := range checks {
 		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
 	}
 	if fixture.Count == -1 {
 		t.Fatal("operations produced impossible observation")
+	}
+}
+
+func allocation_match_cases(fixture *allocation_fixture, cases match_case_set) {
+	for _, one := range cases {
+		fixture.Matched, fixture.Error = path.Match(one.Pattern, one.Name)
 	}
 }

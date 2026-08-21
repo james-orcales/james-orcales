@@ -5,7 +5,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/path/filepath"
+	"local/james-orcales/shared/filepath"
 	"local/james-orcales/shared/sim/nbio"
 	"local/james-orcales/shared/testify"
 )
@@ -439,6 +439,8 @@ const TEST_FILESYSTEM_PATH_CAPACITY = 2
 // TEST_FILESYSTEM_ENTRY_CAPACITY matches fixture path width.
 const TEST_FILESYSTEM_ENTRY_CAPACITY = TEST_FILESYSTEM_PATH_CAPACITY
 
+const TEST_RUNNER_REARM_MAXIMUM = 32
+
 func test_glob(t *testing.T) {
 	t.Parallel()
 	storage := nbio.Storage{Status_Procedure: specification_status}
@@ -470,7 +472,7 @@ func test_walk(t *testing.T) {
 	t.Parallel()
 	for _, directory_entry := range []bool{false, true} {
 		state := specification_walk_state{}
-		runner := filepath.Walk_Runner[specification_walk_state]{}
+		runner := filepath.Walk_Runner{}
 		memory := filepath.Walk_Memory{
 			Queue:    filepath.Walk_Queue_Paths(specification_paths()),
 			Children: filepath.Walk_Child_Paths(specification_paths()),
@@ -486,13 +488,19 @@ func test_walk(t *testing.T) {
 			err = filepath.Walk_Directory_Runner_Init(
 				&runner, nbio.IO{Storage: nbio.Storage{
 					Status_Procedure: specification_status,
-				}}, "file", &state, specification_walk_visit, memory,
+				}}, "file", filepath.Walk_Visitor_State{
+					Pointer: unsafe.Pointer(&state),
+				},
+				specification_walk_visit, memory,
 			)
 		} else {
 			err = filepath.Walk_Runner_Init(
 				&runner, nbio.IO{Storage: nbio.Storage{
 					Status_Procedure: specification_status,
-				}}, "file", &state, specification_walk_visit, memory,
+				}}, "file", filepath.Walk_Visitor_State{
+					Pointer: unsafe.Pointer(&state),
+				},
+				specification_walk_visit, memory,
 			)
 		}
 		testify.No_Error(t, err)
@@ -534,12 +542,13 @@ func specification_status(
 }
 
 func specification_walk_visit(
-	state *specification_walk_state, path bytes.Slice, _ filepath.Walk_Entry,
+	visitor_state filepath.Walk_Visitor_State, path bytes.Slice, _ filepath.Walk_Entry,
 	visit_err error,
 ) (err error) {
 	if visit_err != nil {
 		return visit_err
 	}
+	state := (*specification_walk_state)(visitor_state.Pointer)
 	state.Path = string(path)
 	return nil
 }
@@ -869,43 +878,73 @@ func invalid_input_bounds(t *testing.T) {
 }
 
 type allocation_fixture struct {
-	Storage     [TEST_STORAGE_SIZE]byte
-	Remainder   [TEST_STORAGE_SIZE]byte
-	Link_Target [TEST_STORAGE_SIZE]byte
-	Paths       [filepath.PATH_COUNT_MAXIMUM]bytes.Text
-	Elements    [TEST_COMPONENT_COUNT]bytes.Text
-	Count       filepath.Boundary
-	Path_Count  filepath.Path_Count
-	Nonempty    filepath.Nonempty_Count
-	Directory   filepath.Directory_Count
-	Text        filepath.Text
-	Base        filepath.Base_Text
-	Volume      filepath.Volume
-	Boolean     filepath.Boolean
-	Error       error
-	IO          nbio.IO
-	Glob        filepath.Glob_Runner
-	Glob_Memory filepath.Glob_Memory
-	Matches     filepath.Path_Storage
-	Walk        filepath.Walk_Runner[allocation_walk_state]
-	Walk_State  allocation_walk_state
-	Walk_Memory filepath.Walk_Memory
+	Storage        filepath.Slice
+	Remainder      filepath.Slice
+	Link_Target    filepath.Slice
+	Paths          filepath.Paths
+	Elements       filepath.Elements
+	Clean_Cases    clean_case_set
+	Relative_Cases relative_case_set
+	Match_Cases    match_case_set
+	Count          filepath.Boundary
+	Path_Count     filepath.Path_Count
+	Nonempty       filepath.Nonempty_Count
+	Directory      filepath.Directory_Count
+	Text           filepath.Text
+	Base           filepath.Base_Text
+	Volume         filepath.Volume
+	Boolean        filepath.Boolean
+	Runner_Stopped bool
+	Error          error
+	IO             nbio.IO
+	Glob           filepath.Glob_Runner
+	Glob_Memory    filepath.Glob_Memory
+	Matches        filepath.Path_Storage
+	Walk           filepath.Walk_Runner
+	Walk_State     allocation_walk_state
+	Visitor_State  filepath.Walk_Visitor_State
+	Walk_Memory    filepath.Walk_Memory
+	Filesystem     allocation_filesystem_state
 }
 
 type allocation_walk_state struct {
 	Count int
 }
 
+type allocation_filesystem_state struct {
+	Read_Count int
+	Open_Error error
+	Read_Error error
+}
+
 type allocation_check struct {
-	Name string
-	Call func()
+	Name          string
+	Call          func()
+	Requires_Stop bool
 }
 
 func allocation_fixture_init(fixture *allocation_fixture) {
-	fixture.Elements = [TEST_COMPONENT_COUNT]bytes.Text{"a", "b"}
-	fixture.IO = nbio.IO{Storage: nbio.Storage{
-		Status_Procedure: specification_status,
-	}}
+	fixture.Storage = make(filepath.Slice, TEST_STORAGE_SIZE)
+	fixture.Remainder = make(filepath.Slice, TEST_STORAGE_SIZE)
+	fixture.Link_Target = make(filepath.Slice, TEST_STORAGE_SIZE)
+	fixture.Paths = make(filepath.Paths, filepath.PATH_COUNT_MAXIMUM)
+	fixture.Elements = filepath.Elements{"a", "b"}
+	fixture.Clean_Cases = clean_cases()
+	fixture.Relative_Cases = relative_cases()
+	fixture.Match_Cases = match_cases()
+	fixture.Visitor_State = filepath.Walk_Visitor_State{
+		Pointer: unsafe.Pointer(&fixture.Walk_State),
+	}
+	fixture.IO = nbio.IO{
+		Storage: nbio.Storage{
+			State:                           unsafe.Pointer(&fixture.Filesystem),
+			Status_Procedure:                allocation_filesystem_status,
+			Read_Link_Procedure:             allocation_filesystem_read_link,
+			Open_At_Procedure:               allocation_filesystem_open,
+			Get_Directory_Entries_Procedure: allocation_filesystem_read_directory,
+		},
+		Close_Procedure: allocation_filesystem_close,
+	}
 	fixture.Glob_Memory = filepath.Glob_Memory{
 		Current: filepath.Glob_Current_Paths(specification_paths()),
 		Next:    filepath.Glob_Next_Paths(specification_paths()),
@@ -929,21 +968,30 @@ func allocation_fixture_init(fixture *allocation_fixture) {
 }
 
 func allocation_lexical_checks(fixture *allocation_fixture) (checks []allocation_check) {
+	checks = allocation_lexical_base_checks(fixture)
+	return append(checks, allocation_lexical_corpus_checks(fixture)...)
+}
+
+func allocation_lexical_base_checks(fixture *allocation_fixture) (checks []allocation_check) {
 	return []allocation_check{
 		{Name: "Clean_Into", Call: func() {
-			fixture.Nonempty = filepath.Clean_Into(fixture.Storage[:], "a/../b")
+			fixture.Nonempty = filepath.Clean_Into(
+				bytes.Slice(fixture.Storage), "a/../b",
+			)
 		}},
 		{Name: "Is_Local", Call: func() { fixture.Boolean = filepath.Is_Local("a/b") }},
 		{Name: "Localize_Into", Call: func() {
 			fixture.Count, fixture.Error = filepath.Localize_Into(
-				fixture.Storage[:], "a/b",
+				bytes.Slice(fixture.Storage), "a/b",
 			)
 		}},
 		{Name: "To_Slash_Into", Call: func() {
-			fixture.Count = filepath.To_Slash_Into(fixture.Storage[:], "a/b")
+			fixture.Count = filepath.To_Slash_Into(bytes.Slice(fixture.Storage), "a/b")
 		}},
 		{Name: "From_Slash_Into", Call: func() {
-			fixture.Count = filepath.From_Slash_Into(fixture.Storage[:], "a/b")
+			fixture.Count = filepath.From_Slash_Into(
+				bytes.Slice(fixture.Storage), "a/b",
+			)
 		}},
 		{Name: "Split_List_Into", Call: func() {
 			fixture.Path_Count = filepath.Split_List_Into(fixture.Paths[:], "a:b")
@@ -951,7 +999,8 @@ func allocation_lexical_checks(fixture *allocation_fixture) (checks []allocation
 		{Name: "Split", Call: func() { fixture.Text, _ = filepath.Split("a/b") }},
 		{Name: "Join_Into", Call: func() {
 			fixture.Count = filepath.Join_Into(
-				fixture.Storage[:], filepath.Elements(fixture.Elements[:]),
+				bytes.Slice(fixture.Storage),
+				filepath.Elements(fixture.Elements[:]),
 			)
 		}},
 		{Name: "Extension", Call: func() { fixture.Text = filepath.Extension("a.go") }},
@@ -960,12 +1009,12 @@ func allocation_lexical_checks(fixture *allocation_fixture) (checks []allocation
 		}},
 		{Name: "Absolute_Into", Call: func() {
 			fixture.Count, fixture.Error = filepath.Absolute_Into(
-				fixture.Storage[:], "/work", "a",
+				bytes.Slice(fixture.Storage), "/work", "a",
 			)
 		}},
 		{Name: "Relative_Into", Call: func() {
 			fixture.Count, fixture.Error = filepath.Relative_Into(
-				fixture.Storage[:], "a", "b",
+				bytes.Slice(fixture.Storage), "a", "b",
 			)
 		}},
 		{Name: "Has_Prefix", Call: func() {
@@ -973,7 +1022,9 @@ func allocation_lexical_checks(fixture *allocation_fixture) (checks []allocation
 		}},
 		{Name: "Base", Call: func() { fixture.Base = filepath.Base("a/b") }},
 		{Name: "Directory_Into", Call: func() {
-			fixture.Directory = filepath.Directory_Into(fixture.Storage[:], "a/b")
+			fixture.Directory = filepath.Directory_Into(
+				bytes.Slice(fixture.Storage), "a/b",
+			)
 		}},
 		{Name: "Volume_Name", Call: func() {
 			fixture.Volume = filepath.Volume_Name("a/b")
@@ -984,7 +1035,61 @@ func allocation_lexical_checks(fixture *allocation_fixture) (checks []allocation
 	}
 }
 
+func allocation_lexical_corpus_checks(
+	fixture *allocation_fixture,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Clean_Into_Corpus", Call: func() {
+			for _, one := range fixture.Clean_Cases {
+				fixture.Nonempty = filepath.Clean_Into(
+					bytes.Slice(fixture.Storage), one.Input,
+				)
+			}
+		}},
+		{Name: "Relative_Into_Corpus", Call: func() {
+			for _, one := range fixture.Relative_Cases {
+				fixture.Count, fixture.Error = filepath.Relative_Into(
+					bytes.Slice(fixture.Storage), one.Base, one.Target,
+				)
+			}
+		}},
+		{Name: "Relative_Into_Errors", Call: func() {
+			fixture.Count, fixture.Error = filepath.Relative_Into(
+				bytes.Slice(fixture.Storage), "..", "a",
+			)
+			fixture.Count, fixture.Error = filepath.Relative_Into(
+				bytes.Slice(fixture.Storage), "a", "/a",
+			)
+		}},
+		{Name: "Localize_Into_Error", Call: func() {
+			fixture.Count, fixture.Error = filepath.Localize_Into(
+				bytes.Slice(fixture.Storage), "",
+			)
+		}},
+		{Name: "Absolute_Into_Error", Call: func() {
+			fixture.Count, fixture.Error = filepath.Absolute_Into(
+				bytes.Slice(fixture.Storage), "relative", "a",
+			)
+		}},
+		{Name: "Match_Corpus", Call: func() {
+			for _, one := range fixture.Match_Cases {
+				fixture.Boolean, fixture.Error = filepath.Match(
+					one.Pattern, one.Name,
+				)
+			}
+		}},
+	}
+}
+
 func allocation_filesystem_checks(
+	fixture *allocation_fixture,
+) (checks []allocation_check) {
+	checks = allocation_filesystem_base_checks(fixture)
+	checks = append(checks, allocation_runner_flow_checks(fixture)...)
+	return append(checks, allocation_eval_error_checks(fixture)...)
+}
+
+func allocation_filesystem_base_checks(
 	fixture *allocation_fixture,
 ) (checks []allocation_check) {
 	return []allocation_check{
@@ -1016,19 +1121,22 @@ func allocation_filesystem_checks(
 		}},
 		{Name: "Walk_Runner_Init", Call: func() {
 			fixture.Error = filepath.Walk_Runner_Init(
-				&fixture.Walk, fixture.IO, "file", &fixture.Walk_State,
+				&fixture.Walk, fixture.IO, "file",
+				fixture.Visitor_State,
 				allocation_walk_visit, fixture.Walk_Memory,
 			)
 		}},
 		{Name: "Walk_Directory_Runner_Init", Call: func() {
 			fixture.Error = filepath.Walk_Directory_Runner_Init(
-				&fixture.Walk, fixture.IO, "file", &fixture.Walk_State,
+				&fixture.Walk, fixture.IO, "file",
+				fixture.Visitor_State,
 				allocation_walk_visit, fixture.Walk_Memory,
 			)
 		}},
 		{Name: "Walk_Runner_Rearm", Call: func() {
 			filepath.Walk_Runner_Init(
-				&fixture.Walk, fixture.IO, "file", &fixture.Walk_State,
+				&fixture.Walk, fixture.IO, "file",
+				fixture.Visitor_State,
 				allocation_walk_visit, fixture.Walk_Memory,
 			)
 			fixture.Boolean = filepath.Walk_Runner_Rearm(&fixture.Walk)
@@ -1052,13 +1160,78 @@ func allocation_filesystem_checks(
 	}
 }
 
+func allocation_runner_flow_checks(
+	fixture *allocation_fixture,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Glob_Runner_Full", Requires_Stop: true, Call: func() {
+			allocation_filesystem_reset(&fixture.Filesystem)
+			allocation_glob_run(fixture, "dir/*.go")
+		}},
+		{Name: "Glob_Runner_Open_Error", Requires_Stop: true, Call: func() {
+			allocation_filesystem_reset(&fixture.Filesystem)
+			fixture.Filesystem.Open_Error = filepath.Error_Path_Absent
+			allocation_glob_run(fixture, "dir/*.go")
+		}},
+		{Name: "Glob_Runner_Read_Error", Requires_Stop: true, Call: func() {
+			allocation_filesystem_reset(&fixture.Filesystem)
+			fixture.Filesystem.Read_Error = filepath.Error_Path_Absent
+			allocation_glob_run(fixture, "dir/*.go")
+		}},
+		{Name: "Walk_Runner_Full", Requires_Stop: true, Call: func() {
+			allocation_filesystem_reset(&fixture.Filesystem)
+			allocation_walk_run(fixture, false)
+		}},
+		{Name: "Walk_Directory_Runner_Full", Requires_Stop: true, Call: func() {
+			allocation_filesystem_reset(&fixture.Filesystem)
+			allocation_walk_run(fixture, true)
+		}},
+		{Name: "Walk_Runner_Open_Error", Requires_Stop: true, Call: func() {
+			allocation_filesystem_reset(&fixture.Filesystem)
+			fixture.Filesystem.Open_Error = filepath.Error_Path_Absent
+			allocation_walk_run(fixture, false)
+		}},
+		{Name: "Walk_Runner_Read_Error", Requires_Stop: true, Call: func() {
+			allocation_filesystem_reset(&fixture.Filesystem)
+			fixture.Filesystem.Read_Error = filepath.Error_Path_Absent
+			allocation_walk_run(fixture, false)
+		}},
+	}
+}
+
+func allocation_eval_error_checks(
+	fixture *allocation_fixture,
+) (checks []allocation_check) {
+	return []allocation_check{
+		{Name: "Eval_Symlinks_Into_Missing", Call: func() {
+			fixture.Count, fixture.Error = filepath.Eval_Symlinks_Into(
+				fixture.IO.Storage, fixture.Storage[:filepath.PATH_SIZE_MAXIMUM],
+				fixture.Remainder[:filepath.PATH_SIZE_MAXIMUM],
+				fixture.Link_Target[:filepath.PATH_SIZE_MAXIMUM], "missing",
+			)
+		}},
+		{Name: "Eval_Symlinks_Into_Cycle", Call: func() {
+			fixture.Count, fixture.Error = filepath.Eval_Symlinks_Into(
+				fixture.IO.Storage, fixture.Storage[:filepath.PATH_SIZE_MAXIMUM],
+				fixture.Remainder[:filepath.PATH_SIZE_MAXIMUM],
+				fixture.Link_Target[:filepath.PATH_SIZE_MAXIMUM], "cycle1",
+			)
+		}},
+	}
+}
+
 func test_allocation(t *testing.T) {
 	fixture := allocation_fixture{}
 	allocation_fixture_init(&fixture)
 	checks := allocation_lexical_checks(&fixture)
 	checks = append(checks, allocation_filesystem_checks(&fixture)...)
 	for _, check := range checks {
-		t.Run(check.Name, func(t *testing.T) { testify.Zero_Allocation(t, check.Call) })
+		t.Run(check.Name, func(t *testing.T) {
+			testify.Zero_Allocation(t, check.Call)
+			if check.Requires_Stop {
+				testify.True(t, fixture.Runner_Stopped, check.Name)
+			}
+		})
 	}
 	if fixture.Count == -1 {
 		t.Fatal("operations produced impossible observation")
@@ -1066,12 +1239,132 @@ func test_allocation(t *testing.T) {
 }
 
 func allocation_walk_visit(
-	state *allocation_walk_state, _ bytes.Slice, _ filepath.Walk_Entry,
+	visitor_state filepath.Walk_Visitor_State, _ bytes.Slice, _ filepath.Walk_Entry,
 	visit_err error,
 ) (err error) {
 	if visit_err != nil {
 		return visit_err
 	}
+	state := (*allocation_walk_state)(visitor_state.Pointer)
 	state.Count++
 	return nil
+}
+
+func allocation_filesystem_reset(state *allocation_filesystem_state) {
+	*state = allocation_filesystem_state{}
+}
+
+func allocation_filesystem_status(
+	_ unsafe.Pointer, path string,
+) (status nbio.File_Status, err error) {
+	switch path {
+	case ".", "dir":
+		return nbio.File_Status{Exists: true, Mode: nbio.FILE_MODE_DIRECTORY}, nil
+	case "file", "dir/file.go", "target":
+		return nbio.File_Status{Exists: true}, nil
+	case "link", "cycle1", "cycle2":
+		return nbio.File_Status{Exists: true, Mode: nbio.FILE_MODE_SYMBOLIC_LINK}, nil
+	default:
+		return nbio.File_Status{}, nil
+	}
+}
+
+func allocation_filesystem_read_link(
+	_ unsafe.Pointer, path string, destination []byte,
+) (count int, err error) {
+	switch path {
+	case "link":
+		return copy(destination, "target"), nil
+	case "cycle1":
+		return copy(destination, "cycle2"), nil
+	case "cycle2":
+		return copy(destination, "cycle1"), nil
+	default:
+		return 0, filepath.Error_Path_Absent
+	}
+}
+
+func allocation_filesystem_open(
+	state unsafe.Pointer, completion *nbio.Completion, _ nbio.File, _ string,
+	_ nbio.Open_At_Options, callback nbio.Callback,
+) {
+	filesystem := (*allocation_filesystem_state)(state)
+	filesystem.Read_Count = 0
+	completion.Data = 1
+	completion.Error = filesystem.Open_Error
+	callback(nbio.Completion_Handle(completion))
+}
+
+func allocation_filesystem_read_directory(
+	state unsafe.Pointer, completion *nbio.Completion, _ nbio.File, _ []byte,
+	entries []nbio.Directory_Entry, callback nbio.Callback,
+) {
+	filesystem := (*allocation_filesystem_state)(state)
+	completion.Data = 0
+	completion.Error = filesystem.Read_Error
+	if completion.Error == nil {
+		if filesystem.Read_Count == 0 {
+			entries[0] = nbio.Directory_Entry{Name: "file.go"}
+			completion.Data = 1
+		}
+	}
+	filesystem.Read_Count++
+	callback(nbio.Completion_Handle(completion))
+}
+
+func allocation_filesystem_close(
+	_ unsafe.Pointer, completion *nbio.Completion, _ nbio.File,
+	callback nbio.Callback,
+) {
+	completion.Data = 0
+	completion.Error = nil
+	callback(nbio.Completion_Handle(completion))
+}
+
+func allocation_glob_run(fixture *allocation_fixture, pattern filepath.Text) {
+	fixture.Glob = filepath.Glob_Runner{}
+	fixture.Runner_Stopped = false
+	fixture.Error = filepath.Glob_Runner_Init(
+		&fixture.Glob, fixture.IO, pattern, fixture.Glob_Memory,
+	)
+	if fixture.Error != nil {
+		return
+	}
+	for range TEST_RUNNER_REARM_MAXIMUM {
+		if filepath.Glob_Runner_Stopped(&fixture.Glob) {
+			fixture.Runner_Stopped = true
+			fixture.Matches = filepath.Glob_Runner_Matches(&fixture.Glob)
+			fixture.Error = filepath.Glob_Runner_Status(&fixture.Glob)
+			return
+		}
+		fixture.Boolean = filepath.Glob_Runner_Rearm(&fixture.Glob)
+	}
+}
+
+func allocation_walk_run(fixture *allocation_fixture, directory_entry bool) {
+	fixture.Walk = filepath.Walk_Runner{}
+	fixture.Walk_State.Count = 0
+	fixture.Runner_Stopped = false
+	if directory_entry {
+		fixture.Error = filepath.Walk_Directory_Runner_Init(
+			&fixture.Walk, fixture.IO, "dir", fixture.Visitor_State,
+			allocation_walk_visit, fixture.Walk_Memory,
+		)
+	} else {
+		fixture.Error = filepath.Walk_Runner_Init(
+			&fixture.Walk, fixture.IO, "dir", fixture.Visitor_State,
+			allocation_walk_visit, fixture.Walk_Memory,
+		)
+	}
+	if fixture.Error != nil {
+		return
+	}
+	for range TEST_RUNNER_REARM_MAXIMUM {
+		if filepath.Walk_Runner_Stopped(&fixture.Walk) {
+			fixture.Runner_Stopped = true
+			fixture.Error = filepath.Walk_Runner_Status(&fixture.Walk)
+			return
+		}
+		fixture.Boolean = filepath.Walk_Runner_Rearm(&fixture.Walk)
+	}
 }

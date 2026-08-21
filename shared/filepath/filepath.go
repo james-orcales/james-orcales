@@ -298,8 +298,7 @@ type Glob_Runner struct {
 }
 
 // Glob_Runner_Invariants states complete runner scalar domains.
-func Glob_Runner_Invariants(value *Glob_Runner, namespace aver.Namespace) {
-	aver.Always(value != nil, "A Glob_Runner has caller-owned state.")
+func Glob_Runner_Invariants(value Glob_Runner, namespace aver.Namespace) {
 	nbio.IO_Invariants(value.Loop, namespace)
 	Text_Invariants(value.Pattern, namespace)
 	Glob_Current_Paths_Invariants(value.Current, namespace)
@@ -318,11 +317,22 @@ func Glob_Runner_Invariants(value *Glob_Runner, namespace aver.Namespace) {
 	Glob_Done_Invariants(value.Done, namespace)
 }
 
+// Glob_Runner_Handle keeps caller-owned glob state nonnil.
+type Glob_Runner_Handle *Glob_Runner
+
+// Glob_Runner_Handle_Invariants states complete runner scalar domains.
+func Glob_Runner_Handle_Invariants(value Glob_Runner_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Glob_Runner_Invariants(*value, namespace)
+}
+
 // Glob_Runner_Init validates pattern and binds injected storage. It never drives loop.
 func Glob_Runner_Init(
-	runner *Glob_Runner, loop nbio.IO, pattern Text, memory Glob_Memory,
+	runner Glob_Runner_Handle, loop nbio.IO, pattern Text, memory Glob_Memory,
 ) (err error) {
-	Glob_Runner_Invariants(runner, "glob_runner_init.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_runner_init.runner")
 	nbio.IO_Invariants(loop, "glob_runner_init.loop")
 	Text_Invariants(pattern, "glob_runner_init.pattern")
 	Glob_Memory_Invariants(memory, "glob_runner_init.memory")
@@ -387,9 +397,9 @@ func Glob_Runner_Init(
 
 // Glob_Runner_Rearm executes queued continuation or synchronous lexical work. False means root
 // must drive pending IO, or runner stopped.
-func Glob_Runner_Rearm(runner *Glob_Runner) (rearm Boolean) {
+func Glob_Runner_Rearm(runner Glob_Runner_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "glob_runner_rearm.rearm") }()
-	Glob_Runner_Invariants(runner, "glob_runner_rearm.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_runner_rearm.runner")
 	if runner.Done {
 		return false
 	}
@@ -408,42 +418,46 @@ func Glob_Runner_Rearm(runner *Glob_Runner) (rearm Boolean) {
 }
 
 // Glob_Runner_Work_Queued reports callback stored one continuation for root.
-func Glob_Runner_Work_Queued(runner *Glob_Runner) (queued Boolean) {
+func Glob_Runner_Work_Queued(runner Glob_Runner_Handle) (queued Boolean) {
 	defer func() { Boolean_Invariants(queued, "glob_runner_work_queued.queued") }()
-	Glob_Runner_Invariants(runner, "glob_runner_work_queued.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_runner_work_queued.runner")
 	return Boolean(runner.Work_Ready)
 }
 
 // Glob_Runner_Stopped reports terminal success or failure.
-func Glob_Runner_Stopped(runner *Glob_Runner) (stopped Boolean) {
+func Glob_Runner_Stopped(runner Glob_Runner_Handle) (stopped Boolean) {
 	defer func() { Boolean_Invariants(stopped, "glob_runner_stopped.stopped") }()
-	Glob_Runner_Invariants(runner, "glob_runner_stopped.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_runner_stopped.runner")
 	return Boolean(runner.Done)
 }
 
 // Glob_Runner_Status reports terminal error. Filesystem lookup errors are ignored by Glob.
-func Glob_Runner_Status(runner *Glob_Runner) (err error) {
-	Glob_Runner_Invariants(runner, "glob_runner_status.runner")
+func Glob_Runner_Status(runner Glob_Runner_Handle) (err error) {
+	Glob_Runner_Handle_Invariants(runner, "glob_runner_status.runner")
 	return runner.Result
 }
 
 // Glob_Runner_Matches returns caller-owned lexically sorted populated slots.
-func Glob_Runner_Matches(runner *Glob_Runner) (matches Path_Storage) {
+func Glob_Runner_Matches(runner Glob_Runner_Handle) (matches Path_Storage) {
 	defer func() { Path_Storage_Invariants(matches, "glob_runner_matches.matches") }()
-	Glob_Runner_Invariants(runner, "glob_runner_matches.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_runner_matches.runner")
 	aver.Always(runner.Done, "Glob result is read after runner stops.")
 	return Path_Storage(runner.Current[:runner.Current_Count])
 }
 
-func glob_completion(completion *nbio.Completion) {
+func glob_completion(completion nbio.Completion_Handle) {
 	// First-field ownership avoids closure allocation and a self-pointer escape.
-	runner := (*Glob_Runner)(unsafe.Pointer(completion))
+	runner := Glob_Runner_Handle(unsafe.Pointer(completion))
 	runner.Work_Ready = true
 }
 
-func glob_completion_apply(runner *Glob_Runner) (rearm Boolean) {
+func glob_completion_apply(runner Glob_Runner_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "glob_completion_apply.rearm") }()
-	Glob_Runner_Invariants(runner, "glob_completion_apply.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_completion_apply.runner")
+	aver.Always(
+		runner.Phase != GLOB_PHASE_IDLE,
+		"Filepath Glob completion has pending operation.",
+	)
 	switch runner.Phase {
 	case GLOB_PHASE_OPEN:
 		if runner.Completion.Error != nil {
@@ -474,14 +488,13 @@ func glob_completion_apply(runner *Glob_Runner) (rearm Boolean) {
 		runner.Candidate_Index++
 		runner.Phase = GLOB_PHASE_IDLE
 		return true
-	default:
-		panic("filepath: Glob completion has no pending operation")
 	}
+	return false
 }
 
-func glob_meta_begin(runner *Glob_Runner) (rearm Boolean) {
+func glob_meta_begin(runner Glob_Runner_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "glob_meta_begin.rearm") }()
-	Glob_Runner_Invariants(runner, "glob_meta_begin.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_meta_begin.runner")
 	candidate := runner.Current[runner.Candidate_Index]
 	directory_text := path_slice_text(candidate)
 	if len(candidate) == 0 {
@@ -505,30 +518,33 @@ func glob_meta_begin(runner *Glob_Runner) (rearm Boolean) {
 	nbio.Storage_Open_At(
 		runner.Loop.Storage, &runner.Completion, nbio.DIRECTORY_CURRENT,
 		string(directory_text), nbio.Open_At_Options{Access: nbio.OPEN_READ_ONLY},
-		glob_completion,
+		nbio.Callback(glob_completion),
 	)
 	return false
 }
 
-func glob_directory_read(runner *Glob_Runner) {
-	Glob_Runner_Invariants(runner, "glob_directory_read.runner")
+func glob_directory_read(runner Glob_Runner_Handle) {
+	Glob_Runner_Handle_Invariants(runner, "glob_directory_read.runner")
 	runner.Phase = GLOB_PHASE_READ
 	runner.Work_Ready = false
 	nbio.Storage_Get_Directory_Entries(
 		runner.Loop.Storage, &runner.Completion, runner.Directory,
-		runner.Directory_Buffer, runner.Entries, glob_completion,
+		runner.Directory_Buffer, runner.Entries, nbio.Callback(glob_completion),
 	)
 }
 
-func glob_directory_close(runner *Glob_Runner) {
-	Glob_Runner_Invariants(runner, "glob_directory_close.runner")
+func glob_directory_close(runner Glob_Runner_Handle) {
+	Glob_Runner_Handle_Invariants(runner, "glob_directory_close.runner")
 	runner.Phase = GLOB_PHASE_CLOSE
 	runner.Work_Ready = false
-	nbio.IO_Close(runner.Loop, &runner.Completion, runner.Directory, glob_completion)
+	nbio.IO_Close(
+		runner.Loop, &runner.Completion, runner.Directory,
+		nbio.Callback(glob_completion),
+	)
 }
 
-func glob_entries_apply(runner *Glob_Runner, count Path_Count) {
-	Glob_Runner_Invariants(runner, "glob_entries_apply.runner")
+func glob_entries_apply(runner Glob_Runner_Handle, count Path_Count) {
+	Glob_Runner_Handle_Invariants(runner, "glob_entries_apply.runner")
 	Path_Count_Invariants(count, "glob_entries_apply.count")
 	aver.Always(count > 0, "Glob directory completion has entries.")
 	aver.Always(int(count) <= len(runner.Entries),
@@ -557,9 +573,9 @@ func glob_entries_apply(runner *Glob_Runner, count Path_Count) {
 	}
 }
 
-func glob_literal_apply(runner *Glob_Runner) (rearm Boolean) {
+func glob_literal_apply(runner Glob_Runner_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "glob_literal_apply.rearm") }()
-	Glob_Runner_Invariants(runner, "glob_literal_apply.runner")
+	Glob_Runner_Handle_Invariants(runner, "glob_literal_apply.runner")
 	segment := runner.Pattern[runner.Segment_Start:runner.Segment_End]
 	joined, join_err := path_storage_join(
 		Path_Storage(runner.Next), Path_Count(runner.Next_Count),
@@ -590,8 +606,8 @@ func glob_literal_apply(runner *Glob_Runner) (rearm Boolean) {
 	return true
 }
 
-func glob_generation_finish(runner *Glob_Runner) {
-	Glob_Runner_Invariants(runner, "glob_generation_finish.runner")
+func glob_generation_finish(runner Glob_Runner_Handle) {
+	Glob_Runner_Handle_Invariants(runner, "glob_generation_finish.runner")
 	if runner.Result != nil {
 		runner.Done = true
 		return
@@ -615,8 +631,8 @@ func glob_generation_finish(runner *Glob_Runner) {
 	glob_segment_advance(runner)
 }
 
-func glob_segment_advance(runner *Glob_Runner) {
-	Glob_Runner_Invariants(runner, "glob_segment_advance.runner")
+func glob_segment_advance(runner Glob_Runner_Handle) {
+	Glob_Runner_Handle_Invariants(runner, "glob_segment_advance.runner")
 	start := int(runner.Segment_End)
 	for start < len(runner.Pattern) && runner.Pattern[start] == SEPARATOR {
 		start++
@@ -660,9 +676,22 @@ func Walk_Entry_Invariants(value Walk_Entry, namespace aver.Namespace) {
 	bytes.Slice_Invariants(value.Name, namespace)
 }
 
+// Walk_Visitor_State keeps callback state concrete without interface or generic ownership.
+type Walk_Visitor_State struct {
+	// Pointer borrows caller state for walk lifetime.
+	Pointer unsafe.Pointer
+}
+
+// Walk_Visitor_State_Invariants admits zero runner storage before initialization.
+func Walk_Visitor_State_Invariants(value Walk_Visitor_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Sometimes(value.Pointer != nil, "Walk visitor state is bound.").
+		Ensure()
+}
+
 // Walk_Function receives explicit state so runner retains no allocating closure.
-type Walk_Function[State any] func(
-	state *State, path bytes.Slice, entry Walk_Entry, err error,
+type Walk_Function func(
+	state Walk_Visitor_State, path bytes.Slice, entry Walk_Entry, err error,
 ) (visit_err error)
 
 // Walk_Queue_Paths owns paths awaiting visit.
@@ -777,15 +806,15 @@ const WALK_PHASE_CLOSE Walk_Phase = WALK_PHASE_READ + NONEMPTY_SIZE_MINIMUM
 
 // Walk_Runner walks injected filesystem without driver ownership. Completion stays first for
 // same intrusive static-callback ownership as Glob_Runner.
-type Walk_Runner[State any] struct {
+type Walk_Runner struct {
 	// Completion stays first so static callback recovers runner with no retained closure.
 	Completion nbio.Completion
 	// Loop submits storage work while composition root alone owns driver.
 	Loop nbio.IO
 	// Visitor_State remains explicit callback state.
-	Visitor_State *State
+	Visitor_State Walk_Visitor_State
 	// Visitor observes each path and filters errors.
-	Visitor Walk_Function[State]
+	Visitor Walk_Function
 	// Queue owns paths still awaiting visit.
 	Queue Walk_Queue_Paths
 	// Children owns active directory children until whole collection sorts.
@@ -799,9 +828,7 @@ type Walk_Runner[State any] struct {
 	// Children_Count bounds populated active children.
 	Children_Count Walk_Child_Count
 	// Directory_Path retains active directory across async completions.
-	Directory_Path [PATH_SIZE_MAXIMUM]byte
-	// Directory_Path_Count bounds retained active path.
-	Directory_Path_Count Boundary
+	Directory_Path Slice
 	// Directory_Status retains first visitor metadata for error callback.
 	Directory_Status nbio.File_Status
 	// Directory is descriptor held between open and close completions.
@@ -817,61 +844,91 @@ type Walk_Runner[State any] struct {
 }
 
 // Walk_Runner_Invariants states complete runner scalar domains.
-func Walk_Runner_Invariants[State any](
-	value *Walk_Runner[State], namespace aver.Namespace,
-) {
-	aver.Always(value != nil, "A Walk_Runner has caller-owned state.")
+func Walk_Runner_Invariants(value Walk_Runner, namespace aver.Namespace) {
 	nbio.IO_Invariants(value.Loop, namespace)
+	Walk_Visitor_State_Invariants(value.Visitor_State, namespace)
 	Walk_Queue_Paths_Invariants(value.Queue, namespace)
 	Walk_Child_Paths_Invariants(value.Children, namespace)
 	Directory_Entries_Invariants(value.Entries, namespace)
 	Directory_Buffer_Invariants(value.Directory_Buffer, namespace)
 	Walk_Queue_Count_Invariants(value.Queue_Count, namespace)
 	Walk_Child_Count_Invariants(value.Children_Count, namespace)
-	Boundary_Invariants(value.Directory_Path_Count, namespace)
+	Slice_Invariants(value.Directory_Path, namespace)
 	Walk_Phase_Invariants(value.Phase, namespace)
 	Walk_Work_Ready_Invariants(value.Work_Ready, namespace)
 	Walk_Done_Invariants(value.Done, namespace)
 }
 
+// Walk_Runner_Storage_Handle admits zero caller storage before initialization.
+type Walk_Runner_Storage_Handle *Walk_Runner
+
+// Walk_Runner_Storage_Handle_Invariants requires writable caller storage.
+func Walk_Runner_Storage_Handle_Invariants(
+	value Walk_Runner_Storage_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Walk_Runner_Invariants(*value, namespace)
+}
+
+// Walk_Runner_Handle keeps initialized caller-owned walk state nonnil.
+type Walk_Runner_Handle *Walk_Runner
+
+// Walk_Runner_Handle_Invariants states complete runner scalar domains.
+func Walk_Runner_Handle_Invariants(value Walk_Runner_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Walk_Runner_Invariants(*value, namespace)
+}
+
 // Walk_Runner_Init binds standard Walk behavior to injected filesystem.
-func Walk_Runner_Init[State any](
-	runner *Walk_Runner[State], loop nbio.IO, root Text,
-	visitor_state *State, visitor Walk_Function[State], memory Walk_Memory,
+func Walk_Runner_Init(
+	runner Walk_Runner_Storage_Handle, loop nbio.IO, root Text,
+	visitor_state Walk_Visitor_State, visitor Walk_Function, memory Walk_Memory,
 ) (err error) {
-	Walk_Runner_Invariants(runner, "walk_runner_init.runner")
+	Walk_Runner_Storage_Handle_Invariants(runner, "walk_runner_init.runner")
 	nbio.IO_Invariants(loop, "walk_runner_init.loop")
 	Text_Invariants(root, "walk_runner_init.root")
+	Walk_Visitor_State_Invariants(visitor_state, "walk_runner_init.visitor_state")
 	Walk_Memory_Invariants(memory, "walk_runner_init.memory")
 	return walk_runner_init(runner, loop, root, visitor_state, visitor, memory)
 }
 
 // Walk_Directory_Runner_Init binds standard WalkDir behavior. Current injected entry already
 // carries kind, while callback contract remains same link-aware Walk_Entry.
-func Walk_Directory_Runner_Init[State any](
-	runner *Walk_Runner[State], loop nbio.IO, root Text,
-	visitor_state *State, visitor Walk_Function[State], memory Walk_Memory,
+func Walk_Directory_Runner_Init(
+	runner Walk_Runner_Storage_Handle, loop nbio.IO, root Text,
+	visitor_state Walk_Visitor_State, visitor Walk_Function, memory Walk_Memory,
 ) (err error) {
-	Walk_Runner_Invariants(runner, "walk_directory_runner_init.runner")
+	Walk_Runner_Storage_Handle_Invariants(runner, "walk_directory_runner_init.runner")
 	nbio.IO_Invariants(loop, "walk_directory_runner_init.loop")
 	Text_Invariants(root, "walk_directory_runner_init.root")
+	Walk_Visitor_State_Invariants(
+		visitor_state, "walk_directory_runner_init.visitor_state",
+	)
 	Walk_Memory_Invariants(memory, "walk_directory_runner_init.memory")
 	return walk_runner_init(runner, loop, root, visitor_state, visitor, memory)
 }
 
-func walk_runner_init[State any](
-	runner *Walk_Runner[State], loop nbio.IO, root Text,
-	visitor_state *State, visitor Walk_Function[State], memory Walk_Memory,
+func walk_runner_init(
+	runner Walk_Runner_Storage_Handle, loop nbio.IO, root Text,
+	visitor_state Walk_Visitor_State, visitor Walk_Function, memory Walk_Memory,
 ) (err error) {
-	Walk_Runner_Invariants(runner, "walk_runner_init_internal.runner")
+	Walk_Runner_Storage_Handle_Invariants(runner, "walk_runner_init_internal.runner")
 	nbio.IO_Invariants(loop, "walk_runner_init_internal.loop")
 	Text_Invariants(root, "walk_runner_init_internal.root")
+	Walk_Visitor_State_Invariants(visitor_state, "walk_runner_init_internal.visitor_state")
 	Walk_Memory_Invariants(memory, "walk_runner_init_internal.memory")
+	aver.Always(
+		visitor_state.Pointer != nil, "Walk initialization requires visitor state.",
+	)
 	aver.Always(visitor != nil, "A Walk_Runner has visitor.")
 	path_storage_slots_validate(Path_Storage(memory.Queue))
 	path_storage_slots_validate(Path_Storage(memory.Children))
 	directory_buffer_validate(memory.Directory_Buffer)
-	*runner = Walk_Runner[State]{
+	*runner = Walk_Runner{
 		Loop: loop, Visitor_State: visitor_state, Visitor: visitor,
 		Queue: memory.Queue, Children: memory.Children, Entries: memory.Entries,
 		Directory_Buffer: memory.Directory_Buffer,
@@ -888,9 +945,9 @@ func walk_runner_init[State any](
 }
 
 // Walk_Runner_Rearm executes one continuation or synchronous visit.
-func Walk_Runner_Rearm[State any](runner *Walk_Runner[State]) (rearm Boolean) {
+func Walk_Runner_Rearm(runner Walk_Runner_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "walk_runner_rearm.rearm") }()
-	Walk_Runner_Invariants(runner, "walk_runner_rearm.runner")
+	Walk_Runner_Handle_Invariants(runner, "walk_runner_rearm.runner")
 	if runner.Done {
 		return false
 	}
@@ -906,33 +963,33 @@ func Walk_Runner_Rearm[State any](runner *Walk_Runner[State]) (rearm Boolean) {
 }
 
 // Walk_Runner_Work_Queued reports callback stored one continuation.
-func Walk_Runner_Work_Queued[State any](runner *Walk_Runner[State]) (queued Boolean) {
+func Walk_Runner_Work_Queued(runner Walk_Runner_Handle) (queued Boolean) {
 	defer func() { Boolean_Invariants(queued, "walk_runner_work_queued.queued") }()
-	Walk_Runner_Invariants(runner, "walk_runner_work_queued.runner")
+	Walk_Runner_Handle_Invariants(runner, "walk_runner_work_queued.runner")
 	return Boolean(runner.Work_Ready)
 }
 
 // Walk_Runner_Stopped reports walk terminal state.
-func Walk_Runner_Stopped[State any](runner *Walk_Runner[State]) (stopped Boolean) {
+func Walk_Runner_Stopped(runner Walk_Runner_Handle) (stopped Boolean) {
 	defer func() { Boolean_Invariants(stopped, "walk_runner_stopped.stopped") }()
-	Walk_Runner_Invariants(runner, "walk_runner_stopped.runner")
+	Walk_Runner_Handle_Invariants(runner, "walk_runner_stopped.runner")
 	return Boolean(runner.Done)
 }
 
 // Walk_Runner_Status reports terminal visitor or filesystem error.
-func Walk_Runner_Status[State any](runner *Walk_Runner[State]) (err error) {
-	Walk_Runner_Invariants(runner, "walk_runner_status.runner")
+func Walk_Runner_Status(runner Walk_Runner_Handle) (err error) {
+	Walk_Runner_Handle_Invariants(runner, "walk_runner_status.runner")
 	return runner.Result
 }
 
-func walk_io_complete[State any](completion *nbio.Completion) {
-	runner := (*Walk_Runner[State])(unsafe.Pointer(completion))
+func walk_io_complete(completion nbio.Completion_Handle) {
+	runner := Walk_Runner_Handle(unsafe.Pointer(completion))
 	runner.Work_Ready = true
 }
 
-func walk_visit_next[State any](runner *Walk_Runner[State]) (rearm Boolean) {
+func walk_visit_next(runner Walk_Runner_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "walk_visit_next.rearm") }()
-	Walk_Runner_Invariants(runner, "walk_visit_next.runner")
+	Walk_Runner_Handle_Invariants(runner, "walk_visit_next.runner")
 	runner.Queue_Count--
 	path := runner.Queue[runner.Queue_Count]
 	path_text := string(path_slice_text(path))
@@ -960,7 +1017,7 @@ func walk_visit_next[State any](runner *Walk_Runner[State]) (rearm Boolean) {
 	if !nbio.File_Mode_Is_Directory(status.Mode) {
 		return true
 	}
-	runner.Directory_Path_Count = Boundary(copy(runner.Directory_Path[:], path))
+	runner.Directory_Path = path
 	runner.Directory_Status = status
 	runner.Children_Count = 0
 	runner.Phase = WALK_PHASE_OPEN
@@ -968,16 +1025,16 @@ func walk_visit_next[State any](runner *Walk_Runner[State]) (rearm Boolean) {
 	nbio.Storage_Open_At(
 		runner.Loop.Storage, &runner.Completion, nbio.DIRECTORY_CURRENT,
 		string(path_slice_text(path)), nbio.Open_At_Options{Access: nbio.OPEN_READ_ONLY},
-		walk_io_complete[State],
+		nbio.Callback(walk_io_complete),
 	)
 	return false
 }
 
-func walk_visit_result[State any](
-	runner *Walk_Runner[State], visited Slice, status nbio.File_Status, visit_err error,
+func walk_visit_result(
+	runner Walk_Runner_Handle, visited Slice, status nbio.File_Status, visit_err error,
 ) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "walk_visit_result.rearm") }()
-	Walk_Runner_Invariants(runner, "walk_visit_result.runner")
+	Walk_Runner_Handle_Invariants(runner, "walk_visit_result.runner")
 	Slice_Invariants(visited, "walk_visit_result.visited")
 	if visit_err == nil {
 		return true
@@ -997,9 +1054,13 @@ func walk_visit_result[State any](
 	return false
 }
 
-func walk_completion_apply[State any](runner *Walk_Runner[State]) (rearm Boolean) {
+func walk_completion_apply(runner Walk_Runner_Handle) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "walk_completion_apply.rearm") }()
-	Walk_Runner_Invariants(runner, "walk_completion_apply.runner")
+	Walk_Runner_Handle_Invariants(runner, "walk_completion_apply.runner")
+	aver.Always(
+		runner.Phase != WALK_PHASE_IDLE,
+		"Filepath Walk completion has pending operation.",
+	)
 	switch runner.Phase {
 	case WALK_PHASE_OPEN:
 		if runner.Completion.Error != nil {
@@ -1032,36 +1093,35 @@ func walk_completion_apply[State any](runner *Walk_Runner[State]) (rearm Boolean
 		walk_children_push(runner)
 		runner.Phase = WALK_PHASE_IDLE
 		return !Boolean(runner.Done)
-	default:
-		panic("filepath: Walk completion has no pending operation")
 	}
+	return false
 }
 
-func walk_directory_read[State any](runner *Walk_Runner[State]) {
-	Walk_Runner_Invariants(runner, "walk_directory_read.runner")
+func walk_directory_read(runner Walk_Runner_Handle) {
+	Walk_Runner_Handle_Invariants(runner, "walk_directory_read.runner")
 	runner.Phase = WALK_PHASE_READ
 	runner.Work_Ready = false
 	nbio.Storage_Get_Directory_Entries(
 		runner.Loop.Storage, &runner.Completion, runner.Directory,
-		runner.Directory_Buffer, runner.Entries, walk_io_complete[State],
+		runner.Directory_Buffer, runner.Entries, nbio.Callback(walk_io_complete),
 	)
 }
 
-func walk_directory_close[State any](runner *Walk_Runner[State]) {
-	Walk_Runner_Invariants(runner, "walk_directory_close.runner")
+func walk_directory_close(runner Walk_Runner_Handle) {
+	Walk_Runner_Handle_Invariants(runner, "walk_directory_close.runner")
 	runner.Phase = WALK_PHASE_CLOSE
 	runner.Work_Ready = false
 	nbio.IO_Close(
-		runner.Loop, &runner.Completion, runner.Directory, walk_io_complete[State],
+		runner.Loop, &runner.Completion, runner.Directory, nbio.Callback(walk_io_complete),
 	)
 }
 
-func walk_directory_error[State any](
-	runner *Walk_Runner[State], directory_err error,
+func walk_directory_error(
+	runner Walk_Runner_Handle, directory_err error,
 ) (rearm Boolean) {
 	defer func() { Boolean_Invariants(rearm, "walk_directory_error.rearm") }()
-	Walk_Runner_Invariants(runner, "walk_directory_error.runner")
-	path := Slice(runner.Directory_Path[:runner.Directory_Path_Count])
+	Walk_Runner_Handle_Invariants(runner, "walk_directory_error.runner")
+	path := runner.Directory_Path
 	entry := Walk_Entry{
 		Name: bytes.Slice(path_base(path)), Status: runner.Directory_Status,
 	}
@@ -1073,13 +1133,13 @@ func walk_directory_error[State any](
 	return walk_visit_result(runner, path, runner.Directory_Status, visit_err)
 }
 
-func walk_entries_collect[State any](runner *Walk_Runner[State], count Path_Count) {
-	Walk_Runner_Invariants(runner, "walk_entries_collect.runner")
+func walk_entries_collect(runner Walk_Runner_Handle, count Path_Count) {
+	Walk_Runner_Handle_Invariants(runner, "walk_entries_collect.runner")
 	Path_Count_Invariants(count, "walk_entries_collect.count")
 	aver.Always(count > 0, "Walk directory completion has entries.")
 	aver.Always(int(count) <= len(runner.Entries),
 		"Walk directory completion count fits caller entries.")
-	parent := Slice(runner.Directory_Path[:runner.Directory_Path_Count])
+	parent := runner.Directory_Path
 	for index := 0; index < int(count); index++ {
 		child, join_err := path_storage_join(
 			Path_Storage(runner.Children), Path_Count(runner.Children_Count), parent,
@@ -1094,8 +1154,8 @@ func walk_entries_collect[State any](runner *Walk_Runner[State], count Path_Coun
 	}
 }
 
-func walk_children_push[State any](runner *Walk_Runner[State]) {
-	Walk_Runner_Invariants(runner, "walk_children_push.runner")
+func walk_children_push(runner Walk_Runner_Handle) {
+	Walk_Runner_Handle_Invariants(runner, "walk_children_push.runner")
 	path_storage_sort(Path_Storage(runner.Children[:runner.Children_Count]))
 	for index := runner.Children_Count; index > 0; index-- {
 		if int(runner.Queue_Count) == len(runner.Queue) {
@@ -1118,10 +1178,10 @@ func walk_children_push[State any](runner *Walk_Runner[State]) {
 	runner.Children_Count = 0
 }
 
-func walk_queue_siblings_remove[State any](
-	runner *Walk_Runner[State], visited Slice,
+func walk_queue_siblings_remove(
+	runner Walk_Runner_Handle, visited Slice,
 ) {
-	Walk_Runner_Invariants(runner, "walk_queue_siblings_remove.runner")
+	Walk_Runner_Handle_Invariants(runner, "walk_queue_siblings_remove.runner")
 	Slice_Invariants(visited, "walk_queue_siblings_remove.visited")
 	parent := path_parent(visited)
 	for runner.Queue_Count > 0 {
@@ -1289,6 +1349,17 @@ func Eval_State_Invariants(value Eval_State, namespace aver.Namespace) {
 	Eval_Done_Invariants(value.Done, namespace)
 }
 
+// Eval_State_Handle keeps active caller-owned symbolic-link state nonnil.
+type Eval_State_Handle *Eval_State
+
+// Eval_State_Handle_Invariants states retained buffer and scalar bounds.
+func Eval_State_Handle_Invariants(value Eval_State_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Eval_State_Invariants(*value, namespace)
+}
+
 func eval_symlinks_apply(
 	storage nbio.Storage, destination Slice, remainder Slice,
 	link_target Slice, value Text,
@@ -1325,8 +1396,8 @@ func eval_symlinks_apply(
 	return Boundary(clean_count), nil
 }
 
-func eval_state_step(state *Eval_State) {
-	Eval_State_Invariants(*state, "eval_state_step.state")
+func eval_state_step(state Eval_State_Handle) {
+	Eval_State_Handle_Invariants(state, "eval_state_step.state")
 	eval_component_find(state)
 	if state.Done {
 		return
@@ -1359,8 +1430,8 @@ func eval_state_step(state *Eval_State) {
 	eval_status_apply(state, status)
 }
 
-func eval_component_find(state *Eval_State) {
-	Eval_State_Invariants(*state, "eval_component_find.state")
+func eval_component_find(state Eval_State_Handle) {
+	Eval_State_Handle_Invariants(state, "eval_component_find.state")
 	for int(state.Start) < int(state.Remainder_Count) {
 		if state.Remainder[state.Start] != SEPARATOR {
 			break
@@ -1379,8 +1450,8 @@ func eval_component_find(state *Eval_State) {
 	}
 }
 
-func eval_status_apply(state *Eval_State, status nbio.File_Status) {
-	Eval_State_Invariants(*state, "eval_status_apply.state")
+func eval_status_apply(state Eval_State_Handle, status nbio.File_Status) {
+	Eval_State_Handle_Invariants(state, "eval_status_apply.state")
 	if !status.Exists {
 		state.Result = Error_Path_Absent
 		state.Done = true
@@ -1407,8 +1478,8 @@ func eval_status_apply(state *Eval_State, status nbio.File_Status) {
 	state.Start = 0
 }
 
-func eval_link_apply(state *Eval_State) {
-	Eval_State_Invariants(*state, "eval_link_apply.state")
+func eval_link_apply(state Eval_State_Handle) {
+	Eval_State_Handle_Invariants(state, "eval_link_apply.state")
 	target_count, read_err := nbio.Storage_Read_Link(
 		state.Storage,
 		string(path_slice_text(Slice(
@@ -1442,9 +1513,9 @@ func eval_link_apply(state *Eval_State) {
 	}
 }
 
-func eval_component_dot(state *Eval_State) (yes Boolean) {
+func eval_component_dot(state Eval_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "eval_component_dot.yes") }()
-	Eval_State_Invariants(*state, "eval_component_dot.state")
+	Eval_State_Handle_Invariants(state, "eval_component_dot.state")
 	component := state.Remainder[state.Start:state.End]
 	if len(component) != 1 {
 		return false
@@ -1452,9 +1523,9 @@ func eval_component_dot(state *Eval_State) (yes Boolean) {
 	return Boolean(component[0] == '.')
 }
 
-func eval_component_dot_dot(state *Eval_State) (yes Boolean) {
+func eval_component_dot_dot(state Eval_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "eval_component_dot_dot.yes") }()
-	Eval_State_Invariants(*state, "eval_component_dot_dot.state")
+	Eval_State_Handle_Invariants(state, "eval_component_dot_dot.state")
 	component := state.Remainder[state.Start:state.End]
 	if len(component) != 2 {
 		return false
@@ -1465,8 +1536,8 @@ func eval_component_dot_dot(state *Eval_State) (yes Boolean) {
 	return Boolean(component[1] == '.')
 }
 
-func eval_component_append(state *Eval_State) {
-	Eval_State_Invariants(*state, "eval_component_append.state")
+func eval_component_append(state Eval_State_Handle) {
+	Eval_State_Handle_Invariants(state, "eval_component_append.state")
 	component := state.Remainder[state.Start:state.End]
 	separator := state.Destination_Count > 0
 	if separator {
@@ -1489,8 +1560,8 @@ func eval_component_append(state *Eval_State) {
 	)
 }
 
-func eval_component_remove(state *Eval_State) {
-	Eval_State_Invariants(*state, "eval_component_remove.state")
+func eval_component_remove(state Eval_State_Handle) {
+	Eval_State_Handle_Invariants(state, "eval_component_remove.state")
 	if state.Destination_Count == 0 {
 		return
 	}
@@ -1519,8 +1590,8 @@ func eval_component_remove(state *Eval_State) {
 	state.Destination_Count = 0
 }
 
-func eval_parent_apply(state *Eval_State) {
-	Eval_State_Invariants(*state, "eval_parent_apply.state")
+func eval_parent_apply(state Eval_State_Handle) {
+	Eval_State_Handle_Invariants(state, "eval_parent_apply.state")
 	if state.Destination_Count == 0 {
 		state.Destination[0] = '.'
 		state.Destination[1] = '.'
@@ -1545,9 +1616,9 @@ func eval_parent_apply(state *Eval_State) {
 	eval_component_remove(state)
 }
 
-func eval_has_component(state *Eval_State) (yes Boolean) {
+func eval_has_component(state Eval_State_Handle) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "eval_has_component.yes") }()
-	Eval_State_Invariants(*state, "eval_has_component.state")
+	Eval_State_Handle_Invariants(state, "eval_has_component.state")
 	for index := int(state.End); index < int(state.Remainder_Count); index++ {
 		if state.Remainder[index] != SEPARATOR {
 			return true
@@ -2011,9 +2082,10 @@ func Localize_Into(
 	if !valid_path(value) {
 		return 0, Error_Invalid_Path
 	}
-	if len(destination) < len(value) {
-		panic("filepath: destination too small")
-	}
+	aver.Always(
+		len(destination) >= len(value),
+		"Filepath localize destination holds complete result.",
+	)
 	copy(destination, value)
 	return Boundary(len(value)), nil
 }
@@ -2023,9 +2095,10 @@ func To_Slash_Into(destination bytes.Slice, value Text) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "to_slash_into.count") }()
 	bytes.Slice_Invariants(destination, "to_slash_into.destination")
 	Text_Invariants(value, "to_slash_into.value")
-	if len(destination) < len(value) {
-		panic("filepath: destination too small")
-	}
+	aver.Always(
+		len(destination) >= len(value),
+		"Filepath slash destination holds complete result.",
+	)
 	copy(destination, value)
 	return Boundary(len(value))
 }
@@ -2035,9 +2108,10 @@ func From_Slash_Into(destination bytes.Slice, value Text) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "from_slash_into.count") }()
 	bytes.Slice_Invariants(destination, "from_slash_into.destination")
 	Text_Invariants(value, "from_slash_into.value")
-	if len(destination) < len(value) {
-		panic("filepath: destination too small")
-	}
+	aver.Always(
+		len(destination) >= len(value),
+		"Filepath host separator destination holds complete result.",
+	)
 	copy(destination, value)
 	return Boundary(len(value))
 }
@@ -2056,9 +2130,10 @@ func Split_List_Into(destination Paths, value Text) (count Path_Count) {
 			count++
 		}
 	}
-	if len(destination) < int(count) {
-		panic("filepath: path destination too small")
-	}
+	aver.Always(
+		len(destination) >= int(count),
+		"Filepath list destination holds every path.",
+	)
 	start := 0
 	position := 0
 	for index := range len(value) {
@@ -2210,8 +2285,8 @@ func Match(pattern Text, name Text) (matched Boolean, err error) {
 	defer func() { Boolean_Invariants(matched, "match.matched") }()
 	Text_Invariants(pattern, "match.pattern")
 	Text_Invariants(name, "match.name")
-	path_matched, path_error := path.Match(path.Text(pattern), path.Text(name))
-	if path_error != nil {
+	path_matched, path_err := path.Match(path.Text(pattern), path.Text(name))
+	if path_err != nil {
 		return false, Error_Bad_Pattern
 	}
 	return Boolean(path_matched), nil
@@ -2343,9 +2418,10 @@ func segment_is_dot_dot(value Cleaned_Path) (yes Boolean) {
 func write_dot(destination bytes.Slice) (count Dot_Count) {
 	defer func() { Dot_Count_Invariants(count, "write_dot.count") }()
 	bytes.Slice_Invariants(destination, "write_dot.destination")
-	if len(destination) < NONEMPTY_SIZE_MINIMUM {
-		panic("filepath: destination too small")
-	}
+	aver.Always(
+		len(destination) >= NONEMPTY_SIZE_MINIMUM,
+		"Filepath dot destination holds one byte.",
+	)
 	destination[0] = '.'
 	return NONEMPTY_SIZE_MINIMUM
 }
@@ -2372,9 +2448,10 @@ func write_relative(
 		return 0, Error_Result_Too_Large
 	}
 	// Size check precedes every write so failure cannot leak partial relative path.
-	if len(destination) < result_size {
-		panic("filepath: destination too small")
-	}
+	aver.Always(
+		len(destination) >= result_size,
+		"Filepath relative destination holds complete result.",
+	)
 	position := 0
 	for index := range up_count {
 		if index > 0 {

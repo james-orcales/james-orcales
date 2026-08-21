@@ -665,11 +665,18 @@ func standard_glob_symlinks(t *testing.T) {
 	}
 }
 
+type standard_walk_paths []string
+
 type standard_walk_state struct {
-	Paths [STANDARD_FILESYSTEM_PATH_CAPACITY]string
+	Paths standard_walk_paths
 	Count int
 	Skip  string
 	All   string
+}
+
+func standard_walk_state_make() (state standard_walk_state) {
+	state.Paths = make(standard_walk_paths, STANDARD_FILESYSTEM_PATH_CAPACITY)
+	return state
 }
 
 // Test_Standard_Library_Walk ports upstream TestWalk preorder and skip behavior.
@@ -693,7 +700,7 @@ func standard_walk_test(t *testing.T, directory_entry bool) {
 	standard_filesystem_file(t, loop, driver, "stdlib_walk/a/sub/two")
 	standard_filesystem_file(t, loop, driver, "stdlib_walk/b/three")
 
-	state := standard_walk_state{}
+	state := standard_walk_state_make()
 	err := standard_walk(t, loop, driver, &state, directory_entry)
 	testify.No_Error(t, err)
 	want := []string{
@@ -705,24 +712,27 @@ func standard_walk_test(t *testing.T, directory_entry bool) {
 		testify.Equal(t, want[index], state.Paths[index], "walk position %d", index)
 	}
 
-	state = standard_walk_state{Skip: "stdlib_walk/a"}
+	state = standard_walk_state_make()
+	state.Skip = "stdlib_walk/a"
 	err = standard_walk(t, loop, driver, &state, directory_entry)
 	testify.No_Error(t, err)
 	testify.Equal(t, 4, state.Count)
 	testify.Equal(t, "stdlib_walk/b", state.Paths[2])
 
-	state = standard_walk_state{Skip: "stdlib_walk/a/one"}
+	state = standard_walk_state_make()
+	state.Skip = "stdlib_walk/a/one"
 	err = standard_walk(t, loop, driver, &state, directory_entry)
 	testify.No_Error(t, err)
 	testify.Equal(t, 5, state.Count)
 	testify.Equal(t, "stdlib_walk/b", state.Paths[3])
 
-	state = standard_walk_state{All: "stdlib_walk/a/one"}
+	state = standard_walk_state_make()
+	state.All = "stdlib_walk/a/one"
 	err = standard_walk(t, loop, driver, &state, directory_entry)
 	testify.No_Error(t, err)
 	testify.Equal(t, 3, state.Count)
 
-	state = standard_walk_state{}
+	state = standard_walk_state_make()
 	err = standard_walk_root(
 		t, loop, driver, &state, directory_entry, "stdlib_walk/missing",
 	)
@@ -742,7 +752,7 @@ func standard_walk_symlink_root(t *testing.T, directory_entry bool) {
 		State: unsafe.Pointer(&filesystem), Status_Procedure: standard_link_status,
 		Read_Link_Procedure: standard_link_read,
 	}
-	state := standard_walk_state{}
+	state := standard_walk_state_make()
 	err := standard_walk_root(
 		t, nbio.IO{Storage: storage}, nbio.Driver{}, &state, directory_entry, "link",
 	)
@@ -752,11 +762,12 @@ func standard_walk_symlink_root(t *testing.T, directory_entry bool) {
 }
 
 func standard_walk_visit(
-	state *standard_walk_state, path bytes.Slice, _ Walk_Entry, visit_err error,
+	visitor_state Walk_Visitor_State, path bytes.Slice, _ Walk_Entry, visit_err error,
 ) (err error) {
 	if visit_err != nil {
 		return visit_err
 	}
+	state := (*standard_walk_state)(visitor_state.Pointer)
 	value := string(path)
 	state.Paths[state.Count] = value
 	state.Count++
@@ -791,14 +802,15 @@ func standard_walk_root(
 			make(bytes.Slice, nbio.DIRECTORY_BUFFER_SIZE_MAXIMUM),
 		),
 	}
-	runner := Walk_Runner[standard_walk_state]{}
+	runner := Walk_Runner{}
+	visitor_state := Walk_Visitor_State{Pointer: unsafe.Pointer(state)}
 	if directory_entry {
 		err = Walk_Directory_Runner_Init(
-			&runner, loop, root, state, standard_walk_visit, memory,
+			&runner, loop, root, visitor_state, standard_walk_visit, memory,
 		)
 	} else {
 		err = Walk_Runner_Init(
-			&runner, loop, root, state, standard_walk_visit, memory,
+			&runner, loop, root, visitor_state, standard_walk_visit, memory,
 		)
 	}
 	if err != nil {
@@ -808,9 +820,7 @@ func standard_walk_root(
 	return Walk_Runner_Status(&runner)
 }
 
-func standard_walk_drive[State any](
-	t *testing.T, driver nbio.Driver, runner *Walk_Runner[State],
-) {
+func standard_walk_drive(t *testing.T, driver nbio.Driver, runner *Walk_Runner) {
 	t.Helper()
 	for !bool(Walk_Runner_Stopped(runner)) {
 		for Walk_Runner_Rearm(runner) {
@@ -898,10 +908,10 @@ func standard_filesystem_directory(
 	completion := nbio.Completion{}
 	nbio.Storage_Mkdir_At(
 		loop.Storage, &completion, nbio.DIRECTORY_CURRENT, path, 0o755,
-		func(completed *nbio.Completion) {
+		nbio.Callback(func(completed nbio.Completion_Handle) {
 			testify.No_Error(t, completed.Error, path)
 			done = true
-		},
+		}),
 	)
 	nbio.Driver_Run_Until(
 		driver, STANDARD_FILESYSTEM_DEADLINE, func() (ready bool) { return done },
@@ -921,11 +931,11 @@ func standard_filesystem_file(
 		nbio.Open_At_Options{
 			Access: nbio.OPEN_WRITE_ONLY, Create: true, Permissions: 0o600,
 		},
-		func(completed *nbio.Completion) {
+		nbio.Callback(func(completed nbio.Completion_Handle) {
 			testify.No_Error(t, completed.Error, path)
 			file = nbio.File(completed.Data)
 			done = true
-		},
+		}),
 	)
 	nbio.Driver_Run_Until(
 		driver, STANDARD_FILESYSTEM_DEADLINE, func() (ready bool) { return done },
@@ -940,10 +950,12 @@ func standard_filesystem_close(
 	t.Helper()
 	done := false
 	completion := nbio.Completion{}
-	nbio.IO_Close(loop, &completion, file, func(completed *nbio.Completion) {
-		testify.No_Error(t, completed.Error)
-		done = true
-	})
+	nbio.IO_Close(
+		loop, &completion, file, nbio.Callback(func(completed nbio.Completion_Handle) {
+			testify.No_Error(t, completed.Error)
+			done = true
+		}),
+	)
 	nbio.Driver_Run_Until(
 		driver, STANDARD_FILESYSTEM_DEADLINE, func() (ready bool) { return done },
 	)
@@ -1116,10 +1128,11 @@ func Test_Standard_Library_Filesystem_Bounds(t *testing.T) {
 			Entries:          Directory_Entries(make([]nbio.Directory_Entry, 1)),
 			Directory_Buffer: Directory_Buffer(make([]byte, 1)),
 		}
-		walk := Walk_Runner[standard_walk_state]{}
-		walk_state := standard_walk_state{}
+		walk := Walk_Runner{}
+		walk_state := standard_walk_state_make()
 		testify.No_Error(t, Walk_Runner_Init(
-			&walk, nbio.IO{Storage: storage}, values[index], &walk_state,
+			&walk, nbio.IO{Storage: storage}, values[index],
+			Walk_Visitor_State{Pointer: unsafe.Pointer(&walk_state)},
 			standard_walk_visit, walk_memory,
 		))
 
@@ -1283,31 +1296,33 @@ func standard_walk_state_bounds(values []Text) {
 		WALK_PHASE_IDLE, WALK_PHASE_OPEN, WALK_PHASE_READ, WALK_PHASE_CLOSE,
 	}
 	for index := range values {
-		state := standard_walk_state{}
-		runner := Walk_Runner[standard_walk_state]{
-			Visitor_State: &state, Visitor: standard_walk_visit,
-			Queue:    Walk_Queue_Paths(make(Path_Storage, counts[index])),
-			Children: Walk_Child_Paths(make(Path_Storage, counts[index])),
+		state := standard_walk_state_make()
+		runner := Walk_Runner{
+			Visitor_State: Walk_Visitor_State{Pointer: unsafe.Pointer(&state)},
+			Visitor:       standard_walk_visit,
+			Queue:         Walk_Queue_Paths(make(Path_Storage, counts[index])),
+			Children:      Walk_Child_Paths(make(Path_Storage, counts[index])),
 			Entries: Directory_Entries(
 				make([]nbio.Directory_Entry, counts[index]),
 			),
 			Directory_Buffer: Directory_Buffer(make([]byte, buffers[index])),
 			Queue_Count:      Walk_Queue_Count(counts[index]),
 			Children_Count:   Walk_Child_Count(counts[index]),
-			Directory_Path_Count: Boundary(
-				len(values[index]),
-			),
-			Phase:      phases[index],
-			Work_Ready: Walk_Work_Ready(index%2 == 1),
-			Done:       Walk_Done(index%2 == 0),
+			Directory_Path:   Slice(values[index]),
+			Phase:            phases[index],
+			Work_Ready:       Walk_Work_Ready(index%2 == 1),
+			Done:             Walk_Done(index%2 == 0),
 		}
 		standard_walk_operation_bounds(runner, values[index], counts[index])
 		standard_walk_init_bounds(runner, values[index], counts[index], buffers[index])
 	}
+	empty := Walk_Runner{}
+	standard_walk_operation_bounds(empty, "", 0)
+	standard_walk_init_bounds(empty, "", 0, 0)
 }
 
 func standard_walk_operation_bounds(
-	runner Walk_Runner[standard_walk_state], value Text, count int,
+	runner Walk_Runner, value Text, count int,
 ) {
 	path := Slice(value)
 	status := nbio.File_Status{Exists: true, Mode: nbio.FILE_MODE_DIRECTORY}
@@ -1339,7 +1354,7 @@ func standard_walk_operation_bounds(
 }
 
 func standard_walk_init_bounds(
-	runner Walk_Runner[standard_walk_state], root Text, count int,
+	runner Walk_Runner, root Text, count int,
 	buffer_size int,
 ) {
 	memory := Walk_Memory{
@@ -1474,8 +1489,10 @@ func standard_path_helper_bounds(values []Text) {
 	}
 	maximum_path := append(maximum_parent, '/', 'b')
 	standard_boundary(func() { path_parent(maximum_path) })
-	runner := Walk_Runner[standard_walk_state]{
-		Visitor_State: &standard_walk_state{}, Visitor: standard_walk_visit,
+	state := standard_walk_state_make()
+	runner := Walk_Runner{
+		Visitor_State:    Walk_Visitor_State{Pointer: unsafe.Pointer(&state)},
+		Visitor:          standard_walk_visit,
 		Directory_Status: nbio.File_Status{Exists: true, Mode: nbio.FILE_MODE_DIRECTORY},
 	}
 	standard_boundary(func() { walk_directory_error(&runner, nil) })
