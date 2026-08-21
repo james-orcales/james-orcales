@@ -575,7 +575,8 @@ func Marshal_Into(destination Output, value Value) (data Data, err Error) {
 	if !root.IsValid() {
 		return nil, ERR_ROOT_TYPE
 	}
-	var builder strings.Builder
+	var storage [OUTPUT_SIZE_MAXIMUM]byte
+	builder := strings.Builder{Storage: storage[:]}
 	state := Encoder_State(unsafe.Pointer(&builder))
 	root_state := Reflection_State(unsafe.Pointer(&root))
 	switch root.Kind() {

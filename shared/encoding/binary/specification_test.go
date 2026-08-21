@@ -154,14 +154,14 @@ type deferred_stream struct {
 }
 
 func deferred_to_stream(state *deferred_stream) (stream nbio.Stream) {
-	return nbio.Stream{State: unsafe.Pointer(state), Procedure: deferred_stream_procedure}
+	return nbio.Stream{State: state, Procedure: deferred_stream_procedure}
 }
 
 func deferred_stream_procedure(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
+	state_value nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
-	state := (*deferred_stream)(state_pointer)
+	state := state_value.(*deferred_stream)
 	state.Buffer = buffer
 	state.Completion = completion
 	state.Callback = callback
@@ -196,17 +196,17 @@ type inline_reader_stream struct {
 
 func inline_reader_to_stream(state *inline_reader_stream) (stream nbio.Stream) {
 	stream = nbio.Stream{
-		State: unsafe.Pointer(state), Procedure: inline_reader_stream_procedure,
+		State: state, Procedure: inline_reader_stream_procedure,
 	}
 	state.Stream = stream
 	return stream
 }
 
 func inline_reader_stream_procedure(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
+	state_value nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
-	state := (*inline_reader_stream)(state_pointer)
+	state := state_value.(*inline_reader_stream)
 	if mode != nbio.STREAM_MODE_READ {
 		completion.Data = 0
 		completion.Error = nbio.Stream_Empty

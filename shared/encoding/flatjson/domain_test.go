@@ -117,13 +117,14 @@ func Test_Tag_Domains(t *testing.T) {
 
 func encoder_state(t *testing.T, size int) (state Encoder_State) {
 	t.Helper()
-	builder := new(strings.Builder)
+	storage := make([]byte, strings.TEXT_SIZE_MAXIMUM)
+	builder := &strings.Builder{Storage: storage}
 	state = Encoder_State(unsafe.Pointer(builder))
-	storage := make([]byte, size)
-	for index := range storage {
-		storage[index] = '0'
+	text := make([]byte, size)
+	for index := range text {
+		text[index] = '0'
 	}
-	err := write_text(write_encoder(state), Nonempty_Text(storage))
+	err := write_text(write_encoder(state), Nonempty_Text(text))
 	testify.No_Error(t, err)
 	return state
 }

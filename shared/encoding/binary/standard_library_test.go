@@ -89,14 +89,14 @@ type memory_stream struct {
 }
 
 func memory_to_stream(state *memory_stream) (stream nbio.Stream) {
-	return nbio.Stream{State: unsafe.Pointer(state), Procedure: memory_stream_procedure}
+	return nbio.Stream{State: state, Procedure: memory_stream_procedure}
 }
 
 func memory_stream_procedure(
-	state_pointer unsafe.Pointer, completion *nbio.Completion, mode nbio.Stream_Mode,
+	state_value nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode,
 	buffer []byte, _ int64, _ nbio.Seek_From, callback nbio.Stream_Callback,
 ) {
-	state := (*memory_stream)(state_pointer)
+	state := state_value.(*memory_stream)
 	count, err := memory_stream_transfer(state, mode, buffer)
 	completion.Data = count
 	completion.Error = err
