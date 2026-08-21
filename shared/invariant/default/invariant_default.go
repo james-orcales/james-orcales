@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant"
-	encoding_flatjson "local/james-orcales/shared/invariant/flatjson"
+	"local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/invariant/flatjson"
 )
 
 // Recorder re-exports the library type so callers importing only this package
@@ -121,7 +121,7 @@ const OUTPUT_ENVIRONMENT = "INVARIANT_OUTPUT"
 
 // Coverage_Gap_Json_Write emits one compact flat array and its terminating newline.
 func Coverage_Gap_Json_Write(output io.Writer, gaps []invariant.Coverage_Gap) (err error) {
-	if marshal_error := encoding_flatjson.Marshal_Write(output, gaps); marshal_error != nil {
+	if marshal_error := invariant_flatjson.Marshal_Write(output, gaps); marshal_error != nil {
 		return marshal_error
 	}
 	written, write_error := io.WriteString(output, "\n")

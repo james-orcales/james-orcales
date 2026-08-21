@@ -9,8 +9,6 @@ import (
 	"io"
 	"reflect"
 	"strings"
-
-	core "local/james-orcales/shared/invariant"
 )
 
 // KEY_SEPARATOR preserves flat field paths without nested JSON objects.
@@ -18,15 +16,14 @@ const KEY_SEPARATOR = "_"
 
 // Frame replaces recursive reflection traversal.
 type Frame struct {
+	// Structure stays in each frame because iteration must resume after child traversal.
 	Structure reflect.Value
-	Index     int
-	Prefix    string
-	Null      bool
-}
-
-// Always lets the flat JSON encoder retain assertion enforcement without a dependency cycle.
-func Always[T ~bool](condition T, message string) {
-	core.Recorder_Always(&core.Recorder{}, condition, message)
+	// Index preserves parent progress while child frame owns traversal.
+	Index int
+	// Prefix prevents nested fields from losing flattened identity.
+	Prefix string
+	// Null propagates nil ancestry because zero child values cannot retain that fact.
+	Null bool
 }
 
 // Marshal encodes one struct or one top-level array of structs as flat JSON.
@@ -166,7 +163,9 @@ func flatten_struct(
 				"Marshal only descends into struct values.",
 			)
 			stack = append(stack, Frame{
-				Structure: child, Prefix: prefix + name + KEY_SEPARATOR, Null: child_null,
+				Structure: child,
+				Prefix:    prefix + name + KEY_SEPARATOR,
+				Null:      child_null,
 			})
 			continue
 		}

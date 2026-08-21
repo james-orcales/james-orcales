@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	core "local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/invariant"
 )
 
 // OVERFLOW_FIXTURE_BYTES_MAX bounds the fixture read. Two records fit far inside it, thus a short
@@ -21,7 +21,7 @@ const OVERFLOW_FIXTURE_BYTES_MAX = 4096
 func Test_Overflow_File(t *testing.T) {
 	property := "The value equals the minimum."
 	link := uint8(2)
-	gaps := []core.Coverage_Gap{
+	gaps := []invariant.Coverage_Gap{
 		{
 			Section: "branch", Assertion: "spilled", Package: "pkg", Type: "Value",
 			Link: &link, Absent: "true", Property: &property, Source: "int(value)",
@@ -50,7 +50,7 @@ func Test_Overflow_File(t *testing.T) {
 	if !errors.Is(read_error, io.ErrUnexpectedEOF) {
 		t.Fatalf("read error = %v, want the fixture to fit its bound", read_error)
 	}
-	var restored []core.Coverage_Gap
+	var restored []invariant.Coverage_Gap
 	if decode_error := json.Unmarshal(content[:read], &restored); decode_error != nil {
 		t.Fatal(decode_error)
 	}
@@ -67,7 +67,7 @@ func Test_Overflow_File(t *testing.T) {
 func Test_JSON_Output_Records(t *testing.T) {
 	link := uint8(2)
 	property := "The value equals the minimum."
-	gaps := []core.Coverage_Gap{
+	gaps := []invariant.Coverage_Gap{
 		{
 			Section: "branch", Assertion: "Classify_File_Input.Path",
 			Package: "local/james-orcales/sloc/internal", Type: "File_Path",
@@ -116,7 +116,7 @@ func Test_JSON_Output_Selection(t *testing.T) {
 	}
 	for _, value := range values {
 		t.Setenv(OUTPUT_ENVIRONMENT, value.Environment)
-		recorder := &core.Recorder{}
+		recorder := &invariant.Recorder{}
 		recorder_output_configure(recorder, os.Getenv(OUTPUT_ENVIRONMENT))
 		if recorder.Output_Configuration_Diagnostic != value.Diagnostic {
 			t.Fatalf("mode %q diagnostic = %q, want %q", value.Environment,
@@ -126,11 +126,11 @@ func Test_JSON_Output_Selection(t *testing.T) {
 			continue
 		}
 		output := &bytes.Buffer{}
-		gap := core.Coverage_Gap{
+		gap := invariant.Coverage_Gap{
 			Section: "reachability", Assertion: "guard",
 			Absent: "reachability", Source: "ready",
 		}
-		gaps := []core.Coverage_Gap{gap}
+		gaps := []invariant.Coverage_Gap{gap}
 		if err := recorder.Report_Coverage_Gaps(output, gaps); err != nil {
 			t.Fatal(err)
 		}
@@ -143,15 +143,17 @@ func Test_JSON_Output_Selection(t *testing.T) {
 
 // Test_JSON_Output_Failure keeps both encoder and terminating-newline writes checked.
 func Test_JSON_Output_Failure(t *testing.T) {
-	gap := core.Coverage_Gap{
+	gap := invariant.Coverage_Gap{
 		Section: "reachability", Assertion: "guard",
 		Absent: "reachability", Source: "ready",
 	}
-	if err := Coverage_Gap_Json_Write(failure_writer{}, []core.Coverage_Gap{gap}); err == nil {
+	if err := Coverage_Gap_Json_Write(
+		failure_writer{}, []invariant.Coverage_Gap{gap},
+	); err == nil {
 		t.Fatal("encoder write failure was ignored")
 	}
 	writer := &newline_failure_writer{}
-	if err := Coverage_Gap_Json_Write(writer, []core.Coverage_Gap{gap}); err == nil {
+	if err := Coverage_Gap_Json_Write(writer, []invariant.Coverage_Gap{gap}); err == nil {
 		t.Fatal("terminating newline failure was ignored")
 	}
 }
