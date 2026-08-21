@@ -164,22 +164,18 @@ func Test_Trim_And_Cut(t *testing.T) {
 	verify_affix_views(t)
 }
 
-// Test_Builder proves zero value owns fixed bounded storage.
+// Test_Builder proves Builder borrows bounded caller storage.
 func Test_Builder(t *testing.T) {
-	var builder strings.Builder
+	var storage [strings.TEXT_SIZE_MAXIMUM]byte
+	builder := strings.Builder{Storage: storage[:]}
 	strings.Builder_Write_Text(&builder, "a")
 	strings.Builder_Write_Byte(&builder, 'b')
 	strings.Builder_Write_Character(&builder, '☺')
-	if string(strings.Builder_Bytes(&builder)) != "ab☺" {
-		t.Fatal("Builder writes must remain in fixed storage")
-	}
-	if strings.Builder_Size(&builder) != 5 {
-		t.Fatal("Builder_Size must report encoded bytes")
-	}
+	testify.Equal(t, "ab☺", string(strings.Builder_Bytes(&builder)))
+	testify.Equal(t, strings.Size_Value(5), strings.Builder_Size(&builder))
 	strings.Builder_Reset(&builder)
-	if len(strings.Builder_Bytes(&builder)) != 0 {
-		t.Fatal("Builder_Reset must retain storage and remove content")
-	}
+	testify.Empty(t, strings.Builder_Bytes(&builder))
+	testify.Equal(t, strings.TEXT_SIZE_MAXIMUM, int(strings.Builder_Capacity(&builder)))
 }
 
 // Test_Reader proves cursor state needs no allocated wrapper.
@@ -464,7 +460,7 @@ func verify_api_is_zero_allocation(t *testing.T) {
 	maximum_y_storage[len(maximum_y_storage)-1] = 'y'
 	var byte_storage [strings.TEXT_SIZE_MAXIMUM]byte
 	var text_storage [strings.TEXT_COUNT_MAXIMUM]strings.Text
-	var builder strings.Builder
+	builder := strings.Builder{Storage: byte_storage[:]}
 	var reader strings.Reader
 	rules := [...]strings.Rule{{Old: "x", New: "y"}}
 	observable := 0
@@ -761,20 +757,20 @@ func builder_allocation_checks(
 			*observable = int(builder.Size)
 		}},
 		{Name: "Builder_Write", Call: func() {
-			*builder = strings.Builder{}
+			strings.Builder_Reset(builder)
 			*observable = int(strings.Builder_Write(builder, source[:2]))
 		}},
 		{Name: "Builder_Write_Text", Call: func() {
-			*builder = strings.Builder{}
+			strings.Builder_Reset(builder)
 			*observable = int(strings.Builder_Write_Text(builder, "xy"))
 		}},
 		{Name: "Builder_Write_Byte", Call: func() {
-			*builder = strings.Builder{}
+			strings.Builder_Reset(builder)
 			strings.Builder_Write_Byte(builder, 'x')
 			*observable = int(builder.Size)
 		}},
 		{Name: "Builder_Write_Character", Call: func() {
-			*builder = strings.Builder{}
+			strings.Builder_Reset(builder)
 			strings.Builder_Write_Character(builder, '☺')
 			*observable = int(builder.Size)
 		}},
@@ -990,7 +986,7 @@ func exercise_rune_index_boundaries(maximum_y strings.Text) {
 
 func exercise_function_index_boundaries(
 	operation func(
-		strings.Text, func(rune) (matches bool),
+		strings.Text, strings.Predicate,
 	) (index strings.Index_Value),
 	maximum_y strings.Text,
 ) {
@@ -1032,7 +1028,7 @@ func exercise_cutset_trim_boundaries(
 
 func exercise_function_trim_boundaries(
 	operation func(
-		strings.Text, func(rune) (matches bool),
+		strings.Text, strings.Predicate,
 	) (trimmed strings.Text),
 	maximum strings.Text,
 ) {
@@ -1413,17 +1409,20 @@ func allocation_drop(rune) (mapped rune) {
 func exercise_builder_boundaries(
 	storage strings.Bytes, maximum strings.Text,
 ) {
-	exercise_builder_query_boundaries(maximum)
+	exercise_builder_query_boundaries(storage, maximum)
 	exercise_builder_write_boundaries(storage, maximum)
-	exercise_builder_scalar_write_boundaries()
+	exercise_builder_scalar_write_boundaries(storage)
 }
 
-func exercise_builder_query_boundaries(maximum strings.Text) {
+func exercise_builder_query_boundaries(
+	storage strings.Bytes, maximum strings.Text,
+) {
 	builders := [...]strings.Builder{
-		{},
-		{Size: 1},
-		{Size: 2},
-		{Size: strings.SIZE_VALUE_MAXIMUM},
+		{Storage: storage[:0:0]},
+		{Storage: storage[:1:1], Size: 1},
+		{Storage: storage[:2:2], Size: 2},
+		{Storage: storage[:strings.SIZE_VALUE_MAXIMUM:strings.SIZE_VALUE_MAXIMUM],
+			Size: strings.SIZE_VALUE_MAXIMUM},
 	}
 	for builder_index := range builders {
 		builder := &builders[builder_index]
@@ -1435,76 +1434,88 @@ func exercise_builder_query_boundaries(maximum strings.Text) {
 		builder := builders[builder_index]
 		strings.Builder_Reset(&builder)
 	}
-	var full strings.Builder
+	full := strings.Builder{Storage: storage}
 	strings.Builder_Write_Text(&full, maximum)
 	strings.Builder_Bytes(&full)
+	invalid := strings.Builder{Storage: storage[:0:0], Size: 1}
+	exercise_panicking_call(func() {
+		strings.Builder_Size(&invalid)
+	})
 }
 
 func exercise_builder_write_boundaries(
 	storage strings.Bytes, maximum strings.Text,
 ) {
-	var builder strings.Builder
+	builder := strings.Builder{Storage: storage[:0:0]}
 	strings.Builder_Write(&builder, storage[:0])
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage[:1:1]}
 	strings.Builder_Write(&builder, storage[:1])
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage[:2:2]}
 	strings.Builder_Write(&builder, storage[:2])
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage}
 	strings.Builder_Write(&builder, storage)
-	builder = strings.Builder{Size: strings.SIZE_VALUE_MAXIMUM}
+	builder = strings.Builder{Storage: storage, Size: strings.SIZE_VALUE_MAXIMUM}
 	strings.Builder_Write(&builder, storage[:0])
-	builder = strings.Builder{Size: 1}
+	builder = strings.Builder{Storage: storage, Size: 1}
 	strings.Builder_Write(&builder, storage[:0])
-	builder = strings.Builder{Size: 2}
+	builder = strings.Builder{Storage: storage, Size: 2}
 	strings.Builder_Write(&builder, storage[:0])
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage[:0:0]}
 	strings.Builder_Write_Text(&builder, "")
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage[:1:1]}
 	strings.Builder_Write_Text(&builder, "x")
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage[:2:2]}
 	strings.Builder_Write_Text(&builder, "xx")
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage}
 	strings.Builder_Write_Text(&builder, maximum)
-	builder = strings.Builder{Size: strings.SIZE_VALUE_MAXIMUM}
+	builder = strings.Builder{Storage: storage, Size: strings.SIZE_VALUE_MAXIMUM}
 	strings.Builder_Write_Text(&builder, "")
-	builder = strings.Builder{Size: 1}
+	builder = strings.Builder{Storage: storage, Size: 1}
 	strings.Builder_Write_Text(&builder, "")
-	builder = strings.Builder{Size: 2}
+	builder = strings.Builder{Storage: storage, Size: 2}
 	strings.Builder_Write_Text(&builder, "")
 }
 
-func exercise_builder_scalar_write_boundaries() {
-	builder := strings.Builder{}
+func exercise_builder_scalar_write_boundaries(storage strings.Bytes) {
+	builder := strings.Builder{Storage: storage[:0:0]}
+	exercise_panicking_call(func() {
+		strings.Builder_Write_Byte(&builder, 0)
+	})
+	builder = strings.Builder{Storage: storage[:1:1]}
 	strings.Builder_Write_Byte(&builder, 0)
-	builder = strings.Builder{Size: 1}
+	builder = strings.Builder{Storage: storage[:2:2], Size: 1}
 	strings.Builder_Write_Byte(&builder, 1)
-	builder = strings.Builder{Size: 2}
+	builder = strings.Builder{Storage: storage, Size: 2}
 	strings.Builder_Write_Byte(&builder, 2)
-	builder = strings.Builder{Size: strings.SIZE_VALUE_MAXIMUM}
+	builder = strings.Builder{Storage: storage, Size: strings.SIZE_VALUE_MAXIMUM}
 	exercise_panicking_call(func() {
 		strings.Builder_Write_Byte(
 			&builder, strings.Byte(strings.BYTE_MAXIMUM),
 		)
 	})
-	exercise_builder_character_boundaries()
+	exercise_builder_character_boundaries(storage)
 }
 
-func exercise_builder_character_boundaries() {
-	builder := strings.Builder{}
+func exercise_builder_character_boundaries(storage strings.Bytes) {
+	builder := strings.Builder{Storage: storage[:0:0]}
+	exercise_panicking_call(func() {
+		strings.Builder_Write_Character(&builder, 0)
+	})
+	builder = strings.Builder{Storage: storage[:1:1]}
 	strings.Builder_Write_Character(&builder, 0)
-	builder = strings.Builder{Size: 1}
+	builder = strings.Builder{Storage: storage[:2:2], Size: 1}
 	strings.Builder_Write_Character(&builder, 1)
-	builder = strings.Builder{Size: 2}
+	builder = strings.Builder{Storage: storage, Size: 2}
 	strings.Builder_Write_Character(&builder, 2)
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage}
 	strings.Builder_Write_Character(
 		&builder, strings.Character(strings.CHARACTER_MINIMUM),
 	)
-	builder = strings.Builder{}
+	builder = strings.Builder{Storage: storage}
 	strings.Builder_Write_Character(
 		&builder, strings.Character(strings.CHARACTER_MAXIMUM),
 	)
-	builder = strings.Builder{Size: strings.SIZE_VALUE_MAXIMUM}
+	builder = strings.Builder{Storage: storage, Size: strings.SIZE_VALUE_MAXIMUM}
 	exercise_panicking_call(func() {
 		strings.Builder_Write_Character(&builder, -1)
 	})

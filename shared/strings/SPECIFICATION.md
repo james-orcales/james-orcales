@@ -34,8 +34,9 @@ Cut forms divide Text and report presence. Every returned Text aliases input sto
 
 # Builder
 
-Builder zero value owns one fixed 4,096-byte array. Writes never grow storage. Builder_Bytes returns
-a view into that array, and reset retains storage.
+Builder borrows caller-provided Bytes with at most 4,096 bytes of capacity. Writes never grow
+storage. Builder_Bytes returns a view into caller storage, and reset retains that storage. The zero
+value has zero capacity.
 
 # Reader
 
