@@ -1304,15 +1304,60 @@ func exercise_special_transform_boundaries(
 }
 
 func test_special_case(count strings.Special_Case_Count) (special strings.Special_Case) {
-	var storage [ucd.SPECIAL_CASE_COUNT_MAXIMUM]ucd.Case_Range
-	language_case := ucd.Turkish_Case(storage[:])
+	first, second, third, fourth := turkish_case_ranges()
 	return strings.Special_Case_Of(
 		count,
-		strings.First_Case_Range(language_case[0]),
-		strings.Second_Case_Range(language_case[1]),
-		strings.Third_Case_Range(language_case[2]),
-		strings.Fourth_Case_Range(language_case[3]),
+		strings.First_Case_Range(first),
+		strings.Second_Case_Range(second),
+		strings.Third_Case_Range(third),
+		strings.Fourth_Case_Range(fourth),
 	)
+}
+
+func ucd_range(
+	minimum uint32, maximum uint32,
+	upper int32, lower int32, title int32,
+) (one ucd.Case_Range) {
+	return ucd.Case_Range{
+		Minimum: ucd.Case_Range_Minimum(minimum),
+		Maximum: ucd.Case_Range_Maximum(maximum),
+		Deltas: ucd.Case_Delta{
+			Upper: ucd.Upper_Case_Delta(upper),
+			Lower: ucd.Lower_Case_Delta(lower),
+			Title: ucd.Title_Case_Delta(title),
+		},
+	}
+}
+
+func turkish_case_ranges() (
+	first ucd.Case_Range,
+	second ucd.Case_Range,
+	third ucd.Case_Range,
+	fourth ucd.Case_Range,
+) {
+	var special ucd.Special_Case
+	ucd.Turkish_Case(ucd.Special_Case_Destination(&special))
+	first = ucd_range(
+		uint32(special.First.Minimum), uint32(special.First.Maximum),
+		int32(special.First.Deltas.Upper), int32(special.First.Deltas.Lower),
+		int32(special.First.Deltas.Title),
+	)
+	second = ucd_range(
+		uint32(special.Second.Minimum), uint32(special.Second.Maximum),
+		int32(special.Second.Deltas.Upper), int32(special.Second.Deltas.Lower),
+		int32(special.Second.Deltas.Title),
+	)
+	third = ucd_range(
+		uint32(special.Third.Minimum), uint32(special.Third.Maximum),
+		int32(special.Third.Deltas.Upper), int32(special.Third.Deltas.Lower),
+		int32(special.Third.Deltas.Title),
+	)
+	fourth = ucd_range(
+		uint32(special.Fourth.Minimum), uint32(special.Fourth.Maximum),
+		int32(special.Fourth.Deltas.Upper), int32(special.Fourth.Deltas.Lower),
+		int32(special.Fourth.Deltas.Title),
+	)
+	return first, second, third, fourth
 }
 
 func exercise_valid_utf8_boundaries(

@@ -1227,13 +1227,13 @@ func map_case_into(
 	ucd.Case_Invariants(mapping, "map_case_into.mapping")
 	Special_Case_Invariants(special, "map_case_into.special")
 	Boolean_Invariants(use_special, "map_case_into.use_special")
-	special_ranges := [...]ucd.Case_Range{
+	active_special := ucd.Special_Case_Of(
+		ucd.Special_Case_Count(special.Count),
 		ucd.Case_Range(special.First),
 		ucd.Case_Range(special.Second),
 		ucd.Case_Range(special.Third),
 		ucd.Case_Range(special.Fourth),
-	}
-	active_special := ucd.Special_Case(special_ranges[:int(special.Count)])
+	)
 	written := 0
 	for _, character := range source {
 		mapped_character := ucd.To(mapping, ucd.Character(character))
