@@ -875,14 +875,17 @@ func method_render_type(expression ast.Expr) (output_string string) {
 	return "<unknown>"
 }
 
-// Import_Local_Name is a named import's local name, or the last path segment of
-// an unnamed one.
+// Import_Local_Name is an explicit import name, or package name required by repository layout.
+// Default tier declares parent package name so its directory remains an implementation detail.
 func Import_Local_Name(implementation *ast.ImportSpec, import_path string) (name string) {
 	if implementation.Name != nil {
 		return implementation.Name.Name
 	}
-	slash_offset := strings.LastIndex(import_path, "/")
-	return import_path[slash_offset+1:]
+	name = path.Base(import_path)
+	if name == "default" {
+		return path.Base(path.Dir(import_path))
+	}
+	return name
 }
 
 // Invariant_Name is the _Invariants bundle-function name for a type: Name_Invariants

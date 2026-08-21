@@ -62,9 +62,9 @@ one form that shares a fact. A foreign helper never satisfies a local typed subj
 
 ### Helper Identity
 
-All canonical calls are direct shared/invariant/default statements with qualifier invariant. A Tree
-root takes its helper's own subject before the namespace, and Always uses `subject == CONSTANT` with
-a literal message. Shadowing, an alias, a reversed equality, another root, and a split builder fail.
+All canonical calls are direct shared/invariant/default statements with qualifier invariant. An
+unnamed default-tier import binds parent package name. Tree root takes helper subject before
+namespace. Always uses `subject == CONSTANT` with literal message; every impersonation fails.
 
 ### Builder Walk
 

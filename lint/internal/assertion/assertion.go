@@ -3718,7 +3718,7 @@ func type_invariants_import_names(file *ast.File) (names map[string]bool) {
 			names[specification.Name.Name] = true
 			continue
 		}
-		names[path.Base(unquoted)] = true
+		names[source.Import_Local_Name(specification, unquoted)] = true
 	}
 	return names
 }

@@ -1,12 +1,24 @@
 package source_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"testing"
 
 	"local/james-orcales/lint/internal/source"
 )
+
+// Test_Import_Local_Name_Default_Tier verifies unnamed default-tier import binds parent package
+// name required by shared-component layout.
+func Test_Import_Local_Name_Default_Tier(t *testing.T) {
+	t.Parallel()
+	implementation := &ast.ImportSpec{}
+	got := source.Import_Local_Name(implementation, "example.com/shared/invariant/default")
+	if got != "invariant" {
+		t.Fatalf("unnamed default-tier import: got %q want %q", got, "invariant")
+	}
+}
 
 // Declaration_fixture_input pairs a fixture file's path with its source text.
 type declaration_fixture_input struct {

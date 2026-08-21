@@ -68,7 +68,8 @@ external test package shares a directory with the package it tests.
 ### Imports
 
 Imports maps an importing file's local qualifier to the package it names. An
-import the workspace does not own is left out, so a lookup through it misses.
+import the workspace does not own is left out, so a lookup through it misses. Unnamed default-tier
+import uses parent package name required by shared-component layout.
 
 ### Import Paths
 
