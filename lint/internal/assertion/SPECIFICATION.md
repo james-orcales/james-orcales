@@ -28,7 +28,7 @@ matching type, never adrift.
 
 Structs with fields, defined non-alias types, and generic types are in scope, and their helper
 bodies carry the mandate. Aliases, function and interface types, empty structs, local types, tests,
-and opted-out packages are exempt.
+instrumentation packages, and opted-out packages are exempt.
 
 ### Underlying Kind
 

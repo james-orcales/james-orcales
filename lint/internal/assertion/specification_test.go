@@ -87,6 +87,14 @@ func Test_Invariants_Scope(t *testing.T) {
 	if !diagnosed(diags, "directly below the type Count") {
 		t.Fatal("a defined scalar type is in scope")
 	}
+	exemptions := &assertion.Exemptions{
+		Packages:                 []string{"**", "!pkg/**"},
+		Instrumentation_Packages: []string{"pkg/"},
+	}
+	diags = assertion.Check_Type(pf.File_Set, pf.File, exemptions)
+	if diagnosed(diags, "directly below the type Count") {
+		t.Fatal("assertion opt-in must not restore instrumentation mandate")
+	}
 }
 
 // Test_Invariants_Underlying_Kind verifies a chain of defined types cannot hide the kind it stands

@@ -218,6 +218,9 @@ to use a `<lib>_default` directory instead of a bare `default/`.
 
 An instrumentation package may also declare generic types and functions. One adapter can then
 observe arbitrary values without adding one concrete adapter for every production type.
+Instrumentation packages are always exempt from assertion mandate. Their exact
+`instrumentation_packages` entry must not be repeated in
+`opt_out_assertion_mandate_packages`; broader assertion opt-out globs may cover them.
 
 ## Resolving diagnostics
 

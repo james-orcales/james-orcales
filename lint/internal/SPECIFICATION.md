@@ -557,8 +557,9 @@ lets a caller script outcomes. Thus, a run is a pure function of its seed.
 
 # Configuration
 
-lint.json's path lists share one glob matcher, so one rule keeps every entry unambiguous about
-whether it names a directory or a file.
+lint.json's path lists share one glob matcher. Instrumentation packages are implicit assertion
+exemptions, and their exact entries cannot recur in `opt_out_assertion_mandate_packages`. Broader
+assertion globs may cover them without error.
 
 ### Directory Slash
 

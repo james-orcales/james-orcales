@@ -586,7 +586,8 @@ type Configuration struct {
 	// may name a file. A "!"-prefixed entry revokes instrumentation status from a
 	// package a broader earlier entry granted it; a later match may refine it again. An
 	// instrumentation package is also released from the deterministic tier, so it need
-	// not be repeated in pure_but_indeterministic_packages.
+	// not be repeated in pure_but_indeterministic_packages. It is likewise released
+	// from assertion mandate without duplicate assertion opt-out configuration.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
 	// Pure_But_Indeterministic names the pure packages opted OUT of the deterministic
 	// tier. The tier — no goroutine, channel, select, or float; no time/context/sync
@@ -617,9 +618,9 @@ type Configuration struct {
 	// one exact file (e.g. "build.go"). A "!"-prefixed entry re-includes a path a
 	// broader earlier entry ignored; last match wins.
 	Ignore []string `json:"ignore"`
-	// Invariant_Exempt_Packages names the packages exempt from the type-invariant
-	// rule — the rule's sole escape hatch. The framework package that defines the
-	// bundle machinery lives here so it is not bootstrapped against itself, and a
+	// Invariant_Exempt_Packages names explicit packages exempt from assertion mandate.
+	// Instrumentation packages are inherently exempt and live only in their own list.
+	// Other framework packages live here so they are not bootstrapped against themselves, and a
 	// package is listed while its types are still being given invariants, then
 	// removed. Each entry is an exact-path glob: "shared/foo" exempts that package,
 	// "shared/**" its whole subtree, and "**" the whole tree — the wholesale off
@@ -872,7 +873,31 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	if validate_err := validate_configuration_globs(configuration); validate_err != nil {
 		return nil, validate_err
 	}
+	validate_err := validate_configuration_assertion_exemptions(configuration)
+	if validate_err != nil {
+		return nil, validate_err
+	}
 	return configuration, nil
+}
+
+// Instrumentation already lacks assertion duties. Exact duplicate entries hide
+// ownership intent, while broader assertion globs may cover it during rollout.
+func validate_configuration_assertion_exemptions(configuration *Configuration) (err error) {
+	instrumentation := make(map[string]bool, len(configuration.Instrumentation_Packages))
+	for _, entry := range configuration.Instrumentation_Packages {
+		instrumentation[entry] = true
+	}
+	for _, entry := range configuration.Invariant_Exempt_Packages {
+		if !instrumentation[entry] {
+			continue
+		}
+		return fmt.Errorf(
+			"lint.json: opt_out_assertion_mandate_packages entry %q is already in "+
+				"instrumentation_packages; remove duplicate assertion opt-out",
+			entry,
+		)
+	}
+	return nil
 }
 
 // Rejects a malformed glob in any lint.json path list at load, so a bad pattern
@@ -1566,9 +1591,9 @@ type Check_File_Input struct {
 	Instrumentation []string
 	// Word_Replacements is the lint.json vocabulary table; nil disables the check.
 	Word_Replacements map[string][]string
-	// Invariant_Exempt is the lint.json opt_out_assertion_mandate_packages list, exempting
-	// the type-invariant check.
-	Invariant_Exempt []string
+	// Assertion_Exemptions keeps configured exceptions separate so instrumentation
+	// negations cannot cancel assertion opt-outs, or vice versa.
+	Assertion_Exemptions *assertion.Exemptions
 	// Declarations is the workspace's declaration index, letting a per-file check
 	// resolve a name its own file does not declare. nil on the Check_Source path,
 	// which parses one buffer and so has no workspace to index.
@@ -1583,7 +1608,7 @@ type Check_File_Input struct {
 // presence of any tier-1 diagnostic.
 func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 	diags = check_file_run_tier([]Check_Function{
-		make_check_type_invariants(input.Invariant_Exempt),
+		make_check_type_invariants(input.Assertion_Exemptions),
 		check_casing,
 		check_constant_casing,
 		check_named_returns,
@@ -2306,9 +2331,8 @@ type Check_File_System_Input struct {
 	// every tier. Applied once here against Tracked; with no Tracked set (the
 	// non-git fallback) it is inert, like every other tracked-set filter.
 	Ignore []string
-	// Invariant_Exempt_Packages is the lint.json opt_out_assertion_mandate_packages list
-	// forwarded from Main_Input: workspace-root-relative directories whose files
-	// the type-invariant check skips. Threaded per-file to make_check_type_invariants.
+	// Invariant_Exempt_Packages is the explicit lint.json assertion opt-out list.
+	// Instrumentation_Packages supplies inherent assertion exemptions separately.
 	Invariant_Exempt_Packages []string
 	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
 	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
@@ -2540,8 +2564,7 @@ type Check_File_System_Doctrine_Input struct {
 	// run. The deterministic coverage check needs it to tell an out-of-scope entry
 	// (a real package this run never parsed) from a genuine stale one.
 	Scan_Prefixes []string
-	// Invariant_Exempt_Packages is the lint.json opt_out_assertion_mandate_packages list:
-	// workspace-root-relative directories whose files the type-invariant check skips.
+	// Invariant_Exempt_Packages is the explicit lint.json assertion opt-out list.
 	Invariant_Exempt_Packages []string
 	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
 	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
@@ -2559,17 +2582,21 @@ func check_file_system_doctrine(
 
 	parsed_files := input.Parsed_Files
 	components := input.Components
+	assertion_exemptions := &assertion.Exemptions{
+		Packages:                 input.Invariant_Exempt_Packages,
+		Instrumentation_Packages: input.Instrumentation_Packages,
+	}
 	output = append([]Diagnostic{}, input.Stream_Diags...)
 	output = append(output, input.Parse_Diags...)
 	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
 	output = append(output,
 		check_file_system_run_checks(&Check_File_System_Run_Checks_Input{
-			Parsed_Files:      parsed_files,
-			CPU_Count:         input.CPU_Count,
-			Instrumentation:   input.Instrumentation_Packages,
-			Word_Replacements: input.Word_Replacements,
-			Invariant_Exempt:  input.Invariant_Exempt_Packages,
-			Declarations:      input.Declarations,
+			Parsed_Files:         parsed_files,
+			CPU_Count:            input.CPU_Count,
+			Instrumentation:      input.Instrumentation_Packages,
+			Word_Replacements:    input.Word_Replacements,
+			Assertion_Exemptions: assertion_exemptions,
+			Declarations:         input.Declarations,
 		})...)
 	output = append(output,
 		check_no_recursion_packages(parsed_files, input.Recursion_Exempt)...)
@@ -2611,7 +2638,7 @@ func check_file_system_doctrine(
 	output = append(output, assertion.Check(
 		parsed_files,
 		components,
-		input.Invariant_Exempt_Packages,
+		assertion_exemptions,
 	)...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
@@ -3968,8 +3995,8 @@ type Check_File_System_Run_Checks_Input struct {
 	Instrumentation []string
 	// Word_Replacements is the configured terminology substitution table.
 	Word_Replacements map[string][]string
-	// Invariant_Exempt lists packages exempt from the assertion mandate.
-	Invariant_Exempt []string
+	// Assertion_Exemptions preserves independent assertion and instrumentation globs.
+	Assertion_Exemptions *assertion.Exemptions
 	// Declarations is the workspace's declaration index, threaded to the
 	// per-file checks that resolve a name past their own file.
 	Declarations *source.Declaration_Index
@@ -4007,10 +4034,10 @@ func check_file_system_run_one(
 	defer check_file_system_parse_release(semaphore)
 	per_file_diags[index] = Check_File(&Check_File_Input{
 		File_Set: file.File_Set, File: file.File, Source: file.Source,
-		Instrumentation:   input.Instrumentation,
-		Word_Replacements: input.Word_Replacements,
-		Invariant_Exempt:  input.Invariant_Exempt,
-		Declarations:      input.Declarations,
+		Instrumentation:      input.Instrumentation,
+		Word_Replacements:    input.Word_Replacements,
+		Assertion_Exemptions: input.Assertion_Exemptions,
+		Declarations:         input.Declarations,
 	})
 }
 
@@ -6148,18 +6175,18 @@ func check_names_vocabulary_message(input *Check_Names_Vocabulary_Message_Input)
 	return fmt.Sprintf("Rename %s -> [%s].", input.Name, strings.Join(renames, ", "))
 }
 
-// Builds the type-invariant check, closing over the
-// lint.json opt_out_assertion_mandate_packages list. Every in-scope type must be followed
+// Builds the type-invariant check around explicit and instrumentation exemptions.
+// Every in-scope type must be followed
 // directly by its bundle function (the forward half), and every bundle-named
 // function must itself sit directly below its type (the orphan half). The rule is
 // AST-only and per-file: a type and its bundle are adjacent declarations in one
 // file, so no cross-file or type resolution is needed. Test files are exempt, as
-// is any file matching an opt_out_assertion_mandate_packages glob.
-func make_check_type_invariants(invariant_exempt []string) (check Check_Function) {
+// is any package matching either exemption source.
+func make_check_type_invariants(exemptions *assertion.Exemptions) (check Check_Function) {
 	return func(
 		file_set *token.FileSet, file *ast.File, _ []byte,
 	) (diags []Diagnostic) {
-		return assertion.Check_Type(file_set, file, invariant_exempt)
+		return assertion.Check_Type(file_set, file, exemptions)
 	}
 }
 

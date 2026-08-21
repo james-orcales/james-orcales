@@ -2509,6 +2509,29 @@ func invariant_exempt_self_diagnostics(
 	return diags
 }
 
+// Instrumentation ownership implies assertion exemption; fixtures must not repeat
+// instrumentation paths in opt_out_assertion_mandate_packages.
+func instrumentation_self_diagnostics(
+	t *testing.T, files map[string][]byte, instrumentation []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
+		Word_Replacements:        test_word_replacements(),
+		Instrumentation_Packages: instrumentation,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
+}
+
 // Test_Type_Invariant_Exempt_List_Skips_Package verifies a package listed in
 // opt_out_assertion_mandate_packages is skipped by the type-invariant rule.
 func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
@@ -2518,6 +2541,22 @@ func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
 	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
 	if specification_diagnosed(diags, "directly below the type Widget") {
 		t.Fatal("a type in an exempt package must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Instrumentation_Skips_Package keeps instrumentation free
+// from production assertion coupling without duplicate configuration.
+func Test_Type_Invariant_Instrumentation_Skips_Package(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// Value is a fixture.\n\tValue int\n}\n")
+	diags := instrumentation_self_diagnostics(t, files, []string{"pkg/"})
+	if specification_diagnosed(diags, "directly below the type Widget") {
+		t.Fatal("instrumentation type must not require an invariant bundle")
+	}
+	if specification_diagnosed(diags, "raw type") {
+		t.Fatal("instrumentation boundary must not require assertion wrapper types")
 	}
 }
 
@@ -2912,6 +2951,17 @@ func Test_Simulation_Exempt_Passes(t *testing.T) {
 	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/internal/**"})
 	if specification_named(diags, "simulation") {
 		t.Fatal("a wholly exempt internal tree must not require a simulation package")
+	}
+}
+
+// Test_Simulation_Instrumentation_Exempt_Passes prevents instrumentation-only
+// internal trees from requiring assertion simulations.
+func Test_Simulation_Instrumentation_Exempt_Passes(t *testing.T) {
+	t.Parallel()
+	files := simulation_component_files()
+	diags := instrumentation_self_diagnostics(t, files, []string{"pkg/internal/**"})
+	if specification_named(diags, "simulation") {
+		t.Fatal("instrumentation-only internal tree must not require a simulation package")
 	}
 }
 

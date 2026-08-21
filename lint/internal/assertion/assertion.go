@@ -39,33 +39,57 @@ type Component_Index = source.Component_Index
 // it unqualified.
 type Diagnostic = diagnostic.Diagnostic
 
+// Exemptions keeps explicit rollout exceptions separate from instrumentation.
+// Independent glob decisions preserve each list's negation semantics.
+type Exemptions struct {
+	// Packages holds opt_out_assertion_mandate_packages entries.
+	Packages []string
+	// Instrumentation_Packages holds write-only packages that must remain usable
+	// beneath mandate machinery.
+	Instrumentation_Packages []string
+}
+
+func exemptions_match_directory(directory string, exemptions *Exemptions) (matched bool) {
+	if exemptions == nil {
+		return false
+	}
+	if source.Path_Matches_Glob(directory, exemptions.Packages) {
+		return true
+	}
+	return source.Path_Matches_Glob(directory, exemptions.Instrumentation_Packages)
+}
+
+func exemptions_match_file(file_path string, exemptions *Exemptions) (matched bool) {
+	return exemptions_match_directory(path.Dir(file_path), exemptions)
+}
+
 // Check runs the cross-file invariant and simulation checks over the parsed set,
 // in the order the doctrine aggregator ran them.
 func Check(
 	parsed_files []source.Parsed_File,
 	components *source.Component_Index,
-	exempt []string,
+	exemptions *Exemptions,
 ) (diags []diagnostic.Diagnostic) {
 	diags = append(diags,
-		check_value_invariants(parsed_files, components, exempt)...)
+		check_value_invariants(parsed_files, components, exemptions)...)
 	diags = append(diags,
-		check_struct_invariants(parsed_files, components, exempt)...)
+		check_struct_invariants(parsed_files, components, exemptions)...)
 	diags = append(diags,
-		check_function_invariants(parsed_files, components, exempt)...)
+		check_function_invariants(parsed_files, components, exemptions)...)
 	diags = append(diags,
-		check_recorder_test_main(parsed_files, components, exempt)...)
-	diags = append(diags, check_raw_types(parsed_files, exempt)...)
+		check_recorder_test_main(parsed_files, components, exemptions)...)
+	diags = append(diags, check_raw_types(parsed_files, exemptions)...)
 	diags = append(diags, check_collection_types(parsed_files, components)...)
-	diags = append(diags, check_always_condition(parsed_files, components, exempt)...)
+	diags = append(diags, check_always_condition(parsed_files, components, exemptions)...)
 	diags = append(diags,
-		check_simulation(parsed_files, components, exempt)...)
+		check_simulation(parsed_files, components, exemptions)...)
 	return diags
 }
 
 // Canonical helpers, rather than a second interpretation of their individual assertions, are the
 // stable contract the linter can mandate across invariant implementation changes.
 func check_value_invariants(
-	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	constants := invariant_package_constants(parsed_files)
 	base_kind := base_kind_declaration_index(parsed_files, components, false)
@@ -73,7 +97,7 @@ func check_value_invariants(
 		if strings.Has_Suffix(file.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Matches_Glob(file.Path, exempt) {
+		if exemptions_match_file(file.Path, exemptions) {
 			continue
 		}
 		directory := path.Dir(file.Path)
@@ -913,13 +937,13 @@ func invariant_remedy_text(
 // correctly-named, correctly-signed bundle, and every bundle sits below its type.
 // Test files and files under an exempt package are skipped.
 func Check_Type(
-	file_set *token.FileSet, file *ast.File, exempt []string,
+	file_set *token.FileSet, file *ast.File, exemptions *Exemptions,
 ) (diags []diagnostic.Diagnostic) {
 	filename := file_set.Position(file.Pos()).Filename
 	if strings.Has_Suffix(filename, "_test.go") {
 		return nil
 	}
-	if source.Path_Matches_Glob(filename, exempt) {
+	if exemptions_match_file(filename, exemptions) {
 		return nil
 	}
 	invariant_names := type_invariants_import_names(file)
@@ -1075,7 +1099,7 @@ func helper_callee_identity(
 // the field. A struct with an immediate sync.Mutex/RWMutex field is skipped whole.
 // Cross-file because the bundle index spans the whole module.
 func check_struct_invariants(
-	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
 	declarations := index_declarations(parsed_files, components)
@@ -1083,7 +1107,7 @@ func check_struct_invariants(
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Matches_Glob(pf.Path, exempt) {
+		if exemptions_match_file(pf.Path, exemptions) {
 			continue
 		}
 		diags = append(diags,
@@ -1420,13 +1444,13 @@ func struct_type_diagnostics(input *Struct_Type_Input) (diags []Diagnostic) {
 // one Always each owes one guard, thus a suite that never reaches the second member or either
 // boundary still runs clean.
 func check_always_condition(
-	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Matches_Glob(pf.Path, exempt) {
+		if exemptions_match_file(pf.Path, exemptions) {
 			continue
 		}
 		diags = append(diags, always_condition_diagnostics(pf, components)...)
@@ -2301,14 +2325,14 @@ func struct_is_builtin(name string) (yes bool) {
 // Flags an ordinary function that omits the exact helper for an input or named return. Output
 // helpers stay deferred and input helpers stay leading so every function has one visible boundary.
 func check_function_invariants(
-	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Matches_Glob(pf.Path, exempt) {
+		if exemptions_match_file(pf.Path, exemptions) {
 			continue
 		}
 		diags = append(diags, function_file_diagnostics(pf, defined, components)...)
@@ -2743,10 +2767,10 @@ func function_form(requirement Helper_Requirement) (form string) {
 // directory's test files, so the whole directory is judged together. Shares the
 // type-invariant rule's opt-out.
 func check_recorder_test_main(
-	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	for _, group := range recorder_test_main_groups(parsed_files) {
-		if source.Path_Matches_Glob(group.Directory, exempt) {
+		if exemptions_match_directory(group.Directory, exemptions) {
 			continue
 		}
 		// A main package holds the binary's wiring, not testable invariant logic.
@@ -2981,14 +3005,15 @@ const SIMULATION_GLOB = "../**"
 // fuzz driver and its TestMain, and registers every non-exempt internal package
 // for coverage. Every diagnostic is tier two, so a tier-one issue suppresses it.
 func check_simulation(
-	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	for i := range components.Components {
 		if components.Components[i].Is_Shared_Library {
 			continue
 		}
 		diags = append(diags,
-			simulation_component_diagnostics(parsed_files, components, i, exempt)...)
+			simulation_component_diagnostics(
+				parsed_files, components, i, exemptions)...)
 	}
 	for i := range diags {
 		diags[i].Tier = 2
@@ -3001,12 +3026,12 @@ func check_simulation(
 // and TestMain checks against the package at internal/simulation_test.
 func simulation_component_diagnostics(
 	parsed_files []Parsed_File, components *Component_Index,
-	component_index_number int, exempt []string,
+	component_index_number int, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	component := components.Components[component_index_number]
 	internal_root := component.Root + "/internal"
 	internal_dirs := simulation_internal_dirs(
-		parsed_files, components, component_index_number, exempt, internal_root)
+		parsed_files, components, component_index_number, exemptions, internal_root)
 	if len(internal_dirs) == 0 {
 		return nil
 	}
@@ -3033,7 +3058,7 @@ func simulation_component_diagnostics(
 // invariants seed and judge in the simulation's isolated test binary.
 func simulation_internal_dirs(
 	parsed_files []Parsed_File, components *Component_Index,
-	component_index_number int, exempt []string, internal_root string,
+	component_index_number int, exemptions *Exemptions, internal_root string,
 ) (dirs []string) {
 	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
 	seen := map[string]bool{}
@@ -3058,7 +3083,7 @@ func simulation_internal_dirs(
 		if strings.Has_Prefix(directory, sim_directory+"/") {
 			continue
 		}
-		if source.Path_Matches_Glob(directory, exempt) {
+		if exemptions_match_directory(directory, exemptions) {
 			continue
 		}
 		if seen[directory] {
@@ -3419,12 +3444,14 @@ func simulation_diagnostic(position token.Position, message string) (diags []Dia
 
 // Boundary types need names because only names can own invariant bundles. Shares type-invariant
 // exemptions.
-func check_raw_types(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
+func check_raw_types(
+	parsed_files []Parsed_File, exemptions *Exemptions,
+) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Matches_Glob(pf.Path, exempt) {
+		if exemptions_match_file(pf.Path, exemptions) {
 			continue
 		}
 		diags = append(diags, raw_type_file_diagnostics(pf)...)

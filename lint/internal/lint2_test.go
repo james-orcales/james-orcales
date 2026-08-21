@@ -5789,6 +5789,7 @@ func json_string_list_map_text(values map[string][]string) (text string) {
 // The lint.json documents that decode cleanly: the full document, one with every
 // list empty, and one carrying ignore globs.
 func parse_configuration_valid_cases() (cases []parse_configuration_case) {
+	instrumentation := []string{"shared/sim/aver/**"}
 	return []parse_configuration_case{
 		{
 			Name: "valid full document",
@@ -5813,6 +5814,15 @@ func parse_configuration_valid_cases() (cases []parse_configuration_case) {
 			Input: configuration_document(
 				map[string]any{"ignore": []string{"keep/**", "!keep/sub"}}),
 			Want_Shared: "example.com/lib",
+		},
+		{
+			Name: "broader assertion exemption over instrumentation accepted",
+			Input: configuration_document(map[string]any{
+				"instrumentation_packages":           instrumentation,
+				"opt_out_assertion_mandate_packages": []string{"shared/sim/**"},
+			}),
+			Want_Shared: "example.com/lib",
+			Want_List:   instrumentation,
 		},
 	}
 }
@@ -5872,6 +5882,14 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 			Name: "wrong value type rejected",
 			Input: configuration_document(
 				map[string]any{"instrumentation_packages": "no"}),
+			Want_Err: true,
+		},
+		{
+			Name: "explicit instrumentation assertion exemption rejected",
+			Input: configuration_document(map[string]any{
+				"instrumentation_packages":           []string{"shared/snap/**"},
+				"opt_out_assertion_mandate_packages": []string{"shared/snap/**"},
+			}),
 			Want_Err: true,
 		},
 		{
