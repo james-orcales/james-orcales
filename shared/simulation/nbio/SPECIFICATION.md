@@ -2,8 +2,8 @@
 # Sim
 
 Simulated IO backend schedule each operation at now plus seed-drawn latency. New_Simulated_IO
-build it and never hand it out. Independent streams draw ordinary outcomes, network timeout
-order, and storage timeout order from one seed. Thus, runs reproduce and nothing is scriptable.
+initializes caller-owned bounded state. Independent streams draw ordinary outcomes and timeout
+order from one seed. Thus, runs reproduce and nothing is scriptable.
 
 ### Read
 
@@ -112,8 +112,9 @@ error. No DNS, thus parse never block.
 
 # Stream
 
-A Stream is one stack-capturing function for a bounded byte transport. Every operation uses
-a caller-owned Completion and a last callback. Completion.Data holds the operation result.
+A Stream pairs caller-owned state with one static procedure for a bounded byte transport. Every
+operation uses a caller-owned Completion and a last callback. Completion.Data holds the
+operation result.
 
 ### Callback
 
@@ -189,3 +190,8 @@ Tee writes to both destinations in order and reports the smaller count.
 ### Composition
 
 Composed streams preserve each inner procedure callback policy and sequence dependent callbacks.
+
+# Allocation
+
+IO, Network, Storage, Address, and Stream allocate no heap memory. Caller supplies retained state
+and bounded queues; exhaustion fails instead of growing. Directory names borrow caller memory.

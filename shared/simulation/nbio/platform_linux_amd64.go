@@ -2,7 +2,11 @@
 
 package nbio
 
-import "local/james-orcales/shared/simulation/time"
+import (
+	"unsafe"
+
+	"local/james-orcales/shared/simulation/time"
+)
 
 // STATX_BASIC_STATS request basic Linux statx fields.
 const STATX_BASIC_STATS uint32 = 0x7ff
@@ -74,33 +78,55 @@ type Statx struct {
 
 // Platform_IO is Linux-only surface.
 type Platform_IO struct {
+	// State remains caller-owned while static Statx procedure borrows it.
+	State unsafe.Pointer
 	// Statx asynchronously fill result from Linux IORING_OP_STATX.
-	Statx func(
-		completion *time.Completion, directory File, file_path string,
+	Statx_Procedure func(
+		state unsafe.Pointer, completion *time.Completion, directory File, file_path string,
 		flags uint32, mask uint32, result *Statx, callback time.Callback,
+	)
+}
+
+// Platform_Statx preserves callback-last submit shape while state remains explicit.
+func Platform_Statx(
+	platform Platform_IO,
+	completion *time.Completion, directory File, file_path string,
+	flags uint32, mask uint32, result *Statx, callback time.Callback,
+) {
+	platform.Statx_Procedure(
+		platform.State, completion, directory, file_path, flags, mask, result, callback,
 	)
 }
 
 // Wire Linux simulator statx counterpart over its deterministic in-memory filesystem.
 func sim_wire_platform(state *Sim, loop *IO) {
-	loop.Statx = func(
-		completion *time.Completion, directory File, file_path string,
-		flags uint32, mask uint32, result *Statx, callback time.Callback,
-	) {
-		sim_submit(
-			state, completion, sim_latency(state), func(completion *time.Completion) {
-				if directory != DIRECTORY_CURRENT {
-					sim_deliver(completion, 0, sim_not_a_directory, callback)
-					return
-				}
-				node, found := sim_resolve(state.Root, file_path)
-				if !found {
-					sim_deliver(completion, 0, sim_file_absent, callback)
-					return
-				}
-				result.Mask = mask
-				result.Size = uint64(len(node.Contents))
-				sim_deliver(completion, 0, nil, callback)
-			})
+	loop.Platform_IO.State = unsafe.Pointer(state)
+	loop.Statx_Procedure = sim_statx
+}
+
+func sim_statx(
+	state_pointer unsafe.Pointer, completion *time.Completion, directory File,
+	file_path string, _ uint32, mask uint32, result *Statx, callback time.Callback,
+) {
+	state := (*Sim)(state_pointer)
+	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_STATX, callback)
+	operation.Directory = directory
+	operation.File_Path = file_path
+	operation.Mask = mask
+	operation.Result = unsafe.Pointer(result)
+	sim_operation_submit(operation, completion, sim_latency(state))
+}
+
+func sim_statx_operation_complete(operation *Sim_Operation) (data int, err error) {
+	if operation.Directory != DIRECTORY_CURRENT {
+		return 0, sim_not_a_directory
 	}
+	node_index, found := sim_resolve(operation.State, operation.File_Path)
+	if !found {
+		return 0, sim_file_absent
+	}
+	result := (*Statx)(operation.Result)
+	result.Mask = operation.Mask
+	result.Size = uint64(operation.State.Nodes[node_index].Contents_Count)
+	return 0, nil
 }

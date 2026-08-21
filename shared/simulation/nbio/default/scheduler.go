@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"syscall"
 
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -121,11 +123,16 @@ type Kernel_Timespec struct {
 	Nanoseconds int64
 }
 
+// Linux accepts the larger supported path bound; Darwin rejects its smaller platform excess.
+const OPERATING_SYSTEM_PATH_BYTES_MAXIMUM = 4 * bits.KIBIBYTE_BYTES
+
 // Operating system operation is Go counterpart of one in-flight kernel operation.
 // Identifier is written to kernel user_data instead of Go pointer: registry own operation until
 // kernel retire that integer identifier.
 type Operating_System_Operation struct {
 	Platform_Operation
+	// Used separates registered or prepared work from caller-owned capacity.
+	Used bool
 	// Identifier correlate operation without Go pointer in kernel.
 	Identifier uint64
 	// Completion keep caller identity until callback delivery.
@@ -140,8 +147,10 @@ type Operating_System_Operation struct {
 	Offset uint64
 	// Address hold typed socket address until submission.
 	Address nbio.Address
-	// File_Path hold zero-terminated path memory until kernel retire it.
-	File_Path []byte
+	// File_Path holds zero-terminated path memory inline until kernel retirement.
+	File_Path [OPERATING_SYSTEM_PATH_BYTES_MAXIMUM]byte
+	// File_Path_Count includes the terminal zero and rejects absent path initialization.
+	File_Path_Count int
 	// Open_Options hold Open_At behavior until submission.
 	Open_Options nbio.Open_At_Options
 	// Event_Value correlate synthetic event without Go pointer.
@@ -159,6 +168,10 @@ type Operating_System_Operation struct {
 	Deadline_Span Kernel_Timespec
 	// Bounded join one Linux operation to its linked deadline.
 	Bounded *Operating_System_Bounded_Operation
+	// Bounded_State keeps Linux linked retirement inside caller-owned operation storage.
+	Bounded_State Operating_System_Bounded_Operation
+	// Internal_Completion gives a linked deadline stable storage without heap ownership.
+	Internal_Completion time.Completion
 	// Socket_Address hold sockaddr memory until kernel retire it.
 	Socket_Address [SOCKET_ADDRESS_BYTES]byte
 	// Socket_Address_Size tell kernel which sockaddr bytes are valid.
@@ -224,7 +237,98 @@ func operating_system_operation_register(
 	if !stable_event_identifier {
 		operation.Completion.Kernel_Identifier = operation.Identifier
 	}
-	state.Operations[operation.Identifier] = operation
+	invariant.Always(len(state.Operations) < cap(state.Operations),
+		"The caller-owned operation registry has capacity before submission.")
+	state.Operations = append(state.Operations, operation)
+}
+
+// Caller slots keep operation addresses stable while kernel retains them.
+func operating_system_operation_acquire(
+	state *Operating_System, value Operating_System_Operation,
+) (operation *Operating_System_Operation) {
+	for index := range state.Operation_Memory {
+		if state.Operation_Memory[index].Used {
+			continue
+		}
+		value.Used = true
+		state.Operation_Memory[index] = value
+		return &state.Operation_Memory[index]
+	}
+	invariant.Always(false, "The caller-owned operation pool has capacity before submission.")
+	return nil
+}
+
+// Kernel identifiers are opaque generations, so bounded linear storage needs explicit lookup.
+func operating_system_operation_find(
+	state *Operating_System, identifier uint64,
+) (operation *Operating_System_Operation) {
+	for _, candidate := range state.Operations {
+		if candidate.Identifier == identifier {
+			return candidate
+		}
+	}
+	return nil
+}
+
+// Registry removal happens before callback publication so resubmission sees retired ownership.
+func operating_system_operation_unregister(
+	state *Operating_System, operation *Operating_System_Operation,
+) {
+	found := false
+	kept := state.Operations[:0]
+	for _, candidate := range state.Operations {
+		if candidate == operation {
+			found = true
+			continue
+		}
+		kept = append(kept, candidate)
+	}
+	state.Operations = kept
+	invariant.Always(found, "A completed operation was registered exactly once.")
+}
+
+func operating_system_operation_release(operation *Operating_System_Operation) {
+	pinner := operation.Pinner
+	*operation = Operating_System_Operation{Pinner: pinner}
+}
+
+func operating_system_operation_path_set(
+	operation *Operating_System_Operation, path string,
+) (err error) {
+	if len(path) >= len(operation.File_Path) {
+		return syscall.ENAMETOOLONG
+	}
+	for index := 0; index < len(path); index++ {
+		if path[index] == 0 {
+			return syscall.EINVAL
+		}
+		operation.File_Path[index] = path[index]
+	}
+	operation.File_Path_Count = len(path) + 1
+	return nil
+}
+
+func operating_system_operation_submit_path(
+	state *Operating_System, operation *Operating_System_Operation, path string,
+) {
+	path_err := operating_system_operation_path_set(operation, path)
+	if path_err == nil {
+		operating_system_operation_submit(state, operation)
+		return
+	}
+	operation.Completion.Data = 0
+	operation.Completion.Error = path_err
+	operation.Completion.Callback = operation.Deliver
+	operating_system_completion_add(state, operation.Completion)
+	operating_system_operation_release(operation)
+}
+
+func operating_system_completion_add(
+	state *Operating_System, completion *time.Completion,
+) {
+	invariant.Always(len(state.Completed) < cap(state.Completed),
+		"The caller-owned completion queue has capacity before publication.")
+	state.Completed = append(state.Completed, completion)
 }
 
 // Operating system operation complete retire registry entry and every pinned address before it
@@ -234,7 +338,7 @@ func operating_system_operation_complete(
 	state *Operating_System, operation *Operating_System_Operation,
 	result int, err error,
 ) {
-	delete(state.Operations, operation.Identifier)
+	operating_system_operation_unregister(state, operation)
 	if operation.Pinned {
 		operation.Pinner.Unpin()
 		operation.Pinned = false
@@ -243,7 +347,8 @@ func operating_system_operation_complete(
 	operation.Completion.Data = result
 	operation.Completion.Error = err
 	operation.Completion.Callback = operation.Deliver
-	state.Completed = append(state.Completed, operation.Completion)
+	operating_system_completion_add(state, operation.Completion)
+	operating_system_operation_release(operation)
 }
 
 // Operating system operation account update descriptor ownership only after kernel complete
@@ -254,22 +359,60 @@ func operating_system_operation_account(
 ) {
 	if err == nil {
 		if operation.Kind == OPERATING_SYSTEM_OPERATION_ACCEPT {
-			state.Raw_Open[result] = true
+			operating_system_descriptor_add(state, result)
 		}
 	}
 	if err == nil {
 		if operation.Kind == OPERATING_SYSTEM_OPERATION_OPEN_AT {
-			state.Raw_Open[result] = true
+			operating_system_descriptor_add(state, result)
 		}
 	}
 	if err == nil {
 		if operation.Kind == OPERATING_SYSTEM_OPERATION_CLOSE {
-			delete(state.Raw_Open, operation.Descriptor)
+			operating_system_descriptor_remove(state, operation.Descriptor)
 		}
 	}
 }
 
-// Operating system translate result apply portable result variants shared/io expose. Other
+func operating_system_descriptor_add(state *Operating_System, descriptor int) {
+	for index := range state.Raw_Open {
+		if state.Raw_Open[index].Used {
+			continue
+		}
+		state.Raw_Open[index] = Operating_System_Descriptor{
+			Used: true, Descriptor: descriptor,
+		}
+		return
+	}
+	invariant.Always(false, "The caller-owned descriptor census has capacity before ownership.")
+}
+
+func operating_system_descriptor_remove(state *Operating_System, descriptor int) {
+	found := false
+	for index := range state.Raw_Open {
+		if !state.Raw_Open[index].Used {
+			continue
+		}
+		if state.Raw_Open[index].Descriptor != descriptor {
+			continue
+		}
+		state.Raw_Open[index] = Operating_System_Descriptor{}
+		found = true
+		break
+	}
+	invariant.Always(found, "A released descriptor belonged to the backend.")
+}
+
+func operating_system_descriptor_count(state *Operating_System) (count int) {
+	for index := range state.Raw_Open {
+		if state.Raw_Open[index].Used {
+			count++
+		}
+	}
+	return count
+}
+
+// Operating system translate result apply portable result variants nbio expose. Other
 // errno values stay raw operating-system errors.
 func operating_system_translate_result(
 	operation *Operating_System_Operation, result int32,

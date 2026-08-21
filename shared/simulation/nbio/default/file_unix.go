@@ -4,9 +4,6 @@ package nbio
 
 import (
 	"encoding/binary"
-	"errors"
-	"fmt"
-	"net"
 	"path/filepath"
 	"syscall"
 	"unsafe"
@@ -62,8 +59,7 @@ func file_create(path string) (descriptor int, err error) {
 // path is Exists false with nil error, thus caller tell "not there" apart from real stat
 // failure.
 func file_status(path string) (status nbio.File_Status, err error) {
-	metadata := syscall.Stat_t{}
-	stat_err := syscall.Lstat(path, &metadata)
+	metadata, stat_err := file_metadata_at(platform_current_directory(), path)
 	if stat_err == syscall.ENOENT {
 		return nbio.File_Status{}, nil
 	}
@@ -118,13 +114,12 @@ func directory_make(path string) (err error) {
 // rather than name byte position. Pass loop, descriptor lifetime, and accumulation across
 // passes all compose above surface in Read_Directory.
 func file_directory_pass(
-	descriptor int, buffer []byte,
-) (entries []nbio.Directory_Entry, err error) {
+	descriptor int, buffer []byte, entries []nbio.Directory_Entry,
+) (entry_count int, err error) {
 	count, read_err := platform_directory_read(descriptor, buffer)
 	if read_err != nil {
-		return nil, read_err
+		return 0, read_err
 	}
-	entries = []nbio.Directory_Entry{}
 	for offset := 0; offset < count; {
 		record := (*syscall.Dirent)(unsafe.Pointer(&buffer[offset]))
 		record_bytes := int(record.Reclen)
@@ -133,14 +128,17 @@ func file_directory_pass(
 			"A directory record ends inside the bytes the kernel returned.")
 		entry, keep, entry_err := file_directory_entry(descriptor, record, record_bytes)
 		if entry_err != nil {
-			return nil, entry_err
+			return 0, entry_err
 		}
 		if keep {
-			entries = append(entries, entry)
+			invariant.Always(entry_count < len(entries),
+				"Caller-owned directory entry storage holds one complete pass.")
+			entries[entry_count] = entry
+			entry_count++
 		}
 		offset += record_bytes
 	}
-	return entries, nil
+	return entry_count, nil
 }
 
 // Decode one directory record. keep is false for two self-referencing entries, and for record
@@ -175,10 +173,10 @@ func file_directory_name(record *syscall.Dirent, record_bytes int) (name string)
 	bytes := unsafe.Slice((*byte)(unsafe.Pointer(&record.Name[0])), record_bytes-start)
 	for index, value := range bytes {
 		if value == 0 {
-			return string(bytes[:index])
+			return unsafe.String(unsafe.SliceData(bytes), index)
 		}
 	}
-	return string(bytes)
+	return unsafe.String(unsafe.SliceData(bytes), len(bytes))
 }
 
 // Report whether directory record name directory. Kernel already wrote kind into record, thus
@@ -196,19 +194,40 @@ func file_directory_kind(
 // Report whether name, resolved against open directory, is itself directory. Go export no
 // Fstatat on this platform, thus call go by trap number, same way Open_At and Mkdir_At do.
 func file_status_at(directory int, name string) (directory_bit bool, err error) {
-	bytes, convert_err := syscall.BytePtrFromString(name)
-	if convert_err != nil {
-		return false, convert_err
+	metadata, metadata_err := file_metadata_at(directory, name)
+	if metadata_err != nil {
+		return false, metadata_err
 	}
-	metadata := syscall.Stat_t{}
+	return metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR, nil
+}
+
+func file_metadata_at(directory int, path string) (metadata syscall.Stat_t, err error) {
+	bytes := [OPERATING_SYSTEM_PATH_BYTES_MAXIMUM]byte{}
+	pointer, convert_err := file_path_pointer(path, bytes[:])
+	if convert_err != nil {
+		return syscall.Stat_t{}, convert_err
+	}
 	_, _, errno := syscall.Syscall6(
-		PLATFORM_STAT_AT_CALL, uintptr(directory), uintptr(unsafe.Pointer(bytes)),
+		PLATFORM_STAT_AT_CALL, uintptr(directory), uintptr(unsafe.Pointer(pointer)),
 		uintptr(unsafe.Pointer(&metadata)), PLATFORM_SYMBOLIC_LINK_NO_FOLLOW, 0, 0,
 	)
 	if errno != 0 {
-		return false, errno
+		return syscall.Stat_t{}, errno
 	}
-	return metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR, nil
+	return metadata, nil
+}
+
+func file_path_pointer(path string, storage []byte) (pointer *byte, err error) {
+	if len(path) >= len(storage) {
+		return nil, syscall.ENAMETOOLONG
+	}
+	for index := 0; index < len(path); index++ {
+		if path[index] == 0 {
+			return nil, syscall.EINVAL
+		}
+		storage[index] = path[index]
+	}
+	return &storage[0], nil
 }
 
 // Read up to len(buffer) bytes from pipe. Pipe is not seekable, thus this is plain read, not
@@ -356,9 +375,8 @@ func process_exit_code(status syscall.WaitStatus) (exit int) {
 	return status.ExitStatus()
 }
 
-// Report remote IP address of descriptor through getpeername. Non-IP peer yield empty address
-// with no error.
-func socket_peer_address(descriptor int) (address string, err error) {
+// Report remote address of descriptor through getpeername. Non-IP peer yields zero address.
+func socket_peer_address(descriptor int) (address nbio.Address, err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
 	size := uint32(SOCKET_ADDRESS_BYTES)
 	_, _, errno := syscall.RawSyscall(
@@ -366,20 +384,17 @@ func socket_peer_address(descriptor int) (address string, err error) {
 		uintptr(unsafe.Pointer(&storage[0])), uintptr(unsafe.Pointer(&size)),
 	)
 	if errno != 0 {
-		return "", errno
+		return nbio.Address{}, errno
 	}
 	peer, decode_err := socket_address_decode(&storage, size)
 	// Peer that is neither IPv4 nor IPv6 is not error here, only absent address.
 	if decode_err == syscall.EAFNOSUPPORT {
-		return "", nil
+		return nbio.Address{}, nil
 	}
 	if decode_err != nil {
-		return "", decode_err
+		return nbio.Address{}, decode_err
 	}
-	if peer.Family == nbio.FAMILY_IPV4 {
-		return net.IP(peer.IP[:nbio.IPV4_ADDRESS_BYTES]).String(), nil
-	}
-	return net.IP(peer.IP[:]).String(), nil
+	return peer, nil
 }
 
 // Report whether err is non-blocking "try again" signal that keep operation armed, not complete
@@ -457,34 +472,14 @@ func socket_family(family nbio.Address_Family) (system int) {
 	return syscall.AF_INET
 }
 
-// Resolve turn host into IPv4 literal socket_address_encode require: IP literal pass through
-// unchanged, name is looked up and its first IPv4 returned. Encode take only explicit family,
-// thus no lookup run on dial path — caller resolve here first and hand Connect address, never
-// name. It is prod Resolver injected into shared http client, failing closed when host has no
-// IPv4.
-func Resolve(host string) (address string, err error) {
-	if net.ParseIP(host) != nil {
-		return host, nil
-	}
-	found, lookup_err := net.LookupIP(host)
-	if lookup_err != nil {
-		return "", lookup_err
-	}
-	for index := range found {
-		if four := found[index].To4(); four != nil {
-			return four.String(), nil
-		}
-	}
-	return "", errors.New("io: no IPv4 address for host " + host)
-}
-
 // Accept one pending connection on listener. Return non-blocking connected descriptor. again is
 // true when none is ready yet.
 func socket_accept(listener int) (descriptor int, again bool, err error) {
-	descriptor, _, err = syscall.Accept(listener)
-	if err != nil {
-		return -1, socket_again(err), err
+	result, _, errno := syscall.RawSyscall(syscall.SYS_ACCEPT, uintptr(listener), 0, 0)
+	if errno != 0 {
+		return -1, socket_again(errno), errno
 	}
+	descriptor = int(result)
 	non_block_err := syscall.SetNonblock(descriptor, true)
 	if non_block_err != nil {
 		syscall.Close(descriptor)
@@ -602,7 +597,7 @@ func socket_tcp_options_set(descriptor int, options nbio.TCP_Options) (err error
 	maximum_segment_err := syscall.SetsockoptInt(
 		descriptor, syscall.IPPROTO_TCP, syscall.TCP_MAXSEG, int(maximum_segment))
 	if maximum_segment_err != nil {
-		return fmt.Errorf("set TCP maximum segment: %w", maximum_segment_err)
+		return maximum_segment_err
 	}
 	if !socket_option_integer_valid(options.Not_Sent_Low_Water_Bytes) {
 		return syscall.EINVAL
@@ -611,7 +606,7 @@ func socket_tcp_options_set(descriptor int, options nbio.TCP_Options) (err error
 		descriptor, syscall.IPPROTO_TCP, SOCKET_TCP_NOT_SENT_LOW_WATER,
 		int(options.Not_Sent_Low_Water_Bytes))
 	if not_sent_err != nil {
-		return fmt.Errorf("set TCP not-sent low water: %w", not_sent_err)
+		return not_sent_err
 	}
 	keepalive_err := socket_keepalive_set(descriptor, options.Keepalive)
 	if keepalive_err != nil {
@@ -648,14 +643,14 @@ func socket_options_set(
 	}
 	receive_buffer_err := platform_receive_buffer_set(descriptor, int(receive_buffer_bytes))
 	if receive_buffer_err != nil {
-		return fmt.Errorf("set socket receive buffer: %w", receive_buffer_err)
+		return receive_buffer_err
 	}
 	if !socket_option_integer_valid(send_buffer_bytes) {
 		return syscall.EINVAL
 	}
 	send_buffer_err := platform_send_buffer_set(descriptor, int(send_buffer_bytes))
 	if send_buffer_err != nil {
-		return fmt.Errorf("set socket send buffer: %w", send_buffer_err)
+		return send_buffer_err
 	}
 	if !socket_option_integer_valid(receive_low_water_bytes) {
 		return syscall.EINVAL
@@ -664,7 +659,7 @@ func socket_options_set(
 		descriptor, syscall.SOL_SOCKET, syscall.SO_RCVLOWAT,
 		int(receive_low_water_bytes))
 	if receive_low_water_err != nil {
-		return fmt.Errorf("set socket receive low water: %w", receive_low_water_err)
+		return receive_low_water_err
 	}
 	if !socket_linger_valid(linger_timeout) {
 		return syscall.EINVAL
@@ -675,7 +670,7 @@ func socket_options_set(
 	linger_err := syscall.SetsockoptLinger(
 		descriptor, syscall.SOL_SOCKET, syscall.SO_LINGER, &linger)
 	if linger_err != nil {
-		return fmt.Errorf("set socket linger: %w", linger_err)
+		return linger_err
 	}
 	return nil
 }
@@ -713,21 +708,21 @@ func socket_keepalive_set(descriptor int, keepalive nbio.TCP_Keepalive) (err err
 	enable_err := syscall.SetsockoptInt(
 		descriptor, syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, 1)
 	if enable_err != nil {
-		return fmt.Errorf("enable TCP keepalive: %w", enable_err)
+		return enable_err
 	}
 	idle_err := platform_keepalive_idle_set(
 		descriptor, int(keepalive.Idle/time.SECOND))
 	if idle_err != nil {
-		return fmt.Errorf("set TCP keepalive idle: %w", idle_err)
+		return idle_err
 	}
 	interval_err := platform_keepalive_interval_set(
 		descriptor, int(keepalive.Interval/time.SECOND))
 	if interval_err != nil {
-		return fmt.Errorf("set TCP keepalive interval: %w", interval_err)
+		return interval_err
 	}
 	count_err := platform_keepalive_count_set(descriptor, int(keepalive.Probe_Count))
 	if count_err != nil {
-		return fmt.Errorf("set TCP keepalive probe count: %w", count_err)
+		return count_err
 	}
 	return nil
 }

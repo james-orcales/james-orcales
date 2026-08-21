@@ -208,6 +208,17 @@ type Platform_Scheduler struct {
 	IO_Inflight int
 	// Next_Event keep synthetic event identifiers separate from pointer values.
 	Next_Event uint64
+	// Changes keeps one bounded changelist inline because returning local scratch allocates.
+	Changes [POLL_EVENTS_MAX]Kernel_Event
+	// Events keeps one bounded result batch inline across the kernel call.
+	Events [POLL_EVENTS_MAX]Kernel_Event
+}
+
+// Platform memory binds Darwin readiness backlog to caller capacity.
+func platform_memory_set(
+	platform *Platform_Scheduler, operations []*Operating_System_Operation,
+) {
+	platform.IO_Backlog = operations[:0]
 }
 
 // Kernel event is 64-bit struct kevent layout of Darwin, with integer udata. Use of UAPI layout
@@ -269,11 +280,19 @@ func platform_submit_registered(
 	result, again, operation_err := operating_system_operation_do(operation)
 	if again {
 		operation.Backlogged = true
-		state.Platform.IO_Backlog = append(state.Platform.IO_Backlog, operation)
+		platform_backlog_add(state, operation)
 		return nil
 	}
 	operating_system_operation_complete(state, operation, result, operation_err)
 	return nil
+}
+
+func platform_backlog_add(
+	state *Operating_System, operation *Operating_System_Operation,
+) {
+	invariant.Always(len(state.Platform.IO_Backlog) < cap(state.Platform.IO_Backlog),
+		"The caller-owned Darwin backlog has capacity before readiness wait.")
+	state.Platform.IO_Backlog = append(state.Platform.IO_Backlog, operation)
 }
 
 // Operating system operation do run one Darwin operation at completion time. Connect is
@@ -467,7 +486,7 @@ func platform_run(state *Operating_System, wait time.Monotonic_Moment) (err erro
 	if len(state.Completed) > 0 {
 		kernel_wait = 0
 	}
-	events := make([]Kernel_Event, POLL_EVENTS_MAX)
+	events := state.Platform.Events[:]
 	count, wait_err := kernel_kevent(&Kernel_Kevent_Input{
 		Descriptor: state.Platform.Descriptor,
 		Changes:    changes,
@@ -475,19 +494,20 @@ func platform_run(state *Operating_System, wait time.Monotonic_Moment) (err erro
 		Wait:       kernel_wait,
 	})
 	if wait_err != nil {
-		platform_restore_changes(state, changes)
 		return wait_err
 	}
 	for _, change := range changes {
-		operation := state.Operations[change.User_Data]
+		operation := operating_system_operation_find(state, change.User_Data)
 		if operation != nil {
+			operation.Backlogged = false
 			operation.Kernel_Submitted = true
 		}
 	}
+	platform_changes_remove(state, len(changes))
 	state.Platform.IO_Inflight += len(changes)
 	operation_events := 0
 	for index := 0; index < count; index++ {
-		if state.Operations[events[index].User_Data] != nil {
+		if operating_system_operation_find(state, events[index].User_Data) != nil {
 			operation_events++
 		}
 	}
@@ -506,14 +526,22 @@ func platform_changes(state *Operating_System) (changes []Kernel_Event) {
 	if count > POLL_EVENTS_MAX {
 		count = POLL_EVENTS_MAX
 	}
-	changes = make([]Kernel_Event, count)
+	changes = state.Platform.Changes[:count]
 	for index := 0; index < count; index++ {
 		operation := state.Platform.IO_Backlog[index]
-		operation.Backlogged = false
 		changes[index] = platform_change(operation)
 	}
-	state.Platform.IO_Backlog = state.Platform.IO_Backlog[count:]
 	return changes
+}
+
+func platform_changes_remove(state *Operating_System, count int) {
+	backlog := state.Platform.IO_Backlog
+	copy(backlog, backlog[count:])
+	count_after := len(backlog) - count
+	for index := count_after; index < len(backlog); index++ {
+		backlog[index] = nil
+	}
+	state.Platform.IO_Backlog = backlog[:count_after]
 }
 
 // Platform change encode one backlogged operation as kevent. Descriptor operation key on its
@@ -539,23 +567,6 @@ func platform_change(operation *Operating_System_Operation) (change Kernel_Event
 	}
 }
 
-// Platform restore changes put changes back at head when kevent reject changelist.
-func platform_restore_changes(state *Operating_System, changes []Kernel_Event) {
-	restored := make(
-		[]*Operating_System_Operation,
-		0,
-		len(changes)+len(state.Platform.IO_Backlog),
-	)
-	for _, change := range changes {
-		operation := state.Operations[change.User_Data]
-		if operation != nil {
-			operation.Backlogged = true
-			restored = append(restored, operation)
-		}
-	}
-	state.Platform.IO_Backlog = append(restored, state.Platform.IO_Backlog...)
-}
-
 // Platform filter map each operation to read or write kqueue filter.
 func platform_filter(kind Operating_System_Operation_Kind) (filter int16) {
 	if kind == OPERATING_SYSTEM_OPERATION_CONNECT {
@@ -575,7 +586,7 @@ func platform_complete_events(
 	state *Operating_System, events []Kernel_Event,
 ) (err error) {
 	for _, event := range events {
-		operation := state.Operations[event.User_Data]
+		operation := operating_system_operation_find(state, event.User_Data)
 		if operation == nil {
 			continue
 		}

@@ -13,6 +13,28 @@ import (
 	"local/james-orcales/shared/testify"
 )
 
+// PLATFORM_TEST_CAPACITY holds both primary and linked-deadline test operations.
+const PLATFORM_TEST_CAPACITY = 2 * nbio.IPV4_ADDRESS_BYTES
+
+type platform_test_memory struct {
+	State              Operating_System
+	Clock              clock_value
+	Operations         [PLATFORM_TEST_CAPACITY]Operating_System_Operation
+	Operation_Registry [PLATFORM_TEST_CAPACITY]*Operating_System_Operation
+	Completed          [PLATFORM_TEST_CAPACITY]*time.Completion
+	Retry              [PLATFORM_TEST_CAPACITY]*Operating_System_Operation
+}
+
+func platform_test_state(moment time.Monotonic_Moment) (state *Operating_System) {
+	memory := &platform_test_memory{Clock: clock_value{Moment: moment}}
+	memory.State.Host = clock_value_to_clock(&memory.Clock)
+	memory.State.Operation_Memory = memory.Operations[:]
+	memory.State.Operations = memory.Operation_Registry[:0]
+	memory.State.Completed = memory.Completed[:0]
+	memory.State.Platform.Retry_Backlog = memory.Retry[:0]
+	return &memory.State
+}
+
 // Linux statx must stay in this platform suite because the linter permits one white-box file
 // for one build constraint.
 func Test_Operating_System_IO_Statx(t *testing.T) {
@@ -21,21 +43,23 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 	loop, _, driver := operating_system_loop(t, clock)
 	opened := nbio.File(-1)
 	var open_completion time.Completion
-	loop.Storage.Open_At(&open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
-		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
-	}, func(completed *time.Completion) {
-		if !testify.No_Error(t, completed.Error) {
-			return
-		}
-		opened = nbio.File(completed.Data)
-	})
+	nbio.Storage_Open_At(loop.Storage, &open_completion, nbio.DIRECTORY_CURRENT, path,
+		nbio.Open_At_Options{
+			Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+		}, func(completed *time.Completion) {
+			if !testify.No_Error(t, completed.Error) {
+				return
+			}
+			opened = nbio.File(completed.Data)
+		})
 	testify.True(t,
 		operating_system_run_until(
 			t, driver, func() (finished bool) { return opened >= 0 },
 		))
 	written := false
 	var write_completion time.Completion
-	loop.Storage.Write(&write_completion, opened, []byte("hello"), 10, REAL_DEADLINE,
+	nbio.Storage_Write(loop.Storage, &write_completion, opened, []byte("hello"), 10,
+		REAL_DEADLINE,
 		func(completed *time.Completion) {
 			testify.No_Error(t, completed.Error)
 			written = completed.Data == 5
@@ -47,8 +71,9 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 	status := nbio.Statx{}
 	statted := false
 	var statx_completion time.Completion
-	loop.Statx(
-		&statx_completion, nbio.DIRECTORY_CURRENT, path, 0, nbio.STATX_BASIC_STATS, &status,
+	nbio.Platform_Statx(
+		loop.Platform_IO, &statx_completion, nbio.DIRECTORY_CURRENT, path, 0,
+		nbio.STATX_BASIC_STATS, &status,
 		func(completed *time.Completion) {
 			testify.No_Error(t, completed.Error)
 			statted = true
@@ -57,6 +82,41 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 	testify.True(t,
 		operating_system_run_until(t, driver, func() (finished bool) { return statted }))
 	testify.Equal(t, uint64(15), status.Size)
+}
+
+// Test_Operating_System_Statx_Heap_Allocation guards Linux path pinning and CQE retirement.
+func Test_Operating_System_Statx_Heap_Allocation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "statx-allocation")
+	clock := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, clock)
+	write_file(t, loop, driver, path, []byte("data"))
+	harness := platform_statx_allocation_harness{Driver: driver}
+	harness.Completion.Backend = unsafe.Pointer(&harness)
+	harness.Done = func() (finished bool) { return harness.Called }
+	testify.Zero_Allocation(t, func() {
+		harness.Called = false
+		nbio.Platform_Statx(
+			loop.Platform_IO, &harness.Completion, nbio.DIRECTORY_CURRENT, path, 0,
+			nbio.STATX_BASIC_STATS, &harness.Result, platform_statx_allocation_callback,
+		)
+		_, harness.Error = time.Driver_Run_Until(driver, REAL_DEADLINE, harness.Done)
+	})
+	testify.No_Error(t, harness.Error)
+	time.Driver_Deinit(driver)
+}
+
+type platform_statx_allocation_harness struct {
+	Driver     time.Driver
+	Completion time.Completion
+	Result     nbio.Statx
+	Called     bool
+	Done       func() (finished bool)
+	Error      error
+}
+
+func platform_statx_allocation_callback(completion *time.Completion) {
+	harness := (*platform_statx_allocation_harness)(completion.Backend)
+	harness.Called = true
 }
 
 // A terminal primary CQE is kernel truth even when the linked timeout also reached ETIME.
@@ -86,15 +146,14 @@ func Test_Platform_Bounded_Timeout_Winner(t *testing.T) {
 // CQE drain must only queue interrupted operation. Inline retry can recurse when ring is full.
 func Test_Platform_Retry_Is_Deferred(t *testing.T) {
 	completion := &time.Completion{Armed: true}
-	operation := &Operating_System_Operation{
+	state := platform_test_state(0)
+	operation := operating_system_operation_acquire(state, Operating_System_Operation{
 		Completion: completion,
 		Identifier: 1,
 		Kind:       OPERATING_SYSTEM_OPERATION_READ,
 		Deliver:    func(_ *time.Completion) {},
-	}
-	state := &Operating_System{
-		Operations: map[uint64]*Operating_System_Operation{1: operation},
-	}
+	})
+	operating_system_operation_register(state, operation)
 	err := platform_complete_entry(state, Kernel_Completion_Entry{
 		User_Data: 1,
 		Result:    -int32(syscall.EINTR),
@@ -102,27 +161,23 @@ func Test_Platform_Retry_Is_Deferred(t *testing.T) {
 	testify.No_Error(t, err)
 	testify.Equal(t, 1, len(state.Platform.Retry_Backlog))
 	testify.True(t, state.Platform.Retry_Backlog[0] == operation)
-	testify.True(t, state.Operations[1] == operation)
+	testify.True(t, operating_system_operation_find(state, 1) == operation)
 	testify.True(t, completion.Armed)
 }
 
 // Parked retry keeps original absolute deadline; queue delay never extend operation lifetime.
 func Test_Platform_Retry_Uses_Remaining_Deadline(t *testing.T) {
 	completion := &time.Completion{Armed: true}
-	operation := &Operating_System_Operation{
+	state := platform_test_state(10)
+	operation := operating_system_operation_acquire(state, Operating_System_Operation{
 		Completion: completion,
 		Identifier: 1,
 		Kind:       OPERATING_SYSTEM_OPERATION_READ,
 		Deadline:   9,
 		Deliver:    func(_ *time.Completion) {},
-	}
-	state := &Operating_System{
-		Host:       clock_value_to_clock(&clock_value{Moment: 10}),
-		Operations: map[uint64]*Operating_System_Operation{1: operation},
-		Platform: Platform_Scheduler{
-			Retry_Backlog: []*Operating_System_Operation{operation},
-		},
-	}
+	})
+	operating_system_operation_register(state, operation)
+	platform_retry_add(state, operation)
 	testify.No_Error(t, platform_retry_operations(state))
 	testify.Zero(t, len(state.Platform.Retry_Backlog))
 	testify.Zero(t, len(state.Operations))
@@ -147,13 +202,13 @@ func Test_Platform_Bounded_Storage_Submissions(t *testing.T) {
 	}
 	for _, test := range tests {
 		state := platform_bounded_test_state()
-		operation := &Operating_System_Operation{
+		operation := operating_system_operation_acquire(state, Operating_System_Operation{
 			Completion: &time.Completion{},
 			Kind:       test.Kind,
 			Descriptor: 9,
 			Buffer:     []byte{1},
 			Deadline:   10,
-		}
+		})
 		operating_system_operation_register(state, operation)
 		if !testify.No_Error(t, platform_submit_bounded_operation(
 			state, operation,
@@ -185,18 +240,14 @@ func platform_bounded_test_state() (state *Operating_System) {
 	const ENTRIES = uint32(2)
 	submission := make([]byte, 128)
 	*platform_uint32(submission, 8) = ENTRIES - 1
-	return &Operating_System{
-		Operations: make(map[uint64]*Operating_System_Operation),
-		Host:       clock_value_to_clock(&clock_value{Moment: 1}),
-		Platform: Platform_Scheduler{
-			Parameters: Kernel_Ring_Parameters{
-				Submission_Entries: ENTRIES,
-				Submission:         Kernel_Ring_Offsets{Head: 0, Ring_Mask: 8},
-			},
-			Submission_Ring: submission,
-			Entries:         make([]byte, ENTRIES*64),
-		},
+	state = platform_test_state(1)
+	state.Platform.Parameters = Kernel_Ring_Parameters{
+		Submission_Entries: ENTRIES,
+		Submission:         Kernel_Ring_Offsets{Head: 0, Ring_Mask: 8},
 	}
+	state.Platform.Submission_Ring = submission
+	state.Platform.Entries = make([]byte, ENTRIES*64)
+	return state
 }
 
 // An API timeout that elapses before SQE publication must not fabricate descriptor zero.
@@ -204,7 +255,8 @@ func Test_Platform_Expired_Accept_Submission_Yields_No_Descriptor(t *testing.T) 
 	completion := &time.Completion{Armed: true}
 	delivered := 0
 	var delivered_err error
-	operation := &Operating_System_Operation{
+	state := platform_test_state(10)
+	operation := operating_system_operation_acquire(state, Operating_System_Operation{
 		Completion: completion,
 		Kind:       OPERATING_SYSTEM_OPERATION_ACCEPT,
 		Descriptor: 9,
@@ -213,11 +265,7 @@ func Test_Platform_Expired_Accept_Submission_Yields_No_Descriptor(t *testing.T) 
 			delivered = completed.Data
 			delivered_err = completed.Error
 		},
-	}
-	state := &Operating_System{
-		Host:       clock_value_to_clock(&clock_value{Moment: 10}),
-		Operations: map[uint64]*Operating_System_Operation{},
-	}
+	})
 	operating_system_operation_submit(state, operation)
 	operating_system_flush_completed(state)
 	testify.Equal(t, -1, delivered)
@@ -232,17 +280,14 @@ func Test_Platform_Expired_Storage_Submission_Yields_Zero(t *testing.T) {
 		OPERATING_SYSTEM_OPERATION_FSYNC,
 	} {
 		completion := &time.Completion{Armed: true}
-		operation := &Operating_System_Operation{
+		state := platform_test_state(10)
+		operation := operating_system_operation_acquire(state, Operating_System_Operation{
 			Completion: completion,
 			Kind:       kind,
 			Descriptor: 9,
 			Buffer:     []byte{1},
 			Deadline:   9,
-		}
-		state := &Operating_System{
-			Host:       clock_value_to_clock(&clock_value{Moment: 10}),
-			Operations: map[uint64]*Operating_System_Operation{},
-		}
+		})
 		operating_system_operation_submit(state, operation)
 		testify.Zero(t, completion.Data, kind)
 		testify.Error_Is(t, completion.Error, time.Deadline_Exceeded, kind)
@@ -255,24 +300,20 @@ func Test_Platform_Bounded_Operation_Internal_Completion(t *testing.T) {
 	const ENTRIES = uint32(2)
 	submission := make([]byte, 128)
 	*platform_uint32(submission, 8) = ENTRIES - 1
-	state := &Operating_System{
-		Operations: make(map[uint64]*Operating_System_Operation),
-		Host:       clock_value_to_clock(&clock_value{Moment: 3, Step: time.NANOSECOND}),
-		Platform: Platform_Scheduler{
-			Parameters: Kernel_Ring_Parameters{
-				Submission_Entries: ENTRIES,
-				Submission:         Kernel_Ring_Offsets{Head: 0, Ring_Mask: 8},
-			},
-			Submission_Ring: submission,
-			Entries:         make([]byte, ENTRIES*64),
-		},
+	state := platform_test_state(3)
+	state.Platform.Parameters = Kernel_Ring_Parameters{
+		Submission_Entries: ENTRIES,
+		Submission:         Kernel_Ring_Offsets{Head: 0, Ring_Mask: 8},
 	}
-	primary := &Operating_System_Operation{
+	state.Platform.Submission_Ring = submission
+	state.Platform.Entries = make([]byte, ENTRIES*64)
+	(*clock_value)(state.Host.State).Step = time.NANOSECOND
+	primary := operating_system_operation_acquire(state, Operating_System_Operation{
 		Completion: &time.Completion{},
 		Kind:       OPERATING_SYSTEM_OPERATION_ACCEPT,
 		Descriptor: 9,
 		Deadline:   10,
-	}
+	})
 	operating_system_operation_register(state, primary)
 	if !testify.No_Error(t, platform_submit_bounded_operation(state, primary)) {
 		return

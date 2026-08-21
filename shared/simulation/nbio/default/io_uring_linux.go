@@ -20,6 +20,19 @@ const SOCKET_RECEIVE_BUFFER_SIZE = 4 * 1024 * 1024
 // SOCKET_SEND_BUFFER_SIZE fix socket profile platform tests verify.
 const SOCKET_SEND_BUFFER_SIZE = 2 * 1024 * 1024
 
+// Static identities keep scheduler failure paths inside caller allocation budget.
+var kernel_extended_argument_required = errors.New(
+	"io: Linux kernel 5.11 or newer with IORING_FEAT_EXT_ARG is required",
+)
+
+var kernel_submission_queue_full = errors.New(
+	"io: io_uring submission queue remained full after flush",
+)
+
+var kernel_bounded_chain_unavailable = errors.New(
+	"io: io_uring cannot reserve a bounded operation chain",
+)
+
 // SOCKET_RECEIVE_BUFFER_FORCE identify SO_RCVBUFFORCE, because syscall does not expose it.
 const SOCKET_RECEIVE_BUFFER_FORCE = 33
 
@@ -63,29 +76,33 @@ func process_watch_ready(spawn *Spawn) (err error) {
 
 // Wire Linux IORING_OP_STATX, one operation absent from Darwin surface.
 func operating_system_wire_platform(state *Operating_System, loop *nbio.IO) {
-	loop.Statx = func(
-		completion *time.Completion, directory nbio.File, file_path string,
-		flags uint32, mask uint32, result *nbio.Statx, callback time.Callback,
-	) {
-		operating_system_submit(completion)
-		descriptor := int(directory)
-		if directory == nbio.DIRECTORY_CURRENT {
-			descriptor = platform_current_directory()
-		}
-		operation := &Operating_System_Operation{
-			Completion: completion,
-			Kind:       OPERATING_SYSTEM_OPERATION_STATX,
-			Descriptor: descriptor,
-			File_Path:  append([]byte(file_path), 0),
-			Platform_Operation: Platform_Operation{
-				Statx_Result: result,
-				Statx_Flags:  flags,
-				Statx_Mask:   mask,
-			},
-			Deliver: callback,
-		}
-		operating_system_operation_submit(state, operation)
+	loop.Platform_IO.State = unsafe.Pointer(state)
+	loop.Statx_Procedure = operating_system_statx
+}
+
+func operating_system_statx(
+	state_pointer unsafe.Pointer, completion *time.Completion, directory nbio.File,
+	file_path string, flags uint32, mask uint32, result *nbio.Statx,
+	callback time.Callback,
+) {
+	state := (*Operating_System)(state_pointer)
+	operating_system_submit(completion)
+	descriptor := int(directory)
+	if directory == nbio.DIRECTORY_CURRENT {
+		descriptor = platform_current_directory()
 	}
+	operation := operating_system_operation_acquire(state, Operating_System_Operation{
+		Completion: completion,
+		Kind:       OPERATING_SYSTEM_OPERATION_STATX,
+		Descriptor: descriptor,
+		Platform_Operation: Platform_Operation{
+			Statx_Result: result,
+			Statx_Flags:  flags,
+			Statx_Mask:   mask,
+		},
+		Deliver: callback,
+	})
+	operating_system_operation_submit_path(state, operation, file_path)
 }
 
 // Apply buffer limit for Linux before length reach signed kernel result.
@@ -238,6 +255,9 @@ const KERNEL_RING_OPERATION_ACCEPT = 13
 
 // KERNEL_RING_OPERATION_LINK_TIMEOUT keep SQE opcode compatible with Linux UAPI.
 const KERNEL_RING_OPERATION_LINK_TIMEOUT = 15
+
+// KERNEL_BOUNDED_OPERATION_ENTRIES joins one primary SQE with one deadline SQE.
+const KERNEL_BOUNDED_OPERATION_ENTRIES = 2
 
 // KERNEL_RING_OPERATION_CONNECT keep SQE opcode compatible with Linux UAPI.
 const KERNEL_RING_OPERATION_CONNECT = 16
@@ -429,6 +449,13 @@ type Platform_Scheduler struct {
 	Retry_Backlog []*Operating_System_Operation
 }
 
+// Platform memory binds Linux retry backlog to caller capacity.
+func platform_memory_set(
+	platform *Platform_Scheduler, operations []*Operating_System_Operation,
+) {
+	platform.Retry_Backlog = operations[:0]
+}
+
 // Platform initialize make io_uring eagerly and reject kernel without EXT_ARG.
 func platform_initialize(entries uint16, flags uint32) (platform Platform_Scheduler, err error) {
 	parameters := Kernel_Ring_Parameters{Flags: flags}
@@ -441,9 +468,7 @@ func platform_initialize(entries uint16, flags uint32) (platform Platform_Schedu
 	descriptor := int(result)
 	if parameters.Features&KERNEL_RING_FEATURE_EXTENDED_ARGUMENT == 0 {
 		syscall.Close(descriptor)
-		return Platform_Scheduler{}, errors.New(
-			"io: Linux kernel 5.11 or newer with IORING_FEAT_EXT_ARG is required",
-		)
+		return Platform_Scheduler{}, kernel_extended_argument_required
 	}
 	platform = Platform_Scheduler{Descriptor: descriptor, Parameters: parameters}
 	map_err := platform_map(&platform)
@@ -588,45 +613,49 @@ func platform_submit_bounded_operation(
 	if budget <= 0 {
 		return time.Deadline_Exceeded
 	}
-	bounded := &Operating_System_Bounded_Operation{Operation: operation}
-	deadline := &Operating_System_Operation{
-		Completion: &time.Completion{},
+	bounded := &operation.Bounded_State
+	*bounded = Operating_System_Bounded_Operation{Operation: operation}
+	deadline := operating_system_operation_acquire(state, Operating_System_Operation{
+		Completion: &operation.Internal_Completion,
 		Kind:       OPERATING_SYSTEM_OPERATION_BOUNDED_DEADLINE,
 		Descriptor: -1,
 		Bounded:    bounded,
-	}
+	})
 	bounded.Deadline_Operation = deadline
 	operation.Bounded = bounded
 	operating_system_operation_register(state, deadline)
 	pin_err := platform_pin(deadline)
 	if pin_err != nil {
-		delete(state.Operations, deadline.Identifier)
+		operating_system_operation_unregister(state, deadline)
+		operating_system_operation_release(deadline)
 		operation.Bounded = nil
 		return pin_err
 	}
-	entries, entry_err := platform_get_entries(state, 2)
+	primary_entry, deadline_entry, entry_err := platform_get_entry_pair(state)
 	if entry_err != nil {
-		delete(state.Operations, deadline.Identifier)
+		operating_system_operation_unregister(state, deadline)
 		deadline.Pinner.Unpin()
 		deadline.Pinned = false
+		operating_system_operation_release(deadline)
 		operation.Bounded = nil
 		return entry_err
 	}
 	budget = operation.Deadline - time.Clock_Now_Monotonic(state.Host)
 	if budget <= 0 {
-		state.Platform.Submission_Tail -= uint32(len(entries))
-		delete(state.Operations, deadline.Identifier)
+		state.Platform.Submission_Tail -= KERNEL_BOUNDED_OPERATION_ENTRIES
+		operating_system_operation_unregister(state, deadline)
 		deadline.Pinner.Unpin()
 		deadline.Pinned = false
+		operating_system_operation_release(deadline)
 		operation.Bounded = nil
 		return time.Deadline_Exceeded
 	}
 	operation.Deadline_Span = operating_system_timeout_span(time.Duration(budget))
 	deadline.Timespec = operation.Deadline_Span
-	platform_prepare_entry(entries[0], operation)
-	entries[0].Flags |= KERNEL_RING_SUBMISSION_LINK
-	platform_prepare_entry(entries[1], deadline)
-	state.Platform.IO_Queued += 2
+	platform_prepare_entry(primary_entry, operation)
+	primary_entry.Flags |= KERNEL_RING_SUBMISSION_LINK
+	platform_prepare_entry(deadline_entry, deadline)
+	state.Platform.IO_Queued += KERNEL_BOUNDED_OPERATION_ENTRIES
 	return nil
 }
 
@@ -651,7 +680,7 @@ func platform_pin(operation *Operating_System_Operation) (err error) {
 	if len(operation.Buffer) > 0 {
 		operation.Pinner.Pin(&operation.Buffer[0])
 	}
-	if len(operation.File_Path) > 0 {
+	if operation.File_Path_Count > 0 {
 		operation.Pinner.Pin(&operation.File_Path[0])
 	}
 	if operation.Kind == OPERATING_SYSTEM_OPERATION_CONNECT {
@@ -674,7 +703,7 @@ func platform_pin(operation *Operating_System_Operation) (err error) {
 	return nil
 }
 
-// Platform address encode shared/io.Address as sockaddr_in, or sockaddr_in6. SQE take same bytes
+// Platform address encode nbio.Address as sockaddr_in, or sockaddr_in6. SQE take same bytes
 // synchronous calls pass, thus both share one encoder. Address encoder reject leave size at zero,
 // and kernel then fail operation with EINVAL.
 func platform_address(operation *Operating_System_Operation) {
@@ -713,32 +742,32 @@ func platform_get_entry(
 	}
 	entry = platform_reserve_entry(&state.Platform)
 	if entry == nil {
-		return nil, errors.New("io: io_uring submission queue remained full after flush")
+		return nil, kernel_submission_queue_full
 	}
 	return entry, nil
 }
 
 // Platform get entries reserve one indivisible linked chain. It flush before reserve, thus accept
 // SQE can never be published without its following timeout SQE.
-func platform_get_entries(
-	state *Operating_System, count int,
-) (entries []*Kernel_Submission_Entry, err error) {
-	if platform_entries_available(&state.Platform) < count {
+func platform_get_entry_pair(
+	state *Operating_System,
+) (first *Kernel_Submission_Entry, second *Kernel_Submission_Entry, err error) {
+	if platform_entries_available(&state.Platform) < KERNEL_BOUNDED_OPERATION_ENTRIES {
 		flush_err := platform_enter(state, 0, 0)
 		if flush_err != nil {
-			return nil, flush_err
+			return nil, nil, flush_err
 		}
 	}
-	if platform_entries_available(&state.Platform) < count {
-		return nil, errors.New("io: io_uring cannot reserve a bounded operation chain")
+	if platform_entries_available(&state.Platform) < KERNEL_BOUNDED_OPERATION_ENTRIES {
+		return nil, nil, kernel_bounded_chain_unavailable
 	}
-	entries = make([]*Kernel_Submission_Entry, count)
-	for index := 0; index < count; index++ {
-		entries[index] = platform_reserve_entry(&state.Platform)
-		invariant.Always(entries[index] != nil,
-			"A preflighted bounded operation chain reserves every SQE.")
-	}
-	return entries, nil
+	first = platform_reserve_entry(&state.Platform)
+	second = platform_reserve_entry(&state.Platform)
+	invariant.Always(first != nil,
+		"A preflighted bounded operation chain reserves its primary SQE.")
+	invariant.Always(second != nil,
+		"A preflighted bounded operation chain reserves its deadline SQE.")
+	return first, second, nil
 }
 
 // Platform entries available report private SQ capacity kernel not yet consumed.
@@ -1167,7 +1196,7 @@ func platform_flush_submissions(state *Operating_System) (err error) {
 func platform_complete_entry(
 	state *Operating_System, entry Kernel_Completion_Entry,
 ) (err error) {
-	operation := state.Operations[entry.User_Data]
+	operation := operating_system_operation_find(state, entry.User_Data)
 	if operation == nil {
 		return nil
 	}
@@ -1175,7 +1204,7 @@ func platform_complete_entry(
 		return platform_complete_bounded_entry(state, operation, entry.Result)
 	}
 	if operating_system_retryable_result(operation, entry.Result) {
-		state.Platform.Retry_Backlog = append(state.Platform.Retry_Backlog, operation)
+		platform_retry_add(state, operation)
 		return nil
 	}
 	result, operation_err := operating_system_translate_result(operation, entry.Result)
@@ -1204,11 +1233,12 @@ func platform_complete_bounded_entry(
 	}
 	primary := bounded.Operation
 	deadline := bounded.Deadline_Operation
-	delete(state.Operations, deadline.Identifier)
+	operating_system_operation_unregister(state, deadline)
 	if deadline.Pinned {
 		deadline.Pinner.Unpin()
 		deadline.Pinned = false
 	}
+	operating_system_operation_release(deadline)
 	primary.Bounded = nil
 	if platform_bounded_timeout_won(
 		bounded.Operation_Result, bounded.Deadline_Result,
@@ -1220,7 +1250,7 @@ func platform_complete_bounded_entry(
 		return nil
 	}
 	if operating_system_retryable_result(primary, bounded.Operation_Result) {
-		state.Platform.Retry_Backlog = append(state.Platform.Retry_Backlog, primary)
+		platform_retry_add(state, primary)
 		return nil
 	}
 	translated, operation_err := operating_system_translate_result(
@@ -1248,7 +1278,7 @@ func platform_retry_operations(state *Operating_System) (err error) {
 		if operation.Deadline != 0 {
 			budget := operation.Deadline - time.Clock_Now_Monotonic(state.Host)
 			if budget <= 0 {
-				state.Platform.Retry_Backlog = state.Platform.Retry_Backlog[1:]
+				platform_retry_pop(state)
 				timeout_result := operating_system_timeout_result(operation)
 				operating_system_operation_complete(
 					state, operation, timeout_result, time.Deadline_Exceeded,
@@ -1265,9 +1295,24 @@ func platform_retry_operations(state *Operating_System) (err error) {
 		if submit_err != nil {
 			return submit_err
 		}
-		state.Platform.Retry_Backlog = state.Platform.Retry_Backlog[1:]
+		platform_retry_pop(state)
 	}
 	return nil
+}
+
+func platform_retry_pop(state *Operating_System) {
+	backlog := state.Platform.Retry_Backlog
+	copy(backlog, backlog[1:])
+	backlog[len(backlog)-1] = nil
+	state.Platform.Retry_Backlog = backlog[:len(backlog)-1]
+}
+
+func platform_retry_add(
+	state *Operating_System, operation *Operating_System_Operation,
+) {
+	invariant.Always(len(state.Platform.Retry_Backlog) < cap(state.Platform.Retry_Backlog),
+		"The caller-owned Linux retry backlog has capacity before retry.")
+	state.Platform.Retry_Backlog = append(state.Platform.Retry_Backlog, operation)
 }
 
 // Linked timeout SQE of Linux implement platform expire operation, thus common user-space expiry

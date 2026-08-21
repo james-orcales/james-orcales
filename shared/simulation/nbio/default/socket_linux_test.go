@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/simulation/nbio"
-	"local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
 )
@@ -106,7 +105,9 @@ const SYSCTL_READ_BYTES = 64
 func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	t.Helper()
 	clock := new_operating_system_clock()
+	memory := &operating_system_test_memory{}
 	loop, _, driver, _, loop_err := New_Operating_System_IO(
+		&memory.State, operating_system_memory_view(memory),
 		clock, 32, 0, operating_system_ambient())
 	if !testify.No_Error(t, loop_err) {
 		return 0
@@ -114,8 +115,8 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	file := nbio.File(-1)
 	open_done := false
 	var open_completion time.Completion
-	loop.Storage.Open_At(
-		&open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
+	nbio.Storage_Open_At(
+		loop.Storage, &open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
 			Access: nbio.OPEN_READ_ONLY,
 		}, func(
 			completed *time.Completion,
@@ -128,7 +129,7 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 		func() (finished bool) { return open_done })
 	read_done := false
 	var read_completion time.Completion
-	loop.Storage.Read(&read_completion, file, content, 0, SYSCTL_READ_DEADLINE,
+	nbio.Storage_Read(loop.Storage, &read_completion, file, content, 0, SYSCTL_READ_DEADLINE,
 		func(completed *time.Completion) {
 			testify.No_Error(t, completed.Error, path)
 			count = completed.Data
@@ -139,7 +140,7 @@ func socket_sysctl_read(t *testing.T, path string, content []byte) (count int) {
 	testify.True(t, read_done, path)
 	close_done := false
 	var close_completion time.Completion
-	loop.Close(&close_completion, file, func(completed *time.Completion) {
+	nbio.IO_Close(loop, &close_completion, file, func(completed *time.Completion) {
 		testify.No_Error(t, completed.Error, path)
 		close_done = true
 	})
