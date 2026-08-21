@@ -208,8 +208,9 @@ package uses `aver.Always` so assertion reachability stays observable.
 
 ### Generics
 
-Outside packages listed in lint.json's `instrumentation_packages`, type and func declarations have
-no type parameters. Each production declaration names one concrete program. Instrumentation may
+Outside packages listed in lint.json's `instrumentation_packages` and exact packages
+`shared/testify`, `shared/slices`, and `shared/sort`, type and func declarations have no type
+parameters. Shared exceptions cover source and tests, but not child packages. Instrumentation may
 use type parameters so one adapter can observe arbitrary types without production dependencies.
 
 ### Interface Declarations

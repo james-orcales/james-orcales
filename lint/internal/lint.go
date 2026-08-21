@@ -6338,6 +6338,11 @@ func check_no_generics(
 ) (diags []Diagnostic) {
 	token_file := file_set.File(file.Pos())
 	if token_file != nil {
+		// Shared collection primitives and assertions must accept caller-owned types.
+		switch path.Dir(token_file.Name()) {
+		case "shared/testify", "shared/slices", "shared/sort":
+			return nil
+		}
 		if source.Path_Matches_Glob(path.Dir(token_file.Name()), instrumentation) {
 			return nil
 		}

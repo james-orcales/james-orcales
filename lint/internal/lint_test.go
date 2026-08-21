@@ -4465,6 +4465,46 @@ func value_at(values []int, index int) (result int) { return values[index] }
 	})
 }
 
+// Test_Shared_Generics_Exemptions keeps exceptions limited to exact package paths.
+func Test_Shared_Generics_Exemptions(t *testing.T) {
+	t.Parallel()
+	for _, directory := range []string{"shared/testify", "shared/slices", "shared/sort"} {
+		for _, suffix := range []string{"", "_extra", "/nested"} {
+			for _, filename := range []string{"generic.go", "generic_test.go"} {
+				t.Run(directory+suffix+"/"+filename, func(t *testing.T) {
+					files := fstest.MapFS{
+						directory + suffix + "/" + filename: &fstest.MapFile{Data: []byte(`package fixture
+
+type Box[Value any] struct { Value Value }
+
+func Identity[Value any](value Value) (result Value) { return value }
+`)},
+					}
+					diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+						Fsys: files, Word_Replacements: test_word_replacements(),
+					})
+					if err != nil {
+						t.Fatalf("Check_File_System: %v", err)
+					}
+					count := 0
+					for _, diagnostic := range diags {
+						if strings.Contains(diagnostic.Message, "Do not use generics") {
+							count++
+						}
+					}
+					want := 0
+					if suffix != "" {
+						want = 2
+					}
+					if count != want {
+						t.Fatalf("generic diagnostics: got %d, want %d", count, want)
+					}
+				})
+			}
+		}
+	}
+}
+
 // Test_Instrumentation_Packages_Permit_Generics keeps one instrumentation adapter
 // usable across arbitrary observed types.
 func Test_Instrumentation_Packages_Permit_Generics(t *testing.T) {
