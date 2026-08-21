@@ -904,7 +904,7 @@ func invariant_remedy_text(
 	if invariant_float_primitive(primitive) {
 		return "a direct Always equality to a package constant"
 	}
-	return "a direct Always equality, a Range_" + suffix +
+	return "an Always(<var> == <const>), a Range_" + suffix +
 		" family, or an Enum_" + suffix + " family"
 }
 

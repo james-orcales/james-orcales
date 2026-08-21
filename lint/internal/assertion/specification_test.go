@@ -985,6 +985,10 @@ func scalar_helper_remedy_text(t *testing.T) {
 	if diagnosed(integer, "Int_Invariants,") {
 		t.Fatal("the integer remedy must not name a deleted preset")
 	}
+	if !diagnosed(integer,
+		"Write an Always(<var> == <const>), a Range_Int family, or an Enum_Int family.") {
+		t.Fatal("the integer remedy must show the Always equality shape")
+	}
 	if !diagnosed(integer, "Range_Int family") {
 		t.Fatal("the integer remedy must name the Range_Int family")
 	}
