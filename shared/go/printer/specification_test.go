@@ -19,6 +19,31 @@ func Test_Layout(t *testing.T) {
 	test_layout(t)
 }
 
+// Test_Elision binds the Elision specification leaf before fixture declarations.
+func Test_Elision(t *testing.T) {
+	test_elision(t)
+}
+
+// Test_Spread binds the Spread specification leaf before fixture declarations.
+func Test_Spread(t *testing.T) {
+	test_spread(t)
+}
+
+// Test_Width binds the Width specification leaf before fixture declarations.
+func Test_Width(t *testing.T) {
+	test_width(t)
+}
+
+// Test_Order binds the Order specification leaf before fixture declarations.
+func Test_Order(t *testing.T) {
+	test_order(t)
+}
+
+// Test_Returns binds the Returns specification leaf before fixture declarations.
+func Test_Returns(t *testing.T) {
+	test_returns(t)
+}
+
 // Test_Spacing binds the Spacing specification leaf before fixture declarations.
 func Test_Spacing(t *testing.T) {
 	test_spacing(t)
@@ -29,9 +54,19 @@ func Test_Alignment(t *testing.T) {
 	test_alignment(t)
 }
 
+// Test_Literals binds the Literals specification leaf before fixture declarations.
+func Test_Literals(t *testing.T) {
+	test_literals(t)
+}
+
 // Test_Trivia binds the Trivia specification leaf before fixture declarations.
 func Test_Trivia(t *testing.T) {
 	test_trivia(t)
+}
+
+// Test_Lines binds the Lines specification leaf before fixture declarations.
+func Test_Lines(t *testing.T) {
+	test_lines(t)
 }
 
 // Test_Refusals binds the Refusals specification leaf before fixture declarations.
@@ -103,6 +138,323 @@ func test_layout(t *testing.T) {
 		"\t}\n\treturn 0\n}\n")
 	round_trip(t, "package one\n\nfunc Fold() (sum int) {\n\tfor step := range 4 {\n"+
 		"\t\tsum = sum + step\n\t}\n\treturn sum\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() {\n\tone := fold(1,\n\t\t[]int{2, 3})\n"+
+		"\t_ = one\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() {\n\tone := fold(1,\n\t\t[]int{\n"+
+		"\t\t\t2,\n\t\t\t3,\n\t\t})\n\t_ = one\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() {\n\tone, two := 1,\n\t\t[]int{2, 3}\n"+
+		"\t_, _ = one, two\n}\n")
+}
+
+func test_elision(t *testing.T) {
+	// A slice that reads a value of any wider form than a name may read otherwise than the
+	// value the brackets close, thus its closing bound stands as the author wrote it.
+	round_trip(t, "package one\n\nfunc Fold(pair Pair) {\n"+
+		"\tone := pair.Left[:len(pair.Left)]\n\t_ = one\n}\n")
+	round_trip(t, "package one\n\nfunc Fold(values []int) {\n"+
+		"\tone := values[1:len(values):cap(values)]\n\t_ = one\n}\n")
+	round_trip(t, "package one\n\nfunc Fold(values []int) {\n"+
+		"\tone := values[1 : len(values)-1]\n\t_ = one\n}\n")
+	round_trip(t, "package one\n\nfunc Fold(values []int, held []int) {\n"+
+		"\tone := values[1:len(held)]\n\t_ = one\n}\n")
+	round_trip(t, "package one\n\ntype Empty struct{}\n")
+	round_trip(t, "package one\n\ntype Marker interface{}\n")
+	round_trip(t, "package one\n\nfunc Fold() {\n\tone := 1\n\t_ = one\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() {\n\tvar one int\n\t_ = one\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() {\n\tvar one int = 1\n\t_ = one\n}\n")
+	// A literal that states no type of its own states elements of a type no form spells, thus
+	// the print writes the type its elements name however the literal that holds it stands.
+	round_trip(t, "package one\n\nvar table = []Pair{{Left: 1}}\n")
+	round_trip(t, "package one\n\nvar table = [][]Pair{{Pair{Left: 1}}}\n")
+	round_trip(t, "package one\n\nvar table = []any{Pair{Left: 1}}\n")
+	round_trip(t, "package one\n\nvar table = Table{Pair{Left: 1}}\n")
+	round_trip(t, "package one\n\nvar table = []*Pair{{Left: 1}}\n")
+	round_trip(t, "package one\n\nvar one = &Pair{Left: 1}\n")
+	test_elision_forms(t)
+}
+
+// States the forms the canonical one writes where the author wrote what another form states.
+func test_elision_forms(t *testing.T) {
+	// A field list of no fields closes on the line it opened on, and a variable of values and
+	// no type binds the short sign, thus neither form waits on the author to write it.
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{
+			Source: "package one\n\ntype Empty struct {\n}\n",
+			Form:   "package one\n\ntype Empty struct{}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold(values []int) {\n" +
+				"\tfor _ = range values {\n\t}\n}\n",
+			Form: "package one\n\nfunc Fold(values []int) {\n" +
+				"\tfor range values {\n\t}\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold(values []int) {\n" +
+				"\tfor one, _ := range values {\n\t\t_ = one\n\t}\n}\n",
+			Form: "package one\n\nfunc Fold(values []int) {\n" +
+				"\tfor one := range values {\n\t\t_ = one\n\t}\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold(values []int) {\n" +
+				"\tone := values[1:len(values)]\n\t_ = one\n}\n",
+			Form: "package one\n\nfunc Fold(values []int) {\n" +
+				"\tone := values[1:]\n\t_ = one\n}\n",
+		},
+		{
+			Source: "package one\n\ntype Marker interface {\n}\n",
+			Form:   "package one\n\ntype Marker interface{}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() {\n\tvar one = 1\n\t_ = one\n}\n",
+			Form:   "package one\n\nfunc Fold() {\n\tone := 1\n\t_ = one\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() {\n\tvar one, two = 1, 2\n" +
+				"\t_, _ = one, two\n}\n",
+			Form: "package one\n\nfunc Fold() {\n\tone, two := 1, 2\n" +
+				"\t_, _ = one, two\n}\n",
+		},
+		{
+			Source: "package one\n\nvar table = []Pair{Pair{Left: 1}}\n",
+			Form:   "package one\n\nvar table = []Pair{{Left: 1}}\n",
+		},
+		{
+			Source: "package one\n\nvar table = map[Pair]Pair{Pair{Left: 1}: " +
+				"Pair{Left: 2}}\n",
+			Form: "package one\n\nvar table = map[Pair]Pair{{Left: 1}: {Left: 2}}\n",
+		},
+		{
+			Source: "package one\n\nvar table = []*Pair{&Pair{Left: 1}}\n",
+			Form:   "package one\n\nvar table = []*Pair{{Left: 1}}\n",
+		},
+		{
+			Source: "package one\n\nvar table = [2]Pair{Pair{Left: 1}, " +
+				"Pair{Left: 2}}\n",
+			Form: "package one\n\nvar table = [2]Pair{{Left: 1}, {Left: 2}}\n",
+		},
+	} {
+		testify.Equal(t, one.Form, printed(t, one.Source),
+			"the canonical form states what the author left unwritten")
+	}
+}
+
+func test_spread(t *testing.T) {
+	round_trip(t, "package one\n\nfunc Fold(one int,\n\ttwo int,\n) (held bool) {\n"+
+		"\treturn held\n}\n")
+	round_trip(t, "package one\n\nvar table = []Pair{\n\t{Left: 1},\n\t{Left: 2},\n}\n")
+	// A call the author opened on the line its parenthesis closes keeps that line, thus only
+	// a call whose parenthesis closes its own line closes on a line of its own.
+	round_trip(t, "package one\n\nfunc Fold() {\n\tReport(one, two,\n\t\tthree)\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() {\n\tReport(\n\t\tone,\n\t\ttwo,\n\t)\n}\n")
+	round_trip(t, "package one\n\nfunc Fold(one int) {\n\tswitch one {\n\tcase 1, 2:\n"+
+		"\t\tone = 3\n\t}\n}\n")
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{
+			Source: "package one\n\nfunc Fold(one int,\n\ttwo int) (held bool) {\n" +
+				"\treturn held\n}\n",
+			Form: "package one\n\nfunc Fold(one int,\n\ttwo int,\n) (held bool) {\n" +
+				"\treturn held\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() {\n\tReport(\n\t\tone,\n" +
+				"\t\ttwo)\n}\n",
+			Form: "package one\n\nfunc Fold() {\n\tReport(\n\t\tone,\n" +
+				"\t\ttwo,\n\t)\n}\n",
+		},
+		{
+			Source: "package one\n\nvar table = []Pair{{Left: 1},\n\t{Left: 2}}\n",
+			Form: "package one\n\nvar table = []Pair{\n\t{Left: 1},\n\t{Left: 2},\n" +
+				"}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold(one int) {\n\tswitch one {\n\tcase 1,\n" +
+				"\t\t2:\n\t\tone = 3\n\t}\n}\n",
+			Form: "package one\n\nfunc Fold(one int) {\n\tswitch one {\n" +
+				"\tcase 1, 2:\n\t\tone = 3\n\t}\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() {\n\treturn\n}\nfunc Step() {\n" +
+				"\treturn\n}\n",
+			Form: "package one\n\nfunc Fold() {\n\treturn\n}\n\nfunc Step() {\n" +
+				"\treturn\n}\n",
+		},
+	} {
+		testify.Equal(t, one.Form, printed(t, one.Source),
+			"a form the author broke states one part to a line")
+	}
+}
+
+func test_width(t *testing.T) {
+	// A form that stands inside the widest line reads on one line, thus the print breaks
+	// nothing the author closed up.
+	round_trip(t, "package one\n\nfunc Fold() {\n\tReport(one, two, three)\n}\n")
+	round_trip(t, "package one\n\nvar table = []int{1, 2, 3}\n")
+	round_trip(t, "package one\n\nfunc Fold(one int, two int) (held bool) {\n"+
+		"\treturn held\n}\n")
+	// A note the author laid out states lines of its own: a directive names a tool and a note
+	// that opens on spaces counts the columns it stands in, thus the print wraps neither.
+	round_trip(t, "package one\n\n//go:generate echo one two three four five six seven "+
+		"eight nine ten eleven twelve thirteen\ntype Count int\n")
+	round_trip(t, "package one\n\n//   one two three four five six seven eight nine ten "+
+		"eleven twelve thirteen fourteen\ntype Count int\n")
+	test_width_forms(t)
+}
+
+// States the forms the canonical one breaks because they would run past the widest line.
+func test_width_forms(t *testing.T) {
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{
+			Source: "package one\n\nfunc Fold() {\n\tReport(first_value, " +
+				"second_value, third_value, fourth_value, fifth_value, " +
+				"sixth_value, seventh_value)\n}\n",
+			Form: "package one\n\nfunc Fold() {\n\tReport(\n\t\tfirst_value,\n" +
+				"\t\tsecond_value,\n\t\tthird_value,\n\t\tfourth_value,\n" +
+				"\t\tfifth_value,\n\t\tsixth_value,\n\t\tseventh_value,\n" +
+				"\t)\n}\n",
+		},
+		{
+			Source: "package one\n\nvar table = []int{100000, 200000, 300000, " +
+				"400000, 500000, 600000, 700000, 800000, 900000, 110000, " +
+				"120000, 130000}\n",
+			Form: "package one\n\nvar table = []int{\n\t100000,\n\t200000,\n" +
+				"\t300000,\n\t400000,\n\t500000,\n\t600000,\n\t700000,\n" +
+				"\t800000,\n\t900000,\n\t110000,\n\t120000,\n\t130000,\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold(first_value int, second_value int, " +
+				"third_value int, fourth_value int, fifth_value int) " +
+				"(held bool) {\n\treturn held\n}\n",
+			Form: "package one\n\nfunc Fold(\n\tfirst_value int,\n" +
+				"\tsecond_value int,\n\tthird_value int,\n\tfourth_value int,\n" +
+				"\tfifth_value int,\n) (held bool) {\n\treturn held\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() (held bool) {\n\theld = " +
+				"first_value && second_value && third_value && fourth_value " +
+				"&& fifth_value && sixth_value\n\treturn held\n}\n",
+			Form: "package one\n\nfunc Fold() (held bool) {\n\theld = " +
+				"first_value &&\n\t\tsecond_value &&\n\t\tthird_value &&\n" +
+				"\t\tfourth_value &&\n\t\tfifth_value &&\n\t\tsixth_value\n" +
+				"\treturn held\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() (first_value bool, second_value " +
+				"error, third_value int, fourth_value string, fifth_value " +
+				"int) {\n\treturn first_value, second_value, third_value, " +
+				"fourth_value, fifth_value\n}\n",
+			Form: "package one\n\nfunc Fold() (\n\tfirst_value bool,\n" +
+				"\tsecond_value error,\n\tthird_value int,\n" +
+				"\tfourth_value string,\n\tfifth_value int,\n) {\n" +
+				"\treturn first_value, second_value, third_value, " +
+				"fourth_value, fifth_value\n}\n",
+		},
+		{
+			Source: "package one\n\n// A note that runs a good deal past the widest " +
+				"line the canonical form writes, holding words and more words.\n" +
+				"type Count int\n",
+			Form: "package one\n\n// A note that runs a good deal past the widest " +
+				"line the canonical form writes, holding words and\n// more " +
+				"words.\ntype Count int\n",
+		},
+	} {
+		testify.Equal(t, one.Form, printed(t, one.Source),
+			"a form that runs past the widest line states one part to a line")
+	}
+}
+
+func test_order(t *testing.T) {
+	// A function that states the invariants of a type the file never declares names no type
+	// to stand under, thus it stands where the author wrote it.
+	round_trip(t, "package one\n\ntype Count int\n\n"+
+		"// Count_Invariants states one count.\nfunc Count_Invariants(value Count) {\n}\n")
+	round_trip(t, "package one\n\nfunc Held_Invariants(value Held) {\n}\n\n"+
+		"func Fold() {\n}\n")
+	round_trip(t, "package one\n\ntype Count int\n\nfunc Fold() {\n}\n")
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{
+			Source: "package one\n\ntype Count int\n\nfunc Fold() {\n}\n\n" +
+				"func Count_Invariants(value Count) {\n}\n",
+			Form: "package one\n\ntype Count int\n\n" +
+				"func Count_Invariants(value Count) {\n}\n\nfunc Fold() {\n}\n",
+		},
+		{
+			Source: "package one\n\ntype Count int\n\nfunc Fold() {\n}\n\n" +
+				"// Count_Invariants states one count.\n" +
+				"func Count_Invariants(value Count) {\n}\n",
+			Form: "package one\n\ntype Count int\n\n" +
+				"// Count_Invariants states one count.\n" +
+				"func Count_Invariants(value Count) {\n}\n\nfunc Fold() {\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Count_Invariants(value Count) {\n}\n\n" +
+				"type Count int\n\nfunc Fold() {\n}\n",
+			Form: "package one\n\ntype Count int\n\n" +
+				"func Count_Invariants(value Count) {\n}\n\nfunc Fold() {\n}\n",
+		},
+		{
+			Source: "package one\n\ntype Count int\n\ntype Mark int\n\n" +
+				"func Mark_Invariants(value Mark) {\n}\n\n" +
+				"func Count_Invariants(value Count) {\n}\n",
+			Form: "package one\n\ntype Count int\n\n" +
+				"func Count_Invariants(value Count) {\n}\n\ntype Mark int\n\n" +
+				"func Mark_Invariants(value Mark) {\n}\n",
+		},
+	} {
+		testify.Equal(t, one.Form, printed(t, one.Source),
+			"a function that states the invariants of a type stands under that type")
+	}
+}
+
+func test_returns(t *testing.T) {
+	// A function that hands nothing back names nothing to write, and a result the signature
+	// names as the blank states no name a return can read, thus both stand as written.
+	round_trip(t, "package one\n\nfunc Fold(one int) {\n\tif one > 0 {\n\t\treturn\n"+
+		"\t}\n\tone++\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() (_ bool) {\n\treturn\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() (held bool) {\n\treturn held\n}\n")
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{
+			Source: "package one\n\nfunc Fold(one int) (held bool) {\n" +
+				"\tif one > 0 {\n\t\treturn\n\t}\n\treturn held\n}\n",
+			Form: "package one\n\nfunc Fold(one int) (held bool) {\n" +
+				"\tif one > 0 {\n\t\treturn held\n\t}\n\treturn held\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() (held bool, err error) {\n" +
+				"\treturn\n}\n",
+			Form: "package one\n\nfunc Fold() (held bool, err error) {\n" +
+				"\treturn held, err\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() (one bool, two bool) {\n\treturn\n}\n",
+			Form: "package one\n\nfunc Fold() (one bool, two bool) {\n" +
+				"\treturn one, two\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() (held bool) {\n" +
+				"\tstep := func() {\n\t\treturn\n\t}\n\tstep()\n\treturn\n}\n",
+			Form: "package one\n\nfunc Fold() (held bool) {\n" +
+				"\tstep := func() {\n\t\treturn\n\t}\n\tstep()\n\treturn held\n}\n",
+		},
+	} {
+		testify.Equal(t, one.Form, printed(t, one.Source),
+			"a return states the values the signature names")
+	}
 }
 
 func test_spacing(t *testing.T) {
@@ -144,10 +496,86 @@ func test_alignment(t *testing.T) {
 }
 
 func test_trivia(t *testing.T) {
+	// A note the author closed up against the slashes reads as one word, thus the canonical
+	// form opens a space behind them and leaves the directives a tool reads untouched.
+	round_trip(t, "package one\n\n// Count names a count.\ntype Count int\n")
+	testify.Equal(t, "package one\n\n// Count names a count.\ntype Count int\n",
+		printed(t, "package one\n\n//Count names a count.\ntype Count int\n"),
+		"a note opens with a space behind the slashes")
+	round_trip(t, "package one\n\n//go:generate echo\ntype Count int\n")
+	round_trip(t, "package one\n\n//nolint:all\ntype Count int\n")
+	round_trip(t, "package one\n\n//\ntype Count int\n")
+	round_trip(t, "package one\n\n//line one.go:1\ntype Count int\n")
+	round_trip(t, "package one\n\n//export One\ntype Count int\n")
+	round_trip(t, "package one\n\n//nolint\ntype Count int\n")
 	round_trip(t, "package one\n\n// Count names a count.\ntype Count int\n")
 	round_trip(t, "package one\n\ntype Count int\n\ntype Mark int\n")
 	round_trip(t, "package one\n\nfunc Fold() {\n\t// One states nothing.\n\treturn\n}\n")
 	round_trip(t, "package one\n\n/* Count names a count. */\ntype Count int\n")
+}
+
+// States the empty lines the canonical form drops and the ones it keeps.
+func test_lines(t *testing.T) {
+	// A body opens at its first statement and closes at its last one, thus the empty lines
+	// the author left against the braces state nothing and the canonical form drops them.
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{
+			Source: "package one\n\nfunc Fold() {\n\n\treturn\n}\n",
+			Form:   "package one\n\nfunc Fold() {\n\treturn\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() {\n\treturn\n\n}\n",
+			Form:   "package one\n\nfunc Fold() {\n\treturn\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold(held bool) {\n\tif held {\n" +
+				"\n\t\treturn\n\n\t}\n}\n",
+			Form: "package one\n\nfunc Fold(held bool) {\n\tif held {\n" +
+				"\t\treturn\n\t}\n}\n",
+		},
+		{
+			Source: "package one\n\ntype Pair struct {\n\n\tLeft int\n\n}\n",
+			Form:   "package one\n\ntype Pair struct {\n\tLeft int\n}\n",
+		},
+		{
+			Source: "package one\n\nvar table = []int{\n\n\t1,\n\t2,\n\n}\n",
+			Form:   "package one\n\nvar table = []int{\n\t1,\n\t2,\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() {\n\ttotal :=\n\n\t\t1 + 1\n" +
+				"\t_ = total\n}\n",
+			Form: "package one\n\nfunc Fold() {\n\ttotal := 1 + 1\n" +
+				"\t_ = total\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() (err error) {\n\terr = Step()\n\n" +
+				"\tif err != nil {\n\t\treturn err\n\t}\n\treturn err\n}\n",
+			Form: "package one\n\nfunc Fold() (err error) {\n\terr = Step()\n" +
+				"\tif err != nil {\n\t\treturn err\n\t}\n\treturn err\n}\n",
+		},
+		{
+			Source: "package one\n\nfunc Fold() (err error) {\n" +
+				"\tvalue, err := Step()\n\n\tif err != nil {\n" +
+				"\t\treturn err\n\t}\n\t_ = value\n\treturn err\n}\n",
+			Form: "package one\n\nfunc Fold() (err error) {\n" +
+				"\tvalue, err := Step()\n\tif err != nil {\n" +
+				"\t\treturn err\n\t}\n\t_ = value\n\treturn err\n}\n",
+		},
+	} {
+		testify.Equal(t, one.Form, printed(t, one.Source),
+			"a body states no empty line against the braces that hold it")
+	}
+	// A check the author wrote against anything else states no simple check of an error, thus
+	// the empty line ahead of it stands where the author put it.
+	round_trip(t, "package one\n\nfunc Fold() (err error) {\n\terr = Step()\n\n"+
+		"\tif err != nil {\n\t\treturn err\n\t} else {\n\t\treturn nil\n\t}\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() (err error) {\n\terr = Step()\n\n"+
+		"\tif err == nil {\n\t\treturn err\n\t}\n\treturn err\n}\n")
+	round_trip(t, "package one\n\nfunc Fold() (err error) {\n\tvalue := Step()\n\n"+
+		"\tif err != nil {\n\t\treturn err\n\t}\n\t_ = value\n\treturn err\n}\n")
 }
 
 func test_refusals(t *testing.T) {
@@ -193,22 +621,22 @@ func test_refusals(t *testing.T) {
 func wide_source() (source string) {
 	body := make([]byte, 0, token.SOURCE_SIZE_MAXIMUM)
 	body = append(body, "package one\n\nfunc Fold() {\n"...)
-	for range 60 {
+	for range 100 {
 		body = append(body, "if true {\n"...)
 	}
 	// A run holds one token for the name, one for the step, and one for the line it closes,
 	// thus forty thousand steps stand well inside the token run one parse admits.
-	for range 40000 {
+	for range 21000 {
 		body = append(body, "x++\n"...)
 	}
-	for range 60 {
+	for range 100 {
 		body = append(body, "}\n"...)
 	}
 	body = append(body, "}\n"...)
-	// An empty line states no token at all, thus the padding that carries the source to the
-	// widest admitted size costs the parse nothing.
+	// A space states no token and closes no line, thus the padding that carries the source to
+	// the widest admitted size costs the parse nothing.
 	for len(body) < token.SOURCE_SIZE_MAXIMUM {
-		body = append(body, '\n')
+		body = append(body, ' ')
 	}
 	return string(body)
 }
@@ -232,9 +660,11 @@ func test_bounds(t *testing.T) {
 		"one print walks every node one parse holds")
 	// A run of one sign nests one value inside the next, thus a chain of a thousand values
 	// nests a thousand levels deep and every one of them stands inside the walk.
+	// The chain runs past the widest line, thus its canonical form states one value to a
+	// line and the round trip states that form rather than the one line the chain would be.
 	deep := "package one\n\nconst TEXT = \"one\""
 	for range 1024 {
-		deep = deep + " + \"one\""
+		deep = deep + " +\n\t\"one\""
 	}
 	round_trip(t, deep+"\n")
 }
@@ -345,7 +775,7 @@ func wide_tail() (source string) {
 		"\nvar one, two = 1, 2\n\n// Count states one bare result.\n" +
 		"func Count() int {\n\treturn one + two\n" +
 		"}\n\n// Wide states one signature the author broke behind its fi" +
-		"rst parameter.\nfunc Wide(one int,\n\ttwo int) (held bool) {\n" +
+		"rst parameter.\nfunc Wide(one int,\n\ttwo int,\n) (held bool) {\n" +
 		"\theld = one < two\n\tif one <\n\t\ttwo {\n" +
 		"\t\theld = false\n\t}\n\tswitch one +\n\t\ttwo {\n" +
 		"\tcase 3:\n\tcase 4:\n\t\theld = true\n\t}\n" +
@@ -367,11 +797,7 @@ func wide_tail() (source string) {
 		"\t}\n\theld = strings.\n\t\tContains(pair.Right, \"one\")\n" +
 		"\tReport(\n\t\tone,\n\n\t\t// A note stands behind an empty line" +
 		".\n\t\ttwo,\n\t)\n\tone++\n\n\treturn held\n" +
-		"}\n\n// Trail closes its body on an empty line, which the canoni" +
-		"cal form keeps.\nfunc Trail(one int) {\n" +
-		"\tone++\n\n}\n\n// Open opens its body on an empty line, which t" +
-		"he canonical form keeps.\nfunc Open(one int) {\n" +
-		"\n\tone++\n}\n"
+		"}\n"
 }
 
 // Prints the declarations of one source that states every form the printer writes, which
@@ -419,4 +845,43 @@ func test_arena(t *testing.T) {
 	count, ok := printer.Print(subject, storage, tree, source)
 	testify.True(t, bool(ok), "a print of a hand written tree holds its form")
 	testify.True(t, count > 0, "a print of a hand written tree writes the form it holds")
+}
+
+// Prints one constant of the stated literal, which is how each case states the form one literal
+// takes.
+func literal_form(t *testing.T, literal string) (form string) {
+	t.Helper()
+	return printed(t, "package one\n\nconst VALUE = "+literal+"\n")
+}
+
+func test_literals(t *testing.T) {
+	for _, one := range []struct {
+		Source string
+		Form   string
+	}{
+		{Source: "0XFF", Form: "0xFF"},
+		{Source: "0xff", Form: "0xff"},
+		{Source: "0X_FF", Form: "0x_FF"},
+		{Source: "0B1010", Form: "0b1010"},
+		{Source: "0O17", Form: "0o17"},
+		{Source: "07", Form: "0o7"},
+		{Source: "0755", Form: "0o755"},
+		{Source: "00", Form: "0o0"},
+		{Source: "0_755", Form: "0o_755"},
+		{Source: "0", Form: "0"},
+		{Source: "0.5", Form: "0.5"},
+		{Source: "1E6", Form: "1e6"},
+		{Source: "0.5E-3", Form: "0.5e-3"},
+		{Source: "0X1P-2", Form: "0x1p-2"},
+		{Source: "0x1p-2", Form: "0x1p-2"},
+		{Source: "0765i", Form: "765i"},
+		{Source: "0i", Form: "0i"},
+		{Source: "0_0i", Form: "0i"},
+		{Source: "10i", Form: "10i"},
+		{Source: "1.5E3i", Form: "1.5e3i"},
+		{Source: "1_000", Form: "1_000"},
+	} {
+		testify.Equal(t, "package one\n\nconst VALUE = "+one.Form+"\n",
+			literal_form(t, one.Source), "the literal prints in the canonical form")
+	}
 }

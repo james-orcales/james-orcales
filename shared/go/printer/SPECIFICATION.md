@@ -11,6 +11,36 @@ One declaration stands on one line and a block indents its statements by one tab
 nests. A list, a chain, and an operation break where the author broke them, and a bracket left on
 a line of its own keeps that line and takes the comma the line demands.
 
+# Elision
+
+A form that repeats what another already states writes it once: the type of an element of a run,
+the length a slice closes at, a name a range binds to nothing, and the type of a variable its own
+values name. A field list of no fields closes on the line it opened on.
+
+# Spread
+
+A signature the author broke, and a call whose parenthesis closes its line, each close on a line
+of their own. A literal the author broke states one element to a line, a case head inside sixty
+bytes reads on one line, and two declarations that each span lines stand an empty line apart.
+
+# Width
+
+No line the form states runs past one hundred columns, where one character stands in one column
+and a tab stands in eight. A call, a literal, a signature, and a run of one operation each state
+one part to a line rather than run past it; a line holding one token that wide stands as it is.
+
+# Order
+
+A function that states the invariants of a type the file declares stands under that type, and the
+notes above it travel with it. A function that answers for a type of another file names no type to
+stand under, thus it stands where the author wrote it, as does every other declaration.
+
+# Returns
+
+A return that names no value writes the names its signature bound, thus a reader sees what a
+function hands back at the line it hands it back on. A signature that binds no name, or spells one
+as the blank, states no name to write, thus the return there stands as the author wrote it.
+
 # Spacing
 
 A sign that binds loosely stands between spaces and one that binds tightly stands against its
@@ -23,11 +53,23 @@ A run of struct fields aligns the types on the widest name and the tags on the w
 of keyed elements aligns the values on the widest key, and a run of noted lines aligns the notes
 on the widest line. An empty line, a comment, and a part that runs over lines close a run.
 
+# Literals
+
+A number states its base prefix and its exponent mark in lower case, and an imaginary whole number
+states no leading zero. The digits themselves stand as the author wrote them, because the case of a
+digit carries meaning in no base.
+
 # Trivia
 
 A comment and a run of empty lines print where the author wrote them. A comment left on the line a
 form closes keeps that line and one given a line of its own keeps that line, and a run of empty
 lines prints as one empty line.
+
+# Lines
+
+A body closes up against its brackets: a function body, a body of one statement or one case, a
+literal, and a run of fields each drop the empty lines against them. A line behind the sign of an
+assignment, and one ahead of a simple error check, each state nothing at all.
 
 # Refusals
 
