@@ -109,6 +109,11 @@ func Test_Decode(t *testing.T) {
 		{Decoded: "fo", Encoded: "Zm8="},
 		{Decoded: "foo", Encoded: "Zm9v"},
 		{Decoded: "foobar", Encoded: "Zm9vYmFy"},
+		{Decoded: "foobarfoobar", Encoded: "Zm9vYmFyZm9vYmFy"},
+		{
+			Decoded: "foobarfoobarfoobarfoobar",
+			Encoded: "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFy",
+		},
 		{Decoded: "sure", Encoded: "c3V\ryZ\nQ=="},
 	}
 	for _, one := range cases {
@@ -134,9 +139,26 @@ func Test_Decode(t *testing.T) {
 	count, status = base64.Decode_Into(destination[:2], []byte("Zm8="), encoding)
 	testify.Equal(t, base64.Decoded_Count(2), count)
 	testify.Equal_Values(t, base64.STATUS_OK, status)
+	count, status = base64.Decode_Into(destination[:2], []byte("Zm8=\n"), encoding)
+	testify.Equal(t, base64.Decoded_Count(2), count)
+	testify.Equal_Values(t, base64.STATUS_OK, status)
 	count, status = base64.Decode_Into(destination[:0], []byte("Zg=="), encoding)
 	testify.Equal(t, base64.Decoded_Count(0), count)
 	testify.Equal_Values(t, base64.STATUS_OUTPUT_TOO_SMALL, status)
+
+	var exact [base64.ENCODED_GROUP_SIZE + base64.ENCODED_GROUP_SIZE]byte
+	for index := range exact {
+		exact[index] = TEST_SENTINEL
+	}
+	count, status = base64.Decode_Into(exact[:], []byte("Zm9vYmFy"), encoding)
+	testify.Equal(
+		t, base64.Decoded_Count(base64.DECODED_GROUP_SIZE+base64.DECODED_GROUP_SIZE),
+		count,
+	)
+	testify.Equal_Values(t, base64.STATUS_OK, status)
+	for _, value := range exact[count:] {
+		testify.Equal(t, TEST_SENTINEL, value)
+	}
 }
 
 // Test_Strict_Decode rejects nonzero unused terminal bits only in strict mode.

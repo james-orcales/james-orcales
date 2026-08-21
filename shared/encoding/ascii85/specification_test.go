@@ -41,6 +41,10 @@ func Test_Decode(t *testing.T) {
 	assert_decode(t, " 9j\nqo^\t", "Man ", true)
 	assert_decode(t, "z", "\x00\x00\x00\x00", true)
 	assert_decode(t, "Ac", "f", true)
+	assert_decode(t, "!!!!", "\x00\x00\x00", true)
+	assert_decode(t, "\n!!!!\"", "\x00\x00\x00\x01", true)
+	assert_decode(t, "\n!!!!#", "\x00\x00\x00\x02", true)
+	assert_decode(t, "\ns8W-!", "\xff\xff\xff\xff", true)
 
 	var destination [ascii85.DECODED_SIZE_MAXIMUM]byte
 	decoded, consumed, status := ascii85.Decode_Into(destination[:], []byte("Ac"), false)
@@ -174,8 +178,10 @@ func test_encode_domains(t *testing.T) {
 	for _, size := range sizes {
 		source := ascii85.Encode_Source(source_storage[:size])
 		maximum := ascii85.Encoded_Size_Maximum(ascii85.Source_Count(size))
+		exact := ascii85.Encoded_Size(source)
 		count, status := ascii85.Encode_Into(destination[:int(maximum)], source)
 		testify.Equal_Values(t, ascii85.STATUS_OK, status)
+		testify.Equal(t, exact, count)
 		testify.True(t, count <= ascii85.Encoded_Count(maximum))
 	}
 
@@ -212,6 +218,32 @@ func test_decode_domains(t *testing.T) {
 	decoded_count, consumed, status = ascii85.Decode_Into(decoded[:2], []byte("!!!"), true)
 	testify.Equal(t, ascii85.Decoded_Count(2), decoded_count)
 	testify.Equal(t, ascii85.Consumed_Count(3), consumed)
+	testify.Equal_Values(t, ascii85.STATUS_OK, status)
+
+	bulk_source_size := ascii85.ENCODED_GROUP_SIZE + ascii85.ENCODED_GROUP_SIZE
+	for index := range bulk_source_size {
+		encoded[index] = ascii85.ASCII85_DIGIT_MINIMUM
+	}
+	bulk_decoded_size := ascii85.DECODED_GROUP_SIZE + ascii85.DECODED_GROUP_SIZE
+	decoded_count, consumed, status = ascii85.Decode_Into(
+		decoded[:bulk_decoded_size], encoded[:bulk_source_size], true,
+	)
+	testify.Equal(t, ascii85.Decoded_Count(bulk_decoded_size), decoded_count)
+	testify.Equal(t, ascii85.Consumed_Count(bulk_source_size), consumed)
+	testify.Equal_Values(t, ascii85.STATUS_OK, status)
+
+	for index := range encoded {
+		encoded[index] = ascii85.ASCII85_DIGIT_MINIMUM
+	}
+	bulk_group_count := ascii85.ENCODED_INPUT_SIZE_MAXIMUM / ascii85.ENCODED_GROUP_SIZE
+	decoded_count, consumed, status = ascii85.Decode_Into(decoded[:], encoded[:], false)
+	testify.Equal(
+		t, ascii85.Decoded_Count(bulk_group_count*ascii85.DECODED_GROUP_SIZE),
+		decoded_count,
+	)
+	testify.Equal(
+		t, ascii85.Consumed_Count(bulk_group_count*ascii85.ENCODED_GROUP_SIZE), consumed,
+	)
 	testify.Equal_Values(t, ascii85.STATUS_OK, status)
 
 	zero_count := ascii85.DECODED_SIZE_MAXIMUM / ascii85.DECODED_GROUP_SIZE

@@ -33,11 +33,20 @@ const ENCODED_SIZE_MAXIMUM = (ENCODE_SOURCE_SIZE_MAXIMUM + DECODED_GROUP_SIZE - 
 // ENCODED_GROUP_COUNT_MAXIMUM is complete groups in largest encode source.
 const ENCODED_GROUP_COUNT_MAXIMUM = ENCODE_SOURCE_SIZE_MAXIMUM / DECODED_GROUP_SIZE
 
+// BULK_GROUP_COUNT_MAXIMUM keeps paired source and destination advances inside bounds.
+const BULK_GROUP_COUNT_MAXIMUM = ENCODED_INPUT_SIZE_MAXIMUM / ENCODED_GROUP_SIZE
+
 // SIZE_MINIMUM admits empty source and output.
 const SIZE_MINIMUM = 0
 
 // DECODED_WRITE_DESTINATION_SIZE_MINIMUM admits shortest flushed group.
 const DECODED_WRITE_DESTINATION_SIZE_MINIMUM = SIZE_MINIMUM + 1
+
+// DECODED_WRITE_COUNT_SECOND follows second nonempty group prefix.
+const DECODED_WRITE_COUNT_SECOND = DECODED_WRITE_DESTINATION_SIZE_MINIMUM + 1
+
+// DECODED_WRITE_COUNT_THIRD follows third nonempty group prefix.
+const DECODED_WRITE_COUNT_THIRD = DECODED_WRITE_COUNT_SECOND + 1
 
 // MAXIMUM_ENCODED_COUNT_HOLE_FIRST excludes a count below one complete encoded group.
 const MAXIMUM_ENCODED_COUNT_HOLE_FIRST = DECODED_WRITE_DESTINATION_SIZE_MINIMUM
@@ -125,6 +134,33 @@ func Decoded_Write_Destination_Invariants(
 		Ensure()
 }
 
+// Decoded_Word keeps one group value independent from host word size.
+type Decoded_Word uint32
+
+// Decoded_Word_Invariants retains every possible four-byte group.
+func Decoded_Word_Invariants(value Decoded_Word, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
+		Ensure()
+}
+
+// Decoded_Write_Count excludes an empty write from fixed group storage.
+type Decoded_Write_Count int
+
+// Decoded_Write_Count_Invariants permits each nonempty group prefix.
+func Decoded_Write_Count_Invariants(
+	value Decoded_Write_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_4_Int(
+			int(value), DECODED_WRITE_DESTINATION_SIZE_MINIMUM,
+			DECODED_WRITE_COUNT_SECOND,
+			DECODED_WRITE_COUNT_THIRD,
+			DECODED_GROUP_SIZE,
+		).
+		Ensure()
+}
+
 // Source_Count is byte count accepted by encoding.
 type Source_Count int
 
@@ -172,6 +208,16 @@ type Decoded_Count int
 func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Bulk_Group_Count keeps paired source and destination advances one checked value.
+type Bulk_Group_Count int
+
+// Bulk_Group_Count_Invariants covers every complete bulk group.
+func Bulk_Group_Count_Invariants(value Bulk_Group_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SIZE_MINIMUM, BULK_GROUP_COUNT_MAXIMUM).
 		Ensure()
 }
 
@@ -272,45 +318,61 @@ func Encode_Into(
 		!bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))),
 		"ASCII85 encode source and destination do not overlap.",
 	)
-	required := Encoded_Size(source)
+	maximum := Encoded_Count(Encoded_Size_Maximum(Source_Count(len(source))))
+	required := maximum
+	if len(destination) < int(maximum) {
+		required = Encoded_Size(source)
+	}
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
 
 	source_position := 0
 	destination_position := 0
-	for source_position < len(source) {
-		tail_size := len(source) - source_position
-		group_size := DECODED_GROUP_SIZE
-		if tail_size < group_size {
-			group_size = tail_size
+	for len(source)-source_position >= DECODED_GROUP_SIZE {
+		source_group := source[source_position : source_position+DECODED_GROUP_SIZE]
+		shift := DECODED_GROUP_FINAL_INDEX * bits.BIT_COUNT_8_MAXIMUM
+		value := uint32(source_group[0]) << shift
+		shift -= bits.BIT_COUNT_8_MAXIMUM
+		value |= uint32(source_group[1]) << shift
+		shift -= bits.BIT_COUNT_8_MAXIMUM
+		value |= uint32(source_group[2]) << shift
+		value |= uint32(source_group[3])
+		if value == 0 {
+			destination[destination_position] = ZERO_GROUP_MARKER
+			destination_position++
+			source_position += DECODED_GROUP_SIZE
+			continue
 		}
+		destination_end := destination_position + ENCODED_GROUP_SIZE
+		destination_group := destination[destination_position:destination_end]
+		for digit_position := ENCODED_GROUP_SIZE; digit_position > 0; digit_position-- {
+			destination_group[digit_position-1] = ASCII85_DIGIT_MINIMUM +
+				byte(value%ASCII85_BASE)
+			value /= ASCII85_BASE
+		}
+		destination_position += ENCODED_GROUP_SIZE
+		source_position += DECODED_GROUP_SIZE
+	}
+	tail_size := len(source) - source_position
+	if tail_size > 0 {
 		var value uint32
-		for byte_position_index := range group_size {
+		for byte_position_index := range tail_size {
 			byte_shift_count := DECODED_GROUP_FINAL_INDEX - byte_position_index
 			shift := byte_shift_count * bits.BIT_COUNT_8_MAXIMUM
 			value |= uint32(source[source_position+byte_position_index]) << shift
-		}
-		if value == 0 {
-			if group_size == DECODED_GROUP_SIZE {
-				destination[destination_position] = ZERO_GROUP_MARKER
-				destination_position++
-				source_position += group_size
-				continue
-			}
 		}
 		var group [ENCODED_GROUP_SIZE]byte
 		for digit_position := ENCODED_GROUP_SIZE; digit_position > 0; digit_position-- {
 			group[digit_position-1] = ASCII85_DIGIT_MINIMUM + byte(value%ASCII85_BASE)
 			value /= ASCII85_BASE
 		}
-		encoded_group_size := group_size + 1
+		encoded_group_size := tail_size + 1
 		copy(
 			destination[destination_position:destination_position+encoded_group_size],
 			group[:encoded_group_size],
 		)
 		destination_position += encoded_group_size
-		source_position += group_size
 	}
 	return Encoded_Count(destination_position), STATUS_OK
 }
@@ -329,9 +391,34 @@ func Decode_Into(
 	Flush_Invariants(flush, "Decode_Into.flush")
 	overlap := bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))
 	invariant.Always(!bool(overlap), "ASCII85 decode source and destination do not overlap.")
-	var value uint32
-	digit_count := 0
-	for source_position, encoded_byte := range source {
+	group_count := decode_bulk_unchecked(destination, source)
+	decoded = Decoded_Count(int(group_count) * DECODED_GROUP_SIZE)
+	consumed = Consumed_Count(int(group_count) * ENCODED_GROUP_SIZE)
+	tail_decoded, tail_consumed, status := decode_tail_unchecked(
+		destination[int(decoded):], source[int(consumed):], flush,
+	)
+	if status == STATUS_INPUT_INVALID {
+		return 0, 0, status
+	}
+	return decoded + tail_decoded, consumed + tail_consumed, status
+}
+
+// Control syntax needs byte state after the fixed group path stops.
+func decode_tail_unchecked(
+	destination Decoded, source Encoded, flush Flush,
+) (decoded Decoded_Count, consumed Consumed_Count, status Status) {
+	defer func() {
+		Decoded_Count_Invariants(decoded, "decode_tail_unchecked.decoded")
+		Consumed_Count_Invariants(consumed, "decode_tail_unchecked.consumed")
+		Status_Invariants(status, "decode_tail_unchecked.status")
+	}()
+	Decoded_Invariants(destination, "decode_tail_unchecked.destination")
+	Encoded_Invariants(source, "decode_tail_unchecked.source")
+	Flush_Invariants(flush, "decode_tail_unchecked.flush")
+	source_position, digit_count := SIZE_MINIMUM, SIZE_MINIMUM
+	value := uint32(0)
+	for ; source_position < len(source); source_position++ {
+		encoded_byte := source[source_position]
 		if encoded_byte <= IGNORED_BYTE_MAXIMUM {
 			continue
 		}
@@ -343,15 +430,13 @@ func Decode_Into(
 			if len(destination)-int(decoded) < DECODED_GROUP_SIZE {
 				return decoded, consumed, STATUS_OUTPUT_TOO_SMALL
 			}
-			decoded_write(destination_tail, uint32(0), DECODED_GROUP_SIZE)
+			decoded_write(destination_tail, 0, DECODED_GROUP_SIZE)
 			decoded += DECODED_GROUP_SIZE
 			consumed = Consumed_Count(source_position + 1)
 			continue
 		}
-		if encoded_byte < ASCII85_DIGIT_MINIMUM {
-			return 0, 0, STATUS_INPUT_INVALID
-		}
-		if encoded_byte > ASCII85_DIGIT_MAXIMUM {
+		if encoded_byte-ASCII85_DIGIT_MINIMUM >
+			ASCII85_DIGIT_MAXIMUM-ASCII85_DIGIT_MINIMUM {
 			return 0, 0, STATUS_INPUT_INVALID
 		}
 		value = value*ASCII85_BASE + uint32(encoded_byte-ASCII85_DIGIT_MINIMUM)
@@ -362,7 +447,7 @@ func Decode_Into(
 		if len(destination)-int(decoded) < DECODED_GROUP_SIZE {
 			return decoded, consumed, STATUS_OUTPUT_TOO_SMALL
 		}
-		decoded_write(destination_tail, value, DECODED_GROUP_SIZE)
+		decoded_write(destination_tail, Decoded_Word(value), DECODED_GROUP_SIZE)
 		decoded += DECODED_GROUP_SIZE
 		consumed = Consumed_Count(source_position + 1)
 		value = 0
@@ -384,23 +469,70 @@ func Decode_Into(
 		return decoded, consumed, STATUS_OUTPUT_TOO_SMALL
 	}
 	destination_tail := Decoded_Write_Destination(destination[int(decoded):])
-	decoded_write(destination_tail, value, partial_size)
+	decoded_write(
+		destination_tail, Decoded_Word(value), Decoded_Write_Count(partial_size),
+	)
 	decoded += Decoded_Count(partial_size)
 	return decoded, Consumed_Count(len(source)), STATUS_OK
 }
 
-func decoded_write[Word ~uint32, Count ~int](
-	destination Decoded_Write_Destination, value Word, count Count,
+// Control syntax exits the fixed group path before state could be lost.
+func decode_bulk_unchecked(
+	destination Decoded, source Encoded,
+) (group_count Bulk_Group_Count) {
+	defer func() {
+		Bulk_Group_Count_Invariants(group_count, "decode_bulk_unchecked.group_count")
+	}()
+	Decoded_Invariants(destination, "decode_bulk_unchecked.destination")
+	Encoded_Invariants(source, "decode_bulk_unchecked.source")
+	source_position := SIZE_MINIMUM
+	destination_position := SIZE_MINIMUM
+	digit_maximum := ASCII85_DIGIT_MAXIMUM - ASCII85_DIGIT_MINIMUM
+	for len(source)-source_position >= ENCODED_GROUP_SIZE &&
+		len(destination)-destination_position >= DECODED_GROUP_SIZE {
+		source_group := source[source_position : source_position+ENCODED_GROUP_SIZE]
+		if source_group[0]-ASCII85_DIGIT_MINIMUM > digit_maximum {
+			break
+		}
+		if source_group[1]-ASCII85_DIGIT_MINIMUM > digit_maximum {
+			break
+		}
+		if source_group[2]-ASCII85_DIGIT_MINIMUM > digit_maximum {
+			break
+		}
+		if source_group[3]-ASCII85_DIGIT_MINIMUM > digit_maximum {
+			break
+		}
+		if source_group[4]-ASCII85_DIGIT_MINIMUM > digit_maximum {
+			break
+		}
+		value := uint32(source_group[0] - ASCII85_DIGIT_MINIMUM)
+		value = value*ASCII85_BASE + uint32(source_group[1]-ASCII85_DIGIT_MINIMUM)
+		value = value*ASCII85_BASE + uint32(source_group[2]-ASCII85_DIGIT_MINIMUM)
+		value = value*ASCII85_BASE + uint32(source_group[3]-ASCII85_DIGIT_MINIMUM)
+		value = value*ASCII85_BASE + uint32(source_group[4]-ASCII85_DIGIT_MINIMUM)
+		destination_end := destination_position + DECODED_GROUP_SIZE
+		destination_group := destination[destination_position:destination_end]
+		shift := DECODED_GROUP_FINAL_INDEX * bits.BIT_COUNT_8_MAXIMUM
+		destination_group[0] = byte(value >> shift)
+		shift -= bits.BIT_COUNT_8_MAXIMUM
+		destination_group[1] = byte(value >> shift)
+		shift -= bits.BIT_COUNT_8_MAXIMUM
+		destination_group[2] = byte(value >> shift)
+		destination_group[3] = byte(value)
+		source_position += ENCODED_GROUP_SIZE
+		destination_position += DECODED_GROUP_SIZE
+		group_count++
+	}
+	return group_count
+}
+
+func decoded_write(
+	destination Decoded_Write_Destination, value Decoded_Word, count Decoded_Write_Count,
 ) {
 	Decoded_Write_Destination_Invariants(destination, "decoded_write.destination")
-	invariant.Always(
-		int(count) >= DECODED_WRITE_DESTINATION_SIZE_MINIMUM,
-		"Decoded write emits at least one byte.",
-	)
-	invariant.Always(
-		int(count) <= DECODED_GROUP_SIZE,
-		"Decoded write emits at most one group.",
-	)
+	Decoded_Word_Invariants(value, "decoded_write.value")
+	Decoded_Write_Count_Invariants(count, "decoded_write.count")
 	for byte_position_index := range int(count) {
 		byte_shift_count := DECODED_GROUP_FINAL_INDEX - byte_position_index
 		shift := byte_shift_count * bits.BIT_COUNT_8_MAXIMUM

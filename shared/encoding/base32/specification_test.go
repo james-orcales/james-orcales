@@ -117,6 +117,7 @@ func Test_Decode(t *testing.T) {
 		{Decoded: "fooba", Encoded: "MZXW6YTB"},
 		{Decoded: "foobar", Encoded: "MZXW6YTBOI======"},
 		{Decoded: "sure", Encoded: "ON2X\rEZ\nI="},
+		{Decoded: "fooba", Encoded: "\nMZXW6YTB"},
 	}
 	for _, one := range cases {
 		assert_decode(t, encoding, one.Encoded, one.Decoded)
@@ -129,7 +130,7 @@ func Test_Decode(t *testing.T) {
 	invalid := [...]string{
 		"A", "!!!!", "x===", "AA=A====", "AAA=AAAA", "MMMMMMMMM", "MMMMMM",
 		"A=", "AA=", "AA==", "AA===", "AAAA=", "AAAA==", "AAAAA=",
-		"AAAAA==", "A=======", "AAA=====", "AAAAAA==",
+		"AAAAA==", "A=======", "AAA=====", "AAAAAA==", "========",
 	}
 	var destination [base32.DECODED_SIZE_MAXIMUM]byte
 	for _, source := range invalid {

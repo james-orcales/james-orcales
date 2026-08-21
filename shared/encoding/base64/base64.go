@@ -2,6 +2,8 @@
 package base64
 
 import (
+	"unsafe"
+
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
@@ -25,7 +27,7 @@ const DECODED_GROUP_SIZE = ENCODED_GROUP_SIZE - 1
 // DECODE_MAP_SIZE covers every possible encoded byte without signedness branching.
 const DECODE_MAP_SIZE = 1 << bits.BIT_COUNT_8_MAXIMUM
 
-// INVALID_SYMBOL lies directly beyond every alphabet index.
+// INVALID_SYMBOL occupies the first bit no valid base64 digit can set.
 const INVALID_SYMBOL = ALPHABET_SIZE
 
 // SIZE_MINIMUM admits empty source and output.
@@ -41,6 +43,45 @@ const SOURCE_SIZE_MAXIMUM = ENCODED_SIZE_MAXIMUM /
 // DECODED_SIZE_MAXIMUM follows the largest output possible from bounded encoded input.
 const DECODED_SIZE_MAXIMUM = SOURCE_SIZE_MAXIMUM
 
+// DECODE_BULK_SOURCE_SIZE halves loop control while paired writes stay bounded.
+const DECODE_BULK_SOURCE_SIZE = ENCODED_GROUP_SIZE * ENCODED_GROUP_SIZE
+
+// DECODE_BULK_WRITE_SIZE keeps paired decoded groups inside caller storage.
+const DECODE_BULK_WRITE_SIZE = DECODED_GROUP_SIZE * ENCODED_GROUP_SIZE
+
+// DECODE_BULK_PAIR_COUNT_MAXIMUM bounds every complete paired advance.
+const DECODE_BULK_PAIR_COUNT_MAXIMUM = DECODED_SIZE_MAXIMUM / DECODE_BULK_WRITE_SIZE
+
+// DECODE_FIRST anchors indexing to the declared empty bound.
+const DECODE_FIRST = SIZE_MINIMUM
+
+// DECODE_SECOND derives unit stride from the encoded group.
+const DECODE_SECOND = ENCODED_GROUP_SIZE / ENCODED_GROUP_SIZE
+
+// DECODE_THIRD keeps later offsets dependent on unit stride.
+const DECODE_THIRD = DECODE_SECOND + DECODE_SECOND
+
+// DECODE_FOURTH keeps later offsets dependent on unit stride.
+const DECODE_FOURTH = DECODE_THIRD + DECODE_SECOND
+
+// DECODE_FIFTH keeps later offsets dependent on unit stride.
+const DECODE_FIFTH = DECODE_FOURTH + DECODE_SECOND
+
+// DECODE_SIXTH keeps later offsets dependent on unit stride.
+const DECODE_SIXTH = DECODE_FIFTH + DECODE_SECOND
+
+// DECODE_SEVENTH keeps later offsets dependent on unit stride.
+const DECODE_SEVENTH = DECODE_SIXTH + DECODE_SECOND
+
+// DECODE_FINAL keeps the block end dependent on unit stride.
+const DECODE_FINAL = DECODE_SEVENTH + DECODE_SECOND
+
+// DECODE_PAIR prevents the paired loop from hard-coding its midpoint.
+const DECODE_PAIR = DECODE_BULK_SOURCE_SIZE / DECODE_THIRD
+
+// DECODE_PAIR_WRITE keeps the second write tied to paired output size.
+const DECODE_PAIR_WRITE = DECODE_BULK_WRITE_SIZE / DECODE_THIRD
+
 // DECODED_WRITE_DESTINATION_SIZE_MINIMUM admits the shortest valid terminal quantum.
 const DECODED_WRITE_DESTINATION_SIZE_MINIMUM = SIZE_MINIMUM + 1
 
@@ -50,6 +91,18 @@ const DECODED_TAIL_SIZE_FINAL = DECODED_GROUP_SIZE - 1
 // ENCODED_TAIL_SIZE_ONE derives the shortest useful terminal symbol count.
 const ENCODED_TAIL_SIZE_ONE = (DECODED_WRITE_DESTINATION_SIZE_MINIMUM*
 	bits.BIT_COUNT_8_MAXIMUM + ENCODED_SYMBOL_BIT_COUNT - 1) / ENCODED_SYMBOL_BIT_COUNT
+
+// TAIL_QUANTUM_COUNT_SECOND follows one retained symbol.
+const TAIL_QUANTUM_COUNT_SECOND = SIZE_MINIMUM + 1
+
+// TAIL_QUANTUM_COUNT_THIRD follows two retained symbols.
+const TAIL_QUANTUM_COUNT_THIRD = TAIL_QUANTUM_COUNT_SECOND + 1
+
+// TAIL_QUANTUM_COUNT_FINAL excludes one complete encoded group.
+const TAIL_QUANTUM_COUNT_FINAL = ENCODED_GROUP_SIZE - 1
+
+// DECODED_WRITE_SYMBOL_COUNT_SECOND follows next publishable symbol count.
+const DECODED_WRITE_SYMBOL_COUNT_SECOND = ENCODED_TAIL_SIZE_ONE + 1
 
 // ENCODED_TAIL_SIZE_FINAL derives the largest incomplete encoded quantum.
 const ENCODED_TAIL_SIZE_FINAL = (DECODED_TAIL_SIZE_FINAL*bits.BIT_COUNT_8_MAXIMUM +
@@ -141,6 +194,16 @@ func Padding_Invariants(value Padding, namespace invariant.Namespace) {
 		Range_Int16(
 			int16(value), bits.INTEGER_16_MINIMUM, bits.INTEGER_16_MAXIMUM,
 		).
+		Ensure()
+}
+
+// Padding_Enabled keeps size formulas independent from wire-byte identity.
+type Padding_Enabled bool
+
+// Padding_Enabled_Invariants covers padded and unpadded configurations.
+func Padding_Enabled_Invariants(value Padding_Enabled, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Padding is enabled.").
 		Ensure()
 }
 
@@ -302,6 +365,77 @@ type Decoded_Count int
 func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Decode_Bulk_Pair_Count keeps source and destination pair advances one checked value.
+type Decode_Bulk_Pair_Count int
+
+// Decode_Bulk_Pair_Count_Invariants bounds complete paired advances.
+func Decode_Bulk_Pair_Count_Invariants(
+	value Decode_Bulk_Pair_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SIZE_MINIMUM, DECODE_BULK_PAIR_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Tail_Quantum_Count excludes complete groups already published by decode loop.
+type Tail_Quantum_Count int
+
+// Tail_Quantum_Count_Invariants keeps only incomplete quantum state.
+func Tail_Quantum_Count_Invariants(
+	value Tail_Quantum_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_4_Int(
+			int(value), SIZE_MINIMUM, TAIL_QUANTUM_COUNT_SECOND,
+			TAIL_QUANTUM_COUNT_THIRD, TAIL_QUANTUM_COUNT_FINAL,
+		).
+		Ensure()
+}
+
+// Padding_Count keeps terminal padding inside one quantum.
+type Padding_Count int
+
+// Padding_Count_Invariants permits no padding through one complete quantum.
+func Padding_Count_Invariants(value Padding_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), SIZE_MINIMUM, ENCODED_GROUP_SIZE).
+		Ensure()
+}
+
+// Decoded_Write_Symbol_Count excludes symbol counts that cannot produce one byte.
+type Decoded_Write_Symbol_Count int
+
+// Decoded_Write_Symbol_Count_Invariants bounds one publishable quantum.
+func Decoded_Write_Symbol_Count_Invariants(
+	value Decoded_Write_Symbol_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_3_Int(
+			int(value), ENCODED_TAIL_SIZE_ONE, DECODED_WRITE_SYMBOL_COUNT_SECOND,
+			ENCODED_GROUP_SIZE,
+		).
+		Ensure()
+}
+
+// Decoded_Prefix_Count excludes byte counts that cannot hold complete groups.
+type Decoded_Prefix_Count int
+
+// Decoded_Prefix_Count_Invariants keeps published prefixes group-aligned.
+func Decoded_Prefix_Count_Invariants(
+	value Decoded_Prefix_Count, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		int(value)%DECODED_GROUP_SIZE == SIZE_MINIMUM,
+		"Decoded prefix contains only complete groups.",
+	)
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(
+			int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM,
+			SIZE_MINIMUM+1, SIZE_MINIMUM+2, SIZE_MINIMUM+2, SIZE_MINIMUM+2,
+		).
 		Ensure()
 }
 
@@ -504,8 +638,10 @@ func With_Padding(
 	}()
 	Encoding_Invariants(encoding, "With_Padding.encoding")
 	Padding_Invariants(padding, "With_Padding.padding")
-	if !bool(encoding_valid(encoding)) {
-		return Encoding{}, STATUS_ENCODING_INVALID
+	if !bool(standard_encoding_valid(&encoding)) {
+		if !bool(encoding_valid(&encoding)) {
+			return Encoding{}, STATUS_ENCODING_INVALID
+		}
 	}
 	configured, configuration_status := New_Encoding(encoding.Alphabet, padding)
 	if configuration_status != STATUS_OK {
@@ -524,8 +660,10 @@ func Strict_Encoding(
 		Strict_Status_Invariants(status, "Strict_Encoding.status")
 	}()
 	Encoding_Invariants(encoding, "Strict_Encoding.encoding")
-	if !bool(encoding_valid(encoding)) {
-		return Encoding{}, STATUS_ENCODING_INVALID
+	if !bool(standard_encoding_valid(&encoding)) {
+		if !bool(encoding_valid(&encoding)) {
+			return Encoding{}, STATUS_ENCODING_INVALID
+		}
 	}
 	configured = encoding
 	configured.Strict[STRICT_STORAGE_INDEX] = STRICT_ENABLED
@@ -542,14 +680,15 @@ func Encoded_Size(
 	}()
 	Encoding_Invariants(encoding, "Encoded_Size.encoding")
 	Source_Count_Invariants(source_count, "Encoded_Size.source_count")
-	if !bool(encoding_valid(encoding)) {
-		return 0, STATUS_ENCODING_INVALID
+	if !bool(standard_encoding_valid(&encoding)) {
+		if !bool(encoding_valid(&encoding)) {
+			return 0, STATUS_ENCODING_INVALID
+		}
 	}
-	padding := NO_PADDING
-	if encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED {
-		padding = Padding(encoding.Padding[PADDING_STORAGE_VALUE_INDEX])
-	}
-	return encoded_size_unchecked(source_count, padding), STATUS_OK
+	padding_enabled := Padding_Enabled(
+		encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED,
+	)
+	return encoded_size_unchecked(source_count, padding_enabled), STATUS_OK
 }
 
 // Decoded_Size_Maximum remains safe when newline and padding later reduce actual output.
@@ -564,14 +703,15 @@ func Decoded_Size_Maximum(
 	Encoded_Input_Count_Invariants(
 		encoded_count, "Decoded_Size_Maximum.encoded_count",
 	)
-	if !bool(encoding_valid(encoding)) {
-		return 0, STATUS_ENCODING_INVALID
+	if !bool(standard_encoding_valid(&encoding)) {
+		if !bool(encoding_valid(&encoding)) {
+			return 0, STATUS_ENCODING_INVALID
+		}
 	}
-	padding := NO_PADDING
-	if encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED {
-		padding = Padding(encoding.Padding[PADDING_STORAGE_VALUE_INDEX])
-	}
-	return decoded_size_unchecked(encoded_count, padding), STATUS_OK
+	padding_enabled := Padding_Enabled(
+		encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED,
+	)
+	return decoded_size_unchecked(encoded_count, padding_enabled), STATUS_OK
 }
 
 // Encode_Into checks every refusal before the first caller byte changes.
@@ -585,21 +725,22 @@ func Encode_Into(
 	Encoded_Invariants(destination, "Encode_Into.destination")
 	Source_Invariants(source, "Encode_Into.source")
 	Encoding_Invariants(encoding, "Encode_Into.encoding")
-	if !bool(encoding_valid(encoding)) {
-		return 0, STATUS_ENCODING_INVALID
+	if !bool(standard_encoding_valid(&encoding)) {
+		if !bool(encoding_valid(&encoding)) {
+			return 0, STATUS_ENCODING_INVALID
+		}
 	}
 	if bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))) {
 		return 0, STATUS_STORAGE_INVALID
 	}
-	padding := NO_PADDING
-	if encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED {
-		padding = Padding(encoding.Padding[PADDING_STORAGE_VALUE_INDEX])
-	}
-	required := encoded_size_unchecked(Source_Count(len(source)), padding)
+	padding_enabled := Padding_Enabled(
+		encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED,
+	)
+	required := encoded_size_unchecked(Source_Count(len(source)), padding_enabled)
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	return encode_unchecked(destination, source, encoding), STATUS_OK
+	return encode_unchecked(destination, source, &encoding, required), STATUS_OK
 }
 
 // Decode_Into rejects malformed wire bytes without newline scratch storage.
@@ -613,19 +754,75 @@ func Decode_Into(
 	Decoded_Invariants(destination, "Decode_Into.destination")
 	Encoded_Invariants(source, "Decode_Into.source")
 	Encoding_Invariants(encoding, "Decode_Into.encoding")
-	if !bool(encoding_valid(encoding)) {
-		return 0, STATUS_ENCODING_INVALID
+	if !bool(standard_encoding_valid(&encoding)) {
+		if !bool(encoding_valid(&encoding)) {
+			return 0, STATUS_ENCODING_INVALID
+		}
 	}
 	if bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))) {
 		return 0, STATUS_STORAGE_INVALID
 	}
-	decoded_count, data_status := decode_unchecked(destination, source, encoding)
+	decoded_count, data_status := decode_unchecked(destination, source, &encoding)
 	return decoded_count, Decode_Status(data_status)
 }
 
-func encoding_valid(encoding Encoding) (valid Encoding_Valid) {
+func standard_encoding_valid(encoding *Encoding) (valid Encoding_Valid) {
+	defer func() { Encoding_Valid_Invariants(valid, "standard_encoding_valid.valid") }()
+	Encoding_Invariants(*encoding, "standard_encoding_valid.encoding")
+	const INVALID_1 = string(rune(INVALID_SYMBOL))
+	const INVALID_2 = INVALID_1 + INVALID_1
+	const INVALID_4 = INVALID_2 + INVALID_2
+	const INVALID_8 = INVALID_4 + INVALID_4
+	const INVALID_16 = INVALID_8 + INVALID_8
+	const INVALID_32 = INVALID_16 + INVALID_16
+	const INVALID_64 = INVALID_32 + INVALID_32
+	const INVALID_128 = INVALID_64 + INVALID_64
+	const DECIMAL = "\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d"
+	const UPPER = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c" +
+		"\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19"
+	const LOWER = "\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26" +
+		"\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33"
+	const INVALID_FINAL = INVALID_128 + INVALID_4 + INVALID_1
+	const STANDARD_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	const STANDARD_DECODE_MAP = INVALID_32 + INVALID_8 + INVALID_2 + INVALID_1 +
+		"\x3e" + INVALID_2 + INVALID_1 + "\x3f" + DECIMAL +
+		INVALID_4 + INVALID_2 + INVALID_1 + UPPER + INVALID_4 + INVALID_2 + LOWER +
+		INVALID_FINAL
+	return Encoding_Valid(string(encoding.Alphabet[:]) == STANDARD_ALPHABET &&
+		string(encoding.Decode_Map[:]) == STANDARD_DECODE_MAP &&
+		encoding.Padding[PADDING_STORAGE_VALUE_INDEX] == byte(STANDARD_PADDING) &&
+		encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED &&
+		encoding.Strict[STRICT_STORAGE_INDEX] <= STRICT_ENABLED)
+}
+
+func url_encoding_valid(encoding *Encoding) (valid Encoding_Valid) {
+	defer func() { Encoding_Valid_Invariants(valid, "url_encoding_valid.valid") }()
+	Encoding_Invariants(*encoding, "url_encoding_valid.encoding")
+	const INVALID_1 = string(rune(INVALID_SYMBOL))
+	const INVALID_2 = INVALID_1 + INVALID_1
+	const INVALID_4 = INVALID_2 + INVALID_2
+	const INVALID_8 = INVALID_4 + INVALID_4
+	const INVALID_16 = INVALID_8 + INVALID_8
+	const INVALID_32 = INVALID_16 + INVALID_16
+	const INVALID_64 = INVALID_32 + INVALID_32
+	const INVALID_128 = INVALID_64 + INVALID_64
+	const DECIMAL = "\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d"
+	const UPPER = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c" +
+		"\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19"
+	const LOWER = "\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26" +
+		"\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33"
+	const INVALID_FINAL = INVALID_128 + INVALID_4 + INVALID_1
+	const URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	const URL_DECODE_MAP = INVALID_32 + INVALID_8 + INVALID_4 + INVALID_1 +
+		"\x3e" + INVALID_2 + DECIMAL + INVALID_4 + INVALID_2 + INVALID_1 + UPPER +
+		INVALID_4 + "\x3f" + INVALID_1 + LOWER + INVALID_FINAL
+	return Encoding_Valid(string(encoding.Alphabet[:]) == URL_ALPHABET &&
+		string(encoding.Decode_Map[:]) == URL_DECODE_MAP)
+}
+
+func encoding_valid(encoding *Encoding) (valid Encoding_Valid) {
 	defer func() { Encoding_Valid_Invariants(valid, "encoding_valid.valid") }()
-	Encoding_Invariants(encoding, "encoding_valid.encoding")
+	Encoding_Invariants(*encoding, "encoding_valid.encoding")
 	padding_enabled := encoding.Padding[PADDING_STORAGE_ENABLED_INDEX]
 	if padding_enabled > PADDING_STORAGE_ENABLED {
 		return false
@@ -649,42 +846,51 @@ func encoding_valid(encoding Encoding) (valid Encoding_Valid) {
 	if padding == Padding(LINE_FEED) {
 		return false
 	}
-	for index, symbol := range encoding.Alphabet {
-		if symbol == CARRIAGE_RETURN {
-			return false
-		}
-		if symbol == LINE_FEED {
-			return false
-		}
-		if padding != NO_PADDING {
-			if symbol == byte(padding) {
-				return false
-			}
-		}
-		if encoding.Decode_Map[symbol] != uint8(index) {
+	if padding != NO_PADDING {
+		if encoding.Decode_Map[byte(padding)] != INVALID_SYMBOL {
 			return false
 		}
 	}
+	if bool(standard_encoding_valid(encoding)) {
+		return true
+	}
+	if bool(url_encoding_valid(encoding)) {
+		return true
+	}
+	valid_symbol_count := SIZE_MINIMUM
 	for encoded_byte, symbol := range encoding.Decode_Map {
 		if symbol == INVALID_SYMBOL {
 			continue
 		}
-		if int(symbol) >= ALPHABET_SIZE {
+		if symbol >= ALPHABET_SIZE {
 			return false
 		}
 		if encoding.Alphabet[symbol] != byte(encoded_byte) {
 			return false
 		}
+		if encoded_byte == int(CARRIAGE_RETURN) {
+			return false
+		}
+		if encoded_byte == int(LINE_FEED) {
+			return false
+		}
+		if padding != NO_PADDING {
+			if encoded_byte == int(padding) {
+				return false
+			}
+		}
+		valid_symbol_count++
 	}
-	return true
+	return valid_symbol_count == ALPHABET_SIZE
 }
 
-func encoded_size_unchecked[Padding_Value ~int16](
-	source_count Source_Count, padding Padding_Value,
+func encoded_size_unchecked(
+	source_count Source_Count, padding_enabled Padding_Enabled,
 ) (count Encoded_Count) {
 	defer func() { Encoded_Count_Invariants(count, "encoded_size_unchecked.count") }()
 	Source_Count_Invariants(source_count, "encoded_size_unchecked.source_count")
-	if Padding(padding) == NO_PADDING {
+	Padding_Enabled_Invariants(padding_enabled, "encoded_size_unchecked.padding_enabled")
+	if !bool(padding_enabled) {
 		full_count := int(source_count) / DECODED_GROUP_SIZE * ENCODED_GROUP_SIZE
 		tail_bit_count := int(source_count) % DECODED_GROUP_SIZE * bits.BIT_COUNT_8_MAXIMUM
 		tail_count := (tail_bit_count + ENCODED_SYMBOL_BIT_COUNT - 1) /
@@ -695,15 +901,16 @@ func encoded_size_unchecked[Padding_Value ~int16](
 		DECODED_GROUP_SIZE * ENCODED_GROUP_SIZE)
 }
 
-func decoded_size_unchecked[Padding_Value ~int16](
-	encoded_count Encoded_Input_Count, padding Padding_Value,
+func decoded_size_unchecked(
+	encoded_count Encoded_Input_Count, padding_enabled Padding_Enabled,
 ) (count Decoded_Count) {
 	defer func() { Decoded_Count_Invariants(count, "decoded_size_unchecked.count") }()
 	Encoded_Input_Count_Invariants(
 		encoded_count, "decoded_size_unchecked.encoded_count",
 	)
+	Padding_Enabled_Invariants(padding_enabled, "decoded_size_unchecked.padding_enabled")
 	full_count := int(encoded_count) / ENCODED_GROUP_SIZE * DECODED_GROUP_SIZE
-	if Padding(padding) != NO_PADDING {
+	if bool(padding_enabled) {
 		return Decoded_Count(full_count)
 	}
 	tail_count := int(encoded_count) % ENCODED_GROUP_SIZE * ENCODED_SYMBOL_BIT_COUNT /
@@ -712,45 +919,134 @@ func decoded_size_unchecked[Padding_Value ~int16](
 }
 
 func encode_unchecked(
-	destination Encoded, source Source, encoding Encoding,
+	destination Encoded, source Source, encoding *Encoding, required Encoded_Count,
 ) (count Encoded_Count) {
 	defer func() { Encoded_Count_Invariants(count, "encode_unchecked.count") }()
 	Encoded_Invariants(destination, "encode_unchecked.destination")
 	Source_Invariants(source, "encode_unchecked.source")
-	Encoding_Invariants(encoding, "encode_unchecked.encoding")
-	position := 0
-	bit_count := 0
-	var value uint64
-	for _, source_byte := range source {
-		value = value<<bits.BIT_COUNT_8_MAXIMUM | uint64(source_byte)
-		bit_count += bits.BIT_COUNT_8_MAXIMUM
-		for bit_count >= ENCODED_SYMBOL_BIT_COUNT {
-			bit_count -= ENCODED_SYMBOL_BIT_COUNT
-			symbol := value >> bit_count & uint64(ALPHABET_FINAL_INDEX)
-			destination[position] = encoding.Alphabet[symbol]
-			position++
-		}
+	Encoding_Invariants(*encoding, "encode_unchecked.encoding")
+	Encoded_Count_Invariants(required, "encode_unchecked.required")
+	const OFFSET_FIRST = SIZE_MINIMUM
+	const OFFSET_STEP = DECODED_GROUP_SIZE / DECODED_GROUP_SIZE
+	const OFFSET_SECOND = OFFSET_FIRST + OFFSET_STEP
+	const OFFSET_THIRD = OFFSET_SECOND + OFFSET_STEP
+	const OFFSET_FINAL = OFFSET_THIRD + OFFSET_STEP
+	const GROUP_BIT_COUNT = DECODED_GROUP_SIZE * bits.BIT_COUNT_8_MAXIMUM
+	const SHIFT_FIRST = GROUP_BIT_COUNT - ENCODED_SYMBOL_BIT_COUNT
+	const SHIFT_SECOND = SHIFT_FIRST - ENCODED_SYMBOL_BIT_COUNT
+	const SHIFT_THIRD = SHIFT_SECOND - ENCODED_SYMBOL_BIT_COUNT
+	source_position, destination_position := SIZE_MINIMUM, SIZE_MINIMUM
+	full_end_position := len(source) / DECODED_GROUP_SIZE * DECODED_GROUP_SIZE
+	for source_position < full_end_position {
+		source_block := source[source_position : source_position+DECODED_GROUP_SIZE]
+		destination_end_position := destination_position + ENCODED_GROUP_SIZE
+		destination_block := destination[destination_position:destination_end_position]
+		value := uint32(source_block[OFFSET_FIRST]) <<
+			(bits.BIT_COUNT_8_MAXIMUM * OFFSET_THIRD)
+		value |= uint32(source_block[OFFSET_SECOND]) << bits.BIT_COUNT_8_MAXIMUM
+		value |= uint32(source_block[OFFSET_THIRD])
+		destination_block[OFFSET_FIRST] =
+			encoding.Alphabet[value>>SHIFT_FIRST&ALPHABET_FINAL_INDEX]
+		destination_block[OFFSET_SECOND] =
+			encoding.Alphabet[value>>SHIFT_SECOND&ALPHABET_FINAL_INDEX]
+		destination_block[OFFSET_THIRD] =
+			encoding.Alphabet[value>>SHIFT_THIRD&ALPHABET_FINAL_INDEX]
+		destination_block[OFFSET_FINAL] =
+			encoding.Alphabet[value&ALPHABET_FINAL_INDEX]
+		source_position += DECODED_GROUP_SIZE
+		destination_position += ENCODED_GROUP_SIZE
 	}
-	if bit_count > 0 {
-		symbol := value << (ENCODED_SYMBOL_BIT_COUNT - bit_count)
-		symbol &= uint64(ALPHABET_FINAL_INDEX)
-		destination[position] = encoding.Alphabet[symbol]
-		position++
+	remaining_count := len(source) - source_position
+	if remaining_count == SIZE_MINIMUM {
+		return required
 	}
+	value := uint32(source[source_position]) <<
+		(bits.BIT_COUNT_8_MAXIMUM * OFFSET_THIRD)
+	if remaining_count == OFFSET_THIRD {
+		value |= uint32(source[source_position+OFFSET_SECOND]) << bits.BIT_COUNT_8_MAXIMUM
+	}
+	destination[destination_position+OFFSET_FIRST] =
+		encoding.Alphabet[value>>SHIFT_FIRST&ALPHABET_FINAL_INDEX]
+	destination[destination_position+OFFSET_SECOND] =
+		encoding.Alphabet[value>>SHIFT_SECOND&ALPHABET_FINAL_INDEX]
 	padding := NO_PADDING
 	if encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED {
 		padding = Padding(encoding.Padding[PADDING_STORAGE_VALUE_INDEX])
 	}
-	required := encoded_size_unchecked(Source_Count(len(source)), padding)
-	for position < int(required) {
-		destination[position] = byte(padding)
-		position++
+	if remaining_count == OFFSET_THIRD {
+		destination[destination_position+OFFSET_THIRD] =
+			encoding.Alphabet[value>>SHIFT_THIRD&ALPHABET_FINAL_INDEX]
+		if padding != NO_PADDING {
+			destination[destination_position+OFFSET_FINAL] = byte(padding)
+		}
+		return required
 	}
-	return Encoded_Count(position)
+	if padding != NO_PADDING {
+		destination[destination_position+OFFSET_THIRD] = byte(padding)
+		destination[destination_position+OFFSET_FINAL] = byte(padding)
+	}
+	return required
+}
+
+func decode_bulk_unchecked(
+	destination Decoded, source Encoded, encoding *Encoding,
+) (pair_count Decode_Bulk_Pair_Count) {
+	defer func() {
+		Decode_Bulk_Pair_Count_Invariants(pair_count, "decode_bulk_unchecked.pair_count")
+	}()
+	Decoded_Invariants(destination, "decode_bulk_unchecked.destination")
+	Encoded_Invariants(source, "decode_bulk_unchecked.source")
+	Encoding_Invariants(*encoding, "decode_bulk_unchecked.encoding")
+	table, pair := &encoding.Decode_Map, DECODE_PAIR
+	// Fixed pointers keep one proved bounds check per block without widening writes.
+	source_pointer := unsafe.Pointer(unsafe.SliceData(source))
+	destination_pointer := unsafe.Pointer(unsafe.SliceData(destination))
+	source_count, destination_count := len(source), len(destination)
+	for source_count >= DECODE_BULK_SOURCE_SIZE &&
+		destination_count >= DECODE_BULK_WRITE_SIZE {
+		block := (*[DECODE_BULK_SOURCE_SIZE]byte)(source_pointer)
+		first, pair_first := table[block[DECODE_FIRST]], table[block[pair+DECODE_FIRST]]
+		second, pair_second := table[block[DECODE_SECOND]], table[block[pair+DECODE_SECOND]]
+		third, pair_third := table[block[DECODE_THIRD]], table[block[pair+DECODE_THIRD]]
+		fourth, pair_fourth := table[block[DECODE_FOURTH]], table[block[pair+DECODE_FOURTH]]
+		fifth, pair_fifth := table[block[DECODE_FIFTH]], table[block[pair+DECODE_FIFTH]]
+		sixth, pair_sixth := table[block[DECODE_SIXTH]], table[block[pair+DECODE_SIXTH]]
+		seventh := table[block[DECODE_SEVENTH]]
+		pair_seventh := table[block[pair+DECODE_SEVENTH]]
+		final, pair_final := table[block[DECODE_FINAL]], table[block[pair+DECODE_FINAL]]
+		if (first|second|third|fourth|fifth|sixth|seventh|final|
+			pair_first|pair_second|pair_third|pair_fourth|pair_fifth|pair_sixth|
+			pair_seventh|pair_final)&INVALID_SYMBOL != 0 {
+			break
+		}
+		output := (*[DECODE_BULK_WRITE_SIZE]byte)(destination_pointer)
+		output[DECODE_FIRST] = first<<DECODE_THIRD | second>>DECODE_FIFTH
+		output[DECODE_SECOND] = second<<DECODE_FIFTH | third>>DECODE_THIRD
+		output[DECODE_THIRD] = third<<DECODE_SEVENTH | fourth
+		output[DECODE_FOURTH] = fifth<<DECODE_THIRD | sixth>>DECODE_FIFTH
+		output[DECODE_FIFTH] = sixth<<DECODE_FIFTH | seventh>>DECODE_THIRD
+		output[DECODE_SIXTH] = seventh<<DECODE_SEVENTH | final
+		output[DECODE_SEVENTH] = pair_first<<DECODE_THIRD | pair_second>>DECODE_FIFTH
+		output[DECODE_FINAL] = pair_second<<DECODE_FIFTH | pair_third>>DECODE_THIRD
+		output[DECODE_PAIR] = pair_third<<DECODE_SEVENTH | pair_fourth
+		output[DECODE_PAIR+DECODE_SECOND] = pair_fifth<<DECODE_THIRD |
+			pair_sixth>>DECODE_FIFTH
+		output[DECODE_PAIR+DECODE_THIRD] = pair_sixth<<DECODE_FIFTH |
+			pair_seventh>>DECODE_THIRD
+		output[DECODE_PAIR+DECODE_FOURTH] = pair_seventh<<DECODE_SEVENTH | pair_final
+		source_pointer = unsafe.Add(source_pointer, DECODE_BULK_SOURCE_SIZE)
+		destination_pointer = unsafe.Add(destination_pointer, DECODE_BULK_WRITE_SIZE)
+		source_count -= DECODE_BULK_SOURCE_SIZE
+		destination_count -= DECODE_BULK_WRITE_SIZE
+	}
+	pair_count = Decode_Bulk_Pair_Count(
+		uint(len(source)-source_count) / uint(DECODE_BULK_SOURCE_SIZE),
+	)
+	return pair_count
 }
 
 func decode_unchecked(
-	destination Decoded, source Encoded, encoding Encoding,
+	destination Decoded, source Encoded, encoding *Encoding,
 ) (count Decoded_Count, status Decode_Data_Status) {
 	defer func() {
 		Decoded_Count_Invariants(count, "decode_unchecked.count")
@@ -758,16 +1054,20 @@ func decode_unchecked(
 	}()
 	Decoded_Invariants(destination, "decode_unchecked.destination")
 	Encoded_Invariants(source, "decode_unchecked.source")
-	Encoding_Invariants(encoding, "decode_unchecked.encoding")
-	var quantum Quantum
-	quantum_count := 0
-	padding_count := 0
+	Encoding_Invariants(*encoding, "decode_unchecked.encoding")
+	pair_count := decode_bulk_unchecked(destination, source, encoding)
+	source_position := int(pair_count) * DECODE_BULK_SOURCE_SIZE
+	count = Decoded_Count(pair_count) * DECODE_BULK_WRITE_SIZE
 	padding := NO_PADDING
 	if encoding.Padding[PADDING_STORAGE_ENABLED_INDEX] == PADDING_STORAGE_ENABLED {
 		padding = Padding(encoding.Padding[PADDING_STORAGE_VALUE_INDEX])
 	}
+	suffix := source[source_position:]
+	var quantum Quantum
+	quantum_count := 0
+	padding_count := Padding_Count(0)
 	ended := false
-	for _, source_byte := range source {
+	for _, source_byte := range suffix {
 		if source_byte == CARRIAGE_RETURN {
 			continue
 		}
@@ -783,10 +1083,10 @@ func decode_unchecked(
 		}
 		if is_padding {
 			padding_count++
-			if quantum_count+padding_count > ENCODED_GROUP_SIZE {
+			if int(quantum_count)+int(padding_count) > ENCODED_GROUP_SIZE {
 				return count, STATUS_INPUT_INVALID
 			}
-			if quantum_count+padding_count == ENCODED_GROUP_SIZE {
+			if int(quantum_count)+int(padding_count) == ENCODED_GROUP_SIZE {
 				ended = true
 			}
 			continue
@@ -807,22 +1107,23 @@ func decode_unchecked(
 			return count, STATUS_OUTPUT_TOO_SMALL
 		}
 		tail := Decoded_Write_Destination(destination[int(count):])
-		decoded_write(tail, quantum, quantum_count)
+		decoded_write(tail, quantum, Decoded_Write_Symbol_Count(quantum_count))
 		count += DECODED_GROUP_SIZE
 		quantum_count = 0
 	}
 	return decode_tail(
-		destination, quantum, quantum_count, padding_count, encoding, int(count),
+		destination, quantum, Tail_Quantum_Count(quantum_count), padding_count,
+		encoding, Decoded_Prefix_Count(count),
 	)
 }
 
-func decode_tail[Quantum_Count ~int, Padding_Count ~int, Prefix_Count ~int](
+func decode_tail(
 	destination Decoded,
 	quantum Quantum,
-	quantum_count Quantum_Count,
+	quantum_count Tail_Quantum_Count,
 	padding_count Padding_Count,
-	encoding Encoding,
-	prefix_count Prefix_Count,
+	encoding *Encoding,
+	prefix_count Decoded_Prefix_Count,
 ) (count Decoded_Count, status Decode_Data_Status) {
 	defer func() {
 		Decoded_Count_Invariants(count, "decode_tail.count")
@@ -830,27 +1131,11 @@ func decode_tail[Quantum_Count ~int, Padding_Count ~int, Prefix_Count ~int](
 	}()
 	Decoded_Invariants(destination, "decode_tail.destination")
 	Quantum_Invariants(quantum, "decode_tail.quantum")
-	Encoding_Invariants(encoding, "decode_tail.encoding")
+	Tail_Quantum_Count_Invariants(quantum_count, "decode_tail.quantum_count")
+	Padding_Count_Invariants(padding_count, "decode_tail.padding_count")
+	Encoding_Invariants(*encoding, "decode_tail.encoding")
+	Decoded_Prefix_Count_Invariants(prefix_count, "decode_tail.prefix_count")
 	count = Decoded_Count(prefix_count)
-	invariant.Always(int(quantum_count) >= SIZE_MINIMUM, "Quantum count is nonnegative.")
-	invariant.Always(
-		int(quantum_count) <= ENCODED_GROUP_SIZE,
-		"Quantum count stays inside fixed storage.",
-	)
-	invariant.Always(int(padding_count) >= SIZE_MINIMUM, "Padding count is nonnegative.")
-	invariant.Always(
-		int(padding_count) <= ENCODED_GROUP_SIZE,
-		"Padding count stays inside fixed storage.",
-	)
-	invariant.Always(int(prefix_count) >= SIZE_MINIMUM, "Decoded prefix is nonnegative.")
-	invariant.Always(
-		int(prefix_count) <= DECODED_SIZE_MAXIMUM,
-		"Decoded prefix stays inside destination storage.",
-	)
-	invariant.Always(
-		int(prefix_count)%DECODED_GROUP_SIZE == 0,
-		"Decoded prefix contains only complete groups.",
-	)
 	if padding_count != 0 {
 		if int(quantum_count) < ENCODED_TAIL_SIZE_ONE {
 			return count, STATUS_INPUT_INVALID
@@ -887,22 +1172,18 @@ func decode_tail[Quantum_Count ~int, Padding_Count ~int, Prefix_Count ~int](
 		return count, STATUS_OUTPUT_TOO_SMALL
 	}
 	tail := Decoded_Write_Destination(destination[int(count):])
-	decoded_write(tail, quantum, quantum_count)
+	decoded_write(tail, quantum, Decoded_Write_Symbol_Count(quantum_count))
 	return count + Decoded_Count(decoded_count), STATUS_OK
 }
 
-func decoded_write[Count ~int](
+func decoded_write(
 	destination Decoded_Write_Destination,
 	quantum Quantum,
-	symbol_count Count,
+	symbol_count Decoded_Write_Symbol_Count,
 ) {
 	Decoded_Write_Destination_Invariants(destination, "decoded_write.destination")
 	Quantum_Invariants(quantum, "decoded_write.quantum")
-	invariant.Always(int(symbol_count) > 0, "Decoded quantum contains output bits.")
-	invariant.Always(
-		int(symbol_count) <= ENCODED_GROUP_SIZE,
-		"Decoded quantum stays within fixed symbol storage.",
-	)
+	Decoded_Write_Symbol_Count_Invariants(symbol_count, "decoded_write.symbol_count")
 	var value uint32
 	for index := range int(symbol_count) {
 		value = value<<ENCODED_SYMBOL_BIT_COUNT | uint32(quantum[index])

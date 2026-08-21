@@ -188,6 +188,8 @@ func test_maximum_round_trip(t *testing.T) {
 	for index := range source {
 		source[index] = byte(index)
 	}
+	encoded_size := hex.Encoded_Size(hex.Source_Count(len(source)))
+	testify.Equal(t, hex.Encoded_Count(len(encoded)), encoded_size)
 	encoded_count, encode_status := hex.Encode_Into(encoded[:], source[:])
 	testify.Equal(t, hex.Encoded_Count(len(encoded)), encoded_count)
 	testify.Equal_Values(t, hex.STATUS_OK, encode_status)
@@ -286,6 +288,10 @@ func test_decode_allocation(t *testing.T) {
 	var status hex.Decode_Status
 	testify.Zero_Allocation(t, func() {
 		count, status = hex.Decode_Into(destination[:], valid)
+	})
+	testify.Equal_Values(t, hex.STATUS_OK, status)
+	testify.Zero_Allocation(t, func() {
+		count, status = hex.Decode_Into(destination[:1], valid[:hex.ENCODED_BYTE_SIZE])
 	})
 	testify.Equal_Values(t, hex.STATUS_OK, status)
 	testify.Zero_Allocation(t, func() {
