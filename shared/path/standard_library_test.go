@@ -5,7 +5,6 @@ package path
 
 import (
 	"fmt"
-	"path"
 	"runtime"
 	"testing"
 
@@ -325,7 +324,6 @@ func Test_Standard_Library_Match(t *testing.T) {
 // Benchmark_Join pairs upstream workload with caller-owned output.
 func Benchmark_Join(b *testing.B) {
 	b.Run("Shared", benchmark_join_shared)
-	b.Run("Standard_Library", benchmark_join_standard_library)
 }
 
 func benchmark_join_shared(b *testing.B) {
@@ -340,19 +338,6 @@ func benchmark_join_shared(b *testing.B) {
 	runtime.KeepAlive(count)
 }
 
-func benchmark_join_standard_library(b *testing.B) {
-	b.ReportAllocs()
-	parts := []string{"one", "two", "three", "four"}
-	text := parts[0]
-	for b.Loop() {
-		parts[0] = text
-		text = path.Join(parts...)
-		text = text[:len(parts[0])]
-	}
-	b.StopTimer()
-	runtime.KeepAlive(text)
-}
-
 // Benchmark_Match pairs every upstream match case.
 func Benchmark_Match(b *testing.B) {
 	for _, one := range standard_match_cases() {
@@ -364,19 +349,6 @@ func Benchmark_Match(b *testing.B) {
 				var err error
 				for b.Loop() {
 					matched, err = Match(one.Pattern, one.Name)
-				}
-				b.StopTimer()
-				runtime.KeepAlive(matched)
-				runtime.KeepAlive(err)
-			})
-			b.Run("Standard_Library", func(b *testing.B) {
-				b.ReportAllocs()
-				var matched bool
-				var err error
-				for b.Loop() {
-					matched, err = path.Match(
-						string(one.Pattern), string(one.Name),
-					)
 				}
 				b.StopTimer()
 				runtime.KeepAlive(matched)
@@ -396,21 +368,6 @@ func Benchmark_Match_Corpus(b *testing.B) {
 		for b.Loop() {
 			for _, one := range cases {
 				matched, err = Match(one.Pattern, one.Name)
-			}
-		}
-		b.StopTimer()
-		runtime.KeepAlive(matched)
-		runtime.KeepAlive(err)
-	})
-	b.Run("Standard_Library", func(b *testing.B) {
-		b.ReportAllocs()
-		var matched bool
-		var err error
-		for b.Loop() {
-			for _, one := range cases {
-				matched, err = path.Match(
-					string(one.Pattern), string(one.Name),
-				)
 			}
 		}
 		b.StopTimer()
